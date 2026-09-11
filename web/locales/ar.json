@@ -2302,6 +2302,7 @@
   "vouchers_import.rejected_summary": "لم يتم استيراد %d صف (صفوف):",
   "vouchers_import.result_summary": "تم استيراد %d قسيمة، بإجمالي %s.",
   "vouchers_import.status.bad_balance": "تعذّرت قراءة الرصيد كقيمة",
+  "vouchers_import.status.check_failed": "تعذّر التحقق — حاول مرة أخرى",
   "vouchers_import.status.code_exists": "توجد قسيمة بهذا الرمز مسبقًا — لم تُستبدل",
   "vouchers_import.status.duplicate_code_in_file": "يتكرر هذا الرمز أكثر من مرة في الملف — لم يتم استيراد أي من الصفين",
   "vouchers_import.status.missing_code": "رمز مفقود",

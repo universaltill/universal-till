@@ -545,11 +545,27 @@ WHERE id = ? AND status = 'active' AND balance = original_amount`, id)
 // how many vouchers were issued and redeemed in the window, and for how
 // much (minor units) — reported DISTINCTLY from article revenue, never
 // summed into it.
+//
+// ImportedCount/ImportedMinor (ut-docs#1834) is a separate bucket for
+// opening-balance CSV imports (internal/pages/import_vouchers_page.go) —
+// NOT folded into Issued. An import is a real liability but not a sale made
+// at this till, so counting it as "Issued" would misrepresent the day's Z-
+// report as if N vouchers were sold that day. Giving it its own bucket
+// (rather than excluding it from the report entirely, as an earlier version
+// of this fix did — review finding, ut-docs#1834) keeps the report
+// internally consistent: every voucher_transactions row this till ever
+// writes lands in EXACTLY one of Issued/Redeemed/Imported on SOME day's
+// report, so summing every day's report still ties out to the liability
+// actually on the books — an imported voucher later redeemed has a
+// traceable origin in the report history, not a redemption with no
+// matching issue anywhere.
 type VoucherRangeSummary struct {
 	IssuedCount   int   `json:"issued_count"`
 	IssuedMinor   int64 `json:"issued"`
 	RedeemedCount int   `json:"redeemed_count"`
 	RedeemedMinor int64 `json:"redeemed"`
+	ImportedCount int   `json:"imported_count"`
+	ImportedMinor int64 `json:"imported"`
 }
 
 // VouchersIssuedRedeemedForRange aggregates voucher_transactions over
@@ -570,45 +586,49 @@ type VoucherRangeSummary struct {
 // contrast, keeps its sales row (pos.UpdateSaleStatus never deletes), so
 // `status = 'voided'` is reliably observable whenever it happened.
 //
-// A type='issue' row with sale_id IS NULL is also excluded (ut-docs#1834):
-// the only writer of such a row is internal/pages/import_vouchers_page.go's
-// opening-balance CSV import — a migrating merchant's pre-existing voucher
-// balance, not a sale made at this till. Every OTHER 'issue' row in this
-// table (internal/pos/sales.go, the only other caller of
-// RecordVoucherTransaction with type='issue') always carries a real,
-// non-empty sale_id, so this exclusion can only ever match an imported row,
-// never a genuine sale. Without it, importing opening balances would
-// silently inflate whatever calendar day the import happened to run on's
-// "Issued" count/amount on the Z-report, misleading the operator into
-// thinking vouchers were sold that day. The total OUTSTANDING liability
-// (vouchers.balance, summed elsewhere if ever reported) is unaffected by
-// this — an imported voucher's balance is real and correctly counts there;
-// only this transaction-FLOW aggregation excludes it.
+// A type='issue' row with sale_id IS NULL buckets as Imported, not Issued
+// (ut-docs#1834): the only writer of such a row is
+// internal/pages/import_vouchers_page.go's opening-balance CSV import — a
+// migrating merchant's pre-existing voucher balance, not a sale made at
+// this till. Every OTHER 'issue' row in this table (internal/pos/sales.go,
+// the only other caller of RecordVoucherTransaction with type='issue')
+// always carries a real, non-empty sale_id, so an imported row can never be
+// misclassified as Issued, and a genuine sale-issued voucher can never be
+// misclassified as Imported. See VoucherRangeSummary's own doc comment for
+// why this is a separate bucket rather than an outright exclusion.
 func (r *POSRepo) VouchersIssuedRedeemedForRange(ctx context.Context, from, to string) (VoucherRangeSummary, error) {
 	var out VoucherRangeSummary
 	rows, err := r.db.QueryContext(ctx, `
-SELECT vt.type, COUNT(*), COALESCE(SUM(vt.amount), 0)
+SELECT vt.type, (vt.sale_id IS NULL), COUNT(*), COALESCE(SUM(vt.amount), 0)
 FROM voucher_transactions vt
 LEFT JOIN sales s ON s.id = vt.sale_id
 WHERE date(vt.created_at, 'localtime') BETWEEN date(?) AND date(?)
   AND (s.id IS NULL OR s.status != 'voided')
-  AND NOT (vt.type = 'issue' AND vt.sale_id IS NULL)
-GROUP BY vt.type`, from, to)
+GROUP BY vt.type, (vt.sale_id IS NULL)`, from, to)
 	if err != nil {
 		return out, fmt.Errorf("vouchers issued/redeemed for range: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var txType string
+		var isImported bool
 		var count int
 		var amount int64
-		if err := rows.Scan(&txType, &count, &amount); err != nil {
+		if err := rows.Scan(&txType, &isImported, &count, &amount); err != nil {
 			return out, fmt.Errorf("vouchers issued/redeemed for range: scan: %w", err)
 		}
-		switch txType {
-		case "issue":
+		switch {
+		case txType == "issue" && isImported:
+			out.ImportedCount, out.ImportedMinor = count, amount
+		case txType == "issue":
 			out.IssuedCount, out.IssuedMinor = count, amount
-		case "redemption":
+		case txType == "redemption":
+			// A redemption always carries a real sale_id
+			// (ReserveVoucherRedemption/pos.CompleteSale both require one
+			// non-empty) — isImported is never true here in practice, but
+			// the switch still only matches on txType for this case so a
+			// future redemption-without-a-sale shape (none exists today)
+			// would still count as Redeemed rather than silently vanish.
 			out.RedeemedCount, out.RedeemedMinor = count, amount
 		}
 	}
@@ -620,11 +640,11 @@ GROUP BY vt.type`, from, to)
 
 // VouchersIssuedRedeemedForInstantWindow is VouchersIssuedRedeemedForRange's
 // close-to-close sibling (ADR-0066 Decision 2, ut-docs#1140): the same
-// issue/redemption aggregation with the same voided-sale exclusion (LEFT
-// JOIN, permissive on a MISSING sale row — see the range function's doc
-// comment for why an archived-away sale must keep counting while a voided
-// one must not) AND the same imported-opening-balance exclusion
-// (ut-docs#1834, see the range function's doc comment), over a half-open
+// issue/redemption/imported aggregation with the same voided-sale exclusion
+// (LEFT JOIN, permissive on a MISSING sale row — see the range function's
+// doc comment for why an archived-away sale must keep counting while a void
+// must not) and the same Imported bucket (ut-docs#1834, see the range
+// function's doc comment and VoucherRangeSummary's own), over a half-open
 // [from, to) INSTANT window — see
 // pos_repo.go's instantWindow for the comparison form and the zero-`from`
 // (till's first-ever close) unbounded case. Called out explicitly by the
@@ -634,28 +654,30 @@ func (r *POSRepo) VouchersIssuedRedeemedForInstantWindow(ctx context.Context, fr
 	win, args := instantWindow("vt.created_at", from, to)
 	var out VoucherRangeSummary
 	rows, err := r.db.QueryContext(ctx, `
-SELECT vt.type, COUNT(*), COALESCE(SUM(vt.amount), 0)
+SELECT vt.type, (vt.sale_id IS NULL), COUNT(*), COALESCE(SUM(vt.amount), 0)
 FROM voucher_transactions vt
 LEFT JOIN sales s ON s.id = vt.sale_id
 WHERE `+win+`
   AND (s.id IS NULL OR s.status != 'voided')
-  AND NOT (vt.type = 'issue' AND vt.sale_id IS NULL)
-GROUP BY vt.type`, args...)
+GROUP BY vt.type, (vt.sale_id IS NULL)`, args...)
 	if err != nil {
 		return out, fmt.Errorf("vouchers issued/redeemed for instant window: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var txType string
+		var isImported bool
 		var count int
 		var amount int64
-		if err := rows.Scan(&txType, &count, &amount); err != nil {
+		if err := rows.Scan(&txType, &isImported, &count, &amount); err != nil {
 			return out, fmt.Errorf("vouchers issued/redeemed for instant window: scan: %w", err)
 		}
-		switch txType {
-		case "issue":
+		switch {
+		case txType == "issue" && isImported:
+			out.ImportedCount, out.ImportedMinor = count, amount
+		case txType == "issue":
 			out.IssuedCount, out.IssuedMinor = count, amount
-		case "redemption":
+		case txType == "redemption":
 			out.RedeemedCount, out.RedeemedMinor = count, amount
 		}
 	}

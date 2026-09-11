@@ -148,12 +148,28 @@ func TestVoucherImportPage_PreviewDoesNotWrite(t *testing.T) {
 	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
 
 	body, ct := voucherImportMultipart(t, voucherImportCSV, nil) // no commit field at all
-	rec := postVoucherImport(mux, body, ct, &manager)
+	// ?lang=en (httpx.ResolveLocale's own query-param convention, same as
+	// e.g. fiscal_gate_test.go) pins the locale this assertion checks
+	// English text against, rather than relying on whatever the process-
+	// global default happens to be.
+	req := httptest.NewRequest(http.MethodPost, "/api/vouchers/import?lang=en", body)
+	req.Header.Set("Content-Type", ct)
+	req = auth.WithUser(req, manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("preview: code %d body %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "GS-M1") && !strings.Contains(rec.Body.String(), "2") {
-		t.Fatalf("preview should summarise the parsed rows, got: %s", rec.Body.String())
+	// Review finding (ut-docs#1834): the previous version of this assertion
+	// used && where it meant an OR-shaped check, and neither substring was
+	// even present in the preview's actual output (it shows a count/total
+	// summary, never a bare row code) — the check passed on almost any
+	// output (e.g. the "£" in a money amount contains no digit "2", but the
+	// pence value nearly always does) and would not have caught a broken
+	// summary. Assert the REAL rendered total instead: 2 rows, 25.00+10.50.
+	wantTotal := httpx.FormatMoney(3550, "en")
+	if !strings.Contains(rec.Body.String(), "2 voucher(s) ready to import") || !strings.Contains(rec.Body.String(), wantTotal) {
+		t.Fatalf("preview summary missing expected count/total (want \"2 voucher(s) ready to import\" and %q), got: %s", wantTotal, rec.Body.String())
 	}
 	// The preview must carry a confirm form with the file bytes embedded,
 	// so the operator can actually commit next.
@@ -210,13 +226,21 @@ func TestVoucherImportPage_CommitCreatesVouchers(t *testing.T) {
 		t.Fatalf("voucher_transactions row: type=%q sale_id valid=%v (%q), want type=issue sale_id=NULL", txType, saleID.Valid, saleID.String)
 	}
 
-	// Audited.
+	// Audited — including the imported LIABILITY AMOUNT, not just a row
+	// count (review finding, ut-docs#1834): without total_minor in the
+	// payload, an audit trail can say "2 vouchers imported" months later
+	// but never how much liability that created, which is exactly the
+	// figure a bookkeeper reconciling an opening balance needs.
 	var auditCount int
-	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE entity_type = 'voucher' AND action = 'import'`).Scan(&auditCount); err != nil {
+	var dataJSON string
+	if err := d.Db.QueryRow(`SELECT COUNT(*), data_json FROM audit_log WHERE entity_type = 'voucher' AND action = 'import'`).Scan(&auditCount, &dataJSON); err != nil {
 		t.Fatalf("audit lookup: %v", err)
 	}
 	if auditCount != 1 {
 		t.Fatalf("audit rows for import = %d, want 1", auditCount)
+	}
+	if !strings.Contains(dataJSON, `"total_minor":3550`) {
+		t.Fatalf("audit data_json missing total_minor=3550 (2500+1050), got: %s", dataJSON)
 	}
 }
 
@@ -308,5 +332,110 @@ func TestVoucherImportPage_BadBalanceRowRejected_ValidRowsStillImport(t *testing
 	}
 	if voucherCount != 1 {
 		t.Fatalf("vouchers created = %d, want 1 (only GS-GOOD)", voucherCount)
+	}
+}
+
+// A collision on one row, in the SAME batch as a clean new row, must not
+// abort the whole commit — the clean row still imports. Review finding
+// (ut-docs#1834): commitVoucherBalanceImport's own doc comment claims a
+// failed CreateVoucher (ErrVoucherIDExists) leaves the shared transaction
+// usable for subsequent rows, relying on SQLite's default per-statement
+// ABORT conflict resolution rather than a SAVEPOINT — but until this test,
+// nothing on this branch actually exercised collision-THEN-clean-row in one
+// transaction (the recommit test above collides on BOTH rows).
+func TestVoucherImportPage_CollisionThenCleanRowInSameBatch(t *testing.T) {
+	mux, d := newVoucherImportTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	repo := data.NewPOSRepo(d.Db)
+
+	// Pre-existing voucher (as if from an earlier import or a real sale).
+	body1, ct1 := voucherImportMultipart(t, "code,balance,label\nGS-EXIST,25.00,Alice\n", map[string]string{"commit": "1"})
+	if rec := postVoucherImport(mux, body1, ct1, &manager); rec.Code != http.StatusOK {
+		t.Fatalf("seed commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+
+	// A second file: row 1 collides with GS-EXIST, row 2 (GS-NEW) is
+	// genuinely new — both in ONE commit request, ONE transaction.
+	csv := "code,balance,label\n" +
+		"GS-EXIST,99.00,ShouldNotOverwrite\n" +
+		"GS-NEW,12.34,Dave\n"
+	body2, ct2 := voucherImportMultipart(t, csv, map[string]string{"commit": "1"})
+	rec2 := postVoucherImport(mux, body2, ct2, &manager)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("mixed-batch commit: code %d body %s", rec2.Code, rec2.Body.String())
+	}
+
+	// GS-EXIST's balance must be untouched by the colliding row.
+	existAfter, err := repo.GetVoucherBalance(t.Context(), nil, "GS-EXIST")
+	if err != nil {
+		t.Fatalf("GS-EXIST lookup: %v", err)
+	}
+	if existAfter.BalanceMinor != 2500 {
+		t.Fatalf("GS-EXIST balance = %d, want 2500 (unchanged by the colliding row's 99.00)", existAfter.BalanceMinor)
+	}
+
+	// GS-NEW, in the SAME transaction right after the collision, must still
+	// have been created — this is the actual claim under test.
+	gsNew, err := repo.GetVoucherBalance(t.Context(), nil, "GS-NEW")
+	if err != nil {
+		t.Fatalf("GS-NEW not created despite being clean (a collision earlier in the same batch must not abort it): %v", err)
+	}
+	if gsNew.BalanceMinor != 1234 {
+		t.Fatalf("GS-NEW balance = %d, want 1234", gsNew.BalanceMinor)
+	}
+	if !strings.Contains(rec2.Body.String(), "GS-EXIST") {
+		t.Fatalf("response must report the GS-EXIST collision, got: %s", rec2.Body.String())
+	}
+}
+
+// The preview must NOT overstate what a follow-up commit will actually do:
+// a code that already belongs to an existing voucher is excluded from the
+// preview's "ready to import" count/total and reported as a rejected row,
+// not silently counted as if it were new (review finding, ut-docs#1834 —
+// this page's own manual topic tells the operator the preview shows exactly
+// how many vouchers will be created).
+func TestVoucherImportPage_PreviewExcludesAlreadyExistingCodes(t *testing.T) {
+	mux, d := newVoucherImportTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	// Seed one voucher directly (as if from an earlier import).
+	body1, ct1 := voucherImportMultipart(t, "code,balance,label\nGS-OLD,25.00,Alice\n", map[string]string{"commit": "1"})
+	if rec := postVoucherImport(mux, body1, ct1, &manager); rec.Code != http.StatusOK {
+		t.Fatalf("seed commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+
+	// Preview a file with the SAME existing code plus one genuinely new one.
+	csv := "code,balance,label\n" +
+		"GS-OLD,99.00,ShouldBeSkipped\n" +
+		"GS-FRESH,10.00,Carol\n"
+	body2, ct2 := voucherImportMultipart(t, csv, nil) // no commit — preview only
+	req := httptest.NewRequest(http.MethodPost, "/api/vouchers/import?lang=en", body2)
+	req.Header.Set("Content-Type", ct2)
+	req = auth.WithUser(req, manager)
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("preview: code %d body %s", rec2.Code, rec2.Body.String())
+	}
+
+	// Only the genuinely new row counts toward "ready to import" — NOT 2.
+	want := httpx.FormatMoney(1000, "en")
+	if !strings.Contains(rec2.Body.String(), "1 voucher(s) ready to import") || !strings.Contains(rec2.Body.String(), want) {
+		t.Fatalf("preview must count only the genuinely new row (1, %s), got: %s", want, rec2.Body.String())
+	}
+	// The already-existing code must be reported as a rejected row, not
+	// silently dropped or silently counted as importable.
+	if !strings.Contains(rec2.Body.String(), "GS-OLD") {
+		t.Fatalf("preview must report GS-OLD as already existing, got: %s", rec2.Body.String())
+	}
+
+	// And preview still writes nothing.
+	repo := data.NewPOSRepo(d.Db)
+	old, err := repo.GetVoucherBalance(t.Context(), nil, "GS-OLD")
+	if err != nil || old.BalanceMinor != 2500 {
+		t.Fatalf("preview must not touch GS-OLD's balance: v=%+v err=%v, want balance=2500 unchanged", old, err)
+	}
+	if _, err := repo.GetVoucherBalance(t.Context(), nil, "GS-FRESH"); !errors.Is(err, data.ErrVoucherNotFound) {
+		t.Fatalf("preview must write nothing: GetVoucherBalance(GS-FRESH) err = %v, want ErrVoucherNotFound", err)
 	}
 }

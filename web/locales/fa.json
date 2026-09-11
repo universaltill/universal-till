@@ -2302,6 +2302,7 @@
   "vouchers_import.rejected_summary": "%d ردیف وارد نشد:",
   "vouchers_import.result_summary": "%d گواهی وارد شد، به مبلغ کل %s.",
   "vouchers_import.status.bad_balance": "مانده به‌عنوان یک مقدار قابل خوانده شدن نبود",
+  "vouchers_import.status.check_failed": "قابل بررسی نبود — دوباره تلاش کنید",
   "vouchers_import.status.code_exists": "گواهی‌ای با این کد از قبل وجود دارد — جایگزین نشد",
   "vouchers_import.status.duplicate_code_in_file": "این کد بیش از یک بار در فایل آمده — هیچ‌یک از دو ردیف وارد نشد",
   "vouchers_import.status.missing_code": "کد موجود نیست",

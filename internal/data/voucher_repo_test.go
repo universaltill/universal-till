@@ -125,18 +125,19 @@ func TestVoucherRepo_IssuedRedeemedForRange_LocalDayWindow(t *testing.T) {
 	}
 }
 
-// TestVoucherRepo_IssuedRedeemedForRange_ExcludesImportedOpeningBalance
+// TestVoucherRepo_IssuedRedeemedForRange_SeparatesImportedOpeningBalance
 // (ut-docs#1834): an opening-balance voucher import (internal/pages/
 // import_vouchers_page.go) calls RecordVoucherTransaction(type: "issue")
 // with an EMPTY SaleID — by construction, there is no sale. Without this
-// exclusion, VouchersIssuedRedeemedForRange (and its InstantWindow sibling)
-// would silently count that row as "Issued today" on whatever calendar day
-// the operator happened to run the import, inflating that day's Z-report
-// and misleading the operator into thinking N vouchers were sold today via
-// a real sale. A normal SALE-issued voucher (RecordVoucherTransaction with
-// a real, non-empty SaleID — the only other in-tree caller of type='issue',
-// internal/pos/sales.go) must still count exactly as before.
-func TestVoucherRepo_IssuedRedeemedForRange_ExcludesImportedOpeningBalance(t *testing.T) {
+// separate bucket, VouchersIssuedRedeemedForRange (and its InstantWindow
+// sibling) would silently count that row as "Issued today" on whatever
+// calendar day the operator happened to run the import, inflating that
+// day's Z-report and misleading the operator into thinking N vouchers were
+// sold today via a real sale. A normal SALE-issued voucher
+// (RecordVoucherTransaction with a real, non-empty SaleID — the only other
+// in-tree caller of type='issue', internal/pos/sales.go) must still count
+// exactly as before, as Issued, never as Imported.
+func TestVoucherRepo_IssuedRedeemedForRange_SeparatesImportedOpeningBalance(t *testing.T) {
 	d := b8OpenDB(t, "voucher-range-import-exclude.db")
 	ctx := context.Background()
 	repo := NewPOSRepo(d.DB)
@@ -169,10 +170,13 @@ func TestVoucherRepo_IssuedRedeemedForRange_ExcludesImportedOpeningBalance(t *te
 		t.Fatalf("VouchersIssuedRedeemedForRange: %v", err)
 	}
 	if sum.IssuedCount != 1 || sum.IssuedMinor != 3000 {
-		t.Fatalf("issued = %d/%d, want 1/3000 (only the sale-issued voucher, imported opening balance excluded)", sum.IssuedCount, sum.IssuedMinor)
+		t.Fatalf("issued = %d/%d, want 1/3000 (only the sale-issued voucher; the imported opening balance must not count here)", sum.IssuedCount, sum.IssuedMinor)
+	}
+	if sum.ImportedCount != 1 || sum.ImportedMinor != 7500 {
+		t.Fatalf("imported = %d/%d, want 1/7500 (the opening-balance import, bucketed separately from Issued)", sum.ImportedCount, sum.ImportedMinor)
 	}
 
-	// Same exclusion on the InstantWindow sibling (ADR-0066 Decision 2).
+	// Same separation on the InstantWindow sibling (ADR-0066 Decision 2).
 	from := today.Add(-1 * time.Hour)
 	to := today.Add(1 * time.Hour)
 	sumInstant, err := repo.VouchersIssuedRedeemedForInstantWindow(ctx, from, to)
@@ -180,7 +184,10 @@ func TestVoucherRepo_IssuedRedeemedForRange_ExcludesImportedOpeningBalance(t *te
 		t.Fatalf("VouchersIssuedRedeemedForInstantWindow: %v", err)
 	}
 	if sumInstant.IssuedCount != 1 || sumInstant.IssuedMinor != 3000 {
-		t.Fatalf("instant window issued = %d/%d, want 1/3000 (imported opening balance excluded)", sumInstant.IssuedCount, sumInstant.IssuedMinor)
+		t.Fatalf("instant window issued = %d/%d, want 1/3000 (imported opening balance must not count here)", sumInstant.IssuedCount, sumInstant.IssuedMinor)
+	}
+	if sumInstant.ImportedCount != 1 || sumInstant.ImportedMinor != 7500 {
+		t.Fatalf("instant window imported = %d/%d, want 1/7500", sumInstant.ImportedCount, sumInstant.ImportedMinor)
 	}
 }
 

@@ -2302,6 +2302,7 @@
   "vouchers_import.rejected_summary": "%d row(s) were not imported:",
   "vouchers_import.result_summary": "%d voucher(s) imported, totalling %s.",
   "vouchers_import.status.bad_balance": "balance could not be read as an amount",
+  "vouchers_import.status.check_failed": "could not be verified — try again",
   "vouchers_import.status.code_exists": "a voucher with this code already exists — not overwritten",
   "vouchers_import.status.duplicate_code_in_file": "this code appears more than once in the file — neither row was imported",
   "vouchers_import.status.missing_code": "missing code",

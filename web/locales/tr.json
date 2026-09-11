@@ -2302,6 +2302,7 @@
   "vouchers_import.rejected_summary": "%d satır içe aktarılmadı:",
   "vouchers_import.result_summary": "%d kupon içe aktarıldı, toplam %s.",
   "vouchers_import.status.bad_balance": "bakiye bir tutar olarak okunamadı",
+  "vouchers_import.status.check_failed": "doğrulanamadı — tekrar deneyin",
   "vouchers_import.status.code_exists": "bu koda sahip bir kupon zaten var — üzerine yazılmadı",
   "vouchers_import.status.duplicate_code_in_file": "bu kod dosyada birden fazla kez geçiyor — iki satırdan hiçbiri içe aktarılmadı",
   "vouchers_import.status.missing_code": "kod eksik",

@@ -68,6 +68,14 @@ const voucherImportFormOverhead = 128 << 10 // 128KB
 // import (a prior import, or a voucher this till already issued/sold).
 const voucherImportIssueCodeExists = "code_exists"
 
+// voucherImportIssueCheckFailed is reported for a row the preview's
+// existence pre-check (splitExistingVoucherCodes) could not verify due to an
+// unexpected DB error — kept OUT of "ready to import" (never overstate the
+// preview) but reported with its own honest reason, distinct from
+// voucherImportIssueCodeExists, so the operator isn't told a code exists
+// when what actually happened is a read failure.
+const voucherImportIssueCheckFailed = "check_failed"
+
 // registerVoucherImport mounts GET /settings/vouchers/import (the page) and
 // POST /api/vouchers/import (preview + commit) — ut-docs#1834.
 func registerVoucherImport(mux *http.ServeMux, d *common.Deps) {
@@ -162,6 +170,18 @@ func registerVoucherImport(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		if !commit {
+			// Pre-check existing codes for an ACCURATE preview (review
+			// finding, ut-docs#1834): without this, the preview renders "N
+			// ready to import" purely from parsing, then a re-run of an
+			// already-imported file (or a file that collides with a
+			// voucher this till already sold) commits and reports "0
+			// imported" — the opposite of what the preview just promised,
+			// and exactly what this page's own manual topic tells the
+			// operator the preview can be trusted for. Read-only: nothing
+			// is written here, same as the rest of preview.
+			clean, existing := splitExistingVoucherCodes(r.Context(), posRepo, res.Items)
+			res.Items = clean
+			res.Issues = append(res.Issues, existing...)
 			renderVoucherImportPreview(w, locale, T, res, raw)
 			return
 		}
@@ -175,7 +195,7 @@ func registerVoucherImport(mux *http.ServeMux, d *common.Deps) {
 		}
 		allIssues := append(append([]catimport.VoucherBalanceRowIssue{}, res.Issues...), collisions...)
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "voucher", "-", "import",
-			map[string]any{"rows": imported, "rejected": len(allIssues)}, time.Now().UTC().Format(time.RFC3339), "")
+			map[string]any{"rows": imported, "total_minor": importedTotal, "rejected": len(allIssues)}, time.Now().UTC().Format(time.RFC3339), "")
 		renderVoucherImportResult(w, locale, T, imported, importedTotal, allIssues)
 	})
 }
@@ -252,6 +272,40 @@ func commitVoucherBalanceImport(ctx context.Context, db *sql.DB, repo *data.POSR
 	}
 	committed = true
 	return imported, importedTotalMinor, collisions, nil
+}
+
+// splitExistingVoucherCodes (ut-docs#1834 review fix) separates preview-time
+// items into ones that are genuinely new vs. ones whose code already belongs
+// to an existing voucher — a prior import, or a voucher this till already
+// sold — so the preview's "N ready to import" count/total matches what a
+// follow-up commit will actually create. Read-only: GetVoucherBalance(tx=nil)
+// is a plain SELECT, nothing is written. A code that turns out to collide
+// gets the SAME voucherImportIssueCodeExists reason the commit path itself
+// reports for the identical situation, so the operator sees one consistent
+// vocabulary whether the collision is caught here or at commit time (a
+// narrow race between preview and commit — e.g. two managers importing
+// concurrently — still can't slip through: CreateVoucher's own
+// ErrVoucherIDExists check at commit is the actual guarantee against a
+// double-credit, this is purely about the preview being honest).
+func splitExistingVoucherCodes(ctx context.Context, repo *data.POSRepo, items []catimport.VoucherBalanceItem) (clean []catimport.VoucherBalanceItem, existing []catimport.VoucherBalanceRowIssue) {
+	for _, it := range items {
+		_, err := repo.GetVoucherBalance(ctx, nil, it.Code)
+		switch {
+		case errors.Is(err, data.ErrVoucherNotFound):
+			clean = append(clean, it)
+		case err == nil:
+			existing = append(existing, catimport.VoucherBalanceRowIssue{RowNum: it.RowNum, Code: it.Code, Reason: voucherImportIssueCodeExists})
+		default:
+			// An unexpected DB error reading one code shouldn't blank the
+			// whole preview for every other row — report it as this row's
+			// own issue (a generic "could not verify" reads better to an
+			// operator than either silently dropping the row or crashing
+			// the whole preview) and log the real error for diagnosis.
+			logging.L().Errorf("[vouchers-import] preview existence check for %q: %v", it.Code, err)
+			existing = append(existing, catimport.VoucherBalanceRowIssue{RowNum: it.RowNum, Code: it.Code, Reason: voucherImportIssueCheckFailed})
+		}
+	}
+	return clean, existing
 }
 
 // renderVoucherImportPreview writes nothing to the database — it renders
@@ -334,6 +388,8 @@ func translateVoucherBalanceIssue(T func(string) string, reason string) string {
 		return T("vouchers_import.status.duplicate_code_in_file")
 	case voucherImportIssueCodeExists:
 		return T("vouchers_import.status.code_exists")
+	case voucherImportIssueCheckFailed:
+		return T("vouchers_import.status.check_failed")
 	default:
 		// A reason code with no case here must never put machine text on
 		// the operator's screen (same rule translateImportIssue's own

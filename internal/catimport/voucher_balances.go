@@ -66,10 +66,17 @@ const (
 	VoucherBalanceIssueMissingCode = "missing_code"
 	VoucherBalanceIssueBadBalance  = "bad_balance"
 	// VoucherBalanceIssueZeroOrNegBalance: a real outstanding voucher
-	// balance is always > 0 by definition — a zero or negative "balance"
-	// in the source export is not a liability to import (data.CreateVoucher
-	// itself rejects OriginalAmountMinor <= 0 too; this catches it earlier,
-	// with a reason the operator can actually read).
+	// balance is always > 0 by definition — a zero "balance" in the source
+	// export is not a liability to import (data.CreateVoucher itself
+	// rejects OriginalAmountMinor <= 0 too; this catches it earlier, with a
+	// reason the operator can actually read). In practice this is only ever
+	// reached for a balance of EXACTLY zero, not a negative one: the
+	// existing catimport.ParsePrice this file calls for balance parsing
+	// already rejects a negative number itself (catimport.go's own `f < 0`
+	// check), so a negative balance is caught as VoucherBalanceIssueBadBalance
+	// above before it ever reaches this check — the name/doc here covers
+	// the broader "non-positive" concept for clarity, but review found
+	// (ut-docs#1834) that only the zero case is actually reachable today.
 	VoucherBalanceIssueZeroOrNegBalance = "non_positive_balance"
 	// VoucherBalanceIssueDuplicateCodeInFile: two rows in THIS file claim
 	// the same code. Unlike ParseBkp's same-PLU handling (catimport.go's
