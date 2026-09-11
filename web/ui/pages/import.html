@@ -1,7 +1,11 @@
 {{ define "content" }}
 <div class="page-head">
   <h1>{{ T "import.title" }}</h1>
-  <a class="btn secondary" href="/catalog">← {{ T "nav.catalog" }}</a>
+  <!-- ut-docs#2090: same /items-not-bare-/catalog back-link fix as
+       tax_codes.html — see that file's comment for the full reasoning.
+       Import isn't an /items rail section either (ut-docs#2095,
+       follow-up), so this stays a plain link. -->
+  <a class="btn secondary" href="/items">← {{ T "nav.catalog" }}</a>
 </div>
 
 <div class="card">

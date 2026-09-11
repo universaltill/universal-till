@@ -528,6 +528,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		barcodes, _ := repo.ItemBarcodes(r.Context())
 		variants, _ := repo.ItemVariants(r.Context())
 		thumbnails, _ := repo.ItemThumbnails(r.Context())
+		// ut-docs#2090: whether this render is an /items-shell fragment
+		// swap (true) or a bare/standalone page (false) — catalog.html's
+		// own Modifiers/Option-sets top-action buttons and their
+		// destinations' back-links use this to decide between an in-panel
+		// htmx swap (only meaningful when #items-panel actually exists,
+		// i.e. inside the shell) and a plain navigation.
 		data := map[string]any{
 			"title":        "Catalog",
 			"menuItems":    d.MenuSnapshot(),
@@ -539,6 +545,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"SyncPrimary":  d.SyncPrimaryURL(r.Context()),
 			"BuiltinIcons": catimport.BuiltinIcons(),
 			"ItemColors":   catalogtypes.ItemColors(),
+			"InItemsShell": httpx.IsFragmentSwap(r),
 		}
 		catalogFiles := files(
 			filepath.Join("web", "ui", "layouts", "base.html"),
@@ -578,10 +585,11 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		modifiersData := map[string]any{
-			"title":     "Customization options",
-			"menuItems": d.MenuSnapshot(),
-			"theme":     d.CurrentState().Theme,
-			"Groups":    groupModifierAdminByItem(groups, "modifiers-list"),
+			"title":        "Customization options",
+			"menuItems":    d.MenuSnapshot(),
+			"theme":        d.CurrentState().Theme,
+			"Groups":       groupModifierAdminByItem(groups, "modifiers-list"),
+			"InItemsShell": httpx.IsFragmentSwap(r),
 		}
 		// ut-docs#1950: same /items rail embedding as /catalog above.
 		if httpx.IsFragmentSwap(r) {
@@ -605,10 +613,11 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		optionSetsData := map[string]any{
-			"title":     "Option sets",
-			"menuItems": d.MenuSnapshot(),
-			"theme":     d.CurrentState().Theme,
-			"Sets":      sets,
+			"title":        "Option sets",
+			"menuItems":    d.MenuSnapshot(),
+			"theme":        d.CurrentState().Theme,
+			"Sets":         sets,
+			"InItemsShell": httpx.IsFragmentSwap(r),
 		}
 		// ut-docs#1950: same /items rail embedding as /catalog above.
 		if httpx.IsFragmentSwap(r) {
