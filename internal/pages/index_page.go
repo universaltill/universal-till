@@ -139,7 +139,7 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			defaultPayMethod = &gridMethods[0]
 			defaultMethod = gridMethods[0].ID
 		}
-		// German TSE hard gate (ADR-0048): while an owner override window is
+		// DE+TR fiscal-signing-device hard gate (ADR-0048, fiscal.RequiresHardGate): while an owner override window is
 		// active, the sale screen shows a persistent banner — sales are
 		// being recorded without a TSE signature, and everyone at the till
 		// should see that state, not discover it per-receipt. Rendered via
