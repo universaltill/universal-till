@@ -374,10 +374,12 @@ VALUES (?, ?, ?)
 
 // LinkGroupToItem attaches an existing modifier group to (another) item, or
 // updates the group's per-item sort order if the link already exists
-// (ON CONFLICT DO UPDATE) — ADR-0090's many-to-many write path. No handler
-// calls this yet: the "attach an existing group to a second item" picker is
-// deliberately a follow-up card (ADR-0090 §5); this exists so that card has
-// a ready, tested data layer.
+// (ON CONFLICT DO UPDATE) — ADR-0090's many-to-many write path, wired up by
+// POST /api/catalog/modifier-group/attach's "attach an existing group"
+// picker (ut-docs#2046). The ON CONFLICT branch exists so a resubmit
+// settles safely; the handler itself re-validates against
+// ListAttachableModifierGroups before calling this, so a stale picker can't
+// use it to silently re-order an already-linked group.
 func (r *ModifierRepo) LinkGroupToItem(ctx context.Context, itemID, groupID string, sortOrder int) error {
 	if itemID == "" {
 		return errors.New("item_id required")
@@ -396,11 +398,18 @@ ON CONFLICT(item_id, group_id) DO UPDATE SET sort_order = excluded.sort_order
 	return nil
 }
 
-// UnlinkGroupFromItem detaches a modifier group from one item. It never
-// deletes the group itself, even when this removes its last link: an
-// orphaned group stays manageable via /modifiers, and DeleteGroup is the
-// separate, explicit full-delete action. Same follow-up-card status as
-// LinkGroupToItem.
+// UnlinkGroupFromItem detaches a modifier group from one item
+// unconditionally, including its last remaining link — it never deletes the
+// group ROW itself (DeleteGroup, unwired to any handler, is the separate,
+// explicit full-delete action), but an orphaned (zero-link) group IS
+// unreachable everywhere in the UI: every list query (ListShopModifierGroups/
+// ListAllShopModifierGroups, and so /modifiers and the item-scoped panel)
+// only ever surfaces a group THROUGH a link row. POST
+// /api/catalog/modifier-group/detach (ut-docs#2046) never calls this
+// directly for that reason — see UnlinkGroupFromItemUnlessLastLink below,
+// which is the handler's actual guard against reaching that state. This
+// method remains the direct, unconditional primitive (used by internal
+// data-repair paths and its own regression test), not itself a UI action.
 func (r *ModifierRepo) UnlinkGroupFromItem(ctx context.Context, itemID, groupID string) error {
 	if itemID == "" {
 		return errors.New("item_id required")
@@ -413,6 +422,124 @@ func (r *ModifierRepo) UnlinkGroupFromItem(ctx context.Context, itemID, groupID 
 		return fmt.Errorf("unlink modifier group from item: %w", err)
 	}
 	return nil
+}
+
+// UnlinkGroupFromItemUnlessLastLink detaches a modifier group from one item
+// UNLESS this is the group's only remaining link, in which case it does
+// nothing and returns false — the handler-level guard behind POST
+// /api/catalog/modifier-group/detach (ut-docs#2046) that keeps a group from
+// ever losing its last link through the UI (see UnlinkGroupFromItem's own
+// doc comment on why a zero-link group is a real problem, not a cosmetic
+// one). One atomic conditional DELETE, not a separate GroupLinkCount call
+// followed by UnlinkGroupFromItem (independent review): a count-then-delete
+// has a TOCTOU race — two concurrent detaches against the same group's two
+// different items could both observe count==2, both pass, and both delete,
+// orphaning the group anyway. The subquery here is evaluated as part of the
+// same statement SQLite executes under its writer lock, so a second
+// concurrent call against the same group_id is serialized behind the
+// first's effect rather than racing it.
+func (r *ModifierRepo) UnlinkGroupFromItemUnlessLastLink(ctx context.Context, itemID, groupID string) (bool, error) {
+	if itemID == "" {
+		return false, errors.New("item_id required")
+	}
+	if groupID == "" {
+		return false, errors.New("group_id required")
+	}
+	res, err := r.db.ExecContext(ctx, `
+DELETE FROM item_modifier_group_links
+WHERE item_id = ? AND group_id = ?
+  AND (SELECT COUNT(*) FROM item_modifier_group_links WHERE group_id = ?) > 1
+`, itemID, groupID, groupID)
+	if err != nil {
+		return false, fmt.Errorf("unlink modifier group from item unless last link: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("unlink modifier group from item unless last link: %w", err)
+	}
+	return n > 0, nil
+}
+
+// ListAttachableModifierGroups returns every ACTIVE modifier group in the
+// shop not already linked to itemID — backs the "attach an existing group"
+// picker (ut-docs#2046). Only active groups are offered: putting a group
+// nobody can currently sell in front of a merchant picking what to add would
+// be confusing, the same reasoning ListGroupsForItem already applies at sale
+// time. No options are loaded — the picker only needs id/name/rules to
+// render a dropdown, not a group's full option list.
+func (r *ModifierRepo) ListAttachableModifierGroups(ctx context.Context, itemID string) ([]ModifierGroup, error) {
+	if itemID == "" {
+		return nil, errors.New("item_id required")
+	}
+	rows, err := r.db.QueryContext(ctx, `
+SELECT g.id, g.name, g.required, g.min_select, g.max_select
+FROM item_modifier_groups g
+WHERE g.is_active = 1
+  AND NOT EXISTS (
+    SELECT 1 FROM item_modifier_group_links l
+    WHERE l.group_id = g.id AND l.item_id = ?
+  )
+ORDER BY g.name`, itemID)
+	if err != nil {
+		return nil, fmt.Errorf("list attachable modifier groups: %w", err)
+	}
+	defer rows.Close()
+	var groups []ModifierGroup
+	for rows.Next() {
+		var g ModifierGroup
+		var required int
+		if err := rows.Scan(&g.ID, &g.Name, &required, &g.MinSelect, &g.MaxSelect); err != nil {
+			return nil, fmt.Errorf("scan attachable modifier group: %w", err)
+		}
+		g.Required = required == 1
+		g.IsActive = true
+		groups = append(groups, g)
+	}
+	return groups, rows.Err()
+}
+
+// NextGroupSortOrderForItem reports the sort_order an item's NEXT attached
+// group should get, so it's appended after the item's own existing groups
+// rather than colliding with one of them (ut-docs#2046, independent-review
+// finding). MAX(sort_order)+1, not a plain COUNT of the item's existing
+// links: sort_order is per-item positional (ModifierGroup.SortOrder's own
+// doc comment — "that item's own position for the group"), and a prior
+// detach can leave it sparse (e.g. an item with two groups at sort_order 0
+// and 2, after its middle one was detached) — a count would then compute 2
+// for the new link, colliding with the existing sort_order-2 row and
+// falling back to alphabetical ordering (listGroupsForItem's own
+// `ORDER BY l.sort_order, g.name`) instead of appending last as intended.
+func (r *ModifierRepo) NextGroupSortOrderForItem(ctx context.Context, itemID string) (int, error) {
+	if itemID == "" {
+		return 0, errors.New("item_id required")
+	}
+	var next int
+	err := r.db.QueryRowContext(ctx, `
+SELECT COALESCE(MAX(sort_order) + 1, 0) FROM item_modifier_group_links WHERE item_id = ?
+`, itemID).Scan(&next)
+	if err != nil {
+		return 0, fmt.Errorf("next group sort order for item: %w", err)
+	}
+	return next, nil
+}
+
+// GroupLinkCount reports how many items a modifier group is currently linked
+// to. Used to block detaching a group's last remaining link (ut-docs#2046):
+// UnlinkGroupFromItem never deletes the group row itself, but a zero-link
+// group is invisible everywhere in the UI — ListShopModifierGroups/
+// ListAllShopModifierGroups (and so /modifiers and the item-scoped panel)
+// only ever return a group THROUGH one of its links, and no hard-delete UI
+// is wired up either — so losing its last link would make it permanently
+// unreachable rather than merely "unattached from this item."
+func (r *ModifierRepo) GroupLinkCount(ctx context.Context, groupID string) (int, error) {
+	if groupID == "" {
+		return 0, errors.New("group_id required")
+	}
+	var n int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM item_modifier_group_links WHERE group_id = ?`, groupID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count modifier group links: %w", err)
+	}
+	return n, nil
 }
 
 // ReanchorGroupsBeforeItemDelete re-points item_modifier_groups.item_id
