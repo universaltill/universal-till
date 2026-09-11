@@ -282,7 +282,6 @@
   "catalog.new_item": "New Item",
   "catalog.option_sets.add": "Add option set",
   "catalog.option_sets.add_value": "Add value",
-  "catalog.option_sets.button": "Option sets",
   "catalog.option_sets.exists": "That name is already in use — choose a different one.",
   "catalog.option_sets.name": "Option set name",
   "catalog.option_sets.name_example": "e.g. Size",
