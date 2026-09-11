@@ -255,6 +255,7 @@
   "catalog.labels.no_code": "لا يحتوي هذا الصنف على باركود أو رمز صنف للطباعة",
   "catalog.labels.no_item": "اختر صنفاً أولاً (انقر على صف)",
   "catalog.labels.print": "طباعة الملصقات",
+  "catalog.labels.system_unsupported": "ملصقات الرفوف/الأسعار تحتاج طابعة إيصالات عبر الشبكة أو USB — لا يمكن لاتصال \"طابعة عادية (النظام)\" طباعة الباركود. غيّر نوع الاتصال من الإعدادات ← الطابعة.",
   "catalog.labels.variant": "الصنف الفرعي",
   "catalog.labels.whole_item": "المنتج كاملاً",
   "catalog.lead_time_days": "مدة التوريد (أيام)",

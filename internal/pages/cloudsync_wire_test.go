@@ -103,7 +103,11 @@ func TestCloudAdjustStock_UsesExistingTrackedLocation(t *testing.T) {
 	}
 	found := false
 	for _, l := range levels {
-		if l.ItemID == "itm1" {
+		// ut-docs#2082: ListStockLevels now also returns itm1's variant
+		// (var1/Large) as its own additive row — this adjustment only ever
+		// targets the item's own item-scoped row, so skip the variant row
+		// rather than asserting the item's post-adjustment qty against it.
+		if l.ItemID == "itm1" && l.VariantID == "" {
 			found = true
 			if l.LocationID != "loc_main" {
 				t.Fatalf("expected movement recorded at loc_main, got %q", l.LocationID)
@@ -114,7 +118,7 @@ func TestCloudAdjustStock_UsesExistingTrackedLocation(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("expected itm1 in stock levels")
+		t.Fatalf("expected itm1's item-level row in stock levels")
 	}
 }
 

@@ -255,6 +255,7 @@
   "catalog.labels.no_code": "این کالا بارکد یا SKU برای چاپ ندارد",
   "catalog.labels.no_item": "اول یک کالا انتخاب کنید (روی ردیف کلیک کنید)",
   "catalog.labels.print": "چاپ برچسب‌ها",
+  "catalog.labels.system_unsupported": "برچسب قفسه/قیمت به چاپگر رسید شبکه‌ای یا USB نیاز دارد — اتصال «چاپگر معمولی (سیستم)» نمی‌تواند بارکد را چاپ کند. نوع اتصال را در تنظیمات ← چاپگر تغییر دهید.",
   "catalog.labels.variant": "تنوع",
   "catalog.labels.whole_item": "کل کالا",
   "catalog.lead_time_days": "زمان تحویل (روز)",
