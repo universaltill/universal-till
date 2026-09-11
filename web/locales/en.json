@@ -255,6 +255,7 @@
   "catalog.labels.no_code": "This item has no barcode or SKU to print",
   "catalog.labels.no_item": "Pick an item first (click a row)",
   "catalog.labels.print": "Print labels",
+  "catalog.labels.system_unsupported": "Shelf/price labels need a Network or USB receipt printer — a Regular printer (system) connection cannot print the barcode. Switch the connection in Settings → Printer.",
   "catalog.labels.variant": "Variant",
   "catalog.labels.whole_item": "Whole item",
   "catalog.lead_time_days": "Lead time (days)",

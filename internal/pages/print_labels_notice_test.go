@@ -80,6 +80,42 @@ func TestPostPrintLabels_NoCodeRendersPosNoticeError(t *testing.T) {
 	}
 }
 
+// ut-docs#2062: a label's whole content is a scannable barcode, which a
+// "system" (CUPS `lp`, plain-text-only) printer can never render — this
+// used to surface as print.NewTransport's generic "unknown printer mode"
+// error, bubbling up as a bare "Print failed" with no explanation.
+func TestPostPrintLabels_SystemModeRendersPosNoticeError(t *testing.T) {
+	initLabelsNoticeI18n(t)
+	mux, dp := newPrintAPITestDeps(t)
+
+	if _, err := dp.Db.Exec(`INSERT INTO items (id, sku, name, base_price) VALUES ('item-printable', 'SKU1', 'Printable Item', 250)`); err != nil {
+		t.Fatalf("seed item: %v", err)
+	}
+	if err := dp.Settings.Set(t.Context(), keyPrinterMode, "system"); err != nil {
+		t.Fatalf("set printer mode: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/print/labels", strings.NewReader("item_id=item-printable"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a system-mode printer, got %d: %s", rec.Code, body)
+	}
+	if !strings.Contains(body, `class="pos-notice error"`) {
+		t.Fatalf("expected a pos-notice error, got: %s", body)
+	}
+	want := httpx.T("en", "catalog.labels.system_unsupported")
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected translated system_unsupported message %q, got: %s", want, body)
+	}
+	if strings.Contains(body, "unknown printer mode") {
+		t.Fatalf("must not leak the generic transport error, got: %s", body)
+	}
+}
+
 func TestPostPrintLabels_SuccessRendersPosNoticeSuccessWithCopiesCount(t *testing.T) {
 	initLabelsNoticeI18n(t)
 	mux, dp := newPrintAPITestDeps(t)
