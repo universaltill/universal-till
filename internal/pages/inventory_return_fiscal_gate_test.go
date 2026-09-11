@@ -15,7 +15,7 @@ import (
 )
 
 // CreateReturn (/api/inventory/return) is the SECOND refund/return call
-// site found bypassing ADR-0048's German TSE hard gate while scoping
+// site found bypassing ADR-0048's DE+TR fiscal-signing-device hard gate (fiscal.RequiresHardGate) while scoping
 // ut-docs#731 — the ticket named refund_page.go's postRefund handler, but
 // this handler calls pos.CompleteSale directly too, from the inventory
 // page's own return form (web/ui/pages/inventory.html). Same coverage as

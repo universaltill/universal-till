@@ -528,7 +528,7 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 			return
 		}
 
-		// German TSE hard gate (ADR-0048, ut-docs#731): a return moves real
+		// DE+TR fiscal-signing-device hard gate (ADR-0048, ut-docs#731, fiscal.RequiresHardGate): a return moves real
 		// money and is aufzeichnungspflichtig under KassenSichV the same as
 		// a sale, so it's blocked the same way completeTender blocks a
 		// sale — checked before CompleteSale runs, same as the /refund

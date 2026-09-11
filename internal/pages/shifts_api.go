@@ -314,7 +314,7 @@ type CashAdjustmentResponse struct {
 	Message      string `json:"message,omitempty"`
 }
 
-// enforceCashAdjustmentFiscalGate applies ADR-0048's German TSE hard gate to
+// enforceCashAdjustmentFiscalGate applies ADR-0048's DE+TR fiscal-signing-device hard gate (fiscal.RequiresHardGate) to
 // a cash-leaving-the-till completion (RecordCashAdjustment/PfandRueckgabe) —
 // the same gate #731 applied to the refund/return paths (ut-docs#998):
 // `RecordCashAdjustment` takes cash physically out of the drawer, the same
@@ -484,7 +484,7 @@ func RecordCashAdjustment(dp *common.Deps) http.HandlerFunc {
 			}
 		}
 
-		// German TSE hard gate (ADR-0048, ut-docs#998): same scope as the
+		// DE+TR fiscal-signing-device hard gate (ADR-0048, ut-docs#998, fiscal.RequiresHardGate): same scope as the
 		// manager-approval gate just above — cash actually LEAVING the till
 		// (a negative amount), not every adjustment. A positive adjustment
 		// (float top-up) isn't the payout this gate exists for. Checked
@@ -614,7 +614,7 @@ func PfandRueckgabe(dp *common.Deps) http.HandlerFunc {
 			return
 		}
 
-		// German TSE hard gate (ADR-0048, ut-docs#998) — a PfandRueckgabe is
+		// DE+TR fiscal-signing-device hard gate (ADR-0048, ut-docs#998, fiscal.RequiresHardGate) — a PfandRueckgabe is
 		// ALWAYS cash leaving the till (validated `req.Amount > 0` above,
 		// then negated below), so unlike RecordCashAdjustment's own gate
 		// this one applies unconditionally, not on a sign check.
