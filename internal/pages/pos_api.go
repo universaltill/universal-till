@@ -1287,7 +1287,20 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			voucherIssueTotal = voucherIssueTotal.Add(money.FromMinor(v.Amount))
 		}
 
-		locID, err := repo.EnsureStockLocation(r.Context())
+		// ut-docs#2067: the stock location this sale draws from is the one
+		// assigned to the register it's rung up on (Settings → Registers),
+		// falling back to Main when none is assigned. An explicit registerId
+		// on the request wins; otherwise THIS till's own register identity
+		// (ut-docs#268) — never EnsureRegister's "first active register by
+		// id", which on a two-register shop is the other till's register as
+		// often as not. The same registerID is what the sale row records
+		// further down, so sales.register_id and the stock movement's
+		// location can never disagree about which register sold it.
+		registerID := in.RegisterID
+		if registerID == "" {
+			registerID = tillRegisterIDBestEffort(r.Context(), d)
+		}
+		locID, err := pos.ResolveStockLocationID(r.Context(), d.Db, registerID)
 		if err != nil {
 			// ut-docs#929: same defect class as ut-docs#921/#923 in this same
 			// handler -- a genuine internal/DB-layer failure (the
@@ -1545,7 +1558,9 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 
-		registerID := in.RegisterID
+		// registerID was resolved above (request → this till's identity);
+		// the EnsureRegister self-heal only remains for the ambiguous case
+		// (two-plus registers, nothing persisted) — today's behaviour there.
 		if registerID == "" {
 			if regID, err := repo.EnsureRegister(r.Context()); err == nil {
 				registerID = regID

@@ -4195,6 +4195,29 @@ func (r *POSRepo) SetRegisterLocation(ctx context.Context, id string, locationID
 	return nil
 }
 
+// RegisterLocationID (ut-docs#2067) reports the stock location a register
+// is assigned to, for the sale/refund/import/sync write paths that resolve
+// which location a stock movement lands against. ok is true only when the
+// register has a location set AND that location is still active — an
+// unknown register, an unassigned one, or one whose location has since been
+// deactivated all report ok=false with no error, so the caller falls back to
+// EnsureStockLocation (the pre-#2067 Main-only behaviour) rather than writing
+// against a retired location. Read-only; never self-heals.
+func (r *POSRepo) RegisterLocationID(ctx context.Context, registerID string) (string, bool, error) {
+	var locationID string
+	err := r.db.QueryRowContext(ctx, `
+SELECT r.location_id FROM registers r
+JOIN stock_locations l ON l.id = r.location_id AND l.is_active = 1
+WHERE r.id = ? AND r.location_id IS NOT NULL`, registerID).Scan(&locationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("register location: %w", err)
+	}
+	return locationID, locationID != "", nil
+}
+
 // SetRegisterActive soft-disables/re-enables a register, mirroring
 // SetStockLocationActive's pattern. Unlike a stock location, a register
 // with shift/sale history is still allowed to be deactivated (retiring a
@@ -6644,11 +6667,22 @@ type SaleDetail struct {
 	// journal wire additive, same convention as the field above (a
 	// pre-migration-068 peer's journal simply lacks the key, which reads as
 	// 0 — correct, since such a peer cannot issue tracked vouchers yet).
-	VoucherIssueTotal int64               `json:"voucher_issue_total,omitempty"`
-	CreatedAt         string              `json:"created_at"`
-	CashierID         string              `json:"cashier_id"`
-	Lines             []SaleDetailLine    `json:"lines"`
-	Payments          []SaleDetailPayment `json:"payments"`
+	VoucherIssueTotal int64  `json:"voucher_issue_total,omitempty"`
+	CreatedAt         string `json:"created_at"`
+	CashierID         string `json:"cashier_id"`
+	// RegisterID (ut-docs#2067) is the register the sale was rung up on
+	// (sales.register_id), "" when none was recorded. It rides the LAN-sync
+	// journal so the primary can resolve the REPORTING till's stock
+	// location (pos.ResolveStockLocationID) when replaying the sale, rather
+	// than always drawing from Main; omitempty keeps the wire additive, same
+	// convention as the fields above — a pre-#2067 peer's journal simply
+	// lacks the key, which the primary reads as "no register", i.e. the
+	// Main fallback that peer's sales always got. applyJournal deliberately
+	// does NOT copy it onto SaleInput.RegisterID (see its FK-quarantine
+	// comment): a replica-only register id must never make the replay fail.
+	RegisterID string              `json:"register_id,omitempty"`
+	Lines      []SaleDetailLine    `json:"lines"`
+	Payments   []SaleDetailPayment `json:"payments"`
 	// Charges (ADR-0062, ut-docs#963/#984) is the itemized additive
 	// statutory charge list read from sale_charges, in seq order. Empty for
 	// every sale until step 2/3 of that ADR starts writing sale_charges rows
@@ -6759,13 +6793,13 @@ SELECT s.id, s.receipt_no, s.status, s.sale_type, s.tender_type, s.order_type, s
        s.currency, s.subtotal, s.discount_total, s.tax_total, s.total, s.service_charge_amount,
        s.service_charge_tax_basis_bp, s.voucher_issue_total, s.created_at,
        COALESCE(s.cashier_id, ''), COALESCE(s.table_id, ''), COALESCE(t.label, ''),
-       COALESCE(NULLIF(s.display_no, ''), s.receipt_no)
+       COALESCE(NULLIF(s.display_no, ''), s.receipt_no), COALESCE(s.register_id, '')
 FROM sales s LEFT JOIN tables t ON t.id = s.table_id
 WHERE s.receipt_no = ?`, receiptNo).Scan(
 		&d.ID, &d.ReceiptNo, &d.Status, &d.SaleType, &d.TenderType, &d.OrderType, &d.Offline,
 		&d.SyncStatus, &d.Currency, &d.Subtotal, &d.DiscountTotal, &d.TaxTotal,
 		&d.Total, &d.ServiceCharge, &d.ServiceChargeTaxBasisBP, &d.VoucherIssueTotal, &d.CreatedAt, &d.CashierID, &d.TableID, &d.TableLabel,
-		&d.DisplayNo)
+		&d.DisplayNo, &d.RegisterID)
 	if err == sql.ErrNoRows {
 		return SaleDetail{}, false, nil
 	}

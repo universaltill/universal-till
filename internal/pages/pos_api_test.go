@@ -2690,3 +2690,102 @@ func TestTenderHandler_ReleasesTableClaim(t *testing.T) {
 		t.Fatalf("T1 must be free after the sale completed")
 	}
 }
+
+// ut-docs#2067 regression guard: a shop that never assigns a register a
+// stock location must keep selling from Main exactly as before — the till's
+// register identity self-heals to the default register, which has no
+// location, so the sale still draws down loc_main.
+func TestTenderHandler_RegisterWithoutLocationDrawsFromMain(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"cash","amount":120}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := inventoryQtyAt(t, dp, "itm1", "loc_main"); got != 49 {
+		t.Fatalf("expected Main to go 50 -> 49 with no register location assigned, got %v", got)
+	}
+}
+
+// ut-docs#2067: the till's register is pinned to a second location, so a
+// sale draws that location's stock down and leaves Main alone. Two
+// registers exist and the unpinned one sorts first by id — the exact case
+// where EnsureRegister's "first active register" pick would have sent the
+// stock movement (and sales.register_id) to the wrong register.
+func TestTenderHandler_RegisterPinnedToLocationDrawsFromThatLocation(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := data.NewPOSRepo(dp.Db).CreateRegister(context.Background(), "A Front Till", nil); err != nil {
+		t.Fatalf("create decoy register: %v", err)
+	}
+	regID, locID := pinTillRegisterToNewLocation(t, dp)
+	if _, err := dp.Db.Exec(`INSERT INTO inventory(id, item_id, location_id, quantity) VALUES('inv-2067', 'itm1', ?, 10)`, locID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"cash","amount":120}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if got := inventoryQtyAt(t, dp, "itm1", locID); got != 9 {
+		t.Fatalf("expected the pinned location to go 10 -> 9, got %v", got)
+	}
+	if got := inventoryQtyAt(t, dp, "itm1", "loc_main"); got != 50 {
+		t.Fatalf("expected Main untouched at 50, got %v", got)
+	}
+	var saleRegister string
+	if err := dp.Db.QueryRow(`SELECT COALESCE(register_id, '') FROM sales WHERE sale_type = 'sale'`).Scan(&saleRegister); err != nil {
+		t.Fatal(err)
+	}
+	if saleRegister != regID {
+		t.Fatalf("expected the sale recorded against this till's own register %s, got %q", regID, saleRegister)
+	}
+}
+
+// ut-docs#2067: two active registers and NO persisted till identity is the
+// ambiguous case ut-docs#268 makes shift writes refuse — a sale must NOT
+// start refusing on it (that would stop a two-register shop selling the
+// moment it upgrades). It keeps today's behaviour instead: Main.
+func TestTenderHandler_AmbiguousRegisterIdentityStillSellsFromMain(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	repo := data.NewPOSRepo(dp.Db)
+	locID, err := repo.CreateStockLocation(context.Background(), "Loading Bay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"A Front Till", "B Back Till"} {
+		if _, err := repo.CreateRegister(context.Background(), name, &locID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"cash","amount":120}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("an ambiguous till identity must not refuse a sale: got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := inventoryQtyAt(t, dp, "itm1", "loc_main"); got != 49 {
+		t.Fatalf("expected the ambiguous case to keep drawing from Main (50 -> 49), got %v", got)
+	}
+}
