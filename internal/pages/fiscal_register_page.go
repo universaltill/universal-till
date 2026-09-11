@@ -211,14 +211,27 @@ func registerFiscalRegisterDE(mux *http.ServeMux, d *common.Deps) {
 			out[i] = *g
 		}
 
-		httpx.Render("ui/pages/fiscal_register.html", map[string]any{
+		fiscalRegisterData := map[string]any{
 			"title":     "Fiscal register",
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
 			"groups":    out,
 			"registers": registers,
 			"errKey":    errKey,
-		})(w, r)
+		}
+		// ut-docs#2116: /fiscal-register is one of the /admin tree's six
+		// destinations -- an htmx request from that panel (NOT a stale
+		// history restore, see httpx.IsFragmentSwap) gets just the
+		// "content" block plus an out-of-band refresh of the tree so its
+		// is-current highlight follows the click; a plain browser GET
+		// (deep link, or the redirect a mutation falls back to) still gets
+		// the exact same full standalone page as before this card.
+		if httpx.IsFragmentSwap(w, r) {
+			httpx.RenderContentFragment("ui/pages/fiscal_register.html", fiscalRegisterData)(w, r)
+			writeAdminTreeOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/fiscal-register", adminGroupsFor(visibleAdminEntries(d, r)))
+			return
+		}
+		httpx.Render("ui/pages/fiscal_register.html", fiscalRegisterData)(w, r)
 	}
 
 	mux.HandleFunc("GET /fiscal-register", func(w http.ResponseWriter, r *http.Request) {
