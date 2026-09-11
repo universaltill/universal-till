@@ -1,17 +1,18 @@
 ---
 id: designer
-title: Fiş ve ekran tasarımcısı
+title: Fiş tasarımcısı
 section: İşi yürütme
 order: 240
-summary: Fişinizde görünenleri (logo, başlık, alt yazı) özelleştirin ve satış ekranı düğmelerini çalışma şeklinize göre düzenleyin.
+summary: Fişinizde görünenleri (logo, başlık, alt yazı) özelleştirin — canlı önizleme ve kaydetmeden önce test baskısıyla.
 routes: [/receipt-designer]
 ---
 
-# Fiş ve ekran tasarımcısı
+# Fiş tasarımcısı
 
-Fişinizde görünenleri (logo, başlık, alt yazı) özelleştirin ve satış ekranı düğmelerini çalışma şeklinize göre düzenleyin.
+Fişinizde görünenleri (logo, başlık, alt yazı) özelleştirin — canlı önizleme ve kaydetmeden önce test baskısıyla.
 
 ## Nasıl kullanılır
 
 1. Logo ve fiş metnini değiştirmek için fiş tasarımcısını açın; değişiklikler anında önizlenir.
-2. En çok satan ürünler için hızlı düğmeleri ekran tasarımcısıyla düzenleyin.
+
+Satış ekranı düğmelerini düzenlemek için bunun yerine [Hızlı Düğmeler](/help/till-designer) sayfasını kullanın — fiş tasarımcısından farklı bir sayfadır.

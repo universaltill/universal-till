@@ -1025,6 +1025,158 @@
         "bold_leadins": 3
       },
       "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "ar",
+      "topic": "designer",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 1,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 4,
+        "numbered_steps": 6,
+        "sub_bullets": 0,
+        "top_bullets": 6,
+        "bold_leadins": 5
+      },
+      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "de",
+      "topic": "designer",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 1,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 4,
+        "numbered_steps": 6,
+        "sub_bullets": 0,
+        "top_bullets": 6,
+        "bold_leadins": 5
+      },
+      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "fa",
+      "topic": "designer",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 1,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 4,
+        "numbered_steps": 6,
+        "sub_bullets": 0,
+        "top_bullets": 6,
+        "bold_leadins": 5
+      },
+      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "tr",
+      "topic": "designer",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 1,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 4,
+        "numbered_steps": 6,
+        "sub_bullets": 0,
+        "top_bullets": 6,
+        "bold_leadins": 5
+      },
+      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "ar",
+      "topic": "printing",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 9,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 6,
+        "numbered_steps": 21,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 8
+      },
+      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "de",
+      "topic": "printing",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 9,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 6,
+        "numbered_steps": 21,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 8
+      },
+      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "fa",
+      "topic": "printing",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 9,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 6,
+        "numbered_steps": 21,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 8
+      },
+      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "tr",
+      "topic": "printing",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 9,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 6,
+        "numbered_steps": 21,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 8
+      },
+      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
     }
   ]
 }
