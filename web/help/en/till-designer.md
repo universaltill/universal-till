@@ -24,4 +24,4 @@ Arrange the quick-sale buttons and product grid shown on the sale screen. Any it
 - Quick-sale buttons are shop-wide and always managed from the **main till**: on a joined till, adding, removing or reordering a button shows a message pointing you back to the main till, rather than accepting a change that would only apply locally.
 - No buttons set up yet? The grid shows "No products yet." — search and add your first one to get started.
 - If the till refuses a reorder (for example, a server error), the page reloads to show the sale screen's real, saved order rather than leave a tile sitting in a position that never actually took. If your connection drops entirely instead, the tile still shows in its new spot on screen but the move wasn't saved — reload the page yourself to check, and repeat the move if it reverted.
-- This is not the same page as the **Receipt & screen designer** (Settings → Receipt design), which customises what prints on receipts.
+- This is not the same page as the **Receipt designer** (Settings → Receipt printer → Receipt designer), which customises what prints on receipts — see [Receipt designer](/help/designer).
