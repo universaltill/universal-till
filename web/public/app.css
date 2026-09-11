@@ -2117,6 +2117,35 @@ a.btn, a.btn:hover { text-decoration: none; }
 .tender { display: flex; flex-direction: column; gap: .45rem; }
 .tender-scroll { flex: 1; min-height: 3rem; overflow-y: auto;
                  display: flex; flex-direction: column; gap: .55rem; }
+/* ut-docs#2128: same scroll-shadow recipe as .products (ut-docs#1313,
+   comment above that rule has the full mechanism/caveats — not repeated
+   here). A real product-owner report on the pilot tablet ("held sales not
+   findable") traced to exactly this class of bug: .tender-scroll already
+   scrolls (overflow-y: auto above) once the scan row + held-sales strip
+   don't fit, and live measurement for this card found that's true even at
+   1024x600 with just 1 held sale, not only the higher held-counts this
+   file's own grid-ratio comment assumed -- but nothing on screen hints
+   there's more to scroll to, and many kiosk browsers hide native
+   scrollbars entirely. Two gradient pairs, local/local/scroll/scroll,
+   self-hiding at whichever edge has no unseen content -- no JS, no scroll
+   listener. Same `rgba(255, 255, 255, 0)`-as-transparent caveat as
+   .products: silently coupled to --surface's current value (#ffffff, only
+   definition in this file); swap to `color-mix(in srgb, var(--surface),
+   transparent 100%)` the day a dark theme plugin overrides --surface (not
+   done now, no dark theme exists yet to verify against, matches .products'
+   own deferral). */
+.tender-scroll {
+  background-color: var(--surface);
+  background-image:
+    linear-gradient(var(--surface) 30%, rgba(255, 255, 255, 0)),
+    linear-gradient(rgba(255, 255, 255, 0), var(--surface) 70%),
+    radial-gradient(farthest-side at 50% 0, rgba(0, 0, 0, .18), rgba(0, 0, 0, 0)),
+    radial-gradient(farthest-side at 50% 100%, rgba(0, 0, 0, .18), rgba(0, 0, 0, 0));
+  background-repeat: no-repeat;
+  background-position: 0 0, 0 100%, 0 0, 0 100%;
+  background-size: 100% 16px, 100% 16px, 100% 8px, 100% 8px;
+  background-attachment: local, local, scroll, scroll;
+}
 
 .scan-row { display: flex; gap: .4rem; }
 /* 2026-08-30 (product owner): the barcode field inherited the global

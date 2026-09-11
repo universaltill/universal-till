@@ -280,6 +280,31 @@ export async function ensureOperator(page: Page) {
 // whatever an earlier test left behind makes that true. Was duplicated
 // verbatim across four spec files before this extraction (ut-docs#1173
 // review finding); consolidated here rather than fixed a fifth time.
+// ut-docs#2128: held sales are persistent DB state (hold_api.go), not
+// per-test/per-context like the live sale `/api/pos/reset` clears -- a spec
+// that asserts an exact held-sales count needs a clean slate first, and
+// there is no bulk-clear endpoint. Resume (loads it into the live basket)
+// then reset (discards the basket) for whatever's left, one at a time,
+// same loop-until-count-0 shape as deactivateAllTables above.
+export async function clearAllHeldSales(page: Page) {
+  for (;;) {
+    const count = await page.locator('.held-chip').count();
+    if (count === 0) break;
+    const idAttr = await page.locator('.held-chip').first().getAttribute('hx-vals');
+    const id = idAttr ? (JSON.parse(idAttr).id as string) : undefined;
+    if (!id) break; // defensive: malformed hx-vals must not spin forever
+    // form-encoded, not JSON: the handler reads it via r.ParseForm()/
+    // r.Form.Get("id") (hold_api.go), same as the real hx-vals-driven POST.
+    await page.request.post('/api/pos/resume', { form: { id } });
+    await page.request.post('/api/pos/reset');
+    // The strip only re-renders on a real htmx `held-changed` event or a
+    // fresh load, neither of which a bare API call fires -- reload so the
+    // next iteration's locator sees the updated list.
+    await page.goto('/');
+    await page.waitForSelector('.pos-container');
+  }
+}
+
 export async function deactivateAllTables(page: Page) {
   await ensureOperator(page); // fresh Playwright context per test -> log in each time
   await page.goto('/tables');

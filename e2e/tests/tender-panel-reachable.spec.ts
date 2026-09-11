@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, clearAllHeldSales } from './helpers';
 
 // ut-docs#161's independent review found TWO real regressions on the way to
 // making the sale screen viewport-responsive, both in the tender panel
@@ -220,6 +220,78 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
     }
     assertClean();
   });
+
+  // ut-docs#2128: the test above guards the Payment/quick-pay footer against
+  // the held-sales strip pushing it off screen -- but never checked whether
+  // the STRIP ITSELF stays reachable, which is exactly how a real product-
+  // owner report ("held sales not findable") got past this suite. Live
+  // measurement on both the pilot tablet's own resolution (1280x800) and
+  // this file's existing 1024x600 kiosk floor found every `.held-chip`
+  // already NOT a real hit-test target the moment there is even 1 held sale
+  // -- `.tender-scroll`'s `overflow-y: auto` genuinely has content past the
+  // fold there, same class as ut-docs#1313's `.products` overflow, just
+  // never given that pattern's scroll-shadow cue (app.css). This test
+  // guards the one invariant that must hold regardless of whether the chip
+  // needs a scroll to reach: it must be REACHABLE via scroll, never
+  // collapsed to a genuinely zero-height/unreachable state the way
+  // `.tab-panel` once did (this file's own opening comment) -- scrolling a
+  // chip into view and then hit-testing it, not just checking geometry,
+  // catches that class of regression even though this specific fix (the
+  // scroll-shadow affordance) doesn't change reachability itself.
+  for (const vp of [
+    { width: 1280, height: 800, label: '1280x800 (pilot tablet)' },
+    { width: 1024, height: 600, label: '1024x600 (kiosk floor)' },
+  ]) {
+    test(`held-sales chips stay reachable via scroll at ${vp.label}, 1-3 held sales`, async ({ page }) => {
+      const assertClean = watchConsole(page);
+      await page.setViewportSize({ width: vp.width, height: vp.height });
+      await page.goto('/');
+      await page.waitForSelector('.pos-container');
+      // This suite shares one server/DB across every spec, and held sales
+      // are persistent rows, not per-context state `/api/pos/reset` clears
+      // -- start from a genuine 0 so the i+1 count assertions below hold.
+      await clearAllHeldSales(page);
+
+      const codes = ['5000000000012', '5000000000029', '5000000000012'];
+      for (let i = 0; i < codes.length; i++) {
+        await page.locator('input[name="code"]').first().fill(codes[i]);
+        await Promise.all([
+          page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
+          page.locator('.scan-row button[type=submit]').click(),
+        ]);
+        await page.locator('.tender-default-footer button', { hasText: 'Hold Sale' }).click();
+        const modal = page.locator('#hold-modal');
+        await expect(modal).toBeVisible();
+        await Promise.all([
+          page.waitForResponse((r) => r.url().includes('/api/pos/hold')),
+          modal.locator('button[type=submit]').click(),
+        ]);
+        await expect(modal).toBeHidden();
+
+        // Every chip held so far must be reachable once scrolled into view --
+        // not just the newest one, since an earlier fix could in principle
+        // regress an EARLIER chip while leaving the latest one fine.
+        const chipCount = await page.locator('.held-chip').count();
+        expect(chipCount, `expected ${i + 1} held chip(s) in the DOM`).toBe(i + 1);
+        for (let c = 0; c < chipCount; c++) {
+          const chip = page.locator('.held-chip').nth(c);
+          await chip.scrollIntoViewIfNeeded();
+          const hit = await chip.evaluate((el) => {
+            const r = el.getBoundingClientRect();
+            const x = r.left + r.width / 2;
+            const y = r.top + r.height / 2;
+            if (y > window.innerHeight || y < 0 || x < 0 || x > window.innerWidth) return false;
+            const at = document.elementFromPoint(x, y);
+            return !!at && (at === el || el.contains(at));
+          });
+          expect(hit, `held chip ${c} must be a real hit-test target once scrolled into view, with ${i + 1} held sale(s)`).toBe(true);
+        }
+      }
+      // Leave no held sale behind for the next spec sharing this server/DB.
+      await clearAllHeldSales(page);
+      assertClean();
+    });
+  }
 
   // ut-docs#1327, 2026-08-30: the 900px-width stacked tablet tier (basket/
   // tender/products in one column — `.pos-container`'s own
