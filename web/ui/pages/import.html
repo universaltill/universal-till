@@ -1,11 +1,26 @@
 {{ define "content" }}
 <div class="page-head">
   <h1>{{ T "import.title" }}</h1>
-  <!-- ut-docs#2090: same /items-not-bare-/catalog back-link fix as
-       tax_codes.html — see that file's comment for the full reasoning.
-       Import isn't an /items rail section either (ut-docs#2095,
-       follow-up), so this stays a plain link. -->
-  <a class="btn secondary" href="/items">← {{ T "nav.catalog" }}</a>
+  <!-- ut-docs#2095: Import is NOT an /items rail section, so unlike
+       modifiers.html/option_sets.html this must NEVER hx-get="/catalog"
+       hx-target="#items-panel" — that would swap the shell's panel, which
+       is wrong here since this page never replaces #items-panel; it floats
+       above it in a dialog (#import-modal, catalog.html) with no URL push.
+       Three distinct modes for .InItemsShell, now meaning "am I rendered
+       INSIDE that dialog":
+         - true (inside the dialog): close the dialog, same
+           this.closest('dialog').close() idiom elevation_prompt.html
+           already uses — there is nowhere to "navigate" to, the shell
+           behind the dialog is untouched. "return false" is added
+           (elevation_prompt.html's own use is on a plain <button
+           type="button">, which has no default action to suppress) so
+           the still-present href="/items" fallback below doesn't ALSO
+           fire a real navigation/reload of the very shell page this
+           dialog floats above.
+         - false (standalone page, e.g. a direct GET /import or another
+           page's own back-link, ut-docs#2090's #1950/#1955 landings):
+           unchanged plain link to /items. -->
+  <a class="btn secondary" href="/items"{{ if .InItemsShell }} onclick="this.closest('dialog').close(); return false;"{{ end }}>← {{ T "nav.catalog" }}</a>
 </div>
 
 <div class="card">

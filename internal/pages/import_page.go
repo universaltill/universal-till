@@ -56,6 +56,32 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 
 	mux.HandleFunc("GET /import", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "import_export") {
+			// ut-docs#2095 (independent review, F3): from inside the /items
+			// shell this route is now also reached as an htmx fragment
+			// request (the Import dialog's hx-get) -- a same-origin redirect
+			// is followed transparently by htmx AND preserves the
+			// HX-Request header across the hop, so the old unconditional
+			// redirect made a permission-denied cashier's tap resolve to
+			// GET /catalog's own fragment response (content + rail OOB
+			// swap) swapped straight into #import-modal: the ENTIRE Catalog
+			// page, rail button and all, floating inside the dialog,
+			// including a second nested #import-modal (measured: 86KB
+			// swapped in, duplicate ids throughout, tapping the nested
+			// Import button recurses). A real error response here is caught
+			// by the button's own event.detail.successful guard
+			// (catalog.html) instead. httpx.RenderError, not
+			// common.LocalizedError (guard-page-http-error.sh: this IS a
+			// page-route GET handler, unlike every other import_export
+			// check in this file which guards a POST/API endpoint) --
+			// same helper GET /catalog/tax-codes already uses for its own
+			// page-route permission check (tax_codes_page.go). The
+			// standalone (non-fragment) case is UNCHANGED: direct/bare
+			// GET /import still redirects to /catalog, exactly as before
+			// this card.
+			if httpx.IsFragmentSwap(w, r) {
+				httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
+				return
+			}
 			http.Redirect(w, r, "/catalog", http.StatusSeeOther)
 			return
 		}
@@ -77,13 +103,29 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			confirmedVal, _, cerr := d.Settings.Get(r.Context(), common.KeyCurrencyConfirmed)
 			currencyUnconfirmed = cerr != nil || confirmedVal != "true"
 		}
-		httpx.Render("ui/pages/import.html", map[string]any{
+		importData := map[string]any{
 			"title":               "Import",
 			"theme":               d.CurrentState().Theme,
 			"menuItems":           d.MenuSnapshot(),
 			"stagedID":            stagedID,
 			"currencyUnconfirmed": currencyUnconfirmed,
-		})(w, r)
+			// ut-docs#2095: /import is NOT an /items rail section (unlike
+			// /catalog, /modifiers, /catalog/option-sets, ut-docs#2090) --
+			// Catalog's Import button opens it as a closable dialog overlay
+			// (#import-modal) floating above the /items shell instead of
+			// swapping #items-panel. InItemsShell here means "am I being
+			// rendered inside that dialog", not "am I the shell's own panel
+			// content" -- so on an htmx fragment request, render just the
+			// content block and do NOT also OOB-swap the rail: the rail
+			// sits behind the dialog, unchanged, for the whole time the
+			// dialog is open.
+			"InItemsShell": httpx.IsFragmentSwap(w, r),
+		}
+		if httpx.IsFragmentSwap(w, r) {
+			httpx.RenderContentFragment("ui/pages/import.html", importData)(w, r)
+			return
+		}
+		httpx.Render("ui/pages/import.html", importData)(w, r)
 	})
 
 	mux.HandleFunc("GET /api/catalog/export", func(w http.ResponseWriter, r *http.Request) {
