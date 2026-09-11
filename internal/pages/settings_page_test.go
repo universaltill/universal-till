@@ -22,9 +22,11 @@ import (
 	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/pages/settingsnav"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
+	"github.com/universaltill/universal-till/internal/uislot"
 	layoutsalon "github.com/universaltill/universal-till/plugins/layout-salon"
 )
 
@@ -1595,6 +1597,213 @@ func TestSettingsPageOffersHighDensityScaleOption(t *testing.T) {
 	// succeed, not 400.
 	if rec := postForm(mux, "/api/settings/ui-scale", url.Values{"scale": {"2"}}, nil); rec.Code != http.StatusNoContent {
 		t.Fatalf("scale=2 (the new option's value) = %d, want 204", rec.Code)
+	}
+}
+
+// ut-docs#1913 review findings 3/4: uislot.CoreSettings and
+// filterSettingsNavForRender's gated-key map are both hand-synced to
+// web/ui/pages/settings.html with nothing tying them together — the
+// independent review verified both are correct TODAY, but nothing stops a
+// future card added to the template from silently going uncovered by
+// either (invisible in the sidebar AND in search for CoreSettings; a
+// gated card whose title leaks to viewers who can't see it for the
+// filter). This test reads the real template and cross-checks both.
+func TestSettingsPage_CoreSettingsAndFilterMatchTheRealTemplate(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("web", "ui", "pages", "settings.html"))
+	if err != nil {
+		t.Fatalf("read settings.html: %v", err)
+	}
+	lines := strings.Split(string(raw), "\n")
+	cardRE := regexp.MustCompile(`<div class="card[^"]*" id="([^"]+)"`)
+	ifRE := regexp.MustCompile(`\{\{\s*if\b`)
+
+	type found struct {
+		key    string
+		gated  bool // a "{{ if" appears on one of the lines immediately above this card's div
+		lineNo int
+	}
+	var cards []found
+	for i, line := range lines {
+		m := cardRE.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		gated := false
+		// Look back over blank/comment lines to the nearest real
+		// preceding line — every one of today's 5 gated cards has its
+		// `{{ if }}` on the line directly above the div (see the
+		// settings-data example, which sits right after a multi-line
+		// HTML comment: the comment lines themselves never match ifRE, so
+		// walking back past them to the actual `{{ if }}` line is
+		// required, not just checking i-1 literally).
+		for j := i - 1; j >= 0 && j >= i-6; j-- {
+			trimmed := strings.TrimSpace(lines[j])
+			if trimmed == "" || strings.HasPrefix(trimmed, "<!--") || strings.Contains(trimmed, "-->") {
+				continue
+			}
+			if ifRE.MatchString(trimmed) {
+				gated = true
+			}
+			break
+		}
+		cards = append(cards, found{key: m[1], gated: gated, lineNo: i + 1})
+	}
+
+	if len(cards) == 0 {
+		t.Fatal("found no .card ids in settings.html — the regex or the file itself has drifted")
+	}
+
+	// 1. uislot.CoreSettings must declare EXACTLY these keys, in EXACTLY
+	// this order — a card added/removed/reordered in the template with no
+	// matching CoreSettings change is invisible to the sidebar AND to
+	// settings.html's own search index (both are now built from
+	// CoreSettings' resolution, not a DOM scan).
+	if len(cards) != len(uislot.CoreSettings) {
+		t.Fatalf("settings.html has %d .card ids, uislot.CoreSettings declares %d — got template cards %+v", len(cards), len(uislot.CoreSettings), cards)
+	}
+	for i, c := range cards {
+		if uislot.CoreSettings[i].Key != c.key {
+			t.Errorf("order/key mismatch at position %d: template has %q (line %d), CoreSettings has %q — add/reorder/rename it in BOTH places", i, c.key, c.lineNo, uislot.CoreSettings[i].Key)
+		}
+	}
+
+	// 2. filterSettingsNavForRender's hardcoded gated-key map must name
+	// exactly the cards the template actually wraps in a `{{ if }}` — no
+	// more (a stale entry is harmless but confusing), no fewer (a real
+	// gap here is the information-disclosure regression
+	// TestSettingsPage_NavIndexNeverLeaksManagerOnlyRowsToCashier exists to
+	// prevent, for whichever NEW card it is that this test didn't know
+	// about).
+	allFilteredOut := filterSettingsNavForRender(settingsnav.Resolve("en", nil), false, false, false)
+	filteredKeys := map[string]bool{}
+	for _, c := range cards {
+		if c.gated {
+			filteredKeys[c.key] = true
+		}
+	}
+	survivingWithEverythingOff := map[string]bool{}
+	for _, r := range allFilteredOut {
+		survivingWithEverythingOff[r.Key] = true
+	}
+	for _, c := range cards {
+		wantFiltered := filteredKeys[c.key]
+		gotFiltered := !survivingWithEverythingOff[c.key]
+		if wantFiltered != gotFiltered {
+			t.Errorf("%q (line %d): template gating=%v (a `{{ if }}` %v found on the line above) but filterSettingsNavForRender's map disagrees — update its gated-key map to match", c.key, c.lineNo, c.gated, map[bool]string{true: "was", false: "was NOT"}[c.gated])
+		}
+	}
+}
+
+// ut-docs#1913 review: #settings-nav-index must never leak the title of a
+// `.card` this request's own gates keep out of the DOM — a cashier session
+// must not learn "Report an issue" / "Hidden menu tiles" / "All Settings"
+// exist just by reading the sidebar index, even though those cards
+// genuinely never render for a cashier (isManager-gated). This is the
+// filterSettingsNavForRender regression TestSettingsPage_DataCardHiddenFromCashierWhenNothingPending
+// already covers for settings-data specifically; this pins the other three
+// manager-only rows too.
+func TestSettingsPage_NavIndexNeverLeaksManagerOnlyRowsToCashier(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req = auth.WithUser(req, cashUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, key := range []string{"settings-issuereport", "settings-menulayout", "settings-all"} {
+		if strings.Contains(body, `data-key="`+key+`"`) {
+			t.Errorf("cashier session must not see manager-only row %q in #settings-nav-index:\n%s", key, body)
+		}
+	}
+}
+
+// ADR-0088, ut-docs#1913: with no `layout` plugin active, GET /settings'
+// server-rendered #settings-nav-index must resolve to exactly
+// uislot.CoreSettings' rows, in its declared order, with no group heading —
+// the "Zero-plugin Settings page is unchanged" acceptance criterion, pinned
+// at the actual HTTP-render level (settingsnav's own package tests already
+// pin Resolve directly; this proves the handler actually wires it through).
+func TestSettingsPage_NavIndexResolvesCoreOrderWithNoPlugin(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	indexStart := strings.Index(body, `id="settings-nav-index"`)
+	if indexStart == -1 {
+		t.Fatalf("no #settings-nav-index rendered:\n%s", body)
+	}
+	indexEnd := strings.Index(body[indexStart:], "</ul>")
+	if indexEnd == -1 {
+		t.Fatalf("unterminated #settings-nav-index")
+	}
+	indexHTML := body[indexStart : indexStart+indexEnd]
+	if strings.Contains(indexHTML, "data-group=") {
+		t.Errorf("zero-plugin nav index must carry no group heading, got:\n%s", indexHTML)
+	}
+	// registration is the very first CoreSettings row (Order 100) — it must
+	// appear before settings-update (Order 400) in the rendered index.
+	regIdx := strings.Index(indexHTML, `data-key="registration"`)
+	updateIdx := strings.Index(indexHTML, `data-key="settings-update"`)
+	if regIdx == -1 || updateIdx == -1 || regIdx > updateIdx {
+		t.Fatalf("expected registration before settings-update in declared order, got:\n%s", indexHTML)
+	}
+	if !strings.Contains(indexHTML, "Till registration") {
+		t.Fatalf("expected the resolved English label, not a raw key, got:\n%s", indexHTML)
+	}
+}
+
+// With the salon `layout` plugin active, GET /settings' nav index reflects
+// its Settings-slot amendment: settings-theme reordered to the front, and
+// settings-printer/settings-tills gathered under a shared group heading —
+// the same handler-level proof TestShopTypeEndpoint_ServiceActivatesSalonLayout_SwitchAwayRemovesIt
+// gives the Menu slot's /tables hide.
+func TestSettingsPage_NavIndexReflectsSalonLayoutAmendment(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	ctx := t.Context()
+	pm, err := plugins.Init(ctx, d.Cfg, d.Db)
+	if err != nil {
+		t.Fatalf("plugins.Init: %v", err)
+	}
+	d.Pm = pm
+
+	rec := postForm(mux, "/api/settings/shop-type", url.Values{"shop_type": {"service"}}, &mgrUser)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("save shop_type=service: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req = auth.WithUser(req, mgrUser)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	indexStart := strings.Index(body, `id="settings-nav-index"`)
+	if indexStart == -1 {
+		t.Fatalf("no #settings-nav-index rendered:\n%s", body)
+	}
+	indexEnd := strings.Index(body[indexStart:], "</ul>")
+	indexHTML := body[indexStart : indexStart+indexEnd]
+
+	themeIdx := strings.Index(indexHTML, `data-key="settings-theme"`)
+	regIdx := strings.Index(indexHTML, `data-key="registration"`)
+	if themeIdx == -1 || regIdx == -1 || themeIdx > regIdx {
+		t.Fatalf("salon layout must reorder settings-theme ahead of registration, got:\n%s", indexHTML)
+	}
+	printerIdx := strings.Index(indexHTML, `data-key="settings-printer"`)
+	tillsIdx := strings.Index(indexHTML, `data-key="settings-tills"`)
+	if printerIdx == -1 || tillsIdx == -1 {
+		t.Fatalf("printer/tills rows missing from index:\n%s", indexHTML)
+	}
+	if !strings.Contains(indexHTML[printerIdx:printerIdx+200], "data-group=") {
+		t.Errorf("settings-printer must carry a resolved data-group, got:\n%s", indexHTML[printerIdx:printerIdx+200])
 	}
 }
 

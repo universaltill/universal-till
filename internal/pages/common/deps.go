@@ -73,7 +73,14 @@ type Deps struct {
 	// httpx.InitRailAmendments so nav.html's railEntries func reads it per
 	// request under the lock.
 	RailAmendments []uislot.Amendment
-	Engine         *pos.Service
+	// SettingsAmendments are the /settings sidebar-slot amendments in force
+	// (ADR-0088, ut-docs#1913) — the fourth twin, for settings_page.go's own
+	// nav resolution. Same deferred-restore gap as ItemsAmendments/
+	// RailAmendments (hide is refused for this slot at install, so nothing
+	// needs restoring yet). Rebuilt beside the other three in ReloadPlugins
+	// under PluginMu — read it only through SettingsAmendmentsSnapshot.
+	SettingsAmendments []uislot.Amendment
+	Engine             *pos.Service
 	// KioskEngine is the self-order kiosk's own basket engine — deliberately
 	// a SEPARATE instance from Engine (ut-docs#449): the kiosk surface is
 	// auth-exempt and reachable by any LAN client, so it must never be able
@@ -326,6 +333,7 @@ func (d *Deps) ReloadPlugins(ctx context.Context) error {
 	d.MenuAmendments = BuildMenuAmendments(d.Pm, RestoredMenuKeys(ctx, d.Settings))
 	d.ItemsAmendments = BuildItemsAmendments(d.Pm)
 	d.RailAmendments = BuildRailAmendments(d.Pm)
+	d.SettingsAmendments = BuildSettingsAmendments(d.Pm)
 	return err
 }
 
@@ -366,6 +374,15 @@ func (d *Deps) RailAmendmentsSnapshot() []uislot.Amendment {
 	d.PluginMu.RLock()
 	defer d.PluginMu.RUnlock()
 	return d.RailAmendments
+}
+
+// SettingsAmendmentsSnapshot is MenuAmendmentsSnapshot's twin for the
+// /settings sidebar slot (ut-docs#1913) — the render path's only way to
+// read them.
+func (d *Deps) SettingsAmendmentsSnapshot() []uislot.Amendment {
+	d.PluginMu.RLock()
+	defer d.PluginMu.RUnlock()
+	return d.SettingsAmendments
 }
 
 // LayoutAmendmentsSnapshot returns every active layout plugin's amendments

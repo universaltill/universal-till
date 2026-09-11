@@ -26,6 +26,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/pages/settingsnav"
 	"github.com/universaltill/universal-till/internal/plugins/builtinlayouts"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -364,6 +365,34 @@ func disableDemoRowButtonsScript(rowClass string) string {
 	return `<script>(function(s){var li=s.closest('` + rowClass + `');if(li){li.querySelectorAll('button').forEach(function(b){b.disabled=true;});}})(document.currentScript)</script>`
 }
 
+// filterSettingsNavForRender drops any settingsnav.Row this specific
+// request's own `.card` conditionals (below, in registerSettings' /settings
+// handler) will NOT actually render this time — ut-docs#1913. Without this,
+// a gated card's title would leak into #settings-nav-index (and therefore
+// the response body) even when its `.card` is genuinely absent from the
+// DOM, which is exactly what
+// TestSettingsPage_DataCardHiddenFromCashierWhenNothingPending pins must
+// never happen for a cashier session with nothing pending. Keeps whatever
+// ORDER settingsnav.Resolve produced (a `layout` plugin's reorder still
+// applies) — this only removes rows, never reorders the survivors.
+func filterSettingsNavForRender(rows []settingsnav.Row, isManager, hasPayMethods, showDataCard bool) []settingsnav.Row {
+	hiddenThisRequest := map[string]bool{
+		"settings-issuereport": !isManager,
+		"settings-menulayout":  !isManager,
+		"settings-payments":    !hasPayMethods,
+		"settings-data":        !showDataCard,
+		"settings-all":         !isManager,
+	}
+	out := make([]settingsnav.Row, 0, len(rows))
+	for _, row := range rows {
+		if hiddenThisRequest[row.Key] {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
 func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 	mux.HandleFunc("/settings", func(w http.ResponseWriter, r *http.Request) {
@@ -593,6 +622,20 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// ut-docs#1060: shared with GET /ui/settings/window-mode-status
 		// below via windowControlTopology, so both computations agree.
 		shellAttached, piKioskAppliance := windowControlTopology(d)
+		isManager := canPerform(d, r, "settings")
+		pendingBasePluginRows := pendingBasePluginViews(pendingBasePlugins)
+		restorePromptDeferred := restorePromptStatus == common.RestorePromptStatusDeferred
+		// ut-docs#1913: the same four conditions that gate whether
+		// settings-issuereport/settings-menulayout/settings-payments/
+		// settings-data/settings-all actually RENDER their `.card` this
+		// request (below), restated so settingsNav's filter can drop a
+		// gated row from the sidebar index too — otherwise a cashier with
+		// nothing pending would see the Data card's title leak into
+		// #settings-nav-index even though its own `.card` never renders
+		// (TestSettingsPage_DataCardHiddenFromCashierWhenNothingPending's
+		// whole point: the heading text must not appear in the body at
+		// all, not merely be visually hidden).
+		showDataCard := isManager || sampleCount > 0 || len(pendingBasePluginRows) > 0 || restorePromptDeferred
 		data := map[string]any{
 			"title":       "Settings",
 			"theme":       st.Theme,
@@ -601,7 +644,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"settingsMap": all,
 			"menuItems":   d.MenuSnapshot(),
 			"uiScale":     strconv.FormatFloat(scale, 'f', -1, 64),
-			"isManager":   canPerform(d, r, "settings"),
+			"isManager":   isManager,
 			// ut-docs#1537: will the Android install endpoint accept this
 			// caller's session on its own, or is it going to demand a PIN?
 			// Rendered up front so a cashier (or anyone on a self-order kiosk)
@@ -645,8 +688,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"reportArchiveCoverage":  reportArchiveCoverage,
 			"shopType":               shopType,
 			"shopTypes":              setupShopTypes,
-			"restorePromptDeferred":  restorePromptStatus == common.RestorePromptStatusDeferred,
-			"pendingBasePlugins":     pendingBasePluginViews(pendingBasePlugins),
+			"restorePromptDeferred":  restorePromptDeferred,
+			"pendingBasePlugins":     pendingBasePluginRows,
 			"tseProvisioning":        tseProvisioningViewFor(tseState),
 			"tseRetryable":           tseProvisioningRetryable(tseState),
 			"tseCanDismiss":          !tseProvisioningDismissBlocked(tseState),
@@ -670,6 +713,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"shellAttached":      shellAttached,
 			"piKioskAppliance":   piKioskAppliance,
 			"barcodeSymbologies": barcodeSymbologies,
+			// ADR-0088, ut-docs#1913: the sidebar's resolved order/label/
+			// grouping (core defaults + any active `layout` plugin's
+			// Settings-slot amendments) — see settingsnav's own doc comment
+			// for why this resolves the SIDEBAR only, not the on-page card
+			// content/order.
+			"settingsNav": filterSettingsNavForRender(
+				settingsnav.Resolve(locale, d.SettingsAmendmentsSnapshot()),
+				isManager, len(payMethods) > 0, showDataCard,
+			),
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
 	})
