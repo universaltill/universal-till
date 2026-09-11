@@ -2247,11 +2247,21 @@ a.btn, a.btn:hover { text-decoration: none; }
 .tender-quickpay > .btn { flex: 1; font-weight: 700; }
 
 /* ut-docs#2137: the parked-orders trigger shares the quick-pay row with Card
-   (the product owner's placement). It takes the smaller share -- Card
-   completes a charge and stays the dominant target -- but keeps the row's
-   height, so the #1336 short-viewport budget measured just above is
-   unchanged: this adds a sibling, never a third row. */
-.tender-quickpay > .parked-orders-btn { flex: 0 1 38%; font-weight: 600; }
+   (the product owner's placement). Card completes a charge and stays the
+   dominant target, so this one is sized to its own label and no larger.
+
+   flex-basis must stay content-sized, and the label must not wrap. An
+   earlier cut used `flex: 0 1 38%`, which is 158px at 1024px width -- wide
+   enough for "Open orders" and NOT for the German "Offene Vorgänge" (or the
+   Spanish "Pedidos abiertos"). The label wrapped to two lines, taking this
+   row from 51px to 66.6px, which overflowed .tender by 8px and pushed the
+   bottom of the Card button into that pane's scroll -- on the exact
+   1024x600 kiosk the #1336 budget above was measured to protect, in the
+   exact market this product is piloting in. Measured, not theorised: the
+   English baseline clears by only 0.99px, so this row has no slack to lend
+   a second line. Pinned by parked-orders-popup-2137.spec.ts's
+   long-label test, which fails at 38%. */
+.tender-quickpay > .parked-orders-btn { flex: 0 0 auto; white-space: nowrap; font-weight: 600; }
 
 /* The popup body. Scrolls internally rather than growing the dialog past the
    viewport -- a till with a dozen parked tables must still show its Close
@@ -2264,6 +2274,11 @@ a.btn, a.btn:hover { text-decoration: none; }
    wide. text-align/margin-inline keep it correct under RTL. */
 .parked-orders-list > li > .parked-order { flex: 1; min-height: 46px; display: flex; align-items: center; gap: .5rem; text-align: start; }
 .parked-order-meta { margin-inline-start: auto; opacity: .8; white-space: nowrap; }
+/* .held-chip-table has never had a rule of its own (it rendered as bare text
+   on the strip too). It now also appears here, so give it the quiet chip
+   look its name promises rather than leaving it indistinguishable from the
+   order label beside it. */
+.held-chip-table { font-size: .85em; opacity: .75; border: 1px solid currentColor; border-radius: 999px; padding: 0 .45em; }
 
 /* The dialog itself: a slide-in panel anchored to the inline-end edge
    (right in LTR, left in RTL — logical properties per this repo's RTL

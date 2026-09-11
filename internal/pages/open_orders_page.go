@@ -2,12 +2,12 @@ package pages
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -117,11 +117,17 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /ui/parked-orders", func(w http.ResponseWriter, r *http.Request) {
 		rows, err := listOpenOrders(r.Context())
 		if err != nil {
-			// A fragment has no error page to render into; the popup shows
-			// the same "nothing to resume" body it would for an empty till,
-			// and the sale screen keeps working. Logged, not silent.
-			log.Printf("parked-orders popup: list held sales: %v", err)
-			rows = nil
+			// NEVER fall through to the empty-state body here (ut-docs#2137
+			// review): "No open orders right now" is the one thing a cashier
+			// with parked orders must not be told falsely -- it reads as
+			// "your order is gone", and the recovery is to re-ring the whole
+			// sale. A read failure has to look like a failure. 500 leaves the
+			// popup body unswapped and lets app.js's htmx:responseError
+			// handler raise the usual server banner, which is how every other
+			// fragment on this screen reports the same thing.
+			logging.L().Errorf("parked-orders popup: list held sales: %v", err)
+			http.Error(w, "could not load parked orders", http.StatusInternalServerError)
+			return
 		}
 		httpx.RenderPartial("ui/partials/parked_orders.html", map[string]any{
 			"orders": rows,

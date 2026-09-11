@@ -68,6 +68,55 @@ test('the popup says so when nothing is parked, rather than opening empty', asyn
   assertClean();
 });
 
+// A refused resume must get out of the way (ut-docs#2137 review). The dialog
+// sits over the right-hand side of the toast, so leaving it open lets the
+// cashier read "Finish or hold the current sale first" but not dismiss it --
+// and the refusal is telling them to act on the sale screen the popup is
+// covering.
+test('a resume refused because the basket is busy closes the popup and says why', async ({ page }) => {
+  await page.goto('/');
+  await parkASale(page, 'Table 5');
+
+  // A new sale is now in progress, so the parked one cannot be resumed.
+  await page.locator('.scan-row input[name="code"]').fill('5000000000012');
+  await page.locator('.scan-row button[type=submit]').click();
+  await expect(page.locator('#basket')).toContainText('Coca-Cola');
+
+  await page.locator('.tender-quickpay [data-testid="parked-orders-open"]').click();
+  const modal = page.locator('#parked-orders-modal');
+  await expect(modal).toBeVisible();
+  await modal.locator('.parked-order', { hasText: 'Table 5' }).click();
+
+  await expect(modal).toBeHidden();
+  await expect(page.locator('#toast-message')).toContainText('Finish or hold the current sale first');
+  // The order is untouched and still offered.
+  await page.locator('.tender-quickpay [data-testid="parked-orders-open"]').click();
+  await expect(modal.locator('.parked-order', { hasText: 'Table 5' })).toBeVisible();
+});
+
+// Regression guard for a measured CSS bug this popup shipped with in review:
+// at 38% flex-basis the trigger is 158px at 1024px wide, which fits the
+// English "Open orders" and NOT the German "Offene Vorgänge". The label
+// wrapped, the quick-pay row went 51px -> 66.6px, and the bottom of the Card
+// button was pushed into the tender pane's scroll -- on the 1024x600 kiosk
+// the ut-docs#1336 height budget exists to protect. English alone would never
+// have caught it, so this drives the label directly rather than trusting a
+// locale to be long enough.
+test('a long label does not make the quick-pay row taller', async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 600 });
+  await page.goto('/');
+
+  const row = page.locator('.tender-quickpay');
+  const before = (await row.boundingBox())!.height;
+
+  await page.locator('.tender-quickpay [data-testid="parked-orders-open"]')
+    .evaluate((el) => { el.textContent = 'Offene Vorgänge'; });
+
+  const after = (await row.boundingBox())!.height;
+  expect(after, 'the trigger\'s label must not wrap the quick-pay row onto two lines')
+    .toBeCloseTo(before, 0);
+});
+
 // The whole reason this popup exists: it must work at the resolution where
 // the strip does not. 1280x800 is the pilot tablet.
 test('the trigger and the popup work at the pilot tablet resolution', async ({ page }) => {

@@ -119,6 +119,28 @@ func TestParkedOrders_ResumeFromThePopupLoadsTheBasket(t *testing.T) {
 	}
 }
 
+// A read failure must never render as "No open orders right now" (ut-docs#2137
+// review). That sentence reads as "your parked order is gone" to the one person
+// who most needs it not to be -- a cashier with three orders parked -- and the
+// recovery they would reach for is re-ringing the whole sale.
+func TestParkedOrders_ReadFailureIsReportedNotShownAsEmpty(t *testing.T) {
+	mux, d := newOpenOrdersTestMux(t)
+	if err := d.Db.Close(); err != nil { // the shape of a locked/broken SQLite file
+		t.Fatalf("close db: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/parked-orders", nil))
+
+	if rec.Code == http.StatusOK {
+		t.Fatalf("a failed read answered 200; body: %s", rec.Body.String())
+	}
+	if strings.Contains(html.UnescapeString(rec.Body.String()), httpx.T("en", "open_orders.empty")) {
+		t.Fatal("a failed read rendered the empty-state copy — the cashier would " +
+			"be told nothing is parked when the till simply could not look")
+	}
+}
+
 // The page's own hint sent the cashier to a control the tablet does not show.
 func TestOpenOrdersPage_NoLongerPointsAtTheOffScreenStrip(t *testing.T) {
 	mux, d := newOpenOrdersTestMux(t)
