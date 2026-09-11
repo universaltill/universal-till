@@ -123,6 +123,140 @@ WHERE sale_id = ?
 	return &s, true, nil
 }
 
+// FiscalSignReconcileCandidate is one sale the fiscal.sign.reconcile.ask
+// sweep (ADR-0077 D3, ut-docs#1520) may ask about: it completed UNSIGNED at
+// tender time with a backend-level failure, and no reconcile outcome has been
+// recorded for it yet. FailedAt is the RFC3339 timestamp the declare path
+// stamped into the audit payload — the anchor for the degraded time-window
+// check when core holds no fiscal.sign.start identifier for the sale.
+type FiscalSignReconcileCandidate struct {
+	SaleID   string
+	FailedAt string
+}
+
+// ListFiscalSignReconcileCandidates selects EXACTLY the reconcile-eligible
+// set ADR-0077 D3 defines, and nothing wider:
+//
+//   - the sale carries an unsigned_fiscal_signing audit row (the shared
+//     "signing" gap action — unsigned_fiscal_cannot_sign is a different
+//     action and never eligible: the backend answered, deterministically);
+//   - that row's payload says outcome = "backend" (the ask's budget expired
+//     or the plugin declared its backend unreachable — the only outcome
+//     where fiskaly's own service may have completed the signature and the
+//     till simply never heard). "entry" (the backend answered, unusably) is
+//     excluded by the same predicate;
+//   - known_offline is false (a known-offline skip never reached the plugin
+//     at all — nothing server-side could have been finished);
+//   - no fiscal_signing_reconciled row exists for the sale yet (idempotence:
+//     confirmed once, never re-asked);
+//   - the gap was declared at or after since (the sweep's bounded lookback).
+//
+// The audit payload is queried with SQLite's JSON1 json_extract — the same
+// approach pos_repo.go's cash-movement and audit summaries already use —
+// rather than a new table/column for two fields of an existing row. A
+// boolean JSON false extracts as integer 0. datetime(created_at) matches the
+// existing idx_audit_log_entity_action_created_dt expression index and reads
+// both the RFC3339 form declareUnsignedFiscalSale writes and the
+// datetime('now') form other writers use. Oldest first, capped at limit, so
+// one pass is bounded no matter how long an outage lasted.
+func (r *POSRepo) ListFiscalSignReconcileCandidates(ctx context.Context, since time.Time, limit int) ([]FiscalSignReconcileCandidate, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT a.entity_id, COALESCE(json_extract(a.data_json, '$.failed_at'), a.created_at)
+FROM audit_log a
+WHERE a.entity_type = 'sale'
+  AND a.action = 'unsigned_fiscal_signing'
+  AND json_extract(a.data_json, '$.outcome') = 'backend'
+  AND COALESCE(json_extract(a.data_json, '$.known_offline'), 0) = 0
+  AND datetime(a.created_at) >= datetime(?)
+  AND NOT EXISTS (
+    SELECT 1 FROM audit_log r
+    WHERE r.entity_type = 'sale' AND r.entity_id = a.entity_id AND r.action = 'fiscal_signing_reconciled'
+  )
+ORDER BY datetime(a.created_at) ASC, a.rowid ASC
+LIMIT ?
+`, since.UTC().Format(time.RFC3339), limit)
+	if err != nil {
+		return nil, fmt.Errorf("list fiscal sign reconcile candidates: %w", err)
+	}
+	defer rows.Close()
+	var out []FiscalSignReconcileCandidate
+	for rows.Next() {
+		var c FiscalSignReconcileCandidate
+		if err := rows.Scan(&c.SaleID, &c.FailedAt); err != nil {
+			return nil, fmt.Errorf("scan fiscal sign reconcile candidate: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate fiscal sign reconcile candidates: %w", err)
+	}
+	return out, nil
+}
+
+// FiscalTSEReconciledSignature is the §6 KassenSichV evidence a confirmed
+// fiscal.sign.reconcile.ask answer carried for a sale that completed unsigned
+// (ADR-0077 D3, migration 027) — FiscalTSESignature's field set plus the two
+// facts the reconcile check itself established: TxID, the fiscal.sign.start
+// identifier the answer was matched against ("" on the degraded tier), and
+// CheckTier, "exact" (tx_id equality) or "window" (start/log time within a
+// bounded window of failed_at — the honestly-named weaker tier). Stored in
+// its OWN table, never in fiscal_tse_signatures: both receipt render paths
+// read that table and would otherwise render this evidence on a reprint,
+// which ADR-0077 D4 forbids outright — see the migration's own header.
+type FiscalTSEReconciledSignature struct {
+	SaleID             string
+	TxID               string
+	CheckTier          string
+	TransactionNumber  int64
+	SignatureCounter   int64
+	SerialNumber       string
+	StartTime          string
+	LogTime            string
+	Signature          string
+	SignatureAlgorithm string
+	// CreatedAt is stamped by the DB on insert; zero on the way in.
+	CreatedAt string
+}
+
+// RecordFiscalTSEReconciledSignature stores one sale's reconciled evidence.
+// Idempotent by design (INSERT ... ON CONFLICT DO NOTHING on the sale_id
+// primary key), same as RecordFiscalTSESignature: a repeated sweep pass for
+// the same sale never errors, duplicates, or overwrites the first record.
+func (r *POSRepo) RecordFiscalTSEReconciledSignature(ctx context.Context, sig FiscalTSEReconciledSignature) error {
+	_, err := r.db.ExecContext(ctx, `
+INSERT INTO fiscal_tse_reconciled_signatures
+	(sale_id, tx_id, check_tier, transaction_number, signature_counter, serial_number, start_time, log_time, signature, signature_algorithm)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(sale_id) DO NOTHING
+`, sig.SaleID, sig.TxID, sig.CheckTier, sig.TransactionNumber, sig.SignatureCounter, sig.SerialNumber,
+		sig.StartTime, sig.LogTime, sig.Signature, sig.SignatureAlgorithm)
+	if err != nil {
+		return fmt.Errorf("insert fiscal_tse_reconciled_signatures: %w", err)
+	}
+	return nil
+}
+
+// GetFiscalTSEReconciledSignature loads the reconciled evidence recorded for
+// a sale. (nil, false, nil) when none exists — the ordinary case for every
+// sale that was signed at tender time or never reconciled. Read by the audit
+// trail / a future DSFinV-K export, never by a receipt (ADR-0077 D4).
+func (r *POSRepo) GetFiscalTSEReconciledSignature(ctx context.Context, saleID string) (*FiscalTSEReconciledSignature, bool, error) {
+	var sig FiscalTSEReconciledSignature
+	err := r.db.QueryRowContext(ctx, `
+SELECT sale_id, tx_id, check_tier, transaction_number, signature_counter, serial_number, start_time, log_time, signature, signature_algorithm, created_at
+FROM fiscal_tse_reconciled_signatures
+WHERE sale_id = ?
+`, saleID).Scan(&sig.SaleID, &sig.TxID, &sig.CheckTier, &sig.TransactionNumber, &sig.SignatureCounter, &sig.SerialNumber,
+		&sig.StartTime, &sig.LogTime, &sig.Signature, &sig.SignatureAlgorithm, &sig.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("select fiscal_tse_reconciled_signatures: %w", err)
+	}
+	return &sig, true, nil
+}
+
 // FiscalRegisterDE is one till/TSE pairing recorded for Germany's §146a
 // Abs. 4 AO till-notification duty (ut-docs#665) — the data the shop's own
 // Mein ELSTER filing needs, joined with the register's and its stock
