@@ -689,6 +689,26 @@ func TestInitKioskExposedToTemplates(t *testing.T) {
 	}
 }
 
+// ut-docs#2099 (the implementation half of ut-docs#1999,
+// coding-standards.md §10): "selforder" mirrors InitKiosk/"kiosk" exactly —
+// a package-level toggle published to templates, set at boot from the
+// persisted display.mode and live-updated by POST /api/settings/display-mode
+// — so record_dialog.html can withhold the status/lock/exit affordance for
+// customer containment without every page threading the flag through by
+// hand.
+func TestInitSelfOrderModeExposedToTemplates(t *testing.T) {
+	InitSelfOrderMode(true)
+	defer InitSelfOrderMode(false)
+	fn := FuncsFor("en")["selforder"].(func() bool)
+	if !fn() {
+		t.Fatal("selforder template func = false after InitSelfOrderMode(true)")
+	}
+	InitSelfOrderMode(false)
+	if fn() {
+		t.Fatal("selforder template func = true after InitSelfOrderMode(false)")
+	}
+}
+
 func TestCurrenciesRegistryIsUsable(t *testing.T) {
 	all := Currencies()
 	if len(all) == 0 {

@@ -9,16 +9,21 @@ import { watchConsole, openNewItemForm, closeItemForm } from './helpers';
 //   (b) tapping a row opens it prefilled, in edit mode, posting to that
 //       row's own endpoint, with the destructive control visible;
 //   (c) Escape (and Close) close a clean dialog silently, and ask first
-//       when the form has unsaved changes — settling ut-docs#1999 for every
-//       dialog on this pattern (they are .show()n, so Escape is inert
-//       unless implemented by hand);
+//       when the form has unsaved changes (they are .show()n, so Escape is
+//       inert unless implemented by hand) — this is only HALF of what
+//       ut-docs#1999 actually requires for this pattern; see (j) below for
+//       the other half (a since-corrected claim this comment used to make);
 //   (d) the search box filters rows client-side and shows the translated
 //       no-results row when nothing matches;
 //   (e) at the 1024×600 kiosk floor and at 360px the head is pinned and
 //       every head control is fully inside the viewport — real geometry,
 //       not "an element exists". Deliberately NOT scrollWidth vs
 //       clientWidth on the body: a hidden-overflow box always reports them
-//       equal (the false pass ut-docs#1956's review caught last week).
+//       equal (the false pass ut-docs#1956's review caught last week);
+//   (j) ut-docs#2099 (ut-docs#1999's other half, coding-standards.md §10):
+//       the status/lock/exit-to-OS affordance the dialog owes the nav rail
+//       it covers is visible, on screen, and reachable at both the kiosk
+//       floor and 360px without closing the dialog.
 
 const DIALOG = '#category-dialog';
 const NAME = '#category-form input[name="name"]';
@@ -652,6 +657,51 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
       expect(past).toEqual([]);
       // And the whole page gained no horizontal overflow from opening it.
       expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+      assertClean();
+    });
+  }
+
+  for (const vp of [
+    { width: 1024, height: 600, label: 'kiosk floor 1024x600' },
+    { width: 360, height: 740, label: 'phone 360px' },
+  ]) {
+    test(`(j) at ${vp.label} status/lock/exit-to-OS stay reachable without closing the dialog`, async ({ page }) => {
+      const assertClean = watchConsole(page);
+      await page.setViewportSize({ width: vp.width, height: vp.height });
+      await page.goto('/categories');
+      await createCategory(page, 'Affordance Probe ' + Date.now());
+      await row(page, 'Affordance Probe').locator('td').first().click();
+      const dlg = page.locator(DIALOG);
+      await expect(dlg).toBeVisible();
+
+      // All three on screen, inside the still-open dialog — not requiring
+      // Close first.
+      const conn = page.locator(`${DIALOG} [data-record-dialog-conn]`);
+      const exitLink = page.locator(`${DIALOG} [data-record-dialog-exit]`);
+      const lockBtn = page.locator(`${DIALOG} [data-record-dialog-lock] button`);
+      await expect(conn).toBeVisible();
+      await expect(exitLink).toBeVisible();
+      await expect(lockBtn).toBeVisible();
+
+      const rowBox = (await page.locator(`${DIALOG} [data-record-dialog-status-row]`).boundingBox())!;
+      const dlgBox = (await dlg.boundingBox())!;
+      expect(rowBox.x).toBeGreaterThanOrEqual(0);
+      expect(rowBox.y).toBeGreaterThanOrEqual(0);
+      expect(rowBox.x + rowBox.width).toBeLessThanOrEqual(vp.width + 0.5);
+      expect(rowBox.y + rowBox.height).toBeLessThanOrEqual(vp.height + 0.5);
+      // Compact: this one extra line costs a small slice of the viewport,
+      // never a second full-height bar (ut-docs#2000's own budget finding).
+      expect(rowBox.height / vp.height).toBeLessThan(0.12);
+
+      // Reachable, not just present: real controls wired to the exact
+      // mechanisms coding-standards.md §10 names (session_chip.html's own
+      // lock POST, a real link into Settings' Display card).
+      expect(await page.locator(`${DIALOG} [data-record-dialog-lock]`).getAttribute('action')).toBe('/api/auth/logout');
+      expect(await exitLink.getAttribute('href')).toBe('/settings#settings-display');
+
+      // Never past the dialog's own right edge, matching the (e) full-
+      // viewport geometry check above.
+      expect(rowBox.x + rowBox.width).toBeLessThanOrEqual(dlgBox.x + dlgBox.width + 0.5);
       assertClean();
     });
   }

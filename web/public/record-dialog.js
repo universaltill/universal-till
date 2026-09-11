@@ -51,11 +51,16 @@
 // keyboard (#osk, osk.js) is appended to <body>, and showModal()'s
 // top-layer/inert-outside behaviour makes it unreachable on the till's own
 // touchscreen (ut-docs#1385). Two things .show() therefore does not give and
-// this file implements by hand: Escape-to-close (settling ut-docs#1999) and
-// the focus trap — without one, Tab walks out from the name field into the
-// nav rail and the row buttons UNDER the opaque dialog and never reaches
-// Close/Save (WCAG 2.4.3/2.4.7). The trap whitelists #osk, which never takes
-// focus itself but must not be fought over.
+// this file implements by hand: Escape-to-close and the focus trap —
+// without the latter, Tab walks out from the name field into the nav rail
+// and the row buttons UNDER the opaque dialog and never reaches Close/Save
+// (WCAG 2.4.3/2.4.7). The trap whitelists #osk, which never takes focus
+// itself but must not be fought over. Escape-to-close does NOT by itself
+// settle ut-docs#1999 for this pattern (a since-corrected claim this
+// comment used to make) — #1999 (coding-standards.md §10) also requires
+// status/lock/exit-to-OS to stay reachable while this dialog covers the
+// nav rail, which record_dialog.html's .record-dialog-status-row handles
+// (ut-docs#2099); bindStatusRow() further down is this file's half of it.
 // No hardcoded user-facing strings: every message comes from a data-*
 // attribute the template filled from a locale key. The console.error below
 // is developer-facing (a page authoring bug), not operator-facing.
@@ -380,6 +385,35 @@
     });
   }
 
+  // --- Status row: sync/offline indicator (ut-docs#2099) -----------------
+  // [data-record-dialog-conn] (record_dialog.html's .record-dialog-status-
+  // row, absent outright in self-order kiosk mode — see that file's own
+  // comment) is a SECOND, independent instance of base.html's #sb-conn
+  // footer chip, same data-conn-online/data-conn-offline attributes and
+  // same navigator.onLine + online/offline-event logic — deliberately not
+  // shared code, since base.html's own inline script looks up `#sb-conn`
+  // by its one fixed id and can't see this one anyway. Bound once per
+  // element (data-record-dialog-conn-bound guard, same shape as bind()
+  // above) so a page re-render (htmx:afterSwap) never double-registers the
+  // window listeners.
+  function bindStatusRow(root) {
+    var els = (root || document).querySelectorAll('[data-record-dialog-conn]');
+    Array.prototype.forEach.call(els, function (el) {
+      if (el.hasAttribute('data-record-dialog-conn-bound')) return;
+      el.setAttribute('data-record-dialog-conn-bound', '');
+      var txt = el.querySelector('.sb-conn-text');
+      var on = el.getAttribute('data-conn-online'), off = el.getAttribute('data-conn-offline');
+      function update() {
+        var online = navigator.onLine;
+        el.classList.toggle('is-offline', !online);
+        if (txt) txt.textContent = online ? on : off;
+      }
+      window.addEventListener('online', update);
+      window.addEventListener('offline', update);
+      update();
+    });
+  }
+
   // --- List header: client-side filter ---------------------------------
   // Right for a bounded list (a few hundred rows); above that the screen
   // moves to server-side limit/offset (ut-docs#2014), not a bigger filter.
@@ -422,6 +456,7 @@
 
   function init() {
     bind(document);
+    bindStatusRow(document);
     reapplyFilters();
   }
 
@@ -430,5 +465,5 @@
   } else {
     init();
   }
-  document.addEventListener('htmx:afterSwap', function () { bind(document); reapplyFilters(); });
+  document.addEventListener('htmx:afterSwap', function () { bind(document); bindStatusRow(document); reapplyFilters(); });
 })();
