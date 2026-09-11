@@ -5,8 +5,8 @@
   <tbody>
     {{ if .StockLevels }}
       {{ range .StockLevels }}
-        <tr class="stock-row" data-item="{{ .ItemID }}" data-name="{{ .Name }}" data-sku="{{ .SKU }}" data-location="{{ .LocationID }}" data-location-name="{{ .LocationName }}">
-          <td class="catalog-name">{{ .Name }}</td>
+        <tr class="stock-row" data-item="{{ .ItemID }}" data-name="{{ .Name }}" data-sku="{{ .SKU }}" data-location="{{ .LocationID }}" data-location-name="{{ .LocationName }}" data-variant="{{ .VariantID }}">
+          <td class="catalog-name">{{ .Name }}{{ if .VariantName }} <span class="muted">— {{ .VariantName }}</span>{{ end }}</td>
           <td class="muted">{{ .SKU }}</td>
           <td>{{ .LocationName }}</td>
           <td class="{{ if .Low }}stock-low{{ end }}">{{ .CurrentQty }}</td>

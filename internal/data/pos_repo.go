@@ -164,6 +164,15 @@ type LowStockItem struct {
 	CurrentQty   float64 `json:"current_qty"`
 	ReorderLevel int     `json:"reorder_level"`
 	LeadTimeDays int     `json:"lead_time_days"` // days to receive a reorder; 0 = unset
+	// VariantID/VariantName are set only on a row for a variant-scoped
+	// inventory row (item_id NULL, variant_id set — the 001_init.sql CHECK
+	// constraint), empty on an item-level row — same ADR-0043 convention as
+	// ExportStockRow. ut-docs#2082: added so GetLowStockItems/ListStockLevels
+	// can surface a variant's own stock as its own row, additive to the
+	// parent item's row, never folded into it (ADR-0043 Decision 3 — no
+	// double-counting).
+	VariantID   string `json:"variant_id,omitempty"`
+	VariantName string `json:"variant_name,omitempty"`
 }
 
 // defaultWarnDays is the running-out threshold for an item with no lead
@@ -663,7 +672,7 @@ VALUES (?, ?, 'inventory', ?, 'negative_inventory_override', ?, ?)
 // GetLowStockItems returns all items where current inventory is below reorder level.
 func (r *POSRepo) GetLowStockItems(ctx context.Context, locationID string) ([]LowStockItem, error) {
 	query := `
-SELECT 
+SELECT
 	i.id,
 	i.name,
 	COALESCE(i.sku, ''),
@@ -677,6 +686,18 @@ LEFT JOIN stock_locations sl ON sl.id = inv.location_id
 WHERE i.reorder_level > 0
   AND COALESCE(inv.quantity, 0) < i.reorder_level
   AND i.stock_untracked = 0
+  -- ut-docs#2082: a variant-tracked item (has rows in item_variants) with
+  -- no item-scoped inventory row of its own is NOT "never stocked" — its
+  -- stock lives entirely on its variants, reported separately below by
+  -- variantLowStockItems. Without this guard, inv.item_id IS NULL here
+  -- reads exactly like a genuinely untouched item and phantom-reports it
+  -- as low (qty 0) at every location, even one where its variants
+  -- actually hold plenty of stock. An item that ALSO keeps its own
+  -- item-scoped row despite having variants is untouched by this guard
+  -- (inv.item_id IS NOT NULL covers it).
+  AND (inv.item_id IS NOT NULL OR NOT EXISTS (
+    SELECT 1 FROM item_variants v WHERE v.item_id = i.id
+  ))
 `
 	args := []any{}
 	if locationID != "" {
@@ -714,6 +735,73 @@ WHERE i.reorder_level > 0
 		return nil, fmt.Errorf("iterate low stock: %w", err)
 	}
 
+	variants, err := r.variantLowStockItems(ctx, locationID)
+	if err != nil {
+		return nil, err
+	}
+	return append(items, variants...), nil
+}
+
+// variantLowStockItems is GetLowStockItems' variant-scoped counterpart,
+// same ADR-0043 shape as variantStockForExport below: a separate query
+// joined through item_variants instead of items, additive to (never folded
+// into) the parent item's own row — ut-docs#2082. Without this, a
+// variant-tracked item's stock (item_id NULL, variant_id set rows) never
+// matched GetLowStockItems' `inv.item_id = i.id` join, so it read as
+// permanently, unclearably low at a false qty of 0 once its reorder_level
+// was set, regardless of what its variants actually held.
+//
+// Mirrors the item-scoped query's own "never stocked anywhere" inclusion
+// (LEFT JOIN from item_variants, not an INNER JOIN starting at inventory):
+// a variant awaiting its first delivery belongs on the reorder list too,
+// same reasoning as an item-scoped row with no inventory row at all.
+func (r *POSRepo) variantLowStockItems(ctx context.Context, locationID string) ([]LowStockItem, error) {
+	query := `
+SELECT
+	i.id,
+	i.name,
+	COALESCE(v.sku, ''),
+	v.id,
+	v.name,
+	COALESCE(inv.location_id, ''),
+	COALESCE(sl.name, ''),
+	COALESCE(inv.quantity, 0),
+	i.reorder_level
+FROM item_variants v
+JOIN items i ON i.id = v.item_id
+LEFT JOIN inventory inv ON inv.variant_id = v.id
+LEFT JOIN stock_locations sl ON sl.id = inv.location_id
+WHERE i.reorder_level > 0
+  AND COALESCE(inv.quantity, 0) < i.reorder_level
+  AND i.stock_untracked = 0
+  AND v.is_active = 1
+`
+	args := []any{}
+	if locationID != "" {
+		query += ` AND (inv.location_id = ? OR inv.location_id IS NULL)`
+		args = append(args, locationID)
+	}
+	query += ` ORDER BY i.name, v.name`
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query variant low stock: %w", err)
+	}
+	defer rows.Close()
+
+	var items []LowStockItem
+	for rows.Next() {
+		var item LowStockItem
+		if err := rows.Scan(&item.ItemID, &item.Name, &item.SKU, &item.VariantID, &item.VariantName,
+			&item.LocationID, &item.LocationName, &item.CurrentQty, &item.ReorderLevel); err != nil {
+			return nil, fmt.Errorf("scan variant low stock item: %w", err)
+		}
+		item.LocationName = stripRetireMangle(item.LocationID, item.LocationName)
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate variant low stock: %w", err)
+	}
 	return items, nil
 }
 
@@ -4367,6 +4455,51 @@ ORDER BY i.name, sl.name`)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate stock levels: %w", err)
+	}
+
+	variants, err := r.variantStockLevels(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return append(items, variants...), nil
+}
+
+// variantStockLevels is ListStockLevels' variant-scoped counterpart, the
+// same ADR-0043 shape as variantStockForExport just below (own query,
+// additive rows, never folded into the parent item's row): without it, a
+// variant-tracked item's Reorder-at row never appeared on the /inventory
+// screen at all, since ListStockLevels' own item-scoped INNER JOIN never
+// matches a variant-scoped inventory row (item_id NULL — ut-docs#2082).
+// Filters mirror variantStockForExport's exactly (both variant and parent
+// active, parent not stock_untracked) since ListStockLevels' own item
+// branch applies the identical i.is_active/i.stock_untracked filters.
+func (r *POSRepo) variantStockLevels(ctx context.Context) ([]LowStockItem, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT i.id, i.name, COALESCE(v.sku, ''), v.id, v.name, inv.location_id, COALESCE(sl.name, ''),
+       COALESCE(inv.quantity, 0), COALESCE(i.reorder_level, 0), COALESCE(i.lead_time_days, 0)
+FROM inventory inv
+JOIN item_variants v ON v.id = inv.variant_id
+JOIN items i ON i.id = v.item_id
+LEFT JOIN stock_locations sl ON sl.id = inv.location_id
+WHERE i.is_active = 1 AND v.is_active = 1
+  AND i.stock_untracked = 0
+ORDER BY i.name, v.name, sl.name`)
+	if err != nil {
+		return nil, fmt.Errorf("query variant stock levels: %w", err)
+	}
+	defer rows.Close()
+	var items []LowStockItem
+	for rows.Next() {
+		var item LowStockItem
+		if err := rows.Scan(&item.ItemID, &item.Name, &item.SKU, &item.VariantID, &item.VariantName,
+			&item.LocationID, &item.LocationName, &item.CurrentQty, &item.ReorderLevel, &item.LeadTimeDays); err != nil {
+			return nil, fmt.Errorf("scan variant stock level: %w", err)
+		}
+		item.LocationName = stripRetireMangle(item.LocationID, item.LocationName)
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate variant stock levels: %w", err)
 	}
 	return items, nil
 }

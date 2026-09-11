@@ -395,7 +395,10 @@ func TestListStockLevels_Batch8(t *testing.T) {
 	seedB8Inventory(t, d, "b8-lvl", "loc_back", 2)
 	seedB8Item(t, d, "b8-lvl-off", "sku-lvl-off", "B8 Level Inactive", 3, 0)
 	seedB8Inventory(t, d, "b8-lvl-off", "loc_main", 99)
-	// Variant-level inventory (item_id NULL) is not part of this per-item view.
+	// Variant-level inventory (item_id NULL) now surfaces as its OWN row,
+	// additive to (never folded into) its parent item's own row — ADR-0043's
+	// shape, extended to this view by ut-docs#2082. b8-lvlp itself has no
+	// item-scoped inventory row of its own, only its variant's.
 	seedB8Variant(t, d, "b8-lvlp", "b8-lvlv", "loc_main", 6)
 
 	levels, err := repo.ListStockLevels(ctx)
@@ -403,21 +406,26 @@ func TestListStockLevels_Batch8(t *testing.T) {
 		t.Fatalf("list levels: %v", err)
 	}
 	var mine []LowStockItem
-	for _, l := range levels {
+	var variantRow *LowStockItem
+	for i, l := range levels {
 		switch l.ItemID {
 		case "b8-lvl":
 			mine = append(mine, l)
 		case "b8-lvl-off":
 			t.Fatalf("inactive item leaked into stock levels: %+v", l)
 		case "b8-lvlp":
-			// A leaked variant inventory row would surface under its
-			// PARENT item's id (the items JOIN resolves i.id), never
-			// the variant id — so this is the id that must be absent.
-			t.Fatalf("variant-level inventory surfaced through its parent item: %+v", l)
+			variantRow = &levels[i]
 		}
 	}
 	if len(mine) != 2 {
 		t.Fatalf("b8-lvl rows: got %+v, want 2 (one per location)", mine)
+	}
+	if variantRow == nil {
+		t.Fatalf("b8-lvlp (variant-tracked, no item-scoped row of its own) must still appear via its variant's row")
+	}
+	if variantRow.VariantID != "b8-lvlv" || variantRow.VariantName != "330ml" ||
+		variantRow.LocationID != "loc_main" || variantRow.CurrentQty != 6 {
+		t.Fatalf("b8-lvlp variant row: %+v, want variant b8-lvlv/330ml at loc_main qty 6", variantRow)
 	}
 	// Same item's rows are ordered by location name: Back Store, then Main Store.
 	back, main := mine[0], mine[1]

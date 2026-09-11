@@ -41,6 +41,7 @@ Two separate signals warn you about running low, and only one needs any setup:
 
 - **Days left**, in the stock table's own column, and the ⚠ chip on the Stock Levels card here and on the Reports page's own header — works out of the box, purely from each item's last 28 days of sales against how much is left: a fast seller with little stock warns; an item with no sales history simply shows "—", never a guess. Setting an item's **Lead time (days)** on its Catalog **Variants** tab sharpens both the warning window and the suggested order quantity to how long that item actually takes to restock, instead of a flat default.
 - **Reorder at**, in the stock table, and the **Low Stock** list further down this page — both are driven by a reorder level set per item, which this build has no screen to set from the till yet: on a fresh shop neither one has anything to show ("—" in Reorder at, "No low stock items" in the list) until that's added. Days left above works today regardless.
+- **Items sold in variants** (size, colour, …) get their own row per variant on both signals, alongside the item's own row if it separately carries stock at the item level too — a variant's stock is never folded into or hidden behind its parent item's row, so each variant's own low-stock/reorder state is always visible on its own.
 
 ## Stock locations
 
