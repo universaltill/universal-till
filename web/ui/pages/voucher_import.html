@@ -1,0 +1,29 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "vouchers_import.title" }} {{ helpLink "voucher-import" }}</h1>
+  <a class="btn secondary" href="/settings">← {{ T "nav.settings" }}</a>
+</div>
+
+<div class="card">
+  <p class="muted">{{ T "vouchers_import.help" }}</p>
+  <!-- enctype="multipart/form-data" even on the confirm step (ut-docs#1834):
+       POST /api/vouchers/import's first step is r.ParseMultipartForm, which
+       rejects a plain urlencoded body outright — same reasoning import.html
+       documents for its own restore-resume form. The preview fragment
+       (swapped into #vouchers-import-result below) renders its OWN
+       "Confirm import" form carrying the exact uploaded bytes back as a
+       hidden base64 field, so this outer form only ever previews. -->
+  <form id="vouchers-import-form" hx-post="/api/vouchers/import" hx-target="#vouchers-import-result" hx-swap="innerHTML"
+        enctype="multipart/form-data" hx-indicator="#vouchers-import-busy" hx-disabled-elt="find button[type=submit]">
+    <input type="hidden" name="commit" value="0">
+    <p>
+      <input type="file" name="file" accept=".csv,text/csv" required>
+    </p>
+    <button class="btn primary" type="submit">{{ T "vouchers_import.preview_btn" }}</button>
+  </form>
+  <div id="vouchers-import-busy" class="htmx-indicator" style="margin-top:.6rem; font-size:1.05rem; font-weight:600">
+    <span class="animate-spin" aria-hidden="true">⏳</span> {{ T "vouchers_import.busy" }}
+  </div>
+  <div id="vouchers-import-result" style="margin-top:.8rem; overflow-x:auto"></div>
+</div>
+{{ end }}
