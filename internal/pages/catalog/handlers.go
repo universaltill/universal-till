@@ -555,7 +555,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		// plus an out-of-band refresh of the rail itself, so its is-current
 		// highlight follows the click; a plain browser GET (deep link) still
 		// gets the exact same full standalone page as before this card.
-		if httpx.IsFragmentSwap(r) {
+		if httpx.IsFragmentSwap(w, r) {
 			httpx.RenderWith(catalogFiles, funcs)("content", data)(w, r)
 			itemsnav.WriteRailOOB(w, r, funcs, "/catalog", itemsnav.Resolve(httpx.RequestLocale(r), d.ItemsAmendmentsSnapshot()))
 			return
@@ -584,7 +584,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"Groups":    groupModifierAdminByItem(groups, "modifiers-list"),
 		}
 		// ut-docs#1950: same /items rail embedding as /catalog above.
-		if httpx.IsFragmentSwap(r) {
+		if httpx.IsFragmentSwap(w, r) {
 			httpx.RenderContentFragment("ui/pages/modifiers.html", modifiersData)(w, r)
 			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/modifiers", itemsnav.Resolve(httpx.RequestLocale(r), d.ItemsAmendmentsSnapshot()))
 			return
@@ -611,7 +611,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"Sets":      sets,
 		}
 		// ut-docs#1950: same /items rail embedding as /catalog above.
-		if httpx.IsFragmentSwap(r) {
+		if httpx.IsFragmentSwap(w, r) {
 			httpx.RenderContentFragment("ui/pages/option_sets.html", optionSetsData)(w, r)
 			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/catalog/option-sets", itemsnav.Resolve(httpx.RequestLocale(r), d.ItemsAmendmentsSnapshot()))
 			return

@@ -8,7 +8,11 @@ import (
 // IsFragmentSwap backs the htmx-fragment-vs-full-page branch every one of
 // /items' five section handlers now has (ut-docs#1950), mirroring
 // renderHelpPage's original /help/{topic} check (ut-docs#433) — including
-// the same HX-History-Restore-Request exclusion.
+// the same HX-History-Restore-Request exclusion. Since ut-docs#2091 it also
+// sets "Vary: HX-Request" on the response as a side effect, on every call
+// regardless of the result, so a shared/browser cache never keys a
+// fragment and a full page under the same URL — see that card for the
+// caching bug this closes.
 func TestIsFragmentSwap(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -35,8 +39,15 @@ func TestIsFragmentSwap(t *testing.T) {
 			if tc.hxRestore != "" {
 				r.Header.Set("HX-History-Restore-Request", tc.hxRestore)
 			}
-			if got := IsFragmentSwap(r); got != tc.wantResult {
+			w := httptest.NewRecorder()
+			if got := IsFragmentSwap(w, r); got != tc.wantResult {
 				t.Errorf("IsFragmentSwap() = %v, want %v", got, tc.wantResult)
+			}
+			// ut-docs#2091: every call sets Vary, regardless of outcome —
+			// both the fragment branch and the full-page branch must
+			// invalidate a cache keyed on the plain URL alone.
+			if got := w.Header().Get("Vary"); got != "HX-Request" {
+				t.Errorf("Vary header = %q, want %q", got, "HX-Request")
 			}
 		})
 	}
