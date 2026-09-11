@@ -176,7 +176,7 @@ func TestLineOrderType_SnapshotRoundTripAndLegacyHeader(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Reset()
-	s.Restore(back)
+	s.RestoreHeld(back, HeldOrigin{})
 	b := s.Basket()
 	if b.Lines[0].OrderType != OrderTypeTakeaway || b.Lines[1].OrderType != "" {
 		t.Fatalf("restored modes = %q/%q", b.Lines[0].OrderType, b.Lines[1].OrderType)
@@ -192,7 +192,7 @@ func TestLineOrderType_SnapshotRoundTripAndLegacyHeader(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.Reset()
-	s.Restore(old)
+	s.RestoreHeld(old, HeldOrigin{})
 	b = s.Basket()
 	if b.Lines[0].OrderType != OrderTypeTakeaway || b.OrderType != OrderTypeTakeaway {
 		t.Fatalf("legacy restore: line=%q summary=%q, want takeaway/takeaway", b.Lines[0].OrderType, b.OrderType)

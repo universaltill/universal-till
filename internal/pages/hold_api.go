@@ -230,24 +230,48 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 			renderBasket(w, r, httpx.T(locale, "hold.error.failed"), "error")
 			return
 		}
-		label := truncateRunes(strings.TrimSpace(r.Form.Get("label")), maxHoldLabelRunes)
-		if label == "" {
-			label = strings.TrimSpace(snap.CustomerName)
-		}
-		if label == "" {
-			label = time.Now().Format("15:04")
-		}
 		held := data.HeldSale{
-			ID:         fmt.Sprintf("hold-%d", time.Now().UnixNano()),
-			Label:      label,
 			TotalMinor: snap.Total.Minor(),
 			LineCount:  len(snap.Lines),
 			Payload:    string(payload),
 			TableID:    snap.TableID,
 		}
-		if err := repo.Insert(ctx, held); err != nil {
-			renderBasket(w, r, httpx.T(locale, "hold.error.failed"), "error")
-			return
+		// ut-docs#1918: an order that was resumed from an existing held sale
+		// (and not yet re-parked -- Engine.HeldOrigin is set only by the
+		// resume handler's RestoreHeld and cleared by every basket reset)
+		// goes back under the SAME id and first-parked time it had, via
+		// Upsert -- one order, one identity, however many times it is
+		// picked up and put down. The label fallback chain (typed label ->
+		// customer name -> clock time) runs on a true first park; on a
+		// re-park the ORIGINAL label is kept unless the cashier explicitly
+		// typed a new one into the (still-shown) hold dialog -- a blank
+		// field never re-derives a label from the clock or the customer,
+		// but a genuine rename is honoured rather than silently discarded.
+		if origin := d.Engine.HeldOrigin(); !origin.IsZero() {
+			held.ID = origin.ID
+			held.Label = origin.Label
+			if typed := truncateRunes(strings.TrimSpace(r.Form.Get("label")), maxHoldLabelRunes); typed != "" {
+				held.Label = typed
+			}
+			held.CreatedAt = origin.CreatedAt
+			if err := repo.Upsert(ctx, held); err != nil {
+				renderBasket(w, r, httpx.T(locale, "hold.error.failed"), "error")
+				return
+			}
+		} else {
+			label := truncateRunes(strings.TrimSpace(r.Form.Get("label")), maxHoldLabelRunes)
+			if label == "" {
+				label = strings.TrimSpace(snap.CustomerName)
+			}
+			if label == "" {
+				label = time.Now().Format("15:04")
+			}
+			held.ID = fmt.Sprintf("hold-%d", time.Now().UnixNano())
+			held.Label = label
+			if err := repo.Insert(ctx, held); err != nil {
+				renderBasket(w, r, httpx.T(locale, "hold.error.failed"), "error")
+				return
+			}
 		}
 		// ut-docs#1704: the live claim the table pick wrote (ut-docs#1390) is
 		// deliberately KEPT here, not released -- it's the only signal that
@@ -335,7 +359,13 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		// the resume: the sale is restored either way, same philosophy as
 		// the Delete below.
 		prevTable := d.Engine.TableID()
-		d.Engine.Restore(snap)
+		// ut-docs#1918: RestoreHeld, not Restore -- the resumed basket
+		// remembers which row it came from (id, label, first-parked time),
+		// so re-parking it lands under the same identity (see the hold
+		// handler above). Remembered on the engine, not by skipping the
+		// Delete below: the row still goes away while the order is live,
+		// exactly as before, and comes back under the same id on re-park.
+		d.Engine.RestoreHeld(snap, pos.HeldOrigin{ID: held.ID, Label: held.Label, CreatedAt: held.CreatedAt})
 		restoredTable := d.Engine.TableID()
 		if restoredTable != "" && restoredTable != prevTable {
 			if claimed, err := claimTableWriteThrough(ctx, d, posRepo, restoredTable); err != nil || !claimed {

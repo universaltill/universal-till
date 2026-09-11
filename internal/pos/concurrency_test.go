@@ -88,7 +88,7 @@ func TestServiceConcurrentMutations(t *testing.T) {
 		_ = s.HasItems()
 		_ = s.HasLine("A")
 		snap := s.Snapshot()
-		s.Restore(snap)
+		s.RestoreHeld(snap, HeldOrigin{})
 		if i%97 == 0 {
 			s.Reset()
 		}

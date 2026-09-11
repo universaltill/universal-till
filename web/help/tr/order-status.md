@@ -13,7 +13,7 @@ Her siparişin ilerlemesini — hazırlanıyor, hazır, teslim edildi — tek do
 
 ## Nasıl kullanılır
 
-1. **Siparişler**'i açın — satış ekranındaki raftaki 🛎️ simgesinden, ya da ☰ menüden. Son satışlar en yenisi başta olacak şekilde, her biri güncel durumuyla listelenir.
+1. **Sipariş durumu**'nu açın — satış ekranındaki raftaki 🛎️ simgesinden, ya da ☰ menüden. Son satışlar en yenisi başta olacak şekilde, her biri güncel durumuyla listelenir.
 2. Satış ekranında bir müşterinin fiş barkodunu okutmak, henüz teslim edilmemişse siparişini doğrudan da açar — aynı tek dokunuşluk **Teslim edildi** düğmesiyle ve gerçekten gerekiyorsa iadeye giden bir bağlantıyla birlikte. Zaten teslim edilmiş ya da hiç takip edilmemiş bir fiş, tıpkı başka bitmiş bir fişi okutmakta olduğu gibi doğrudan iadeyi açar; iptal edilmiş bir sipariş ya da hiç tamamlanmamış bir satış ise bunun yerine satış ekranında sadece bunu bildirir.
 3. Mutfak siparişe başladığında **Hazırlanıyor**'a, sipariş alınabilir olduğunda **Hazır**'a, müşteri aldığında **Teslim edildi**'ye dokunun. Bunu her kasiyer yapabilir — yönetici PIN'i gerekmez.
 4. Her değişiklik, kimin ne zaman yaptığını durumun yanına kaydeder. Gösterilen numara, müşterinize verilen kısa sipariş numarasıdır (aşağıya bakın) — üzerine dokunmak İşlem geçmişindeki tam fişi açar, başka bir kasada alındığı için burada listelenen bir sipariş hariç (aşağıdaki nota bakın): bu kasa o fişi kendi kaydında tutmadığından numara görünür ama bağlantı değildir.

@@ -147,7 +147,7 @@ func TestSnapshotRestore_PreservesNoMergeProtection(t *testing.T) {
 
 	snap := s.Snapshot()
 	s.Reset()
-	s.Restore(snap)
+	s.RestoreHeld(snap, HeldOrigin{})
 
 	if _, err := s.Scan("CHEESE"); err != nil {
 		t.Fatal(err)
