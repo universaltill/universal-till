@@ -25,14 +25,32 @@ import (
 // of its own.
 func registerItemsPage(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/items", func(w http.ResponseWriter, r *http.Request) {
-		// AC #3: the first section (Library/Catalog) is selected by default
-		// — the right panel is never empty on a bare /items load.
-		current := itemsnav.Sections[0].Href
+		// RequestLocale, not ResolveLocale: Render resolves (and sets the
+		// ?lang= cookie) itself below; resolving twice would emit the
+		// cookie twice (same reasoning as menu_page.go's registerMenu).
+		locale := httpx.RequestLocale(r)
+		sections := itemsnav.Resolve(locale, d.ItemsAmendmentsSnapshot())
+		// Defensive, not reachable via any amendment a plugin can install
+		// today (the Items slot refuses `hide` at parse time — see
+		// itemsSpec's own comment — so uislot.CoreItems' five rows can
+		// never drop to zero through Resolve). Kept anyway: the old code
+		// indexed a statically non-empty package var, and this handler
+		// must never panic just because a future capability widening or a
+		// bug elsewhere left the resolved list empty (independent review
+		// of ut-docs#1911).
+		if len(sections) == 0 {
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", nil)
+			return
+		}
+		// AC #3: the first section (Library/Catalog, or whatever a `layout`
+		// plugin amendment reordered to the front) is selected by default —
+		// the right panel is never empty on a bare /items load.
+		current := sections[0].Href
 		data := map[string]any{
 			"title":       "Items",
 			"theme":       d.CurrentState().Theme,
 			"menuItems":   d.MenuSnapshot(),
-			"Sections":    itemsnav.Sections,
+			"Sections":    sections,
 			"CurrentHref": current,
 			"PanelHTML":   embedItemsSection(mux, r, current),
 		}

@@ -443,18 +443,21 @@ func validatePageEntryRoutes(ctx context.Context, repo *data.PluginRepo, tx *sql
 // validateLayoutEntries is ADR-0088's install-time half for every path that
 // writes plugin_entries type='layout' (PersistManifest AND Rollback, the
 // same two sites as validatePageEntryKeys). Each layout entry's config is
-// an amendment document over the Menu slot (internal/uislot): it must
-// parse (a typo'd field or an unknown key is refused, never a silent
-// render-time no-op), it may not hide a protected destination (Decision
-// E — the error names the key), and it may not restructure — reorder,
-// re-label, re-group, re-icon — a key ANOTHER installed plugin already
-// restructures (Decision F — the error names the incumbent and the key).
-// Two plugins hiding the same key is idempotent and accepted. The Menu
-// slot is `shared` in ADR-0041's vocabulary; this is that ADR's Decision
-// B refusal shape, deliberately not a "first registration wins".
+// an amendment document over ONE slot (internal/uislot — Menu or Items as
+// of ut-docs#1911, generalizing what was Menu-only): it must parse (a
+// typo'd field or an unknown key is refused, never a silent render-time
+// no-op), it may not hide a protected destination (Decision E — the error
+// names the key), and it may not restructure — reorder, re-label,
+// re-group, re-icon — a key ANOTHER installed plugin already restructures
+// in the SAME slot (Decision F — the error names the incumbent and the
+// key; uislot.FindConflict is slot-scoped, so a Menu key and an Items key
+// that happen to share a string never falsely conflict). Two plugins
+// hiding the same key is idempotent and accepted. Every slot here is
+// `shared` in ADR-0041's vocabulary; this is that ADR's Decision B
+// refusal shape, deliberately not a "first registration wins".
 func validateLayoutEntries(ctx context.Context, repo *data.PluginRepo, tx *sql.Tx, pluginID string, entries []ManifestEntry) error {
 	var candidate []uislot.Amendment
-	seenKeys := map[string]string{} // slot key -> entry key that amended it
+	seenKeys := map[string]string{} // "slot\x00key" -> entry key that amended it
 	for _, e := range entries {
 		if e.Type != "layout" {
 			continue
@@ -462,15 +465,16 @@ func validateLayoutEntries(ctx context.Context, repo *data.PluginRepo, tx *sql.T
 		// Validate the PERSISTED form (entryConfigJSON), not e.Config: it is
 		// the exact bytes Manager.loadLayoutEntries parses back at reload, so
 		// nothing can pass here and then be skipped there.
-		amendments, err := uislot.ParseMenuAmendmentsJSON(pluginID, entryConfigJSON(e))
+		amendments, err := uislot.ParseAmendmentsJSON(pluginID, entryConfigJSON(e))
 		if err != nil {
 			return fmt.Errorf("layout entry %q: %w", e.Key, err)
 		}
 		for _, a := range amendments {
-			if prev, dup := seenKeys[a.Key]; dup {
-				return fmt.Errorf("layout entry %q amends menu key %q, which layout entry %q of this manifest already amends — amend each key once", e.Key, a.Key, prev)
+			seenKey := a.Slot + "\x00" + a.Key
+			if prev, dup := seenKeys[seenKey]; dup {
+				return fmt.Errorf("layout entry %q amends %s-slot key %q, which layout entry %q of this manifest already amends — amend each key once", e.Key, a.Slot, a.Key, prev)
 			}
-			seenKeys[a.Key] = e.Key
+			seenKeys[seenKey] = e.Key
 		}
 		candidate = append(candidate, amendments...)
 	}
@@ -483,7 +487,7 @@ func validateLayoutEntries(ctx context.Context, repo *data.PluginRepo, tx *sql.T
 	}
 	var installed []uislot.Amendment
 	for _, row := range others {
-		amendments, err := uislot.ParseMenuAmendmentsJSON(row.PluginID, row.ConfigJSON)
+		amendments, err := uislot.ParseAmendmentsJSON(row.PluginID, row.ConfigJSON)
 		if err != nil {
 			// A row that passed this same validation at its own install
 			// cannot normally be malformed; if core's key set changed
@@ -494,7 +498,7 @@ func validateLayoutEntries(ctx context.Context, repo *data.PluginRepo, tx *sql.T
 		installed = append(installed, amendments...)
 	}
 	if c, ok := uislot.FindConflict(candidate, installed); ok {
-		return fmt.Errorf("layout amendment of menu key %q conflicts with plugin %s, which already restructures that destination — uninstall it first or amend a different key", c.Key, c.Incumbent)
+		return fmt.Errorf("layout amendment of key %q conflicts with plugin %s, which already restructures that destination — uninstall it first or amend a different key", c.Key, c.Incumbent)
 	}
 	return nil
 }

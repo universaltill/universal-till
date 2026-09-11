@@ -273,11 +273,14 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		// ADR-0088: the layout amendments in force, read once here and
 		// again on every ReloadPlugins — never per render.
 		MenuAmendments: common.BuildMenuAmendments(pm, common.RestoredMenuKeys(ctx, setStore)),
-		Engine:         engine,
-		KioskEngine:    kioskEngine,
-		BtnStore:       btnStore,
-		CatalogRepo:    catalogRepo,
-		AuthSvc:        authSvc,
+		// ADR-0088 / ut-docs#1911: the Items-slot twin, same read-once-then-
+		// on-reload lifecycle.
+		ItemsAmendments: common.BuildItemsAmendments(pm),
+		Engine:          engine,
+		KioskEngine:     kioskEngine,
+		BtnStore:        btnStore,
+		CatalogRepo:     catalogRepo,
+		AuthSvc:         authSvc,
 		// Order-status pub/sub (ut-docs#526): one instance for the process —
 		// the one-tap endpoint publishes, future KDS/pager surfaces subscribe.
 		OrderStatus: pos.NewOrderStatusBroadcaster(),

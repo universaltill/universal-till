@@ -114,6 +114,17 @@ func zzGuardTestHandler(dp *common.Deps) []uislot.Amendment {
 expect_fail "unlocked dp.Pm.LayoutAmendments read"
 clear_fixture "UnlockedLayoutAmendments"
 
+# ut-docs#1911: Deps.ItemsAmendments is MenuAmendments' Items-slot twin,
+# reassigned in the same ReloadPlugins critical section — must be caught
+# exactly the same way.
+plant "UnlockedItemsAmendments" 'package pages
+
+func zzGuardTestHandler(d *common.Deps) []uislot.Amendment {
+	return d.ItemsAmendments
+}'
+expect_fail "unlocked d.ItemsAmendments read"
+clear_fixture "UnlockedItemsAmendments"
+
 # A different *common.Deps receiver variable name — registerShiftsAPI/
 # registerInventoryAPI/registerPluginStore use "dp"/"deps" elsewhere in this
 # package, so the guard must not be fooled by those names either.
@@ -146,9 +157,10 @@ func zzGuardTestHandler(d *common.Deps, id, key string) {
 	_, _ = d.InstalledPlugin(id)
 	_, _ = d.MenuPluginByKey(key)
 	_ = d.MenuAmendmentsSnapshot()
+	_ = d.ItemsAmendmentsSnapshot()
 	_ = d.LayoutAmendmentsSnapshot()
 }'
-expect_pass "the locked MenuSnapshot/InstalledPlugin/MenuPluginByKey/MenuAmendmentsSnapshot/LayoutAmendmentsSnapshot accessors"
+expect_pass "the locked MenuSnapshot/InstalledPlugin/MenuPluginByKey/MenuAmendmentsSnapshot/ItemsAmendmentsSnapshot/LayoutAmendmentsSnapshot accessors"
 clear_fixture "LockedAccessorsUsed"
 
 # Test files exercise the locked accessors under controlled goroutine
@@ -175,7 +187,18 @@ func zzGuardTestHandler(pm *plugins.Manager) []uislot.Amendment {
 expect_fail "a new, non-allowlisted BuildMenuAmendments call site"
 clear_fixture "RogueBuildMenuAmendmentsCaller"
 
-# ...while the three allowlisted call sites (deps.go, state.go, init.go)
+# ut-docs#1911: BuildItemsAmendments reads the identical pm.LayoutAmendments
+# field under the identical caller-holds-the-lock contract — a new,
+# non-allowlisted caller of IT must fail this guard too, not just Menu's.
+plant "RogueBuildItemsAmendmentsCaller" 'package pages
+
+func zzGuardTestHandler(pm *plugins.Manager) []uislot.Amendment {
+	return common.BuildItemsAmendments(pm)
+}'
+expect_fail "a new, non-allowlisted BuildItemsAmendments call site"
+clear_fixture "RogueBuildItemsAmendmentsCaller"
+
+# ...while the allowlisted call sites (deps.go, state.go, init.go)
 # keep the clean codebase passing — asserted by the baseline check below.
 
 # Baseline: the guard must still pass on the real, unmodified codebase.

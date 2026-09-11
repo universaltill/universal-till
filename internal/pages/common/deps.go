@@ -55,7 +55,16 @@ type Deps struct {
 	// PluginMu — read it only through MenuAmendmentsSnapshot
 	// (guard-plugin-menu-read.sh enforces this, like Menu).
 	MenuAmendments []uislot.Amendment
-	Engine         *pos.Service
+	// ItemsAmendments are the Items-slot amendments in force (ADR-0088,
+	// ut-docs#1911) — MenuAmendments' twin for the /items rail. No restore
+	// mechanism exists for this slot yet (unlike Menu's Settings → Hidden
+	// menu tiles): a `layout` plugin hiding an Items row has no merchant-
+	// facing way back today short of uninstalling the plugin — a known,
+	// deliberately deferred gap (this card's demo only relabels, never
+	// hides). Rebuilt beside MenuAmendments in ReloadPlugins under
+	// PluginMu — read it only through ItemsAmendmentsSnapshot.
+	ItemsAmendments []uislot.Amendment
+	Engine          *pos.Service
 	// KioskEngine is the self-order kiosk's own basket engine — deliberately
 	// a SEPARATE instance from Engine (ut-docs#449): the kiosk surface is
 	// auth-exempt and reachable by any LAN client, so it must never be able
@@ -299,6 +308,7 @@ func (d *Deps) ReloadPlugins(ctx context.Context) error {
 	err := d.Pm.Reload(ctx)
 	d.Menu = BuildMenu(d.BaseMenu, d.Pm)
 	d.MenuAmendments = BuildMenuAmendments(d.Pm, RestoredMenuKeys(ctx, d.Settings))
+	d.ItemsAmendments = BuildItemsAmendments(d.Pm)
 	return err
 }
 
@@ -320,6 +330,14 @@ func (d *Deps) MenuAmendmentsSnapshot() []uislot.Amendment {
 	d.PluginMu.RLock()
 	defer d.PluginMu.RUnlock()
 	return d.MenuAmendments
+}
+
+// ItemsAmendmentsSnapshot is MenuAmendmentsSnapshot's twin for the Items
+// slot (ut-docs#1911) — the render path's only way to read them.
+func (d *Deps) ItemsAmendmentsSnapshot() []uislot.Amendment {
+	d.PluginMu.RLock()
+	defer d.PluginMu.RUnlock()
+	return d.ItemsAmendments
 }
 
 // LayoutAmendmentsSnapshot returns every active layout plugin's amendments
