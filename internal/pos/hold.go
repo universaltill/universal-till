@@ -71,6 +71,46 @@ type BasketSnapshot struct {
 	Total      money.Money `json:"total"`
 }
 
+// HeldOrigin (ut-docs#1918) identifies the parked held_sales row the live
+// basket was resumed from -- the order's stable identity across a
+// park -> resume -> re-park cycle. Before this, every re-park minted a
+// fresh `hold-<unixnano>` id and re-ran the label fallback chain, so one
+// order changed identity (and possibly name) every time it was touched.
+//
+// Carried on the engine, NOT inside BasketSnapshot: it is per-live-basket
+// state like tableID/customerID (a fact about which row this basket came
+// from), not part of the order's own content that gets serialized into
+// held_sales.payload -- writing it into the payload would make the row
+// describe itself, which is circular and survives nothing the engine
+// doesn't already know. The zero value (ID == "") means "never parked" --
+// the next hold mints a fresh id and runs the label fallback chain exactly
+// as before.
+//
+// Label and CreatedAt ride along with the ID because the resume handler
+// deletes the held_sales row the moment the order goes live (so a stale
+// duplicate never sits in the DB while the order is being edited), and
+// re-parking recreates the row under the same id -- so the original label
+// and first-parked timestamp have to be remembered here, or they'd be
+// re-derived (a different clock-time label, an "age" that resets on every
+// re-park).
+type HeldOrigin struct {
+	ID        string
+	Label     string
+	CreatedAt string
+}
+
+// IsZero reports whether this basket has no held-sale origin, i.e. it was
+// never parked (or has been reset/tendered since it was resumed).
+func (o HeldOrigin) IsZero() bool { return o.ID == "" }
+
+// HeldOrigin returns the held sale the current basket was resumed from, or
+// the zero HeldOrigin when it was never parked.
+func (s *Service) HeldOrigin() HeldOrigin {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.heldOrigin
+}
+
 // HasItems reports whether the current basket has any lines.
 func (s *Service) HasItems() bool {
 	s.mu.Lock()
@@ -110,13 +150,25 @@ func (s *Service) Snapshot() BasketSnapshot {
 	return snap
 }
 
-// Restore replaces the current basket with a previously held snapshot.
-func (s *Service) Restore(snap BasketSnapshot) {
+// RestoreHeld (ut-docs#1918) replaces the current basket with a previously
+// held snapshot and records origin as the held_sales row this basket now
+// belongs to, atomically under the lock, so the next hold re-parks it
+// under the same id/label instead of minting new ones. Pass the zero
+// HeldOrigin{} for a basket with no held-sale origin (e.g. restoring a
+// basket that was never parked) -- the restored basket then reads as never
+// parked, and its next hold mints a fresh id, exactly as the old bare
+// `Restore` used to (removed: `deadcode` flagged it unreachable in
+// production once hold_api.go's only caller switched to this one).
+// Origin is set here rather than by a separate setter afterward because
+// resetLocked() below clears any previous origin -- a caller that set it
+// first would have it silently wiped.
+func (s *Service) RestoreHeld(snap BasketSnapshot, origin HeldOrigin) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Lock-free cores, NOT s.Reset()/s.SetCustomer() — s.mu is non-reentrant
 	// and already held here (see the locking-pattern comment on Service.mu).
 	s.resetLocked()
+	s.heldOrigin = origin
 	// ADR-0073 legacy rule: a pre-ADR-0073 payload has no per-line values
 	// and its header IS the mode of every line. A new payload always writes
 	// an explicit "takeaway" on every takeaway line, so only a "takeaway"

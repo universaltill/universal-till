@@ -490,6 +490,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	dropStaleFiscalSignRetryQueue(bgCtx, dp) // one-time drop of the pre-1.4.0 re-sign queue — retry-signing removed (ADR-0056, ut-docs#839)
 	registerInvoices(mux, dp)                // VAT invoices + credit notes (G31)
 	registerHoldAPI(mux, dp)
+	registerOpenOrders(mux, dp) // Open orders list page: every parked (held) order (ut-docs#1918)
 	registerSuggestions(mux, dp)
 	registerTablePicker(mux, dp) // basket table-assignment picker (ut-docs#820, ADR-0054)
 	registerInventoryAPI(mux, dp)

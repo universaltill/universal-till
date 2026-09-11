@@ -29,19 +29,46 @@
             aria-label="{{ T "catalog.add_item_btn" }}" title="{{ T "catalog.add_item_btn" }}">
       <span class="btn-ico" aria-hidden="true">{{ icon "plus" }}</span>
     </button>
-    <!-- ut-docs#2095 tracks converting this into an in-panel/full-screen
-         surface — out of #2092's scope, unchanged here beyond the icon.
-         ut-docs#2090's own in-panel/full-navigation split for this button
-         (superseded here, see the commit that resolved this merge) is
-         exactly what #2095 will need to build on. -->
-    <a class="btn secondary btn-icon" href="/import"
-       aria-label="{{ T "import.title" }}" title="{{ T "import.title" }}">
+    <!-- ut-docs#2095 (merge of #2092's icon-only row + this card's dialog
+         behaviour — #2092's own comment on this button anticipated exactly
+         this): Import is NOT an /items rail section (itemsnav.Resolve's
+         five rows are Catalog/Categories/Inventory/Modifiers/Option sets
+         only), so the #2090 in-panel-swap pattern (hx-target="#items-panel")
+         used by Modifiers/Option-sets below would be wrong here — this
+         handler never replaces #items-panel. Instead, inside the /items
+         shell (.InItemsShell), it opens as a closable full-screen dialog
+         overlay floating ABOVE the shell.
+
+         Deliberately NOT the #catalog-barcode-backfill-btn/showModal()
+         pattern below (independent review, F1): this dialog contains a
+         real file input and the import wizard's own fields, and
+         showModal()'s top-layer/inert-outside behaviour makes the custom
+         on-screen keyboard (#osk, appended to <body>, never re-parented
+         into whichever dialog is open) completely unreachable — the exact
+         #1385 bug. So it reuses the .show()/.item-form-modal treatment
+         #item-form-modal itself uses for the identical reason.
+
+         hx-on::after-request is also guarded on event.detail.successful
+         (independent review, F2) — unguarded, a non-2xx response (e.g. a
+         cashier without import_export) still fired .show(), opening an
+         empty/erroring modal with no close control reachable on a
+         touch-only till (CLAUDE.md §10, ut-docs#1999). Same guard idiom
+         already used by catalog_variants.html/self_order_cart.html's own
+         hx-on::after-request calls. Outside the shell (a bare GET
+         /catalog), .InItemsShell is false and this stays a plain icon
+         link, unchanged from #2092. -->
+    <a id="catalog-import-btn" class="btn secondary btn-icon" href="/import"
+       aria-label="{{ T "import.title" }}" title="{{ T "import.title" }}"
+       {{ if .InItemsShell }}hx-get="/import" hx-target="#import-modal" hx-swap="innerHTML" hx-on::after-request="if (event.detail.successful) { document.getElementById('import-modal').show(); }"{{ end }}>
       <span class="btn-ico" aria-hidden="true">{{ icon "upload" }}</span>
     </a>
-    <!-- ut-docs#2095 tracks converting this into an in-panel/full-screen
-         surface — out of #2092's scope, unchanged here beyond the icon. -->
-    <a class="btn secondary btn-icon" href="/catalog/tax-codes"
-       aria-label="{{ T "taxcodes.title" }}" title="{{ T "taxcodes.title" }}">
+    <!-- ut-docs#2095: same dialog treatment as Import above, for the
+         identical reason (Tax codes isn't an /items rail section either,
+         and its form fields need the OSK reachable too) — see that
+         button's comment for the full reasoning. -->
+    <a id="catalog-taxcodes-btn" class="btn secondary btn-icon" href="/catalog/tax-codes"
+       aria-label="{{ T "taxcodes.title" }}" title="{{ T "taxcodes.title" }}"
+       {{ if .InItemsShell }}hx-get="/catalog/tax-codes" hx-target="#tax-codes-modal" hx-swap="innerHTML" hx-on::after-request="if (event.detail.successful) { document.getElementById('tax-codes-modal').show(); }"{{ end }}>
       <span class="btn-ico" aria-hidden="true">{{ icon "landmark" }}</span>
     </a>
     <button id="catalog-export-btn" class="btn secondary btn-icon"
@@ -67,6 +94,17 @@
 </div>
 
 <dialog id="barcode-backfill-modal" class="modifier-modal barcode-backfill-modal" aria-labelledby="catalog-barcode-backfill-btn"></dialog>
+
+<!-- ut-docs#2095: Import and Tax codes floating above the /items shell —
+     see the Import/Tax codes buttons above for the full reasoning. Empty
+     placeholders, filled by the hx-get swap and opened via .show().
+     .item-form-modal (not .modifier-modal) is deliberate: both contain
+     real text inputs, so they need the same OSK-reachable, full-bleed,
+     no-top-layer treatment as #item-form-modal itself, including its
+     existing `body.osk-padded .item-form-modal` keyboard-clearance rule
+     — reusing the class gets that for free, no new CSS needed. -->
+<dialog id="import-modal" class="item-form-modal" aria-labelledby="catalog-import-btn"></dialog>
+<dialog id="tax-codes-modal" class="item-form-modal" aria-labelledby="catalog-taxcodes-btn"></dialog>
 
 <!-- ut-docs#1957: the "Manage customization groups" nested dialog, opened
      from the compact summary button inside catalog_variants.html (below).

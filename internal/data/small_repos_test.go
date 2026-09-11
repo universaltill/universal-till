@@ -81,6 +81,65 @@ func TestHeldSalesRepo_InsertGetListDelete(t *testing.T) {
 	}
 }
 
+// TestHeldSalesRepo_Upsert (ut-docs#1918): the re-park write. A held sale
+// resumed into the live basket keeps its original id; parking it again
+// must land under that SAME id whether the original row is gone (the
+// resume handler deleted it -- recreate, keeping the remembered first-
+// parked created_at) or still there (update in place, created_at
+// untouched). Insert itself is unchanged: a fresh first park still leaves
+// created_at to the schema default.
+func TestHeldSalesRepo_Upsert(t *testing.T) {
+	repo := newHeldSalesTestDB(t)
+	ctx := context.Background()
+
+	// Recreate after delete, with the remembered first-parked time.
+	if err := repo.Upsert(ctx, HeldSale{ID: "h1", Label: "Table 4", TotalMinor: 1200, LineCount: 3, Payload: `{"lines":[]}`, TableID: "tbl-1", CreatedAt: "2026-09-09 10:00:00"}); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := repo.Get(ctx, "h1")
+	if err != nil || !ok {
+		t.Fatalf("Get h1 after upsert-insert: ok=%v err=%v", ok, err)
+	}
+	if got.Label != "Table 4" || got.TotalMinor != 1200 || got.LineCount != 3 || got.TableID != "tbl-1" {
+		t.Fatalf("unexpected held sale after upsert-insert: %+v", got)
+	}
+	if got.CreatedAt != "2026-09-09 10:00:00" {
+		t.Fatalf("upsert-insert must honour the remembered created_at, got %q", got.CreatedAt)
+	}
+
+	// Update in place: contents refresh, id and created_at stay.
+	if err := repo.Upsert(ctx, HeldSale{ID: "h1", Label: "Table 4", TotalMinor: 1500, LineCount: 4, Payload: `{"lines":[{}]}`, TableID: "", CreatedAt: "2030-01-01 00:00:00"}); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err = repo.Get(ctx, "h1")
+	if err != nil || !ok {
+		t.Fatalf("Get h1 after upsert-update: ok=%v err=%v", ok, err)
+	}
+	if got.TotalMinor != 1500 || got.LineCount != 4 || got.Payload != `{"lines":[{}]}` || got.TableID != "" {
+		t.Fatalf("upsert-update must refresh the row's contents, got %+v", got)
+	}
+	if got.CreatedAt != "2026-09-09 10:00:00" {
+		t.Fatalf("upsert-update must leave created_at at the first park, got %q", got.CreatedAt)
+	}
+	list, err := repo.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("upsert must never duplicate a row, got %d", len(list))
+	}
+
+	// No remembered created_at -> schema default (now), never an empty
+	// string that would parse as "no age".
+	if err := repo.Upsert(ctx, HeldSale{ID: "h2", Label: "Walk-in", Payload: `{}`}); err != nil {
+		t.Fatal(err)
+	}
+	got2, _, _ := repo.Get(ctx, "h2")
+	if got2.CreatedAt == "" {
+		t.Fatalf("upsert without CreatedAt must fall back to the schema default, got empty")
+	}
+}
+
 // ut-docs#820: a held sale's assigned table survives Insert/Get/List, and
 // SetTable is the "move a parked order to a different table" write --
 // updating table_id alone, leaving everything else about the held sale

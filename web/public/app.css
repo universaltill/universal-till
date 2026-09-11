@@ -1648,6 +1648,25 @@ a.btn, a.btn:hover { text-decoration: none; }
    larger cap keep the common case scroll-free; the table wrapper's
    overflow:auto is the remaining safety net for a still-longer row. */
 .barcode-backfill-modal { max-width: 38rem; }
+/* ut-docs#2095: #tax-codes-modal/#import-modal are .item-form-modal, not
+   .modifier-modal (independent review, F1/F2 -- both dialogs hold real
+   text inputs, so they need the same OSK-reachable .show()/no-top-layer
+   treatment #item-form-modal itself uses, not showModal()'s inert-outside
+   behaviour) -- see catalog.html's own comment on the two dialogs for the
+   full reasoning. .item-form-modal is already full-bleed (inset: 0, no
+   max-width), so unlike .barcode-backfill-modal/.modifier-modal above
+   there is no dialog width to widen here. What's still needed is a
+   horizontal-scroll safety net on the tax-codes table's own wrapper
+   (#tax-codes-table, tax_codes_table.html) at narrow viewports -- measured
+   at 360x800 the Active/Edit/Deactivate columns clip without it. NOTE:
+   the standalone /catalog/tax-codes page (outside this dialog) is NOT
+   unaffected -- independent review measured it overflowing WORSE at
+   360px (overflow-x: visible, ~183px of table hanging off the document,
+   the whole page scrolling horizontally to 521px in a 360px viewport) --
+   that's a pre-existing gap this rule doesn't reach (scoped to
+   #tax-codes-modal specifically) and is tracked as its own follow-up
+   rather than widened here. */
+#tax-codes-modal #tax-codes-table { overflow-x: auto; }
 /* Hold Sale naming (ut-docs#46) is opened non-modal (dialog.show(), not
    showModal()): a showModal() dialog makes everything outside it inert,
    including the custom on-screen keyboard (#osk, appended to <body>, not

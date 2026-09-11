@@ -344,6 +344,25 @@
     },
     {
       "locale": "fa",
+      "topic": "open-orders",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 3,
+        "sub_bullets": 0,
+        "top_bullets": 4,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 3,
+        "sub_bullets": 0,
+        "top_bullets": 4,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1918 — reviewed, not a translation error: Persian's step 1 opens with the noun phrase '**سفارش‌های باز**' (Open orders) immediately after the '1. ' numbering, with the imperative verb at the end (SOV word order), so it matches boldLeadInRe where English's 'Open **Open orders** from the ☰ menu' has the verb 'Open' between the numbering and the bold term. Same shape as the other fa/ar/tr word-order-driven bold_leadins entries above (ut-docs#1962)."
+    },
+    {
+      "locale": "fa",
       "topic": "option-sets",
       "signature": {
         "headings": 3,
