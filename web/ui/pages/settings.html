@@ -817,6 +817,15 @@
     <div id="cat-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
   </div>
   <div id="cat-results" class="set-gap-s"></div>
+
+  <!-- ut-docs#1834: a migrating merchant's existing voucher balances, as an
+       opening liability -- a separate small CSV import, distinct from the
+       catalog cleanup just above and from /import's catalog importer
+       (different format; gated on "settings", not "import_export"). -->
+  <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
+  <h3 style="margin:0 0 .3rem">{{ T "settings.data.vouchers_import_title" }}</h3>
+  <p class="muted">{{ T "settings.data.vouchers_import_help" }}</p>
+  <a class="btn secondary" href="/settings/vouchers/import">{{ T "settings.data.vouchers_import_btn" }}</a>
   {{ end }}
 
   {{ if .restorePromptDeferred }}

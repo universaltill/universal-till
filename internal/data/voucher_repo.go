@@ -569,6 +569,21 @@ type VoucherRangeSummary struct {
 // real, non-voided sale whose voucher flows must keep counting; a void, by
 // contrast, keeps its sales row (pos.UpdateSaleStatus never deletes), so
 // `status = 'voided'` is reliably observable whenever it happened.
+//
+// A type='issue' row with sale_id IS NULL is also excluded (ut-docs#1834):
+// the only writer of such a row is internal/pages/import_vouchers_page.go's
+// opening-balance CSV import — a migrating merchant's pre-existing voucher
+// balance, not a sale made at this till. Every OTHER 'issue' row in this
+// table (internal/pos/sales.go, the only other caller of
+// RecordVoucherTransaction with type='issue') always carries a real,
+// non-empty sale_id, so this exclusion can only ever match an imported row,
+// never a genuine sale. Without it, importing opening balances would
+// silently inflate whatever calendar day the import happened to run on's
+// "Issued" count/amount on the Z-report, misleading the operator into
+// thinking vouchers were sold that day. The total OUTSTANDING liability
+// (vouchers.balance, summed elsewhere if ever reported) is unaffected by
+// this — an imported voucher's balance is real and correctly counts there;
+// only this transaction-FLOW aggregation excludes it.
 func (r *POSRepo) VouchersIssuedRedeemedForRange(ctx context.Context, from, to string) (VoucherRangeSummary, error) {
 	var out VoucherRangeSummary
 	rows, err := r.db.QueryContext(ctx, `
@@ -577,6 +592,7 @@ FROM voucher_transactions vt
 LEFT JOIN sales s ON s.id = vt.sale_id
 WHERE date(vt.created_at, 'localtime') BETWEEN date(?) AND date(?)
   AND (s.id IS NULL OR s.status != 'voided')
+  AND NOT (vt.type = 'issue' AND vt.sale_id IS NULL)
 GROUP BY vt.type`, from, to)
 	if err != nil {
 		return out, fmt.Errorf("vouchers issued/redeemed for range: %w", err)
@@ -607,7 +623,9 @@ GROUP BY vt.type`, from, to)
 // issue/redemption aggregation with the same voided-sale exclusion (LEFT
 // JOIN, permissive on a MISSING sale row — see the range function's doc
 // comment for why an archived-away sale must keep counting while a voided
-// one must not), over a half-open [from, to) INSTANT window — see
+// one must not) AND the same imported-opening-balance exclusion
+// (ut-docs#1834, see the range function's doc comment), over a half-open
+// [from, to) INSTANT window — see
 // pos_repo.go's instantWindow for the comparison form and the zero-`from`
 // (till's first-ever close) unbounded case. Called out explicitly by the
 // ADR precisely because it lives in a different file than the fragments
@@ -621,6 +639,7 @@ FROM voucher_transactions vt
 LEFT JOIN sales s ON s.id = vt.sale_id
 WHERE `+win+`
   AND (s.id IS NULL OR s.status != 'voided')
+  AND NOT (vt.type = 'issue' AND vt.sale_id IS NULL)
 GROUP BY vt.type`, args...)
 	if err != nil {
 		return out, fmt.Errorf("vouchers issued/redeemed for instant window: %w", err)
