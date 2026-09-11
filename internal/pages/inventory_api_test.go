@@ -928,6 +928,59 @@ func TestCreateReturn_SecondReturnAgainstSameLineIsCapped(t *testing.T) {
 	}
 }
 
+// seedCompletedSaleWithQtyForReturn is seedCompletedSaleForReturn's
+// multi-unit sibling: a single line sold at the given quantity, so a test
+// can return PART of it and still have something left to request against.
+func seedCompletedSaleWithQtyForReturn(t *testing.T, dp *common.Deps, qty int) (saleID, receiptNo, lineID string) {
+	t.Helper()
+	ctx := context.Background()
+	saleID, receiptNo = "sale-return-partial-1", "R-RETURN-PARTIAL-1"
+	total := 100 * qty
+	taxTotal := 20 * qty
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', ?, 0, ?, ?, datetime('now'), datetime('now'))`, saleID, receiptNo, total, taxTotal, total+taxTotal); err != nil {
+		t.Fatal(err)
+	}
+	lineID = "line-return-partial-1"
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES(?, ?, 1, 'itm1', 'Apple', 'ABC', ?, 100, 2000, ?, ?, ?)`, lineID, saleID, qty, taxTotal, total, total+taxTotal); err != nil {
+		t.Fatal(err)
+	}
+	return saleID, receiptNo, lineID
+}
+
+// TestCreateReturn_PartialReturnThenOverLimitRejected is the other half of
+// ut-docs#2069's acceptance criteria that
+// TestCreateReturn_SecondReturnAgainstSameLineIsCapped above doesn't cover:
+// not just a second request for the FULL original quantity, but a partial
+// return followed by a request for more than what's actually left.
+func TestCreateReturn_PartialReturnThenOverLimitRejected(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	saleID, _, lineID := seedCompletedSaleWithQtyForReturn(t, dp, 3)
+
+	// Return 1 of the 3 sold -- must succeed, leaving 2 remaining.
+	partial := postInvJSON(t, mux, "/api/inventory/return",
+		`{"original_sale_id":"`+saleID+`","reason":"faulty","lines":[{"line_id":"`+lineID+`","quantity":1}]}`)
+	if partial.Code != http.StatusOK {
+		t.Fatalf("expected the partial return to succeed, got %d: %s", partial.Code, partial.Body.String())
+	}
+
+	// Only 2 remain -- requesting 3 more must be rejected, not silently
+	// capped or allowed.
+	over := postInvJSON(t, mux, "/api/inventory/return",
+		`{"original_sale_id":"`+saleID+`","reason":"too many","lines":[{"line_id":"`+lineID+`","quantity":3}]}`)
+	if over.Code != http.StatusBadRequest {
+		t.Fatalf("expected a request for more than the 2 remaining to be REJECTED, got %d: %s", over.Code, over.Body.String())
+	}
+
+	// Exactly the 2 remaining must still be accepted.
+	rest := postInvJSON(t, mux, "/api/inventory/return",
+		`{"original_sale_id":"`+saleID+`","reason":"faulty","lines":[{"line_id":"`+lineID+`","quantity":2}]}`)
+	if rest.Code != http.StatusOK {
+		t.Fatalf("expected the remaining 2 to be returnable, got %d: %s", rest.Code, rest.Body.String())
+	}
+}
+
 // TestGetReturnLines_RemainingNetsPriorReturn confirms the picker itself
 // never OFFERS a quantity the POST above would then refuse (ut-docs#2069)
 // -- Remaining must drop to 0 for a line already fully returned, not stay
