@@ -12,6 +12,7 @@ import (
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
+	"github.com/universaltill/universal-till/internal/print"
 )
 
 // shopItem is one tile on the kiosk browse grid. Deliberately a distinct
@@ -264,9 +265,20 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 	// Payment-method picker (ADR-0020: card/contactless only, no cash
 	// drawer at a kiosk) — shown in the same #selforder-modal the
 	// customization picker uses.
+	//
+	// ut-docs#582: in "counter" payment mode there is nothing to pick --
+	// the kiosk never takes payment -- so this renders the plain "place
+	// order" confirm screen (self_order_counter_confirm.html) instead of
+	// loading/offering payment methods at all. Checked FIRST, before the
+	// ListActiveNonCashPaymentMethods call below, so a counter-mode kiosk
+	// never even queries payment methods it will never show.
 	mux.HandleFunc("GET /api/self-order/checkout", func(w http.ResponseWriter, r *http.Request) {
 		if len(d.KioskEngine.Lines()) == 0 {
 			http.Error(w, "basket is empty", http.StatusBadRequest)
+			return
+		}
+		if d.CurrentState().KioskPaymentMode == common.KioskPaymentModeCounter {
+			renderKioskCounterConfirmPicker(w, r, d)
 			return
 		}
 		methods, err := repo.ListActiveNonCashPaymentMethods(r.Context())
@@ -279,6 +291,14 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 
 	mux.HandleFunc("POST /api/self-order/checkout", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
+		// ut-docs#582: counter-mode checkout is a COMPLETELY separate path
+		// -- checked before any method/ListActiveNonCashPaymentMethods code
+		// runs -- because it creates no sale/payment at all. Kiosk (default)
+		// mode below this branch is byte-identical to before this card.
+		if d.CurrentState().KioskPaymentMode == common.KioskPaymentModeCounter {
+			completeCounterOrderCheckout(w, r, d)
+			return
+		}
 		// ut-docs#1795: same canonicalization as the cashier tender/refund
 		// paths (pos_api.go, refund_page.go) -- this handler shares the
 		// same completeTender -> blockingPaymentEventWithResponseAndID /
@@ -440,8 +460,137 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			"DisplayNo":   displayNo,
 			"TrackingQR":  trackingQR,
 			"TrackingURL": trackingURL,
+			"CounterMode": false,
 		})(w, r)
 	})
+}
+
+// renderKioskCounterConfirmPicker renders the "pay at counter" confirm
+// screen (ut-docs#582) — the counter-mode twin of renderKioskPaymentPicker
+// above: no payment methods to choose, just one big "place order" button.
+func renderKioskCounterConfirmPicker(w http.ResponseWriter, r *http.Request, d *common.Deps) {
+	httpx.RenderPartial("ui/partials/self_order_counter_confirm.html", map[string]any{
+		"Total": d.KioskEngine.Basket().Total,
+	})(w, r)
+}
+
+// counterOrderModifierNames flattens a basket line's chosen modifiers to
+// their option names, the same shape kitchenItemsFor (kitchen_print.go)
+// reads off data.SaleDetailLine.Modifiers — this basket line hasn't been
+// through a sale yet, so it flattens straight from pos.BasketLine's own
+// []data.SelectedModifier instead.
+func counterOrderModifierNames(mods []data.SelectedModifier) []string {
+	if len(mods) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(mods))
+	for _, m := range mods {
+		names = append(names, m.OptionName)
+	}
+	return names
+}
+
+// completeCounterOrderCheckout is the entire "pay at counter" checkout path
+// (ut-docs#582): unlike the kiosk (card/contactless) path above, it never
+// builds a pos.SaleInput and never calls completeTender — there is no
+// payment to take, so there must be no sale/payment row either. It records
+// a kiosk_counter_orders row instead (internal/data/
+// kiosk_counter_orders_repo.go), fires a best-effort kitchen ticket, clears
+// the kiosk basket the same way GET /self-order does on every fresh visit
+// (d.KioskEngine.Reset()), and renders the SAME self_order_confirmation.html
+// partial the kiosk path uses, with CounterMode=true selecting the
+// "selforder.confirm.counter_hint" copy instead of the payment-flow hint.
+func completeCounterOrderCheckout(w http.ResponseWriter, r *http.Request, d *common.Deps) {
+	lines := d.KioskEngine.Lines()
+	if len(lines) == 0 {
+		http.Error(w, "basket is empty", http.StatusBadRequest)
+		return
+	}
+	orderLines := make([]data.KioskCounterOrderLine, 0, len(lines))
+	locale := httpx.ResolveLocale(w, r)
+	for _, l := range lines {
+		orderLines = append(orderLines, data.KioskCounterOrderLine{
+			Name:      l.Name,
+			Qty:       httpx.FormatQtyLatin(l.Qty, locale),
+			Modifiers: counterOrderModifierNames(l.Modifiers),
+		})
+	}
+
+	repo := data.NewKioskCounterOrdersRepo(d.Db)
+	order, err := repo.Create(r.Context(), data.KioskCounterOrder{
+		OrderType: d.KioskEngine.OrderType(),
+		Lines:     orderLines,
+	})
+	if err != nil {
+		http.Error(w, "failed to place order", http.StatusInternalServerError)
+		return
+	}
+
+	// Same post-checkout reset the kiosk (card/contactless) path gets via
+	// completeTender's own engine.Reset() call — a counter order is just as
+	// "done" from the kiosk's point of view as a paid sale.
+	d.KioskEngine.Reset()
+
+	printCounterOrderTicketAsync(d, order)
+
+	httpx.RenderPartial("ui/partials/self_order_confirmation.html", map[string]any{
+		"ReceiptNo":   order.ID,
+		"DisplayNo":   order.DisplayNo,
+		"TrackingQR":  "",
+		"TrackingURL": "",
+		"CounterMode": true,
+	})(w, r)
+}
+
+// printCounterOrderTicketAsync sends a kitchen ticket for a counter order
+// without ever blocking checkout — mirrors printKitchenAsync's shape
+// (kitchen_print.go: goroutine, d.AsyncWork tracked, its own timeout,
+// best-effort, never fails or delays the order) but builds
+// print.KitchenTicket/print.KitchenItem DIRECTLY from the counter order's
+// own fields instead of going through buildKitchenTicket/buildKitchenTargets
+// — both of those hard-require a data.SaleDetail via GetSaleDetail(receiptNo),
+// which does not exist for a counter order (there is no sale row at all).
+// v1 scope (explicit non-goal per the card): one ticket to the legacy
+// printer.kitchen_addr only — no per-station routing.
+func printCounterOrderTicketAsync(d *common.Deps, order data.KioskCounterOrder) {
+	d.AsyncWork.Add(1)
+	go func() {
+		defer d.AsyncWork.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), printAsyncTimeout)
+		defer cancel()
+		cfg, cfgErr := printerConfigChecked(ctx, d)
+		if cfgErr != nil || !cfg.KitchenEnabled() {
+			// No legacy kitchen printer configured (or the settings read
+			// itself failed) — best-effort, silently no-op, same as
+			// printKitchenAsync's own "nothing to send" path. A counter
+			// order carries no /orders warning flag to set (it isn't a
+			// sale), so there is nothing further to record either way.
+			return
+		}
+		locale := httpx.DefaultLocale()
+		items := make([]print.KitchenItem, 0, len(order.Lines))
+		for _, l := range order.Lines {
+			items = append(items, print.KitchenItem{
+				Qty:       l.Qty,
+				Name:      l.Name,
+				Modifiers: l.Modifiers,
+			})
+		}
+		ticket := print.KitchenTicket{
+			Station:    kitchenTicketText(locale, cfg.Charset, "kitchen.ticket.station_default"),
+			OrderNo:    order.DisplayNo,
+			OrderLabel: kitchenTicketText(locale, cfg.Charset, "kitchen.ticket.order_label"),
+			OrderType:  kitchenOrderTypeLabel(locale, cfg.Charset, order.OrderType),
+			Timestamp:  order.CreatedAt,
+			Charset:    cfg.Charset,
+			Items:      items,
+		}
+		tr, err := print.TransportForAddress(cfg.KitchenAddress)
+		if err != nil || tr == nil {
+			return
+		}
+		_ = tr.Print(ctx, print.RenderKitchenTicket(ticket))
+	}()
 }
 
 // kioskSaleLinesAndTotal converts the current basket into SaleLineInput rows
@@ -505,6 +654,15 @@ func renderKioskCartWithMessage(w http.ResponseWriter, r *http.Request, d *commo
 	}
 	httpx.RenderPartial("ui/partials/self_order_cart.html", map[string]any{
 		"Basket": b,
+		// CounterMode re-labels the cart's own call-to-action (review
+		// finding, ut-docs#582): "selforder.checkout" reads as a neutral
+		// "Checkout" in English, but its ar/fa/tr translations literally
+		// mean "Pay" (الدفع / پرداخت / Ödeme). In counter mode the kiosk
+		// never takes payment, so on those locales the button promised
+		// something the next screen immediately contradicts. Reuses the
+		// existing "selforder.counter.place_order" key rather than adding a
+		// new one, so this costs no extra language-pack follow-up.
+		"CounterMode": d.CurrentState().KioskPaymentMode == common.KioskPaymentModeCounter,
 	})(w, r)
 }
 

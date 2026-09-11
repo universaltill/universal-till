@@ -4,7 +4,16 @@
        (already resolved to ReceiptNo when the sale has none) -- ReceiptNo
        itself is never shown here, it only feeds the tracking QR above. -->
   <p class="order-confirmation-receipt">{{ T "selforder.confirm.receipt" }}: {{ .DisplayNo }}</p>
+  <!-- ut-docs#582: counter mode never took payment, so the ordinary
+       "sent to the kitchen" hint would be misleading (or, worse, read as a
+       promise the kiosk already charged them) -- CounterMode swaps in the
+       dedicated pay-at-counter copy instead of touching the existing hint
+       key every kiosk-mode confirmation already uses. -->
+  {{ if .CounterMode }}
+  <p class="muted">{{ T "selforder.confirm.counter_hint" }}</p>
+  {{ else }}
   <p class="muted">{{ T "selforder.confirm.hint" }}</p>
+  {{ end }}
   {{ if .TrackingQR }}
   <!-- Order-tracking QR (ut-docs#527): scanning opens /o/{token} on the
        customer's phone. Only rendered when the till has a LAN-dialable

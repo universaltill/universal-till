@@ -13,3 +13,5 @@ Self servis sipariş, bir kasayı müşterilerin kataloğa göz atıp kendi sipa
 Müşteriler ürünleri kategori etiketlerine dokunarak bulur — bu ekranda bilinçli olarak arama kutusu yoktur.
 
 Sepette, kasiyer sepetiyle aynı "burada / paket" seçeneği bulunur; böylece müşteri kendi siparişini paket olarak işaretleyebilir (veya geri alabilir). Bu seçim fiş, satış kaydı ve mutfak fişine işlenir; vergiyi yalnızca bölgenize özgü bir vergi eklentisi bunu farklı bir oran seçmek için kullanırsa değiştirir.
+
+Varsayılan olarak kiosk, siparişi mutfağa göndermeden önce ödemeyi (kart/temassız) kendisi alır. Ayarlar → Kiosk ödeme modu ayrıca **Kasada öde**'yi de sunar: kiosk her siparişi herhangi bir ödeme almadan doğrudan mutfağa gönderir ve müşteri siparişini alırken kasada bir kişiye öder. Personel bu siparişleri kendi panosunda görür ve yönetir — bkz. [Kasada öde](/help/kiosk-counter-orders).

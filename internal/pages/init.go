@@ -488,8 +488,9 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	catalog.Register(mux, dp)
 	registerBasket(mux, dp)
 	registerJournal(mux, dp)
-	registerOrderStatus(mux, dp)   // order lifecycle status one-tap surface (ut-docs#526)
-	registerOrderTracking(mux, dp) // anonymous customer tracking page /o/{token}, auth-exempt (ut-docs#527)
+	registerOrderStatus(mux, dp)            // order lifecycle status one-tap surface (ut-docs#526)
+	registerKioskCounterOrdersPage(mux, dp) // staff "pay at counter" board (ut-docs#582), normal authenticated route
+	registerOrderTracking(mux, dp)          // anonymous customer tracking page /o/{token}, auth-exempt (ut-docs#527)
 	registerHealth(mux)
 	registerWindowState(mux, dp) // desktop shell reads this pre-login at launch (ut-docs#611)
 	registerExternalProxy(mux, dp)

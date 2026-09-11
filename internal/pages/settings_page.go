@@ -1038,6 +1038,43 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		settingsRespondSaved(w, r, elev)
 	})
 
+	// Self-order kiosk payment mode (ut-docs#582): "kiosk" (default --
+	// ADR-0020's card/contactless payment picker) or "counter" ("pay at
+	// counter" -- the kiosk takes the order and sends it to the kitchen but
+	// never charges anything; a human takes payment at the till
+	// afterwards, so counter-mode checkout creates no sale/payment row at
+	// all -- see internal/data/kiosk_counter_orders_repo.go). Manager/admin
+	// only, same elevation gate as every other kiosk setting on this page.
+	// ut-docs#865: checkOrElevate/InsertAuditElevated, same validation-
+	// before-elevation ordering as kiosk-idle-reset just above.
+	mux.HandleFunc("POST /api/settings/kiosk-payment-mode", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		_ = r.ParseForm()
+		mode := strings.TrimSpace(r.Form.Get("mode"))
+		switch mode {
+		case common.KioskPaymentModeKiosk, common.KioskPaymentModeCounter:
+		default:
+			http.Error(w, "mode must be kiosk or counter", http.StatusBadRequest)
+			return
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/settings/kiosk-payment-mode", "#kiosk-payment-mode-msg",
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.kiosk_payment_mode"), httpx.T(locale, "settings.kiosk.payment_mode."+mode)),
+				[]elevationHiddenField{{Name: "mode", Value: mode}}, elev)
+			return
+		}
+		st := d.CurrentState()
+		st.KioskPaymentMode = mode
+		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		d.SetState(st)
+		settingsAudit(r, posRepo, elev, "settings", common.KeyKioskPaymentMode, "kiosk_payment_mode_changed", map[string]any{"mode": mode})
+		settingsRespondSaved(w, r, elev)
+	})
+
 	// Window mode (ut-docs#608 scaffold, #883 for the Pi kiosk path): stores
 	// the till's window/process display mode AND applies it via WindowCtl.
 	// Real OS effect today: the Pi headless kiosk (#883, immediately, no
