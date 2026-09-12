@@ -409,6 +409,55 @@ func TestImport_CommitShowsDistinctSuccessSummaryWithCatalogLink(t *testing.T) {
 	}
 }
 
+// TestImport_CommitInItemsShellClosesDialogNotBareNavigation covers
+// ut-docs#2112: from inside the /items shell's Import dialog, the commit
+// success summary's "View catalog" control must not plain-navigate to bare
+// /catalog (the railless standalone destination ut-docs#2090 moved every
+// other in-shell exit away from) -- it must close the dialog instead, the
+// same this.closest('dialog').close() idiom this file's own back-link and
+// tax_codes.html already use. import.html has no header of its own to
+// signal this on the POST (an hx-post form submits with HX-Request:true
+// whether the page around it was loaded standalone or inside the dialog),
+// so the signal rides along as the in_items_shell hidden form field instead
+// -- this pins the handler's read of that field, independent of the
+// template wiring (covered separately at the e2e layer, since only a real
+// browser proves the GET's .InItemsShell value round-trips into this exact
+// field on a real page).
+func TestImport_CommitInItemsShellClosesDialogNotBareNavigation(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	body, ct := multipartCSV(t, importCSV, map[string]string{"commit": "1", "in_items_shell": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	req.Header.Set("HX-Request", "true")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+	got := rec.Body.String()
+	if strings.Contains(got, `href="/catalog"`) {
+		t.Fatalf("commit response inside the /items dialog must not offer a bare /catalog navigation, got: %s", got)
+	}
+	if !strings.Contains(got, `this.closest('dialog').close()`) {
+		t.Fatalf("commit response inside the /items dialog must offer a dialog-close control, got: %s", got)
+	}
+	// F1 follow-up: closing alone isn't enough (the panel behind the dialog
+	// would go stale) -- this button's own click must also refetch
+	// #items-panel, not just close.
+	if !strings.Contains(got, `htmx.ajax('GET','/catalog',{target:'#items-panel',swap:'innerHTML'})`) {
+		t.Fatalf("commit response inside the /items dialog must refresh #items-panel on View catalog, got: %s", got)
+	}
+	// The visible label is unchanged -- only the control's behaviour differs.
+	if !strings.Contains(got, "View catalog") {
+		t.Fatalf("commit response must still show the View catalog label, got: %s", got)
+	}
+}
+
 // TestImport_CommitWithRowFailuresUsesWarnBannerNotSuccess covers a review
 // finding on ut-docs#1171: an unconditionally green .notice-block-success
 // banner would read as unambiguous success even when a row hit a genuine,
