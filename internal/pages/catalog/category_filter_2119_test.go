@@ -64,6 +64,34 @@ func TestCatalogPage_RendersCategoryFilterChipRow(t *testing.T) {
 	}
 }
 
+// ut-docs#2140 — a still-active child whose parent was deactivated (and so
+// no longer appears in ListActiveCategories) must still get its own chip,
+// rather than being silently unreachable through the category filter.
+func TestCatalogPage_DeactivatedParentPromotesActiveChildToItsOwnChip(t *testing.T) {
+	chdirToRepoRoot(t)
+	db := setupCatalogPageDB(t)
+	defer db.Close()
+	testsupport.SeedInactiveCategoryTree(t, db, "cat-drinks", "Drinks", "", 0, "")
+	testsupport.SeedCategoryTree(t, db, "cat-hot-drinks", "Hot Drinks", "cat-drinks", 0, "")
+
+	mux := http.NewServeMux()
+	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}})
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/catalog", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /catalog = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	if strings.Contains(body, `data-cat-id="cat-drinks"`) {
+		t.Fatalf("expected NO chip for the deactivated Drinks category; got:\n%s", body)
+	}
+	if !strings.Contains(body, `data-cat-id="cat-hot-drinks"`) {
+		t.Fatalf("expected Hot Drinks promoted to its own chip once its parent was deactivated; got:\n%s", body)
+	}
+}
+
 func TestCatalogPage_NoCategoriesStillRendersAllChipOnly(t *testing.T) {
 	chdirToRepoRoot(t)
 	db := setupCatalogPageDB(t)

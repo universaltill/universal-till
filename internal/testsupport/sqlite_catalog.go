@@ -158,6 +158,25 @@ func SeedCategoryTree(t *testing.T, db *sql.DB, id, name, parentID string, sortO
 	}
 }
 
+// SeedInactiveCategoryTree is SeedCategoryTree but is_active=0 — for tests
+// that need a DEACTIVATED parent with an otherwise-active child (ut-docs#2140:
+// a category can be deactivated while an active child still points at it,
+// since SetCategoryActive only blocks on DIRECT items, not descendants).
+func SeedInactiveCategoryTree(t *testing.T, db *sql.DB, id, name, parentID string, sortOrder int, color string) {
+	t.Helper()
+	var parent, col any
+	if parentID != "" {
+		parent = parentID
+	}
+	if color != "" {
+		col = color
+	}
+	if _, err := db.Exec(`INSERT INTO categories(id,name,parent_id,sort_order,color,is_active) VALUES(?,?,?,?,?,0)`,
+		id, name, parent, sortOrder, col); err != nil {
+		t.Fatalf("seed inactive category tree: %v", err)
+	}
+}
+
 // SeedBrand inserts a brand.
 func SeedBrand(t *testing.T, db *sql.DB, id, name string, active bool) {
 	t.Helper()
