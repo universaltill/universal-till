@@ -613,27 +613,16 @@
     }
     requestAnimationFrame(function () { requestAnimationFrame(fn); });
   }
-  // ut-docs#2024: toggles the two fade classes app.css's ::before/::after
-  // pseudo-elements key off. Math.abs() on scrollLeft (rather than
-  // comparing against 0/scrollWidth directly) is what makes this correct
-  // for BOTH scroll-origin conventions at once — Chromium/Firefox/Safari
-  // all use "0 at the reading start, growing toward the reading end" for
-  // LTR and the mirrored "0 at the reading start, going NEGATIVE toward
-  // the reading end" for RTL (verified live, 360px, `dir="fa"`: `el.
-  // scrollLeft` ranges from 0 to -(scrollWidth-clientWidth), never
-  // positive) — so a plain `scrollLeft > 0` check silently never fires
-  // for RTL. No overflow at all (fits within its box) clears both
-  // classes rather than leaving a stale fade from a wider viewport.
+  // ut-docs#2024, moved to app.js by ut-docs#2173: the fade-toggle logic
+  // (Math.abs(scrollLeft) handling both the LTR 0→+max and RTL 0→-max
+  // scroll-origin conventions) now lives once at window.utTabBarFade, since
+  // ut-docs#2173 added a second call site (the sale screen's category
+  // strip, index.html) and that scroll-origin subtlety must not be
+  // duplicated. This local name stays so every call site below and every
+  // comment above it didn't need to change — see app.js for the real
+  // implementation and its comment.
   function tabBarFade(el) {
-    if (!el) return;
-    var max = el.scrollWidth - el.clientWidth;
-    if (max <= 1) {
-      el.classList.remove('tab-bar--fade-start', 'tab-bar--fade-end');
-      return;
-    }
-    var pos = Math.abs(el.scrollLeft);
-    el.classList.toggle('tab-bar--fade-start', pos > 1);
-    el.classList.toggle('tab-bar--fade-end', pos < max - 1);
+    window.utTabBarFade(el);
   }
   // ut-docs#1901: opened via .show(), NOT showModal() — same reasoning
   // (and same established fix, ut-docs#1385) as #hold-modal/#pfand-modal/
