@@ -79,12 +79,24 @@
         hx-indicator="#import-busy" hx-disabled-elt="find button[type=submit]">
     <input type="hidden" name="commit" value="1">
     <input type="hidden" name="staged_id" value="{{ .stagedID }}">
+    <!-- ut-docs#2112: the POST handler has no other way to tell "this
+         request came from the /items dialog" from "this came from the
+         standalone /import page" -- both submit via the same hx-post form,
+         so httpx.IsFragmentSwap(w, r) on the POST itself is true either
+         way (an hx-post carries HX-Request:true regardless of how the page
+         around it was loaded). Threading .InItemsShell through as a form
+         field, the same way `commit`/`staged_id` already ride along, is
+         what lets the commit response's own "View catalog" link/button
+         decide correctly (see import_page.go's success summary). -->
+    <input type="hidden" name="in_items_shell" value="{{ if .InItemsShell }}1{{ else }}0{{ end }}">
     <button class="btn primary" type="submit">{{ T "import.import" }}</button>
   </form>
   {{ else }}
   <form id="import-form" hx-post="/api/import" hx-target="#import-result" hx-swap="innerHTML" enctype="multipart/form-data"
         hx-indicator="#import-busy" hx-disabled-elt="find button[type=submit]">
     <input type="hidden" name="commit" id="import-commit" value="0">
+    <!-- ut-docs#2112: see the sibling form above -- same reason. -->
+    <input type="hidden" name="in_items_shell" value="{{ if .InItemsShell }}1{{ else }}0{{ end }}">
     <!-- ut-docs#1247: accept is a UX hint only (the server sniffs real
          content, never trusts extension/MIME — see catimport.ParseBkp /
          zipMagic in import_page.go), so being strict here is pure downside.
