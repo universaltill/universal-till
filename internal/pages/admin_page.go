@@ -283,7 +283,6 @@ func registerAdmin(mux *http.ServeMux, d *common.Deps) {
 			"menuItems":   d.MenuSnapshot(),
 			"Groups":      groups,
 			"CurrentHref": current,
-			"BackHref":    "/menu",
 		}
 		if current != "" {
 			data["PanelHTML"] = embedAdminSection(mux, r, current)

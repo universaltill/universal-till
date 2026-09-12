@@ -591,7 +591,17 @@ jobs:
       # the taxonomy agrees.
       - name: ADR-0002 plugin taxonomy drift guard regression test
         run: bash scripts/ci/guard-adr-plugin-taxonomy_test.sh
-      - name: Checkout ut-docs for the taxonomy guard
+      # ut-docs#2159: ADR-0002's own text isn't the only place the taxonomy
+      # count can drift — any OTHER ADR that separately restates the count
+      # in prose can go stale independently (two real instances already:
+      # ADR-0002 itself in ut-docs#2134, ADR-0050 in ut-docs#2150). Same
+      # self-test-first ordering as the ADR-0002 guard just above, and
+      # deliberately a separate script/job step (not merged into the
+      # ADR-0002 guard) so each guard's own failure output stays about one
+      # thing.
+      - name: Cross-ADR taxonomy drift guard regression test
+        run: bash scripts/ci/guard-adr-taxonomy-drift_test.sh
+      - name: Checkout ut-docs for the taxonomy guards
         if: env.DOCS_READ_TOKEN != ''
         uses: actions/checkout@v4
         with:
@@ -603,6 +613,11 @@ jobs:
         env:
           DOCS_DIR: ut-docs
         run: bash scripts/ci/guard-adr-plugin-taxonomy.sh
-      - name: Warn that the taxonomy guard will skip
+      - name: Cross-ADR taxonomy drift guard
+        if: env.DOCS_READ_TOKEN != ''
+        env:
+          DOCS_DIR: ut-docs
+        run: bash scripts/ci/guard-adr-taxonomy-drift.sh
+      - name: Warn that the taxonomy guards will skip
         if: env.DOCS_READ_TOKEN == ''
-        run: echo "::warning::DOCS_READ_TOKEN secret not set — ut-docs is private, the ADR-0002 taxonomy guard will be skipped"
+        run: echo "::warning::DOCS_READ_TOKEN secret not set — ut-docs is private, the ADR-0002 and cross-ADR taxonomy guards will be skipped"
