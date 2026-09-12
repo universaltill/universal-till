@@ -17,7 +17,16 @@
      (open_orders_page.go), a plain form (not htmx: this is a full-page nav,
      unlike the popup's #basket swap) -- success lands on the sale screen
      with the basket loaded, a refusal (basket not empty) returns here with
-     .errKey set and the order still parked and listed. */}}
+     .errKey set and the order still parked and listed.
+
+     ut-docs#2147: the button's accessible name was just its visible spans
+     concatenated (e.g. "Sarah Window 2 3 £12.50 90 min"), which reads out
+     the order's details but never says what activating it does. A
+     visually-hidden span naming the action is prepended -- same
+     .visually-hidden idiom as basket.html's own icon-only controls -- so
+     the concatenated name becomes "Resume order Sarah Window 2 3 £12.50
+     90 min" without dropping any of the detail a sighted cashier already
+     sees. parked_orders.html's popup row carries the identical fix. */}}
 <div class="page-head">
   <h1>{{ T "open_orders.title" }}</h1>
   <a class="btn primary btn-touch" href="{{ .backToSaleURL }}">← {{ T "menu.back_to_sale" }}</a>
@@ -44,6 +53,7 @@
           <form method="post" action="/open-orders/resume">
             <input type="hidden" name="id" value="{{ .ID }}">
             <button type="submit" class="open-order-row-btn" data-testid="open-order-row">
+              <span class="visually-hidden">{{ T "open_orders.resume_row" }}</span>
               <span class="open-order-cell open-order-cell-label">{{ .Label }}</span>
               <span class="open-order-cell open-order-cell-table">{{ .TableLabel }}</span>
               <span class="open-order-cell open-order-cell-lines">{{ .LineCount }}</span>
