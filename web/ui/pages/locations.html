@@ -1,3 +1,9 @@
+{{/* ut-docs#2124: adopts the ut-docs#2010 list/edit dialog standard
+     (ut-docs/reference/list-and-dialog-pattern.md), copying
+     categories.html's shape (the reference implementation) — see that
+     file's own header comment for the full contract. Two fields only
+     (name, active), no reorder, no items count: the closest 1:1
+     structural match of the four screens ut-docs#2012 tracks. */}}
 {{ define "content" }}
 <div class="page-head">
   <h1>{{ T "locations.title" }}</h1>
@@ -5,45 +11,97 @@
 
 {{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
 
-<div class="users-layout">
-  <div class="card users-list">
-    <table class="table">
-      <thead>
-        <tr>
-          <th>{{ T "locations.col.name" }}</th>
-          <th>{{ T "locations.col.status" }}</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {{ range .locations }}
-        <tr>
-          <td>{{ .Name }}</td>
-          <td>{{ if .IsActive }}{{ T "locations.active" }}{{ else }}<span class="muted">{{ T "locations.inactive" }}</span>{{ end }}</td>
-          <td class="users-actions">
-            <form method="post" action="/api/locations/{{ .ID }}" class="users-inline">
-              <input type="text" name="name" value="{{ .Name }}" required class="rename-input" />
-              <button type="submit" class="btn secondary">{{ T "locations.rename" }}</button>
-            </form>
-            <form method="post" action="/api/locations/{{ .ID }}/active" class="users-inline">
-              <input type="hidden" name="active" value="{{ if .IsActive }}0{{ else }}1{{ end }}" />
-              <button type="submit" class="btn secondary">
-                {{ if .IsActive }}{{ T "locations.deactivate" }}{{ else }}{{ T "locations.activate" }}{{ end }}
-              </button>
-            </form>
-          </td>
-        </tr>
-        {{ end }}
-      </tbody>
-    </table>
-  </div>
+{{ template "list_header" (dict
+     "searchID"       "locations-search"
+     "searchLabelKey" "locations.search_placeholder"
+     "filterTarget"   "#locations-table .location-row"
+     "emptyTarget"    "#locations-no-results"
+     "newID"          "locations-new"
+     "newLabelKey"    "locations.new"
+     "dialogID"       "location-dialog") }}
 
-  <div class="card users-form">
-    <h3>{{ T "locations.new.title" }}</h3>
-    <form method="post" action="/api/locations" autocomplete="off">
-      <label>{{ T "locations.col.name" }} <input type="text" name="name" required /></label>
-      <button type="submit" class="btn primary" style="width:100%">{{ T "locations.new.submit" }}</button>
-    </form>
+<div class="card list-card">
+  {{ if not .locations }}
+  <p class="muted">{{ T "locations.empty" }}</p>
+  {{ else }}
+  <div class="list-scroll">
+  <table class="table" id="locations-table">
+    <thead>
+      <tr>
+        <th>{{ T "locations.col.name" }}</th>
+        <th>{{ T "locations.col.status" }}</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .locations }}
+      <tr class="location-row" data-id="{{ .ID }}"
+          data-record-open="location-dialog"
+          data-record-action="/api/locations/{{ .ID }}"
+          data-record-destructive-action="/api/locations/{{ .ID }}/active"
+          data-field-name="{{ .Name }}"
+          data-field-active="{{ if .IsActive }}1{{ else }}0{{ end }}">
+        <td>{{ .Name }}</td>
+        <td>{{ if .IsActive }}{{ T "locations.active" }}{{ else }}<span class="muted">{{ T "locations.inactive" }}</span>{{ end }}</td>
+        <td class="list-actions">
+          <button type="button" class="btn secondary btn-icon" data-record-edit
+                  aria-label="{{ T "common.edit" }}" title="{{ T "common.edit" }}">
+            <span class="btn-ico" aria-hidden="true">{{ icon "pencil" }}</span>
+          </button>
+        </td>
+      </tr>
+      {{ end }}
+      <tr id="locations-no-results" class="list-empty-row" hidden>
+        <td colspan="3">{{ T "common.no_results" }}</td>
+      </tr>
+    </tbody>
+  </table>
   </div>
+  {{ end }}
 </div>
+
+{{ template "record_dialog" (dict
+     "id"             "location-dialog"
+     "formID"         "location-form"
+     "createTitleKey" "locations.create"
+     "editTitleKey"   "locations.edit"
+     "createAction"   "/api/locations"
+     "root"           .) }}
+{{ end }}
+
+{{/* The two slots record_dialog.html owes to this page — see that
+     partial's header for the contract, and categories.html's own slots
+     for the fuller annotated version this copies. */}}
+{{ define "record_dialog_fields" }}
+<form id="location-form" method="post" action="/api/locations" autocomplete="off"
+      hx-boost="true" hx-target="#location-dialog-msg" hx-swap="innerHTML">
+  <label>{{ T "locations.col.name" }}
+    <input type="text" name="name" required />
+  </label>
+</form>
+{{ end }}
+
+{{/* Deactivate, never erase: the trash icon posts active=0; an already-
+     inactive location gets Activate instead (record-dialog.js shows
+     whichever data-record-when="active=…" matches the opened row). Both
+     forms take their action from the row's data-record-destructive-action.
+     hx-confirm (not data-record-confirm — see categories.html's own
+     comment for why: htmx's own confirm handling runs INSIDE the same
+     call that issues the request, so cancelling it truly aborts before
+     any request is sent). */}}
+{{ define "record_dialog_destructive" }}
+<form method="post" data-record-destructive-form data-record-when="active=1"
+      hx-confirm="{{ T "locations.deactivate_confirm" }}"
+      hx-boost="true" hx-target="#location-dialog-msg" hx-swap="innerHTML">
+  <input type="hidden" name="active" value="0" />
+  <button type="submit" class="btn secondary btn-icon btn-icon-danger"
+          aria-label="{{ T "locations.deactivate" }}" title="{{ T "locations.deactivate" }}">
+    <span class="btn-ico" aria-hidden="true">{{ icon "trash-2" }}</span>
+  </button>
+</form>
+<form method="post" data-record-destructive-form data-record-when="active=0"
+      hx-boost="true" hx-target="#location-dialog-msg" hx-swap="innerHTML">
+  <input type="hidden" name="active" value="1" />
+  <button type="submit" class="btn secondary">{{ T "locations.activate" }}</button>
+</form>
 {{ end }}
