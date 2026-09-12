@@ -430,7 +430,7 @@ func TestButtonsHTTPList_TabsCarryColorWithMultipleCategories(t *testing.T) {
 // --cat-color on the <button> itself (pinned by
 // TestButtonsHTTPList_TabsCarryColorWithMultipleCategories above), but a
 // top-level category's OWN buttons render inside its tab panel
-// (id="cat-panel-<id>") via the "category-group-body" template — a
+// (id="cat-panel-<id>") via the "category-group-body-tabbed" template — a
 // completely separate element from the tab button, not a descendant of it.
 // CSS custom properties only inherit down the DOM tree, so a .btn-tile
 // under that panel has no --cat-color in scope at all unless the panel
