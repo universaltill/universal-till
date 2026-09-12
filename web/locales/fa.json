@@ -507,6 +507,7 @@
   "eod.err.retention_save_failed": "ذخیرهٔ تنظیم نگهداری گزارش‌ها ممکن نشد.",
   "error.page.title": "مشکلی پیش آمد",
   "ext.error.unreachable": "این صفحه افزونه اکنون در دسترس نیست.",
+  "filter.category_active": "Filter by category (filtered)",
   "filter.category_all": "All categories",
   "filter.category_label": "Filter by category",
   "filter.no_matches": "No items match your filter",

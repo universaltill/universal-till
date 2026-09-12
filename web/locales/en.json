@@ -507,6 +507,7 @@
   "eod.err.retention_save_failed": "Could not save the report retention setting.",
   "error.page.title": "Something went wrong",
   "ext.error.unreachable": "That plugin page is unreachable right now.",
+  "filter.category_active": "Filter by category (filtered)",
   "filter.category_all": "All categories",
   "filter.category_label": "Filter by category",
   "filter.no_matches": "No items match your filter",

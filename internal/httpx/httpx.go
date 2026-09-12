@@ -1123,6 +1123,11 @@ var renderFiles = []string{
 	// httpx.Render("ui/pages/inventory.html", ...) call site above, same
 	// riding-along mechanism as items_rail.html/modifier_group_admin.html.
 	"ui/partials/category_filter.html",
+	// ut-docs#2165: the collapsed filter-icon trigger + popover shell around
+	// the chip row above — same riding-along mechanism, same two call
+	// sites (this global list for /inventory, catalog/handlers.go's own
+	// bespoke file set for /catalog).
+	"ui/partials/category_filter_popover.html",
 	// ut-docs#2010: the app-wide list/edit standard's two partials
 	// (ut-docs/reference/list-and-dialog-pattern.md). Same mechanism as
 	// items_rail.html above — a page includes them by their {{ define }}

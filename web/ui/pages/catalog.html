@@ -90,12 +90,22 @@
       <span class="btn-ico" aria-hidden="true">{{ icon "scan-barcode" }}</span>
     </button>
     <input type="search" id="catalog-search" placeholder="{{ T "catalog.search_placeholder" }}" autocomplete="off">
+    {{/* ut-docs#2165 (follow-up of ut-docs#2119): collapsed behind a
+         filter-icon trigger + popover instead of an always-visible chip
+         row — see category_filter_popover.html. It lives INSIDE this
+         action row, immediately beside the search box, deliberately: the
+         card exists because the old chip row ate vertical space on a
+         10.1" tablet, and parking the trigger on its own line below the
+         header would still have cost a whole 68px row at the 1024x600
+         kiosk floor (measured) to hold one 51px button — the AC's "in
+         the list header, not a full-width row", and what catalog.md/
+         inventory.md's "tap the filter icon beside the search box" tells
+         a shop owner to look for. Grouped with the search box because
+         both narrow the same list (AND, not replace — see filterRows()
+         in the script block below), unlike the action buttons above. */}}
+    {{ template "category_filter_popover" (dict "categories" .CategoryFilterOptions "controlID" "catalog-category-filter") }}
   </div>
 </div>
-
-{{/* ut-docs#2119: composes with the search box above (AND, not replace) —
-     see filterRows() in the script block below. */}}
-{{ template "category_filter" (dict "categories" .CategoryFilterOptions "controlID" "catalog-category-filter") }}
 
 <dialog id="barcode-backfill-modal" class="modifier-modal barcode-backfill-modal" aria-labelledby="catalog-barcode-backfill-btn"></dialog>
 
@@ -1577,9 +1587,17 @@
   function bindCategoryFilter() {
     var categoryFilterEl = document.getElementById('catalog-category-filter');
     if (!categoryFilterEl || !window.CategoryFilter) return;
+    // ut-docs#2165: the popover shell around this same chip row — trigger
+    // open/close/focus, independent of the chip-selection wiring below.
+    // .closest() from the chip row itself (not a page-wide query) so this
+    // can never grab the wrong control if a future page ever renders more
+    // than one category filter.
+    var controlEl = categoryFilterEl.closest('[data-category-filter-control]');
+    window.CategoryFilter.bindPopover(controlEl);
     window.CategoryFilter.bind(categoryFilterEl, {
       onChange: function (selectedIds) {
         expandedCategories = window.CategoryFilter.expand(selectedIds, categoryNodes);
+        window.CategoryFilter.paintTriggerState(controlEl, selectedIds.length > 0);
         filterRows();
       }
     });

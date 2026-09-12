@@ -507,6 +507,7 @@
   "eod.err.retention_save_failed": "تعذّر حفظ إعداد الاحتفاظ بالتقارير.",
   "error.page.title": "حدث خطأ ما",
   "ext.error.unreachable": "صفحة الإضافة هذه غير متاحة الآن.",
+  "filter.category_active": "Filter by category (filtered)",
   "filter.category_all": "All categories",
   "filter.category_label": "Filter by category",
   "filter.no_matches": "No items match your filter",

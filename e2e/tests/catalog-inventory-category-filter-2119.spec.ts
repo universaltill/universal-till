@@ -11,13 +11,29 @@ import { watchConsole } from './helpers';
 // and others under a Food child (e.g. "White Bread Loaf" under Bakery) —
 // so the parent-includes-children case is exercised against real data,
 // no synthetic seeding needed.
+//
+// ut-docs#2165 — the chip row itself (asserted below) is now collapsed
+// behind a filter-icon trigger + <dialog> popover (category_filter_
+// popover.html); every test that interacts with a chip opens the popover
+// first via its own page's trigger button before doing so. The chip row's
+// own markup/ids/behaviour are UNCHANGED (category-filter.js's expand()/
+// matches()/bind() didn't move), so this file's existing assertions on the
+// chips themselves stay exactly as they were — only the "how do you reach
+// them" step at the top of each test changed.
 
-test.describe('catalog category filter (ut-docs#2119)', () => {
+test.describe('catalog category filter (ut-docs#2119, popover shell ut-docs#2165)', () => {
   test('chips render, narrow the grid, include a child category under its parent, compose with search, and All categories clears it', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.goto('/catalog');
 
+    const trigger = page.locator('#catalog-category-filter-trigger');
+    await expect(trigger).toBeVisible();
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
     const filterRow = page.locator('#catalog-category-filter');
+    await expect(filterRow).toBeHidden(); // inside a closed <dialog>
+
+    await trigger.click();
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true');
     await expect(filterRow).toBeVisible();
     await expect(filterRow).toHaveAttribute('role', 'group');
 
@@ -31,9 +47,11 @@ test.describe('catalog category filter (ut-docs#2119)', () => {
     // Snacks (children of Food) must not appear as separate chips.
     await expect(filterRow.locator('[data-cat-id="cat_bakery"]')).toHaveCount(0);
 
-    // Starting state: nothing selected, "All categories" reads as pressed.
+    // Starting state: nothing selected, "All categories" reads as pressed,
+    // and the trigger's own active-filter badge is not shown yet.
     await expect(allChip).toHaveAttribute('aria-pressed', 'true');
     await expect(drinksChip).toHaveAttribute('aria-pressed', 'false');
+    await expect(trigger.locator('.category-filter-badge')).toBeHidden();
 
     const pepsi = page.locator('.catalog-row', { hasText: 'Pepsi Can 330ml' });
     const bread = page.locator('.catalog-row', { hasText: 'White Bread Loaf' });
@@ -42,10 +60,13 @@ test.describe('catalog category filter (ut-docs#2119)', () => {
     await expect(bread).toBeVisible();
     await expect(cornflakes).toBeVisible();
 
-    // Tapping "Drinks" (no children) narrows to drinks only.
+    // Tapping "Drinks" (no children) narrows to drinks only, and the
+    // trigger's badge lights up — a merchant must never be looking at a
+    // filtered list without a visible cue on the collapsed control itself.
     await drinksChip.click();
     await expect(drinksChip).toHaveAttribute('aria-pressed', 'true');
     await expect(allChip).toHaveAttribute('aria-pressed', 'false');
+    await expect(trigger.locator('.category-filter-badge')).toBeVisible();
     await expect(pepsi).toBeVisible();
     await expect(bread).toBeHidden();
     await expect(cornflakes).toBeHidden();
@@ -62,7 +83,8 @@ test.describe('catalog category filter (ut-docs#2119)', () => {
     await expect(cornflakes).toBeVisible();
 
     // Compose with search (AND, not replace): narrows further within the
-    // already-selected category.
+    // already-selected category. The popover stays open across all of
+    // this — nothing here closes it.
     const search = page.locator('#catalog-search');
     await search.fill('Bread');
     await expect(bread).toBeVisible();
@@ -74,11 +96,13 @@ test.describe('catalog category filter (ut-docs#2119)', () => {
     await expect(page.locator('#catalog-no-matches')).toBeVisible();
     await expect(page.locator('#catalog-empty-row')).toBeHidden();
 
-    // "All categories" clears the category filter (search still applies).
+    // "All categories" clears the category filter (search still applies)
+    // and the trigger's badge goes away again.
     await search.fill('');
     await allChip.click();
     await expect(allChip).toHaveAttribute('aria-pressed', 'true');
     await expect(foodChip).toHaveAttribute('aria-pressed', 'false');
+    await expect(trigger.locator('.category-filter-badge')).toBeHidden();
     await expect(pepsi).toBeVisible();
     await expect(bread).toBeVisible();
     await expect(cornflakes).toBeVisible();
@@ -88,11 +112,13 @@ test.describe('catalog category filter (ut-docs#2119)', () => {
   });
 });
 
-test.describe('inventory category filter (ut-docs#2119)', () => {
+test.describe('inventory category filter (ut-docs#2119, popover shell ut-docs#2165)', () => {
   test('chips render and narrow the stock table the same way', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.goto('/inventory');
 
+    const trigger = page.locator('#inventory-category-filter-trigger');
+    await trigger.click();
     const filterRow = page.locator('#inventory-category-filter');
     await expect(filterRow).toBeVisible();
     const allChip = filterRow.locator('[data-cat-all]');
@@ -142,6 +168,9 @@ test.describe('category filter still binds after an /items rail swap (ut-docs#21
   // swapped-in <script> block): the surrounding document's
   // DOMContentLoaded fired long before the swap, so the listener sat
   // registered forever and the chips rendered but silently never bound.
+  // ut-docs#2165: bindPopover() rides the exact same bindCategoryFilter()
+  // entry point, so this also covers the popover's own open/close wiring
+  // surviving the fragment swap, not just the chip bind.
   test('Inventory chips respond after navigating there via the rail, not just on a direct load', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.goto('/items'); // Catalog loads by default, one full page load
@@ -152,6 +181,8 @@ test.describe('category filter still binds after an /items rail swap (ut-docs#21
     await page.locator('.items-row[href="/inventory"]').click();
     await expect(page.locator('.items-row.is-current')).toHaveAttribute('href', '/inventory');
 
+    const trigger = page.locator('#inventory-category-filter-trigger');
+    await trigger.click();
     const filterRow = page.locator('#inventory-category-filter');
     await expect(filterRow).toBeVisible();
     const drinksChip = filterRow.locator('[data-cat-id="cat_drink"]');
@@ -180,6 +211,8 @@ test.describe('category filter still binds after an /items rail swap (ut-docs#21
     await page.locator('.items-row[href="/catalog"]').click();
     await expect(page.locator('.items-row.is-current')).toHaveAttribute('href', '/catalog');
 
+    const trigger = page.locator('#catalog-category-filter-trigger');
+    await trigger.click();
     const filterRow = page.locator('#catalog-category-filter');
     await expect(filterRow).toBeVisible();
     const drinksChip = filterRow.locator('[data-cat-id="cat_drink"]');
@@ -192,6 +225,77 @@ test.describe('category filter still binds after an /items rail swap (ut-docs#21
     await expect(drinksChip).toHaveAttribute('aria-pressed', 'true');
     await expect(pepsi).toBeVisible();
     await expect(bread).toBeHidden();
+
+    assertClean();
+  });
+});
+
+test.describe('category-filter popover shell (ut-docs#2165)', () => {
+  // The AC's own priority order: open -> select -> list narrows -> close ->
+  // state still shown. Also covers the two explicit dismiss paths (close
+  // button, Escape) and that focus returns to the trigger either way.
+  test('opens on trigger click, narrows on selection, closes via the close button, and focus returns to the trigger', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.goto('/catalog');
+
+    const trigger = page.locator('#catalog-category-filter-trigger');
+    const dialog = page.locator('#catalog-category-filter-dialog');
+    await expect(dialog).toBeHidden();
+
+    await trigger.click();
+    await expect(dialog).toBeVisible();
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+
+    const drinksChip = dialog.locator('[data-cat-id="cat_drink"]');
+    const bread = page.locator('.catalog-row', { hasText: 'White Bread Loaf' });
+    await expect(bread).toBeVisible();
+    await drinksChip.click();
+    await expect(bread).toBeHidden(); // the list narrowed while the popover is still open
+
+    await dialog.locator('[data-category-filter-close]').click();
+    await expect(dialog).toBeHidden();
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    await expect(trigger).toBeFocused();
+    // State still shown after close: the filter that was applied while the
+    // popover was open is still in effect, and the trigger still carries
+    // its active badge — the whole point of the AC's "state still shown".
+    await expect(bread).toBeHidden();
+    await expect(trigger.locator('.category-filter-badge')).toBeVisible();
+
+    // Toggling the trigger again re-opens with the selection preserved.
+    await trigger.click();
+    await expect(dialog).toBeVisible();
+    await expect(drinksChip).toHaveAttribute('aria-pressed', 'true');
+
+    // Escape closes it too, and also returns focus to the trigger.
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await expect(trigger).toBeFocused();
+
+    assertClean();
+  });
+
+  test('is RTL-safe: opens fully on-screen under the Farsi locale', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.goto('/catalog?lang=fa');
+    await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+
+    const trigger = page.locator('#catalog-category-filter-trigger');
+    await trigger.click();
+    const dialog = page.locator('#catalog-category-filter-dialog');
+    await expect(dialog).toBeVisible();
+
+    const box = await dialog.boundingBox();
+    const viewport = page.viewportSize();
+    expect(box).not.toBeNull();
+    expect(viewport).not.toBeNull();
+    if (box && viewport) {
+      // Never off-screen in either direction — the AC's own wording.
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.y).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+      expect(box.y + box.height).toBeLessThanOrEqual(viewport.height);
+    }
 
     assertClean();
   });
