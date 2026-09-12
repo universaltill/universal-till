@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"html/template"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -27,6 +28,7 @@ func TestInventoryBannerLinksToPrimaryWhenActionable(t *testing.T) {
 		filepath.Join("web", "ui", "layouts", "base.html"),
 		filepath.Join("web", "ui", "pages", "inventory.html"),
 		funcs,
+		filepath.Join("web", "ui", "partials", "category_filter.html"),
 	)
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
@@ -34,7 +36,9 @@ func TestInventoryBannerLinksToPrimaryWhenActionable(t *testing.T) {
 	w := httptest.NewRecorder()
 	data := map[string]any{
 		"title": "Inventory", "theme": "", "menuItems": nil, "errKey": "",
-		"SyncPrimary": "http://primary.till.local:8080",
+		"SyncPrimary":           "http://primary.till.local:8080",
+		"CategoryFilterOptions": []any{},
+		"CategoryNodesJSON":     template.JS("[]"),
 	}
 	if err := r.Render(w, "base", data); err != nil {
 		t.Fatalf("Render: %v", err)
@@ -59,6 +63,7 @@ func TestInventoryBannerHasNoLinkWhenNotActionable(t *testing.T) {
 		filepath.Join("web", "ui", "layouts", "base.html"),
 		filepath.Join("web", "ui", "pages", "inventory.html"),
 		funcs,
+		filepath.Join("web", "ui", "partials", "category_filter.html"),
 	)
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
@@ -66,7 +71,9 @@ func TestInventoryBannerHasNoLinkWhenNotActionable(t *testing.T) {
 	w := httptest.NewRecorder()
 	data := map[string]any{
 		"title": "Inventory", "theme": "", "menuItems": nil, "errKey": "",
-		"SyncPrimary": "http://primary.till.local:8080",
+		"SyncPrimary":           "http://primary.till.local:8080",
+		"CategoryFilterOptions": []any{},
+		"CategoryNodesJSON":     template.JS("[]"),
 	}
 	if err := r.Render(w, "base", data); err != nil {
 		t.Fatalf("Render: %v", err)
@@ -91,6 +98,7 @@ func TestCatalogBannerLinksToPrimaryWhenActionable(t *testing.T) {
 		filepath.Join("web", "ui", "partials", "catalog_table.html"),
 		filepath.Join("web", "ui", "partials", "catalog_row.html"),
 		filepath.Join("web", "ui", "partials", "catalog_variants.html"),
+		filepath.Join("web", "ui", "partials", "category_filter.html"),
 	)
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
@@ -98,7 +106,9 @@ func TestCatalogBannerLinksToPrimaryWhenActionable(t *testing.T) {
 	w := httptest.NewRecorder()
 	data := map[string]any{
 		"title": "Catalog", "theme": "", "menuItems": nil, "errKey": "",
-		"SyncPrimary": "http://primary.till.local:8080",
+		"SyncPrimary":           "http://primary.till.local:8080",
+		"CategoryFilterOptions": []any{},
+		"CategoryNodesJSON":     template.JS("[]"),
 	}
 	if err := r.Render(w, "base", data); err != nil {
 		t.Fatalf("Render: %v", err)
@@ -123,6 +133,7 @@ func TestCatalogBannerHasNoLinkWhenNotActionable(t *testing.T) {
 		filepath.Join("web", "ui", "partials", "catalog_table.html"),
 		filepath.Join("web", "ui", "partials", "catalog_row.html"),
 		filepath.Join("web", "ui", "partials", "catalog_variants.html"),
+		filepath.Join("web", "ui", "partials", "category_filter.html"),
 	)
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
@@ -130,7 +141,9 @@ func TestCatalogBannerHasNoLinkWhenNotActionable(t *testing.T) {
 	w := httptest.NewRecorder()
 	data := map[string]any{
 		"title": "Catalog", "theme": "", "menuItems": nil, "errKey": "",
-		"SyncPrimary": "http://primary.till.local:8080",
+		"SyncPrimary":           "http://primary.till.local:8080",
+		"CategoryFilterOptions": []any{},
+		"CategoryNodesJSON":     template.JS("[]"),
 	}
 	if err := r.Render(w, "base", data); err != nil {
 		t.Fatalf("Render: %v", err)

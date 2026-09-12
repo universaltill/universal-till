@@ -938,17 +938,17 @@
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 13,
-        "top_bullets": 5,
-        "bold_leadins": 14
+        "top_bullets": 6,
+        "bold_leadins": 15
       },
       "english": {
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 13,
-        "top_bullets": 6,
-        "bold_leadins": 15
+        "top_bullets": 7,
+        "bold_leadins": 16
       },
-      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1."
     },
     {
       "locale": "de",
@@ -957,17 +957,17 @@
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 13,
-        "top_bullets": 5,
-        "bold_leadins": 14
+        "top_bullets": 6,
+        "bold_leadins": 15
       },
       "english": {
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 13,
-        "top_bullets": 6,
-        "bold_leadins": 15
+        "top_bullets": 7,
+        "bold_leadins": 16
       },
-      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1."
     },
     {
       "locale": "fa",
@@ -976,17 +976,17 @@
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 13,
-        "top_bullets": 5,
-        "bold_leadins": 14
+        "top_bullets": 6,
+        "bold_leadins": 15
       },
       "english": {
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 13,
-        "top_bullets": 6,
-        "bold_leadins": 15
+        "top_bullets": 7,
+        "bold_leadins": 16
       },
-      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1."
     },
     {
       "locale": "tr",
@@ -995,17 +995,17 @@
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 13,
-        "top_bullets": 5,
-        "bold_leadins": 14
+        "top_bullets": 6,
+        "bold_leadins": 15
       },
       "english": {
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 13,
-        "top_bullets": 6,
-        "bold_leadins": 15
+        "top_bullets": 7,
+        "bold_leadins": 16
       },
-      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1."
     },
     {
       "locale": "ar",
@@ -1050,76 +1050,76 @@
       "topic": "inventory",
       "signature": {
         "headings": 4,
-        "numbered_steps": 4,
+        "numbered_steps": 5,
         "sub_bullets": 0,
         "top_bullets": 0,
         "bold_leadins": 0
       },
       "english": {
         "headings": 10,
-        "numbered_steps": 9,
+        "numbered_steps": 10,
         "sub_bullets": 0,
         "top_bullets": 3,
         "bold_leadins": 3
       },
-      "reason": "ut-docs#330 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+      "reason": "ut-docs#330 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more numbered step (a new category-filter tip in \"How to use it\") — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing step-count gap this entry already tracked is unchanged in size, just shifted by +1/+1."
     },
     {
       "locale": "de",
       "topic": "inventory",
       "signature": {
         "headings": 4,
-        "numbered_steps": 4,
+        "numbered_steps": 5,
         "sub_bullets": 0,
         "top_bullets": 0,
         "bold_leadins": 0
       },
       "english": {
         "headings": 10,
-        "numbered_steps": 9,
+        "numbered_steps": 10,
         "sub_bullets": 0,
         "top_bullets": 3,
         "bold_leadins": 3
       },
-      "reason": "ut-docs#330 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+      "reason": "ut-docs#330 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more numbered step (a new category-filter tip in \"How to use it\") — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing step-count gap this entry already tracked is unchanged in size, just shifted by +1/+1."
     },
     {
       "locale": "fa",
       "topic": "inventory",
       "signature": {
         "headings": 4,
-        "numbered_steps": 4,
+        "numbered_steps": 5,
         "sub_bullets": 0,
         "top_bullets": 0,
         "bold_leadins": 0
       },
       "english": {
         "headings": 10,
-        "numbered_steps": 9,
+        "numbered_steps": 10,
         "sub_bullets": 0,
         "top_bullets": 3,
         "bold_leadins": 3
       },
-      "reason": "ut-docs#330 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+      "reason": "ut-docs#330 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more numbered step (a new category-filter tip in \"How to use it\") — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing step-count gap this entry already tracked is unchanged in size, just shifted by +1/+1."
     },
     {
       "locale": "tr",
       "topic": "inventory",
       "signature": {
         "headings": 4,
-        "numbered_steps": 4,
+        "numbered_steps": 5,
         "sub_bullets": 0,
         "top_bullets": 0,
         "bold_leadins": 0
       },
       "english": {
         "headings": 10,
-        "numbered_steps": 9,
+        "numbered_steps": 10,
         "sub_bullets": 0,
         "top_bullets": 3,
         "bold_leadins": 3
       },
-      "reason": "ut-docs#330 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+      "reason": "ut-docs#330 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more numbered step (a new category-filter tip in \"How to use it\") — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing step-count gap this entry already tracked is unchanged in size, just shifted by +1/+1."
     },
     {
       "locale": "ar",
