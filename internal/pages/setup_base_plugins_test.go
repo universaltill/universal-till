@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -66,6 +67,82 @@ func TestResolveAndInstallBasePlugin_DEHappyPath(t *testing.T) {
 	}
 	if hits := mkt.downloadTokenHits(); hits != 1 {
 		t.Fatalf("expected exactly one download-token request, got %d", hits)
+	}
+}
+
+// ut-docs#2133: resolveAndInstallBasePlugin used to read only page 1 of
+// ListPlugins, unlike its two setup-wizard siblings (setup_language_catalog.go,
+// setup_tax_catalog.go), which both page through the full result following
+// next_page_token (ut-docs#1108). ut-cloud's real defaultPageSize is 20, so
+// this was invisible while the catalog was small — but the country
+// base-plugin auto-install path (ut-docs#591) fails SILENTLY when it finds
+// no match (nothing published for this country yet is a legitimate no-op),
+// so a real match sitting beyond page 1 would install nothing and report no
+// error. Page size 1, with an unrelated "es" listing occupying page 1 ahead
+// of the real "de" match, forces the fetch to follow next_page_token to page
+// 2 to find it at all.
+func TestResolveAndInstallBasePlugin_FindsListingBeyondFirstCatalogPage(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "ut-plugin-language-de"})
+	mkt.setCatalog(
+		marketplace.PluginSummary{
+			ID: "ut-plugin-language-es", ListingID: "listing-lang-es", Name: "Spanish language pack",
+			Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"es"},
+		},
+		deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"),
+	)
+	mkt.setCatalogPageSize(1)
+	dp.Cfg.Marketplace = mkt.config()
+
+	spec := basePluginSpec{CanonicalType: "language", Locale: "de"}
+	if err := resolveAndInstallBasePlugin(t.Context(), dp, spec); err != nil {
+		t.Fatalf("resolveAndInstallBasePlugin: %v", err)
+	}
+
+	active, err := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-language-de")
+	if err != nil {
+		t.Fatalf("PluginActive: %v", err)
+	}
+	if !active {
+		t.Fatal("expected ut-plugin-language-de (catalog page 2 at page size 1) to be installed and active — an unpaginated fetch would silently miss it and report no error")
+	}
+	// 2 listings at page size 1 = 2 requests to exhaust the catalog.
+	if hits := mkt.catalogHitsFor(""); hits != 2 {
+		t.Fatalf("expected 2 catalog requests to page through 2 listings at page size 1, got %d", hits)
+	}
+}
+
+// The pagination loop must still terminate against a server that keeps
+// returning a non-empty next_page_token forever (malformed or hostile) —
+// bounded the same way its siblings are, by setupBasePluginMaxPages.
+func TestResolveAndInstallBasePlugin_PaginationCapPreventsInfiniteLoop(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	mkt := newFakeMarketplace(t, nil)
+	entries := make([]marketplace.PluginSummary, 0, setupBasePluginMaxPages+10)
+	for i := 0; i < setupBasePluginMaxPages+10; i++ {
+		entries = append(entries, marketplace.PluginSummary{
+			ID: "listing-" + strconv.Itoa(i), ListingID: "listing-" + strconv.Itoa(i),
+			Version: "1.0.0", CanonicalType: "language",
+			AvailableLocales: []string{"zz" + strconv.Itoa(i)},
+		})
+	}
+	mkt.setCatalog(entries...)
+	mkt.setCatalogPageSize(1)
+	dp.Cfg.Marketplace = mkt.config()
+
+	spec := basePluginSpec{CanonicalType: "language", Locale: "de"}
+	done := make(chan error, 1)
+	go func() { done <- resolveAndInstallBasePlugin(t.Context(), dp, spec) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("resolveAndInstallBasePlugin: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("resolveAndInstallBasePlugin did not return — pagination cap did not bound the loop")
+	}
+	if hits := mkt.catalogHitsFor(""); hits != setupBasePluginMaxPages {
+		t.Fatalf("expected exactly %d catalog requests (cap), got %d", setupBasePluginMaxPages, hits)
 	}
 }
 
