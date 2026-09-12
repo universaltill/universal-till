@@ -5,13 +5,23 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/universaltill/universal-till/internal/logging"
 )
+
+// ErrManifestUnsigned is wrapped into VerifyManifest's returned error when a
+// public key is configured but the manifest carries no signature — the one
+// validation failure with an actionable, distinct fix (get a signed bundle)
+// rather than "the file is malformed." Callers use errors.Is against this to
+// show operators that specific reason instead of a generic import failure
+// (ut-docs#2132).
+var ErrManifestUnsigned = errors.New("plugin manifest is unsigned")
 
 // ManifestVerifier validates plugin manifests and artifact signatures
 type ManifestVerifier struct {
@@ -139,7 +149,8 @@ func (mv *ManifestVerifier) VerifyManifest(manifestPath string) (*VerificationRe
 	// rejected, not silently skipped (every marketplace-published manifest is
 	// signed; a missing signature only ever means tampered/hand-built input).
 	// Dev mode — no key configured — is unaffected.
-	if mv.publicKey != nil && manifest.Signature == "" {
+	unsigned := mv.publicKey != nil && manifest.Signature == ""
+	if unsigned {
 		result.Errors = append(result.Errors, "manifest missing required field: signature (public key is configured)")
 	}
 
@@ -168,7 +179,14 @@ func (mv *ManifestVerifier) VerifyManifest(manifestPath string) (*VerificationRe
 	}
 
 	if len(result.Errors) > 0 {
-		return result, fmt.Errorf("manifest validation failed: %d errors", len(result.Errors))
+		// Name the actual problem(s), not just a count (ut-docs#2132) — "1
+		// errors" told an operator nothing actionable; the caller (and the
+		// server log via LogAndLocalizedError) now gets the real reason(s).
+		err := fmt.Errorf("manifest validation failed (%d error(s)): %s", len(result.Errors), strings.Join(result.Errors, "; "))
+		if unsigned {
+			err = fmt.Errorf("%w: %w", ErrManifestUnsigned, err)
+		}
+		return result, err
 	}
 
 	return result, nil

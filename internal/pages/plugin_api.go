@@ -972,7 +972,17 @@ func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 
 		result, err := importer.Import(ctx, importReq)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Import failed: %v", err), http.StatusBadRequest)
+			// The unsigned case gets its own operator-comprehensible,
+			// translated reason pointing at the supported route — a bare
+			// "manifest validation failed: 1 errors" (or even the fuller
+			// %v this used to show) told the operator nothing they could
+			// act on (ut-docs#2132). Every other import failure still
+			// gets a translated message, just without that specific detail.
+			if errors.Is(err, plugins.ErrManifestUnsigned) {
+				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "plugins.error.import_unsigned", "plugin_import_unsigned", err)
+			} else {
+				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "plugins.error.import_failed", "plugin_import_failed", err)
+			}
 			return
 		}
 
