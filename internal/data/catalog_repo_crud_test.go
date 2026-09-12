@@ -691,6 +691,34 @@ func TestItemLeadTimeDays_RoundTrip(t *testing.T) {
 	}
 }
 
+// Reorder level (universaltill/ut-docs#2065) feeds the stock table's "Reorder
+// at" column and the Low Stock list's GetLowStockItems query — same shape as
+// the lead-time round trip above.
+func TestItemReorderLevel_RoundTrip(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Item", BasePrice: 100, IsActive: true})
+
+	// Unset (the migration's default) reads back as 0.
+	if got, err := repo.ItemReorderLevel(ctx, "i1"); err != nil || got != 0 {
+		t.Fatalf("unset reorder level = %d %v, want 0 nil", got, err)
+	}
+
+	if err := repo.SetItemReorderLevel(ctx, "i1", 10); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if got, err := repo.ItemReorderLevel(ctx, "i1"); err != nil || got != 10 {
+		t.Fatalf("reorder level roundtrip = %d %v, want 10 nil", got, err)
+	}
+
+	if err := repo.SetItemReorderLevel(ctx, "", 5); err == nil {
+		t.Fatal("expected an error for an empty id")
+	}
+}
+
 func TestUpdateVariant(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
 	defer db.Close()
