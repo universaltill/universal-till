@@ -1435,3 +1435,36 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
   }
   return send(params);
 };
+
+// ut-docs#2024 (moved here by ut-docs#2173): toggles the two fade classes
+// app.css's ::before/::after pseudo-elements key off, for any horizontally-
+// scrollable .tab-bar. Math.abs() on scrollLeft (rather than comparing
+// against 0/scrollWidth directly) is what makes this correct for BOTH
+// scroll-origin conventions at once — Chromium/Firefox/Safari all use "0 at
+// the reading start, growing toward the reading end" for LTR and the
+// mirrored "0 at the reading start, going NEGATIVE toward the reading end"
+// for RTL (verified live, 360px, `dir="fa"`: `el.scrollLeft` ranges from 0
+// to -(scrollWidth-clientWidth), never positive) — so a plain
+// `scrollLeft > 0` check silently never fires for RTL. No overflow at all
+// (fits within its box) clears both classes rather than leaving a stale
+// fade from a wider viewport.
+//
+// Originally a local `function tabBarFade(el)` inside catalog.html's own
+// inline script (the catalog item-form tab strip, ≤700px only). ut-docs#2173
+// added a second call site — the sale screen's always-single-row category
+// strip (index.html) — and the scroll-origin handling above is subtle
+// enough that it must not be duplicated, so it now lives here once and both
+// pages call window.utTabBarFade(el). catalog.html keeps a same-named local
+// wrapper that delegates to this, so its own comments/call sites didn't
+// need to change.
+window.utTabBarFade = function (el) {
+  if (!el) return;
+  var max = el.scrollWidth - el.clientWidth;
+  if (max <= 1) {
+    el.classList.remove('tab-bar--fade-start', 'tab-bar--fade-end');
+    return;
+  }
+  var pos = Math.abs(el.scrollLeft);
+  el.classList.toggle('tab-bar--fade-start', pos > 1);
+  el.classList.toggle('tab-bar--fade-end', pos < max - 1);
+};

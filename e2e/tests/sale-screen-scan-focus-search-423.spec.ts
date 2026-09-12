@@ -23,6 +23,10 @@ test.describe('scan while focus is in another sale-screen field (ut-docs#423)', 
     const assertClean = watchConsole(page);
     await page.goto('/');
 
+    // ut-docs#2173: the search box is no longer always on screen — tap the
+    // strip's search icon first to swap the category strip for the input,
+    // same as a real cashier would.
+    await page.locator('.products-strip-search').click();
     const search = page.locator('#products-search');
     await search.click();
     await expect(search).toBeFocused();
@@ -83,6 +87,9 @@ test.describe('scan while focus is in another sale-screen field (ut-docs#423)', 
     // Food is the default-active tab (sale-screen-category-tabs-search-418.spec.ts) —
     // search "Butter" (Food > Dairy) rather than a Drinks item, since search
     // filters WITHIN the active tab.
+    // ut-docs#2173: open the strip's search first — see the first test's
+    // own comment above.
+    await page.locator('.products-strip-search').click();
     const search = page.locator('#products-search');
     await search.click();
     await page.keyboard.type('Butter', { delay: 120 }); // human-speed, not scanner-speed
