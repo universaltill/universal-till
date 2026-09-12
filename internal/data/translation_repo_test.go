@@ -14,6 +14,7 @@ func newTranslationTestDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
+	t.Cleanup(func() { db.Close() })
 	if _, err := db.Exec(`CREATE TABLE translation_overrides (
 		locale TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,
 		updated_at TEXT NOT NULL, updated_by TEXT NOT NULL DEFAULT '',
