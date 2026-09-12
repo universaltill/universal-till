@@ -1,11 +1,14 @@
 package pages
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/auth"
@@ -17,14 +20,107 @@ import (
 	"github.com/universaltill/universal-till/internal/settings"
 )
 
+// realDBTemplate* hold the one fully-migrated SQLite file this test binary
+// builds, as raw bytes, so every newRealDBDeps caller can clone it instead
+// of running the whole migration chain again (ut-docs#2191).
+//
+// Why: `go test ./internal/pages/... -race` was timing out at the default
+// 600s, and the blame landed on whichever test happened to be running when
+// the deadline fired — not a deadlock, just ~80 from-scratch db.Open calls
+// (48 of them through newRealDBDeps alone) each executing every migration's
+// DDL and seed SQL under -race instrumentation. The template is built once
+// per process; each test still gets its own private copy under its own
+// t.TempDir(), so nothing a test writes can leak into another.
+//
+// What this relies on in internal/db (do not break it without revisiting
+// this helper): db.Open's migrate() treats a database whose
+// schema_migrations ledger is already at the newest version as "nothing to
+// apply" — it still runs verifyAppliedMigrations (a few ledger SELECTs plus a
+// checksum compare per migration file, cheap), so a migration file edited or
+// renumbered after the template was built is STILL caught, on the very next
+// clone. No production code changes; if migrate() ever stops being cheap on
+// an already-migrated file (say, an unconditional re-run step), this helper
+// stops paying for itself and the isolation test below is where that shows.
+//
+// The build is deliberately NOT under a t.TempDir(): that is scoped to
+// whichever test trips the sync.Once and is removed when that test ends, so
+// the bytes are read eagerly into memory and the throwaway directory is
+// removed inside the Once, before anything else can depend on it. The DSN
+// opens in WAL mode, so the checkpoint below folds any outstanding -wal
+// content into the main file before it is read — without it the copy would
+// be missing whatever the last migrations wrote.
+var (
+	realDBTemplateOnce  sync.Once
+	realDBTemplateBytes []byte
+	realDBTemplateErr   error
+)
+
+// realDBTemplate returns the cached fully-migrated database file bytes,
+// building them on the first call. A build failure is recorded once and
+// reported through t.Fatalf by every caller, so it surfaces on the test that
+// asked rather than as a panic from whichever goroutine happened to win the
+// Once.
+func realDBTemplate(t *testing.T) []byte {
+	t.Helper()
+	realDBTemplateOnce.Do(func() {
+		realDBTemplateBytes, realDBTemplateErr = buildRealDBTemplate()
+	})
+	if realDBTemplateErr != nil {
+		t.Fatalf("build migrated template db (ut-docs#2191): %v", realDBTemplateErr)
+	}
+	return realDBTemplateBytes
+}
+
+// buildRealDBTemplate runs the real migration chain exactly once, into a
+// throwaway directory it removes before returning, and hands back the
+// resulting single-file database.
+func buildRealDBTemplate() ([]byte, error) {
+	dir, err := os.MkdirTemp("", "ut-pages-dbtemplate-")
+	if err != nil {
+		return nil, fmt.Errorf("temp dir: %w", err)
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "template.db")
+	dbo, err := db.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open+migrate: %w", err)
+	}
+	// Fold the WAL into the main file so the bytes we copy are the complete
+	// migrated state (journal_mode=WAL in db.Open's DSN).
+	if _, err := dbo.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		_ = dbo.Close()
+		return nil, fmt.Errorf("wal checkpoint: %w", err)
+	}
+	if err := dbo.Close(); err != nil {
+		return nil, fmt.Errorf("close: %w", err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read template: %w", err)
+	}
+	if len(b) == 0 {
+		return nil, fmt.Errorf("template file %s is empty after migration", path)
+	}
+	return b, nil
+}
+
 // newRealDBDeps wires the setup + settings handlers over a REAL migrated
 // database (post-036: no demo rows) — unlike newFullAuthDeps' minimal
 // schema, this has the full catalogue tables the demo seed touches.
+//
+// The database is a per-test clone of the once-built template (see
+// realDBTemplate, ut-docs#2191): copied to a fresh path under THIS test's
+// t.TempDir() and then opened through the normal db.Open, whose migrate()
+// finds the ledger already complete and only verifies it.
 func newRealDBDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Helper()
 	chdirRoot(t)
 	initAuthTestI18n(t)
-	dbo, err := db.Open(filepath.Join(t.TempDir(), "demo-optin.db"))
+	path := filepath.Join(t.TempDir(), "demo-optin.db")
+	if err := os.WriteFile(path, realDBTemplate(t), 0o600); err != nil {
+		t.Fatalf("clone template db: %v", err)
+	}
+	dbo, err := db.Open(path)
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
@@ -831,5 +927,46 @@ func TestSettingsRemoveDemoCatalogueEndpoint_EditedPromoRowHasBothButtons(t *tes
 		if !strings.Contains(body, want) {
 			t.Errorf("edited-promo row missing %q\nbody=%s", want, body)
 		}
+	}
+}
+
+// ut-docs#2191: newRealDBDeps now clones a once-built, fully-migrated
+// template file per call instead of re-running the whole migration chain 48
+// times per test binary. That only stays correct if every caller still gets
+// its OWN independent copy: a write through one handle must never be visible
+// through the next, and the clone must be a real migrated database (not just
+// a file that happens to open). The pointer-identity check pins the "built
+// once per process" half — a second realDBTemplate call must hand back the
+// same cached slice, never a rebuilt one.
+func TestNewRealDBDeps_TemplateClonesAreIsolatedAndFullyMigrated(t *testing.T) {
+	first := realDBTemplate(t)
+	second := realDBTemplate(t)
+	if len(first) == 0 {
+		t.Fatal("realDBTemplate returned an empty template")
+	}
+	if &first[0] != &second[0] {
+		t.Fatal("realDBTemplate rebuilt the template on a second call; want the sync.Once-cached bytes")
+	}
+
+	_, a := newRealDBDeps(t)
+	if err := a.Settings.Set(t.Context(), common.KeyShopType, "cafe"); err != nil {
+		t.Fatalf("Set on first deps: %v", err)
+	}
+	if v, ok, _ := a.Settings.Get(t.Context(), common.KeyShopType); !ok || v != "cafe" {
+		t.Fatalf("first deps did not see its own write: %q ok=%v", v, ok)
+	}
+
+	_, b := newRealDBDeps(t)
+	if v, ok, err := b.Settings.Get(t.Context(), common.KeyShopType); err != nil || ok {
+		t.Fatalf("second deps saw the first deps' write: %q ok=%v err=%v — template clone is not isolated", v, ok, err)
+	}
+	// A migrated schema, not just a file that opens: the demo-seed repo's
+	// count needs the full catalogue tables 001_init.sql creates.
+	n, err := data.NewDemoSeedRepo(b.Db).SampleItemCount(t.Context())
+	if err != nil {
+		t.Fatalf("SampleItemCount on cloned db: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("cloned db already has %d sample items; template must be pristine", n)
 	}
 }
