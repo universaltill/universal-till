@@ -21,6 +21,17 @@ func TestSilentServer_CloseReleasesConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start sim: %v", err)
 	}
+	// Same convention as startSim/startOKCSim in the sibling packages: without
+	// it, either t.Fatalf below (dial, write) leaves the listener and its
+	// accept goroutine running for the rest of the binary — in the one test
+	// whose whole subject is not leaking them. It also makes this a genuine
+	// double Close (explicit, below, then this), pinning the idempotency that
+	// the sync.Once around close(s.closed) provides. Nothing else covers that
+	// locally: the only other double close is internal/plugins'
+	// okc_plugin_test.go "unreachable" subtest, so dropping the Once would
+	// surface as a panic deep in a slow WASM suite rather than failing here.
+	t.Cleanup(func() { _ = s.Close() })
+
 	conn, err := net.Dial("tcp", s.Addr())
 	if err != nil {
 		t.Fatalf("dial: %v", err)
