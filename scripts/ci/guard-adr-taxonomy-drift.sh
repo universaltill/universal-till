@@ -48,15 +48,28 @@
 # guard-adr-taxonomy-drift_test.sh): args are the Go source file and the
 # ADR directory to scan, both as direct paths.
 #
-# Detection is line-based regex on three known current-fact phrasings this
+# Detection is line-based regex on four known current-fact phrasings this
 # repo actually uses (confirmed by a live grep across every adr/*.md file
 # while building this guard: "N-type (plugin )?taxonomy", "(N canonical
-# types)", and "N types (ADR-0002" — the last one scoped to a same-line
-# ADR-0002 co-mention specifically so it doesn't fire on an unrelated "N
-# types of X" sentence elsewhere) — not a markdown parser, and not
-# exhaustive against a phrasing nobody has used yet. Widen the patterns
-# below if a future stale mention uses different wording and slips past
-# this guard.
+# types)", "N types (ADR-0002" — scoped to a same-line ADR-0002 co-mention
+# specifically so it doesn't fire on an unrelated "N types of X" sentence
+# elsewhere — and "(N types" followed by `;`/`,`/`)`, e.g. ADR-0088's own
+# "Taxonomy after this ADR (22 types; ...)") — not a markdown parser, and
+# NOT exhaustive against a phrasing nobody has used yet (independent
+# review, ut-docs#2159: the first version of this list was built the same
+# way and still missed ADR-0088's own phrasing on the first pass — that is
+# the shape of gap to expect here, not a claim this guard sees everything).
+# Widen the patterns below if a future stale mention uses different
+# wording and slips past this guard. Known, accepted gaps this guard does
+# NOT close: only the first matching phrase on a given line is evaluated
+# (a second stale mention sharing a line with a correct first one would be
+# missed — realistic only for a long/rewrapped line); a duplicated
+# space-separated type LIST (as opposed to a count) restated in an ADR's
+# prose, e.g. ADR-0088's own type-list block, isn't a "count" at all and
+# isn't in scope for this guard; and a stale count restated outside
+# `ut-docs/adr/` entirely (other ut-docs docs, skill files, or code
+# comments in universal-till itself) is a different, wider problem than
+# "cross-ADR" drift and is out of this guard's scope by design.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -120,14 +133,14 @@ while IFS= read -r -d '' f; do
     case "${line}" in
       *'taxonomy-count:historical'*) continue ;;
     esac
-    n="$(printf '%s' "${line}" | grep -oE '[0-9]+-type( plugin)? taxonomy|\([0-9]+ canonical types\)|[0-9]+ types? \(ADR-0002' | head -1 | grep -oE '[0-9]+' | head -1)"
+    n="$(printf '%s' "${line}" | grep -oE '[0-9]+-type( plugin)? taxonomy|\([0-9]+ canonical types\)|[0-9]+ types? \(ADR-0002|\([0-9]+ types[;,)]' | head -1 | grep -oE '[0-9]+' | head -1)"
     if [ -n "${n}" ] && [ "${n}" -ne "${LIVE_COUNT}" ]; then
       echo "❌ adr-taxonomy-drift guard: ${f#"${ADR_DIR}"/}:${lineno} says ${n} but the live count is ${LIVE_COUNT} (${GO_FILE}'s CanonicalTypes):" >&2
       echo "    ${line}" >&2
       echo "  Either update the number, reword to name ADR-0002 without hardcoding a count, or — if this line is deliberately narrating a HISTORICAL count as part of explaining that ADR's own decision (see ADR-0010/ADR-0050) — add an inline <!-- taxonomy-count:historical --> marker." >&2
       FAIL_COUNT=$((FAIL_COUNT + 1))
     fi
-  done < <(grep -noE '.*(([0-9]+-type( plugin)? taxonomy)|(\([0-9]+ canonical types\))|([0-9]+ types? \(ADR-0002)).*' "${f}" || true)
+  done < <(grep -a -noE '.*(([0-9]+-type( plugin)? taxonomy)|(\([0-9]+ canonical types\))|([0-9]+ types? \(ADR-0002)|(\([0-9]+ types[;,)])).*' "${f}" || true)
 done < <(find "${ADR_DIR}" -maxdepth 1 -name '*.md' -print0)
 
 if [ "${FAIL_COUNT}" -gt 0 ]; then

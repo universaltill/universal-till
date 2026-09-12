@@ -9,7 +9,14 @@
 # a stale "N-type taxonomy" mention fails; a stale "(N canonical types)"
 # mention fails; a stale "N types (ADR-0002..." mention fails; the same
 # stale wording WITH the historical marker passes; a correct (live-count)
-# mention passes; ADR-0002's own file is never scanned by this guard (that's
+# mention passes in both the "(N canonical types)" shape and the distinct
+# "(N types;" shape (case 5/5b — added after independent review,
+# ut-docs#2159, found the first version of this guard didn't match the
+# "(N types;" shape at ALL, so it silently passed ADR-0088's own line
+# regardless of what number it named; 5 alone couldn't have caught that —
+# it takes a paired expect_fail on the identical shape to prove the guard
+# is actually reading the number, not just failing to match anything);
+# ADR-0002's own file is never scanned by this guard (that's
 # guard-adr-plugin-taxonomy.sh's exclusive territory); and DOCS_DIR/explicit
 # args pointing at nothing is a hard failure, never a silent skip.
 set -euo pipefail
@@ -137,14 +144,32 @@ had no slot for them.
 EOF
 expect_pass "historical N-type taxonomy mention WITH marker" "${GO_FIXTURE}" "${d4b}"
 
-# 5. A mention with the CURRENT, correct count → pass regardless of shape.
+# 5. A mention with the CURRENT, correct count, in the real ADR-0088 shape
+#    ("(N types;" — distinct from "(N canonical types)") → pass. This is
+#    the shape independent review (ut-docs#2159) found the first version
+#    of this guard did NOT match at all — the guard silently passed
+#    ADR-0088's own line regardless of what number it named, which would
+#    have missed a real future drift the moment a 23rd type lands. Proven
+#    below by 5b: the identical shape with a WRONG number must fail.
 d5="$(fresh_adr_dir 5)"
 cat > "${d5}/0088-declarative-ui-slot-registry.md" <<'EOF'
 # ADR-0088: Declarative UI slot registry
 
 Taxonomy after this ADR (22 types; note `language` was already added after ADR-0010).
 EOF
-expect_pass "correct current-count mention" "${GO_FIXTURE}" "${d5}"
+expect_pass "correct current-count mention, ADR-0088 shape" "${GO_FIXTURE}" "${d5}"
+
+# 5b. The identical shape with a stale number → fail. Without this case,
+#     5 alone cannot distinguish "the guard checks this phrasing's count"
+#     from "the guard doesn't match this phrasing at all" — which is
+#     exactly how the ADR-0088 gap above went unnoticed the first time.
+d5b="$(fresh_adr_dir 5b)"
+cat > "${d5b}/0088-declarative-ui-slot-registry.md" <<'EOF'
+# ADR-0088: Declarative UI slot registry
+
+Taxonomy after this ADR (20 types; note `language` was already added after ADR-0010).
+EOF
+expect_fail "stale count, ADR-0088 shape" "${GO_FIXTURE}" "${d5b}"
 
 # 6. ADR-0002's own file is never scanned by this guard — that guard
 #    (guard-adr-plugin-taxonomy.sh) owns it exclusively, and this guard
