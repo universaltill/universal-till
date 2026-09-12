@@ -439,7 +439,23 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
   // RTL (fa): the row is direction-agnostic (full-width, no left/right
   // literals) — under dir="rtl" it must span the same inline extent as the
   // Hold Sale/Payment row above it, and still be a real hit-test target.
-  test('the quick-pay button mirrors correctly under RTL (fa) and stays a real target', async ({ page }) => {
+  //
+  // The measured subject is the ROW (.tender-quickpay), not the quick-pay
+  // button. Until ut-docs#2137 the button WAS the row's only child, so its
+  // box and the row's box were the same rectangle and asserting on either
+  // was equivalent. #2137 put the parked-orders trigger beside it (the
+  // product owner's own placement), so quick-pay now covers only part of
+  // the row and only the row still carries the full-width invariant this
+  // test exists for. Asserting on the button here would not be a stricter
+  // version of that invariant — it would be a different, now-false claim.
+  //
+  // What the button keeps is a direction assertion the old shape could not
+  // make at all: with two children, correct mirroring is observable, so we
+  // check the parked-orders trigger leads (sits at the row's right edge
+  // under RTL) and quick-pay trails. A stray `left`/`right` literal in the
+  // row's CSS would leave the DOM order unmirrored and fail here — which is
+  // what "mirrors correctly" in this test's name is supposed to mean.
+  test('the quick-pay row mirrors correctly under RTL (fa) and stays a real target', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto('/?lang=fa');
@@ -448,11 +464,24 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
 
     const geom = await page.evaluate(() => {
       const row = document.querySelector('.tender-default-footer')!.getBoundingClientRect();
+      const qpRow = document.querySelector('.tender-quickpay')!.getBoundingClientRect();
       const qp = document.querySelector('[data-testid="quick-pay"]')!.getBoundingClientRect();
-      return { rowLeft: row.left, rowRight: row.right, qpLeft: qp.left, qpRight: qp.right };
+      const parked = document.querySelector('[data-testid="parked-orders-open"]')!.getBoundingClientRect();
+      return {
+        rowLeft: row.left, rowRight: row.right,
+        qpRowLeft: qpRow.left, qpRowRight: qpRow.right,
+        qpLeft: qp.left, qpRight: qp.right,
+        parkedLeft: parked.left, parkedRight: parked.right,
+      };
     });
-    expect(Math.abs(geom.qpLeft - geom.rowLeft), 'quick-pay must start where the footer row starts (RTL)').toBeLessThan(2);
-    expect(Math.abs(geom.qpRight - geom.rowRight), 'quick-pay must end where the footer row ends (RTL)').toBeLessThan(2);
+    expect(Math.abs(geom.qpRowLeft - geom.rowLeft), 'quick-pay row must start where the footer row starts (RTL)').toBeLessThan(2);
+    expect(Math.abs(geom.qpRowRight - geom.rowRight), 'quick-pay row must end where the footer row ends (RTL)').toBeLessThan(2);
+
+    // Mirrored: first child (parked orders) takes the right-hand end under
+    // RTL, quick-pay sits to its left. Under LTR this ordering is reversed,
+    // so a row that failed to mirror would trip this.
+    expect(Math.abs(geom.parkedRight - geom.rowRight), 'parked-orders trigger must lead at the row start (RTL = right edge)').toBeLessThan(2);
+    expect(geom.qpRight, 'quick-pay must sit inline-after the parked-orders trigger under RTL').toBeLessThanOrEqual(geom.parkedLeft + 2);
 
     const hit = await page.getByTestId('quick-pay').evaluate((el) => {
       const r = el.getBoundingClientRect();

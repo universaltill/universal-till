@@ -1,11 +1,13 @@
 package pages
 
 import (
+	"context"
 	"net/http"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -49,12 +51,14 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewHeldSalesRepo(d.Db)
 	posRepo := data.NewPOSRepo(d.Db)
 
-	mux.HandleFunc("GET /open-orders", func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
+	// listOpenOrders builds the display-ready rows both surfaces render: the
+	// full /open-orders page and the sale screen's parked-orders popup
+	// (ut-docs#2137). One reader, so the two can never disagree about what is
+	// parked, what it is worth, or which table it is on.
+	listOpenOrders := func(ctx context.Context) ([]openOrderRow, error) {
 		items, err := repo.List(ctx)
 		if err != nil {
-			httpx.RenderError(w, r, http.StatusInternalServerError, "open_orders.error.load_failed", err)
-			return
+			return nil, err
 		}
 		now := time.Now().UTC()
 		// Memoised per distinct table id: several parked orders rarely share
@@ -83,11 +87,50 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 			}
 			rows = append(rows, row)
 		}
+		return rows, nil
+	}
+
+	mux.HandleFunc("GET /open-orders", func(w http.ResponseWriter, r *http.Request) {
+		rows, err := listOpenOrders(r.Context())
+		if err != nil {
+			httpx.RenderError(w, r, http.StatusInternalServerError, "open_orders.error.load_failed", err)
+			return
+		}
 		httpx.Render("ui/pages/open_orders.html", map[string]any{
 			"title":     "Open orders",
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
 			"orders":    rows,
+		})(w, r)
+	})
+
+	// Parked-orders popup body (ut-docs#2137), opened from the button beside
+	// Card on the sale screen. A fragment rather than part of the sale
+	// screen's own render: it is fetched each time the popup opens, so it
+	// cannot show an order that was paid or resumed since the page loaded.
+	//
+	// Why this exists at all: the strip that was supposed to be the way back
+	// to a parked order is clipped off-screen on the pilot tablet
+	// (ut-docs#2128), and /open-orders -- the other way -- was read-only and
+	// pointed the cashier at that same strip. A parked order was
+	// unreachable on that device.
+	mux.HandleFunc("GET /ui/parked-orders", func(w http.ResponseWriter, r *http.Request) {
+		rows, err := listOpenOrders(r.Context())
+		if err != nil {
+			// NEVER fall through to the empty-state body here (ut-docs#2137
+			// review): "No open orders right now" is the one thing a cashier
+			// with parked orders must not be told falsely -- it reads as
+			// "your order is gone", and the recovery is to re-ring the whole
+			// sale. A read failure has to look like a failure. 500 leaves the
+			// popup body unswapped and lets app.js's htmx:responseError
+			// handler raise the usual server banner, which is how every other
+			// fragment on this screen reports the same thing.
+			logging.L().Errorf("parked-orders popup: list held sales: %v", err)
+			http.Error(w, "could not load parked orders", http.StatusInternalServerError)
+			return
+		}
+		httpx.RenderPartial("ui/partials/parked_orders.html", map[string]any{
+			"orders": rows,
 		})(w, r)
 	})
 }
