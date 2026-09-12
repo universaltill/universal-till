@@ -499,6 +499,19 @@ window.utCurrency = (function(){
           },
           body: JSON.stringify({ payments: payments, issue_vouchers: pendingVoucherIssues, offline: offlineOverrideEnabled() || !navigator.onLine })
         });
+        // ut-docs#2144: unlike hold/resume/scan (hx-post forms, fixed at the
+        // auth-middleware level), this is a raw fetch() with no HX-Request
+        // header, so an expired session's 401 reaches here directly. Without
+        // this check, the branch below would render the raw, hardcoded-
+        // English JSON error body ({"data":null,"error":{...}}) as the
+        // payment status line — worse than the generic banner it was meant
+        // to replace. Redirect the same way every other expired-session path
+        // already does; nothing to roll back, the middleware short-circuits
+        // BEFORE completeTender ever runs, so no payment was taken.
+        if (response.status === 401) {
+          window.location.href = '/login';
+          return;
+        }
         var text = await response.text();
         var genericFailure = msg.msgPaymentFailed;
         if (!response.ok) {
