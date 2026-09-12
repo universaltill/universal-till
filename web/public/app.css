@@ -1215,33 +1215,37 @@ body.osk-padded .modifier-groups-modal { block-size: calc(100% - var(--osk-reser
    block's own `background` for `.products` specifically (same selector
    specificity as the shared rule above, so source order is what makes this
    win -- keep it directly below that block if either ever moves).
-   `rgba(255,255,255,0)` is used as "transparent" rather than a bare
+   `rgba(255,255,255,0)` was used as "transparent" rather than a bare
    `transparent` keyword so Safari's gradient-interpolation quirk doesn't
-   fade through gray; the alpha channel makes the RGB value irrelevant --
-   TODAY. This RGB is silently coupled to `--surface`'s *current* value
-   (`#ffffff`, the only definition in this file -- no `prefers-color-scheme`/
-   `[data-theme]` override exists yet). Reviewed 2026-08-31 (ut-docs#1313):
-   the moment a theme plugin (e.g. `ut-plugin-theme-midnight`, see
-   adr/0009's own example) overrides `--surface` to something dark, these
-   cover gradients will still fade toward WHITE-transparent instead of
-   matching-color-transparent -- a visible white halo at the scroll edges,
-   worse than no shadow at all. No CI guard catches this (no CSS-token-
-   linting guard exists). Fix then: swap both `rgba(255, 255, 255, 0)`
-   occurrences for `color-mix(in srgb, var(--surface), transparent 100%)`
-   (verify webkit2gtk-4.1's minimum shipped version actually supports
-   `color-mix()` first, per ADR-0028) -- not changed now because no dark
-   theme exists yet to verify against, and this card's scope is the scroll
-   cue itself. `.products` and (since ut-docs#2128) `.tender-scroll` carry
-   this recipe -- `.basket`'s own pinned-footer/tab-panel scroll pattern is
-   different and out of scope here, though the same two-gradient-pair
-   recipe would apply if a future card asks for it there too. Whoever
-   fixes the dark-theme gap: BOTH occurrences need the `color-mix()` swap,
-   not just this one -- see `.tender-scroll`'s own comment for its copy. */
+   fade through gray; the alpha channel makes the RGB value irrelevant.
+   Originally coupled to `--surface`'s then-only value (`#ffffff`).
+   Reviewed 2026-08-31 (ut-docs#1313): the moment a theme overrides
+   `--surface` to something dark, this cover gradient would fade toward
+   WHITE-transparent instead of matching-color-transparent -- a visible
+   white halo at the scroll edges, worse than no shadow at all -- deferred
+   then because no dark theme existed yet to verify the fix against.
+   **ut-docs#2176 is that dark theme, and the fix below is verified
+   against it**: `color-mix(in srgb, var(--surface), transparent 100%)`
+   keeps the same anti-gray-fade property (it's still an explicit alpha-0
+   value, never the bare `transparent` keyword) while tracking whichever
+   theme is active. Re: the ADR-0028 webkit2gtk-4.1 version check this
+   comment previously asked for: `color-mix()` is a long-shipped, widely
+   supported CSS Color 4 feature (Safari/WebKit since ~16.2, essentially
+   baseline across engines by now) -- not independently confirmed against
+   this product's actual installed webkit2gtk-4.1 build (no such hardware
+   in this session), so if a Linux desktop build ever shows the halo
+   again, check the runtime WebKitGTK version first before assuming this
+   fix regressed. `.products` and (since ut-docs#2128) `.tender-scroll` carry this recipe
+   -- `.basket`'s own pinned-footer/tab-panel scroll pattern is different
+   and out of scope here, though the same two-gradient-pair recipe would
+   apply if a future card asks for it there too. Both occurrences here AND
+   both in `.tender-scroll`'s own copy below use the swap -- see that
+   rule's comment. */
 .pos-container > .products {
   background-color: var(--surface);
   background-image:
-    linear-gradient(var(--surface) 30%, rgba(255, 255, 255, 0)),
-    linear-gradient(rgba(255, 255, 255, 0), var(--surface) 70%),
+    linear-gradient(var(--surface) 30%, color-mix(in srgb, var(--surface), transparent 100%)),
+    linear-gradient(color-mix(in srgb, var(--surface), transparent 100%), var(--surface) 70%),
     radial-gradient(farthest-side at 50% 0, rgba(0, 0, 0, .18), rgba(0, 0, 0, 0)),
     radial-gradient(farthest-side at 50% 100%, rgba(0, 0, 0, .18), rgba(0, 0, 0, 0));
   background-repeat: no-repeat;
@@ -2129,17 +2133,16 @@ a.btn, a.btn:hover { text-decoration: none; }
    there's more to scroll to, and many kiosk browsers hide native
    scrollbars entirely. Two gradient pairs, local/local/scroll/scroll,
    self-hiding at whichever edge has no unseen content -- no JS, no scroll
-   listener. Same `rgba(255, 255, 255, 0)`-as-transparent caveat as
-   .products: silently coupled to --surface's current value (#ffffff, only
-   definition in this file); swap to `color-mix(in srgb, var(--surface),
-   transparent 100%)` the day a dark theme plugin overrides --surface (not
-   done now, no dark theme exists yet to verify against, matches .products'
-   own deferral). */
+   listener. Same `color-mix(in srgb, var(--surface), transparent 100%)`
+   swap as `.products` (ut-docs#2176) -- see that rule's comment for the
+   full history; was `rgba(255, 255, 255, 0)`, silently coupled to
+   --surface's then-only value (#ffffff), deferred pending a dark theme to
+   verify against. */
 .tender-scroll {
   background-color: var(--surface);
   background-image:
-    linear-gradient(var(--surface) 30%, rgba(255, 255, 255, 0)),
-    linear-gradient(rgba(255, 255, 255, 0), var(--surface) 70%),
+    linear-gradient(var(--surface) 30%, color-mix(in srgb, var(--surface), transparent 100%)),
+    linear-gradient(color-mix(in srgb, var(--surface), transparent 100%), var(--surface) 70%),
     radial-gradient(farthest-side at 50% 0, rgba(0, 0, 0, .18), rgba(0, 0, 0, 0)),
     radial-gradient(farthest-side at 50% 100%, rgba(0, 0, 0, .18), rgba(0, 0, 0, 0));
   background-repeat: no-repeat;
@@ -3214,6 +3217,9 @@ body.login-screen {
 
 /* Claim-by-phone QR under the claim code (kiosk/desktop shells can't open a browser) */
 .claim-qr { margin-top: .6rem; }
+/* ut-docs#2176 (dark-theme audit): #fff here is deliberate, not a theme gap
+   — a QR code needs a plain white quiet zone to stay reliably scannable
+   regardless of theme, so this one intentionally does NOT follow --surface. */
 .claim-qr img { border-radius: .5rem; background: #fff; padding: .4rem; border: 1px solid var(--border); }
 
 /* Busiest days/hours bars on the reports page */
@@ -3248,7 +3254,11 @@ body.login-screen {
 
 /* Variant image cell: thumb + hidden-file camera upload */
 .vg-img { display: flex; align-items: center; gap: .25rem; }
-.vg-img img, .vg-img .thumb-ph { inline-size: 2.2rem; block-size: 2.2rem; object-fit: cover; border-radius: .4rem; background: #fff; }
+/* ut-docs#2176 (dark-theme audit): was a hardcoded #fff — a stranded white
+   square around every variant thumbnail once a dark theme is selected.
+   var(--surface-2) is the same token .thumb (catalog tiles' own photo
+   backdrop, just above in this file) already uses for the identical job. */
+.vg-img img, .vg-img .thumb-ph { inline-size: 2.2rem; block-size: 2.2rem; object-fit: cover; border-radius: .4rem; background: var(--surface-2); }
 .vg-img-upload label { cursor: pointer; opacity: .6; }
 .vg-img-upload label:hover { opacity: 1; }
 .vg-img-upload input[type="file"] { display: none; }
