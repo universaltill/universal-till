@@ -1,7 +1,31 @@
 {{ define "content" }}
-<div class="page-head">
+{{/* ut-docs#2165: page-head-wrap (the shared #2092 override, already on
+     catalog.html's own head for the identical reason) — this head's
+     children now total 515px at a 360px phone width, so without flex-wrap
+     they are squeezed onto one never-wrapping line and the last control
+     lands fully off-screen. The overflow predates this card (h1 + a
+     260px-min search box + the "+" button already came to 456px); moving
+     the filter trigger up into this row is what would have pushed a
+     control the merchant actually needs past the edge, so the wrap comes
+     with it. Nothing wraps at the 1024x600 kiosk floor or above. */}}
+<div class="page-head page-head-wrap">
   <h1>{{ T "nav.inventory" }}</h1>
-  <input type="search" id="stock-search" placeholder="{{ T "inventory.search_placeholder" }}" autocomplete="off">
+  {{/* ut-docs#2165: the search box and the category-filter trigger are
+       one group, not two space-between siblings — .page-head spreads its
+       direct children evenly, which would have pushed the trigger a full
+       gap away from the box catalog.md/inventory.md tell a shop owner it
+       sits "beside". See catalog.html's own call site for why the
+       trigger belongs in this header row at all rather than on its own
+       line below it. */}}
+  <div class="page-head-search-group">
+    <input type="search" id="stock-search" placeholder="{{ T "inventory.search_placeholder" }}" autocomplete="off">
+    {{/* ut-docs#2165 (follow-up of ut-docs#2119): collapsed behind a
+         filter-icon trigger + popover instead of an always-visible chip
+         row — see category_filter_popover.html. Still composes with the
+         search box beside it (AND, not replace) — see applyStockFilter()
+         in the script block below. */}}
+    {{ template "category_filter_popover" (dict "categories" .CategoryFilterOptions "controlID" "inventory-category-filter") }}
+  </div>
   {{/* ut-docs#2011: opens #stock-dialog blank -- the entry point for
        adjusting an item that isn't in the visible stock/low-stock lists
        (the free-text item search inside the dialog handles that case). */}}
@@ -10,10 +34,6 @@
     <span class="btn-ico" aria-hidden="true">{{ icon "plus" }}</span>
   </button>
 </div>
-
-{{/* ut-docs#2119: composes with the search box above (AND, not replace) —
-     see applyStockFilter() in the script block below. */}}
-{{ template "category_filter" (dict "categories" .CategoryFilterOptions "controlID" "inventory-category-filter") }}
 
 {{ if .SyncPrimary }}
 <div class="sync-banner">⚠ {{ T "sync.banner_replica" }}
@@ -408,9 +428,14 @@
   function bindCategoryFilter() {
     var categoryFilterEl = document.getElementById('inventory-category-filter');
     if (!categoryFilterEl || !window.CategoryFilter) return;
+    // ut-docs#2165: the popover shell around this same chip row — trigger
+    // open/close/focus, independent of the chip-selection wiring below.
+    var controlEl = categoryFilterEl.closest('[data-category-filter-control]');
+    window.CategoryFilter.bindPopover(controlEl);
     window.CategoryFilter.bind(categoryFilterEl, {
       onChange: function (selectedIds) {
         expandedStockCategories = window.CategoryFilter.expand(selectedIds, inventoryCategoryNodes);
+        window.CategoryFilter.paintTriggerState(controlEl, selectedIds.length > 0);
         applyStockFilter();
       }
     });

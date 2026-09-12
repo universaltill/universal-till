@@ -440,6 +440,12 @@ body.sale-screen .session-admin-link { display: none; }
    flex children being squeezed onto one, never-wrapping line. */
 .page-head-wrap { flex-wrap: wrap; }
 .page-head input[type="search"] { min-width: 260px; }
+/* ut-docs#2165: keeps a .page-head's search box and its category-filter
+   trigger together as ONE space-between child. Without it .page-head's own
+   justify-content spreads every direct child evenly, putting a full 1rem+
+   gap between a box and the control the manual calls "beside" it. Logical
+   gap only — nothing directional to mirror under RTL. */
+.page-head-search-group { display: flex; align-items: center; gap: .5rem; min-inline-size: 0; }
 
 /* ---------- Plugin content pages (FAQ etc.) ---------- */
 .plugin-content-search { display: block; min-width: 260px; max-width: 100%;
@@ -1815,6 +1821,43 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
    explicit fixed position replaces reliance on the browser's native
    top-layer centering, which fixes both. */
 #table-add-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
+/* Category-filter popover (ut-docs#2165) — same non-modal .show() family
+   as #hold-modal/#pfand-modal/#elevation-modal/#table-add-modal above and
+   for the identical reason (the custom on-screen keyboard must stay
+   reachable), just class-scoped instead of id-scoped since this dialog
+   renders twice on the page (catalog.html AND inventory.html each ship
+   their own instance with a different controlID). inset-inline (not
+   left/right) so the centered anchor mirrors correctly under dir="rtl"
+   with no separate rule. */
+.category-filter-control { position: relative; display: inline-flex; }
+.category-filter-dialog {
+  position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500;
+  max-width: 22rem;
+}
+.category-filter-dialog-head {
+  display: flex; align-items: center; justify-content: space-between; gap: .75rem;
+  margin-block-end: .5rem;
+}
+.category-filter-dialog-head h3 { margin: 0; font-size: 1rem; }
+/* The chip row's own default top margin/wrapping is fine at full page
+   width but wants a scroll boundary once it's confined to this dialog's
+   22rem cap on a shop with many top-level categories. */
+.category-filter-dialog .category-filter { max-height: 50vh; overflow-y: auto; }
+/* The trigger's active-filter indicator: presence/absence (a real hidden
+   attribute JS toggles, category-filter.js's paintTriggerState), not a
+   colour swap — same WCAG 1.4.11 reasoning category_filter.html's own
+   chip-check already documents for the chips themselves. --surface as the
+   ring colour (not --brand, unlike .nav-badge above) since this button
+   sits on a page card, not the dark nav rail. */
+.category-filter-badge {
+  position: absolute; inset-block-start: -.1rem; inset-inline-end: -.1rem;
+  inline-size: .6rem; block-size: .6rem; border-radius: 50%;
+  background: var(--accent); border: 1px solid var(--surface);
+}
+/* Anchors the badge above — plain .btn-ico has no positioned ancestor
+   (unlike .nav-toggle-ico, which app.css gives one for the same reason),
+   so this is scoped to just the one trigger that needs it. */
+.category-filter-trigger .btn-ico { position: relative; }
 .modifier-group { border: 1px solid var(--border); border-radius: var(--radius);
                    padding: .6rem .75rem; margin-block-end: .75rem; }
 .modifier-group legend { font-weight: 600; padding-inline: .25rem; }
