@@ -10,7 +10,7 @@ VERSION?=0.1.0
 # release minutes later (ut-docs#369, found deploying a field hotfix).
 LDFLAGS=-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=$(VERSION)
 
-.PHONY: build run test test-race-plugins test-race-pages e2e e2e-seed docs-shots prune-worktrees
+.PHONY: build run test test-race-plugins test-race-pages test-race-data e2e e2e-seed docs-shots prune-worktrees
 
 build:
 	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/$(BIN) .
@@ -61,6 +61,28 @@ test-race-pages:
 # the internal/plugins step) — this is the safe way to run it by hand.
 test-race-plugins:
 	go test -race -timeout 45m ./internal/plugins/...
+
+# internal/data hits the same shape as internal/pages/internal/plugins above,
+# for a different underlying reason: this package's 854 tests all go through
+# modernc.org/sqlite, a pure-Go SQLite implementation — every B-tree/VFS
+# operation it performs is real Go code the race detector fully instruments,
+# unlike a cgo driver whose C internals the detector can't see at all. Plain
+# (no -race) runtime is ~70-105s; under -race two independent full runs
+# measured 1290s/1306s (ut-docs#1366) and a third measured 1416.679s in a
+# different environment — no failures, no races detected, genuinely just
+# slow. None of the 854 tests call t.Parallel(), but that's not "redundant
+# setup" to fix: each test legitimately needs its own isolated in-memory DB
+# (testsupport.NewCatalogTestDB), and the cost is dominated by real SQLite
+# operations under instrumentation, not Go-level per-test overhead —
+# retrofitting safe parallelism across 125 test files is a much larger,
+# separate change, not a fix for this timeout. 60m gives ~2.5x the worst
+# measured runtime (1416.679s), the same generous-margin shape as
+# test-race-pages (~2.35x) and the original test-race-plugins precedent
+# (~2.5x). -race isn't run in CI for this package either (ci.yml's own
+# comment on the internal/plugins step) — this is the safe way to run it by
+# hand (e.g. during Reviewer/Tester gate verification).
+test-race-data:
+	go test -race -timeout 60m ./internal/data/...
 
 e2e-seed:
 	UT_DB_PATH=./data/e2e.db go run ./scripts/e2e_seed/main.go
