@@ -63,9 +63,21 @@ if ! grep -q '"price_history":' "${SYNC_CLASSIFICATION_FILE}"; then
   exit 0
 fi
 
+# ut-docs#2129: this scans the whole working tree ("." — real callers can
+# show up anywhere), so it also walks any agent worktree checked out under
+# .claude/worktrees/ (gitignored, not repo content, but still real files on
+# disk — see universal-till/CLAUDE.md's "Agent worktree hygiene"). Those are
+# just copies of this same repo's tracked files at some other commit, so a
+# worktree holding an unmerged branch that ALSO touches pricing.go trips
+# this guard on its own already-tracked-elsewhere caller, with nothing new
+# to review — a false failure, confirmed reproducible (12 hits, every one
+# under .claude/worktrees/agent-*/internal/pos/pricing.go, none in real
+# source). Excluded here for the same reason pricing.go's own copy at its
+# real path is excluded just above: it's not a NEW caller.
 callers="$(grep -rnE '\.(AppendPriceHistoryItem|AppendPriceHistoryVariant)\(' --include='*.go' . 2>/dev/null \
   | grep -v '^\./internal/pos/pricing\.go:' \
-  | grep -v '_test\.go:' || true)"
+  | grep -v '_test\.go:' \
+  | grep -v '^\./\.claude/worktrees/' || true)"
 
 if [[ -n "${callers}" ]]; then
   echo "❌ price-history-sync guard: AppendPriceHistoryItem/Variant now has a real caller outside internal/pos," >&2
