@@ -54,6 +54,42 @@
 #   every locale file, which would force a 40-screenshot regen on almost any
 #   string change. Accepted gap — a copy change can go stale in a screenshot
 #   without tripping this guard.
+#
+# ESCAPE HATCH (ut-docs#2102, fourth narrowing): whole-file hashing means a
+# comment-only edit to a surface file trips this guard for zero pixel
+# change, and the regeneration it demands touches all 104 screenshots —
+# conflicting with every other open PR by construction. Automatically
+# telling a real change apart from a comment-only one would need a
+# per-language-safe comment stripper (Go/HTML/CSS/JS all differ, and a
+# naive regex risks a FALSE NEGATIVE — misreading a real change as "just a
+# comment" and silently never regenerating, which is strictly worse than
+# today's false positive); judged too risky to land in one pass, so this
+# ships the alternative the ticket itself names as cheaper and safer: an
+# explicit, reviewed escape hatch.
+#
+# An earlier draft of this had the GUARD itself read a `Docs-Shots-
+# Unchanged: true` git trailer at check time and bypass the surface check
+# live in CI. Independent review (ut-docs#2102) found that broken two
+# ways: (1) `actions/checkout`'s default `fetch-depth: 1` grafts the
+# checked-out commit as parentless, so `HEAD^2` never resolves in real CI
+# and the bypass would silently never fire; (2) even if it had fired, it
+# never updated `manifest.json` itself, so the bypass would need to be
+# re-asserted forever and the recorded `surface_sha256` would stay wrong
+# for every subsequent unrelated PR to trip over. Both problems disappear
+# by moving the escape hatch OUT of the CI-time check entirely: instead,
+# `scripts/ci/update-docs-shots-surface-hash.sh` is a companion tool an
+# author runs locally after confirming a surface edit changes no rendered
+# pixel. It recomputes `surface_sha256` the same way this guard does and
+# writes ONLY that one field into `manifest.json` — no screenshots
+# captured, no per-topic hash touched — and the author commits the result
+# with a `Docs-Shots-Unchanged: true` trailer, which is not read or
+# enforced by this guard; it exists purely so a reviewer can `git log
+# --grep` or read the commit message and see that a `surface_sha256`
+# change without any accompanying `.png` change was a deliberate,
+# confirmed no-op refresh, not an accident or a way to dodge a real
+# regeneration. This guard's own pass/fail logic is UNCHANGED — the
+# manifest is simply made accurate again, the same way `make docs-shots`
+# would, just without paying for a real screenshot capture.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -212,7 +248,10 @@ if surface_stale:
     fail = True
     print("guard-docs-shots: the app surface (web/ui/**, web/public/**, or "
           "internal/pages/**.go) changed since the manual's screenshots were "
-          "last taken")
+          "last taken. If you have manually confirmed this change alters no "
+          "rendered pixel (e.g. a comment-only edit), run "
+          "scripts/ci/update-docs-shots-surface-hash.sh instead of a full "
+          "`make docs-shots` regeneration.")
 if stale:
     fail = True
     print("guard-docs-shots: topic markdown changed since its screenshot was taken (locale/topic):")

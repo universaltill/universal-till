@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -63,6 +64,95 @@ func truncateRunes(s string, max int) string {
 	}
 	r := []rune(s)
 	return string(r[:max])
+}
+
+// resumeOutcome is the shared result of attempting to resume a held sale.
+// Each caller picks its own way of reporting it: the sale-screen fragment
+// (POST /api/pos/resume, this file) renders a #basket toast; the
+// /open-orders full page (ut-docs#2138, open_orders_page.go) redirects with
+// an ?err= query string, since it has no #basket to swap into.
+type resumeOutcome int
+
+const (
+	resumeOK resumeOutcome = iota
+	resumeNotFound
+	resumeBusy
+	resumeFailed
+)
+
+// resumeHeldSale resumes held sale `id` into the live basket, which must
+// already be empty. ut-docs#2138: extracted out of the POST /api/pos/resume
+// handler below so /open-orders' own resume route (open_orders_page.go)
+// shares it rather than duplicating it -- it carries the ut-docs#820 table
+// re-resolution and the ut-docs#1390 claim handling, and those must never
+// exist in two places that can drift apart.
+func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRepo, posRepo *data.POSRepo, id string) resumeOutcome {
+	if id == "" {
+		return resumeNotFound
+	}
+	if d.Engine.HasItems() {
+		return resumeBusy
+	}
+	held, found, err := repo.Get(ctx, id)
+	if err != nil || !found {
+		return resumeNotFound
+	}
+	var snap pos.BasketSnapshot
+	if err := json.Unmarshal([]byte(held.Payload), &snap); err != nil {
+		return resumeFailed
+	}
+	// The held_sales.table_id COLUMN -- not the payload snapshot -- is the
+	// authoritative table assignment (ut-docs#820). POST /api/pos/held/table
+	// moves a parked order by updating only that column, leaving the payload
+	// holding the pre-move table; restoring the snapshot verbatim would
+	// silently revert a moved order to its old table and tender the sale,
+	// receipt and kitchen ticket against the wrong one. Re-resolve the label
+	// here too, so a table renamed while the order was parked resumes under
+	// its current name -- same ListTables-at-the-pages-layer choice the strip
+	// makes, rather than trusting a label snapshotted at hold time.
+	snap.TableID = held.TableID
+	snap.TableLabel = ""
+	if held.TableID != "" {
+		if t, found, err := posRepo.GetTable(ctx, held.TableID); err == nil && found {
+			snap.TableLabel = t.Label
+		} else {
+			snap.TableLabel = held.TableID
+		}
+	}
+	// ut-docs#1390: occupancy moves back from the held_sales row (about
+	// to be deleted) to a live claim for the resumed basket -- claimed
+	// BEFORE the delete so the table never reads free in between, and
+	// read back from the engine rather than held.TableID because
+	// Restore itself enforces the Takeaway-clears-table invariant
+	// (nothing to claim then). The empty basket being resumed INTO may
+	// already have picked a table of its own (a pick needs no items);
+	// Restore wipes that assignment, so its claim is released -- unless
+	// it is the very table being resumed, in which case the existing
+	// row simply stays ours. A failed/lost claim is logged, never fails
+	// the resume: the sale is restored either way, same philosophy as
+	// the Delete below.
+	prevTable := d.Engine.TableID()
+	// ut-docs#1918: RestoreHeld, not Restore -- the resumed basket
+	// remembers which row it came from (id, label, first-parked time),
+	// so re-parking it lands under the same identity (see the hold
+	// handler below). Remembered on the engine, not by skipping the
+	// Delete below: the row still goes away while the order is live,
+	// exactly as before, and comes back under the same id on re-park.
+	d.Engine.RestoreHeld(snap, pos.HeldOrigin{ID: held.ID, Label: held.Label, CreatedAt: held.CreatedAt})
+	restoredTable := d.Engine.TableID()
+	if restoredTable != "" && restoredTable != prevTable {
+		if claimed, err := claimTableWriteThrough(ctx, d, posRepo, restoredTable); err != nil || !claimed {
+			log.Printf("resume %s: re-claim table %s failed (claimed=%v): %v", id, restoredTable, claimed, err)
+		}
+	}
+	if prevTable != restoredTable {
+		releaseTableClaim(ctx, d, posRepo, prevTable)
+	}
+	if err := repo.Delete(ctx, id); err != nil {
+		// The sale is restored either way; a stale row is the lesser evil.
+		_ = err
+	}
+	return resumeOK
 }
 
 // registerHoldAPI wires hold/resume: park the current basket so another
@@ -310,77 +400,17 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		locale := httpx.ResolveLocale(w, r)
 		_ = r.ParseForm()
 		id := strings.TrimSpace(r.Form.Get("id"))
-		if id == "" {
+		switch resumeHeldSale(ctx, d, repo, posRepo, id) {
+		case resumeNotFound:
 			renderBasket(w, r, httpx.T(locale, "hold.error.not_found"), "error")
-			return
-		}
-		if d.Engine.HasItems() {
+		case resumeBusy:
 			renderBasket(w, r, httpx.T(locale, "hold.error.busy"), "error")
-			return
-		}
-		held, found, err := repo.Get(ctx, id)
-		if err != nil || !found {
-			renderBasket(w, r, httpx.T(locale, "hold.error.not_found"), "error")
-			return
-		}
-		var snap pos.BasketSnapshot
-		if err := json.Unmarshal([]byte(held.Payload), &snap); err != nil {
+		case resumeFailed:
 			renderBasket(w, r, httpx.T(locale, "hold.error.failed"), "error")
-			return
+		default:
+			w.Header().Set("HX-Trigger", "held-changed")
+			renderBasket(w, r, httpx.T(locale, "hold.toast.resumed"), "success")
 		}
-		// The held_sales.table_id COLUMN -- not the payload snapshot -- is the
-		// authoritative table assignment (ut-docs#820). POST /api/pos/held/table
-		// moves a parked order by updating only that column, leaving the payload
-		// holding the pre-move table; restoring the snapshot verbatim would
-		// silently revert a moved order to its old table and tender the sale,
-		// receipt and kitchen ticket against the wrong one. Re-resolve the label
-		// here too, so a table renamed while the order was parked resumes under
-		// its current name -- same ListTables-at-the-pages-layer choice the strip
-		// makes, rather than trusting a label snapshotted at hold time.
-		snap.TableID = held.TableID
-		snap.TableLabel = ""
-		if held.TableID != "" {
-			if t, found, err := posRepo.GetTable(ctx, held.TableID); err == nil && found {
-				snap.TableLabel = t.Label
-			} else {
-				snap.TableLabel = held.TableID
-			}
-		}
-		// ut-docs#1390: occupancy moves back from the held_sales row (about
-		// to be deleted) to a live claim for the resumed basket -- claimed
-		// BEFORE the delete so the table never reads free in between, and
-		// read back from the engine rather than held.TableID because
-		// Restore itself enforces the Takeaway-clears-table invariant
-		// (nothing to claim then). The empty basket being resumed INTO may
-		// already have picked a table of its own (a pick needs no items);
-		// Restore wipes that assignment, so its claim is released -- unless
-		// it is the very table being resumed, in which case the existing
-		// row simply stays ours. A failed/lost claim is logged, never fails
-		// the resume: the sale is restored either way, same philosophy as
-		// the Delete below.
-		prevTable := d.Engine.TableID()
-		// ut-docs#1918: RestoreHeld, not Restore -- the resumed basket
-		// remembers which row it came from (id, label, first-parked time),
-		// so re-parking it lands under the same identity (see the hold
-		// handler above). Remembered on the engine, not by skipping the
-		// Delete below: the row still goes away while the order is live,
-		// exactly as before, and comes back under the same id on re-park.
-		d.Engine.RestoreHeld(snap, pos.HeldOrigin{ID: held.ID, Label: held.Label, CreatedAt: held.CreatedAt})
-		restoredTable := d.Engine.TableID()
-		if restoredTable != "" && restoredTable != prevTable {
-			if claimed, err := claimTableWriteThrough(ctx, d, posRepo, restoredTable); err != nil || !claimed {
-				log.Printf("resume %s: re-claim table %s failed (claimed=%v): %v", id, restoredTable, claimed, err)
-			}
-		}
-		if prevTable != restoredTable {
-			releaseTableClaim(ctx, d, posRepo, prevTable)
-		}
-		if err := repo.Delete(ctx, id); err != nil {
-			// The sale is restored either way; a stale row is the lesser evil.
-			_ = err
-		}
-		w.Header().Set("HX-Trigger", "held-changed")
-		renderBasket(w, r, httpx.T(locale, "hold.toast.resumed"), "success")
 	})
 
 	// Held-sales strip: chips the cashier taps to resume.

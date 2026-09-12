@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"html/template"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -113,6 +115,126 @@ func TestOpenOrdersPage_ListsHeldSalesWithTableTotalAndAge(t *testing.T) {
 	// Oldest first (repo.List orders by created_at), matching the strip.
 	if strings.Index(body, `data-held-id="h1"`) > strings.Index(body, `data-held-id="h2"`) {
 		t.Fatalf("expected the older order first, got: %s", body)
+	}
+}
+
+// TestOpenOrdersPage_RowsAreRealResumeButtons (ut-docs#2138): each row must
+// be a real, focusable control -- a <form>+<button> -- not a <tr> with a JS
+// click handler and no keyboard/assistive-tech equivalent (ut-docs#826's
+// accessibility gate).
+func TestOpenOrdersPage_RowsAreRealResumeButtons(t *testing.T) {
+	mux, d := newOpenOrdersTestMux(t)
+	if _, err := d.Db.Exec(`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id, created_at) VALUES
+ ('h1','Table 4',1250,3,'{}',NULL,datetime('now'))`); err != nil {
+		t.Fatalf("seed held sale: %v", err)
+	}
+	body := openOrdersGet(t, mux)
+	for _, want := range []string{
+		`<form method="post" action="/open-orders/resume">`,
+		`<button type="submit" class="open-order-row-btn"`,
+		`<input type="hidden" name="id" value="h1">`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected %q in the open-orders page, got: %s", want, body)
+		}
+	}
+	// ut-docs#2138 review: the original assertion here looked for the exact
+	// literal `<tr data-held-id="h1" onclick`, a string this template has
+	// never produced in any version -- it passed against the broken page and
+	// the fixed one alike, so it pinned nothing. What actually has to hold is
+	// that resuming depends on NO script at all: no inline handler and no
+	// htmx attribute anywhere in the rows, so the row still resumes with
+	// JavaScript off (that, not the tag name, is what ut-docs#826's gate is
+	// about). Checked over the <tbody> only, so the base layout's own
+	// scripts/htmx wiring can't satisfy or break it.
+	tbody := body[strings.Index(body, "<tbody>"):strings.Index(body, "</tbody>")]
+	for _, banned := range []string{"onclick", "onmousedown", "ontouchstart", "hx-post", "hx-get", "data-record-open"} {
+		if strings.Contains(tbody, banned) {
+			t.Fatalf("a row must resume without script, found %q in the rows: %s", banned, tbody)
+		}
+	}
+	// And the control must be the row itself, not a widget tucked into one
+	// cell: one <td colspan> spanning every column, holding the button.
+	if !strings.Contains(tbody, `<td colspan="5">`) {
+		t.Fatalf("expected the whole row to be the control (one full-width cell), got: %s", tbody)
+	}
+}
+
+// TestOpenOrdersResume_SuccessRedirectsToSaleScreenWithBasketLoaded
+// (ut-docs#2138): tapping a row on THIS page (not the sale-screen popup)
+// resumes the order and sends the cashier to the sale screen, sharing the
+// same resumeHeldSale logic (hold_api.go) the popup's POST /api/pos/resume
+// uses -- so the ut-docs#820 table re-resolution and ut-docs#1390 claim
+// handling exist in exactly one place.
+func TestOpenOrdersResume_SuccessRedirectsToSaleScreenWithBasketLoaded(t *testing.T) {
+	mux, d := newOpenOrdersTestMux(t)
+	holdMux := http.NewServeMux()
+	registerHoldAPI(holdMux, d)
+	if _, err := d.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	holdTestPost(holdMux, "/api/pos/hold", "label=Table+4")
+	row := holdTestOnlyRow(t, d)
+
+	rec := holdTestPost(mux, "/open-orders/resume", "id="+row.ID)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("POST /open-orders/resume = %d, want %d: %s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	if got := rec.Header().Get("Location"); got != "/" {
+		t.Fatalf("expected redirect to the sale screen (\"/\"), got %q", got)
+	}
+	if !d.Engine.HasItems() {
+		t.Fatal("expected the resumed order's basket to be loaded onto the engine")
+	}
+	rows, err := data.NewHeldSalesRepo(d.Db).List(context.Background())
+	if err != nil {
+		t.Fatalf("list held_sales: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("expected the resumed order to leave held_sales, got %+v", rows)
+	}
+}
+
+// TestOpenOrdersResume_BusyRefusalKeepsOrderParkedAndListed (ut-docs#2138's
+// own acceptance criterion): with the live basket already busy, tapping a
+// row is refused with the existing hold.error.busy message, and the order
+// stays parked and listed -- exactly the pre-#2138 rule, just reachable from
+// a new place.
+func TestOpenOrdersResume_BusyRefusalKeepsOrderParkedAndListed(t *testing.T) {
+	mux, d := newOpenOrdersTestMux(t)
+	if _, err := d.Db.Exec(`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id, created_at) VALUES
+ ('h1','Table 4',1250,3,'{}',NULL,datetime('now'))`); err != nil {
+		t.Fatalf("seed held sale: %v", err)
+	}
+	if _, err := d.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed a live basket: %v", err)
+	}
+	rec := holdTestPost(mux, "/open-orders/resume", "id=h1")
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("POST /open-orders/resume = %d, want %d: %s", rec.Code, http.StatusSeeOther, rec.Body.String())
+	}
+	if got := rec.Header().Get("Location"); got != "/open-orders?err=hold.error.busy" {
+		t.Fatalf("expected the busy refusal to redirect back with the error, got %q", got)
+	}
+	body := openOrdersGet(t, mux)
+	if !strings.Contains(body, `data-held-id="h1"`) {
+		t.Fatalf("expected the refused order to stay parked and listed, got: %s", body)
+	}
+}
+
+// TestOpenOrdersPage_ShowsErrBanner (ut-docs#2138): the ?err= query string
+// the resume route's busy redirect carries must actually render, same
+// "login-error" banner convention country_settings_page.go's renderPage
+// already uses for this shape.
+func TestOpenOrdersPage_ShowsErrBanner(t *testing.T) {
+	mux, _ := newOpenOrdersTestMux(t)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/open-orders?err=hold.error.busy", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /open-orders?err=... = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), httpx.T("en", "hold.error.busy")) {
+		t.Fatalf("expected the busy error banner, got: %s", rec.Body.String())
 	}
 }
 

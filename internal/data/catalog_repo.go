@@ -1090,6 +1090,36 @@ ORDER BY sort_order, name`)
 	return out, rows.Err()
 }
 
+// TopLevelForFilterChips takes a ListActiveCategories result and, for
+// chip-rendering purposes only, treats a category whose ParentID points at
+// a category NOT present in this same active-only slice as top-level
+// (ParentID cleared) — ut-docs#2140. Without this, deactivating a
+// top-level category that itself holds no direct items (so
+// SetCategoryActive's item-count guard doesn't block it) silently strands
+// its still-active children: they keep a non-empty ParentID pointing at a
+// category that no longer appears in the list, so category_filter.html's
+// "only top-level nodes get a chip" rule (ut-docs#2119) never renders one
+// for them, and no other chip expands to include them either. Returns a
+// new slice; the input is never mutated. Safe to reuse for the CLIENT-side
+// full flat list (CategoryNodesJSON) too: category-filter.js's expand()
+// only ever walks a node's OWN children via their ParentID, never a node's
+// own parent, so clearing an orphan's ParentID here cannot affect how its
+// descendants match.
+func TopLevelForFilterChips(nodes []CategoryNode) []CategoryNode {
+	present := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		present[n.ID] = true
+	}
+	out := make([]CategoryNode, len(nodes))
+	copy(out, nodes)
+	for i, n := range out {
+		if n.ParentID != "" && !present[n.ParentID] {
+			out[i].ParentID = ""
+		}
+	}
+	return out
+}
+
 // CategoryAdminRow is one category as the categories admin page
 // (ut-docs#1898) needs it: everything ListCategories has, plus how many
 // currently-ACTIVE items point at it — the count that gates deactivation

@@ -127,6 +127,10 @@ func registerInventoryPage(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "catalog.error.server", err)
 			return
 		}
+		// ut-docs#2140: a still-active child whose parent was deactivated
+		// (and so is missing from the slice above) would otherwise get no
+		// chip at all — see TopLevelForFilterChips' own doc comment.
+		categoryFilterOptions = data.TopLevelForFilterChips(categoryFilterOptions)
 
 		picker := make([]pickerItem, 0, len(items))
 		for _, it := range items {
