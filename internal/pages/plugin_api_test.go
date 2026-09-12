@@ -21,6 +21,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	appdb "github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -680,6 +681,58 @@ func TestHandleImportFromFile_NoPublicKeyImportsUnsignedBundle(t *testing.T) {
 	}
 	if _, ok := deps.Pm.Installed["com.test.unsigned"]; !ok {
 		t.Fatalf("unsigned bundle should import when no key is configured")
+	}
+}
+
+// TDD arc for ut-docs#2132: with a public key configured, importing a bundle
+// whose manifest carries no signature at all used to answer with the raw Go
+// error text ("Import failed: manifest verification failed: manifest
+// validation failed: 1 errors") — a bare count naming neither the problem
+// nor a next step. This pins the fix: the response body is the translated,
+// operator-comprehensible "unsigned" message (which points at the Plugin
+// Store / Export route), not the technical error, and the plugin is not
+// installed.
+func TestHandleImportFromFile_UnsignedBundleWithKeyConfiguredShowsLocalizedReason(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	isolatePluginsDir(t)
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	cfg := basePluginCfg()
+	cfg.Marketplace.PublicKey = hex.EncodeToString(pub)
+
+	db := openRealSchemaPagesDB(t)
+	deps := newPluginAPIDeps(t, db, cfg)
+	mux := http.NewServeMux()
+	registerPluginAPI(mux, deps)
+
+	m := plugins.Manifest{
+		ID:            "com.test.unsignedwithkey",
+		Name:          "Unsigned With Key",
+		Version:       "1.0.0",
+		Entrypoint:    "./plugin",
+		Runtime:       "go",
+		CanonicalType: "page",
+		DeviceArch:    "any",
+		// deliberately no Signature
+	}
+	bundle := writePluginBundle(t, m)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, importRequest(t, bundle, "unsignedwithkey.tar.gz", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for an unsigned bundle with a key configured, got %d: %s", rec.Code, rec.Body.String())
+	}
+	wantMsg := httpx.T("en", "plugins.error.import_unsigned") + "\n" // http.Error appends a newline
+	if rec.Body.String() != wantMsg {
+		t.Fatalf("expected the translated unsigned-bundle message, got: %q", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "manifest validation failed") {
+		t.Fatalf("operator response must not leak the raw Go error text: %q", rec.Body.String())
+	}
+	if _, ok := deps.Pm.Installed["com.test.unsignedwithkey"]; ok {
+		t.Fatalf("an unsigned bundle must not be installed when a key is configured")
 	}
 }
 

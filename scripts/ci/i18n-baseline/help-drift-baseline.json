@@ -119,19 +119,19 @@
       "topic": "plugins",
       "signature": {
         "headings": 2,
-        "numbered_steps": 9,
-        "sub_bullets": 0,
-        "top_bullets": 0,
-        "bold_leadins": 0
-      },
-      "english": {
-        "headings": 2,
         "numbered_steps": 10,
         "sub_bullets": 0,
         "top_bullets": 0,
-        "bold_leadins": 0
+        "bold_leadins": 1
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#2131 added a new item 10 in English (and matching item 9 here) without closing the pre-existing gap, so the counts moved together and the drift itself is unchanged."
+      "english": {
+        "headings": 2,
+        "numbered_steps": 11,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 1
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#2131 added a new item 10 in English (and matching item 9 here) without closing the pre-existing gap, so the counts moved together and the drift itself is unchanged. ut-docs#2132 added another new item (a bold-lead-in numbered step, and a matching translated item here) the same way, so numbered_steps and bold_leadins both moved together again — still an unclosed 1-step gap, not worsened."
     },
     {
       "locale": "ar",
@@ -423,19 +423,19 @@
       "topic": "plugins",
       "signature": {
         "headings": 2,
-        "numbered_steps": 9,
-        "sub_bullets": 0,
-        "top_bullets": 0,
-        "bold_leadins": 0
-      },
-      "english": {
-        "headings": 2,
         "numbered_steps": 10,
         "sub_bullets": 0,
         "top_bullets": 0,
-        "bold_leadins": 0
+        "bold_leadins": 1
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#2131 added a new item 10 in English (and matching item 9 here) without closing the pre-existing gap, so the counts moved together and the drift itself is unchanged."
+      "english": {
+        "headings": 2,
+        "numbered_steps": 11,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 1
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#2131 added a new item 10 in English (and matching item 9 here) without closing the pre-existing gap, so the counts moved together and the drift itself is unchanged. ut-docs#2132 added another new item (a bold-lead-in numbered step, and a matching translated item here) the same way, so numbered_steps and bold_leadins both moved together again — still an unclosed 1-step gap, not worsened."
     },
     {
       "locale": "fa",
@@ -746,19 +746,19 @@
       "topic": "plugins",
       "signature": {
         "headings": 2,
-        "numbered_steps": 9,
+        "numbered_steps": 10,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 2
+      },
+      "english": {
+        "headings": 2,
+        "numbered_steps": 11,
         "sub_bullets": 0,
         "top_bullets": 0,
         "bold_leadins": 1
       },
-      "english": {
-        "headings": 2,
-        "numbered_steps": 10,
-        "sub_bullets": 0,
-        "top_bullets": 0,
-        "bold_leadins": 0
-      },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#2131 added a new item 10 in English (and matching item 9 here) without closing the pre-existing gap, so the counts moved together and the drift itself is unchanged."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. ut-docs#2131 added a new item 10 in English (and matching item 9 here) without closing the pre-existing gap, so the counts moved together and the drift itself is unchanged. ut-docs#2132 added another new item (a bold-lead-in numbered step, and a matching translated item here) the same way, so numbered_steps and bold_leadins both moved together again — still an unclosed 1-step gap, not worsened."
     },
     {
       "locale": "tr",

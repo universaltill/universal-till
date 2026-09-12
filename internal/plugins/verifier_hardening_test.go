@@ -24,6 +24,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -151,5 +152,86 @@ func TestDownloadChecksumMismatchIsNotRetried(t *testing.T) {
 	}
 	if got := hits.Load(); got != 1 {
 		t.Fatalf("checksum mismatch was retried: server hit %d times, want 1", got)
+	}
+}
+
+// TestVerifyManifestUnsignedErrorIsDetectableAndNamesTheReason is the TDD
+// arc for ut-docs#2132: VerifyManifest's returned error used to be a bare
+// "manifest validation failed: 1 errors" — no caller could tell WHICH
+// validation failed without re-deriving it, and the operator-facing message
+// built from it (Import failed: %v) was equally uninformative. Both halves
+// of the fix are pinned here: errors.Is finds the specific unsigned case
+// (so a caller can show a distinct, actionable reason), and the error text
+// itself names the actual problem rather than just a count.
+func TestVerifyManifestUnsignedErrorIsDetectableAndNamesTheReason(t *testing.T) {
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	mv, err := NewManifestVerifier(hex.EncodeToString(pub))
+	if err != nil {
+		t.Fatalf("NewManifestVerifier: %v", err)
+	}
+
+	manifest := map[string]any{
+		"id":             "com.test.unsigned2",
+		"name":           "Unsigned",
+		"version":        "1.0.0",
+		"canonical_type": "page",
+		"device_arch":    "any",
+		"runtime":        "none",
+		// deliberately NO signature field
+	}
+	raw, _ := json.Marshal(manifest)
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	_, err = mv.VerifyManifest(path)
+	if err == nil {
+		t.Fatalf("unsigned manifest passed verification with a public key configured")
+	}
+	if !errors.Is(err, ErrManifestUnsigned) {
+		t.Fatalf("expected errors.Is(err, ErrManifestUnsigned), got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "signature") {
+		t.Fatalf("error should name the actual reason (missing signature), not just a count: %v", err)
+	}
+}
+
+// TestVerifyManifestOtherFailureIsNotErrManifestUnsigned pins the negative
+// case: a validation failure unrelated to signing (here, a missing required
+// field) must NOT be reported as ErrManifestUnsigned, or the caller would
+// show the "get a signed bundle" message for a problem that has nothing to
+// do with signing.
+func TestVerifyManifestOtherFailureIsNotErrManifestUnsigned(t *testing.T) {
+	manifest := map[string]any{
+		// deliberately missing "id"
+		"name":           "Missing ID",
+		"version":        "1.0.0",
+		"canonical_type": "page",
+		"device_arch":    "any",
+		"runtime":        "none",
+	}
+	raw, _ := json.Marshal(manifest)
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	mv, err := NewManifestVerifier("") // no key configured
+	if err != nil {
+		t.Fatalf("NewManifestVerifier: %v", err)
+	}
+	_, err = mv.VerifyManifest(path)
+	if err == nil {
+		t.Fatalf("manifest missing a required field passed verification")
+	}
+	if errors.Is(err, ErrManifestUnsigned) {
+		t.Fatalf("a missing-field failure must not be reported as ErrManifestUnsigned: %v", err)
+	}
+	if !strings.Contains(err.Error(), "id") {
+		t.Fatalf("error should name the actual reason (missing id), not just a count: %v", err)
 	}
 }
