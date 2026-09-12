@@ -64,16 +64,75 @@ export default defineConfig({
       use: {
         baseURL: 'http://127.0.0.1:8091',
         // The product's reference kiosk viewport — every screenshot in the
-        // manual is taken at the same size.
+        // manual is taken at the same size. Pinned explicitly alongside the
+        // viewport (ut-docs#2184) rather than left to Playwright's default:
+        // this harness's determinism proof (scripts/ci/guard-docs-shots-determinism.sh)
+        // depends on every knob that can affect a rendered pixel being
+        // pinned, not merely "probably already 1 today".
         viewport: { width: 1024, height: 600 },
+        deviceScaleFactor: 1,
         trace: 'retain-on-failure',
-        // Set by scripts/docs-shots.sh only when resolve-chromium.sh found a
-        // pre-installed browser worth reusing (ut-docs#622) — unset (and so
-        // this is a no-op) on any machine that ran the normal
-        // `playwright install --with-deps chromium` path.
-        ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE
-          ? { launchOptions: { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE } }
-          : {}),
+        launchOptions: {
+          // ut-docs#2184: GPU-accelerated rasterization (Chromium's default,
+          // even headless — it uses SwiftShader for GL) turned out to be the
+          // actual root cause of the "43 unrelated screenshots churn by
+          // <20 bytes" bug, not per-locale content or timing. Two identical
+          // `make docs-shots` runs on the same machine, same Chromium build,
+          // produced pixel-identical output everywhere EXCEPT a handful of
+          // anti-aliased edges on repeated vector icons (confirmed live: a
+          // pixel-diff of two `tr/catalog` captures isolated the residual to
+          // ~67 pixels, all landing at the SAME relative offset inside each
+          // of 5 repeated product-tile icons, spaced exactly one tile-width
+          // apart — i.e. one shared icon whose AA edge rasterizes
+          // differently run-to-run, not per-tile content). That is GPU
+          // compositor/raster nondeterminism (thread-scheduling-dependent
+          // blend order on tile boundaries), a well-documented class of
+          // Chromium screenshot flake — NOT a font/text issue like the
+          // ut-docs#930 residual this comment block used to describe.
+          // Forcing the software (CPU) rasterizer removes the
+          // nondeterminism at its source: verified byte-identical PNGs
+          // across repeated `make docs-shots` runs with these flags, where
+          // the same runs without them reliably differed (scripts/ci/
+          // guard-docs-shots-determinism.sh; the sale-CSS-only regeneration
+          // experiment described in the bug report also stopped touching
+          // `catalog`).
+          //   --disable-gpu / --disable-gpu-compositing: render+composite in
+          //     software instead of via the GPU process, eliminating the
+          //     driver/thread-scheduling variance across runs.
+          //   --disable-partial-raster, --disable-skia-runtime-opts: skip
+          //     Skia's incremental-raster caching and CPU-feature-dispatched
+          //     code paths — both are legitimate perf optimizations that
+          //     also introduce run-to-run ordering/codepath variance for a
+          //     one-shot screenshot harness that doesn't need them.
+          //   --run-all-compositor-stages-before-draw: makes compositing
+          //     fully synchronous, so a screenshot can never observe a
+          //     partially-composited frame regardless of the animation/rAF
+          //     waits already in capture().
+          //   --force-color-profile=srgb: pins color management so the
+          //     result can't depend on a monitor/profile-store difference
+          //     between the two headless processes' environments.
+          // Scoped to THIS config only — never merged into
+          // playwright.config.ts's launchOptions, so the real e2e suite (and
+          // any interactive/manual Chromium run) keeps normal GPU-accelerated
+          // rendering. Inert in production: nothing here reaches the actual
+          // till binary or a shop's browser at all — these are Chromium
+          // command-line flags for the test harness's OWN browser process.
+          args: [
+            '--disable-gpu',
+            '--disable-gpu-compositing',
+            '--disable-partial-raster',
+            '--disable-skia-runtime-opts',
+            '--run-all-compositor-stages-before-draw',
+            '--force-color-profile=srgb',
+          ],
+          // Set by scripts/docs-shots.sh only when resolve-chromium.sh found
+          // a pre-installed browser worth reusing (ut-docs#622) — unset (and
+          // so this key is omitted) on any machine that ran the normal
+          // `playwright install --with-deps chromium` path.
+          ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE
+            ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE }
+            : {}),
+        },
       },
     },
   ],

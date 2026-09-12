@@ -40,7 +40,24 @@
          two are self-describing ("Show only my country" / "Show all
          countries"), so a group role would announce a boundary with no
          name on it — strictly worse than no role at all. Don't add the
-         role back without adding a label key in the same change. */}}
+         role back without adding a label key in the same change.
+
+     ut-docs#2178: each chip's hx-headers now sends X-UT-Admin-Inline-Swap
+     so writeAdminTreeOOB (admin_page.go) knows to skip the out-of-band
+     tree for this in-page swap — replaces the old HX-Target-sniffing
+     isAdminPanelSwap check, which broke if a target ever lacked an id.
+     #country-settings-status is the aria-live region a screen-reader user
+     hears the toggle's outcome through (AC: "a screen reader gets a
+     spoken confirmation when a filter/scope swap changes what is
+     listed") — it sits OUTSIDE #country-settings-view deliberately, since
+     that div is itself replaced wholesale (hx-swap="outerHTML") on every
+     toggle: an aria-live region has to be a stable node that survives the
+     swap for assistive tech to notice the mutation inside it. The
+     after-swap listener below reuses whichever chip's own label is now
+     pressed rather than a new phrase — that text ("Show only my
+     country"/"Show all countries") already says exactly what changed, so
+     this needs no new locale key. */}}
+<div id="country-settings-status" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
 <div id="country-settings-view">
 
 {{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
@@ -53,12 +70,14 @@
 <div class="filter-chips">
   <button type="button" class="chip" id="cs-scope-mine" aria-pressed="{{ if .showAll }}false{{ else }}true{{ end }}"
           hx-get="/country-settings"
+          hx-headers='{"X-UT-Admin-Inline-Swap":"1"}'
           hx-target="#country-settings-view" hx-swap="outerHTML"
           hx-select="#country-settings-view" hx-push-url="true">
     <span class="chip-check" aria-hidden="true">{{ icon "check" }}</span>{{ T "countrysettings.show_mine" }}
   </button>
   <button type="button" class="chip" id="cs-scope-all" aria-pressed="{{ if .showAll }}true{{ else }}false{{ end }}"
           hx-get="/country-settings?all=1"
+          hx-headers='{"X-UT-Admin-Inline-Swap":"1"}'
           hx-target="#country-settings-view" hx-swap="outerHTML"
           hx-select="#country-settings-view" hx-push-url="true">
     <span class="chip-check" aria-hidden="true">{{ icon "check" }}</span>{{ T "countrysettings.show_all" }}
@@ -165,4 +184,39 @@
 </div>
 
 </div>
+<script>
+  // ut-docs#2178: announce whichever scope chip is now pressed into
+  // #country-settings-status (outside #country-settings-view, so it
+  // survives that div's own outerHTML swap) every time it swaps in.
+  // Unguarded against re-registration deliberately, same convention as
+  // catalog.html's own document.body afterSwap listeners (e.g.
+  // #catalog-table's filterRows): this whole block sits INSIDE the
+  // "content" fragment, so every return trip through /admin's tree
+  // registers ANOTHER copy of this listener on the persistent
+  // document.body. That is safe only because the write below is a true
+  // no-op when nothing changed — see the equality check. (Re-setting an
+  // aria-live region's textContent is a DOM mutation even when the new
+  // value is identical, so without that check N accumulated copies would
+  // make a screen reader repeat the same confirmation N times.)
+  //
+  // ev.detail.target is used ONLY as the "was it us?" predicate, never as
+  // the thing we read the chips out of: this swap is hx-swap="outerHTML",
+  // so by the time afterSwap fires htmx has REPLACED that element and
+  // detail.target still references the detached, pre-swap node. Reading
+  // .querySelector off it announced the chip that was pressed BEFORE the
+  // click — one toggle behind, every time. Re-query the live node by id
+  // instead (same shape as catalog.html's and tables.html's own afterSwap
+  // handlers, which likewise only id-check detail.target and then look the
+  // real nodes up fresh).
+  document.body.addEventListener('htmx:afterSwap', function (ev) {
+    if (!ev.detail.target || ev.detail.target.id !== 'country-settings-view') return;
+    var view = document.getElementById('country-settings-view');
+    if (!view) return;
+    var pressed = view.querySelector('.chip[aria-pressed="true"]');
+    var status = document.getElementById('country-settings-status');
+    if (!pressed || !status) return;
+    var label = pressed.textContent.trim();
+    if (status.textContent !== label) status.textContent = label;
+  });
+</script>
 {{ end }}

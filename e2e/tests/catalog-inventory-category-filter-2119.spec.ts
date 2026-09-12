@@ -70,6 +70,18 @@ test.describe('catalog category filter (ut-docs#2119, popover shell ut-docs#2165
     await expect(pepsi).toBeVisible();
     await expect(bread).toBeHidden();
     await expect(cornflakes).toBeHidden();
+    // ut-docs#2178 AC: a screen reader gets a spoken confirmation that the
+    // filter changed what's listed — reuses the trigger's own already-
+    // localized active-state label rather than a second copy of it.
+    // Pinned to a non-empty expectation on purpose: the live region also
+    // starts out empty (category-filter.js's paintStatus arms it on the
+    // bind-time paint without writing, so a page load never announces a
+    // filter the user never chose), so comparing against a label that had
+    // silently gone missing would assert ""==="" and pass against an
+    // implementation that never writes the region at all.
+    const activeLabel = await trigger.getAttribute('data-label-active');
+    expect(activeLabel).toBeTruthy();
+    await expect(page.locator('#catalog-category-filter-status')).toHaveText(activeLabel!);
 
     // Tapping "Food" instead (toggle Drinks off, Food on): includes BOTH an
     // item filed directly under Food (Cornflakes) AND one filed under a

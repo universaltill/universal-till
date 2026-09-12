@@ -386,12 +386,12 @@ func TestCountrySettingsPage_HXRequestReturnsContentFragmentWithOOBAdminTree(t *
 
 	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/country-settings", nil), mgr)
 	req.Header.Set("HX-Request", "true")
-	// ut-docs#2167: real htmx always sends HX-Target with the swap
-	// target's id, and admin_tree.html's row targets #admin-panel — the
-	// only case writeAdminTreeOOB now fires for (isAdminPanelSwap). This
-	// test models a tree-row click, so it must carry that header too;
-	// see TestCountrySettings_FragmentOmitsAdminTreeUnlessPanelTargeted
-	// for the other side of the guard.
+	// ut-docs#2167 (mechanism updated by ut-docs#2178): real htmx always
+	// sends HX-Target with the swap target's id, and admin_tree.html's row
+	// targets #admin-panel. This test models a tree-row click — no
+	// X-UT-Admin-Inline-Swap header — so writeAdminTreeOOB fires; see
+	// TestCountrySettings_FragmentOmitsAdminTreeOnlyWhenInlineSwapMarked
+	// for the other side of the guard (and the fail-open case).
 	req.Header.Set("HX-Target", "admin-panel")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -552,21 +552,27 @@ func TestCountrySettings_ScopeFilterPressedStateFollowsView(t *testing.T) {
 	}
 }
 
-// TestCountrySettings_FragmentOmitsAdminTreeUnlessPanelTargeted is the
-// regression test for isAdminPanelSwap (ut-docs#2167): the new in-panel
-// chips issue a fragment request targeting the page's own subtree, not
-// /admin's #admin-panel, so the out-of-band admin-tree refresh must be
-// skipped for that request — there is no #admin-tree in the DOM to
-// receive it (standalone page: none at all; the chip's own swap: outside
-// the swapped subtree). Only a real tree-row click (HX-Target:
-// admin-panel) gets the OOB tree.
-func TestCountrySettings_FragmentOmitsAdminTreeUnlessPanelTargeted(t *testing.T) {
+// TestCountrySettings_FragmentOmitsAdminTreeOnlyWhenInlineSwapMarked is the
+// regression test for isAdminInlineSwap (ut-docs#2178, replacing
+// isAdminPanelSwap/ut-docs#2167): the in-panel scope chips issue a fragment
+// request carrying X-UT-Admin-Inline-Swap, so the out-of-band admin-tree
+// refresh must be skipped for that request — there is no #admin-tree in
+// the DOM to receive it (standalone page: none at all; the chip's own
+// swap: outside the swapped subtree). A real tree-row click (no such
+// header) still gets the OOB tree, AND — the fail-open case the old
+// HX-Target-sniffing check could not pass — so does a fragment request
+// that carries NEITHER header nor a recognizable HX-Target at all: the
+// guard no longer depends on HX-Target's presence or value in any way, so
+// a future admin_tree.html row (or in-page control) using a target with no
+// id can never silently lose the tree the way the old check would have.
+func TestCountrySettings_FragmentOmitsAdminTreeOnlyWhenInlineSwapMarked(t *testing.T) {
 	mux, _, _ := newCountrySettingsTestMux(t)
 	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
 
 	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/country-settings", nil), mgr)
 	req.Header.Set("HX-Request", "true")
 	req.Header.Set("HX-Target", "country-settings-view")
+	req.Header.Set("X-UT-Admin-Inline-Swap", "1")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -574,7 +580,7 @@ func TestCountrySettings_FragmentOmitsAdminTreeUnlessPanelTargeted(t *testing.T)
 	}
 	body := rec.Body.String()
 	if strings.Contains(body, "hx-swap-oob") || strings.Contains(body, `id="admin-tree"`) {
-		t.Errorf("fragment targeted at #country-settings-view must not carry the OOB admin tree: %s", body)
+		t.Errorf("an in-page swap (X-UT-Admin-Inline-Swap set) must not carry the OOB admin tree: %s", body)
 	}
 
 	req = auth.WithUser(httptest.NewRequest(http.MethodGet, "/country-settings", nil), mgr)
@@ -587,7 +593,21 @@ func TestCountrySettings_FragmentOmitsAdminTreeUnlessPanelTargeted(t *testing.T)
 	}
 	body = rec.Body.String()
 	if !strings.Contains(body, "hx-swap-oob") || !strings.Contains(body, `id="admin-tree"`) {
-		t.Errorf("fragment targeted at #admin-panel must still carry the OOB admin tree: %s", body)
+		t.Errorf("a real tree-row click (no inline-swap header) must still carry the OOB admin tree: %s", body)
+	}
+
+	// Fail-open: no HX-Target at all (a target with no id sends none) and
+	// no opt-out marker either — the tree must still be sent.
+	req = auth.WithUser(httptest.NewRequest(http.MethodGet, "/country-settings", nil), mgr)
+	req.Header.Set("HX-Request", "true")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("fragment GET with no HX-Target = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body = rec.Body.String()
+	if !strings.Contains(body, "hx-swap-oob") || !strings.Contains(body, `id="admin-tree"`) {
+		t.Errorf("a fragment request with no HX-Target and no opt-out marker must fail OPEN (tree sent): %s", body)
 	}
 }
 

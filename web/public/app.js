@@ -888,13 +888,17 @@ document.addEventListener('click', function(e){
     alertBox.querySelector('.notice-text').textContent = msg || '';
   }
   // htmx never swaps a non-2xx response into its target by default — it
-  // fires htmx:responseError instead and discards the body. That's fine on
-  // the sale screen, which has the generic #pos-alert fallback below, but
-  // several admin-page handlers that fail (print/labels, print/test, invoice
-  // issue, backup now/restore, sync join/promote, …) still render a real,
-  // translated `.muted` fragment straight into their own hx-target — and on
-  // those pages there is no #pos-alert equivalent, so the rendered error
-  // was silently discarded and the operator saw nothing at all (ut-docs#916).
+  // fires htmx:responseError instead and discards the body. That's fine
+  // when the generic #pos-alert fallback below is the best available
+  // answer, but several admin-page handlers that fail (print/labels,
+  // print/test, invoice issue, backup now/restore, sync join/promote, …)
+  // still render a real, translated `.muted` fragment straight into their
+  // own hx-target — a SPECIFIC answer (which barcode conflicted, why the
+  // sync join failed) the operator needs, not a generic "something failed"
+  // banner. Even now that #pos-alert exists on every page (ut-docs#2183),
+  // discarding that fragment and falling back to the generic banner would
+  // still lose the actionable detail, so this still needs a force-swap
+  // into the real hx-target rather than the fallback (ut-docs#916).
   //
   // NOT every non-2xx response is safe to force-swap, though (review finding
   // on the first version of this fix): a plain `http.Error(...)` body is

@@ -426,13 +426,20 @@ func NewRenderer(layout, page, partial string, funcs template.FuncMap) (*Rendere
 		// base.html references it on every page; must be parsed alongside
 		// the layout or executing "base" fails.
 		"ui/partials/bugreport_panel.html",
-		// ut-docs#2179: index.html now includes the shared #pos-alert
-		// partial — a parse-time requirement, not a render-time one
-		// (production callers in internal/pages/buttons_api.go only ever
-		// execute the "buttons"/"buttons_admin_grid" fragments, never
-		// "base"), but {{ define "pos_alert" }} still has to be present
-		// in this parsed set or ClonedTemplate fails at parse time. Same
-		// reasoning as bugreport_panel.html just above.
+		// ut-docs#2183: base.html itself now includes the shared
+		// #pos-alert partial on every page (moved there from
+		// index.html/admin.html/items.html's own content blocks). Parsing/
+		// Clone succeed either way — html/template only resolves a
+		// {{ template "name" }} call at EXECUTE time — but production
+		// callers in internal/pages/buttons_api.go only ever execute the
+		// "buttons"/"buttons_admin_grid" fragments (never "base"), while
+		// render_cwd_test.go's TestButtonsNewRenderer_WorksFromAnyWorkingDirectory
+		// does execute "base" through this exact renderer, so
+		// {{ define "pos_alert" }} still has to be present in this parsed
+		// set or THAT executes and fails with "no such template". Same
+		// reasoning as bugreport_panel.html just above (corrected here,
+		// ut-docs#2179's original comment on this line also said "parse
+		// time", which independent review caught as inaccurate).
 		"ui/partials/pos_alert.html",
 		stripWebPrefix(partial),
 	)

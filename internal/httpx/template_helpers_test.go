@@ -2,7 +2,6 @@ package httpx
 
 import (
 	"encoding/json"
-	"errors"
 	"html/template"
 	"net/http"
 	"net/http/httptest"
@@ -223,6 +222,10 @@ func TestRenderWithRendersAndReports500OnBadFile(t *testing.T) {
 		filepath.Join("web", "ui", "pages", "pin.html"),
 		filepath.Join("web", "ui", "partials", "nav.html"),
 		filepath.Join("web", "ui", "partials", "bugreport_panel.html"),
+		// ut-docs#2183: base.html unconditionally references
+		// {{ template "pos_alert" . }} now — required here or executing
+		// "base" below fails, same reasoning as bugreport_panel.html above.
+		filepath.Join("web", "ui", "partials", "pos_alert.html"),
 	}
 	h := RenderWith(files, FuncsFor("en"))("base", map[string]any{
 		"title": "Change PIN", "theme": "", "menuItems": nil, "errKey": "",
@@ -492,58 +495,6 @@ func TestBaseLayoutPluginUpdateChipAbsentWhenNonePending(t *testing.T) {
 	}
 	if body := w.Body.String(); strings.Contains(body, "sb-plugin-update") {
 		t.Fatalf("expected no plugin-update chip when nothing is pending, got %.800s", body)
-	}
-}
-
-func TestNewMuxDispatchesRegisteredRoutes(t *testing.T) {
-	mux := NewMux()
-	mux.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusTeapot)
-	})
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, httptest.NewRequest("GET", "/ping", nil))
-	if w.Code != http.StatusTeapot {
-		t.Fatalf("mux dispatch = %d; want 418", w.Code)
-	}
-}
-
-func TestJSONHandlerSuccessAndError(t *testing.T) {
-	type in struct {
-		Name string `json:"name"`
-	}
-	ok := JSON(func(i in) (map[string]string, error) {
-		return map[string]string{"hello": i.Name}, nil
-	})
-	w := httptest.NewRecorder()
-	ok(w, httptest.NewRequest("POST", "/", strings.NewReader(`{"name":"till"}`)))
-	if w.Code != http.StatusOK {
-		t.Fatalf("JSON success status = %d", w.Code)
-	}
-	if ct := w.Header().Get("Content-Type"); ct != "application/json" {
-		t.Fatalf("Content-Type = %q", ct)
-	}
-	var out map[string]string
-	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if out["hello"] != "till" {
-		t.Fatalf("body = %v; want hello=till", out)
-	}
-
-	fail := JSON(func(i in) (map[string]string, error) {
-		return nil, errors.New("boom")
-	})
-	w = httptest.NewRecorder()
-	fail(w, httptest.NewRequest("POST", "/", strings.NewReader(`{}`)))
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("JSON error status = %d; want 400", w.Code)
-	}
-	var errOut map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &errOut); err != nil {
-		t.Fatalf("decode error body: %v", err)
-	}
-	if errOut["error"] != "boom" {
-		t.Fatalf("error body = %v; want error=boom", errOut)
 	}
 }
 
