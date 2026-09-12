@@ -34,9 +34,10 @@ type openOrderRow struct {
 // room for (table, item count, total, how long it has been open). ut-docs#2138:
 // tapping a row resumes it from here too, not just from the sale screen's own
 // popup (ut-docs#2137) -- a list that cannot open what it lists was a dead
-// end for the one cashier who reached for it. Still enforces the empty-basket
-// rule (resumeHeldSale, hold_api.go): refused, the order stays parked and
-// listed, exactly as before.
+// end for the one cashier who reached for it. ut-docs#1919: a busy live
+// basket is no longer refused here either -- resumeHeldSale (hold_api.go)
+// auto-parks it first, so opening another order from this page never
+// discards whatever the cashier already had rung up.
 //
 // Modelled on registerTables' page half: repo reads at the pages layer,
 // display-only joins done here (table id -> current label via
@@ -124,18 +125,17 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 	// sale-screen popup's POST /api/pos/resume (hold_api.go, ut-docs#2137):
 	// that one is an htmx fragment swapped into #basket, which this page does
 	// not have. resumeHeldSale (hold_api.go) carries the actual logic, shared
-	// so the ut-docs#820 table re-resolution and ut-docs#1390 claim handling
-	// exist in exactly one place. A plain redirect, not htmx, because this is
-	// a full-page navigation: success lands the cashier on the sale screen
-	// with the resumed basket; a refusal returns here with the existing
-	// hold.error.busy message and the order still parked and listed.
+	// so the ut-docs#820 table re-resolution, ut-docs#1390 claim handling and
+	// ut-docs#1919 park-current-then-open all exist in exactly one place. A
+	// plain redirect, not htmx, because this is a full-page navigation:
+	// success lands the cashier on the sale screen with the resumed basket
+	// (their own prior in-progress sale, if any, now parked and listed here
+	// instead of lost).
 	mux.HandleFunc("POST /open-orders/resume", func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		_ = r.ParseForm()
 		id := strings.TrimSpace(r.Form.Get("id"))
 		switch resumeHeldSale(ctx, d, repo, posRepo, id) {
-		case resumeBusy:
-			http.Redirect(w, r, "/open-orders?err=hold.error.busy", http.StatusSeeOther)
 		case resumeNotFound:
 			http.Redirect(w, r, "/open-orders?err=hold.error.not_found", http.StatusSeeOther)
 		case resumeFailed:
