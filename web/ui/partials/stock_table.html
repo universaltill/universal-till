@@ -5,7 +5,7 @@
   <tbody>
     {{ if .StockLevels }}
       {{ range .StockLevels }}
-        <tr class="stock-row" data-item="{{ .ItemID }}" data-name="{{ if .VariantName }}{{ printf "%s — %s" .Name .VariantName }}{{ else }}{{ .Name }}{{ end }}" data-sku="{{ .SKU }}" data-location="{{ .LocationID }}" data-location-name="{{ .LocationName }}" data-variant="{{ .VariantID }}">
+        <tr class="stock-row" data-item="{{ .ItemID }}" data-name="{{ if .VariantName }}{{ printf "%s — %s" .Name .VariantName }}{{ else }}{{ .Name }}{{ end }}" data-sku="{{ .SKU }}" data-location="{{ .LocationID }}" data-location-name="{{ .LocationName }}" data-variant="{{ .VariantID }}" data-category="{{ .CategoryID }}">
           <td class="catalog-name">{{ .Name }}{{ if .VariantName }} <span class="muted">— {{ .VariantName }}</span>{{ end }}</td>
           <td class="muted">{{ .SKU }}</td>
           <td>{{ .LocationName }}</td>
@@ -20,5 +20,9 @@
     {{ else }}
       <tr><td colspan="6" class="empty">{{ T "inventory.empty" }}</td></tr>
     {{ end }}
+    {{/* ut-docs#2119: see inventory.html's own comment on this same row —
+         kept identical here since this partial re-renders the whole table
+         on every stock-updated refresh. */}}
+    <tr id="stock-no-matches" hidden><td colspan="6" class="empty">{{ T "filter.no_matches" }}</td></tr>
   </tbody>
 </table>
