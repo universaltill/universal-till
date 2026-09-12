@@ -22,7 +22,25 @@
   .Groups is []adminGroup (internal/pages/admin_page.go): only the domain
   clusters that ended up with at least one visible entry after
   visibleAdminEntries' own gating -- an empty cluster never reaches this
-  template, so no "no entries" branch is needed here.
+  template, so no "no entries" branch is needed here. Each entry is an
+  adminTreeEntry, not a bare uislot.Entry: .FragmentCapable is true only
+  for the six adminGroupOrder destinations (the ones a writeAdminTreeOOB-
+  wired handler actually answers) -- an entry a `layout` plugin regroups
+  into Administration (ADR-0088 Decision F, adminGroupsFor's "Other"
+  catch-all) is never fragment-capable, since its own route has no handler
+  that can answer an hx-get with a content fragment; wiring htmx onto it
+  anyway would swap that page's whole standalone document into
+  #admin-panel (found in review, ut-docs#2139) -- such a row stays a plain
+  <a href> real navigation instead, same as every row behaved before
+  ut-docs#2116.
+
+  id="admin-tree" is what hx-swap-oob="true" matches against the copy
+  already in the DOM — sent again as an out-of-band swap alongside EVERY ONE
+  of the tree's six destinations' own htmx fragment response (internal/
+  pages/admin_page.go's writeAdminTreeOOB, called from each of those six
+  handlers) so the active-node highlight follows the click regardless of
+  which handler answered it, the same mechanism items_rail.html/help_nav.html
+  already use.
 */}}
 {{ define "admin_tree" }}
 <div class="admin-tree" id="admin-tree" {{ if .OOB }}hx-swap-oob="true"{{ end }}>
@@ -34,7 +52,7 @@
       <li>
         <a class="items-row{{ if eq .Href $.CurrentHref }} is-current{{ end }}"
            href="{{ .Href }}"
-           hx-get="{{ .Href }}" hx-target="#admin-panel" hx-push-url="true"
+           {{ if .FragmentCapable }}hx-get="{{ .Href }}" hx-target="#admin-panel" hx-push-url="true"{{ end }}
            {{ if eq .Href $.CurrentHref }}aria-current="page"{{ end }}>
           <span class="items-text">
             <span class="items-name">{{ T .LabelKey }}</span>
