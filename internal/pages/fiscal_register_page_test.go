@@ -550,3 +550,86 @@ func TestFiscalRegisterPage_ListsUnassignedRegisterEntry(t *testing.T) {
 		t.Fatalf("expected the unassigned register's entry to be listed, got: %s", body)
 	}
 }
+
+// ut-docs#2116: /fiscal-register is one of the /admin tree's six
+// destinations, converted to the same two-pane master-detail shell /items
+// uses (ut-docs#1950). An htmx request (from that panel) must get just the
+// "content" block, plus an out-of-band refresh of the admin tree with
+// /fiscal-register marked is-current — not the full standalone page's
+// chrome. Country=DE + the German tax plugin active so the entry actually
+// appears in the tree at all (fiscalRegisterPluginActive's gate,
+// ut-docs#1084) — without that the OOB tree simply omits the row.
+func TestFiscalRegisterPage_HXRequestReturnsContentFragmentWithOOBAdminTree(t *testing.T) {
+	mux, d := newFiscalRegisterTestMux(t)
+	d.UpdateState(func(s *common.RuntimeState) { s.Country = "DE" })
+	seedActiveTaxDePlugin(t, d.Db)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/fiscal-register", nil), manager)
+	req.Header.Set("HX-Request", "true")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("htmx GET /fiscal-register: %d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "<html") || strings.Contains(body, `class="nav"`) {
+		t.Errorf("htmx request re-rendered the whole page shell: %s", body)
+	}
+	railStart := strings.Index(body, `id="admin-tree"`)
+	if railStart < 0 || !strings.Contains(body, `hx-swap-oob="true"`) {
+		t.Fatalf("fragment missing the OOB admin-tree swap: %s", body)
+	}
+	rail := body[railStart:]
+	idx := strings.Index(rail, `href="/fiscal-register"`)
+	if idx < 0 {
+		t.Fatalf("OOB admin tree missing the /fiscal-register row: %s", rail)
+	}
+	tagStart := strings.LastIndex(rail[:idx], "<a ")
+	tagEnd := strings.Index(rail[tagStart:], ">") + tagStart
+	if !strings.Contains(rail[tagStart:tagEnd], "is-current") {
+		t.Errorf("the /fiscal-register row itself is not marked is-current: %s", rail[tagStart:tagEnd])
+	}
+}
+
+// A plain browser GET (no HX-Request) must still render the exact same full
+// standalone page as before this card.
+func TestFiscalRegisterPage_NonHXRequestStillRendersFullPage(t *testing.T) {
+	mux, d := newFiscalRegisterTestMux(t)
+	d.UpdateState(func(s *common.RuntimeState) { s.Country = "DE" })
+	seedActiveTaxDePlugin(t, d.Db)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/fiscal-register", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /fiscal-register: %d %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "<html") || !strings.Contains(body, `class="nav"`) {
+		t.Errorf("expected the full standalone page shell, got: %s", body)
+	}
+}
+
+// ut-docs#2091's Vary requirement, extended to /fiscal-register now that it
+// is a dual-mode destination too.
+func TestFiscalRegisterPage_VaryHXRequestOnBothBranches(t *testing.T) {
+	mux, d := newFiscalRegisterTestMux(t)
+	d.UpdateState(func(s *common.RuntimeState) { s.Country = "DE" })
+	seedActiveTaxDePlugin(t, d.Db)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	fragReq := auth.WithUser(httptest.NewRequest(http.MethodGet, "/fiscal-register", nil), manager)
+	fragReq.Header.Set("HX-Request", "true")
+	fragRec := httptest.NewRecorder()
+	mux.ServeHTTP(fragRec, fragReq)
+	if got := fragRec.Header().Get("Vary"); got != "HX-Request" {
+		t.Errorf("fragment branch: Vary header = %q, want %q", got, "HX-Request")
+	}
+
+	fullReq := auth.WithUser(httptest.NewRequest(http.MethodGet, "/fiscal-register", nil), manager)
+	fullRec := httptest.NewRecorder()
+	mux.ServeHTTP(fullRec, fullReq)
+	if got := fullRec.Header().Get("Vary"); got != "HX-Request" {
+		t.Errorf("full-page branch: Vary header = %q, want %q", got, "HX-Request")
+	}
+}

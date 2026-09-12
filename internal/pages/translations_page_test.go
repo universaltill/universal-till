@@ -710,3 +710,74 @@ func TestTranslationsClear_RequiresManager(t *testing.T) {
 		t.Fatalf("expected 403 without a manager session, got %d", rec.Code)
 	}
 }
+
+// ut-docs#2116: /translations is one of the /admin tree's six destinations,
+// converted to the same two-pane master-detail shell /items uses
+// (ut-docs#1950). An htmx request (from that panel) must get just the
+// "content" block, plus an out-of-band refresh of the admin tree with
+// /translations marked is-current — not the full standalone page's chrome.
+func TestTranslationsPage_HXRequestReturnsContentFragmentWithOOBAdminTree(t *testing.T) {
+	mux, _, _ := newTranslationsTestDeps(t)
+
+	req := withManager(httptest.NewRequest(http.MethodGet, "/translations", nil))
+	req.Header.Set("HX-Request", "true")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("htmx GET /translations: %d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "<html") || strings.Contains(body, `class="nav"`) {
+		t.Errorf("htmx request re-rendered the whole page shell: %s", body)
+	}
+	railStart := strings.Index(body, `id="admin-tree"`)
+	if railStart < 0 || !strings.Contains(body, `hx-swap-oob="true"`) {
+		t.Fatalf("fragment missing the OOB admin-tree swap: %s", body)
+	}
+	rail := body[railStart:]
+	idx := strings.Index(rail, `href="/translations"`)
+	if idx < 0 {
+		t.Fatalf("OOB admin tree missing the /translations row: %s", rail)
+	}
+	tagStart := strings.LastIndex(rail[:idx], "<a ")
+	tagEnd := strings.Index(rail[tagStart:], ">") + tagStart
+	if !strings.Contains(rail[tagStart:tagEnd], "is-current") {
+		t.Errorf("the /translations row itself is not marked is-current: %s", rail[tagStart:tagEnd])
+	}
+}
+
+// A plain browser GET (no HX-Request) must still render the exact same full
+// standalone page as before this card.
+func TestTranslationsPage_NonHXRequestStillRendersFullPage(t *testing.T) {
+	mux, _, _ := newTranslationsTestDeps(t)
+	req := withManager(httptest.NewRequest(http.MethodGet, "/translations", nil))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /translations: %d %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "<html") || !strings.Contains(body, `class="nav"`) {
+		t.Errorf("expected the full standalone page shell, got: %s", body)
+	}
+}
+
+// ut-docs#2091's Vary requirement, extended to /translations now that it is
+// a dual-mode destination too.
+func TestTranslationsPage_VaryHXRequestOnBothBranches(t *testing.T) {
+	mux, _, _ := newTranslationsTestDeps(t)
+
+	fragReq := withManager(httptest.NewRequest(http.MethodGet, "/translations", nil))
+	fragReq.Header.Set("HX-Request", "true")
+	fragRec := httptest.NewRecorder()
+	mux.ServeHTTP(fragRec, fragReq)
+	if got := fragRec.Header().Get("Vary"); got != "HX-Request" {
+		t.Errorf("fragment branch: Vary header = %q, want %q", got, "HX-Request")
+	}
+
+	fullReq := withManager(httptest.NewRequest(http.MethodGet, "/translations", nil))
+	fullRec := httptest.NewRecorder()
+	mux.ServeHTTP(fullRec, fullReq)
+	if got := fullRec.Header().Get("Vary"); got != "HX-Request" {
+		t.Errorf("full-page branch: Vary header = %q, want %q", got, "HX-Request")
+	}
+}

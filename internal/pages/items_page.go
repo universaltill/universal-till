@@ -101,7 +101,12 @@ func embedItemsSection(mux *http.ServeMux, r *http.Request, href, locale string)
 		}
 		sub.AddCookie(c)
 	}
-	sub.AddCookie(&http.Cookie{Name: "ut_lang", Value: locale})
+	// Built through LocaleOverrideValue, never as a bare locale (ut-docs#2135):
+	// a ut_lang value carries the shop default and locale generation it was
+	// chosen against, and one that carries neither is treated as a stale
+	// pre-#2135 cookie and ignored — which would drop this sub-request back to
+	// the shop default and silently undo #2114's fix.
+	sub.AddCookie(&http.Cookie{Name: "ut_lang", Value: httpx.LocaleOverrideValue(locale)})
 	if u, ok := auth.FromContext(r.Context()); ok {
 		sub = auth.WithUser(sub, u)
 	}

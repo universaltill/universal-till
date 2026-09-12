@@ -436,3 +436,108 @@ func TestRegistersPage_DeniedWithSettingsButNotStockLocationManagement(t *testin
 		t.Fatalf("manager with settings but not stock_location_management: GET /registers = %d, want 403", rec.Code)
 	}
 }
+
+// ut-docs#2116: /registers is one of the /admin tree's six destinations,
+// converted to the same two-pane master-detail shell /items uses
+// (ut-docs#1950). An htmx request (from that panel) must get just the
+// "content" block, plus an out-of-band refresh of the admin tree with
+// /registers marked is-current — not the full standalone page's chrome.
+func TestRegistersPage_HXRequestReturnsContentFragmentWithOOBAdminTree(t *testing.T) {
+	mux, _ := newRegistersTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/registers", nil), manager)
+	req.Header.Set("HX-Request", "true")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("htmx GET /registers: %d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "<html") || strings.Contains(body, `class="nav"`) {
+		t.Errorf("htmx request re-rendered the whole page shell: %s", body)
+	}
+	railStart := strings.Index(body, `id="admin-tree"`)
+	if railStart < 0 || !strings.Contains(body, `hx-swap-oob="true"`) {
+		t.Fatalf("fragment missing the OOB admin-tree swap: %s", body)
+	}
+	rail := body[railStart:]
+	idx := strings.Index(rail, `href="/registers"`)
+	if idx < 0 {
+		t.Fatalf("OOB admin tree missing the /registers row: %s", rail)
+	}
+	tagStart := strings.LastIndex(rail[:idx], "<a ")
+	tagEnd := strings.Index(rail[tagStart:], ">") + tagStart
+	if !strings.Contains(rail[tagStart:tagEnd], "is-current") {
+		t.Errorf("the /registers row itself is not marked is-current: %s", rail[tagStart:tagEnd])
+	}
+}
+
+// A plain browser GET (no HX-Request) must still render the exact same full
+// standalone page as before this card.
+func TestRegistersPage_NonHXRequestStillRendersFullPage(t *testing.T) {
+	mux, _ := newRegistersTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/registers", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /registers: %d %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "<html") || !strings.Contains(body, `class="nav"`) {
+		t.Errorf("expected the full standalone page shell, got: %s", body)
+	}
+}
+
+// ut-docs#2091's Vary requirement, extended to /registers now that it is a
+// dual-mode destination too.
+func TestRegistersPage_VaryHXRequestOnBothBranches(t *testing.T) {
+	mux, _ := newRegistersTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	fragReq := auth.WithUser(httptest.NewRequest(http.MethodGet, "/registers", nil), manager)
+	fragReq.Header.Set("HX-Request", "true")
+	fragRec := httptest.NewRecorder()
+	mux.ServeHTTP(fragRec, fragReq)
+	if got := fragRec.Header().Get("Vary"); got != "HX-Request" {
+		t.Errorf("fragment branch: Vary header = %q, want %q", got, "HX-Request")
+	}
+
+	fullReq := auth.WithUser(httptest.NewRequest(http.MethodGet, "/registers", nil), manager)
+	fullRec := httptest.NewRecorder()
+	mux.ServeHTTP(fullRec, fullReq)
+	if got := fullRec.Header().Get("Vary"); got != "HX-Request" {
+		t.Errorf("full-page branch: Vary header = %q, want %q", got, "HX-Request")
+	}
+}
+
+// Independent review of ut-docs#2116: the six new dual-mode handlers all
+// route through httpx.IsFragmentSwap, so they inherit its
+// HX-History-Restore-Request exclusion (ut-docs#433/#2091) — htmx re-requests
+// a restored history entry with BOTH headers set and expects the FULL page
+// back, and answering that with a bare fragment leaves the restored screen
+// chrome-less. That rule was pinned only on /help and /inventory before this
+// card; nothing pinned it on any of the six, so a future handler-local
+// "just check HX-Request" simplification would go unnoticed here. Covered
+// once, on /registers, exactly as the /items rail covers it once on
+// /inventory (TestInventoryPage_HXHistoryRestoreReturnsFullPage).
+func TestRegistersPage_HXHistoryRestoreReturnsFullPage(t *testing.T) {
+	mux, _ := newRegistersTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/registers", nil), manager)
+	req.Header.Set("HX-Request", "true")
+	req.Header.Set("HX-History-Restore-Request", "true")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("history-restore GET /registers: %d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "<html") || !strings.Contains(body, `class="nav"`) {
+		t.Errorf("a history-restore request must get the full standalone page, got: %s", body)
+	}
+	if strings.Contains(body, `hx-swap-oob=`) {
+		t.Errorf("a history-restore request must not carry the OOB admin-tree swap: %s", body)
+	}
+}
