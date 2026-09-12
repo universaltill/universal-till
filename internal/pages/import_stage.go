@@ -172,9 +172,16 @@ func commitStagedImportForSetup(ctx context.Context, mux *http.ServeMux, adminUs
 	// actually committed — the ut-docs#970 currency-confirm detour
 	// (renderImportCurrencyConfirm) also answers with a 200 HTML fragment
 	// when confirm_currency is missing/rejected, and a re-preview-instead-
-	// of-commit response would too. A real commit's success branch always
-	// renders the "view catalog" link (import_page.go), so require both.
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `href="/catalog"`) {
+	// of-commit response would too. ut-docs#2112 review (F2): this used to
+	// match on `href="/catalog"`, which was only ever true because the
+	// commit summary's "View catalog" control happened to always be a link
+	// — once it could also render as a dialog-close button
+	// (in_items_shell="1", never the case for this wizard request, which
+	// never sets that field), that match would have gone silently false on
+	// a genuinely successful commit. data-import-committed="1" marks the
+	// real commit summary div unconditionally, regardless of which control
+	// it renders — see its own comment in import_page.go.
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `data-import-committed="1"`) {
 		logging.L().Errorf("setup wizard: staged import %s did not commit (code %d): %s", stagedID, rec.Code, rec.Body.String())
 		return false
 	}

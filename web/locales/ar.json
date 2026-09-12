@@ -1069,6 +1069,8 @@
   "plugins.buttons.title": "إجراءات الإضافة",
   "plugins.current_version": "الإصدار الحالي:",
   "plugins.error.grant_failed": "تعذّر منح الإذن.",
+  "plugins.error.import_failed": "فشل الاستيراد. تحقق من أن الملف حزمة إضافة صالحة وحاول مرة أخرى.",
+  "plugins.error.import_unsigned": "حزمة هذه الإضافة غير موقّعة ولا يمكن تثبيتها. ثبّتها من متجر الإضافات بدلاً من ذلك، أو استخدم خيار التصدير في جهاز آخر لإنشاء حزمة يمكن لهذا الجهاز استيرادها.",
   "plugins.error.malformed_form": "تعذّرت قراءة الطلب. حاول مرة أخرى.",
   "plugins.error.revoke_failed": "تعذّر إلغاء الإذن.",
   "plugins.error.server": "حدث خطأ ما. يرجى المحاولة مجددًا.",

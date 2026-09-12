@@ -1069,6 +1069,8 @@
   "plugins.buttons.title": "Plugin actions",
   "plugins.current_version": "Current version:",
   "plugins.error.grant_failed": "Could not grant the permission.",
+  "plugins.error.import_failed": "Import failed. Check that the file is a valid plugin bundle and try again.",
+  "plugins.error.import_unsigned": "This plugin bundle is unsigned and can't be installed. Install it from the Plugin Store instead, or use Export on another till to create a bundle this till can import.",
   "plugins.error.malformed_form": "The request could not be read. Please try again.",
   "plugins.error.revoke_failed": "Could not revoke the permission.",
   "plugins.error.server": "Something went wrong. Please try again.",
