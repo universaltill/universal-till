@@ -1,4 +1,4 @@
-import { Page, expect } from '@playwright/test';
+import { APIRequestContext, Page, expect } from '@playwright/test';
 
 // ---------------------------------------------------------------------------
 // Form-layout geometry (ut-docs#300). Shared because the two surfaces that had
@@ -386,13 +386,20 @@ export async function closeItemForm(page: Page) {
 // empty held state.
 //
 // Held orders are DB rows, and `POST /api/pos/reset` only clears the
-// in-memory basket engine -- so fixtures.ts's per-file basket reset does NOT
-// remove them, and a parked order outlives the spec file that made it. Any
-// test asserting "nothing is parked" is therefore making a claim about GLOBAL
-// state: with `workers: 1` and servers shared across spec files, an earlier
-// file that parked a sale without resuming it has already falsified it. That
-// failure is CI-only and order-dependent -- it passes on its own locally,
-// which reads as flakiness and is not.
+// in-memory basket engine -- so a plain reset does NOT remove them, and a
+// parked order outlives the spec file that made it. Any test asserting
+// "nothing is parked" is therefore making a claim about GLOBAL state: with
+// `workers: 1` and servers shared across spec files, an earlier file that
+// parked a sale without resuming it has already falsified it. That failure
+// is CI-only and order-dependent -- it passes on its own locally, which
+// reads as flakiness and is not.
+//
+// Since ut-docs#2141, fixtures.ts's own `resetPosOncePerFile` auto-fixture
+// calls this once per file, so this is no longer something each spec file
+// has to remember to call for itself just to avoid inheriting an earlier
+// file's leak -- it's still exported/callable directly for a test (like
+// parked-orders-popup-2137.spec.ts's own) that specifically wants a drained
+// state mid-file, not just at the file's first test.
 //
 // Resume is the only thing that deletes a held row (there is deliberately no
 // bulk-delete endpoint; going around it via SQL would exercise a path the
@@ -408,18 +415,35 @@ export async function closeItemForm(page: Page) {
 // finding parked orders", which reads as unbounded generation rather than one
 // specific unresumable row. Naming the id and the toast is the difference
 // between a diagnosable failure and a confusing one.
-export async function drainParkedOrders(page: Page) {
+// Takes an APIRequestContext (e.g. `page.request`, or the top-level `request`
+// fixture) rather than a Page -- every call this makes is a plain HTTP
+// request with no need for a browser page, and e2e/tests/fixtures.ts's own
+// resetPosOncePerFile auto-fixture (ut-docs#2141) only ever has `request`,
+// not `page`, available to it.
+export async function drainParkedOrders(request: APIRequestContext) {
   let lastID = '';
   for (let round = 0; round < 50; round++) {
-    await page.request.post('/api/pos/reset').catch(() => {});
-    const body = await (await page.request.get('/ui/parked-orders')).text();
+    await request.post('/api/pos/reset').catch(() => {});
+    const listing = await request.get('/ui/parked-orders');
+    // An independent review caught this: a non-2xx here (500 on a repo read
+    // failure -- internal/pages/open_orders_page.go -- or an auth-project
+    // caller with no session getting redirected to /login) parses no
+    // `data-held-id` either, and would otherwise be silently read as
+    // "nothing parked". Since ut-docs#2141 this runs on every spec file via
+    // fixtures.ts's own auto-fixture, so a swallowed failure here would
+    // reintroduce exactly the silent, order-dependent leak this function
+    // exists to close -- fail loudly instead.
+    if (!listing.ok()) {
+      throw new Error(`drainParkedOrders: GET /ui/parked-orders returned ${listing.status()}, expected 2xx`);
+    }
+    const body = await listing.text();
     const id = body.match(/data-held-id="([^"]+)"/)?.[1];
     if (!id) return;
     if (id === lastID) {
       // Quote the refusal's own toast rather than the whole basket partial it
       // is wrapped in -- the partial leads with ~200 chars of markup and
       // whitespace, so a blind slice of it shows the caller nothing.
-      const refusal = await (await page.request.post('/api/pos/resume', { form: { id } })).text();
+      const refusal = await (await request.post('/api/pos/resume', { form: { id } })).text();
       const toast = refusal.match(/class="notice-text">([^<]*)</)?.[1]?.trim() ?? '(no toast in response)';
       throw new Error(
         `drainParkedOrders: held order ${id} survived a resume, so it can never be ` +
@@ -428,7 +452,7 @@ export async function drainParkedOrders(page: Page) {
       );
     }
     lastID = id;
-    await page.request.post('/api/pos/resume', { form: { id } });
+    await request.post('/api/pos/resume', { form: { id } });
   }
   throw new Error('drainParkedOrders: more than 50 parked orders; refusing to loop further');
 }
