@@ -1,12 +1,17 @@
 {{ define "content" }}
 <!--
-  /admin (ut-docs#2008): the tree page the Menu launcher's single gated
-  "Administration" tile opens. Replaces #1959's group heading on the flat
-  /menu grid -- the six set-once/onboarding destinations it used to head
-  (country settings, translations, the two statutory fiscal-device pages,
-  stock locations/registers) now live here instead, grouped into three
-  domain clusters (internal/pages/admin_page.go's adminGroupOrder) rather
-  than one flat list.
+  /admin (ut-docs#2008, converted to the SAME two-pane master-detail shell
+  /items uses by ut-docs#2116 -- the Architect's note on that card says to
+  mirror items.html's own pattern exactly, see that file's own doc comment).
+  The tree page the Menu launcher's single gated "Administration" tile
+  opens. The six set-once/onboarding destinations it leads to (country
+  settings, translations, the two statutory fiscal-device pages, stock
+  locations/registers) are grouped into three domain clusters
+  (internal/pages/admin_page.go's adminGroupOrder) down the left, and the
+  selected destination's own content renders on the right -- selecting a
+  row swaps ONLY #admin-panel via htmx and pushes the URL, so each
+  destination stays directly linkable/bookmarkable on its own; a bare GET to
+  any of them still renders its own complete standalone page, unchanged.
 
   Server-side gated independently of the tile that leads here
   (registerAdmin's own visibleAdminEntries check, 403 via httpx.RenderError
@@ -25,5 +30,31 @@
   <a class="btn primary btn-touch" href="{{ .BackHref }}"><span class="btn-ico" aria-hidden="true">{{ icon "menu" }}</span> {{ T "nav.menu" }}</a>
 </div>
 
-{{ template "admin_tree" . }}
+<div class="items-layout">
+  <aside class="items-rail-wrap" aria-label="{{ T "menu.group.administration" }}">
+    {{ template "admin_tree" . }}
+  </aside>
+  <div class="items-panel" id="admin-panel">
+    {{ if .PanelHTML }}{{ .PanelHTML }}{{ end }}
+  </div>
+</div>
+
+<script>
+(function () {
+  // ut-docs#2116: below app.css's .items-layout breakpoint (52rem) the two
+  // panes stack, and a tree tap must fall back to a plain navigation to the
+  // destination's own full page instead of the wide layout's in-panel htmx
+  // swap -- same reasoning and same mechanism as items.html's own identical
+  // script (see that file's comment for the full "why", including why this
+  // is bound on `document` rather than on #admin-tree itself: every
+  // destination swap replaces the tree out-of-band, and hx-swap-oob="true"
+  // is an outerHTML swap that would throw away a listener bound to the node
+  // being replaced).
+  document.addEventListener('click', function (evt) {
+    if (!window.matchMedia('(max-width: 52rem)').matches) return;
+    var t = evt.target;
+    if (t && t.closest && t.closest('a.items-row, a[hx-target="#admin-panel"]')) evt.stopPropagation();
+  }, true);
+})();
+</script>
 {{ end }}

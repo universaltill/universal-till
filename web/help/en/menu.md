@@ -14,7 +14,7 @@ Tap **☰ Menu** on the sale screen to open a page of big touch tiles — one fo
 
 ## Administration
 
-Set-up tiles you touch once and rarely return to — Country settings, Translations, the fiscal register/device page, Locations and Registers — sit behind one **Administration** tile, below the everyday tiles. Tap it to open a page listing them in three groups: Fiscal, Locations, Localization. Users, Kitchen stations and Bluetooth devices stay outside this tile: you manage those more often than a one-time setup.
+Set-up tiles you touch once and rarely return to — Country settings, Translations, the fiscal register/device page, Locations and Registers — sit behind one **Administration** tile, below the everyday tiles. Tap it to open a page listing them in three groups: Fiscal, Locations, Localization. On a tablet-width screen or wider this opens as a two-pane screen, the same as **Items**: the grouped list stays down the left and the selected destination's own screen shows on the right, so switching between them never leaves the page. On a phone-width screen the two panes stack, and tapping an entry opens its own full screen instead, the same as before. Each of the six destinations is still its own page with its own address — going to one directly or bookmarking it works exactly as before. Users, Kitchen stations and Bluetooth devices stay outside this tile: you manage those more often than a one-time setup.
 
 ## Tiles a layout plugin has hidden
 
