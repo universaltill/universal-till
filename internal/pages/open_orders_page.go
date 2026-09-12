@@ -96,11 +96,16 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "open_orders.error.load_failed", err)
 			return
 		}
+		// ut-docs#2146: bare "/" isn't always the sale screen -- see
+		// saleScreenReturnURL's own comment (index_page.go) for why
+		// backoffice/self_order need opposite treatment here.
+		mode, _, _ := d.Settings.Get(r.Context(), "display.mode")
 		httpx.Render("ui/pages/open_orders.html", map[string]any{
-			"title":     "Open orders",
-			"theme":     d.CurrentState().Theme,
-			"menuItems": d.MenuSnapshot(),
-			"orders":    rows,
+			"title":         "Open orders",
+			"theme":         d.CurrentState().Theme,
+			"menuItems":     d.MenuSnapshot(),
+			"orders":        rows,
+			"backToSaleURL": saleScreenReturnURL(mode),
 		})(w, r)
 	})
 

@@ -13,7 +13,7 @@
      budget. This page stays the detailed read-only view. */}}
 <div class="page-head">
   <h1>{{ T "open_orders.title" }}</h1>
-  <a class="btn primary btn-touch" href="/">← {{ T "menu.back_to_sale" }}</a>
+  <a class="btn primary btn-touch" href="{{ .backToSaleURL }}">← {{ T "menu.back_to_sale" }}</a>
 </div>
 <div class="card users-list">
   {{ if not .orders }}
