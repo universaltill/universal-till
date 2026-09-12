@@ -388,9 +388,14 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// buttons already use), which sets the cookie and re-renders; an
 		// unavailable one falls through to render with a "coming soon" note.
 		_, hasQueryLang := r.URL.Query()["lang"]
-		_, cookieErr := r.Cookie("ut_lang")
+		// ut-docs#2135: a cookie that EXISTS but is no longer valid (recorded
+		// against a superseded shop default or generation) is ignored when
+		// resolving the locale, so it must not count as "an earlier visit"
+		// here either — otherwise a stale jar suppresses detection and the
+		// wizard renders its fallback language with nothing having chosen it.
+		_, hasOverride := httpx.LocaleOverride(r)
 		langUnavailableCode := ""
-		if !hasQueryLang && cookieErr != nil {
+		if !hasQueryLang && !hasOverride {
 			code, available := detectLanguage()
 			if available {
 				// ut-docs#1180 (CI-discovered): this used to redirect to a
@@ -591,11 +596,19 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// ut-docs#1027: live-apply the just-derived locale, same posture as
 		// InitCurrency above — SetDefaultLocale no-ops on an empty value, so
 		// this is safe even when no country matched (st.Locale left at
-		// CurrentState()'s own seed). Only affects ResolveLocale's final
-		// fallback (no request-scoped ?lang=/ut_lang cookie yet); a fresh
-		// wizard run's own step-1 language detection cookie, when present,
-		// still wins for this browser, exactly as it does today.
+		// CurrentState()'s own seed).
 		httpx.SetDefaultLocale(st.Locale)
+		// ut-docs#2135: finishing the wizard is the shop stating its
+		// language, so it retires the wizard's OWN step-1 ?lang= cookie
+		// along with any other. That cookie used to win for this browser
+		// and is why the bug existed: a shop clicked through setup in
+		// English, and the till rendered English for a year afterwards
+		// while Settings said German. The cost is deliberate and worth
+		// naming — an operator who picked a language for THEMSELVES in
+		// step 1, different from the shop's, has to pick it again after
+		// setup (Menu → language, or ?lang=). The shop's own setting
+		// winning is the whole point of the card.
+		retireLocaleOverrides(r.Context(), d.Settings)
 		// Both engines: the kiosk's separate instance (ut-docs#449) must see
 		// the same tax config or it would silently charge stale rates.
 		newCfg := pos.Config{

@@ -518,13 +518,38 @@ func AvailableLocales() []string {
 	return nil
 }
 
+// localeCookie is the per-browser language override a ?lang= link leaves
+// behind. Its value is "<locale>|<shop default at the time>|<locale
+// generation at the time>" — see LocaleOverride for why the two trailing
+// fields exist.
+const localeCookie = "ut_lang"
+
+// localeGeneration counts the times the shop has EXPLICITLY set its
+// language (Settings' Language card, a store.locale write from the
+// all-settings table, finishing the setup wizard). It is persisted in
+// store.locale_generation and reloaded at boot, so it survives restarts —
+// a counter that reset to zero would silently re-validate every override
+// it had retired.
+var localeGeneration atomic.Int64
+
+// SetLocaleGeneration publishes the shop's current locale generation
+// (ut-docs#2135). Called at boot from the persisted value, and again each
+// time the shop's language is explicitly set.
+func SetLocaleGeneration(n int64) { localeGeneration.Store(n) }
+
+// LocaleGeneration returns the shop's current locale generation.
+func LocaleGeneration() int64 { return localeGeneration.Load() }
+
 // ResolveLocale determines the locale from query, cookie, then default.
 func ResolveLocale(w http.ResponseWriter, r *http.Request) string {
 	// query param takes precedence and sets cookie
 	if lang := r.URL.Query().Get("lang"); lang != "" {
 		http.SetCookie(w, &http.Cookie{
-			Name:     "ut_lang",
-			Value:    lang,
+			Name: localeCookie,
+			// Record what this choice was made against, so a later
+			// shop-level change can tell a live preference from a stale
+			// one (ut-docs#2135).
+			Value:    LocaleOverrideValue(lang),
 			Path:     "/",
 			MaxAge:   31536000, // 1 year
 			HttpOnly: false,
@@ -532,6 +557,64 @@ func ResolveLocale(w http.ResponseWriter, r *http.Request) string {
 		return lang
 	}
 	return RequestLocale(r)
+}
+
+// LocaleOverrideValue builds the ut_lang cookie value for a chosen locale:
+// the locale itself, plus the two things it is only valid relative to. The
+// single definition of the cookie's format — construct it nowhere else.
+func LocaleOverrideValue(lang string) string {
+	return lang + "|" + DefaultLocale() + "|" + strconv.FormatInt(LocaleGeneration(), 10)
+}
+
+// LocaleOverride returns this request's per-browser language override and
+// whether it is still valid.
+//
+// An override is a preference *relative to* what the shop was showing when it
+// was made, so it is honoured only while both of those things still hold
+// (ut-docs#2135):
+//
+//   - the shop default it was recorded against is still the shop default, and
+//   - the shop has not explicitly set its language since (the generation).
+//
+// The generation is what makes Settings → Language authoritative for the
+// WHOLE shop rather than only for the browser the save happened to be made
+// from. Re-applying the language the shop is already set to leaves the
+// default unmoved, so the first check alone would let the override stand —
+// and that is exactly the state a confused operator is in: the screen shows
+// the wrong language, Settings already shows the right one, and re-applying
+// it was their only move. It also means a manager can fix a till from their
+// own phone, which a Set-Cookie on the responding request cannot do.
+//
+// A cookie with fewer than three fields is a pre-#2135 one. It carries no
+// evidence of what it was chosen against, so it cannot be trusted over an
+// explicit shop setting and is ignored: affected tills heal themselves on
+// upgrade instead of waiting for an operator to find a control that, before
+// this change, could not clear it anyway. The cost is that a deliberate
+// pre-upgrade per-browser choice is forgotten once, and has to be re-picked.
+func LocaleOverride(r *http.Request) (string, bool) {
+	c, err := r.Cookie(localeCookie)
+	if err != nil || c.Value == "" {
+		return "", false
+	}
+	// Cut at the FIRST separator, so a ?lang= value containing one of its
+	// own cannot forge the trailing fields: "en|de|9" arrives as
+	// "en|de|9|<real base>|<real gen>" and fails the field count below.
+	lang, rest, ok := strings.Cut(c.Value, "|")
+	if !ok || lang == "" {
+		return "", false // legacy, pre-#2135
+	}
+	base, genStr, ok := strings.Cut(rest, "|")
+	if !ok || base == "" || genStr == "" {
+		return "", false
+	}
+	gen, err := strconv.ParseInt(genStr, 10, 64)
+	if err != nil {
+		return "", false
+	}
+	if base != DefaultLocale() || gen != LocaleGeneration() {
+		return "", false // the shop has moved on since
+	}
+	return lang, true
 }
 
 // RequestLocale is ResolveLocale without the side effect: the same
@@ -544,9 +627,10 @@ func RequestLocale(r *http.Request) string {
 	if lang := r.URL.Query().Get("lang"); lang != "" {
 		return lang
 	}
-	// cookie
-	if c, err := r.Cookie("ut_lang"); err == nil && c.Value != "" {
-		return c.Value
+	// cookie — only while it is still a live preference, not a stale one
+	// (ut-docs#2135)
+	if lang, ok := LocaleOverride(r); ok {
+		return lang
 	}
 	// default
 	if v := defaultLocale.Load(); v != nil {

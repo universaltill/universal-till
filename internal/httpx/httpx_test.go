@@ -77,7 +77,7 @@ func TestResolveLocaleQueryParamPrecedence(t *testing.T) {
 	InitI18n(nil, "en")
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/?lang=fr", nil)
-	r.AddCookie(&http.Cookie{Name: "ut_lang", Value: "en"})
+	r.AddCookie(&http.Cookie{Name: "ut_lang", Value: LocaleOverrideValue("en")})
 
 	locale := ResolveLocale(w, r)
 	if locale != "fr" {
@@ -88,8 +88,12 @@ func TestResolveLocaleQueryParamPrecedence(t *testing.T) {
 	for _, c := range res.Cookies() {
 		if c.Name == "ut_lang" {
 			found = true
-			if c.Value != "fr" {
-				t.Fatalf("cookie value = %q; want 'fr'", c.Value)
+			// Not a bare "fr", since ut-docs#2135: the cookie also records
+			// what the choice was made against, so a later shop-level
+			// language change can tell this preference apart from a stale
+			// one. See LocaleOverride.
+			if want := LocaleOverrideValue("fr"); c.Value != want {
+				t.Fatalf("cookie value = %q; want %q", c.Value, want)
 			}
 		}
 	}
@@ -102,7 +106,12 @@ func TestResolveLocaleCookieFallback(t *testing.T) {
 	InitI18n(nil, "en")
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/", nil)
-	r.AddCookie(&http.Cookie{Name: "ut_lang", Value: "fa"})
+	// Built through LocaleOverrideValue rather than written bare, since
+	// ut-docs#2135 — an override is honoured only while what it was
+	// recorded against still stands. A bare value is a pre-#2135 cookie and
+	// is deliberately ignored; that case has its own test in
+	// locale_override_test.go.
+	r.AddCookie(&http.Cookie{Name: "ut_lang", Value: LocaleOverrideValue("fa")})
 
 	locale := ResolveLocale(w, r)
 	if locale != "fa" {

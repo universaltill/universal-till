@@ -1,0 +1,41 @@
+{{/* Parked-orders popup body (ut-docs#2137): every order currently held on
+     this till, each one a control that resumes it straight into the live
+     basket. Fetched when the popup opens, so it is never stale.
+
+     This exists because the two other ways to reach a parked order both
+     failed on the pilot tablet: the sale screen's On hold strip is clipped
+     off-screen at 1280x800 (ut-docs#2128), and /open-orders was read-only,
+     pointing the cashier at that same strip (ut-docs#1918). A popup depends
+     on neither a viewport budget nor a second page.
+
+     Same contract as the strip's chip -- POST /api/pos/resume, #basket
+     swapped -- because this renders on the sale screen, where #basket is.
+     The empty-basket rule is enforced there, not by hiding the control.
+
+     Closes on ANY answered request, including a refusal (ut-docs#2137
+     review). Keeping it open on refusal looks more helpful and measured
+     worse: this dialog sits over the right-hand side of the toast, so the
+     cashier could read "Finish or hold the current sale first" but not
+     reach its dismiss button (from x@50% at 1024x600). The refusal also
+     tells them to go and do something on the sale screen, which is exactly
+     what the popup is covering -- so getting out of the way IS the useful
+     response. Deliberately simpler than the pay-grid handlers' toast-class
+     sniffing, which exists there to keep a DIFFERENT overlay open. */}}
+{{ if not .orders }}
+<p class="muted" data-testid="parked-orders-empty">{{ T "open_orders.empty" }}</p>
+{{ else }}
+<ul class="parked-orders-list">
+  {{ range .orders }}
+  <li>
+    <button type="button" class="btn secondary parked-order" data-held-id="{{ .ID }}"
+            hx-post="/api/pos/resume" hx-vals='{{ jsonVals "id" .ID }}'
+            hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+            hx-on::after-request="if (event.detail.successful) { var m = document.getElementById('parked-orders-modal'); if (m && m.open) m.close(); }">
+      <span class="parked-order-label">{{ .Label }}</span>
+      {{ if .TableLabel }}<span class="held-chip-table">{{ .TableLabel }}</span>{{ end }}
+      <span class="parked-order-meta">{{ .LineCount }} × · {{ money .Total }} · {{ printf (T "open_orders.age_minutes") .AgeMinutes }}</span>
+    </button>
+  </li>
+  {{ end }}
+</ul>
+{{ end }}
