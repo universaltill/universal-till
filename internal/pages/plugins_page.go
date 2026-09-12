@@ -48,9 +48,12 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 		// every file-imported plugin (no plugin_install_status row at all,
 		// internal/data/sync_plugins_repo.go) permanently unable to report an
 		// update, indistinguishable from "you are current". GetOrFetch serves
-		// the cache when fresh and refreshes it when stale (offline-first
-		// fallback preserved on a failed refetch) rather than serving an
-		// arbitrarily old cached snapshot forever.
+		// the cache when fresh, and when merely stale serves that same stale
+		// snapshot immediately while refreshing it in the background
+		// (ut-docs#2143) — rather than serving an arbitrarily old cached
+		// snapshot forever (the original ut-docs#2131 problem) or blocking
+		// this page render on a real network round-trip to an unreachable
+		// marketplace (what refetching inline turned out to cost, ut-docs#2143).
 		listingByPlugin := map[string]string{}
 		for listingID, st := range statuses {
 			if st.PluginID != "" {
