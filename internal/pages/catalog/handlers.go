@@ -622,6 +622,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			filepath.Join("web", "ui", "partials", "catalog_row.html"),
 			filepath.Join("web", "ui", "partials", "catalog_variants.html"),
 			filepath.Join("web", "ui", "partials", "category_filter.html"),
+			filepath.Join("web", "ui", "partials", "category_filter_popover.html"),
 		)
 		// ut-docs#1950: /catalog is also the /items rail's default ("Library")
 		// section — an htmx request from that panel (NOT a stale history

@@ -30,6 +30,8 @@
   <a class="btn primary btn-touch" href="{{ .BackHref }}"><span class="btn-ico" aria-hidden="true">{{ icon "menu" }}</span> {{ T "nav.menu" }}</a>
 </div>
 
+{{ template "pos_alert" . }}
+
 <div class="items-layout">
   <aside class="items-rail-wrap" aria-label="{{ T "menu.group.administration" }}">
     {{ template "admin_tree" . }}

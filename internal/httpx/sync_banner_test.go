@@ -29,6 +29,7 @@ func TestInventoryBannerLinksToPrimaryWhenActionable(t *testing.T) {
 		filepath.Join("web", "ui", "pages", "inventory.html"),
 		funcs,
 		filepath.Join("web", "ui", "partials", "category_filter.html"),
+		filepath.Join("web", "ui", "partials", "category_filter_popover.html"),
 	)
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
@@ -64,6 +65,7 @@ func TestInventoryBannerHasNoLinkWhenNotActionable(t *testing.T) {
 		filepath.Join("web", "ui", "pages", "inventory.html"),
 		funcs,
 		filepath.Join("web", "ui", "partials", "category_filter.html"),
+		filepath.Join("web", "ui", "partials", "category_filter_popover.html"),
 	)
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
@@ -99,6 +101,7 @@ func TestCatalogBannerLinksToPrimaryWhenActionable(t *testing.T) {
 		filepath.Join("web", "ui", "partials", "catalog_row.html"),
 		filepath.Join("web", "ui", "partials", "catalog_variants.html"),
 		filepath.Join("web", "ui", "partials", "category_filter.html"),
+		filepath.Join("web", "ui", "partials", "category_filter_popover.html"),
 	)
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
@@ -134,6 +137,7 @@ func TestCatalogBannerHasNoLinkWhenNotActionable(t *testing.T) {
 		filepath.Join("web", "ui", "partials", "catalog_row.html"),
 		filepath.Join("web", "ui", "partials", "catalog_variants.html"),
 		filepath.Join("web", "ui", "partials", "category_filter.html"),
+		filepath.Join("web", "ui", "partials", "category_filter_popover.html"),
 	)
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)

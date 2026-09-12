@@ -99,5 +99,91 @@
     return { getSelected: selected };
   }
 
-  global.CategoryFilter = { expand: expand, matches: matches, bind: bind };
+  // bindPopover(controlEl) -> { open, close } | undefined
+  //
+  // ut-docs#2165 — wires the collapsed filter-icon trigger button
+  // (category_filter_popover.html) to its own <dialog> popover: open on
+  // trigger click (toggles closed again on a second click), close via the
+  // popover's own close button or Escape, and returns focus to the
+  // trigger every time it closes so a keyboard/screen-reader user never
+  // loses their place. controlEl is the popover's own wrapping element
+  // (category_filter_popover.html's outer [data-category-filter-control]),
+  // carrying both the trigger and the dialog. Deliberately does NOT
+  // close-on-outside-click: .modifier-modal is opened via .show(), not
+  // .showModal(), so it never paints a real ::backdrop element to hit-test
+  // against (record_dialog.html's own comment on the same tradeoff) — an
+  // "outside click" hack here would need a synthetic full-page overlay
+  // this card's AC never asked for. Escape + the explicit close button
+  // are the two dismiss paths the AC actually specifies.
+  function bindPopover(controlEl) {
+    if (!controlEl) return undefined;
+    var trigger = controlEl.querySelector('[data-category-filter-trigger]');
+    var dialog = controlEl.querySelector('[data-category-filter-dialog]');
+    var closeBtn = controlEl.querySelector('[data-category-filter-close]');
+    if (!trigger || !dialog) return undefined;
+
+    function open() {
+      if (dialog.open) return;
+      dialog.show();
+      trigger.setAttribute('aria-expanded', 'true');
+      // The close button is always present and immediately reachable,
+      // regardless of how many (or how few) category chips this shop has
+      // — a more robust first-focus target than "the first chip", which
+      // would be a different element's job to guarantee exists.
+      if (closeBtn) closeBtn.focus();
+    }
+    function close() {
+      if (!dialog.open) return;
+      dialog.close();
+      trigger.setAttribute('aria-expanded', 'false');
+      trigger.focus();
+    }
+    trigger.addEventListener('click', function () {
+      if (dialog.open) { close(); } else { open(); }
+    });
+    if (closeBtn) closeBtn.addEventListener('click', close);
+    dialog.addEventListener('keydown', function (ev) {
+      if (ev.key !== 'Escape' && ev.key !== 'Esc') return;
+      ev.preventDefault();
+      close();
+    });
+
+    return { open: open, close: close };
+  }
+
+  // paintTriggerState(controlEl, active) -> void
+  //
+  // Mirrors the popover's current selection onto its own collapsed
+  // trigger: active = at least one category chip selected. aria-expanded
+  // (set by bindPopover above) already carries open/closed; this instead
+  // carries FILTERED/not, the state ut-docs#2165's AC calls "the
+  // acceptance criterion that matters most" — a merchant must never be
+  // looking at a filtered list without knowing it. The badge is a
+  // presence/absence toggle (a real hidden attribute, not a colour swap)
+  // for the same WCAG 1.4.11 reason category_filter.html's own chip-check
+  // is shape-based, not colour-based; the accessible name gets the same
+  // signal in words via data-label-active/data-label-idle (filled from
+  // locale keys by the call site, so this file stays locale-free).
+  function paintTriggerState(controlEl, active) {
+    if (!controlEl) return;
+    var trigger = controlEl.querySelector('[data-category-filter-trigger]');
+    if (!trigger) return;
+    var badge = trigger.querySelector('.category-filter-badge');
+    if (badge) badge.hidden = !active;
+    var activeLabel = trigger.getAttribute('data-label-active');
+    var idleLabel = trigger.getAttribute('data-label-idle');
+    var label = (active && activeLabel) ? activeLabel : idleLabel;
+    if (label) {
+      trigger.setAttribute('aria-label', label);
+      trigger.setAttribute('title', label);
+    }
+  }
+
+  global.CategoryFilter = {
+    expand: expand,
+    matches: matches,
+    bind: bind,
+    bindPopover: bindPopover,
+    paintTriggerState: paintTriggerState
+  };
 })(window);

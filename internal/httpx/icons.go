@@ -191,6 +191,14 @@ var railIcons = map[string]string{
 	// locked) and "monitor" (the open-orders board). Lucide's "log-out"
 	// path, unmodified.
 	"log-out": `<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/>`,
+	// Category-filter trigger (ut-docs#2165) — the collapsed filter-icon
+	// button that opens /catalog's and /inventory's category popover,
+	// replacing the always-visible chip row. Lucide's "filter" (funnel)
+	// path, unmodified — no dedicated filter glyph existed in this set
+	// before; the shared drawn-icon set is meant to grow the same way
+	// "landmark"/"scan-barcode"/"log-out" above already did, not to be
+	// treated as closed.
+	"filter": `<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>`,
 }
 
 // iconSVGOpen is the one shared wrapper every rail icon renders inside.
