@@ -1445,15 +1445,115 @@ a.btn, a.btn:hover { text-decoration: none; }
    (the class of bug the self-order kiosk's own search+category
    combination has, ut-docs#419). */
 .products-finder { display: flex; flex-direction: column; gap: .6rem; }
-/* 2026-08-30 (product owner, live on the tablet): PRODUCTS/search used to
-   be two separate full-width rows -- combined into one (title + search +
-   the "+ Add" quick link, buttons.html) so search doesn't cost its own
-   row of height. h2 keeps its own margin reset since .products-header's
-   gap already provides spacing. */
+/* ut-docs#2173 (closes ut-docs#993): replaces the old two-row
+   .products-header (title + always-expanded search + compact "+" link,
+   2026-08-30) stacked above .tab-bar. At 1024x600 with 12 categories that
+   tab bar alone (flex-wrap: wrap, unbounded) ran 247px over 5 rows with
+   ZERO product tiles visible on the kiosk floor — the whole point of this
+   screen. .products-strip is now the ONE row both live in: the category
+   tab bar (still .tab-bar, still a real WAI-ARIA tablist — see the generic
+   .tab-bar rule far below, which this section deliberately never touches;
+   it's shared with the tender Pay/Split bar and the catalog item-form
+   strip) plus the search/edit icon buttons pinned at its trailing end.
+   justify-content: flex-end matters for the $flat/single-real-category
+   branches (buttons.html) where no .tab-bar renders at all — the icons
+   then sit at the trailing end instead of drifting to the leading one. */
+.products-strip { display: flex; align-items: center; justify-content: flex-end; gap: .25rem; }
+/* ut-docs#2173 review finding F1: these three rules serve the EMPTY-CATALOG
+   branch of buttons.html ({{ if not .Groups }}), which still renders its own
+   .products-header/.products-add and is deliberately untouched by the strip
+   work above — it has no tab bar and no search to collapse, and its visible
+   <h2> is the only context a brand-new shop gets. Deleting them along with
+   the old two-row header regressed that screen from one ~42px flex row to a
+   77.8px stacked block (measured at 1024x600), i.e. the exact opposite of
+   this card's goal, on the first screen a new merchant ever sees. The old
+   `.products-header input[type="search"]` rule is NOT restored: that branch
+   has no search input, so it really was dead. */
 .products-header { display: flex; align-items: center; gap: .6rem; margin-bottom: .6rem; }
 .products-header h2 { margin: 0; white-space: nowrap; }
-.products-header input[type="search"] { flex: 1; min-width: 0; }
 .products-add { flex: 0 0 auto; }
+/* Padding-matched to .products-finder .tab-bar's own rendered height so
+   swapping the tab bar out for this input (search mode) never changes
+   .products-strip's own height — the "same row, same height" requirement
+   ut-docs#2173 was written against.
+
+   The +4px is not a fudge factor and does NOT depend on the font-size
+   (corrected by this card's independent review, which decomposed it): both
+   elements are `font: inherit` and both carry the same .5rem vertical
+   padding, which cancels. The 8px difference is entirely px constants —
+   the bar's padding-block (2+2) and border-bottom (2), plus the active
+   tab's border-block-start (3) and border-bottom (3), minus its
+   margin-bottom (-2), minus the input's own top+bottom border (1+1) = 8.
+   Half on each side is this +4px. So it holds at any font-size or rem
+   scale (verified live: bar and input both 51.640625px), and what it IS
+   brittle to is a change in any of those BORDER widths, or .tab's vertical
+   padding diverging from the base input's. Change either and re-measure.
+   e2e/tests/sale-screen-search-strip-2173.spec.ts pins the invariant
+   (|Δheight| < 1px between rest and search mode), so a drift fails there
+   rather than silently on a till. */
+.products-strip > input[type="search"] { flex: 1 1 auto; min-inline-size: 0; padding-block: calc(.5rem + 4px); }
+/* The strip's tab bar: unlike the generic .tab-bar (flex-wrap: wrap, below)
+   this one is ALWAYS single-row, at every width — the sale screen never
+   had room to spare for a second row, so unlike .catalog-form-head
+   .tab-bar (which only goes nowrap under its own max-width: 700px query,
+   ut-docs#2000/#2024) this is not inside any media query at all. */
+.products-finder .tab-bar {
+  flex: 1 1 auto; min-inline-size: 0;
+  flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+  padding-block: 2px; margin-bottom: 0;
+}
+/* overflow-y: hidden above (needed so the horizontal scrollbar doesn't add
+   height) clips both the active tab's border-bottom indicator and its
+   focus ring, since .tab uses a negative margin-bottom to overlap the
+   bar's own border — same gap independent review found in
+   .catalog-form-head .tab-bar (ut-docs#2000) and the same fix, ported
+   here rather than duplicated by accident. */
+.products-finder .tab-bar .tab:focus-visible {
+  outline: 2px solid var(--focus, var(--accent)); outline-offset: -2px;
+}
+/* Scroll-shadow recipe ported verbatim from .catalog-form-head .tab-bar
+   (ut-docs#2024, below in this file) rather than duplicated with drift —
+   Math.abs(scrollLeft) window.utTabBarFade (app.js) drives these same two
+   classes for both call sites; only the selector differs. See that
+   section's own comment for why a pure-CSS background-attachment "scroll
+   shadow" was rejected (backwards under RTL) in favor of real JS
+   scrollLeft/scrollWidth arithmetic toggling these two classes, and why
+   the fade's gradient *direction* (not whether it shows) needs its own
+   dir="rtl" override below. */
+.products-finder .tab-bar::before,
+.products-finder .tab-bar::after {
+  content: ""; position: sticky; flex: none; pointer-events: none;
+  inline-size: 1.1rem; block-size: 100%; opacity: 0;
+  transition: opacity .15s ease;
+}
+.products-finder .tab-bar::before {
+  order: -1; inset-inline-start: 0;
+  background: linear-gradient(to right, var(--surface), transparent);
+}
+.products-finder .tab-bar::after {
+  order: 999; inset-inline-end: 0;
+  background: linear-gradient(to left, var(--surface), transparent);
+}
+html[dir="rtl"] .products-finder .tab-bar::before {
+  background: linear-gradient(to left, var(--surface), transparent);
+}
+html[dir="rtl"] .products-finder .tab-bar::after {
+  background: linear-gradient(to right, var(--surface), transparent);
+}
+.products-finder .tab-bar.tab-bar--fade-start::before,
+.products-finder .tab-bar.tab-bar--fade-end::after {
+  opacity: 1;
+}
+/* Deliberately NOT setting touch-action on .products-strip or
+   .products-finder .tab-bar: the default is what lets a vertical finger-
+   pan that starts on the strip keep scrolling the products panel beneath
+   it (.pos-container > .products' own overflow-y: auto) rather than being
+   captured by this row — looks like an omission, isn't one. */
+/* ut-docs#2173 — the back arrow is the first direction-dependent icon in
+   this registry (internal/httpx/icons.go): every other rail glyph reads
+   the same in LTR and RTL, but "back" must point startward, so it's
+   mirrored here instead of drawn twice. */
+html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
 .products-finder input[type="search"] { width: 100%; }
 /* Unlike .tender's tab-panel (app.css, "Tender" section below), .products
    itself already scrolls (.pos-container > .products has its own

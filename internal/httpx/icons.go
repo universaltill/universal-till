@@ -191,6 +191,13 @@ var railIcons = map[string]string{
 	// locked) and "monitor" (the open-orders board). Lucide's "log-out"
 	// path, unmodified.
 	"log-out": `<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/>`,
+	// Back (ut-docs#2173) — the sale-screen category strip's search-mode
+	// back control, restoring the tab-bar view. The first direction-
+	// dependent icon in this registry: every other glyph above reads the
+	// same in LTR and RTL, but an arrow pointing "back" must point start-
+	// ward, so app.css mirrors this one under `html[dir="rtl"]` instead of
+	// drawing a second path. Lucide's "arrow-left" path, unmodified.
+	"arrow-left": `<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>`,
 }
 
 // iconSVGOpen is the one shared wrapper every rail icon renders inside.

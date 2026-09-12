@@ -45,11 +45,62 @@
          when nothing in the active tab matches at all. Re-queries the DOM
          on every keystroke rather than tracking a reactive count — fine at
          the tile counts a category screen actually has. */}}
-    <div class="products-finder" x-data="{
+    {{/* Focus handling on open/close (ut-docs#2173 review finding F2), and
+         two things that cost this cycle real time -- both verified, not
+         reasoned about.
+
+         1. WHY IT EXISTS. Tapping the search icon focuses that BUTTON, then
+            x-show hides it; tapping back does the same to the back button.
+            Either way the focused element goes display:none and focus falls
+            to the document body -- confirmed with real taps, activeElement
+            reading BODY both after opening and after closing. A keyboard or
+            screen-reader operator then has to Tab in from the top of the
+            document again, on the till's primary screen. So openSearch()
+            hands focus to the input and closeSearch() hands it back to the
+            search icon.
+
+            Note this only reproduces with a REAL tap. Driving the same
+            buttons with element.click() from a script never moves focus off
+            the scan input in the first place, so it shows no bug -- if you
+            are checking this by hand, use a real click.
+
+         2. USE $refs, NOT this.$el.querySelector(...). The first attempt at
+            closeSearch() resolved the button via this.$el.querySelector and
+            silently did nothing: focus() on an element you did not actually
+            find is no error, and focus() on a still-hidden element is a
+            silent no-op too, so both failure modes look identical to "the
+            fix is there and works". $refs is what the input was already
+            using, and it is what works -- hence x-ref="searchBtn" on the
+            icon. A double requestAnimationFrame was also tried instead of
+            $nextTick, on the theory that Alpine's x-show write lands on the
+            second frame (catalog.html's afterTabPaint, ut-docs#1956); that
+            is NOT what was wrong here and it made things worse, breaking
+            open as well as close. $nextTick is sufficient.
+
+         3. KEEP LONG PROSE OUT OF THE x-data ATTRIBUTE. This note first
+            lived inside x-data="{...}" below. A literal double quote in
+            template SOURCE terminates the attribute -- html/template's
+            contextual escaping covers {{ }} interpolations, NOT literal text
+            the author typed -- and this text quotes a word and mentions a
+            body tag. The result was not a loud parse error: /ui/buttons
+            returned HTTP 200 with ZERO bytes, the whole products panel
+            vanished, and 28 sale-screen e2e specs failed with null-element
+            and click-timeout errors that pointed nowhere near the cause.
+            internal/pages/buttons_api_test.go would have caught it in one
+            second; it was missed by re-running only go build/go vet after
+            that edit instead of the full gate. */}}
+    <section class="products-finder" aria-labelledby="products-panel-title" x-data="{
       tab: '{{ if $hasTabs }}{{ (index .Groups 0).ID }}{{ end }}',
       q: '',
       matches(tileEl) { return !this.q || tileEl.dataset.name.toLowerCase().includes(this.q.toLowerCase()); },
       sectionHasMatch(el) { return !this.q || Array.from(el.querySelectorAll('.btn-tile')).some(t => this.matches(t)); },
+      searching: false,
+      openSearch() { this.searching = true; this.$nextTick(() => { const i = this.$refs.search; if (i) i.focus(); }); },
+      closeSearch() {
+        this.searching = false;
+        this.q = '';
+        this.$nextTick(() => { const b = this.$refs.searchBtn; if (b) b.focus(); });
+      },
       /* Roving-tabindex arrow-key nav (ut-docs#424, WAI-ARIA tabs pattern):
          moves focus to the next/previous [role=tab] within this component
          and activates it via its own @click handler — reuses the same
@@ -71,40 +122,81 @@
         next.click(); next.focus();
       }
     }">
-      <!-- 2026-08-30 (product owner, live on the tablet): PRODUCTS/search
-           used to be two separate full-width rows (title, then search
-           below it) -- combined into one row so search doesn't cost its
-           own row of height, same pattern this session already applied
-           to the sale screen's other panels. The + Add tile-style button
-           (SumUp's own reference grid has one) is the same /designer link
-           as the empty-state's above, just compact since it lives
-           alongside real content here instead of being the only thing on
-           screen. -->
-      <div class="products-header">
-        <h2>{{ T "products.title" }}</h2>
-        <input type="search" id="products-search" x-model="q"
-               placeholder="{{ T "products.search_ph" }}" aria-label="{{ T "products.search_ph" }}"
-               autocomplete="off">
-        <a class="btn secondary compact products-add" href="/designer" data-testid="products-add-link" title="{{ T "products.add" }}" aria-label="{{ T "products.add" }}">+</a>
-      </div>
-      {{ if $hasTabs }}
-      {{/* One tab per top-level category (ut-docs#418) — findable by name
-           via search below, ut-docs#173's barcode-less-item gap is
-           unaffected either way. Nested subcategories render as headed
-           sub-sections inside their parent's tab panel (see
-           "category-group-body"), not as their own top-level tab.
-           --cat-color carries each category's color onto its own tab
-           (border-block-start always, the active underline when
-           selected) — pre-#418, every category's color was visible at
-           once via its stacked section header; tabs make that one-at-a-
-           time, so the tab itself is now what carries the color instead
-           of losing it. */}}
-      <div class="tab-bar" role="tablist" @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
-        {{ range .Groups }}
-        <button type="button" id="cat-tab-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" class="tab" role="tab" style="--cat-color: {{ .Color }}" :class="tab === '{{ .ID }}' && 'active'" :aria-selected="tab === '{{ .ID }}'" :tabindex="tab === '{{ .ID }}' ? 0 : -1" aria-controls="cat-panel-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" @click="tab = '{{ .ID }}'">{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</button>
+      <!-- ut-docs#2173 (closes ut-docs#993): the sale screen used to spend
+           TWO full rows of height before the first product tile -- this
+           .products-header row (title + an always-expanded search input +
+           a compact + link) added 2026-08-30 below, THEN .tab-bar below
+           that, unbounded (flex-wrap: wrap). At 1024x600 with 12
+           categories the tab bar alone ran 247px over 5 rows and ZERO
+           tiles were visible on the kiosk floor. Both rows are now ONE
+           .products-strip: the category tab bar stays a real single-row,
+           horizontally-scrolling tablist (app.css's .products-finder
+           .tab-bar), with the search and edit icon buttons pinned at its
+           trailing end. Tapping search swaps the strip out for the same
+           #products-search input IN PLACE (x-show, not a second row) via
+           searching/openSearch()/closeSearch() above, with a back arrow at
+           the leading end restoring the strip and clearing the query --
+           see the elements below for why each is x-show rather than a
+           template conditional or x-if. The removed <h2> was the row's only visible
+           heading; a visually-hidden one right below keeps the <section>'s
+           accessible name AND the heading-navigation outline a screen
+           reader relies on, at zero pixels -- .visually-hidden is the
+           existing global utility in app.css (no line reference on purpose:
+           the one this comment first carried was stale within the same
+           cycle). -->
+      <h2 id="products-panel-title" class="visually-hidden">{{ T "products.title" }}</h2>
+      <div class="products-strip">
+        <!-- Back control: only ever visible while searching (x-cloak keeps
+             it hidden pre-hydration, same convention as the tab-panel
+             x-cloak below -- cloaking the default-visible elements instead
+             would hide the till's main content until Alpine boots). -->
+        <button type="button" x-show="searching" x-cloak
+                class="btn secondary compact btn-icon products-strip-back"
+                aria-label="{{ T "products.search_close" }}" title="{{ T "products.search_close" }}"
+                @click="closeSearch()" @keydown.escape="closeSearch()">
+          <span class="btn-ico" aria-hidden="true">{{ icon "arrow-left" }}</span>
+        </button>
+        {{ if $hasTabs }}
+        {{/* One tab per top-level category (ut-docs#418) — findable by name
+             via search below, ut-docs#173's barcode-less-item gap is
+             unaffected either way. Nested subcategories render as headed
+             sub-sections inside their parent's tab panel (see
+             "category-group-body"), not as their own top-level tab.
+             --cat-color carries each category's color onto its own tab
+             (border-block-start always, the active underline when
+             selected) — pre-#418, every category's color was visible at
+             once via its stacked section header; tabs make that one-at-a-
+             time, so the tab itself is now what carries the color instead
+             of losing it. */}}
+        <div class="tab-bar" role="tablist" x-show="!searching" @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
+          {{ range .Groups }}
+          {{/* $el.scrollIntoView({ block: 'nearest', inline: 'nearest' }):
+               ut-docs#2173 made this bar horizontally-scrolling, so
+               selecting an off-screen tab (click, or focusTab()'s arrow-key
+               nav above) must bring it into view. block: 'nearest' is
+               deliberate -- it must never scroll the PAGE vertically, only
+               the strip itself horizontally (inline: 'nearest'); 'center'
+               or 'start' would fight that. */}}
+          <button type="button" id="cat-tab-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" class="tab" role="tab" style="--cat-color: {{ .Color }}" :class="tab === '{{ .ID }}' && 'active'" :aria-selected="tab === '{{ .ID }}'" :tabindex="tab === '{{ .ID }}' ? 0 : -1" aria-controls="cat-panel-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" @click="tab = '{{ .ID }}'; $el.scrollIntoView({ block: 'nearest', inline: 'nearest' })">{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</button>
+          {{ end }}
+        </div>
         {{ end }}
+        <input type="search" id="products-search" x-model="q" x-ref="search"
+               x-show="searching" x-cloak
+               placeholder="{{ T "products.search_ph" }}" aria-label="{{ T "products.search_ph" }}"
+               autocomplete="off" @keydown.escape="closeSearch()">
+        <button type="button" x-show="!searching" x-ref="searchBtn"
+                class="btn secondary compact btn-icon products-strip-search"
+                aria-label="{{ T "products.search_open" }}" title="{{ T "products.search_open" }}"
+                @click="openSearch()">
+          <span class="btn-ico" aria-hidden="true">{{ icon "search" }}</span>
+        </button>
+        <a href="/designer" x-show="!searching"
+           class="btn secondary compact btn-icon products-strip-edit" data-testid="products-add-link"
+           aria-label="{{ T "products.edit" }}" title="{{ T "products.edit" }}">
+          <span class="btn-ico" aria-hidden="true">{{ icon "pencil" }}</span>
+        </a>
       </div>
-      {{ end }}
       <div id="buttons-grid" class="category-groups">
         {{ if $flat }}
         {{/* No category-group wrapper here to inherit #422's
@@ -155,7 +247,7 @@
         <p class="empty" x-show="!sectionHasMatch($el.parentElement)">{{ T "products.no_matches" }}</p>
         {{ end }}
       </div>
-    </div>
+    </section>
   {{ end }}
   <!-- Action buttons contributed by installed plugins -->
   <div hx-get="/ui/plugin-buttons" hx-trigger="load" hx-swap="outerHTML"></div>
