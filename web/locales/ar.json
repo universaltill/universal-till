@@ -296,6 +296,8 @@
   "catalog.price_major": "السعر (£)",
   "catalog.price_minor": "السعر (وحدات صغرى)",
   "catalog.primary": "أساسي",
+  "catalog.reorder_level": "حد إعادة الطلب",
+  "catalog.reorder_level_hint": "كمية المخزون التي يُعتبر دونها هذا الصنف منخفضًا — يحدد عمود «إعادة الطلب عند» في جدول المخزون وقائمة المخزون المنخفض",
   "catalog.sample_badge": "تجريبي",
   "catalog.save_changes": "حفظ التغييرات",
   "catalog.save_first_hint": "احفظ هذا الصنف أولاً — يصبح هذا القسم متاحًا بعد إنشاء الصنف.",

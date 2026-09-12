@@ -691,8 +691,13 @@
     modifierGroupsModal.addEventListener('close', function () {
       var itemId = document.getElementById('item-id').value;
       if (itemId) {
+        // ut-docs#2179 review finding: `source: '#item-form'` matters
+        // beyond htmx config — it's what makes `ev.detail.elt` resolve
+        // inside `#item-form-modal` for the scoped htmx:responseError
+        // listener below, so a real failure here still reaches the
+        // dialog's own message area instead of being silently dropped.
         htmx.ajax('GET', '/api/catalog/item-variants?item_id=' + encodeURIComponent(itemId),
-          { target: '#catalog-variants', swap: 'outerHTML' });
+          { source: '#item-form', target: '#catalog-variants', swap: 'outerHTML' });
       }
     });
   }
@@ -1003,8 +1008,12 @@
     // Load the item's variants/barcodes editor panel — since ut-docs#1956
     // the Variants tab of this same dialog, so there is nothing to scroll
     // into view any more.
+    // ut-docs#2179 review finding: `source: '#item-form'` (see the
+    // identical comment on the modifier-dialog-close reset above) — the
+    // dialog is open at this point, so a real failure here must reach its
+    // own message area, not vanish silently.
     htmx.ajax('GET', '/api/catalog/item-variants?item_id=' + encodeURIComponent(row.dataset.id),
-      { target: '#catalog-variants', swap: 'outerHTML' });
+      { source: '#item-form', target: '#catalog-variants', swap: 'outerHTML' });
     var imgLabel = document.getElementById('image-item-label');
     if (imgLabel) { imgLabel.value = row.dataset.name; document.getElementById('image-item-id').value = row.dataset.id; }
     refreshBuiltinIconState(row.dataset.id);
@@ -1100,8 +1109,23 @@
     // regardless of the primary swap mode. The target only needs to be a
     // valid element; swap:none never touches it.
     var failed = false;
-    function markFailed() { failed = true; }
-    document.body.addEventListener('htmx:responseError', markFailed, { once: true });
+    // ut-docs#2179 review finding: this used to be `{ once: true }` with no
+    // scoping — the FIRST htmx:responseError anywhere on the page (e.g. an
+    // unrelated /items panel-swap failure while this save is in flight)
+    // consumed the one-shot slot and never fired again, so the real save's
+    // own failure (if it came after) would sail through unnoticed: `failed`
+    // stays false, `.then()` proceeds down the success branch, and the
+    // operator sees a stuck "Saving…" with no outcome. Scope to this
+    // dialog's own requests, like the generic listener below already does,
+    // and only remove the listener once it actually matches — an unrelated
+    // event must leave it armed for the real one.
+    function markFailed(ev) {
+      var elt = ev.detail && ev.detail.elt;
+      if (!elt || !elt.closest || !elt.closest('#item-form-modal')) return;
+      failed = true;
+      document.body.removeEventListener('htmx:responseError', markFailed);
+    }
+    document.body.addEventListener('htmx:responseError', markFailed);
     // ut-docs#1901 UX fix: captured BEFORE clearForm() may blank #item-id,
     // so the delayed auto-close below (search "auto-close") can tell
     // whether this is still the same dialog session that just saved.
@@ -1150,7 +1174,20 @@
         renderNotice(msg, 'error', NOTICE_MSG.itemFormErrorGeneric);
       });
   });
+  // ut-docs#2179 review finding: this was unscoped — ANY failed htmx
+  // request anywhere on a page that embeds this dialog (e.g. /items'
+  // panel swap to a DIFFERENT, unrelated section) bubbles htmx:
+  // responseError to document.body and used to stamp its raw response
+  // text into this closed dialog's own message area, visible the next
+  // time it's opened. Surfaced by ut-docs#2179's own fix: app.js no
+  // longer force-swaps (and thereby suppresses responseError for) a full
+  // RenderError document, so this listener started firing for requests
+  // that were never this dialog's own. Scope to requests this dialog
+  // itself triggered — same "which element asked for this" check
+  // buttons_admin.html's own target(evt) helper already uses.
   document.body.addEventListener('htmx:responseError', function (ev) {
+    var elt = ev.detail && ev.detail.elt;
+    if (!elt || !elt.closest || !elt.closest('#item-form-modal')) return;
     renderNotice(msg, 'error', (ev.detail.xhr.responseText || '').trim() || NOTICE_MSG.itemFormErrorGeneric);
   });
 

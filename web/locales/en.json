@@ -296,6 +296,8 @@
   "catalog.price_major": "Price (£)",
   "catalog.price_minor": "Price (minor units)",
   "catalog.primary": "Primary",
+  "catalog.reorder_level": "Reorder level",
+  "catalog.reorder_level_hint": "Stock quantity below which this item counts as low — drives the stock table's Reorder at column and the Low Stock list",
   "catalog.sample_badge": "SAMPLE",
   "catalog.save_changes": "Save Changes",
   "catalog.save_first_hint": "Save this item first — this section becomes available once the item exists.",
