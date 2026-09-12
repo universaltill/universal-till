@@ -21,14 +21,13 @@
 -->
 <div class="page-head">
   <h1>{{ T "menu.group.administration" }} {{ helpLink "menu" }}</h1>
-  <!-- Real, touch-sized back-to-menu affordance (>=46px, .btn-touch) --
-       same "icon + label" button shape menu.html's own "Back to sale"
-       button and error_page.html's 403 fallback use, just pointed at
-       .BackHref (always "/menu" today) instead of "/". The nav rail's own
-       "Menu" icon (nav.html, every page) already reaches /menu too; this
-       is the in-content affordance the AC calls for in addition to it. -->
-  <a class="btn primary btn-touch" href="{{ .BackHref }}"><span class="btn-ico" aria-hidden="true">{{ icon "menu" }}</span> {{ T "nav.menu" }}</a>
 </div>
+<!-- ut-docs#2166 (product owner, on the pilot tablet): the in-content
+     back-to-menu button ut-docs#2116 added here was reviewed live and
+     called redundant with the nav rail's own "Menu" icon (nav.html, every
+     page), which already reaches /menu — removed. The rail stays the
+     single way back; see TestAdminPage_AllNonEmptyClustersRenderForFullAccessDETill
+     for the "can still get back" assertion, now against the rail entry. -->
 
 {{ template "pos_alert" . }}
 
