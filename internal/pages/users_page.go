@@ -155,7 +155,7 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if !ok {
 			return
 		}
-		renderUsers(w, r, actor, r.URL.Query().Get("err"))
+		renderUsers(w, r, actor, httpx.QueryErrKey(r))
 	})
 
 	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, r *http.Request) {

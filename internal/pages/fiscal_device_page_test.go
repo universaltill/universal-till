@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -106,6 +107,33 @@ func TestFiscalDevicePage_RendersWithoutPlugin(t *testing.T) {
 	}
 	if !strings.Contains(body, en("fiscaldevice.actions.unavailable")) {
 		t.Fatalf("expected the actions-unavailable explanation, got: %s", body)
+	}
+}
+
+// ut-docs#2148 review finding: `?msg=` used to feed the "login-ok" success
+// banner through `{{ T .msgKey }}` unvalidated — a crafted link could make
+// the till display fake "confirmed"-looking text. An unrecognised value
+// must render the shared generic fallback instead of the raw query value.
+func TestFiscalDevicePage_UnrecognisedMsgQueryValueRendersGenericFallback(t *testing.T) {
+	mux, d := newFiscalDeviceTestMux(t)
+	t.Setenv("UT_AUTH", "off")
+	seedActiveTaxTrPlugin(t, d.Db, false)
+	setCountry(t, d, "TR")
+
+	attackerText := "Device confirmed successfully, no action needed"
+	req := httptest.NewRequest(http.MethodGet, "/fiscal-device?msg="+url.QueryEscape(attackerText), nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /fiscal-device?msg=... = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, attackerText) {
+		t.Fatalf("body rendered the raw, unrecognised ?msg= value verbatim:\n%s", body)
+	}
+	want := httpx.T("en", "common.error.server")
+	if !strings.Contains(body, want) {
+		t.Fatalf("body missing the generic fallback message %q:\n%s", want, body)
 	}
 }
 

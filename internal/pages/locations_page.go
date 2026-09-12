@@ -93,7 +93,7 @@ func registerLocations(mux *http.ServeMux, d *common.Deps) {
 		if _, ok := requireManager(w, r); !ok {
 			return
 		}
-		renderLocations(w, r, r.URL.Query().Get("err"))
+		renderLocations(w, r, httpx.QueryErrKey(r))
 	})
 
 	mux.HandleFunc("POST /api/locations", func(w http.ResponseWriter, r *http.Request) {

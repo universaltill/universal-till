@@ -148,7 +148,7 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 		if _, ok := requireManager(w, r); !ok {
 			return
 		}
-		renderRegisters(w, r, r.URL.Query().Get("err"))
+		renderRegisters(w, r, httpx.QueryErrKey(r))
 	})
 
 	mux.HandleFunc("POST /api/registers", func(w http.ResponseWriter, r *http.Request) {
