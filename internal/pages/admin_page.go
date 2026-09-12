@@ -205,6 +205,22 @@ func renderAdminDestination(d *common.Deps, currentHref, tplPath string, data ma
 			writeAdminTreeOOB(w, funcs, currentHref, groups)
 			return
 		}
+		// Review finding (ut-docs#2116): this viewer can reach currentHref
+		// itself (their own requireManager-shaped gate already passed
+		// before this call) but groups can still legitimately come back
+		// empty for them — a `layout` plugin regrouping every OTHER
+		// administration entry out of this cluster (ADR-0088 Decision F;
+		// adminGroupsFor's own doc comment already anticipates the reverse
+		// direction) is a real, reachable case, not a defensive
+		// hypothetical. Rendering the shell anyway would reserve
+		// .admin-layout's tree-column width beside an empty <aside> — a
+		// blank gutter with nothing in it. Falling back to the plain
+		// standalone render (this destination's pre-ut-docs#2116 shape)
+		// degrades to something real instead.
+		if len(groups) == 0 {
+			httpx.Render(tplPath, data)(w, r)
+			return
+		}
 		panelHTML, err := httpx.RenderContentFragmentToString(tplPath, data, r)
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
@@ -217,6 +233,12 @@ func renderAdminDestination(d *common.Deps, currentHref, tplPath string, data ma
 			"Groups":      groups,
 			"CurrentHref": currentHref,
 			"PanelHTML":   panelHTML,
+			// Defensive only (review finding): admin_shell.html's
+			// empty-state branch is the only reader of .BackHref, and
+			// PanelHTML is non-empty on every reachable path here — but
+			// setting it removes even the theoretical broken-href risk if
+			// RenderContentFragmentToString ever legitimately returns "".
+			"BackHref": "/menu",
 		})(w, r)
 	}
 }

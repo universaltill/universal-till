@@ -423,6 +423,56 @@ func TestAdminPage_BareGETIsShellEmptyState(t *testing.T) {
 	}
 }
 
+// ut-docs#2116, found in review: every other test in this file (and the
+// e2e spec's original draft) asserted only the URL/is-current/aria-current
+// outcome of a tree click -- which this card's own bare-GET shell
+// rendering makes IDENTICAL whether the click ran as a real htmx in-panel
+// swap or as a plain full-page navigation to the same href. Deleting the
+// tree row's hx-get/hx-target/hx-push-url attributes entirely (i.e.
+// reverting to the old plain-<a>-only behaviour this card exists to fix)
+// left every one of those assertions green. This test pins the actual
+// mechanism -- the attributes themselves -- so that regression can't
+// recur silently.
+func TestAdminPage_TreeRowsCarryHtmxSwapAttributes(t *testing.T) {
+	mux, dp := newAdminPageTestDeps(t)
+	t.Setenv("UT_AUTH", "off")
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "DE" })
+	seedActiveTaxDePlugin(t, dp.Db)
+
+	body := getAdmin(t, mux, nil).Body.String()
+	for _, href := range []string{"/locations", "/registers", "/fiscal-register", "/translations", "/country-settings"} {
+		row := findRowByHref(t, body, href)
+		if !strings.Contains(row, `hx-get="`+href+`"`) {
+			t.Errorf("expected %s's tree row to carry hx-get=%q for the in-panel swap, got row: %s", href, href, row)
+		}
+		if !strings.Contains(row, `hx-target="#admin-panel"`) {
+			t.Errorf("expected %s's tree row to target #admin-panel, got row: %s", href, row)
+		}
+		if !strings.Contains(row, `hx-push-url="true"`) {
+			t.Errorf("expected %s's tree row to push its own URL (so a swap stays deep-linkable/back-button-safe), got row: %s", href, row)
+		}
+	}
+}
+
+// findRowByHref extracts the single <a ...>...</a> element whose href
+// matches, so the hx-* assertions above are scoped to that one row rather
+// than matching an hx-get/hx-target that happens to appear ANYWHERE in the
+// page body (e.g. a different row, or an unrelated htmx element).
+func findRowByHref(t *testing.T, body, href string) string {
+	t.Helper()
+	marker := `href="` + href + `"`
+	idx := strings.Index(body, marker)
+	if idx == -1 {
+		t.Fatalf("no row found for href=%s in body: %s", href, body)
+	}
+	start := strings.LastIndex(body[:idx], "<a ")
+	end := strings.Index(body[idx:], "</a>")
+	if start == -1 || end == -1 {
+		t.Fatalf("could not isolate the <a> element for href=%s", href)
+	}
+	return body[start : idx+end+len("</a>")]
+}
+
 // Unit-level coverage for visibleAdminEntries and the "administration"
 // predicate directly, independent of HTTP rendering.
 func TestVisibleAdminEntries_NoPermissions(t *testing.T) {

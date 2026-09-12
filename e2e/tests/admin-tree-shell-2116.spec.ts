@@ -29,10 +29,24 @@ test.describe('/admin tree: two-pane shell (ut-docs#2116)', () => {
 
     const locationsRow = page.locator('#admin-tree a[href="/locations"]');
     await expect(locationsRow).toBeVisible();
+
+    // Review finding (ut-docs#2116): at this width the destination ALSO
+    // satisfies every URL/DOM assertion below via a full page navigation
+    // (this PR's own bare-GET shell rendering makes both paths converge on
+    // the same visible state), so those assertions alone cannot prove the
+    // click was a real in-place htmx swap rather than a reload. A sentinel
+    // set before the click, checked after, is what actually distinguishes
+    // them: it survives an htmx swap (the document is never torn down) and
+    // is wiped by any real navigation.
+    await page.evaluate(() => { (window as unknown as { __navSentinel?: number }).__navSentinel = 1; });
     await locationsRow.click();
 
     // A real htmx in-panel swap, not a full navigation away from the shell.
     await expect(page).toHaveURL(/\/locations$/);
+    expect(
+      await page.evaluate(() => (window as unknown as { __navSentinel?: number }).__navSentinel),
+      'the sentinel must survive an in-place htmx swap — a full navigation would tear down the document and lose it',
+    ).toBe(1);
     await expect(page.locator('#admin-tree')).toBeVisible();
     await expect(locationsRow).toHaveClass(/is-current/);
     await expect(locationsRow).toHaveAttribute('aria-current', 'page');
@@ -73,6 +87,12 @@ test.describe('/admin tree: two-pane shell (ut-docs#2116)', () => {
     await expect(page.locator('#admin-tree')).toBeVisible();
 
     const registersRow = page.locator('#admin-tree a[href="/registers"]');
+
+    // Same review finding as the wide-viewport test above: hx-push-url
+    // means an htmx swap ALSO lands on /registers, so the URL alone can't
+    // tell a real navigation apart from a swap. The sentinel is wiped by a
+    // real navigation and survives a swap — here we assert it's GONE.
+    await page.evaluate(() => { (window as unknown as { __navSentinel?: number }).__navSentinel = 1; });
     await registersRow.click();
 
     // Real navigation to the destination's own full URL (the href
@@ -80,6 +100,10 @@ test.describe('/admin tree: two-pane shell (ut-docs#2116)', () => {
     // where the two-pane layout has stacked and a swap into an
     // off-screen/hidden panel would look broken.
     await expect(page).toHaveURL(/\/registers$/);
+    expect(
+      await page.evaluate(() => (window as unknown as { __navSentinel?: number }).__navSentinel),
+      'a real plain navigation tears down the document and loses the sentinel — an htmx swap would not',
+    ).toBeUndefined();
     assertClean();
   });
 });
