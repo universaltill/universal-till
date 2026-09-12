@@ -2416,6 +2416,55 @@ func TestSettingsPage_PrinterCardHasDiscoverableAddressFieldIDs(t *testing.T) {
 	}
 }
 
+// ut-docs#2168: the kitchen-printer address field used to render directly
+// above the receipt-policy control with no visual boundary between them —
+// a real product-owner report said the receipt-policy control read as
+// belonging to the kitchen printer and appeared to have been removed. It
+// must now render inside its own <fieldset>/<legend> group, positioned
+// after every receipt-printer control (including receipt policy), so the
+// two printers' settings are visibly distinct.
+func TestSettingsPage_KitchenPrinterIsGroupedSeparatelyFromReceiptPolicy(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req = auth.WithUser(req, mgrUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings = %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	policyIdx := strings.Index(body, `name="receiptPolicy"`)
+	if policyIdx == -1 {
+		t.Fatalf("expected the receipt-policy control to render")
+	}
+	afterPolicy := body[policyIdx:]
+	fieldsetRel := strings.Index(afterPolicy, "<fieldset")
+	if fieldsetRel == -1 {
+		t.Fatalf("expected a <fieldset> (the kitchen-printer group) after the receipt-policy control")
+	}
+	kitchenSection := afterPolicy[fieldsetRel:]
+	closeRel := strings.Index(kitchenSection, "</fieldset>")
+	if closeRel == -1 {
+		t.Fatalf("the kitchen-printer fieldset never closes")
+	}
+	kitchenSection = kitchenSection[:closeRel]
+	if !strings.Contains(kitchenSection, `name="kitchenAddr"`) {
+		t.Fatalf("expected the kitchen-printer address input inside the fieldset that follows receipt policy, got:\n%s", kitchenSection)
+	}
+	// Asserts the <legend> tag itself, not just the substring "Kitchen
+	// printer" anywhere in the section — the field's own label text is a
+	// different key (settings.printer.address, "Printer address") precisely
+	// so this can't pass without a real legend (review finding, ut-docs#2168:
+	// an earlier version of this assertion passed even with the <legend>
+	// line deleted entirely, because kitchen_addr's own former label text
+	// was the same phrase).
+	if !strings.Contains(kitchenSection, "<legend>Kitchen printer</legend>") {
+		t.Fatalf("expected the kitchen-printer fieldset's own translated <legend>, got:\n%s", kitchenSection)
+	}
+}
+
 // ut-docs#924: a Settings.Set failure on the telemetry/generic-upsert
 // endpoints used to leak the raw Go/SQL error text via http.Error(w,
 // err.Error(), ...) instead of a translated message. Force a real repo

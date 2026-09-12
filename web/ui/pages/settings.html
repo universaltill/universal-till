@@ -1443,10 +1443,6 @@
       </select>
     </label>
     <p class="muted" style="margin:.2rem 0 0">{{ T "settings.printer.system_hint" }}</p>
-    <label>{{ T "settings.printer.kitchen_addr" }}
-      <input type="text" name="kitchenAddr" id="printer-kitchen-addr-input" value="{{ $p.KitchenAddress }}" placeholder="192.168.1.60:9100" dir="ltr">
-      <span class="muted">{{ T "settings.printer.kitchen_help" }}</span>
-    </label>
     <!-- ADR-0089 (ut-docs#1907): the old "print automatically" checkbox is
          now a three-way receipt policy — always / ask the customer / never.
          $p.ReceiptPolicy is the RESOLVED value (legacy auto_print
@@ -1468,6 +1464,25 @@
     <input type="hidden" name="receiptPolicy" value="always">
     <p class="muted receipt-policy-locked" style="margin:.2rem 0 0">{{ T "settings.printer.receipt_policy.locked_de" }}</p>
     {{ end }}
+    <!-- ut-docs#2168: kitchen printer moved into its own fieldset/legend,
+         after every receipt-printer control (mode/charset/address/device/
+         discovery/drawer pin/system hint/receipt policy — all under this
+         card's own h2, "Receipt printer"). It previously sat directly
+         above the receipt-policy control with no visual boundary, which
+         is what made a working receipt-policy control read as belonging
+         to the kitchen printer and therefore "gone" — a real
+         product-owner report on the pilot tablet. Reuses
+         settings.printer.address ("Printer address") for the field label
+         rather than kitchen_addr's own "Kitchen printer" text, so the
+         legend right above it doesn't repeat the same phrase verbatim
+         (review finding, ut-docs#2168). -->
+    <fieldset style="margin-block-start:1rem">
+      <legend>{{ T "settings.printer.kitchen_group.title" }}</legend>
+      <label>{{ T "settings.printer.address" }}
+        <input type="text" name="kitchenAddr" id="printer-kitchen-addr-input" value="{{ $p.KitchenAddress }}" placeholder="192.168.1.60:9100" dir="ltr">
+        <span class="muted">{{ T "settings.printer.kitchen_help" }}</span>
+      </label>
+    </fieldset>
     <div style="display:flex; gap:.4rem; align-items:center; margin-top:.5rem">
       <button class="btn" type="submit">{{ T "settings.printer.apply" }}</button>
       <!-- ut-docs#866 review (N3): un-gating this card newly exposes these
