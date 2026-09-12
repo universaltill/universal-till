@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"maps"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -288,6 +289,21 @@ func RenderWith(files []string, funcs template.FuncMap) func(name string, data a
 	key := "httpx.RenderWith:" + strings.Join(stripped, "\x00")
 	return func(name string, data any) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
+			// ut-docs#2162: "content" is this codebase's own established
+			// name for "the page's content block, without base.html's
+			// chrome" (see RenderContentFragment, whose entire job is the
+			// same distinction) — i.e. a fragment-swap response, not a
+			// full page. /catalog (catalog/handlers.go) and
+			// /catalog/tax-codes (tax_codes_page.go) build their own file
+			// sets and call RenderWith directly instead of
+			// RenderContentFragment for exactly that reason (extra
+			// partials RenderContentFragment's fixed set doesn't include),
+			// so they need the same header-write RenderContentFragment
+			// already does. "base" (a full standalone page) already gets
+			// its <title> from base.html itself; skip it there.
+			if name == "content" {
+				writePageTitleHeader(w, data)
+			}
 			t, err := ClonedTemplate(key, "base.html", withHelpHref(funcs, r), stripped...)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1151,11 +1167,62 @@ func Render(tplPath string, data any) http.HandlerFunc {
 	}
 }
 
+// pageTitleHeader is how RenderContentFragment/RenderPartial tell the
+// shared client-side htmx:afterSwap listener (web/public/app.js) what
+// document.title should become after the fragment they're answering gets
+// swapped in — see writePageTitleHeader's own comment for the full "why".
+const pageTitleHeader = "X-UT-Page-Title"
+
+// writePageTitleHeader sets pageTitleHeader from data's "title" field, when
+// present and non-empty, so an in-panel htmx swap (/items, /admin,
+// /help/{topic}) can refresh document.title (ut-docs#2162) — base.html's
+// own <title> tag only ever renders on a full-page response, never on a
+// bare fragment, so a swap that changes what's showing left the browser
+// tab's title stale.
+//
+// Percent-encoded (net/url.PathEscape), not written raw: browsers' Fetch/
+// XHR getResponseHeader() reads header values as Latin-1, not UTF-8, so a
+// literal non-ASCII title (this product ships ar/fa/tr locales) would come
+// back corrupted on the client. The paired client-side decodeURIComponent
+// reverses it.
+//
+// PathEscape, deliberately NOT QueryEscape: QueryEscape follows
+// application/x-www-form-urlencoded and encodes a space as "+", a
+// convention only QueryUnescape (or a form/query decoder) reverses —
+// JavaScript's decodeURIComponent (the paired client-side call, in
+// web/public/app.js) only unescapes "%XX" sequences and leaves a literal
+// "+" untouched, so every multi-word title ("Country settings", "Fiscal
+// register", "Tax codes", …) would have round-tripped as
+// "Country+settings" — a real, visible bug caught in review, not by the
+// original tests (they exercised a non-ASCII title with no space in it).
+// PathEscape encodes a space as "%20", which decodeURIComponent does
+// reverse correctly, and escapes control characters (CR/LF included) the
+// same way QueryEscape does, so the no-header-injection guarantee holds.
+//
+// A no-op for the great majority of RenderPartial's call sites, whose data
+// isn't a title-bearing map[string]any at all (dialog messages, OOB
+// refreshes, small in-place fragments) — same "absent = do nothing"
+// contract as record-dialog.js/category-filter.js's own attribute-driven
+// listeners. Must run before the template executes: a header can't be set
+// once body bytes have started writing.
+func writePageTitleHeader(w http.ResponseWriter, data any) {
+	m, ok := data.(map[string]any)
+	if !ok {
+		return
+	}
+	title, ok := m["title"].(string)
+	if !ok || title == "" {
+		return
+	}
+	w.Header().Set(pageTitleHeader, url.PathEscape(title))
+}
+
 // RenderPartial renders just a template fragment (for HTMX responses)
 func RenderPartial(tplPath string, data any) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		page := stripWebPrefix(tplPath)
 
+		writePageTitleHeader(w, data)
 		locale := ResolveLocale(w, r)
 		t := template.Must(ClonedTemplate("httpx.RenderPartial:"+page, filepath.Base(page), FuncsFor(locale), page))
 		if err := t.Execute(w, data); err != nil {
@@ -1183,6 +1250,7 @@ func RenderContentFragment(tplPath string, data any) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		page := stripWebPrefix(tplPath)
 
+		writePageTitleHeader(w, data)
 		locale := ResolveLocale(w, r)
 		files := append([]string{renderFiles[0], page}, renderFiles[1:]...)
 		t := template.Must(ClonedTemplate("httpx.Render:"+page, "base.html", withHelpHref(FuncsFor(locale), r), files...))
