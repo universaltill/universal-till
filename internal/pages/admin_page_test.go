@@ -358,16 +358,23 @@ func TestAdminPage_AllNonEmptyClustersRenderForFullAccessDETill(t *testing.T) {
 	if strings.Contains(body, `href="/fiscal-device"`) {
 		t.Errorf("expected no fiscal-device entry on a DE-only till, got: %s", body)
 	}
-	// Back-to-menu affordance and page title, both through T -- not a
-	// hardcoded literal. Tag-wrapped (adminPageTitle), not a bare
-	// substring: admin_page.go also passes "title": "Administration" as a
-	// hardcoded literal consumed by <title> in the base layout, so a bare
-	// Contains(body, "Administration") passes even with the <h1> deleted.
+	// Page title through T -- not a hardcoded literal. Tag-wrapped
+	// (adminPageTitle), not a bare substring: admin_page.go also passes
+	// "title": "Administration" as a hardcoded literal consumed by
+	// <title> in the base layout, so a bare Contains(body, "Administration")
+	// passes even with the <h1> deleted.
 	if !strings.Contains(body, adminPageTitle()) {
 		t.Errorf("expected the page title rendered through T, got: %s", body)
 	}
-	if !strings.Contains(body, `href="/menu"`) {
-		t.Errorf("expected a back-to-menu link to /menu, got: %s", body)
+	// ut-docs#2166: the in-content back-to-menu button ut-docs#2116 added
+	// is gone (product owner: redundant with the nav rail). The "can
+	// still get back" guarantee now rests on the rail's own Menu entry
+	// (nav.html, rendered on every page via base.html) -- assert its
+	// stable data-testid specifically, not a bare href="/menu" substring,
+	// since that would also match a since-removed in-content button and
+	// silently stop testing what it claims to.
+	if !strings.Contains(body, `data-testid="nav-menu"`) {
+		t.Errorf("expected the nav rail's Menu entry (data-testid=\"nav-menu\"), got: %s", body)
 	}
 }
 
