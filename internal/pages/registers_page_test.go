@@ -541,3 +541,62 @@ func TestRegistersPage_HXHistoryRestoreReturnsFullPage(t *testing.T) {
 		t.Errorf("a history-restore request must not carry the OOB admin-tree swap: %s", body)
 	}
 }
+
+// ut-docs#2185: /registers adopts the record_dialog/list_header pattern
+// (ut-docs#2010), mirroring locations_page_test.go's htmx-path coverage
+// for its near-twin (ut-docs#2124), which itself mirrors
+// categories_page_test.go's original proof. postFormHtmx is
+// categories_page_test.go's shared htmx-boosted POST helper, same
+// package, reused as-is.
+func TestRegistersPage_RefusalRendersInDialogMessageForHtmxRequest(t *testing.T) {
+	mux, _ := newRegistersTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	rec := postFormHtmx(mux, "/api/registers", url.Values{"name": {"   "}}, &manager)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("htmx whitespace-only name: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Location") != "" {
+		t.Errorf("htmx refusal must not redirect — a redirect is exactly what closed the dialog before this card")
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want text/html", ct)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "id=") || strings.Contains(body, "<form") || strings.Contains(body, "<dialog") {
+		t.Errorf("response must be ONLY the message text — no wrapper, form or dialog markup: %s", body)
+	}
+}
+
+func TestRegistersPage_HtmxSuccessAnswersWithHXRedirectNotBareRedirect(t *testing.T) {
+	mux, _ := newRegistersTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	rec := postFormHtmx(mux, "/api/registers", url.Values{"name": {"Loading Bay Till"}}, &manager)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("htmx create success: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("HX-Redirect"); got != "/registers" {
+		t.Fatalf("HX-Redirect = %q, want /registers", got)
+	}
+	if rec.Header().Get("Location") != "" {
+		t.Errorf("a bare Location alongside HX-Redirect would be followed by the boosted form's own fetch/XHR layer")
+	}
+}
+
+func TestRegistersPage_ReplicaRefusalRendersInDialogMessageForHtmxRequest(t *testing.T) {
+	mux, d := newRegistersTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	if err := d.Settings.Set(t.Context(), "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("set primary_url: %v", err)
+	}
+
+	rec := postFormHtmx(mux, "/api/registers", url.Values{"name": {"Satellite Till"}}, &manager)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("htmx create on replica: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Location") != "" {
+		t.Errorf("htmx replica refusal must not redirect")
+	}
+}
