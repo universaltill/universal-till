@@ -15,7 +15,7 @@ Jeder aktuell gehaltene Verkauf an dieser Kasse in einer Liste — für wen, an 
 ## Verwendung
 
 1. Öffnen Sie **Offene Bestellungen** über das ☰-Menü. Jeder gehaltene Verkauf ist eine Zeile: der Name, unter dem er gehalten wurde, sein Tisch (falls vorhanden), die Anzahl der Artikel, die Summe und wie lange er schon offen ist.
-2. Um eine Bestellung fortzusetzen, gehen Sie zurück zum Verkaufsbildschirm und tippen Sie neben der Zahlungstaste auf **Offene Vorgänge** — es öffnet sich eine Liste aller gehaltenen Bestellungen, und ein Tippen darauf legt sie direkt zurück in den Warenkorb. Der Warenkorb muss dafür leer sein, schließen Sie also den laufenden Verkauf ab oder halten Sie ihn. Die Leiste **Gehalten** tut dasselbe, wenn der Bildschirm hoch genug ist, um sie anzuzeigen. Diese Seite selbst ist eine Übersicht zum Nachsehen, kein zweiter Ort zum Fortsetzen.
+2. Um eine Bestellung fortzusetzen, tippen Sie auf ihre Zeile hier auf dieser Seite, oder gehen Sie zurück zum Verkaufsbildschirm und tippen Sie neben der Zahlungstaste auf **Offene Vorgänge** — so oder so legt ein Tippen die Bestellung direkt zurück in den Warenkorb. Der Warenkorb muss dafür leer sein, schließen Sie also den laufenden Verkauf ab oder halten Sie ihn; ist er es nicht, sagt Ihnen das Tippen auf die Zeile das, und die Bestellung bleibt unverändert stehen. Die Leiste **Gehalten** tut dasselbe, wenn der Bildschirm hoch genug ist, um sie anzuzeigen.
 3. Wird ein abgerufener Verkauf erneut gehalten, bleibt er dieselbe Bestellung: gleicher Name, gleicher Platz in der Liste, und die Zeit „offen seit“ läuft ab dem ersten Halten weiter. Nur ein ganz neuer Verkauf bekommt einen neuen Eintrag.
 
 ## Gut zu wissen

@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -30,9 +31,12 @@ type openOrderRow struct {
 // registerOpenOrders wires the Open orders page (ut-docs#1918): every order
 // currently parked on this till -- what the sale screen's "On hold" strip
 // shows as chips, laid out as a full list with the details the strip has no
-// room for (table, item count, total, how long it has been open). Read-only:
-// resuming stays on the sale screen (the strip's chip), because a resume
-// needs the live basket to be empty and lands the cashier there anyway.
+// room for (table, item count, total, how long it has been open). ut-docs#2138:
+// tapping a row resumes it from here too, not just from the sale screen's own
+// popup (ut-docs#2137) -- a list that cannot open what it lists was a dead
+// end for the one cashier who reached for it. Still enforces the empty-basket
+// rule (resumeHeldSale, hold_api.go): refused, the order stays parked and
+// listed, exactly as before.
 //
 // Modelled on registerTables' page half: repo reads at the pages layer,
 // display-only joins done here (table id -> current label via
@@ -101,7 +105,36 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
 			"orders":    rows,
+			// ut-docs#2138: set only by the resume route's redirect below, on
+			// refusal -- the same ?err=<i18n key> + "login-error" banner
+			// convention country_settings_page.go's renderPage already uses.
+			"errKey": r.URL.Query().Get("err"),
 		})(w, r)
+	})
+
+	// Resume a row tapped on THIS page (ut-docs#2138) -- distinct from the
+	// sale-screen popup's POST /api/pos/resume (hold_api.go, ut-docs#2137):
+	// that one is an htmx fragment swapped into #basket, which this page does
+	// not have. resumeHeldSale (hold_api.go) carries the actual logic, shared
+	// so the ut-docs#820 table re-resolution and ut-docs#1390 claim handling
+	// exist in exactly one place. A plain redirect, not htmx, because this is
+	// a full-page navigation: success lands the cashier on the sale screen
+	// with the resumed basket; a refusal returns here with the existing
+	// hold.error.busy message and the order still parked and listed.
+	mux.HandleFunc("POST /open-orders/resume", func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		_ = r.ParseForm()
+		id := strings.TrimSpace(r.Form.Get("id"))
+		switch resumeHeldSale(ctx, d, repo, posRepo, id) {
+		case resumeBusy:
+			http.Redirect(w, r, "/open-orders?err=hold.error.busy", http.StatusSeeOther)
+		case resumeNotFound:
+			http.Redirect(w, r, "/open-orders?err=hold.error.not_found", http.StatusSeeOther)
+		case resumeFailed:
+			http.Redirect(w, r, "/open-orders?err=hold.error.failed", http.StatusSeeOther)
+		default:
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+		}
 	})
 
 	// Parked-orders popup body (ut-docs#2137), opened from the button beside

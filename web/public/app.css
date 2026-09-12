@@ -2280,6 +2280,83 @@ a.btn, a.btn:hover { text-decoration: none; }
    order label beside it. */
 .held-chip-table { font-size: .85em; opacity: .75; border: 1px solid currentColor; border-radius: 999px; padding: 0 .45em; }
 
+/* ut-docs#2138: /open-orders' own rows are real buttons, not <tr> click
+   handlers (ut-docs#826's accessibility gate: tap-only with no keyboard
+   equivalent fails it) -- each body row is a single <td colspan> holding a
+   <form>+<button>, so the WHOLE row is one focusable control at the
+   product's 46px touch floor (the .btn-touch value; .btn-touch itself is
+   display:inline-flex, which a full-width row button cannot take).
+   Because the row is one control rather than five real per-field <td>s,
+   the header CANNOT stay a table row: `flex` on a <th> is inert while its
+   <tr> is still display:table-row, so the <th>s were laid out by the table
+   algorithm while the values were laid out by the button's flex box, and
+   the two disagreed by 100-356px at EVERY viewport measured (360x740,
+   1024x600, 1280x800) -- headers pointing at the wrong column on a list
+   that carries money (ut-docs#2138 review). The header row is therefore
+   the same flex box as the button, over the same classes and the same
+   gap/padding, which is the only way the two can line up.
+   The block display on the table parts is also what lets the button's
+   width:100% fill the row: .users-list .table's `display:block` escape
+   hatch shrink-to-fits the internal table box, which left ~25% of each
+   visible row non-tappable at 1024x600 and 1280x800 (measured). */
+#open-orders-table, #open-orders-table thead,
+#open-orders-table tbody, #open-orders-table tr { display: block; }
+/* overflow-x, not just width:100% -- ut-docs#2138 review follow-up: with a
+   long cashier-typed label (up to 64 runes, maxHoldLabelRunes) AND a long
+   merchant-named table sharing one row at the 360px phone floor, the four
+   never-truncated fields' own min-inline-size floors alone can exceed the
+   viewport. Before this rule the label (which had NO floor) simply
+   shrank to 0 and vanished, silently -- worse than the truncation this
+   card exists to avoid. A horizontal scroll on the table itself (matching
+   `.list-scroll`'s documented role for the same class of overflow
+   elsewhere in this pattern) makes the rare long-label+long-table
+   combination reachable by a swipe instead of invisible. */
+#open-orders-table { width: 100%; overflow-x: auto; }
+#open-orders-table thead tr {
+  display: flex; align-items: center; gap: .5rem;
+  padding: .5rem .6rem; border-bottom: 2px solid var(--border);
+}
+/* display:block on the <td> too, not just the <tr>: a table-cell under a
+   blockified row gets wrapped in an ANONYMOUS table box, which shrink-to-
+   fits, and the button's width:100% then resolves against that instead of
+   the row -- the row button measured 412px inside a 915px list. */
+#open-orders-table td { display: block; }
+#open-orders-table th, #open-orders-table td { padding: 0; border-bottom: none; }
+#open-orders-table td > form { margin: 0; }
+.open-order-row-btn {
+  width: 100%; min-height: 46px; display: flex; align-items: center; gap: .5rem;
+  padding: .5rem .6rem; text-align: start; background: none; border: none;
+  border-bottom: 1px solid var(--border); color: inherit; font: inherit; cursor: pointer;
+}
+#open-orders-table tbody tr:last-child .open-order-row-btn { border-bottom: none; }
+.open-order-row-btn:hover, .open-order-row-btn:focus-visible { background: var(--surface-2); }
+/* Two of the five fields are unbounded free text -- the cashier-typed
+   order label and the merchant-named table -- so those two shrink and
+   ellipsize. The other three (item count, money total, age) are the ones
+   that must NEVER be truncated: "short in English" is not "short
+   everywhere" (Persian digits/currency and the localised "N min" phrasing
+   measure wider), and silently clipping a money amount on a till is the
+   worst outcome here. They take their natural width and never ellipsize.
+   Every column carries a rem min-inline-size shared by the <th> and the
+   value, so header and value start at the same edge for ordinary content
+   and only the genuinely over-long string widens its own column -- rem,
+   not px, so it stays inside the fluid 1024->1920 type scale. */
+.open-order-cell-label {
+  /* min-inline-size: 3rem, not 0 -- the label is the row's PRIMARY
+     identifying text (which order this even is), so it must stay visible
+     rather than shrink to nothing under pressure; #open-orders-table's own
+     overflow-x is the escape hatch once even that floor cannot fit. */
+  flex: 1 1 5rem; min-inline-size: 3rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.open-order-cell-table {
+  flex: 0 1 auto; min-inline-size: 4rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.open-order-cell-lines { flex: 0 0 auto; min-inline-size: 3rem; white-space: nowrap; }
+.open-order-cell-total { flex: 0 0 auto; min-inline-size: 5rem; white-space: nowrap; }
+.open-order-cell-age { flex: 0 0 auto; min-inline-size: 6rem; white-space: nowrap; }
+
 /* The dialog itself: a slide-in panel anchored to the inline-end edge
    (right in LTR, left in RTL — logical properties per this repo's RTL
    rule) rather than the UA's default centered box, and sized so it never
