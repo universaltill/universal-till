@@ -544,6 +544,10 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "catalog.error.server", err)
 			return
 		}
+		// ut-docs#2140: a still-active child whose parent was deactivated
+		// (and so is missing from the slice above) would otherwise get no
+		// chip at all — see TopLevelForFilterChips' own doc comment.
+		categoryFilterOptions = data.TopLevelForFilterChips(categoryFilterOptions)
 		taxCodes, err := repo.ListAllTaxCodes(r.Context())
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "catalog.error.server", err)

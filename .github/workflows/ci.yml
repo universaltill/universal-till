@@ -121,6 +121,8 @@ jobs:
         run: bash scripts/ci/guard-docs-shots_test.sh
       - name: "Manual screenshot freshness guard: Python/JS cross-check (ut-docs#370)"
         run: bash scripts/ci/guard-docs-shots-cross-check_test.sh
+      - name: "Manual screenshot freshness guard: surface-hash-only escape hatch (ut-docs#2102)"
+        run: bash scripts/ci/update-docs-shots-surface-hash_test.sh
       - name: Help-topic registry guard
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
