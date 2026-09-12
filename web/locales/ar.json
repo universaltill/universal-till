@@ -1156,6 +1156,8 @@
   "plugins.manage.store_link": "فتح متجر الإضافات",
   "plugins.manage.title": "الإضافات",
   "plugins.manage.update_available": "تحديث:",
+  "plugins.manage.update_unknown": "حالة التحديث غير معروفة",
+  "plugins.manage.update_unknown_hint": "لا يمكننا معرفة ما إذا كانت هذه الإضافة محدَّثة — كتالوج السوق غير متاح الآن أو لا يحتوي على بيانات عنها.",
   "plugins.none_found": "لم يُعثر على إضافات",
   "plugins.none_found_hint": "جرّب تعديل عوامل التصفية أو حدّث الكتالوج.",
   "plugins.permission.granted": "تم منح الإذن",

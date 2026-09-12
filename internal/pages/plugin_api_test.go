@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -24,6 +25,7 @@ import (
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
+	"github.com/universaltill/universal-till/internal/plugins/oauth"
 	"github.com/universaltill/universal-till/internal/settings"
 )
 
@@ -398,6 +400,71 @@ func TestHandleUpdatePlugin_InstalledButNoListing_404(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "marketplace listing") {
 		t.Fatalf("expected an explanatory 'no marketplace listing' message, got %q", rec.Body.String())
+	}
+}
+
+// ut-docs#2131 review (Finding 1): the management page shows an "Update
+// available" badge for a file-imported plugin resolved via the catalog's
+// author+name fallback (plugins.IndexCatalog), but this handler used to
+// 404 unconditionally the moment plugin_install_status had no row for it --
+// a dead-end button for exactly the population that badge fix targeted.
+// applyPluginUpdate must now also try resolveListingViaCatalog before
+// giving up. This asserts it gets PAST ErrPluginUpdateNoListing (it still
+// fails later, since there's no real download-token/artifact server behind
+// the fake catalog endpoint -- that's the existing install pipeline's own
+// concern, not this fix's) rather than 404ing immediately as before.
+func TestApplyPluginUpdate_NoListingButCatalogMatchFound_PastNoListingGate(t *testing.T) {
+	isolatePluginsDir(t)
+	db := openRealSchemaPagesDB(t)
+
+	m := &plugins.Manifest{
+		ID:            "com.test.fileimport",
+		Name:          "Loyalty Plugin",
+		Author:        "Acme Inc",
+		Version:       "1.0.0",
+		Entrypoint:    "./plugin",
+		Runtime:       "go",
+		CanonicalType: "page",
+		DeviceArch:    "any",
+	}
+	if err := plugins.PersistManifest(t.Context(), db, m, plugins.InstallOptions{
+		TrustLevel: "untrusted",
+		Uploader:   "test",
+	}); err != nil {
+		t.Fatalf("seed installed plugin: %v", err)
+	}
+	// Deliberately no plugin_install_status row -- this is the file-import case.
+
+	mp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/catalog/plugins" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"plugins":[{"id":"listing-acme","name":"Loyalty Plugin","developer_id":"Acme Inc","version":"1.1.0"}]}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer mp.Close()
+
+	cfg := basePluginCfg()
+	cfg.Marketplace = config.MarketplaceConfig{EndpointURL: mp.URL}
+	client := marketplace.NewClient(&cfg.Marketplace, oauth.NewTokenClient(&cfg.Marketplace))
+	catalogRepo, err := marketplace.NewCatalogRepository(client, t.TempDir())
+	if err != nil {
+		t.Fatalf("catalog repo: %v", err)
+	}
+
+	deps := newPluginAPIDeps(t, db, cfg)
+	deps.CatalogRepo = catalogRepo
+	if err := deps.Pm.Reload(t.Context()); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+
+	_, _, err = applyPluginUpdate(t.Context(), deps, "com.test.fileimport")
+	if err == nil {
+		t.Fatal("expected applyPluginUpdate to still fail (no real install-pipeline server), but not with ErrPluginUpdateNoListing")
+	}
+	if errors.Is(err, ErrPluginUpdateNoListing) {
+		t.Fatalf("got ErrPluginUpdateNoListing — the author+name catalog fallback should have found listing-acme: %v", err)
 	}
 }
 
