@@ -159,7 +159,7 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 			"tables":      rows,
 			"canvasSize":  data.TableCanvasSize,
 			"canvasInset": data.TableEdgeInset,
-			"errKey":      r.URL.Query().Get("err"),
+			"errKey":      httpx.QueryErrKey(r),
 		})(w, r)
 	})
 

@@ -73,6 +73,33 @@ func TestCategoriesPage_ReachableUnderAuthOff(t *testing.T) {
 	}
 }
 
+// ut-docs#2148: `?err=` used to be passed straight through to
+// `{{ T .errKey }}`, and T's own fallback-to-key behaviour then rendered
+// WHATEVER text followed `?err=` verbatim in the page's error banner — a
+// crafted link could make the till display attacker-chosen "official
+// looking" text. An unrecognised value must now render the shared generic
+// fallback message instead, and never the raw query value.
+func TestCategoriesPage_UnrecognisedErrQueryValueRendersGenericFallback(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newCategoriesTestMux(t)
+
+	attackerText := "Your card was declined, call this number to fix it"
+	req := httptest.NewRequest(http.MethodGet, "/categories?err="+url.QueryEscape(attackerText), nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /categories?err=... = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, attackerText) {
+		t.Fatalf("body rendered the raw, unrecognised ?err= value verbatim:\n%s", body)
+	}
+	want := httpx.T("en", "common.error.server")
+	if !strings.Contains(body, want) {
+		t.Fatalf("body missing the generic fallback message %q:\n%s", want, body)
+	}
+}
+
 func TestCategoriesPageCreate_WhitespaceOnlyNameRejected(t *testing.T) {
 	mux, _ := newCategoriesTestMux(t)
 	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
