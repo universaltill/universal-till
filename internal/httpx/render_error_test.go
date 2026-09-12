@@ -77,3 +77,61 @@ func TestRenderErrorTranslatesPerLocale(t *testing.T) {
 		t.Errorf("expected the Turkish translation of common.error.server, got:\n%s", body)
 	}
 }
+
+// ut-docs#2154. error_page.html's "Back to sale" link had the same
+// mode-unaware bare "/" shape ut-docs#2146 fixed for /open-orders.
+// RenderError has no *common.Deps in scope (it's called from ~80 sites
+// across many packages), so it can't read display.mode fresh per request
+// the way index_page.go/open_orders_page.go do — instead it reads the same
+// process-wide cached value InitDisplayMode publishes, mirroring the
+// existing kiosk/selforder atomic template-func pattern in httpx.go.
+func TestRenderErrorBackToSaleURL_BackofficeModeReachesSaleScreenNotDashboard(t *testing.T) {
+	i18n := realI18n(t)
+	chdirTemp(t)
+	InitI18n(i18n, "en")
+	InitDisplayMode("backoffice")
+	t.Cleanup(func() { InitDisplayMode("") })
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/tables", nil)
+	RenderError(w, r, http.StatusInternalServerError, "common.error.server", errors.New("boom"))
+
+	body := w.Body.String()
+	if !strings.Contains(body, `href="/?stay=1"`) {
+		t.Fatalf("expected Back to sale to link to /?stay=1 on a backoffice-mode till, got: %s", body)
+	}
+}
+
+func TestRenderErrorBackToSaleURL_SelfOrderModeStaysOnTillHomeNotCashierScreen(t *testing.T) {
+	i18n := realI18n(t)
+	chdirTemp(t)
+	InitI18n(i18n, "en")
+	InitDisplayMode("self_order")
+	t.Cleanup(func() { InitDisplayMode("") })
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/tables", nil)
+	RenderError(w, r, http.StatusInternalServerError, "common.error.server", errors.New("boom"))
+
+	body := w.Body.String()
+	if !strings.Contains(body, `href="/self-order"`) {
+		t.Fatalf("expected Back to sale to link to /self-order on a self-order-mode till (ADR-0020 containment), got: %s", body)
+	}
+}
+
+func TestRenderErrorBackToSaleURL_DefaultModeIsUnchanged(t *testing.T) {
+	i18n := realI18n(t)
+	chdirTemp(t)
+	InitI18n(i18n, "en")
+	InitDisplayMode("")
+	t.Cleanup(func() { InitDisplayMode("") })
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/tables", nil)
+	RenderError(w, r, http.StatusInternalServerError, "common.error.server", errors.New("boom"))
+
+	body := w.Body.String()
+	if !strings.Contains(body, `href="/"`) || strings.Contains(body, `href="/?stay=1"`) {
+		t.Fatalf("expected Back to sale to keep its plain / link when no mode is set, got: %s", body)
+	}
+}
