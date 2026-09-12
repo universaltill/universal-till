@@ -191,6 +191,18 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   hardcoded copy of itself and could never see the ADR drift (which is
   exactly how `language` and `layout` both shipped with their own accepted
   ADRs while ADR-0002's own text kept saying "20 canonical types").
+  **A sibling guard, `scripts/ci/guard-adr-taxonomy-drift.sh` (ut-docs#2159),
+  runs in the same job and catches the same class of drift in every OTHER
+  ADR that restates the taxonomy count in one of a handful of known
+  phrasings** — ADR-0002's own text drifting is not the only way this goes
+  stale; ADR-0050 did too (ut-docs#2150). It is line-based regex, not a
+  markdown parser, and explicitly not exhaustive against a phrasing nobody
+  has used yet (the guard's own header names exactly which phrasings it
+  matches and its known gaps — widen it there, not here, if a future stale
+  mention slips past). A line deliberately narrating a historical count (as
+  part of explaining that ADR's own decision, e.g. ADR-0010/ADR-0050) is
+  exempt via an inline `<!-- taxonomy-count:historical -->` marker — same
+  reviewed-exception convention as `i18n:ignore`/`compliance-claim:allow`.
   **Unlike `manifest-contract-guard`'s direction** (checks out this
   *public* repo from `ut-cloud`, no token needed), this job checks out
   `ut-docs`, which is **private** — it needs a `DOCS_READ_TOKEN` repo
