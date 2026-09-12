@@ -504,6 +504,54 @@ func T(locale, key string) string {
 	return key
 }
 
+// genericErrKey is the fallback QueryErrKey renders in place of unrecognised
+// `?err=` text. Reuses the existing shared `common.error.server` key rather
+// than minting a new one — same reasoning as ut-docs#1663/#1620's own
+// error-message migrations: it avoids new-key churn across all four locales
+// plus the external ut-plugin-language-{de,es} packs, and no touched page's
+// own namespace has a better-fitting existing "something went wrong" key.
+const genericErrKey = "common.error.server"
+
+// QueryErrKey reads a page's conventional `?err=` query parameter and
+// returns it only if it resolves to a real i18n key; otherwise it returns
+// genericErrKey. Several pages pass r.URL.Query().Get("err") straight
+// through to `{{ T .errKey }}` for their error banner, and T's own
+// fallback-to-key behaviour then renders WHATEVER text follows `?err=`
+// verbatim — not exploitable as XSS (html/template still escapes the text
+// node) but a spoofing/social-engineering vector: a crafted link can make
+// the till's own UI display an attacker-chosen "official-looking" message
+// (ut-docs#2148). Centralizing the check here, rather than validating in
+// each of the ~10 handlers that read this parameter, is deliberate: it's
+// the one choke point every one of them already funnels through.
+// No translator wired (a test that never called InitI18n) can't verify a
+// key either way, so this preserves T's own existing nil-safety and passes
+// the raw value through unchanged rather than failing closed on every such
+// test.
+func QueryErrKey(r *http.Request) string {
+	return queryBannerKey(r, "err")
+}
+
+// QueryMsgKey is QueryErrKey's success-banner counterpart (ut-docs#2148
+// review finding): fiscal_device_page.go's `?msg=` feeds a "login-ok"
+// success banner through the identical `{{ T .msgKey }}` fallback-to-key
+// hazard — same fix, different query parameter and banner styling.
+func QueryMsgKey(r *http.Request) string {
+	return queryBannerKey(r, "msg")
+}
+
+// queryBannerKey backs both QueryErrKey and QueryMsgKey: reads the named
+// query parameter and returns it only if it resolves to a real i18n key.
+func queryBannerKey(r *http.Request, param string) string {
+	key := r.URL.Query().Get(param)
+	if key == "" {
+		return ""
+	}
+	if t := translator(); t != nil && !t.Has(key) {
+		return genericErrKey
+	}
+	return key
+}
+
 // AvailableLocales returns the locales the base translation files define
 // (config.I18n.Available() — the same set the UI's own language switcher is
 // built from), or nil if no translator is wired (e.g. a test that never
