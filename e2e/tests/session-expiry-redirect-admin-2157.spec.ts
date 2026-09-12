@@ -19,6 +19,19 @@ import { ensureOperator, openNewItemForm } from './helpers';
 //
 // This needs the `auth` project (a real session that can actually expire)
 // — the default project's UT_AUTH=off till has no session to revoke.
+//
+// NAMED TO SORT AFTER login.spec.ts (found live in CI, ut-docs#2157
+// review fallout): the `auth` project's server is shared across every
+// spec file in the project (one process, `workers: 1`), and
+// login.spec.ts's own first test requires that server to still be
+// genuinely unconfigured when it runs. Playwright runs a project's spec
+// files in filename-sort order, and this file's own `ensureOperator()`
+// completes the full first-boot setup wizard on its very first call —
+// so a filename sorting before "login" (the original name here,
+// `admin-session-expiry-redirect-2157.spec.ts`, did exactly that) steals
+// that fresh-install state out from under login.spec.ts's first test,
+// which then finds itself redirected to `/login` instead of `/setup`.
+// Keep this file's name sorting after "login" if it's ever renamed again.
 // One representative call site is exercised per distinct mechanism: the
 // shared utPostWithElevation helper (covers settings.html AND
 // reports_tab_eod.html in one proof), plugins.html's globally-exposed

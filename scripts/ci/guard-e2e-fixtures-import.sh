@@ -54,7 +54,7 @@
 # request it makes after revocation is rejected by the middleware before
 # any handler runs), and it sorts last among the auth project's specs.
 #
-# admin-session-expiry-redirect-2157.spec.ts (ut-docs#2157) is exempt for
+# session-expiry-redirect-admin-2157.spec.ts (ut-docs#2157) is exempt for
 # the identical #2144 reason above, not a copy-paste of it: it proves the
 # same session-expired-401 redirect on the admin pages' own raw fetch()
 # call sites (plugins/settings/catalog/tills/bluetooth-devices/promotions),
@@ -62,7 +62,12 @@
 # fixtures.ts's `resetPosOncePerFile` would 401 against the revoked
 # session the same way, and none of this spec's tests touch the sale
 # basket at all (they drive admin pages, not the sale screen), so nothing
-# leaks either way.
+# leaks either way. Named to sort alphabetically AFTER login.spec.ts
+# (ut-docs#2157 review fallout, found live in CI): login.spec.ts's own
+# first test requires running against the auth project's server while it
+# is still genuinely unconfigured, and any earlier-sorting spec file whose
+# ensureOperator() call completes the setup wizard first (as this one's
+# does) steals that fresh-install state out from under it.
 #
 # Explicit first argument runs this guard against a fixture directory
 # instead of the real tree (see guard-e2e-fixtures-import_test.sh).
@@ -78,7 +83,7 @@ if [ ! -d "$TESTS_DIR" ]; then
   exit 1
 fi
 
-EXEMPT_FILES=('login.spec.ts' 'nav-rail-lock-reachable-1346.spec.ts' 'nav-rail-svg-icons-lock-1423.spec.ts' 'session-expiry-redirect-2144.spec.ts' 'admin-session-expiry-redirect-2157.spec.ts')
+EXEMPT_FILES=('login.spec.ts' 'nav-rail-lock-reachable-1346.spec.ts' 'nav-rail-svg-icons-lock-1423.spec.ts' 'session-expiry-redirect-2144.spec.ts' 'session-expiry-redirect-admin-2157.spec.ts')
 
 is_exempt() {
   local base="$1" f

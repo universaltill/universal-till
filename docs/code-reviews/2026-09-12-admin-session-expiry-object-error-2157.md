@@ -37,7 +37,7 @@ Files touched:
   forget) and the scan handler.
 - `web/ui/pages/promotions.html` and `web/ui/pages/settings.html` — the
   customer-search/obsolete-items-preview GETs.
-- `e2e/tests/admin-session-expiry-redirect-2157.spec.ts` (new) — one real
+- `e2e/tests/session-expiry-redirect-admin-2157.spec.ts` (new) — one real
   regression test per distinct mechanism (the shared `utPostWithElevation`
   helper via `page.evaluate()`, `window.act` via `page.evaluate()`, and one
   real UI-driven click/keystroke per page-local closure), on the `auth`
@@ -154,12 +154,32 @@ two recurring `os.MkdirAll`/`paths.Data` bug classes don't apply).
   confirmed all 6 pass again. Independently repeated by the review
   subagent in its own isolated worktree with an identical result.
 - e2e regression run (`--project=auth
-  admin-session-expiry-redirect-2157`): 6/6 pass, both before and after
+  session-expiry-redirect-admin-2157`): 6/6 pass, both before and after
   the AC #2 follow-up fix above.
 - No regression in existing coverage for the touched pages: re-ran
   `catalog-barcode-backfill-1356`, `catalog-import-friendly-errors`,
   `tills-lan-discovery`, `bluetooth-devices-76` on the `default` project —
   4/4 pass.
+- **CI-caught regression, found and fixed after the first push**: the new
+  spec was originally named `admin-session-expiry-redirect-2157.spec.ts`,
+  which sorts alphabetically *before* `login.spec.ts` — Playwright runs a
+  project's spec files in filename order, the `auth` project's server is
+  shared across every file in it (`workers: 1`), and `login.spec.ts`'s own
+  first test requires that shared server to still be genuinely
+  unconfigured when it runs. This spec's `ensureOperator()` completes the
+  full first-boot setup wizard on its very first call, so running first it
+  silently consumed the fresh-install state `login.spec.ts` needed —
+  caught by CI's `playwright` check (`login.spec.ts:29` failed both
+  attempts: expected `/setup`, got `/login`), not by any local run before
+  the first push (this failure mode only reproduces when both spec files
+  run together in the real `auth`-project ordering, which the local runs
+  up to that point had not exercised). Fixed by renaming to
+  `session-expiry-redirect-admin-2157.spec.ts` (sorts after `login`,
+  matching every sibling `AUTH_ONLY_SPECS` exemption's own naming) and
+  documenting the ordering constraint both in the spec file's own header
+  and in `guard-e2e-fixtures-import.sh`'s exemption comment. Re-verified
+  by running the full `auth` project's real spec-file order locally after
+  the rename: 26/26 pass, `login.spec.ts` first and green.
 - No help-manual update needed: this is an internal error-handling fix on
   the session-expiry path, not a change to any screen a shop owner sees or
   a step they follow in normal use — same scope as the ut-docs#2144
