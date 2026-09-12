@@ -1123,6 +1123,11 @@ var renderFiles = []string{
 	// {{ define "admin_tree" }} name — same riding-along mechanism as
 	// items_rail.html above, and the only call site today.
 	"ui/partials/admin_tree.html",
+	// ut-docs#2179: the shared `#pos-alert` request-failure banner —
+	// index.html, admin.html and items.html all include this by its
+	// {{ define "pos_alert" }} name, same riding-along mechanism as
+	// admin_tree.html above.
+	"ui/partials/pos_alert.html",
 }
 
 // ut-docs#2020: web/ui/partials/record_dialog_msg.html is deliberately NOT

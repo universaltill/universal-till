@@ -908,6 +908,18 @@ document.addEventListener('click', function(e){
     var contentType = (d.xhr.getResponseHeader && d.xhr.getResponseHeader('Content-Type')) || '';
     if (contentType.indexOf('text/html') === -1) return;
     if (typeof d.serverResponse !== 'string' || d.serverResponse.trim() === '') return;
+    // ut-docs#2179: httpx.RenderError (page routes' last-resort error
+    // renderer) has no htmx-fragment awareness — it always answers with a
+    // full base-templated HTML document (own <head>, own nav), non-2xx,
+    // Content-Type text/html, non-empty. That satisfies every check above
+    // just like a real targeted `.muted` fragment does, but force-swapping
+    // a whole document as innerHTML into a small panel target (#admin-panel/
+    // #items-panel) doesn't render anything sane — exactly the "silent
+    // no-op" this card reports, one layer deeper than a missing #pos-alert
+    // element. A real fragment meant for a swap target is never a full
+    // document, so this is a safe, cheap discriminator: fall through to
+    // htmx:responseError/showAlert instead, same as a plain-text/empty body.
+    if (/^\s*(<!doctype html|<html)/i.test(d.serverResponse)) return;
     d.shouldSwap = true;
     d.isError = false;
   });

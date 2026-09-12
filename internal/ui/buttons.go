@@ -426,6 +426,12 @@ func NewRenderer(layout, page, partial string, funcs template.FuncMap) (*Rendere
 		// base.html references it on every page; must be parsed alongside
 		// the layout or executing "base" fails.
 		"ui/partials/bugreport_panel.html",
+		// ut-docs#2179: index.html (this constructor's only real caller,
+		// buttons_api.go) now includes the shared #pos-alert partial —
+		// same "referenced on every page this renders, so it must be
+		// parsed alongside the layout" reasoning as bugreport_panel.html
+		// just above.
+		"ui/partials/pos_alert.html",
 		stripWebPrefix(partial),
 	)
 	if err != nil {
