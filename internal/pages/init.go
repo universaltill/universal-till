@@ -161,8 +161,14 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// the store here, same as authSvc.SetAnonymousRootRedirect below.
 	if mode, _, _ := setStore.Get(ctx, "display.mode"); mode == "self_order" {
 		httpx.InitSelfOrderMode(true)
+		httpx.InitDisplayMode(mode)
 	} else {
 		httpx.InitSelfOrderMode(false)
+		// ut-docs#2154: error_page.html's "Back to sale" link needs the
+		// full mode value (not just the self-order bool) to distinguish
+		// backoffice from register -- see httpx.InitDisplayMode's own doc
+		// comment.
+		httpx.InitDisplayMode(mode)
 	}
 
 	// Boot sweep: drop THIS till's own live-basket table claims
@@ -601,6 +607,7 @@ func newRederiveSettings(dp *common.Deps, authDisabled bool, i18n *config.I18n) 
 		// keeps withholding those controls on an ordinary register.
 		if mode, _, err := dp.Settings.Get(c, "display.mode"); err == nil {
 			httpx.InitSelfOrderMode(mode == "self_order")
+			httpx.InitDisplayMode(mode) // ut-docs#2154, same re-derive
 		}
 		dp.AuthSvc.SetIdleLockMinutes(applied.IdleLockMinutes)
 		if !authDisabled {

@@ -1601,6 +1601,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// stale until the till restarts. Mirrors httpx.InitOSKMode(mode)
 		// right above the OSK settings handler in this same file.
 		httpx.InitSelfOrderMode(rawMode == "self_order")
+		httpx.InitDisplayMode(rawMode) // ut-docs#2154, same live-update
 		// ut-docs#1259: self_order is customer-facing and auth-exempt
 		// (/self-order, /api/self-order/*) — the browser that just made this
 		// switch must not keep a live session past it, or anyone with
@@ -2747,6 +2748,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// exactly as the dedicated handler does right after its own
 			// d.Settings.Set — without this it stays stale until restart.
 			httpx.InitSelfOrderMode(value == "self_order")
+			httpx.InitDisplayMode(value) // ut-docs#2154, same live-update
 			// ut-docs#1259 (pre-existing gap, not introduced by #2099): the
 			// dedicated handler revokes the acting session before entering
 			// self_order, since that mode is customer-facing and auth-exempt
