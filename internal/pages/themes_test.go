@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -165,6 +166,88 @@ func TestThemesHandler_FallsBackToEmbeddedDefaultWhenDiskDirMissing(t *testing.T
 	}
 	if !found {
 		t.Fatalf("expected the embedded default theme to be listed, got %+v", opts)
+	}
+}
+
+// TestThemesHandler_MonochromeAndDarkAreBuiltIn guards ut-docs#2176: a
+// black-and-white/high-contrast theme and a dark theme, both built-in (no
+// plugin/marketplace install required), each selectable from Settings →
+// Theme like the four pre-existing built-ins. Empty disk dir like
+// TestThemesHandler_FallsBackToEmbeddedDefaultWhenDiskDirMissing above, so
+// this exercises the binary's real embedded web/public/themes/*.css, not a
+// throwaway fixture — a future edit that breaks the embed or renames a key
+// fails this, not just a manual look at Settings.
+func TestThemesHandler_MonochromeAndDarkAreBuiltIn(t *testing.T) {
+	d, _, _ := themeTestDeps(t)
+
+	mux := http.NewServeMux()
+	registerThemes(mux, d)
+
+	opts := availableThemes(t.Context(), d)
+	wantKeys := map[string]bool{"monochrome": false, "dark": false}
+	for _, o := range opts {
+		if _, ok := wantKeys[o.Key]; ok {
+			if o.Source != "built-in" {
+				t.Errorf("%s: Source = %q, want \"built-in\" (no plugin install should be required)", o.Key, o.Source)
+			}
+			wantKeys[o.Key] = true
+		}
+	}
+	for key, found := range wantKeys {
+		if !found {
+			t.Errorf("expected built-in theme %q among availableThemes, got %+v", key, opts)
+		}
+	}
+
+	// Each theme key collides with neither the other three pre-existing
+	// built-ins nor the real ut-plugin-theme-midnight plugin's own "midnight"
+	// key (themes_test.go's own ServesBuiltinAndPluginCSS test above uses
+	// that exact key) — two entries sharing a key would render as two
+	// visually-identical rows in the Settings <select>.
+	seen := map[string]int{}
+	for _, o := range opts {
+		seen[o.Key]++
+	}
+	for key, n := range seen {
+		if n > 1 {
+			t.Errorf("theme key %q appears %d times, want at most 1: %+v", key, n, opts)
+		}
+	}
+
+	// Required tokens present in each new theme's own CSS (not just
+	// inherited from app.css's :root defaults) — --accent/--focus-border/
+	// --bg/--surface/--text/--muted is the same token set every existing
+	// theme file defines or relies on; the WCAG ratios themselves are
+	// documented and verified in the CLI review, not re-derived by this
+	// test (a computed hex-math ratio check would just re-encode the same
+	// design constants the CSS comments already record).
+	wantTokens := []string{"--accent", "--focus-border", "--bg", "--surface", "--text", "--muted"}
+	for _, key := range []string{"monochrome", "dark"} {
+		req := httptest.NewRequest(http.MethodGet, "/themes/"+key+".css", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: GET /themes/%s.css = %d, want 200", key, key, rec.Code)
+		}
+		body := rec.Body.String()
+		for _, tok := range wantTokens {
+			if !strings.Contains(body, tok) {
+				t.Errorf("%s.css: missing token %q", key, tok)
+			}
+		}
+	}
+
+	// Monochrome specifically: no colour accent carries meaning on its own
+	// (ut-docs#2176 acceptance criteria) — the semantic tokens collapse to
+	// black rather than leaving app.css's default green/red/amber.
+	monoReq := httptest.NewRequest(http.MethodGet, "/themes/monochrome.css", nil)
+	monoRec := httptest.NewRecorder()
+	mux.ServeHTTP(monoRec, monoReq)
+	monoBody := monoRec.Body.String()
+	for _, tok := range []string{"--success", "--danger", "--warning"} {
+		if !strings.Contains(monoBody, tok+": #000000") {
+			t.Errorf("monochrome.css: expected %s: #000000 (no colour-only meaning), got body:\n%s", tok, monoBody)
+		}
 	}
 }
 
