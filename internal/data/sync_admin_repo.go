@@ -771,27 +771,38 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 		if err != nil {
 			return err
 		}
-		for _, rec := range recs {
-			if t.name == "settings" && perTillSetting(fmt.Sprint(rec["key"])) {
-				continue // defense in depth: never let a primary write per-till keys
-			}
-			if t.name == "country_settings" {
-				// ut-docs#1669: upsertRow below writes archive_min_days raw,
-				// bypassing CountrySettingsRepo.Upsert()'s own ADR-0040 floor
-				// check entirely — clamp it here so a rolled-back or buggy
-				// primary can never push a satellite below the retention
-				// floor via sync (defense in depth, same shape as the
-				// per-till-setting skip just above). Only touch it when the
-				// bundle actually carries the column — leave a genuinely
-				// absent column (an older primary's schema) alone, same as
-				// upsertRow's own "column the primary doesn't know" case.
-				if v, ok := rec["archive_min_days"]; ok && syncedDays(v) < GlobalArchiveMinDays {
-					rec["archive_min_days"] = GlobalArchiveMinDays
+		// ut-docs#1369: upsertRows batches this table's rows into chunked
+		// multi-row statements instead of one exec per row — the two
+		// per-row adjustments below (settings/country_settings) still run
+		// first, over the same recs slice, exactly as before; only the
+		// final write is batched.
+		toApply := recs
+		if t.name == "settings" || t.name == "country_settings" {
+			toApply = make([]map[string]any, 0, len(recs))
+			for _, rec := range recs {
+				if t.name == "settings" && perTillSetting(fmt.Sprint(rec["key"])) {
+					continue // defense in depth: never let a primary write per-till keys
 				}
+				if t.name == "country_settings" {
+					// ut-docs#1669: upsertRows below writes archive_min_days
+					// raw, bypassing CountrySettingsRepo.Upsert()'s own
+					// ADR-0040 floor check entirely — clamp it here so a
+					// rolled-back or buggy primary can never push a
+					// satellite below the retention floor via sync (defense
+					// in depth, same shape as the per-till-setting skip just
+					// above). Only touch it when the bundle actually carries
+					// the column — leave a genuinely absent column (an older
+					// primary's schema) alone, same as resolveUpsertRow's
+					// own "column the primary doesn't know" case.
+					if v, ok := rec["archive_min_days"]; ok && syncedDays(v) < GlobalArchiveMinDays {
+						rec["archive_min_days"] = GlobalArchiveMinDays
+					}
+				}
+				toApply = append(toApply, rec)
 			}
-			if err := upsertRow(ctx, tx, t, cols, rec); err != nil {
-				return fmt.Errorf("apply %s: %w", t.name, err)
-			}
+		}
+		if err := upsertRows(ctx, tx, t, cols, toApply); err != nil {
+			return fmt.Errorf("apply %s: %w", t.name, err)
 		}
 	}
 	return tx.Commit()
@@ -854,6 +865,12 @@ func applyPluginSettings(ctx context.Context, tx *sql.Tx, t adminTable, recs []m
 	if err != nil {
 		return err
 	}
+	// ut-docs#1369 review (finding 1): batch this loop's writes the same way
+	// ApplyAdmin's generic phase-2 path does, instead of one exec per row
+	// per row — a shop with many installed plugins each carrying many
+	// global settings keys hits this path on every admin pull exactly like
+	// the generic tables the card was filed against.
+	toApply := make([]map[string]any, 0, len(recs))
 	for _, rec := range recs {
 		if !installed[fmt.Sprint(rec["plugin_id"])] {
 			continue
@@ -861,9 +878,10 @@ func applyPluginSettings(ctx context.Context, tx *sql.Tx, t adminTable, recs []m
 		if fmt.Sprint(rec["scope"]) != "global" {
 			continue // defense in depth: a primary must never write per-till scopes
 		}
-		if err := upsertRow(ctx, tx, t, cols, rec); err != nil {
-			return fmt.Errorf("apply plugin_settings: %w", err)
-		}
+		toApply = append(toApply, rec)
+	}
+	if err := upsertRows(ctx, tx, t, cols, toApply); err != nil {
+		return fmt.Errorf("apply plugin_settings: %w", err)
 	}
 	return nil
 }
@@ -879,7 +897,7 @@ func applyPluginSettings(ctx context.Context, tx *sql.Tx, t adminTable, recs []m
 // FiscalRegisterDEKeyPrefix ("fiscal_register:") is a fixed compile-time
 // constant with no '%'/'_' characters, so the LIKE pattern below needs no
 // ESCAPE clause. Same shape as applyPluginSettings just above: a scoped
-// delete-then-insert stands in for deleteMissing/upsertRow because the
+// delete-then-insert stands in for deleteMissing/upsertRows because the
 // generic path can't safely reason about a bundle that is deliberately a
 // subset of the table.
 func applyFiscalRegisterStorage(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[string]any) error {
@@ -892,14 +910,20 @@ func applyFiscalRegisterStorage(ctx context.Context, tx *sql.Tx, t adminTable, r
 	if err != nil {
 		return err
 	}
+	// ut-docs#1369 review (finding 1): this was the sharpest un-batched
+	// survivor — a blanket DELETE followed by one INSERT per surviving row,
+	// on every admin pull, over an unbounded fiscal-register keyspace. Same
+	// batching swap as applyPluginSettings just above.
+	toApply := make([]map[string]any, 0, len(recs))
 	for _, rec := range recs {
 		if fmt.Sprint(rec["plugin_id"]) != FiscalRegisterDEPluginID ||
 			!strings.HasPrefix(fmt.Sprint(rec["key"]), FiscalRegisterDEKeyPrefix) {
 			continue // defense in depth: mirrors applyPluginSettings' own scope re-check
 		}
-		if err := upsertRow(ctx, tx, t, cols, rec); err != nil {
-			return fmt.Errorf("apply plugin_storage (fiscal register): %w", err)
-		}
+		toApply = append(toApply, rec)
+	}
+	if err := upsertRows(ctx, tx, t, cols, toApply); err != nil {
+		return fmt.Errorf("apply plugin_storage (fiscal register): %w", err)
 	}
 	return nil
 }
@@ -1107,8 +1131,6 @@ func stripRetireMangle(id, name string) string {
 	return strings.TrimSuffix(name, "~"+id)
 }
 
-// upsertRow inserts or fully updates one row. Column names are validated
-// against the live schema, never taken from the wire.
 // syncedDays converts a bundle value's dynamic type to int64: int64 when
 // ApplyAdmin is called directly in-process (scanGeneric's own type for an
 // INTEGER column), float64 after a real wire hop (wireTrip/JSON turns every
@@ -1128,7 +1150,26 @@ func syncedDays(v any) int64 {
 	}
 }
 
-func upsertRow(ctx context.Context, tx *sql.Tx, t adminTable, cols []string, rec map[string]any) error {
+// resolvedUpsertRow is one row's fully-resolved upsert shape: which columns
+// actually travel (skip/redact/missing-column rules already applied, ut-docs#1369's
+// upsertRows groups rows sharing an identical `names`+`sets` signature so they
+// can share one multi-row statement), the SET-clause fragments for an
+// ON CONFLICT UPDATE, and the row's own bind values in `names` order.
+type resolvedUpsertRow struct {
+	names []string
+	sets  []string
+	args  []any
+}
+
+// resolveUpsertRow applies upsertRows' (and, historically, the now-removed
+// single-row upsertRow's) shared per-row column rules:
+// a skipCols entry never travels even if the bundle carries it; a redactCols
+// entry always force-writes NULL, never the bundle's value; any other column
+// travels only if the bundle's row actually has it (an older/newer primary's
+// schema may not). Returns a nil names slice when nothing survives — the
+// caller skips the row entirely — a no-op, same as the pre-#1369 single-row
+// upsertRow did for an empty column set.
+func resolveUpsertRow(t adminTable, cols []string, rec map[string]any) resolvedUpsertRow {
 	isPK := map[string]bool{}
 	for _, c := range t.pk {
 		isPK[c] = true
@@ -1171,12 +1212,126 @@ func upsertRow(ctx context.Context, tx *sql.Tx, t adminTable, cols []string, rec
 			sets = append(sets, c+" = excluded."+c)
 		}
 	}
-	if len(names) == 0 {
-		return nil
+	return resolvedUpsertRow{names: names, sets: sets, args: args}
+}
+
+// maxBatchPlaceholders bounds how many bound parameters one multi-row
+// upsertRows statement carries (rows-in-chunk * columns-in-signature).
+// ut-docs#1369 review (finding 3): measured directly against this repo's
+// actual driver (modernc.org/sqlite v1.58.0) rather than assumed — a single
+// statement with 32,764 bound parameters succeeds; 40,000 fails with "too
+// many SQL variables" (SQLite's SQLITE_MAX_VARIABLE_NUMBER, 32766 by
+// default on a modern build). 4000 leaves a wide safety margin below that
+// measured ceiling — comfortably clear even if a future driver/SQLite
+// build ships a much lower compile-time limit than today's default — while
+// still capturing most of the real win: the widest adminTable (`items`,
+// 19 columns) chunks at ~210 rows instead of the historical 1 (or an
+// overly-conservative earlier draft's 26), so a large catalog needs
+// single-digit statements per pull instead of one per row. The
+// divide-and-floor-at-1 below just means a pathologically wide table
+// (500+ columns; none exists today) still works, one row at a time,
+// instead of erroring.
+const maxBatchPlaceholders = 4000
+
+// upsertBatch is one multi-row statement's worth of identically-shaped
+// rows — the unit buildUpsertBatches groups recs into and upsertRows then
+// executes one-for-one.
+type upsertBatch struct {
+	names []string
+	sets  []string
+	rows  [][]any
+}
+
+// buildUpsertBatches groups recs by resolveUpsertRow's exact column
+// signature rather than assuming uniformity: within one bundle every row of
+// a table normally resolves identically (one scan of one schema), but a
+// rolling upgrade can hand ApplyAdmin a primary whose dump has a different
+// column set for the same table, and grouping preserves each row's original
+// per-row semantics exactly — only the number of statements changes, not
+// what any single row writes. Within one signature's group, row order
+// follows first-appearance in recs; across DIFFERENT signatures, groups are
+// emitted in first-seen-signature order, which does not generally preserve
+// recs' original interleaving (a mixed-signature bundle can apply its rows
+// out of original order across groups) — harmless in the normal uniform
+// case, and only reachable at all during a rolling upgrade; see
+// TestBuildUpsertBatches_DifferingColumnSetsGetSeparateGroups.
+//
+// Splits each group into maxBatchPlaceholders-safe chunks. Pure and DB-free
+// by design, so the grouping/chunking behaviour is unit-testable without a
+// database.
+func buildUpsertBatches(t adminTable, cols []string, recs []map[string]any) []upsertBatch {
+	type group struct {
+		names []string
+		sets  []string
+		rows  [][]any
 	}
-	q := `INSERT INTO ` + t.name + ` (` + strings.Join(names, ", ") + `) VALUES (` +
-		strings.TrimSuffix(strings.Repeat("?, ", len(names)), ", ") + `) ON CONFLICT (` +
-		strings.Join(t.pk, ", ") + `) DO `
+	groups := map[string]*group{}
+	var order []string
+	for _, rec := range recs {
+		rr := resolveUpsertRow(t, cols, rec)
+		if len(rr.names) == 0 {
+			continue
+		}
+		sig := strings.Join(rr.names, "\x1f")
+		g, ok := groups[sig]
+		if !ok {
+			g = &group{names: rr.names, sets: rr.sets}
+			groups[sig] = g
+			order = append(order, sig)
+		}
+		g.rows = append(g.rows, rr.args)
+	}
+
+	var batches []upsertBatch
+	for _, sig := range order {
+		g := groups[sig]
+		chunkRows := maxBatchPlaceholders / len(g.names)
+		if chunkRows < 1 {
+			chunkRows = 1
+		}
+		for start := 0; start < len(g.rows); start += chunkRows {
+			end := start + chunkRows
+			if end > len(g.rows) {
+				end = len(g.rows)
+			}
+			batches = append(batches, upsertBatch{names: g.names, sets: g.sets, rows: g.rows[start:end]})
+		}
+	}
+	return batches
+}
+
+// upsertRows is ApplyAdmin's phase-2 batching path (ut-docs#1369): before
+// this, every row of every synced table was its own INSERT ... ON CONFLICT
+// statement, so a bundle with tens of thousands of byte-identical rows (one
+// unrelated price edit bumps the whole bundle's generation, ut-docs#1368)
+// replayed that many round trips on every replica's poll. DumpAdmin's own
+// change-marker (ut-docs#1368) is a coarse, whole-bundle generation counter,
+// not a per-row change signal, so there is no cheap way to skip re-applying
+// an unchanged row — this instead cuts the cost of applying every row by
+// batching same-shaped rows into chunked multi-row statements (via
+// buildUpsertBatches, above), without changing what gets written or the
+// wire/bundle format.
+func upsertRows(ctx context.Context, tx *sql.Tx, t adminTable, cols []string, recs []map[string]any) error {
+	for _, b := range buildUpsertBatches(t, cols, recs) {
+		if err := execUpsertBatch(ctx, tx, t, b.names, b.sets, b.rows); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// execUpsertBatch issues one multi-row INSERT ... ON CONFLICT statement for
+// rows that all share the same resolved names/sets (see upsertRows).
+func execUpsertBatch(ctx context.Context, tx *sql.Tx, t adminTable, names, sets []string, rows [][]any) error {
+	rowPH := "(" + strings.TrimSuffix(strings.Repeat("?, ", len(names)), ", ") + ")"
+	placeholders := make([]string, len(rows))
+	args := make([]any, 0, len(rows)*len(names))
+	for i, row := range rows {
+		placeholders[i] = rowPH
+		args = append(args, row...)
+	}
+	q := `INSERT INTO ` + t.name + ` (` + strings.Join(names, ", ") + `) VALUES ` +
+		strings.Join(placeholders, ", ") + ` ON CONFLICT (` + strings.Join(t.pk, ", ") + `) DO `
 	if len(sets) == 0 {
 		q += `NOTHING`
 	} else {
