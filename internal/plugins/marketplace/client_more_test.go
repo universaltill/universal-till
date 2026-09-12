@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -253,11 +254,16 @@ func TestIssueDownloadTokenErrorPaths(t *testing.T) {
 	}
 }
 
-func catalogServer(t *testing.T, hits *int) *httptest.Server {
+// catalogServer's hit counter is an *int32 updated via sync/atomic, not a
+// plain int — ut-docs#2143's background refresh means a stale-cache test
+// can legitimately have the server handler goroutine still incrementing it
+// while the test goroutine polls, and a plain int there is a real data race
+// (caught by `go test -race`), not just a style nit.
+func catalogServer(t *testing.T, hits *int32) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if hits != nil {
-			*hits++
+			atomic.AddInt32(hits, 1)
 		}
 		json.NewEncoder(w).Encode(map[string]any{
 			"plugins": []map[string]any{
@@ -268,7 +274,7 @@ func catalogServer(t *testing.T, hits *int) *httptest.Server {
 }
 
 func TestGetOrFetchPrefersCache(t *testing.T) {
-	hits := 0
+	var hits int32
 	server := catalogServer(t, &hits)
 	defer server.Close()
 
@@ -280,7 +286,7 @@ func TestGetOrFetchPrefersCache(t *testing.T) {
 	if _, err := repo.Fetch(ctx, "en", "linux/amd64"); err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
-	fetchesAfterWarm := hits
+	fetchesAfterWarm := atomic.LoadInt32(&hits)
 
 	snap, stale, err := repo.GetOrFetch(ctx, "en", "linux/amd64")
 	if err != nil {
@@ -292,13 +298,13 @@ func TestGetOrFetchPrefersCache(t *testing.T) {
 	if len(snap.Plugins) != 1 {
 		t.Fatalf("snapshot plugins = %d; want 1", len(snap.Plugins))
 	}
-	if hits != fetchesAfterWarm {
-		t.Fatalf("GetOrFetch hit the network despite a warm cache (%d -> %d requests)", fetchesAfterWarm, hits)
+	if got := atomic.LoadInt32(&hits); got != fetchesAfterWarm {
+		t.Fatalf("GetOrFetch hit the network despite a warm cache (%d -> %d requests)", fetchesAfterWarm, got)
 	}
 }
 
 func TestGetOrFetchFetchesWhenNoCache(t *testing.T) {
-	hits := 0
+	var hits int32
 	server := catalogServer(t, &hits)
 	defer server.Close()
 
@@ -310,8 +316,8 @@ func TestGetOrFetchFetchesWhenNoCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrFetch cold: %v", err)
 	}
-	if stale || len(snap.Plugins) != 1 || hits == 0 {
-		t.Fatalf("cold GetOrFetch: stale=%v plugins=%d hits=%d", stale, len(snap.Plugins), hits)
+	if stale || len(snap.Plugins) != 1 || atomic.LoadInt32(&hits) == 0 {
+		t.Fatalf("cold GetOrFetch: stale=%v plugins=%d hits=%d", stale, len(snap.Plugins), atomic.LoadInt32(&hits))
 	}
 }
 
@@ -336,8 +342,13 @@ func TestGetOrFetchErrorsWhenOfflineAndNoCache(t *testing.T) {
 // triggers a real refetch, and a refetch failure still falls back to the
 // stale copy rather than erroring (offline-first is preserved).
 
+// ut-docs#2143: GetOrFetch on a stale cache no longer refetches inline — it
+// serves the stale snapshot immediately (so the caller never blocks on the
+// network) and kicks the refetch off in the background. So "does staleness
+// trigger a refetch" is now observed by polling for the background
+// goroutine's effect, not by asserting on GetOrFetch's own return value.
 func TestGetOrFetchRefetchesWhenStale(t *testing.T) {
-	hits := 0
+	var hits int32
 	server := catalogServer(t, &hits)
 	defer server.Close()
 
@@ -349,7 +360,7 @@ func TestGetOrFetchRefetchesWhenStale(t *testing.T) {
 	if _, err := repo.Fetch(ctx, "en", "linux/amd64"); err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
-	fetchesAfterWarm := hits
+	fetchesAfterWarm := atomic.LoadInt32(&hits)
 
 	// Force staleness without waiting out the real 15-minute window.
 	repo.mu.Lock()
@@ -360,14 +371,43 @@ func TestGetOrFetchRefetchesWhenStale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrFetch: %v", err)
 	}
-	if stale {
-		t.Fatal("a successful refetch should report the fresh snapshot as not stale")
-	}
-	if hits != fetchesAfterWarm+1 {
-		t.Fatalf("stale cache did not trigger a refetch (%d -> %d requests)", fetchesAfterWarm, hits)
+	if !stale {
+		t.Fatal("GetOrFetch should report the pre-refresh snapshot as stale — the refresh runs in the background, not inline")
 	}
 	if len(snap.Plugins) != 1 {
 		t.Fatalf("snapshot plugins = %d; want 1", len(snap.Plugins))
+	}
+
+	// Poll on the cache's own staleness, not on the hit counter (review
+	// Finding 1): `hits` is incremented at the START of the server
+	// handler, before the background goroutine has updated cr.cached —
+	// polling on `hits` reaching fetchesAfterWarm+1 could observe that
+	// increment and proceed while the refresh was still in flight,
+	// occasionally racing the `repo.Get()` call below (reproduced under
+	// `-race`/high contention while building this fix). Waiting for the
+	// cache to actually report fresh is what the test is really trying to
+	// assert, and it can't fire early.
+	var fresh *CatalogSnapshot
+	var freshStale bool
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		fresh, freshStale, err = repo.Get()
+		if err != nil {
+			t.Fatalf("Get after background refresh: %v", err)
+		}
+		if !freshStale {
+			break
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatal("stale cache did not refresh in the background within the deadline")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(fresh.Plugins) != 1 {
+		t.Fatalf("refreshed snapshot plugins = %d; want 1", len(fresh.Plugins))
+	}
+	if got := atomic.LoadInt32(&hits); got != fetchesAfterWarm+1 {
+		t.Fatalf("stale cache did not trigger exactly one background refetch (%d -> %d requests)", fetchesAfterWarm, got)
 	}
 }
 
@@ -378,11 +418,15 @@ func TestGetOrFetchRefetchesWhenStale(t *testing.T) {
 // refetch in the first place). Serving a real 500 on the second request
 // instead means `hits` only reaches 2 if GetOrFetch genuinely tried and
 // failed, which is what this test claims to verify.
+//
+// ut-docs#2143: the failed refetch now happens in the background (see
+// TestGetOrFetchRefetchesWhenStale's doc comment above), so `hits` reaching
+// 2 is polled for rather than observed synchronously.
 func TestGetOrFetchFallsBackToStaleCacheWhenRefetchFails(t *testing.T) {
-	hits := 0
+	var hits int32
 	failAfterFirst := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits++
+		atomic.AddInt32(&hits, 1)
 		if failAfterFirst {
 			http.Error(w, "simulated marketplace outage", http.StatusInternalServerError)
 			return
@@ -419,8 +463,26 @@ func TestGetOrFetchFallsBackToStaleCacheWhenRefetchFails(t *testing.T) {
 	if len(snap.Plugins) != 1 {
 		t.Fatalf("snapshot plugins = %d; want 1", len(snap.Plugins))
 	}
-	if hits != 2 {
-		t.Fatalf("expected the original fetch plus one failed refetch attempt (2), got %d", hits)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for atomic.LoadInt32(&hits) != 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := atomic.LoadInt32(&hits); got != 2 {
+		t.Fatalf("expected the original fetch plus one failed background refetch attempt (2), got %d", got)
+	}
+
+	// The failed background refresh must not have clobbered the still-valid
+	// stale cache.
+	stillCached, stillStale, err := repo.Get()
+	if err != nil {
+		t.Fatalf("Get after failed background refresh: %v", err)
+	}
+	if !stillStale {
+		t.Fatal("cache should still report stale after a failed background refresh")
+	}
+	if len(stillCached.Plugins) != 1 {
+		t.Fatalf("snapshot plugins = %d; want 1", len(stillCached.Plugins))
 	}
 }
 
