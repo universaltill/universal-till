@@ -28,6 +28,34 @@ type CatalogRepository struct {
 	staleAfter   time.Duration
 }
 
+// catalogFetchMaxPages bounds how many pages Fetch will follow before
+// giving up — mirrors setupBasePluginMaxPages/setupLanguageCatalogMaxPages
+// (internal/pages/setup_base_plugins.go / setup_language_catalog.go),
+// the same cap value and rationale (ut-docs#2149, same shape as the
+// ut-docs#2133/#1108 fix those two already carry): bounds a malformed or
+// hostile server from looping forever, well beyond any real catalog's page
+// count.
+const catalogFetchMaxPages = 25
+
+// catalogFetchTimeout bounds the ENTIRE multi-page fetch, not just one
+// page's own request timeout (config.MarketplaceConfig.RequestTimeoutSec,
+// applied per-request inside Client). Fetch's two setup-wizard siblings
+// (resolveAndInstallBasePlugin, languagePackLocalesForListing) rely on
+// their CALLER wrapping the whole attempt in a short context
+// (setupBasePluginAttemptTimeout, internal/pages/setup_base_plugins.go) —
+// but Fetch has no such caller-side wrapper (its own callers, e.g.
+// internal/pages/plugins_page.go, pass a bare request context with no
+// deadline), and Fetch itself is what owns the pagination loop, so it has
+// to bound its own worst case here. Without this, a slow-but-alive server
+// that keeps emitting a non-empty NextPageToken could hold cr.mu (and
+// therefore every other Get()/Filter() reader) for up to
+// catalogFetchMaxPages * RequestTimeoutSec — ~12.5 minutes at the config
+// default, against ~30s before this fix (independent review finding,
+// ut-docs#2149). 30s is comfortably enough for a real catalog (25 pages
+// in 30s is generous for any network this product runs on) while keeping
+// the worst case bounded to roughly one page's own timeout instead of 25.
+const catalogFetchTimeout = 30 * time.Second
+
 // NewCatalogRepository creates a catalog repository
 func NewCatalogRepository(client *Client, cacheDir string) (*CatalogRepository, error) {
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
@@ -41,7 +69,25 @@ func NewCatalogRepository(client *Client, cacheDir string) (*CatalogRepository, 
 	}, nil
 }
 
-// Fetch retrieves the latest catalog from the marketplace
+// Fetch retrieves the latest catalog from the marketplace, paging through
+// the full result set rather than just page 1 (ut-docs#2149) — same shape
+// as the ut-docs#2133/#1108 fix already applied to this package's two
+// setup-wizard callers (resolveAndInstallBasePlugin,
+// languagePackLocalesForListing): ut-cloud's real defaultPageSize is 20, so
+// a legitimate listing can sort past page 1 as the catalog grows, and this
+// snapshot backs the general catalog browse UI, category listings and
+// tax-code listings, not just one bounded lookup. Bounded by
+// catalogFetchMaxPages (page count) and catalogFetchTimeout (wall clock)
+// so a malformed/hostile server can't loop forever or stall every reader.
+//
+// Interaction with ut-docs#2143 (a 30s block on a dead network route,
+// same general area): unchanged for that card's literal case — a
+// genuinely dead route fails on page 1 and Fetch returns immediately,
+// same as before this fix. The window this pagination loop widens is
+// different: a server that stays alive and slow while still emitting a
+// non-empty NextPageToken. catalogFetchTimeout caps that widened window
+// back down to roughly one page's own timeout rather than up to
+// catalogFetchMaxPages of them (independent review finding, ut-docs#2149).
 func (cr *CatalogRepository) Fetch(ctx context.Context, locale, deviceArch string) (*CatalogSnapshot, error) {
 	cr.mu.Lock()
 	defer cr.mu.Unlock()
@@ -55,19 +101,37 @@ func (cr *CatalogRepository) Fetch(ctx context.Context, locale, deviceArch strin
 		return nil, fmt.Errorf("no marketplace client configured")
 	}
 
-	req := &ListPluginsRequest{
-		Locale:     locale,
-		DeviceArch: deviceArch,
-	}
+	ctx, cancel := context.WithTimeout(ctx, catalogFetchTimeout)
+	defer cancel()
 
-	resp, err := cr.client.ListPlugins(ctx, req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch catalog: %w", err)
+	var all []PluginSummary
+	var snapshotVersion int64
+	pageToken := ""
+	for page := 0; page < catalogFetchMaxPages; page++ {
+		resp, err := cr.client.ListPlugins(ctx, &ListPluginsRequest{
+			Locale:     locale,
+			DeviceArch: deviceArch,
+			PageToken:  pageToken,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch catalog: %w", err)
+		}
+		all = append(all, resp.Plugins...)
+		if page == 0 {
+			// The snapshot version describes the catalog as a whole, not a
+			// single page — it doesn't vary across pages of the same query,
+			// so the first page's value is as good as any.
+			snapshotVersion = resp.SnapshotVersion
+		}
+		if resp.NextPageToken == "" {
+			break
+		}
+		pageToken = resp.NextPageToken
 	}
 
 	snapshot := &CatalogSnapshot{
-		Plugins:         resp.Plugins,
-		SnapshotVersion: resp.SnapshotVersion,
+		Plugins:         all,
+		SnapshotVersion: snapshotVersion,
 		FetchedAt:       time.Now(),
 		Locale:          locale,
 		DeviceArch:      deviceArch,
