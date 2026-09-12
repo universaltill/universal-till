@@ -4,39 +4,54 @@
      orders as chips but has no room for table / items / total / age side by
      side.
 
-     ut-docs#2137: this page no longer tells the cashier to "tap it on the On
-     hold strip on the sale screen". That strip is clipped off-screen on a
-     1280x800 tablet (ut-docs#2128), so the hint pointed at a control the
-     device does not show -- with this page read-only, a parked order was
-     unreachable. Resuming now lives in the parked-orders popup on the sale
-     screen itself (the button beside Card), which depends on no viewport
-     budget. This page stays the detailed read-only view. */}}
+     ut-docs#2137 added a second way to resume (the sale screen's own popup,
+     which this page's old hint pointed at -- since removed, that strip is
+     clipped off-screen on a 1280x800 tablet, ut-docs#2128).
+
+     ut-docs#2138: this page's own rows are tappable too now -- a list that
+     cannot open what it lists was a dead end the first time a cashier tried
+     it here, even with the popup existing elsewhere. Each row is a real
+     <button>, not a <tr> click handler (ut-docs#826's accessibility gate),
+     at the product's 46px touch floor (.btn-touch) -- see
+     .open-order-row-btn in app.css. It posts to POST /open-orders/resume
+     (open_orders_page.go), a plain form (not htmx: this is a full-page nav,
+     unlike the popup's #basket swap) -- success lands on the sale screen
+     with the basket loaded, a refusal (basket not empty) returns here with
+     .errKey set and the order still parked and listed. */}}
 <div class="page-head">
   <h1>{{ T "open_orders.title" }}</h1>
   <a class="btn primary btn-touch" href="{{ .backToSaleURL }}">← {{ T "menu.back_to_sale" }}</a>
 </div>
+{{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
 <div class="card users-list">
   {{ if not .orders }}
   <p class="muted" data-testid="open-orders-empty">{{ T "open_orders.empty" }}</p>
   {{ else }}
-  <table class="table">
+  <table class="table" id="open-orders-table">
     <thead>
       <tr>
-        <th>{{ T "open_orders.col.label" }}</th>
-        <th>{{ T "open_orders.col.table" }}</th>
-        <th>{{ T "open_orders.col.lines" }}</th>
-        <th>{{ T "open_orders.col.total" }}</th>
-        <th>{{ T "open_orders.col.age" }}</th>
+        <th class="open-order-cell-label">{{ T "open_orders.col.label" }}</th>
+        <th class="open-order-cell-table">{{ T "open_orders.col.table" }}</th>
+        <th class="open-order-cell-lines">{{ T "open_orders.col.lines" }}</th>
+        <th class="open-order-cell-total">{{ T "open_orders.col.total" }}</th>
+        <th class="open-order-cell-age">{{ T "open_orders.col.age" }}</th>
       </tr>
     </thead>
     <tbody>
       {{ range .orders }}
       <tr data-held-id="{{ .ID }}">
-        <td>{{ .Label }}</td>
-        <td>{{ .TableLabel }}</td>
-        <td>{{ .LineCount }}</td>
-        <td>{{ money .Total }}</td>
-        <td>{{ printf (T "open_orders.age_minutes") .AgeMinutes }}</td>
+        <td colspan="5">
+          <form method="post" action="/open-orders/resume">
+            <input type="hidden" name="id" value="{{ .ID }}">
+            <button type="submit" class="open-order-row-btn" data-testid="open-order-row">
+              <span class="open-order-cell open-order-cell-label">{{ .Label }}</span>
+              <span class="open-order-cell open-order-cell-table">{{ .TableLabel }}</span>
+              <span class="open-order-cell open-order-cell-lines">{{ .LineCount }}</span>
+              <span class="open-order-cell open-order-cell-total">{{ money .Total }}</span>
+              <span class="open-order-cell open-order-cell-age">{{ printf (T "open_orders.age_minutes") .AgeMinutes }}</span>
+            </button>
+          </form>
+        </td>
       </tr>
       {{ end }}
     </tbody>
