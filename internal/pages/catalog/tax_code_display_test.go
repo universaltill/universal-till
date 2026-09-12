@@ -97,9 +97,19 @@ func TestCatalogTablePartial_UpdateNeverLeaksRawTaxCodeID(t *testing.T) {
 // stripDataAttrs removes HTML attribute values (data-tax="...", id="...",
 // value="...", etc.) so the UUID check below only inspects rendered visible
 // content, not the ids HTMX/JS legitimately need in markup attributes.
+//
+// ut-docs#2119: also strips inline <script> block CONTENT for the same
+// reason — CategoryNodesJSON ships the category tree's real ids to
+// category-filter.js's client-side expand() (a `var categoryNodes = [...]`
+// literal, same established pattern as inventory_page.go's ItemsJSON/
+// plugins_page.go's pluginsJSON), which is exactly as inert/non-rendered as
+// a data-* attribute — never text a shop owner reads — but sits in neither
+// an attribute NOR ordinary body text, so it needs its own carve-out here.
 func stripDataAttrs(html string) string {
 	attr := regexp.MustCompile(`(?:data-[a-z-]+|id|value)="[^"]*"`)
-	return attr.ReplaceAllString(html, "")
+	html = attr.ReplaceAllString(html, "")
+	script := regexp.MustCompile(`(?s)<script[^>]*>.*?</script>`)
+	return script.ReplaceAllString(html, "")
 }
 
 // ut-docs#1178 review finding F1: converting the item-edit Tax code field

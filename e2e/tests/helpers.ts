@@ -335,3 +335,54 @@ export async function closeItemForm(page: Page) {
   await page.locator('#item-form-modal').evaluate((el: HTMLDialogElement) => el.close());
   await expect(page.locator('#item-form-modal')).toBeHidden();
 }
+
+// ut-docs#2137: drain every parked (held) order, so a test can assert on an
+// empty held state.
+//
+// Held orders are DB rows, and `POST /api/pos/reset` only clears the
+// in-memory basket engine -- so fixtures.ts's per-file basket reset does NOT
+// remove them, and a parked order outlives the spec file that made it. Any
+// test asserting "nothing is parked" is therefore making a claim about GLOBAL
+// state: with `workers: 1` and servers shared across spec files, an earlier
+// file that parked a sale without resuming it has already falsified it. That
+// failure is CI-only and order-dependent -- it passes on its own locally,
+// which reads as flakiness and is not.
+//
+// Resume is the only thing that deletes a held row (there is deliberately no
+// bulk-delete endpoint; going around it via SQL would exercise a path the
+// product does not have), so draining means resuming each one in turn and
+// resetting the basket it lands in.
+//
+// Fails fast on a row resume cannot clear. `/api/pos/resume` returns
+// hold.error.failed WITHOUT deleting the row when the stored payload does not
+// unmarshal into a BasketSnapshot (internal/pages/hold_api.go -- the handler
+// returns before its own repo.Delete), and repo.Delete's error is swallowed
+// on the success path too. Either way the same id comes back every round, so
+// looping blindly to a round cap would burn the cap and then report "still
+// finding parked orders", which reads as unbounded generation rather than one
+// specific unresumable row. Naming the id and the toast is the difference
+// between a diagnosable failure and a confusing one.
+export async function drainParkedOrders(page: Page) {
+  let lastID = '';
+  for (let round = 0; round < 50; round++) {
+    await page.request.post('/api/pos/reset').catch(() => {});
+    const body = await (await page.request.get('/ui/parked-orders')).text();
+    const id = body.match(/data-held-id="([^"]+)"/)?.[1];
+    if (!id) return;
+    if (id === lastID) {
+      // Quote the refusal's own toast rather than the whole basket partial it
+      // is wrapped in -- the partial leads with ~200 chars of markup and
+      // whitespace, so a blind slice of it shows the caller nothing.
+      const refusal = await (await page.request.post('/api/pos/resume', { form: { id } })).text();
+      const toast = refusal.match(/class="notice-text">([^<]*)</)?.[1]?.trim() ?? '(no toast in response)';
+      throw new Error(
+        `drainParkedOrders: held order ${id} survived a resume, so it can never be ` +
+          `drained (a payload that fails to unmarshal is refused WITHOUT deleting ` +
+          `the row -- internal/pages/hold_api.go). The till answered: ${toast}`,
+      );
+    }
+    lastID = id;
+    await page.request.post('/api/pos/resume', { form: { id } });
+  }
+  throw new Error('drainParkedOrders: more than 50 parked orders; refusing to loop further');
+}

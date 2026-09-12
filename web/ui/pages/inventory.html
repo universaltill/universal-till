@@ -11,6 +11,10 @@
   </button>
 </div>
 
+{{/* ut-docs#2119: composes with the search box above (AND, not replace) —
+     see applyStockFilter() in the script block below. */}}
+{{ template "category_filter" (dict "categories" .CategoryFilterOptions "controlID" "inventory-category-filter") }}
+
 {{ if .SyncPrimary }}
 <div class="sync-banner">⚠ {{ T "sync.banner_replica" }}
   {{ if crossdevicelinkactionable }}
@@ -31,7 +35,7 @@
         <tbody>
           {{ if .StockLevels }}
             {{ range .StockLevels }}
-              <tr class="stock-row" data-item="{{ .ItemID }}" data-name="{{ if .VariantName }}{{ printf "%s — %s" .Name .VariantName }}{{ else }}{{ .Name }}{{ end }}" data-sku="{{ .SKU }}" data-location="{{ .LocationID }}" data-location-name="{{ .LocationName }}" data-variant="{{ .VariantID }}">
+              <tr class="stock-row" data-item="{{ .ItemID }}" data-name="{{ if .VariantName }}{{ printf "%s — %s" .Name .VariantName }}{{ else }}{{ .Name }}{{ end }}" data-sku="{{ .SKU }}" data-location="{{ .LocationID }}" data-location-name="{{ .LocationName }}" data-variant="{{ .VariantID }}" data-category="{{ .CategoryID }}">
                 <td class="catalog-name">{{ .Name }}{{ if .VariantName }} <span class="muted">— {{ .VariantName }}</span>{{ end }}</td>
                 <td class="muted">{{ .SKU }}</td>
                 <td>{{ .LocationName }}</td>
@@ -46,6 +50,11 @@
           {{ else }}
             <tr><td colspan="6" class="empty">{{ T "inventory.empty" }}</td></tr>
           {{ end }}
+          {{/* ut-docs#2119: always present (hidden by default), toggled by
+               applyStockFilter() below — distinct from the true "no stock
+               recorded yet" row above: this one means there ARE rows, but
+               the current search/category filter narrowed them all out. */}}
+          <tr id="stock-no-matches" hidden><td colspan="6" class="empty">{{ T "filter.no_matches" }}</td></tr>
         </tbody>
       </table>
     </div>
@@ -363,16 +372,54 @@
   // above), an unscoped selector here would also start hiding low-stock
   // rows out of sync with their own "N running out" badge -- a regression
   // this card never asked for.
+  // ut-docs#2119: ANDed with the category-filter chip row — see
+  // category-filter.js for expand()/matches()/bind().
   var search = document.getElementById('stock-search');
+  var inventoryCategoryNodes = {{ .CategoryNodesJSON }};
+  var expandedStockCategories = new Set();
   function applyStockFilter() {
     var q = search.value.toLowerCase();
+    var total = 0, visible = 0;
     document.querySelectorAll('#stock-table .stock-row').forEach(function (row) {
+      total++;
       var hay = (row.dataset.name + ' ' + row.dataset.sku).toLowerCase();
-      row.hidden = q !== '' && hay.indexOf(q) === -1;
+      var textMatch = q === '' || hay.indexOf(q) !== -1;
+      // ut-docs#2119 review (F4): fail OPEN if category-filter.js somehow
+      // never loaded — search must keep working even if the chips don't.
+      var catMatch = !window.CategoryFilter || window.CategoryFilter.matches(row.dataset.category, expandedStockCategories);
+      var show = textMatch && catMatch;
+      row.hidden = !show;
+      if (show) visible++;
     });
+    // Distinct from the true "no stock recorded yet" row: only shown when
+    // there ARE rows but the current filter narrowed them all out.
+    var noMatches = document.getElementById('stock-no-matches');
+    if (noMatches) noMatches.hidden = !(total > 0 && visible === 0);
   }
   search.addEventListener('input', applyStockFilter);
   document.getElementById('stock-levels-card').addEventListener('htmx:afterSwap', applyStockFilter);
+  // ut-docs#2119 review (F1): a plain DOMContentLoaded listener never
+  // fires when this page is reached via the /items rail's htmx fragment
+  // swap (hx-target="#items-panel") — that event already fired long
+  // before the swap happened, so this exact listener would sit registered
+  // forever and the chips would render but never bind. Same readyState
+  // guard already used by record-dialog.js/app.js/autofill.js: run
+  // immediately if the document has already finished loading, else wait.
+  function bindCategoryFilter() {
+    var categoryFilterEl = document.getElementById('inventory-category-filter');
+    if (!categoryFilterEl || !window.CategoryFilter) return;
+    window.CategoryFilter.bind(categoryFilterEl, {
+      onChange: function (selectedIds) {
+        expandedStockCategories = window.CategoryFilter.expand(selectedIds, inventoryCategoryNodes);
+        applyStockFilter();
+      }
+    });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bindCategoryFilter);
+  } else {
+    bindCategoryFilter();
+  }
 
   // ut-docs#2069 (independent review of ut-docs#2064): the vendored htmx
   // 1.9.12 build only ever swaps a 2xx response, so CreateReturn's own
