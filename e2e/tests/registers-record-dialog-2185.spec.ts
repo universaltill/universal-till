@@ -77,27 +77,26 @@ test.describe('registers list + record dialog (ut-docs#2185)', () => {
     const renamed = name + ' Renamed';
     await page.locator(NAME).fill(renamed);
     const options = await page.locator(`${LOCATION} option[value]:not([value=""])`).all();
-    if (options.length > 0) {
-      const val = await options[0].getAttribute('value');
-      await page.locator(LOCATION).selectOption(val!);
-      await Promise.all([
-        page.waitForURL(/\/registers$/),
-        page.locator(`${DIALOG} .record-dialog-save`).click(),
-      ]);
-      // Reopen: the location just picked is still selected — proves the
-      // row's data-field-location_id prefill round-trips through a real
-      // save, not just the name field.
-      await row(page, renamed).click();
-      await expect(dlg).toBeVisible();
-      await expect(page.locator(LOCATION)).toHaveValue(val!);
-    } else {
-      await Promise.all([
-        page.waitForURL(/\/registers$/),
-        page.locator(`${DIALOG} .record-dialog-save`).click(),
-      ]);
-      await row(page, renamed).click();
-      await expect(dlg).toBeVisible();
-    }
+    // scripts/e2e_seed/main.go always seeds "loc-main" as a real, active
+    // stock location, so this suite's fixture data guarantees at least one
+    // real option here. Asserting that rather than branching on it: a
+    // silent `if (options.length > 0)` would let this test pass vacuously
+    // (proving nothing about the location <select> round-trip) the moment
+    // that seed assumption ever stopped holding, with nobody the wiser —
+    // exactly the failure mode independent review flagged this file for.
+    expect(options.length).toBeGreaterThan(0);
+    const val = await options[0].getAttribute('value');
+    await page.locator(LOCATION).selectOption(val!);
+    await Promise.all([
+      page.waitForURL(/\/registers$/),
+      page.locator(`${DIALOG} .record-dialog-save`).click(),
+    ]);
+    // Reopen: the location just picked is still selected — proves the
+    // row's data-field-location_id prefill round-trips through a real
+    // save, not just the name field.
+    await row(page, renamed).click();
+    await expect(dlg).toBeVisible();
+    await expect(page.locator(LOCATION)).toHaveValue(val!);
 
     // Deactivate — behind the real hx-confirm browser dialog (Playwright
     // auto-dismisses an unhandled one, which would silently no-op the
