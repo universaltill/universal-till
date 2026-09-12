@@ -223,6 +223,10 @@ func TestRenderWithRendersAndReports500OnBadFile(t *testing.T) {
 		filepath.Join("web", "ui", "pages", "pin.html"),
 		filepath.Join("web", "ui", "partials", "nav.html"),
 		filepath.Join("web", "ui", "partials", "bugreport_panel.html"),
+		// ut-docs#2183: base.html unconditionally references
+		// {{ template "pos_alert" . }} now — required here or executing
+		// "base" below fails, same reasoning as bugreport_panel.html above.
+		filepath.Join("web", "ui", "partials", "pos_alert.html"),
 	}
 	h := RenderWith(files, FuncsFor("en"))("base", map[string]any{
 		"title": "Change PIN", "theme": "", "menuItems": nil, "errKey": "",

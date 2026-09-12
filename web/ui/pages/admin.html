@@ -29,7 +29,9 @@
      single way back; see TestAdminPage_AllNonEmptyClustersRenderForFullAccessDETill
      for the "can still get back" assertion, now against the rail entry. -->
 
-{{ template "pos_alert" . }}
+<!-- ut-docs#2183: #pos-alert now renders once, globally, from base.html
+     itself — see that file's own comment. Removed from here to avoid a
+     duplicate id="pos-alert". -->
 
 <div class="items-layout">
   <aside class="items-rail-wrap" aria-label="{{ T "menu.group.administration" }}">

@@ -3,7 +3,9 @@
   <h1>{{ T "items.title" }}</h1>
 </div>
 
-{{ template "pos_alert" . }}
+<!-- ut-docs#2183: #pos-alert now renders once, globally, from base.html
+     itself — see that file's own comment. Removed from here to avoid a
+     duplicate id="pos-alert". -->
 
 {{/*
   ut-docs#1950 (product-owner feedback: "make it like sumup" — a

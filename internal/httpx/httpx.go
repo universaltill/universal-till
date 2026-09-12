@@ -245,11 +245,12 @@ func stripWebPrefixes(paths []string) []string {
 // Render/RenderPartial/RenderWith do, keyed on the (layout, page, partials)
 // tuple the way ui.NewRenderer (internal/ui/buttons.go) already does.
 func NewRenderer(layout string, page string, funcs template.FuncMap, partials ...string) (*Renderer, error) {
-	// nav.html and bugreport_panel.html ride along automatically: base.html
-	// references both on every page.
+	// nav.html, bugreport_panel.html and (ut-docs#2183) pos_alert.html ride
+	// along automatically: base.html references all three on every page.
 	files := []string{layout, page,
 		filepath.Join("web", "ui", "partials", "nav.html"),
-		filepath.Join("web", "ui", "partials", "bugreport_panel.html")}
+		filepath.Join("web", "ui", "partials", "bugreport_panel.html"),
+		filepath.Join("web", "ui", "partials", "pos_alert.html")}
 	files = append(files, partials...)
 	t, err := template.New("base.html").Funcs(funcs).ParseFS(uiassets.FS, stripWebPrefixes(files)...)
 	if err != nil {
@@ -1144,10 +1145,13 @@ var renderFiles = []string{
 	// {{ define "admin_tree" }} name — same riding-along mechanism as
 	// items_rail.html above, and the only call site today.
 	"ui/partials/admin_tree.html",
-	// ut-docs#2179: the shared `#pos-alert` request-failure banner —
-	// index.html, admin.html and items.html all include this by its
-	// {{ define "pos_alert" }} name, same riding-along mechanism as
-	// admin_tree.html above.
+	// ut-docs#2183 (originally ut-docs#2179, scoped to only three pages):
+	// the shared `#pos-alert` request-failure banner. base.html itself
+	// (already in this list, line above the block comment on
+	// admin_tree.html) now includes this by its {{ define "pos_alert" }}
+	// name directly, so every page rendered through the normal layout
+	// gets it for free — same riding-along mechanism as admin_tree.html
+	// above, just referenced from the layout rather than a specific page.
 	"ui/partials/pos_alert.html",
 }
 
