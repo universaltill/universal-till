@@ -18,6 +18,7 @@ func newFiscalChipTestDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
+	t.Cleanup(func() { db.Close() })
 	stmts := []string{
 		`CREATE TABLE sales (id TEXT PRIMARY KEY, created_at TEXT NOT NULL, till_id TEXT NOT NULL DEFAULT '');`,
 		`CREATE TABLE audit_log (id TEXT PRIMARY KEY, actor_id TEXT, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, action TEXT NOT NULL, data_json TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), blocked_actor_id TEXT);`,
