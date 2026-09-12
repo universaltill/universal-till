@@ -1069,6 +1069,8 @@
   "plugins.buttons.title": "Eklenti işlemleri",
   "plugins.current_version": "Mevcut sürüm:",
   "plugins.error.grant_failed": "İzin verilemedi.",
+  "plugins.error.import_failed": "İçe aktarma başarısız oldu. Dosyanın geçerli bir eklenti paketi olduğunu kontrol edip tekrar deneyin.",
+  "plugins.error.import_unsigned": "Bu eklenti paketi imzasız ve kurulamaz. Bunun yerine Eklenti Mağazası'ndan kurun veya bu cihazın içe aktarabileceği bir paket oluşturmak için başka bir kasada Dışa Aktar seçeneğini kullanın.",
   "plugins.error.malformed_form": "İstek okunamadı. Lütfen tekrar deneyin.",
   "plugins.error.revoke_failed": "İzin iptal edilemedi.",
   "plugins.error.server": "Bir şeyler ters gitti. Lütfen tekrar deneyin.",
