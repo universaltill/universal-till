@@ -1153,6 +1153,8 @@
   "plugins.manage.store_link": "فروشگاه افزونه‌ها",
   "plugins.manage.title": "افزونه‌ها",
   "plugins.manage.update_available": "به‌روزرسانی:",
+  "plugins.manage.update_unknown": "وضعیت به‌روزرسانی نامشخص",
+  "plugins.manage.update_unknown_hint": "نمی‌توانیم بگوییم این افزونه به‌روز است یا نه — کاتالوگ بازار اکنون در دسترس نیست یا داده‌ای برای آن ندارد.",
   "plugins.none_found": "افزونه‌ای یافت نشد",
   "plugins.none_found_hint": "فیلترها را تغییر دهید یا کاتالوگ را تازه‌سازی کنید.",
   "plugins.permission.granted": "دسترسی اعطا شد",

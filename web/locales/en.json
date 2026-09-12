@@ -1153,6 +1153,8 @@
   "plugins.manage.store_link": "Open Plugin Store",
   "plugins.manage.title": "Plugins",
   "plugins.manage.update_available": "Update:",
+  "plugins.manage.update_unknown": "Update status unknown",
+  "plugins.manage.update_unknown_hint": "We can't tell whether this plugin is up to date — the marketplace catalog is unavailable or has no data for it right now.",
   "plugins.none_found": "No plugins found",
   "plugins.none_found_hint": "Try adjusting your filters or refresh the catalog.",
   "plugins.permission.granted": "Permission granted",

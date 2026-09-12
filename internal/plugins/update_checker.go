@@ -67,39 +67,11 @@ func (uc *UpdateChecker) CheckForUpdates(ctx context.Context) ([]UpdateInfo, err
 		return nil, fmt.Errorf("failed to get catalog: %w", err)
 	}
 
-	// Index the catalog two ways.
-	//
-	// byListing is the authoritative one: a marketplace install records the
-	// listing↔plugin mapping in the install-status store, which is exactly
-	// what /plugins' "Update available" badge (plugins_page.go) and the
-	// install itself (applyPluginUpdate) already resolve through.
-	//
-	// byAuthorName is the historical heuristic — installed manifest
-	// author+name against catalog developer_id+listing name. Nothing
-	// guarantees those agree: the installed plugin's Author/Name come from
-	// the plugin's own manifest.json (installer_marketplace.go persists
-	// manifest.Author verbatim), while DeveloperID falls back to the
-	// listing's vendor display string. It is kept only as a fallback for
-	// plugins with no install-status record (ut-docs#1953 review).
-	byListing := make(map[string]marketplace.PluginSummary)
-	byAuthorName := make(map[string]marketplace.PluginSummary)
-	keepHighest := func(m map[string]marketplace.PluginSummary, key string, p marketplace.PluginSummary) {
-		if key == "" {
-			return
-		}
-		if existing, ok := m[key]; ok && compareVersions(p.Version, existing.Version) <= 0 {
-			return
-		}
-		m[key] = p
-	}
-	for _, p := range snapshot.Plugins {
-		listingID := p.ListingID
-		if listingID == "" {
-			listingID = p.ID
-		}
-		keepHighest(byListing, listingID, p)
-		keepHighest(byAuthorName, p.DeveloperID+"/"+p.Name, p)
-	}
+	// Index the catalog and resolve each installed plugin via the same
+	// two-tier byListing/byAuthorName match /plugins' management page
+	// uses (extracted to catalog_match.go, ut-docs#2131, so the two call
+	// sites can't drift on this question the way they used to).
+	idx := IndexCatalog(snapshot)
 
 	// Installed plugin id → the listing it was installed from.
 	listingByPlugin := make(map[string]string)
@@ -117,13 +89,7 @@ func (uc *UpdateChecker) CheckForUpdates(ctx context.Context) ([]UpdateInfo, err
 	// Find updates
 	var updates []UpdateInfo
 	for _, inst := range installed {
-		catalogPlugin, ok := marketplace.PluginSummary{}, false
-		if listingID, mapped := listingByPlugin[inst.ID]; mapped {
-			catalogPlugin, ok = byListing[listingID]
-		}
-		if !ok {
-			catalogPlugin, ok = byAuthorName[inst.Author+"/"+inst.Name]
-		}
+		catalogPlugin, ok := idx.Resolve(listingByPlugin[inst.ID], inst.Author, inst.Name)
 
 		if ok {
 			// Compare versions
