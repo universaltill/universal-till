@@ -64,6 +64,28 @@ test.describe('/items and /admin shells keep document.title in sync with the swa
     assertClean();
   });
 
+  // Review finding (2026-09-12): every title above is a single word, so
+  // none of them would have caught the real bug an independent review
+  // found in the first draft — url.QueryEscape (Go) encodes a space as
+  // "+", which decodeURIComponent (JS) does NOT decode back to a space,
+  // so a genuinely multi-word title (most of the real ones — "Country
+  // settings", "Fiscal register", "Tax codes"...) rendered a literal "+"
+  // in the tab instead of a space. Fixed with url.PathEscape/
+  // PathUnescape's %20 encoding instead. This test exists specifically
+  // so that regression can never come back unnoticed.
+  test('/admin: swapping the tree to a multi-word destination (Country settings) renders a real space, not "+"', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.goto('/admin');
+    await expect(page.locator('#admin-tree')).toBeVisible();
+
+    await page.locator('.items-row[href="/country-settings"]').click();
+
+    await expect(page).toHaveURL(/\/country-settings$/);
+    await expect(page.locator('#admin-tree .items-row.is-current')).toHaveAttribute('href', '/country-settings');
+    await expect.poll(() => page.title()).toBe('Country settings');
+    assertClean();
+  });
+
   test('a bare-GET deep link to a section still gets its own correct title (unaffected by the swap fix)', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.goto('/inventory');
