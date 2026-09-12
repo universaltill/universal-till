@@ -44,6 +44,17 @@ var setupBasePlugins = map[string][]basePluginSpec{
 // setup itself must never block on a download (ut-docs#591 AC).
 const setupBasePluginAttemptTimeout = 5 * time.Second
 
+// setupBasePluginMaxPages bounds how many pages resolveAndInstallBasePlugin
+// will follow before giving up — mirrors setupLanguageCatalogMaxPages/
+// setupTaxCatalogMaxPages (setup_language_catalog.go/setup_tax_catalog.go)
+// exactly, same value and reasoning (ut-docs#2133): ut-cloud's real
+// ListPlugins defaults to a 20-listing page (internal/catalog/service.go
+// defaultPageSize), so this generously covers many hundreds of listings —
+// far beyond any real catalog today — while still guaranteeing the loop
+// below terminates even against a malformed or hostile server that keeps
+// returning a non-empty next_page_token forever.
+const setupBasePluginMaxPages = 25
+
 // basePluginRetryInitialDelay/basePluginRetryInterval shape the background
 // retry loop, mirroring internal/updates.Start's "short delay, then a
 // ticker" idiom. Unlike sync_admin.go's brokenRefetchMaxAttempts/
@@ -147,17 +158,39 @@ func addPendingBasePlugins(ctx context.Context, d *common.Deps, specs []basePlug
 // published yet, or an equivalent plugin is already active — idempotent on
 // a retry or a second wizard run) or a non-nil error describing why the
 // spec should stay pending for the next attempt.
+//
+// Pages through the full result under the same ctx deadline as a single
+// page (ut-docs#2133): this used to read only page 1 of ListPlugins, unlike
+// its two setup-wizard siblings (setupLanguageCatalogEntries,
+// setupTaxCatalogEntries), which both already follow next_page_token
+// (ut-docs#1108). ut-cloud's real defaultPageSize is 20 and compatibility
+// filtering runs server-side before pagination, so a legitimate match can
+// sort past page 1 as the catalog grows — and because "nothing published
+// for this country yet" is a legitimate, silent no-op one level down, a
+// single-page fetch would silently install nothing and report no error.
+// Bounded by setupBasePluginMaxPages so a malformed/hostile server can't
+// loop forever.
 func resolveAndInstallBasePlugin(ctx context.Context, d *common.Deps, spec basePluginSpec) error {
 	effCfg := enroll.EnsureRegistered(ctx, d.Cfg, d.Settings)
 	client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
-	resp, err := client.ListPlugins(ctx, &marketplace.ListPluginsRequest{Locale: spec.Locale})
-	if err != nil {
-		return fmt.Errorf("catalog unreachable: %w", err)
+
+	var all []marketplace.PluginSummary
+	pageToken := ""
+	for page := 0; page < setupBasePluginMaxPages; page++ {
+		resp, err := client.ListPlugins(ctx, &marketplace.ListPluginsRequest{Locale: spec.Locale, PageToken: pageToken})
+		if err != nil {
+			return fmt.Errorf("catalog unreachable: %w", err)
+		}
+		all = append(all, resp.Plugins...)
+		if resp.NextPageToken == "" {
+			break
+		}
+		pageToken = resp.NextPageToken
 	}
 
 	var best *marketplace.PluginSummary
-	for i := range resp.Plugins {
-		p := &resp.Plugins[i]
+	for i := range all {
+		p := &all[i]
 		if p.CanonicalType != spec.CanonicalType || !localeInList(p.AvailableLocales, spec.Locale) {
 			continue
 		}
