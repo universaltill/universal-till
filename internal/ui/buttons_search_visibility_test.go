@@ -12,10 +12,15 @@ import (
 // TestButtonsHTTPList_CategoryGroupSectionsCarrySearchVisibilityWiring
 // (ut-docs#422): each category-group section must be individually
 // hideable based on whether it currently has any search-matching tile,
-// and every tab panel must carry a "no matches" message — otherwise a
+// and the tabbed view must carry a "no matches" message — otherwise a
 // search that empties one subcategory but not a sibling strands a
-// pointless header, and a search matching nothing anywhere in the active
-// tab leaves a blank panel with no feedback. The demo/e2e-seeded catalog
+// pointless header, and a search matching nothing anywhere leaves a blank
+// grid with no feedback. (ut-docs#2181 moved that message from one per tab
+// panel to a single one covering the whole tabbed view — see
+// TestButtonsHTTPList_TabbedPanelsCarryCrossCategorySearchWiring below for
+// that card's own coverage; this test's own assertions only pin that the
+// message exists somewhere in the tabbed view, not its exact location.)
+// The demo/e2e-seeded catalog
 // only ever surfaces one live subcategory under a tab (Food > Dairy —
 // Bakery/Snack/Frozen have zero shortcut_buttons and get pruned), so this
 // test seeds its own isolated two-subcategory fixture rather than relying
@@ -37,8 +42,11 @@ func TestButtonsHTTPList_CategoryGroupSectionsCarrySearchVisibilityWiring(t *tes
 
 	// A second top-level category so $hasTabs is true (BuildCategoryGroups
 	// needs >=2 root groups for a tab bar to render at all), plus two real
-	// subcategories under "Food" so both the stranded-header case and the
-	// tab-panel no-matches case are exercised by the same fixture.
+	// subcategories under "Food" so the stranded-header case is exercised.
+	// Drinks also gets a DIRECT item (no subcategory of its own) — since
+	// ut-docs#2181, that also renders its own sectionHasMatch($el)-wired
+	// "category-group" wrapper (Dairy + Bakery + Drinks' own = 3), which is
+	// why the assertion below only checks a lower bound, not an exact count.
 	mustExec(t, db, `INSERT INTO categories(id, name, parent_id, sort_order) VALUES
 		('cat_food', 'Food', NULL, 1),
 		('cat_dairy', 'Dairy', 'cat_food', 1),
@@ -66,17 +74,17 @@ func TestButtonsHTTPList_CategoryGroupSectionsCarrySearchVisibilityWiring(t *tes
 	body := rec.Body.String()
 
 	if strings.Count(body, `x-show="sectionHasMatch($el)"`) < 2 {
-		t.Fatalf("expected both Dairy and Bakery category-group sections to carry sectionHasMatch($el) wiring, got: %s", body)
+		t.Fatalf("expected at least Dairy and Bakery's category-group sections to carry sectionHasMatch($el) wiring, got: %s", body)
 	}
 	if !strings.Contains(body, `x-show="!sectionHasMatch($el.parentElement)"`) {
-		t.Fatalf("expected a no-matches message wired to sectionHasMatch($el.parentElement) inside a tab panel, got: %s", body)
+		t.Fatalf("expected a no-matches message wired to sectionHasMatch($el.parentElement) somewhere in the tabbed view, got: %s", body)
 	}
 	// This package's tests never wire a real translator (no InitI18n call),
 	// so T falls back to the raw key — assert on that rather than the
 	// translated English string, which guard-i18n.sh (not this test) is
 	// what actually enforces exists in every locale file.
 	if !strings.Contains(body, "products.no_matches") {
-		t.Fatalf("expected the products.no_matches key to render in the tab panel, got: %s", body)
+		t.Fatalf("expected the products.no_matches key to render in the tabbed view, got: %s", body)
 	}
 }
 
@@ -183,5 +191,79 @@ func TestButtonsHTTPList_FlatCatalogAlsoCarriesNoMatchesMessage(t *testing.T) {
 	}
 	if !strings.Contains(body, "products.no_matches") {
 		t.Fatalf("expected the products.no_matches key to render in the $flat branch, got: %s", body)
+	}
+}
+
+// TestButtonsHTTPList_TabbedPanelsCarryCrossCategorySearchWiring (ut-docs#2181):
+// with >=2 top-level categories, each tab panel's visibility must be driven
+// by panelVisible(id, panelEl) rather than a bare "tab === id" check, and a
+// top-level category's OWN buttons (no subcategory of their own — a nested
+// subcategory already carries its own always-visible header via
+// "category-group", unaffected by this card) must render inside a
+// conditionally-headered "category-group" section, so a search that spans
+// every tab at once still tells the operator which category a result came
+// from. Also pins that the "no matches" message appears exactly ONCE for
+// the whole tabbed view, not once per panel — a query can now make several
+// panels visible at the same time (panelVisible), so a per-panel message
+// would either duplicate or (for an already-hidden empty panel) never be
+// seen at all.
+func TestButtonsHTTPList_TabbedPanelsCarryCrossCategorySearchWiring(t *testing.T) {
+	db := setupFullTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	store := NewButtonStore(db)
+	renderer, err := NewRenderer(
+		filepath.Join("web", "ui", "layouts", "base.html"),
+		filepath.Join("web", "ui", "pages", "index.html"),
+		filepath.Join("web", "ui", "partials", "buttons.html"),
+		httpx.FuncsFor("en"),
+	)
+	if err != nil {
+		t.Fatalf("NewRenderer: %v", err)
+	}
+	h := &ButtonsHTTP{Store: *store, View: renderer}
+
+	// Two top-level categories, each with a DIRECT item (no subcategory) —
+	// exactly the case "category-group-body" used to render with no header
+	// at all, and the one this card's cross-category search needs to
+	// disambiguate.
+	mustExec(t, db, `INSERT INTO categories(id, name, parent_id, sort_order) VALUES
+		('cat_food', 'Food', NULL, 1),
+		('cat_drink', 'Drinks', NULL, 2)`)
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, category_id, is_active) VALUES
+		('i1', 'S1', 'Bread', 140, 'cat_food', 1),
+		('i2', 'S2', 'Cola', 120, 'cat_drink', 1)`)
+	for _, b := range []Button{
+		{Label: "Bread", Code: "C1", ItemID: "i1"},
+		{Label: "Cola", Code: "C2", ItemID: "i2"},
+	} {
+		if err := store.Add(b); err != nil {
+			t.Fatalf("Add(%+v): %v", b, err)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest("GET", "/ui/buttons", nil))
+	if rec.Code != 200 {
+		t.Fatalf("List = %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	if strings.Count(body, `x-show="panelVisible('`) != 2 {
+		t.Fatalf("expected both tab panels wired to panelVisible(id, panelEl), got: %s", body)
+	}
+	if strings.Contains(body, `x-show="tab === '`) {
+		t.Fatalf("expected no tab panel left on the old tab-only visibility check, got: %s", body)
+	}
+	// Each top-level bucket's own buttons now render inside a
+	// "category-group" section with a header hidden until a query is
+	// active — the same q-gated header the no-subcategory case never had
+	// before this card.
+	if strings.Count(body, `<h3 class="category-header" x-show="q" x-cloak>`) != 2 {
+		t.Fatalf("expected both Food's and Drinks' own buttons to carry a q-gated category header, got: %s", body)
+	}
+	// Exactly one no-matches message for the whole tabbed view (outside the
+	// per-panel loop), not one per panel.
+	if strings.Count(body, `x-show="!sectionHasMatch($el.parentElement)"`) != 1 {
+		t.Fatalf("expected exactly one whole-catalogue no-matches message in the tabbed view, got: %s", body)
 	}
 }
