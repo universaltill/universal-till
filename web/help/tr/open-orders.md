@@ -15,7 +15,7 @@ Bu kasada şu anda bekletilen her satış tek listede — kimin için, hangi mas
 ## Nasıl kullanılır
 
 1. ☰ menüden **Açık siparişler**'i açın. Bekletilen her satış bir satırdır: hangi adla bekletildiği, masası (varsa), kaç ürün içerdiği, toplamı ve ne zamandır açık olduğu.
-2. Bir siparişe devam etmek için satış ekranına dönün ve **Beklemede** şeridinde ona dokunun — önce sepetin boş olması gerekir, bu yüzden üzerinde olduğunuz satışı bitirin ya da bekletin. Açık siparişler bakmak için bir listedir, sürdürmek için ikinci bir yer değildir.
+2. Bir siparişe devam etmek için satış ekranına dönün ve ödeme düğmesinin yanındaki **Açık siparişler** düğmesine dokunun — bekleyen tüm siparişlerin listesi açılır ve birine dokunduğunuzda doğrudan sepete geri gelir. Önce sepetin boş olması gerekir, bu yüzden üzerinde olduğunuz satışı bitirin ya da bekletin. Ekran onu gösterecek kadar yüksek olduğunda **Beklemede** şeridi de aynı işi yapar. Bu sayfanın kendisi bakmak için bir listedir, sürdürmek için ikinci bir yer değildir.
 3. Geri çağrılan bir satışı yeniden bekletmek onu aynı sipariş olarak korur: aynı ad, listede aynı yer ve „açık kalma süresi“ ilk bekletildiği andan itibaren saymaya devam eder. Yalnızca yepyeni bir satış yeni bir kayıt alır.
 
 ## Notlar

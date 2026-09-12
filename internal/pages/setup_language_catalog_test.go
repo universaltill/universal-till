@@ -11,6 +11,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
 
@@ -297,8 +298,11 @@ func TestSetupLanguageInstallHappyPath(t *testing.T) {
 			gotCookie = c.Value
 		}
 	}
-	if gotCookie != "de" {
-		t.Fatalf("following the redirect set ut_lang=%q, want %q (same state as a bundled pick)", gotCookie, "de")
+	// ut-docs#2135: the cookie also records the shop context the choice was
+	// made against, so it can be told apart from a stale one later.
+	wantCookie := httpx.LocaleOverrideValue("de")
+	if gotCookie != wantCookie {
+		t.Fatalf("following the redirect set ut_lang=%q, want %q (same state as a bundled pick)", gotCookie, wantCookie)
 	}
 }
 
