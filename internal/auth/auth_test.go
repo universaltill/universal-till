@@ -311,6 +311,68 @@ func TestMiddleware(t *testing.T) {
 	}
 }
 
+// ut-docs#2144: hold/resume/scan are all hx-post forms under /api/pos/*, so
+// an expired session mid-sale hit the SAME "APIs get 401 JSON" branch proven
+// above — but htmx discards a JSON body on error and fires htmx:responseError
+// instead, which app.js's global handler renders as the generic "something
+// went wrong" banner on top of the still-fully-rendered sale screen. The
+// operator never learns they need to sign back in. An htmx-driven request
+// must get the SAME HX-Redirect treatment a non-API htmx fragment load
+// already gets (proven in TestMiddleware above), regardless of the /api/
+// prefix — only a non-htmx API caller (mobile/sync client) keeps the JSON
+// contract.
+func TestMiddlewareHXRequestUnderAPIPathGetsRedirectNotJSON(t *testing.T) {
+	db := openAuthTestDB(t)
+	svc := NewService(db)
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	h := Middleware(inner, svc)
+
+	for _, p := range []string{"/api/pos/hold", "/api/pos/resume", "/api/pos/scan", "/api/pos/tender"} {
+		req := httptest.NewRequest(http.MethodPost, p, nil)
+		req.Header.Set("HX-Request", "true")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized || rec.Header().Get("HX-Redirect") != "/login" {
+			t.Errorf("htmx %s without session = %d hx-redirect=%q, want 401 + HX-Redirect:/login",
+				p, rec.Code, rec.Header().Get("HX-Redirect"))
+		}
+		var body struct {
+			Error *struct{} `json:"error"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		if body.Error != nil {
+			t.Errorf("htmx %s 401 must not carry the JSON error body — htmx discards it and shows the generic banner instead of redirecting", p)
+		}
+	}
+
+	// A non-htmx caller under the exact same path keeps the existing JSON
+	// contract unchanged — this is the regression guard for the case
+	// TestMiddleware's "APIs get 401 JSON on the response contract" already
+	// covers for /api/pos/scan specifically; this generalizes it across the
+	// other paths this card touches.
+	for _, p := range []string{"/api/pos/hold", "/api/pos/resume", "/api/pos/tender"} {
+		req := httptest.NewRequest(http.MethodPost, p, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("non-htmx %s without session = %d, want 401", p, rec.Code)
+		}
+		if rec.Header().Get("HX-Redirect") != "" {
+			t.Errorf("non-htmx %s must not carry HX-Redirect — it never asked for one", p)
+		}
+		var body struct {
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.Error.Code != "unauthorized" {
+			t.Errorf("non-htmx %s 401 body wrong: %s (err %v)", p, rec.Body.String(), err)
+		}
+	}
+}
+
 // The first-boot pairing trio (ut-docs#289) must be middleware-exempt the
 // same way /api/setup/join is: a brand-new till has NO operators, so no
 // session can possibly exist — without the exemption the wizard's
