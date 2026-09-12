@@ -402,3 +402,76 @@ func TestLocationsPage_VaryHXRequestOnBothBranches(t *testing.T) {
 		t.Errorf("full-page branch: Vary header = %q, want %q", got, "HX-Request")
 	}
 }
+
+// ut-docs#2124: /locations adopts the record_dialog/list_header pattern
+// (ut-docs#2010), mirroring categories_page_test.go's htmx-path coverage.
+// A refusal from the dialog's own hx-boosted forms must render an in-dialog
+// message fragment, never a redirect — a redirect is exactly what closed
+// the dialog before this card (postFormHtmx is categories_page_test.go's
+// shared htmx-boosted POST helper, same package, reused as-is).
+func TestLocationsPage_RefusalRendersInDialogMessageForHtmxRequest(t *testing.T) {
+	mux, _ := newLocationsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	rec := postFormHtmx(mux, "/api/locations", url.Values{"name": {"   "}}, &manager)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("htmx whitespace-only name: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Location") != "" {
+		t.Errorf("htmx refusal must not redirect — a redirect is exactly what closed the dialog before this card")
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want text/html (app.js's htmx:beforeSwap only force-swaps a non-2xx text/html body)", ct)
+	}
+	body := rec.Body.String()
+	// hx-swap="innerHTML" into "#location-dialog-msg" — the aria-live
+	// region ITSELF, which must never be re-rendered. So the body carries
+	// ONLY the message text, no id/wrapper/form/dialog markup — an id or a
+	// <form>/<dialog> tag here would mean the wrong element got swapped, or
+	// this swap could reach (and so potentially touch) what the operator
+	// typed, which the whole design exists to prevent.
+	if strings.Contains(body, "id=") || strings.Contains(body, "<form") || strings.Contains(body, "<dialog") {
+		t.Errorf("response must be ONLY the message text — no wrapper, form or dialog markup: %s", body)
+	}
+}
+
+// ut-docs#2020's success shape, ported to Locations: a SUCCESSFUL
+// htmx-boosted mutation answers with HX-Redirect (a real browser
+// navigation) rather than a bare 303 — a boosted form submits via
+// fetch/XHR, which follows a bare 303 itself and would hand the whole
+// /locations page's HTML to whatever hx-target the form declares.
+func TestLocationsPage_HtmxSuccessAnswersWithHXRedirectNotBareRedirect(t *testing.T) {
+	mux, _ := newLocationsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	rec := postFormHtmx(mux, "/api/locations", url.Values{"name": {"Loading Bay"}}, &manager)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("htmx create success: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("HX-Redirect"); got != "/locations" {
+		t.Fatalf("HX-Redirect = %q, want /locations", got)
+	}
+	if rec.Header().Get("Location") != "" {
+		t.Errorf("a bare Location alongside HX-Redirect would be followed by the boosted form's own fetch/XHR layer and land the wrong content in the dialog's message target — must not be set")
+	}
+}
+
+// The replica refusal (requirePrimary) must also render in-dialog for an
+// htmx request, same as every other refusal above — mirrors
+// TestCategoriesPage_MutationsRefusedOnReplica's htmx-path equivalent.
+func TestLocationsPage_ReplicaRefusalRendersInDialogMessageForHtmxRequest(t *testing.T) {
+	mux, d := newLocationsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	if err := d.Settings.Set(t.Context(), "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("set primary_url: %v", err)
+	}
+
+	rec := postFormHtmx(mux, "/api/locations", url.Values{"name": {"Satellite Pop-up"}}, &manager)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("htmx create on replica: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Location") != "" {
+		t.Errorf("htmx replica refusal must not redirect")
+	}
+}

@@ -11,11 +11,50 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
+// redirectLocations answers a locations mutation's SUCCESS with a
+// navigation back to GET /locations. Mirrors categories_page.go's
+// redirectCategories exactly (ut-docs#2124 adopting ut-docs#2010's pattern):
+// the dialog's forms are hx-boosted, so a bare 303 would be followed by the
+// boosted form's own fetch/XHR layer and land the whole /locations page's
+// HTML wherever the form's hx-target points — HX-Redirect instead forces a
+// real browser navigation, bypassing swap logic entirely. A non-htmx caller
+// (a bookmarked/curl'd request, or a template regression) gets the plain
+// redirect, matching every pre-#2124 Go-level test in this file.
+func redirectLocations(w http.ResponseWriter, r *http.Request, target string) {
+	if isHtmxDialogRequest(r) {
+		w.Header().Set("HX-Redirect", target)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+// renderLocationsDialogError answers a REFUSED locations mutation. Mirrors
+// categories_page.go's renderCategoryDialogError exactly, minus the %d
+// count interpolation categories.error.deactivate_blocked needs — no
+// locations.error.* key takes a placeholder. See that function's own doc
+// comment for the full reasoning (why a non-2xx text/html body, why
+// innerHTML-only into the dialog's own aria-live message region, why the
+// non-htmx fallback preserves the pre-#2124 redirect-with-query-string
+// shape byte for byte).
+func renderLocationsDialogError(w http.ResponseWriter, r *http.Request, errKey string) {
+	if !isHtmxDialogRequest(r) {
+		redirectLocations(w, r, "/locations?err="+errKey)
+		return
+	}
+	msg := httpx.T(httpx.RequestLocale(r), errKey)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusBadRequest)
+	httpx.RenderPartial("ui/partials/record_dialog_msg.html", map[string]any{"msg": msg})(w, r)
+}
+
 // registerLocations wires the stock-locations admin page (universaltill/ut-docs#49).
 // Manager/admin only; a location currently holding nonzero stock, or
 // assigned to a currently-active register, can't be deactivated
 // (StockLocationInUse guard) — past history alone no longer blocks it
-// (universaltill/ut-docs#2066).
+// (universaltill/ut-docs#2066). Adopts the record_dialog/list_header
+// pattern (ut-docs#2010) as of ut-docs#2124 — see redirectLocations/
+// renderLocationsDialogError above.
 func registerLocations(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 
@@ -55,7 +94,7 @@ func registerLocations(mux *http.ServeMux, d *common.Deps) {
 	// same pattern as plugins_store_page.go's replica_use_primary gate.
 	requirePrimary := func(w http.ResponseWriter, r *http.Request) bool {
 		if d.SyncPrimaryURL(r.Context()) != "" {
-			http.Redirect(w, r, "/locations?err=locations.error.replica_use_primary", http.StatusSeeOther)
+			renderLocationsDialogError(w, r, "locations.error.replica_use_primary")
 			return false
 		}
 		return true
@@ -107,16 +146,16 @@ func registerLocations(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		name := strings.TrimSpace(r.PostFormValue("name"))
 		if name == "" {
-			http.Redirect(w, r, "/locations?err=locations.error.required", http.StatusSeeOther)
+			renderLocationsDialogError(w, r, "locations.error.required")
 			return
 		}
 		id, err := posRepo.CreateStockLocation(r.Context(), name)
 		if err != nil {
-			http.Redirect(w, r, "/locations?err=locations.error.create", http.StatusSeeOther)
+			renderLocationsDialogError(w, r, "locations.error.create")
 			return
 		}
 		audit(r, actor.ID, id, "stock_location_create")
-		http.Redirect(w, r, "/locations", http.StatusSeeOther)
+		redirectLocations(w, r, "/locations")
 	})
 
 	mux.HandleFunc("POST /api/locations/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -131,15 +170,15 @@ func registerLocations(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		name := strings.TrimSpace(r.PostFormValue("name"))
 		if name == "" {
-			http.Redirect(w, r, "/locations?err=locations.error.required", http.StatusSeeOther)
+			renderLocationsDialogError(w, r, "locations.error.required")
 			return
 		}
 		if err := posRepo.RenameStockLocation(r.Context(), id, name); err != nil {
-			http.Redirect(w, r, "/locations?err=locations.error.rename", http.StatusSeeOther)
+			renderLocationsDialogError(w, r, "locations.error.rename")
 			return
 		}
 		audit(r, actor.ID, id, "stock_location_rename")
-		http.Redirect(w, r, "/locations", http.StatusSeeOther)
+		redirectLocations(w, r, "/locations")
 	})
 
 	mux.HandleFunc("POST /api/locations/{id}/active", func(w http.ResponseWriter, r *http.Request) {
@@ -160,7 +199,7 @@ func registerLocations(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 			if inUse {
-				http.Redirect(w, r, "/locations?err=locations.error.in_use", http.StatusSeeOther)
+				renderLocationsDialogError(w, r, "locations.error.in_use")
 				return
 			}
 			// A shop must always have somewhere to receive/adjust/return stock —
@@ -171,12 +210,12 @@ func registerLocations(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 			if activeCount <= 1 {
-				http.Redirect(w, r, "/locations?err=locations.error.last_location", http.StatusSeeOther)
+				renderLocationsDialogError(w, r, "locations.error.last_location")
 				return
 			}
 		}
 		if err := posRepo.SetStockLocationActive(r.Context(), id, activate); err != nil {
-			http.Redirect(w, r, "/locations?err=locations.error.update", http.StatusSeeOther)
+			renderLocationsDialogError(w, r, "locations.error.update")
 			return
 		}
 		action := "stock_location_deactivate"
@@ -184,6 +223,6 @@ func registerLocations(mux *http.ServeMux, d *common.Deps) {
 			action = "stock_location_activate"
 		}
 		audit(r, actor.ID, id, action)
-		http.Redirect(w, r, "/locations", http.StatusSeeOther)
+		redirectLocations(w, r, "/locations")
 	})
 }

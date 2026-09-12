@@ -127,7 +127,7 @@ test.describe('catalog item form tab strip scroll-shadow (ut-docs#2024)', () => 
     await expect(bar).toBeVisible();
 
     // Kiosk floor: no fade class yet (same baseline as the test above).
-    let classes = await bar.evaluate((el) => el.className);
+    const classes = await bar.evaluate((el) => el.className);
     expect(classes, 'no fade class at the kiosk floor').not.toMatch(/tab-bar--fade-/);
 
     // Shrink below the breakpoint WITHOUT closing/reopening the dialog —
@@ -139,9 +139,19 @@ test.describe('catalog item form tab strip scroll-shadow (ut-docs#2024)', () => 
 
     // Grow back past the breakpoint: the strip no longer overflows, so
     // both fade classes should clear again, still without a scroll/reopen.
+    // Poll rather than read once: this assertion used to read `className`
+    // immediately after setViewportSize(), racing the resize listener that
+    // recomputes it (~50% flaky). Still asserting on the CLASS, not the
+    // pseudo-element opacity that expectFade()/fadeOpacity() use above —
+    // above 700px the fade rules (including the ::before/::after `content`)
+    // don't exist at all (see the kiosk-floor test's own comment), so a
+    // computed-opacity read here would misleadingly read '1' for a
+    // pseudo-element with no box, not prove the fade actually cleared.
     await page.setViewportSize({ width: 1024, height: 600 });
-    classes = await bar.evaluate((el) => el.className);
-    expect(classes, 'fade classes should clear once the strip stops overflowing').not.toMatch(/tab-bar--fade-/);
+    await expect.poll(
+      () => bar.evaluate((el) => el.className),
+      { message: 'fade classes should clear once the strip stops overflowing' },
+    ).not.toMatch(/tab-bar--fade-/);
 
     assertClean();
   });
