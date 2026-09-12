@@ -729,14 +729,27 @@ func declareUnsignedFiscalSale(ctx context.Context, repo *data.POSRepo, saleID, 
 	// and both receipt render paths key off this to show wording that never
 	// implies a connectivity outage for a sale that was never going to sign.
 	action := fiscalSignGapActionSigning
-	if cannotSign {
-		action = fiscalSignGapActionCannotSign
-	}
-	if auditErr := repo.InsertAudit(ctx, nil, actorID, "sale", saleID, action, map[string]any{
+	payload := map[string]any{
 		"reason":        res.Reason,
 		"known_offline": knownOffline,
 		"failed_at":     now,
-	}, now, ""); auditErr != nil {
+	}
+	if cannotSign {
+		action = fiscalSignGapActionCannotSign
+	} else {
+		// "outcome" records WHICH signing outcome produced this gap — the
+		// distinction the shared "signing" action used to lose (ADR-0077
+		// D3, ut-docs#1520: "today's audit payload doesn't distinguish
+		// backend-vs-entry"). It is what makes reconcile eligibility
+		// decidable later: only a backend-level failure (budget expired /
+		// backend declared unreachable) is ever a fiscal.sign.reconcile.ask
+		// candidate; an entry-level failure means the backend answered, so
+		// there is nothing plausible to retrieve; a known-offline skip never
+		// reached the plugin at all. The cannot-sign action carries no such
+		// field — it already IS its own outcome, and is never eligible.
+		payload["outcome"] = fiscalSignGapOutcome(res.Outcome)
+	}
+	if auditErr := repo.InsertAudit(ctx, nil, actorID, "sale", saleID, action, payload, now, ""); auditErr != nil {
 		log.Printf("fiscal signing: %s audit marker for sale %s failed: %v", action, saleID, auditErr)
 	}
 
@@ -761,6 +774,38 @@ const (
 	fiscalSignGapActionSigning    = "unsigned_fiscal_signing"
 	fiscalSignGapActionCannotSign = "unsigned_fiscal_cannot_sign"
 )
+
+// fiscalSignGapOutcome* are the values of the unsigned_fiscal_signing audit
+// payload's "outcome" field (ADR-0077 D3, ut-docs#1520) — one per
+// fiscalSignOutcome that can produce that action. Persisted strings, read
+// back by data.POSRepo.ListFiscalSignReconcileCandidates' JSON1 predicate
+// (which selects exactly fiscalSignGapOutcomeBackend), so they must never
+// be renamed without that query moving with them.
+const (
+	fiscalSignGapOutcomeBackend = "backend"
+	fiscalSignGapOutcomeEntry   = "entry"
+	fiscalSignGapOutcomeOffline = "offline"
+)
+
+// fiscalSignGapOutcome maps a declare-path outcome to its persisted
+// "outcome" value. Only the three outcomes declareUnsignedFiscalSale writes
+// under the shared signing action reach here (cannot-sign has its own
+// action and never carries the field); anything else is a programming error
+// surfaced as its raw enum value rather than silently mislabelled as one of
+// the three — it will never match the reconcile query's "backend"
+// predicate, which is the fail-safe direction.
+func fiscalSignGapOutcome(o fiscalSignOutcome) string {
+	switch o {
+	case fiscalSignFailedBackend:
+		return fiscalSignGapOutcomeBackend
+	case fiscalSignFailedEntry:
+		return fiscalSignGapOutcomeEntry
+	case fiscalSignSkippedOffline:
+		return fiscalSignGapOutcomeOffline
+	default:
+		return fmt.Sprintf("unexpected-outcome-%d", int(o))
+	}
+}
 
 // saleFiscalSigningGapKind decides the receipt notice for both render paths
 // (renderReceipt's flags in pos_api.go, the ESC/POS Meta lines in

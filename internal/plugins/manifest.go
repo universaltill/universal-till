@@ -563,49 +563,109 @@ const FiscalSignAskEvent = "fiscal.sign.ask"
 // only subscribes to fiscal.sign.ask is never asked this one — nothing
 // changes for a till running an older plugin build.
 //
-// NOT (yet) folded into validateExclusiveHookOwnership's exclusivity check
-// below — ADR-0077 explicitly sequences that extension (to cover this event
-// and fiscal.sign.reconcile.ask too) into the follow-up card that adds the
-// reconcile path (ut-docs#1520), landing after this one. Until #1520 lands,
-// this event does not inherit fiscal.sign.ask's single-owner enforcement.
+// One member of the FiscalSignExclusiveEvents group (ADR-0077 D3, ut-docs#1520):
+// it inherits fiscal.sign.ask's single-owner enforcement at both persist and
+// enable time — see validateExclusiveHookOwnership below.
 const FiscalSignStartEvent = "fiscal.sign.start"
 
+// FiscalSignReconcileAskEvent is the ADR-0077 Decision 3 recovery point
+// (ut-docs#1520): a read-only, checked retrieval of a signature fiskaly's
+// own service may have already produced for a sale that completed UNSIGNED
+// at tender time with a backend-level failure. Dispatched by a periodic
+// sweep in internal/pages (fiscal_sign_reconcile.go) via EventBus.Ask; the
+// answer can only confirm or deny — the wire shape has no state that lets a
+// plugin say "sign it now" (ADR-0056's belated-signing prohibition stays
+// structurally enforced). The ".ask" suffix is deliberate: it is what
+// wasm_runtime.go keys blocking/value-returning dispatch and ".ask"
+// response-log redaction off, and this answer carries the signature itself.
+// One member of the FiscalSignExclusiveEvents group.
+const FiscalSignReconcileAskEvent = "fiscal.sign.reconcile.ask"
+
+// FiscalSignExclusiveEvents is the ONE exclusivity group ADR-0077 D3 fixes
+// for the fiscal signing extension points: fiscal.sign.ask (the tender-time
+// "finish"), fiscal.sign.start (D1) and fiscal.sign.reconcile.ask (D3).
+// Declaring ANY one of the three while a DIFFERENT active plugin holds ANY
+// one of the three is refused — at persist time by
+// validateExclusiveHookOwnership below, at enable time by
+// internal/pages' setPluginActiveHandler — because all three hand the
+// answering plugin real sale data or take its answer as authoritative for a
+// compliance-bearing record. Before this group existed, only the literal
+// fiscal.sign.ask key was checked, so a second plugin declaring only
+// fiscal.sign.start or only fiscal.sign.reconcile.ask passed both checks
+// (the gap ADR-0077 D3 records as found on independent review). Exported so
+// the enable-time check and this package share one definition; a test pins
+// the exact membership.
+var FiscalSignExclusiveEvents = []string{FiscalSignAskEvent, FiscalSignStartEvent, FiscalSignReconcileAskEvent}
+
+// DeclaredFiscalSignExclusiveEvent reports the first FiscalSignExclusiveEvents
+// member among hooks (group order), or ("", false) when the manifest declares
+// none of the group.
+func DeclaredFiscalSignExclusiveEvent(hooks []ManifestHook) (string, bool) {
+	for _, ev := range FiscalSignExclusiveEvents {
+		for _, h := range hooks {
+			if h.Event == ev {
+				return ev, true
+			}
+		}
+	}
+	return "", false
+}
+
+// FiscalSignExclusiveOwner reports the ACTIVE plugin other than pluginID
+// currently holding an active hook on ANY FiscalSignExclusiveEvents member —
+// the group-wide form of data.PluginRepo.ActiveHookOwner, which stays
+// per-event. heldEvent names which member the owner holds (for the refusal
+// message). tx is the install transaction when called from PersistManifest
+// (a consistent snapshot), nil from the enable handler. found=false means
+// the group is unowned, or owned only by pluginID itself (a re-enable or a
+// self-update never conflicts with its own registration). A DB error is
+// returned as-is for the caller to fail CLOSED on.
+func FiscalSignExclusiveOwner(ctx context.Context, repo *data.PluginRepo, tx *sql.Tx, pluginID string) (ownerID, ownerName, heldEvent string, found bool, err error) {
+	for _, ev := range FiscalSignExclusiveEvents {
+		id, name, ok, err := repo.ActiveHookOwner(ctx, tx, ev, pluginID)
+		if err != nil {
+			return "", "", "", false, err
+		}
+		if ok {
+			return id, name, ev, true, nil
+		}
+	}
+	return "", "", "", false, nil
+}
+
 // validateExclusiveHookOwnership enforces ADR-0041 Decision B's `exclusive`
-// marker for fiscal.sign.ask at manifest-persist time (independent review
-// of ut-docs#675, finding B2). The enable-time check in
-// setPluginActiveHandler alone is bypassable: PersistManifest activates the
-// plugin unconditionally (UpsertPluginManifest sets is_active = 1 on both
-// its INSERT and its ON CONFLICT UPDATE branch), so a fresh install of a
-// second fiscal.sign.ask-declaring plugin — or an update of an
-// already-active plugin whose new version starts declaring the hook —
+// marker for the fiscal signing group (FiscalSignExclusiveEvents — ADR-0077
+// D3 widened it from the single fiscal.sign.ask key) at manifest-persist
+// time (independent review of ut-docs#675, finding B2). The enable-time
+// check in setPluginActiveHandler alone is bypassable: PersistManifest
+// activates the plugin unconditionally (UpsertPluginManifest sets
+// is_active = 1 on both its INSERT and its ON CONFLICT UPDATE branch), so a
+// fresh install of a second group-declaring plugin — or an update of an
+// already-active plugin whose new version starts declaring any member —
 // would silently create two active answerers without ever passing through
 // POST /api/plugins/{id}/enable. Same call-site shape as
 // validatePageEntryKeys above: run inside PersistManifest's transaction
 // before anything is written, so a refusal rolls the whole install back.
 //
 // The plugin's own prior registration is excluded from the ownership query,
-// so a plugin updating or re-installing ITSELF never conflicts with itself.
+// so a plugin updating or re-installing ITSELF never conflicts with itself —
+// including today's ask-only signer gaining start + reconcile in one release.
 // A DB error fails CLOSED (the persist is refused with the error): on a
 // compliance-relevant exclusive point, "couldn't verify ownership" must
 // never degrade to "allowed" — the same posture the enable-time check
 // applies.
 func validateExclusiveHookOwnership(ctx context.Context, repo *data.PluginRepo, tx *sql.Tx, pluginID string, hooks []ManifestHook) error {
-	declares := false
-	for _, h := range hooks {
-		if h.Event == FiscalSignAskEvent {
-			declares = true
-			break
-		}
-	}
-	if !declares {
+	declared, ok := DeclaredFiscalSignExclusiveEvent(hooks)
+	if !ok {
 		return nil
 	}
-	ownerID, ownerName, found, err := repo.ActiveHookOwner(ctx, tx, FiscalSignAskEvent, pluginID)
+	ownerID, ownerName, heldEvent, found, err := FiscalSignExclusiveOwner(ctx, repo, tx, pluginID)
 	if err != nil {
 		return fmt.Errorf("check fiscal signing exclusivity: %w", err)
 	}
 	if found {
-		return fmt.Errorf("%s (%s) is already the active fiscal signing provider — %s is an exclusive extension point; disable or uninstall it before installing %s", ownerName, ownerID, FiscalSignAskEvent, pluginID)
+		return fmt.Errorf("%s (%s) is already the active fiscal signing provider (holds %s) — %s is an exclusive extension point, one owner across %s; disable or uninstall it before installing %s",
+			ownerName, ownerID, heldEvent, declared, strings.Join(FiscalSignExclusiveEvents, ", "), pluginID)
 	}
 	return nil
 }

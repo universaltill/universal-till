@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -20,10 +21,12 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	appdb "github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
+	"github.com/universaltill/universal-till/internal/plugins/oauth"
 	"github.com/universaltill/universal-till/internal/settings"
 )
 
@@ -401,6 +404,71 @@ func TestHandleUpdatePlugin_InstalledButNoListing_404(t *testing.T) {
 	}
 }
 
+// ut-docs#2131 review (Finding 1): the management page shows an "Update
+// available" badge for a file-imported plugin resolved via the catalog's
+// author+name fallback (plugins.IndexCatalog), but this handler used to
+// 404 unconditionally the moment plugin_install_status had no row for it --
+// a dead-end button for exactly the population that badge fix targeted.
+// applyPluginUpdate must now also try resolveListingViaCatalog before
+// giving up. This asserts it gets PAST ErrPluginUpdateNoListing (it still
+// fails later, since there's no real download-token/artifact server behind
+// the fake catalog endpoint -- that's the existing install pipeline's own
+// concern, not this fix's) rather than 404ing immediately as before.
+func TestApplyPluginUpdate_NoListingButCatalogMatchFound_PastNoListingGate(t *testing.T) {
+	isolatePluginsDir(t)
+	db := openRealSchemaPagesDB(t)
+
+	m := &plugins.Manifest{
+		ID:            "com.test.fileimport",
+		Name:          "Loyalty Plugin",
+		Author:        "Acme Inc",
+		Version:       "1.0.0",
+		Entrypoint:    "./plugin",
+		Runtime:       "go",
+		CanonicalType: "page",
+		DeviceArch:    "any",
+	}
+	if err := plugins.PersistManifest(t.Context(), db, m, plugins.InstallOptions{
+		TrustLevel: "untrusted",
+		Uploader:   "test",
+	}); err != nil {
+		t.Fatalf("seed installed plugin: %v", err)
+	}
+	// Deliberately no plugin_install_status row -- this is the file-import case.
+
+	mp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/catalog/plugins" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"plugins":[{"id":"listing-acme","name":"Loyalty Plugin","developer_id":"Acme Inc","version":"1.1.0"}]}`))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer mp.Close()
+
+	cfg := basePluginCfg()
+	cfg.Marketplace = config.MarketplaceConfig{EndpointURL: mp.URL}
+	client := marketplace.NewClient(&cfg.Marketplace, oauth.NewTokenClient(&cfg.Marketplace))
+	catalogRepo, err := marketplace.NewCatalogRepository(client, t.TempDir())
+	if err != nil {
+		t.Fatalf("catalog repo: %v", err)
+	}
+
+	deps := newPluginAPIDeps(t, db, cfg)
+	deps.CatalogRepo = catalogRepo
+	if err := deps.Pm.Reload(t.Context()); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+
+	_, _, err = applyPluginUpdate(t.Context(), deps, "com.test.fileimport")
+	if err == nil {
+		t.Fatal("expected applyPluginUpdate to still fail (no real install-pipeline server), but not with ErrPluginUpdateNoListing")
+	}
+	if errors.Is(err, ErrPluginUpdateNoListing) {
+		t.Fatalf("got ErrPluginUpdateNoListing — the author+name catalog fallback should have found listing-acme: %v", err)
+	}
+}
+
 // --- handleRollbackPlugin --------------------------------------------------
 
 func TestHandleRollbackPlugin_Validation(t *testing.T) {
@@ -613,6 +681,58 @@ func TestHandleImportFromFile_NoPublicKeyImportsUnsignedBundle(t *testing.T) {
 	}
 	if _, ok := deps.Pm.Installed["com.test.unsigned"]; !ok {
 		t.Fatalf("unsigned bundle should import when no key is configured")
+	}
+}
+
+// TDD arc for ut-docs#2132: with a public key configured, importing a bundle
+// whose manifest carries no signature at all used to answer with the raw Go
+// error text ("Import failed: manifest verification failed: manifest
+// validation failed: 1 errors") — a bare count naming neither the problem
+// nor a next step. This pins the fix: the response body is the translated,
+// operator-comprehensible "unsigned" message (which points at the Plugin
+// Store / Export route), not the technical error, and the plugin is not
+// installed.
+func TestHandleImportFromFile_UnsignedBundleWithKeyConfiguredShowsLocalizedReason(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	isolatePluginsDir(t)
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	cfg := basePluginCfg()
+	cfg.Marketplace.PublicKey = hex.EncodeToString(pub)
+
+	db := openRealSchemaPagesDB(t)
+	deps := newPluginAPIDeps(t, db, cfg)
+	mux := http.NewServeMux()
+	registerPluginAPI(mux, deps)
+
+	m := plugins.Manifest{
+		ID:            "com.test.unsignedwithkey",
+		Name:          "Unsigned With Key",
+		Version:       "1.0.0",
+		Entrypoint:    "./plugin",
+		Runtime:       "go",
+		CanonicalType: "page",
+		DeviceArch:    "any",
+		// deliberately no Signature
+	}
+	bundle := writePluginBundle(t, m)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, importRequest(t, bundle, "unsignedwithkey.tar.gz", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for an unsigned bundle with a key configured, got %d: %s", rec.Code, rec.Body.String())
+	}
+	wantMsg := httpx.T("en", "plugins.error.import_unsigned") + "\n" // http.Error appends a newline
+	if rec.Body.String() != wantMsg {
+		t.Fatalf("expected the translated unsigned-bundle message, got: %q", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "manifest validation failed") {
+		t.Fatalf("operator response must not leak the raw Go error text: %q", rec.Body.String())
+	}
+	if _, ok := deps.Pm.Installed["com.test.unsignedwithkey"]; ok {
+		t.Fatalf("an unsigned bundle must not be installed when a key is configured")
 	}
 }
 

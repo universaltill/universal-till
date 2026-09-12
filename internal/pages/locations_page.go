@@ -12,8 +12,10 @@ import (
 )
 
 // registerLocations wires the stock-locations admin page (universaltill/ut-docs#49).
-// Manager/admin only; a location with any inventory, stock movement, or
-// register history can't be deactivated (StockLocationInUse guard).
+// Manager/admin only; a location currently holding nonzero stock, or
+// assigned to a currently-active register, can't be deactivated
+// (StockLocationInUse guard) — past history alone no longer blocks it
+// (universaltill/ut-docs#2066).
 func registerLocations(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 
@@ -65,20 +67,33 @@ func registerLocations(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
-		httpx.Render("ui/pages/locations.html", map[string]any{
+		locationsData := map[string]any{
 			"title":     "Locations",
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
 			"locations": locs,
 			"errKey":    errKey,
-		})(w, r)
+		}
+		// ut-docs#2116: /locations is one of the /admin tree's six
+		// destinations -- an htmx request from that panel (NOT a stale
+		// history restore, see httpx.IsFragmentSwap) gets just the
+		// "content" block plus an out-of-band refresh of the tree so its
+		// is-current highlight follows the click; a plain browser GET
+		// (deep link, or the redirect a mutation falls back to) still gets
+		// the exact same full standalone page as before this card.
+		if httpx.IsFragmentSwap(w, r) {
+			httpx.RenderContentFragment("ui/pages/locations.html", locationsData)(w, r)
+			writeAdminTreeOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/locations", adminGroupsFor(visibleAdminEntries(d, r)))
+			return
+		}
+		httpx.Render("ui/pages/locations.html", locationsData)(w, r)
 	}
 
 	mux.HandleFunc("GET /locations", func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := requireManager(w, r); !ok {
 			return
 		}
-		renderLocations(w, r, r.URL.Query().Get("err"))
+		renderLocations(w, r, httpx.QueryErrKey(r))
 	})
 
 	mux.HandleFunc("POST /api/locations", func(w http.ResponseWriter, r *http.Request) {

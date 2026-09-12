@@ -600,12 +600,36 @@ func TestSetupWizardDetectionSkippedOnceAChoiceExists(t *testing.T) {
 	}
 
 	// A cookie from an earlier visit: same — no redirect, no note.
-	rec = getSetup(mux, "", "en")
+	rec = getSetup(mux, "", httpx.LocaleOverrideValue("en"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /setup with existing ut_lang cookie: code=%d", rec.Code)
 	}
 	if strings.Contains(rec.Body.String(), "data-detected-lang=") {
 		t.Error("a repeat visit (cookie already set) must not re-show the detected-language note")
+	}
+}
+
+// ut-docs#2135: "a choice already happened" must mean a choice that is still
+// HONOURED, not merely a cookie that exists. A stale or pre-#2135 ut_lang is
+// ignored when resolving the locale, so if it also suppressed detection the
+// wizard would render its fallback language with nothing having chosen it —
+// reachable for real, because the Linux desktop app persists its cookie jar
+// across a reinstall (cmd/unitill-desktop/webkit_linux.go).
+func TestSetupWizardDetectionStillRunsForAnIgnoredLanguageCookie(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+	withOSLocale(t, "tr_TR.UTF-8", "Europe/Istanbul")
+
+	for _, cookie := range []string{
+		"en",           // pre-#2135: no recorded context at all
+		"en|xx|999999", // recorded against a shop default and generation that are not current
+	} {
+		rec := getSetup(mux, "", cookie)
+		// tr is a shipped locale, so detection redirects through ?lang=
+		// rather than rendering a coming-soon note.
+		if rec.Code != http.StatusSeeOther {
+			t.Errorf("ut_lang=%q: GET /setup code=%d, want %d — an ignored cookie "+
+				"must not count as an earlier choice", cookie, rec.Code, http.StatusSeeOther)
+		}
 	}
 }
 

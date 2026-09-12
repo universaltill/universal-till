@@ -213,7 +213,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		// follows the click; a plain browser GET (deep link, or the redirect
 		// a mutation falls back to) still gets the exact same full standalone
 		// page as before this card.
-		if httpx.IsFragmentSwap(r) {
+		if httpx.IsFragmentSwap(w, r) {
 			httpx.RenderContentFragment("ui/pages/categories.html", categoriesData)(w, r)
 			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/categories", itemsnav.Resolve(httpx.RequestLocale(r), d.ItemsAmendmentsSnapshot()))
 			return
@@ -229,7 +229,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		// (the %d placeholder it interpolates); absent/unparseable elsewhere
 		// just renders as 0, which the template never reads for any other key.
 		count, _ := strconv.Atoi(r.URL.Query().Get("count"))
-		renderCategories(w, r, r.URL.Query().Get("err"), count)
+		renderCategories(w, r, httpx.QueryErrKey(r), count)
 	})
 
 	mux.HandleFunc("POST /api/categories", func(w http.ResponseWriter, r *http.Request) {

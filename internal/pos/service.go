@@ -65,6 +65,11 @@ type Service struct {
 	// and what a "move to a different table" operation keys on.
 	tableID    string
 	tableLabel string
+	// heldOrigin (ut-docs#1918) is the parked held_sales row this basket
+	// was resumed from -- see HeldOrigin in hold.go. Zero when the basket
+	// was never parked. Set only by RestoreHeld; cleared by resetLocked and
+	// Tender, so it can never leak into the next customer's sale.
+	heldOrigin HeldOrigin
 	// taxAsker, when set, can override a line's tax rate per the current
 	// order type — see TaxRateAsker. nil (the default) means core just uses
 	// each line's own configured rate, unaffected by order type.
@@ -1009,6 +1014,7 @@ func (s *Service) Tender(amount money.Money, method string) (map[string]any, err
 	s.orderType = ""
 	s.tableID = ""
 	s.tableLabel = ""
+	s.heldOrigin = HeldOrigin{}
 	return map[string]any{"status": "ok", "method": method, "amount": amount}, nil
 }
 
@@ -1291,6 +1297,15 @@ func (s *Service) removeLocked(sku string) {
 	s.lines = filtered
 	s.clearCacheForCode(sku)
 	s.applyTablePolicyLocked() // ADR-0073 D5: voiding the last dine-in line clears the table
+	if len(s.lines) == 0 {
+		// ut-docs#1918 (independent review finding): voiding every line one
+		// at a time -- instead of Reset() -- otherwise leaves heldOrigin
+		// pointing at a held_sales row that no longer describes this
+		// basket. An unrelated sale rung up afterward and parked would
+		// then be upserted under the OLD order's id/label/created_at,
+		// silently replacing it on the Open orders page.
+		s.heldOrigin = HeldOrigin{}
+	}
 	s.recomputeTotals()
 }
 
@@ -1316,6 +1331,10 @@ func (s *Service) removeLineLocked(key string) {
 	}
 	s.lines = filtered
 	s.applyTablePolicyLocked() // ADR-0073 D5: voiding the last dine-in line clears the table
+	if len(s.lines) == 0 {
+		// ut-docs#1918: same reasoning as removeLocked above.
+		s.heldOrigin = HeldOrigin{}
+	}
 	s.recomputeTotals()
 }
 
@@ -1362,6 +1381,7 @@ func (s *Service) resetLocked() {
 	s.tableID = ""
 	s.tableLabel = ""
 	s.tenderAttemptID = ""
+	s.heldOrigin = HeldOrigin{}
 	// ut-docs#1833: s.basket = Basket{} above already zeroes
 	// VoucherID/VoucherBalance, same as it does for CustomerID/CustomerName
 	// -- a completed/abandoned sale's pending voucher must never leak into

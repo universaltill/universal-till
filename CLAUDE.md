@@ -22,7 +22,16 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
 ## Offline-first (non-negotiable)
 - **Checkout must never be blocked by the network.** A full sale completes offline.
 - Surface offline/sync/install state with status chips/banners, never modal
-  blockers in the kiosk flow. Status/lock/exit must always be reachable.
+  blockers in the kiosk flow.
+- **Status, lock and exit-to-OS must always be reachable — on every surface,
+  admin ones included.** The one exception is self-order kiosk mode, where
+  they must be deliberately *unreachable* (customer containment); the rule
+  resumes the moment an admin takes the device out of that mode. The axis is
+  the device's mode, never admin-vs-sale. A full-screen dialog is still fine,
+  but it may not cover the nav rail without carrying a compact persistent
+  affordance for those three. Decided on ut-docs#1999; full text, and the
+  ut-docs#1513 corollary that the way out of kiosk mode cannot live in the
+  web UI it is hiding, in `ut-docs/reference/coding-standards.md` §10.
 
 ## Self-order kiosk isolation (enforced by scripts/ci/guard-kiosk-engine.sh)
 - The self-order kiosk's basket (`common.Deps.KioskEngine`) is a separate
@@ -171,6 +180,27 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   test), right after "Install gomobile/gobind" and before the Gradle
   build, so a silent skip fails fast instead of shipping a phone build
   silently missing a method.
+- **A `CanonicalTypes` change (`internal/plugins/manifest_verifier.go`)
+  also gates on `adr-taxonomy-guard`** (ut-docs#2134) — a separate,
+  standalone job in `.github/workflows/ci.yml` (not a step in the `build`
+  job, same reasoning as `android-ci.yml` above: it needs a second repo
+  checked out, `ut-docs`, so it stays out of `build`'s own checkout).
+  `scripts/ci/guard-adr-plugin-taxonomy.sh` reads `ADR-0002`'s taxonomy
+  line for real and fails if it disagrees with `CanonicalTypes` — replacing
+  a same-repo test that used to diff `CanonicalTypes` against a second
+  hardcoded copy of itself and could never see the ADR drift (which is
+  exactly how `language` and `layout` both shipped with their own accepted
+  ADRs while ADR-0002's own text kept saying "20 canonical types").
+  **Unlike `manifest-contract-guard`'s direction** (checks out this
+  *public* repo from `ut-cloud`, no token needed), this job checks out
+  `ut-docs`, which is **private** — it needs a `DOCS_READ_TOKEN` repo
+  secret (a PAT with read access to `universaltill/ut-docs`), and skips
+  loudly (`::warning::`, non-blocking) rather than failing when that
+  secret isn't available, e.g. a fork PR. **A `CanonicalTypes` change
+  landing here needs `ut-docs`'s own ADR-0002 PR merged first** (or at
+  least merged before this job's run reads `ut-docs`'s default branch) —
+  same ordering dependency `manifest-contract-guard` already documents for
+  its own direction.
 - Feature branch; code review recorded in `docs/code-reviews/<date>-<topic>.md`;
   then merge to `main`. No secrets in logs or committed files.
 
@@ -180,8 +210,9 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
 - **Document-first:** significant/architectural choices get an ADR *before*
   code; non-trivial features start from a short spec in the docs repo.
 - Key standing decisions: plugin runtime = in-process **WASM (wazero)**,
-  processes only for hardware plugins (ADR-0001); 20-type plugin taxonomy is
-  fixed (ADR-0002); offline-first, assets vendored (ADR-0003); server-rendered
+  processes only for hardware plugins (ADR-0001); 22-type plugin taxonomy is
+  fixed (ADR-0002, amended by ADR-0010 and ADR-0088 Decision B); offline-first,
+  assets vendored (ADR-0003); server-rendered
   HTMX UI, no SPA (ADR-0008).
 - Behaviour changes update the affected doc (`docs/reference/`, guides,
   `architecture/plugin-architecture.md`) in the same session.

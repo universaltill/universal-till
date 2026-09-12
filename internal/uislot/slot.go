@@ -14,11 +14,17 @@
 // The first slot was the Menu launcher (MenuSlot); the second is the /items
 // section list (ItemsSlot, ut-docs#1911, generalizing what ut-docs#1897
 // shipped as a hardcoded list); the third is the nav rail (RailSlot,
-// ut-docs#1912, generalizing what #1332 shipped as hardcoded markup).
-// Further slots (settings groups) attach the same way: a new *Slot name, a
-// new declared core table, and a slotSpec passed to the shared
-// parse/validate path below — no redesign of
+// ut-docs#1912, generalizing what #1332 shipped as hardcoded markup); the
+// fourth is Settings groupings (SettingsSlot, ut-docs#1913) — all four
+// attach the same way: a new *Slot name, a new declared core table, and a
+// slotSpec passed to the shared parse/validate path below — no redesign of
 // Entry/Amendment/Resolve/FindConflict, which were already slot-agnostic.
+// No further slot candidate is identified today: ADR-0091 considered the
+// catalog list's own presentation (table vs. card grid) as a possible
+// fifth entry and declined it — that choice is one view/one axis/one value
+// at a time, not a list of keyed, orderable destinations like the four
+// above, so it stays a core-only default reachable through the theme seam
+// instead.
 package uislot
 
 import (
@@ -179,16 +185,16 @@ func IsProtectedMenuKey(key string) bool {
 //
 // Order bands (documented so a `layout` author knows what a reorder value
 // lands against): 100–800 the InNav entries, PluginPagesOrder (1000)+ the
-// plugin `page` tiles, 2000 help, 2100–2550 the manager-gated destinations
-// with no Group (2550 is /admin, see below), 2600–3100 the same gated band
-// but still grouped under "menu.group.administration" (ut-docs#1959) —
-// set-once/onboarding destinations (country, translations, the two
-// statutory fiscal-device pages, stock locations/registers). Kept
-// contiguous deliberately: Resolve only re-runs groupTogether when an
-// AMENDMENT regroups something (Decision I), so with no plugin installed
-// the renderer walks CoreMenu as declared — an ungrouped entry landing
-// between two same-Group entries here would split one heading into two
-// identical ones.
+// plugin `page` tiles, 1900 open orders, 2000 help, 2100–2550 the
+// manager-gated destinations with no Group (2550 is /admin, see below),
+// 2600–3100 the same gated band but still grouped under
+// "menu.group.administration" (ut-docs#1959) — set-once/onboarding
+// destinations (country, translations, the two statutory fiscal-device
+// pages, stock locations/registers). Kept contiguous deliberately: Resolve
+// only re-runs groupTogether when an AMENDMENT regroups something (Decision
+// I), so with no plugin installed the renderer walks CoreMenu as declared —
+// an ungrouped entry landing between two same-Group entries here would
+// split one heading into two identical ones.
 //
 // ut-docs#2008: the six Group: "menu.group.administration" entries no
 // longer render as tiles on the flat /menu grid at all (menu_page.go's
@@ -223,6 +229,12 @@ var CoreMenu = []Entry{
 	// ut-docs#1897: the "Items" tile that replaced the flat "Catalog" one.
 	{Key: "/items", Href: "/items", LabelKey: "nav.items", Icon: "tag", Order: 800, InNav: true},
 
+	// ut-docs#1918: parked baskets -- a cashier surface (the sale screen's
+	// held strip as a full list), so it sits ungated, not in baseMenu (which
+	// also feeds the top nav rail, where a second orders entry next to the
+	// bell would just be clutter). Not part of d.MenuSnapshot() either, so
+	// it must be declared here to render at all.
+	{Key: "/open-orders", Href: "/open-orders", LabelKey: "open_orders.title", Icon: "monitor", Order: 1900},
 	{Key: "/help", Href: "/help", LabelKey: "nav.help", Icon: "help", Order: 2000},
 	// ut-docs#582: the staff "pay at counter" board (kiosk.payment_mode
 	// "counter") — no VisibleIf, same as /orders above: any operator needs

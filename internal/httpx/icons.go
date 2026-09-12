@@ -169,6 +169,28 @@ var railIcons = map[string]string{
 	// statusbar's "register this till" chip (base.html .sb-enrol). Lucide's
 	// "sparkles" path, unmodified.
 	"sparkles": `<path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/><path d="M20 2v4"/><path d="M22 4h-4"/><circle cx="4" cy="20" r="2"/>`,
+	// ut-docs#2092 — catalog top action row's icon-only buttons, replacing
+	// the row's remaining full-width text buttons. Lucide paths, unmodified.
+	// Import.
+	"upload": `<path d="M12 3v12"/><path d="m17 8-5-5-5 5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>`,
+	// Export.
+	"download": `<path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/>`,
+	// Tax codes — Lucide's "landmark" (a government/civic-building glyph,
+	// this ecosystem's nearest fit for "tax"; no dedicated tax icon exists
+	// in the set and "percent"/"receipt" are already claimed by Promotions
+	// and the fiscal-signing chip respectively, ut-docs#1958).
+	"landmark": `<path d="M10 18v-7"/><path d="M11.119 2.205a2 2 0 0 1 1.762 0l7.84 3.846A.5.5 0 0 1 20.5 7h-17a.5.5 0 0 1-.22-.949z"/><path d="M14 18v-7"/><path d="M18 18v-7"/><path d="M3 22h18"/><path d="M6 18v-7"/>`,
+	// Barcode backfill.
+	"scan-barcode": `<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M8 7v10"/><path d="M12 7v10"/><path d="M17 7v10"/>`,
+	// Exit to OS (ut-docs#2099's record-dialog status row) — "monitor" was
+	// this affordance's first choice, but ut-docs#1918 landed first and
+	// claimed "monitor" for /open-orders, so TestNoTwoNavDestinationsShareAnIcon
+	// would flag two destinations sharing a glyph the moment both merged.
+	// A door with an outward arrow is Lucide's own "log-out" convention —
+	// reads as "leave this app", distinct from "lock" (stay in-app, screen
+	// locked) and "monitor" (the open-orders board). Lucide's "log-out"
+	// path, unmodified.
+	"log-out": `<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/>`,
 }
 
 // iconSVGOpen is the one shared wrapper every rail icon renders inside.

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
 )
@@ -326,6 +327,100 @@ func TestGetOrFetchErrorsWhenOfflineAndNoCache(t *testing.T) {
 	}
 	if _, _, err := repo.GetOrFetch(context.Background(), "en", "linux/amd64"); err == nil {
 		t.Fatal("GetOrFetch offline with no cache: want error")
+	}
+}
+
+// ut-docs#2131: GetOrFetch used to compute isStale correctly (via Get()) and
+// then ignore it — once a snapshot ever landed on disk, it was served
+// forever no matter its age. These two tests cover the fix: a stale cache
+// triggers a real refetch, and a refetch failure still falls back to the
+// stale copy rather than erroring (offline-first is preserved).
+
+func TestGetOrFetchRefetchesWhenStale(t *testing.T) {
+	hits := 0
+	server := catalogServer(t, &hits)
+	defer server.Close()
+
+	repo, err := NewCatalogRepository(testClient(t, server.URL), t.TempDir())
+	if err != nil {
+		t.Fatalf("NewCatalogRepository: %v", err)
+	}
+	ctx := context.Background()
+	if _, err := repo.Fetch(ctx, "en", "linux/amd64"); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	fetchesAfterWarm := hits
+
+	// Force staleness without waiting out the real 15-minute window.
+	repo.mu.Lock()
+	repo.cached.FetchedAt = time.Now().Add(-2 * repo.staleAfter)
+	repo.mu.Unlock()
+
+	snap, stale, err := repo.GetOrFetch(ctx, "en", "linux/amd64")
+	if err != nil {
+		t.Fatalf("GetOrFetch: %v", err)
+	}
+	if stale {
+		t.Fatal("a successful refetch should report the fresh snapshot as not stale")
+	}
+	if hits != fetchesAfterWarm+1 {
+		t.Fatalf("stale cache did not trigger a refetch (%d -> %d requests)", fetchesAfterWarm, hits)
+	}
+	if len(snap.Plugins) != 1 {
+		t.Fatalf("snapshot plugins = %d; want 1", len(snap.Plugins))
+	}
+}
+
+// ut-docs#2131 review: the first cut of this test closed the server before
+// forcing staleness, so a refetch attempt was indistinguishable from no
+// refetch attempt at all -- `hits` stayed at 1 either way, and the test
+// passed unchanged against the pre-fix GetOrFetch (which never attempted a
+// refetch in the first place). Serving a real 500 on the second request
+// instead means `hits` only reaches 2 if GetOrFetch genuinely tried and
+// failed, which is what this test claims to verify.
+func TestGetOrFetchFallsBackToStaleCacheWhenRefetchFails(t *testing.T) {
+	hits := 0
+	failAfterFirst := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		if failAfterFirst {
+			http.Error(w, "simulated marketplace outage", http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"plugins": []map[string]any{
+				{"listing_id": "p1", "name": "P1", "version": "1.0.0", "canonical_type": "payment"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	repo, err := NewCatalogRepository(testClient(t, server.URL), t.TempDir())
+	if err != nil {
+		t.Fatalf("NewCatalogRepository: %v", err)
+	}
+	ctx := context.Background()
+	if _, err := repo.Fetch(ctx, "en", "linux/amd64"); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	failAfterFirst = true // any refetch attempt now fails with a real 500
+
+	repo.mu.Lock()
+	repo.cached.FetchedAt = time.Now().Add(-2 * repo.staleAfter)
+	repo.mu.Unlock()
+
+	snap, stale, err := repo.GetOrFetch(ctx, "en", "linux/amd64")
+	if err != nil {
+		t.Fatalf("GetOrFetch should fall back to the stale cache, not error: %v", err)
+	}
+	if !stale {
+		t.Fatal("fallback snapshot should still be reported stale")
+	}
+	if len(snap.Plugins) != 1 {
+		t.Fatalf("snapshot plugins = %d; want 1", len(snap.Plugins))
+	}
+	if hits != 2 {
+		t.Fatalf("expected the original fetch plus one failed refetch attempt (2), got %d", hits)
 	}
 }
 

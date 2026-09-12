@@ -56,6 +56,32 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 
 	mux.HandleFunc("GET /import", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "import_export") {
+			// ut-docs#2095 (independent review, F3): from inside the /items
+			// shell this route is now also reached as an htmx fragment
+			// request (the Import dialog's hx-get) -- a same-origin redirect
+			// is followed transparently by htmx AND preserves the
+			// HX-Request header across the hop, so the old unconditional
+			// redirect made a permission-denied cashier's tap resolve to
+			// GET /catalog's own fragment response (content + rail OOB
+			// swap) swapped straight into #import-modal: the ENTIRE Catalog
+			// page, rail button and all, floating inside the dialog,
+			// including a second nested #import-modal (measured: 86KB
+			// swapped in, duplicate ids throughout, tapping the nested
+			// Import button recurses). A real error response here is caught
+			// by the button's own event.detail.successful guard
+			// (catalog.html) instead. httpx.RenderError, not
+			// common.LocalizedError (guard-page-http-error.sh: this IS a
+			// page-route GET handler, unlike every other import_export
+			// check in this file which guards a POST/API endpoint) --
+			// same helper GET /catalog/tax-codes already uses for its own
+			// page-route permission check (tax_codes_page.go). The
+			// standalone (non-fragment) case is UNCHANGED: direct/bare
+			// GET /import still redirects to /catalog, exactly as before
+			// this card.
+			if httpx.IsFragmentSwap(w, r) {
+				httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
+				return
+			}
 			http.Redirect(w, r, "/catalog", http.StatusSeeOther)
 			return
 		}
@@ -77,13 +103,29 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			confirmedVal, _, cerr := d.Settings.Get(r.Context(), common.KeyCurrencyConfirmed)
 			currencyUnconfirmed = cerr != nil || confirmedVal != "true"
 		}
-		httpx.Render("ui/pages/import.html", map[string]any{
+		importData := map[string]any{
 			"title":               "Import",
 			"theme":               d.CurrentState().Theme,
 			"menuItems":           d.MenuSnapshot(),
 			"stagedID":            stagedID,
 			"currencyUnconfirmed": currencyUnconfirmed,
-		})(w, r)
+			// ut-docs#2095: /import is NOT an /items rail section (unlike
+			// /catalog, /modifiers, /catalog/option-sets, ut-docs#2090) --
+			// Catalog's Import button opens it as a closable dialog overlay
+			// (#import-modal) floating above the /items shell instead of
+			// swapping #items-panel. InItemsShell here means "am I being
+			// rendered inside that dialog", not "am I the shell's own panel
+			// content" -- so on an htmx fragment request, render just the
+			// content block and do NOT also OOB-swap the rail: the rail
+			// sits behind the dialog, unchanged, for the whole time the
+			// dialog is open.
+			"InItemsShell": httpx.IsFragmentSwap(w, r),
+		}
+		if httpx.IsFragmentSwap(w, r) {
+			httpx.RenderContentFragment("ui/pages/import.html", importData)(w, r)
+			return
+		}
+		httpx.Render("ui/pages/import.html", importData)(w, r)
 	})
 
 	mux.HandleFunc("GET /api/catalog/export", func(w http.ResponseWriter, r *http.Request) {
@@ -1397,7 +1439,17 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			if failed > 0 {
 				successClass = "notice-block-warn"
 			}
-			fmt.Fprintf(&b, `<div class="%s">`, successClass)
+			// data-import-committed: a stable, locale-independent, markup-
+			// independent marker that this IS the real commit summary (not
+			// the ut-docs#970 currency-confirm gate's own .notice-block-warn
+			// div, renderImportCurrencyConfirm below -- the two classes
+			// already overlap on failed>0). ut-docs#2112 review (F2):
+			// commitStagedImportForSetup's own success sentinel used to
+			// match on `href="/catalog"`, which broke the moment this
+			// summary could ALSO render as a button (in_items_shell="1") --
+			// this attribute is present either way, so that sentinel no
+			// longer depends on which control this block happens to render.
+			fmt.Fprintf(&b, `<div class="%s" data-import-committed="1">`, successClass)
 			fmt.Fprintf(&b, `<p><strong>%s</strong></p>`, fmt.Sprintf(htmlEscape(T("import.commit_success")), created))
 			fmt.Fprintf(&b, `<p>%s: %d — %s: %d — %s: %d`,
 				T("import.created"), created, T("import.warned"), warned,
@@ -1410,7 +1462,41 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					T("import.status.tax_overrides_plugin_disabled"))
 			}
 			b.WriteString(`</p>`)
-			fmt.Fprintf(&b, `<a class="btn primary" href="/catalog">%s</a>`, htmlEscape(T("import.view_catalog")))
+			// ut-docs#2112: from inside the /items shell's Import dialog, a
+			// plain navigation to bare /catalog is exactly the railless
+			// standalone destination #2090 moved every other in-shell exit
+			// away from. The POST has no header to tell dialog from
+			// standalone by itself (see the in_items_shell field's own
+			// comment in import.html) -- it's carried through the form
+			// instead. Standalone /import (in_items_shell="0", or absent on
+			// any older cached form) keeps the unchanged plain link.
+			if r.FormValue("in_items_shell") == "1" {
+				// Closing alone (this file's own back-link idiom, and
+				// tax_codes.html's) isn't enough here -- review finding F1
+				// (2026-09-12): the /items shell's Catalog panel behind the
+				// dialog was rendered BEFORE this commit and is never
+				// otherwise touched, so an operator who just imported real
+				// rows would tap this and see the exact stale list that
+				// made ut-docs#1171 add this button in the first place. So,
+				// unlike the plain back-link, this ALSO refetches
+				// #items-panel -- but only from THIS button's own click, not
+				// from a generic dialog 'close' listener: a listener bound
+				// to every close (including the back-link's plain cancel)
+				// was tried and reverted, because it also fired on a cancel
+				// that changed nothing, wiping the operator's live search/
+				// filter state on the panel behind it for no reason (review
+				// finding F1 follow-up). Scoping the refetch to this one
+				// control's click keeps the cancel path exactly as it was.
+				// No hx-push-url: unlike Modifiers/Option-sets' own
+				// back-link (#2090), this never left /catalog in the first
+				// place -- the URL stays /items throughout (import.html's
+				// own "no URL push" note) -- so pushing one here would be
+				// wrong, not just redundant.
+				fmt.Fprintf(&b, `<button type="button" class="btn primary" onclick="htmx.ajax('GET','/catalog',{target:'#items-panel',swap:'innerHTML'});this.closest('dialog').close()">%s</button>`,
+					htmlEscape(T("import.view_catalog")))
+			} else {
+				fmt.Fprintf(&b, `<a class="btn primary" href="/catalog">%s</a>`, htmlEscape(T("import.view_catalog")))
+			}
 			b.WriteString(`</div>`)
 		} else {
 			fmt.Fprintf(&b, `<p><strong>%s: %s · %d %s, %d %s</strong></p>`,

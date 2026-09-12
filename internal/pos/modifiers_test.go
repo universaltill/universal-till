@@ -196,7 +196,7 @@ func TestRestore_ThenAddLineWithModifiers_MergesIntoCorrectSibling(t *testing.T)
 	snap := s.Snapshot()
 
 	restored := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, mapResolver{})
-	restored.Restore(snap)
+	restored.RestoreHeld(snap, HeldOrigin{})
 	if len(restored.Basket().Lines) != 2 {
 		t.Fatalf("setup: expected 2 distinct lines after restore, got %d", len(restored.Basket().Lines))
 	}

@@ -401,6 +401,38 @@ func TestMenuPage_EveryDrawnTileIconNameResolves(t *testing.T) {
 	}
 }
 
+// TestMenuPage_OpenOrdersTileRendered (ut-docs#1918): the Open orders page
+// is reachable from the menu launcher as an ungated tile (a cashier
+// surface, same audience as the sale screen's held strip) with its own
+// drawn icon -- and it is NOT part of the configured d.Menu, so it must
+// render even when the menu list doesn't mention it.
+func TestMenuPage_OpenOrdersTileRendered(t *testing.T) {
+	mux, _ := newMenuPageTestDeps(t, []common.MenuItem{
+		{Href: "/orders", Label: "nav.orders"},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/menu", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `href="/open-orders"`) {
+		t.Fatalf("expected the open-orders tile rendered, got: %s", body)
+	}
+	if !strings.Contains(body, `data-icon="monitor"`) {
+		t.Fatalf("expected the open-orders tile's mapped icon, got: %s", body)
+	}
+	if !strings.Contains(body, httpx.T("en", "open_orders.title")) {
+		t.Fatalf("expected the open-orders tile label, got: %s", body)
+	}
+	// The two "orders" tiles must read differently on screen (ut-docs#1918:
+	// the naming collision this card resolves).
+	if httpx.T("en", "nav.orders") == httpx.T("en", "open_orders.title") {
+		t.Fatalf("nav.orders and open_orders.title render the same label %q", httpx.T("en", "nav.orders"))
+	}
+}
+
 // The two fiscal tiles are nested INSIDE the manager gate, and always have
 // been: on main that nesting was structural (`if canPerform { … if DE {
 // add } }`), so it could not be dropped by accident. ADR-0088 turned it

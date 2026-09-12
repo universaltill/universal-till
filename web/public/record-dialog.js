@@ -51,11 +51,16 @@
 // keyboard (#osk, osk.js) is appended to <body>, and showModal()'s
 // top-layer/inert-outside behaviour makes it unreachable on the till's own
 // touchscreen (ut-docs#1385). Two things .show() therefore does not give and
-// this file implements by hand: Escape-to-close (settling ut-docs#1999) and
-// the focus trap — without one, Tab walks out from the name field into the
-// nav rail and the row buttons UNDER the opaque dialog and never reaches
-// Close/Save (WCAG 2.4.3/2.4.7). The trap whitelists #osk, which never takes
-// focus itself but must not be fought over.
+// this file implements by hand: Escape-to-close and the focus trap —
+// without the latter, Tab walks out from the name field into the nav rail
+// and the row buttons UNDER the opaque dialog and never reaches Close/Save
+// (WCAG 2.4.3/2.4.7). The trap whitelists #osk, which never takes focus
+// itself but must not be fought over. Escape-to-close does NOT by itself
+// settle ut-docs#1999 for this pattern (a since-corrected claim this
+// comment used to make) — #1999 (coding-standards.md §10) also requires
+// status/lock/exit-to-OS to stay reachable while this dialog covers the
+// nav rail, which record_dialog.html's .record-dialog-status-row handles
+// (ut-docs#2099); bindStatusRow() further down is this file's half of it.
 // No hardcoded user-facing strings: every message comes from a data-*
 // attribute the template filled from a locale key. The console.error below
 // is developer-facing (a page authoring bug), not operator-facing.
@@ -380,6 +385,55 @@
     });
   }
 
+  // --- Status row: sync/offline indicator (ut-docs#2099) -----------------
+  // [data-record-dialog-conn] (record_dialog.html's .record-dialog-status-
+  // row, absent outright in self-order kiosk mode — see that file's own
+  // comment) is a SECOND, independent instance of base.html's #sb-conn
+  // footer chip, same data-conn-online/data-conn-offline attributes and
+  // same navigator.onLine + online/offline-event logic — deliberately not
+  // shared code, since base.html's own inline script looks up `#sb-conn`
+  // by its one fixed id and can't see this one anyway.
+  //
+  // Bound ONCE globally, not per element (ut-docs#2122). The previous
+  // shape mirrored bind()'s per-element bound-guard, which is harmless
+  // there for a different reason than "the element persists" — the
+  // [data-record-dialog] element is swapped away and recreated by the
+  // /items rail exactly like this status row is (both live inside the
+  // same categories.html fragment #items-panel replaces wholesale), but
+  // bind()'s keydown listener is attached directly to the dialog element
+  // itself, so it is garbage-collected together with that detached node
+  // once nothing else references it — a per-element guard there is only
+  // ever redundant, never leak-preventing. This status row's listeners
+  // were instead attached to `window`, a target that outlives every
+  // swap: each new [data-record-dialog-conn] element got its own fresh
+  // window online/offline pair, the previous element's pair was never
+  // removed, and the closure over that pair kept its now-detached element
+  // alive too. A per-element guard can never stop that, because the
+  // "already bound" flag lived on the very element the next swap throws
+  // away. Painting every currently-present element from one shared pair
+  // of listeners avoids the leak outright, the same way #sb-conn avoids
+  // it by simply never being re-created.
+  function paintStatusRows() {
+    var online = navigator.onLine;
+    var els = document.querySelectorAll('[data-record-dialog-conn]');
+    Array.prototype.forEach.call(els, function (el) {
+      var txt = el.querySelector('.sb-conn-text');
+      var on = el.getAttribute('data-conn-online'), off = el.getAttribute('data-conn-offline');
+      el.classList.toggle('is-offline', !online);
+      if (txt) txt.textContent = online ? on : off;
+    });
+  }
+  window.addEventListener('online', paintStatusRows);
+  window.addEventListener('offline', paintStatusRows);
+
+  // Kept as its own function (called from init() and the htmx:afterSwap
+  // handler below, same as bind()) so a freshly-swapped-in element gets
+  // its initial paint immediately rather than waiting for the next
+  // online/offline event.
+  function bindStatusRow() {
+    paintStatusRows();
+  }
+
   // --- List header: client-side filter ---------------------------------
   // Right for a bounded list (a few hundred rows); above that the screen
   // moves to server-side limit/offset (ut-docs#2014), not a bigger filter.
@@ -422,6 +476,7 @@
 
   function init() {
     bind(document);
+    bindStatusRow(document);
     reapplyFilters();
   }
 
@@ -430,5 +485,5 @@
   } else {
     init();
   }
-  document.addEventListener('htmx:afterSwap', function () { bind(document); reapplyFilters(); });
+  document.addEventListener('htmx:afterSwap', function () { bind(document); bindStatusRow(document); reapplyFilters(); });
 })();

@@ -290,6 +290,52 @@ export async function deactivateAllTables(page: Page) {
   }
 }
 
+// ut-docs#2128: held sales are persistent DB state (hold_api.go), not
+// per-test/per-context like the live sale `/api/pos/reset` clears -- a spec
+// that asserts an exact held-sales count needs a clean slate first, and
+// there is no bulk-clear endpoint. Resume (loads it into the live basket)
+// then reset (discards the basket) for whatever's left, one at a time,
+// same loop-until-count-0 shape as deactivateAllTables above.
+export async function clearAllHeldSales(page: Page) {
+  // #held-sales is a bare placeholder at page load (`hx-trigger="load"`,
+  // index.html) until its own async htmx GET /ui/held swap lands -- reading
+  // .held-chip before that swap settles would see 0 and wrongly conclude
+  // there's nothing to clear (independent review finding, ut-docs#2128:
+  // demonstrated with an artificially delayed /ui/held response; not
+  // observed on an idle machine, but a real, silent race, not a
+  // hypothetical one). `state: 'attached'`, not the default 'visible': the
+  // swapped-in fragment can be legitimately empty (`.held-strip:empty {
+  // display: none }`), which 'visible' would wait forever for.
+  await page.waitForSelector('#held-sales.held-strip', { state: 'attached' });
+  const MAX_ITERATIONS = 20; // real held-sale counts in these specs are 0-3;
+  // 20 is headroom, not a real expected count -- hitting it means a resume
+  // is silently failing to actually clear the row (see below), not that
+  // there were ever legitimately this many held sales to clear.
+  for (let i = 0; i < MAX_ITERATIONS; i++) {
+    const count = await page.locator('.held-chip').count();
+    if (count === 0) return;
+    const idAttr = await page.locator('.held-chip').first().getAttribute('hx-vals');
+    const id = idAttr ? (JSON.parse(idAttr).id as string) : undefined;
+    if (!id) throw new Error('clearAllHeldSales: a .held-chip has no parseable hx-vals id');
+    // form-encoded, not JSON: the handler reads it via r.ParseForm()/
+    // r.Form.Get("id") (hold_api.go), same as the real hx-vals-driven POST.
+    await page.request.post('/api/pos/resume', { form: { id } });
+    await page.request.post('/api/pos/reset');
+    // The strip only re-renders on a real htmx `held-changed` event or a
+    // fresh load, neither of which a bare API call fires -- reload so the
+    // next iteration's locator sees the updated list.
+    await page.goto('/');
+    await page.waitForSelector('#held-sales.held-strip', { state: 'attached' });
+  }
+  // Every iteration ran and at least one chip is still there: resume is
+  // silently not clearing it (hold_api.go deliberately swallows a failed
+  // repo.Get/Delete rather than erroring -- "a stale row is the lesser
+  // evil") -- surface that instead of leaving the caller to wonder why its
+  // held-sales count assertion doesn't match.
+  const stuckId = await page.locator('.held-chip').first().getAttribute('hx-vals').catch(() => null);
+  throw new Error(`clearAllHeldSales: gave up after ${MAX_ITERATIONS} iterations, still stuck on ${stuckId ?? '(unreadable)'}`);
+}
+
 // The bottom-of-page card form — the pre-#1025 add path. Scoped to it
 // specifically: since ut-docs#1025 the tap-to-add dialog is a second
 // form[action="/api/tables"], so the bare selector would be a strict-mode
@@ -334,4 +380,55 @@ export async function openNewItemForm(page: Page) {
 export async function closeItemForm(page: Page) {
   await page.locator('#item-form-modal').evaluate((el: HTMLDialogElement) => el.close());
   await expect(page.locator('#item-form-modal')).toBeHidden();
+}
+
+// ut-docs#2137: drain every parked (held) order, so a test can assert on an
+// empty held state.
+//
+// Held orders are DB rows, and `POST /api/pos/reset` only clears the
+// in-memory basket engine -- so fixtures.ts's per-file basket reset does NOT
+// remove them, and a parked order outlives the spec file that made it. Any
+// test asserting "nothing is parked" is therefore making a claim about GLOBAL
+// state: with `workers: 1` and servers shared across spec files, an earlier
+// file that parked a sale without resuming it has already falsified it. That
+// failure is CI-only and order-dependent -- it passes on its own locally,
+// which reads as flakiness and is not.
+//
+// Resume is the only thing that deletes a held row (there is deliberately no
+// bulk-delete endpoint; going around it via SQL would exercise a path the
+// product does not have), so draining means resuming each one in turn and
+// resetting the basket it lands in.
+//
+// Fails fast on a row resume cannot clear. `/api/pos/resume` returns
+// hold.error.failed WITHOUT deleting the row when the stored payload does not
+// unmarshal into a BasketSnapshot (internal/pages/hold_api.go -- the handler
+// returns before its own repo.Delete), and repo.Delete's error is swallowed
+// on the success path too. Either way the same id comes back every round, so
+// looping blindly to a round cap would burn the cap and then report "still
+// finding parked orders", which reads as unbounded generation rather than one
+// specific unresumable row. Naming the id and the toast is the difference
+// between a diagnosable failure and a confusing one.
+export async function drainParkedOrders(page: Page) {
+  let lastID = '';
+  for (let round = 0; round < 50; round++) {
+    await page.request.post('/api/pos/reset').catch(() => {});
+    const body = await (await page.request.get('/ui/parked-orders')).text();
+    const id = body.match(/data-held-id="([^"]+)"/)?.[1];
+    if (!id) return;
+    if (id === lastID) {
+      // Quote the refusal's own toast rather than the whole basket partial it
+      // is wrapped in -- the partial leads with ~200 chars of markup and
+      // whitespace, so a blind slice of it shows the caller nothing.
+      const refusal = await (await page.request.post('/api/pos/resume', { form: { id } })).text();
+      const toast = refusal.match(/class="notice-text">([^<]*)</)?.[1]?.trim() ?? '(no toast in response)';
+      throw new Error(
+        `drainParkedOrders: held order ${id} survived a resume, so it can never be ` +
+          `drained (a payload that fails to unmarshal is refused WITHOUT deleting ` +
+          `the row -- internal/pages/hold_api.go). The till answered: ${toast}`,
+      );
+    }
+    lastID = id;
+    await page.request.post('/api/pos/resume', { form: { id } });
+  }
+  throw new Error('drainParkedOrders: more than 50 parked orders; refusing to loop further');
 }

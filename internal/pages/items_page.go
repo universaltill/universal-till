@@ -52,7 +52,7 @@ func registerItemsPage(mux *http.ServeMux, d *common.Deps) {
 			"menuItems":   d.MenuSnapshot(),
 			"Sections":    sections,
 			"CurrentHref": current,
-			"PanelHTML":   embedItemsSection(mux, r, current),
+			"PanelHTML":   embedItemsSection(mux, r, current, locale),
 		}
 		httpx.Render("ui/pages/items.html", data)(w, r)
 	})
@@ -67,10 +67,16 @@ func registerItemsPage(mux *http.ServeMux, d *common.Deps) {
 // (ut-docs#1168): mux is the raw, not-yet-auth-wrapped mux app.Init passes
 // to every registerXxxPage call, so the caller's own session (r's context)
 // is carried over explicitly via auth.WithUser rather than relying on
-// middleware that this call bypasses. Locale/theme/other cookies (the
-// ut_lang cookie in particular) ride along unchanged via AddCookie, so the
-// embedded content matches what a direct visit to href would render for
-// this same user.
+// middleware that this call bypasses. Locale/theme/other cookies ride along
+// unchanged via AddCookie, so the embedded content matches what a direct
+// visit to href would render for this same user — EXCEPT ut_lang, which is
+// set explicitly from locale (the caller's already-resolved
+// httpx.RequestLocale(r)) rather than copied: href carries no ?lang= of its
+// own, so on a first-ever ?lang= visit — before Render's own ResolveLocale
+// call has had a chance to write the ut_lang cookie — copying r's cookies
+// alone would leave the sub-request with no locale signal at all, and it
+// would silently fall back to the default locale instead of inheriting
+// fa/whatever was actually requested (ut-docs#2114).
 //
 // On any non-200 (a permission gate this user doesn't clear, a DB error),
 // logs the real status/body server-side (same logging.L().Errorf pattern as
@@ -80,7 +86,7 @@ func registerItemsPage(mux *http.ServeMux, d *common.Deps) {
 // failure, and AC #3 ("the right panel is never empty on arrival") would
 // otherwise fail exactly when something is actually wrong. The section is
 // still reachable directly at its own URL either way.
-func embedItemsSection(mux *http.ServeMux, r *http.Request, href string) template.HTML {
+func embedItemsSection(mux *http.ServeMux, r *http.Request, href, locale string) template.HTML {
 	sub := httptest.NewRequest(http.MethodGet, href, nil).WithContext(r.Context())
 	sub.Header.Set("HX-Request", "true")
 	// This body is INLINED into /items, which draws the rail itself just
@@ -90,8 +96,17 @@ func embedItemsSection(mux *http.ServeMux, r *http.Request, href string) templat
 	// a second time inside the right panel). See itemsnav.EmbedHeader.
 	sub.Header.Set(itemsnav.EmbedHeader, "1")
 	for _, c := range r.Cookies() {
+		if c.Name == "ut_lang" {
+			continue // set explicitly below from the already-resolved locale
+		}
 		sub.AddCookie(c)
 	}
+	// Built through LocaleOverrideValue, never as a bare locale (ut-docs#2135):
+	// a ut_lang value carries the shop default and locale generation it was
+	// chosen against, and one that carries neither is treated as a stale
+	// pre-#2135 cookie and ignored — which would drop this sub-request back to
+	// the shop default and silently undo #2114's fix.
+	sub.AddCookie(&http.Cookie{Name: "ut_lang", Value: httpx.LocaleOverrideValue(locale)})
 	if u, ok := auth.FromContext(r.Context()); ok {
 		sub = auth.WithUser(sub, u)
 	}
@@ -99,7 +114,6 @@ func embedItemsSection(mux *http.ServeMux, r *http.Request, href string) templat
 	mux.ServeHTTP(rec, sub)
 	if rec.Code != http.StatusOK {
 		logging.L().Errorf("items panel: embedding %s failed (code %d): %s", href, rec.Code, rec.Body.String())
-		locale := httpx.RequestLocale(r)
 		msg := template.HTMLEscapeString(httpx.T(locale, "common.error.server"))
 		return template.HTML(`<div class="card" style="color: var(--danger)">` + msg + `</div>`) //nolint:gosec // msg is HTML-escaped above; the surrounding markup is a fixed literal
 	}

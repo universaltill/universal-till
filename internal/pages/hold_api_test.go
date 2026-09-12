@@ -250,6 +250,12 @@ func TestResumeHandler_RejectsWhenBasketAlreadyBusy(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("expected the held row to survive a rejected resume, got %d rows", count)
 	}
+	// ut-docs#1918: a refused resume must not stamp the held row's identity
+	// onto the unrelated live sale either -- parking THAT sale later must
+	// mint its own id, not overwrite the refused order's row.
+	if !dp.Engine.HeldOrigin().IsZero() {
+		t.Fatalf("a refused resume must leave the live basket with no held origin, got %+v", dp.Engine.HeldOrigin())
+	}
 }
 
 func TestHoldHandler_LabelsWithCustomerNameWhenSet(t *testing.T) {
@@ -917,5 +923,241 @@ func TestResume_ReleasesEmptyBasketsPriorTableClaim(t *testing.T) {
 	}
 	if !holdTestTableClaimed(t, dp, "tbl-1") {
 		t.Fatalf("the resumed order's T1 must be claimed")
+	}
+}
+
+// holdTestPost posts a form to the hold-API mux and returns the recorder.
+func holdTestPost(mux *http.ServeMux, path, form string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// holdTestOnlyRow returns the single held_sales row, failing if there isn't
+// exactly one -- the stable-identity tests below all assert that a re-park
+// never leaves a second row behind.
+func holdTestOnlyRow(t *testing.T, dp *common.Deps) data.HeldSale {
+	t.Helper()
+	rows, err := data.NewHeldSalesRepo(dp.Db).List(context.Background())
+	if err != nil {
+		t.Fatalf("list held_sales: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected exactly one held_sales row, got %d: %+v", len(rows), rows)
+	}
+	return rows[0]
+}
+
+// TestHoldHandler_FirstParkMintsFreshIDAndLabel (ut-docs#1918): a basket
+// that was never parked (no held-sale origin on the engine) keeps today's
+// behaviour exactly -- a fresh hold-<unixnano> id, the label fallback
+// chain, created_at from the schema default -- and parking clears the
+// engine's origin so the NEXT sale starts clean.
+func TestHoldHandler_FirstParkMintsFreshIDAndLabel(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	if !dp.Engine.HeldOrigin().IsZero() {
+		t.Fatalf("a never-parked basket must have no held origin, got %+v", dp.Engine.HeldOrigin())
+	}
+	if rec := holdTestPost(mux, "/api/pos/hold", "label=Table+4"); rec.Code != http.StatusOK {
+		t.Fatalf("hold: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	row := holdTestOnlyRow(t, dp)
+	if !strings.HasPrefix(row.ID, "hold-") {
+		t.Fatalf("first park must mint a fresh hold-<nanos> id, got %q", row.ID)
+	}
+	if row.Label != "Table 4" {
+		t.Fatalf("first park label = %q, want the typed label", row.Label)
+	}
+	if row.CreatedAt == "" {
+		t.Fatalf("first park must stamp created_at (schema default), got empty")
+	}
+	if !dp.Engine.HeldOrigin().IsZero() {
+		t.Fatalf("parking must leave the (now empty) basket with no origin, got %+v", dp.Engine.HeldOrigin())
+	}
+}
+
+// TestResumeThenRepark_ReusesSameIDLabelAndFirstParkedTime (ut-docs#1918):
+// the headline behaviour. Park -> resume -> edit -> park again lands under
+// the SAME row id, keeps the ORIGINAL label even though the re-park posts a
+// different one and a customer has since been attached (the fallback chain
+// must not run again), keeps the FIRST park's created_at (age never
+// resets), and never leaves a duplicate row -- while the row's contents
+// (line count, total, payload) do reflect the edits.
+func TestResumeThenRepark_ReusesSameIDLabelAndFirstParkedTime(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	if rec := holdTestPost(mux, "/api/pos/hold", "label=Table+4"); rec.Code != http.StatusOK {
+		t.Fatalf("first hold: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	first := holdTestOnlyRow(t, dp)
+	// Backdate the first park so "created_at preserved" is distinguishable
+	// from "created_at re-stamped to now" (both would otherwise read as the
+	// same second in a fast test).
+	if _, err := dp.Db.Exec(`UPDATE held_sales SET created_at = '2026-09-09 10:00:00' WHERE id = ?`, first.ID); err != nil {
+		t.Fatalf("backdate: %v", err)
+	}
+
+	if rec := holdTestPost(mux, "/api/pos/resume", "id="+first.ID); rec.Code != http.StatusOK {
+		t.Fatalf("resume: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := dp.Engine.HeldOrigin(); got.ID != first.ID || got.Label != "Table 4" || got.CreatedAt != "2026-09-09 10:00:00" {
+		t.Fatalf("resume must record the row's identity on the engine, got %+v", got)
+	}
+	var n int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM held_sales`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("resume still consumes the row while the order is live, got %d rows (err %v)", n, err)
+	}
+
+	// Edit the live order, attach a customer, then re-park posting a BLANK
+	// label -- none of that may change the order's identity, and a blank
+	// field must never re-derive a label from the clock or the customer
+	// just attached (see TestResumeThenRepark_ExplicitRenameOverrides below
+	// for the case where the cashier DOES type a new one).
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("second scan: %v", err)
+	}
+	dp.Engine.SetCustomer("cust1", "Jane Doe")
+	rec := holdTestPost(mux, "/api/pos/hold", "label=")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("re-park: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("HX-Trigger") != "held-changed" {
+		t.Fatalf("re-park must still refresh the held strip, got HX-Trigger %q", rec.Header().Get("HX-Trigger"))
+	}
+	again := holdTestOnlyRow(t, dp)
+	if again.ID != first.ID {
+		t.Fatalf("re-park id = %q, want the original %q (a resumed order must keep its identity)", again.ID, first.ID)
+	}
+	if again.Label != "Table 4" {
+		t.Fatalf("re-park label = %q, want the ORIGINAL \"Table 4\" (a blank field must not re-run the fallback chain)", again.Label)
+	}
+	if again.CreatedAt != "2026-09-09 10:00:00" {
+		t.Fatalf("re-park created_at = %q, want the first park's time preserved", again.CreatedAt)
+	}
+	// One merged line at qty 2: 2 x 100 + 20% tax-exclusive VAT = 240
+	// (first park was 1 x 100 + 20% = 120).
+	if again.LineCount != 1 || again.TotalMinor != 240 {
+		t.Fatalf("re-park must store the EDITED contents (2 x 100 + 20%% = 240), got lines=%d total=%d", again.LineCount, again.TotalMinor)
+	}
+	if !dp.Engine.HeldOrigin().IsZero() {
+		t.Fatalf("re-park must clear the engine's origin, got %+v", dp.Engine.HeldOrigin())
+	}
+
+	// And it can be resumed again under that same id.
+	if rec := holdTestPost(mux, "/api/pos/resume", "id="+first.ID); rec.Code != http.StatusOK {
+		t.Fatalf("second resume: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !dp.Engine.HasItems() {
+		t.Fatalf("second resume must restore the basket")
+	}
+}
+
+// TestResumeThenRepark_ExplicitRenameOverrides (ut-docs#1918, independent
+// review finding): the hold dialog still shows an editable label field on
+// every park, including a re-park. Freezing the label unconditionally would
+// make that field a lie -- a cashier who resumes "12:05", realises it's
+// actually table 4, types "Table 4" and submits would see the toast succeed
+// while the order silently kept its old name forever. A genuinely typed,
+// non-blank label on re-park must win; only a BLANK field keeps the
+// original (see TestResumeThenRepark_ReusesSameIDLabelAndFirstParkedTime).
+func TestResumeThenRepark_ExplicitRenameOverrides(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	if rec := holdTestPost(mux, "/api/pos/hold", "label="); rec.Code != http.StatusOK {
+		t.Fatalf("first hold: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	first := holdTestOnlyRow(t, dp)
+	if first.Label == "" {
+		t.Fatalf("first park with no typed label must fall back (clock or customer), got empty")
+	}
+
+	if rec := holdTestPost(mux, "/api/pos/resume", "id="+first.ID); rec.Code != http.StatusOK {
+		t.Fatalf("resume: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := holdTestPost(mux, "/api/pos/hold", "label=Table+4"); rec.Code != http.StatusOK {
+		t.Fatalf("re-park: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	again := holdTestOnlyRow(t, dp)
+	if again.ID != first.ID {
+		t.Fatalf("explicit rename must not change the order's identity, id = %q, want %q", again.ID, first.ID)
+	}
+	if again.Label != "Table 4" {
+		t.Fatalf("re-park label = %q, want the explicitly typed \"Table 4\"", again.Label)
+	}
+}
+
+// TestResumeThenReset_NextParkIsAFreshOrder (ut-docs#1918): abandoning a
+// resumed order (New sale / Reset) ends its identity -- the next basket
+// parked on this till is a new order with its own id, never a silent
+// overwrite of the abandoned one's row under the old id.
+func TestResumeThenReset_NextParkIsAFreshOrder(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	holdTestPost(mux, "/api/pos/hold", "label=Table+4")
+	first := holdTestOnlyRow(t, dp)
+	holdTestPost(mux, "/api/pos/resume", "id="+first.ID)
+	dp.Engine.Reset()
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("new sale scan: %v", err)
+	}
+	holdTestPost(mux, "/api/pos/hold", "label=Walk-in")
+	next := holdTestOnlyRow(t, dp)
+	if next.ID == first.ID {
+		t.Fatalf("a new sale after Reset must park under a fresh id, reused %q", first.ID)
+	}
+	if next.Label != "Walk-in" {
+		t.Fatalf("a new sale's first park must run the label chain, got %q", next.Label)
+	}
+}
+
+// TestResumeReparkResume_PreservesOrderType (ut-docs#1381 regression guard,
+// re-pinned for ut-docs#1918's stable-identity path): the takeaway choice
+// must survive not just one hold/resume (TestHoldThenResume_PreservesOrderType
+// above) but the new re-park-under-the-same-id write too -- resume, add
+// nothing, verify; re-park (Upsert), resume again, verify. A silent revert
+// to dine-in here changes the sale's VAT basis (§12 UStG).
+func TestResumeReparkResume_PreservesOrderType(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	dp.Engine.SetOrderType(pos.OrderTypeTakeaway)
+	holdTestPost(mux, "/api/pos/hold", "")
+	first := holdTestOnlyRow(t, dp)
+
+	holdTestPost(mux, "/api/pos/resume", "id="+first.ID)
+	if got := dp.Engine.OrderType(); got != pos.OrderTypeTakeaway {
+		t.Fatalf("after first resume OrderType() = %q, want %q", got, pos.OrderTypeTakeaway)
+	}
+
+	// Re-park with nothing changed: the upsert path, same id.
+	holdTestPost(mux, "/api/pos/hold", "")
+	again := holdTestOnlyRow(t, dp)
+	if again.ID != first.ID {
+		t.Fatalf("re-park id = %q, want %q", again.ID, first.ID)
+	}
+	// heldSaleMayHaveTable is false only for an all-takeaway payload -- a
+	// cheap check that the re-parked payload itself still says takeaway.
+	if heldSaleMayHaveTable(again.Payload) {
+		t.Fatalf("re-parked payload lost its takeaway order type: %s", again.Payload)
+	}
+
+	holdTestPost(mux, "/api/pos/resume", "id="+first.ID)
+	if got := dp.Engine.OrderType(); got != pos.OrderTypeTakeaway {
+		t.Fatalf("after resume -> re-park -> resume OrderType() = %q, want %q (silently reverted to dine-in)", got, pos.OrderTypeTakeaway)
+	}
+	if got := dp.Engine.HeldOrigin(); got.ID != first.ID {
+		t.Fatalf("second resume must re-record the same origin id, got %+v", got)
 	}
 }

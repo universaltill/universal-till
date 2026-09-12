@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -106,6 +107,33 @@ func TestFiscalDevicePage_RendersWithoutPlugin(t *testing.T) {
 	}
 	if !strings.Contains(body, en("fiscaldevice.actions.unavailable")) {
 		t.Fatalf("expected the actions-unavailable explanation, got: %s", body)
+	}
+}
+
+// ut-docs#2148 review finding: `?msg=` used to feed the "login-ok" success
+// banner through `{{ T .msgKey }}` unvalidated — a crafted link could make
+// the till display fake "confirmed"-looking text. An unrecognised value
+// must render the shared generic fallback instead of the raw query value.
+func TestFiscalDevicePage_UnrecognisedMsgQueryValueRendersGenericFallback(t *testing.T) {
+	mux, d := newFiscalDeviceTestMux(t)
+	t.Setenv("UT_AUTH", "off")
+	seedActiveTaxTrPlugin(t, d.Db, false)
+	setCountry(t, d, "TR")
+
+	attackerText := "Device confirmed successfully, no action needed"
+	req := httptest.NewRequest(http.MethodGet, "/fiscal-device?msg="+url.QueryEscape(attackerText), nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /fiscal-device?msg=... = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, attackerText) {
+		t.Fatalf("body rendered the raw, unrecognised ?msg= value verbatim:\n%s", body)
+	}
+	want := httpx.T("en", "common.error.server")
+	if !strings.Contains(body, want) {
+		t.Fatalf("body missing the generic fallback message %q:\n%s", want, body)
 	}
 }
 
@@ -547,5 +575,88 @@ func TestFiscalDevicePage_RendersLocaleFormattedIssuedAt(t *testing.T) {
 	// 2026-09-03T10:00:00+03:00 in UTC (time.Local above) is 07:00.
 	if !strings.Contains(body, "03.09.2026 07:00") {
 		t.Fatalf("last-receipt row must show the de-DE-formatted date+time: %s", body)
+	}
+}
+
+// ut-docs#2116: /fiscal-device is one of the /admin tree's six
+// destinations, converted to the same two-pane master-detail shell /items
+// uses (ut-docs#1950). An htmx request (from that panel) must get just the
+// "content" block, plus an out-of-band refresh of the admin tree with
+// /fiscal-device marked is-current — not the full standalone page's
+// chrome. Country=TR + the Turkish plugin active so the entry actually
+// appears in the tree at all (fiscalDevicePluginActive's gate) — without
+// that the OOB tree simply omits the row.
+func TestFiscalDevicePage_HXRequestReturnsContentFragmentWithOOBAdminTree(t *testing.T) {
+	mux, d := newFiscalDeviceTestMux(t)
+	d.UpdateState(func(s *common.RuntimeState) { s.Country = "TR" })
+	seedActiveTaxTrPlugin(t, d.Db, true)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/fiscal-device", nil), manager)
+	req.Header.Set("HX-Request", "true")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("htmx GET /fiscal-device: %d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "<html") || strings.Contains(body, `class="nav"`) {
+		t.Errorf("htmx request re-rendered the whole page shell: %s", body)
+	}
+	railStart := strings.Index(body, `id="admin-tree"`)
+	if railStart < 0 || !strings.Contains(body, `hx-swap-oob="true"`) {
+		t.Fatalf("fragment missing the OOB admin-tree swap: %s", body)
+	}
+	rail := body[railStart:]
+	idx := strings.Index(rail, `href="/fiscal-device"`)
+	if idx < 0 {
+		t.Fatalf("OOB admin tree missing the /fiscal-device row: %s", rail)
+	}
+	tagStart := strings.LastIndex(rail[:idx], "<a ")
+	tagEnd := strings.Index(rail[tagStart:], ">") + tagStart
+	if !strings.Contains(rail[tagStart:tagEnd], "is-current") {
+		t.Errorf("the /fiscal-device row itself is not marked is-current: %s", rail[tagStart:tagEnd])
+	}
+}
+
+// A plain browser GET (no HX-Request) must still render the exact same full
+// standalone page as before this card.
+func TestFiscalDevicePage_NonHXRequestStillRendersFullPage(t *testing.T) {
+	mux, d := newFiscalDeviceTestMux(t)
+	d.UpdateState(func(s *common.RuntimeState) { s.Country = "TR" })
+	seedActiveTaxTrPlugin(t, d.Db, true)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/fiscal-device", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /fiscal-device: %d %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "<html") || !strings.Contains(body, `class="nav"`) {
+		t.Errorf("expected the full standalone page shell, got: %s", body)
+	}
+}
+
+// ut-docs#2091's Vary requirement, extended to /fiscal-device now that it
+// is a dual-mode destination too.
+func TestFiscalDevicePage_VaryHXRequestOnBothBranches(t *testing.T) {
+	mux, d := newFiscalDeviceTestMux(t)
+	d.UpdateState(func(s *common.RuntimeState) { s.Country = "TR" })
+	seedActiveTaxTrPlugin(t, d.Db, true)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	fragReq := auth.WithUser(httptest.NewRequest(http.MethodGet, "/fiscal-device", nil), manager)
+	fragReq.Header.Set("HX-Request", "true")
+	fragRec := httptest.NewRecorder()
+	mux.ServeHTTP(fragRec, fragReq)
+	if got := fragRec.Header().Get("Vary"); got != "HX-Request" {
+		t.Errorf("fragment branch: Vary header = %q, want %q", got, "HX-Request")
+	}
+
+	fullReq := auth.WithUser(httptest.NewRequest(http.MethodGet, "/fiscal-device", nil), manager)
+	fullRec := httptest.NewRecorder()
+	mux.ServeHTTP(fullRec, fullReq)
+	if got := fullRec.Header().Get("Vary"); got != "HX-Request" {
+		t.Errorf("full-page branch: Vary header = %q, want %q", got, "HX-Request")
 	}
 }

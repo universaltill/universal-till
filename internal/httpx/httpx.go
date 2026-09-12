@@ -504,6 +504,54 @@ func T(locale, key string) string {
 	return key
 }
 
+// genericErrKey is the fallback QueryErrKey renders in place of unrecognised
+// `?err=` text. Reuses the existing shared `common.error.server` key rather
+// than minting a new one — same reasoning as ut-docs#1663/#1620's own
+// error-message migrations: it avoids new-key churn across all four locales
+// plus the external ut-plugin-language-{de,es} packs, and no touched page's
+// own namespace has a better-fitting existing "something went wrong" key.
+const genericErrKey = "common.error.server"
+
+// QueryErrKey reads a page's conventional `?err=` query parameter and
+// returns it only if it resolves to a real i18n key; otherwise it returns
+// genericErrKey. Several pages pass r.URL.Query().Get("err") straight
+// through to `{{ T .errKey }}` for their error banner, and T's own
+// fallback-to-key behaviour then renders WHATEVER text follows `?err=`
+// verbatim — not exploitable as XSS (html/template still escapes the text
+// node) but a spoofing/social-engineering vector: a crafted link can make
+// the till's own UI display an attacker-chosen "official-looking" message
+// (ut-docs#2148). Centralizing the check here, rather than validating in
+// each of the ~10 handlers that read this parameter, is deliberate: it's
+// the one choke point every one of them already funnels through.
+// No translator wired (a test that never called InitI18n) can't verify a
+// key either way, so this preserves T's own existing nil-safety and passes
+// the raw value through unchanged rather than failing closed on every such
+// test.
+func QueryErrKey(r *http.Request) string {
+	return queryBannerKey(r, "err")
+}
+
+// QueryMsgKey is QueryErrKey's success-banner counterpart (ut-docs#2148
+// review finding): fiscal_device_page.go's `?msg=` feeds a "login-ok"
+// success banner through the identical `{{ T .msgKey }}` fallback-to-key
+// hazard — same fix, different query parameter and banner styling.
+func QueryMsgKey(r *http.Request) string {
+	return queryBannerKey(r, "msg")
+}
+
+// queryBannerKey backs both QueryErrKey and QueryMsgKey: reads the named
+// query parameter and returns it only if it resolves to a real i18n key.
+func queryBannerKey(r *http.Request, param string) string {
+	key := r.URL.Query().Get(param)
+	if key == "" {
+		return ""
+	}
+	if t := translator(); t != nil && !t.Has(key) {
+		return genericErrKey
+	}
+	return key
+}
+
 // AvailableLocales returns the locales the base translation files define
 // (config.I18n.Available() — the same set the UI's own language switcher is
 // built from), or nil if no translator is wired (e.g. a test that never
@@ -518,13 +566,38 @@ func AvailableLocales() []string {
 	return nil
 }
 
+// localeCookie is the per-browser language override a ?lang= link leaves
+// behind. Its value is "<locale>|<shop default at the time>|<locale
+// generation at the time>" — see LocaleOverride for why the two trailing
+// fields exist.
+const localeCookie = "ut_lang"
+
+// localeGeneration counts the times the shop has EXPLICITLY set its
+// language (Settings' Language card, a store.locale write from the
+// all-settings table, finishing the setup wizard). It is persisted in
+// store.locale_generation and reloaded at boot, so it survives restarts —
+// a counter that reset to zero would silently re-validate every override
+// it had retired.
+var localeGeneration atomic.Int64
+
+// SetLocaleGeneration publishes the shop's current locale generation
+// (ut-docs#2135). Called at boot from the persisted value, and again each
+// time the shop's language is explicitly set.
+func SetLocaleGeneration(n int64) { localeGeneration.Store(n) }
+
+// LocaleGeneration returns the shop's current locale generation.
+func LocaleGeneration() int64 { return localeGeneration.Load() }
+
 // ResolveLocale determines the locale from query, cookie, then default.
 func ResolveLocale(w http.ResponseWriter, r *http.Request) string {
 	// query param takes precedence and sets cookie
 	if lang := r.URL.Query().Get("lang"); lang != "" {
 		http.SetCookie(w, &http.Cookie{
-			Name:     "ut_lang",
-			Value:    lang,
+			Name: localeCookie,
+			// Record what this choice was made against, so a later
+			// shop-level change can tell a live preference from a stale
+			// one (ut-docs#2135).
+			Value:    LocaleOverrideValue(lang),
 			Path:     "/",
 			MaxAge:   31536000, // 1 year
 			HttpOnly: false,
@@ -532,6 +605,64 @@ func ResolveLocale(w http.ResponseWriter, r *http.Request) string {
 		return lang
 	}
 	return RequestLocale(r)
+}
+
+// LocaleOverrideValue builds the ut_lang cookie value for a chosen locale:
+// the locale itself, plus the two things it is only valid relative to. The
+// single definition of the cookie's format — construct it nowhere else.
+func LocaleOverrideValue(lang string) string {
+	return lang + "|" + DefaultLocale() + "|" + strconv.FormatInt(LocaleGeneration(), 10)
+}
+
+// LocaleOverride returns this request's per-browser language override and
+// whether it is still valid.
+//
+// An override is a preference *relative to* what the shop was showing when it
+// was made, so it is honoured only while both of those things still hold
+// (ut-docs#2135):
+//
+//   - the shop default it was recorded against is still the shop default, and
+//   - the shop has not explicitly set its language since (the generation).
+//
+// The generation is what makes Settings → Language authoritative for the
+// WHOLE shop rather than only for the browser the save happened to be made
+// from. Re-applying the language the shop is already set to leaves the
+// default unmoved, so the first check alone would let the override stand —
+// and that is exactly the state a confused operator is in: the screen shows
+// the wrong language, Settings already shows the right one, and re-applying
+// it was their only move. It also means a manager can fix a till from their
+// own phone, which a Set-Cookie on the responding request cannot do.
+//
+// A cookie with fewer than three fields is a pre-#2135 one. It carries no
+// evidence of what it was chosen against, so it cannot be trusted over an
+// explicit shop setting and is ignored: affected tills heal themselves on
+// upgrade instead of waiting for an operator to find a control that, before
+// this change, could not clear it anyway. The cost is that a deliberate
+// pre-upgrade per-browser choice is forgotten once, and has to be re-picked.
+func LocaleOverride(r *http.Request) (string, bool) {
+	c, err := r.Cookie(localeCookie)
+	if err != nil || c.Value == "" {
+		return "", false
+	}
+	// Cut at the FIRST separator, so a ?lang= value containing one of its
+	// own cannot forge the trailing fields: "en|de|9" arrives as
+	// "en|de|9|<real base>|<real gen>" and fails the field count below.
+	lang, rest, ok := strings.Cut(c.Value, "|")
+	if !ok || lang == "" {
+		return "", false // legacy, pre-#2135
+	}
+	base, genStr, ok := strings.Cut(rest, "|")
+	if !ok || base == "" || genStr == "" {
+		return "", false
+	}
+	gen, err := strconv.ParseInt(genStr, 10, 64)
+	if err != nil {
+		return "", false
+	}
+	if base != DefaultLocale() || gen != LocaleGeneration() {
+		return "", false // the shop has moved on since
+	}
+	return lang, true
 }
 
 // RequestLocale is ResolveLocale without the side effect: the same
@@ -544,9 +675,10 @@ func RequestLocale(r *http.Request) string {
 	if lang := r.URL.Query().Get("lang"); lang != "" {
 		return lang
 	}
-	// cookie
-	if c, err := r.Cookie("ut_lang"); err == nil && c.Value != "" {
-		return c.Value
+	// cookie — only while it is still a live preference, not a stale one
+	// (ut-docs#2135)
+	if lang, ok := LocaleOverride(r); ok {
+		return lang
 	}
 	// default
 	if v := defaultLocale.Load(); v != nil {
@@ -573,6 +705,25 @@ var kioskMode atomic.Value // bool
 // InitKiosk marks the process as running on a dedicated till (larger touch
 // targets, no text selection). Driven by UT_KIOSK=1.
 func InitKiosk(on bool) { kioskMode.Store(on) }
+
+// selfOrderMode backs the "selforder" template func — mirrors kioskMode
+// above exactly, but for a different axis: the per-till display.mode
+// setting (ADR-0020), not the UT_KIOSK window-chrome flag. ut-docs#2099
+// (the implementation half of ut-docs#1999, coding-standards.md §10) reads
+// it so a shared partial (record_dialog.html) can withhold the status/
+// lock/exit affordance for customer containment while a device is in
+// self-order kiosk mode, without every page threading the flag through its
+// own template dict by hand. Published at boot from the persisted
+// display.mode (pages.Init) and live-updated the moment an operator flips
+// it (settings_page.go's POST /api/settings/display-mode) — same two call
+// sites InitOSKMode/oskModeVal already follow for the on-screen-keyboard
+// mode.
+var selfOrderMode atomic.Value // bool
+
+// InitSelfOrderMode publishes whether this till is currently in self-order
+// kiosk mode (display.mode="self_order") to templates via the "selforder"
+// func below.
+func InitSelfOrderMode(on bool) { selfOrderMode.Store(on) }
 
 // assetVersion returns a cache-busting version for a web asset: the file's
 // mtime, so browsers pick up redesigns without a manual hard refresh.
@@ -757,6 +908,21 @@ func FuncsFor(locale string) template.FuncMap {
 		}
 		return false
 	}
+	// ut-docs#2099: whether THIS device is currently in self-order kiosk
+	// mode (display.mode="self_order", ADR-0020) — the axis record_dialog.html
+	// checks to withhold its status/lock/exit affordance (coding-standards.md
+	// §10: customer containment is the one place those three must NOT be
+	// reachable). Same shape as "kiosk" just above; a different underlying
+	// atomic (selfOrderMode, not kioskMode) since the two are unrelated
+	// settings that happen to share the word "kiosk" — see selfOrderMode's
+	// own doc comment.
+	funcs["selforder"] = func() bool {
+		if v := selfOrderMode.Load(); v != nil {
+			b, _ := v.(bool)
+			return b
+		}
+		return false
+	}
 	funcs["uiscalepx"] = uiScalePx
 	funcs["uiscale"] = uiScaleCSS
 	funcs["oskmode"] = oskModeVal
@@ -890,6 +1056,12 @@ var renderFiles = []string{
 	// modifiers.html", ...)/RenderContentFragment call sites, same as
 	// items_rail.html above.
 	"ui/partials/modifier_group_admin.html",
+	// ut-docs#2119: the /catalog + /inventory category-filter chip row.
+	// /catalog goes through its own bespoke RenderWith file set (see
+	// catalog/handlers.go), but /inventory renders through the plain
+	// httpx.Render("ui/pages/inventory.html", ...) call site above, same
+	// riding-along mechanism as items_rail.html/modifier_group_admin.html.
+	"ui/partials/category_filter.html",
 	// ut-docs#2010: the app-wide list/edit standard's two partials
 	// (ut-docs/reference/list-and-dialog-pattern.md). Same mechanism as
 	// items_rail.html above — a page includes them by their {{ define }}
@@ -976,22 +1148,37 @@ func RenderContentFragment(tplPath string, data any) http.HandlerFunc {
 }
 
 // IsFragmentSwap reports whether r is an ordinary in-page htmx navigation —
-// "HX-Request: true" and NOT ALSO "HX-History-Restore-Request: true".
+// "HX-Request: true" and NOT ALSO "HX-History-Restore-Request: true" — and,
+// as a side effect on every call regardless of the result, sets
+// "Vary: HX-Request" on w.
 //
-// The second header matters: htmx caps its client-side history cache at 10
-// snapshots, so restoring an older bfcache'd URL makes htmx re-request it
-// itself with BOTH headers set, expecting the FULL page back (to replace
-// the whole tracked history element) rather than a bare swappable fragment
-// — checking HX-Request alone sent the fragment there too and left the
-// restored page broken (see renderHelpPage's original instance of this
-// exact check, ut-docs#433, for the full story). Shared here so every
-// handler that serves both a full standalone page and an htmx fragment of
-// the same content at the same route applies the identical rule — /items'
-// five section destinations (ut-docs#1950) need it five times over;
-// renderHelpPage itself keeps its own inline copy rather than being
-// refactored onto this helper, so as not to touch its own already-covered
-// behavior as a side effect of this card.
-func IsFragmentSwap(r *http.Request) bool {
+// The Vary header matters because the two branches this decides between
+// return different bodies for the SAME URL: a fragment for an htmx
+// navigation, a complete standalone page otherwise. With no Vary header, a
+// browser/WebView HTTP cache keys purely on the URL and can serve either
+// body to the other kind of request — concretely, a rail swap that fetches
+// a page as a fragment and pushes its URL into history, followed by a
+// plain navigation back to that URL (e.g. the Android hardware Back
+// button), can be served the cached fragment: an unstyled page with no
+// <head> (ut-docs#2091). Setting it here, at the one place every dual-mode
+// handler already calls to make this decision, means a future dual-mode
+// handler inherits the fix automatically instead of having to remember it
+// — which is also why renderHelpPage's own former inline copy of this
+// exact check (ut-docs#433) was retired in favor of calling this helper
+// directly as part of ut-docs#2091, rather than keeping a second place
+// this rule could go stale.
+//
+// The HX-History-Restore-Request exclusion: htmx caps its client-side
+// history cache at 10 snapshots, so restoring an older bfcache'd URL makes
+// htmx re-request it itself with BOTH headers set, expecting the FULL page
+// back (to replace the whole tracked history element) rather than a bare
+// swappable fragment — checking HX-Request alone sent the fragment there
+// too and left the restored page broken. Shared here so every handler that
+// serves both a full standalone page and an htmx fragment of the same
+// content at the same route applies the identical rule — /items' five
+// section destinations (ut-docs#1950) need it five times over.
+func IsFragmentSwap(w http.ResponseWriter, r *http.Request) bool {
+	w.Header().Set("Vary", "HX-Request")
 	if strings.EqualFold(r.Header.Get("HX-History-Restore-Request"), "true") {
 		return false
 	}

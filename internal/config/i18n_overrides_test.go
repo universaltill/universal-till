@@ -104,6 +104,34 @@ func TestEntries_MissingKeyInNonEnglishFallbackStillListed(t *testing.T) {
 	}
 }
 
+// TestHas_TrueForAnyLayerInAnyLocale (ut-docs#2148): Has must find a key
+// regardless of which locale or layer (base/overlay/shop) actually defines
+// it — it answers "is this a real key anywhere", not "does it resolve for
+// one particular locale" (that's T's job).
+func TestHas_TrueForAnyLayerInAnyLocale(t *testing.T) {
+	i := newTestI18n(t)
+	i.SetShopOverrides(map[string]map[string]string{"fa": {"only.shop": "فقط فروشگاه"}})
+
+	for _, key := range []string{"basket.total", "only.base", "plugin.faq.menu", "only.shop"} {
+		if !i.Has(key) {
+			t.Errorf("Has(%q) = false, want true", key)
+		}
+	}
+}
+
+// TestHas_FalseForArbitraryText is the actual security-relevant case: text
+// an attacker controls (e.g. a `?err=` query value) that never appears in
+// any locale file must not be mistaken for a real key.
+func TestHas_FalseForArbitraryText(t *testing.T) {
+	i := newTestI18n(t)
+	if i.Has("Your card was declined") {
+		t.Fatal("Has(arbitrary attacker text) = true, want false")
+	}
+	if i.Has("") {
+		t.Fatal("Has(\"\") = true, want false")
+	}
+}
+
 // SetOverlays (language-pack plugin translations) had zero direct test
 // coverage before this batch — only ever exercised transitively through T()
 // via a hand-built struct literal, never through the setter itself.

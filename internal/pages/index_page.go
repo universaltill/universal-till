@@ -37,8 +37,13 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 		// never LAN-syncs). /backoffice is manager/admin role-gated — a
 		// cashier session on a backoffice-mode till falls through to the
 		// normal sale screen instead of a dead-end 403 (the mode is a
-		// default landing preference, not a role bypass).
-		if mode == "backoffice" && canPerform(d, r, "reports") {
+		// default landing preference, not a role bypass). ut-docs#2146:
+		// "stay=1" is that same fall-through, offered to an explicit action
+		// too — an operator who just tapped a "Back to sale" link (see
+		// saleScreenReturnURL below) has already opted out of the landing
+		// preference, so this bypasses it exactly like the non-manager case
+		// already does.
+		if mode == "backoffice" && r.URL.Query().Get("stay") != "1" && canPerform(d, r, "reports") {
 			http.Redirect(w, r, "/backoffice", http.StatusSeeOther)
 			return
 		}
@@ -206,4 +211,37 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 		}
 		httpx.Render("ui/pages/index.html", data)(w, r)
 	})
+}
+
+// saleScreenReturnURL is where an explicit "return to the sale screen"
+// action (e.g. /open-orders's own "Back to sale" link, open_orders_page.go)
+// should point -- NOT always bare "/", which re-applies whatever
+// display.mode landing preference is current rather than necessarily
+// showing the sale screen (ut-docs#2146). The two modes handled below need
+// OPPOSITE treatment, not one bypass:
+//
+//   - backoffice (ADR-0018): the redirect above is documented as "a default
+//     landing preference, not a role bypass" -- an operator who just took
+//     an explicit action asking for the sale screen has already opted out
+//     of that default, so this sends them to "/" with "stay=1", which the
+//     handler above honors by skipping the /backoffice redirect exactly
+//     like it already does for a non-manager session.
+//   - self_order (ADR-0020): the opposite call, deliberately. That redirect
+//     is kiosk containment, not a preference -- it applies to every
+//     authenticated session "since a self-order-mode till isn't meant to
+//     show the cashier screen to anyone by default" (see the handler's own
+//     comment above). An explicit action still can't open a door ADR-0020
+//     says should not exist, so this returns the till to the one screen it
+//     is meant to show, not the cashier sale screen.
+//
+// Any other mode: "/" already renders the sale screen directly, unchanged.
+func saleScreenReturnURL(mode string) string {
+	switch mode {
+	case "self_order":
+		return "/self-order"
+	case "backoffice":
+		return "/?stay=1"
+	default:
+		return "/"
+	}
 }

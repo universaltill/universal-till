@@ -28,6 +28,7 @@ FAIL_COUNT=0
 
 fixtures=()
 scratch_dir=""
+worktree_decoy_root=""
 # Invoked indirectly via `trap ... EXIT`, not a direct call -- shellcheck cannot see that (SC2317 false positive).
 # shellcheck disable=SC2317
 cleanup() {
@@ -39,6 +40,12 @@ cleanup() {
   fi
   if [[ -n "${scratch_dir}" && -d "${scratch_dir}" ]]; then
     rm -rf "${scratch_dir}"
+  fi
+  # Absolute path to this test's own uniquely-named decoy directory only —
+  # never a glob, and never anywhere near a real .claude/worktrees/agent-*
+  # tree a live Agent(isolation: "worktree") run may have checked out.
+  if [[ -n "${worktree_decoy_root}" && -d "${worktree_decoy_root}" ]]; then
+    rm -rf "${worktree_decoy_root}"
   fi
   exit "${status}"
 }
@@ -138,6 +145,26 @@ func zzGuardTestOtherFileInPos(ctx context.Context, repo PricingRepo) {
 }'
 expect_fail "a caller inside internal/pos but outside pricing.go"
 clear_fixtures
+
+# ut-docs#2129: a real caller planted under .claude/worktrees/ (an agent
+# worktree's own copy of this repo's files at some other commit — see
+# universal-till/CLAUDE.md's "Agent worktree hygiene") must NOT trip the
+# guard, even though it is a real, textually-matching call outside
+# internal/pos/pricing.go — it's a copy of a caller tracked (or planted)
+# elsewhere, not a new one, and the same false failure that motivated this
+# card was reproduced exactly this way. A dedicated, uniquely-named
+# directory (never touching the real .claude/worktrees/agent-* trees a
+# live Agent(isolation: "worktree") run may have checked out) so this test
+# can never step on one; removed with an absolute-path `rm -rf`, never a
+# glob, on this test's own directory only.
+worktree_decoy_root="${ROOT_DIR}/.claude/worktrees/zz-guard-test-fixture-2129"
+worktree_decoy_dir="${worktree_decoy_root}/internal/pages"
+mkdir -p "${worktree_decoy_dir}"
+worktree_decoy_path="${worktree_decoy_dir}/zz_guard_test_WorktreeDecoy.go"
+printf 'package pages\n\nimport (\n\t"context"\n\t"time"\n\n\t"github.com/universaltill/universal-till/internal/pos"\n)\n\nfunc zzGuardTestWorktreeDecoy(ctx context.Context, repo pos.PricingRepo) {\n\t_ = pos.AppendPriceHistoryItem(ctx, repo, "itm1", 100, time.Now())\n}\n' >"${worktree_decoy_path}"
+expect_pass "a caller planted under .claude/worktrees/ (agent worktree copy)"
+rm -rf "${worktree_decoy_root}"
+worktree_decoy_root=""
 
 # A call planted in a _test.go file outside internal/pos must not trip the
 # guard (mirrors the deadcode guard's own test-file exclusion).

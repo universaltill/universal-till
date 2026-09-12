@@ -410,18 +410,21 @@ func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.Handl
 			http.Error(w, "plugin ID is required", http.StatusBadRequest)
 			return
 		}
-		// fiscal.sign.ask is an EXCLUSIVE extension point (ADR-0041
-		// Decision B, ADR-0044; ut-docs#675): only one TSE provider is
-		// meaningfully active on a till at once, so enabling a second
-		// plugin that also declares it while another answerer is active is
-		// refused HERE, at install/enable time, naming the owning plugin —
-		// never at tender time, mid-sale. The same check also runs at
-		// manifest-persist time (plugins.PersistManifest), which install
-		// and update go through — this handler covers re-enabling an
-		// installed-but-disabled plugin. NOTE: tax.rate.ask is equally
-		// `exclusive` per ADR-0041 but has NO equivalent enforcement today;
-		// retrofitting it is deliberately out of this card's scope (it
-		// predates the mechanism) and needs its own card.
+		// The fiscal signing group — fiscal.sign.ask, fiscal.sign.start,
+		// fiscal.sign.reconcile.ask (plugins.FiscalSignExclusiveEvents) —
+		// is ONE EXCLUSIVE extension point (ADR-0041 Decision B, ADR-0044;
+		// ut-docs#675, widened to the three-event group by ADR-0077 D3,
+		// ut-docs#1520): only one TSE provider is meaningfully active on a
+		// till at once, so enabling a second plugin that declares ANY
+		// member while another plugin holds ANY member is refused HERE, at
+		// install/enable time, naming the owning plugin — never at tender
+		// time, mid-sale. The same check also runs at manifest-persist time
+		// (plugins.PersistManifest), which install and update go through —
+		// this handler covers re-enabling an installed-but-disabled plugin.
+		// NOTE: tax.rate.ask is equally `exclusive` per ADR-0041 but has NO
+		// equivalent enforcement today; retrofitting it is deliberately out
+		// of this card's scope (it predates the mechanism) and needs its own
+		// card.
 		//
 		// FAIL CLOSED on a DB error (review of ut-docs#675, B2): on a
 		// compliance-relevant exclusive point, "couldn't verify ownership"
@@ -429,24 +432,31 @@ func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.Handl
 		// skip the check and activate a possibly-second answerer.
 		if active {
 			pluginRepo := data.NewPluginRepo(d.Db)
-			declares, hookErr := pluginRepo.HasActiveHook(ctx, pluginID, fiscalSignAskEvent)
-			if hookErr != nil {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusInternalServerError)
-				json.NewEncoder(w).Encode(map[string]interface{}{
-					"data":  nil,
-					"error": fmt.Sprintf("cannot enable %s: exclusivity check for %s failed: %v", pluginID, fiscalSignAskEvent, hookErr),
-				})
-				return
+			declared := ""
+			for _, ev := range plugins.FiscalSignExclusiveEvents {
+				declares, hookErr := pluginRepo.HasActiveHook(ctx, pluginID, ev)
+				if hookErr != nil {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusInternalServerError)
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"data":  nil,
+						"error": fmt.Sprintf("cannot enable %s: exclusivity check for %s failed: %v", pluginID, ev, hookErr),
+					})
+					return
+				}
+				if declares {
+					declared = ev
+					break
+				}
 			}
-			if declares {
-				ownerID, ownerName, found, ownerErr := pluginRepo.ActiveHookOwner(ctx, nil, fiscalSignAskEvent, pluginID)
+			if declared != "" {
+				ownerID, ownerName, heldEvent, found, ownerErr := plugins.FiscalSignExclusiveOwner(ctx, pluginRepo, nil, pluginID)
 				if ownerErr != nil {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusInternalServerError)
 					json.NewEncoder(w).Encode(map[string]interface{}{
 						"data":  nil,
-						"error": fmt.Sprintf("cannot enable %s: exclusivity check for %s failed: %v", pluginID, fiscalSignAskEvent, ownerErr),
+						"error": fmt.Sprintf("cannot enable %s: exclusivity check for %s failed: %v", pluginID, declared, ownerErr),
 					})
 					return
 				}
@@ -455,8 +465,8 @@ func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.Handl
 					w.WriteHeader(http.StatusConflict)
 					json.NewEncoder(w).Encode(map[string]interface{}{
 						"data": nil,
-						"error": fmt.Sprintf("cannot enable %s: %s (%s) is already the active fiscal signing provider — %s is an exclusive extension point; disable the active provider first",
-							pluginID, ownerName, ownerID, fiscalSignAskEvent),
+						"error": fmt.Sprintf("cannot enable %s: %s (%s) is already the active fiscal signing provider (holds %s) — %s is an exclusive extension point, one owner across %s; disable the active provider first",
+							pluginID, ownerName, ownerID, heldEvent, declared, strings.Join(plugins.FiscalSignExclusiveEvents, ", ")),
 					})
 					return
 				}
@@ -598,8 +608,7 @@ func applyPluginUpdate(ctx context.Context, d *common.Deps, pluginID string) (fr
 	}
 
 	// Marketplace installs record the listing↔plugin mapping in the
-	// install-status store; manual imports have no listing and cannot be
-	// updated from the marketplace.
+	// install-status store; manual imports have no listing at all.
 	statusStore := plugins.NewInstallStatusStore(d.Db)
 	listingID := ""
 	if records, err := statusStore.List(ctx); err == nil {
@@ -609,6 +618,15 @@ func applyPluginUpdate(ctx context.Context, d *common.Deps, pluginID string) (fr
 				break
 			}
 		}
+	}
+	if listingID == "" {
+		// ut-docs#2131 review: the management page's "Update available"
+		// badge resolves a file-imported plugin via the same author+name
+		// catalog match /plugins uses (plugins.IndexCatalog) — without this
+		// fallback here too, that badge promised an update this handler
+		// could never deliver, 404ing with ErrPluginUpdateNoListing on
+		// every click for exactly the population the badge fix targeted.
+		listingID = resolveListingViaCatalog(ctx, d, pluginID)
 	}
 	if listingID == "" {
 		return "", "", ErrPluginUpdateNoListing
@@ -670,6 +688,47 @@ func applyPluginUpdate(ctx context.Context, d *common.Deps, pluginID string) (fr
 	}
 
 	return currentPlugin.Version, result.Version, nil
+}
+
+// resolveListingViaCatalog finds the marketplace listing for a plugin that
+// has no plugin_install_status row at all -- most commonly one installed via
+// "Import from file" -- via the same author+name fallback the /plugins
+// management page uses to decide whether to show an "Update available"
+// badge (plugins.IndexCatalog/Resolve, ut-docs#2131). Returns "" if the
+// catalog is unreachable or has no match; callers must treat that exactly
+// like "no listing", never as an error worth surfacing on its own.
+func resolveListingViaCatalog(ctx context.Context, d *common.Deps, pluginID string) string {
+	if d.CatalogRepo == nil {
+		return ""
+	}
+	installed, err := data.NewPluginRepo(d.Db).ListInstalledPlugins(ctx)
+	if err != nil {
+		return ""
+	}
+	var author, name string
+	found := false
+	for _, row := range installed {
+		if row.ID == pluginID {
+			author, name = row.Author, row.Name
+			found = true
+			break
+		}
+	}
+	if !found {
+		return ""
+	}
+	snapshot, _, err := d.CatalogRepo.GetOrFetch(ctx, d.Cfg.DefaultLocale, fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH))
+	if err != nil || snapshot == nil {
+		return ""
+	}
+	catalogPlugin, ok := plugins.IndexCatalog(snapshot).Resolve("", author, name)
+	if !ok {
+		return ""
+	}
+	if catalogPlugin.ListingID != "" {
+		return catalogPlugin.ListingID
+	}
+	return catalogPlugin.ID
 }
 
 // handleUpdatePlugin updates an installed plugin to the latest marketplace
@@ -913,7 +972,17 @@ func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 
 		result, err := importer.Import(ctx, importReq)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("Import failed: %v", err), http.StatusBadRequest)
+			// The unsigned case gets its own operator-comprehensible,
+			// translated reason pointing at the supported route — a bare
+			// "manifest validation failed: 1 errors" (or even the fuller
+			// %v this used to show) told the operator nothing they could
+			// act on (ut-docs#2132). Every other import failure still
+			// gets a translated message, just without that specific detail.
+			if errors.Is(err, plugins.ErrManifestUnsigned) {
+				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "plugins.error.import_unsigned", "plugin_import_unsigned", err)
+			} else {
+				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "plugins.error.import_failed", "plugin_import_failed", err)
+			}
 			return
 		}
 

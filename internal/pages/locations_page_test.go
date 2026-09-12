@@ -227,6 +227,44 @@ func TestLocationsPage_CannotDeactivateLastActiveLocation(t *testing.T) {
 	}
 }
 
+// ut-docs#2066: "clear the stock to zero and try again" must be a real,
+// working path — a location the in-use guard once refused becomes
+// deactivatable again once its stock is genuinely gone, without needing to
+// delete or clear any history row.
+func TestLocationsPage_DeactivatableOnceStockCleared(t *testing.T) {
+	mux, d := newLocationsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	// loc_main is seeded with real (nonzero) inventory, so it starts refused.
+	rec := postForm(mux, "/api/locations/loc_main/active", url.Values{"active": {"0"}}, &manager)
+	if rec.Header().Get("Location") != "/locations?err=locations.error.in_use" {
+		t.Fatalf("expected in-use refusal before clearing stock: loc=%q", rec.Header().Get("Location"))
+	}
+
+	// Clear its inventory rows to zero — a real stock-adjust would do this
+	// via UpsertInventory; going straight at the table is equivalent for
+	// this handler-level test and keeps it independent of that code path.
+	if _, err := d.Db.Exec(`UPDATE inventory SET quantity = 0 WHERE location_id = 'loc_main'`); err != nil {
+		t.Fatalf("clear stock: %v", err)
+	}
+
+	rec = postForm(mux, "/api/locations/loc_main/active", url.Values{"active": {"0"}}, &manager)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/locations" {
+		t.Fatalf("deactivate after clearing stock: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	var active int
+	if err := d.Db.QueryRow(`SELECT is_active FROM stock_locations WHERE id = 'loc_main'`).Scan(&active); err != nil || active != 0 {
+		t.Fatalf("loc_main must now be deactivated: active=%d err=%v", active, err)
+	}
+
+	// Its past inventory/movement rows are untouched — nothing was deleted
+	// or orphaned by the deactivation, only is_active flipped.
+	var invCount int
+	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM inventory WHERE location_id = 'loc_main'`).Scan(&invCount); err != nil || invCount == 0 {
+		t.Fatalf("loc_main's inventory history must survive deactivation: count=%d err=%v", invCount, err)
+	}
+}
+
 // Deactivating is only meaningful if it actually changes what the rest of
 // the app offers — the inventory page's stock-adjust location picker must
 // stop offering a deactivated location as a destination.
@@ -288,5 +326,79 @@ func TestLocationsPage_DeniedWithSettingsButNotStockLocationManagement(t *testin
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("manager with settings but not stock_location_management: GET /locations = %d, want 403", rec.Code)
+	}
+}
+
+// ut-docs#2116: /locations is one of the /admin tree's six destinations,
+// converted to the same two-pane master-detail shell /items uses
+// (ut-docs#1950). An htmx request (from that panel) must get just the
+// "content" block, plus an out-of-band refresh of the admin tree with
+// /locations marked is-current — not the full standalone page's chrome.
+func TestLocationsPage_HXRequestReturnsContentFragmentWithOOBAdminTree(t *testing.T) {
+	mux, _ := newLocationsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/locations", nil), manager)
+	req.Header.Set("HX-Request", "true")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("htmx GET /locations: %d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "<html") || strings.Contains(body, `class="nav"`) {
+		t.Errorf("htmx request re-rendered the whole page shell: %s", body)
+	}
+	railStart := strings.Index(body, `id="admin-tree"`)
+	if railStart < 0 || !strings.Contains(body, `hx-swap-oob="true"`) {
+		t.Fatalf("fragment missing the OOB admin-tree swap: %s", body)
+	}
+	rail := body[railStart:]
+	idx := strings.Index(rail, `href="/locations"`)
+	if idx < 0 {
+		t.Fatalf("OOB admin tree missing the /locations row: %s", rail)
+	}
+	tagStart := strings.LastIndex(rail[:idx], "<a ")
+	tagEnd := strings.Index(rail[tagStart:], ">") + tagStart
+	if !strings.Contains(rail[tagStart:tagEnd], "is-current") {
+		t.Errorf("the /locations row itself is not marked is-current: %s", rail[tagStart:tagEnd])
+	}
+}
+
+// A plain browser GET (no HX-Request) must still render the exact same full
+// standalone page as before this card.
+func TestLocationsPage_NonHXRequestStillRendersFullPage(t *testing.T) {
+	mux, _ := newLocationsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/locations", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /locations: %d %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "<html") || !strings.Contains(body, `class="nav"`) {
+		t.Errorf("expected the full standalone page shell, got: %s", body)
+	}
+}
+
+// ut-docs#2091's Vary requirement, extended to /locations now that it is a
+// dual-mode destination too.
+func TestLocationsPage_VaryHXRequestOnBothBranches(t *testing.T) {
+	mux, _ := newLocationsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	fragReq := auth.WithUser(httptest.NewRequest(http.MethodGet, "/locations", nil), manager)
+	fragReq.Header.Set("HX-Request", "true")
+	fragRec := httptest.NewRecorder()
+	mux.ServeHTTP(fragRec, fragReq)
+	if got := fragRec.Header().Get("Vary"); got != "HX-Request" {
+		t.Errorf("fragment branch: Vary header = %q, want %q", got, "HX-Request")
+	}
+
+	fullReq := auth.WithUser(httptest.NewRequest(http.MethodGet, "/locations", nil), manager)
+	fullRec := httptest.NewRecorder()
+	mux.ServeHTTP(fullRec, fullReq)
+	if got := fullRec.Header().Get("Vary"); got != "HX-Request" {
+		t.Errorf("full-page branch: Vary header = %q, want %q", got, "HX-Request")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"image/png"
 	"io"
 	"log"
@@ -321,6 +322,16 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// be reactivated). Used both for the page's own initial load and for a
 	// mutation whose originating form targets #modifiers-list (see
 	// renderModifierMutationResult below).
+	//
+	// ut-docs#2090 review finding: deliberately NO "InItemsShell" key here.
+	// A mutation POSTed from #modifiers-list always carries HX-Request:true
+	// (it's an htmx form submit), so httpx.IsFragmentSwap(w, r) would read
+	// true here even on a standalone, non-/items-shell /modifiers page —
+	// the wrong signal, since this response never targets #items-panel,
+	// only #modifiers-list. modifiers.html's own templates read
+	// .InItemsShell on a bare map[string]any as nil -> false when the key
+	// is absent, which is exactly the safe fallback (plain href="/items",
+	// no hx- attributes) — don't "fix" that by adding the key here.
 	renderModifiersList := func(w http.ResponseWriter, r *http.Request, notice string) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		groups, err := modRepo.ListAllShopModifierGroups(r.Context())
@@ -556,6 +567,19 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "catalog.error.server", err)
 			return
 		}
+		// ut-docs#2119: deliberately NOT the "cats" lookup just above —
+		// that one is the item-edit form's unfiltered <select> (a
+		// deactivated-but-still-referenced category must stay selectable
+		// there, per ListActiveCategories' own doc comment) while the
+		// category FILTER chip row must never offer a chip a shop owner
+		// can browse into for a category that no longer exists to browse.
+		// Two different lookups for two different reasons — do not merge
+		// them into one shared call.
+		categoryFilterOptions, err := repo.ListActiveCategories(r.Context())
+		if err != nil {
+			httpx.RenderError(w, r, http.StatusInternalServerError, "catalog.error.server", err)
+			return
+		}
 		taxCodes, err := repo.ListAllTaxCodes(r.Context())
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "catalog.error.server", err)
@@ -564,17 +588,26 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		barcodes, _ := repo.ItemBarcodes(r.Context())
 		variants, _ := repo.ItemVariants(r.Context())
 		thumbnails, _ := repo.ItemThumbnails(r.Context())
+		// ut-docs#2090: whether this render is an /items-shell fragment
+		// swap (true) or a bare/standalone page (false) — catalog.html's
+		// own Modifiers/Option-sets top-action buttons and their
+		// destinations' back-links use this to decide between an in-panel
+		// htmx swap (only meaningful when #items-panel actually exists,
+		// i.e. inside the shell) and a plain navigation.
 		data := map[string]any{
-			"title":        "Catalog",
-			"menuItems":    d.MenuSnapshot(),
-			"theme":        d.CurrentState().Theme,
-			"Rows":         buildCatalogRows(items, barcodes, variants, thumbnails),
-			"Categories":   cats,
-			"Brands":       brands,
-			"TaxCodes":     taxCodes,
-			"SyncPrimary":  d.SyncPrimaryURL(r.Context()),
-			"BuiltinIcons": catimport.BuiltinIcons(),
-			"ItemColors":   catalogtypes.ItemColors(),
+			"title":                 "Catalog",
+			"menuItems":             d.MenuSnapshot(),
+			"theme":                 d.CurrentState().Theme,
+			"Rows":                  buildCatalogRows(items, barcodes, variants, thumbnails),
+			"Categories":            cats,
+			"CategoryFilterOptions": categoryFilterOptions,
+			"CategoryNodesJSON":     categoryFilterNodesJSON(categoryFilterOptions),
+			"Brands":                brands,
+			"TaxCodes":              taxCodes,
+			"SyncPrimary":           d.SyncPrimaryURL(r.Context()),
+			"BuiltinIcons":          catimport.BuiltinIcons(),
+			"ItemColors":            catalogtypes.ItemColors(),
+			"InItemsShell":          httpx.IsFragmentSwap(w, r),
 		}
 		catalogFiles := files(
 			filepath.Join("web", "ui", "layouts", "base.html"),
@@ -584,6 +617,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
 			filepath.Join("web", "ui", "partials", "catalog_row.html"),
 			filepath.Join("web", "ui", "partials", "catalog_variants.html"),
+			filepath.Join("web", "ui", "partials", "category_filter.html"),
 		)
 		// ut-docs#1950: /catalog is also the /items rail's default ("Library")
 		// section — an htmx request from that panel (NOT a stale history
@@ -591,7 +625,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		// plus an out-of-band refresh of the rail itself, so its is-current
 		// highlight follows the click; a plain browser GET (deep link) still
 		// gets the exact same full standalone page as before this card.
-		if httpx.IsFragmentSwap(r) {
+		if httpx.IsFragmentSwap(w, r) {
 			httpx.RenderWith(catalogFiles, funcs)("content", data)(w, r)
 			itemsnav.WriteRailOOB(w, r, funcs, "/catalog", itemsnav.Resolve(httpx.RequestLocale(r), d.ItemsAmendmentsSnapshot()))
 			return
@@ -614,13 +648,14 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		modifiersData := map[string]any{
-			"title":     "Customization options",
-			"menuItems": d.MenuSnapshot(),
-			"theme":     d.CurrentState().Theme,
-			"Groups":    groupModifierAdminByItem(groups, "modifiers-list"),
+			"title":        "Customization options",
+			"menuItems":    d.MenuSnapshot(),
+			"theme":        d.CurrentState().Theme,
+			"Groups":       groupModifierAdminByItem(groups, "modifiers-list"),
+			"InItemsShell": httpx.IsFragmentSwap(w, r),
 		}
 		// ut-docs#1950: same /items rail embedding as /catalog above.
-		if httpx.IsFragmentSwap(r) {
+		if httpx.IsFragmentSwap(w, r) {
 			httpx.RenderContentFragment("ui/pages/modifiers.html", modifiersData)(w, r)
 			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/modifiers", itemsnav.Resolve(httpx.RequestLocale(r), d.ItemsAmendmentsSnapshot()))
 			return
@@ -641,13 +676,14 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		optionSetsData := map[string]any{
-			"title":     "Option sets",
-			"menuItems": d.MenuSnapshot(),
-			"theme":     d.CurrentState().Theme,
-			"Sets":      sets,
+			"title":        "Option sets",
+			"menuItems":    d.MenuSnapshot(),
+			"theme":        d.CurrentState().Theme,
+			"Sets":         sets,
+			"InItemsShell": httpx.IsFragmentSwap(w, r),
 		}
 		// ut-docs#1950: same /items rail embedding as /catalog above.
-		if httpx.IsFragmentSwap(r) {
+		if httpx.IsFragmentSwap(w, r) {
 			httpx.RenderContentFragment("ui/pages/option_sets.html", optionSetsData)(w, r)
 			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/catalog/option-sets", itemsnav.Resolve(httpx.RequestLocale(r), d.ItemsAmendmentsSnapshot()))
 			return
@@ -1935,6 +1971,36 @@ func convertLookups(in []data.Lookup) []lookup {
 		out = append(out, lookup{ID: l.ID, Name: l.Name})
 	}
 	return out
+}
+
+// categoryFilterNodeJSON is one data.CategoryNode as the category-filter
+// chip row's client-side JS needs it (ut-docs#2119): id/name/parentId only
+// — category_filter.html renders the chips themselves server-side (one per
+// TOP-LEVEL category), but category-filter.js's expand() still needs the
+// FULL flat tree, children included, to walk parent-includes-children at
+// match time. camelCase tags on purpose: this is a page-embedded JS blob
+// (like inventory_page.go's pickerItem/ItemsJSON), not a JSON API response,
+// so the repo-wide snake_case wire convention doesn't apply here.
+type categoryFilterNodeJSON struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	ParentID string `json:"parentId"`
+}
+
+// categoryFilterNodesJSON serializes the full flat category list (the same
+// slice CategoryFilterOptions renders chips from) for category-filter.js's
+// expand() tree walk — see that field's own comment on why both a Go-side
+// and a JS-side view of the same data are needed.
+func categoryFilterNodesJSON(nodes []data.CategoryNode) template.JS {
+	out := make([]categoryFilterNodeJSON, 0, len(nodes))
+	for _, n := range nodes {
+		out = append(out, categoryFilterNodeJSON{ID: n.ID, Name: n.Name, ParentID: n.ParentID})
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return template.JS("[]")
+	}
+	return template.JS(b)
 }
 
 func validateLookups(ctx context.Context, repo *data.CatalogRepo, in pos.ItemInput) error {

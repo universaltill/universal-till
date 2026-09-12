@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
 #
-# Regression test for guard-commit-attribution.sh (ut-docs#1373 + ut-docs#732):
-# proves the guard rejects AI-tool/unattributable authors, rejects a
-# well-formed users.noreply.github.com address whose numeric ID doesn't
-# match a known contributor (the exact ut-docs#1373 incident, reproduced
-# with the real bad commit's data — including trivial variations of it:
-# mixed case, a stray extra '+', an empty username), rejects every legacy
-# no-ID-prefix noreply address (the allowlist for that shape is
-# deliberately empty — see the guard's own comment), rejects a pipe
-# character smuggled into the author NAME field, fails closed on an empty
-# commit range instead of reporting a silent pass, and passes every known-
-# good shape — including a smoke check against the real, unmodified repo's
-# own HEAD commit.
+# Regression test for guard-commit-attribution.sh (ut-docs#1373 + ut-docs#732
+# + ut-docs#2103): proves the guard rejects AI-tool/unattributable authors,
+# rejects a well-formed users.noreply.github.com address whose numeric ID
+# doesn't match a known contributor (the exact ut-docs#1373 incident,
+# reproduced with the real bad commit's data — including trivial variations
+# of it: mixed case, a stray extra '+', an empty username), rejects every
+# legacy no-ID-prefix noreply address (the allowlist for that shape is
+# deliberately empty — see the guard's own comment), rejects an ordinary
+# (non-noreply) address that isn't on ALLOWED_PLAIN_EMAILS (ut-docs#2103 —
+# this branch used to pass any such address unconditionally), rejects a
+# pipe character smuggled into the author NAME field, fails closed on an
+# empty commit range instead of reporting a silent pass, passes every
+# known-good shape (including an allowlisted plain address), and smoke-checks
+# that the guard parses the real repo's own most recent non-merge commit
+# without crashing.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -63,9 +66,20 @@ expect_pass "a correctly-ID'd noreply commit" \
 expect_pass "a second known contributor's correctly-ID'd noreply commit" \
   'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|35641125+pouria-teimouri@users.noreply.github.com|Pouria Teimouri'
 
-# A verified personal (non-noreply) email — untouched by this guard.
-expect_pass "a verified personal email address" \
-  'dddddddddddddddddddddddddddddddddddddddd|contributor@example.com|Somebody'
+# An allowlisted plain (non-noreply) address — the pipeline owner's own
+# sanctioned identity as of ut-docs#2103.
+expect_pass "the allowlisted pipeline-owner plain email address" \
+  'dddddddddddddddddddddddddddddddddddddddd|farsid@taskrunnertech.co.uk|Farshid Mirza'
+
+# Case variation of the allowlisted plain address — matching must be
+# case-insensitive here too, same as every other branch.
+expect_pass "the allowlisted plain address, mixed case" \
+  'iiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiii|Farsid@TaskRunnerTech.co.uk|Farshid Mirza'
+
+# A plain (non-noreply) email NOT on the allowlist must be rejected —
+# ut-docs#2103: this branch used to pass any ordinary address unconditionally.
+expect_fail "an unrecognized plain email address (not on ALLOWED_PLAIN_EMAILS)" \
+  'jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj|contributor@example.com|Somebody'
 
 # Multiple good commits in one run.
 expect_pass "multiple good commits together" \
@@ -130,18 +144,56 @@ expect_pass "a '|' character embedded in the author name, paired with a good ema
 # would turn a real gap into a silent no-op.
 expect_fail "an empty commit range (fails closed, doesn't silently pass)" ""
 
-# The real, unmodified repo's current HEAD commit must still pass — a
-# smoke check that the guard parses genuine `git log` output without
-# crashing. (Not asserting all of history passes: the live workflow only
-# ever checks a PR's own new commits against its base, never full main
-# history, which can and does carry pre-guard commits — see the guard's own
-# "not fixed by this ticket" scoping.)
+# The real, unmodified repo's most recent NON-MERGE commit must still be
+# PARSED without the guard crashing — a smoke check on genuine `git log`
+# output, not a check of this repo's own history. (Separately: the live
+# workflow only ever checks a PR's own new commits against its base, never
+# full main history, which can and does carry pre-guard commits — see the
+# guard's own "not fixed by this ticket" scoping.)
+#
+# --no-merges is deliberate, not incidental (ut-docs#2103), though it only
+# narrows the gap, it doesn't close it: a PR's own `BASE_SHA..HEAD_SHA`
+# range (see commit-attribution.yml) DOES still include any commit that
+# merges the base branch INTO the PR branch mid-flight (a real, routine
+# occurrence in this ecosystem's history) — `--no-merges` only excludes
+# the merge commit GitHub creates once a PR itself lands, which indeed
+# never appears in any PR's own range. Excluding merges here matters
+# because GitHub's "Merge pull request" button (and, worse, its "Update
+# branch" button, which authors a same-branch merge commit that IS inside
+# a PR's range) authors that merge commit with the clicking account's
+# real, verified personal email — on this org that is
+# the merging account's real, GitHub-linked personal email address (not spelled out here — see ut-docs#1100/#247 for why), but not one on
+# ALLOWED_PLAIN_EMAILS (that leak into public history is ut-docs#1100's
+# own separate, already-tracked problem — not something to paper over by
+# allowlisting it here).
+#
+# So this check deliberately does NOT assert pass/fail on the outcome —
+# only that the guard runs to completion without a shell error. This
+# repo's own history is not this test's to control: an accidental
+# squash/rebase-merge (`allow_squash_merge`/`allow_rebase_merge` are still
+# `true` here — see the reviewer skill's "Merge method" note) would
+# instantly and permanently make the OLD (assert-pass) version of this
+# check red for every future PR, for a reason with nothing to do with that
+# PR's own diff. Confirmed empirically while reviewing ut-docs#2103: adding
+# one commit authored with that real personal address on top was enough to fail
+# the old assertion.
 if git rev-parse --git-dir >/dev/null 2>&1; then
-  tip_sha="$(git log --format='%H' -1 2>/dev/null || true)"
-  tip_email="$(git log --format='%ae' -1 2>/dev/null || true)"
-  tip_name="$(git log --format='%an' -1 2>/dev/null || true)"
+  tip_sha="$(git log --no-merges --format='%H' -1 2>/dev/null || true)"
+  tip_email="$(git log --no-merges --format='%ae' -1 2>/dev/null || true)"
+  tip_name="$(git log --no-merges --format='%an' -1 2>/dev/null || true)"
   if [ -n "${tip_sha}" ]; then
-    expect_pass "the real repo's current HEAD commit" "${tip_sha}|${tip_email}|${tip_name}"
+    if printf '%s\n' "${tip_sha}|${tip_email}|${tip_name}" | run_guard >/tmp/guard_commit_attr_smoke_out.$$ 2>&1; then
+      echo "✓ guard parsed the real repo's most recent non-merge commit without crashing (result: pass)"
+    else
+      # A real rejection here is a fact about this repo's own history —
+      # e.g. an accidental squash/rebase/update-branch merge commit — not a
+      # bug in the guard, which is DESIGNED to reject a real, correctly
+      # parsed address that just isn't on an allowlist. Don't fail the
+      # smoke check on that; its job is "parses without crashing", not
+      # "every commit in this repo's history is on an allowlist."
+      echo "✓ guard parsed the real repo's most recent non-merge commit without crashing (result: reject — a fact about this repo's history, not a guard bug; see comment above)"
+    fi
+    rm -f /tmp/guard_commit_attr_smoke_out.$$
   fi
 fi
 

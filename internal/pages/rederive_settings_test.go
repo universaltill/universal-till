@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -52,5 +53,49 @@ func TestRederiveSettings_PushesWindowModeOntoShellChannel(t *testing.T) {
 	rederive(context.Background())
 	if mode, _ := d.Shell.Snapshot(); mode != "normal" {
 		t.Fatalf("shell channel mode after second rederive = %q, want normal", mode)
+	}
+}
+
+// TestRederiveSettings_PublishesSelfOrderMode (review of ut-docs#2099,
+// finding B1): display.mode is deliberately NOT part of RuntimeState (see
+// pages.Init's own boot-time InitSelfOrderMode call), so it got no free
+// ride from this function's `*s = st` and was left stale until the next
+// process restart after a cloud set_setting directive (ADR-0018) or replica
+// drift — exactly the kiosk-containment flag coding-standards.md §10
+// depends on to withhold lock/status/exit-to-OS from a device an admin just
+// declared customer-facing (or restore them on a device taken out of kiosk
+// mode). Same shape as the WindowMode test above.
+func TestRederiveSettings_PublishesSelfOrderMode(t *testing.T) {
+	_, _, d := newFullAuthDeps(t)
+	d.KioskEngine = pos.NewServiceWithResolver(pos.Config{}, stubResolver{})
+
+	i18n, err := config.NewI18n("web/locales", "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rederive := newRederiveSettings(d, true, i18n)
+	selforder := func() bool { return httpx.FuncsFor("en")["selforder"].(func() bool)() }
+
+	httpx.InitSelfOrderMode(false)
+	defer httpx.InitSelfOrderMode(false)
+
+	// A cloud directive / replica drift writes display.mode straight into
+	// the store — no settings handler, no InitSelfOrderMode call of its own.
+	if err := d.Settings.Set(t.Context(), "display.mode", "self_order"); err != nil {
+		t.Fatal(err)
+	}
+	rederive(context.Background())
+	if !selforder() {
+		t.Fatal("selforder template func = false after rederive with display.mode=self_order — the flag went stale, leaving lock/status/exit-to-OS rendered to a device just declared customer-facing")
+	}
+
+	// And back down again: taken out of kiosk mode, the till must regain
+	// the affordance without waiting for a restart.
+	if err := d.Settings.Set(t.Context(), "display.mode", "register"); err != nil {
+		t.Fatal(err)
+	}
+	rederive(context.Background())
+	if selforder() {
+		t.Fatal("selforder template func = true after rederive with display.mode=register — an ordinary register is wrongly withholding lock/status/exit-to-OS")
 	}
 }

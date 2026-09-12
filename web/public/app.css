@@ -434,6 +434,11 @@ body.sale-screen .session-admin-link { display: none; }
 /* ---------- Back-office pages (catalog / inventory) ---------- */
 .page-head { display: flex; align-items: center; justify-content: space-between;
              gap: 1rem; margin: .25rem 0 1rem; }
+/* ut-docs#2092: page-scoped override for .page-head usages whose action
+   row is more than a title + one small control (currently just catalog.html)
+   — lets the row drop to its own line at narrow widths instead of both
+   flex children being squeezed onto one, never-wrapping line. */
+.page-head-wrap { flex-wrap: wrap; }
 .page-head input[type="search"] { min-width: 260px; }
 
 /* ---------- Plugin content pages (FAQ etc.) ---------- */
@@ -1226,11 +1231,12 @@ body.osk-padded .modifier-groups-modal { block-size: calc(100% - var(--osk-reser
    (verify webkit2gtk-4.1's minimum shipped version actually supports
    `color-mix()` first, per ADR-0028) -- not changed now because no dark
    theme exists yet to verify against, and this card's scope is the scroll
-   cue itself. Only `.products` gets this for now -- `.basket`/`.tender`
-   have their own pinned-footer/tab-panel scroll patterns already (see
-   comments below) and are out of this card's scope, though the same
-   two-gradient-pair recipe would apply if a future card asks for it there
-   too. */
+   cue itself. `.products` and (since ut-docs#2128) `.tender-scroll` carry
+   this recipe -- `.basket`'s own pinned-footer/tab-panel scroll pattern is
+   different and out of scope here, though the same two-gradient-pair
+   recipe would apply if a future card asks for it there too. Whoever
+   fixes the dark-theme gap: BOTH occurrences need the `color-mix()` swap,
+   not just this one -- see `.tender-scroll`'s own comment for its copy. */
 .pos-container > .products {
   background-color: var(--surface);
   background-image:
@@ -1643,6 +1649,28 @@ a.btn, a.btn:hover { text-decoration: none; }
    larger cap keep the common case scroll-free; the table wrapper's
    overflow:auto is the remaining safety net for a still-longer row. */
 .barcode-backfill-modal { max-width: 38rem; }
+/* ut-docs#2095: #tax-codes-modal/#import-modal are .item-form-modal, not
+   .modifier-modal (independent review, F1/F2 -- both dialogs hold real
+   text inputs, so they need the same OSK-reachable .show()/no-top-layer
+   treatment #item-form-modal itself uses, not showModal()'s inert-outside
+   behaviour) -- see catalog.html's own comment on the two dialogs for the
+   full reasoning. .item-form-modal is already full-bleed (inset: 0, no
+   max-width), so unlike .barcode-backfill-modal/.modifier-modal above
+   there is no dialog width to widen here. What's still needed is a
+   horizontal-scroll safety net on the tax-codes table's own wrapper
+   (#tax-codes-table, tax_codes_table.html) at narrow viewports -- measured
+   at 360x800 the Active/Edit/Deactivate columns clip without it.
+   ut-docs#2113 (independent review of this same card flagged the gap,
+   fixed as its own follow-up): the STANDALONE /catalog/tax-codes page
+   renders the identical #tax-codes-table partial outside this dialog
+   entirely, and was measured overflowing WORSE at 360px with no rule
+   reaching it at all (overflow-x: visible, ~183px of table hanging off
+   the document, the whole page scrolling horizontally to 521px in a
+   360px viewport). #tax-codes-table is a single unique id per page render
+   -- whether reached via this dialog or the standalone page -- so
+   unscoping the selector below covers both call sites with one rule
+   instead of duplicating it under `.catalog-list` too. */
+#tax-codes-table { overflow-x: auto; }
 /* Hold Sale naming (ut-docs#46) is opened non-modal (dialog.show(), not
    showModal()): a showModal() dialog makes everything outside it inert,
    including the custom on-screen keyboard (#osk, appended to <body>, not
@@ -2090,6 +2118,35 @@ a.btn, a.btn:hover { text-decoration: none; }
 .tender { display: flex; flex-direction: column; gap: .45rem; }
 .tender-scroll { flex: 1; min-height: 3rem; overflow-y: auto;
                  display: flex; flex-direction: column; gap: .55rem; }
+/* ut-docs#2128: same scroll-shadow recipe as .products (ut-docs#1313,
+   comment above that rule has the full mechanism/caveats — not repeated
+   here). A real product-owner report on the pilot tablet ("held sales not
+   findable") traced to exactly this class of bug: .tender-scroll already
+   scrolls (overflow-y: auto above) once the scan row + held-sales strip
+   don't fit, and live measurement for this card found that's true even at
+   1024x600 with just 1 held sale, not only the higher held-counts this
+   file's own grid-ratio comment assumed -- but nothing on screen hints
+   there's more to scroll to, and many kiosk browsers hide native
+   scrollbars entirely. Two gradient pairs, local/local/scroll/scroll,
+   self-hiding at whichever edge has no unseen content -- no JS, no scroll
+   listener. Same `rgba(255, 255, 255, 0)`-as-transparent caveat as
+   .products: silently coupled to --surface's current value (#ffffff, only
+   definition in this file); swap to `color-mix(in srgb, var(--surface),
+   transparent 100%)` the day a dark theme plugin overrides --surface (not
+   done now, no dark theme exists yet to verify against, matches .products'
+   own deferral). */
+.tender-scroll {
+  background-color: var(--surface);
+  background-image:
+    linear-gradient(var(--surface) 30%, rgba(255, 255, 255, 0)),
+    linear-gradient(rgba(255, 255, 255, 0), var(--surface) 70%),
+    radial-gradient(farthest-side at 50% 0, rgba(0, 0, 0, .18), rgba(0, 0, 0, 0)),
+    radial-gradient(farthest-side at 50% 100%, rgba(0, 0, 0, .18), rgba(0, 0, 0, 0));
+  background-repeat: no-repeat;
+  background-position: 0 0, 0 100%, 0 0, 0 100%;
+  background-size: 100% 16px, 100% 16px, 100% 8px, 100% 8px;
+  background-attachment: local, local, scroll, scroll;
+}
 
 .scan-row { display: flex; gap: .4rem; }
 /* 2026-08-30 (product owner): the barcode field inherited the global
@@ -2216,8 +2273,119 @@ a.btn, a.btn:hover { text-decoration: none; }
    scrolls as a last resort, never squeezes this to nothing). Full-width via
    the row's single stretched flex item — direction-agnostic, no
    left/right, nothing to mirror for RTL. */
-.tender-quickpay { display: flex; flex-shrink: 0; }
+.tender-quickpay { display: flex; flex-shrink: 0; gap: .5rem; }
 .tender-quickpay > .btn { flex: 1; font-weight: 700; }
+
+/* ut-docs#2137: the parked-orders trigger shares the quick-pay row with Card
+   (the product owner's placement). Card completes a charge and stays the
+   dominant target, so this one is sized to its own label and no larger.
+
+   flex-basis must stay content-sized, and the label must not wrap. An
+   earlier cut used `flex: 0 1 38%`, which is 158px at 1024px width -- wide
+   enough for "Open orders" and NOT for the German "Offene Vorgänge" (or the
+   Spanish "Pedidos abiertos"). The label wrapped to two lines, taking this
+   row from 51px to 66.6px, which overflowed .tender by 8px and pushed the
+   bottom of the Card button into that pane's scroll -- on the exact
+   1024x600 kiosk the #1336 budget above was measured to protect, in the
+   exact market this product is piloting in. Measured, not theorised: the
+   English baseline clears by only 0.99px, so this row has no slack to lend
+   a second line. Pinned by parked-orders-popup-2137.spec.ts's
+   long-label test, which fails at 38%. */
+.tender-quickpay > .parked-orders-btn { flex: 0 0 auto; white-space: nowrap; font-weight: 600; }
+
+/* The popup body. Scrolls internally rather than growing the dialog past the
+   viewport -- a till with a dozen parked tables must still show its Close
+   button. */
+.parked-orders-modal { min-width: min(30rem, 92vw); }
+.parked-orders-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; max-height: 60vh; overflow-y: auto; }
+.parked-orders-list > li { display: flex; }
+/* Whole-row target at the product's documented 46px floor (.btn-touch): the
+   cashier taps this with a finger, and the label alone is a few characters
+   wide. text-align/margin-inline keep it correct under RTL. */
+.parked-orders-list > li > .parked-order { flex: 1; min-height: 46px; display: flex; align-items: center; gap: .5rem; text-align: start; }
+.parked-order-meta { margin-inline-start: auto; opacity: .8; white-space: nowrap; }
+/* .held-chip-table has never had a rule of its own (it rendered as bare text
+   on the strip too). It now also appears here, so give it the quiet chip
+   look its name promises rather than leaving it indistinguishable from the
+   order label beside it. */
+.held-chip-table { font-size: .85em; opacity: .75; border: 1px solid currentColor; border-radius: 999px; padding: 0 .45em; }
+
+/* ut-docs#2138: /open-orders' own rows are real buttons, not <tr> click
+   handlers (ut-docs#826's accessibility gate: tap-only with no keyboard
+   equivalent fails it) -- each body row is a single <td colspan> holding a
+   <form>+<button>, so the WHOLE row is one focusable control at the
+   product's 46px touch floor (the .btn-touch value; .btn-touch itself is
+   display:inline-flex, which a full-width row button cannot take).
+   Because the row is one control rather than five real per-field <td>s,
+   the header CANNOT stay a table row: `flex` on a <th> is inert while its
+   <tr> is still display:table-row, so the <th>s were laid out by the table
+   algorithm while the values were laid out by the button's flex box, and
+   the two disagreed by 100-356px at EVERY viewport measured (360x740,
+   1024x600, 1280x800) -- headers pointing at the wrong column on a list
+   that carries money (ut-docs#2138 review). The header row is therefore
+   the same flex box as the button, over the same classes and the same
+   gap/padding, which is the only way the two can line up.
+   The block display on the table parts is also what lets the button's
+   width:100% fill the row: .users-list .table's `display:block` escape
+   hatch shrink-to-fits the internal table box, which left ~25% of each
+   visible row non-tappable at 1024x600 and 1280x800 (measured). */
+#open-orders-table, #open-orders-table thead,
+#open-orders-table tbody, #open-orders-table tr { display: block; }
+/* overflow-x, not just width:100% -- ut-docs#2138 review follow-up: with a
+   long cashier-typed label (up to 64 runes, maxHoldLabelRunes) AND a long
+   merchant-named table sharing one row at the 360px phone floor, the four
+   never-truncated fields' own min-inline-size floors alone can exceed the
+   viewport. Before this rule the label (which had NO floor) simply
+   shrank to 0 and vanished, silently -- worse than the truncation this
+   card exists to avoid. A horizontal scroll on the table itself (matching
+   `.list-scroll`'s documented role for the same class of overflow
+   elsewhere in this pattern) makes the rare long-label+long-table
+   combination reachable by a swipe instead of invisible. */
+#open-orders-table { width: 100%; overflow-x: auto; }
+#open-orders-table thead tr {
+  display: flex; align-items: center; gap: .5rem;
+  padding: .5rem .6rem; border-bottom: 2px solid var(--border);
+}
+/* display:block on the <td> too, not just the <tr>: a table-cell under a
+   blockified row gets wrapped in an ANONYMOUS table box, which shrink-to-
+   fits, and the button's width:100% then resolves against that instead of
+   the row -- the row button measured 412px inside a 915px list. */
+#open-orders-table td { display: block; }
+#open-orders-table th, #open-orders-table td { padding: 0; border-bottom: none; }
+#open-orders-table td > form { margin: 0; }
+.open-order-row-btn {
+  width: 100%; min-height: 46px; display: flex; align-items: center; gap: .5rem;
+  padding: .5rem .6rem; text-align: start; background: none; border: none;
+  border-bottom: 1px solid var(--border); color: inherit; font: inherit; cursor: pointer;
+}
+#open-orders-table tbody tr:last-child .open-order-row-btn { border-bottom: none; }
+.open-order-row-btn:hover, .open-order-row-btn:focus-visible { background: var(--surface-2); }
+/* Two of the five fields are unbounded free text -- the cashier-typed
+   order label and the merchant-named table -- so those two shrink and
+   ellipsize. The other three (item count, money total, age) are the ones
+   that must NEVER be truncated: "short in English" is not "short
+   everywhere" (Persian digits/currency and the localised "N min" phrasing
+   measure wider), and silently clipping a money amount on a till is the
+   worst outcome here. They take their natural width and never ellipsize.
+   Every column carries a rem min-inline-size shared by the <th> and the
+   value, so header and value start at the same edge for ordinary content
+   and only the genuinely over-long string widens its own column -- rem,
+   not px, so it stays inside the fluid 1024->1920 type scale. */
+.open-order-cell-label {
+  /* min-inline-size: 3rem, not 0 -- the label is the row's PRIMARY
+     identifying text (which order this even is), so it must stay visible
+     rather than shrink to nothing under pressure; #open-orders-table's own
+     overflow-x is the escape hatch once even that floor cannot fit. */
+  flex: 1 1 5rem; min-inline-size: 3rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.open-order-cell-table {
+  flex: 0 1 auto; min-inline-size: 4rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.open-order-cell-lines { flex: 0 0 auto; min-inline-size: 3rem; white-space: nowrap; }
+.open-order-cell-total { flex: 0 0 auto; min-inline-size: 5rem; white-space: nowrap; }
+.open-order-cell-age { flex: 0 0 auto; min-inline-size: 6rem; white-space: nowrap; }
 
 /* The dialog itself: a slide-in panel anchored to the inline-end edge
    (right in LTR, left in RTL — logical properties per this repo's RTL
@@ -3395,7 +3563,6 @@ body.login-screen {
 .btn-icon .btn-ico svg { inline-size: 1.3rem; block-size: 1.3rem; }
 .btn-icon:focus-visible { outline: 2px solid var(--focus-border, var(--accent)); outline-offset: 2px; }
 .btn-icon-danger, .btn-icon-danger:hover { color: var(--danger); }
-
 /* --- The list: a card whose wide table scrolls inside it (same escape
    hatch as .users-list / .settings-grid .card .table) and tap-to-edit rows
    that read as tappable. Attribute selectors, so no page has to carry an
@@ -3461,6 +3628,35 @@ body.login-screen {
 .record-dialog [data-record-when][hidden] { display: none; }
 .record-dialog-head-actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center;
                               margin-inline-start: auto; }
+/* ut-docs#2099 (coding-standards.md §10, ut-docs#1999's other half): status/
+   lock/exit-to-OS, withheld outright in self-order kiosk mode (see
+   record_dialog.html — the whole row is absent then, not just hidden).
+   Deliberately its own thin line, NOT full-height .btn/.btn-icon controls
+   (those are 3rem/48px touch targets, sized for a primary action) — this
+   is a secondary affordance and the ut-docs#2000 head-height budget has no
+   room to repeat that size a third time in the same pinned head. Measured
+   height cost at 360px is recorded in
+   ut-docs/reference/list-and-dialog-pattern.md's "The nav rail is
+   covered" section. The connection chip reuses .sb-dot / .is-offline
+   as-is (both unscoped in this file already, e.g. via base.html's #sb-conn)
+   — only this row's own layout/sizing is new. */
+.record-dialog-status-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem;
+                            margin-block-start: .35rem; padding-block-start: .35rem;
+                            border-block-start: 1px solid var(--border);
+                            font-size: .78rem; color: var(--muted, #6b7280); }
+.record-dialog-conn { display: inline-flex; align-items: center; gap: .4rem;
+                      margin-inline-end: auto; white-space: nowrap; }
+/* ut-docs#2099 review finding N1: .sb-conn.is-offline's #fca5a5 (app.css
+   above) was tuned for the statusbar's own dark #0f172a ground — ~1.9:1
+   against this dialog's white --surface, a WCAG 1.4.3 failure on exactly
+   the state (offline) an offline-first till most needs legible. Scoped
+   override to the existing --danger token (~4.8:1 on white) rather than a
+   new literal; .sb-dot's own background/glow is unaffected. */
+.record-dialog-status-row .sb-conn.is-offline { color: var(--danger); }
+.record-dialog-status-row .btn { min-block-size: 1.9rem; padding: .2rem .5rem; }
+.record-dialog-status-row .btn-icon { min-inline-size: 1.9rem; padding-inline: .4rem; }
+.record-dialog-status-row .btn-icon .btn-ico svg { inline-size: 1.05rem; block-size: 1.05rem; }
+.record-dialog-lock { margin: 0; display: inline-flex; }
 .record-dialog-body { flex: 1 1 auto; min-block-size: 0; overflow-y: auto;
                       padding: 1rem 1.5rem 1.5rem; }
 /* ut-docs#2020: :empty, not [hidden] — this element is the aria-live
@@ -3514,3 +3710,51 @@ body.login-screen {
    body.osk-padded, .item-form-modal and .payment-overlay are all 17rem
    since #1027 (15.5rem under-reserved, which is the bug #1998 fixed). */
 body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-height, 17rem)); }
+
+/* ==========================================================================
+   ut-docs#2119 — category filter chip row, shared by /catalog and
+   /inventory (web/ui/partials/category_filter.html, web/public/
+   category-filter.js). Existing :root tokens only, logical properties
+   only (RTL is a real target — UX gate finding 5: `gap` alone drives the
+   spacing, never a per-chip margin-inline-*, so flex-wrap mirrors
+   correctly under dir="rtl" for free).
+
+   Deliberately scoped under .category-filter rather than styling the bare
+   .chip class: .chip already means something else here (the small,
+   monospace, removable-tag pill used by barcode/option-set-value chips
+   and the "N running out"/"pending plugin" badges, all far smaller than a
+   touch target) — restyling it globally would regress every one of those.
+   The filter row's buttons keep the "chip" class name the design calls
+   for (and so they still read as chips visually — a rounded pill, not a
+   rectangular button), but every rule below is scoped to only apply
+   inside .category-filter. */
+.category-filter { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center;
+                    margin-block-end: .75rem; }
+/* Real 3rem touch floor (same as .btn-icon), content-sized (no fixed
+   width/max-width, white-space normal) so a long localized category name
+   (German runs 30-50% longer, UX gate finding 2) never truncates —
+   instead the row wraps (flex-wrap above), never scrolls. */
+.category-filter .chip { display: inline-flex; align-items: center; gap: .35rem;
+                          min-block-size: 3rem; padding-inline: 1rem; padding-block: .3rem;
+                          border-radius: var(--radius); border: 1px solid var(--border);
+                          background: var(--surface); color: var(--text);
+                          font: inherit; font-size: .95rem; line-height: 1.25;
+                          white-space: normal; text-align: start;
+                          inline-size: auto; max-inline-size: none;
+                          cursor: pointer; touch-action: manipulation; }
+.category-filter .chip:hover { background: var(--surface-2); }
+/* Explicit focus ring (WCAG 1.4.11) — same treatment as .btn-icon's own,
+   since the chip's accessible state (pressed/not) is otherwise carried
+   only by aria-pressed + the checkmark below (UX gate finding 7). */
+.category-filter .chip:focus-visible { outline: 2px solid var(--focus-border, var(--accent));
+                                        outline-offset: 2px; }
+/* Pressed state: colour AND a checkmark, never colour alone (WCAG
+   non-colour-alone, UX gate finding 3) — a shop owner must be able to
+   tell at a glance that a category filter from an earlier session is
+   still narrowing what they see. */
+.category-filter .chip[aria-pressed="true"] { background: var(--accent);
+                                               color: var(--accent-contrast);
+                                               border-color: var(--accent); }
+.category-filter .chip-check { display: none; flex: none; inline-size: 1rem; block-size: 1rem; }
+.category-filter .chip-check svg { inline-size: 1rem; block-size: 1rem; }
+.category-filter .chip[aria-pressed="true"] .chip-check { display: inline-flex; }

@@ -1594,6 +1594,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
+		// ut-docs#2099: keep httpx's live "selforder" template flag
+		// (record_dialog.html's status/lock/exit-to-OS withholding, §10)
+		// in step with the mode that was JUST persisted — without this the
+		// flag would only ever reflect the value pages.Init read at boot,
+		// stale until the till restarts. Mirrors httpx.InitOSKMode(mode)
+		// right above the OSK settings handler in this same file.
+		httpx.InitSelfOrderMode(rawMode == "self_order")
 		// ut-docs#1259: self_order is customer-facing and auth-exempt
 		// (/self-order, /api/self-order/*) — the browser that just made this
 		// switch must not keep a live session past it, or anyone with
@@ -2341,6 +2348,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			st.Region = v
 			auditPayload["region"] = v
 		}
+		// Whether this request carried an ACCEPTED explicit locale — the
+		// Language card's own field. Drives the ut-docs#2135 cookie clear
+		// below; a rejected value must not clear anything.
+		localeChosen := false
 		if v := strings.TrimSpace(r.Form.Get("locale")); v != "" {
 			// Reject silently rather than 400 (ut-docs#861) — matches this
 			// handler's existing lenient contract (see the comment at its
@@ -2354,6 +2365,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			if slices.Contains(httpx.AvailableLocales(), v) {
 				st.Locale = v
 				auditPayload["locale"] = v
+				localeChosen = true
 				// ut-docs#1074: this form field is the one genuine
 				// operator-explicit locale choice (Settings' Language
 				// card) — mark it confirmed so no later derivation
@@ -2392,6 +2404,18 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// set (fresh boot, before LoadState's cfg.Locales.Locale fallback
 		// even applies) can't accidentally blank the wired translator.
 		httpx.SetDefaultLocale(st.Locale)
+		if localeChosen {
+			// ut-docs#2135: setting the shop default is not enough — a
+			// ut_lang cookie from an earlier ?lang= link (clicking through
+			// /setup in English is the common way to acquire one) overrides
+			// it on every page, for a year. Retire every such override
+			// shop-wide. This is what makes re-applying the language the
+			// shop is ALREADY set to do something, which is precisely what
+			// an operator does when the screen shows the wrong language and
+			// Settings already says the right one — and what lets that fix
+			// reach a till the manager is not standing at.
+			retireLocaleOverrides(r.Context(), d.Settings)
+		}
 		// In place: replacing the engine would empty a basket in progress.
 		// Both engines: the kiosk's separate instance (ut-docs#449) must see
 		// the same tax config or it would silently charge stale rates.
@@ -2678,6 +2702,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// SetDefaultLocale's own empty-guard makes this safe even when
 			// the switch above left s.Locale untouched (invalid value).
 			httpx.SetDefaultLocale(st.Locale)
+			// Same reasoning as the Language card (ut-docs#2135): editing
+			// store.locale by hand here is just as explicit a shop choice,
+			// so it must not be silently outvoted by a stale per-browser
+			// cookie either. Guarded on the value actually having been
+			// ACCEPTED above — a rejected locale changes nothing, so it
+			// must not throw away anyone's override.
+			if slices.Contains(httpx.AvailableLocales(), value) {
+				retireLocaleOverrides(r.Context(), d.Settings)
+			}
 		case common.KeyTaxInclusive, common.KeyServiceChargeRate, common.KeyCountry:
 			// In place: replacing the engine would empty a basket in progress.
 			// Both engines — see the currency-card handler above (ut-docs#449).
@@ -2703,6 +2736,32 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			d.Engine.SetConfig(newCfg)
 			if d.KioskEngine != nil {
 				d.KioskEngine.SetConfig(newCfg)
+			}
+		case "display.mode":
+			// ut-docs#2121: this generic key/value door didn't get the same
+			// side effects as the dedicated POST /api/settings/display-mode
+			// handler above — same class of bug ut-docs#2099's review found
+			// in newRederiveSettings. Keep httpx's live "selforder" template
+			// flag (record_dialog.html's status/lock/exit-to-OS withholding,
+			// coding-standards.md §10) in step with what was just persisted,
+			// exactly as the dedicated handler does right after its own
+			// d.Settings.Set — without this it stays stale until restart.
+			httpx.InitSelfOrderMode(value == "self_order")
+			// ut-docs#1259 (pre-existing gap, not introduced by #2099): the
+			// dedicated handler revokes the acting session before entering
+			// self_order, since that mode is customer-facing and auth-exempt
+			// (/self-order, /api/self-order/*) — without this, this generic
+			// path left the acting browser signed in one navigation away
+			// from an authenticated /settings, the exact door #1259 closed
+			// for the other handler. Mirrored here verbatim: revoke only the
+			// acting session (ut-docs#1301 finding NB-2's decided scope),
+			// clear its cookie, and audit the revoke as its own event.
+			if value == "self_order" {
+				if c, err := r.Cookie(auth.CookieName); err == nil && d.AuthSvc != nil {
+					d.AuthSvc.Logout(r.Context(), c.Value)
+					settingsAudit(r, posRepo, elev, "user", elev.ActorID, "self_order_session_revoked", nil)
+				}
+				setSessionCookie(w, "", -1)
 			}
 		}
 		settingsRespondSaved(w, r, elev)

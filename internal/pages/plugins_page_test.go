@@ -7,7 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins/marketplace"
+	"github.com/universaltill/universal-till/internal/plugins/oauth"
 )
 
 // pluginsManagerTestDeps reuses pluginPageTestDeps' schema/deps. The real
@@ -58,9 +61,12 @@ func pluginsManagerJSON(t *testing.T, mux *http.ServeMux) map[string]pluginsMana
 }
 
 type pluginsManagerItem struct {
-	ID        string `json:"id"`
-	Enabled   bool   `json:"enabled"`
-	DocsRoute string `json:"docsRoute"`
+	ID             string `json:"id"`
+	Enabled        bool   `json:"enabled"`
+	DocsRoute      string `json:"docsRoute"`
+	Latest         string `json:"latest"`
+	HasUpdate      bool   `json:"hasUpdate"`
+	VersionUnknown bool   `json:"versionUnknown"`
 }
 
 // An installed, enabled plugin with an active page entry using the reserved
@@ -168,5 +174,123 @@ func TestPluginsPage_DisabledPluginHidesDocsRoute(t *testing.T) {
 	}
 	if got.DocsRoute != "" {
 		t.Errorf("docsRoute = %q, want empty for a disabled plugin", got.DocsRoute)
+	}
+}
+
+// withCatalog points d.CatalogRepo at a fake marketplace server returning the
+// given catalog body, mirroring plugins_store_render_test.go's own wiring.
+func withCatalog(t *testing.T, d *common.Deps, catalogBody string) {
+	t.Helper()
+	mp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(catalogBody))
+	}))
+	t.Cleanup(mp.Close)
+	cfg := &config.MarketplaceConfig{EndpointURL: mp.URL}
+	client := marketplace.NewClient(cfg, oauth.NewTokenClient(cfg))
+	repo, err := marketplace.NewCatalogRepository(client, t.TempDir())
+	if err != nil {
+		t.Fatalf("catalog repo: %v", err)
+	}
+	d.CatalogRepo = repo
+}
+
+// ut-docs#2131 AC: a plugin installed via "Import from file" writes no
+// plugin_install_status row (internal/data/sync_plugins_repo.go), so it can
+// never resolve a catalog match through the listing mapping alone -- the
+// management page used to leave latest empty forever for exactly this case,
+// indistinguishable from "up to date". It must resolve via the same
+// author+name fallback UpdateChecker already used.
+func TestPluginsPage_FileImportedPluginResolvesUpdateViaAuthorName(t *testing.T) {
+	d := pluginsManagerTestDeps(t)
+	seedTestPlugin(t, d.Db, "com.x.faq", "FAQ Plugin", "1.0.0")
+	if _, err := d.Db.Exec(`UPDATE plugins SET author = 'Acme Inc' WHERE id = 'com.x.faq'`); err != nil {
+		t.Fatal(err)
+	}
+	// Deliberately no plugin_install_status row -- this is the file-import case.
+	withCatalog(t, d, `{"plugins":[{"id":"listing-xyz","name":"FAQ Plugin","developer_id":"Acme Inc","version":"1.2.0"}]}`)
+
+	mux := http.NewServeMux()
+	registerPluginsPage(mux, d)
+
+	items := pluginsManagerJSON(t, mux)
+	got, ok := items["com.x.faq"]
+	if !ok {
+		t.Fatalf("plugin com.x.faq missing from manager payload: %+v", items)
+	}
+	if !got.HasUpdate {
+		t.Errorf("hasUpdate = false, want true (catalog has 1.2.0 > installed 1.0.0)")
+	}
+	if got.Latest != "1.2.0" {
+		t.Errorf("latest = %q, want %q", got.Latest, "1.2.0")
+	}
+	if got.VersionUnknown {
+		t.Error("versionUnknown = true, want false: the author+name fallback found a real match")
+	}
+}
+
+// ut-docs#2131 AC: a plugin absent from the resolved catalog data entirely
+// must render as "unknown", never silently as "current" -- before this fix
+// it was indistinguishable from up to date (empty latest, hasUpdate false,
+// no UI signal either way).
+func TestPluginsPage_UnresolvedPluginReportsVersionUnknownNotCurrent(t *testing.T) {
+	d := pluginsManagerTestDeps(t)
+	seedTestPlugin(t, d.Db, "com.x.ghost", "Ghost Plugin", "1.0.0")
+	if _, err := d.Db.Exec(`UPDATE plugins SET author = 'Nobody' WHERE id = 'com.x.ghost'`); err != nil {
+		t.Fatal(err)
+	}
+	// Catalog is reachable but has nothing matching this plugin by listing or
+	// by author+name -- e.g. it was never published, or the snapshot's locale
+	// filter excludes it.
+	withCatalog(t, d, `{"plugins":[{"id":"listing-other","name":"Unrelated Plugin","developer_id":"Someone Else","version":"3.0.0"}]}`)
+
+	mux := http.NewServeMux()
+	registerPluginsPage(mux, d)
+
+	items := pluginsManagerJSON(t, mux)
+	got, ok := items["com.x.ghost"]
+	if !ok {
+		t.Fatalf("plugin com.x.ghost missing from manager payload: %+v", items)
+	}
+	if got.HasUpdate {
+		t.Error("hasUpdate = true, want false: nothing in the catalog matched")
+	}
+	if got.Latest != "" {
+		t.Errorf("latest = %q, want empty: no catalog match", got.Latest)
+	}
+	if !got.VersionUnknown {
+		t.Error("versionUnknown = false, want true: an unresolved plugin must not look like it's current")
+	}
+}
+
+// ut-docs#2131 review (Finding 2): a catalog match was found, but its
+// Version is empty -- e.g. a listing the marketplace hasn't populated a
+// version for yet. This must still render as "unknown", not "current":
+// before this fix, hasUpdate stayed false (VersionNewer rejects an empty
+// candidate) AND versionUnknown stayed false (a match was found), which is
+// exactly the "latest:” presented as current" bug the issue is named
+// after, reached by a second route than the one AC2's own regression test
+// (above) covers.
+func TestPluginsPage_MatchWithEmptyVersionReportsVersionUnknownNotCurrent(t *testing.T) {
+	d := pluginsManagerTestDeps(t)
+	seedTestPlugin(t, d.Db, "com.x.faq", "FAQ Plugin", "1.0.0")
+	if _, err := d.Db.Exec(`UPDATE plugins SET author = 'Acme Inc' WHERE id = 'com.x.faq'`); err != nil {
+		t.Fatal(err)
+	}
+	withCatalog(t, d, `{"plugins":[{"id":"listing-xyz","name":"FAQ Plugin","developer_id":"Acme Inc","version":""}]}`)
+
+	mux := http.NewServeMux()
+	registerPluginsPage(mux, d)
+
+	items := pluginsManagerJSON(t, mux)
+	got, ok := items["com.x.faq"]
+	if !ok {
+		t.Fatalf("plugin com.x.faq missing from manager payload: %+v", items)
+	}
+	if got.HasUpdate {
+		t.Error("hasUpdate = true, want false: an empty catalog version is never a real update")
+	}
+	if !got.VersionUnknown {
+		t.Error("versionUnknown = false, want true: a match with an empty version must not look current")
 	}
 }

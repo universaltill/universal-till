@@ -98,6 +98,18 @@ func getAdmin(t *testing.T, mux *http.ServeMux, u *auth.User) *httptest.Response
 	return rec
 }
 
+// newAdminPageTestDepsWithLocations is newAdminPageTestDeps plus
+// registerLocations on the SAME mux — needed for the deep-link/arrival test
+// below, which asserts the panel actually embeds a real destination's own
+// content (not just admin_page.go's own fallback error card for an
+// unregistered route).
+func newAdminPageTestDepsWithLocations(t *testing.T) (*http.ServeMux, *common.Deps) {
+	t.Helper()
+	mux, dp := newAdminPageTestDeps(t)
+	registerLocations(mux, dp)
+	return mux, dp
+}
+
 // adminGroupHeading and adminPageTitle wrap the tag around the translated
 // text, not just the bare translated string: a bare
 // strings.Contains(body, httpx.T("en", key)) is a tautology whenever a
@@ -515,6 +527,32 @@ func TestAdminPage_RegroupIntoAdministrationMovesEntryFromMenuToAdminTree(t *tes
 	}
 }
 
+// ut-docs#2139, found in review: a row a `layout` plugin regroups INTO
+// Administration (landing in adminGroupsFor's "Other" catch-all, exercised
+// above) must NOT get the hx-get/hx-target/hx-push-url wiring the six real
+// destinations get — that entry's own route has no writeAdminTreeOOB-wired
+// handler, so an hx-get to it returns a whole standalone HTML document,
+// which htmx would swap wholesale into #admin-panel. Only a
+// FragmentCapable row may carry hx-get; the "Other" row must stay a plain
+// <a href> real navigation, exactly as it behaved before ut-docs#2116.
+func TestAdminPage_OtherClusterRowIsPlainNavigationNotFragmentSwap(t *testing.T) {
+	mux, dp := newAdminPageTestDeps(t)
+	t.Setenv("UT_AUTH", "off")
+	installLayoutAmendments(t, dp, map[string]any{"key": "/users", "group": "menu.group.administration"})
+
+	body := getAdmin(t, mux, nil).Body.String()
+	idx := strings.Index(body, `href="/users"`)
+	if idx < 0 {
+		t.Fatalf("expected the regrouped /users row present, got: %s", body)
+	}
+	tagStart := strings.LastIndex(body[:idx], "<a ")
+	tagEnd := strings.Index(body[tagStart:], ">") + tagStart
+	row := body[tagStart:tagEnd]
+	if strings.Contains(row, "hx-get") || strings.Contains(row, "hx-target") || strings.Contains(row, "hx-push-url") {
+		t.Errorf("expected the Other-cluster /users row to stay a plain <a href> with no htmx wiring, got: %s", row)
+	}
+}
+
 // ut-docs#2008, found in review: regrouping one of the six OUT of
 // "menu.group.administration" used to duplicate it — back on the flat grid
 // (resolved Group no longer matched registerMenu's skip) AND still inside
@@ -569,5 +607,155 @@ func TestVisibleAdminEntries_ExcludesAdminItselfEvenIfRegroupedIntoItsOwnGroup(t
 	}
 	if len(got) == 0 {
 		t.Fatalf("expected the normal admin entries still visible under UT_AUTH=off, got none")
+	}
+}
+
+// ut-docs#2116: /admin's tree became the same two-pane master-detail shell
+// /items already uses (ut-docs#1950) — a bare (non-htmx) GET /admin must
+// embed the first visible group's first entry's own content into the
+// panel, with the tree showing that SAME entry is-current on the very
+// first load. This is the "deep link/arrival" half of the AC (mirrors
+// items_page.go's own "the right panel is never empty on arrival"
+// guarantee) — the click-driven OOB-swap half is covered by each of the
+// six destination pages' own TestXxxPage_HXRequestReturnsContentFragment-
+// WithOOBAdminTree test.
+//
+// No country configured, so the Fiscal cluster is empty and Locations is
+// the first non-empty cluster (adminGroupOrder) — /locations is registered
+// on this test's own mux (newAdminPageTestDepsWithLocations) specifically
+// so the embed sub-request resolves to real content instead of
+// embedAdminSection's fallback error card.
+func TestAdminPage_BareGetEmbedsFirstVisibleEntryAndMarksItCurrent(t *testing.T) {
+	mux, _ := newAdminPageTestDepsWithLocations(t)
+	t.Setenv("UT_AUTH", "off")
+
+	rec := getAdmin(t, mux, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /admin = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	panelStart := strings.Index(body, `id="admin-panel"`)
+	if panelStart < 0 {
+		t.Fatalf("expected the #admin-panel wrapper, got: %s", body)
+	}
+	panel := body[panelStart:]
+	// The embedded /locations page's own content actually landed in the
+	// panel — its own page title, translated through T — not a fallback
+	// error card (embedAdminSection's non-200 fallback).
+	wantTitle := "<h1>" + httpx.T("en", "locations.title")
+	if !strings.Contains(panel, wantTitle) {
+		t.Fatalf("expected /locations' own content embedded in the panel, got: %s", panel)
+	}
+	// The tree itself marks /locations is-current on arrival, not just
+	// after a click — checked on the tree markup that precedes the panel
+	// in document order.
+	treeStart := strings.Index(body, `class="admin-tree"`)
+	if treeStart < 0 || treeStart > panelStart {
+		t.Fatalf("expected the admin tree to render before the panel: %s", body)
+	}
+	tree := body[treeStart:panelStart]
+	idx := strings.Index(tree, `href="/locations"`)
+	if idx < 0 {
+		t.Fatalf("tree missing the /locations row: %s", tree)
+	}
+	tagStart := strings.LastIndex(tree[:idx], "<a ")
+	tagEnd := strings.Index(tree[tagStart:], ">") + tagStart
+	if !strings.Contains(tree[tagStart:tagEnd], "is-current") {
+		t.Errorf("the /locations row is not marked is-current on arrival: %s", tree[tagStart:tagEnd])
+	}
+}
+
+// Independent review of ut-docs#2116: pins the exact regression the
+// ut-docs#1950 review already found once on /items — the embedded
+// destination's OWN out-of-band tree copy landing inside the panel, so a
+// bare GET /admin emits a duplicate id="admin-tree" and paints the whole
+// tree a second time inside the right pane. admin_page.go's
+// adminEmbedHeader/isAdminEmbed check in writeAdminTreeOOB is what
+// prevents it; nothing pinned that it stays prevented, and the embed
+// header is exactly the kind of plumbing a later refactor drops silently.
+func TestAdminPage_BareGetRendersTheTreeExactlyOnce(t *testing.T) {
+	mux, _ := newAdminPageTestDepsWithLocations(t)
+	t.Setenv("UT_AUTH", "off")
+
+	rec := getAdmin(t, mux, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /admin = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if n := strings.Count(body, `id="admin-tree"`); n != 1 {
+		t.Errorf(`bare GET /admin rendered id="admin-tree" %d time(s), want exactly 1 — the embedded destination must not append its own OOB tree copy`, n)
+	}
+	// The same thing said the other way round: a full page load has no
+	// element to swap out of band, so it must carry no OOB marker at all.
+	if strings.Contains(body, `hx-swap-oob=`) {
+		t.Errorf("bare GET /admin must not contain an out-of-band swap marker: %s", body)
+	}
+}
+
+// Found in review, ut-docs#2139 follow-up: pure unit coverage for
+// firstFragmentCapableHref alongside the HTTP-level regression test below.
+func TestFirstFragmentCapableHref(t *testing.T) {
+	capable := adminTreeEntry{Entry: uislot.Entry{Key: "/locations", Href: "/locations"}, FragmentCapable: true}
+	notCapable := adminTreeEntry{Entry: uislot.Entry{Key: "/users", Href: "/users"}, FragmentCapable: false}
+
+	if got := firstFragmentCapableHref(nil); got != "" {
+		t.Errorf("no groups: got %q, want \"\"", got)
+	}
+	if got := firstFragmentCapableHref([]adminGroup{{Entries: []adminTreeEntry{notCapable}}}); got != "" {
+		t.Errorf("only a non-fragment-capable entry: got %q, want \"\"", got)
+	}
+	if got := firstFragmentCapableHref([]adminGroup{{Entries: []adminTreeEntry{notCapable, capable}}}); got != "/locations" {
+		t.Errorf("capable entry after a non-capable one in the SAME group: got %q, want /locations", got)
+	}
+	if got := firstFragmentCapableHref([]adminGroup{{Entries: []adminTreeEntry{notCapable}}, {Entries: []adminTreeEntry{capable}}}); got != "/locations" {
+		t.Errorf("capable entry in a LATER group: got %q, want /locations", got)
+	}
+}
+
+// Found in review, ut-docs#2139 follow-up: an always-visible core entry
+// (VisibleIf=="", e.g. /open-orders — visible to every role, cashier
+// included) a `layout` plugin regroups into Administration can become the
+// ONLY entry a low-privilege viewer sees here, landing in adminGroupsFor's
+// "Other" catch-all. Before firstFragmentCapableHref, registerAdmin's
+// default panel embed used groups[0].Entries[0].Href unconditionally — for
+// such a viewer that's the non-fragment-capable /open-orders entry, and
+// embedAdminSection would nest its entire standalone HTML document inside
+// #admin-panel (reproduced in review: a cashier got a literal
+// "<!DOCTYPE html><html>...<nav class=\"nav\">" inside the panel). The
+// panel must stay empty instead when nothing visible is fragment-capable.
+func TestAdminPage_BareGetDoesNotEmbedNonFragmentCapableEntry(t *testing.T) {
+	mux, dp := newAdminPageTestDeps(t)
+	registerOpenOrders(mux, dp)
+	installLayoutAmendments(t, dp, map[string]any{"key": "/open-orders", "group": "menu.group.administration"})
+
+	// A cashier: none of the six real destinations are visible (no
+	// permissions granted), so /open-orders — always visible, VisibleIf=="" —
+	// is the only entry, landing in the "Other" catch-all as groups[0].
+	cashier := auth.User{ID: "c1", Role: "cashier", DisplayName: "Cash"}
+	rec := getAdmin(t, mux, &cashier)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("cashier GET /admin (with /open-orders regrouped in) = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	panelStart := strings.Index(body, `id="admin-panel"`)
+	if panelStart < 0 {
+		t.Fatalf("expected the #admin-panel wrapper, got: %s", body)
+	}
+	panel := body[panelStart:]
+	if strings.Contains(panel, "<!DOCTYPE") || strings.Contains(panel, "<html") {
+		t.Fatalf("expected an empty panel, not a nested standalone document, got: %s", panel)
+	}
+	// The tree itself must not mark the non-fragment-capable /open-orders
+	// row is-current either -- nothing was actually embedded for it.
+	treeStart := strings.Index(body, `class="admin-tree"`)
+	tree := body[treeStart:panelStart]
+	idx := strings.Index(tree, `href="/open-orders"`)
+	if idx < 0 {
+		t.Fatalf("expected the regrouped /open-orders row present, got: %s", tree)
+	}
+	tagStart := strings.LastIndex(tree[:idx], "<a ")
+	tagEnd := strings.Index(tree[tagStart:], ">") + tagStart
+	if strings.Contains(tree[tagStart:tagEnd], "is-current") {
+		t.Errorf("expected /open-orders NOT marked is-current (nothing was embedded), got: %s", tree[tagStart:tagEnd])
 	}
 }
