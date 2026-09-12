@@ -162,6 +162,10 @@ jobs:
         run: bash scripts/ci/guard-emoji-font.sh
       - name: htmx-loaded guard
         run: bash scripts/ci/guard-htmx-loaded.sh
+      - name: docs-hub checkout repo guard
+        run: bash scripts/ci/guard-docs-hub-checkout-repo.sh
+      - name: docs-hub checkout repo guard regression test
+        run: bash scripts/ci/guard-docs-hub-checkout-repo_test.sh
       - name: Autofill-suppression guard
         run: bash scripts/ci/guard-autofill-suppression.sh
       - name: Autofill-suppression guard regression test
@@ -451,7 +455,7 @@ jobs:
         if: env.DOCS_READ_TOKEN != ''
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/docs
+          repository: universaltill/ut-docs
           # NOT ./docs — that is universal-till's OWN docs directory, which
           # made the specs' "is the docs repo present?" skip-check always
           # true (and previously let the checkout silently clobber it).
