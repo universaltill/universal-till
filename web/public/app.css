@@ -1016,7 +1016,7 @@ body.osk-padded .modifier-groups-modal { block-size: calc(100% - var(--osk-reser
    size for buttons that don't need the full checkout-grade footprint —
    New Sale/Inventory/Deposit refund here, available anywhere else a
    dense row of lower-stakes actions needs it. min-height 2.5rem/40px
-   clears WCAG 2.5.5's 24x24 CSS px floor with real margin. Deliberately
+   clears WCAG 2.5.8's 24x24 CSS px floor with real margin. Deliberately
    NOT applied to anything money/tax-path (Cash, Card, Payment, tender
    actions, the dine-in/takeaway switch — that one determines VAT, see
    .order-type-switch's own comment) — those keep the base .btn size. */
@@ -1945,10 +1945,54 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
    these inputs were ALREADY under this product's 44px touch-target
    minimum before this change (33-35px), so the shave lowers a floor that
    was never met rather than breaking one that was, and it stays above
-   WCAG 2.2 AA 2.5.5's 24px. Raising basket qty/discount to a real 44px in
-   non-kiosk mode is its own card — it cannot be done by padding alone
-   without re-breaking ut-docs#213's ">=4 rows" AC that the shave exists
-   to protect. */
+   WCAG 2.2 AA 2.5.8's 24px (2.5.5, cited near here elsewhere in this file,
+   is the DIFFERENT 44px AAA "Enhanced" criterion — not this floor; fixed
+   at both those other spots as part of ut-docs#1340 below, since that card
+   IS the WCAG-citation question and left them newly inconsistent
+   otherwise). Raising basket qty/discount to a real 44px in non-kiosk mode
+   is its own card — it cannot be done by padding alone without
+   re-breaking ut-docs#213's ">=4 rows" AC that the shave exists to
+   protect.
+
+   ut-docs#1340 investigated raising it anyway and REJECTED it — closed
+   decision, not an open question. The decisive number: two inputs at a
+   real 44px each, plus the `.25rem` gap between them (tracks
+   `--ui-scale`/`--fluid-fs`'s `clamp(17px,...,20px)`, so ~4.25-5px at the
+   default scale, not a flat 4px), need ~92-98px of vertical content —
+   inside rows currently 77-79px with only 12.9px of measured margin (the
+   ut-docs#1314 review's own number). That kills every SYMMETRIC sizing
+   variant at once, not just padding: widening the gap instead of the
+   inputs costs the identical vertical budget, and an invisible enlarged
+   hit-area (a <label> overlay, out of flow, so it doesn't touch row
+   height) still can't reach 44px symmetrically without the two overlays
+   overlapping by ~11-12px in that shared gap — a real misclick risk
+   between qty and discount, worse than the current undersized-but-
+   unambiguous targets. (A third stacked child, `.line-order-type-phone`,
+   joins this column below 480px — whoever designs the ut-docs#2217
+   overlay has to account for it too, not just the qty/disc pair.)
+   An ASYMMETRIC overlay — qty's hit-area growing into the row's own
+   `.55rem` cell padding upward, disc's growing into it downward, never
+   into the shared gap or the next row — reaches ~39px each without
+   touching row height at all. Deliberately NOT built here: it is a real
+   interaction change (hit-testing inside a <td>'s padding under
+   `vertical-align: middle`, the phone-breakpoint third child above) that
+   wants its own tests, and ut-docs#2217 is already redesigning this
+   control (dedicated +/- steppers) — one coordinated interaction
+   redesign, not two uncoordinated ones.
+   Current sizes already clear the real WCAG AA floor (2.5.8, 24x24px);
+   44px is this product's own stricter internal aspiration, not a
+   compliance requirement — and at the supported `ui_scale 2` (these
+   inputs are rem-sized, so they track `--ui-scale` directly) they are
+   already ~56px, over 44, so the gap only bites at the default scale.
+   No new device re-verification: nothing here changes a measured
+   dimension, so ut-docs#1021/#1314's existing on-device measurements
+   still stand — this card's decision is about the trade-off between
+   sizing variants, not a new number to confirm on hardware.
+   Decision: keep this size at the default scale. The real fix is
+   ut-docs#2217 (dedicated +/- steppers, each their own non-overlapping
+   44px target, in BOTH kiosk and non-kiosk — kiosk's own 2.1rem/37.5px
+   floor is also under 44px); this compact input stays for the rarer
+   "type an exact number" path and is out of scope there. */
 .qty-input { width: 3.4rem; padding: .25rem .3rem; font-size: .85rem; line-height: 1.2; }
 .disc-input { width: 3.4rem; padding: .25rem .3rem; font-size: .8rem; line-height: 1.2; }
 .btn-x { padding: .3rem .4rem; font-size: .8rem; min-height: 0; }
@@ -1968,7 +2012,7 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
    owner watching it live: (1) "too big" -- dropped from the switch's old
    3rem/48px floor to the app's own established `.btn.compact` floor
    (2.5rem/40px, still a real deliberate touch target, above WCAG 2.2 AA
-   2.5.5's 24px). (2) reference screenshot supplied showing a small self-
+   2.5.8's 24px). (2) reference screenshot supplied showing a small self-
    contained widget: `flex: 1` was still stretching the group to fill the
    WHOLE row. Both the group and each option are now `flex: 0 0 auto` --
    sized to their own icon+label content, not to the row. `.order-type-row`
