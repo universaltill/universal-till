@@ -18,7 +18,7 @@ This page is where those per-country defaults live. **The first-boot setup wizar
 
 1. Open **Country settings** from the menu (manager only). By default you see only your own shop's country, with its currency, tax rate and archive-retention floor.
 2. Edit the values on the row and press **Save**.
-3. To see every country the till knows about — useful if you're setting values up for a till that will run in a different country — follow **Show all countries**. **Show only my country** takes you back to just your own.
+3. To see every country the till knows about — useful if you're setting values up for a till that will run in a different country — press **Show all countries**. **Show only my country** takes you back to just your own. The table swaps over in place — you stay on the same page, and from the Administration screen the menu tree beside it stays put.
 4. To add somewhere that isn't listed, fill in **Add a country** with a short code of your own choosing (letters and numbers only, up to 8 characters), its currency and tax rate — this form is available in both views.
 5. **Restore defaults** puts a built-in country back to the values it shipped with. A country you added yourself is removed completely by **Delete**.
 

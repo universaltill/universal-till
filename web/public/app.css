@@ -3727,14 +3727,24 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
    The filter row's buttons keep the "chip" class name the design calls
    for (and so they still read as chips visually — a rounded pill, not a
    rectangular button), but every rule below is scoped to only apply
-   inside .category-filter. */
-.category-filter { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center;
+   inside .category-filter.
+
+   ut-docs#2167: /country-settings' scope-filter chips (its two "show
+   mine"/"show all" chips, web/ui/pages/country_settings.html) need this
+   exact same touch-floor/focus-ring/pressed-checkmark treatment, so every
+   selector below carries a `.filter-chips` twin instead of duplicating
+   the block — `.filter-chips` is the shared/generic name, `.category-filter`
+   is kept only because it's still /catalog's and /inventory's own existing
+   call site's class. Add any FUTURE chip-row consumer under `.filter-chips`
+   directly; there's no need to keep inventing a new `.category-filter`-style
+   name per page. */
+.category-filter, .filter-chips { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center;
                     margin-block-end: .75rem; }
 /* Real 3rem touch floor (same as .btn-icon), content-sized (no fixed
    width/max-width, white-space normal) so a long localized category name
    (German runs 30-50% longer, UX gate finding 2) never truncates —
    instead the row wraps (flex-wrap above), never scrolls. */
-.category-filter .chip { display: inline-flex; align-items: center; gap: .35rem;
+.category-filter .chip, .filter-chips .chip { display: inline-flex; align-items: center; gap: .35rem;
                           min-block-size: 3rem; padding-inline: 1rem; padding-block: .3rem;
                           border-radius: var(--radius); border: 1px solid var(--border);
                           background: var(--surface); color: var(--text);
@@ -3742,19 +3752,19 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
                           white-space: normal; text-align: start;
                           inline-size: auto; max-inline-size: none;
                           cursor: pointer; touch-action: manipulation; }
-.category-filter .chip:hover { background: var(--surface-2); }
+.category-filter .chip:hover, .filter-chips .chip:hover { background: var(--surface-2); }
 /* Explicit focus ring (WCAG 1.4.11) — same treatment as .btn-icon's own,
    since the chip's accessible state (pressed/not) is otherwise carried
    only by aria-pressed + the checkmark below (UX gate finding 7). */
-.category-filter .chip:focus-visible { outline: 2px solid var(--focus-border, var(--accent));
+.category-filter .chip:focus-visible, .filter-chips .chip:focus-visible { outline: 2px solid var(--focus-border, var(--accent));
                                         outline-offset: 2px; }
 /* Pressed state: colour AND a checkmark, never colour alone (WCAG
    non-colour-alone, UX gate finding 3) — a shop owner must be able to
    tell at a glance that a category filter from an earlier session is
    still narrowing what they see. */
-.category-filter .chip[aria-pressed="true"] { background: var(--accent);
+.category-filter .chip[aria-pressed="true"], .filter-chips .chip[aria-pressed="true"] { background: var(--accent);
                                                color: var(--accent-contrast);
                                                border-color: var(--accent); }
-.category-filter .chip-check { display: none; flex: none; inline-size: 1rem; block-size: 1rem; }
-.category-filter .chip-check svg { inline-size: 1rem; block-size: 1rem; }
-.category-filter .chip[aria-pressed="true"] .chip-check { display: inline-flex; }
+.category-filter .chip-check, .filter-chips .chip-check { display: none; flex: none; inline-size: 1rem; block-size: 1rem; }
+.category-filter .chip-check svg, .filter-chips .chip-check svg { inline-size: 1rem; block-size: 1rem; }
+.category-filter .chip[aria-pressed="true"] .chip-check, .filter-chips .chip[aria-pressed="true"] .chip-check { display: inline-flex; }

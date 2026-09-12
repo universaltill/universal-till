@@ -18,7 +18,7 @@ Hier liegen diese länderspezifischen Standardwerte. **Der Erstinbetriebnahme-As
 
 1. Öffnen Sie **Ländereinstellungen** über das Menü (nur Manager). Standardmäßig sehen Sie nur das Land Ihres eigenen Geschäfts mit Währung, Steuersatz und Mindestarchivaufbewahrung.
 2. Bearbeiten Sie die Werte in der Zeile und drücken Sie **Speichern**.
-3. Um jedes Land zu sehen, das die Kasse kennt — nützlich, wenn Sie Werte für eine Kasse einrichten, die in einem anderen Land laufen wird —, folgen Sie **Alle Länder anzeigen**. **Nur mein Land anzeigen** bringt Sie zurück zu nur Ihrem eigenen.
+3. Um jedes Land zu sehen, das die Kasse kennt — nützlich, wenn Sie Werte für eine Kasse einrichten, die in einem anderen Land laufen wird —, drücken Sie **Alle Länder anzeigen**. **Nur mein Land anzeigen** bringt Sie zurück zu nur Ihrem eigenen. Die Tabelle wird an Ort und Stelle ausgetauscht — Sie bleiben auf derselben Seite, und im Verwaltungsbildschirm bleibt der Menübaum daneben stehen.
 4. Um einen Ort hinzuzufügen, der nicht aufgeführt ist, füllen Sie **Land hinzufügen** mit einem eigenen kurzen Code (nur Buchstaben und Zahlen, bis zu 8 Zeichen), seiner Währung und seinem Steuersatz aus — dieses Formular ist in beiden Ansichten verfügbar.
 5. **Standardwerte wiederherstellen** setzt ein eingebautes Land auf die Werte zurück, mit denen es ausgeliefert wurde. Ein selbst hinzugefügtes Land wird über **Löschen** vollständig entfernt.
 
