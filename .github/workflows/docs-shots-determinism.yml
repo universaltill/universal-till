@@ -1,0 +1,76 @@
+name: docs-shots-determinism
+
+# ut-docs#2184: `make docs-shots` must produce byte-identical PNGs and
+# manifest.json across two consecutive runs on an identical tree. That
+# property is proven by scripts/ci/guard-docs-shots-determinism.sh, which
+# runs the real Playwright harness TWICE (124 screenshots each run) and
+# diffs every byte — ~5 minutes total on the reference runner.
+#
+# Deliberately NOT a step in ci.yml's `build` job (same reasoning as
+# android-ci.yml / adr-taxonomy-guard, see universal-till/CLAUDE.md): this
+# is far more expensive than that job's other guards, all of which are pure
+# source-hash/lint checks with no browser involved. Running it on every PR
+# would roughly double the cost of any PR that also triggers
+# guard-docs-shots.sh's own regeneration requirement.
+#
+# Instead, same shape as lang-pack-drift.yml's PR/push split:
+#   - pull_request, paths-scoped to the harness itself (the files that could
+#     actually reintroduce rendering nondeterminism) — an ordinary UI PR
+#     that only changes web/ui/**, web/public/** or internal/pages/** never
+#     triggers this at all, no cost, no noise. Includes e2e/package.json and
+#     e2e/package-lock.json (a Playwright/Chromium version bump lands there
+#     first — exactly the drift class the weekly schedule below also guards
+#     against, so a PR that bumps the pin gets caught immediately rather than
+#     waiting up to 7 days) and Makefile (the docs-shots-determinism target
+#     itself lives there).
+#   - schedule (weekly): defense-in-depth against a cause that ISN'T a diff
+#     to these files — e.g. a Chromium/Playwright version bump silently
+#     changing what --disable-gpu et al. actually determinize, or an
+#     upstream regression. A quiet plugin repo's schedule can go 60 days
+#     idle and get auto-disabled by GitHub; this repo's own push volume
+#     doesn't save a `schedule:`-only trigger the way it saves push-based
+#     lang-pack-drift, so this stays on an explicit weekly cron instead of
+#     relying on repo activity.
+#   - workflow_dispatch, for an on-demand re-check.
+on:
+  pull_request:
+    paths:
+      - 'e2e/playwright.docs.config.ts'
+      - 'e2e/tests-docs/**'
+      - 'e2e/scripts/docs-shots.sh'
+      - 'e2e/scripts/resolve-chromium.sh'
+      - 'e2e/run-till.sh'
+      - 'e2e/run-till-auth.sh'
+      - 'e2e/package.json'
+      - 'e2e/package-lock.json'
+      - 'Makefile'
+      - 'scripts/ci/guard-docs-shots-determinism.sh'
+      - '.github/workflows/docs-shots-determinism.yml'
+  schedule:
+    - cron: '0 4 * * 1' # 04:00 UTC every Monday
+  workflow_dispatch: {}
+
+# WARNING: never add this job as a required status check in branch
+# protection. `paths:` above means most PRs get NO check run at all for
+# this job — a required-status-check gate reads that as "waiting forever"
+# and makes those PRs permanently unmergeable. Same warning as
+# lang-pack-drift.yml's.
+jobs:
+  determinism:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Prints exactly which file(s) differed and why on failure (see the
+      # script's own FAIL block) — no artifact upload needed. The script
+      # restores web/help/img/ to its pre-run state on exit either way (both
+      # of its own two internal runs happen in place, in the real working
+      # tree), so there is nothing left on disk at this point worth
+      # archiving; the failure detail is all in the step's own log output.
+      - name: Two-run byte-identical determinism check
+        run: bash scripts/ci/guard-docs-shots-determinism.sh
