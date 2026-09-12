@@ -14,7 +14,7 @@ const (
 	pluginUpdateCheckInitialDelay = 30 * time.Second
 	pluginUpdateCheckInterval     = 15 * time.Minute
 	// pluginUpdateCanonicalTypeLanguage is the one canonical type (ADR-0002's
-	// 20-type taxonomy) this scheduler auto-applies without asking. A
+	// 22-type taxonomy) this scheduler auto-applies without asking. A
 	// language pack is content, not code, and a stale one silently degrades
 	// the product for exactly the non-English merchants we are trying to
 	// win (ut-docs#1953) — every other type only ever surfaces as a pending
