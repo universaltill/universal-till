@@ -18,6 +18,10 @@ func newTelemetryTestDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
+	// Every caller leaked this DB (and its background connectionOpener
+	// goroutine) forever — a real, if minor, contributor to the "surviving
+	// goroutine" noise in a go test -race timeout dump (ut-docs#2156).
+	t.Cleanup(func() { db.Close() })
 	stmts := []string{
 		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, author TEXT, is_active INTEGER NOT NULL DEFAULT 1, install_state TEXT DEFAULT 'installed', runtime TEXT DEFAULT 'go', entrypoint TEXT DEFAULT '');`,
 		`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at DATETIME);`,

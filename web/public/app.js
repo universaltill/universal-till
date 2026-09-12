@@ -840,6 +840,28 @@ function scheduleToastDismiss(){
 document.addEventListener('DOMContentLoaded', scheduleToastDismiss);
 document.addEventListener('htmx:afterSwap', scheduleToastDismiss);
 
+// ut-docs#2162: web/ui/layouts/base.html's own <title> only ever renders
+// on a full-page response — an in-panel swap (/items, /admin,
+// /help/{topic}) never touches document.title at all, so the browser tab
+// kept showing whichever shell's own bare-GET title it started on.
+// internal/httpx.RenderContentFragment/RenderPartial (Go side) set the
+// X-UT-Page-Title response header (percent-encoded — see that header's own
+// comment for why: getResponseHeader() reads bytes as Latin-1, not UTF-8,
+// and this product ships ar/fa/tr locales) whenever the swapped fragment's
+// template data carries a "title". This is the one place that reads it
+// back. Scoped to an explicit swap-target allowlist, NOT "any response
+// carrying the header": /import's modal (#import-modal) also renders
+// through RenderContentFragment and would otherwise wrongly retitle the
+// tab to "Import" while just a dialog is open over the real panel.
+document.addEventListener('htmx:afterSwap', function (evt) {
+  var target = evt.detail && evt.detail.target;
+  if (!target || ['items-panel', 'admin-panel', 'manual-panel'].indexOf(target.id) === -1) return;
+  var xhr = evt.detail.xhr;
+  var encoded = xhr && xhr.getResponseHeader('X-UT-Page-Title');
+  if (!encoded) return;
+  try { document.title = decodeURIComponent(encoded); } catch (_) {}
+});
+
 // Dismiss control — delegated so it survives every #basket outerHTML swap.
 document.addEventListener('click', function(e){
   var btn = e.target.closest ? e.target.closest('.notice-dismiss') : null;
@@ -908,6 +930,18 @@ document.addEventListener('click', function(e){
     var contentType = (d.xhr.getResponseHeader && d.xhr.getResponseHeader('Content-Type')) || '';
     if (contentType.indexOf('text/html') === -1) return;
     if (typeof d.serverResponse !== 'string' || d.serverResponse.trim() === '') return;
+    // ut-docs#2179: httpx.RenderError (page routes' last-resort error
+    // renderer) has no htmx-fragment awareness — it always answers with a
+    // full base-templated HTML document (own <head>, own nav), non-2xx,
+    // Content-Type text/html, non-empty. That satisfies every check above
+    // just like a real targeted `.muted` fragment does, but force-swapping
+    // a whole document as innerHTML into a small panel target (#admin-panel/
+    // #items-panel) doesn't render anything sane — exactly the "silent
+    // no-op" this card reports, one layer deeper than a missing #pos-alert
+    // element. A real fragment meant for a swap target is never a full
+    // document, so this is a safe, cheap discriminator: fall through to
+    // htmx:responseError/showAlert instead, same as a plain-text/empty body.
+    if (/^\s*(<!doctype html|<html)/i.test(d.serverResponse)) return;
     d.shouldSwap = true;
     d.isError = false;
   });

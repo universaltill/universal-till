@@ -114,6 +114,13 @@ func TestCatalogItemMutations_RefusedOnReplica(t *testing.T) {
 		t.Errorf("item lead time must not be set on a replica: got %d err=%v", leadTime, err)
 	}
 
+	// items: reorder level
+	assertRefused(t, "set item reorder level", post(t, "/api/catalog/item-reorder-level", "panelItem=itm1&reorderLevel=5"))
+	var reorderLevel int
+	if err := db.QueryRow(`SELECT reorder_level FROM items WHERE id = 'itm1'`).Scan(&reorderLevel); err != nil || reorderLevel != 0 {
+		t.Errorf("item reorder level must not be set on a replica: got %d err=%v", reorderLevel, err)
+	}
+
 	// item_variants: create
 	assertRefused(t, "create variant", post(t, "/api/catalog/variant", "itemId=itm1&name=Small&price=250"))
 	var variantCount int
