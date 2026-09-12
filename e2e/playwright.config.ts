@@ -52,7 +52,8 @@ const launchOptions = existsSync(PREINSTALLED_CHROMIUM) ? { executablePath: PREI
 // (verified: `playwright test --project=auth --list`), so it always finds
 // the wizard-created admin operator already in place and never races
 // login.spec.ts's own "brand-new till" first assertion.
-const AUTH_ONLY_SPECS = /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423|session-expiry-redirect-2144)\.spec\.ts$/;
+const AUTH_ONLY_SPECS =
+  /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423|session-expiry-redirect-2144|admin-session-expiry-redirect-2157)\.spec\.ts$/;
 
 // ut-docs#1559: the ai.identify overlay's own err.name branching coverage
 // needs the dedicated ai-identify project/server below — see the comment

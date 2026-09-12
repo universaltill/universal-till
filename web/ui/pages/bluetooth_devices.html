@@ -147,7 +147,15 @@
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ address: address })
-    }).then(function (r) { return r.json(); });
+    }).then(function (r) {
+      // ut-docs#2157: a session-expired 401 for this raw (non-htmx) /api/*
+      // call answers with the auth middleware's {code,message} error
+      // object too — messageFor() below would just fall through to its
+      // generic fallback text, silently hiding that the operator needs to
+      // sign back in. One fix here covers every post() caller.
+      if (r.status === 401) { window.location.href = '/login'; return null; }
+      return r.json();
+    });
   }
 
   // ut-docs#1751: an Android permission prompt and the system's
@@ -215,6 +223,7 @@
         scanMsg.textContent = T.pairing;
         post('/api/bluetooth-devices/pair', dev.address)
           .then(function (j) {
+            if (!j) return;
             if (j.error) {
               pair.disabled = false;
               scanMsg.textContent = messageFor(j.error.code, T.pairError);
@@ -238,8 +247,13 @@
       scanMsg.textContent = T.scanning;
       scanOut.innerHTML = '';
       fetch('/api/bluetooth-devices/scan', { method: 'POST' })
-        .then(function (r) { return r.json(); })
+        .then(function (r) {
+          // ut-docs#2157: same session-expiry shape as post() above.
+          if (r.status === 401) { window.location.href = '/login'; return null; }
+          return r.json();
+        })
         .then(function (j) {
+          if (!j) return;
           scanBtn.disabled = false;
           if (j.error) { scanMsg.textContent = messageFor(j.error.code, T.scanError); return; }
           var list = (j.data && j.data.devices) || [];
@@ -257,6 +271,7 @@
       pairedMsg.textContent = T.forgetting;
       post('/api/bluetooth-devices/forget', btn.getAttribute('data-address'))
         .then(function (j) {
+          if (!j) return;
           if (j.error) {
             btn.disabled = false;
             pairedMsg.textContent = messageFor(j.error.code, T.forgetError);

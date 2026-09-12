@@ -1104,8 +1104,22 @@
   function search() {
     msg.textContent = '…'; // not renderNotice — persists past the 2.5s auto-expire (ut-docs#918 review finding 2)
     fetch('/api/data/customers?q=' + encodeURIComponent(q.value.trim()))
-      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        // ut-docs#2157: a session-expired 401 answers with the auth
+        // middleware's {code,message} error object — j.data below would be
+        // null, silently reading as "no matches" instead of telling the
+        // operator they need to sign back in.
+        if (r.status === 401) { window.location.href = '/login'; return null; }
+        return r.json();
+      })
       .then(function (j) {
+        if (!j) return;
+        // ut-docs#2157 review finding: dataAPIRespond's real (non-401)
+        // errors (403 manager-only, 500) are plain-string JSON, unlike the
+        // auth middleware's 401 object — without this check they read as
+        // j.data being null and silently render "No matches." instead of
+        // the actual problem.
+        if (j.error) { renderNotice(msg, 'error', j.error); return; }
         msg.textContent = '';
         var list = (j.data && j.data.customers) || [];
         if (!list.length) { out.innerHTML = '<p class="muted">No matches.</p>'; return; } // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
@@ -1147,8 +1161,22 @@
   pv.addEventListener('click', function () {
     msg.textContent = '…'; // not renderNotice — persists past the 2.5s auto-expire (ut-docs#918 review finding 2)
     fetch('/api/data/obsolete-items')
-      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        // ut-docs#2157: a session-expired 401 answers with the auth
+        // middleware's {code,message} error object — j.data below would be
+        // null, silently reading as "nothing to remove" instead of telling
+        // the operator they need to sign back in.
+        if (r.status === 401) { window.location.href = '/login'; return null; }
+        return r.json();
+      })
       .then(function (j) {
+        if (!j) return;
+        // ut-docs#2157 review finding: dataAPIRespond's real (non-401)
+        // errors (403 manager-only, 500) are plain-string JSON, unlike the
+        // auth middleware's 401 object — without this check they read as
+        // j.data being null and silently render "Nothing to remove."
+        // instead of the actual problem.
+        if (j.error) { renderNotice(msg, 'error', j.error); return; }
         msg.textContent = '';
         var list = (j.data && j.data.items) || [];
         run.disabled = list.length === 0;
