@@ -101,6 +101,12 @@
   window.act = function (url, method) {
     msg.textContent = '⏳ …';
     fetch(url, { method: method }).then(function (res) {
+      // ut-docs#2157: a session-expired 401 answers with the auth
+      // middleware's {code,message} error OBJECT — unlike this plugin
+      // endpoint's own errors, which are always the plain string T[...]
+      // above expects. Without this check, msg ends up showing the literal
+      // "[object Object]" instead of a way back to sign in.
+      if (res.status === 401) { window.location.href = '/login'; return; }
       return res.json().catch(function () { return {}; }).then(function (j) {
         if (res.ok && !j.error) { window.location.reload(); return; }
         msg.textContent = '✗ ' + (T[j.error] || j.error || ('HTTP ' + res.status));
@@ -113,6 +119,8 @@
     var fd = new FormData(ev.target);
     msg.textContent = '⏳ import…';
     fetch('/api/plugins/import-from-file', { method: 'POST', body: fd }).then(function (res) {
+      // ut-docs#2157: same session-expiry shape as window.act above.
+      if (res.status === 401) { window.location.href = '/login'; return; }
       return res.text().then(function (t) {
         if (res.ok) { window.location.reload(); return; }
         // The replica guard answers with the JSON envelope; legacy error
