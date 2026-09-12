@@ -255,6 +255,11 @@ func setupIntegrationTestDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
+	// This leaked the DB (and its background connectionOpener goroutine)
+	// forever — never closed, only the underlying temp file was removed
+	// (ut-docs#2156). t.Cleanup runs LIFO, so this closes before the
+	// os.Remove registered above.
+	t.Cleanup(func() { database.Close() })
 
 	return database.DB
 }
