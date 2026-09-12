@@ -46,6 +46,15 @@ func (cr *CatalogRepository) Fetch(ctx context.Context, locale, deviceArch strin
 	cr.mu.Lock()
 	defer cr.mu.Unlock()
 
+	if cr.client == nil {
+		// A repo with no configured marketplace client (e.g. a test fixture
+		// that seeds a snapshot directly on disk, ut-docs#2131) can't fetch —
+		// treat it as an ordinary fetch failure rather than a nil-pointer
+		// panic, so GetOrFetch's stale-cache fallback handles it the same
+		// way it handles any other unreachable marketplace.
+		return nil, fmt.Errorf("no marketplace client configured")
+	}
+
 	req := &ListPluginsRequest{
 		Locale:     locale,
 		DeviceArch: deviceArch,
@@ -98,12 +107,29 @@ func (cr *CatalogRepository) Get() (*CatalogSnapshot, bool, error) {
 	return snapshot, isStale, nil
 }
 
-// GetOrFetch returns cached catalog or fetches fresh if unavailable
+// GetOrFetch returns the cached catalog, refreshing it first when the cache
+// is stale — offline-first is preserved throughout: a refetch failure (no
+// network) falls back to serving the stale cache rather than erroring, the
+// same fallback GetOrFetch has always used for "no cache at all".
+//
+// Before ut-docs#2131 this only fetched when there was NO cache — Get()
+// computed isStale correctly (staleAfter is 15 minutes) but the caller threw
+// it away, so a till that had ever written one snapshot to disk kept serving
+// it forever, however old. That's a third, independent way a plugin's
+// "latest" version goes stale/wrong on the management page, on top of the
+// missing plugin_install_status mapping and the locale-filtered snapshot.
 func (cr *CatalogRepository) GetOrFetch(ctx context.Context, locale, deviceArch string) (*CatalogSnapshot, bool, error) {
 	// Try to get cached first
 	snapshot, isStale, err := cr.Get()
 	if err == nil {
-		return snapshot, isStale, nil
+		if !isStale {
+			return snapshot, false, nil
+		}
+		if fresh, ferr := cr.Fetch(ctx, locale, deviceArch); ferr == nil {
+			return fresh, false, nil
+		}
+		// Refetch failed (e.g. offline) — the stale copy still beats nothing.
+		return snapshot, true, nil
 	}
 
 	// No cache available, fetch fresh

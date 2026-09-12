@@ -42,26 +42,25 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 
-		// Latest catalog versions keyed by plugin id via the install-status
-		// listing mapping. GetOrFetch serves the cache when present (offline-
-		// first) and only fetches when there is no cache at all — otherwise a
-		// fresh boot never shows "update available" until the store is visited.
-		latestByPlugin := map[string]string{}
+		// Catalog match per installed plugin, via the same two-tier
+		// byListing/byAuthorName resolution UpdateChecker already uses
+		// (plugins.IndexCatalog/Resolve, ut-docs#2131) — byListing alone left
+		// every file-imported plugin (no plugin_install_status row at all,
+		// internal/data/sync_plugins_repo.go) permanently unable to report an
+		// update, indistinguishable from "you are current". GetOrFetch serves
+		// the cache when fresh and refreshes it when stale (offline-first
+		// fallback preserved on a failed refetch) rather than serving an
+		// arbitrarily old cached snapshot forever.
+		listingByPlugin := map[string]string{}
+		for listingID, st := range statuses {
+			if st.PluginID != "" {
+				listingByPlugin[st.PluginID] = listingID
+			}
+		}
+		var catalogIdx plugins.CatalogIndex
 		if d.CatalogRepo != nil {
 			if snapshot, _, err := d.CatalogRepo.GetOrFetch(r.Context(), httpx.ResolveLocale(w, r), ""); err == nil && snapshot != nil {
-				latestByListing := map[string]string{}
-				for _, p := range snapshot.Plugins {
-					id := p.ListingID
-					if id == "" {
-						id = p.ID
-					}
-					latestByListing[id] = p.Version
-				}
-				for listingID, st := range statuses {
-					if v, ok := latestByListing[listingID]; ok && st.PluginID != "" {
-						latestByPlugin[st.PluginID] = v
-					}
-				}
+				catalogIdx = plugins.IndexCatalog(snapshot)
 			}
 		}
 
@@ -72,17 +71,32 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 				!strings.Contains(strings.ToLower(row.ID), search) {
 				continue
 			}
-			latest := latestByPlugin[row.ID]
+			var latest string
+			var hasUpdate, versionUnknown bool
+			// versionUnknown covers TWO cases, not just "no match at all"
+			// (ut-docs#2131 review): a resolved catalog entry with an empty
+			// Version is just as much an unknown as no entry at all — AC2
+			// says latest:"" must never be presented as current, and a
+			// match with an empty version falls straight through that gap
+			// otherwise (hasUpdate stays false, versionUnknown would stay
+			// false too, rendering identically to "you are current").
+			if catalogPlugin, ok := catalogIdx.Resolve(listingByPlugin[row.ID], row.Author, row.Name); ok && catalogPlugin.Version != "" {
+				latest = catalogPlugin.Version
+				hasUpdate = plugins.VersionNewer(latest, row.Version)
+			} else {
+				versionUnknown = true
+			}
 			items = append(items, map[string]any{
-				"id":        row.ID,
-				"name":      row.Name,
-				"version":   row.Version,
-				"enabled":   row.IsActive,
-				"trust":     row.TrustLevel,
-				"state":     row.InstallState,
-				"hasUpdate": latest != "" && latest != row.Version,
-				"latest":    latest,
-				"docsRoute": docsRouteByPlugin[row.ID],
+				"id":             row.ID,
+				"name":           row.Name,
+				"version":        row.Version,
+				"enabled":        row.IsActive,
+				"trust":          row.TrustLevel,
+				"state":          row.InstallState,
+				"hasUpdate":      hasUpdate,
+				"latest":         latest,
+				"versionUnknown": versionUnknown,
+				"docsRoute":      docsRouteByPlugin[row.ID],
 			})
 		}
 
