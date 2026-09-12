@@ -43,6 +43,14 @@
           data-category-filter-trigger>
     <span class="btn-ico" aria-hidden="true">{{ icon "filter" }}<span class="category-filter-badge" aria-hidden="true" hidden></span></span>
   </button>
+  {{/* ut-docs#2178: a persistent aria-live region so a screen reader gets a
+       spoken confirmation when the category selection changes what's
+       listed. Lives on the always-present control wrapper (never itself
+       swapped by htmx — only .catalog-row/#catalog-tbody are), and reuses
+       the SAME data-label-active/data-label-idle text the trigger button's
+       own aria-label already carries (CategoryFilter.paintTriggerState in
+       category-filter.js writes both) rather than a new locale key. */}}
+  <div id="{{ .controlID }}-status" class="visually-hidden" aria-live="polite" aria-atomic="true" data-category-filter-status></div>
   <dialog id="{{ .controlID }}-dialog" class="modifier-modal category-filter-dialog"
           aria-labelledby="{{ .controlID }}-dialog-title" data-category-filter-dialog>
     <div class="category-filter-dialog-head">

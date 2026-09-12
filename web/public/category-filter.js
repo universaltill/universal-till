@@ -164,6 +164,13 @@
   // is shape-based, not colour-based; the accessible name gets the same
   // signal in words via data-label-active/data-label-idle (filled from
   // locale keys by the call site, so this file stays locale-free).
+  //
+  // ut-docs#2178: also writes that SAME label into [data-category-filter-
+  // status] if the control carries one (category_filter_popover.html's own
+  // aria-live="polite" region) — one spoken confirmation whenever the
+  // filter changes what's listed, reusing this text rather than a second
+  // locale key that would say the same thing twice. "Whenever it CHANGES"
+  // is load-bearing and lives in paintStatus below, not here.
   function paintTriggerState(controlEl, active) {
     if (!controlEl) return;
     var trigger = controlEl.querySelector('[data-category-filter-trigger]');
@@ -176,7 +183,33 @@
     if (label) {
       trigger.setAttribute('aria-label', label);
       trigger.setAttribute('title', label);
+      paintStatus(controlEl, label);
     }
+  }
+
+  // paintStatus(controlEl, label) -> void
+  //
+  // Writes `label` into the control's aria-live region, but ONLY for a
+  // real user-driven change. Two things it deliberately does not do:
+  //
+  //  1. It skips the very first call for a given region. bind() above
+  //     fires onChange() once at bind time to seed the list, so
+  //     paintTriggerState runs on every page load (and on every htmx swap
+  //     that re-renders the control) with nothing having been chosen.
+  //     Writing a live region on load is the classic way to make a screen
+  //     reader announce a filter state the user never selected, so the
+  //     first call only arms the region and leaves it empty.
+  //  2. It skips a write whose value is already there. Setting textContent
+  //     replaces the text node even when the string is identical, and that
+  //     mutation alone is enough for a live region to speak again.
+  function paintStatus(controlEl, label) {
+    var status = controlEl.querySelector('[data-category-filter-status]');
+    if (!status) return;
+    if (status.getAttribute('data-armed') !== '1') {
+      status.setAttribute('data-armed', '1');
+      return;
+    }
+    if (status.textContent !== label) status.textContent = label;
   }
 
   global.CategoryFilter = {
