@@ -195,12 +195,12 @@ func TestOpenOrdersResume_SuccessRedirectsToSaleScreenWithBasketLoaded(t *testin
 	}
 }
 
-// TestOpenOrdersResume_BusyRefusalKeepsOrderParkedAndListed (ut-docs#2138's
-// own acceptance criterion): with the live basket already busy, tapping a
-// row is refused with the existing hold.error.busy message, and the order
-// stays parked and listed -- exactly the pre-#2138 rule, just reachable from
-// a new place.
-func TestOpenOrdersResume_BusyRefusalKeepsOrderParkedAndListed(t *testing.T) {
+// TestOpenOrdersResume_BusyBasketIsAutoParkedThenTargetOpens (ut-docs#1919):
+// with the live basket already busy, tapping a row no longer refuses -- the
+// in-progress sale is auto-parked (findable and resumable later, same as a
+// manual Hold) and the tapped order opens onto the sale screen, same as it
+// does with an empty basket.
+func TestOpenOrdersResume_BusyBasketIsAutoParkedThenTargetOpens(t *testing.T) {
 	mux, d := newOpenOrdersTestMux(t)
 	if _, err := d.Db.Exec(`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id, created_at) VALUES
  ('h1','Table 4',1250,3,'{}',NULL,datetime('now'))`); err != nil {
@@ -213,28 +213,42 @@ func TestOpenOrdersResume_BusyRefusalKeepsOrderParkedAndListed(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("POST /open-orders/resume = %d, want %d: %s", rec.Code, http.StatusSeeOther, rec.Body.String())
 	}
-	if got := rec.Header().Get("Location"); got != "/open-orders?err=hold.error.busy" {
-		t.Fatalf("expected the busy refusal to redirect back with the error, got %q", got)
+	if got := rec.Header().Get("Location"); got != "/" {
+		t.Fatalf("expected a redirect to the sale screen, got %q", got)
 	}
-	body := openOrdersGet(t, mux)
-	if !strings.Contains(body, `data-held-id="h1"`) {
-		t.Fatalf("expected the refused order to stay parked and listed, got: %s", body)
+	// h1's seeded payload is an empty snapshot ('{}') -- this test is about
+	// which order ends up live and which gets auto-parked, not about line
+	// restoration (TestOpenOrdersResume_SuccessRedirectsToSaleScreenWithBasketLoaded
+	// already covers a real basket round-tripping through resume).
+	if d.Engine.HeldOrigin().ID != "h1" {
+		t.Fatalf("expected order h1 to be the live basket's origin, got %+v", d.Engine.HeldOrigin())
+	}
+	rows, err := data.NewHeldSalesRepo(d.Db).List(context.Background())
+	if err != nil {
+		t.Fatalf("list held_sales: %v", err)
+	}
+	if len(rows) != 1 || rows[0].ID == "h1" {
+		t.Fatalf("expected exactly one held row -- the auto-parked prior sale under a fresh id, not h1 -- got %+v", rows)
 	}
 }
 
 // TestOpenOrdersPage_ShowsErrBanner (ut-docs#2138): the ?err= query string
-// the resume route's busy redirect carries must actually render, same
+// the resume route's redirect carries must actually render, same
 // "login-error" banner convention country_settings_page.go's renderPage
-// already uses for this shape.
+// already uses for this shape. Uses hold.error.not_found rather than the
+// old hold.error.busy (ut-docs#1919 retired that outcome from this route --
+// a busy basket now auto-parks instead of failing) -- any key the route can
+// still actually produce works equally well to pin the generic banner
+// mechanism this test is really about.
 func TestOpenOrdersPage_ShowsErrBanner(t *testing.T) {
 	mux, _ := newOpenOrdersTestMux(t)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/open-orders?err=hold.error.busy", nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/open-orders?err=hold.error.not_found", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /open-orders?err=... = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), httpx.T("en", "hold.error.busy")) {
-		t.Fatalf("expected the busy error banner, got: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), httpx.T("en", "hold.error.not_found")) {
+		t.Fatalf("expected the not-found error banner, got: %s", rec.Body.String())
 	}
 }
 
