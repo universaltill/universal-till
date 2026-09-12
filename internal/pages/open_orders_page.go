@@ -100,15 +100,23 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "open_orders.error.load_failed", err)
 			return
 		}
+		// ut-docs#2146: bare "/" isn't always the sale screen -- see
+		// saleScreenReturnURL's own comment (index_page.go) for why
+		// backoffice/self_order need opposite treatment here.
+		mode, _, _ := d.Settings.Get(r.Context(), "display.mode")
 		httpx.Render("ui/pages/open_orders.html", map[string]any{
-			"title":     "Open orders",
-			"theme":     d.CurrentState().Theme,
-			"menuItems": d.MenuSnapshot(),
-			"orders":    rows,
+			"title":         "Open orders",
+			"theme":         d.CurrentState().Theme,
+			"menuItems":     d.MenuSnapshot(),
+			"orders":        rows,
+			"backToSaleURL": saleScreenReturnURL(mode),
 			// ut-docs#2138: set only by the resume route's redirect below, on
 			// refusal -- the same ?err=<i18n key> + "login-error" banner
 			// convention country_settings_page.go's renderPage already uses.
-			"errKey": r.URL.Query().Get("err"),
+			// ut-docs#2148: validated via httpx.QueryErrKey, not a raw
+			// passthrough -- an unrecognised query value must not render
+			// verbatim in the banner.
+			"errKey": httpx.QueryErrKey(r),
 		})(w, r)
 	})
 
