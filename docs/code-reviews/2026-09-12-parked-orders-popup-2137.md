@@ -133,3 +133,65 @@ in a second context, so it got the quiet chip styling its name implies.
 acceptance criterion still open, and given this card exists because a device
 screenshot disagreed with what the server reported, the device check is the one
 that counts.
+
+## Second review round — the two CI failures (2026-09-12)
+
+The first round reviewed the feature. CI then failed two tests, both caused
+by this card's own change rather than by flakiness, and both fixed here.
+Reviewed independently again (different model, isolated worktree).
+
+### What failed and why
+
+1. `tender-panel-reachable.spec.ts` — the RTL (fa) test asserted the
+   quick-pay **button** spans the full width of `.tender-default-footer`.
+   That held only while the button was the sole child of `.tender-quickpay`;
+   this card put the parked-orders trigger beside it, so quick-pay now
+   covers part of the row (measured 164.95px short in CI, 141.67px locally).
+   The invariant the test exists for belongs to the **row**, so the
+   assertion now measures `.tender-quickpay`, and additionally asserts the
+   two children genuinely mirror under RTL — a check the old single-child
+   shape could not express at all.
+
+2. `parked-orders-popup-2137.spec.ts` — "the popup says so when nothing is
+   parked" is a claim about global state. Held orders are DB rows and
+   `POST /api/pos/reset` clears only the in-memory basket engine, so
+   fixtures.ts's per-file reset does not remove them and any earlier spec
+   that parked a sale without resuming it falsifies the claim. It passed
+   alone and failed in CI at test ~301 — order-dependent, not flaky.
+   Fixed with a `drainParkedOrders` helper.
+
+### Evidence
+
+- Full local `--project=default` run: **443 passed, 0 failed**.
+- Negative control: deliberately parking an order reproduces CI's exact
+  `element(s) not found` without the drain, and passes with it. (A first
+  attempt at this control was invalid — a `-g` filter silently excluded the
+  polluting test — and was redone.)
+
+### Review findings acted on
+
+- **Confirmed (fixed):** `/api/pos/resume` refuses a held sale whose payload
+  fails `json.Unmarshal` and returns *before* its own `repo.Delete`, so the
+  row is never removed. A drain loop that only counts rounds would burn its
+  cap and then report "still finding parked orders" — which reads as
+  unbounded generation rather than one unresumable row. The reviewer proved
+  this live by inserting a malformed payload. The helper now detects the
+  same id surviving a resume and fails immediately, naming the id and
+  quoting the till's own toast. Re-verified by reproducing that insert:
+  fails in seconds with
+  `held order hold-corrupt-1 survived a resume … The till answered: Could
+  not hold the sale`.
+- **Acted on:** the helper was private to one spec. Moved to
+  `e2e/tests/helpers.ts` and exported, so the next spec asserting an empty
+  held state finds it instead of re-discovering this CI-only failure.
+- **Filed, not fixed here:** two tests in this file park orders they never
+  resume (the busy-refusal and pilot-resolution cases), so they still leak
+  held rows to later spec files. Nothing today asserts a held-order count,
+  so nothing breaks — but the systemic gap is only patched at this one call
+  site, not closed. Tracked separately rather than widened into this fix.
+- **Checked and dismissed:** the RTL assertion is not backwards — DOM order
+  (trigger first) and `.tender-quickpay { display: flex }` with no
+  `flex-direction`/`direction` override mean the first child legitimately
+  renders at the row's right edge under `dir="rtl"`. Reading `.left`/`.right`
+  off `getBoundingClientRect` is a measurement API, not authored CSS, so it
+  does not conflict with the repo's logical-properties rule.

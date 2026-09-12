@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { drainParkedOrders, watchConsole } from './helpers';
 
 // ut-docs#2137: a parked order was unreachable on the pilot tablet. The sale
 // screen's On hold strip is clipped off-screen at 1280x800 (ut-docs#2128) and
@@ -59,6 +59,8 @@ test('a parked order can be picked back up from the popup beside Card', async ({
 test('the popup says so when nothing is parked, rather than opening empty', async ({ page }) => {
   const assertClean = watchConsole(page);
   await page.goto('/');
+  await drainParkedOrders(page);
+  await page.reload();
 
   await page.locator('.tender-quickpay [data-testid="parked-orders-open"]').click();
   const modal = page.locator('#parked-orders-modal');
