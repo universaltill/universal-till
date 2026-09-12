@@ -18,7 +18,7 @@ Bu sayfa, o ülke varsayılanlarının bulunduğu yerdir. **İlk kurulum sihirba
 
 1. Menüden **Ülke ayarları**'nı açın (yalnızca yönetici). Varsayılan olarak yalnızca kendi dükkânınızın ülkesini, para birimi, vergi oranı ve arşiv saklama alt sınırıyla görürsünüz.
 2. Satırdaki değerleri düzenleyip **Kaydet**'e basın.
-3. Kasanın tanıdığı tüm ülkeleri görmek için — örneğin farklı bir ülkede çalışacak bir kasa için değerleri önceden ayarlamak istiyorsanız — **Tüm ülkeleri göster**'e tıklayın. **Yalnızca kendi ülkemi göster**, sizi yalnızca kendi ülkenize geri götürür.
+3. Kasanın tanıdığı tüm ülkeleri görmek için — örneğin farklı bir ülkede çalışacak bir kasa için değerleri önceden ayarlamak istiyorsanız — **Tüm ülkeleri göster**'e tıklayın. **Yalnızca kendi ülkemi göster**, sizi yalnızca kendi ülkenize geri götürür. Tablo yerinde değişir — aynı sayfada kalırsınız ve Yönetim ekranında yanındaki menü ağacı yerinde durur.
 4. Listede olmayan bir yeri eklemek için **Ülke ekle** bölümünü kendi seçeceğiniz kısa bir kodla (yalnızca harf/rakam, en fazla 8 karakter), para birimi ve vergi oranıyla doldurun — bu form her iki görünümde de kullanılabilir.
 5. **Varsayılanlara dön**, yerleşik bir ülkeyi geldiği değerlere geri getirir. Kendi eklediğiniz bir ülke **Sil** ile tamamen kaldırılır.
 

@@ -141,6 +141,28 @@ func isAdminEmbed(r *http.Request) bool {
 	return r != nil && r.Header.Get(adminEmbedHeader) != ""
 }
 
+// isAdminPanelSwap reports whether r is an htmx request whose target is
+// /admin's own #admin-panel — i.e. a tree-row click, the only case where
+// the out-of-band tree refresh has anything to swap into. htmx sends the
+// target element's id in HX-Target, and every admin_tree.html row targets
+// #admin-panel. An in-page htmx control on one of the six destinations
+// (ut-docs#2167's country-scope chips) targets its own subtree instead, and
+// the standalone page has no tree at all.
+//
+// What this does NOT do, stated plainly so nobody re-derives it: htmx 1.9
+// silently DISCARDS an out-of-band fragment whose target is absent — no
+// console error, nothing inserted into the DOM. Measured during ut-docs#2167
+// by reverting this guard and re-running that card's e2e spec, which still
+// passed. So this is not fixing a visible break; it stops the handler doing
+// real work (visibleAdminEntries + adminGroupsFor + a template render) on
+// every in-page toggle for output the browser will throw away, and keeps the
+// response honest about what it is. internal/pages/country_settings_page.go
+// is its only caller today; a destination growing its own in-page htmx
+// control wants the same guard.
+func isAdminPanelSwap(r *http.Request) bool {
+	return r != nil && r.Header.Get("HX-Target") == "admin-panel"
+}
+
 // writeAdminTreeOOB renders web/ui/partials/admin_tree.html as an
 // out-of-band swap (id="admin-tree", hx-swap-oob="true") with currentHref's
 // row marked is-current, and writes it to w — for appending after the htmx
