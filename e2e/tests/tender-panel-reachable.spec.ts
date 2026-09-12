@@ -252,43 +252,53 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
       // -- start from a genuine 0 so the i+1 count assertions below hold.
       await clearAllHeldSales(page);
 
-      const codes = ['5000000000012', '5000000000029', '5000000000012'];
-      for (let i = 0; i < codes.length; i++) {
-        await page.locator('input[name="code"]').first().fill(codes[i]);
-        await Promise.all([
-          page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
-          page.locator('.scan-row button[type=submit]').click(),
-        ]);
-        await page.locator('.tender-default-footer button', { hasText: 'Hold Sale' }).click();
-        const modal = page.locator('#hold-modal');
-        await expect(modal).toBeVisible();
-        await Promise.all([
-          page.waitForResponse((r) => r.url().includes('/api/pos/hold')),
-          modal.locator('button[type=submit]').click(),
-        ]);
-        await expect(modal).toBeHidden();
+      // try/finally, not a bare trailing call (independent review finding,
+      // ut-docs#2128): a thrown assertion below -- precisely the hit-test
+      // regression this test exists to catch -- would otherwise skip the
+      // cleanup entirely and leave up to 3 held sales behind for every
+      // later spec sharing this server/DB, turning one real failure into a
+      // cascade of unrelated ones.
+      try {
+        const codes = ['5000000000012', '5000000000029', '5000000000012'];
+        for (let i = 0; i < codes.length; i++) {
+          await page.locator('input[name="code"]').first().fill(codes[i]);
+          await Promise.all([
+            page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
+            page.locator('.scan-row button[type=submit]').click(),
+          ]);
+          await page.locator('.tender-default-footer button', { hasText: 'Hold Sale' }).click();
+          const modal = page.locator('#hold-modal');
+          await expect(modal).toBeVisible();
+          await Promise.all([
+            page.waitForResponse((r) => r.url().includes('/api/pos/hold')),
+            modal.locator('button[type=submit]').click(),
+          ]);
+          await expect(modal).toBeHidden();
 
-        // Every chip held so far must be reachable once scrolled into view --
-        // not just the newest one, since an earlier fix could in principle
-        // regress an EARLIER chip while leaving the latest one fine.
-        const chipCount = await page.locator('.held-chip').count();
-        expect(chipCount, `expected ${i + 1} held chip(s) in the DOM`).toBe(i + 1);
-        for (let c = 0; c < chipCount; c++) {
-          const chip = page.locator('.held-chip').nth(c);
-          await chip.scrollIntoViewIfNeeded();
-          const hit = await chip.evaluate((el) => {
-            const r = el.getBoundingClientRect();
-            const x = r.left + r.width / 2;
-            const y = r.top + r.height / 2;
-            if (y > window.innerHeight || y < 0 || x < 0 || x > window.innerWidth) return false;
-            const at = document.elementFromPoint(x, y);
-            return !!at && (at === el || el.contains(at));
-          });
-          expect(hit, `held chip ${c} must be a real hit-test target once scrolled into view, with ${i + 1} held sale(s)`).toBe(true);
+          // Every chip held so far must be reachable once scrolled into view --
+          // not just the newest one, since an earlier fix could in principle
+          // regress an EARLIER chip while leaving the latest one fine.
+          const chipCount = await page.locator('.held-chip').count();
+          expect(chipCount, `expected ${i + 1} held chip(s) in the DOM`).toBe(i + 1);
+          for (let c = 0; c < chipCount; c++) {
+            const chip = page.locator('.held-chip').nth(c);
+            await chip.scrollIntoViewIfNeeded();
+            const hit = await chip.evaluate((el) => {
+              const r = el.getBoundingClientRect();
+              const x = r.left + r.width / 2;
+              const y = r.top + r.height / 2;
+              if (y > window.innerHeight || y < 0 || x < 0 || x > window.innerWidth) return false;
+              const at = document.elementFromPoint(x, y);
+              return !!at && (at === el || el.contains(at));
+            });
+            expect(hit, `held chip ${c} must be a real hit-test target once scrolled into view, with ${i + 1} held sale(s)`).toBe(true);
+          }
         }
+      } finally {
+        // Leave no held sale behind for the next spec sharing this server/DB,
+        // whether this test passed or threw.
+        await clearAllHeldSales(page);
       }
-      // Leave no held sale behind for the next spec sharing this server/DB.
-      await clearAllHeldSales(page);
       assertClean();
     });
   }

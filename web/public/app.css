@@ -1231,11 +1231,12 @@ body.osk-padded .modifier-groups-modal { block-size: calc(100% - var(--osk-reser
    (verify webkit2gtk-4.1's minimum shipped version actually supports
    `color-mix()` first, per ADR-0028) -- not changed now because no dark
    theme exists yet to verify against, and this card's scope is the scroll
-   cue itself. Only `.products` gets this for now -- `.basket`/`.tender`
-   have their own pinned-footer/tab-panel scroll patterns already (see
-   comments below) and are out of this card's scope, though the same
-   two-gradient-pair recipe would apply if a future card asks for it there
-   too. */
+   cue itself. `.products` and (since ut-docs#2128) `.tender-scroll` carry
+   this recipe -- `.basket`'s own pinned-footer/tab-panel scroll pattern is
+   different and out of scope here, though the same two-gradient-pair
+   recipe would apply if a future card asks for it there too. Whoever
+   fixes the dark-theme gap: BOTH occurrences need the `color-mix()` swap,
+   not just this one -- see `.tender-scroll`'s own comment for its copy. */
 .pos-container > .products {
   background-color: var(--surface);
   background-image:
