@@ -1608,7 +1608,7 @@ func TestAdminDumpApplyRoundTrip_CountrySettings(t *testing.T) {
 }
 
 // TestAdminApplyCountrySettings_ClampsArchiveMinDaysToGlobalFloor is
-// ut-docs#1669: ApplyAdmin's generic upsertRow() writes raw column values
+// ut-docs#1669: ApplyAdmin's generic upsert path writes raw column values
 // directly, bypassing CountrySettingsRepo.Upsert()'s own ADR-0040 floor
 // validation entirely — so a rolled-back or buggy primary must not be able
 // to push a satellite below the retention floor via sync. Build the bundle
