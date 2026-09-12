@@ -178,6 +178,48 @@ func TestItemLeadTime_RepoErrorIs500(t *testing.T) {
 	}
 }
 
+func TestItemReorderLevel_ValidationAndClear(t *testing.T) {
+	mux, db := newCatalogMux(t)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "S1", Name: "Tea", BasePrice: 100, IsActive: true})
+
+	if rec := postForm(t, mux, "/api/catalog/item-reorder-level", "reorderLevel=5"); rec.Code != http.StatusBadRequest {
+		t.Errorf("missing item: want 400, got %d", rec.Code)
+	}
+	for _, bad := range []string{"abc", "-1", "1000001"} {
+		if rec := postForm(t, mux, "/api/catalog/item-reorder-level", "panelItem=itm1&reorderLevel="+bad); rec.Code != http.StatusBadRequest {
+			t.Errorf("reorderLevel=%q: want 400, got %d", bad, rec.Code)
+		}
+	}
+
+	// Set then clear: an empty value stores 0 (unset), and must succeed.
+	if rec := postForm(t, mux, "/api/catalog/item-reorder-level", "panelItem=itm1&reorderLevel=10"); rec.Code != http.StatusOK {
+		t.Fatalf("set: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := get(t, mux, "/api/catalog/item-variants?item_id=itm1"); !strings.Contains(rec.Body.String(), `value="10"`) {
+		t.Fatalf("expected the panel re-render to show the saved reorder level, got %s", rec.Body.String())
+	}
+	if rec := postForm(t, mux, "/api/catalog/item-reorder-level", "panelItem=itm1&reorderLevel="); rec.Code != http.StatusOK {
+		t.Fatalf("clear: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var level int
+	if err := db.QueryRow(`SELECT reorder_level FROM items WHERE id = 'itm1'`).Scan(&level); err != nil {
+		t.Fatal(err)
+	}
+	if level != 0 {
+		t.Fatalf("clearing the field must store 0, got %d", level)
+	}
+}
+
+func TestItemReorderLevel_RepoErrorIs500(t *testing.T) {
+	mux, db := newCatalogMux(t)
+	if _, err := db.Exec(`DROP TABLE items`); err != nil {
+		t.Fatal(err)
+	}
+	if rec := postForm(t, mux, "/api/catalog/item-reorder-level", "panelItem=itm1&reorderLevel=5"); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestItemCost_RepoErrorIs500(t *testing.T) {
 	mux, db := newCatalogMux(t)
 	if _, err := db.Exec(`DROP TABLE items`); err != nil {
