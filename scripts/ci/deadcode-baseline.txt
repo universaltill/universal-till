@@ -13,11 +13,8 @@ internal/data/related_items_repo.go: unreachable func: RelatedItemsRepo.LastRebu
 internal/db/db.go: unreachable func: BaselineStatementsFor
 internal/discovery/sweep.go: unreachable func: SweepPrinters
 internal/fiscal/tse_credential_store.go: unreachable func: NewSigningDeviceCredentialStoreAt
-internal/fiscal/tse_credential_store.go: unreachable func: SigningDeviceCredentialStore.Exists
 internal/fiscal/tse_credential_store.go: unreachable func: SigningDeviceCredentialStore.Path
 internal/httpx/currency.go: unreachable func: FormatQty
-internal/httpx/httpx.go: unreachable func: JSON
-internal/httpx/httpx.go: unreachable func: NewMux
 internal/httpx/httpx.go: unreachable func: NewRenderer
 internal/httpx/httpx.go: unreachable func: Renderer.Render
 internal/httpx/icons.go: unreachable func: IconNames
@@ -53,7 +50,6 @@ internal/plugins/permissions.go: unreachable func: HasAnyPermission
 internal/plugins/permissions.go: unreachable func: ListPluginPermissions
 internal/plugins/plugins.go: unreachable func: Manager.CatalogList
 internal/plugins/plugins.go: unreachable func: Manager.CatalogPage
-internal/plugins/plugins.go: unreachable func: Manager.InstalledIDs
 internal/plugins/revocation.go: unreachable func: RevocationChecker.GetRevokedPlugins
 internal/plugins/rollback.go: unreachable func: RollbackManager.GetVersionHistory
 internal/plugins/update_checker.go: unreachable func: UpdateChecker.GetUpdateInfo
