@@ -551,3 +551,52 @@ jobs:
           path: |
             tests/contract/pacts/
             tests/contract/logs/
+
+  # ADR-0002's taxonomy line and internal/plugins.CanonicalTypes must agree
+  # for real (ut-docs#2134) — the old same-repo test that claimed to pin
+  # this compared CanonicalTypes to a second hardcoded copy of itself and
+  # never actually read the ADR. Pure bash/grep, no Go build needed, so this
+  # runs standalone rather than gated behind `build` — same shape as
+  # ut-cloud's manifest-contract-guard job, which solves the identical
+  # cross-repo mirroring problem in the other direction.
+  adr-taxonomy-guard:
+    runs-on: ubuntu-latest
+    env:
+      # ut-docs went private (2026-07-31) — the default GITHUB_TOKEN cannot
+      # read it, and (independent review, ut-docs#2134) ut-cloud's
+      # manifest-contract-guard is NOT the same shape here: it checks out
+      # universal-till, which is PUBLIC, so its tokenless checkout works in
+      # that direction and does not in this one. A PAT with read access to
+      # universaltill/ut-docs must be provided as the DOCS_READ_TOKEN
+      # secret. Same fallback convention as this file's own `e2e` job
+      # (its docs-hub checkout, above): when the secret isn't available —
+      # a fork PR never receives repo secrets — this job skips loudly
+      # rather than either failing (blocking every external contribution
+      # on a secret they can't have) or silently passing (the exact
+      # failure class this guard exists to prevent).
+      DOCS_READ_TOKEN: ${{ secrets.DOCS_READ_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      # Self-test runs first and unconditionally (no ut-docs checkout
+      # needed), mirroring lang-pack-drift.yml's own "self-tests run first,
+      # even if a later step would fail" convention and this file's other
+      # guards' `_test.sh`-then-guard ordering — so a red run always tells
+      # you whether the guard mechanism itself is sound, not just whether
+      # the taxonomy agrees.
+      - name: ADR-0002 plugin taxonomy drift guard regression test
+        run: bash scripts/ci/guard-adr-plugin-taxonomy_test.sh
+      - name: Checkout ut-docs for the taxonomy guard
+        if: env.DOCS_READ_TOKEN != ''
+        uses: actions/checkout@v4
+        with:
+          repository: universaltill/ut-docs
+          path: ut-docs
+          token: ${{ env.DOCS_READ_TOKEN }}
+      - name: ADR-0002 plugin taxonomy drift guard
+        if: env.DOCS_READ_TOKEN != ''
+        env:
+          DOCS_DIR: ut-docs
+        run: bash scripts/ci/guard-adr-plugin-taxonomy.sh
+      - name: Warn that the taxonomy guard will skip
+        if: env.DOCS_READ_TOKEN == ''
+        run: echo "::warning::DOCS_READ_TOKEN secret not set — ut-docs is private, the ADR-0002 taxonomy guard will be skipped"

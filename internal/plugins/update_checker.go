@@ -24,7 +24,7 @@ type UpdateInfo struct {
 	DeviceArch       string
 	TrustTier        string
 	// CanonicalType is the marketplace listing's plugin type (ADR-0002's
-	// 20-type taxonomy, e.g. "language", "theme") — carried through so a
+	// 22-type taxonomy, e.g. "language", "theme") — carried through so a
 	// caller (StartPluginUpdateScheduler, ut-docs#1953) can decide whether
 	// this update is safe to auto-apply without a merchant's say-so. Not
 	// persisted anywhere locally; it comes from the catalog snapshot only.
