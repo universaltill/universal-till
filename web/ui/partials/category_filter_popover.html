@@ -1,0 +1,58 @@
+{{/* ut-docs#2165 — collapses the always-visible category-filter chip row
+     (ut-docs#2119, category_filter.html below) behind a small filter-icon
+     trigger button, per the product owner's direct report on the pilot
+     tablet: the permanent chip row ate vertical space the list needed.
+     Wraps "category_filter" unchanged — same call-site dict, same
+     controlID, so the chip row's own id/markup/tests (category_filter_
+     2119_test.go, category-filter.js's expand()/matches()/bind()) need no
+     change at all; this partial only adds the collapsed shell around it.
+
+       {{ template "category_filter_popover" (dict
+            "categories" .CategoryFilterOptions
+            "controlID"  "catalog-category-filter") }}
+
+     Renders three things sharing one wrapper:
+       1. The trigger button (id "<controlID>-trigger") — icon-only,
+          aria-haspopup="dialog" + aria-expanded (toggled by
+          CategoryFilter.bindPopover in category-filter.js) and a small
+          presence/absence badge (.category-filter-badge, hidden by
+          default) that lights up while any category is selected. Shape,
+          not colour, carries the state — same WCAG 1.4.11 reasoning
+          category_filter.html's own chip-check already documents; see
+          category-filter.js's paintTriggerState().
+       2. The popover itself (id "<controlID>-dialog") — a `.modifier-
+          modal` `<dialog>`, same non-modal `.show()` family as
+          #hold-modal/#pfand-modal/#elevation-modal/#table-add-modal
+          (app.css): NOT .showModal(), so the custom on-screen keyboard
+          stays reachable and this never makes the rest of the page inert.
+          Fixed/anchored positioning lives on .category-filter-dialog in
+          app.css, not here.
+       3. The unchanged chip row, via the original "category_filter"
+          define, nested inside the dialog body.
+
+     All open/close/focus/Escape/badge wiring lives in category-filter.js's
+     bindPopover() — this partial only renders markup and the closed
+     starting state (no `open` attribute). */}}
+{{ define "category_filter_popover" }}
+{{ $_ := req . "categories" "controlID" }}
+<div class="category-filter-control" data-category-filter-control>
+  <button type="button" class="btn secondary btn-icon category-filter-trigger" id="{{ .controlID }}-trigger"
+          aria-haspopup="dialog" aria-controls="{{ .controlID }}-dialog" aria-expanded="false"
+          aria-label="{{ T "filter.category_label" }}" title="{{ T "filter.category_label" }}"
+          data-label-idle="{{ T "filter.category_label" }}" data-label-active="{{ T "filter.category_active" }}"
+          data-category-filter-trigger>
+    <span class="btn-ico" aria-hidden="true">{{ icon "filter" }}<span class="category-filter-badge" aria-hidden="true" hidden></span></span>
+  </button>
+  <dialog id="{{ .controlID }}-dialog" class="modifier-modal category-filter-dialog"
+          aria-labelledby="{{ .controlID }}-dialog-title" data-category-filter-dialog>
+    <div class="category-filter-dialog-head">
+      <h3 id="{{ .controlID }}-dialog-title">{{ T "filter.category_label" }}</h3>
+      <button type="button" class="btn secondary btn-icon category-filter-close"
+              aria-label="{{ T "common.close" }}" title="{{ T "common.close" }}" data-category-filter-close>
+        <span class="btn-ico" aria-hidden="true">{{ icon "x" }}</span>
+      </button>
+    </div>
+    {{ template "category_filter" (dict "categories" .categories "controlID" .controlID) }}
+  </dialog>
+</div>
+{{ end }}
