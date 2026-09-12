@@ -60,6 +60,14 @@
                placeholder="0" title="{{ T "catalog.lead_time_days_hint" }}">
         <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
       </form>
+      <div class="muted catalog-detail-label">{{ T "catalog.reorder_level" }}</div>
+      <form class="chip-add" hx-post="/api/catalog/item-reorder-level" hx-target="#catalog-variants" hx-swap="outerHTML">
+        <input type="hidden" name="panelItem" value="{{ .ItemID }}">
+        <input type="number" name="reorderLevel" step="1" min="0" style="max-inline-size:7rem"
+               value="{{ if .ReorderLevel }}{{ .ReorderLevel }}{{ end }}"
+               placeholder="0" title="{{ T "catalog.reorder_level_hint" }}">
+        <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
+      </form>
     </aside>
 
     <div class="catalog-detail-variants">
