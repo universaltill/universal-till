@@ -255,6 +255,19 @@ func setupIntegrationTestDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
+	// Teardown belongs to the helper that opened the pool, so a future
+	// caller that forgets its own defer can't leak the DB (and its
+	// background connectionOpener goroutine) for the rest of the test
+	// binary — the shape newTelemetryTestDB really did leak (ut-docs#2156).
+	// Belt-and-braces here rather than a fix for a live leak, and corrected
+	// during review of that card: this file's only caller already closes the
+	// handle itself (`defer tmpDB.Close()`), and the whole file sits behind
+	// //go:build integration, so it is compiled out of every default
+	// `go test ./internal/plugins/...` run and could never have appeared in
+	// that card's goroutine dump. *sql.DB.Close is idempotent, so the
+	// caller's defer getting there first is harmless. t.Cleanup runs LIFO,
+	// so this still closes before the os.Remove registered above.
+	t.Cleanup(func() { database.Close() })
 
 	return database.DB
 }

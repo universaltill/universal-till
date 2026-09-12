@@ -53,6 +53,9 @@ type Server struct {
 	today     int64
 	seen      map[string]answer // request_id → answer (idempotency)
 	log       []Printed
+
+	closeOnce sync.Once
+	closed    chan struct{} // closed by Close(); releases a "Silent" mode hang (ut-docs#2156)
 }
 
 // Printed is one receipt the simulated device "printed" — tests read these
@@ -80,7 +83,7 @@ func Start(addr string, opts Options) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &Server{ln: ln, opts: opts, zNo: opts.ZNo, seen: map[string]answer{}}
+	s := &Server{ln: ln, opts: opts, zNo: opts.ZNo, seen: map[string]answer{}, closed: make(chan struct{})}
 	go s.accept()
 	return s, nil
 }
@@ -91,8 +94,13 @@ func (s *Server) Addr() string { return s.ln.Addr().String() }
 // Port is the bound TCP port.
 func (s *Server) Port() int { return s.ln.Addr().(*net.TCPAddr).Port }
 
-// Close stops listening.
-func (s *Server) Close() error { return s.ln.Close() }
+// Close stops listening and releases any "Silent" mode connection still
+// hanging (ut-docs#2156) — without this, a Server{Silent: true}'s serve
+// goroutine (and its TCP connection) leaked forever, even after Close.
+func (s *Server) Close() error {
+	s.closeOnce.Do(func() { close(s.closed) })
+	return s.ln.Close()
+}
 
 // SetDeclineAll flips the decline-everything failure mode at runtime.
 func (s *Server) SetDeclineAll(v bool) {
@@ -130,7 +138,13 @@ func (s *Server) serve(conn net.Conn) {
 			return
 		}
 		if s.opts.Silent {
-			select {} // hang forever: the client's read deadline must fire
+			// Hang until the client's own read deadline fires — simulating
+			// a permanently unresponsive device — but don't leak this
+			// goroutine/connection forever: Close() releases it too
+			// (ut-docs#2156, found as a "surviving goroutine" in a
+			// go test -race timeout dump).
+			<-s.closed
+			return
 		}
 		resp := s.handle(line)
 		if s.opts.Delay > 0 {

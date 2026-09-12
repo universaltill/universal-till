@@ -1785,6 +1785,7 @@
   "settings.printer.drawer_pin_5": "Pim 5",
   "settings.printer.help": "Fişleri termal yazıcıda sessizce yazdırın. Ağ modu herhangi bir WiFi/Ethernet ESC/POS yazıcıyla konuşur; cihaz modu takılı bir USB yazıcıya yazar (örn. Linux/Pi'de /dev/usb/lp0).",
   "settings.printer.kitchen_addr": "Mutfak yazıcısı",
+  "settings.printer.kitchen_group.title": "Mutfak yazıcısı",
   "settings.printer.kitchen_help": "Mutfak fişleri için ayrı bir yazıcı — ağ ana bilgisayarı:bağlantı noktası (örn. 192.168.1.60:9100) veya bir aygıt yolu. Mutfak yazdırmayı kapatmak için boş bırakın.",
   "settings.printer.mode": "Bağlantı",
   "settings.printer.mode_device": "USB cihazı",

@@ -10,7 +10,7 @@ VERSION?=0.1.0
 # release minutes later (ut-docs#369, found deploying a field hotfix).
 LDFLAGS=-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=$(VERSION)
 
-.PHONY: build run test test-race-pages e2e e2e-seed docs-shots prune-worktrees
+.PHONY: build run test test-race-plugins test-race-pages e2e e2e-seed docs-shots prune-worktrees
 
 build:
 	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/$(BIN) .
@@ -43,6 +43,24 @@ test:
 # re-creating the same near-the-wire margin one test class later.
 test-race-pages:
 	go test -race -timeout 60m ./internal/pages/...
+
+# internal/plugins under -race hits the same shape as internal/pages above,
+# for the same reason: this package is heavy with real wazero WASM-module
+# tests (each compiles/instantiates and runs actual guest bytecode), which
+# -race instrumentation multiplies significantly — not a deadlock, just no
+# margin against the bare default (ut-docs#2156, found via a go test -race
+# timeout's goroutine dump naming a "surviving" plugins/tax-tr/okc/sim
+# goroutine that was never the actual cause: two independent full runs
+# confirmed the package genuinely completes, no hang, no failure — first
+# a 900s-timeout run killed mid-flight while still legitimately loading a
+# real wazero module (not blocked on anything), then a clean pass at
+# 1078.827s (~18min)). 45m gives ~2.5x that measured runtime, the same
+# generous-margin shape as test-race-pages above (~2.4x) and the original
+# internal/plugins precedent (ut-docs#643, ~85-90s against a 20m budget).
+# -race isn't run in CI for this package either (ci.yml's own comment on
+# the internal/plugins step) — this is the safe way to run it by hand.
+test-race-plugins:
+	go test -race -timeout 45m ./internal/plugins/...
 
 e2e-seed:
 	UT_DB_PATH=./data/e2e.db go run ./scripts/e2e_seed/main.go
