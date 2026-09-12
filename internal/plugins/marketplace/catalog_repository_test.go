@@ -680,3 +680,208 @@ func TestCatalogRepository_GetOrFetch_NoCacheAtAllCoalescesConcurrentCallers(t *
 		t.Errorf("expected 5 concurrent cold-start callers to coalesce into 1 network request, got %d", got)
 	}
 }
+
+// ut-docs#2155: two independent callers can both be mid-flight in Fetch at
+// once (server.go's scheduler calls Fetch directly; a page handler's
+// GetOrFetch spawns refreshInBackground/coldFetch). Each stamps its own
+// FetchedAt with time.Now() BEFORE racing for cr.mu, so the fetch whose
+// FetchedAt is numerically OLDER can acquire the lock SECOND and
+// unconditionally overwrite a chronologically newer, already-cached
+// snapshot with staler data. This test reproduces that race outcome
+// deterministically by seeding cr.cached (white-box) with a snapshot whose
+// FetchedAt is in the future, then running a real Fetch: the fetch's own
+// return value must still be its own honest answer, but neither the memory
+// cache nor the on-disk snapshot may be replaced by the older result.
+func TestCatalogRepository_Fetch_NeverOverwritesCacheWithOlderResult(t *testing.T) {
+	tmpDir := t.TempDir()
+	mockToken := &mockTokenClient{token: "test-token"}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]interface{}{"plugins": []map[string]interface{}{
+			{
+				"listing_id":     "older-fetch-plugin",
+				"name":           "older-fetch-plugin",
+				"version":        "1.0.0",
+				"artifact_url":   "http://example.com/plugin.tar.gz",
+				"sha256":         "deadbeef",
+				"canonical_type": "payment",
+			},
+		}}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	cfg := &config.MarketplaceConfig{
+		EndpointURL:       server.URL,
+		APIVersion:        "1.0.0",
+		RequestTimeoutSec: 30,
+	}
+	client := NewClient(cfg, mockToken)
+
+	repo, err := NewCatalogRepository(client, tmpDir)
+	if err != nil {
+		t.Fatalf("NewCatalogRepository failed: %v", err)
+	}
+
+	// Seed a cache entry that is chronologically NEWER than anything this
+	// test's Fetch can produce (its FetchedAt is stamped from time.Now()
+	// during the call, which is strictly before now+1h). Different
+	// locale/arch than the fetch below, so a clobber is unambiguous.
+	seeded := &CatalogSnapshot{
+		Plugins: []PluginSummary{{
+			ListingID: "already-cached-newer-plugin",
+			Name:      "already-cached-newer-plugin",
+			Version:   "9.9.9",
+		}},
+		SnapshotVersion: 42,
+		FetchedAt:       time.Now().Add(1 * time.Hour),
+		Locale:          "de-DE",
+		DeviceArch:      "linux/arm64",
+	}
+	repo.mu.Lock()
+	repo.cached = seeded
+	repo.mu.Unlock()
+
+	got, err := repo.Fetch(context.Background(), "en-US", "linux/amd64")
+	if err != nil {
+		t.Fatalf("Fetch failed: %v", err)
+	}
+
+	// AC2: the caller always gets its OWN request's result, whether or not
+	// the cache write was skipped — never another caller's snapshot.
+	if got == nil || len(got.Plugins) != 1 || got.Plugins[0].Name != "older-fetch-plugin" {
+		t.Fatalf("Fetch must return its own request's result; got %+v", got)
+	}
+	if got.Locale != "en-US" || got.DeviceArch != "linux/amd64" {
+		t.Errorf("Fetch return value carries wrong params: locale=%q arch=%q", got.Locale, got.DeviceArch)
+	}
+
+	// The seeded newer entry must be completely untouched in memory.
+	cached, _, err := repo.Get()
+	if err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+	if cached != seeded {
+		t.Errorf("Fetch overwrote a chronologically newer cached snapshot with an older result: cached=%+v", cached)
+	}
+	if len(cached.Plugins) != 1 || cached.Plugins[0].Name != "already-cached-newer-plugin" {
+		t.Errorf("cached plugins changed: %+v", cached.Plugins)
+	}
+	if cached.Locale != "de-DE" || cached.DeviceArch != "linux/arm64" || cached.SnapshotVersion != 42 {
+		t.Errorf("cached snapshot fields changed: locale=%q arch=%q version=%d", cached.Locale, cached.DeviceArch, cached.SnapshotVersion)
+	}
+	if !cached.FetchedAt.Equal(seeded.FetchedAt) {
+		t.Errorf("cached FetchedAt changed: %v != %v", cached.FetchedAt, seeded.FetchedAt)
+	}
+
+	// The disk write is guarded together with the memory write — nothing
+	// was persisted, so the on-disk snapshot must still be absent.
+	onDisk, err := repo.loadSnapshot()
+	if err != nil {
+		t.Fatalf("loadSnapshot failed: %v", err)
+	}
+	if onDisk != nil {
+		t.Errorf("Fetch persisted an older result to disk despite a newer cached snapshot: %+v", onDisk)
+	}
+}
+
+// ut-docs#2155, AC2: two concurrent Fetch calls with DIFFERENT
+// (locale, deviceArch) parameters must each return the snapshot produced by
+// their own request — never the other caller's — regardless of which one
+// wins the race for cr.mu. The server staggers its responses (en-US/amd64
+// is delayed 50ms, de-DE/arm64 answers immediately) to make the two
+// requests genuinely overlap rather than serialize by accident, and returns
+// a distinguishable plugin per branch so a swapped result is detectable.
+// This does NOT reproduce the older-fetch-clobbers-newer race itself (that
+// requires goroutine scheduling to reorder lock acquisition relative to
+// FetchedAt, which this test doesn't force either way — it already passes
+// pre-fix, since Fetch's return value was never the thing that raced) — it
+// only guards the AC2 invariant that neither caller's direct answer is ever
+// swapped for the other's. See
+// TestCatalogRepository_Fetch_NeverOverwritesCacheWithOlderResult for the
+// actual regression test that fails pre-fix.
+func TestCatalogRepository_Fetch_ConcurrentDifferentParamsEachCallerGetsOwnResult(t *testing.T) {
+	tmpDir := t.TempDir()
+	mockToken := &mockTokenClient{token: "test-token"}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		locale := r.URL.Query().Get("locale")
+		arch := r.URL.Query().Get("arch")
+		var name string
+		switch {
+		case locale == "en-US" && arch == "linux/amd64":
+			name = "en-amd64-plugin"
+			time.Sleep(50 * time.Millisecond)
+		case locale == "de-DE" && arch == "linux/arm64":
+			name = "de-arm64-plugin"
+		default:
+			t.Errorf("unexpected request params: locale=%q arch=%q", locale, arch)
+			http.Error(w, "unexpected params", http.StatusBadRequest)
+			return
+		}
+		resp := map[string]interface{}{"plugins": []map[string]interface{}{
+			{
+				"listing_id":     name,
+				"name":           name,
+				"version":        "1.0.0",
+				"artifact_url":   "http://example.com/plugin.tar.gz",
+				"sha256":         "deadbeef",
+				"canonical_type": "payment",
+			},
+		}}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	cfg := &config.MarketplaceConfig{
+		EndpointURL:       server.URL,
+		APIVersion:        "1.0.0",
+		RequestTimeoutSec: 30,
+	}
+	client := NewClient(cfg, mockToken)
+
+	repo, err := NewCatalogRepository(client, tmpDir)
+	if err != nil {
+		t.Fatalf("NewCatalogRepository failed: %v", err)
+	}
+
+	type call struct {
+		locale, arch, wantPlugin string
+	}
+	calls := []call{
+		{locale: "en-US", arch: "linux/amd64", wantPlugin: "en-amd64-plugin"},
+		{locale: "de-DE", arch: "linux/arm64", wantPlugin: "de-arm64-plugin"},
+	}
+	results := make([]*CatalogSnapshot, len(calls))
+	errs := make([]error, len(calls))
+
+	var wg sync.WaitGroup
+	for i, c := range calls {
+		wg.Add(1)
+		go func(i int, c call) {
+			defer wg.Done()
+			results[i], errs[i] = repo.Fetch(context.Background(), c.locale, c.arch)
+		}(i, c)
+	}
+	wg.Wait()
+
+	for i, c := range calls {
+		if errs[i] != nil {
+			t.Errorf("Fetch(%s, %s) returned error: %v", c.locale, c.arch, errs[i])
+			continue
+		}
+		got := results[i]
+		if got == nil {
+			t.Errorf("Fetch(%s, %s) returned nil snapshot", c.locale, c.arch)
+			continue
+		}
+		if got.Locale != c.locale || got.DeviceArch != c.arch {
+			t.Errorf("Fetch(%s, %s) returned another caller's params: locale=%q arch=%q", c.locale, c.arch, got.Locale, got.DeviceArch)
+		}
+		if len(got.Plugins) != 1 || got.Plugins[0].Name != c.wantPlugin {
+			t.Errorf("Fetch(%s, %s) returned another caller's plugins: want %q, got %+v", c.locale, c.arch, c.wantPlugin, got.Plugins)
+		}
+	}
+}
