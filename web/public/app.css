@@ -3633,3 +3633,51 @@ body.login-screen {
    body.osk-padded, .item-form-modal and .payment-overlay are all 17rem
    since #1027 (15.5rem under-reserved, which is the bug #1998 fixed). */
 body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-height, 17rem)); }
+
+/* ==========================================================================
+   ut-docs#2119 — category filter chip row, shared by /catalog and
+   /inventory (web/ui/partials/category_filter.html, web/public/
+   category-filter.js). Existing :root tokens only, logical properties
+   only (RTL is a real target — UX gate finding 5: `gap` alone drives the
+   spacing, never a per-chip margin-inline-*, so flex-wrap mirrors
+   correctly under dir="rtl" for free).
+
+   Deliberately scoped under .category-filter rather than styling the bare
+   .chip class: .chip already means something else here (the small,
+   monospace, removable-tag pill used by barcode/option-set-value chips
+   and the "N running out"/"pending plugin" badges, all far smaller than a
+   touch target) — restyling it globally would regress every one of those.
+   The filter row's buttons keep the "chip" class name the design calls
+   for (and so they still read as chips visually — a rounded pill, not a
+   rectangular button), but every rule below is scoped to only apply
+   inside .category-filter. */
+.category-filter { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center;
+                    margin-block-end: .75rem; }
+/* Real 3rem touch floor (same as .btn-icon), content-sized (no fixed
+   width/max-width, white-space normal) so a long localized category name
+   (German runs 30-50% longer, UX gate finding 2) never truncates —
+   instead the row wraps (flex-wrap above), never scrolls. */
+.category-filter .chip { display: inline-flex; align-items: center; gap: .35rem;
+                          min-block-size: 3rem; padding-inline: 1rem; padding-block: .3rem;
+                          border-radius: var(--radius); border: 1px solid var(--border);
+                          background: var(--surface); color: var(--text);
+                          font: inherit; font-size: .95rem; line-height: 1.25;
+                          white-space: normal; text-align: start;
+                          inline-size: auto; max-inline-size: none;
+                          cursor: pointer; touch-action: manipulation; }
+.category-filter .chip:hover { background: var(--surface-2); }
+/* Explicit focus ring (WCAG 1.4.11) — same treatment as .btn-icon's own,
+   since the chip's accessible state (pressed/not) is otherwise carried
+   only by aria-pressed + the checkmark below (UX gate finding 7). */
+.category-filter .chip:focus-visible { outline: 2px solid var(--focus-border, var(--accent));
+                                        outline-offset: 2px; }
+/* Pressed state: colour AND a checkmark, never colour alone (WCAG
+   non-colour-alone, UX gate finding 3) — a shop owner must be able to
+   tell at a glance that a category filter from an earlier session is
+   still narrowing what they see. */
+.category-filter .chip[aria-pressed="true"] { background: var(--accent);
+                                               color: var(--accent-contrast);
+                                               border-color: var(--accent); }
+.category-filter .chip-check { display: none; flex: none; inline-size: 1rem; block-size: 1rem; }
+.category-filter .chip-check svg { inline-size: 1rem; block-size: 1rem; }
+.category-filter .chip[aria-pressed="true"] .chip-check { display: inline-flex; }

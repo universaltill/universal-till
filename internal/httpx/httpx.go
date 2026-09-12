@@ -1008,6 +1008,12 @@ var renderFiles = []string{
 	// modifiers.html", ...)/RenderContentFragment call sites, same as
 	// items_rail.html above.
 	"ui/partials/modifier_group_admin.html",
+	// ut-docs#2119: the /catalog + /inventory category-filter chip row.
+	// /catalog goes through its own bespoke RenderWith file set (see
+	// catalog/handlers.go), but /inventory renders through the plain
+	// httpx.Render("ui/pages/inventory.html", ...) call site above, same
+	// riding-along mechanism as items_rail.html/modifier_group_admin.html.
+	"ui/partials/category_filter.html",
 	// ut-docs#2010: the app-wide list/edit standard's two partials
 	// (ut-docs/reference/list-and-dialog-pattern.md). Same mechanism as
 	// items_rail.html above — a page includes them by their {{ define }}
