@@ -360,6 +360,13 @@ func formatMoney(minor int64, locale string, digitShape bool) string {
 // decimal convention (ut-docs#1130) — "1.5" renders "1,5" under a de-DE
 // locale, matching FormatMoney's decimal-separator swap, and digit shape
 // follows locale the same way too ("1.5" → "۱٫۵" under fa).
+//
+// Has zero production call sites today (ut-docs#1566 dead-code sweep) —
+// every real caller uses FormatQtyLatin instead, which is correct for
+// ESC/POS printing but doesn't explain why on-screen quantity display
+// (which DOES use FormatMoney's locale-digit substitution for amounts)
+// doesn't use this for quantities. Tracked as ut-docs#2221 — don't wire
+// this up here without that card's BA/UX pass.
 func FormatQty(qty float64, locale string) string {
 	return LocalizeDigits(formatGrouped(strconv.FormatFloat(qty, 'f', -1, 64), locale), locale)
 }
