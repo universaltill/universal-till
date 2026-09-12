@@ -165,6 +165,49 @@ func (cr *CatalogRepository) Fetch(ctx context.Context, locale, deviceArch strin
 	cr.mu.Lock()
 	defer cr.mu.Unlock()
 
+	// Monotonic-write guard (ut-docs#2155): never replace a chronologically
+	// NEWER cached snapshot with an older one. Two independent callers can
+	// both be mid-flight here at once — server.go's scheduler (syncCatalog)
+	// calls Fetch directly and so bypasses GetOrFetch's refreshing/coldFetch
+	// coalescing, while a page handler's GetOrFetch drives its own
+	// refreshInBackground/coldFetch path — and each stamps its own FetchedAt
+	// (time.Now(), above) BEFORE racing for cr.mu, not after. So goroutine
+	// scheduling can let the fetch with the numerically OLDER FetchedAt
+	// acquire the lock SECOND, and the unconditional write that used to
+	// live here then clobbered a newer, already-committed snapshot with
+	// staler data: the cache silently went "stale again" sooner, and the
+	// on-disk snapshot regressed with it. Rare, but real, and undetectable
+	// from the outside. Comparing FetchedAt under the lock closes it — the
+	// later stamp wins the cache regardless of lock-acquisition order.
+	//
+	// Both writes (disk AND memory) are skipped together: guarding only one
+	// would leave the two disagreeing, and a restart would then reload the
+	// older on-disk copy over the newer in-memory one.
+	//
+	// The RETURN VALUE is deliberately still this call's own snapshot,
+	// never the cached one: each caller's answer is what its own
+	// (locale, deviceArch) request produced, whether or not it won the
+	// cache slot. Substituting cr.cached here would hand a caller another
+	// locale/arch's filtered result — the exact class of bug server.go's
+	// own comment and coldFetch's per-parameter key both exist to prevent.
+	// (The single cache slot shared across locale/arch is a separate,
+	// deliberately deferred concern, not addressed by this guard.)
+	//
+	// INVARIANT this comparison depends on: cr.cached is only ever assigned
+	// from an in-process time.Now() (the line at the bottom of this function
+	// is the only production write), so BOTH times carry a monotonic reading
+	// and After() compares monotonically — immune to the wall clock being
+	// stepped, which matters on a till whose RTC boots wrong and is then
+	// corrected by NTP. Do NOT start warming cr.cached from loadSnapshot()
+	// (e.g. to save Get() re-reading the file on every call while the cache
+	// is cold) without revisiting this: a JSON round-trip DROPS the monotonic
+	// reading, so a snapshot written with a bad future RTC date would then
+	// compare as permanently newer and freeze the cache until real time
+	// caught up.
+	if cr.cached != nil && !snapshot.FetchedAt.After(cr.cached.FetchedAt) {
+		return snapshot, nil
+	}
+
 	// Save to disk
 	if err := cr.saveSnapshot(snapshot); err != nil {
 		return nil, fmt.Errorf("failed to save snapshot: %w", err)
