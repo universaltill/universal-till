@@ -66,7 +66,14 @@ const pinnedQuery: Record<string, string> = {
 // three consecutive `make docs-shots` runs with no source change, where the
 // same runs without the flags reliably differed. scripts/ci/
 // guard-docs-shots-determinism.sh asserts this property so it cannot
-// silently regress. There is no longer a known non-zero residual.
+// silently regress — but its own CI runs have twice shown a much smaller
+// residual since this fix landed (0-2 files out of 124, on `fiscal-device`/
+// `display`, always in a Chromium build this repo's own dev sandbox could
+// not exactly reproduce): a dramatic reduction from the pre-fix 43+, not a
+// proven zero. See docs/code-reviews/2026-09-12-docs-shots-determinism-2184.md's
+// "Update after pushing to CI" section for the honest full account. The
+// check stays deliberately non-required (see the workflow's own comment)
+// precisely because of this residual.
 //
 // THE MANIFEST-vs-PNG CONTRACT (ut-docs#930 AC, still true): guard-docs-shots.sh
 // checks freshness from SOURCE-surface hashes recorded in manifest.json, and
