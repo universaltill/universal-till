@@ -75,13 +75,102 @@ type resumeOutcome int
 
 const (
 	resumeOK resumeOutcome = iota
+	// resumeOKParkedPrior is resumeOK's twin for ut-docs#1919: the resume
+	// succeeded, but only after auto-parking a busy live basket first. Kept
+	// distinct from plain resumeOK so a caller with a toast (POST
+	// /api/pos/resume) can tell the cashier their prior sale was held too,
+	// not just that the new one loaded -- the UX gap evidence item 1 warns
+	// about (a real effect with no on-screen cue is a control nobody finds).
+	resumeOKParkedPrior
 	resumeNotFound
-	resumeBusy
 	resumeFailed
 )
 
-// resumeHeldSale resumes held sale `id` into the live basket, which must
-// already be empty. ut-docs#2138: extracted out of the POST /api/pos/resume
+// parkCurrentBasket persists the live basket as a held sale -- the same
+// upsert-by-origin-or-insert-fresh logic POST /api/pos/hold uses
+// (ut-docs#1918), minus the cashier-typed label override, which only that
+// handler's own form provides. Extracted for ut-docs#1919: resumeHeldSale
+// below calls this to auto-park a busy basket rather than refusing the
+// resume outright, and must go through the exact same path a manual Hold
+// does -- a second, slightly different parking code path is exactly how the
+// #1381 dine-in/takeaway fix or the #1918 stable-identity upsert would end
+// up covered on one path and not the other.
+func parkCurrentBasket(ctx context.Context, d *common.Deps, repo *data.HeldSalesRepo, typedLabel string) error {
+	snap := d.Engine.Snapshot()
+	payload, err := json.Marshal(snap)
+	if err != nil {
+		return err
+	}
+	held := data.HeldSale{
+		TotalMinor: snap.Total.Minor(),
+		LineCount:  len(snap.Lines),
+		Payload:    string(payload),
+		TableID:    snap.TableID,
+	}
+	// ut-docs#1918: an order that was resumed from an existing held sale
+	// (and not yet re-parked -- Engine.HeldOrigin is set only by the
+	// resume handler's RestoreHeld and cleared by every basket reset)
+	// goes back under the SAME id and first-parked time it had, via
+	// Upsert -- one order, one identity, however many times it is
+	// picked up and put down. The label fallback chain (typed label ->
+	// customer name -> clock time) runs on a true first park; on a
+	// re-park the ORIGINAL label is kept unless the caller explicitly
+	// passed a typed rename -- a blank field never re-derives a label
+	// from the clock or the customer, but a genuine rename is honoured
+	// rather than silently discarded.
+	if origin := d.Engine.HeldOrigin(); !origin.IsZero() {
+		held.ID = origin.ID
+		held.Label = origin.Label
+		if typedLabel != "" {
+			held.Label = typedLabel
+		}
+		held.CreatedAt = origin.CreatedAt
+		if err := repo.Upsert(ctx, held); err != nil {
+			return err
+		}
+	} else {
+		label := typedLabel
+		if label == "" {
+			label = strings.TrimSpace(snap.CustomerName)
+		}
+		if label == "" {
+			label = time.Now().Format("15:04")
+		}
+		held.ID = fmt.Sprintf("hold-%d", time.Now().UnixNano())
+		held.Label = label
+		if err := repo.Insert(ctx, held); err != nil {
+			return err
+		}
+	}
+	// ut-docs#1704: the live claim the table pick wrote (ut-docs#1390) is
+	// deliberately KEPT here, not released -- it's the only signal that
+	// makes a parked order's table occupancy visible cross-till, since
+	// held_sales itself still isn't synced or proxied to the primary at
+	// all. Locally this is harmless redundancy (ListTablesWithState
+	// already unions held_sales and table_claims, and the held_sales row
+	// alone was always enough for THIS till's own view). On a REPLICA
+	// it's the whole fix: the claim was already write-through'd to the
+	// primary the instant the table was picked (claimTableWriteThrough,
+	// pos_api.go), and the primary's own GET /api/sync/tables already
+	// serves it to every other till (ut-docs#1392) -- parking the order
+	// needs no NEW proxy call at all, it just must not throw away the
+	// one already made. Resume re-affirms the SAME row
+	// (claimTableWriteThrough's own-claim re-take, tables_repo.go)
+	// rather than re-claiming from scratch; the held/move handler
+	// (below) is the one place that must move the claim explicitly,
+	// since that changes WHICH table is occupied.
+	d.Engine.Reset()
+	return nil
+}
+
+// resumeHeldSale resumes held sale `id` into the live basket. ut-docs#1919:
+// a busy basket (HasItems()) is no longer refused -- it is auto-parked first
+// (parkCurrentBasket, the identical path a manual Hold takes), so switching
+// to another order never silently discards whatever the cashier already had
+// rung up. The target row is fetched and its payload validated BEFORE the
+// live basket is touched, so a not-found or corrupt target costs nothing --
+// the current basket is only ever parked once the resume is known to be able
+// to proceed. ut-docs#2138: extracted out of the POST /api/pos/resume
 // handler below so /open-orders' own resume route (open_orders_page.go)
 // shares it rather than duplicating it -- it carries the ut-docs#820 table
 // re-resolution and the ut-docs#1390 claim handling, and those must never
@@ -90,9 +179,6 @@ func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 	if id == "" {
 		return resumeNotFound
 	}
-	if d.Engine.HasItems() {
-		return resumeBusy
-	}
 	held, found, err := repo.Get(ctx, id)
 	if err != nil || !found {
 		return resumeNotFound
@@ -100,6 +186,33 @@ func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 	var snap pos.BasketSnapshot
 	if err := json.Unmarshal([]byte(held.Payload), &snap); err != nil {
 		return resumeFailed
+	}
+	// ut-docs#1919, independent review: the live basket can already BE this
+	// exact order (HeldOrigin().ID == id) -- most plausibly when a prior
+	// resume's repo.Delete below failed and left the row behind (the
+	// resumeHeldSale comment two lines above this function, and
+	// HeldSalesRepo.Upsert's own doc comment, both already anticipate that
+	// happening). Falling through would auto-park the LIVE basket's current
+	// state into the row we are about to delete via Upsert, then delete it
+	// -- silently destroying whatever the cashier had added since the
+	// stale row was left behind, with no held row left to recover it from.
+	// Tapping "resume" on the order you are already on has nothing to do,
+	// so treat it as a no-op success rather than reaching HasItems() at all.
+	if origin := d.Engine.HeldOrigin(); origin.ID == id {
+		return resumeOK
+	}
+	parkedPrior := false
+	if d.Engine.HasItems() {
+		// ut-docs#1919: park-current-then-open, decided over a true
+		// two-basket engine model as the right-sized fix for this
+		// pipeline's own scope discipline -- switching to another order
+		// must never discard whatever the cashier already had rung up,
+		// and this reuses the existing, well-tested Hold path rather
+		// than adding a second concurrent-basket concept to the engine.
+		if err := parkCurrentBasket(ctx, d, repo, ""); err != nil {
+			return resumeFailed
+		}
+		parkedPrior = true
 	}
 	// The held_sales.table_id COLUMN -- not the payload snapshot -- is the
 	// authoritative table assignment (ut-docs#820). POST /api/pos/held/table
@@ -151,6 +264,9 @@ func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 	if err := repo.Delete(ctx, id); err != nil {
 		// The sale is restored either way; a stale row is the lesser evil.
 		_ = err
+	}
+	if parkedPrior {
+		return resumeOKParkedPrior
 	}
 	return resumeOK
 }
@@ -314,72 +430,10 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		_ = r.ParseForm()
-		snap := d.Engine.Snapshot()
-		payload, err := json.Marshal(snap)
-		if err != nil {
-			renderBasket(w, r, httpx.T(locale, "hold.error.failed"), "error")
-			return
-		}
-		held := data.HeldSale{
-			TotalMinor: snap.Total.Minor(),
-			LineCount:  len(snap.Lines),
-			Payload:    string(payload),
-			TableID:    snap.TableID,
-		}
-		// ut-docs#1918: an order that was resumed from an existing held sale
-		// (and not yet re-parked -- Engine.HeldOrigin is set only by the
-		// resume handler's RestoreHeld and cleared by every basket reset)
-		// goes back under the SAME id and first-parked time it had, via
-		// Upsert -- one order, one identity, however many times it is
-		// picked up and put down. The label fallback chain (typed label ->
-		// customer name -> clock time) runs on a true first park; on a
-		// re-park the ORIGINAL label is kept unless the cashier explicitly
-		// typed a new one into the (still-shown) hold dialog -- a blank
-		// field never re-derives a label from the clock or the customer,
-		// but a genuine rename is honoured rather than silently discarded.
-		if origin := d.Engine.HeldOrigin(); !origin.IsZero() {
-			held.ID = origin.ID
-			held.Label = origin.Label
-			if typed := truncateRunes(strings.TrimSpace(r.Form.Get("label")), maxHoldLabelRunes); typed != "" {
-				held.Label = typed
-			}
-			held.CreatedAt = origin.CreatedAt
-			if err := repo.Upsert(ctx, held); err != nil {
-				renderBasket(w, r, httpx.T(locale, "hold.error.failed"), "error")
-				return
-			}
-		} else {
-			label := truncateRunes(strings.TrimSpace(r.Form.Get("label")), maxHoldLabelRunes)
-			if label == "" {
-				label = strings.TrimSpace(snap.CustomerName)
-			}
-			if label == "" {
-				label = time.Now().Format("15:04")
-			}
-			held.ID = fmt.Sprintf("hold-%d", time.Now().UnixNano())
-			held.Label = label
-			if err := repo.Insert(ctx, held); err != nil {
-				renderBasket(w, r, httpx.T(locale, "hold.error.failed"), "error")
-				return
-			}
-		}
-		// ut-docs#1704: the live claim the table pick wrote (ut-docs#1390) is
-		// deliberately KEPT here, not released -- it's the only signal that
-		// makes a parked order's table occupancy visible cross-till, since
-		// held_sales itself still isn't synced or proxied to the primary at
-		// all. Locally this is harmless redundancy (ListTablesWithState
-		// already unions held_sales and table_claims, and the held_sales row
-		// alone was always enough for THIS till's own view). On a REPLICA
-		// it's the whole fix: the claim was already write-through'd to the
-		// primary the instant the table was picked (claimTableWriteThrough,
-		// pos_api.go), and the primary's own GET /api/sync/tables already
-		// serves it to every other till (ut-docs#1392) -- parking the order
-		// needs no NEW proxy call at all, it just must not throw away the
-		// one already made. Resume re-affirms the SAME row
-		// (claimTableWriteThrough's own-claim re-take, tables_repo.go)
-		// rather than re-claiming from scratch; the held/move handler below
-		// is the one place that must move the claim explicitly, since that
-		// changes WHICH table is occupied.
+		typed := truncateRunes(strings.TrimSpace(r.Form.Get("label")), maxHoldLabelRunes)
+		// ut-docs#1919: shares parkCurrentBasket with resumeHeldSale's
+		// auto-park -- see that function for the upsert-by-origin/insert
+		// and table-claim-keep reasoning (ut-docs#1918/#1704).
 		//
 		// Known, accepted limitation (same class as tables_claim_proxy.go's
 		// own note): if THIS till goes dark for the full tillClaimTTL window
@@ -389,7 +443,10 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		// accepted for a live basket's claim, not a new one. A healthy
 		// till's routine ~30s admin-sync poll keeps last_seen_at fresh
 		// throughout an ordinary hold, however long the table sits parked.
-		d.Engine.Reset()
+		if err := parkCurrentBasket(ctx, d, repo, typed); err != nil {
+			renderBasket(w, r, httpx.T(locale, "hold.error.failed"), "error")
+			return
+		}
 		w.Header().Set("HX-Trigger", "held-changed")
 		renderBasket(w, r, httpx.T(locale, "hold.toast.held"), "success")
 	})
@@ -403,10 +460,14 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		switch resumeHeldSale(ctx, d, repo, posRepo, id) {
 		case resumeNotFound:
 			renderBasket(w, r, httpx.T(locale, "hold.error.not_found"), "error")
-		case resumeBusy:
-			renderBasket(w, r, httpx.T(locale, "hold.error.busy"), "error")
 		case resumeFailed:
 			renderBasket(w, r, httpx.T(locale, "hold.error.failed"), "error")
+		case resumeOKParkedPrior:
+			// ut-docs#1919: tell the cashier BOTH things that just happened --
+			// otherwise switching orders looks identical to a plain resume,
+			// and their own prior sale went somewhere with no on-screen cue.
+			w.Header().Set("HX-Trigger", "held-changed")
+			renderBasket(w, r, httpx.T(locale, "hold.toast.parked_and_resumed"), "success")
 		default:
 			w.Header().Set("HX-Trigger", "held-changed")
 			renderBasket(w, r, httpx.T(locale, "hold.toast.resumed"), "success")

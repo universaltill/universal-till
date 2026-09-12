@@ -12,11 +12,14 @@ import { drainParkedOrders, watchConsole } from './helpers';
 // tappable to resume. It depends on no viewport budget, which is the whole
 // point: it works at the resolution the strip's CSS tuning never covered.
 //
-// ut-docs#2141: two tests below ("a resume refused because the basket is
-// busy..." and "the trigger and the popup work at the pilot tablet
-// resolution") deliberately leave a held row behind (a refused resume; a
-// park that's never resumed at all) -- draining here, not just resetting
-// the basket, is what stops those rows surviving past this file. This is
+// ut-docs#2141: two tests below ("a resume while the basket is busy parks
+// the current sale first..." and "the trigger and the popup work at the
+// pilot tablet resolution") deliberately leave a held row behind (ut-docs#1919:
+// a busy resume now auto-parks the sale that was live rather than refusing,
+// so it leaves ITS OWN new held row, not "Table 5" -- Table 5 is the one
+// that ends up live; a park that's never resumed at all) -- draining here,
+// not just resetting the basket, is what stops those rows surviving past
+// this file. This is
 // IN ADDITION TO fixtures.ts's own once-per-file drain (ut-docs#2141),
 // not a replacement for it: that one protects every OTHER file in the
 // suite from what THIS file leaks; this one keeps this file's own later
@@ -80,16 +83,16 @@ test('the popup says so when nothing is parked, rather than opening empty', asyn
   assertClean();
 });
 
-// A refused resume must get out of the way (ut-docs#2137 review). The dialog
-// sits over the right-hand side of the toast, so leaving it open lets the
-// cashier read "Finish or hold the current sale first" but not dismiss it --
-// and the refusal is telling them to act on the sale screen the popup is
-// covering.
-test('a resume refused because the basket is busy closes the popup and says why', async ({ page }) => {
+// ut-docs#1919: tapping a parked order while the basket is busy must not
+// refuse and must not silently discard whatever the cashier already rang
+// up -- the live sale is parked first (findable, resumable, under its own
+// new entry), then the tapped order opens. The popup gets out of the way
+// on its own either way, same as any other successful resume.
+test('a resume while the basket is busy parks the current sale first, then opens the tapped order', async ({ page }) => {
   await page.goto('/');
   await parkASale(page, 'Table 5');
 
-  // A new sale is now in progress, so the parked one cannot be resumed.
+  // A new sale is now in progress.
   await page.locator('.scan-row input[name="code"]').fill('5000000000012');
   await page.locator('.scan-row button[type=submit]').click();
   await expect(page.locator('#basket')).toContainText('Coca-Cola');
@@ -99,11 +102,19 @@ test('a resume refused because the basket is busy closes the popup and says why'
   await expect(modal).toBeVisible();
   await modal.locator('.parked-order', { hasText: 'Table 5' }).click();
 
+  // The tapped order (Table 5) is now live, and the cashier is told BOTH
+  // things happened, not just that a new one loaded.
   await expect(modal).toBeHidden();
-  await expect(page.locator('#toast-message')).toContainText('Finish or hold the current sale first');
-  // The order is untouched and still offered.
+  await expect(page.locator('#toast-message')).toContainText('Previous sale held — order resumed');
+  await expect(page.locator('#basket')).toContainText('Coca-Cola');
+
+  // The sale that WAS live is not lost: it is parked under its own new
+  // entry, and "Table 5" itself is gone from the list -- it's the live
+  // basket now, not a parked one.
   await page.locator('.tender-quickpay [data-testid="parked-orders-open"]').click();
-  await expect(modal.locator('.parked-order', { hasText: 'Table 5' })).toBeVisible();
+  await expect(modal).toBeVisible();
+  await expect(modal.locator('.parked-order', { hasText: 'Table 5' })).toHaveCount(0);
+  await expect(modal.locator('.parked-order')).toHaveCount(1);
 });
 
 // Regression guard for a measured CSS bug this popup shipped with in review:
