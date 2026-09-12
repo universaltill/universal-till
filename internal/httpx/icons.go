@@ -199,6 +199,13 @@ var railIcons = map[string]string{
 	// "landmark"/"scan-barcode"/"log-out" above already did, not to be
 	// treated as closed.
 	"filter": `<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>`,
+	// Back (ut-docs#2173) — the sale-screen category strip's search-mode
+	// back control, restoring the tab-bar view. The first direction-
+	// dependent icon in this registry: every other glyph above reads the
+	// same in LTR and RTL, but an arrow pointing "back" must point start-
+	// ward, so app.css mirrors this one under `html[dir="rtl"]` instead of
+	// drawing a second path. Lucide's "arrow-left" path, unmodified.
+	"arrow-left": `<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>`,
 }
 
 // iconSVGOpen is the one shared wrapper every rail icon renders inside.

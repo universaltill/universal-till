@@ -7,7 +7,12 @@ import { watchConsole } from './helpers';
 // and a search query composes with the active tab rather than overriding
 // it (the bug class ut-docs#419 fixes on the self-order kiosk side, where
 // search used to reload the grid via a separate endpoint and silently drop
-// the active category filter).
+// the active category filter). Since ut-docs#2173, search and the tab
+// strip occupy the same row and are mutually exclusive on screen — opening
+// search hides the tab strip, and closing it (the strip's back arrow, or
+// Escape) clears the query — so "composes with the active tab" now means
+// within one open-search session, never across a tab switch (switching
+// tabs requires closing search first). See this file's first test.
 //
 // Drives the real demo-seeded catalog (001_init.sql) rather than importing
 // fixture data — Food (default-active tab, nests a "Dairy" subcategory
@@ -47,12 +52,29 @@ test.describe('sale screen category tabs + search (ut-docs#418)', () => {
     // Search filters WITHIN the active tab: searching "Butter" while on
     // Drinks must show nothing (Butter lives in Food), not silently jump
     // tabs — the self-order compose bug (ut-docs#419) this design avoids.
+    // ut-docs#2173: search is no longer always on screen, and — new since
+    // that card — it now REPLACES the tab strip in place rather than
+    // sitting alongside it, so a query can no longer survive a tab switch
+    // (switching tabs requires closing search first, via the strip's back
+    // arrow, which clears the query by design — see
+    // sale-screen-search-strip-2173.spec.ts for that cycle's own
+    // coverage). This still proves the ut-docs#419 property that matters:
+    // search never leaks across the active tab boundary, checked fresh
+    // inside each tab's own search session rather than across one that
+    // spans a tab switch.
+    await page.locator('.products-strip-search').click();
     const search = page.locator('#products-search');
     await search.fill('Butter');
     await expect(colaTile).toBeHidden();
     await expect(butterTile).toBeHidden(); // still on the Drinks tab
 
+    await page.locator('.products-strip-back').click();
+    await expect(search).toHaveValue(''); // closing search clears the query (ut-docs#2173)
     await foodTab.click();
+    await expect(butterTile).toBeVisible(); // no query active, Food tab's own tiles show
+
+    await page.locator('.products-strip-search').click();
+    await search.fill('Butter');
     await expect(butterTile).toBeVisible(); // "Butter" query matches, Food tab active
     await expect(page.locator('.btn-tile', { hasText: 'Cheddar Cheese' })).toBeHidden(); // same tab, doesn't match query
 
@@ -75,6 +97,8 @@ test.describe('sale screen category tabs + search (ut-docs#418)', () => {
     await expect(drinksTab).toHaveClass(/active/);
     await expect(noMatches).toBeHidden();
 
+    // ut-docs#2173: open search via the strip's search icon first.
+    await page.locator('.products-strip-search').click();
     const search = page.locator('#products-search');
     await search.fill('this matches absolutely nothing on the till');
     await expect(noMatches).toBeVisible();
@@ -94,6 +118,13 @@ test.describe('sale screen category tabs + search (ut-docs#418)', () => {
 
     const tabBar = page.locator('.products .tab-bar');
     await expect(tabBar).toBeVisible();
+    // ut-docs#2173: the search box is no longer always on screen — its
+    // trigger icon is, and opening it still reveals the same input, RTL
+    // included. sale-screen-search-strip-2173.spec.ts covers the
+    // expand/collapse cycle itself in full; this just confirms the search
+    // path still works end to end under RTL.
+    await expect(page.locator('.products-strip-search')).toBeVisible();
+    await page.locator('.products-strip-search').click();
     await expect(page.locator('#products-search')).toBeVisible();
 
     // Exactly one tab is active by default, and its own tile is a real,

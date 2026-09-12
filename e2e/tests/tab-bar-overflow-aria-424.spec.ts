@@ -99,8 +99,25 @@ test.describe('tab-bar overflow + ARIA tabs pattern (ut-docs#424)', () => {
       items = [];
     });
 
-    test('12+ categories wrap the tab bar onto multiple rows instead of squashing labels', async ({ page }) => {
+    test('12+ categories stay on ONE scrollable row, leaving product tiles visible (ut-docs#2173/#993)', async ({ page }) => {
+      // ut-docs#424 originally required this exact tab bar to WRAP onto
+      // multiple rows for a large category count (flex-wrap: wrap) — see
+      // git history for that version of this test. ut-docs#2173
+      // deliberately reverses that, FOR THIS ONE TAB BAR ONLY (the
+      // sale-screen category strip, `.products .tab-bar`): at 1024x600 with
+      // 12 categories the old wrapping bar alone ran 247px over 5 rows and
+      // left ZERO product tiles visible on the kiosk floor (ut-docs#993).
+      // It is now a single-row, horizontally-scrollable strip instead —
+      // asserted below as exactly one distinct `top` offset among the
+      // tabs. #424's OTHER acceptance criteria are unaffected and still
+      // enforced here: no tab may wrap its own label across multiple
+      // lines (the height assertion, kept verbatim), and the tender
+      // Pay/Split bar's own `.tab-bar` keeps its original wrap behaviour
+      // untouched (see the generic `.tab-bar` tests further down this
+      // file, and app.css's own comment on why that rule is never scoped
+      // away from by this card).
       const assertClean = watchConsole(page);
+      await page.setViewportSize({ width: 1024, height: 600 });
       items = overflowItems('Wrap', '71');
 
       await seedOverflowCategories(page, 'import-424-wrap.csv', items);
@@ -118,17 +135,66 @@ test.describe('tab-bar overflow + ARIA tabs pattern (ut-docs#424)', () => {
         }),
       );
 
-      // Wrapped onto more than one row: more than one distinct top offset
-      // among the tabs (ut-docs#424's flex-wrap fix).
+      // ut-docs#2173: every tab now shares the SAME top offset — one row,
+      // not many. This is the exact opposite of #424's original assertion
+      // for this tab bar.
       const rowsSeen = new Set(boxes.map((b) => b.top));
-      expect(rowsSeen.size, 'tab bar should wrap many categories onto multiple rows').toBeGreaterThan(1);
+      expect(rowsSeen.size, `sale-screen tab bar should stay on exactly one row, saw tops: ${JSON.stringify(boxes)}`).toBe(1);
 
-      // No tab collapsed to a multi-line squashed label — every tab stays
-      // a single readable line (well under a two-line height at this UI's
-      // fluid font-size/line-height).
+      // #424's own AC: every tab stays a single readable line, never a
+      // squashed multi-line label.
+      //
+      // ut-docs#2173's independent review pointed out that the height check
+      // below, kept from the pre-#2173 version of this test, can no longer
+      // fail: with flex-wrap: nowrap on the container AND the pre-existing
+      // white-space: nowrap on .tab, a tab CANNOT wrap its own label, so the
+      // assertion is now tautological. Keeping it is still right (it would
+      // catch a future change that reintroduces wrapping), but on its own it
+      // is no longer live coverage of this AC — so it is paired with the
+      // check that actually can fail now.
+      //
+      // What can go wrong in the nowrap world is the opposite failure: the
+      // label CLIPPED inside its own tab box rather than wrapped. A tab
+      // whose content is wider than its own content box is exactly that, and
+      // it is what "readable" means once wrapping is off the table.
       for (const b of boxes) {
         expect(b.height, 'a tab must not have wrapped its own label across multiple lines').toBeLessThan(60);
       }
+      const clipped = await tabBar.locator('.tab').evaluateAll((els) =>
+        els
+          .map((el) => ({ label: (el.textContent || '').trim(), scrollW: el.scrollWidth, clientW: el.clientWidth }))
+          // 1px of tolerance for sub-pixel layout rounding.
+          .filter((t) => t.scrollW > t.clientW + 1),
+      );
+      expect(clipped, `every tab must show its whole label — these are clipped inside their own box: ${JSON.stringify(clipped)}`).toEqual([]);
+
+      // ut-docs#993: the tab bar being single-row is only useful if it
+      // actually frees up room for product tiles. Assert real geometry,
+      // not just element presence — the first tile must sit ENTIRELY
+      // inside the .products panel's own visible box, with no scrolling
+      // needed to see it.
+      const tabBarBox = await tabBar.boundingBox();
+      expect(tabBarBox, 'tab bar must have a measurable box').toBeTruthy();
+      // A generous single-row bound: real single-row tab heights on this
+      // UI run well under 3rem (~48px); 60px leaves headroom without
+      // tolerating a second row sneaking back in.
+      expect(tabBarBox!.height, `tab bar height should be single-row, measured ${tabBarBox!.height}px`).toBeLessThan(60);
+
+      const panelBox = await page.locator('.products').boundingBox();
+      expect(panelBox, '.products panel must have a measurable box').toBeTruthy();
+      const firstTile = page.locator('.products .btn-tile').first();
+      await expect(firstTile).toBeVisible();
+      const tileBox = await firstTile.boundingBox();
+      expect(tileBox, 'first product tile must have a measurable box').toBeTruthy();
+
+      expect(
+        tileBox!.y,
+        `first tile top (${tileBox!.y}) should be >= .products panel top (${panelBox!.y}) -- tab bar: ${JSON.stringify(tabBarBox)}, panel: ${JSON.stringify(panelBox)}, tile: ${JSON.stringify(tileBox)}`,
+      ).toBeGreaterThanOrEqual(panelBox!.y);
+      expect(
+        tileBox!.y + tileBox!.height,
+        `first tile bottom (${tileBox!.y + tileBox!.height}) should be <= .products panel bottom (${panelBox!.y + panelBox!.height}) -- tab bar: ${JSON.stringify(tabBarBox)}, panel: ${JSON.stringify(panelBox)}, tile: ${JSON.stringify(tileBox)}`,
+      ).toBeLessThanOrEqual(panelBox!.y + panelBox!.height);
 
       assertClean();
     });
