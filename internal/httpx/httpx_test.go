@@ -3,7 +3,9 @@ package httpx
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -225,6 +227,183 @@ func TestFuncsForExposesDateTime(t *testing.T) {
 	}
 	if got := dtUTCFn("2026-09-05"); got != "2026-09-05" {
 		t.Errorf("datetimeUTC(non-RFC3339) = %q, want the raw string back", got)
+	}
+}
+
+// ut-docs#2162: RenderContentFragment/RenderPartial set X-UT-Page-Title
+// from the template data's "title" so a shared client-side htmx:afterSwap
+// listener (web/public/app.js) can refresh document.title after an
+// in-panel swap — base.html's own <title> only ever renders on a
+// full-page response, never on a fragment. Percent-encoded: browsers'
+// Fetch/XHR getResponseHeader() reads header values as Latin-1, not
+// UTF-8, so a raw non-ASCII title (this product ships ar/fa/tr locales)
+// would come back corrupted without encoding.
+// TestRenderWithContentSetsPageTitleHeader guards a real gap found while
+// testing ut-docs#2162's fix: /catalog — the /items rail's own DEFAULT
+// section, the one every plain visit to /items actually lands on — does
+// NOT go through RenderContentFragment at all. catalog/handlers.go builds
+// its own file set (extra partials RenderContentFragment's fixed set
+// doesn't include) and calls the lower-level httpx.RenderWith(...)("content",
+// data) directly for its fragment-swap branch. Both must carry the header,
+// or the single most-visited /items section would silently be the one
+// exception to this whole fix.
+func TestRenderWithContentSetsPageTitleHeader(t *testing.T) {
+	chdirTemp(t)
+	InitI18n(nil, "en")
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/catalog", nil)
+	render := RenderWith([]string{
+		"web/ui/layouts/base.html",
+		"web/ui/pages/setup.html",
+	}, FuncsFor("en"))
+	render("content", map[string]any{
+		"title":     "Catalog",
+		"countries": nil,
+		"errKey":    "",
+	})(w, r)
+
+	if got := w.Header().Get("X-UT-Page-Title"); got != "Catalog" {
+		t.Fatalf("X-UT-Page-Title = %q, want %q", got, "Catalog")
+	}
+}
+
+// TestRenderWithBaseOmitsPageTitleHeader: the "base" (full standalone page)
+// execution already gets its <title> from base.html itself — the header
+// is specifically for the fragment path, so "base" must not also set it.
+func TestRenderWithBaseOmitsPageTitleHeader(t *testing.T) {
+	chdirTemp(t)
+	InitI18n(nil, "en")
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/catalog", nil)
+	render := RenderWith([]string{
+		"web/ui/layouts/base.html",
+		"web/ui/pages/setup.html",
+	}, FuncsFor("en"))
+	render("base", map[string]any{
+		"title":     "Catalog",
+		"theme":     "",
+		"menuItems": nil,
+		"countries": nil,
+		"errKey":    "",
+	})(w, r)
+
+	if got := w.Header().Get("X-UT-Page-Title"); got != "" {
+		t.Fatalf("X-UT-Page-Title = %q, want unset on a base/full-page render", got)
+	}
+}
+
+func TestRenderContentFragmentSetsPageTitleHeader(t *testing.T) {
+	chdirTemp(t)
+	InitI18n(nil, "en")
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/inventory", nil)
+	r.Header.Set("HX-Request", "true")
+	RenderContentFragment("ui/pages/inventory.html", map[string]any{
+		"title":       "Inventory",
+		"theme":       "",
+		"menuItems":   nil,
+		"StockLevels": nil,
+		"RunningOut":  nil,
+		"Locations":   nil,
+	})(w, r)
+
+	if got := w.Header().Get("X-UT-Page-Title"); got != "Inventory" {
+		t.Fatalf("X-UT-Page-Title = %q, want %q", got, "Inventory")
+	}
+}
+
+// TestRenderPartialSetsPageTitleHeaderWhenPresent covers help_page.go's
+// own call shape (a topic's real, locale-resolved title, not an English
+// literal) and confirms non-ASCII survives round-trip percent-encoding.
+//
+// Decoded with url.PathUnescape, not url.QueryUnescape: the real client
+// side (web/public/app.js) decodes with JavaScript's decodeURIComponent,
+// which only unescapes "%XX" sequences and leaves a literal "+"
+// untouched — the same contract url.PathUnescape has (and url.QueryUnescape
+// does not: it turns "+" back into a space). Asserting through PathUnescape
+// is what would have caught the "+"-for-space bug TestRenderPartialTitle
+// WithSpaceRoundTripsForClientDecoding below pins directly.
+func TestRenderPartialSetsPageTitleHeaderWhenPresent(t *testing.T) {
+	chdirTemp(t)
+	InitI18n(nil, "en")
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/setup", nil)
+	RenderPartial("ui/pages/setup.html", map[string]any{
+		"title":     "کاتالوگ", // Farsi "Catalog" — exercises the encoding, not a real setup-page title
+		"countries": nil,
+		"errKey":    "",
+	})(w, r)
+
+	encoded := w.Header().Get("X-UT-Page-Title")
+	if encoded == "" {
+		t.Fatal("X-UT-Page-Title header not set")
+	}
+	decoded, err := url.PathUnescape(encoded)
+	if err != nil {
+		t.Fatalf("X-UT-Page-Title %q did not decode: %v", encoded, err)
+	}
+	if decoded != "کاتالوگ" {
+		t.Fatalf("X-UT-Page-Title round-tripped to %q, want the original Farsi string", decoded)
+	}
+}
+
+// TestRenderPartialTitleWithSpaceRoundTripsForClientDecoding: review finding
+// for ut-docs#2162 — writePageTitleHeader originally used url.QueryEscape,
+// which encodes a space as "+" (application/x-www-form-urlencoded
+// convention). The client only ever decodes with JavaScript's
+// decodeURIComponent (web/public/app.js's htmx:afterSwap listener), which
+// does NOT turn "+" back into a space — so every multi-word title in this
+// diff ("Country settings", "Fiscal register", "Tax codes", "Customization
+// options", "Option sets", …) would have shown up in the browser tab with
+// a literal "+" instead of a space. Several real handlers' "title" values
+// contain a space (see e.g. country_settings_page.go, fiscal_register_page.go,
+// tax_codes_page.go), so this is not a hypothetical edge case. Simulates
+// the client decode with url.PathUnescape (see the previous test's comment
+// for why that, not url.QueryUnescape, is the correct stand-in).
+func TestRenderPartialTitleWithSpaceRoundTripsForClientDecoding(t *testing.T) {
+	chdirTemp(t)
+	InitI18n(nil, "en")
+
+	const want = "Country settings"
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/setup", nil)
+	RenderPartial("ui/pages/setup.html", map[string]any{
+		"title":     want,
+		"countries": nil,
+		"errKey":    "",
+	})(w, r)
+
+	encoded := w.Header().Get("X-UT-Page-Title")
+	if strings.Contains(encoded, "+") {
+		t.Fatalf("X-UT-Page-Title = %q: contains a literal %q, which the client's decodeURIComponent would NOT turn back into a space", encoded, "+")
+	}
+	decoded, err := url.PathUnescape(encoded)
+	if err != nil {
+		t.Fatalf("X-UT-Page-Title %q did not decode: %v", encoded, err)
+	}
+	if decoded != want {
+		t.Fatalf("X-UT-Page-Title round-tripped to %q, want %q", decoded, want)
+	}
+}
+
+// TestRenderPartialOmitsPageTitleHeaderWhenAbsent guards the no-op path:
+// the great majority of RenderPartial's call sites pass data with no
+// "title" key at all (dialog messages, OOB refreshes, small in-place
+// fragments) and must not grow a stray header.
+func TestRenderPartialOmitsPageTitleHeaderWhenAbsent(t *testing.T) {
+	chdirTemp(t)
+	InitI18n(nil, "en")
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/x", nil)
+	RenderPartial("ui/partials/record_dialog_msg.html", map[string]any{"msg": "ok"})(w, r)
+
+	if got := w.Header().Get("X-UT-Page-Title"); got != "" {
+		t.Fatalf("X-UT-Page-Title = %q, want unset", got)
 	}
 }
 
