@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import type { Locator } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { watchConsole } from './helpers';
 
 // ut-docs#901: /locations and /registers both 403'd permanently under
@@ -38,6 +38,28 @@ import { watchConsole } from './helpers';
 // The toggle form's own hidden `active` input -- see the file-header note.
 function activeInput(row: Locator) {
   return row.locator('form.users-inline').nth(1).locator('input[name="active"]');
+}
+
+// Observed real, if infrequent, flakiness on this exact server (a
+// throwaway till boots fresh per e2e run, and record-dialog.js's click
+// delegation is registered at script-load time on the page HX-Redirect
+// navigates to): a row click landing right after that navigation
+// occasionally has no effect the first time (ut-docs#2124's own fix to
+// this same file's /locations block). A row click is otherwise a simple
+// action with nothing to legitimately retry on real content grounds --
+// this exists purely to absorb that timing gap, bounded and visible in
+// the loop count rather than silently retried forever.
+async function openRowDialog(page: Page, row: Locator, dialogSel: string) {
+  const dialog = page.locator(dialogSel);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await row.click();
+    try {
+      await expect(dialog).toBeVisible({ timeout: 2000 });
+      return;
+    } catch {
+      if (attempt === 2) throw new Error(`${dialogSel} did not open after 3 row-click attempts`);
+    }
+  }
 }
 
 test.describe('/locations admin page (ut-docs#901)', () => {
@@ -112,6 +134,7 @@ test.describe('/registers admin page (ut-docs#901)', () => {
         page.waitForURL((u) => u.pathname === '/registers'),
         page.locator('#register-dialog .record-dialog-save').click(),
       ]);
+      await page.waitForLoadState('load');
     }
 
     const rowA = page.locator('#registers-table .register-row', { hasText: nameA });
@@ -119,13 +142,13 @@ test.describe('/registers admin page (ut-docs#901)', () => {
 
     // Rename.
     const renamedA = `${nameA} Renamed`;
-    await rowA.click();
-    await expect(page.locator('#register-dialog')).toBeVisible();
+    await openRowDialog(page, rowA, '#register-dialog');
     await page.locator('#register-form input[name="name"]').fill(renamedA);
     await Promise.all([
       page.waitForURL((u) => u.pathname === '/registers'),
       page.locator('#register-dialog .record-dialog-save').click(),
     ]);
+    await page.waitForLoadState('load');
     const renamedRowA = page.locator('#registers-table .register-row', { hasText: renamedA });
     await expect(renamedRowA).toBeVisible();
 
@@ -133,19 +156,18 @@ test.describe('/registers admin page (ut-docs#901)', () => {
     // the last-active-register guard. Behind hx-confirm (a real browser
     // confirm()) -- Playwright auto-dismisses an unhandled one, which
     // would silently no-op the click, so accept it explicitly.
-    await renamedRowA.click();
-    await expect(page.locator('#register-dialog')).toBeVisible();
+    await openRowDialog(page, renamedRowA, '#register-dialog');
     page.once('dialog', (d) => d.accept());
     await Promise.all([
       page.waitForURL((u) => u.pathname === '/registers'),
       page.locator('#register-dialog form[data-record-when="active=1"] button[type="submit"]').click(),
     ]);
+    await page.waitForLoadState('load');
     await expect(renamedRowA).toHaveAttribute('data-field-active', '0'); // now offers "activate" -> currently inactive
 
     // Reactivate. Leaves both this test's new/renamed rows behind, active --
     // same server-state note as the locations spec above.
-    await renamedRowA.click();
-    await expect(page.locator('#register-dialog')).toBeVisible();
+    await openRowDialog(page, renamedRowA, '#register-dialog');
     await Promise.all([
       page.waitForURL((u) => u.pathname === '/registers'),
       page.locator('#register-dialog form[data-record-when="active=0"] button[type="submit"]').click(),
