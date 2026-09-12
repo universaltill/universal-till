@@ -290,6 +290,52 @@ export async function deactivateAllTables(page: Page) {
   }
 }
 
+// ut-docs#2128: held sales are persistent DB state (hold_api.go), not
+// per-test/per-context like the live sale `/api/pos/reset` clears -- a spec
+// that asserts an exact held-sales count needs a clean slate first, and
+// there is no bulk-clear endpoint. Resume (loads it into the live basket)
+// then reset (discards the basket) for whatever's left, one at a time,
+// same loop-until-count-0 shape as deactivateAllTables above.
+export async function clearAllHeldSales(page: Page) {
+  // #held-sales is a bare placeholder at page load (`hx-trigger="load"`,
+  // index.html) until its own async htmx GET /ui/held swap lands -- reading
+  // .held-chip before that swap settles would see 0 and wrongly conclude
+  // there's nothing to clear (independent review finding, ut-docs#2128:
+  // demonstrated with an artificially delayed /ui/held response; not
+  // observed on an idle machine, but a real, silent race, not a
+  // hypothetical one). `state: 'attached'`, not the default 'visible': the
+  // swapped-in fragment can be legitimately empty (`.held-strip:empty {
+  // display: none }`), which 'visible' would wait forever for.
+  await page.waitForSelector('#held-sales.held-strip', { state: 'attached' });
+  const MAX_ITERATIONS = 20; // real held-sale counts in these specs are 0-3;
+  // 20 is headroom, not a real expected count -- hitting it means a resume
+  // is silently failing to actually clear the row (see below), not that
+  // there were ever legitimately this many held sales to clear.
+  for (let i = 0; i < MAX_ITERATIONS; i++) {
+    const count = await page.locator('.held-chip').count();
+    if (count === 0) return;
+    const idAttr = await page.locator('.held-chip').first().getAttribute('hx-vals');
+    const id = idAttr ? (JSON.parse(idAttr).id as string) : undefined;
+    if (!id) throw new Error('clearAllHeldSales: a .held-chip has no parseable hx-vals id');
+    // form-encoded, not JSON: the handler reads it via r.ParseForm()/
+    // r.Form.Get("id") (hold_api.go), same as the real hx-vals-driven POST.
+    await page.request.post('/api/pos/resume', { form: { id } });
+    await page.request.post('/api/pos/reset');
+    // The strip only re-renders on a real htmx `held-changed` event or a
+    // fresh load, neither of which a bare API call fires -- reload so the
+    // next iteration's locator sees the updated list.
+    await page.goto('/');
+    await page.waitForSelector('#held-sales.held-strip', { state: 'attached' });
+  }
+  // Every iteration ran and at least one chip is still there: resume is
+  // silently not clearing it (hold_api.go deliberately swallows a failed
+  // repo.Get/Delete rather than erroring -- "a stale row is the lesser
+  // evil") -- surface that instead of leaving the caller to wonder why its
+  // held-sales count assertion doesn't match.
+  const stuckId = await page.locator('.held-chip').first().getAttribute('hx-vals').catch(() => null);
+  throw new Error(`clearAllHeldSales: gave up after ${MAX_ITERATIONS} iterations, still stuck on ${stuckId ?? '(unreadable)'}`);
+}
+
 // The bottom-of-page card form — the pre-#1025 add path. Scoped to it
 // specifically: since ut-docs#1025 the tap-to-add dialog is a second
 // form[action="/api/tables"], so the bare selector would be a strict-mode
