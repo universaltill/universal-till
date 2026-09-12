@@ -218,7 +218,10 @@ func (mv *ManifestVerifier) VerifyExecutable(pluginDir, executableName string) e
 }
 
 // CanonicalTypes is the full plugin-type taxonomy. It mirrors the
-// plugin_entries.type CHECK constraint in the schema — keep the two in sync.
+// plugin_entries.type CHECK constraint in the schema — keep the two in
+// sync. It also must mirror ut-docs/adr/0002-plugin-type-taxonomy.md's own
+// taxonomy line, pinned for real by scripts/ci/guard-adr-plugin-taxonomy.sh
+// (ut-docs#2134) — adding a type here without updating that ADR fails CI.
 var CanonicalTypes = []string{
 	"page", "button", "popup", "payment", "device", "integration",
 	"report", "pricing", "tax", "import", "export", "hardware",
