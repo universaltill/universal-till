@@ -3,16 +3,68 @@
   <h1>{{ T "countrysettings.title" }}</h1>
 </div>
 
+{{/* ut-docs#2167: the two scope links used to be plain <a href> anchors, so
+     clicking either from inside /admin's two-pane shell (ut-docs#2116) was
+     a full navigation — it tore the whole shell down, losing the admin
+     tree and its selection state, to reload just this one page. They are
+     in-panel htmx chips instead now (vocabulary borrowed from
+     web/ui/partials/category_filter.html, ut-docs#2119: .chip/.chip-check/
+     icon "check"), wrapped together with the rest of this page's content
+     in #country-settings-view so hx-select="#country-settings-view" can
+     pull just that div out of the response.
+     hx-select is what makes ONE chip markup work identically in both
+     places this page renders. A chip click is an htmx request either way,
+     so httpx.IsFragmentSwap is true either way and the handler answers
+     with the "content" block in both cases (verified live: no <!doctype>
+     in the response) — the difference is only whether an #admin-panel
+     wraps it. What hx-select is actually for is that this block is MORE
+     than the div being swapped: it also carries the page-head. Without
+     hx-select, hx-swap="outerHTML" would replace #country-settings-view
+     with the whole block and paint a second <h1> on every toggle.
+
+     Two details that look optional and are not (independent review,
+     2026-09-12):
+       - Each chip carries an id. The chips live INSIDE the element they
+         replace, and htmx 1.9's post-swap focus restoration only fires for
+         a previously-focused element that HAS an id — it re-finds it with
+         getElementById in the swap callback and skips the branch entirely
+         otherwise. Without an id, a manager who reaches a chip by keyboard
+         and presses Enter has focus dumped to <body>, with nothing
+         announced and the next Tab restarting at the nav rail.
+         web/ui/pages/setup.html's own "show all countries" control
+         hand-rolls the same restoration with $nextTick(...).focus(); two
+         attributes buy it here for free.
+       - No role="group", deliberately. category_filter.html's chip row
+         carries role="group" WITH an aria-label, because its chips are
+         bare category names that say nothing about what they scope. These
+         two are self-describing ("Show only my country" / "Show all
+         countries"), so a group role would announce a boundary with no
+         name on it — strictly worse than no role at all. Don't add the
+         role back without adding a label key in the same change. */}}
+<div id="country-settings-view">
+
 {{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
 
 <p class="muted">{{ T "countrysettings.intro" }}</p>
 
 {{ if .countryUnknown }}
 <p class="muted">{{ T "countrysettings.unknown_country" }}</p>
-{{ else if .showAll }}
-<p class="muted"><a href="/country-settings">{{ T "countrysettings.show_mine" }}</a></p>
 {{ else }}
-<p class="muted">{{ T "countrysettings.showing_mine" }} <a href="/country-settings?all=1">{{ T "countrysettings.show_all" }}</a></p>
+<div class="filter-chips">
+  <button type="button" class="chip" id="cs-scope-mine" aria-pressed="{{ if .showAll }}false{{ else }}true{{ end }}"
+          hx-get="/country-settings"
+          hx-target="#country-settings-view" hx-swap="outerHTML"
+          hx-select="#country-settings-view" hx-push-url="true">
+    <span class="chip-check" aria-hidden="true">{{ icon "check" }}</span>{{ T "countrysettings.show_mine" }}
+  </button>
+  <button type="button" class="chip" id="cs-scope-all" aria-pressed="{{ if .showAll }}true{{ else }}false{{ end }}"
+          hx-get="/country-settings?all=1"
+          hx-target="#country-settings-view" hx-swap="outerHTML"
+          hx-select="#country-settings-view" hx-push-url="true">
+    <span class="chip-check" aria-hidden="true">{{ icon "check" }}</span>{{ T "countrysettings.show_all" }}
+  </button>
+</div>
+{{ if not .showAll }}<p class="muted">{{ T "countrysettings.showing_mine" }}</p>{{ end }}
 {{ end }}
 
 <div class="users-layout">
@@ -110,5 +162,7 @@
     </form>
     <p class="muted">{{ T "countrysettings.delete_help" }}</p>
   </div>
+</div>
+
 </div>
 {{ end }}

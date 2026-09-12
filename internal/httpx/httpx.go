@@ -725,6 +725,44 @@ var selfOrderMode atomic.Value // bool
 // func below.
 func InitSelfOrderMode(on bool) { selfOrderMode.Store(on) }
 
+// displayMode backs the "backtosaleurl" template func — same publish
+// pattern as selfOrderMode above (kept as a separate atomic rather than
+// derived from this one so neither call site's existing behavior changes),
+// but carrying the raw display.mode value ("", "backoffice", "self_order")
+// rather than a single bool, since RenderError (ut-docs#2154) needs to
+// choose between three destinations, not just detect self-order.
+// RenderError has no *common.Deps in scope — it's called from ~80 sites
+// across many packages — so it can't read display.mode fresh per request
+// the way index_page.go/open_orders_page.go do; this cached value is how
+// error_page.html's "Back to sale" link gets the same mode-aware
+// destination those two pages already have (saleScreenReturnURL,
+// internal/pages/index_page.go) without threading Deps through every one
+// of those 80 call sites.
+var displayMode atomic.Value // string
+
+// InitDisplayMode publishes the current display.mode value for the
+// "backtosaleurl" template func below. Published at boot (pages.Init) and
+// live-updated at the same call sites InitSelfOrderMode already is.
+func InitDisplayMode(mode string) { displayMode.Store(mode) }
+
+// saleScreenReturnURLFor mirrors internal/pages/index_page.go's
+// saleScreenReturnURL exactly (same two ADR-driven exceptions: ADR-0018
+// backoffice is a landing preference an explicit action opts out of,
+// ADR-0020 self-order containment is not) — duplicated rather than
+// imported because internal/pages already imports internal/httpx, so the
+// reverse import would cycle. Keep both in step if the destinations ever
+// change.
+func saleScreenReturnURLFor(mode string) string {
+	switch mode {
+	case "self_order":
+		return "/self-order"
+	case "backoffice":
+		return "/?stay=1"
+	default:
+		return "/"
+	}
+}
+
 // assetVersion returns a cache-busting version for a web asset: the file's
 // mtime, so browsers pick up redesigns without a manual hard refresh.
 // imgVersion appends a cache-busting mtime to a /public/... URL so replacing
@@ -922,6 +960,13 @@ func FuncsFor(locale string) template.FuncMap {
 			return b
 		}
 		return false
+	}
+	// ut-docs#2154: error_page.html's "Back to sale" link — RenderError has
+	// no *common.Deps in scope to read display.mode fresh, so it reads the
+	// same cached value InitDisplayMode publishes (see its own doc comment).
+	funcs["backtosaleurl"] = func() string {
+		mode, _ := displayMode.Load().(string)
+		return saleScreenReturnURLFor(mode)
 	}
 	funcs["uiscalepx"] = uiScalePx
 	funcs["uiscale"] = uiScaleCSS

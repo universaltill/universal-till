@@ -77,3 +77,56 @@ func TestInventoryPage_RendersCategoryFilterChipRowAndRowCategoryID(t *testing.T
 		t.Fatalf("expected the stock row to carry data-category=\"cat-drinks\"; got:\n%s", body)
 	}
 }
+
+// ut-docs#2140 — a still-active child whose parent was deactivated (and so
+// no longer appears in ListActiveCategories) must still get its own chip on
+// /inventory, same as /catalog.
+func TestInventoryPage_DeactivatedParentPromotesActiveChildToItsOwnChip(t *testing.T) {
+	chdirRoot(t)
+	f := filepath.Join(t.TempDir(), "inv-cat-2140.db")
+	database, err := db.Open(f)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer database.Close()
+	d := database.DB
+
+	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+	if err != nil {
+		t.Fatalf("i18n: %v", err)
+	}
+	httpx.InitI18n(i18n, "en")
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := d.Exec(q, args...); err != nil {
+			t.Fatalf("exec: %v (%s)", err, q)
+		}
+	}
+	mustExec(`INSERT INTO categories (id, name, is_active) VALUES ('cat-drinks', 'Drinks', 0)`)
+	mustExec(`INSERT INTO categories (id, name, parent_id, is_active) VALUES ('cat-hot-drinks', 'Hot Drinks', 'cat-drinks', 1)`)
+	mustExec(`INSERT INTO items (id, name, sku, base_price, category_id, is_active) VALUES
+		('it-tea', 'Tea', 'TEA', 200, 'cat-hot-drinks', 1)`)
+	mustExec(`INSERT INTO stock_locations (id, name) VALUES ('loc-1', 'Shop floor')`)
+	mustExec(`INSERT INTO inventory (id, item_id, location_id, quantity) VALUES ('inv-1', 'it-tea', 'loc-1', 6)`)
+
+	state := common.LoadState(context.Background(), settings.NewStore(d), &config.Config{Theme: "default"})
+	dp := &common.Deps{Cfg: &config.Config{Theme: "default"}, Db: d, State: state,
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(d)}
+	mux := http.NewServeMux()
+	registerInventoryPage(mux, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/inventory", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /inventory: %d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	if strings.Contains(body, `data-cat-id="cat-drinks"`) {
+		t.Fatalf("expected NO chip for the deactivated Drinks category; got:\n%s", body)
+	}
+	if !strings.Contains(body, `data-cat-id="cat-hot-drinks"`) {
+		t.Fatalf("expected Hot Drinks promoted to its own chip once its parent was deactivated; got:\n%s", body)
+	}
+}

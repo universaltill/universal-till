@@ -258,8 +258,16 @@ func exempt(path string) bool {
 	return false
 }
 
-// Middleware gates every route behind a live session. Browsers are redirected
-// to /login; API calls get 401 JSON. The operator lands in the context.
+// Middleware gates every route behind a live session. An htmx-driven request
+// (HX-Request: true) always gets HX-Redirect to /login — a real browser
+// navigation — regardless of path, /api/* included: htmx discards a JSON
+// error body on a non-2xx response and fires htmx:responseError instead, so
+// a bare JSON 401 under /api/* left hold/resume/scan/tender rendering the
+// generic "something went wrong" banner on top of a still-fully-rendered
+// sale screen with no indication the operator needed to sign back in
+// (ut-docs#2144). Only a NON-htmx caller under /api/* (mobile/sync clients)
+// gets the 401 JSON contract; a plain browser page load gets the ordinary
+// 303 redirect. The operator lands in the context.
 // optionalAuth paths are reachable WITHOUT a session but must still receive
 // one when the caller has it. This is a distinct tier from exempt(), and the
 // distinction is not cosmetic: exempt() returns before the cookie is ever
@@ -300,7 +308,15 @@ func Middleware(next http.Handler, svc *Service) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if strings.HasPrefix(r.URL.Path, "/api/") {
+		// ut-docs#2144: this must NOT catch an htmx-driven /api/* request --
+		// htmx discards a JSON error body on a non-2xx response (fires
+		// htmx:responseError instead), so hold/resume/scan/tender (all
+		// hx-post under /api/pos/*) rendered the generic "something went
+		// wrong" banner with no indication the session had expired. Only a
+		// non-htmx caller (mobile/sync clients) gets this JSON contract; an
+		// htmx caller falls through to the same HX-Redirect logic below that
+		// every other route already gets.
+		if strings.HasPrefix(r.URL.Path, "/api/") && r.Header.Get("HX-Request") != "true" {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]any{

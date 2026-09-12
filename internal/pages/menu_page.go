@@ -322,6 +322,11 @@ func registerMenu(mux *http.ServeMux, d *common.Deps) {
 		// ?lang= cookie) itself below; resolving twice would emit the
 		// cookie twice.
 		locale := httpx.RequestLocale(r)
+		// ut-docs#2154: same mode-aware "Back to sale" destination
+		// open_orders_page.go already uses -- see saleScreenReturnURL's own
+		// doc comment (index_page.go) for why backoffice/self_order need
+		// opposite treatment.
+		mode, _, _ := d.Settings.Get(r.Context(), "display.mode")
 		resolved := uislot.Resolve(menuSlotEntries(d.MenuSnapshot()), d.MenuAmendmentsSnapshot())
 		vis := &menuVisibility{d: d, r: r}
 		tiles := make([]menuTile, 0, len(resolved))
@@ -367,9 +372,10 @@ func registerMenu(mux *http.ServeMux, d *common.Deps) {
 			"theme": d.CurrentState().Theme,
 			// menuScreen collapses the small-text top nav: the touch tiles below
 			// ARE the navigation, so the header stays clean (logo + lock).
-			"menuScreen": true,
-			"menuItems":  d.MenuSnapshot(),
-			"Tiles":      tiles,
+			"menuScreen":    true,
+			"menuItems":     d.MenuSnapshot(),
+			"Tiles":         tiles,
+			"backToSaleURL": saleScreenReturnURL(mode),
 		})(w, r)
 	})
 }

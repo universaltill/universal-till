@@ -923,9 +923,15 @@
     renderNotice(autofillMsg, 'info', AUTOFILL_MSG.searching);
     fetch('/api/catalog/lookup?barcode=' + encodeURIComponent(code))
       .then(function (res) {
+        // ut-docs#2157: a session-expired 401 answers with the auth
+        // middleware's {code,message} error OBJECT — without this check,
+        // r.body.error below renders as the literal "[object Object]"
+        // instead of sending the operator back to sign in.
+        if (res.status === 401) { window.location.href = '/login'; return null; }
         return res.json().then(function (body) { return { ok: res.ok, status: res.status, body: body }; });
       })
       .then(function (r) {
+        if (!r) return;
         if (!r.ok) {
           // 404 (not found in the shared product databases) is an expected,
           // routine outcome — informational, not an error; anything else
@@ -1507,6 +1513,11 @@
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: body.toString()
       }).then(function (res) {
+        // ut-docs#2157: without this, a session-expired 401 falls into the
+        // !res.ok branch below and throws the raw JSON error-envelope text
+        // as the "error", which the catch then prints verbatim to the
+        // operator instead of sending them back to sign in.
+        if (res.status === 401) { window.location.href = '/login'; return; }
         if (!res.ok) { return res.text().then(function (t) { throw new Error(t); }); }
         renderNotice(log, 'success', code + ' → ' + itemLabel);
         capture.focus();

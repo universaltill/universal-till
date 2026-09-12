@@ -9,7 +9,10 @@
 <div class="card">
   <p>{{ .Message }}</p>
   <!-- ut-docs#1896: same shopping-cart glyph as menu.html's back-to-sale
-       button and the nav rail's sale entry point, for consistency. -->
-  <a class="btn primary btn-touch" href="/"><span class="btn-ico" aria-hidden="true">{{ icon "shopping-cart" }}</span> {{ T "menu.back_to_sale" }}</a>
+       button and the nav rail's sale entry point, for consistency.
+       ut-docs#2154: backtosaleurl (not bare "/") so a backoffice/self_order
+       till's mode-landing preference doesn't hijack this explicit action —
+       see httpx.saleScreenReturnURLFor's own doc comment. -->
+  <a class="btn primary btn-touch" href="{{ backtosaleurl }}"><span class="btn-ico" aria-hidden="true">{{ icon "shopping-cart" }}</span> {{ T "menu.back_to_sale" }}</a>
 </div>
 {{ end }}

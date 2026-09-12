@@ -1,4 +1,5 @@
 import { test as base, expect } from '@playwright/test';
+import { drainParkedOrders } from './helpers';
 
 // ut-docs#1315: every spec in a project shares ONE live till server
 // (`Engine` is a server-side singleton — see playwright.config.ts's
@@ -47,14 +48,50 @@ export const test = base.extend<{ resetPosOncePerFile: void }>({
   // fixtures — so the reset fires after any `test.beforeAll` a spec might
   // add, not before it. No default-project spec uses `beforeAll` today
   // (verified: only the exempt login.spec.ts does), so there's no live
-  // bug, but don't seed basket state meant to survive the whole file in a
-  // `beforeAll` — it would be silently wiped by this reset before the
-  // first test runs.
+  // bug, but don't seed basket OR held-order state meant to survive the
+  // whole file in a `beforeAll` (ut-docs#2141 widened what this reset
+  // clears — see below) — either would be silently wiped before the first
+  // test runs.
+  //
+  // Also DRAINS held (parked) rows, once per file (ut-docs#2141) — `POST
+  // /api/pos/reset` only clears the in-memory basket, never a held row
+  // (that's a DB row, deleted only by resuming it — see helpers.ts's own
+  // drainParkedOrders doc comment), so without this a spec file that holds
+  // a sale and never resumes it (found live, and checked one by one rather
+  // than assumed from a grep for "Hold Sale" — see docs/code-reviews/ for
+  // this card's own review record: 5 real spots, plus
+  // parked-orders-popup-2137.spec.ts's own two deliberately-refused/
+  // never-resumed tests -- hold-named-tab.spec.ts,
+  // new-sale-closes-payment-overlay-1386.spec.ts,
+  // payment-overlay-duplicate-labels-1625.spec.ts,
+  // payment-overlay-footer-reachable-1542.spec.ts and
+  // tender-panel-reachable.spec.ts) leaves that row for every later file to
+  // inherit. Deliberately once per FILE, same granularity as the basket
+  // reset above, not once per TEST — draining is a few extra HTTP round
+  // trips per round and this suite already has enough files that a
+  // per-test cost would add up for no benefit: nothing here needs a drain
+  // BETWEEN two tests in the same file, only between one file and the
+  // next. A file whose own tests need a drained state mid-file (not just
+  // at the file's first test) still calls drainParkedOrders directly, same
+  // as parked-orders-popup-2137.spec.ts's own afterEach does.
+  //
+  // Only a `default`-project spec is actually protected by the drain
+  // above: the top-level `request` fixture here carries no session cookie,
+  // so on the `auth` project (login.spec.ts and its two siblings) this is
+  // the same no-op the plain basket reset always was there too — not a
+  // regression, just worth knowing this doesn't magically cover every
+  // project.
+  //
+  // `resetDoneForFile.add` only happens AFTER a successful drain (not
+  // before, the way a check-then-set might read at a glance) — if
+  // `drainParkedOrders` throws (a row that cannot be resumed, or the
+  // parked-orders listing itself erroring — both loud, deliberate
+  // failures), this file is not falsely marked as already handled.
   resetPosOncePerFile: [
     async ({ request }, use, testInfo) => {
       if (!resetDoneForFile.has(testInfo.file)) {
+        await drainParkedOrders(request);
         resetDoneForFile.add(testInfo.file);
-        await request.post('/api/pos/reset');
       }
       await use();
     },

@@ -499,6 +499,19 @@ window.utCurrency = (function(){
           },
           body: JSON.stringify({ payments: payments, issue_vouchers: pendingVoucherIssues, offline: offlineOverrideEnabled() || !navigator.onLine })
         });
+        // ut-docs#2144: unlike hold/resume/scan (hx-post forms, fixed at the
+        // auth-middleware level), this is a raw fetch() with no HX-Request
+        // header, so an expired session's 401 reaches here directly. Without
+        // this check, the branch below would render the raw, hardcoded-
+        // English JSON error body ({"data":null,"error":{...}}) as the
+        // payment status line — worse than the generic banner it was meant
+        // to replace. Redirect the same way every other expired-session path
+        // already does; nothing to roll back, the middleware short-circuits
+        // BEFORE completeTender ever runs, so no payment was taken.
+        if (response.status === 401) {
+          window.location.href = '/login';
+          return;
+        }
         var text = await response.text();
         var genericFailure = msg.msgPaymentFailed;
         if (!response.ok) {
@@ -1354,6 +1367,15 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body.toString()
     }).then(function (r) {
+      // ut-docs#2157: the auth middleware's non-htmx 401 (session expired)
+      // answers with Content-Type: application/json, never text/html, so it
+      // falls straight past the elevation-dialog branch below into
+      // onDone(r) — and every caller here (settings.html's customer-erase/
+      // cleanup-catalog, reports_tab_eod.html) then parses that body and
+      // renders its {code,message} error OBJECT directly, showing the
+      // literal string "[object Object]" instead of a way back to sign in.
+      // One fix here covers every utPostWithElevation caller.
+      if (r.status === 401) { close(); window.location.href = '/login'; return; }
       var cd = r.headers.get('Content-Disposition') || '';
       var ct = r.headers.get('Content-Type') || '';
       if (cd.indexOf('attachment') === -1 && ct.indexOf('text/html') !== -1) {

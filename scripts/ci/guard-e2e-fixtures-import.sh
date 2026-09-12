@@ -40,6 +40,35 @@
 # icon's box vs. every other rail icon), so it is auth-project-only too and
 # the reset fixture would 401 there the same way.
 #
+# session-expiry-redirect-2144.spec.ts (ut-docs#2144) is exempt on the same
+# objective criterion, not a copy-paste of it: it proves that an htmx-driven
+# /api/pos/* request on a REVOKED session redirects to /login instead of
+# answering a JSON 401 htmx throws away, so it needs a real session to
+# revoke and therefore runs only on the `auth` project
+# (playwright.config.ts's AUTH_ONLY_SPECS). fixtures.ts's
+# `resetPosOncePerFile` posts /api/pos/reset through a bare, cookie-less
+# `request` context, which that project answers 401 — the very response
+# this spec exists to characterise — so the reset would silently no-op
+# rather than reset anything, exactly as for #1346/#1423 above. Nothing
+# leaks either way: the spec never successfully mutates the basket (every
+# request it makes after revocation is rejected by the middleware before
+# any handler runs), and it sorts last among the auth project's specs.
+#
+# session-expiry-redirect-admin-2157.spec.ts (ut-docs#2157) is exempt for
+# the identical #2144 reason above, not a copy-paste of it: it proves the
+# same session-expired-401 redirect on the admin pages' own raw fetch()
+# call sites (plugins/settings/catalog/tills/bluetooth-devices/promotions),
+# so it also revokes the session and also runs only on the `auth` project.
+# fixtures.ts's `resetPosOncePerFile` would 401 against the revoked
+# session the same way, and none of this spec's tests touch the sale
+# basket at all (they drive admin pages, not the sale screen), so nothing
+# leaks either way. Named to sort alphabetically AFTER login.spec.ts
+# (ut-docs#2157 review fallout, found live in CI): login.spec.ts's own
+# first test requires running against the auth project's server while it
+# is still genuinely unconfigured, and any earlier-sorting spec file whose
+# ensureOperator() call completes the setup wizard first (as this one's
+# does) steals that fresh-install state out from under it.
+#
 # Explicit first argument runs this guard against a fixture directory
 # instead of the real tree (see guard-e2e-fixtures-import_test.sh).
 set -euo pipefail
@@ -54,7 +83,7 @@ if [ ! -d "$TESTS_DIR" ]; then
   exit 1
 fi
 
-EXEMPT_FILES=('login.spec.ts' 'nav-rail-lock-reachable-1346.spec.ts' 'nav-rail-svg-icons-lock-1423.spec.ts')
+EXEMPT_FILES=('login.spec.ts' 'nav-rail-lock-reachable-1346.spec.ts' 'nav-rail-svg-icons-lock-1423.spec.ts' 'session-expiry-redirect-2144.spec.ts' 'session-expiry-redirect-admin-2157.spec.ts')
 
 is_exempt() {
   local base="$1" f

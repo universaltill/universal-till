@@ -99,9 +99,18 @@ func TestSalesForExport_ConstantQueryCount(t *testing.T) {
 // prepared. WAL mode (set on the file by db.Open's DSN) makes a second
 // connection to the same path safe to read from concurrently.
 func openCountingConn(t *testing.T, path string, counter *int64) *sql.DB {
+	return openCountingConnMatching(t, path, counter, "SELECT")
+}
+
+// openCountingConnMatching generalizes openCountingConn to count any
+// statement whose text starts with the given prefix (case-insensitive),
+// not just SELECT — ut-docs#1369's batching regression test needs to count
+// INSERT statements instead, to prove ApplyAdmin's write count no longer
+// grows with row count.
+func openCountingConnMatching(t *testing.T, path string, counter *int64, prefix string) *sql.DB {
 	t.Helper()
 	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)", path)
-	countingDB := sql.OpenDB(&countingConnector{dsn: dsn, driver: &sqlited.Driver{}, counter: counter})
+	countingDB := sql.OpenDB(&countingConnector{dsn: dsn, driver: &sqlited.Driver{}, counter: counter, prefix: prefix})
 	t.Cleanup(func() { _ = countingDB.Close() })
 	return countingDB
 }
@@ -110,6 +119,7 @@ type countingConnector struct {
 	dsn     string
 	driver  driver.Driver
 	counter *int64
+	prefix  string
 }
 
 func (c *countingConnector) Connect(context.Context) (driver.Conn, error) {
@@ -117,19 +127,25 @@ func (c *countingConnector) Connect(context.Context) (driver.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &countingConn{Conn: conn, counter: c.counter}, nil
+	return &countingConn{Conn: conn, counter: c.counter, prefix: c.prefix}, nil
 }
 
 func (c *countingConnector) Driver() driver.Driver { return c.driver }
 
-// countingConn wraps a driver.Conn, counting every SELECT statement
-// prepared. *sql.DB.QueryContext prepares a fresh statement per call (no
-// caching) when called directly rather than through a pre-built *sql.Stmt,
-// so counting Prepare/PrepareContext calls for SELECT text faithfully
-// counts application-level QueryContext calls.
+// countingConn wraps a driver.Conn, counting every statement matching
+// `prefix` that's prepared. *sql.DB.QueryContext/ExecContext prepare a
+// fresh statement per call (no caching) when called directly rather than
+// through a pre-built *sql.Stmt, and neither this wrapper nor the embedded
+// driver.Conn interface value satisfies driver.ExecerContext/Execer (Go
+// only promotes methods declared on the embedded field's static interface
+// type, and driver.Conn declares neither), so database/sql always falls
+// back to Prepare/PrepareContext for both reads and writes — counting
+// Prepare/PrepareContext calls for `prefix` text faithfully counts
+// application-level QueryContext AND ExecContext calls alike.
 type countingConn struct {
 	driver.Conn
 	counter *int64
+	prefix  string
 }
 
 func (c *countingConn) Prepare(query string) (driver.Stmt, error) {
@@ -146,7 +162,7 @@ func (c *countingConn) PrepareContext(ctx context.Context, query string) (driver
 }
 
 func (c *countingConn) count(query string) {
-	if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "SELECT") {
+	if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), c.prefix) {
 		atomic.AddInt64(c.counter, 1)
 	}
 }

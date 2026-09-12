@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -385,6 +386,13 @@ func TestCountrySettingsPage_HXRequestReturnsContentFragmentWithOOBAdminTree(t *
 
 	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/country-settings", nil), mgr)
 	req.Header.Set("HX-Request", "true")
+	// ut-docs#2167: real htmx always sends HX-Target with the swap
+	// target's id, and admin_tree.html's row targets #admin-panel — the
+	// only case writeAdminTreeOOB now fires for (isAdminPanelSwap). This
+	// test models a tree-row click, so it must carry that header too;
+	// see TestCountrySettings_FragmentOmitsAdminTreeUnlessPanelTargeted
+	// for the other side of the guard.
+	req.Header.Set("HX-Target", "admin-panel")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -445,5 +453,164 @@ func TestCountrySettingsPage_VaryHXRequestOnBothBranches(t *testing.T) {
 	mux.ServeHTTP(fullRec, fullReq)
 	if got := fullRec.Header().Get("Vary"); got != "HX-Request" {
 		t.Errorf("full-page branch: Vary header = %q, want %q", got, "HX-Request")
+	}
+}
+
+// ut-docs#2167: the two scope links were plain <a href> anchors, so
+// clicking either from inside /admin's two-pane shell was a full
+// navigation that tore the user out of #admin-panel and lost the tree's
+// selection state. They must instead be in-panel htmx chips targeting the
+// page's own subtree.
+func TestCountrySettings_ScopeFilterIsInPanelNotFullNavigation(t *testing.T) {
+	mux, _, d := newCountrySettingsTestMux(t)
+	d.SetState(common.RuntimeState{Country: "DE"})
+	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/country-settings", nil), mgr)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("manager GET = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `hx-get="/country-settings?all=1"`) {
+		t.Errorf("default view missing the show-all chip's hx-get: %s", body)
+	}
+	if !strings.Contains(body, `hx-target="#country-settings-view"`) {
+		t.Errorf("default view missing hx-target=\"#country-settings-view\": %s", body)
+	}
+	if !strings.Contains(body, `hx-select="#country-settings-view"`) {
+		t.Errorf("default view missing hx-select=\"#country-settings-view\": %s", body)
+	}
+	if strings.Contains(body, `<a href="/country-settings?all=1"`) {
+		t.Errorf("default view still renders the old full-navigation anchor: %s", body)
+	}
+
+	req = auth.WithUser(httptest.NewRequest(http.MethodGet, "/country-settings?all=1", nil), mgr)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("manager GET ?all=1 = %d, want 200", rec.Code)
+	}
+	body = rec.Body.String()
+	if !strings.Contains(body, `hx-get="/country-settings"`) {
+		t.Errorf("?all=1 view missing the show-mine chip's hx-get: %s", body)
+	}
+	if strings.Contains(body, `<a href="/country-settings"`) {
+		t.Errorf("?all=1 view still renders the old full-navigation anchor: %s", body)
+	}
+}
+
+// The pressed chip must track which view actually rendered, both ways.
+func TestCountrySettings_ScopeFilterPressedStateFollowsView(t *testing.T) {
+	mux, _, d := newCountrySettingsTestMux(t)
+	d.SetState(common.RuntimeState{Country: "DE"})
+	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
+
+	// Pin aria-pressed to the SPECIFIC chip by finding that chip's own
+	// <button> opening tag by id and reading the attribute out of it.
+	//
+	// The first cut of this matched a literal `aria-pressed="X"` followed
+	// by a newline, ten spaces and the chip's hx-get — which pinned the
+	// right chip but also pinned the template's exact indentation:
+	// reindenting one attribute line by a single space, changing no
+	// behaviour at all, failed the test. Independent review (ut-docs#2167)
+	// caught that and verified it. Attribute ORDER inside the tag still
+	// matters slightly here (the regex reads forward from the id), which
+	// is fine — order is meaningful to a reader in a way whitespace is not.
+	chipTag := regexp.MustCompile(`(?s)<button[^>]*\bid="(cs-scope-mine|cs-scope-all)"[^>]*?\baria-pressed="(true|false)"`)
+	pressedByChip := func(t *testing.T, body string) map[string]string {
+		t.Helper()
+		got := map[string]string{}
+		for _, m := range chipTag.FindAllStringSubmatch(body, -1) {
+			got[m[1]] = m[2]
+		}
+		if len(got) != 2 {
+			t.Fatalf("expected both scope chips to render with an id and aria-pressed, got %v\n%s", got, body)
+		}
+		return got
+	}
+
+	for _, tc := range []struct {
+		name, url, mine, all string
+	}{
+		{"default view", "/country-settings", "true", "false"},
+		{"all-countries view", "/country-settings?all=1", "false", "true"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := auth.WithUser(httptest.NewRequest(http.MethodGet, tc.url, nil), mgr)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			got := pressedByChip(t, rec.Body.String())
+			if got["cs-scope-mine"] != tc.mine {
+				t.Errorf("show-mine chip aria-pressed = %q, want %q", got["cs-scope-mine"], tc.mine)
+			}
+			if got["cs-scope-all"] != tc.all {
+				t.Errorf("show-all chip aria-pressed = %q, want %q", got["cs-scope-all"], tc.all)
+			}
+		})
+	}
+}
+
+// TestCountrySettings_FragmentOmitsAdminTreeUnlessPanelTargeted is the
+// regression test for isAdminPanelSwap (ut-docs#2167): the new in-panel
+// chips issue a fragment request targeting the page's own subtree, not
+// /admin's #admin-panel, so the out-of-band admin-tree refresh must be
+// skipped for that request — there is no #admin-tree in the DOM to
+// receive it (standalone page: none at all; the chip's own swap: outside
+// the swapped subtree). Only a real tree-row click (HX-Target:
+// admin-panel) gets the OOB tree.
+func TestCountrySettings_FragmentOmitsAdminTreeUnlessPanelTargeted(t *testing.T) {
+	mux, _, _ := newCountrySettingsTestMux(t)
+	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/country-settings", nil), mgr)
+	req.Header.Set("HX-Request", "true")
+	req.Header.Set("HX-Target", "country-settings-view")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("chip-targeted fragment GET = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "hx-swap-oob") || strings.Contains(body, `id="admin-tree"`) {
+		t.Errorf("fragment targeted at #country-settings-view must not carry the OOB admin tree: %s", body)
+	}
+
+	req = auth.WithUser(httptest.NewRequest(http.MethodGet, "/country-settings", nil), mgr)
+	req.Header.Set("HX-Request", "true")
+	req.Header.Set("HX-Target", "admin-panel")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("panel-targeted fragment GET = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body = rec.Body.String()
+	if !strings.Contains(body, "hx-swap-oob") || !strings.Contains(body, `id="admin-tree"`) {
+		t.Errorf("fragment targeted at #admin-panel must still carry the OOB admin tree: %s", body)
+	}
+}
+
+// hx-select="#country-settings-view" only works if that id exists in BOTH
+// the standalone page's full HTML and the htmx fragment response — this
+// pins the wrapper div is present in both.
+func TestCountrySettings_ViewWrapperPresentOnStandaloneAndFragment(t *testing.T) {
+	mux, _, _ := newCountrySettingsTestMux(t)
+	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/country-settings", nil), mgr)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if !strings.Contains(rec.Body.String(), `id="country-settings-view"`) {
+		t.Errorf("standalone page missing id=\"country-settings-view\": %s", rec.Body.String())
+	}
+
+	req = auth.WithUser(httptest.NewRequest(http.MethodGet, "/country-settings", nil), mgr)
+	req.Header.Set("HX-Request", "true")
+	req.Header.Set("HX-Target", "country-settings-view")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if !strings.Contains(rec.Body.String(), `id="country-settings-view"`) {
+		t.Errorf("fragment missing id=\"country-settings-view\": %s", rec.Body.String())
 	}
 }
