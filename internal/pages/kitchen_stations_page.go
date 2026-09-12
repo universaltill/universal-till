@@ -213,7 +213,7 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 		if _, ok := requireManager(w, r); !ok {
 			return
 		}
-		renderPage(w, r, r.URL.Query().Get("err"))
+		renderPage(w, r, httpx.QueryErrKey(r))
 	})
 
 	// Discover printers (ut-docs#140, ut-docs#1606): a bounded, per-click

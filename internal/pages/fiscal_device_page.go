@@ -170,7 +170,7 @@ func registerFiscalDeviceTR(mux *http.ServeMux, d *common.Deps) {
 		if _, ok := requireManager(w, r); !ok {
 			return
 		}
-		render(w, r, r.URL.Query().Get("msg"))
+		render(w, r, httpx.QueryMsgKey(r))
 	})
 
 	// Manual confirm: a manager who has paired the device and watched it
