@@ -1012,6 +1012,7 @@
   "open_orders.empty": "Şu anda açık sipariş yok. Satış ekranında bir satışı beklettiğinizde, sürdürülüp ödenene kadar burada görünür.",
   "open_orders.error.load_failed": "Açık siparişler yüklenemedi. Tekrar deneyin veya çalışmaya menüden devam edin.",
   "open_orders.hint": "Bir siparişi sürdürmek için satış ekranındaki «Beklemede» şeridinde ona dokunun.",
+  "open_orders.resume_row": "Siparişi sürdür",
   "open_orders.title": "Açık siparişler",
   "orders.btn.cancel": "Siparişi iptal et",
   "orders.col.actions": "Güncelle",

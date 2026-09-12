@@ -1012,6 +1012,7 @@
   "open_orders.empty": "No open orders right now. When you hold a sale on the sale screen, it shows up here until it's resumed and paid.",
   "open_orders.error.load_failed": "Couldn't load open orders. Try again, or use the menu to keep working.",
   "open_orders.hint": "To pick an order back up, tap it on the On hold strip on the sale screen.",
+  "open_orders.resume_row": "Resume order",
   "open_orders.title": "Open orders",
   "orders.btn.cancel": "Cancel order",
   "orders.col.actions": "Update",
