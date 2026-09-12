@@ -61,6 +61,14 @@ const (
 	PluginStateBroken    = "broken"
 )
 
+// InstallPlugin seeds a bare plugin row (id + default install_state) with no
+// manifest metadata. No production caller — a real install goes through
+// UpsertPluginManifest instead, which carries the full manifest (name,
+// version, entrypoint, trust level, …) an actually-installed plugin needs.
+// This narrower primitive stays as a deliberate test-fixture helper: six
+// `internal/data`/`internal/pages`/`internal/plugins` test files use it to
+// seed a minimal plugin row without constructing a full ManifestRow (found
+// while burning down ut-docs#1566's `internal/data` baseline entries).
 func (r *PluginRepo) InstallPlugin(ctx context.Context, tx *sql.Tx, id string) error {
 	var err error
 	done := pluginObs.trace("install_plugin")
@@ -588,7 +596,17 @@ WHERE id = ? AND version = ?
 	return nil
 }
 
-// ListRevokedPlugins returns plugins marked as revoked.
+// ListRevokedPlugins returns plugins marked as revoked. No production
+// caller today: its only in-tree caller is
+// internal/plugins.RevocationChecker.GetRevokedPlugins, which is itself
+// unreachable from either shipped binary (found while burning down
+// ut-docs#1566's `internal/data` baseline entries) — the whole
+// revocation-checking chain, this method included, currently never runs in
+// the product. Left in place rather than deleted here: removing it would
+// also require touching RevocationChecker in `internal/plugins`, out of
+// this PR's package scope, and whether the chain should be wired up (vs.
+// deleted outright) is a product/security call, not a cleanup one — see
+// the filed follow-up for that decision.
 func (r *PluginRepo) ListRevokedPlugins(ctx context.Context) ([]PluginInfoRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, COALESCE(version, ''), COALESCE(entrypoint, ''), COALESCE(runtime, ''), install_state, is_active
@@ -1164,7 +1182,16 @@ func (r *PluginRepo) DeleteStorageKey(ctx context.Context, pluginID, key string)
 	return nil
 }
 
-// DeleteStorage clears a plugin's namespace (uninstall housekeeping).
+// DeleteStorage clears a plugin's entire storage namespace. No production
+// caller today — actual uninstall housekeeping
+// (internal/plugins.UninstallPlugin) deliberately calls the narrower
+// DeleteStorageExceptPrefix instead, preserving any fiscal-register key
+// (ADR-0072/ut-docs#1106) so a §146a Abs. 4 AO bookkeeping record is never
+// silently destroyed by an automatic uninstall. This full-purge primitive
+// is kept for the "operator explicitly wants old records purged" action
+// that same comment describes as deliberately out of scope — not dead code
+// so much as a not-yet-built feature's primitive (found while burning down
+// ut-docs#1566's `internal/data` baseline entries).
 func (r *PluginRepo) DeleteStorage(ctx context.Context, pluginID string) error {
 	_, err := r.executor(nil).ExecContext(ctx,
 		`DELETE FROM plugin_storage WHERE plugin_id = ?`, pluginID)
@@ -2531,7 +2558,19 @@ ORDER BY pe.plugin_id, pe.key
 	return res, rows.Err()
 }
 
-// HasActivePrinterPermission reports whether any active plugin can access printers.
+// HasActivePrinterPermission reports whether any active plugin holds the
+// devices:printer grant, ignoring install_state. No production caller
+// today — the one live call site (internal/pages/pos_api.go) uses the
+// narrower HasActivePrinterCapability, which additionally requires
+// install_state='installed' so a mid-upgrade plugin doesn't appear
+// printer-capable. This broader, install-state-agnostic variant is not a
+// stale duplicate left behind by that narrowing, though: it has its own
+// differential test (TestHasActivePrinterPermissionAndCapability) that
+// exists specifically to lock down the two methods' distinct semantics, so
+// something intended this one for a different, not-yet-built decision point
+// (e.g. showing printer-setup UI during an upgrade rather than gating an
+// actual print job) — see the filed follow-up (found while burning down
+// ut-docs#1566's `internal/data` baseline entries).
 func (r *PluginRepo) HasActivePrinterPermission(ctx context.Context) (bool, error) {
 	var count int
 	err := r.db.QueryRowContext(ctx, `
@@ -2561,7 +2600,16 @@ WHERE pp.permission = 'devices:printer' AND pp.granted = 1 AND p.is_active = 1 A
 	return count > 0, nil
 }
 
-// GetPluginVersionAt returns the plugin version active at or before the given timestamp.
+// GetPluginVersionAt returns the plugin version active at or before the
+// given timestamp — a point-in-time lookup over the `plugins` table's own
+// updated_at. No production caller today; unrelated to the plugin-rollback
+// feature (internal/plugins.RollbackManager), which is live in production
+// (StoreVersion/Rollback) but tracks version history via on-disk snapshot
+// directories, never this table. Kept: its two dedicated tests lock down
+// exact before/after boundary semantics, which reads as a genuinely
+// intended (if never wired) audit/historical-lookup helper rather than
+// leftover cruft (found while burning down ut-docs#1566's `internal/data`
+// baseline entries).
 func (r *PluginRepo) GetPluginVersionAt(ctx context.Context, pluginID string, at time.Time) (string, bool, error) {
 	query := `
 SELECT version
@@ -2651,7 +2699,19 @@ WHERE is_deprecated = 0
 	return res, rows.Err()
 }
 
-// CatalogPage returns paginated catalog entries and total count filtered by tag.
+// CatalogPage returns paginated catalog entries and total count filtered by
+// tag, from the local `plugins` table. No production caller today: its only
+// in-tree caller is internal/plugins.Manager.CatalogPage, itself unreachable
+// from either shipped binary (found while burning down ut-docs#1566's
+// `internal/data` baseline entries) — production instead lists installed
+// plugins via PluginRepo.ListInstalledPlugins, and lists the *available*
+// marketplace catalog via the CatalogRepo snapshot + plugins.IndexCatalog
+// (internal/pages/plugin_api.go), an unrelated path. This method and
+// Manager.CatalogPage read as a matched, superseded pair from before that
+// split existed. Left in place rather than deleted here: removing it also
+// means removing Manager.CatalogPage, which lives in `internal/plugins`,
+// out of this PR's package scope — a candidate for that package's own
+// deadcode slice.
 func (r *PluginRepo) CatalogPage(ctx context.Context, offset, limit int, tag string) ([]CatalogRow, int, error) {
 	where := "WHERE is_deprecated = 0"
 	args := []any{}
