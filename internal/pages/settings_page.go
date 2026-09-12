@@ -2737,6 +2737,32 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			if d.KioskEngine != nil {
 				d.KioskEngine.SetConfig(newCfg)
 			}
+		case "display.mode":
+			// ut-docs#2121: this generic key/value door didn't get the same
+			// side effects as the dedicated POST /api/settings/display-mode
+			// handler above — same class of bug ut-docs#2099's review found
+			// in newRederiveSettings. Keep httpx's live "selforder" template
+			// flag (record_dialog.html's status/lock/exit-to-OS withholding,
+			// coding-standards.md §10) in step with what was just persisted,
+			// exactly as the dedicated handler does right after its own
+			// d.Settings.Set — without this it stays stale until restart.
+			httpx.InitSelfOrderMode(value == "self_order")
+			// ut-docs#1259 (pre-existing gap, not introduced by #2099): the
+			// dedicated handler revokes the acting session before entering
+			// self_order, since that mode is customer-facing and auth-exempt
+			// (/self-order, /api/self-order/*) — without this, this generic
+			// path left the acting browser signed in one navigation away
+			// from an authenticated /settings, the exact door #1259 closed
+			// for the other handler. Mirrored here verbatim: revoke only the
+			// acting session (ut-docs#1301 finding NB-2's decided scope),
+			// clear its cookie, and audit the revoke as its own event.
+			if value == "self_order" {
+				if c, err := r.Cookie(auth.CookieName); err == nil && d.AuthSvc != nil {
+					d.AuthSvc.Logout(r.Context(), c.Value)
+					settingsAudit(r, posRepo, elev, "user", elev.ActorID, "self_order_session_revoked", nil)
+				}
+				setSessionCookie(w, "", -1)
+			}
 		}
 		settingsRespondSaved(w, r, elev)
 	})
