@@ -128,6 +128,9 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		log.Fatalf("failed to load locales: %v", err)
 	}
 	httpx.InitI18n(i18n, state.Locale)
+	// ut-docs#2135: republish the persisted locale generation, so per-browser
+	// ut_lang overrides retired before this restart stay retired.
+	loadLocaleGeneration(ctx, setStore)
 	pm.SetLocalizer(i18n) // language-pack plugins merge into the translator
 	// Shop translation overrides (manager edits) win over base + plugin
 	// strings; loaded once here, refreshed by the /translations editor.

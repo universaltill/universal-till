@@ -11,6 +11,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	appdb "github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -367,7 +368,12 @@ func TestSetupWizardUploadFormHasBusyIndicator(t *testing.T) {
 	// locale — true on the GitHub Actions runner, false in some local dev
 	// sandboxes, so this passed locally and failed in CI. A "repeat visit"
 	// ut_lang cookie renders directly regardless of environment.
-	rec := getSetup(mux, "", "en")
+	//
+	// ut-docs#2135: built through LocaleOverrideValue, not as a bare "en" —
+	// a cookie carrying no shop default/generation is treated as stale and
+	// ignored, so a bare value would no longer suppress the redirect and
+	// this test would fail in CI again for the very reason it was written.
+	rec := getSetup(mux, "", httpx.LocaleOverrideValue("en"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /setup: code=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -422,7 +428,12 @@ func TestSetupWizardUploadPanelHasExplicitCurrencyConfirmControl(t *testing.T) {
 	// locale — true on the GitHub Actions runner, false in some local dev
 	// sandboxes, so this passed locally and failed in CI. A "repeat visit"
 	// ut_lang cookie renders directly regardless of environment.
-	rec := getSetup(mux, "", "en")
+	//
+	// ut-docs#2135: built through LocaleOverrideValue, not as a bare "en" —
+	// a cookie carrying no shop default/generation is treated as stale and
+	// ignored, so a bare value would no longer suppress the redirect and
+	// this test would fail in CI again for the very reason it was written.
+	rec := getSetup(mux, "", httpx.LocaleOverrideValue("en"))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /setup: code=%d body=%s", rec.Code, rec.Body.String())
 	}

@@ -389,7 +389,9 @@ func TestIssueReportAPI_CapturesOperatorLocale(t *testing.T) {
 	body, ctype := multipartIssueReport(t, "", true, false)
 	req := httptest.NewRequest(http.MethodPost, "/api/issue-reports", body)
 	req.Header.Set("Content-Type", ctype)
-	req.AddCookie(&http.Cookie{Name: "ut_lang", Value: "fa"})
+	// ut-docs#2135: an override records the shop context it was chosen
+	// against, and is honoured only while that context still stands.
+	req.AddCookie(&http.Cookie{Name: "ut_lang", Value: httpx.LocaleOverrideValue("fa")})
 	req = auth.WithUser(req, auth.User{ID: "mgr-1", Role: "manager"})
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -423,7 +425,7 @@ func TestIssueReportAPI_UnknownLocaleFallsBackToEmpty(t *testing.T) {
 	body, ctype := multipartIssueReport(t, "", true, false)
 	req := httptest.NewRequest(http.MethodPost, "/api/issue-reports", body)
 	req.Header.Set("Content-Type", ctype)
-	req.AddCookie(&http.Cookie{Name: "ut_lang", Value: "klingon"})
+	req.AddCookie(&http.Cookie{Name: "ut_lang", Value: httpx.LocaleOverrideValue("klingon")})
 	req = auth.WithUser(req, auth.User{ID: "mgr-1", Role: "manager"})
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
