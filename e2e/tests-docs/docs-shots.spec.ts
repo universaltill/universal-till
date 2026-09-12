@@ -45,28 +45,46 @@ const pinnedQuery: Record<string, string> = {
 // every-single-run churn (the 8 alerts/designer PNGs), which was pure
 // timestamp drift.
 //
-// A SMALLER, INTERMITTENT residual remains and is NOT chased to zero here: on
-// the heaviest text screens (the ~hundreds-of-rows ar/translations table,
-// occasionally invoices) a handful of anti-aliased pixels on a single glyph
-// can still toggle between two rasterizations run-to-run — measured at ~10
-// pixels, a sub-10-byte PNG delta. That is browser text-rasterization
-// nondeterminism, the same reason Playwright's own toHaveScreenshot compares
-// with a pixel TOLERANCE rather than byte-equality; it survives every
-// DOM-side settle below (htmx-idle wait, fonts.ready, rAF, animations
-// disabled). It is deliberately left as-is rather than over-engineered around
-// (ut-docs#930 close-out notes a follow-up if pixel-exactness is ever needed).
+// UPDATE (ut-docs#2184): the residual this comment used to describe as an
+// accepted, intermittent "single glyph AA" flake on the heaviest text
+// screens turned out to be much more widespread than that theory covered —
+// measured live (the bug report's own reproduction) as a sub-20-byte churn
+// on ~43 UNRELATED screenshots (invoices, multitill, tax-codes, plugins,
+// menu, catalog, …) that have nothing to do with text density — later
+// re-runs of the same underlying cause (GPU-rasterization nondeterminism)
+// varied in exactly how many files it touched per run, which fits: it's a
+// nondeterministic race, not a fixed-size set. Root cause: GPU-
+// accelerated rasterization (Chromium's default even headless — it uses
+// SwiftShader for GL) has compositor/raster-thread scheduling that is not
+// guaranteed bit-exact run-to-run — confirmed live by pixel-diffing two
+// `tr/catalog` captures, which isolated the residual to ~67 pixels all at
+// the SAME relative offset inside each of 5 repeated product-tile icons
+// (one shared icon's AA edge, not per-tile content). Fixed at the source in
+// playwright.docs.config.ts by forcing software rasterization
+// (--disable-gpu et al.) for this harness's own Chromium process — verified
+// byte-identical PNGs (every screenshot, not just the affected ones) across
+// three consecutive `make docs-shots` runs with no source change, where the
+// same runs without the flags reliably differed. scripts/ci/
+// guard-docs-shots-determinism.sh asserts this property so it cannot
+// silently regress — but its own CI runs have twice shown a much smaller
+// residual since this fix landed (0-2 files out of 124, on `fiscal-device`/
+// `display`, always in a Chromium build this repo's own dev sandbox could
+// not exactly reproduce): a dramatic reduction from the pre-fix 43+, not a
+// proven zero. See docs/code-reviews/2026-09-12-docs-shots-determinism-2184.md's
+// "Update after pushing to CI" section for the honest full account. The
+// check stays deliberately non-required (see the workflow's own comment)
+// precisely because of this residual.
 //
-// THE MANIFEST-vs-PNG CONTRACT (ut-docs#930 AC): guard-docs-shots.sh checks
-// freshness from SOURCE-surface hashes recorded in manifest.json, and never
-// hashes the PNG bytes — precisely so this AA noise cannot fail CI. So a PR
-// that touches a screened surface must regenerate and commit manifest.json
-// (its recorded surface hash moves), but need only commit the PNGs whose
-// CONTENT actually changed; regenerated PNGs that differ only by AA noise
-// should be reverted, not committed. A manifest-only (or manifest-plus-the-
-// -real-PNGs) commit is therefore a LEGITIMATE, intended outcome — the
-// ut-docs#925 workaround was correct, just previously undocumented. The clock
-// pin above means this manual triage is now rare and tiny, not the 8-file
-// every-run event ut-docs#930 reported.
+// THE MANIFEST-vs-PNG CONTRACT (ut-docs#930 AC, still true): guard-docs-shots.sh
+// checks freshness from SOURCE-surface hashes recorded in manifest.json, and
+// never hashes the PNG bytes. So a PR that touches a screened surface must
+// regenerate and commit manifest.json (its recorded surface hash moves), but
+// need only commit the PNGs whose CONTENT actually changed. With docs-shots
+// now byte-stable, a regenerated PNG that differs from what's committed
+// means the surface genuinely changed something visible on that page — not
+// noise to triage away. A manifest-only commit (no PNG changes at all) is
+// still a legitimate outcome when a surface edit is provably pixel-inert
+// (e.g. a comment-only change, ut-docs#2102's escape hatch).
 
 // A blank white 1024×600 PNG compresses to ~2 KB — anything at or below that
 // is a broken capture (error page, unstyled shell), and must fail the run

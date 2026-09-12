@@ -10,7 +10,7 @@ VERSION?=0.1.0
 # release minutes later (ut-docs#369, found deploying a field hotfix).
 LDFLAGS=-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=$(VERSION)
 
-.PHONY: build run test test-race-plugins test-race-pages test-race-data e2e e2e-seed docs-shots prune-worktrees
+.PHONY: build run test test-race-plugins test-race-pages test-race-data e2e e2e-seed docs-shots docs-shots-determinism prune-worktrees
 
 build:
 	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/$(BIN) .
@@ -119,6 +119,14 @@ prune-worktrees:
 # simply unrunnable there.
 docs-shots:
 	bash e2e/scripts/docs-shots.sh
+
+# ut-docs#2184: proves docs-shots is byte-stable by running it TWICE and
+# diffing every PNG + manifest.json — non-destructive, restores web/help/img/
+# to its prior state on exit either way. See the script's own header for why
+# this is a separate, opt-in target rather than folded into docs-shots
+# itself (~5 minutes vs. ~2.5, not worth paying on every regeneration).
+docs-shots-determinism:
+	bash scripts/ci/guard-docs-shots-determinism.sh
 
 e2e:
 	@set -e; \

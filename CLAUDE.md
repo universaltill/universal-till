@@ -213,6 +213,26 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   least merged before this job's run reads `ut-docs`'s default branch) —
   same ordering dependency `manifest-contract-guard` already documents for
   its own direction.
+- **A change to the docs-shots harness itself also gates on
+  `.github/workflows/docs-shots-determinism.yml`** (ut-docs#2184) — same
+  reasoning as `android-ci.yml`/`adr-taxonomy-guard` above: a separate
+  workflow, not a step in `ci.yml`'s `build` job, because it is far more
+  expensive (it runs the real Playwright `docs-shots` harness TWICE,
+  ~5 minutes, to byte-diff every screenshot) than that job's other guards,
+  all pure source-hash/lint checks with no browser involved.
+  `scripts/ci/guard-docs-shots-determinism.sh` proves the property
+  `guard-docs-shots.sh` cannot see (that one hashes source surfaces, never
+  PNG bytes): two consecutive runs on an identical tree must produce
+  byte-identical PNGs and `manifest.json`. `paths:`-scoped to the harness
+  itself (`e2e/playwright.docs.config.ts`, `e2e/tests-docs/**`,
+  `e2e/scripts/docs-shots.sh`/`resolve-chromium.sh`, the docs `run-till*.sh`
+  servers, `e2e/package*.json`, `Makefile`) on PRs, plus a weekly Monday
+  cron and `workflow_dispatch` as defense-in-depth against a cause that
+  isn't a diff to those files (e.g. a Chromium/Playwright version bump
+  silently changing what its `--disable-gpu`-et-al. determinism flags
+  actually determinize). Never add it to branch protection's required
+  checks, same reason as `lang-pack-drift`/`adr-taxonomy-guard` above (most
+  PRs get no check run at all for it).
 - Feature branch; code review recorded in `docs/code-reviews/<date>-<topic>.md`;
   then merge to `main`. No secrets in logs or committed files.
 
