@@ -251,6 +251,91 @@ func TestThemesHandler_MonochromeAndDarkAreBuiltIn(t *testing.T) {
 	}
 }
 
+// TestSemanticTintBackgrounds_MonochromeIsColourless guards ut-docs#2192:
+// app.css used to paint several semantic-tint BACKGROUNDS (the sale-screen
+// success/error notice, the "needs attention" tag, the sync banner, the
+// catalogue-import row/block warning+success notices, and the journal
+// cross-till replica notice) as literal rgba() green/red/amber, so no
+// theme — monochrome included — could reach them; a merchant on Monochrome
+// still saw colour behind black, legible text, undercutting the theme's own
+// "no colour accent carries meaning" identity (already tested for the
+// --success/--danger/--warning ink tokens by
+// TestThemesHandler_MonochromeAndDarkAreBuiltIn above, which this doesn't
+// duplicate). Reads the real embedded assets via registerStatic/
+// registerThemes, not a copy of the CSS, so an edit to either file is what
+// this test actually exercises.
+func TestSemanticTintBackgrounds_MonochromeIsColourless(t *testing.T) {
+	mux := http.NewServeMux()
+	registerStatic(mux)
+	registerThemes(mux, &common.Deps{})
+
+	get := func(path string) string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d, want 200", path, rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	appCSS := get("/public/app.css")
+	for _, tok := range []string{"--success-tint:", "--danger-tint:", "--warning-tint:"} {
+		if !strings.Contains(appCSS, tok) {
+			t.Errorf("app.css: missing base token %q", tok)
+		}
+	}
+	// None of the affected rules may still paint a hardcoded semantic rgba()
+	// as a BACKGROUND — every one of them must read a --*-tint var instead.
+	// (Their borders are explicitly out of scope for this card and are
+	// expected to still carry the literal rgba(...,.35) — this only checks
+	// `background:`.)
+	for _, bad := range []string{
+		"background: rgba(22, 163, 74", "background: rgba(220, 38, 38", "background: rgba(217, 119, 6",
+	} {
+		if strings.Contains(appCSS, bad) {
+			t.Errorf("app.css: found a hardcoded tint background %q — should read a --*-tint var instead", bad)
+		}
+	}
+	for _, want := range []string{
+		".tag.warn { background: var(--warning-tint)",
+		".pos-notice.success { background: var(--success-tint)",
+		".pos-notice.error { background: var(--danger-tint)",
+		"background: var(--warning-tint); color: var(--warning); }\n.journal table",
+		"tr.row-warn td { background: var(--warning-tint); }",
+		".notice-block-warn { background: var(--warning-tint);",
+		".notice-block-success { background: var(--success-tint);",
+		".sync-banner { background: var(--warning-tint);",
+	} {
+		if !strings.Contains(appCSS, want) {
+			t.Errorf("app.css: expected to find %q", want)
+		}
+	}
+
+	// Monochrome overrides all three to a neutral grayscale wash — no hue.
+	monoCSS := get("/themes/monochrome.css")
+	for _, tok := range []string{"--success-tint: rgba(0, 0, 0,", "--danger-tint: rgba(0, 0, 0,", "--warning-tint: rgba(0, 0, 0,"} {
+		if !strings.Contains(monoCSS, tok) {
+			t.Errorf("monochrome.css: expected %q, got body:\n%s", tok, monoCSS)
+		}
+	}
+
+	// Every other built-in theme (amber/fresh/monarch/slate/dark) must NOT
+	// override the tint tokens — the four light themes and dark.css all
+	// inherit app.css's defaults, so they render byte-identical to before
+	// this change (dark.css deliberately overrides --danger for contrast,
+	// per its own #2176 review comment, but never the tint).
+	for _, key := range []string{"amber", "fresh", "monarch", "slate", "dark"} {
+		css := get("/themes/" + key + ".css")
+		for _, tok := range []string{"--success-tint", "--danger-tint", "--warning-tint"} {
+			if strings.Contains(css, tok) {
+				t.Errorf("%s.css: unexpectedly overrides %q — expected it to inherit app.css's default", key, tok)
+			}
+		}
+	}
+}
+
 func TestResolvePluginThemeCSS_RejectsEscapingConfig(t *testing.T) {
 	d, _, _ := themeTestDeps(t)
 	if _, err := d.Db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('com.x.evil','Evil','1.0.0',1)`); err != nil {
