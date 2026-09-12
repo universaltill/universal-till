@@ -65,10 +65,10 @@ const (
 // manifest metadata. No production caller — a real install goes through
 // UpsertPluginManifest instead, which carries the full manifest (name,
 // version, entrypoint, trust level, …) an actually-installed plugin needs.
-// This narrower primitive stays as a deliberate test-fixture helper: six
-// `internal/data`/`internal/pages`/`internal/plugins` test files use it to
-// seed a minimal plugin row without constructing a full ManifestRow (found
-// while burning down ut-docs#1566's `internal/data` baseline entries).
+// This narrower primitive stays as a deliberate test-fixture helper: seven
+// `internal/data` test files use it to seed a minimal plugin row without
+// constructing a full ManifestRow (found while burning down ut-docs#1566's
+// `internal/data` baseline entries).
 func (r *PluginRepo) InstallPlugin(ctx context.Context, tx *sql.Tx, id string) error {
 	var err error
 	done := pluginObs.trace("install_plugin")
@@ -597,16 +597,19 @@ WHERE id = ? AND version = ?
 }
 
 // ListRevokedPlugins returns plugins marked as revoked. No production
-// caller today: its only in-tree caller is
-// internal/plugins.RevocationChecker.GetRevokedPlugins, which is itself
-// unreachable from either shipped binary (found while burning down
-// ut-docs#1566's `internal/data` baseline entries) — the whole
-// revocation-checking chain, this method included, currently never runs in
-// the product. Left in place rather than deleted here: removing it would
-// also require touching RevocationChecker in `internal/plugins`, out of
-// this PR's package scope, and whether the chain should be wired up (vs.
-// deleted outright) is a product/security call, not a cleanup one — see
-// the filed follow-up for that decision.
+// caller — but revocation ENFORCEMENT is live, not dead: `internal/server`
+// runs RevocationChecker.SyncRevocations on a 30-minute ticker whenever a
+// marketplace endpoint is configured, and that path disables a revoked
+// plugin directly via PluginRepo.GetPlugin/SetPluginState, never through
+// this method. What's actually unreachable is only the separate read-back
+// accessor, RevocationChecker.GetRevokedPlugins (itself unreachable), which
+// exists to list currently-revoked plugins (e.g. for a future admin
+// display) and is this method's only in-tree caller (found while burning
+// down ut-docs#1566's `internal/data` baseline entries). Left in place
+// rather than deleted here: removing it also means removing
+// GetRevokedPlugins, which lives in `internal/plugins`, out of this PR's
+// package scope — a candidate for that package's own deadcode slice, not a
+// security concern (the enforcement path doesn't depend on it).
 func (r *PluginRepo) ListRevokedPlugins(ctx context.Context) ([]PluginInfoRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, COALESCE(version, ''), COALESCE(entrypoint, ''), COALESCE(runtime, ''), install_state, is_active
@@ -2602,14 +2605,23 @@ WHERE pp.permission = 'devices:printer' AND pp.granted = 1 AND p.is_active = 1 A
 
 // GetPluginVersionAt returns the plugin version active at or before the
 // given timestamp — a point-in-time lookup over the `plugins` table's own
-// updated_at. No production caller today; unrelated to the plugin-rollback
-// feature (internal/plugins.RollbackManager), which is live in production
+// updated_at. No production caller today, but this is a superseded-in-place
+// case, not a never-wired one: ut-docs#1323 replaced its one production
+// caller (loadReceiptLegalBlocks, on the real tender path) with the batched
+// GetPluginVersionsAt just below, called once per sale instead of once per
+// receipt-template plugin. Unrelated to the plugin-rollback feature
+// (internal/plugins.RollbackManager), which is live in production
 // (StoreVersion/Rollback) but tracks version history via on-disk snapshot
-// directories, never this table. Kept: its two dedicated tests lock down
-// exact before/after boundary semantics, which reads as a genuinely
-// intended (if never wired) audit/historical-lookup helper rather than
-// leftover cruft (found while burning down ut-docs#1566's `internal/data`
-// baseline entries).
+// directories, never this table. Kept rather than deleted alongside its
+// tests: TestPluginRepoGetPluginVersionAt_SeedForPagesSchema
+// (internal/pages/ui_smoke_test.go, ut-docs#625) is a real schema-drift
+// regression test that happens to call the singular form, and
+// TestGetPluginVersionsAt_SameDayBoundary is explicitly written to mirror
+// this method's own same-day-boundary test — deleting the singular cleanly
+// means re-pointing ut-docs#625's regression at the batched form first, a
+// small follow-up left for a future `internal/data` slice rather than
+// bundled into this comment-only one (found while burning down
+// ut-docs#1566's `internal/data` baseline entries).
 func (r *PluginRepo) GetPluginVersionAt(ctx context.Context, pluginID string, at time.Time) (string, bool, error) {
 	query := `
 SELECT version
@@ -2702,8 +2714,9 @@ WHERE is_deprecated = 0
 // CatalogPage returns paginated catalog entries and total count filtered by
 // tag, from the local `plugins` table. No production caller today: its only
 // in-tree caller is internal/plugins.Manager.CatalogPage, itself unreachable
-// from either shipped binary (found while burning down ut-docs#1566's
-// `internal/data` baseline entries) — production instead lists installed
+// per the deadcode-baseline guard's whole-program analysis (found while
+// burning down ut-docs#1566's `internal/data` baseline entries) —
+// production instead lists installed
 // plugins via PluginRepo.ListInstalledPlugins, and lists the *available*
 // marketplace catalog via the CatalogRepo snapshot + plugins.IndexCatalog
 // (internal/pages/plugin_api.go), an unrelated path. This method and

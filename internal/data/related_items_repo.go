@@ -104,12 +104,13 @@ WHERE rn <= ?`,
 
 // LastRebuilt reports when the table was last rebuilt (zero time when
 // empty). No production caller today — Rebuild() itself is live
-// (internal/pages/suggestions_api.go), but nothing in the product currently
-// surfaces when it last ran; this getter is exercised only by tests
-// confirming Rebuild() updates the stored timestamp. Reads as an admin/
-// status-page display ("suggestions last refreshed: …") that was never
-// built rather than dead code — kept, not deleted (found while burning
-// down ut-docs#1566's `internal/data` baseline entries).
+// (internal/server: runs at startup, then on a 24h ticker), but nothing in
+// the product currently surfaces when it last ran; this getter is
+// exercised only by tests confirming Rebuild() updates the stored
+// timestamp. Reads as an admin/status-page display ("suggestions last
+// refreshed: …") that was never built rather than dead code — kept, not
+// deleted (found while burning down ut-docs#1566's `internal/data`
+// baseline entries).
 func (r *RelatedItemsRepo) LastRebuilt(ctx context.Context) (time.Time, error) {
 	var err error
 	done := relatedItemsObs.trace("last_rebuilt")
