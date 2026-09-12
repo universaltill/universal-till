@@ -392,26 +392,46 @@
   // footer chip, same data-conn-online/data-conn-offline attributes and
   // same navigator.onLine + online/offline-event logic — deliberately not
   // shared code, since base.html's own inline script looks up `#sb-conn`
-  // by its one fixed id and can't see this one anyway. Bound once per
-  // element (data-record-dialog-conn-bound guard, same shape as bind()
-  // above) so a page re-render (htmx:afterSwap) never double-registers the
-  // window listeners.
-  function bindStatusRow(root) {
-    var els = (root || document).querySelectorAll('[data-record-dialog-conn]');
+  // by its one fixed id and can't see this one anyway.
+  //
+  // Bound ONCE globally, not per element (ut-docs#2122). The previous
+  // shape mirrored bind()'s per-element bound-guard, which is harmless
+  // there for a different reason than "the element persists" — the
+  // [data-record-dialog] element is swapped away and recreated by the
+  // /items rail exactly like this status row is (both live inside the
+  // same categories.html fragment #items-panel replaces wholesale), but
+  // bind()'s keydown listener is attached directly to the dialog element
+  // itself, so it is garbage-collected together with that detached node
+  // once nothing else references it — a per-element guard there is only
+  // ever redundant, never leak-preventing. This status row's listeners
+  // were instead attached to `window`, a target that outlives every
+  // swap: each new [data-record-dialog-conn] element got its own fresh
+  // window online/offline pair, the previous element's pair was never
+  // removed, and the closure over that pair kept its now-detached element
+  // alive too. A per-element guard can never stop that, because the
+  // "already bound" flag lived on the very element the next swap throws
+  // away. Painting every currently-present element from one shared pair
+  // of listeners avoids the leak outright, the same way #sb-conn avoids
+  // it by simply never being re-created.
+  function paintStatusRows() {
+    var online = navigator.onLine;
+    var els = document.querySelectorAll('[data-record-dialog-conn]');
     Array.prototype.forEach.call(els, function (el) {
-      if (el.hasAttribute('data-record-dialog-conn-bound')) return;
-      el.setAttribute('data-record-dialog-conn-bound', '');
       var txt = el.querySelector('.sb-conn-text');
       var on = el.getAttribute('data-conn-online'), off = el.getAttribute('data-conn-offline');
-      function update() {
-        var online = navigator.onLine;
-        el.classList.toggle('is-offline', !online);
-        if (txt) txt.textContent = online ? on : off;
-      }
-      window.addEventListener('online', update);
-      window.addEventListener('offline', update);
-      update();
+      el.classList.toggle('is-offline', !online);
+      if (txt) txt.textContent = online ? on : off;
     });
+  }
+  window.addEventListener('online', paintStatusRows);
+  window.addEventListener('offline', paintStatusRows);
+
+  // Kept as its own function (called from init() and the htmx:afterSwap
+  // handler below, same as bind()) so a freshly-swapped-in element gets
+  // its initial paint immediately rather than waiting for the next
+  // online/offline event.
+  function bindStatusRow() {
+    paintStatusRows();
   }
 
   // --- List header: client-side filter ---------------------------------
