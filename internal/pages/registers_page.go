@@ -30,12 +30,39 @@ type registerView struct {
 	InUse         bool
 }
 
+// redirectRegisters/renderRegistersDialogError mirror
+// locations_page.go's redirectLocations/renderLocationsDialogError
+// (itself mirroring categories_page.go's redirectCategories/
+// renderCategoryDialogError) — ut-docs#2185 adopting ut-docs#2010's
+// pattern on Registers, the second screen after Locations. See
+// redirectLocations's own doc comment for the full reasoning.
+func redirectRegisters(w http.ResponseWriter, r *http.Request, target string) {
+	if isHtmxDialogRequest(r) {
+		w.Header().Set("HX-Redirect", target)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+func renderRegistersDialogError(w http.ResponseWriter, r *http.Request, errKey string) {
+	if !isHtmxDialogRequest(r) {
+		redirectRegisters(w, r, "/registers?err="+errKey)
+		return
+	}
+	msg := httpx.T(httpx.RequestLocale(r), errKey)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusBadRequest)
+	httpx.RenderPartial("ui/partials/record_dialog_msg.html", map[string]any{"msg": msg})(w, r)
+}
+
 // registerRegisters wires the registers admin page (universaltill/ut-docs#651).
 // Manager/admin only, structural mirror of registerLocations
 // (locations_page.go). Unlike a stock location, a register with existing
 // shift/sale history CAN still be deactivated -- retiring a till keeps its
 // history -- so this page only guards the last-active-register case, never
-// RegisterInUse.
+// RegisterInUse. Adopts the record_dialog/list_header pattern (ut-docs#2010)
+// as of ut-docs#2185 — see redirectRegisters/renderRegistersDialogError above.
 func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 
@@ -68,7 +95,7 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 	// same pattern as plugins_store_page.go's replica_use_primary gate.
 	requirePrimary := func(w http.ResponseWriter, r *http.Request) bool {
 		if d.SyncPrimaryURL(r.Context()) != "" {
-			http.Redirect(w, r, "/registers?err=registers.error.replica_use_primary", http.StatusSeeOther)
+			renderRegistersDialogError(w, r, "registers.error.replica_use_primary")
 			return false
 		}
 		return true
@@ -162,7 +189,7 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		name := strings.TrimSpace(r.PostFormValue("name"))
 		if name == "" {
-			http.Redirect(w, r, "/registers?err=registers.error.required", http.StatusSeeOther)
+			renderRegistersDialogError(w, r, "registers.error.required")
 			return
 		}
 		var locationID *string
@@ -171,11 +198,11 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 		}
 		id, err := posRepo.CreateRegister(r.Context(), name, locationID)
 		if err != nil {
-			http.Redirect(w, r, "/registers?err=registers.error.create", http.StatusSeeOther)
+			renderRegistersDialogError(w, r, "registers.error.create")
 			return
 		}
 		audit(r, actor.ID, id, "register_create")
-		http.Redirect(w, r, "/registers", http.StatusSeeOther)
+		redirectRegisters(w, r, "/registers")
 	})
 
 	mux.HandleFunc("POST /api/registers/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -190,11 +217,11 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		name := strings.TrimSpace(r.PostFormValue("name"))
 		if name == "" {
-			http.Redirect(w, r, "/registers?err=registers.error.required", http.StatusSeeOther)
+			renderRegistersDialogError(w, r, "registers.error.required")
 			return
 		}
 		if err := posRepo.RenameRegister(r.Context(), id, name); err != nil {
-			http.Redirect(w, r, "/registers?err=registers.error.rename", http.StatusSeeOther)
+			renderRegistersDialogError(w, r, "registers.error.rename")
 			return
 		}
 		// ut-docs#895: the same form also carries the register's stock
@@ -206,14 +233,14 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 			locationID = &loc
 		}
 		if err := posRepo.SetRegisterLocation(r.Context(), id, locationID); err != nil {
-			http.Redirect(w, r, "/registers?err=registers.error.update", http.StatusSeeOther)
+			renderRegistersDialogError(w, r, "registers.error.update")
 			return
 		}
 		// ut-docs#895 review: this endpoint always updates both name and
 		// location together now, so "register_rename" would mislabel a
 		// location-only edit in the audit trail.
 		audit(r, actor.ID, id, "register_update")
-		http.Redirect(w, r, "/registers", http.StatusSeeOther)
+		redirectRegisters(w, r, "/registers")
 	})
 
 	mux.HandleFunc("POST /api/registers/{id}/active", func(w http.ResponseWriter, r *http.Request) {
@@ -239,12 +266,12 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 			if activeCount <= 1 {
-				http.Redirect(w, r, "/registers?err=registers.error.last_active", http.StatusSeeOther)
+				renderRegistersDialogError(w, r, "registers.error.last_active")
 				return
 			}
 		}
 		if err := posRepo.SetRegisterActive(r.Context(), id, activate); err != nil {
-			http.Redirect(w, r, "/registers?err=registers.error.update", http.StatusSeeOther)
+			renderRegistersDialogError(w, r, "registers.error.update")
 			return
 		}
 		action := "register_deactivate"
@@ -252,6 +279,6 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 			action = "register_activate"
 		}
 		audit(r, actor.ID, id, action)
-		http.Redirect(w, r, "/registers", http.StatusSeeOther)
+		redirectRegisters(w, r, "/registers")
 	})
 }
