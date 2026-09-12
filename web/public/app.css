@@ -2293,6 +2293,26 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
   background-size: 100% 16px, 100% 16px, 100% 8px, 100% 8px;
   background-attachment: local, local, scroll, scroll;
 }
+/* ut-docs#2142 (considered, decided against): whether #held-sales should
+   move out of this shared scrolling box into its own always-visible grid
+   region in .pos-container, now that scrolling is the normal case (see
+   the ut-docs#2128 comment above) rather than the edge case. Decided to
+   leave it here — not mainly for lack of data, but because the actual
+   reachability problem is already solved at zero vertical-budget cost:
+   ut-docs#2137 added an always-rendered "Open orders" popup
+   (.tender-quickpay, below) precisely because this strip is clipped at
+   1280x800 and a parked order needs to be resumable regardless of this
+   box's own CSS. A grid change here would only buy at-a-glance visibility
+   on top of that already-shipped fix, against .pos-container's grid-row-
+   ratio math, independently re-measured four times already
+   (ut-docs#213/#1231/#1336, plus the 2026-08-30 compact-UI pass) for
+   unrelated height budgets — reopening it for an unverified marginal
+   benefit is a real, demonstrated regression risk, not a hypothetical
+   one. (No real shop is live yet either, so there is also no production
+   telemetry to size that marginal benefit against — a secondary reason,
+   not the load-bearing one.) Cheap future move if this strip's own
+   visibility ever needs to improve further: a parked-count badge on the
+   #2137 button, not a grid restructure. Full reasoning: ut-docs#2142. */
 
 .scan-row { display: flex; gap: .4rem; }
 /* 2026-08-30 (product owner): the barcode field inherited the global
