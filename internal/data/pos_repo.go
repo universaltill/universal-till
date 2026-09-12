@@ -173,6 +173,12 @@ type LowStockItem struct {
 	// double-counting).
 	VariantID   string `json:"variant_id,omitempty"`
 	VariantName string `json:"variant_name,omitempty"`
+	// CategoryID is the item's category (empty when uncategorized) —
+	// ut-docs#2119: /inventory's category-filter chip row needs it on
+	// every row (item-scoped AND variant-scoped) the same way catalog_row.
+	// html's data-category already carries it for /catalog. No join: items
+	// is already in every query below's FROM/JOIN.
+	CategoryID string `json:"category_id,omitempty"`
 }
 
 // defaultWarnDays is the running-out threshold for an item with no lead
@@ -4461,7 +4467,8 @@ func (r *POSRepo) ListStockLocations(ctx context.Context) ([]StockLocation, erro
 func (r *POSRepo) ListStockLevels(ctx context.Context) ([]LowStockItem, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT i.id, i.name, COALESCE(i.sku, ''), inv.location_id, COALESCE(sl.name, ''),
-       COALESCE(inv.quantity, 0), COALESCE(i.reorder_level, 0), COALESCE(i.lead_time_days, 0)
+       COALESCE(inv.quantity, 0), COALESCE(i.reorder_level, 0), COALESCE(i.lead_time_days, 0),
+       COALESCE(i.category_id, '')
 FROM inventory inv
 JOIN items i ON i.id = inv.item_id
 LEFT JOIN stock_locations sl ON sl.id = inv.location_id
@@ -4475,7 +4482,7 @@ ORDER BY i.name, sl.name`)
 	var items []LowStockItem
 	for rows.Next() {
 		var item LowStockItem
-		if err := rows.Scan(&item.ItemID, &item.Name, &item.SKU, &item.LocationID, &item.LocationName, &item.CurrentQty, &item.ReorderLevel, &item.LeadTimeDays); err != nil {
+		if err := rows.Scan(&item.ItemID, &item.Name, &item.SKU, &item.LocationID, &item.LocationName, &item.CurrentQty, &item.ReorderLevel, &item.LeadTimeDays, &item.CategoryID); err != nil {
 			return nil, fmt.Errorf("scan stock level: %w", err)
 		}
 		// ut-docs#1610 (review): same unfiltered stock_locations join as
@@ -4507,7 +4514,8 @@ ORDER BY i.name, sl.name`)
 func (r *POSRepo) variantStockLevels(ctx context.Context) ([]LowStockItem, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT i.id, i.name, COALESCE(v.sku, ''), v.id, v.name, inv.location_id, COALESCE(sl.name, ''),
-       COALESCE(inv.quantity, 0), COALESCE(i.reorder_level, 0), COALESCE(i.lead_time_days, 0)
+       COALESCE(inv.quantity, 0), COALESCE(i.reorder_level, 0), COALESCE(i.lead_time_days, 0),
+       COALESCE(i.category_id, '')
 FROM inventory inv
 JOIN item_variants v ON v.id = inv.variant_id
 JOIN items i ON i.id = v.item_id
@@ -4523,7 +4531,8 @@ ORDER BY i.name, v.name, sl.name`)
 	for rows.Next() {
 		var item LowStockItem
 		if err := rows.Scan(&item.ItemID, &item.Name, &item.SKU, &item.VariantID, &item.VariantName,
-			&item.LocationID, &item.LocationName, &item.CurrentQty, &item.ReorderLevel, &item.LeadTimeDays); err != nil {
+			&item.LocationID, &item.LocationName, &item.CurrentQty, &item.ReorderLevel, &item.LeadTimeDays,
+			&item.CategoryID); err != nil {
 			return nil, fmt.Errorf("scan variant stock level: %w", err)
 		}
 		item.LocationName = stripRetireMangle(item.LocationID, item.LocationName)

@@ -93,6 +93,10 @@
   </div>
 </div>
 
+{{/* ut-docs#2119: composes with the search box above (AND, not replace) —
+     see filterRows() in the script block below. */}}
+{{ template "category_filter" (dict "categories" .CategoryFilterOptions "controlID" "catalog-category-filter") }}
+
 <dialog id="barcode-backfill-modal" class="modifier-modal barcode-backfill-modal" aria-labelledby="catalog-barcode-backfill-btn"></dialog>
 
 <!-- ut-docs#2095: Import and Tax codes floating above the /items shell —
@@ -1513,19 +1517,67 @@
     });
   })();
 
-  // Client-side search over the (server-rendered) table; reapplied after swaps.
+  // Client-side search over the (server-rendered) table; reapplied after
+  // swaps. ut-docs#2119: ANDed with the category-filter chip row — see
+  // category-filter.js for expand()/matches()/bind().
   var search = document.getElementById('catalog-search');
+  var categoryNodes = {{ .CategoryNodesJSON }};
+  var expandedCategories = new Set();
   function filterRows() {
     var q = (search.value || '').toLowerCase();
+    var total = 0, visible = 0;
     document.querySelectorAll('.catalog-row').forEach(function (row) {
+      total++;
       var hay = (row.dataset.name + ' ' + row.dataset.sku).toLowerCase();
-      row.hidden = q !== '' && hay.indexOf(q) === -1;
+      var textMatch = q === '' || hay.indexOf(q) !== -1;
+      // ut-docs#2119 review (F4): fail OPEN if category-filter.js somehow
+      // never loaded (asset 404, an earlier script error) — the search box
+      // must keep working even if the category chips don't, never throw
+      // and take out search too.
+      var catMatch = !window.CategoryFilter || window.CategoryFilter.matches(row.dataset.category, expandedCategories);
+      var show = textMatch && catMatch;
+      row.hidden = !show;
+      if (show) visible++;
     });
+    // Distinct from catalog_empty_row: only shown when there ARE items but
+    // the current search/category filter narrowed them all out.
+    var noMatches = document.getElementById('catalog-no-matches');
+    if (noMatches) noMatches.hidden = !(total > 0 && visible === 0);
   }
   search.addEventListener('input', filterRows);
   document.body.addEventListener('htmx:afterSwap', function (ev) {
     if (ev.detail.target && ev.detail.target.id === 'catalog-table') filterRows();
   });
+  // ut-docs#2119 review (F1): this inline block runs at PARSE time, before
+  // category-filter.js's own `defer`red load finishes — window.
+  // CategoryFilter doesn't exist yet if this ran any earlier, which is why
+  // the bind() call below waits. But a plain `DOMContentLoaded` listener
+  // never fires again once that event has already happened — true on a
+  // full page load, but NOT true when this page is reached via the /items
+  // rail's htmx fragment swap (hx-target="#items-panel"): the surrounding
+  // document's DOMContentLoaded fired long before this swap ever happened,
+  // htmx's vendored 1.9.12 build re-executes swapped-in <script> blocks
+  // (allowScriptTags:true — see catalog-tab-strip-fade-2024.spec.ts's own
+  // "each additional swap re-runs the IIFE" note), so this exact listener
+  // would sit registered forever, never firing, on that path — the chips
+  // render but silently never bind. Same readyState guard already used by
+  // record-dialog.js/app.js/autofill.js for this reason: run immediately
+  // if the document has already finished loading, else wait for the event.
+  function bindCategoryFilter() {
+    var categoryFilterEl = document.getElementById('catalog-category-filter');
+    if (!categoryFilterEl || !window.CategoryFilter) return;
+    window.CategoryFilter.bind(categoryFilterEl, {
+      onChange: function (selectedIds) {
+        expandedCategories = window.CategoryFilter.expand(selectedIds, categoryNodes);
+        filterRows();
+      }
+    });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bindCategoryFilter);
+  } else {
+    bindCategoryFilter();
+  }
   // ut-docs#1363 review: the row-level OOB protocol inserts a new row at
   // the bottom of #catalog-tbody (beforeend) and swaps an edited row in
   // place, so a create/rename no longer lands it in the server's own

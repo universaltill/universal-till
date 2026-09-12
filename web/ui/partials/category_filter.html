@@ -1,0 +1,51 @@
+{{/* ut-docs#2119 — shared category-filter chip row for /catalog and
+     /inventory (full BA/Architect/UX design recorded as comments on
+     ut-docs#2119). dict-driven like list_header.html/record_dialog.html;
+     the req guard on the first line fails the render, naming the key,
+     when a required dict key is missing. Call site:
+
+       {{ template "category_filter" (dict
+            "categories" .CategoryFilterOptions
+            "controlID"  "catalog-category-filter") }}
+
+     categories: a []data.CategoryNode-shaped slice (ID/Name/ParentID) from
+     CatalogRepo.ListActiveCategories — deliberately NOT the unfiltered
+     Categories lookup the item-edit <select> uses (see catalog/handlers.go
+     and inventory_page.go for why the two call sites intentionally read
+     different lookups). Only TOP-LEVEL categories (empty .ParentID) get
+     their own chip — a nested child folds into its parent's chip instead
+     of getting a second one, per the BA's "selecting a parent includes
+     its children" decision, and keeps the row short on a 10.1" tablet
+     (UX gate finding 1). The full flat list (children included) still has
+     to reach the CLIENT for the actual parent-includes-children match, so
+     the page also ships it separately as JSON (CategoryNodesJSON) for
+     web/public/category-filter.js's expand() to walk — this partial only
+     renders the chips, it doesn't do the matching.
+
+     controlID: id of the wrapping <div>, so a page can address this
+     control's DOM directly if it ever needs to (category-filter.js's
+     bind() is handed the element itself by the caller, not this id).
+
+     Renders a role="group" chip row: one "All categories" chip
+     (data-cat-all, starts aria-pressed="true" — empty selection already
+     means "no filter" per the BA decision) plus one chip per top-level
+     category (data-cat-id). Each chip is a real <button> — Tab reaches
+     it, Enter/Space activates it (UX gate finding 7) — carrying a
+     checkmark (chip-check, icon "check") shown only while
+     aria-pressed="true": colour alone can't carry the pressed state
+     (WCAG 1.4.11, UX gate finding 3). All click/toggle behaviour lives in
+     web/public/category-filter.js's bind(); this partial only renders
+     markup and the starting state. */}}
+{{ define "category_filter" }}
+{{ $_ := req . "categories" "controlID" }}
+<div class="category-filter" id="{{ .controlID }}" role="group" aria-label="{{ T "filter.category_label" }}">
+  <button type="button" class="chip chip-all" data-cat-all aria-pressed="true">
+    <span class="chip-check" aria-hidden="true">{{ icon "check" }}</span>{{ T "filter.category_all" }}
+  </button>
+  {{ range .categories }}{{ if not .ParentID }}
+  <button type="button" class="chip" data-cat-id="{{ .ID }}" aria-pressed="false">
+    <span class="chip-check" aria-hidden="true">{{ icon "check" }}</span>{{ .Name }}
+  </button>
+  {{ end }}{{ end }}
+</div>
+{{ end }}
