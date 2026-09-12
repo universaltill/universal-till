@@ -39,12 +39,30 @@
     {{/* matches: the same per-tile "!q or data-name substring" check
          product-tile already applied inline, now shared. sectionHasMatch:
          does ANY .btn-tile anywhere under el (a category-group section, or
-         a whole tab panel) currently match — used both to hide a
-         subcategory's header once search empties it (ut-docs#422's
-         stranded-header gap) and to show a per-panel "no matches" message
-         when nothing in the active tab matches at all. Re-queries the DOM
+         a whole tab panel, or the whole #buttons-grid) currently match —
+         used to hide a subcategory's header once search empties it
+         (ut-docs#422's stranded-header gap), to decide whether a whole tab
+         panel has anything to show while a cross-category search is open
+         (panelVisible below, ut-docs#2181), and to show the single
+         "no matches" message when nothing in the WHOLE catalogue matches
+         (also ut-docs#2181 — see the note lower in this file on why that
+         message now sits outside the tab-panel loop). Re-queries the DOM
          on every keystroke rather than tracking a reactive count — fine at
-         the tile counts a category screen actually has. */}}
+         the tile counts a category screen actually has. panelVisible(id,
+         panelEl): ut-docs#2181 — with no query, a tab panel shows only when it's the
+         active tab (unchanged); with a query, EVERY panel that has a match
+         anywhere inside it (own buttons or nested subcategories) shows at
+         once, so an item is findable regardless of which tab happened to
+         be active when the search started. Takes the panel element as an
+         explicit $el argument from its own x-show call (same convention
+         sectionHasMatch($el) already uses elsewhere in this file) rather
+         than reading this.$el inside the method — Alpine's $el magic
+         resolves to whichever element the CURRENT expression is bound to,
+         which here IS the panel itself, so this.$el.querySelector(...)
+         would only ever search the panel's descendants, never find the
+         panel's own id, and always miss (caught live: the panel's own
+         inline style stayed display:none after a query started matching,
+         because the miss made panelVisible fall through to false). */}}
     {{/* Focus handling on open/close (ut-docs#2173 review finding F2), and
          two things that cost this cycle real time -- both verified, not
          reasoned about.
@@ -94,6 +112,9 @@
       q: '',
       matches(tileEl) { return !this.q || tileEl.dataset.name.toLowerCase().includes(this.q.toLowerCase()); },
       sectionHasMatch(el) { return !this.q || Array.from(el.querySelectorAll('.btn-tile')).some(t => this.matches(t)); },
+      panelVisible(id, panelEl) {
+        return this.q ? this.sectionHasMatch(panelEl) : this.tab === id;
+      },
       searching: false,
       openSearch() { this.searching = true; this.$nextTick(() => { const i = this.$refs.search; if (i) i.focus(); }); },
       closeSearch() {
@@ -161,7 +182,7 @@
              via search below, ut-docs#173's barcode-less-item gap is
              unaffected either way. Nested subcategories render as headed
              sub-sections inside their parent's tab panel (see
-             "category-group-body"), not as their own top-level tab.
+             "category-group-body-tabbed"), not as their own top-level tab.
              --cat-color carries each category's color onto its own tab
              (border-block-start always, the active underline when
              selected) — pre-#418, every category's color was visible at
@@ -216,18 +237,47 @@
              tabs make (only "split", never "pay", is cloaked).
              --cat-color set here too (ut-docs#1325), not just on the tab
              button above: a top-level group's OWN buttons render straight
-             into this panel via "category-group-body", never wrapped in a
-             "category-group" element of their own, so without it here a
-             .btn-tile would have no --cat-color ancestor at all (only a
-             NESTED subcategory, rendered via "category-group", carries
-             its own). The tab button and this panel are siblings, not
-             ancestor/descendant, so the tab's own --cat-color never
-             reaches down into it on its own. */}}
-        <div id="cat-panel-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}" role="tabpanel" aria-labelledby="cat-tab-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}" class="products-tab-panel" style="--cat-color: {{ $g.Color }}" x-show="tab === '{{ $g.ID }}'"{{ if ne $i 0 }} x-cloak{{ end }}>
-          {{ template "category-group-body" $g }}
-          <p class="empty" x-show="!sectionHasMatch($el.parentElement)">{{ T "products.no_matches" }}</p>
+             into this panel via "category-group-body-tabbed" (own
+             "category-group" wrapper since ut-docs#2181, but that wrapper
+             doesn't set its own --cat-color — it inherits this panel's),
+             so without it here a .btn-tile would have no --cat-color
+             ancestor at all when its own bucket has no header/wrapper of
+             its own to carry one (only a NESTED subcategory, rendered via
+             "category-group", carries its own regardless). The tab button
+             and this panel are siblings, not ancestor/descendant, so the
+             tab's own --cat-color never reaches down into it on its own. */}}
+        {{/* :role/:aria-labelledby (ut-docs#2181 review finding F3): the
+             WAI-ARIA tabs pattern (focusTab's own comment above cites the
+             APG) requires exactly one visible tabpanel, owned by the one
+             selected tab — true whenever there's no query, but broken the
+             moment a query makes panelVisible() show several panels at
+             once while the tablist itself is hidden (x-show="!searching"
+             on .tab-bar) and exactly one tab still claims
+             aria-selected="true". Measured live: a screen reader then
+             finds two "tab panel"s under a tablist that isn't rendered,
+             one of them not the one it was told is selected. So while a
+             query is active this is no longer a tab's panel at all — just
+             a labeled group of results — and drops both attributes rather
+             than assert a relationship that no longer holds; Alpine
+             removes an :attr bound to null/false, it doesn't render the
+             literal string. */}}
+        <div id="cat-panel-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}" :role="q ? 'group' : 'tabpanel'" :aria-labelledby="q ? null : 'cat-tab-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}'" class="products-tab-panel" style="--cat-color: {{ $g.Color }}" x-show="panelVisible('{{ $g.ID }}', $el)"{{ if ne $i 0 }} x-cloak{{ end }}>
+          {{ template "category-group-body-tabbed" $g }}
         </div>
         {{ end }}
+        {{/* ut-docs#2181: one "no matches" message for the whole tabbed
+             view, not one per panel — since a query can now show several
+             panels at once (panelVisible above), a per-panel message would
+             either duplicate across every visible panel or never fire
+             right (a panel with zero matches is already hidden, so its own
+             message would never be seen anyway). $el.parentElement here is
+             #buttons-grid, which contains every tab panel regardless of
+             which is currently visible (x-show never removes them from the
+             DOM), so sectionHasMatch($el.parentElement) is exactly "does
+             anything in the WHOLE catalogue match" — the same idiom the
+             $flat/no-tab-bar branches below already use for their own
+             (single-section) case. */}}
+        <p class="empty" x-show="!sectionHasMatch($el.parentElement)">{{ T "products.no_matches" }}</p>
         {{ else }}
         {{/* Exactly one real category, nothing uncategorized: no tab bar
              (nothing to switch between), but its name/color still show
@@ -255,16 +305,27 @@
 {{ end }}
 
 {{/* A top-level tab's own content: its own buttons (if any), then its
-     nested subcategories rendered with headers via the recursive
-     "category-group" template below — same markup a subcategory always
-     used, just no longer wrapping the top-level group itself (the tab
-     bar communicates that level now, so repeating it as a redundant
-     header inside every panel would be noise). */}}
-{{ define "category-group-body" }}
+     nested subcategories, rendered with their own always-visible headers
+     via the recursive "category-group" template below — same markup a
+     subcategory always used. The top-level bucket's own buttons get a
+     "category-group" wrapper too, but with its header shown only while a
+     query is active (ut-docs#2181): outside a search, the active tab
+     already names the category, so a permanent header here would be
+     redundant noise; but once a query makes panelVisible() (above) show
+     more than one tab's panel at once, the tab bar (hidden while searching
+     anyway) can no longer tell the operator which category a result came
+     from, and the header is what does instead. Nested subcategories don't
+     need this treatment — "category-group" below already carries its own
+     always-visible header regardless of search state, which is exactly
+     what already keeps a Dairy/Bakery-style result unambiguous today. */}}
+{{ define "category-group-body-tabbed" }}
   {{ if .Buttons }}
-  <div class="grid">
-    {{ range .Buttons }}{{ template "product-tile" . }}{{ end }}
-  </div>
+  <section class="category-group" x-show="sectionHasMatch($el)">
+    <h3 class="category-header" x-show="q" x-cloak>{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</h3>
+    <div class="grid">
+      {{ range .Buttons }}{{ template "product-tile" . }}{{ end }}
+    </div>
+  </section>
   {{ end }}
   {{ range .Children }}{{ template "category-group" . }}{{ end }}
 {{ end }}

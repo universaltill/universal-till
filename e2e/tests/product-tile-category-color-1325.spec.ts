@@ -5,7 +5,7 @@ import { watchConsole } from './helpers';
 // accent, reusing the --cat-color custom property .category-header/.tab
 // already carry (app.css). Structural coverage of the actual bug this
 // fixes — a top-level category's OWN tiles (not a nested subcategory's)
-// render inside its tab panel via "category-group-body", a sibling of the
+// render inside its tab panel via "category-group-body-tabbed", a sibling of the
 // tab button rather than its descendant, so without the panel itself also
 // carrying --cat-color those tiles had NO color ancestor at all and
 // silently fell back to --accent for every top-level category — lives in
