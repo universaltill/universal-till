@@ -114,8 +114,22 @@
     if (!term) { out.innerHTML = ''; return; }
     timer = setTimeout(function () {
       fetch('/api/data/customers?q=' + encodeURIComponent(term))
-        .then(function (r) { return r.json(); })
+        .then(function (r) {
+          // ut-docs#2157: a session-expired 401 answers with the auth
+          // middleware's {code,message} error object — j.data below would
+          // be null, silently reading as "no matches" instead of telling
+          // the operator they need to sign back in.
+          if (r.status === 401) { window.location.href = '/login'; return null; }
+          return r.json();
+        })
         .then(function (j) {
+          if (!j) return;
+          // ut-docs#2157 review finding: dataAPIRespond's real (non-401)
+          // errors (403 manager-only, 500) are plain-string JSON, unlike
+          // the auth middleware's 401 object — without this check they
+          // read as j.data being null and silently render an empty
+          // results list instead of the actual problem.
+          if (j.error) { renderNotice(out, 'error', j.error); return; }
           var list = (j.data && j.data.customers) || [];
           out.innerHTML = list.map(function (c) {
             return '<button type="button" class="btn secondary" data-cust-pick="' + esc(c.ID) + '" data-cust-name="' + esc(c.Name) + '">'

@@ -217,8 +217,16 @@
     msg.textContent = i18n.searching;
     out.innerHTML = '';
     fetch('/api/sync/discover-primaries')
-      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        // ut-docs#2157: a session-expired 401 answers with the auth
+        // middleware's {code,message} error object — j.data below would be
+        // null, silently reading as "no primaries found" instead of telling
+        // the operator they need to sign back in.
+        if (r.status === 401) { window.location.href = '/login'; return null; }
+        return r.json();
+      })
       .then(function (j) {
+        if (!j) return;
         btn.disabled = false;
         var list = (j.data && j.data.primaries) || [];
         if (!list.length) { msg.textContent = i18n.noneFound; return; }

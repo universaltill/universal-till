@@ -1389,6 +1389,15 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: body.toString()
     }).then(function (r) {
+      // ut-docs#2157: the auth middleware's non-htmx 401 (session expired)
+      // answers with Content-Type: application/json, never text/html, so it
+      // falls straight past the elevation-dialog branch below into
+      // onDone(r) — and every caller here (settings.html's customer-erase/
+      // cleanup-catalog, reports_tab_eod.html) then parses that body and
+      // renders its {code,message} error OBJECT directly, showing the
+      // literal string "[object Object]" instead of a way back to sign in.
+      // One fix here covers every utPostWithElevation caller.
+      if (r.status === 401) { close(); window.location.href = '/login'; return; }
       var cd = r.headers.get('Content-Disposition') || '';
       var ct = r.headers.get('Content-Type') || '';
       if (cd.indexOf('attachment') === -1 && ct.indexOf('text/html') !== -1) {
