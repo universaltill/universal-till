@@ -20,7 +20,12 @@
      tells them to go and do something on the sale screen, which is exactly
      what the popup is covering -- so getting out of the way IS the useful
      response. Deliberately simpler than the pay-grid handlers' toast-class
-     sniffing, which exists there to keep a DIFFERENT overlay open. */}}
+     sniffing, which exists there to keep a DIFFERENT overlay open.
+
+     ut-docs#2147: same accessible-name fix as /open-orders' own row
+     button -- a visually-hidden "Resume order" span is prepended so the
+     concatenated accessible name states the action, not just the order's
+     details. See open_orders.html's own comment for the full reasoning. */}}
 {{ if not .orders }}
 <p class="muted" data-testid="parked-orders-empty">{{ T "open_orders.empty" }}</p>
 {{ else }}
@@ -31,6 +36,7 @@
             hx-post="/api/pos/resume" hx-vals='{{ jsonVals "id" .ID }}'
             hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
             hx-on::after-request="if (event.detail.successful) { var m = document.getElementById('parked-orders-modal'); if (m && m.open) m.close(); }">
+      <span class="visually-hidden">{{ T "open_orders.resume_row" }}</span>
       <span class="parked-order-label">{{ .Label }}</span>
       {{ if .TableLabel }}<span class="held-chip-table">{{ .TableLabel }}</span>{{ end }}
       <span class="parked-order-meta">{{ .LineCount }} × · {{ money .Total }} · {{ printf (T "open_orders.age_minutes") .AgeMinutes }}</span>
