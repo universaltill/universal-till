@@ -11,8 +11,18 @@ import { drainParkedOrders, watchConsole } from './helpers';
 // The fix is a button beside Card that opens a popup of parked orders, each
 // tappable to resume. It depends on no viewport budget, which is the whole
 // point: it works at the resolution the strip's CSS tuning never covered.
+//
+// ut-docs#2141: two tests below ("a resume refused because the basket is
+// busy..." and "the trigger and the popup work at the pilot tablet
+// resolution") deliberately leave a held row behind (a refused resume; a
+// park that's never resumed at all) -- draining here, not just resetting
+// the basket, is what stops those rows surviving past this file. This is
+// IN ADDITION TO fixtures.ts's own once-per-file drain (ut-docs#2141),
+// not a replacement for it: that one protects every OTHER file in the
+// suite from what THIS file leaks; this one keeps this file's own later
+// tests (and a re-run of just this file) from seeing it too.
 test.afterEach(async ({ page }) => {
-  await page.request.post('/api/pos/reset').catch(() => {});
+  await drainParkedOrders(page.request);
 });
 
 async function parkASale(page, label: string) {
@@ -59,7 +69,7 @@ test('a parked order can be picked back up from the popup beside Card', async ({
 test('the popup says so when nothing is parked, rather than opening empty', async ({ page }) => {
   const assertClean = watchConsole(page);
   await page.goto('/');
-  await drainParkedOrders(page);
+  await drainParkedOrders(page.request);
   await page.reload();
 
   await page.locator('.tender-quickpay [data-testid="parked-orders-open"]').click();
