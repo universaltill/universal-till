@@ -1,0 +1,71 @@
+/* "Monochrome" — black-and-white / high-contrast POS theme (board #2176,
+   product owner: "also I need a black and white theme like SumUp").
+   Near-black text on white surfaces, minimal chrome, no colour accent
+   carrying meaning on its own — every accent/semantic token collapses to
+   black so nothing in the base chrome relies on hue. The app's own
+   existing non-colour cues (the pressed-chip checkmark, the fiscal/sync
+   nav-badge dot's presence/absence, active-tab underline + text, ARIA
+   roles + message text on notices) still carry the actual meaning; this
+   theme only removes the *colour* layer on top of them. */
+:root {
+  --brand: #000000;
+  --accent: #000000;
+  --accent-contrast: #ffffff;
+  --focus-border: #000000;    /* ut-docs#2176: pure black on white is 21:1 (WCAG 1.4.11 >=3:1) */
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-2: #f2f2f2;
+  --border: #d4d4d4;
+  --text: #000000;
+  --muted: #525252;           /* ut-docs#2176: 7.81:1 on white (WCAG 1.4.3 normal text >=4.5:1) */
+  --control-border: var(--muted);   /* ut-docs#305: form-control border, 3:1 min */
+  --success: #000000;
+  --danger: #000000;
+  --warning: #000000;
+  --radius: 8px;
+  --radius-lg: 10px;
+  --shadow: 0 1px 2px rgba(0,0,0,.12), 0 2px 6px rgba(0,0,0,.1);
+}
+.btn-tile { border-radius: 10px; box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.btn-tile:hover { border-color: #a3a3a3; box-shadow: 0 6px 16px rgba(0,0,0,.18); }
+.btn-tile:active { transform: scale(.97); }
+.tile-price { color: var(--accent); font-weight: 800; }
+.thumb { background: var(--surface-2); }
+.chip, .cat-chip, .category-chip { border-radius: 999px; }
+.tender .btn.primary, .btn.primary { box-shadow: 0 2px 10px rgba(0,0,0,.35); }
+.tender .btn.primary { min-height: 3.4rem; font-size: 1.12rem; }
+.basket .total, .basket .totals .grand, .kpi-value { color: var(--accent); }
+.basket .totals { border-top: 2px solid var(--surface-2); }
+.nav, header.nav { background: var(--brand); color: #fff; }
+.nav a { color: #fff; }
+
+/* ut-docs#2176 review: this theme's header comment leans on "the fiscal/sync
+   nav-badge dot's presence/absence" as a surviving non-colour cue — but
+   collapsing --warning to black destroyed exactly that cue, because app.css
+   paints the dot `background: var(--warning)` with a `1px solid var(--brand)`
+   ring, and BOTH are black here, on a nav whose background is also --brand
+   black: 1.00:1 against the rail, 1.27:1 against the .nav-toggle's
+   rgba(255,255,255,.12) tint. The dot is aria-hidden="true" and rendered
+   conditionally (sync_chip.html / fiscal_chip.html), so its visibility IS
+   the whole signal — there is no text fallback behind it. Inverted to the
+   theme's own on-black ink: a white dot is 21:1 on the rail, and app.css's
+   black ring still separates it from the icon underneath. */
+.nav-badge { background: var(--accent-contrast); }
+
+/* ut-docs#2176 UX gate finding (driven-run screenshot): app.css's
+   var(--cat-color, ...) fallback pattern (category-header/tile accent
+   stripe, sale-screen tab underline) reads an inline --cat-color a
+   merchant sets per category — an arbitrary hue that beats any :root
+   token, including this theme's own black --accent, since it's set
+   inline closer to the element. Left alone, a merchant's purple/green
+   category colours show through even in the theme whose entire point is
+   "no colour accent" (acceptance criteria: "check the category strip's
+   active tab"). Same selectors as app.css, same specificity, loaded
+   after it — so these three win in the cascade regardless of any inline
+   --cat-color, without needing !important. Category/tab identity still
+   reads from the name/price/thumbnail/header text next to each of these,
+   same as app.css's own WCAG 1.4.1 reasoning just above these rules. */
+.category-header { border-inline-start-color: var(--accent); }
+.btn-tile { border-inline-start-color: var(--accent); }
+.tab-bar .tab { border-block-start-color: transparent; }
+.tab-bar .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
