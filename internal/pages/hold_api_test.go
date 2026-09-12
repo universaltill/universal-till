@@ -212,49 +212,177 @@ func TestResumeHandler_UnknownIDRejected(t *testing.T) {
 	}
 }
 
-func TestResumeHandler_RejectsWhenBasketAlreadyBusy(t *testing.T) {
+// TestResumeHandler_AutoParksBusyBasketThenResumes (ut-docs#1919): resuming
+// while the live basket already has items no longer refuses the switch --
+// the in-progress sale is parked first (the exact same path a manual Hold
+// takes), and the requested order is then loaded, so the cashier never loses
+// what they already had rung up.
+func TestResumeHandler_AutoParksBusyBasketThenResumes(t *testing.T) {
 	mux, dp := newHoldTestDeps(t)
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
 		t.Fatalf("seed scan: %v", err)
 	}
 	// Hold it so there's a real held row, then start a NEW live sale before
-	// trying to resume -- the handler must refuse rather than overwrite an
-	// in-progress basket.
+	// trying to resume.
 	holdReq := httptest.NewRequest(http.MethodPost, "/api/pos/hold", nil)
 	mux.ServeHTTP(httptest.NewRecorder(), holdReq)
-	var id string
-	if err := dp.Db.QueryRow(`SELECT id FROM held_sales`).Scan(&id); err != nil {
+	var targetID string
+	if err := dp.Db.QueryRow(`SELECT id FROM held_sales`).Scan(&targetID); err != nil {
 		t.Fatalf("expected a held_sales row: %v", err)
 	}
+	// A second scan (qty 2, not 1) so the live sale is distinguishable by
+	// content from the target it is about to switch away from -- otherwise
+	// a broken auto-park that discarded its payload would be
+	// indistinguishable from a correct one in the assertions below.
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
 		t.Fatalf("start a new live sale: %v", err)
 	}
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("add a second line to the new live sale: %v", err)
+	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/pos/resume", strings.NewReader("id="+id))
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/resume", strings.NewReader("id="+targetID))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("HX-Trigger") != "held-changed" {
+		t.Fatalf("expected HX-Trigger: held-changed on resume, got %q", rec.Header().Get("HX-Trigger"))
+	}
+	// ut-docs#1919: a distinct toast from a plain resume -- the cashier must
+	// be told their own prior sale was held too, not just that a new one
+	// loaded (evidence: a real effect with no on-screen cue is a control
+	// nobody finds).
+	if !strings.Contains(rec.Body.String(), httpx.T("en", "hold.toast.parked_and_resumed")) {
+		t.Fatalf("expected the parked-and-resumed toast, got: %s", rec.Body.String())
+	}
+	// The requested order (qty 1) is now live -- NOT the qty-2 sale that was
+	// in progress a moment ago.
+	if !dp.Engine.HasItems() {
+		t.Fatalf("expected the requested order's basket to be loaded")
+	}
+	if dp.Engine.HeldOrigin().ID != targetID {
+		t.Fatalf("expected the live basket's held origin to be %q, got %+v", targetID, dp.Engine.HeldOrigin())
+	}
+	if lines := dp.Engine.Basket().Lines; len(lines) != 1 || lines[0].Qty != 1 {
+		t.Fatalf("expected the restored basket to be the target's single-qty line, got %+v", lines)
+	}
+	// The sale that was live when the resume was requested is not lost --
+	// it is parked, WITH ITS ACTUAL CONTENT (qty 2, not empty), under a NEW,
+	// distinct id (never the target's), findable and resumable later.
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM held_sales`).Scan(&count); err != nil {
+		t.Fatalf("query held_sales: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly one held row (the auto-parked in-progress sale), got %d", count)
+	}
+	var autoParkedID string
+	var lineCount, totalMinor int
+	if err := dp.Db.QueryRow(`SELECT id, line_count, total_minor FROM held_sales`).Scan(&autoParkedID, &lineCount, &totalMinor); err != nil {
+		t.Fatalf("expected the auto-parked row: %v", err)
+	}
+	if autoParkedID == targetID {
+		t.Fatalf("the auto-parked sale must not overwrite the resumed order's row")
+	}
+	// qty 2 of a 100-minor item at 20% exclusive tax = 240, not 0 and not
+	// the target's own 120 -- pins that the auto-parked payload is the
+	// PRIOR sale's real content, not an empty/discarded snapshot.
+	if lineCount != 1 || totalMinor != 240 {
+		t.Fatalf("expected the auto-parked row to hold the prior qty-2 sale (line_count=1 total_minor=240), got line_count=%d total_minor=%d", lineCount, totalMinor)
+	}
+}
+
+// TestResumeHandler_BusyBasketNotParkedWhenTargetMissing (ut-docs#1919): the
+// live basket is only ever parked once the resume is known to be able to
+// proceed -- an unknown target must not cost the cashier their in-progress
+// sale for nothing.
+func TestResumeHandler_BusyBasketNotParkedWhenTargetMissing(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("start a live sale: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/resume", strings.NewReader("id=hold-does-not-exist"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 (in-place toast), got %d: %s", rec.Code, rec.Body.String())
 	}
-	// This is the only way to confirm the request actually hit the
-	// HasItems() busy branch and not the unrelated not-found path -- both
-	// otherwise leave the held row untouched.
-	if !strings.Contains(rec.Body.String(), httpx.T("en", "hold.error.busy")) {
-		t.Fatalf("expected the busy toast, got: %s", rec.Body.String())
+	if !dp.Engine.HasItems() {
+		t.Fatalf("the live sale must survive an unknown resume target")
 	}
 	var count int
 	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM held_sales`).Scan(&count); err != nil {
 		t.Fatalf("query held_sales: %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("expected the held row to survive a rejected resume, got %d rows", count)
+	if count != 0 {
+		t.Fatalf("an unknown target must not auto-park the live basket, got %d held rows", count)
 	}
-	// ut-docs#1918: a refused resume must not stamp the held row's identity
-	// onto the unrelated live sale either -- parking THAT sale later must
-	// mint its own id, not overwrite the refused order's row.
-	if !dp.Engine.HeldOrigin().IsZero() {
-		t.Fatalf("a refused resume must leave the live basket with no held origin, got %+v", dp.Engine.HeldOrigin())
+}
+
+// TestResumeHandler_AlreadyLiveOrderIsANoOp (ut-docs#1919, independent
+// review): the live basket can already BE the order being "resumed" -- most
+// plausibly when an earlier resume's own repo.Delete failed and left a stale
+// row behind (resumeHeldSale's own doc comment, and HeldSalesRepo.Upsert's,
+// both already anticipate this). Before the F1 fix, falling through to the
+// busy branch would auto-park the LIVE basket's current state into the row
+// about to be deleted (via Upsert, same id) and then delete it -- destroying
+// whatever the cashier added since the stale row was left behind, leaving
+// nothing to recover it from. Tapping an order you are already on must be a
+// safe no-op instead.
+func TestResumeHandler_AlreadyLiveOrderIsANoOp(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	holdReq := httptest.NewRequest(http.MethodPost, "/api/pos/hold", nil)
+	mux.ServeHTTP(httptest.NewRecorder(), holdReq)
+	var id string
+	if err := dp.Db.QueryRow(`SELECT id FROM held_sales`).Scan(&id); err != nil {
+		t.Fatalf("expected a held_sales row: %v", err)
+	}
+	// Resume it: the row is deleted and the live basket's HeldOrigin is now
+	// this id -- then simulate the accepted "Delete failed" case by
+	// re-inserting the exact same row behind the engine's back (repo.Delete
+	// erroring is swallowed by design; this reproduces its effect directly).
+	resumeReq := httptest.NewRequest(http.MethodPost, "/api/pos/resume", strings.NewReader("id="+id))
+	resumeReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(httptest.NewRecorder(), resumeReq)
+	if dp.Engine.HeldOrigin().ID != id {
+		t.Fatalf("precondition: expected the live basket's origin to be %q, got %+v", id, dp.Engine.HeldOrigin())
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id, created_at) VALUES (?,?,?,?,?,?,datetime('now'))`,
+		id, "Stale", 100, 1, `{}`, nil); err != nil {
+		t.Fatalf("reinsert stale row: %v", err)
+	}
+	// Add another item on top of the resumed order -- this is the value a
+	// pre-fix auto-park-then-delete would destroy.
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("add to the resumed order: %v", err)
+	}
+	linesBefore := len(dp.Engine.Basket().Lines)
+
+	// Tap the same order again.
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/pos/resume", strings.NewReader("id="+id)))
+	_ = rec
+
+	if got := len(dp.Engine.Basket().Lines); got != linesBefore {
+		t.Fatalf("re-tapping the already-live order changed the basket: had %d lines, now %d", linesBefore, got)
+	}
+	if !dp.Engine.HasItems() {
+		t.Fatalf("re-tapping the already-live order must not empty the basket")
+	}
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM held_sales WHERE id = ?`, id).Scan(&count); err != nil {
+		t.Fatalf("query held_sales: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected the stale row to be left exactly as found (1 row), got %d", count)
 	}
 }
 
