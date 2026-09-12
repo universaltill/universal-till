@@ -26,11 +26,27 @@ import (
 //
 // Why: `go test ./internal/pages/... -race` was timing out at the default
 // 600s, and the blame landed on whichever test happened to be running when
-// the deadline fired — not a deadlock, just ~80 from-scratch db.Open calls
-// (48 of them through newRealDBDeps alone) each executing every migration's
-// DDL and seed SQL under -race instrumentation. The template is built once
-// per process; each test still gets its own private copy under its own
-// t.TempDir(), so nothing a test writes can leak into another.
+// the deadline fired — not a deadlock, just a very large number of
+// from-scratch db.Open calls each executing every migration's DDL and seed
+// SQL under -race instrumentation. The template is built once per process;
+// each test still gets its own private copy under its own t.TempDir(), so
+// nothing a test writes can leak into another.
+//
+// Counted properly (review of ut-docs#2191 — an earlier draft of this
+// comment said "~80", which was the number of db.Open *source lines*, not
+// runtime calls, and understated the real figure by more than 3x). Per
+// full-package run this package performs ~263 fully-migrated opens:
+//   - 50 through newRealDBDeps — what this helper fixes;
+//   - 138 through openPagesTestDB (ui_smoke_test.go) — by far the largest
+//     remaining lever, and one function, so the identical treatment applies;
+//   - ~74 ad-hoc db.Open call sites across 46 other files in this package.
+//
+// So this change removes roughly a fifth of the migration work, and the
+// full-package -race gate still exceeds any reasonable timeout without the
+// follow-up. Measured on the 48 newRealDBDeps-backed tests: 4.96s -> 1.94s
+// without -race, and 99.2s -> 20.5s with -race (~1.6s of -race time per
+// avoided migration chain, vs ~60ms without it — that ~26x amplification is
+// the whole mechanism behind the original hang).
 //
 // What this relies on in internal/db (do not break it without revisiting
 // this helper): db.Open's migrate() treats a database whose
