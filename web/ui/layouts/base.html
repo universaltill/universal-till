@@ -81,6 +81,24 @@
          dismiss script (getElementById('pairing-notice')) would resolve to
          this outer, dataset-less placeholder instead of the real banner. -->
     <div id="pairing-notice-mount" hx-get="/ui/pairing-notice" hx-trigger="load, every 30s"></div>
+    <!-- ut-docs#2183: the app-wide client-side request-failure surface
+         (ut-docs#213, docs/sale-screen-notifications.md) — app.js's
+         htmx:responseError/htmx:sendError listeners already fill this in
+         and self-heal it on the next successful request, on EVERY page
+         (app.js loads via base.html). Declared ONCE here, outside <main>,
+         so it survives whatever the current page's own content/in-panel
+         swaps do (same "sibling of <main>, not inside it" precedent as
+         bugreport_panel below) and every page gets it for free instead of
+         needing its own copy. ut-docs#2179 originally added this only to
+         index.html/admin.html/items.html's own content blocks (now
+         removed from all three — this single copy replaces them; leaving
+         theirs in place too would duplicate id="pos-alert"). A page-local
+         error surface that already takes priority for its own scoped
+         requests (catalog.html's #item-form-msg, buttons_admin.html's
+         #buttons-add-error) is unaffected — this is only the generic
+         fallback for whatever isn't caught by a more specific handler
+         first. -->
+    {{ template "pos_alert" . }}
     <main class="container">{{ template "content" . }}</main>
     <!-- Floating, NON-modal bug-report capture panel (ut-docs#346) — a
          sibling of <main>, not inside it, so it's independent of whatever

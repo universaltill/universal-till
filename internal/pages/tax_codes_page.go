@@ -230,6 +230,11 @@ func registerTaxCodes(mux *http.ServeMux, d *common.Deps) {
 			filepath.Join("web", "ui", "pages", "tax_codes.html"),
 			filepath.Join("web", "ui", "partials", "nav.html"),
 			filepath.Join("web", "ui", "partials", "bugreport_panel.html"),
+			// ut-docs#2183: base.html now references {{ template "pos_alert" . }}
+			// unconditionally — required in this parsed set or executing
+			// "base" below (the non-fragment-swap branch) fails at render
+			// time, same reasoning as bugreport_panel.html just above.
+			filepath.Join("web", "ui", "partials", "pos_alert.html"),
 			filepath.Join("web", "ui", "partials", "tax_codes_table.html"),
 		}
 		if httpx.IsFragmentSwap(w, r) {
