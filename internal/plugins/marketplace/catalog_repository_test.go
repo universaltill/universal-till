@@ -229,6 +229,132 @@ func TestCatalogRepository_Filter(t *testing.T) {
 	}
 }
 
+// ut-docs#2149: Fetch used to read only page 1 of ListPlugins, unlike this
+// package's two setup-wizard callers (resolveAndInstallBasePlugin,
+// languagePackLocalesForListing), which both already page through
+// next_page_token (ut-docs#2133/#1108). This snapshot backs the general
+// catalog browse UI plus category/tax-code listings (internal/ui/buttons.go,
+// internal/pages/plugin_settings_page.go), so a listing sorting past page 1
+// as the catalog grows would be invisible everywhere those read from the
+// snapshot, not just one bounded lookup. Two single-plugin pages, forcing
+// the fetch to follow next_page_token to find the second one at all.
+func TestCatalogRepository_FetchPagesThroughFullCatalog(t *testing.T) {
+	tmpDir := t.TempDir()
+	mockToken := &mockTokenClient{token: "test-token"}
+	var hits int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("page_token") == "" {
+			// camelCase nextPageToken/snapshotVersion (snapshotVersion as a
+			// quoted string) mirrors the real live wire format, not the
+			// legacy snake_case fields — see ListPluginsResponse.UnmarshalJSON's
+			// own doc comment. A test using only the legacy shape would still
+			// pass even if the live-wire decode path (ut-docs#1108) broke,
+			// since PluginSummary/ListPluginsResponse decode either shape
+			// today; camelCase is what actually exercises that path.
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"plugins": []map[string]interface{}{
+					{"listing_id": "page1-plugin", "name": "Page 1 Plugin", "version": "1.0.0", "canonical_type": "payment"},
+				},
+				"nextPageToken":   "page2",
+				"snapshotVersion": "7",
+			})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"plugins": []map[string]interface{}{
+				{"listing_id": "page2-plugin", "name": "Page 2 Plugin", "version": "1.0.0", "canonical_type": "report"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	cfg := &config.MarketplaceConfig{
+		EndpointURL:       server.URL,
+		APIVersion:        "1.0.0",
+		RequestTimeoutSec: 30,
+	}
+	client := NewClient(cfg, mockToken)
+
+	repo, err := NewCatalogRepository(client, tmpDir)
+	if err != nil {
+		t.Fatalf("NewCatalogRepository failed: %v", err)
+	}
+
+	snapshot, err := repo.Fetch(context.Background(), "en-US", "linux/amd64")
+	if err != nil {
+		t.Fatalf("Fetch failed: %v", err)
+	}
+	if hits != 2 {
+		t.Fatalf("expected 2 catalog requests to page through 2 listings, got %d", hits)
+	}
+	if len(snapshot.Plugins) != 2 {
+		t.Fatalf("expected 2 plugins across both pages in the snapshot, got %d", len(snapshot.Plugins))
+	}
+	if snapshot.SnapshotVersion != 7 {
+		t.Errorf("SnapshotVersion = %d, want 7 (from the first page's response)", snapshot.SnapshotVersion)
+	}
+
+	filtered, err := repo.Filter("report", "", "")
+	if err != nil {
+		t.Fatalf("Filter failed: %v", err)
+	}
+	if len(filtered) != 1 || filtered[0].ListingID != "page2-plugin" {
+		t.Fatalf("expected page2-plugin (beyond page 1) to be findable via Filter — an unpaginated fetch would silently miss it, got %+v", filtered)
+	}
+}
+
+// The pagination loop must still terminate against a server that keeps
+// returning a non-empty next_page_token forever (malformed or hostile) —
+// bounded the same way its two package siblings are, by catalogFetchMaxPages.
+func TestCatalogRepository_FetchPaginationCapPreventsInfiniteLoop(t *testing.T) {
+	tmpDir := t.TempDir()
+	mockToken := &mockTokenClient{token: "test-token"}
+	var hits int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.Header().Set("Content-Type", "application/json")
+		// camelCase nextPageToken, same reasoning as the sibling test above.
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"plugins": []map[string]interface{}{
+				{"listing_id": "listing", "name": "Listing", "version": "1.0.0", "canonical_type": "payment"},
+			},
+			"nextPageToken": "always-more",
+		})
+	}))
+	defer server.Close()
+
+	cfg := &config.MarketplaceConfig{
+		EndpointURL:       server.URL,
+		APIVersion:        "1.0.0",
+		RequestTimeoutSec: 30,
+	}
+	client := NewClient(cfg, mockToken)
+
+	repo, err := NewCatalogRepository(client, tmpDir)
+	if err != nil {
+		t.Fatalf("NewCatalogRepository failed: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, ferr := repo.Fetch(context.Background(), "en-US", "linux/amd64")
+		done <- ferr
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Fetch failed: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Fetch did not return — pagination cap did not bound the loop")
+	}
+	if hits != catalogFetchMaxPages {
+		t.Fatalf("expected exactly %d catalog requests (cap), got %d", catalogFetchMaxPages, hits)
+	}
+}
+
 func TestCatalogRepository_OfflineReplay(t *testing.T) {
 	tmpDir := t.TempDir()
 	mockToken := &mockTokenClient{token: "test-token"}
