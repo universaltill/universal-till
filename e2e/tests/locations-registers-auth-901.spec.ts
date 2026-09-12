@@ -140,7 +140,7 @@ test.describe('/registers admin page (ut-docs#901)', () => {
       page.waitForURL((u) => u.pathname === '/registers'),
       page.locator('#register-dialog form[data-record-when="active=1"] button[type="submit"]').click(),
     ]);
-    expect(await renamedRowA.getAttribute('data-field-active')).toBe('0'); // now offers "activate" -> currently inactive
+    await expect(renamedRowA).toHaveAttribute('data-field-active', '0'); // now offers "activate" -> currently inactive
 
     // Reactivate. Leaves both this test's new/renamed rows behind, active --
     // same server-state note as the locations spec above.
@@ -150,7 +150,7 @@ test.describe('/registers admin page (ut-docs#901)', () => {
       page.waitForURL((u) => u.pathname === '/registers'),
       page.locator('#register-dialog form[data-record-when="active=0"] button[type="submit"]').click(),
     ]);
-    expect(await renamedRowA.getAttribute('data-field-active')).toBe('1'); // now offers "deactivate" -> currently active
+    await expect(renamedRowA).toHaveAttribute('data-field-active', '1'); // now offers "deactivate" -> currently active
 
     assertClean();
   });
