@@ -608,8 +608,7 @@ func applyPluginUpdate(ctx context.Context, d *common.Deps, pluginID string) (fr
 	}
 
 	// Marketplace installs record the listing↔plugin mapping in the
-	// install-status store; manual imports have no listing and cannot be
-	// updated from the marketplace.
+	// install-status store; manual imports have no listing at all.
 	statusStore := plugins.NewInstallStatusStore(d.Db)
 	listingID := ""
 	if records, err := statusStore.List(ctx); err == nil {
@@ -619,6 +618,15 @@ func applyPluginUpdate(ctx context.Context, d *common.Deps, pluginID string) (fr
 				break
 			}
 		}
+	}
+	if listingID == "" {
+		// ut-docs#2131 review: the management page's "Update available"
+		// badge resolves a file-imported plugin via the same author+name
+		// catalog match /plugins uses (plugins.IndexCatalog) — without this
+		// fallback here too, that badge promised an update this handler
+		// could never deliver, 404ing with ErrPluginUpdateNoListing on
+		// every click for exactly the population the badge fix targeted.
+		listingID = resolveListingViaCatalog(ctx, d, pluginID)
 	}
 	if listingID == "" {
 		return "", "", ErrPluginUpdateNoListing
@@ -680,6 +688,47 @@ func applyPluginUpdate(ctx context.Context, d *common.Deps, pluginID string) (fr
 	}
 
 	return currentPlugin.Version, result.Version, nil
+}
+
+// resolveListingViaCatalog finds the marketplace listing for a plugin that
+// has no plugin_install_status row at all -- most commonly one installed via
+// "Import from file" -- via the same author+name fallback the /plugins
+// management page uses to decide whether to show an "Update available"
+// badge (plugins.IndexCatalog/Resolve, ut-docs#2131). Returns "" if the
+// catalog is unreachable or has no match; callers must treat that exactly
+// like "no listing", never as an error worth surfacing on its own.
+func resolveListingViaCatalog(ctx context.Context, d *common.Deps, pluginID string) string {
+	if d.CatalogRepo == nil {
+		return ""
+	}
+	installed, err := data.NewPluginRepo(d.Db).ListInstalledPlugins(ctx)
+	if err != nil {
+		return ""
+	}
+	var author, name string
+	found := false
+	for _, row := range installed {
+		if row.ID == pluginID {
+			author, name = row.Author, row.Name
+			found = true
+			break
+		}
+	}
+	if !found {
+		return ""
+	}
+	snapshot, _, err := d.CatalogRepo.GetOrFetch(ctx, d.Cfg.DefaultLocale, fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH))
+	if err != nil || snapshot == nil {
+		return ""
+	}
+	catalogPlugin, ok := plugins.IndexCatalog(snapshot).Resolve("", author, name)
+	if !ok {
+		return ""
+	}
+	if catalogPlugin.ListingID != "" {
+		return catalogPlugin.ListingID
+	}
+	return catalogPlugin.ID
 }
 
 // handleUpdatePlugin updates an installed plugin to the latest marketplace

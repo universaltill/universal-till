@@ -1410,12 +1410,17 @@ type ManagedPluginRow struct {
 	IsActive     bool
 	TrustLevel   string
 	InstallState string
+	// Author is the manifest's author string (ut-docs#2131) — needed
+	// alongside Name so the management page can resolve a catalog match
+	// via the same author+name fallback UpdateChecker already uses for a
+	// plugin with no install-status listing mapping (e.g. file-imported).
+	Author string
 }
 
 // ListManagedPlugins returns every plugin row regardless of active state.
 func (r *PluginRepo) ListManagedPlugins(ctx context.Context) ([]ManagedPluginRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, version, is_active, trust_level, install_state
+SELECT id, name, version, is_active, trust_level, install_state, COALESCE(author, '')
 FROM plugins
 ORDER BY name COLLATE NOCASE
 `)
@@ -1426,7 +1431,7 @@ ORDER BY name COLLATE NOCASE
 	var res []ManagedPluginRow
 	for rows.Next() {
 		var p ManagedPluginRow
-		if err := rows.Scan(&p.ID, &p.Name, &p.Version, &p.IsActive, &p.TrustLevel, &p.InstallState); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Version, &p.IsActive, &p.TrustLevel, &p.InstallState, &p.Author); err != nil {
 			return nil, pluginObs.wrap("list_managed", err)
 		}
 		res = append(res, p)

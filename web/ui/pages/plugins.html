@@ -48,6 +48,14 @@
                 title="{{ T "plugins.status.broken_binary" }}">{{ T "plugins.manage.broken" }} ⚠</span>
           <span class="tag" x-text="p.trust"></span>
           <span class="tag warn" x-show="p.hasUpdate" x-text="'{{ T "plugins.manage.update_available" }} v' + p.latest"></span>
+          {{/* ut-docs#2131: a plugin the till couldn't resolve against the
+               marketplace catalog (most commonly one installed via "Import
+               from file", which records no listing mapping) must never look
+               like "you are current" — it looks like neither hasUpdate nor
+               this tag, which is silently indistinguishable from current.
+               Mutually exclusive with the warn tag above: hasUpdate is only
+               ever true when a catalog match was actually found. */}}
+          <span class="tag" x-show="p.versionUnknown" title="{{ T "plugins.manage.update_unknown_hint" }}">{{ T "plugins.manage.update_unknown" }}</span>
         </div>
         <div style="display:flex; gap:.5rem; flex-wrap:wrap">
           <a class="btn secondary" x-show="p.enabled" :href="'/plugins/' + encodeURIComponent(p.id) + '/settings'">{{ T "plugins.settings.title" }}</a>

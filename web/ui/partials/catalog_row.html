@@ -62,6 +62,14 @@
      back to a real templated call. */}}
 {{ define "catalog_empty_row" }}<div id="catalog-empty-row" class="empty catalog-empty">No items yet — tap <strong>Add item</strong> to create one.</div>{{ end }}
 
+{{/* ut-docs#2119: the DISTINCT "search/category filter matched nothing"
+     state — never shown at the same time as catalog_empty_row above (that
+     one means there are no items in the shop at all; this one means there
+     ARE items, but the current filter hid every one of them). Hidden by
+     default; filterRows() in catalog.html toggles it. Spans every column
+     the same way catalog_empty_row does (.catalog-empty, app.css). */}}
+{{ define "catalog_no_matches_row" }}<div id="catalog-no-matches" class="empty catalog-empty" hidden>{{ T "filter.no_matches" }}</div>{{ end }}
+
 {{/* ------------------------------------------------------------------
      Out-of-band fragments. ut-docs#1951 simplification: the pre-card
      markup wrapped every fragment in a hidden <table><tbody> "carrier"

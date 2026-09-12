@@ -18,6 +18,12 @@
     {{ else }}
       {{ template "catalog_empty_row" }}
     {{ end }}
+    {{/* ut-docs#2119: always present (hidden by default), toggled by
+         filterRows() in catalog.html — distinct from catalog_empty_row
+         above, which is the true "no items in the shop yet" state. This
+         one means "there are items, but the current search/category
+         filter narrowed them all out". */}}
+    {{ template "catalog_no_matches_row" }}
   </div>
 </div>
 {{ end }}
