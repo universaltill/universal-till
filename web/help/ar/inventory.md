@@ -17,7 +17,7 @@ routes: [/inventory, /locations, /ui/inventory/stock-table]
 2. اضغط على صف مخزون — أو زر **+** بجوار مربع البحث — لفتح نافذة التوريد/التسوية المعبأة مسبقًا بذلك الصنف. سجّل التوريد بإدخال البضاعة؛ واستخدم التسوية للهدر أو الكسر أو فروق الجرد — أدخل رقماً سالباً لإنقاص المخزون (على شاشة اللمس، اضغط أولاً على مفتاح "-" في لوحة المفاتيح على الشاشة).
 3. تتنبأ صفحة المخزون بعدد أيام بقاء المخزون وتقترح كمية الطلب؛ وتعرض صفحة التقارير شارة انخفاض المخزون أيضاً.
 4. مواقع المخزون (صفحة "المواقع"، للمدير فقط) عناصر على مستوى المتجر بأكمله وتُدار دائمًا من **الجهاز الرئيسي**: على جهاز منضم، محاولة إنشاء موقع أو إعادة تسميته أو إلغاء تفعيله تُظهر رسالة توجّهك إلى الجهاز الرئيسي.
-5. Tap a category chip below the search box to narrow the list to items in that category — tapping a category that has sub-categories includes their items too. It combines with the search box; tap **All categories** to clear it.
+5. Tap the filter icon beside the search box to open the category list, then tap a category to narrow the list to items in that category — tapping a category that has sub-categories includes their items too. It combines with the search box; tap **All categories** to clear it.
 
 ## إذا كنت لا تتتبّع المخزون إطلاقًا
 
