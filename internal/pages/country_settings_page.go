@@ -174,7 +174,7 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 		if _, ok := requireManager(w, r); !ok {
 			return
 		}
-		renderPage(w, r, r.URL.Query().Get("err"))
+		renderPage(w, r, httpx.QueryErrKey(r))
 	})
 
 	// Create or update. One handler for both: the code is the primary key, so

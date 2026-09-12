@@ -238,7 +238,7 @@ func registerFiscalRegisterDE(mux *http.ServeMux, d *common.Deps) {
 		if _, ok := requireManager(w, r); !ok {
 			return
 		}
-		renderFiscalRegister(w, r, r.URL.Query().Get("err"))
+		renderFiscalRegister(w, r, httpx.QueryErrKey(r))
 	})
 
 	mux.HandleFunc("POST /api/fiscal-register", func(w http.ResponseWriter, r *http.Request) {

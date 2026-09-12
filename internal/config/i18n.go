@@ -105,6 +105,37 @@ func (i *I18n) T(locale, key string) string {
 	return key
 }
 
+// Has reports whether key is a real, known translation key — present in any
+// locale's base messages, plugin overlay, or shop override — as opposed to
+// arbitrary text that would otherwise ride T's fallback-to-key behaviour.
+// Unlike T, this deliberately checks across ALL locales rather than
+// resolving one: the question it answers is "does this key exist anywhere
+// in the catalog", not "does it resolve for this locale" (a key can be a
+// genuine, if untranslated-in-this-locale, key). Used to distinguish a real
+// i18n key from user-controlled text before it reaches a template's
+// `{{ T .errKey }}` (ut-docs#2148 — an unrecognised `?err=` query value
+// otherwise renders verbatim in a page's error banner).
+func (i *I18n) Has(key string) bool {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	for _, m := range i.messages {
+		if _, ok := m[key]; ok {
+			return true
+		}
+	}
+	for _, m := range i.overlays {
+		if _, ok := m[key]; ok {
+			return true
+		}
+	}
+	for _, m := range i.shop {
+		if _, ok := m[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 // SetShopOverrides atomically replaces all manager-edited translations
 // (docs repo: architecture/translation-editor.md).
 func (i *I18n) SetShopOverrides(shop map[string]map[string]string) {

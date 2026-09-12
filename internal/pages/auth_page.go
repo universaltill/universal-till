@@ -261,7 +261,7 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			"title":     "Change PIN",
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
-			"errKey":    r.URL.Query().Get("err"),
+			"errKey":    httpx.QueryErrKey(r),
 		})(w, r)
 	})
 

@@ -127,7 +127,7 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 		if _, ok := requireManager(w, r); !ok {
 			return
 		}
-		renderPromotions(w, r, r.URL.Query().Get("err"))
+		renderPromotions(w, r, httpx.QueryErrKey(r))
 	})
 
 	mux.HandleFunc("POST /api/promotions", func(w http.ResponseWriter, r *http.Request) {
