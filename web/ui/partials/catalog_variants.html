@@ -177,6 +177,24 @@
               <label class="chip-add-primary" title="{{ T "catalog.barcode.force_plain_hint" }}"><input type="checkbox" name="forcePlainBarcode" value="1"> {{ T "catalog.barcode.force_plain" }}</label>
               <button class="btn secondary" type="submit" title="{{ T "catalog.attach_barcode" }}">＋</button>
             </form>
+            {{/* ut-docs#2230: an ACTIVE variant with neither a barcode (the
+                 chips above) nor a SKU (the input in this row) is
+                 "codeless" — nothing resolves it at sale time, so
+                 sellableVariants/ItemIDsWithVariants silently drop it from
+                 the sale-screen picker (ut-docs#2209). Migration 028
+                 backfills every pre-existing case and ApplyAdmin's own
+                 synced-variant backfill (sync_admin_repo.go) closes the
+                 sync write path, but this flag stays as the merchant-facing
+                 backstop the card's acceptance criteria ask for regardless
+                 — the only way to reach this state at all today is some
+                 write path neither of those two covers. .tag.warn is the
+                 shared "needs attention" style already used elsewhere
+                 (plugins.html's update badge, my_reports.html's failing
+                 status); inline-flow, no left/right positioning, so no RTL
+                 concern. */}}
+            {{ if and .IsActive (eq .SKU "") (eq (len .Barcodes) 0) }}
+            <span class="tag warn" data-testid="variant-codeless" title="{{ T "catalog.variant_codeless_hint" }}">{{ T "catalog.variant_codeless" }}</span>
+            {{ end }}
           </div>
           <input form="vf-{{ .ID }}" type="checkbox" name="isActive" value="1" {{ if .IsActive }}checked{{ end }}>
           <button form="vf-{{ .ID }}" class="btn primary" type="submit">{{ T "common.save" }}</button>

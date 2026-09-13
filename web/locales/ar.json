@@ -311,6 +311,8 @@
   "catalog.tax_code.inactive": "غير نشط",
   "catalog.tax_code.none": "— بدون —",
   "catalog.upload_image": "رفع صورة",
+  "catalog.variant_codeless": "لن يُباع — يحتاج إلى رمز",
+  "catalog.variant_codeless_hint": "لا يحتوي هذا المتغيّر على باركود ولا رمز صنف، لذا يتعذّر مسحه أو اختياره عند البيع. أضف باركوداً أو رمز صنف لإصلاح ذلك.",
   "catalog.variant_image": "صورة الصنف الفرعي",
   "catalog.variants": "المتغيّرات",
   "catalog.variants.add": "إضافة متغيّر",
