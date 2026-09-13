@@ -243,3 +243,97 @@ test.describe('sale screen basket layout + count + notices (ut-docs#213)', () =>
     assertClean();
   });
 });
+
+// ut-docs#1339: gap exposed by review of ut-docs#1314 (universal-till PR
+// #667, docs/code-reviews/2026-08-30-basket-item-name-column-width.md).
+// #1314's fix (stacking qty above discount inside .line-inputs) has a
+// trade-off that ONLY bites under `body.kiosk` -- its 2.1rem .qty-input/
+// .disc-input min-height (app.css) eats vertical space the non-kiosk
+// 1024x600 test above never spends; that review's own measurement (six
+// long-named "Cheddar Cheese 400g" lines) found kiosk mode dropping the
+// 1024x600 floor to 1 fully-visible row. This suite has no server running
+// with UT_KIOSK=1 (grep confirms it -- none of e2e/run-till*.sh set it), so
+// rather than stand up a 6th webServer+project pair for one CSS-only
+// assertion, this applies the identical class-injection technique the
+// 'products grid keeps its floor under vertical pressure' test above
+// already uses for `osk-padded`: `body.kiosk`'s CSS rules apply the same
+// regardless of whether the class was server-rendered or added by a script,
+// since nothing in app.js reads it (verified: no `classList.*kiosk` in any
+// web/public/*.js) -- confirmed directly: the min-height computed style
+// really does jump from `auto` (~27-28px) to 35.7px on these inputs once
+// the class is added, matching the review's own 35.7px figure exactly.
+//
+// NOT copying the review's "1" here. Re-measured against current `main`
+// with THIS suite's own CODES/scan() (five short-named demo items, not the
+// review's six long-named ones): today's actual floor is 2, fully-visible,
+// identically for both kiosk and non-kiosk, at this viewport -- run 3x,
+// byte-for-byte stable. The gap from the review's own numbers is real and
+// most likely comes from the different item names (this suite's CODES
+// happen not to wrap to a second line at this width, so row height here is
+// governed by something other than the input min-height the review's
+// longer names were sensitive to) rather than anything having regressed
+// since that review; basket-item-name-width-1314.spec.ts is the suite that
+// exercises the long-name wrapping case directly, this one is a plain
+// row-count floor for whatever this suite's own existing scan helper
+// produces. The AC asks for TODAY's number as the floor, not the review's,
+// specifically so a FUTURE drop below today's real number is caught --
+// asserting the review's stale "1" here would silently pass a regression
+// from 2 down to 1.
+test.describe('kiosk-mode basket layout floor (ut-docs#1339)', () => {
+  test.use({ viewport: { width: 1024, height: 600 } });
+
+  test.afterEach(async ({ page }) => {
+    await page.request.post('/api/pos/reset');
+  });
+
+  test('basket rows visible under body.kiosk at the 1024x600 kiosk floor do not regress below today\'s count', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.goto('/');
+    await page.waitForSelector('.pos-container');
+    await page.evaluate(() => document.body.classList.add('kiosk'));
+    for (const code of CODES) {
+      await scan(page, code);
+    }
+    await expect(page.locator('.basket table tbody tr')).toHaveCount(CODES.length);
+
+    // Same settle wait as the non-kiosk assertion above -- ut-docs#320.
+    await waitForStableLayout(page, '.basket-scroll, .basket-scroll tbody tr');
+
+    const measured = await page.evaluate(() => {
+      const scroll = document.querySelector('.basket-scroll') as HTMLElement;
+      const box = scroll.getBoundingClientRect();
+      let n = 0;
+      const rows: { top: number; bottom: number; height: number }[] = [];
+      scroll.querySelectorAll('tbody tr').forEach((tr) => {
+        const r = (tr as HTMLElement).getBoundingClientRect();
+        rows.push({ top: r.top, bottom: r.bottom, height: r.height });
+        if (r.height > 0 && r.top >= box.top - 1 && r.bottom <= box.bottom + 1) n++;
+      });
+      return { fullyVisible: n, box: { top: box.top, bottom: box.bottom, height: box.height }, rows };
+    });
+    // Floor, not the non-kiosk AC's >=4: today's measured kiosk-mode budget
+    // at this viewport, with this suite's own CODES, is 2 (see the
+    // test.describe comment above for the measurement and why it differs
+    // from ut-docs#1314's review record). This guards against a FUTURE
+    // regression below today's number, same spirit as the #213/#391 guards
+    // this AC references. Independent review confirmed today's non-kiosk
+    // floor at this same viewport/CODES also measures 2 -- this assertion's
+    // job right now is catching a future drop below 2 in EITHER mode, not
+    // distinguishing kiosk from non-kiosk (basket-item-name-width-1314.
+    // spec.ts's long-name cases are what actually stress that difference).
+    expect(
+      measured.fullyVisible,
+      `at least 2 line items fully visible without scrolling under body.kiosk at 1024x600 (today's measured floor) — got ${measured.fullyVisible}. ` +
+        `box=${JSON.stringify(measured.box)} rows=${JSON.stringify(measured.rows)}`,
+    ).toBeGreaterThanOrEqual(2);
+
+    // Explicit symmetry with the 'osk-padded' class-injection test above
+    // (line ~227) -- functionally unnecessary since Playwright gives every
+    // test() a fresh page/context (confirmed: no storageState/context reuse
+    // in playwright.config.ts), but keeps this file's two synthetic-class
+    // tests reading the same way.
+    await page.evaluate(() => document.body.classList.remove('kiosk'));
+    await resetBasket(page);
+    assertClean();
+  });
+});
