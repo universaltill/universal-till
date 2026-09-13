@@ -134,7 +134,21 @@ func (rc *RevocationChecker) processRevocation(ctx context.Context, entry Revoca
 	return nil
 }
 
-// GetRevokedPlugins returns list of currently revoked plugins
+// GetRevokedPlugins returns list of currently revoked plugins.
+//
+// No production caller — but revocation ENFORCEMENT is live and does not
+// depend on this: internal/server runs SyncRevocations on a 30-minute
+// ticker whenever a marketplace endpoint is configured, and
+// processRevocation disables a revoked plugin directly (GetPlugin →
+// StopPlugin → SetPluginState → audit) without ever reading back through
+// here. This is only the read-back accessor (over
+// PluginRepo.ListRevokedPlugins, equally unreachable) for a "which plugins
+// were disabled by revocation, and why" display that was never built.
+// Tracked as universaltill/ut-docs#2225, which asks for a decision between
+// wiring that display and deleting the pair together — deliberately left
+// in place here (ut-docs#1566 `internal/plugins` slice) so that card
+// decides, not a mechanical cleanup; TestSyncRevocationsDisablesInstalledPlugin
+// also asserts the post-sync state through it.
 func (rc *RevocationChecker) GetRevokedPlugins(ctx context.Context) ([]RevocationEntry, error) {
 	rows, err := data.NewPluginRepo(rc.db).ListRevokedPlugins(ctx)
 	if err != nil {

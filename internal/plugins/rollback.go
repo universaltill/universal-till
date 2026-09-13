@@ -37,7 +37,22 @@ type VersionInfo struct {
 	IsActive    bool
 }
 
-// GetVersionHistory retrieves version history for a plugin
+// GetVersionHistory retrieves version history for a plugin: every snapshot
+// under pluginBaseDir/pluginID/versions/ (the tree StoreVersion writes and
+// Rollback reads), flagged with which one is currently active.
+//
+// No production caller (ut-docs#1566). Rollback itself IS live —
+// POST /api/plugins/{id}/rollback (internal/pages/plugin_api.go) and the
+// multi-till sync's failed-upgrade recovery (cloudsync_wire.go) both call
+// RollbackManager.Rollback — but both require the caller to already know
+// the target version string: the sync path takes it from its own
+// install-status record, and the API has no companion endpoint or page
+// that lists the versions available to roll back to (nothing under web/ui
+// renders a rollback control at all). This is the unwired read half of
+// that operator-facing flow. Wiring it means a new route, a manual topic
+// and a UX decision, so it is left in place with its tests
+// (TestRollbackFullArc, TestGetVersionHistoryNoDirectory) rather than
+// deleted or wired blind. Tracked as ut-docs#2239.
 func (rm *RollbackManager) GetVersionHistory(ctx context.Context, pluginID string) ([]VersionInfo, error) {
 	// Check plugin directory
 	pluginDir := filepath.Join(rm.pluginBaseDir, pluginID, "versions")

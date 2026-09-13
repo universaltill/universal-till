@@ -2712,19 +2712,18 @@ WHERE is_deprecated = 0
 }
 
 // CatalogPage returns paginated catalog entries and total count filtered by
-// tag, from the local `plugins` table. No production caller today: its only
-// in-tree caller is internal/plugins.Manager.CatalogPage, itself unreachable
-// per the deadcode-baseline guard's whole-program analysis (found while
-// burning down ut-docs#1566's `internal/data` baseline entries) —
-// production instead lists installed
+// tag, from the local `plugin_catalog` table. No caller left outside its own
+// test (TestCatalogPage, plugin_repo_lifecycle_test.go): its last in-tree
+// caller, internal/plugins.Manager.CatalogPage — itself unreachable per the
+// deadcode-baseline guard's whole-program analysis — was deleted in
+// ut-docs#1566's `internal/plugins` slice. Production instead lists installed
 // plugins via PluginRepo.ListInstalledPlugins, and lists the *available*
 // marketplace catalog via the CatalogRepo snapshot + plugins.IndexCatalog
 // (internal/pages/plugin_api.go), an unrelated path. This method and
 // Manager.CatalogPage read as a matched, superseded pair from before that
-// split existed. Left in place rather than deleted here: removing it also
-// means removing Manager.CatalogPage, which lives in `internal/plugins`,
-// out of this PR's package scope — a candidate for that package's own
-// deadcode slice.
+// split existed; with the domain half now gone, this one is a deletion
+// candidate (together with its test) for a future `internal/data` slice of
+// that same card.
 func (r *PluginRepo) CatalogPage(ctx context.Context, offset, limit int, tag string) ([]CatalogRow, int, error) {
 	where := "WHERE is_deprecated = 0"
 	args := []any{}

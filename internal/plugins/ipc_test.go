@@ -76,11 +76,6 @@ func TestEventBus_SubscribePublish(t *testing.T) {
 			t.Errorf("expected event ID '%s', got '%s'", eventID, event.ID)
 		}
 
-		// Acknowledge
-		if err := bus.Acknowledge(ctx, event.ID, manifest.ID, true, ""); err != nil {
-			t.Errorf("Acknowledge failed: %v", err)
-		}
-
 	case <-time.After(time.Second):
 		t.Fatal("timeout waiting for event")
 	}
@@ -658,34 +653,5 @@ func TestEventBus_Unsubscribe(t *testing.T) {
 		// ok == false means channel was closed, which is expected
 	case <-time.After(100 * time.Millisecond):
 		t.Error("expected closed channel to return immediately")
-	}
-}
-
-func TestEventBus_AcknowledgeError(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
-	setupAuditLog(t, db)
-
-	ctx := context.Background()
-	bus := NewEventBus(db)
-
-	// Acknowledge with error
-	err := bus.Acknowledge(ctx, "event-123", "plugin-abc", false, "processing failed")
-	if err != nil {
-		t.Errorf("Acknowledge failed: %v", err)
-	}
-
-	// Verify audit log contains error details
-	var details string
-	err = db.QueryRowContext(ctx, `
-		SELECT data_json FROM audit_log WHERE action = 'event_acknowledged'
-	`).Scan(&details)
-	if err != nil {
-		t.Fatalf("query audit_log: %v", err)
-	}
-
-	// Should contain error message
-	if details == "" {
-		t.Error("expected details in audit log")
 	}
 }

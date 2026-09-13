@@ -286,7 +286,7 @@ func TestHostTCPCrossPluginHandleRejected(t *testing.T) {
 	}
 
 	// Plugin A's own handle must be untouched by B's no-op close attempt.
-	if _, ok := tcpConns.Get(pluginA, 0); !ok {
+	if _, _, ok := tcpConns.GetWithAddr(pluginA, 0); !ok {
 		t.Error("plugin A's handle was affected by plugin B's cross-plugin close attempt")
 	}
 }
@@ -530,7 +530,7 @@ func TestHostTCPCloseAllOnPluginUnload(t *testing.T) {
 	defer deviceConn.Close()
 
 	// The handle survives the event (the registry outlives the instance).
-	if _, ok := tcpConns.Get(pluginID, 0); !ok {
+	if _, _, ok := tcpConns.GetWithAddr(pluginID, 0); !ok {
 		t.Fatal("open handle not in the registry after the event")
 	}
 
@@ -542,7 +542,7 @@ func TestHostTCPCloseAllOnPluginUnload(t *testing.T) {
 	w.Sync(context.Background(), d)
 	defer SharedBus(d).ResetSubscribers()
 
-	if _, ok := tcpConns.Get(pluginID, 0); ok {
+	if _, _, ok := tcpConns.GetWithAddr(pluginID, 0); ok {
 		t.Error("registry still holds the handle after unload")
 	}
 	_ = deviceConn.SetReadDeadline(time.Now().Add(2 * time.Second))
@@ -589,7 +589,7 @@ func TestHostTCPCloseAllOnPluginVersionUpdate(t *testing.T) {
 	}
 	defer deviceConn.Close()
 
-	if _, ok := tcpConns.Get(pluginID, 0); !ok {
+	if _, _, ok := tcpConns.GetWithAddr(pluginID, 0); !ok {
 		t.Fatal("open handle not in the registry after the event")
 	}
 
@@ -627,7 +627,7 @@ func TestHostTCPCloseAllOnPluginVersionUpdate(t *testing.T) {
 	w.Sync(context.Background(), d)
 	defer SharedBus(d).ResetSubscribers()
 
-	if _, ok := tcpConns.Get(pluginID, 0); ok {
+	if _, _, ok := tcpConns.GetWithAddr(pluginID, 0); ok {
 		t.Error("registry still holds the old version's handle after a version update")
 	}
 	_ = deviceConn.SetReadDeadline(time.Now().Add(2 * time.Second))
@@ -705,18 +705,18 @@ func TestTCPConnRegistry(t *testing.T) {
 		t.Fatalf("plugin.b first handle = %d, want its own sequence starting 0", hB0)
 	}
 
-	if _, ok := r.Get("plugin.a", hA0); !ok {
-		t.Error("Get lost an open handle")
+	if _, _, ok := r.GetWithAddr("plugin.a", hA0); !ok {
+		t.Error("GetWithAddr lost an open handle")
 	}
-	if _, ok := r.Get("plugin.a", 99); ok {
-		t.Error("Get returned an unknown handle")
+	if _, _, ok := r.GetWithAddr("plugin.a", 99); ok {
+		t.Error("GetWithAddr returned an unknown handle")
 	}
-	if _, ok := r.Get("plugin.b", hA1); ok {
+	if _, _, ok := r.GetWithAddr("plugin.b", hA1); ok {
 		t.Error("plugin.b sees plugin.a's handle")
 	}
 
 	r.Close("plugin.a", hA0)
-	if _, ok := r.Get("plugin.a", hA0); ok {
+	if _, _, ok := r.GetWithAddr("plugin.a", hA0); ok {
 		t.Error("handle still present after Close")
 	}
 	r.Close("plugin.a", hA0) // idempotent: closing again must not panic
@@ -728,10 +728,10 @@ func TestTCPConnRegistry(t *testing.T) {
 	}
 
 	r.CloseAll("plugin.a")
-	if _, ok := r.Get("plugin.a", hA1); ok {
+	if _, _, ok := r.GetWithAddr("plugin.a", hA1); ok {
 		t.Error("CloseAll left plugin.a handles behind")
 	}
-	if _, ok := r.Get("plugin.b", hB0); !ok {
+	if _, _, ok := r.GetWithAddr("plugin.b", hB0); !ok {
 		t.Error("CloseAll(plugin.a) closed plugin.b's handle")
 	}
 	r.CloseAll("plugin.b")
