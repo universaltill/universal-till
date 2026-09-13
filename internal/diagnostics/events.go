@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
-	"sort"
 	"strings"
 	"time"
 
@@ -406,21 +405,18 @@ func Emit(ev Event) {
 // EnumValues returns the closed vocabulary registered for one enum field
 // ("<type>.<json name>"), or nil — so a caller package (e.g. internal/pages)
 // can pin the copy kept here against the real constants it mirrors.
+//
+// Reachable only from a _test.go file today (TestOrderStatusEnumMatchesPOS
+// in internal/pages), which whole-program deadcode analysis (CI's
+// guard-deadcode-baseline.sh, ut-docs#1581) cannot see — that guard's own
+// header names this exact shape ("an exported production-code helper used
+// exclusively by its own tests... reads as unreachable even though it's
+// genuinely in use", citing ResetCacheForTests as the precedent) as a real,
+// sanctioned baseline entry, not a bug to fix here.
 func EnumValues(eventType, field string) []string {
 	vals := enumValues[eventType+"."+field]
 	if vals == nil {
 		return nil
 	}
 	return append([]string(nil), vals...)
-}
-
-// EventTypes lists the registered wire discriminators, sorted — for
-// diagnostics/inventory display and tests.
-func EventTypes() []string {
-	out := make([]string, 0, len(allEvents))
-	for _, ev := range allEvents {
-		out = append(out, ev.eventType())
-	}
-	sort.Strings(out)
-	return out
 }

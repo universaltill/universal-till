@@ -234,9 +234,42 @@ and that is the expected, bounded state for this specific case. This same
 lane opens and merges both pack follow-up PRs immediately after this PR
 merges, in this same cycle.
 
+## CI finding, after the PR opened
+
+`guard-deadcode-baseline.sh` (ut-docs#1581/#1566's whole-program deadcode
+gate) failed on the pushed head: two new exported functions in
+`internal/diagnostics/events.go` were unreachable under its `-tags=desktop
+-test=false` whole-program analysis.
+
+- **`EventTypes()`** had zero callers anywhere, including tests — genuinely
+  dead on arrival. Deleted, along with the now-unused `sort` import.
+- **`EnumValues()`** is called only from `TestOrderStatusEnumMatchesPOS`
+  (`internal/pages`), which pins `internal/diagnostics`'s hardcoded
+  `order_status.status` vocabulary against `pos`'s real status constants so
+  the two can't silently drift — a real, load-bearing regression test, not
+  dead code. `deadcode -test=false` cannot see a test-only call site by
+  construction; the guard's own header names this exact shape as a
+  sanctioned baseline entry, citing `ResetCacheForTests` as the existing
+  precedent. Added `internal/diagnostics/events.go: unreachable func:
+  EnumValues` to `scripts/ci/deadcode-baseline.txt` (one line, correct
+  sort position) rather than deleting genuinely-in-use test infrastructure
+  or fabricating a fake production call site.
+
+This guard could not be run locally in either the dev or review session —
+both cloud containers lack the GTK/WebKit dev headers `cmd/unitill-desktop`
+needs to even type-check under the `desktop` tag (a known, documented
+environment limitation, not something either session missed checking for).
+The fix was made directly from CI's own precise failure output (exact file
+and function names) and re-verified via `gofmt`/`go build`/`go vet`/the
+affected test packages/`golangci-lint`/the full `go test ./...` suite
+locally; the guard itself is re-verified by CI on the next push, which is
+also this fix's only available verification path.
+
 ## Safe to merge
 
 Yes — no blocker-class finding remains open; every should-fix item from
 the independent review is either fixed (with a new regression test) or
 filed as a scoped Backlog follow-up with an honest reason it wasn't fixed
-inline. Full gate green, twice.
+inline. Full gate green, three times (main-line, post-review-fixes,
+post-merge-with-main); the deadcode-baseline CI finding above is fixed and
+awaiting its own CI re-run.
