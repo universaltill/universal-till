@@ -19,7 +19,7 @@ import (
 // the default alone, and renders the basket with the mixed summary.
 func TestLineOrderTypeHandler_FlipsOneLineByKey(t *testing.T) {
 	mux, dp := newPOSTestDeps(t)
-	posPostForm(mux, "/api/pos/scan", "code=ABC")
+	posPostForm(mux, "/api/pos/scan", "code=PLAIN")
 	posPostForm(mux, "/api/pos/scan", "code=VAR")
 	b := dp.Engine.Basket()
 	if len(b.Lines) != 2 {
@@ -72,7 +72,7 @@ func TestLineOrderTypeHandler_FlipsOneLineByKey(t *testing.T) {
 // tender persists each line's own mode + derived header.
 func TestTender_PersistsPerLineOrderTypes(t *testing.T) {
 	mux, dp := newPOSTestDeps(t)
-	posPostForm(mux, "/api/pos/scan", "code=ABC")
+	posPostForm(mux, "/api/pos/scan", "code=PLAIN")
 	posPostForm(mux, "/api/pos/scan", "code=VAR")
 	b := dp.Engine.Basket()
 	posPostForm(mux, "/api/pos/line-order-type", "key="+b.Lines[1].LineKey+"&order_type=takeaway")
@@ -103,7 +103,7 @@ func TestTender_PersistsPerLineOrderTypes(t *testing.T) {
 		_ = rows.Scan(&sku, &ot)
 		got[sku] = ot
 	}
-	if got["ABC"] != "" || got["VAR"] != pos.OrderTypeTakeaway {
+	if got["PLAIN"] != "" || got["VAR"] != pos.OrderTypeTakeaway {
 		t.Fatalf("persisted line modes = %v", got)
 	}
 }
@@ -326,7 +326,7 @@ func TestRenderReceipt_MixedSaleMarksLines_UniformUnchanged(t *testing.T) {
 func TestTender_DefaultTakeawayButLineDineIn_PersistsDineIn(t *testing.T) {
 	mux, dp := newPOSTestDeps(t)
 	posPostForm(mux, "/api/pos/order-type", "order_type=takeaway")
-	posPostForm(mux, "/api/pos/scan", "code=ABC")
+	posPostForm(mux, "/api/pos/scan", "code=PLAIN")
 	b := dp.Engine.Basket()
 	posPostForm(mux, "/api/pos/line-order-type", "key="+b.Lines[0].LineKey+"&order_type=")
 	if dp.Engine.OrderType() != pos.OrderTypeTakeaway || dp.Engine.Basket().OrderType != "" {
@@ -386,7 +386,7 @@ func TestApplyJournal_LegacyReturnInheritsOriginalLineModes(t *testing.T) {
 func TestLineOrderType_ClaimReleasedWhenBasketTurnsAllTakeaway(t *testing.T) {
 	mux, dp := newPOSTestDeps(t)
 	t1 := createTestTable(t, dp, "T1")
-	posPostForm(mux, "/api/pos/scan", "code=ABC")
+	posPostForm(mux, "/api/pos/scan", "code=PLAIN")
 	posPostForm(mux, "/api/pos/scan", "code=VAR")
 	if rec := posPostForm(mux, "/api/pos/table", "table_id="+t1); rec.Code != http.StatusOK {
 		t.Fatalf("assign: %d", rec.Code)
@@ -405,7 +405,7 @@ func TestLineOrderType_ClaimReleasedWhenBasketTurnsAllTakeaway(t *testing.T) {
 	}
 	// Void path: dine-in + takeaway, table, void the dine-in line.
 	posPostForm(mux, "/api/pos/reset", "")
-	posPostForm(mux, "/api/pos/scan", "code=ABC")
+	posPostForm(mux, "/api/pos/scan", "code=PLAIN")
 	posPostForm(mux, "/api/pos/scan", "code=VAR")
 	b = dp.Engine.Basket()
 	posPostForm(mux, "/api/pos/line-order-type", "key="+b.Lines[1].LineKey+"&order_type=takeaway")
@@ -425,7 +425,7 @@ func TestLineOrderType_ClaimReleasedWhenBasketTurnsAllTakeaway(t *testing.T) {
 // with each line's own tax rate.
 func TestLineOrderTypeHandler_SplitsOneUnitOfMultiQtyLine(t *testing.T) {
 	mux, dp := newPOSTestDeps(t)
-	posPostForm(mux, "/api/pos/scan", "code=ABC&qty=2")
+	posPostForm(mux, "/api/pos/scan", "code=PLAIN&qty=2")
 	b := dp.Engine.Basket()
 	if len(b.Lines) != 1 || b.Lines[0].Qty != 2 {
 		t.Fatalf("seed: %+v", b.Lines)

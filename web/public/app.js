@@ -951,6 +951,20 @@ document.addEventListener('click', function(e){
   });
   document.body.addEventListener('htmx:responseError', function(){ showAlert('server'); });
   document.body.addEventListener('htmx:sendError', function(){ showAlert('network'); });
+  // ut-docs#2227: /api/pos/scan retargets a parent-code scan onto
+  // #modifier-modal (HX-Retarget/HX-Reswap) when the item has sellable
+  // variants, and fires this event via HX-Trigger-After-Swap once the
+  // picker markup has actually swapped in -- HX-Trigger alone would fire
+  // before the swap, calling showModal() on a still-empty <dialog>.
+  document.body.addEventListener('open-modifier-modal', function(){
+    var m = document.getElementById('modifier-modal');
+    // review finding, non-blocker 4: a wedge/HID scanner submits the scan
+    // row programmatically regardless of focus, so a second parent-code
+    // scan can fire while the picker from a first one is still open --
+    // showModal() on an already-open <dialog> throws InvalidStateError.
+    // The swapped-in markup (the new item) still replaces the old one first.
+    if (m && !m.open) m.showModal();
+  });
   // Self-heal: the first successful request clears a stale alert, so an
   // intermittent-connectivity till doesn't wear a permanent red banner
   // (offline-first: transient failure must not leave persistent chrome).
