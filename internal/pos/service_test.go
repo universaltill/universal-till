@@ -149,6 +149,37 @@ func TestTenderAttemptID_StableUntilResetThenFresh(t *testing.T) {
 	}
 }
 
+// ut-docs#2244: the memoized "no sellable variants" result must have the
+// exact same reset lifetime as scanCache, since it exists to be safely
+// reused across scans within one session and nothing else.
+func TestNoSellableVariantsCache_SetGetAndClearsOnReset(t *testing.T) {
+	s := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, &countingResolver{lines: map[string]BasketLine{}})
+
+	if s.HasNoSellableVariants("itm-water") {
+		t.Fatal("expected false before anything is marked")
+	}
+	s.MarkNoSellableVariants("itm-water")
+	if !s.HasNoSellableVariants("itm-water") {
+		t.Fatal("expected true immediately after marking")
+	}
+	if s.HasNoSellableVariants("itm-coffee") {
+		t.Fatal("marking one itemID must not affect another")
+	}
+
+	s.Reset()
+	if s.HasNoSellableVariants("itm-water") {
+		t.Fatal("expected Reset to clear the memoized result, same lifetime as scanCache")
+	}
+}
+
+func TestNoSellableVariantsCache_EmptyItemIDIsNoOp(t *testing.T) {
+	s := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, &countingResolver{lines: map[string]BasketLine{}})
+	s.MarkNoSellableVariants("")
+	if s.HasNoSellableVariants("") {
+		t.Fatal("empty itemID must never read back as cached")
+	}
+}
+
 func TestScanCacheClearsOnRemove(t *testing.T) {
 	resolver := &countingResolver{
 		lines: map[string]BasketLine{
