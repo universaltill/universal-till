@@ -9,6 +9,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -27,7 +28,11 @@ type shopItem struct {
 	Code         string // primary barcode, falling back to SKU — what /api/self-order/scan resolves against
 	PriceMinor   int64
 	HasModifiers bool
-	ImageURL     string
+	// HasVariants (ut-docs#2209) — see ui.Button.HasVariants: the kiosk
+	// grid template ORs it with HasModifiers to decide whether tapping the
+	// tile opens the picker or adds straight to the cart.
+	HasVariants bool
+	ImageURL    string
 }
 
 // loadShopItems returns every active catalog item as a kiosk browse tile.
@@ -50,6 +55,13 @@ func loadShopItems(ctx context.Context, d *common.Deps) ([]shopItem, error) {
 		ids = append(ids, it.ID)
 	}
 	hasMods, _ := data.NewModifierRepo(d.Db).ItemIDsWithModifiers(ctx, ids)
+	hasVariants, variantsErr := repo.ItemIDsWithVariants(ctx, ids)
+	if variantsErr != nil {
+		// Same reasoning as ButtonStore.Load's own guard (ut-docs#2209
+		// review, finding 5): on this error every kiosk tile reverts to
+		// adding the PARENT base price, so it must never fail silently.
+		logging.L().Warnf("kiosk: load items-with-variants failed, every tile falls back to parent-price add (ut-docs#2209): %v", variantsErr)
+	}
 	thumbnails, _ := repo.ItemThumbnails(ctx) // best-effort: a read error just means every tile falls back to no-image, same as a missing row
 
 	out := make([]shopItem, 0, len(items))
@@ -73,6 +85,7 @@ func loadShopItems(ctx context.Context, d *common.Deps) ([]shopItem, error) {
 			Code:         code,
 			PriceMinor:   it.BasePrice,
 			HasModifiers: hasMods[it.ID],
+			HasVariants:  hasVariants[it.ID],
 			// item_images (ut-docs#1870), not a hardcoded upload-only path:
 			// an item's thumbnail may be a built-in category icon (the
 			// picker, ut-docs#1844, or the auto-import placeholder,
@@ -161,11 +174,17 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "failed to load customization options", http.StatusInternalServerError)
 			return
 		}
+		variants, err := data.NewCatalogRepo(d.Db).ItemVariantsFor(r.Context(), itemID)
+		if err != nil {
+			http.Error(w, "failed to load customization options", http.StatusInternalServerError)
+			return
+		}
 		httpx.RenderPartial("ui/partials/self_order_modifier_picker.html", map[string]any{
 			"ItemID":   itemID,
 			"Code":     code,
 			"ItemName": base.Name,
 			"Groups":   groups,
+			"Variants": sellableVariants(variants),
 		})(w, r)
 	})
 
@@ -174,7 +193,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		code := strings.TrimSpace(r.Form.Get("code"))
 		itemID := strings.TrimSpace(r.Form.Get("itemId"))
 
-		base, selected, userMsg, err := resolveAndValidateModifiers(r.Context(), d, d.KioskEngine, code, itemID, r.Form)
+		base, selected, userMsg, err := resolveAndValidateModifiers(r.Context(), d, d.KioskEngine, httpx.ResolveLocale(w, r), code, itemID, r.Form)
 		if err != nil {
 			if userMsg == "" {
 				http.Error(w, "failed to load customization options", http.StatusInternalServerError)

@@ -114,7 +114,18 @@ func TestButtonsUIFragmentRendersSeededButtons(t *testing.T) {
 func TestButtonsUIFragment_HxValsSurvivesQuotedCode(t *testing.T) {
 	mux, d := newButtonsMux(t)
 	weird := `we"ird'code`
-	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id) VALUES (?,'Weird Tile','itm1')`, weird); err != nil {
+	// ut-docs#2209: this test needs a tile on the PLAIN (straight-to-basket)
+	// branch, and seedForPages' itm1 carries a variant (var1, seeded for
+	// ut-docs#744), so its tile now correctly opens the variant picker via
+	// hx-get instead of posting hx-vals to /api/pos/scan. Seed a
+	// variant-less, modifier-less item of our own rather than relaxing the
+	// assertion -- the escaping this test guards is a property of the plain
+	// tile specifically, and asserting it against the picker branch would
+	// silently stop testing it.
+	if _, err := d.Db.Exec(`INSERT INTO items(id,sku,name,base_price,tax_code_id,is_active) VALUES('itm_novar','NOVAR','Plain',100,'tax_std',1)`); err != nil {
+		t.Fatalf("seed variant-less item: %v", err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id) VALUES (?,'Weird Tile','itm_novar')`, weird); err != nil {
 		t.Fatalf("seed button: %v", err)
 	}
 

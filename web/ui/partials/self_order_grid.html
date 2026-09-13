@@ -1,7 +1,7 @@
 <div id="selforder-grid" class="selforder-grid">
   {{ if .Items }}
     {{ range .Items }}
-    {{ if .HasModifiers }}
+    {{ if or .HasModifiers .HasVariants }}
     <button type="button" class="selforder-tile" data-cat="{{ .CategoryID }}"
             hx-get="/api/self-order/modifiers?item={{ .ItemID }}&code={{ .Code }}"
             hx-target="#selforder-modal" hx-swap="innerHTML"
