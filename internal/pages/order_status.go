@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -211,6 +212,17 @@ type orderStatusOutcome struct {
 	Status    string
 	Who       string
 	When      string
+}
+
+// emitOrderStatus records one one-tap status change for the diagnostic-
+// mode stream (ADR-0092 §2, ut-docs#2169): receipt number, the closed
+// status value, whether the ladder actually moved, and which till applied
+// it — nothing from the order itself.
+func emitOrderStatus(receiptNo, status string, applied bool, via string) {
+	if !diagnostics.Active() {
+		return
+	}
+	diagnostics.Emit(diagnostics.OrderStatus{OrderID: receiptNo, Status: status, Applied: applied, Via: via})
 }
 
 // applyOrderStatusCore is THE guarded status write, shared by the human
@@ -719,6 +731,9 @@ func registerOrderStatus(mux *http.ServeMux, d *common.Deps) {
 		// (ut-docs#1350) and render its post-write truth; ANY failure falls
 		// back to the local write below, exactly as an offline till.
 		if res, ok := applyOrderStatusOnPrimary(r.Context(), d, orderProxyClient, receiptNo, next, actorID); ok {
+			// Applied is inferred: the primary's post-write truth equals the
+			// requested status only when the move was accepted.
+			emitOrderStatus(receiptNo, next, res.Status == next, diagnostics.ViaPrimary)
 			writeOrderStatusFragment(w, locale, receiptNo, res.Status, res.Who, res.When)
 			return
 		}
@@ -731,6 +746,7 @@ func registerOrderStatus(mux *http.ServeMux, d *common.Deps) {
 			fail(http.StatusNotFound, "orders.err.not_found")
 			return
 		}
+		emitOrderStatus(receiptNo, next, res.Applied, diagnostics.ViaLocal)
 		// Render the post-write truth (applied or dropped alike) from the
 		// journal's newest event — its actor/time is the current state's
 		// who/when. Tracked=false (sale exists but was never tracked, only

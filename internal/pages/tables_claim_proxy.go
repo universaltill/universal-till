@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -169,17 +170,40 @@ func claimTableWriteThrough(ctx context.Context, d *common.Deps, repo *data.POSR
 	if !ok {
 		claimed, err := repo.ClaimTableForTill(ctx, tableID, "", time.Now().Add(-tillClaimTTL))
 		if err == nil {
+			emitTableClaim(tableID, claimed, nil, diagnostics.ViaLocal)
 			return claimed, nil
 		}
 		logging.L().Debugf("table claim: local reconciling claim of %s failed (%v) — using the plain local claim", tableID, err)
-		return repo.ClaimTable(ctx, tableID)
+		claimed, err = repo.ClaimTable(ctx, tableID)
+		emitTableClaim(tableID, claimed, err, diagnostics.ViaLocal)
+		return claimed, err
 	}
 	if claimed {
 		if _, err := repo.ClaimTable(ctx, tableID); err != nil {
 			logging.L().Debugf("table claim proxy: local mirror of primary-granted claim %s failed: %v", tableID, err)
 		}
 	}
+	emitTableClaim(tableID, claimed, nil, diagnostics.ViaPrimary)
 	return claimed, nil
+}
+
+// emitTableClaim records one claim outcome for the diagnostic-mode stream
+// (ADR-0092 §2, ut-docs#2169): the table ID and a closed outcome only —
+// the table's operator-typed label never travels. This is THE single
+// choke point every basket/hold table pick goes through, so wiring it
+// here covers all three callers (pos_api.go, hold_api.go ×2).
+func emitTableClaim(tableID string, claimed bool, err error, via string) {
+	if !diagnostics.Active() {
+		return
+	}
+	outcome := diagnostics.TableOutcomeRefused
+	switch {
+	case err != nil:
+		outcome = diagnostics.TableOutcomeError
+	case claimed:
+		outcome = diagnostics.TableOutcomeClaimed
+	}
+	diagnostics.Emit(diagnostics.TableAssignment{TableID: tableID, Action: diagnostics.TableActionClaim, Outcome: outcome, Via: via})
 }
 
 // reaffirmHeldOrderTableClaims write-throughs this till's PRIMARY-side claim

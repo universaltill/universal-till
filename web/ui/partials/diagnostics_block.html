@@ -1,0 +1,67 @@
+<!-- Diagnostic mode card body (ADR-0092 §1/§7, ut-docs#2169). Rendered two
+     ways with the same `diagnostics` key (a pages.diagnosticsView):
+       - inline from settings.html (the card shell + <h2> live there);
+       - standalone via httpx.RenderPartial from the activate/stop handlers
+         (diagnostics_settings.go) for an htmx outerHTML swap, followed by
+         an out-of-band refresh of the nav chip.
+     Same one-source-of-truth shape as tse_provisioning_block.html. Every
+     visible string is a locale key; the activation code the operator typed
+     is never echoed back into the markup. -->
+<div id="diagnostics-block" class="diagnostics-block">
+  {{ with .diagnostics }}
+  {{ if .Active }}
+  <p data-testid="diagnostics-on">
+    <strong>{{ printf (T "settings.diagnostics.on_since") .Since }}</strong>
+  </p>
+  <p class="muted">{{ T "settings.diagnostics.on_explain" }}</p>
+  <p class="muted" data-testid="diagnostics-session-id">{{ T "settings.diagnostics.session_id" }} <code>{{ .SessionID }}</code></p>
+  {{ if .Activated }}
+  <p class="notice-block-success" data-testid="diagnostics-activated-notice">{{ T "settings.diagnostics.activated" }}</p>
+  {{ end }}
+  {{ if .ConfirmStop }}
+  <div class="notice-block-warn" data-testid="diagnostics-stop-confirm">
+    <p>
+      {{ if or .PendingBatches .PendingEvents }}
+      {{ printf (T "settings.diagnostics.stop_confirm") .PendingBatches .PendingEvents }}
+      {{ else }}
+      {{ T "settings.diagnostics.stop_confirm_none" }}
+      {{ end }}
+    </p>
+    <div class="set-row">
+      <form hx-post="/api/settings/diagnostics/stop" hx-target="#diagnostics-block" hx-swap="outerHTML" hx-disabled-elt="this">
+        <input type="hidden" name="confirm" value="1">
+        <button class="btn" type="submit" data-testid="diagnostics-stop-confirm-btn">{{ T "settings.diagnostics.stop_confirm_btn" }}</button>
+      </form>
+      <form hx-post="/api/settings/diagnostics/cancel-stop" hx-target="#diagnostics-block" hx-swap="outerHTML" hx-disabled-elt="this">
+        <button class="btn secondary" type="submit" data-testid="diagnostics-stop-cancel">{{ T "settings.diagnostics.cancel_btn" }}</button>
+      </form>
+    </div>
+  </div>
+  {{ else }}
+  <form hx-post="/api/settings/diagnostics/stop" hx-target="#diagnostics-block" hx-swap="outerHTML" hx-disabled-elt="this" class="set-row">
+    <button class="btn secondary" type="submit" data-testid="diagnostics-stop">{{ T "settings.diagnostics.stop_btn" }}</button>
+    {{ if .PendingBatches }}<span class="muted">{{ printf (T "settings.diagnostics.pending_count") .PendingBatches }}</span>{{ end }}
+  </form>
+  {{ end }}
+  {{ else }}
+  <p data-testid="diagnostics-off"><strong>{{ T "settings.diagnostics.off" }}</strong></p>
+  <p class="muted">{{ T "settings.diagnostics.intro" }}</p>
+  {{ if .Stopped }}
+  <p class="notice-block-success" data-testid="diagnostics-stopped-notice">{{ printf (T "settings.diagnostics.stopped") .StoppedBatches .StoppedEvents }}</p>
+  {{ else if eq .EndedReason "revoked" }}
+  <p class="muted" data-testid="diagnostics-ended-remotely">{{ printf (T "settings.diagnostics.ended_remotely") .EndedAt }}</p>
+  {{ else if eq .EndedReason "rejected" }}
+  <p class="muted" data-testid="diagnostics-ended-remotely">{{ printf (T "settings.diagnostics.ended_remotely") .EndedAt }}</p>
+  {{ end }}
+  {{ if .ErrKey }}
+  <p class="notice-block-warn" role="alert" data-testid="diagnostics-error"><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ T .ErrKey }}</p>
+  {{ end }}
+  <form hx-post="/api/settings/diagnostics/activate" hx-target="#diagnostics-block" hx-swap="outerHTML" hx-disabled-elt="find button" class="set-gap">
+    <label for="diagnostics-code">{{ T "settings.diagnostics.code_label" }}
+      <input id="diagnostics-code" name="code" type="text" inputmode="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="64" required data-testid="diagnostics-code">
+    </label>
+    <button class="btn" type="submit" data-testid="diagnostics-activate">{{ T "settings.diagnostics.activate_btn" }}</button>
+  </form>
+  {{ end }}
+  {{ end }}
+</div>

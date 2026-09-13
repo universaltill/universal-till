@@ -26,6 +26,7 @@ import (
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -76,6 +77,14 @@ type Hooks struct {
 	// rides the directive itself) and store it locally. The hook only acks
 	// success once the credential is confirmed stored on disk.
 	FiscalTSEReady func(ctx context.Context) (string, error)
+	// DiagnosticModeRevoke handles the "diagnostic_mode_revoke" directive
+	// (ADR-0092 §1/§4, ut-docs#2169): Universal Till ended this till's
+	// diagnostic session. Payload is {session_id} only — no secret material
+	// rides the directive (ADR-0053's "signal, not secret" shape). The hook
+	// clears the local active flag AND drains the whole on-disk pending
+	// queue for that session in one step, so a revoked till doesn't spend
+	// N more ticks rediscovering "not active" one 409 at a time.
+	DiagnosticModeRevoke func(ctx context.Context, sessionID string) (string, error)
 	// DeviceExtra contributes extra fields to the device report (e.g. the
 	// current theme + the themes this till can switch to, so the cloud can
 	// render a real design picker instead of a raw key/value form). Keys must
@@ -105,6 +114,11 @@ func Tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) erro
 	// issue_reports.go's own check) and issuereport.Pending() is a pure local
 	// disk read.
 	uploadPendingIssueReports(ctx, cfg, db)
+	// Diagnostic-mode batches (ADR-0092 §4, ut-docs#2169) ride the same
+	// slot for the same reasons: the flush to disk must happen even when
+	// unregistered (the ring is time/size-capped, so a stalled flush loses
+	// events), and the upload self-guards on registration inside.
+	uploadPendingDiagnostics(ctx, cfg, db)
 
 	eff := enroll.Effective(cfg)
 	m := eff.Marketplace
@@ -292,6 +306,15 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 		// Deliberately payload-less (ADR-0053 Decision 1): the directive is
 		// a non-secret ready signal; no field validation applies.
 		msg, err = hooks.FiscalTSEReady(ctx)
+	case "diagnostic_mode_revoke":
+		if hooks.DiagnosticModeRevoke == nil {
+			return "failed", "diagnostic_mode_revoke is not supported on this till"
+		}
+		id := str("session_id")
+		if id == "" {
+			return "failed", "missing session_id"
+		}
+		msg, err = hooks.DiagnosticModeRevoke(ctx, id)
 	default:
 		return "failed", "unknown directive type " + d.Type
 	}
@@ -348,6 +371,21 @@ func pushSync(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) 
 			}
 		}
 	}
+	// A LOCAL diagnostic-mode stop (ADR-0092 §1, ut-docs#2169) is reported
+	// best-effort here — on the device record of the very next heartbeat,
+	// no dedicated round trip, no blocking wait — and the marker clears
+	// once this push succeeds. Known gap, stated plainly: ut-cloud's sync
+	// handler decodes the device record into a typed struct today and has
+	// no dedicated stop endpoint (part (b) built activate/batch/revoke
+	// only), so the cloud does not yet CONSUME this field; the wire shape
+	// is in place for the cloud-side follow-up, and until then a stopped
+	// session stays "active" on the cloud until staff revoke it — exactly
+	// the bounded lag §1 names, closed for upload purposes by the cloud's
+	// own "reject any batch for a non-active session" check.
+	stopReport, hasStop := diagnostics.StopReport(ctx, settings)
+	if hasStop {
+		device["diagnostics"] = stopReport
+	}
 	payload, _ := json.Marshal(map[string]any{
 		"store_id": m.StoreID,
 		"devices":  []map[string]any{device},
@@ -355,6 +393,11 @@ func pushSync(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) 
 	body, err := post(ctx, cfg, "/v1/stores/sync", payload)
 	if err != nil {
 		return nil, err
+	}
+	if hasStop {
+		if cerr := diagnostics.ClearStopReport(ctx, settings); cerr != nil {
+			logging.L().Warnf("cloudsync: diagnostics stop report delivered but marker not cleared: %v", cerr)
+		}
 	}
 	var resp struct {
 		Data struct {

@@ -1278,6 +1278,10 @@ type InstalledPluginRow struct {
 	// InstallState is the plugins.install_state lifecycle value —
 	// WasmRuntime.Sync keys its broken/heal transitions on it (ut-docs#368).
 	InstallState string
+	// InstalledSHA256 is the verified bundle checksum recorded at install
+	// (plugins.installed_sha256, "" for a row that predates it) — the
+	// diagnostic-mode plugin inventory reports it (ADR-0092 §2).
+	InstalledSHA256 string
 }
 
 // MenuEntryRow represents a plugin menu entry with aggregated permissions.
@@ -1477,7 +1481,7 @@ func (r *PluginRepo) ListInstalledPlugins(ctx context.Context) ([]InstalledPlugi
 	// bumps the generation after any failure regardless of order), but an
 	// explicit order removes the ambiguity for the next reader.
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, version, COALESCE(author, ''), COALESCE(runtime, 'go'), COALESCE(entrypoint, ''), is_active, COALESCE(install_state, '')
+SELECT id, name, version, COALESCE(author, ''), COALESCE(runtime, 'go'), COALESCE(entrypoint, ''), is_active, COALESCE(install_state, ''), COALESCE(installed_sha256, '')
 FROM plugins
 WHERE is_active = 1
 ORDER BY id
@@ -1489,7 +1493,7 @@ ORDER BY id
 	var res []InstalledPluginRow
 	for rows.Next() {
 		var p InstalledPluginRow
-		if err := rows.Scan(&p.ID, &p.Name, &p.Version, &p.Author, &p.Runtime, &p.Entrypoint, &p.IsActive, &p.InstallState); err != nil {
+		if err := rows.Scan(&p.ID, &p.Name, &p.Version, &p.Author, &p.Runtime, &p.Entrypoint, &p.IsActive, &p.InstallState, &p.InstalledSHA256); err != nil {
 			return nil, pluginObs.wrap("list_installed", err)
 		}
 		res = append(res, p)

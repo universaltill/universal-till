@@ -5,8 +5,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"sync"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -45,6 +49,11 @@ type taxRateAskResponse struct {
 type taxAskAnswer struct {
 	rateBP int
 	ok     bool
+	// pluginID names the plugin that produced this answer ("" for a
+	// declined ask) — carried through the cache only so a cache HIT can
+	// still report the plugin identity to the diagnostic-mode emitter
+	// (ADR-0092 §2, ut-docs#2169); it plays no part in the answer itself.
+	pluginID string
 }
 
 // taxAskCacheMax bounds the cache (catalog items × order types in practice;
@@ -90,6 +99,55 @@ type pluginTaxRateAsker struct {
 	// Zero (every real construction site, e.g. init.go) keeps production
 	// behaviour exactly as before.
 	cacheMax int
+	// versionsGen/versions memoize installed plugin id → version for one
+	// bus generation, read ONLY while a diagnostic session is active (the
+	// emitter needs the answering plugin's version, ADR-0092 §2). A till
+	// that never activated diagnostics never runs this query.
+	versionsGen uint64
+	versions    map[string]string
+}
+
+// emitAsk records one tax.rate.ask lifecycle event for the diagnostic-mode
+// stream (ADR-0092 §2, ut-docs#2169) — plugin identity, cache hit/miss,
+// generation, duration, a correlation id and the outcome CATEGORY only;
+// never the payload (item/tax code ids stay on the line, not here) and
+// never the response bytes. Cheap no-op unless a session is active, so
+// the version lookup below is never paid on an ordinary till.
+func (a *pluginTaxRateAsker) emitAsk(gen uint64, pluginID string, cacheHit bool, dur time.Duration, outcome string) {
+	if !diagnostics.Active() {
+		return
+	}
+	diagnostics.Emit(diagnostics.PluginAsk{
+		Event:         taxRateAskEvent,
+		PluginID:      pluginID,
+		PluginVersion: a.pluginVersion(gen, pluginID),
+		CacheHit:      cacheHit,
+		Generation:    gen,
+		DurationMS:    dur.Milliseconds(),
+		CorrelationID: uuid.NewString(),
+		Outcome:       outcome,
+	})
+}
+
+// pluginVersion resolves an installed plugin's version, memoized per bus
+// generation (an install/upgrade bumps the generation, so a stale version
+// can never outlive the install it was read under). "" when unknown.
+func (a *pluginTaxRateAsker) pluginVersion(gen uint64, pluginID string) string {
+	if pluginID == "" {
+		return ""
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.versions == nil || a.versionsGen != gen {
+		a.versions = map[string]string{}
+		a.versionsGen = gen
+		if rows, err := data.NewPluginRepo(a.db).ListInstalledPlugins(context.Background()); err == nil {
+			for _, r := range rows {
+				a.versions[r.ID] = r.Version
+			}
+		}
+	}
+	return a.versions[pluginID]
 }
 
 // maxCache returns the cache's real eviction bound: cacheMax when a test
@@ -132,8 +190,10 @@ func (a *pluginTaxRateAsker) AskTaxRateBP(l pos.BasketLine, orderType string) (i
 	if ans, hit := a.cache[payload]; hit {
 		a.mu.Unlock()
 		if ans.ok {
+			a.emitAsk(gen, ans.pluginID, true, 0, diagnostics.OutcomeAnswer)
 			return ans.rateBP, true, false
 		}
+		a.emitAsk(gen, ans.pluginID, true, 0, diagnostics.OutcomeNoOpinion)
 		return 0, false, a.taxAuthorityBroken(gen)
 	}
 	a.mu.Unlock()
@@ -141,7 +201,9 @@ func (a *pluginTaxRateAsker) AskTaxRateBP(l pos.BasketLine, orderType string) (i
 	// Ask outside the lock: a blocking wasm ask is milliseconds-to-~100ms,
 	// and holding the lock across it would serialize unrelated lines.
 	// Concurrent recomputes may double-ask the same payload; that's benign.
-	resp, ok, err := bus.Ask(context.Background(), taxRateAskEvent, payload)
+	askStart := time.Now()
+	resp, pluginID, ok, err := bus.AskFrom(context.Background(), taxRateAskEvent, payload)
+	askDur := time.Since(askStart)
 	if err != nil {
 		// transient failure: decline now, retry next recompute — but still
 		// fail closed if a registered tax plugin is broken (a second,
@@ -153,9 +215,10 @@ func (a *pluginTaxRateAsker) AskTaxRateBP(l pos.BasketLine, orderType string) (i
 		// desktop with byte-identical plugin code) had no trace anywhere to
 		// catch it by.
 		logging.L().Errorf("tax.rate.ask failed for item=%s tax_code=%s order_type=%q: %v", l.ItemID, l.TaxCodeID, orderType, err)
+		a.emitAsk(gen, pluginID, false, askDur, diagnostics.OutcomeError)
 		return 0, false, a.taxAuthorityBroken(gen)
 	}
-	ans := taxAskAnswer{}
+	ans := taxAskAnswer{pluginID: pluginID}
 	if ok {
 		var parsed taxRateAskResponse
 		if unmarshalErr := json.Unmarshal(resp, &parsed); unmarshalErr != nil {
@@ -165,11 +228,20 @@ func (a *pluginTaxRateAsker) AskTaxRateBP(l pos.BasketLine, orderType string) (i
 			// which is a deterministic answer and cacheable. Logged for the
 			// same reason as the bus.Ask error above (ut-docs#1370).
 			logging.L().Errorf("tax.rate.ask returned unparseable JSON for item=%s tax_code=%s order_type=%q: %v (raw: %q)", l.ItemID, l.TaxCodeID, orderType, unmarshalErr, string(resp))
+			a.emitAsk(gen, pluginID, false, askDur, diagnostics.OutcomeMalformed)
 			return 0, false, a.taxAuthorityBroken(gen)
 		}
 		if parsed.RateBP > 0 {
-			ans = taxAskAnswer{rateBP: parsed.RateBP, ok: true}
+			ans = taxAskAnswer{rateBP: parsed.RateBP, ok: true, pluginID: pluginID}
 		}
+	}
+	// The "clean no_opinion" — a valid, empty or rate<=0 answer — is exactly
+	// the outcome ut-docs#1391's incident could not see in any log; it is
+	// emitted as its own category here, never folded into "answer".
+	if ans.ok {
+		a.emitAsk(gen, pluginID, false, askDur, diagnostics.OutcomeAnswer)
+	} else {
+		a.emitAsk(gen, pluginID, false, askDur, diagnostics.OutcomeNoOpinion)
 	}
 
 	a.mu.Lock()

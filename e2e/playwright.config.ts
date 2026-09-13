@@ -68,6 +68,14 @@ const AI_IDENTIFY_ONLY_SPECS = /camera-error-branching-ai-identify-1559\.spec\.t
 // in the suite, so it gets its own server + project.
 const LAYOUT_ONLY_SPECS = /layout-plugin-menu-1904\.spec\.ts$/;
 
+// ut-docs#2169 / ADR-0092: the diagnostic-mode spec REGISTERS its till
+// against an in-process fake ut-cloud (run-till-diagnostics.sh points
+// UT_MARKETPLACE_ENDPOINT_URL at the port the spec listens on). Doing that
+// to the shared default till would flip its Registration card — and what
+// every cloudsync tick does — for every later spec in the run, so it gets
+// its own server + project, same reasoning as the layout project above.
+const DIAGNOSTICS_ONLY_SPECS = /diagnostic-mode-indicator-2169\.spec\.ts$/;
+
 export default defineConfig({
   testDir: './tests',
   timeout: 30_000,
@@ -103,11 +111,17 @@ export default defineConfig({
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
     },
+    {
+      command: 'bash ./run-till-diagnostics.sh',
+      url: 'http://127.0.0.1:8095/healthz',
+      timeout: 120_000,
+      reuseExistingServer: !process.env.CI,
+    },
   ],
   projects: [
     {
       name: 'default',
-      testIgnore: [AUTH_ONLY_SPECS, AI_IDENTIFY_ONLY_SPECS, LAYOUT_ONLY_SPECS],
+      testIgnore: [AUTH_ONLY_SPECS, AI_IDENTIFY_ONLY_SPECS, LAYOUT_ONLY_SPECS, DIAGNOSTICS_ONLY_SPECS],
       use: {
         baseURL: 'http://127.0.0.1:8091',
         trace: 'retain-on-failure',
@@ -140,6 +154,16 @@ export default defineConfig({
       testMatch: LAYOUT_ONLY_SPECS,
       use: {
         baseURL: 'http://127.0.0.1:8094',
+        trace: 'retain-on-failure',
+        screenshot: 'only-on-failure',
+        launchOptions,
+      },
+    },
+    {
+      name: 'diagnostics',
+      testMatch: DIAGNOSTICS_ONLY_SPECS,
+      use: {
+        baseURL: 'http://127.0.0.1:8095',
         trace: 'retain-on-failure',
         screenshot: 'only-on-failure',
         launchOptions,

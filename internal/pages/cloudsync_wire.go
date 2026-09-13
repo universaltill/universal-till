@@ -16,6 +16,7 @@ import (
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/cloudsync"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -154,6 +155,18 @@ func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.C
 		// fiscal.signing_device_configured flips true only on confirmed local receipt.
 		FiscalTSEReady: func(ctx context.Context) (string, error) {
 			return applyFiscalTSEReady(ctx, d)
+		},
+		// diagnostic_mode_revoke (ADR-0092 §1/§4, ut-docs#2169): Universal
+		// Till ended this till's diagnostic session — clear the local flag
+		// and drain that session's whole pending queue in one step. Same
+		// settings store the local stop control writes, so the two paths
+		// can never disagree about what "off" means.
+		DiagnosticModeRevoke: func(ctx context.Context, sessionID string) (string, error) {
+			msg, err := diagnostics.Revoke(ctx, d.Settings, sessionID)
+			if err == nil {
+				auditDiagnostics(ctx, d, "system", "diagnostics_revoked", map[string]any{"session_id": sessionID})
+			}
+			return msg, err
 		},
 		// The cloud's Design picker offers exactly what this till could pick
 		// locally (built-in + plugin-contributed themes); applying one comes

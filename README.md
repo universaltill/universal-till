@@ -84,6 +84,10 @@
 - Managed fiscal device where a market requires one (e.g. German TSE)
 - Remote support sessions — a technician sees your screen, with your
   permission, and fixes it with you
+- Diagnostic mode — with a one-time code from support, the till streams
+  structured technical events (never receipts, prices, names or notes)
+  until you turn it off in Settings; a rail indicator stays visible the
+  whole time
 - Advanced analytics and accountant exports
 - Multi-location management
 

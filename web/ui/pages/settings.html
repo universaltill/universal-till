@@ -84,6 +84,22 @@
   <a class="btn" href="/report-issue">{{ T "issuereport.title" }}</a>
 </div>
 {{ end }}
+{{/* Diagnostic mode (ADR-0092 §1/§7, ut-docs#2169): activation-code entry
+     while off; "ON since <date>" + the local stop control while on. The
+     body is a shared partial so the activate/stop handlers re-render
+     EXACTLY this markup for their htmx outerHTML swap — same pattern as
+     tse_provisioning_block.html. Manager-only, like the Report-an-issue
+     card above (the sidebar row is filtered the same way in
+     settings_page.go's filterSettingsNavForRender, whose consistency test
+     reads the `if` from the line directly above the card's div — which is
+     also why this is a template comment, not an HTML one: an HTML comment
+     here would render its text to a cashier's page). */}}
+{{ if .isManager }}
+<div class="card" id="settings-diagnostics">
+  <h2>{{ T "settings.diagnostics.title" }} {{ helpLink "display" }}</h2>
+  {{ template "diagnostics_block.html" . }}
+</div>
+{{ end }}
 {{ if .isManager }}
 <div class="card" id="settings-menulayout">
   <h2>{{ T "menulayout.title" }} {{ helpLink "menu" }}</h2>

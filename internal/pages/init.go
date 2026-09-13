@@ -15,6 +15,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/issuereport"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -95,10 +96,23 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	pluginThemesDir = paths.Plugins()
 	pluginIconsDir = paths.Plugins()
 	issuereport.PendingDir = paths.Data("issue-reports", "pending")
+	// Diagnostic-mode pending batches (ADR-0092 §3, ut-docs#2169) — same
+	// stable-data-dir convention; diagnostics.Flush MkdirAlls it before the
+	// first write.
+	diagnostics.PendingDir = paths.Data("diagnostics", "pending")
 
 	// settings + state
 	setStore := settings.NewStore(db)
 	state := common.LoadState(ctx, setStore, cfg)
+	// ADR-0092 §1: a diagnostic session persisted as settings rows comes
+	// back active across restart/reboot/update. Non-fatal (offline-first:
+	// a boot must never be blocked on this) — a failed read leaves the
+	// till inactive, the fail-safe direction. The inventory events are
+	// emitted once dp exists (below), so the session opens with the
+	// till's identity every boot.
+	if err := diagnostics.LoadSession(ctx, setStore); err != nil {
+		log.Errorf("diagnostics: restore session: %v", err)
+	}
 	// Ensure defaults are persisted (e.g., theme). Non-fatal on error
 	// (offline-first: a boot must never be blocked on a settings write) —
 	// the in-memory state above is already correct for this boot either way.
@@ -508,12 +522,14 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerShiftsAPI(mux, dp)
 	registerShiftsPage(mux, dp)
 	registerReportsPage(mux, dp)
-	registerBackofficePage(mux, dp)  // manager dashboard (ADR-0018 back-office home)
-	registerSelfOrder(mux, dp)       // self-order kiosk shell, auth-exempt (ADR-0020)
-	registerSelfOrderShop(mux, dp)   // kiosk browse/search/customize/cart, auth-exempt (ADR-0020 Phase 3)
-	registerAuditPage(mux, dp)       // manager-only audit-trail browse/filter page
-	registerIssueReportPage(mux, dp) // manager-only "report an issue" capture (ADR-0022)
-	registerMyReportsPage(mux, dp)   // manager-only sent-report tracking list (ut-docs#348)
+	registerBackofficePage(mux, dp)      // manager dashboard (ADR-0018 back-office home)
+	registerSelfOrder(mux, dp)           // self-order kiosk shell, auth-exempt (ADR-0020)
+	registerSelfOrderShop(mux, dp)       // kiosk browse/search/customize/cart, auth-exempt (ADR-0020 Phase 3)
+	registerAuditPage(mux, dp)           // manager-only audit-trail browse/filter page
+	registerIssueReportPage(mux, dp)     // manager-only "report an issue" capture (ADR-0022)
+	registerMyReportsPage(mux, dp)       // manager-only sent-report tracking list (ut-docs#348)
+	registerDiagnosticsSettings(mux, dp) // diagnostic mode: nav chip, code redemption, local stop (ADR-0092, ut-docs#2169)
+	emitDiagnosticsInventory(ctx, dp)    // no-op unless a session was restored above
 	registerHelp(mux, dp)
 	registerUpdateAPI(mux, dp)
 	registerMenu(mux, dp)

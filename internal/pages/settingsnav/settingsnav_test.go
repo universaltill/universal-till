@@ -33,6 +33,7 @@ func TestResolve_ZeroAmendmentsMatchesCoreSettingsExactly(t *testing.T) {
 	want := []Row{
 		{Key: "registration", Label: "Till registration"},
 		{Key: "settings-issuereport", Label: "Report an issue"},
+		{Key: "settings-diagnostics", Label: "Diagnostic mode"},
 		{Key: "settings-menulayout", Label: "Hidden menu tiles"},
 		{Key: "settings-update", Label: "Software update"},
 		{Key: "settings-theme", Label: "Theme"},
