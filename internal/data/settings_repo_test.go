@@ -18,6 +18,7 @@ func TestSettingsRepo_SetAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
+	t.Cleanup(func() { db.Close() })
 	if _, err := db.Exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)`); err != nil {
 		t.Fatalf("create settings: %v", err)
 	}
