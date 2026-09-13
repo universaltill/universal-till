@@ -96,6 +96,57 @@ func TestGetModifiers_RendersPickerWithGroups(t *testing.T) {
 	}
 }
 
+// ut-docs#2210: the picker's own content must reflect a group added AFTER
+// the item already had customization -- not just the /ui/buttons tile's
+// scan-vs-picker gate (covered separately in buttons_api_test.go). A merchant
+// editing an existing customizable item (adding a third group, e.g.
+// "Toppings", alongside the item's existing Extras/Size) must see it appear
+// on the very next tap, with no button rebuild anywhere in the picture.
+func TestGetModifiers_ReflectsGroupAddedAfterFirstFetch(t *testing.T) {
+	dp, d := setupModifiersTestDeps(t)
+	mux := http.NewServeMux()
+	registerPOSModifiersAPI(mux, dp)
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/pos/modifiers?item=itm-coffee&code=COFFEE", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first fetch: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Toppings") {
+		t.Fatalf("Toppings should not exist yet: %s", rec.Body.String())
+	}
+
+	if _, err := d.DB.Exec(`
+		INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order, is_active)
+		VALUES ('g-toppings', 'itm-coffee', 'Toppings', 0, 0, 3, 3, 1)
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO item_modifier_group_links (item_id, group_id, sort_order) VALUES ('itm-coffee', 'g-toppings', 3)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`
+		INSERT INTO item_modifier_options (id, group_id, name, price_delta_minor, sort_order)
+		VALUES ('o-cinnamon', 'g-toppings', 'Cinnamon', 20, 1)
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/ui/pos/modifiers?item=itm-coffee&code=COFFEE", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second fetch: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"Toppings", "Cinnamon", "Extras", "Size"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("picker after edit missing %q: %s", want, body)
+		}
+	}
+}
+
 func TestGetModifiers_UnknownItemIs404(t *testing.T) {
 	dp, _ := setupModifiersTestDeps(t)
 	mux := http.NewServeMux()
