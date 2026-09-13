@@ -135,6 +135,48 @@ func TestAttachDecisionLine(t *testing.T) {
 	}
 }
 
+// TestAttachRetryDurationFloorsWhenGateDisabled is ut-docs#1278's actual
+// fix: attachDeadline() (attach_gate_linux.go) used to collapse straight to
+// "now" (a single immediate probe, no retry) whenever the render-defect
+// gate was disabled (UT_SHELL_MIN_UPTIME_SECONDS=0), silently reopening the
+// ut-docs#1199 boot race on any machine disabling the gate for an unrelated
+// reason (X11, a non-Pi Linux desktop, no WebKitGTK 2.52.6 compositing
+// defect). The attach-race retry must still get its own floor in that case.
+func TestAttachRetryDurationFloorsWhenGateDisabled(t *testing.T) {
+	got := attachRetryDuration(0, 0)
+	if got != attachRetryFloor {
+		t.Fatalf("attachRetryDuration(0, 0) = %v, want attachRetryFloor (%v) — a disabled render gate must not collapse the attach-race retry to a single immediate probe",
+			got, attachRetryFloor)
+	}
+}
+
+// TestAttachRetryDurationUnchangedWhenGateActive covers acceptance criterion
+// 3 of ut-docs#1278: when the render gate is NOT disabled, attachRetryDuration
+// must still reduce to plain holdFor(up, min) — including the
+// near-end-of-window case where that is smaller than attachRetryFloor. The
+// two windows may legitimately coincide (ut-docs#1199's "free on the attach
+// path" reasoning), but this fix must not widen the active-gate window by
+// flooring it too — only the disabled-gate case (min == 0) gets the floor.
+func TestAttachRetryDurationUnchangedWhenGateActive(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		up, min time.Duration
+		want    time.Duration
+	}{
+		{"far from min, most of the window remains", 5 * time.Second, 60 * time.Second, 55 * time.Second},
+		{"near end of window, below the floor — must NOT be raised to the floor", 59 * time.Second, 60 * time.Second, 1 * time.Second},
+		{"exactly at min, no window left", 60 * time.Second, 60 * time.Second, 0},
+		{"already past min, no window left", 65 * time.Second, 60 * time.Second, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := attachRetryDuration(tc.up, tc.min)
+			if got != tc.want {
+				t.Errorf("attachRetryDuration(%v, %v) = %v, want %v", tc.up, tc.min, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestWaitForAttachGivesUpAtDeadlineNeverAttaches covers the genuine
 // no-service case (dev launch, tarball install, or a .deb whose service is
 // simply down): the probe never succeeds, so waitForAttach must give up

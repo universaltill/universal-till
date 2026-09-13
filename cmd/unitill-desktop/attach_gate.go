@@ -12,6 +12,46 @@ import (
 // moment it binds :8080, without hot-looping the probe.
 const attachPollInterval = 500 * time.Millisecond
 
+// attachRetryFloor is the attach-probe retry's own minimum, held open
+// regardless of UT_SHELL_MIN_UPTIME_SECONDS (ut-docs#1278, review follow-up
+// to ut-docs#1199). Before this, attachDeadline() (attach_gate_linux.go)
+// derived the whole retry window from the render-defect startup gate's own
+// duration, so an operator disabling that gate for a reason unrelated to
+// ut-docs#1199 — X11 instead of Wayland, a non-Pi Linux desktop, any machine
+// without the WebKitGTK 2.52.6 compositing defect — silently also disabled
+// the boot-race retry: that machine reverted to a single attach probe and
+// could still lose the race #1199 fixes. The render-defect gate and the
+// attach-race retry each need their own on/off switch. 15s is a recommended
+// default (per the review's suggestion) — tune to the measured systemd unit
+// start time if a deployment needs more headroom.
+const attachRetryFloor = 15 * time.Second
+
+// attachRetryDuration is attachDeadline's pure decision (attach_gate_linux.go)
+// of how long from now to keep retrying the attach probe, given the render
+// gate's resolved minimum (min, from gateDuration()) and, when the gate is
+// active, how long the machine has been up (up). Split out as pure logic —
+// no clock, no file I/O — so the decision is directly testable here under
+// the plain (non-desktop-tagged) build, same "test the pure logic, leave
+// time.Now()/file I/O untested" split startup_gate.go's holdFor already uses
+// for waitForSafeStartup. It lives in this untagged file, not the
+// desktop&&linux-only attach_gate_linux.go, specifically so its test runs in
+// the CI job that actually executes `go test` on this package — the
+// desktop-shell job builds and vets attach_gate_linux.go but never tests it.
+//
+// min == 0 means the render-defect gate is explicitly disabled
+// (UT_SHELL_MIN_UPTIME_SECONDS=0) — but the attach-race retry is a separate
+// concern with its own switch, so it still gets attachRetryFloor rather than
+// collapsing to a single immediate probe (ut-docs#1278). Any other min keeps
+// the ut-docs#1199 behaviour unchanged: the two windows may still coincide,
+// deliberately — retrying the attach probe across the same span the render
+// gate is already holding open costs nothing extra.
+func attachRetryDuration(up, min time.Duration) time.Duration {
+	if min == 0 {
+		return attachRetryFloor
+	}
+	return holdFor(up, min)
+}
+
 // waitForAttach repeats probe (a health check against the would-be already-
 // running server) at attachPollInterval until either it reports true — the
 // shell attaches instead of spawning its own server — or deadline passes
@@ -32,12 +72,15 @@ const attachPollInterval = 500 * time.Millisecond
 //
 // A deadline that is not after `now()` (already passed, or equal) decides
 // immediately from a single probe call — the exact behaviour this
-// replaces — so a warm or manual launch, a platform with no startup gate,
-// or the gate disabled outright all cost exactly the one probe they always
-// cost. Only a cold boot still inside the gate window retries, and it never
-// retries past that window (attachDeadline derives from the same gate
-// duration as waitForSafeStartup, which was holding the window shut for
-// exactly that long anyway).
+// replaces — so a warm or manual launch, or a platform with no startup gate
+// at all, cost exactly the one probe they always cost. Only a cold boot
+// still inside a retry window retries, and it never retries past that
+// window: on Linux with the render-defect gate active, that window is
+// attachDeadline's reuse of the same gate duration waitForSafeStartup is
+// already holding the window shut for (see below); with the gate disabled
+// (ut-docs#1278), it's attachRetryDuration's own independent
+// attachRetryFloor instead — disabling the gate no longer collapses this
+// to a single immediate probe the way it used to.
 //
 // On the attach path that costs nothing: waitForSafeStartup still opens the
 // window at the same instant it always did. One case does pay a little

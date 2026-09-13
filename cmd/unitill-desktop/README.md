@@ -46,7 +46,9 @@ Tune or disable it with `UT_SHELL_MIN_UPTIME_SECONDS` (seconds; `0` disables
 the gate entirely). Values outside `0..600` fall back to the 60s default
 rather than being honoured, so a units-confusion typo can't hold the window
 for hours or silently disable the gate. Windows and macOS use their own
-platform web views and are unaffected — the gate is a no-op there.
+platform web views and are unaffected — the gate is a no-op there. Disabling
+this gate does not also disable the attach-probe retry below — see
+ut-docs#1278 in the next section.
 
 ## Linux WebKit cookie persistence (ut-docs#1233)
 
@@ -88,11 +90,15 @@ split this fixes.
 
 The retry only runs on Linux; other platforms/topologies (macOS, Windows, a
 warm/manual launch already past the gate) still decide from one probe, same
-as always. **Note that the retry window is derived from the startup gate's
-own duration, so `UT_SHELL_MIN_UPTIME_SECONDS=0` disables both** — a machine
-that doesn't need the WebKitGTK render mitigation is back to a single probe
-and can still lose this race. See `attach_gate.go`'s doc comment for the
-exact retry-vs-give-up logic and its tests.
+as always. While the startup gate is active, the retry window is derived
+from its duration — the two windows coincide, which is what makes the
+retry free on the attach path above. **When the gate is disabled
+(`UT_SHELL_MIN_UPTIME_SECONDS=0`), the retry keeps its own independent 15s
+floor instead (ut-docs#1278)** — a machine that doesn't need the WebKitGTK
+render mitigation still gets a real chance to see the service come up,
+rather than reverting to a single probe and losing this race. See
+`attach_gate.go`'s doc comment for the exact retry-vs-give-up logic and its
+tests.
 
 **If an install was already bitten by the race before this fix** (two
 `unitill-pos` processes, one on `:8080` as the desktop user with its own
