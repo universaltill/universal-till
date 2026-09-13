@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"database/sql"
 	"encoding/json"
 	"html"
 	"net/http"
@@ -9,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/pages/catalog"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/ui"
@@ -30,6 +33,75 @@ func newButtonsMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	mux := http.NewServeMux()
 	registerButtonsAPI(mux, d)
 	return mux, d
+}
+
+// newButtonsAndCatalogMux is newButtonsMux plus catalog.Register on the SAME
+// mux/DB — needed by the ut-docs#2210 regression tests below that drive the
+// REAL Designer/item-detail modifier-group endpoints (create/update/attach/
+// detach) rather than raw SQL, so a mutation neither the UI nor those
+// handlers could actually produce can never sneak into a test's setup.
+func newButtonsAndCatalogMux(t *testing.T) (*http.ServeMux, *common.Deps) {
+	t.Helper()
+	chdirRoot(t)
+	initPagesI18n(t)
+	db := openPagesTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	seedForPages(t, db)
+	d := &common.Deps{
+		Db:       db,
+		BtnStore: ui.NewButtonStore(db),
+		Settings: settings.NewStore(db),
+		State:    common.RuntimeState{Theme: "default", Currency: "GBP"},
+		Menu:     []common.MenuItem{},
+	}
+	mux := http.NewServeMux()
+	registerButtonsAPI(mux, d)
+	catalog.Register(mux, d)
+	return mux, d
+}
+
+// assertTileOpensModifiers checks, robustly against attribute/param
+// reordering, that body's tile for itemID/code routes a tap to the
+// customization picker rather than a straight scan.
+func assertTileOpensModifiers(t *testing.T, body, itemID, code string) {
+	t.Helper()
+	if !strings.Contains(body, `hx-get="/ui/pos/modifiers?`) {
+		t.Fatalf("expected a tile opening the customization picker (hx-get=\"/ui/pos/modifiers?...\"), got: %.1200s", body)
+	}
+	for _, want := range []string{"item=" + itemID, "code=" + code} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected the /ui/pos/modifiers query to carry %q, got: %.1200s", want, body)
+		}
+	}
+}
+
+// assertTileScansDirectly is assertTileOpensModifiers's opposite: the tile
+// must post straight to /api/pos/scan and must NOT open the picker at all.
+func assertTileScansDirectly(t *testing.T, body string) {
+	t.Helper()
+	if !strings.Contains(body, `hx-post="/api/pos/scan"`) {
+		t.Fatalf("expected a tile scanning straight to the basket (hx-post=\"/api/pos/scan\"), got: %.1200s", body)
+	}
+	if strings.Contains(body, "/ui/pos/modifiers") {
+		t.Fatalf("tile must not offer the customization picker, got: %.1200s", body)
+	}
+}
+
+// seedPlainItem inserts a catalog item with NO variants and NO modifier
+// groups -- deliberately NOT itm1 (seedForPages gives itm1 a real variant,
+// 'var1', for other tests' own purposes). Since ut-docs#2209's
+// {{ if or .HasModifiers .HasVariants }} gate (buttons.html:378,
+// internal/ui/buttons.go's Store.Load()), an item with ANY active variant
+// already routes its tile to the customization picker regardless of
+// modifier-group state, which would make itm1 a false negative for these
+// ut-docs#2210 tests' "before attaching, the tile scans straight to the
+// basket" baseline. A dedicated variant-free item isolates the assertion
+// to the modifier-group axis alone.
+func seedPlainItem(t *testing.T, db *sql.DB, id string) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO items(id,sku,name,base_price,is_active) VALUES(?,?,?,100,1)`, id, id+"-SKU", id); err != nil {
+		t.Fatalf("seed plain item %s: %v", id, err)
+	}
 }
 
 func TestButtonsUIFragmentRendersSeededButtons(t *testing.T) {
@@ -351,5 +423,312 @@ func TestButtonsAPI_MutationsRefusedOnReplica(t *testing.T) {
 	var removeCount int
 	if err := d.Db.QueryRow(`SELECT count(*) FROM shortcut_buttons WHERE barcode='ABC'`).Scan(&removeCount); err != nil || removeCount != 1 {
 		t.Errorf("button must not be removed on a replica: count=%d err=%v", removeCount, err)
+	}
+}
+
+// ut-docs#2210: "a newly-attached option set doesn't reach the sale screen
+// until the quick button is deleted and recreated" — product owner report:
+// attaching a modifier group ("Toppings") to an item that already has a
+// sale-screen quick button never made the tile offer the picker, until the
+// button itself was deleted and re-added.
+//
+// This proves the /ui/buttons render path itself is NOT the bug: the tile's
+// hx-get="/ui/pos/modifiers" vs hx-post="/api/pos/scan" choice
+// (web/ui/partials/buttons.html's "product-tile" template) is driven by
+// ui.Button.HasModifiers, which internal/ui/buttons.go's Store.Load()
+// computes fresh on every call via ModifierRepo.ItemIDsWithModifiers — a
+// live join against item_modifier_group_links, never a value cached or
+// copied onto the shortcut_buttons row at Add time. So attaching a group to
+// an item that already has a button, with the button never touched, must
+// already flip the SAME rendered tile from a straight scan-and-add to the
+// customization picker on the very next render — no delete/recreate
+// needed. This test fails loudly (tile still posts to /api/pos/scan) if a
+// future change ever reintroduces a creation-time snapshot on the button
+// itself.
+func TestButtonsUIFragment_ReflectsModifierGroupAttachedAfterButtonExisted(t *testing.T) {
+	mux, d := newButtonsMux(t)
+	seedPlainItem(t, d.Db, "itm-plain")
+
+	// The quick button is created FIRST, while the item has no customization
+	// at all -- exactly the reported order of events (button already on the
+	// sale screen, then a modifier group gets attached to its item later).
+	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id) VALUES ('BTN1','Apple Tile','itm-plain')`); err != nil {
+		t.Fatalf("seed button: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/buttons", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/ui/buttons = %d (%s)", rec.Code, rec.Body.String())
+	}
+	assertTileScansDirectly(t, rec.Body.String())
+
+	// Attach a modifier group ("Toppings") to the item -- the PO's "option
+	// set" on an item's customization section -- WITHOUT touching the
+	// button. This is the exact row shape ModifierRepo.CreateGroup itself
+	// produces (a group row plus its first link row), so it's a reachable
+	// state even though it bypasses the HTTP handler -- unlike the old
+	// detach test this replaces, no UI-unreachable state is asserted
+	// against here.
+	if _, err := d.Db.Exec(`INSERT INTO item_modifier_groups(id,item_id,name,required,min_select,max_select,sort_order,is_active) VALUES ('g1','itm-plain','Toppings',0,0,3,0,1)`); err != nil {
+		t.Fatalf("seed modifier group: %v", err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO item_modifier_group_links(item_id,group_id,sort_order) VALUES ('itm-plain','g1',0)`); err != nil {
+		t.Fatalf("seed modifier group link: %v", err)
+	}
+
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/buttons", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/ui/buttons (after attach) = %d (%s)", rec.Code, rec.Body.String())
+	}
+	after := rec.Body.String()
+	if !strings.Contains(after, "Apple Tile") {
+		t.Fatalf("the SAME button must still render (never deleted/recreated), got: %.800s", after)
+	}
+	assertTileOpensModifiers(t, after, "itm-plain", "BTN1")
+}
+
+// ut-docs#2210/#2209 interaction: an item that ALREADY has a variant (so
+// HasVariants alone already routes its tile to the picker, per buttons.html
+// :378's {{ if or .HasModifiers .HasVariants }}) must keep offering the
+// picker throughout a modifier group being attached and then detached --
+// the OR-gate must never let a modifier-group change flip a
+// variant-carrying tile back to a straight scan. itm1 (seedForPages) has
+// exactly this shape: a real, active variant ('var1') and no modifier
+// groups of its own.
+func TestButtonsUIFragment_HasVariantsAloneKeepsPickerAcrossModifierGroupChanges(t *testing.T) {
+	mux, d := newButtonsMux(t)
+
+	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id) VALUES ('BTN1','Apple Tile','itm1')`); err != nil {
+		t.Fatalf("seed button: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/buttons", nil))
+	assertTileOpensModifiers(t, rec.Body.String(), "itm1", "BTN1")
+
+	// Attach a modifier group too -- both gates now true.
+	if _, err := d.Db.Exec(`INSERT INTO item_modifier_groups(id,item_id,name,required,min_select,max_select,sort_order,is_active) VALUES ('g1','itm1','Toppings',0,0,3,0,1)`); err != nil {
+		t.Fatalf("seed modifier group: %v", err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO item_modifier_group_links(item_id,group_id,sort_order) VALUES ('itm1','g1',0)`); err != nil {
+		t.Fatalf("seed modifier group link: %v", err)
+	}
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/buttons", nil))
+	assertTileOpensModifiers(t, rec.Body.String(), "itm1", "BTN1")
+
+	// Deactivate the modifier group -- HasModifiers now false, but
+	// HasVariants is still true, so the tile must NOT fall back to a plain
+	// scan (that would silently drop the variant-selection prompt
+	// ut-docs#2209 exists for, shop-wide, on every affected item).
+	if _, err := d.Db.Exec(`UPDATE item_modifier_groups SET is_active = 0 WHERE id = 'g1'`); err != nil {
+		t.Fatalf("deactivate modifier group: %v", err)
+	}
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/buttons", nil))
+	assertTileOpensModifiers(t, rec.Body.String(), "itm1", "BTN1")
+}
+
+// ut-docs#2210, driven through the REAL merchant flow end to end: the item
+// detail panel's "attach an existing option set" picker (ADR-0090 §5,
+// ut-docs#2046) posts to /api/catalog/modifier-group/attach, linking an
+// EXISTING group to an item -- distinct from creating a brand new one. The
+// group is created first (via ModifierRepo, on a throwaway item, exactly
+// what CreateGroup itself does — a group + its first link) so that
+// attaching it to itm1 is a genuine "existing, unlinked, active group"
+// state ListAttachableModifierGroups would actually offer.
+//
+// This is the true end-to-end regression for the reported bug: before the
+// ut-docs#2210 fix (buttons.html's swapped-in root carrying no refresh
+// trigger, and this handler never announcing the change), an already-open
+// sale screen's Apple Tile would keep scanning straight to the basket
+// forever after this attach, in a REAL browser, even though this test's
+// own recorder-based /ui/buttons re-fetch (which no real sale screen ever
+// issues on its own) would still show it correctly -- see
+// TestButtonsPartial_RootCarriesRefreshTrigger and
+// TestModifierGroupAttach_FiresModifiersChangedTrigger below for the two
+// halves of the actual fix this test can't observe through a bare re-fetch.
+func TestButtonsUIFragment_ReflectsModifierGroupAttachedViaRealAttachHandler(t *testing.T) {
+	mux, d := newButtonsAndCatalogMux(t)
+	seedPlainItem(t, d.Db, "itm-plain")
+
+	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id) VALUES ('BTN1','Apple Tile','itm-plain')`); err != nil {
+		t.Fatalf("seed button: %v", err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO items(id,sku,name,base_price,is_active) VALUES('itm-decoy','DECOY','Decoy',100,1)`); err != nil {
+		t.Fatalf("seed decoy item: %v", err)
+	}
+	modRepo := data.NewModifierRepo(d.Db)
+	groupID, err := modRepo.CreateGroup(t.Context(), "g-toppings", "itm-decoy", "Toppings", false, 0, 3, 0)
+	if err != nil {
+		t.Fatalf("create existing group: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/buttons", nil))
+	assertTileScansDirectly(t, rec.Body.String())
+
+	attachForm := url.Values{"itemId": {"itm-plain"}, "groupId": {groupID}}
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group/attach", strings.NewReader(attachForm.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("attach via real handler: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/buttons", nil))
+	after := rec.Body.String()
+	if !strings.Contains(after, "Apple Tile") {
+		t.Fatalf("the SAME button must still render, got: %.800s", after)
+	}
+	assertTileOpensModifiers(t, after, "itm-plain", "BTN1")
+}
+
+// The flip side, and the "editing" case, of ut-docs#2210's acceptance
+// criteria ("attaching (or detaching, or editing)"): a modifier group is
+// never hard-deleted from the UI (soft-deactivate convention, handlers.go's
+// own comment on /api/catalog/modifier-group) -- a merchant "removes" its
+// effect by unchecking the group's Active checkbox, which round-trips
+// through the SAME create-or-update handler as an isActive=0 update. This
+// drives that real toggle both ways and checks the tile after each flip,
+// rather than asserting a raw multi-link DELETE the real detach handler
+// (UnlinkGroupFromItemUnlessLastLink) can never produce for a
+// single-linked group.
+func TestButtonsUIFragment_ReflectsModifierGroupActiveToggleViaRealHandler(t *testing.T) {
+	mux, d := newButtonsAndCatalogMux(t)
+	seedPlainItem(t, d.Db, "itm-plain")
+
+	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id) VALUES ('BTN1','Apple Tile','itm-plain')`); err != nil {
+		t.Fatalf("seed button: %v", err)
+	}
+	modRepo := data.NewModifierRepo(d.Db)
+	groupID, err := modRepo.CreateGroup(t.Context(), "g-toppings", "itm-plain", "Toppings", false, 0, 3, 0)
+	if err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/buttons", nil))
+	assertTileOpensModifiers(t, rec.Body.String(), "itm-plain", "BTN1")
+
+	toggle := func(active string) *httptest.ResponseRecorder {
+		t.Helper()
+		form := url.Values{
+			"id": {groupID}, "itemId": {"itm-plain"}, "name": {"Toppings"},
+			"minSelect": {"0"}, "maxSelect": {"3"}, "isActive": {active},
+		}
+		req := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("toggle isActive=%s: want 200, got %d: %s", active, rec.Code, rec.Body.String())
+		}
+		return rec
+	}
+
+	// Uncheck Active ("edit"/"detach"-equivalent): the tile must stop
+	// offering the picker on the very next render, button untouched.
+	toggle("0")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/buttons", nil))
+	assertTileScansDirectly(t, rec.Body.String())
+
+	// Re-check Active ("edit" back): the tile must offer the picker again.
+	toggle("1")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/buttons", nil))
+	assertTileOpensModifiers(t, rec.Body.String(), "itm-plain", "BTN1")
+}
+
+// TestButtonsPartial_RootCarriesRefreshTrigger is the client-side half of
+// the ut-docs#2210 fix: index.html's placeholder div fetches /ui/buttons
+// exactly once (hx-trigger="load") and outerHTML-swaps it away, so nothing
+// on an already-open sale screen can ever re-fetch it again UNLESS the
+// swapped-in root re-declares its own trigger -- same self-refreshing shape
+// as hold_api.go's "#held-sales" strip (hx-trigger="held-changed
+// from:body", re-emitted on every one of its own renders). Before this fix,
+// buttons.html's root carried no hx-get/hx-trigger at all: a real browser
+// sitting on the sale screen would never see any catalog change again, no
+// matter how live the server-side data was -- exactly the reported "must
+// delete and recreate the button" symptom, which really just forced a full
+// page reload. Revert the hx-get/hx-trigger on buttons.html's root div to
+// reproduce the original bug against this test (red).
+func TestButtonsPartial_RootCarriesRefreshTrigger(t *testing.T) {
+	mux, _ := newButtonsMux(t)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/buttons", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/ui/buttons = %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `hx-get="/ui/buttons"`) {
+		t.Fatalf(`swapped-in root must re-declare hx-get="/ui/buttons" so it can refetch itself, got: %.500s`, body)
+	}
+	if !strings.Contains(body, `hx-trigger="modifiers-changed from:body"`) {
+		t.Fatalf(`swapped-in root must listen for hx-trigger="modifiers-changed from:body", got: %.500s`, body)
+	}
+	if !strings.Contains(body, `hx-swap="outerHTML"`) {
+		t.Fatalf(`swapped-in root must keep hx-swap="outerHTML" so it can keep replacing itself, got: %.500s`, body)
+	}
+}
+
+// TestModifierGroupAttach_FiresModifiersChangedTrigger is the server-side
+// half of the ut-docs#2210 fix: every successful modifier-group mutation
+// (attach here; create/update/detach are pinned by the sibling tests below)
+// must set HX-Trigger: modifiers-changed so any open sale screen's
+// buttons.html root (see TestButtonsPartial_RootCarriesRefreshTrigger)
+// actually refetches. Revert the HX-Trigger write in
+// renderModifierMutationResult (catalog/handlers.go) to reproduce the
+// original bug against this test (red).
+func TestModifierGroupAttach_FiresModifiersChangedTrigger(t *testing.T) {
+	mux, d := newButtonsAndCatalogMux(t)
+	modRepo := data.NewModifierRepo(d.Db)
+	groupID, err := modRepo.CreateGroup(t.Context(), "g-toppings", "itm1", "Toppings", false, 0, 3, 0)
+	if err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	if err := modRepo.UnlinkGroupFromItem(t.Context(), "itm1", groupID); err != nil {
+		t.Fatalf("unlink so it's attachable again: %v", err)
+	}
+
+	attachForm := url.Values{"itemId": {"itm1"}, "groupId": {groupID}}
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group/attach", strings.NewReader(attachForm.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("attach: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("HX-Trigger"); got != "modifiers-changed" {
+		t.Fatalf("attach response HX-Trigger = %q, want %q", got, "modifiers-changed")
+	}
+}
+
+// A refused mutation changed nothing and must not tell any open sale screen
+// to refetch — the detach-guard's last-link refusal is the one call site
+// that answers through renderModifierMutationResult with a non-OK status.
+func TestModifierGroupDetach_LastLinkRefusalDoesNotFireTrigger(t *testing.T) {
+	mux, d := newButtonsAndCatalogMux(t)
+	modRepo := data.NewModifierRepo(d.Db)
+	groupID, err := modRepo.CreateGroup(t.Context(), "g-toppings", "itm1", "Toppings", false, 0, 3, 0)
+	if err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+
+	detachForm := url.Values{"itemId": {"itm1"}, "groupId": {groupID}}
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group/detach", strings.NewReader(detachForm.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("detaching a group's last link: want 409 (refused), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("HX-Trigger"); got != "" {
+		t.Fatalf("a refused detach must not fire a refresh trigger, got HX-Trigger %q", got)
 	}
 }

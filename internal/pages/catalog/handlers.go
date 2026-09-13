@@ -397,7 +397,23 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// does. status/notice are the zero values (200, "") on every ordinary
 	// success path, unchanged from before this card.
 	renderModifierMutationResult := func(w http.ResponseWriter, r *http.Request, itemID string, status int, notice string) {
-		if status != http.StatusOK {
+		if status == http.StatusOK {
+			// ut-docs#2210: the sale screen fetches /ui/buttons exactly
+			// once (index.html's hx-trigger="load"); a quick button's
+			// routing between the customization picker and a straight
+			// scan-and-add is baked into that one render and — with no
+			// signal telling an already-open sale screen to refetch —
+			// would otherwise never reflect a group created/updated
+			// (including the Active toggle), attached, or detached here,
+			// however live the underlying DB read already is. Every
+			// successful mutation through this shared dispatch fires it;
+			// a refused one (status != OK, e.g. the detach-guard's
+			// last-link refusal) changed nothing and must not. Same shape
+			// as hold_api.go's "held-changed" / inventory_api.go's
+			// "stock-updated" — buttons.html's swapped-in root listens for
+			// it via hx-trigger="modifiers-changed from:body".
+			w.Header().Set("HX-Trigger", "modifiers-changed")
+		} else {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(status)
 		}
