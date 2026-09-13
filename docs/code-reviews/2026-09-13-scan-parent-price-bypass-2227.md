@@ -190,12 +190,63 @@ to the one helper that actually needed it.
   barcode scan, AI-identify, the wedge scanner, both `scan-with-modifiers`
   endpoints) and confirmed all funnel through the two guarded endpoints —
   no third unguarded path found.
-- e2e (Playwright) demo/seed data seeds no `item_variants` rows at all, so
-  this guard is a verified no-op for the entire existing e2e suite — no
-  spec needed re-running for this change specifically.
 - Help-doc translations (de/ar/fa/tr) checked for structural parallelism
   with the English paragraph (same three claims, same order); not
   independently checked for idiomatic fluency.
+
+## CI found a real gap this review's own e2e claim missed
+
+The first pass of this review record claimed "e2e demo/seed data seeds no
+`item_variants` rows at all, so this guard is a verified no-op for the
+entire existing e2e suite" — **that was wrong**, caught only after this
+PR's own CI ran. That check was based on grepping `e2e/` for
+`item_variants` and finding nothing; the actual demo catalogue those
+specs seed from is `internal/data/seeddata/demo_catalogue.sql` (loaded via
+`go run ./e2e/seed_demo` in `run-till.sh`), outside the `e2e/` tree
+entirely — a real blind spot in how that check was scoped, not a
+difference of judgment.
+
+That catalogue seeded `itm001` (Coca-Cola), `itm002` (Pepsi) and `itm005`
+(Orange Juice) — the three demo items dozens of unrelated `e2e/tests/`
+specs scan by their parent barcode as "just some item to add," entirely
+unrelated to variant behavior — with a real, active, barcoded variant
+each. Once this fix shipped, scanning those parent barcodes correctly
+opened the picker instead of adding directly, which broke every one of
+those specs (confirmed live: PR CI's "UI E2E" job ran far longer than this
+repo's own `main`-branch baseline for the same workflow, and the "build"
+job's `guard-docs-shots.sh` step failed for the same underlying reason —
+`docs-shots.spec.ts`'s own basket-staging helper scans `itm001`/`itm002`
+too).
+
+**Fix:** rather than editing every affected spec (dozens of files, several
+with test logic that depends on the item's exact price — editing each
+correctly would have been slow and error-prone), moved the affected
+variants in `demo_catalogue.sql` off `itm001`/`itm002`/`itm005` onto three
+different items nothing in `e2e/` references by barcode (`itm006` Apple
+Juice, `itm007` Semi-Skimmed Milk, `itm008` Whole Milk). That makes the
+three commonly-scanned items plain again — every existing spec that scans
+them goes back to working completely unmodified — while the guard itself,
+and the money-correctness behavior it protects, is untouched. Verified: a
+representative sample across the affected surface (`sale-screen-213`,
+`catalog-inventory-category-filter-2119` — including its own two tests
+whose comment specifically named Pepsi's variant row, `voucher-split-
+tender-combine-1851`, `hold-modal-duplicate-accessible-name-1628`,
+`sale.spec.ts`, `split-tender-underpayment-921`, `manual.spec.ts`; 34
+tests total) all pass, including ones asserting the item's exact original
+price (e.g. "payments (50) do not cover total (120)" for itm001).
+Confirmed no e2e spec anywhere exercises the variant-picker flow through
+these three items specifically, so nothing was relying on them having a
+variant. One spec's own comment (`catalog-inventory-category-filter-2119`)
+incorrectly claimed Pepsi has a variant row for a selector-disambiguation
+reason — the selector itself doesn't need one (every stock row always
+carries a `data-variant` attribute, empty or not), so only the comment
+needed correcting, not the test.
+
+**The lesson, stated plainly for next time:** "no e2e impact" is not a
+claim a repo-subtree grep can support when the actual seed data a suite
+depends on can live in `internal/`. Scope a data-dependency check to where
+the runtime data actually loads from, not to the test directory that
+consumes it.
 
 ## Explicitly deferred (not this card)
 

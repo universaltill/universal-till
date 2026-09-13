@@ -204,12 +204,26 @@ INSERT OR IGNORE INTO item_images (id, item_id, role, path, sort_order) VALUES
   ('img050', 'itm050', 'thumbnail', '/public/assets/items/itm050/thumb.png', 0);
 
 -- item_variants
+-- ut-docs#2227: var001/var002/var003/var004/var005 were originally attached
+-- to itm001 (Coca-Cola), itm002 (Pepsi) and itm005 (Orange Juice) -- the
+-- three most commonly scanned "just some item" demo barcodes across the
+-- e2e suite (dozens of specs scan 5000000000012/29/50 expecting a direct,
+-- ungated basket add, unrelated to variant behavior). Once ut-docs#2227
+-- made a variant-bearing PARENT code correctly open the picker instead of
+-- adding directly, those specs broke -- not because they were wrong, but
+-- because the variant happened to sit on the item every spec author
+-- reached for first. Moved onto itm006/itm007/itm008 (Apple Juice,
+-- Semi-Skimmed Milk, Whole Milk -- confirmed unreferenced by barcode
+-- anywhere under e2e/) instead of touching every affected spec
+-- individually. No e2e/tests-docs spec exercises the variant-picker flow
+-- through any of these five items specifically (checked), so nothing
+-- was relying on itm001/002/005 having variants.
 INSERT OR IGNORE INTO item_variants (id, item_id, sku, name, price, cost_price, is_active) VALUES
-  ('var001', 'itm001', 'SKU-0001-6P', 'Pack of 6', 650, 330, 1),
-  ('var002', 'itm001', 'SKU-0001-12P', 'Pack of 12', 1200, 640, 1),
-  ('var003', 'itm002', 'SKU-0002-6P', 'Pack of 6', 630, 320, 1),
-  ('var004', 'itm005', 'SKU-0005-500', '500ml Bottle', 140, 75, 1),
-  ('var005', 'itm005', 'SKU-0005-1L', '1L Bottle', 220, 120, 1),
+  ('var001', 'itm006', 'SKU-0006-6P', 'Pack of 6', 650, 330, 1),
+  ('var002', 'itm006', 'SKU-0006-12P', 'Pack of 12', 1200, 640, 1),
+  ('var003', 'itm007', 'SKU-0007-6P', 'Pack of 6', 630, 320, 1),
+  ('var004', 'itm008', 'SKU-0008-500', '500ml Bottle', 140, 75, 1),
+  ('var005', 'itm008', 'SKU-0008-1L', '1L Bottle', 220, 120, 1),
   ('var006', 'itm015', 'SKU-0015-MP', 'Multipack x6', 520, 260, 1),
   ('var007', 'itm021', 'SKU-0021-1K', '1kg Family Box', 420, 250, 1),
   ('var008', 'itm024', 'SKU-0024-1K', '1kg Bag', 160, 90, 1),
