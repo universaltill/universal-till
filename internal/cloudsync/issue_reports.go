@@ -313,6 +313,23 @@ func uploadIssueReport(ctx context.Context, cfg *config.Config, b issuereport.Bu
 			return err
 		}
 	}
+	// Diagnostic-session snapshot (ADR-0092 §6, ut-docs#2169): the session
+	// reference plus its recent allowlisted events as ONE JSON-array field,
+	// riding this same request. Omitted entirely — not sent empty — when
+	// the bundle has none, so a cloud that predates the IssueReport
+	// snapshot pointer sees the exact request it always did.
+	if b.Meta.DiagnosticSessionID != "" {
+		_ = w.WriteField("diagnostic_session_id", b.Meta.DiagnosticSessionID)
+		events := b.Meta.DiagnosticEvents
+		if events == nil {
+			events = []json.RawMessage{}
+		}
+		raw, err := json.Marshal(events)
+		if err != nil {
+			return err
+		}
+		_ = w.WriteField("diagnostic_events", string(raw))
+	}
 	if err := w.Close(); err != nil {
 		return err
 	}

@@ -23,7 +23,7 @@ func newTelemetryTestDB(t *testing.T) *sql.DB {
 	// goroutine" noise in a go test -race timeout dump (ut-docs#2156).
 	t.Cleanup(func() { db.Close() })
 	stmts := []string{
-		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, author TEXT, is_active INTEGER NOT NULL DEFAULT 1, install_state TEXT DEFAULT 'installed', runtime TEXT DEFAULT 'go', entrypoint TEXT DEFAULT '');`,
+		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, author TEXT, is_active INTEGER NOT NULL DEFAULT 1, install_state TEXT DEFAULT 'installed', runtime TEXT DEFAULT 'go', entrypoint TEXT DEFAULT '', installed_sha256 TEXT);`,
 		`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at DATETIME);`,
 	}
 	for _, s := range stmts {

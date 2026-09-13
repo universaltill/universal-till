@@ -1,0 +1,18 @@
+{{/* Diagnostic-mode rail indicator (ADR-0092 §7, ut-docs#2169). Only ever
+     rendered while a session is locally active (GET /ui/diagnostics-chip
+     answers an empty body otherwise), on every page, for every role: a
+     disclosure that this till is sending technical events to Universal
+     Till support, not a manager control. Same .nav-toggle + inline SVG +
+     .nav-badge dot shape as fiscal_chip.html / sync_chip.html, and the same
+     href gating: only a session that may open /settings gets a link (an
+     <a> with no href is plain, non-focusable inline text per the HTML
+     spec), so a cashier never gets a link that 403s. The state is in the
+     accessible name, not colour alone. */}}
+<span class="diagnostics-chip on" data-testid="diagnostics-chip-on">
+  <a {{ if .canManage }}href="/settings#settings-diagnostics" {{ end }}class="nav-toggle"
+     title="{{ T "diagnostics.chip_title" }}"
+     aria-label="{{ T "diagnostics.chip_label" }} — {{ T "diagnostics.chip_title" }}">
+    <span class="nav-toggle-ico" aria-hidden="true">{{ icon "pulse" }}<span class="nav-badge" aria-hidden="true"></span></span>
+    <span class="nav-toggle-label" aria-hidden="true">{{ T "diagnostics.chip_label" }}</span>
+  </a>
+</span>

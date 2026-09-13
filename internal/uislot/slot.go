@@ -474,6 +474,11 @@ func IsProtectedSettingsKey(key string) bool {
 var CoreSettings = []Entry{
 	{Key: "registration", Href: "#registration", LabelKey: "settings.enrol.title", Order: 100},
 	{Key: "settings-issuereport", Href: "#settings-issuereport", LabelKey: "issuereport.title", Order: 200},
+	// ADR-0092 §7 / ut-docs#2169: diagnostic mode (activation code entry,
+	// "ON since" copy, local stop). Manager-only card right after
+	// Report-an-issue in settings.html — the two are the till's support
+	// surfaces — and filtered from the sidebar for a cashier the same way.
+	{Key: "settings-diagnostics", Href: "#settings-diagnostics", LabelKey: "settings.diagnostics.title", Order: 250},
 	{Key: "settings-menulayout", Href: "#settings-menulayout", LabelKey: "menulayout.title", Order: 300},
 	{Key: "settings-update", Href: "#settings-update", LabelKey: "settings.update.title", Order: 400},
 	{Key: "settings-theme", Href: "#settings-theme", LabelKey: "settings.theme.title", Order: 500},

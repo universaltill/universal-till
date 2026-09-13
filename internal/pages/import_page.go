@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/csv"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"image/png"
@@ -22,6 +23,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/catimport"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/imaging"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -1860,12 +1862,40 @@ func mergeTakeawayOverrides(ctx context.Context, db *sql.DB, discovered map[stri
 	// repo itself (ut-docs#1941): MergeAdditiveJSONMapSetting fires it after
 	// its commit exactly when added > 0, so this path can't forget it again.
 	repo := data.NewPluginRepo(db).OnSettingsChanged(func() { plugins.SharedBus(db).BumpGeneration() })
+	// Diagnostic-mode provenance (ADR-0092 §2, ut-docs#2169): a key this
+	// merge ADDS moves that tax code from catalog_suggestion (pinned on the
+	// tax code, no override yet) to active_override. Read the before-set
+	// only while a session is active — an ordinary till never pays it.
+	var before map[string]int
+	if diagnostics.Active() {
+		before = currentTakeawayOverrides(ctx, repo)
+	}
 	added, err := repo.MergeAdditiveJSONMapSetting(ctx, taxDePluginID, "takeaway_rate_overrides", discovered)
 	if err != nil {
 		log.Printf("[import] merge takeaway_rate_overrides: %v", err)
 		return 0, true
 	}
+	if added > 0 && before != nil {
+		for id := range discovered {
+			if _, had := before[id]; !had {
+				diagnostics.Emit(diagnostics.TaxProvenance{TaxCodeID: id, From: diagnostics.ProvenanceCatalogSuggestion, To: diagnostics.ProvenanceActiveOverride})
+			}
+		}
+	}
 	return added, false
+}
+
+// currentTakeawayOverrides reads ut-plugin-tax-de's takeaway_rate_overrides
+// map as it stands (nil/empty on any failure) — only for the provenance
+// diff above, never for a decision about the rates themselves.
+func currentTakeawayOverrides(ctx context.Context, repo *data.PluginRepo) map[string]int {
+	out := map[string]int{}
+	raw, ok, err := repo.GetPluginSetting(ctx, taxDePluginID, "takeaway_rate_overrides")
+	if err != nil || !ok {
+		return out
+	}
+	_ = json.Unmarshal([]byte(data.DecodeMapSettingValue(raw)), &out)
+	return out
 }
 
 // reconcileTaxDeTakeawayOverridesOnActivate mirrors mergeTakeawayOverrides

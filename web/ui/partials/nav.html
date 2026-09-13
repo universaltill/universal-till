@@ -116,6 +116,14 @@
          no fiscalisation configured — same "nothing shown" convention as
          the other chips' zero-state. -->
     <span id="fiscal-chip" hx-get="/ui/fiscal-chip" hx-trigger="load, every 30s"></span>
+    <!-- Diagnostic mode indicator (ADR-0092 §7, ut-docs#2169): empty body
+         unless a diagnostic session is locally active; then a persistent
+         pulse icon with a dot badge on EVERY page, for every role — a
+         disclosure that this till is sending technical events to support,
+         not a manager control. Same htmx-after-render trick as the other
+         chips; the activate/stop responses also push it out-of-band so it
+         flips without waiting for the 30s poll. -->
+    <span id="diagnostics-chip" hx-get="/ui/diagnostics-chip" hx-trigger="load, every 30s"></span>
     <span id="session-chip" hx-get="/ui/session-chip" hx-trigger="load"></span>
   </div>
 </nav>

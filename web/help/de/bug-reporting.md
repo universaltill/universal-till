@@ -26,3 +26,5 @@ In der Android-Kasse-App erfasst "Screenshot aufnehmen" direkt, was die App gera
 Schließen Sie das Fenster mit ✕, bleibt es geschlossen, bis Sie es erneut anfordern: Es bleibt beim Wechsel zwischen Bildschirmen zu, und die Seite „Problem melden“ öffnet es nicht mehr zwangsweise erneut. Drücken Sie 🐞 im linken Menü, wann immer Sie es zurückhaben möchten.
 
 Möchten Sie wissen, was aus einem gesendeten Bericht geworden ist? Siehe [Meine Berichte](/help/my-reports) — jeder von dieser Kasse gesendete Bericht mit seinem aktuellen Status.
+
+Ist beim Senden eines Berichts der Diagnosemodus eingeschaltet (siehe Einstellungen → Diagnosemodus unter [Sprachen & Anzeige](/help/display)), enthält der Bericht zusätzlich einen Verweis auf diese Diagnosesitzung und ihre letzten technischen Ereignisse, damit der Support den Bericht neben dem zugehörigen Datenstrom lesen kann. Bei ausgeschaltetem Diagnosemodus wird nichts Zusätzliches gesendet.

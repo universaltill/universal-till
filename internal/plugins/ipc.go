@@ -591,9 +591,18 @@ func (eb *EventBus) publishWithID(ctx context.Context, id, eventType string, pay
 // consulted. A handler error still aborts the whole Ask (same failure
 // semantics as Publish's Blocking mode).
 func (eb *EventBus) Ask(ctx context.Context, eventType string, payload interface{}) (json.RawMessage, bool, error) {
+	resp, _, ok, err := eb.AskFrom(ctx, eventType, payload)
+	return resp, ok, err
+}
+
+// AskFrom is Ask that also names WHICH plugin answered (pluginID is ""
+// when nobody did, or on error) — for callers that need the answering
+// plugin's identity for a diagnostic event (ADR-0092 §2's plugin-ask
+// lifecycle, ut-docs#2169) without inspecting the answer itself.
+func (eb *EventBus) AskFrom(ctx context.Context, eventType string, payload interface{}) (json.RawMessage, string, bool, error) {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
-		return nil, false, fmt.Errorf("marshal payload: %w", err)
+		return nil, "", false, fmt.Errorf("marshal payload: %w", err)
 	}
 	event := Event{
 		ID:        uuid.NewString(),
@@ -617,15 +626,15 @@ func (eb *EventBus) Ask(ctx context.Context, eventType string, payload interface
 		resp, err := sub.Handler(ctx, event)
 		if err != nil {
 			eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "error", err.Error())
-			return nil, false, fmt.Errorf("ask %s failed for plugin %s: %w", eventType, sub.PluginID, err)
+			return nil, sub.PluginID, false, fmt.Errorf("ask %s failed for plugin %s: %w", eventType, sub.PluginID, err)
 		}
 		eb.auditDispatch(ctx, event.ID, eventType, sub.PluginID, "success", "")
 		if len(resp) == 0 {
 			continue // handler ran but declined to answer — try the next subscriber
 		}
-		return resp, true, nil
+		return resp, sub.PluginID, true, nil
 	}
-	return nil, false, nil
+	return nil, "", false, nil
 }
 
 // AskPlugin is Ask restricted to a single, already-identified plugin —
