@@ -45,6 +45,16 @@ type Service struct {
 	resolver  PriceResolver
 	lines     []BasketLine // persisted after completion
 	scanCache map[string]BasketLine
+	// noSellableVariants memoizes, per itemID, that ut-docs#2227's variant
+	// guard already checked this item this session and found zero sellable
+	// variants — so a repeat scan of the same parent code can skip the
+	// ItemVariantsFor DB round trip and fall straight through to the
+	// scanCache/HasLine fast path below it (ut-docs#2244). Same lifetime as
+	// scanCache (reset in resetLocked, including on Restore) so it can never
+	// outlive the session it was observed in, and only ever populated from a
+	// live guard check in THIS process — never from a restored snapshot —
+	// which is what keeps it from reintroducing #2227 review finding F1.
+	noSellableVariants map[string]bool
 	// discount can be fixed amount or percentage basis points (1% = 100)
 	discountType      string
 	discountValue     money.Money // fixed discount amount (minor units)
@@ -591,6 +601,36 @@ func (s *Service) HasScanCache(code string) bool {
 	}
 	_, ok := s.scanCache[code]
 	return ok
+}
+
+// HasNoSellableVariants reports whether the ut-docs#2227 variant guard has
+// already checked itemID this session and found zero sellable variants —
+// callers use this to skip a redundant ItemVariantsFor DB query on a repeat
+// scan of the same parent code (ut-docs#2244).
+func (s *Service) HasNoSellableVariants(itemID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if itemID == "" {
+		return false
+	}
+	return s.noSellableVariants[itemID]
+}
+
+// MarkNoSellableVariants records that itemID was just checked (this
+// session, this process — never from a restored snapshot) and has zero
+// sellable variants, per HasNoSellableVariants above. Never call this on a
+// query error — memoizing a transient failure as "no variants" would fail
+// OPEN instead of closed, the opposite of ut-docs#2227's guard.
+func (s *Service) MarkNoSellableVariants(itemID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if itemID == "" {
+		return
+	}
+	if s.noSellableVariants == nil {
+		s.noSellableVariants = map[string]bool{}
+	}
+	s.noSellableVariants[itemID] = true
 }
 
 func (s *Service) cacheScan(code string, line BasketLine) {
@@ -1377,6 +1417,7 @@ func (s *Service) resetLocked() {
 	s.basket.CustomerID = ""
 	s.basket.CustomerName = ""
 	s.scanCache = map[string]BasketLine{}
+	s.noSellableVariants = nil
 	s.orderType = ""
 	s.tableID = ""
 	s.tableLabel = ""

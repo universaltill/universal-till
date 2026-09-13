@@ -193,6 +193,75 @@ func TestSelfOrderScanAPI_ParentCodeWithVariants_RefusesRatherThanAdds(t *testin
 	}
 }
 
+// ut-docs#2244: once the guard has checked itm-water this session and found
+// zero sellable variants, a repeat scan of the same code must not repeat the
+// ItemVariantsFor DB round trip. Proven without a query spy: drop the table
+// between the two scans, so the second scan would fail closed (toast, no
+// line added) if it still queried it -- it must instead still add the item,
+// which only happens if the guard was skipped via the memoized result.
+func TestScanAPI_RepeatScanOfNoVariantItem_SkipsRedundantVariantsQuery(t *testing.T) {
+	dp, d := setupVariantModifiersTestDeps(t)
+	mux := http.NewServeMux()
+	registerPOSAPI(mux, dp)
+	registerPOSModifiersAPI(mux, dp)
+
+	rec := posPostForm(mux, "/api/pos/scan", "code=WATER")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first scan: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(dp.Engine.Basket().Lines) != 1 {
+		t.Fatalf("first scan: want 1 line, got %d", len(dp.Engine.Basket().Lines))
+	}
+
+	if _, err := d.DB.Exec(`DROP TABLE item_variants`); err != nil {
+		t.Fatalf("drop item_variants: %v", err)
+	}
+
+	rec = posPostForm(mux, "/api/pos/scan", "code=WATER")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second scan: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	b := dp.Engine.Basket()
+	if len(b.Lines) != 1 || b.Lines[0].Qty != 2 {
+		t.Fatalf("second scan must have merged into the existing line via the scanCache fast path (qty 2), got %+v -- a fail-closed toast here means the guard still queried the (now-dropped) item_variants table instead of trusting the memoized result", b.Lines)
+	}
+}
+
+// Same fix, same proof, on the kiosk's /api/self-order/scan.
+func TestSelfOrderScanAPI_RepeatScanOfNoVariantItem_SkipsRedundantVariantsQuery(t *testing.T) {
+	dp, d := setupVariantModifiersTestDeps(t)
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+
+	post := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/self-order/scan", strings.NewReader("code=WATER"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := post(); rec.Code != http.StatusOK {
+		t.Fatalf("first scan: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(dp.KioskEngine.Basket().Lines) != 1 {
+		t.Fatalf("first scan: want 1 line, got %d", len(dp.KioskEngine.Basket().Lines))
+	}
+
+	if _, err := d.DB.Exec(`DROP TABLE item_variants`); err != nil {
+		t.Fatalf("drop item_variants: %v", err)
+	}
+
+	rec := post()
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second scan: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	b := dp.KioskEngine.Basket()
+	if len(b.Lines) != 1 || b.Lines[0].Qty != 2 {
+		t.Fatalf("second scan must have merged via the scanCache fast path (qty 2), got %+v -- a stuck-at-1 / error result means the guard still queried the dropped table", b.Lines)
+	}
+}
+
 // Same non-regression as the cashier path: a scanned variant barcode is
 // unaffected on the kiosk.
 func TestSelfOrderScanAPI_VariantBarcodeStillAddsDirectly(t *testing.T) {

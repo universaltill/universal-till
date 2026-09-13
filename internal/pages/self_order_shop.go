@@ -167,9 +167,15 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			// alone here too — there is no variant question this endpoint
 			// can correctly ask for one, refusing it would just as wrongly
 			// block a legitimate scale-label add.
-			if base, ok := d.KioskEngine.ResolveBase(code); ok && base.VariantID == "" && base.ItemID != "" && !base.QtyFromCode {
+			// ut-docs#2244: skip the repeat ItemVariantsFor round trip once
+			// this session already found itemID variant-free — see
+			// pos.Service.HasNoSellableVariants' doc comment for why this
+			// can't reintroduce #2227 review finding F1.
+			if base, ok := d.KioskEngine.ResolveBase(code); ok && base.VariantID == "" && base.ItemID != "" && !base.QtyFromCode && !d.KioskEngine.HasNoSellableVariants(base.ItemID) {
 				variants, err := data.NewCatalogRepo(d.Db).ItemVariantsFor(r.Context(), base.ItemID)
 				if err != nil {
+					// Deliberately NOT memoized — a transient error must stay
+					// retryable, not get cached as a false "no variants".
 					renderKioskCartWithMessage(w, r, d, httpx.T(httpx.ResolveLocale(w, r), "modifiers.variant_unavailable"))
 					return
 				}
@@ -183,6 +189,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 					renderKioskCartWithMessage(w, r, d, httpx.T(httpx.ResolveLocale(w, r), "modifiers.variant_required"))
 					return
 				}
+				d.KioskEngine.MarkNoSellableVariants(base.ItemID)
 			}
 			// Item resolution + add ONLY — no promo-code-via-code fallback,
 			// no scan-to-refund, no customer-barcode lookup. Those are

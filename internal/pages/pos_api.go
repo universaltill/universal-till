@@ -828,7 +828,13 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// scale-label item choosing between variants has no correct answer
 		// this diff can give it, so it stays exactly as before this fix
 		// (added directly, unaffected) rather than silently mis-costing it.
-		if base, ok := d.Engine.ResolveBase(code); ok && base.VariantID == "" && base.ItemID != "" && !base.QtyFromCode {
+		// ut-docs#2244: HasNoSellableVariants skips the ItemVariantsFor round
+		// trip on a repeat scan of a code this guard already checked and
+		// found variant-free this session — see its doc comment for why
+		// that can never resurrect #2227 review finding F1 (it is only ever
+		// populated by this same guard running live, never by a restored
+		// snapshot, and is cleared with scanCache on every reset/restore).
+		if base, ok := d.Engine.ResolveBase(code); ok && base.VariantID == "" && base.ItemID != "" && !base.QtyFromCode && !d.Engine.HasNoSellableVariants(base.ItemID) {
 			variants, err := data.NewCatalogRepo(d.Db).ItemVariantsFor(r.Context(), base.ItemID)
 			if err != nil {
 				// Fail closed (ut-docs#2227 design note item 4): unlike
@@ -836,7 +842,9 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				// still needs to render), this query is scoped to the one
 				// code being scanned, so failing closed blocks one add
 				// with a retryable toast rather than risking a parent-price
-				// add if the query is a transient error.
+				// add if the query is a transient error. Deliberately NOT
+				// memoized as "no sellable variants" — a transient error
+				// must stay retryable, not get cached as a false negative.
 				b := d.Engine.Basket()
 				b.ToastMessage = httpx.T(locale, "modifiers.variant_unavailable")
 				b.ToastLevel = "error"
@@ -862,6 +870,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				renderModifierPicker(w, r, base.ItemID, code, base.Name, in.Qty, groups, variants)
 				return
 			}
+			d.Engine.MarkNoSellableVariants(base.ItemID)
 		}
 
 		if d.Engine.HasScanCache(code) || d.Engine.HasLine(code) {
