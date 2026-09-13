@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -249,6 +250,23 @@ func writeTaxOverrides(ctx context.Context, repo *data.PluginRepo, pluginID stri
 	// false); the repository's key-name heuristic still applies regardless.
 	if err := repo.UpsertPluginSettingScoped(ctx, pluginID, row.Key, raw, row.Scope, false); err != nil {
 		return 0, err
+	}
+	// Diagnostic-mode provenance (ADR-0092 §2, ut-docs#2169): a manager's
+	// edit adds or removes active overrides per tax code. Tax code ids
+	// only — the rate value and the code's name never travel.
+	if diagnostics.Active() {
+		before := map[string]int{}
+		_ = json.Unmarshal([]byte(data.DecodeMapSettingValue(row.ValueJSON)), &before)
+		for id := range overrides {
+			if _, had := before[id]; !had {
+				diagnostics.Emit(diagnostics.TaxProvenance{TaxCodeID: id, From: diagnostics.ProvenanceAbsent, To: diagnostics.ProvenanceActiveOverride})
+			}
+		}
+		for id := range before {
+			if _, still := overrides[id]; !still {
+				diagnostics.Emit(diagnostics.TaxProvenance{TaxCodeID: id, From: diagnostics.ProvenanceActiveOverride, To: diagnostics.ProvenanceAbsent})
+			}
+		}
 	}
 	return 1, nil
 }

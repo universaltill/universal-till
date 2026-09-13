@@ -26,3 +26,5 @@ On the Android till app, "Take screenshot" captures what the app is showing dire
 Closing the panel with ✕ keeps it closed until you ask for it again: it stays shut as you move between screens, and the Report an issue page no longer forces it back open. Press 🐞 in the left-hand menu whenever you want it back.
 
 Wondering what happened to a report after you sent it? See [My reports](/help/my-reports) — every report this till has sent, with its current status.
+
+If diagnostic mode is on when you send a report (see Settings → Diagnostic mode in [Languages & display](/help/display)), the report also carries a reference to that diagnostic session and its most recent technical events, so support can read the report next to the stream it belongs to. Nothing extra is sent when diagnostic mode is off.

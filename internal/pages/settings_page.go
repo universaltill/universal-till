@@ -378,6 +378,7 @@ func disableDemoRowButtonsScript(rowClass string) string {
 func filterSettingsNavForRender(rows []settingsnav.Row, isManager, hasPayMethods, showDataCard bool) []settingsnav.Row {
 	hiddenThisRequest := map[string]bool{
 		"settings-issuereport": !isManager,
+		"settings-diagnostics": !isManager, // ADR-0092 §7, ut-docs#2169
 		"settings-menulayout":  !isManager,
 		"settings-payments":    !hasPayMethods,
 		"settings-data":        !showDataCard,
@@ -645,6 +646,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"menuItems":   d.MenuSnapshot(),
 			"uiScale":     strconv.FormatFloat(scale, 'f', -1, 64),
 			"isManager":   isManager,
+			// ADR-0092 §7 / ut-docs#2169: the diagnostic-mode card's state
+			// (web/ui/partials/diagnostics_block.html).
+			"diagnostics": diagnosticsViewFor(r.Context(), d, locale),
 			// ut-docs#1537: will the Android install endpoint accept this
 			// caller's session on its own, or is it going to demand a PIN?
 			// Rendered up front so a cashier (or anyone on a self-order kiosk)

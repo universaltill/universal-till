@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
@@ -79,6 +80,17 @@ type Meta struct {
 	// URL/host, isn't translated, and isn't meant for a shop owner to read
 	// verbatim).
 	UploadFailReason string `json:"upload_fail_reason,omitempty"`
+	// DiagnosticSessionID / DiagnosticEvents are the OPTIONAL diagnostic-
+	// mode attachment (ADR-0092 §6, till side; ut-docs#2169): the id of the
+	// diagnostic session locally active at capture time and its most recent
+	// locally-buffered allowlisted events (diagnostics.RecentForIssueReport
+	// — the ring plus the newest on-disk batch, capped), so a report filed
+	// mid-session lands next to the stream it belongs to. Both absent when
+	// no session was active — a bundle then serialises exactly as before
+	// these fields existed. Sent over the same multipart upload as
+	// everything else here (uploadIssueReport), never a separate channel.
+	DiagnosticSessionID string            `json:"diagnostic_session_id,omitempty"`
+	DiagnosticEvents    []json.RawMessage `json:"diagnostic_events,omitempty"`
 }
 
 // UploadFailingThreshold is how many consecutive cloud-upload failures (of
@@ -172,6 +184,9 @@ func saveBundleFiles(dir, id, note, locale string, audio, video []byte, images [
 		}
 	}
 	meta := Meta{ID: id, Note: note, Locale: locale, CreatedAt: time.Now().UTC(), Logs: logging.Recent()}
+	// ADR-0092 §6: attach the active diagnostic session's recent events,
+	// if any. A read-only snapshot — nothing is consumed from the queue.
+	meta.DiagnosticSessionID, meta.DiagnosticEvents = diagnostics.RecentForIssueReport()
 	mb, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return fmt.Errorf("issuereport: encode meta: %w", err)
