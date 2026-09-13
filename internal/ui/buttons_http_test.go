@@ -353,15 +353,17 @@ func TestButtonsHTTPList_RendersTabBarAndSearchWithMultipleCategories(t *testing
 	if !strings.Contains(body, `data-name="Cola"`) || !strings.Contains(body, `data-name="Burger"`) {
 		t.Fatalf("expected each tile to carry data-name for the search filter, got: %s", body)
 	}
-	// Exactly one tab starts active — the first group's ID drives the
-	// shared x-data seed, so its own tab panel (and only its own) shows
-	// x-show="tab === 'drinks'" wired to that same value. Checked as a
-	// substring, not the full x-data literal (ut-docs#422 added the
-	// matches/sectionHasMatch methods alongside tab/q, reformatting it
-	// onto multiple lines — the seeded initial tab is what this test
-	// actually pins, not the surrounding object's exact layout).
-	if !strings.Contains(body, `tab: 'drinks'`) {
-		t.Fatalf("expected the first root category to seed the initial active tab, got: %s", body)
+	// ut-docs#2212 SUPERSEDES this test's original invariant: the first
+	// root category no longer seeds the initial active tab — the
+	// synthetic "All" tab does, so every category's tiles show by default
+	// (see buttons_all_tab_test.go for the All tab's own coverage).
+	// Checked as a substring, not the full x-data literal (ut-docs#422
+	// added the matches/sectionHasMatch methods alongside tab/q,
+	// reformatting it onto multiple lines — the seeded initial tab is
+	// what this test actually pins, not the surrounding object's exact
+	// layout).
+	if !strings.Contains(body, `tab: '__all__'`) {
+		t.Fatalf("expected the synthetic All tab to seed the initial active tab, got: %s", body)
 	}
 }
 

@@ -126,12 +126,24 @@
             second; it was missed by re-running only go build/go vet after
             that edit instead of the full gate. */}}
     <section class="products-finder" aria-labelledby="products-panel-title" x-data="{
-      tab: '{{ if $hasTabs }}{{ (index .Groups 0).ID }}{{ end }}',
+      tab: '{{ if $hasTabs }}__all__{{ end }}',
       q: '',
       matches(tileEl) { return !this.q || tileEl.dataset.name.toLowerCase().includes(this.q.toLowerCase()); },
       sectionHasMatch(el) { return !this.q || Array.from(el.querySelectorAll('.btn-tile')).some(t => this.matches(t)); },
+      {{/* ut-docs#2212: the category strip's first tab is a synthetic "All"
+           (sentinel '__all__' — never a real category ID, which is always
+           either a server-generated uuid or "" for the uncategorized
+           bucket), selected by default, so an operator who has tapped into
+           one category always has an escape hatch back to the whole
+           catalogue. Reuses the EXISTING per-category panels rather than
+           rendering the catalogue a third time: selecting All just makes
+           every panelVisible() call for every panel return true at once,
+           the same "several panels visible together" shape ut-docs#2181
+           already built for a cross-category search — see this file's
+           other #2212 comments below for the ARIA/header side of that
+           reuse. */}}
       panelVisible(id, panelEl) {
-        return this.q ? this.sectionHasMatch(panelEl) : this.tab === id;
+        return this.q ? this.sectionHasMatch(panelEl) : (this.tab === id || this.tab === '__all__');
       },
       searching: false,
       openSearch() { this.searching = true; this.$nextTick(() => { const i = this.$refs.search; if (i) i.focus(); }); },
@@ -208,6 +220,17 @@
              time, so the tab itself is now what carries the color instead
              of losing it. */}}
         <div class="tab-bar" role="tablist" x-show="!searching" @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
+          {{/* ut-docs#2212: the All tab, always first, always selected by
+               default (tab's own initial value above). Deliberately no
+               aria-controls — unlike a real category tab, All doesn't own
+               ONE panel, it makes every existing panel visible at once, so
+               claiming a single aria-controls target would assert a
+               relationship that isn't true (same reasoning #2181 already
+               used to drop role="tabpanel"/aria-labelledby on a panel while
+               a cross-category search shows several of them at once — see
+               the panel loop below). No --cat-color either: All isn't one
+               category, so it has nothing to color-code with. */}}
+          <button type="button" id="cat-tab-all" class="tab" role="tab" :class="tab === '__all__' && 'active'" :aria-selected="tab === '__all__'" :tabindex="tab === '__all__' ? 0 : -1" @click="tab = '__all__'; $el.scrollIntoView({ block: 'nearest', inline: 'nearest' })">{{ T "products.all" }}</button>
           {{ range .Groups }}
           {{/* $el.scrollIntoView({ block: 'nearest', inline: 'nearest' }):
                ut-docs#2173 made this bar horizontally-scrolling, so
@@ -248,11 +271,12 @@
         </div>
         <p class="empty" x-show="!sectionHasMatch($el.parentElement)">{{ T "products.no_matches" }}</p>
         {{ else if $hasTabs }}
-        {{ range $i, $g := .Groups }}
-        {{/* x-cloak only the non-default panels — cloaking the initially-
-             active one too would hide the till's main content until
-             Alpine hydrates, the same tradeoff index.html's own Pay/Split
-             tabs make (only "split", never "pay", is cloaked).
+        {{ range $g := .Groups }}
+        {{/* ut-docs#2212: no panel is x-cloak'd any more — the default tab
+             is now the synthetic All (above), which makes every panel
+             visible at once, so cloaking "all but the first" (the old
+             single-default-category behavior) would hide real content
+             pre-hydration instead of preventing a flash of wrong content.
              --cat-color set here too (ut-docs#1325), not just on the tab
              button above: a top-level group's OWN buttons render straight
              into this panel via "category-group-body-tabbed" (own
@@ -279,7 +303,7 @@
              than assert a relationship that no longer holds; Alpine
              removes an :attr bound to null/false, it doesn't render the
              literal string. */}}
-        <div id="cat-panel-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}" :role="q ? 'group' : 'tabpanel'" :aria-labelledby="q ? null : 'cat-tab-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}'" class="products-tab-panel" style="--cat-color: {{ $g.Color }}" x-show="panelVisible('{{ $g.ID }}', $el)"{{ if ne $i 0 }} x-cloak{{ end }}>
+        <div id="cat-panel-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}" :role="(q || tab === '__all__') ? 'group' : 'tabpanel'" :aria-labelledby="(q || tab === '__all__') ? null : 'cat-tab-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}'" class="products-tab-panel" style="--cat-color: {{ $g.Color }}" x-show="panelVisible('{{ $g.ID }}', $el)">
           {{ template "category-group-body-tabbed" $g }}
         </div>
         {{ end }}
@@ -327,19 +351,21 @@
      via the recursive "category-group" template below — same markup a
      subcategory always used. The top-level bucket's own buttons get a
      "category-group" wrapper too, but with its header shown only while a
-     query is active (ut-docs#2181): outside a search, the active tab
-     already names the category, so a permanent header here would be
-     redundant noise; but once a query makes panelVisible() (above) show
-     more than one tab's panel at once, the tab bar (hidden while searching
-     anyway) can no longer tell the operator which category a result came
-     from, and the header is what does instead. Nested subcategories don't
-     need this treatment — "category-group" below already carries its own
-     always-visible header regardless of search state, which is exactly
-     what already keeps a Dairy/Bakery-style result unambiguous today. */}}
+     query is active (ut-docs#2181) OR the All tab is selected (ut-docs#2212)
+     — outside both, the active tab already names the category, so a
+     permanent header here would be redundant noise; but once either one
+     makes panelVisible() (above) show more than one tab's panel at once,
+     the tab bar (hidden while searching; not naming any one category while
+     All is active) can no longer tell the operator which category a result
+     came from, and the header is what does instead. Nested subcategories
+     don't need this treatment — "category-group" below already carries its
+     own always-visible header regardless of search/All state, which is
+     exactly what already keeps a Dairy/Bakery-style result unambiguous
+     today. */}}
 {{ define "category-group-body-tabbed" }}
   {{ if .Buttons }}
   <section class="category-group" x-show="sectionHasMatch($el)">
-    <h3 class="category-header" x-show="q" x-cloak>{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</h3>
+    <h3 class="category-header" x-show="q || tab === '__all__'">{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</h3>
     <div class="grid">
       {{ range .Buttons }}{{ template "product-tile" . }}{{ end }}
     </div>

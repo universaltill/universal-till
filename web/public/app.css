@@ -2396,7 +2396,17 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
 .held-strip:empty { display: none; }
 .held-title { font-size: .78rem; font-weight: 700; text-transform: uppercase;
               letter-spacing: .04em; color: var(--muted); }
-.held-chip { padding: .35rem .6rem; font-size: .8rem; min-height: 0;
+/* ut-docs#2218: min-height:0 overrode .btn's 3rem floor down to a
+   measured ~26-27px hit target -- under this codebase's 44px touch-target
+   floor (see .modifier-option/.catalog-detail-title .thumb elsewhere in
+   this file). Raised to a real 44px, same as those, WITHOUT touching
+   padding/font-size, so the chip keeps its compact look; .btn's own
+   align-items:center centers the (unchanged) content in the taller box.
+   Unlike ut-docs#1340 (basket qty/disc, rejected: a fixed ">=4 rows
+   visible" AC), .held-chip lives in .held-strip (flex-wrap) inside
+   .tender-scroll (free-scrolling, no row-count AC) -- nothing here
+   depends on this chip's height staying small. */
+.held-chip { padding: .35rem .6rem; font-size: .8rem; min-height: 44px;
              border: 1px dashed var(--accent); color: var(--accent); background: var(--surface); }
 .held-chip:hover { background: var(--accent); color: #fff; }
 

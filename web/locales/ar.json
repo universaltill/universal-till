@@ -1285,6 +1285,7 @@
   "pos.toast.voucher_scan_not_found": "لم يتم العثور على قسيمة بالرمز %s",
   "pos.toast.voucher_scan_unusable": "لا يمكن استخدام القسيمة %s — لا يوجد رصيد متبقٍ أو لم تعد سارية",
   "products.add": "إضافة منتج",
+  "products.all": "الكل",
   "products.edit": "تعديل الأزرار السريعة",
   "products.empty": "لا توجد منتجات بعد. أضِف بعضها في الأزرار السريعة.",
   "products.no_matches": "لا توجد منتجات مطابقة.",
