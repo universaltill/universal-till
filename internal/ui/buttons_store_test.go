@@ -13,7 +13,13 @@ func setupFullTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db := setupTestDB(t)
 	stmts := []string{
-		`CREATE TABLE item_variants (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, name TEXT, price INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
+		// ut-docs#2209: `sku` is part of the REAL schema (001_init.sql) and
+		// this fixture had drifted from it — CatalogRepo.ItemIDsWithVariants
+		// reads it (and variant_barcodes, created in setupTestDB) to tell a
+		// sellable variant from a codeless one, and failed here with "no such
+		// column: v.sku" until it was added. Same fixture-drift class as
+		// ut-docs#625.
+		`CREATE TABLE item_variants (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, sku TEXT UNIQUE, name TEXT, price INTEGER NOT NULL, cost_price INTEGER, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE item_modifier_groups (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, name TEXT, is_active INTEGER NOT NULL DEFAULT 1);`,
 		// Migration 025 (ADR-0090): ItemIDsWithModifiers reads membership
 		// through the link table, not item_modifier_groups.item_id.

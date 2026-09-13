@@ -5,7 +5,7 @@ section: Täglicher Verkauf
 order: 10
 summary: "Der Hauptbildschirm der Kasse: Artikel scannen oder auswählen, Zahlung entgegennehmen, Beleg drucken oder überspringen."
 routes: [/, /ui/basket, /ui/buttons, /ui/held, /refund/{receipt}]
-keywords: [warenkorb, kassieren, zahlung, bezahlen, scannen, halten, rabatt, kamera, tisch, tische, modifikator, anpassung, kunde, treue, aktion, bestellart, außer haus, vor ort, vorschläge, offline, sync-chip]
+keywords: [warenkorb, kassieren, zahlung, bezahlen, scannen, halten, rabatt, kamera, tisch, tische, modifikator, anpassung, variante, größe, kunde, treue, aktion, bestellart, außer haus, vor ort, vorschläge, offline, sync-chip]
 ---
 
 # Verkaufen & Kassieren
@@ -23,13 +23,13 @@ Der Hauptbildschirm der Kasse: Artikel scannen oder auswählen, Zahlung entgegen
 
 ## Artikelanpassung
 
-Manche Artikel sind im Katalog mit Anpassungsgruppen eingerichtet — die Größe eines Kaffees, das Brot eines Sandwiches, die Extras eines Burgers — jeweils mit eigenem Preis. Siehe **Katalog, Varianten & Barcodes** für das Einrichten dieser Gruppen; dieser Abschnitt handelt vom Buchen eines solchen Artikels.
+Manche Artikel sind im Katalog mit Anpassungsgruppen eingerichtet — die Größe eines Kaffees, das Brot eines Sandwiches, die Extras eines Burgers — jeweils mit eigenem Preis. Manche Artikel haben stattdessen (oder zusätzlich) Varianten — ein Kaffee, der als Klein/Normal/Groß verkauft wird, jede mit ihrem eigenen Preis statt eines Aufpreises auf einen Basispreis. Siehe **Katalog, Varianten & Barcodes** für das Einrichten von beidem; dieser Abschnitt handelt vom Buchen eines solchen Artikels.
 
-Tippen Sie auf die Kachel eines anpassbaren Artikels, öffnet sich eine Auswahl, statt den Artikel direkt in den Warenkorb zu legen. Wählen Sie eine Option in jeder Gruppe — eine Gruppe, die nur eine Wahl erlaubt, zeigt runde Schaltflächen, eine Gruppe, die mehrere erlaubt, zeigt Kontrollkästchen —, dann wählen Sie **Zum Warenkorb hinzufügen**. Optionen mit Aufpreis zeigen ihren Zusatzpreis direkt neben der Auswahl; die Warenkorbzeile zeigt danach jede gewählte Option unter dem Namen des Artikels an, mit dem Gesamtpreis bereits in den Zeilenpreis eingerechnet.
+Tippen Sie auf die Kachel eines anpassbaren oder variantenbehafteten Artikels, öffnet sich eine Auswahl, statt den Artikel direkt in den Warenkorb zu legen — genau das ist der Sinn: Ein Artikel mit Varianten hat nie einen einzigen „den" Preis, darum fragt die Kasse immer erst, welche Variante es sein soll, bevor sie eine Zeile hinzufügen kann. Hat der Artikel Varianten, wählen Sie zuerst eine aus — jede Variante zeigt ihren eigenen Preis, und eine Auswahl ist Pflicht, es gibt keine Option, „einfach den Basisartikel" hinzuzufügen. Wählen Sie danach eine Option in jeder Anpassungsgruppe, falls der Artikel welche hat — eine Gruppe, die nur eine Wahl erlaubt, zeigt runde Schaltflächen, eine Gruppe, die mehrere erlaubt, zeigt Kontrollkästchen —, dann wählen Sie **Zum Warenkorb hinzufügen**. Optionen mit Aufpreis zeigen ihren Zusatzpreis direkt neben der Auswahl; die Warenkorbzeile zeigt danach die Variante und jede gewählte Option unter dem Namen des Artikels an, mit dem Gesamtpreis bereits in den Zeilenpreis eingerechnet.
 
-Eine Gruppe kann erforderlich (markiert mit einem **\***) oder optional sein und eine eigene Mindest- und Höchstanzahl an Auswahlmöglichkeiten haben — die meisten Artikel benötigen nur eine Wahl pro Gruppe, aber nichts hindert ein Geschäft daran, eine Gruppe einzurichten, die zwei von vier möchte. Wählen Sie zu wenige oder zu viele für eine Gruppe, geht **Zum Warenkorb hinzufügen** nicht durch: Eine Meldung nennt die Gruppe und wie viele Auswahlmöglichkeiten sie benötigt. **Abbrechen** schließt die Auswahl, ohne etwas hinzuzufügen.
+Eine Gruppe kann erforderlich (markiert mit einem **\***) oder optional sein und eine eigene Mindest- und Höchstanzahl an Auswahlmöglichkeiten haben — die meisten Artikel benötigen nur eine Wahl pro Gruppe, aber nichts hindert ein Geschäft daran, eine Gruppe einzurichten, die zwei von vier möchte. Wählen Sie zu wenige oder zu viele für eine Gruppe, oder keine Variante, geht **Zum Warenkorb hinzufügen** nicht durch: Eine Meldung nennt, was fehlt. **Abbrechen** schließt die Auswahl, ohne etwas hinzuzufügen.
 
-Ist eine angepasste Zeile einmal im Warenkorb, sind ihre Optionen für diesen Verkauf festgelegt — es gibt keine Möglichkeit, sie an Ort und Stelle zu bearbeiten. Um die Meinung eines Kunden zu ändern, entfernen Sie die Zeile (✕) und tippen Sie den Artikel erneut an, um die Auswahl erneut zu öffnen.
+Ist eine angepasste oder variantenbehaftete Zeile einmal im Warenkorb, sind ihre Auswahlen für diesen Verkauf festgelegt — es gibt keine Möglichkeit, sie an Ort und Stelle zu bearbeiten. Um die Meinung eines Kunden zu ändern, entfernen Sie die Zeile (✕) und tippen Sie den Artikel erneut an, um die Auswahl erneut zu öffnen.
 
 ## Rabatte
 

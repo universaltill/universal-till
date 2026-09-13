@@ -4,6 +4,18 @@
         hx-on::after-request="if (event.detail.successful) { var m = document.getElementById('selforder-modal'); m.close(); m.innerHTML=''; }">
     <input type="hidden" name="code" value="{{ .Code }}">
     <input type="hidden" name="itemId" value="{{ .ItemID }}">
+    {{ if .Variants }}
+    <fieldset class="modifier-group">
+      <legend>{{ T "modifiers.variant_legend" }} <span class="modifier-required">*</span></legend>
+      {{ range .Variants }}
+      <label class="modifier-option">
+        <input type="radio" name="variantId" value="{{ .ID }}" required>
+        <span>{{ .Name }}</span>
+        <span class="modifier-price">{{ money .PriceMinor }}</span>
+      </label>
+      {{ end }}
+    </fieldset>
+    {{ end }}
     {{ if .Groups }}
       {{ range .Groups }}
       {{ $group := . }}
@@ -19,7 +31,7 @@
         {{ end }}
       </fieldset>
       {{ end }}
-    {{ else }}
+    {{ else if not .Variants }}
       <p class="muted">{{ T "modifiers.none_available" }}</p>
     {{ end }}
     <div class="modifier-actions">
