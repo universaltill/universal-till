@@ -20,12 +20,13 @@ import { watchConsole } from './helpers';
 //    carries the page-head, with no shell around it.
 //
 // One thing this file deliberately does NOT claim to cover: the server-side
-// isAdminPanelSwap guard (internal/pages/admin_page.go). Reverting that
-// guard leaves both tests below GREEN — htmx 1.9 discards an out-of-band
-// fragment with no matching target silently, with no console error for
-// watchConsole to catch and nothing inserted into the DOM. That guard's
-// real coverage is the Go handler test
-// TestCountrySettings_FragmentOmitsAdminTreeUnlessPanelTargeted. The
+// admin-tree-suppression guard (internal/pages/admin_page.go's
+// isAdminInlineSwap, ut-docs#2178 — replaced the old isAdminPanelSwap).
+// Reverting that guard leaves both tests below GREEN — htmx 1.9 discards an
+// out-of-band fragment with no matching target silently, with no console
+// error for watchConsole to catch and nothing inserted into the DOM. That
+// guard's real coverage is the Go handler test
+// TestCountrySettings_FragmentOmitsAdminTreeOnlyWhenInlineSwapMarked. The
 // #admin-tree count assertion below is kept as a cheap tripwire for a
 // future htmx upgrade changing that behaviour, not as proof of the guard.
 //
@@ -61,6 +62,11 @@ test.describe('/country-settings scope filter stays in-panel (ut-docs#2167)', ()
       .toHaveAttribute('aria-pressed', 'true');
     // The all-countries view really did load, not just the chip flip.
     expect(await page.locator('#country-settings-view table.table tbody tr').count()).toBeGreaterThan(1);
+    // ut-docs#2178 AC: a screen reader gets a spoken confirmation of the
+    // toggle — #country-settings-status sits OUTSIDE #country-settings-view
+    // (survives its outerHTML swap) and is updated to the now-pressed
+    // chip's own label by the page's htmx:afterSwap listener.
+    await expect(page.locator('#country-settings-status')).toHaveText(await showAll.innerText());
 
     // And back again, still in the shell.
     await page.locator('#country-settings-view .filter-chips .chip').nth(0).click();
@@ -87,11 +93,11 @@ test.describe('/country-settings scope filter stays in-panel (ut-docs#2167)', ()
     await expect(page.locator('#country-settings-view table.table')).toBeVisible();
     // The out-of-band admin tree must not have leaked into a page that has
     // no shell to receive it (internal/pages/admin_page.go's
-    // isAdminPanelSwap). Asserted AFTER the swap, not only before it:
-    // htmx 1.9 does not raise a console error for an oob fragment with no
-    // matching target, so watchConsole alone cannot see this — verified by
-    // reverting the guard and watching this file still pass without this
-    // line.
+    // isAdminInlineSwap, ut-docs#2178). Asserted AFTER the swap, not only
+    // before it: htmx 1.9 does not raise a console error for an oob
+    // fragment with no matching target, so watchConsole alone cannot see
+    // this — verified by reverting the guard and watching this file still
+    // pass without this line.
     await expect(page.locator('#admin-tree')).toHaveCount(0);
     assertClean();
   });

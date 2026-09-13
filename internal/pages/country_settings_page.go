@@ -164,19 +164,13 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 		// the exact same full standalone page as before this card.
 		if httpx.IsFragmentSwap(w, r) {
 			httpx.RenderContentFragment("ui/pages/country_settings.html", countrySettingsData)(w, r)
-			// ut-docs#2167: only a real /admin tree-row click targets
-			// #admin-panel (isAdminPanelSwap) — the in-page scope-filter
-			// chips this page now renders target their own
-			// #country-settings-view subtree instead, and on both the
-			// standalone page and that in-page swap there is no
-			// #admin-tree present to receive an out-of-band refresh.
-			// htmx discards such a fragment silently rather than
-			// breaking, so this saves pointless work per toggle rather
-			// than fixing a visible bug — see isAdminPanelSwap's own
-			// comment for the measurement.
-			if isAdminPanelSwap(r) {
-				writeAdminTreeOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/country-settings", adminGroupsFor(visibleAdminEntries(d, r)))
-			}
+			// Unconditional, like the other five /admin destinations
+			// (ut-docs#2178): writeAdminTreeOOB itself now decides whether
+			// this request wants the tree (isAdminInlineSwap — the scope
+			// chips below carry that header on their own hx-headers), so
+			// this call site no longer needs its own guard the way the old
+			// isAdminPanelSwap check required.
+			writeAdminTreeOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/country-settings", adminGroupsFor(visibleAdminEntries(d, r)))
 			return
 		}
 		httpx.Render("ui/pages/country_settings.html", countrySettingsData)(w, r)

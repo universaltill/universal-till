@@ -141,26 +141,31 @@ func isAdminEmbed(r *http.Request) bool {
 	return r != nil && r.Header.Get(adminEmbedHeader) != ""
 }
 
-// isAdminPanelSwap reports whether r is an htmx request whose target is
-// /admin's own #admin-panel — i.e. a tree-row click, the only case where
-// the out-of-band tree refresh has anything to swap into. htmx sends the
-// target element's id in HX-Target, and every admin_tree.html row targets
-// #admin-panel. An in-page htmx control on one of the six destinations
-// (ut-docs#2167's country-scope chips) targets its own subtree instead, and
-// the standalone page has no tree at all.
+// adminInlineSwapHeader marks an htmx request from an IN-PAGE control on
+// one of the six /admin destinations (e.g. ut-docs#2167's country-settings
+// scope chips) that targets its own subtree rather than /admin's
+// #admin-panel — the destination's own template sets this header on that
+// control's hx-headers, so the OOB tree refresh knows to skip itself no
+// matter what selector the control's own hx-target uses (ut-docs#2178).
 //
-// What this does NOT do, stated plainly so nobody re-derives it: htmx 1.9
-// silently DISCARDS an out-of-band fragment whose target is absent — no
-// console error, nothing inserted into the DOM. Measured during ut-docs#2167
-// by reverting this guard and re-running that card's e2e spec, which still
-// passed. So this is not fixing a visible break; it stops the handler doing
-// real work (visibleAdminEntries + adminGroupsFor + a template render) on
-// every in-page toggle for output the browser will throw away, and keeps the
-// response honest about what it is. internal/pages/country_settings_page.go
-// is its only caller today; a destination growing its own in-page htmx
-// control wants the same guard.
-func isAdminPanelSwap(r *http.Request) bool {
-	return r != nil && r.Header.Get("HX-Target") == "admin-panel"
+// This replaces the old HX-Target-sniffing check (isAdminPanelSwap,
+// removed) deliberately: HX-Target carries the target element's id, and
+// htmx omits the header ENTIRELY when the target has no id — so a check
+// built on it fails *closed* (tree silently dropped) the moment a future
+// admin_tree.html row, or a future in-page control, uses a target without
+// one. This header is a POSITIVE opt-out instead: writeAdminTreeOOB below
+// sends the tree unless a request explicitly says it doesn't want it, so
+// the failure mode for a future caller that forgets to set it is "the tree
+// is sent and harmlessly discarded" (htmx 1.9 silently drops an
+// out-of-band fragment with no matching target — measured during
+// ut-docs#2167 by reverting that card's own guard and re-running its e2e
+// spec, which still passed), never "a real tree-row click's highlight
+// silently stops updating."
+const adminInlineSwapHeader = "X-UT-Admin-Inline-Swap"
+
+// isAdminInlineSwap reports whether r is such an in-page, non-tree swap.
+func isAdminInlineSwap(r *http.Request) bool {
+	return r != nil && r.Header.Get(adminInlineSwapHeader) != ""
 }
 
 // writeAdminTreeOOB renders web/ui/partials/admin_tree.html as an
@@ -173,11 +178,15 @@ func isAdminPanelSwap(r *http.Request) bool {
 // can't reach the client as a truncated hx-swap-oob="true" fragment.
 // Best-effort: silently does nothing on error, same as WriteRailOOB.
 //
-// No-ops for an inlined embed (see adminEmbedHeader) — that caller's page
-// draws the tree itself, so a second copy here would be a duplicate DOM id
-// and a visibly doubled tree.
+// No-ops for an inlined embed (see adminEmbedHeader) or an in-page swap
+// (see adminInlineSwapHeader) — the embed caller's page draws the tree
+// itself, and an in-page control has no #admin-tree in its own subtree to
+// receive the fragment either way. This is the ONE place that decision is
+// made (ut-docs#2178): every one of the six destinations calls this
+// function unconditionally and gets the right answer, rather than each
+// call site guarding itself and risking the next one forgetting to.
 func writeAdminTreeOOB(w io.Writer, r *http.Request, funcs template.FuncMap, currentHref string, groups []adminGroup) {
-	if isAdminEmbed(r) {
+	if isAdminEmbed(r) || isAdminInlineSwap(r) {
 		return
 	}
 	view, err := ui.NewAdminTreeView(funcs)
