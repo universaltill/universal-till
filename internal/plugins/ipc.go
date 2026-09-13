@@ -284,7 +284,16 @@ func (eb *EventBus) HasSubscribers(eventType string) bool {
 }
 
 // GetEventMode returns the dispatch mode for an event type
-// Defaults to NonBlocking if not explicitly configured
+// Defaults to NonBlocking if not explicitly configured.
+//
+// No production caller: publish() deliberately inlines this lookup rather
+// than calling it, because it already holds eb.mu and a recursive RLock
+// can deadlock once a writer is pending (see the reentrancy note there,
+// ut-docs#504). Kept as a declared test helper (ut-docs#1566): it is the
+// read side of the live SetEventMode, and wasm_sync_test.go asserts through
+// it that WasmRuntime.Sync marks ".ask" and ".refund" hooks Blocking (Sync
+// applies the same rule to ".authorize", which no test reads back) — the
+// only read path for that state short of poking eventModes.
 func (eb *EventBus) GetEventMode(eventType string) EventDispatchMode {
 	eb.mu.RLock()
 	defer eb.mu.RUnlock()
@@ -329,7 +338,16 @@ func (eb *EventBus) subscribe(ctx context.Context, pluginID string, eventTypes [
 	return ch, nil
 }
 
-// Subscribe registers a plugin to receive events
+// Subscribe registers a plugin to receive events on the returned channel
+// only, with no blocking handler — the non-blocking half of the bus's two
+// dispatch modes. No production caller: the WASM runtime (the only shipped
+// plugin runtime, ADR-0001) always subscribes through SubscribeWithHandler
+// (WasmRuntime.Sync), since every hook it registers may also be published
+// Blocking. Kept as a declared test helper (ut-docs#1566): 25 call sites
+// across ten `_test.go` files in this package exercise the channel
+// dispatch path, permission gating, ut-docs#791 payload redaction and the
+// channel-full throttle through it, and it is a one-line wrapper over the
+// same subscribe() the live path uses, so it can't drift from it.
 func (eb *EventBus) Subscribe(ctx context.Context, pluginID string, eventTypes []string) (<-chan Event, error) {
 	return eb.subscribe(ctx, pluginID, eventTypes, nil)
 }
@@ -683,21 +701,6 @@ func (eb *EventBus) AskPlugin(ctx context.Context, pluginID, eventType string, p
 	return nil, false, nil
 }
 
-// Acknowledge records event acknowledgment from a plugin
-func (eb *EventBus) Acknowledge(ctx context.Context, eventID, pluginID string, success bool, errorMsg string) error {
-	status := "success"
-	if !success {
-		status = "error"
-	}
-
-	details := fmt.Sprintf("event_id=%s, status=%s", eventID, status)
-	if errorMsg != "" {
-		details += fmt.Sprintf(", error=%s", errorMsg)
-	}
-
-	return data.NewPluginRepo(eb.dbHandle()).InsertAuditRaw(ctx, nil, "event_acknowledged", "plugin", pluginID, details, time.Now())
-}
-
 // auditEventWithDB logs event publication to audit_log, with the db handle
 // passed in explicitly for callers that already hold eb.mu (publish,
 // ut-docs#504) — calling dbHandle() there would be a recursive RLock, which
@@ -767,7 +770,20 @@ func (eb *EventBus) PublishStockAdjusted(ctx context.Context, stockEvent StockAd
 	return eb.Publish(ctx, "stock.adjusted", stockEvent)
 }
 
-// Unsubscribe removes a plugin's subscription
+// Unsubscribe removes one plugin's subscriptions and closes its channel.
+// No production caller: the WASM runtime never unsubscribes a single
+// plugin — WasmRuntime.Sync rebuilds the whole subscriber set on every
+// Manager.Reload via ResetSubscribers (which also closes the channels), and
+// WasmRuntime.Close does the same at shutdown. Kept as a declared test
+// helper (ut-docs#1566): TestEventBus_Unsubscribe pins the closed-channel
+// contract, and the crash-isolation integration test uses it to simulate a
+// plugin dropping out between subscribe and publish. Safe alongside a live
+// publish for the same reason ResetSubscribers is (exclusive Lock vs.
+// publish's held RLock). Known latent bug, not fixed here (ut-docs#2242):
+// a plugin subscribed to >=2 event types in one Subscribe/SubscribeWithHandler
+// call shares one channel across those types, and this closes it once per
+// event type with no dedupe — unlike ResetSubscribers' closed map. Dormant
+// today because every caller subscribes with a single event type.
 func (eb *EventBus) Unsubscribe(pluginID string) {
 	eb.mu.Lock()
 	defer eb.mu.Unlock()

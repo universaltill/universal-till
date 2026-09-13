@@ -278,6 +278,13 @@ type VariantView struct {
 	Name       string
 	Barcode    string
 	PriceMinor int64
+	// SKU is the variant's own SKU (ut-docs#2209) — populated by
+	// ItemVariantsFor (not ItemVariants, which has no caller needing it) so
+	// the sale-screen variant picker can tell a genuinely codeless variant
+	// (no barcode AND no SKU — can never be resolved at sale time) from one
+	// that only lacks a barcode, mirroring GetVariantLabel's own
+	// barcode-else-SKU "resolvable code" fallback.
+	SKU string
 }
 
 // ItemVariants returns each active item's variants (with each variant's primary
@@ -452,11 +459,14 @@ func (r *CatalogRepo) HasOtherActiveItems(ctx context.Context, itemID string) (b
 }
 
 // ItemVariantsFor returns ONE item's active variants (with each variant's
-// primary barcode), name-ordered — the single-item counterpart to
-// ItemVariants for the row-level re-render (ut-docs#1363).
+// primary barcode and its own SKU), name-ordered — the single-item
+// counterpart to ItemVariants for the row-level re-render (ut-docs#1363),
+// and also what the sale-screen variant picker loads (ut-docs#2209) — SKU
+// is included so that caller can filter out a variant with no resolvable
+// code (see VariantView.SKU's doc comment).
 func (r *CatalogRepo) ItemVariantsFor(ctx context.Context, itemID string) ([]VariantView, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT v.id, v.name, v.price,
+SELECT v.id, v.name, v.price, COALESCE(v.sku, ''),
        COALESCE((SELECT b.barcode FROM variant_barcodes b WHERE b.variant_id = v.id
                  ORDER BY b.is_primary DESC, b.barcode LIMIT 1), '')
 FROM item_variants v
@@ -469,12 +479,62 @@ ORDER BY v.name`, itemID)
 	var out []VariantView
 	for rows.Next() {
 		var v VariantView
-		if err := rows.Scan(&v.ID, &v.Name, &v.PriceMinor, &v.Barcode); err != nil {
+		if err := rows.Scan(&v.ID, &v.Name, &v.PriceMinor, &v.SKU, &v.Barcode); err != nil {
 			return nil, err
 		}
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+// ItemIDsWithVariants reports which of the given item IDs have at least one
+// active, SELLABLE variant — one batch query, not N+1, mirroring
+// ModifierRepo.ItemIDsWithModifiers exactly (ut-docs#2209): the sale-screen
+// button grid and the kiosk browse grid each need to know, for a whole page
+// of tiles at once, whether tapping a tile should open the variant/modifier
+// picker first instead of adding straight to the basket at the parent
+// item's base price. Items with no such variant are simply absent from the
+// returned set (not present == false).
+//
+// "Sellable" here MUST mean exactly what pages.sellableVariants means —
+// active AND carrying a resolvable code (a variant barcode, else a SKU).
+// DO NOT relax this to a bare is_active check (ut-docs#2209 review,
+// blocker 2). These two predicates decide different halves of the same
+// interaction: this one decides whether the TILE opens the picker,
+// sellableVariants decides what the picker OFFERS. When they disagreed,
+// an item whose variants were all codeless opened a picker with no variant
+// fieldset and a live "Add to cart" button, and submitting it added the
+// PARENT base price — the original money defect, now wearing a dialog that
+// looks like it asked the question. That shape is reachable on real
+// installs: item_variants.sku is nullable, CreateVariant has only
+// auto-generated SKUs since ut-docs#1900, and no migration backfills the
+// older rows.
+func (r *CatalogRepo) ItemIDsWithVariants(ctx context.Context, itemIDs []string) (map[string]bool, error) {
+	result := map[string]bool{}
+	if len(itemIDs) == 0 {
+		return result, nil
+	}
+	placeholders, args := inPlaceholders(itemIDs)
+	query := `
+SELECT DISTINCT v.item_id
+FROM item_variants v
+WHERE v.is_active = 1
+  AND (COALESCE(v.sku, '') <> ''
+       OR EXISTS (SELECT 1 FROM variant_barcodes b WHERE b.variant_id = v.id))
+  AND v.item_id IN (` + placeholders + `)`
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("item ids with variants: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan item id with variants: %w", err)
+		}
+		result[id] = true
+	}
+	return result, rows.Err()
 }
 
 // VariantEditView is one variant in the item's edit panel: everything the

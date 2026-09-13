@@ -135,15 +135,8 @@ func (r *tcpConnRegistry) Open(pluginID string, conn net.Conn, addr string) (int
 	return h, true
 }
 
-// Get looks up an open connection by (pluginID, handle).
-func (r *tcpConnRegistry) Get(pluginID string, handle int32) (net.Conn, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	info, ok := r.byPlugin[pluginID][handle]
-	return info.conn, ok
-}
-
-// GetWithAddr is Get plus the `tcp:<host>:<port>` permission string that was
+// GetWithAddr looks up an open connection by (pluginID, handle), returning
+// it together with the `tcp:<host>:<port>` permission string that was
 // checked when the handle was opened, in a single locked lookup —
 // hostTCPWrite/hostTCPRead need both the connection and its authorization
 // address per call, and looking them up as two separately-locked calls
@@ -153,7 +146,9 @@ func (r *tcpConnRegistry) Get(pluginID string, handle int32) (net.Conn, bool) {
 // closed or, in the narrowest cross-reload race, degrades to a spurious
 // closed-connection I/O error rather than misdirecting a call onto a
 // different plugin's connection — this closes the window regardless,
-// since a single lock is free to have).
+// since a single lock is free to have). It replaced a conn-only Get, whose
+// last (test-only) callers moved here under ut-docs#1566 so the tests
+// assert through the same lookup production uses.
 func (r *tcpConnRegistry) GetWithAddr(pluginID string, handle int32) (net.Conn, string, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

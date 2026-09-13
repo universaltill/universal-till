@@ -36,7 +36,6 @@ internal/pages/refund_page.go: unreachable func: blockingPaymentEvent
 internal/pages/setup_language_catalog.go: unreachable func: resetSetupLanguageCatalog
 internal/pages/setup_tax_catalog.go: unreachable func: resetSetupTaxCatalog
 internal/pihealth/pihealth.go: unreachable func: CheckNow
-internal/plugins/ipc.go: unreachable func: EventBus.Acknowledge
 internal/plugins/ipc.go: unreachable func: EventBus.GetEventMode
 internal/plugins/ipc.go: unreachable func: EventBus.Subscribe
 internal/plugins/ipc.go: unreachable func: EventBus.Unsubscribe
@@ -46,15 +45,10 @@ internal/plugins/marketplace/catalog_repository.go: unreachable func: CatalogRep
 internal/plugins/marketplace/client.go: unreachable func: Client.AckDownload
 internal/plugins/marketplace/client.go: unreachable func: Client.GetRevocations
 internal/plugins/marketplace/client.go: unreachable func: Client.ReportPluginStatus
-internal/plugins/permissions.go: unreachable func: CheckMultiplePermissions
-internal/plugins/permissions.go: unreachable func: HasAnyPermission
 internal/plugins/permissions.go: unreachable func: ListPluginPermissions
 internal/plugins/plugins.go: unreachable func: Manager.CatalogList
-internal/plugins/plugins.go: unreachable func: Manager.CatalogPage
 internal/plugins/revocation.go: unreachable func: RevocationChecker.GetRevokedPlugins
 internal/plugins/rollback.go: unreachable func: RollbackManager.GetVersionHistory
-internal/plugins/update_checker.go: unreachable func: UpdateChecker.GetUpdateInfo
-internal/plugins/wasm_tcp.go: unreachable func: tcpConnRegistry.Get
 internal/pos/catalog_ops.go: unreachable func: UpdateItem
 internal/pos/catalog_search.go: unreachable func: CatalogSearcher.LookupActiveVariant
 internal/pos/catalog_search.go: unreachable func: CatalogSearcher.SearchActiveItems

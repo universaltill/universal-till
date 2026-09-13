@@ -186,19 +186,3 @@ func compareVersions(v1, v2 string) int {
 
 	return 0
 }
-
-// GetUpdateInfo retrieves update information for a specific plugin
-func (uc *UpdateChecker) GetUpdateInfo(ctx context.Context, pluginID string) (*UpdateInfo, error) {
-	updates, err := uc.CheckForUpdates(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, update := range updates {
-		if update.PluginID == pluginID {
-			return &update, nil
-		}
-	}
-
-	return nil, fmt.Errorf("no update available for plugin %s", pluginID)
-}

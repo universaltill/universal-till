@@ -191,56 +191,6 @@ func TestLoadMenuEntriesPermissionGating(t *testing.T) {
 	}
 }
 
-func TestCatalogPage(t *testing.T) {
-	db := managerTestDB(t)
-	ctx := context.Background()
-
-	seedCatalogRow(t, db, "com.test.p1", "Alpha", "1.0.0", `["pos"]`)
-	seedCatalogRow(t, db, "com.test.p3", "Gamma", "1.0.0", `["pos"]`)
-	// p2 is installed; its catalog row comes from seedInstalledPlugin. Tag it.
-	seedInstalledPlugin(t, db, "com.test.p2", "Beta", "1.0.0", "none", true)
-	if _, err := db.Exec(`UPDATE plugin_catalog SET tags_json = '["report"]' WHERE id = 'com.test.p2'`); err != nil {
-		t.Fatalf("tag p2: %v", err)
-	}
-
-	m, err := Init(ctx, &config.Config{Env: "test"}, db)
-	if err != nil {
-		t.Fatalf("Init: %v", err)
-	}
-
-	// Defaults kick in for bad offset/limit.
-	all, total, err := m.CatalogPage(ctx, -5, 0, "")
-	if err != nil {
-		t.Fatalf("CatalogPage: %v", err)
-	}
-	if total != 3 || len(all) != 3 {
-		t.Fatalf("total=%d len=%d", total, len(all))
-	}
-	for _, v := range all {
-		if v.ID == "com.test.p2" && !v.Installed {
-			t.Fatalf("installed flag lost for p2")
-		}
-	}
-
-	// Tag filter.
-	pos, total, err := m.CatalogPage(ctx, 0, 10, "pos")
-	if err != nil {
-		t.Fatalf("CatalogPage tag: %v", err)
-	}
-	if total != 2 || len(pos) != 2 {
-		t.Fatalf("tag filter: total=%d len=%d", total, len(pos))
-	}
-
-	// Pagination.
-	page2, _, err := m.CatalogPage(ctx, 2, 2, "")
-	if err != nil {
-		t.Fatalf("CatalogPage page2: %v", err)
-	}
-	if len(page2) != 1 {
-		t.Fatalf("page2 len=%d", len(page2))
-	}
-}
-
 func TestParseTags(t *testing.T) {
 	cases := []struct {
 		in   string

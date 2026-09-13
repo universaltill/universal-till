@@ -1,6 +1,24 @@
 <!-- web/ui/partials/buttons.html -->
 {{ define "buttons" }}
-<div class="products">
+{{/* ut-docs#2210: index.html's placeholder div fetches this fragment once,
+     on "load", then outerHTML-swaps it away -- after that first paint,
+     NOTHING on the sale screen can ever re-fetch /ui/buttons again unless
+     THIS swapped-in root carries its own trigger, same self-refreshing
+     shape as hold_api.go's #held-sales strip (hx-trigger="held-changed
+     from:body", re-emitted on itself every render so the listener never
+     lapses). "load" is deliberately NOT repeated here (unlike the
+     placeholder div in index.html): htmx fires "load" again the moment
+     THIS element is inserted by the outerHTML swap that "modifiers-changed"
+     itself triggered, which would only mean one harmless extra immediate
+     refetch -- omitted anyway to match the held-sales precedent exactly.
+     modifiers-changed is emitted (HX-Trigger response header) by every
+     successful modifier-group/option mutation in
+     internal/pages/catalog/handlers.go's renderModifierMutationResult --
+     create/update a group (including the Active toggle), attach, detach,
+     create/update an option -- so a quick button whose item's
+     customization changed reflects it on the very next render, with the
+     button itself never rebuilt. */}}
+<div class="products" hx-get="/ui/buttons" hx-trigger="modifiers-changed from:body" hx-swap="outerHTML">
   {{ if not .Groups }}
   <div class="products-header">
     <h2>{{ T "products.title" }}</h2>
@@ -357,7 +375,7 @@
      --cat-color is set inline per category elsewhere in this file. */}}
 {{ define "product-tile" }}
   {{ $colored := and (not .ImageURL) .Color }}
-  {{ if .HasModifiers }}
+  {{ if or .HasModifiers .HasVariants }}
   <button
     class="btn-tile{{ if $colored }} tile-colored{{ end }}"
     data-name="{{ .Label }}"
