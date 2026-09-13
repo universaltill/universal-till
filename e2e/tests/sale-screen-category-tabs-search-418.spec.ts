@@ -45,11 +45,23 @@ test.describe('sale screen category tabs + search (ut-docs#418)', () => {
     const butterTile = page.locator('.btn-tile', { hasText: 'Butter 250g' }); // Food > Dairy
     const colaTile = page.locator('.btn-tile', { hasText: 'Coca-Cola 330ml' }); // Drinks, direct (no subcategory)
 
+    const allTab = tabBar.getByRole('tab', { name: 'All' });
     const foodTab = tabBar.getByRole('tab', { name: 'Food' });
     const drinksTab = tabBar.getByRole('tab', { name: 'Drinks' });
 
-    // No query active: tabs still work exactly as before — only the active
-    // tab's own tiles show.
+    // ut-docs#2212: "All" is the first tab and is selected by default, with
+    // no query and no prior tap — every category's tiles show at once, and
+    // no other single tab claims to be active.
+    await expect(tabBar.locator('.tab').first()).toHaveId('cat-tab-all');
+    await expect(allTab).toHaveClass(/active/);
+    await expect(tabBar.locator('.tab.active')).toHaveCount(1);
+    await expect(butterTile).toBeVisible();
+    await expect(colaTile).toBeVisible();
+
+    // Selecting a real category tab still narrows to just that category —
+    // the pre-#2212 behavior, now reached by an explicit tap on the tab
+    // rather than being the default.
+    await foodTab.click();
     await expect(foodTab).toHaveClass(/active/);
     await expect(butterTile).toBeVisible();
     await expect(colaTile).toBeHidden();
@@ -118,6 +130,52 @@ test.describe('sale screen category tabs + search (ut-docs#418)', () => {
 
     await search.fill('');
     await expect(page.locator('.btn-tile', { hasText: 'Cheddar Cheese' })).toBeVisible();
+
+    assertClean();
+  });
+
+  test('the All tab shows every category at once, each labelled, without growing the strip row (ut-docs#2212)', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.goto('/');
+
+    const tabBar = page.locator('.products .tab-bar');
+    const strip = page.locator('.products-strip');
+    const allTab = tabBar.getByRole('tab', { name: 'All' });
+    const foodTab = tabBar.getByRole('tab', { name: 'Food' });
+    const butterTile = page.locator('.btn-tile', { hasText: 'Butter 250g' }); // Food > Dairy
+    const colaTile = page.locator('.btn-tile', { hasText: 'Coca-Cola 330ml' }); // Drinks, direct
+
+    // ut-docs#2173's own invariant (same row, same height, never a second
+    // row) must still hold once a tab is ADDED to the strip, not just when
+    // search toggles within it.
+    const beforeBox = await strip.boundingBox();
+    expect(beforeBox, 'strip must have a measurable box on first paint').toBeTruthy();
+
+    // Navigate away from the default (Food), then back to All — proving
+    // selection, not just the initial default, restores the whole-catalogue
+    // view.
+    await foodTab.click();
+    await expect(colaTile).toBeHidden();
+    await allTab.click();
+    await expect(allTab).toHaveClass(/active/);
+    await expect(tabBar.locator('.tab.active')).toHaveCount(1);
+
+    // Every category's tiles show at once...
+    await expect(butterTile).toBeVisible();
+    await expect(colaTile).toBeVisible();
+    // ...and each carries a visible category header so an item flattened in
+    // from a different category is still attributable to it — the same
+    // headers ut-docs#2181 already shows during a cross-category search,
+    // now also shown for the All tab with no search active.
+    await expect(page.locator('.category-header', { hasText: 'Dairy' })).toBeVisible();
+    await expect(page.locator('.category-header', { hasText: 'Drinks' })).toBeVisible();
+
+    const afterBox = await strip.boundingBox();
+    expect(afterBox, 'strip must have a measurable box with All selected').toBeTruthy();
+    expect(
+      Math.abs(afterBox!.height - beforeBox!.height),
+      `strip height must not change when All is selected (before ${beforeBox!.height}px, after ${afterBox!.height}px)`,
+    ).toBeLessThan(1);
 
     assertClean();
   });

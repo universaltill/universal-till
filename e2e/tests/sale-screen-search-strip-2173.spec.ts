@@ -152,7 +152,9 @@ test.describe('sale-screen category strip: search expand/collapse (ut-docs#2173)
     const assertClean = watchConsole(page);
     await page.goto('/');
 
-    // Food is the default-active tab (sale-screen-category-tabs-search-418.spec.ts).
+    // Whichever tab is active (ut-docs#2212: All by default — see
+    // sale-screen-category-tabs-search-418.spec.ts), search spans every
+    // category (ut-docs#2181), so which tab is active doesn't matter here.
     await page.locator('.products-strip-search').click();
     await page.locator('#products-search').fill('Butter');
 
@@ -331,13 +333,13 @@ test.describe('sale-screen category strip: scrolling + RTL mirroring (ut-docs#21
 
     await page.goto('/');
     const tabBar = page.locator('.products .tab-bar');
-    await expect(tabBar.locator('.tab')).toHaveCount(CATEGORY_COUNT + 2, { timeout: 10_000 });
+    await expect(tabBar.locator('.tab')).toHaveCount(CATEGORY_COUNT + 3, { timeout: 10_000 }); // + seeded Food/Drinks + ut-docs#2212's All tab
 
     const { scrollWidth, clientWidth } = await tabBar.evaluate((el) => ({
       scrollWidth: el.scrollWidth,
       clientWidth: el.clientWidth,
     }));
-    expect(scrollWidth, `strip should overflow horizontally with ${CATEGORY_COUNT + 2} tabs (scrollWidth ${scrollWidth}, clientWidth ${clientWidth})`).toBeGreaterThan(clientWidth);
+    expect(scrollWidth, `strip should overflow horizontally with ${CATEGORY_COUNT + 3} tabs (scrollWidth ${scrollWidth}, clientWidth ${clientWidth})`).toBeGreaterThan(clientWidth);
 
     // ut-docs#2173 / ut-docs#2024: the scroll-shadow is the ONLY thing on
     // screen saying more categories exist past the edge — without it a shop
@@ -396,7 +398,7 @@ test.describe('sale-screen category strip: scrolling + RTL mirroring (ut-docs#21
     await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
 
     const tabBar = page.locator('.products .tab-bar');
-    await expect(tabBar.locator('.tab')).toHaveCount(CATEGORY_COUNT + 2, { timeout: 10_000 });
+    await expect(tabBar.locator('.tab')).toHaveCount(CATEGORY_COUNT + 3, { timeout: 10_000 }); // + seeded Food/Drinks + ut-docs#2212's All tab
 
     const { scrollWidth, clientWidth } = await tabBar.evaluate((el) => ({
       scrollWidth: el.scrollWidth,
