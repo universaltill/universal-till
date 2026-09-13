@@ -805,7 +805,82 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 			return fmt.Errorf("apply %s: %w", t.name, err)
 		}
 	}
+
+	if err := backfillCodelessSyncedVariants(ctx, tx); err != nil {
+		return fmt.Errorf("backfill codeless synced variants: %w", err)
+	}
+
 	return tx.Commit()
+}
+
+// backfillCodelessSyncedVariants is ut-docs#2230's defense against the
+// second variant-write path found while fixing that card: execUpsertBatch
+// (upsertRows' own writer, above) is a fully generic column-copy engine
+// shared by every table in adminTables, and — like the country_settings
+// special-case just above already concedes for ADR-0040's floor — it
+// bypasses every table's own domain rules, sku generation included. A
+// primary that is itself still behind on ut-docs#1900 or on this exact fix
+// (028_backfill_codeless_variant_skus.sql, applied locally on every till
+// including the primary at its own next boot) can hand a satellite a
+// genuinely codeless item_variants row this way — active, no barcode, no
+// sku — even though the satellite's own local copy of 028 already ran once
+// at boot and has nothing left of its own to catch. Same failure class as
+// ut-docs#1459: generate-and-surface, not hide.
+//
+// Runs unconditionally at the end of every ApplyAdmin (not only when the
+// bundle happens to mention item_variants) and is a single indexed-friendly
+// scan when there is nothing to do. Mirrors 028's own scope and SKU
+// convention exactly (active, no barcode, blank/NULL sku;
+// generatedVariantSKU(), same "VAR-" + 8 uppercase hex chars) so a variant
+// fixed here is indistinguishable from one the migration or CreateVariant
+// itself fixed — and reuses generatedVariantSKU() directly since this file
+// lives in the same package.
+//
+// Deliberately NOT sticky across repeated polls: if the primary is still
+// sending a blank sku on the NEXT pull, the generic upsert above rewrites
+// sku=NULL first (primary always wins, this table's whole raison d'être),
+// and this function then hands out a *fresh* code again. The value can
+// therefore change between polls while a primary stays behind — cosmetic,
+// self-resolving the moment that primary itself boots the fix — but it can
+// never go back to being genuinely codeless, which is the actual
+// correctness property this guards.
+func backfillCodelessSyncedVariants(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, `
+SELECT v.id
+FROM item_variants v
+WHERE v.is_active = 1
+  AND (v.sku IS NULL OR TRIM(v.sku) = '')
+  AND NOT EXISTS (SELECT 1 FROM variant_barcodes b WHERE b.variant_id = v.id)`)
+	if err != nil {
+		return fmt.Errorf("find codeless synced variants: %w", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan codeless synced variant id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	rows.Close()
+
+	for _, id := range ids {
+		var err error
+		for attempt := 0; attempt < 3; attempt++ {
+			_, err = tx.ExecContext(ctx, `UPDATE item_variants SET sku = ? WHERE id = ?`, generatedVariantSKU(), id)
+			if err == nil || !isUniqueViolation(err) {
+				break
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("assign sku to synced variant %s: %w", id, err)
+		}
+	}
+	return nil
 }
 
 // applyPluginSettings replaces this till's GLOBAL plugin settings with the

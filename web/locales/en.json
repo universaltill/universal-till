@@ -311,6 +311,8 @@
   "catalog.tax_code.inactive": "inactive",
   "catalog.tax_code.none": "— none —",
   "catalog.upload_image": "Upload Image",
+  "catalog.variant_codeless": "Won't sell — needs a code",
+  "catalog.variant_codeless_hint": "This variant has no barcode and no SKU, so it can't be scanned or picked at the till. Add a barcode or a SKU to fix it.",
   "catalog.variant_image": "Variant image",
   "catalog.variants": "Variants",
   "catalog.variants.add": "Add variant",
