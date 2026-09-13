@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -87,6 +88,47 @@ func TestPOSRepo_CurrentQtyBatch(t *testing.T) {
 	if len(empty) != 0 {
 		t.Errorf("CurrentQtyBatch(nil) = %v, want empty", empty)
 	}
+}
+
+// ut-docs#1347: CurrentQtyBatch chunks its SELECT at batchChunkSize(3) = 266
+// distinct keys (800/3, floored). 300 keys forces a second chunk and lets
+// this test check the exact boundary — the last key of chunk 1 (index 265)
+// and the first key of chunk 2 (index 266) — rather than only the total
+// count, which a boundary off-by-one (e.g. dropping/duplicating the row at
+// the split) wouldn't necessarily change if it shifted rows between chunks.
+func TestPOSRepo_CurrentQtyBatch_ChunksPastParamCap(t *testing.T) {
+	dbo := openBatchDB(t)
+	seedBatchCatalog(t, dbo)
+	ctx := context.Background()
+	repo := NewPOSRepo(dbo.DB)
+
+	const n = 300
+	keys := make([]StockKey, 0, n)
+	for i := 0; i < n; i++ {
+		id := chunkItemIDForTest(i)
+		mustExec(t, dbo, `INSERT INTO items(id, sku, name, base_price) VALUES(?, ?, ?, 100)`, id, id, id)
+		mustExec(t, dbo, `INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES(?, ?, NULL, 'loc1', ?, datetime('now'))`,
+			"inv-"+id, id, float64(i))
+		keys = append(keys, StockKey{LocationID: "loc1", ItemID: id})
+	}
+
+	got, err := repo.CurrentQtyBatch(ctx, nil, keys)
+	if err != nil {
+		t.Fatalf("CurrentQtyBatch: %v", err)
+	}
+	if len(got) != n {
+		t.Fatalf("got %d keys, want %d", len(got), n)
+	}
+	for _, i := range []int{0, 265, 266, n - 1} {
+		key := StockKey{LocationID: "loc1", ItemID: chunkItemIDForTest(i)}
+		if q := got[key]; q != float64(i) {
+			t.Errorf("key %d (chunk boundary check) qty = %v, want %v", i, q, float64(i))
+		}
+	}
+}
+
+func chunkItemIDForTest(i int) string {
+	return fmt.Sprintf("citm%04d", i)
 }
 
 // ut-docs#1353: a StockKey with both ItemID and VariantID set must be
@@ -288,6 +330,93 @@ VALUES('sale1', 'R1', 'completed', 'sale', 'GBP', 0, 0, 0, 0, datetime('now'))`)
 	}
 }
 
+// ut-docs#1347: InsertSaleLineModifiersBatch and InsertSaleDiscountsBatch
+// both chunk at batchChunkSize(7) = 114 rows (800/7, floored) — only
+// InsertSaleLinesBatch (cols=17) is exercised past its own, much lower,
+// boundary by the existing 120-row test above. 120 rows here forces a
+// second chunk for both and checks the exact split (row 113 = last of
+// chunk 1, row 114 = first of chunk 2), not just the total count.
+func TestPOSRepo_InsertSaleLineModifiersAndDiscountsBatch_ChunksPastParamCap(t *testing.T) {
+	dbo := openBatchDB(t)
+	seedBatchCatalog(t, dbo)
+	ctx := context.Background()
+	repo := NewPOSRepo(dbo.DB)
+
+	mustExec(t, dbo, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at)
+VALUES('sale1', 'R1', 'completed', 'sale', 'GBP', 0, 0, 0, 0, datetime('now'))`)
+
+	const n = 120
+	lines := make([]SaleLineRow, 0, n)
+	mods := make([]SaleLineModifierRow, 0, n)
+	discounts := make([]SaleDiscountRow, 0, n)
+	for i := 0; i < n; i++ {
+		lineID := lineIDForTest(i)
+		lines = append(lines, SaleLineRow{
+			ID: lineID, SaleID: "sale1", LineNo: i + 1, ItemID: "itmA", Name: "Item A",
+			Qty: 1, UnitPrice: 100, TaxRateBP: 0, TotalBeforeTax: 100, TotalAfterTax: 100,
+		})
+		mods = append(mods, SaleLineModifierRow{
+			ID: fmt.Sprintf("mod%04d", i), SaleLineID: lineID,
+			GroupName: "Size", OptionName: fmt.Sprintf("opt%04d", i), PriceDeltaMinor: int64(i),
+		})
+		discounts = append(discounts, SaleDiscountRow{
+			ID: fmt.Sprintf("disc%04d", i), SaleID: "sale1", LineID: lineID,
+			Type: "fixed", Value: int64(i), Amount: int64(i), Reason: "line_discount",
+		})
+	}
+
+	tx, err := dbo.DB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.InsertSaleLinesBatch(ctx, tx, lines); err != nil {
+		tx.Rollback()
+		t.Fatalf("InsertSaleLinesBatch: %v", err)
+	}
+	if err := repo.InsertSaleLineModifiersBatch(ctx, tx, mods); err != nil {
+		tx.Rollback()
+		t.Fatalf("InsertSaleLineModifiersBatch: %v", err)
+	}
+	if err := repo.InsertSaleDiscountsBatch(ctx, tx, discounts); err != nil {
+		tx.Rollback()
+		t.Fatalf("InsertSaleDiscountsBatch: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	var modCount, discCount int
+	if err := dbo.DB.QueryRow(`SELECT COUNT(*) FROM sale_line_modifiers`).Scan(&modCount); err != nil {
+		t.Fatal(err)
+	}
+	if modCount != n {
+		t.Fatalf("sale_line_modifiers count = %d, want %d", modCount, n)
+	}
+	if err := dbo.DB.QueryRow(`SELECT COUNT(*) FROM sale_discounts`).Scan(&discCount); err != nil {
+		t.Fatal(err)
+	}
+	if discCount != n {
+		t.Fatalf("sale_discounts count = %d, want %d", discCount, n)
+	}
+
+	for _, i := range []int{0, 113, 114, n - 1} {
+		var delta int64
+		if err := dbo.DB.QueryRow(`SELECT price_delta_minor FROM sale_line_modifiers WHERE id = ?`, fmt.Sprintf("mod%04d", i)).Scan(&delta); err != nil {
+			t.Fatalf("modifier %d (chunk boundary check): %v", i, err)
+		}
+		if delta != int64(i) {
+			t.Errorf("modifier %d price_delta_minor = %d, want %d", i, delta, i)
+		}
+		var amount int64
+		if err := dbo.DB.QueryRow(`SELECT amount FROM sale_discounts WHERE id = ?`, fmt.Sprintf("disc%04d", i)).Scan(&amount); err != nil {
+			t.Fatalf("discount %d (chunk boundary check): %v", i, err)
+		}
+		if amount != int64(i) {
+			t.Errorf("discount %d amount = %d, want %d", i, amount, i)
+		}
+	}
+}
+
 func TestPOSRepo_RecordStockMovementsBatch(t *testing.T) {
 	dbo := openBatchDB(t)
 	seedBatchCatalog(t, dbo)
@@ -379,6 +508,83 @@ func TestPOSRepo_RecordStockMovementsBatch(t *testing.T) {
 	}
 	if payload.Type != "sale" || payload.Quantity != -4 || payload.Reason != "sold" {
 		t.Fatalf("audit payload = %+v, want {sale -4 sold}", payload)
+	}
+}
+
+// ut-docs#1347: RecordStockMovementsBatch has three internal chunk
+// boundaries — stock_movements INSERT at batchChunkSize(9) = 88 rows (with
+// cost_price; 800/9 floored), and the inventory-INSERT and audit_log
+// batches both at batchChunkSize(6) = 133 rows (800/6 floored). All keys
+// here are brand new (no existing inventory row), which routes every one
+// through the chunked inventory-INSERT branch rather than the per-key
+// prepared UPDATE (which isn't a multi-row statement and so has no
+// param-cap boundary to cross). 150 movements crosses all three
+// boundaries; this checks the exact split points, not just totals.
+func TestPOSRepo_RecordStockMovementsBatch_ChunksPastParamCap(t *testing.T) {
+	dbo := openBatchDB(t)
+	seedBatchCatalog(t, dbo)
+	ctx := context.Background()
+	repo := NewPOSRepo(dbo.DB)
+
+	const n = 150
+	ins := make([]StockMovementInput, 0, n)
+	for i := 0; i < n; i++ {
+		id := chunkItemIDForTest(i)
+		mustExec(t, dbo, `INSERT INTO items(id, sku, name, base_price) VALUES(?, ?, ?, 100)`, id, id, id)
+		ins = append(ins, StockMovementInput{
+			ItemID: id, LocationID: "loc1", Type: "adjust", Quantity: float64(i + 1), ActorID: "u1",
+		})
+	}
+
+	tx, err := dbo.DB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Non-nil, empty: every key is genuinely known-absent (not "unknown"),
+	// so every one takes the insert path this test means to exercise.
+	ids, err := repo.RecordStockMovementsBatch(ctx, tx, ins, map[StockKey]float64{})
+	if err != nil {
+		tx.Rollback()
+		t.Fatalf("RecordStockMovementsBatch: %v", err)
+	}
+	if len(ids) != n {
+		t.Fatalf("got %d ids, want %d", len(ids), n)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	var count int
+	if err := dbo.DB.QueryRow(`SELECT COUNT(*) FROM stock_movements`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != n {
+		t.Fatalf("stock_movements count = %d, want %d", count, n)
+	}
+	if err := dbo.DB.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE entity_type='inventory'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != n {
+		t.Fatalf("audit_log inventory rows = %d, want %d", count, n)
+	}
+
+	// Boundary checks: index 87/88 (stock_movements' own chunk split) and
+	// 132/133 (the inventory/audit_log chunk split shared by both).
+	for _, i := range []int{0, 87, 88, 132, 133, n - 1} {
+		var qty float64
+		if err := dbo.DB.QueryRow(`SELECT quantity FROM inventory WHERE item_id = ?`, chunkItemIDForTest(i)).Scan(&qty); err != nil {
+			t.Fatalf("item %d inventory row (chunk boundary check): %v", i, err)
+		}
+		if qty != float64(i+1) {
+			t.Errorf("item %d inventory qty = %v, want %v", i, qty, float64(i+1))
+		}
+		var movQty float64
+		if err := dbo.DB.QueryRow(`SELECT quantity FROM stock_movements WHERE item_id = ?`, chunkItemIDForTest(i)).Scan(&movQty); err != nil {
+			t.Fatalf("item %d stock_movements row (chunk boundary check): %v", i, err)
+		}
+		if movQty != float64(i+1) {
+			t.Errorf("item %d stock_movements quantity = %v, want %v", i, movQty, float64(i+1))
+		}
 	}
 }
 
