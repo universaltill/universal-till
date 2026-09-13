@@ -158,6 +158,30 @@ production file shows no residual change and all tests pass again.
   buttons has a code path this diff could break. Noting explicitly rather
   than silently skipping.
 
+## Post-merge test collision with a concurrent lane (ut-docs#2209)
+
+While this branch was being kept current against `main`, `universal-till`
+PR #1150 (a different lane, ut-docs#2209 "ask for the variant before adding
+a line to the basket") merged and added a parallel `HasVariants` flag:
+`buttons.html:378`'s gate became `{{ if or .HasModifiers .HasVariants }}`.
+Three of this card's tests reused `itm1` from the shared `seedForPages`
+fixture, which already carries a real variant (`var1`) for an unrelated
+test's purposes — so after the merge, `itm1`'s tile opened the picker via
+`HasVariants` alone regardless of modifier-group state, breaking these
+tests' "before attaching, the tile scans straight to the basket" baseline
+(not a template regression; the tile rendered correctly, the fixture choice
+was just no longer valid post-merge).
+
+Fixed by adding `seedPlainItem()` (a variant-free item) and switching the
+three affected tests to it, isolating the assertion to the modifier-group
+axis. Also added `TestButtonsUIFragment_HasVariantsAloneKeepsPickerAcrossModifierGroupChanges`,
+which deliberately uses `itm1` (real variant) to confirm the OR-gate
+interaction directly: attaching then deactivating a modifier group on a
+variant-carrying item must never flip its tile back to a plain scan, since
+that would silently drop the variant-selection prompt ut-docs#2209 exists
+for. Re-ran the full `go build`/`go vet`/`gofmt`/test gate after the fix —
+all green.
+
 ## Residual, explicitly out of scope for this card
 
 The Opus reviewer noted, and this session concurs, that multi-till

@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"database/sql"
 	"encoding/json"
 	"html"
 	"net/http"
@@ -83,6 +84,23 @@ func assertTileScansDirectly(t *testing.T, body string) {
 	}
 	if strings.Contains(body, "/ui/pos/modifiers") {
 		t.Fatalf("tile must not offer the customization picker, got: %.1200s", body)
+	}
+}
+
+// seedPlainItem inserts a catalog item with NO variants and NO modifier
+// groups -- deliberately NOT itm1 (seedForPages gives itm1 a real variant,
+// 'var1', for other tests' own purposes). Since ut-docs#2209's
+// {{ if or .HasModifiers .HasVariants }} gate (buttons.html:378,
+// internal/ui/buttons.go's Store.Load()), an item with ANY active variant
+// already routes its tile to the customization picker regardless of
+// modifier-group state, which would make itm1 a false negative for these
+// ut-docs#2210 tests' "before attaching, the tile scans straight to the
+// basket" baseline. A dedicated variant-free item isolates the assertion
+// to the modifier-group axis alone.
+func seedPlainItem(t *testing.T, db *sql.DB, id string) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO items(id,sku,name,base_price,is_active) VALUES(?,?,?,100,1)`, id, id+"-SKU", id); err != nil {
+		t.Fatalf("seed plain item %s: %v", id, err)
 	}
 }
 
@@ -429,11 +447,12 @@ func TestButtonsAPI_MutationsRefusedOnReplica(t *testing.T) {
 // itself.
 func TestButtonsUIFragment_ReflectsModifierGroupAttachedAfterButtonExisted(t *testing.T) {
 	mux, d := newButtonsMux(t)
+	seedPlainItem(t, d.Db, "itm-plain")
 
-	// The quick button is created FIRST, while itm1 has no customization at
-	// all -- exactly the reported order of events (button already on the
+	// The quick button is created FIRST, while the item has no customization
+	// at all -- exactly the reported order of events (button already on the
 	// sale screen, then a modifier group gets attached to its item later).
-	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id) VALUES ('BTN1','Apple Tile','itm1')`); err != nil {
+	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id) VALUES ('BTN1','Apple Tile','itm-plain')`); err != nil {
 		t.Fatalf("seed button: %v", err)
 	}
 
@@ -444,16 +463,17 @@ func TestButtonsUIFragment_ReflectsModifierGroupAttachedAfterButtonExisted(t *te
 	}
 	assertTileScansDirectly(t, rec.Body.String())
 
-	// Attach a modifier group ("Toppings") to itm1 -- the PO's "option set"
-	// on an item's customization section -- WITHOUT touching the button.
-	// This is the exact row shape ModifierRepo.CreateGroup itself produces
-	// (a group row plus its first link row), so it's a reachable state even
-	// though it bypasses the HTTP handler -- unlike the old detach test this
-	// replaces, no UI-unreachable state is asserted against here.
-	if _, err := d.Db.Exec(`INSERT INTO item_modifier_groups(id,item_id,name,required,min_select,max_select,sort_order,is_active) VALUES ('g1','itm1','Toppings',0,0,3,0,1)`); err != nil {
+	// Attach a modifier group ("Toppings") to the item -- the PO's "option
+	// set" on an item's customization section -- WITHOUT touching the
+	// button. This is the exact row shape ModifierRepo.CreateGroup itself
+	// produces (a group row plus its first link row), so it's a reachable
+	// state even though it bypasses the HTTP handler -- unlike the old
+	// detach test this replaces, no UI-unreachable state is asserted
+	// against here.
+	if _, err := d.Db.Exec(`INSERT INTO item_modifier_groups(id,item_id,name,required,min_select,max_select,sort_order,is_active) VALUES ('g1','itm-plain','Toppings',0,0,3,0,1)`); err != nil {
 		t.Fatalf("seed modifier group: %v", err)
 	}
-	if _, err := d.Db.Exec(`INSERT INTO item_modifier_group_links(item_id,group_id,sort_order) VALUES ('itm1','g1',0)`); err != nil {
+	if _, err := d.Db.Exec(`INSERT INTO item_modifier_group_links(item_id,group_id,sort_order) VALUES ('itm-plain','g1',0)`); err != nil {
 		t.Fatalf("seed modifier group link: %v", err)
 	}
 
@@ -466,7 +486,49 @@ func TestButtonsUIFragment_ReflectsModifierGroupAttachedAfterButtonExisted(t *te
 	if !strings.Contains(after, "Apple Tile") {
 		t.Fatalf("the SAME button must still render (never deleted/recreated), got: %.800s", after)
 	}
-	assertTileOpensModifiers(t, after, "itm1", "BTN1")
+	assertTileOpensModifiers(t, after, "itm-plain", "BTN1")
+}
+
+// ut-docs#2210/#2209 interaction: an item that ALREADY has a variant (so
+// HasVariants alone already routes its tile to the picker, per buttons.html
+// :378's {{ if or .HasModifiers .HasVariants }}) must keep offering the
+// picker throughout a modifier group being attached and then detached --
+// the OR-gate must never let a modifier-group change flip a
+// variant-carrying tile back to a straight scan. itm1 (seedForPages) has
+// exactly this shape: a real, active variant ('var1') and no modifier
+// groups of its own.
+func TestButtonsUIFragment_HasVariantsAloneKeepsPickerAcrossModifierGroupChanges(t *testing.T) {
+	mux, d := newButtonsMux(t)
+
+	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id) VALUES ('BTN1','Apple Tile','itm1')`); err != nil {
+		t.Fatalf("seed button: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/buttons", nil))
+	assertTileOpensModifiers(t, rec.Body.String(), "itm1", "BTN1")
+
+	// Attach a modifier group too -- both gates now true.
+	if _, err := d.Db.Exec(`INSERT INTO item_modifier_groups(id,item_id,name,required,min_select,max_select,sort_order,is_active) VALUES ('g1','itm1','Toppings',0,0,3,0,1)`); err != nil {
+		t.Fatalf("seed modifier group: %v", err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO item_modifier_group_links(item_id,group_id,sort_order) VALUES ('itm1','g1',0)`); err != nil {
+		t.Fatalf("seed modifier group link: %v", err)
+	}
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/buttons", nil))
+	assertTileOpensModifiers(t, rec.Body.String(), "itm1", "BTN1")
+
+	// Deactivate the modifier group -- HasModifiers now false, but
+	// HasVariants is still true, so the tile must NOT fall back to a plain
+	// scan (that would silently drop the variant-selection prompt
+	// ut-docs#2209 exists for, shop-wide, on every affected item).
+	if _, err := d.Db.Exec(`UPDATE item_modifier_groups SET is_active = 0 WHERE id = 'g1'`); err != nil {
+		t.Fatalf("deactivate modifier group: %v", err)
+	}
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/buttons", nil))
+	assertTileOpensModifiers(t, rec.Body.String(), "itm1", "BTN1")
 }
 
 // ut-docs#2210, driven through the REAL merchant flow end to end: the item
@@ -490,8 +552,9 @@ func TestButtonsUIFragment_ReflectsModifierGroupAttachedAfterButtonExisted(t *te
 // halves of the actual fix this test can't observe through a bare re-fetch.
 func TestButtonsUIFragment_ReflectsModifierGroupAttachedViaRealAttachHandler(t *testing.T) {
 	mux, d := newButtonsAndCatalogMux(t)
+	seedPlainItem(t, d.Db, "itm-plain")
 
-	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id) VALUES ('BTN1','Apple Tile','itm1')`); err != nil {
+	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id) VALUES ('BTN1','Apple Tile','itm-plain')`); err != nil {
 		t.Fatalf("seed button: %v", err)
 	}
 	if _, err := d.Db.Exec(`INSERT INTO items(id,sku,name,base_price,is_active) VALUES('itm-decoy','DECOY','Decoy',100,1)`); err != nil {
@@ -507,7 +570,7 @@ func TestButtonsUIFragment_ReflectsModifierGroupAttachedViaRealAttachHandler(t *
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/buttons", nil))
 	assertTileScansDirectly(t, rec.Body.String())
 
-	attachForm := url.Values{"itemId": {"itm1"}, "groupId": {groupID}}
+	attachForm := url.Values{"itemId": {"itm-plain"}, "groupId": {groupID}}
 	req := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group/attach", strings.NewReader(attachForm.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec = httptest.NewRecorder()
@@ -522,7 +585,7 @@ func TestButtonsUIFragment_ReflectsModifierGroupAttachedViaRealAttachHandler(t *
 	if !strings.Contains(after, "Apple Tile") {
 		t.Fatalf("the SAME button must still render, got: %.800s", after)
 	}
-	assertTileOpensModifiers(t, after, "itm1", "BTN1")
+	assertTileOpensModifiers(t, after, "itm-plain", "BTN1")
 }
 
 // The flip side, and the "editing" case, of ut-docs#2210's acceptance
@@ -537,24 +600,25 @@ func TestButtonsUIFragment_ReflectsModifierGroupAttachedViaRealAttachHandler(t *
 // single-linked group.
 func TestButtonsUIFragment_ReflectsModifierGroupActiveToggleViaRealHandler(t *testing.T) {
 	mux, d := newButtonsAndCatalogMux(t)
+	seedPlainItem(t, d.Db, "itm-plain")
 
-	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id) VALUES ('BTN1','Apple Tile','itm1')`); err != nil {
+	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id) VALUES ('BTN1','Apple Tile','itm-plain')`); err != nil {
 		t.Fatalf("seed button: %v", err)
 	}
 	modRepo := data.NewModifierRepo(d.Db)
-	groupID, err := modRepo.CreateGroup(t.Context(), "g-toppings", "itm1", "Toppings", false, 0, 3, 0)
+	groupID, err := modRepo.CreateGroup(t.Context(), "g-toppings", "itm-plain", "Toppings", false, 0, 3, 0)
 	if err != nil {
 		t.Fatalf("create group: %v", err)
 	}
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/buttons", nil))
-	assertTileOpensModifiers(t, rec.Body.String(), "itm1", "BTN1")
+	assertTileOpensModifiers(t, rec.Body.String(), "itm-plain", "BTN1")
 
 	toggle := func(active string) *httptest.ResponseRecorder {
 		t.Helper()
 		form := url.Values{
-			"id": {groupID}, "itemId": {"itm1"}, "name": {"Toppings"},
+			"id": {groupID}, "itemId": {"itm-plain"}, "name": {"Toppings"},
 			"minSelect": {"0"}, "maxSelect": {"3"}, "isActive": {active},
 		}
 		req := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group", strings.NewReader(form.Encode()))
@@ -578,7 +642,7 @@ func TestButtonsUIFragment_ReflectsModifierGroupActiveToggleViaRealHandler(t *te
 	toggle("1")
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/buttons", nil))
-	assertTileOpensModifiers(t, rec.Body.String(), "itm1", "BTN1")
+	assertTileOpensModifiers(t, rec.Body.String(), "itm-plain", "BTN1")
 }
 
 // TestButtonsPartial_RootCarriesRefreshTrigger is the client-side half of
