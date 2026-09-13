@@ -39,7 +39,13 @@ type Button struct {
 	ImageURL     string `json:"imageUrl,omitempty"`
 	Price        int64  `json:"price,omitempty"` // minor units, display only
 	HasModifiers bool   `json:"hasModifiers,omitempty"`
-	CategoryID   string `json:"categoryId,omitempty"` // the item's category, empty when uncategorized
+	// HasVariants (ut-docs#2209) mirrors HasModifiers: the item has at
+	// least one active item_variants row (small/regular/large sizing, …),
+	// so tapping the tile must open the picker to ask which variant
+	// instead of adding the parent item's own base price straight to the
+	// basket.
+	HasVariants bool   `json:"hasVariants,omitempty"`
+	CategoryID  string `json:"categoryId,omitempty"` // the item's category, empty when uncategorized
 	// Color is the item's tile swatch (ut-docs#1901) — empty when unset.
 	Color string `json:"color,omitempty"`
 }
@@ -52,6 +58,10 @@ type ButtonVM struct {
 	ImageURL     string `json:"imageUrl,omitempty"`
 	Price        int64  `json:"price,omitempty"` // minor units, display only
 	HasModifiers bool   `json:"hasModifiers,omitempty"`
+	// HasVariants — see Button.HasVariants; product-tile (buttons.html)
+	// ORs it with HasModifiers to decide whether tapping the tile opens
+	// the picker or adds straight to the basket.
+	HasVariants bool `json:"hasVariants,omitempty"`
 	// Color is the item's tile swatch (ut-docs#1901) — product-tile
 	// (buttons.html) renders it as the tile's solid background, via
 	// --tile-color, ONLY when the tile has no ImageURL: a real photo
@@ -75,6 +85,7 @@ func toButtonVM(x Button) ButtonVM {
 		ImageURL:     x.ImageURL,
 		Price:        x.Price,
 		HasModifiers: x.HasModifiers,
+		HasVariants:  x.HasVariants,
 		Color:        x.Color,
 	}
 }
@@ -319,6 +330,22 @@ func (s *ButtonStore) Load() ([]Button, error) {
 	if s.modRepo != nil {
 		hasMods, _ = s.modRepo.ItemIDsWithModifiers(ctx, itemIDs)
 	}
+	var hasVariants map[string]bool
+	if s.catalogRepo != nil {
+		var err error
+		hasVariants, err = s.catalogRepo.ItemIDsWithVariants(ctx, itemIDs)
+		if err != nil {
+			// Not fatal — a tile still renders — but do NOT let it pass in
+			// silence (ut-docs#2209 review, finding 5). On this error EVERY
+			// tile falls back to straight-to-basket at the parent's base
+			// price, i.e. ut-docs#2209 returns shop-wide, and the only
+			// symptom is wrong takings. The neighbouring hasMods swallow
+			// loses a prompt; this one loses money correctness, so it gets
+			// the same treatment ButtonsHTTP.List gives its own non-fatal
+			// category error.
+			logging.L().Warnf("ui: load items-with-variants failed, every tile falls back to parent-price add (ut-docs#2209): %v", err)
+		}
+	}
 	var out []Button
 	for _, b := range rows {
 		out = append(out, Button{
@@ -328,6 +355,7 @@ func (s *ButtonStore) Load() ([]Button, error) {
 			ImageURL:     b.ImageURL,
 			Price:        b.Price,
 			HasModifiers: hasMods[b.ItemID],
+			HasVariants:  hasVariants[b.ItemID],
 			CategoryID:   b.CategoryID,
 			Color:        b.Color,
 		})

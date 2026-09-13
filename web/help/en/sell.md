@@ -5,7 +5,7 @@ section: Everyday selling
 order: 10
 summary: "The main register screen: scan or pick items, take payment, print or skip the receipt."
 routes: [/, /ui/basket, /ui/buttons, /ui/held, /refund/{receipt}]
-keywords: [basket, checkout, tender, pay, scan, hold, discount, camera, table, tables, modifier, customization, customer, loyalty, promo, order type, takeaway, dine in, suggestions, offline, sync chip, voucher, gutschein, gift card]
+keywords: [basket, checkout, tender, pay, scan, hold, discount, camera, table, tables, modifier, customization, variant, size, customer, loyalty, promo, order type, takeaway, dine in, suggestions, offline, sync chip, voucher, gutschein, gift card]
 ---
 
 # Selling & checkout
@@ -23,13 +23,13 @@ The main register screen: scan or pick items, take payment, print or skip the re
 
 ## Item customization
 
-Some items are set up in the catalog with customization groups — a coffee's size, a sandwich's bread, a burger's extras — each with its own price. See **Catalog, variants & barcodes** for setting those groups up; this section is about ringing one up.
+Some items are set up in the catalog with customization groups — a coffee's size, a sandwich's bread, a burger's extras — each with its own price. Some items instead (or as well) have variants — a coffee sold as Small/Regular/Large, each its own price rather than an add-on to one base price. See **Catalog, variants & barcodes** for setting either up; this section is about ringing one up.
 
-Tap a customized item's tile and a picker opens instead of the item going straight into the basket. Pick an option in each group — a group that only allows one choice shows round buttons, a group that allows more than one shows checkboxes — then choose **Add to cart**. Options that cost extra show their added price right next to the choice; the basket line then shows every option you picked underneath the item's name, with the total already folded into the line price.
+Tap a customized or variant item's tile and a picker opens instead of the item going straight into the basket — this is the whole point: an item with variants never has one single "the" price, so the till always asks which one before it can add a line. If the item has variants, pick one first — each variant shows its own price, and picking one is required, there's no "just add the base item" option. Then pick an option in each customization group, if the item has any — a group that only allows one choice shows round buttons, a group that allows more than one shows checkboxes — then choose **Add to cart**. Options that cost extra show their added price right next to the choice; the basket line then shows the variant and every option you picked underneath the item's name, with the total already folded into the line price.
 
-A group can be required (marked with a **\***) or optional, and can have its own minimum and maximum number of choices — most items just need one pick per group, but nothing stops a shop setting up a group that wants two of four. If you pick too few or too many for a group, **Add to cart** doesn't go through: a message names the group and how many choices it needs. **Cancel** closes the picker without adding anything.
+A group can be required (marked with a **\***) or optional, and can have its own minimum and maximum number of choices — most items just need one pick per group, but nothing stops a shop setting up a group that wants two of four. If you pick too few or too many for a group, or don't pick a variant, **Add to cart** doesn't go through: a message names what's missing. **Cancel** closes the picker without adding anything.
 
-Once a customized line is in the basket, its options are locked in for that sale — there's no way to edit them in place. To change a customer's mind, remove the line (✕) and tap the item again to reopen the picker.
+Once a customized or variant line is in the basket, its choices are locked in for that sale — there's no way to edit them in place. To change a customer's mind, remove the line (✕) and tap the item again to reopen the picker.
 
 ## Discounts
 

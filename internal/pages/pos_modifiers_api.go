@@ -30,7 +30,7 @@ import (
 // resolver instance, so this is a consistency fix (every kiosk call now
 // goes through KioskEngine, matching the rest of the split) rather than a
 // behavior change.
-func resolveAndValidateModifiers(ctx context.Context, d *common.Deps, engine *pos.Service, code, itemID string, form url.Values) (pos.BasketLine, []data.SelectedModifier, string, error) {
+func resolveAndValidateModifiers(ctx context.Context, d *common.Deps, engine *pos.Service, locale, code, itemID string, form url.Values) (pos.BasketLine, []data.SelectedModifier, string, error) {
 	base, ok := engine.ResolveBase(code)
 	if !ok {
 		return pos.BasketLine{}, nil, "Item not found", errors.New("resolve base: not found")
@@ -40,6 +40,95 @@ func resolveAndValidateModifiers(ctx context.Context, d *common.Deps, engine *po
 		// picker's hidden inputs); a manipulated or stale submission could
 		// send a mismatched pair. See docs/code-reviews/2026-07-24-item-modifiers-cashier-ui.md.
 		return pos.BasketLine{}, nil, "Item not found", errors.New("code/itemId mismatch")
+	}
+
+	catalogRepo := data.NewCatalogRepo(d.Db)
+	variants, err := catalogRepo.ItemVariantsFor(ctx, itemID)
+	if err != nil {
+		return pos.BasketLine{}, nil, "", fmt.Errorf("load item variants: %w", err)
+	}
+	variants = sellableVariants(variants)
+
+	// ut-docs#2209: an item with at least one SELLABLE variant (small/
+	// regular/large, ...) must never be added at its own parent base
+	// price — the whole point of this card. base gets swapped for the
+	// chosen variant's own resolved line below.
+	submittedVariantID := strings.TrimSpace(form.Get("variantId"))
+
+	// DO NOT REMOVE (ut-docs#2209 review, blocker 1). len(variants) is read
+	// at SUBMIT time, but the picker rendered earlier — so the item's last
+	// sellable variant can be deactivated while the modal sits open. Without
+	// this, that submission skips the whole variant branch and silently adds
+	// the PARENT base line: a 9.99 line for a 3.10 coffee, no error, no log —
+	// precisely the money defect this card exists to remove, now laundered
+	// through a dialog that appears to have asked the question. A submitted
+	// variantId with nothing to match it against is a conflict, never a
+	// fallback.
+	if len(variants) == 0 && submittedVariantID != "" {
+		return pos.BasketLine{}, nil, httpx.T(locale, "modifiers.variant_unavailable"), errors.New("variantId submitted but item has no sellable variants (deactivated mid-pick?)")
+	}
+
+	if len(variants) > 0 {
+		variantID := submittedVariantID
+		if variantID == "" {
+			return pos.BasketLine{}, nil, httpx.T(locale, "modifiers.variant_required"), errors.New("variant required, none submitted")
+		}
+
+		// DO NOT REMOVE: this membership check is the SOLE guard against
+		// selling one item's variant priced/labeled as a DIFFERENT item.
+		// itemId and variantId are two independent caller-supplied values
+		// (the picker's hidden input and its radio group) — exactly the
+		// same shape as the code/itemId pair checked above — so a
+		// manipulated or stale submission could pair THIS item's itemId
+		// with a variantId that actually belongs to a different item. The
+		// only safe check is membership in THIS item's own server-loaded,
+		// sellable-variant set (never a bare "does this variant id exist
+		// anywhere" lookup, which would accept any real variant id
+		// regardless of which item it belongs to).
+		var match *data.VariantView
+		for i := range variants {
+			if variants[i].ID == variantID {
+				match = &variants[i]
+				break
+			}
+		}
+		if match == nil {
+			// NOT "item not found": the item resolved fine — it is the
+			// chosen variant that does not belong to it (or was just
+			// retired). Pointing the operator at the item sends them
+			// looking in the wrong place.
+			return pos.BasketLine{}, nil, httpx.T(locale, "modifiers.variant_unavailable"), errors.New("variant id not a member of item's sellable variants")
+		}
+
+		label, ok, err := catalogRepo.GetVariantLabel(ctx, variantID)
+		if err != nil {
+			return pos.BasketLine{}, nil, "", fmt.Errorf("load variant label %s: %w", variantID, err)
+		}
+		if !ok || label.Code == "" {
+			// sellableVariants already excludes a codeless variant, and
+			// match came from that same filtered set, so this is a
+			// server-side inconsistency (GetVariantLabel disagreeing with
+			// ItemVariantsFor about the resolvable code), not a user
+			// mistake. NOTE: this branch does NOT catch deactivation —
+			// ItemVariantsFor filters is_active = 1, so a variant retired
+			// mid-pick disappears from `variants` and is caught by the
+			// membership check above, or by the len(variants) == 0 guard
+			// before it. An earlier version of this comment claimed
+			// otherwise (ut-docs#2209 review).
+			return pos.BasketLine{}, nil, "", fmt.Errorf("resolve variant %s: no resolvable code (ok=%v)", variantID, ok)
+		}
+		variantBase, ok := engine.ResolveBase(label.Code)
+		if !ok {
+			return pos.BasketLine{}, nil, "", fmt.Errorf("resolve variant %s by code %q: not found", variantID, label.Code)
+		}
+		if variantBase.VariantID != variantID {
+			// Never a silent pass: the resolved line MUST carry the exact
+			// variant the operator picked, or a resolver bug (e.g. a
+			// duplicate/ambiguous code) could silently substitute a
+			// different variant's price.
+			return pos.BasketLine{}, nil, "", fmt.Errorf("resolved variant line carries VariantID %q, want %q", variantBase.VariantID, variantID)
+		}
+		base = variantBase
 	}
 
 	groups, err := data.NewModifierRepo(d.Db).ListGroupsForItem(ctx, itemID)
@@ -76,6 +165,23 @@ func resolveAndValidateModifiers(ctx context.Context, d *common.Deps, engine *po
 	return base, selected, "", nil
 }
 
+// sellableVariants filters out any variant with no resolvable code — no
+// barcode AND no SKU (ut-docs#2209). This product's standing rule is that
+// a codeless thing never reaches the sale screen (ut-docs#1459); a variant
+// with nothing to scan/resolve it by can never actually be sold, so
+// offering it in the picker would let an operator choose a size that can
+// never be added to the basket. If this filters out every variant an item
+// has, that item behaves exactly as if it had none.
+func sellableVariants(variants []data.VariantView) []data.VariantView {
+	out := make([]data.VariantView, 0, len(variants))
+	for _, v := range variants {
+		if v.Barcode != "" || v.SKU != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 // registerPOSModifiersAPI wires the cashier's item-customization step
 // (ADR-0020): tapping a button whose item has modifier groups (extra
 // shot, bread choice, ...) opens this picker instead of adding straight
@@ -85,6 +191,7 @@ func resolveAndValidateModifiers(ctx context.Context, d *common.Deps, engine *po
 // view, not this package's cashier ui.BasketView.
 func registerPOSModifiersAPI(mux *http.ServeMux, d *common.Deps) {
 	modRepo := data.NewModifierRepo(d.Db)
+	catalogRepo := data.NewCatalogRepo(d.Db)
 
 	mux.HandleFunc("GET /ui/pos/modifiers", func(w http.ResponseWriter, r *http.Request) {
 		itemID := strings.TrimSpace(r.URL.Query().Get("item"))
@@ -100,12 +207,18 @@ func registerPOSModifiersAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "failed to load customization options", http.StatusInternalServerError)
 			return
 		}
+		variants, err := catalogRepo.ItemVariantsFor(r.Context(), itemID)
+		if err != nil {
+			http.Error(w, "failed to load customization options", http.StatusInternalServerError)
+			return
+		}
 
 		httpx.RenderPartial("ui/partials/modifier_picker.html", map[string]any{
 			"ItemID":   itemID,
 			"Code":     code,
 			"ItemName": base.Name,
 			"Groups":   groups,
+			"Variants": sellableVariants(variants),
 		})(w, r)
 	})
 
@@ -124,7 +237,7 @@ func registerPOSModifiersAPI(mux *http.ServeMux, d *common.Deps) {
 			_ = basketView.Render(w, &b)
 		}
 
-		base, selected, userMsg, err := resolveAndValidateModifiers(r.Context(), d, d.Engine, code, itemID, r.Form)
+		base, selected, userMsg, err := resolveAndValidateModifiers(r.Context(), d, d.Engine, httpx.ResolveLocale(w, r), code, itemID, r.Form)
 		if err != nil {
 			if userMsg == "" {
 				http.Error(w, "failed to load customization options", http.StatusInternalServerError)

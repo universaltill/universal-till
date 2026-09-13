@@ -357,7 +357,7 @@
      --cat-color is set inline per category elsewhere in this file. */}}
 {{ define "product-tile" }}
   {{ $colored := and (not .ImageURL) .Color }}
-  {{ if .HasModifiers }}
+  {{ if or .HasModifiers .HasVariants }}
   <button
     class="btn-tile{{ if $colored }} tile-colored{{ end }}"
     data-name="{{ .Label }}"

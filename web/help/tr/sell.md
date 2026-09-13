@@ -5,7 +5,7 @@ section: Günlük satış
 order: 10
 summary: "Ana kasa ekranı: ürünleri okutun veya seçin, ödemeyi alın, fişi yazdırın ya da atlayın."
 routes: [/, /ui/basket, /ui/buttons, /ui/held, /refund/{receipt}]
-keywords: [basket, checkout, tender, pay, scan, hold, discount, camera, table, tables, modifier, customization, customer, loyalty, promo, order type, takeaway, dine in, suggestions, offline, sync chip]
+keywords: [basket, checkout, tender, pay, scan, hold, discount, camera, table, tables, modifier, customization, variant, size, customer, loyalty, promo, order type, takeaway, dine in, suggestions, offline, sync chip]
 ---
 
 # Satış ve ödeme ekranı
@@ -31,13 +31,13 @@ Aynı ürün iki modda her zaman 2 adet yerine iki ayrı satırda durur — bu b
 
 ## Ürün özelleştirme
 
-Bazı ürünler kataloğa özelleştirme gruplarıyla kurulmuştur — bir kahvenin boyutu, bir sandviçin ekmeği, bir burgerin ekleri — her birinin kendi fiyatı vardır. Bu grupları kurmak için **Katalog, varyantlar ve barkodlar**'a bakın; bu bölüm bir tane kaydetmek içindir.
+Bazı ürünler kataloğa özelleştirme gruplarıyla kurulmuştur — bir kahvenin boyutu, bir sandviçin ekmeği, bir burgerin ekleri — her birinin kendi fiyatı vardır. Bazı ürünlerin bunun yerine (veya buna ek olarak) varyantları vardır — Küçük/Orta/Büyük olarak satılan bir kahve gibi, her biri tek bir taban fiyata ek yerine kendi fiyatına sahiptir. İkisini de kurmak için **Katalog, varyantlar ve barkodlar**'a bakın; bu bölüm bir tane kaydetmek içindir.
 
-Özelleştirilebilir bir ürünün kartına dokunduğunuzda ürün doğrudan sepete gitmek yerine bir seçici açılır. Her grupta bir seçenek seçin — sadece bir seçim izleyen grup yuvarlak düğmeler gösterir, birden fazla seçim izleyen grup onay kutuları gösterir — sonra **Sepete ekle**'yi seçin. Ekstra maliyeti olan seçenekler eklenen fiyatı seçimin yanında gösterir; sepet satırı daha sonra her seçtiğiniz seçeneği ürün adının altında gösterir, toplam zaten satır fiyatına dahil edilmiştir.
+Özelleştirilebilir veya varyantlı bir ürünün kartına dokunduğunuzda ürün doğrudan sepete gitmek yerine bir seçici açılır — asıl amaç da budur: varyantlı bir ürünün asla tek bir fiyatı yoktur, bu yüzden kasa bir satır eklemeden önce her zaman hangi varyantın seçildiğini sorar. Ürünün varyantları varsa, önce birini seçin — her varyant kendi fiyatını gösterir ve bir tanesini seçmek zorunludur, sadece temel ürünü eklemek gibi bir seçenek yoktur. Ardından, ürünün özelleştirme grubu varsa her grupta bir seçenek seçin — sadece bir seçim izleyen grup yuvarlak düğmeler gösterir, birden fazla seçim izleyen grup onay kutuları gösterir — sonra **Sepete ekle**'yi seçin. Ekstra maliyeti olan seçenekler eklenen fiyatı seçimin yanında gösterir; sepet satırı daha sonra varyantı ve seçtiğiniz her seçeneği ürün adının altında gösterir, toplam zaten satır fiyatına dahil edilmiştir.
 
-Bir grup zorunlu olabilir (**\*** ile işaretlenmiş) veya isteğe bağlı olabilir, ve kendi minimum ve maksimum seçim sayısına sahip olabilir — çoğu ürün her grup için sadece bir seçim gerektirir, ama bir grubun dörtten ikisini isteyecek şekilde kurulmasına hiçbir şey engel değildir. Bir grup için az veya çok seçim yaparsanız, **Sepete ekle** geçirilmez: bir mesaj grup adını söyler ve kaç seçim gerektiğini belirtir. **İptal** hiçbir şey eklemeden seçiciyi kapatır.
+Bir grup zorunlu olabilir (**\*** ile işaretlenmiş) veya isteğe bağlı olabilir, ve kendi minimum ve maksimum seçim sayısına sahip olabilir — çoğu ürün her grup için sadece bir seçim gerektirir, ama bir grubun dörtten ikisini isteyecek şekilde kurulmasına hiçbir şey engel değildir. Bir grup için az ya da çok seçim yaparsanız, veya bir varyant seçmezseniz, **Sepete ekle** geçirilmez: bir mesaj neyin eksik olduğunu söyler. **İptal** hiçbir şey eklemeden seçiciyi kapatır.
 
-Özelleştirilmiş bir satır bir kez sepete girdiğinde, seçenekleri bu satış için kilitlenir — yerinde düzenlemenin bir yolu yoktur. Müşterinin fikrini değiştirmek için satırı silin (✕) ve seçiciyi yeniden açmak için ürüne tekrar dokunun.
+Özelleştirilmiş veya varyantlı bir satır bir kez sepete girdiğinde, seçimleri bu satış için kilitlenir — yerinde düzenlemenin bir yolu yoktur. Müşterinin fikrini değiştirmek için satırı silin (✕) ve seçiciyi yeniden açmak için ürüne tekrar dokunun.
 
 ## İndirimler
 
