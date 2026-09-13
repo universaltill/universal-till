@@ -70,7 +70,7 @@ Linking a customer is what lets a customer-specific promotion code (see **Discou
 
 ## "Customers also buy" suggestions
 
-A row of suggestion chips can appear under the basket totals, based on what tends to sell alongside what's already in the basket — worked out entirely from this shop's own past sales, with nothing sent over the network. Tap a chip to add that item straight to the basket. Unlike tapping the item's own tile, this always adds it directly — for an item that's normally customized (see **Item customization** above), the chip skips the customization picker rather than opening it, so double-check a customized item added this way.
+A row of suggestion chips can appear under the basket totals, based on what tends to sell alongside what's already in the basket — worked out entirely from this shop's own past sales, with nothing sent over the network. Tap a chip to add that item straight to the basket. An item with variants (see **Item customization** above) opens the same picker the tile does — a sized drink still asks which size before it's added. An item that only has customization options, with no variants, still adds directly from the chip and skips that picker, so double-check a customized item added this way.
 
 The strip shows nothing at all — not even an empty box — whenever there's nothing to suggest: an empty basket, a basket of items with no strong sales pattern together, or if the lookup itself fails for any reason. It never blocks or interrupts a sale; treat it as a hint, not a step you need to act on.
 

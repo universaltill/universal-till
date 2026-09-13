@@ -4,6 +4,7 @@
         hx-on::after-request="if (event.detail.successful) { var m = document.getElementById('modifier-modal'); m.close(); m.innerHTML=''; }">
     <input type="hidden" name="code" value="{{ .Code }}">
     <input type="hidden" name="itemId" value="{{ .ItemID }}">
+    <input type="hidden" name="qty" value="{{ .Qty }}">
     {{ if .Variants }}
     <fieldset class="modifier-group">
       <legend>{{ T "modifiers.variant_legend" }} <span class="modifier-required">*</span></legend>

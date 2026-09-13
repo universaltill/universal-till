@@ -39,6 +39,10 @@ func setupVariantModifiersTestDeps(t *testing.T) (*common.Deps, *db.DB) {
 	execAll(t, d, []string{
 		`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-coffee', 'COFFEE', 'Flat White', 999, 1)`,
 		`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-tea', 'TEA', 'Tea', 250, 1)`,
+		// ut-docs#2227: a plain item with NO item_variants row at all --
+		// "an item with no sellable variant is unaffected" needs a real
+		// zero-variant fixture; itm-tea doesn't qualify, it has v-tea-1.
+		`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-water', 'WATER', 'Water', 150, 1)`,
 
 		`INSERT INTO item_variants (id, item_id, sku, name, price, is_active) VALUES ('v-small', 'itm-coffee', 'COFFEE-S', 'Small', 250, 1)`,
 		`INSERT INTO item_variants (id, item_id, sku, name, price, is_active) VALUES ('v-reg',   'itm-coffee', 'COFFEE-R', 'Regular', 310, 1)`,
@@ -62,10 +66,17 @@ func setupVariantModifiersTestDeps(t *testing.T) (*common.Deps, *db.DB) {
 	resolver := stubResolver{
 		"COFFEE": {SKU: "COFFEE", ItemID: "itm-coffee", Name: "Flat White", Qty: 1, PriceCents: 999},
 		"TEA":    {SKU: "TEA", ItemID: "itm-tea", Name: "Tea", Qty: 1, PriceCents: 250},
-		"C-S":    {SKU: "COFFEE-S", ItemID: "itm-coffee", VariantID: "v-small", Name: "Flat White Small", Qty: 1, PriceCents: 250},
-		"C-R":    {SKU: "COFFEE-R", ItemID: "itm-coffee", VariantID: "v-reg", Name: "Flat White Regular", Qty: 1, PriceCents: 310},
-		"C-L":    {SKU: "COFFEE-L", ItemID: "itm-coffee", VariantID: "v-large", Name: "Flat White Large", Qty: 1, PriceCents: 350},
-		"T-1":    {SKU: "TEA-1", ItemID: "itm-tea", VariantID: "v-tea-1", Name: "Tea Mug", Qty: 1, PriceCents: 250},
+		"WATER":  {SKU: "WATER", ItemID: "itm-water", Name: "Water", Qty: 1, PriceCents: 150},
+		// ut-docs#2227 review, BLOCKER 1: a weight-embedded scale label
+		// (ADR-0059 §3) resolving to a PARENT item that ALSO has sellable
+		// variants (itm-coffee again) -- mirrors what a real scale barcode
+		// decode produces (QtyFromCode + a decoded Qty the picker/variant
+		// resolution path has no way to carry through).
+		"COFFEE-SCALE": {SKU: "COFFEE", ItemID: "itm-coffee", Name: "Flat White", Qty: 1.234, PriceCents: 999, QtyFromCode: true},
+		"C-S":          {SKU: "COFFEE-S", ItemID: "itm-coffee", VariantID: "v-small", Name: "Flat White Small", Qty: 1, PriceCents: 250},
+		"C-R":          {SKU: "COFFEE-R", ItemID: "itm-coffee", VariantID: "v-reg", Name: "Flat White Regular", Qty: 1, PriceCents: 310},
+		"C-L":          {SKU: "COFFEE-L", ItemID: "itm-coffee", VariantID: "v-large", Name: "Flat White Large", Qty: 1, PriceCents: 350},
+		"T-1":          {SKU: "TEA-1", ItemID: "itm-tea", VariantID: "v-tea-1", Name: "Tea Mug", Qty: 1, PriceCents: 250},
 	}
 	dp := &common.Deps{
 		State:       common.RuntimeState{Currency: "GBP", TaxRatePct: 20},

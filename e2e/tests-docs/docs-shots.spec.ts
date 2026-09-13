@@ -183,6 +183,12 @@ async function capture(page: Page, id: string, locale: string, route: string) {
 
 // Same barcodes as sale.spec.ts (demo catalog, checksums fixed by migration
 // 023): the sell screenshots should show a shop mid-sale, not an empty till.
+//
+// ut-docs#2227: itm001 (Coca-Cola) and itm002 (Pepsi) are plain, variant-free
+// demo items -- their variant-bearing "Pack of 6/12" siblings were moved onto
+// itm006/itm007/itm008 in demo_catalogue.sql specifically so this and the
+// dozens of other e2e/tests specs that scan these two barcodes expecting a
+// direct, ungated add (unrelated to variant behavior) keep working unchanged.
 async function ensureBasketLines(page: Page) {
   await page.goto('/');
   const basket = page.locator('#basket');

@@ -59,7 +59,7 @@ Bir müşteriyi bağlamak, müşteriye özel bir promosyon kodunun (yukarıda **
 
 ## "Müşteriler ayrıca satın alır" önerileri
 
-Sepet toplamlarının altında bir öneri çipleri satırı görünebilir, zaten sepette olanla birlikte satılması eğiliminde olanlara dayalı — tamamen bu dükkanın kendi geçmiş satışlarından hesaplanır, ağ üzerinden hiçbir şey gönderilmez. Bir çipe dokunarak o ürünü doğrudan sepete ekleyin. Ürünün kendi kartına dokunmaktan farklı olarak, bunu her zaman doğrudan ekler — normalde özelleştirilebilir bir ürün için (yukarıda **Ürün özelleştirme**'ye bakın), çip özelleştirme seçicisini açmak yerine atlar, bu yüzden böyle eklenen özelleştirilebilir bir ürünü iki kez kontrol edin.
+Sepet toplamlarının altında bir öneri çipleri satırı görünebilir, zaten sepette olanla birlikte satılması eğiliminde olanlara dayalı — tamamen bu dükkanın kendi geçmiş satışlarından hesaplanır, ağ üzerinden hiçbir şey gönderilmez. Bir çipe dokunarak o ürünü doğrudan sepete ekleyin. Varyantları olan bir ürün (yukarıda **Ürün özelleştirme**'ye bakın) kartın açtığı aynı seçiciyi açar — farklı boylardaki bir içecek, eklenmeden önce hâlâ boy sorar. Yalnızca özelleştirme seçenekleri olan ama varyantı olmayan bir ürün ise çip üzerinden doğrudan eklenmeye devam eder ve bu seçiciyi atlar — bu yüzden böyle eklenen özelleştirilmiş bir ürünü iki kez kontrol edin.
 
 Şerit hiçbir öneri olmadığında hiçbir şey göstermez — boş bir kutu bile değil — boş bir sepet, birlikte güçlü satış kalıbı olmayan bir sepet ürünleri, veya herhangi bir nedenle arama kendisi başarısız olursa. Asla bir satışı engellemez veya kesmez — bir işaret olarak ele alın, tepki vermeniz gereken bir adım değil.
 

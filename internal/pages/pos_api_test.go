@@ -38,6 +38,23 @@ func newPOSTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
+	// ut-docs#2227: a second, genuinely variant-free item -- itm1/ABC now
+	// carries a real sellable variant (var1/VAR, seeded above by
+	// seedForPages), so an HTTP scan of ABC alone correctly asks for a
+	// variant instead of adding directly. Seeded locally here (not in the
+	// shared seedForPages) so it only reaches newPOSTestDeps' own callers,
+	// not every other seedForPages consumer (ask_api_test.go's stock-level
+	// row count and buttons_api_test.go's own local "itm-plain" fixture
+	// both broke when this lived in seedForPages instead).
+	if _, err := db.Exec(`INSERT INTO items(id,sku,name,base_price,tax_code_id,is_active) VALUES('itm-plain2','PLAIN','Plain Item',200,'tax_std',1)`); err != nil {
+		t.Fatalf("seed plain item itm-plain2: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO item_barcodes(barcode,item_id,is_primary) VALUES('PLAIN','itm-plain2',1)`); err != nil {
+		t.Fatalf("seed plain item barcode: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO inventory(id,item_id,variant_id,location_id,quantity,updated_at) VALUES('inv-plain2','itm-plain2',NULL,'loc_main',50,datetime('now'))`); err != nil {
+		t.Fatalf("seed plain item inventory: %v", err)
+	}
 
 	resolver := stubResolver{
 		"ABC": {SKU: "ABC", Name: "Apple", Qty: 1, PriceCents: 100, ItemID: "itm1", TaxRateBP: 2000},
@@ -45,6 +62,10 @@ func newPOSTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 		// for a real variant barcode scan -- BOTH ItemID and VariantID set
 		// (see internal/ui/resolver_test.go's TestResolve_VariantBarcode).
 		"VAR": {SKU: "VAR", Name: "Apple - Large", Qty: 1, PriceCents: 150, ItemID: "itm1", VariantID: "var1", TaxRateBP: 2000},
+		// PLAIN resolves to itm-plain2, seeded just above -- no item_variants
+		// row at all, so this guard's added lookup is always a zero-row no-op
+		// for it.
+		"PLAIN": {SKU: "PLAIN", Name: "Plain Item", Qty: 1, PriceCents: 200, ItemID: "itm-plain2", TaxRateBP: 2000},
 	}
 	engine := pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver)
 	// Same charge-policy seam init.go wires in production (ADR-0061) — the

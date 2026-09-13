@@ -182,6 +182,33 @@ func sellableVariants(variants []data.VariantView) []data.VariantView {
 	return out
 }
 
+// renderModifierPicker renders the cashier's shared picker partial from
+// already-loaded groups/variants. Used both by the picker's own GET route
+// below (a tile tap, already targeting #modifier-modal) and by
+// registerPOSAPI's /api/pos/scan guard (ut-docs#2227), which reaches this
+// same markup by REDIRECTING a request that was aimed at #basket — see that
+// guard's own comment for why. qty is carried through as a hidden field
+// (ut-docs#2227 review finding F2) so a manual code entry's typed quantity
+// survives the detour through this picker instead of silently collapsing to
+// 1 on submit.
+//
+// Deliberately takes groups/variants as arguments rather than fetching them
+// itself (ut-docs#2227 review finding, non-blocker 5): the scan guard's own
+// HX-Retarget/HX-Reswap/HX-Trigger-After-Swap headers must not be set until
+// the render is known to succeed, or a query error here leaves a 500 that
+// still carries those headers. Callers fetch (and handle the error from)
+// groups/variants BEFORE writing any header.
+func renderModifierPicker(w http.ResponseWriter, r *http.Request, itemID, code, itemName string, qty float64, groups []data.ModifierGroup, variants []data.VariantView) {
+	httpx.RenderPartial("ui/partials/modifier_picker.html", map[string]any{
+		"ItemID":   itemID,
+		"Code":     code,
+		"ItemName": itemName,
+		"Qty":      qty,
+		"Groups":   groups,
+		"Variants": sellableVariants(variants),
+	})(w, r)
+}
+
 // registerPOSModifiersAPI wires the cashier's item-customization step
 // (ADR-0020): tapping a button whose item has modifier groups (extra
 // shot, bread choice, ...) opens this picker instead of adding straight
@@ -190,36 +217,32 @@ func sellableVariants(variants []data.VariantView) []data.VariantView {
 // resolveAndValidateModifiers above but renders its own locked-down cart
 // view, not this package's cashier ui.BasketView.
 func registerPOSModifiersAPI(mux *http.ServeMux, d *common.Deps) {
-	modRepo := data.NewModifierRepo(d.Db)
-	catalogRepo := data.NewCatalogRepo(d.Db)
-
 	mux.HandleFunc("GET /ui/pos/modifiers", func(w http.ResponseWriter, r *http.Request) {
 		itemID := strings.TrimSpace(r.URL.Query().Get("item"))
 		code := strings.TrimSpace(r.URL.Query().Get("code"))
+		qty := 1.0
+		if q := r.URL.Query().Get("qty"); q != "" {
+			if v, err := strconv.ParseFloat(q, 64); err == nil && v > 0 {
+				qty = v
+			}
+		}
 
 		base, ok := d.Engine.ResolveBase(code)
 		if !ok || itemID == "" {
 			http.Error(w, "item not found", http.StatusNotFound)
 			return
 		}
-		groups, err := modRepo.ListGroupsForItem(r.Context(), itemID)
+		groups, err := data.NewModifierRepo(d.Db).ListGroupsForItem(r.Context(), itemID)
 		if err != nil {
 			http.Error(w, "failed to load customization options", http.StatusInternalServerError)
 			return
 		}
-		variants, err := catalogRepo.ItemVariantsFor(r.Context(), itemID)
+		variants, err := data.NewCatalogRepo(d.Db).ItemVariantsFor(r.Context(), itemID)
 		if err != nil {
 			http.Error(w, "failed to load customization options", http.StatusInternalServerError)
 			return
 		}
-
-		httpx.RenderPartial("ui/partials/modifier_picker.html", map[string]any{
-			"ItemID":   itemID,
-			"Code":     code,
-			"ItemName": base.Name,
-			"Groups":   groups,
-			"Variants": sellableVariants(variants),
-		})(w, r)
+		renderModifierPicker(w, r, itemID, code, base.Name, qty, groups, variants)
 	})
 
 	mux.HandleFunc("POST /api/pos/scan-with-modifiers", func(w http.ResponseWriter, r *http.Request) {

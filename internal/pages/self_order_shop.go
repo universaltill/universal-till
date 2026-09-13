@@ -152,6 +152,38 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 		if code != "" {
+			// ut-docs#2227: same parent-price defect as the cashier's
+			// /api/pos/scan, and reachable here even though the shipped
+			// grid never triggers it (self_order_grid.html's own
+			// HasVariants check keeps a real tap off this path) — this
+			// endpoint is anonymous and auth-exempt, so a crafted POST with
+			// a variant-bearing parent code still reaches it directly.
+			// Unlike the cashier path there is no picker to redirect to
+			// here (no UI ever reaches this branch to render one into), so
+			// this refuses the add instead of prompting — deliberately
+			// asymmetric with the cashier fix, per the design note.
+			// review finding, BLOCKER 1 (same as the cashier path): a
+			// weight/price-embedded scale label (QtyFromCode) must be left
+			// alone here too — there is no variant question this endpoint
+			// can correctly ask for one, refusing it would just as wrongly
+			// block a legitimate scale-label add.
+			if base, ok := d.KioskEngine.ResolveBase(code); ok && base.VariantID == "" && base.ItemID != "" && !base.QtyFromCode {
+				variants, err := data.NewCatalogRepo(d.Db).ItemVariantsFor(r.Context(), base.ItemID)
+				if err != nil {
+					renderKioskCartWithMessage(w, r, d, httpx.T(httpx.ResolveLocale(w, r), "modifiers.variant_unavailable"))
+					return
+				}
+				if len(sellableVariants(variants)) > 0 {
+					// review finding, non-blocker 3: "variant_unavailable"
+					// ("the options just changed") is misleading here —
+					// nothing changed, the item has always needed a variant
+					// choice this anonymous endpoint can't make. Reuse the
+					// existing "variant_required" key instead (no new i18n
+					// key, already present in every locale).
+					renderKioskCartWithMessage(w, r, d, httpx.T(httpx.ResolveLocale(w, r), "modifiers.variant_required"))
+					return
+				}
+			}
 			// Item resolution + add ONLY — no promo-code-via-code fallback,
 			// no scan-to-refund, no customer-barcode lookup. Those are
 			// cashier-facing behaviors on /api/pos/scan that must not be

@@ -795,6 +795,75 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
+		// ut-docs#2227: a code that resolves to a PARENT item (VariantID
+		// == "") with at least one sellable variant must never add at the
+		// parent's base price on this endpoint — the suggestion strip and
+		// manual code entry both post here, and neither goes through the
+		// tile's own picker. Checked read-only, BEFORE the HasScanCache/
+		// HasLine fast path below (review finding F1): that fast path adds
+		// directly via ScanQtyWithResult with no variant awareness at all,
+		// and a held sale resumed from before this fix can already carry a
+		// parent-priced line/scan-cache entry for this exact code, which
+		// would let a repeat scan slip past a guard placed any later.
+		// ResolveBase's exact-match tiers return ok=false for a customer/
+		// voucher/promo code; a name-substring fallback tier exists too and
+		// could theoretically catch one, but that fallback is already
+		// shadowed for every code this handler treats as a promo/receipt
+		// candidate (see the item-resolution fast path below), so this is a
+		// no-op in practice for every other branch. A scanned VARIANT's own
+		// barcode carries VariantID != "" and is unaffected (ut-docs#744) —
+		// unchanged, no extra prompt. An empty ItemID can't own a catalog
+		// variant (item_variants is keyed by item_id) — real resolution
+		// always sets it (ui.PriceResolverAdapter resolves through a real
+		// catalog row), so that part only ever short-circuits a resolver
+		// that doesn't model items at all.
+		//
+		// review finding, BLOCKER 1: a weight/price-embedded scale label
+		// (QtyFromCode, ADR-0059 §3) must never be redirected here. The
+		// picker always resolves the CHOSEN VARIANT's own plain code
+		// (resolveAndValidateModifiers), which carries no decoded qty/price
+		// at all — routing a scale-label scan through it silently replaces
+		// the label's decoded weight with the submitted form qty (reproduced:
+		// a 1.234kg cheese label re-priced as qty=1 once redirected). A
+		// scale-label item choosing between variants has no correct answer
+		// this diff can give it, so it stays exactly as before this fix
+		// (added directly, unaffected) rather than silently mis-costing it.
+		if base, ok := d.Engine.ResolveBase(code); ok && base.VariantID == "" && base.ItemID != "" && !base.QtyFromCode {
+			variants, err := data.NewCatalogRepo(d.Db).ItemVariantsFor(r.Context(), base.ItemID)
+			if err != nil {
+				// Fail closed (ut-docs#2227 design note item 4): unlike
+				// internal/ui/buttons.go's #2209 fallback (a whole grid
+				// still needs to render), this query is scoped to the one
+				// code being scanned, so failing closed blocks one add
+				// with a retryable toast rather than risking a parent-price
+				// add if the query is a transient error.
+				b := d.Engine.Basket()
+				b.ToastMessage = httpx.T(locale, "modifiers.variant_unavailable")
+				b.ToastLevel = "error"
+				render(&b)
+				return
+			}
+			if sellable := sellableVariants(variants); len(sellable) > 0 {
+				groups, err := data.NewModifierRepo(d.Db).ListGroupsForItem(r.Context(), base.ItemID)
+				if err != nil {
+					// Same fail-closed reasoning as above — checked BEFORE
+					// any header is set (review finding, non-blocker 5): a
+					// query error here must not leave a 500 that still
+					// carries HX-Retarget/HX-Reswap/HX-Trigger-After-Swap.
+					b := d.Engine.Basket()
+					b.ToastMessage = httpx.T(locale, "modifiers.variant_unavailable")
+					b.ToastLevel = "error"
+					render(&b)
+					return
+				}
+				w.Header().Set("HX-Retarget", "#modifier-modal")
+				w.Header().Set("HX-Reswap", "innerHTML")
+				w.Header().Set("HX-Trigger-After-Swap", "open-modifier-modal")
+				renderModifierPicker(w, r, base.ItemID, code, base.Name, in.Qty, groups, variants)
+				return
+			}
+		}
+
 		if d.Engine.HasScanCache(code) || d.Engine.HasLine(code) {
 			b, _, _ := d.Engine.ScanQtyWithResult(code, in.Qty)
 			render(b)

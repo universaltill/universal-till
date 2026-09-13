@@ -140,10 +140,13 @@ test.describe('inventory category filter (ut-docs#2119, popover shell ut-docs#21
     await expect(drinksChip).toBeVisible();
     await expect(foodChip).toBeVisible();
 
-    // Scoped to the item-level row specifically (data-variant="") — Pepsi
-    // also has its own separately-tracked variant row ("— Pack of 6"),
-    // additive per ADR-0043 (ut-docs#2082), which a bare hasText match
-    // would ambiguously also match.
+    // Scoped to the item-level row specifically (data-variant="") — every
+    // stock row carries this attribute (empty for the item-level row, a
+    // real variant id for a variant row, ADR-0043/ut-docs#2082), so this
+    // stays the correct, unambiguous selector even for an item with no
+    // variant of its own, like Pepsi (ut-docs#2227 moved Pepsi's demo
+    // "Pack of 6" variant off to a different item so scanning Pepsi's own
+    // barcode elsewhere in this suite keeps adding it directly).
     const pepsiRow = page.locator('#stock-table .stock-row[data-item="itm002"][data-variant=""]');
     const breadRow = page.locator('#stock-table .stock-row', { hasText: 'White Bread Loaf' });
     await expect(pepsiRow).toBeVisible();
