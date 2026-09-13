@@ -1076,8 +1076,6 @@ func FuncsFor(locale string) template.FuncMap {
 	return funcs
 }
 
-func NewMux() *http.ServeMux { return http.NewServeMux() }
-
 // renderFiles is the fixed file set every Render() call shares — only the
 // page itself varies per call site, so the cache key only needs to vary on
 // page (ut-docs#1320).
@@ -1313,22 +1311,4 @@ func IsFragmentSwap(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	return strings.EqualFold(r.Header.Get("HX-Request"), "true")
-}
-
-func JSON[In any, Out any](fn func(In) (Out, error)) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var in In
-		if r.Body != nil {
-			defer r.Body.Close()
-			_ = json.NewDecoder(r.Body).Decode(&in)
-		}
-		out, err := fn(in)
-		w.Header().Set("Content-Type", "application/json")
-		if err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
-			return
-		}
-		_ = json.NewEncoder(w).Encode(out)
-	}
 }

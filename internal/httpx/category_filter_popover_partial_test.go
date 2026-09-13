@@ -66,6 +66,16 @@ func TestCategoryFilterPopover_RendersTriggerAndDialog(t *testing.T) {
 	if !strings.Contains(body, `class="category-filter-badge"`) {
 		t.Fatalf("expected the active-state badge element (hidden by default); got:\n%s", body)
 	}
+	// ut-docs#2178: a persistent aria-live region category-filter.js's
+	// paintTriggerState writes the same active/idle label into, so a
+	// screen reader gets a spoken confirmation when the filter changes
+	// what's listed.
+	if !strings.Contains(body, `id="catalog-category-filter-status"`) {
+		t.Fatalf("expected the status live-region id; got:\n%s", body)
+	}
+	if !strings.Contains(body, `aria-live="polite"`) || !strings.Contains(body, `data-category-filter-status`) {
+		t.Fatalf("expected an aria-live=\"polite\" region marked data-category-filter-status; got:\n%s", body)
+	}
 
 	// The dialog: closed by default (no `open` attribute), labelled, and
 	// holding a close control.

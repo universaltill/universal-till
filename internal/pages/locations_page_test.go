@@ -365,6 +365,31 @@ func TestLocationsPage_HXRequestReturnsContentFragmentWithOOBAdminTree(t *testin
 	}
 }
 
+// TestLocationsPage_InlineSwapSuppressesOOBAdminTreeToo proves
+// isAdminInlineSwap/writeAdminTreeOOB (ut-docs#2178) is genuinely a shared
+// rule covering all six /admin destinations, not just country-settings —
+// /locations has no in-page control of its own today, but the guard lives
+// inside writeAdminTreeOOB now, so every one of its six callers answers a
+// request carrying X-UT-Admin-Inline-Swap identically, provably rather
+// than by inspection.
+func TestLocationsPage_InlineSwapSuppressesOOBAdminTreeToo(t *testing.T) {
+	mux, _ := newLocationsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/locations", nil), manager)
+	req.Header.Set("HX-Request", "true")
+	req.Header.Set("X-UT-Admin-Inline-Swap", "1")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("htmx GET /locations: %d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, `id="admin-tree"`) || strings.Contains(body, "hx-swap-oob") {
+		t.Errorf("an in-page swap (X-UT-Admin-Inline-Swap set) must not carry the OOB admin tree here either: %s", body)
+	}
+}
+
 // A plain browser GET (no HX-Request) must still render the exact same full
 // standalone page as before this card.
 func TestLocationsPage_NonHXRequestStillRendersFullPage(t *testing.T) {

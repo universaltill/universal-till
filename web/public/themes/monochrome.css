@@ -22,6 +22,17 @@
   --success: #000000;
   --danger: #000000;
   --warning: #000000;
+  /* ut-docs#2192: app.css's semantic-tint BACKGROUNDS (.pos-notice,
+     .tag.warn, .sync-banner, row/block warning+success notices) used to
+     be literal rgba() green/red/amber washes no theme could reach — this
+     theme's whole point is "no colour accent carrying meaning on its
+     own," so those tints stayed visibly coloured even here. All three
+     collapse to the same neutral grayscale depth; there's no reason for
+     one to read "heavier" than another in a theme that already erases
+     the hue distinction between them above. */
+  --success-tint: rgba(0, 0, 0, .08);
+  --danger-tint: rgba(0, 0, 0, .08);
+  --warning-tint: rgba(0, 0, 0, .08);
   --radius: 8px;
   --radius-lg: 10px;
   --shadow: 0 1px 2px rgba(0,0,0,.12), 0 2px 6px rgba(0,0,0,.1);
