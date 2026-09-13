@@ -5291,6 +5291,20 @@ VALUES `+strings.Join(placeholders, ", "), args...); err != nil {
 // map means "unknown" — every key is probed with the UPDATE and inserted
 // only when no row was affected (full RecordStockMovement semantics).
 // Returned movement IDs are in input order.
+//
+// This trust is sound only because CompleteSale (the sole caller as of
+// ut-docs#1318) always passes its own CurrentQtyBatch result, looked up on
+// the exact same tx, for a key set that is a SUPERSET of (CurrentQtyBatch
+// runs for every line; RecordStockMovementsBatch's own keys exclude
+// untracked-item lines) — so every key this function looks up is guaranteed
+// present in the map, never merely "usually". ut-docs#1347 reviewed hardening it
+// (probing every key via UPDATE regardless of the map) against leaving the
+// contract as-is, and chose to leave it as-is rather than pay an extra
+// UPDATE per brand-new key on the hot path — but a FUTURE caller passing an
+// incomplete map for these keys would silently create a duplicate inventory
+// row instead of erroring (ux_inventory_item's UNIQUE constraint can't catch
+// it: SQLite never considers two NULL-bearing unique columns equal). Any new
+// caller must pass a complete map for its own keys, or nil.
 func (r *POSRepo) RecordStockMovementsBatch(ctx context.Context, tx *sql.Tx, ins []StockMovementInput, existing map[StockKey]float64) ([]string, error) {
 	if len(ins) == 0 {
 		return nil, nil
