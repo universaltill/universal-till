@@ -32,6 +32,20 @@
   --success: #16a34a;
   --danger: #dc2626;
   --warning: #d97706;
+  /* ut-docs#2192: semantic-tint BACKGROUND colours, split out from
+     --success/--danger/--warning themselves (deliberately — a theme that
+     retunes the ink/border colour above shouldn't silently move every tint
+     background too). Every existing tint rule below now reads one of
+     these three instead of a literal rgba(), so a theme can override the
+     wash without touching the ink. Defaults are exactly the literal
+     values every call site used before this token existed, so the four
+     themes that never override these (amber/fresh/monarch/slate) and
+     dark.css (overrides --danger only, not the tint) render pixel-
+     identical to before; monochrome.css overrides all three to a neutral
+     grayscale wash instead. */
+  --success-tint: rgba(22, 163, 74, .12);
+  --danger-tint: rgba(220, 38, 38, .1);
+  --warning-tint: rgba(217, 119, 6, .12);
   --radius: 10px;
   --radius-lg: 14px;
   --shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 1px 3px rgba(15, 23, 42, .08);
@@ -144,7 +158,7 @@ body.tracking-screen { -webkit-user-select: text; user-select: text; }
 /* A tag flagging something that needs attention (e.g. a failing bug-report
    upload, ut-docs#637) — same warn tint .sync-banner below uses, reused
    here rather than inventing a second warning color. */
-.tag.warn { background: rgba(217, 119, 6, .12); color: var(--warning); border-color: var(--warning); }
+.tag.warn { background: var(--warning-tint); color: var(--warning); border-color: var(--warning); }
 
 /* ---------- Navigation: left icon rail (>480px), top bar (<=480px) ----------
    2026-08-30 (ut-docs#1332): converted from an always-horizontal top bar,
@@ -2244,9 +2258,9 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
 .pos-notice .notice-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .pos-notice.info { background: rgba(37, 99, 235, .1); color: var(--accent);
   border-color: rgba(37, 99, 235, .3); }
-.pos-notice.success { background: rgba(22, 163, 74, .12); color: var(--success);
+.pos-notice.success { background: var(--success-tint); color: var(--success);
   border-color: rgba(22, 163, 74, .35); }
-.pos-notice.error { background: rgba(220, 38, 38, .1); color: var(--danger);
+.pos-notice.error { background: var(--danger-tint); color: var(--danger);
   border-color: rgba(220, 38, 38, .35); }
 .notice-dismiss { flex: 0 0 auto; background: transparent; border: none;
   color: inherit; font: inherit; font-size: 1rem; cursor: pointer;
@@ -2277,7 +2291,7 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
    .sync-banner already use, so it reads as a real notice, not muted status text. */
 .journal-replica-notice { margin-block-end: .75rem; padding: .5rem .75rem;
                            border-radius: var(--radius); font-size: .85rem;
-                           background: rgba(217, 119, 6, .12); color: var(--warning); }
+                           background: var(--warning-tint); color: var(--warning); }
 .journal table { width: 100%; border-collapse: collapse; background: var(--surface);
                  border-radius: var(--radius); overflow: hidden; }
 .journal th { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em;
@@ -2337,6 +2351,26 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
   background-size: 100% 16px, 100% 16px, 100% 8px, 100% 8px;
   background-attachment: local, local, scroll, scroll;
 }
+/* ut-docs#2142 (considered, decided against): whether #held-sales should
+   move out of this shared scrolling box into its own always-visible grid
+   region in .pos-container, now that scrolling is the normal case (see
+   the ut-docs#2128 comment above) rather than the edge case. Decided to
+   leave it here — not mainly for lack of data, but because the actual
+   reachability problem is already solved at zero vertical-budget cost:
+   ut-docs#2137 added an always-rendered "Open orders" popup
+   (.tender-quickpay, below) precisely because this strip is clipped at
+   1280x800 and a parked order needs to be resumable regardless of this
+   box's own CSS. A grid change here would only buy at-a-glance visibility
+   on top of that already-shipped fix, against .pos-container's grid-row-
+   ratio math, independently re-measured four times already
+   (ut-docs#213/#1231/#1336, plus the 2026-08-30 compact-UI pass) for
+   unrelated height budgets — reopening it for an unverified marginal
+   benefit is a real, demonstrated regression risk, not a hypothetical
+   one. (No real shop is live yet either, so there is also no production
+   telemetry to size that marginal benefit against — a secondary reason,
+   not the load-bearing one.) Cheap future move if this strip's own
+   visibility ever needs to improve further: a parked-count badge on the
+   #2137 button, not a grid restructure. Full reasoning: ut-docs#2142. */
 
 .scan-row { display: flex; gap: .4rem; }
 /* 2026-08-30 (product owner): the barcode field inherited the global
@@ -2796,27 +2830,28 @@ table.table tr:last-child td, .card table tr:last-child td { border-bottom: none
    just readable in its own status text (ut-docs#303 — three warnings sat
    unnoticed among 209 rows that all rendered identically). Tint + icon,
    not colour alone, so it doesn't rely on colour perception. The icon uses
-   the --warning var directly; the tint is a hardcoded rgba, deliberately
-   not derived from var(--warning) itself — a future --warning change
-   won't silently move it.
-   Legible on every theme's light --surface (ut-docs#303 review: no theme
-   here is actually dark — see the themes/*.css files — so "every theme"
-   IS "every background this can render on"). Logical margin, not
+   the --warning var directly; the tint reads the separate --warning-tint
+   token (ut-docs#2192) instead of a literal rgba — still decoupled from
+   --warning itself (a future --warning change won't silently move it),
+   but now a theme can override the wash on its own, which monochrome does.
+   Legible on every theme this ships, light or dark: dark.css doesn't
+   override --warning-tint, and dark's own #2176 review already confirmed
+   the inherited amber has adequate contrast there. Logical margin, not
    left/right, for RTL. */
-tr.row-warn td { background: rgba(217, 119, 6, .12); }
+tr.row-warn td { background: var(--warning-tint); }
 .row-warn-icon { color: var(--warning); margin-inline-end: .3em; }
 /* Block-level warning notice (ut-docs#970 review, F6) — .row-warn above is
    scoped to `tr.row-warn td` only, so a non-table warning block (e.g. the
    catalogue-import currency-confirmation prompt) rendered with just
    `class="row-warn"` got NO background/border at all, reading as plain body
    text. Same amber palette as the row variant, block-shaped instead. */
-.notice-block-warn { background: rgba(217, 119, 6, .12); border: 1px solid rgba(217, 119, 6, .35);
+.notice-block-warn { background: var(--warning-tint); border: 1px solid rgba(217, 119, 6, .35);
   border-radius: var(--radius); padding: .7rem .9rem; margin-block-end: .6rem; }
 /* Block-level success notice (ut-docs#1171): same shape as .notice-block-warn
    above, --success palette instead of --warning — the catalogue import's
    post-commit summary needs to read as unmistakably "done", distinct at a
    glance from the (amber) preview/warning state, not just a plain <p>. */
-.notice-block-success { background: rgba(22, 163, 74, .12); border: 1px solid rgba(22, 163, 74, .35);
+.notice-block-success { background: var(--success-tint); border: 1px solid rgba(22, 163, 74, .35);
   border-radius: var(--radius); padding: .7rem .9rem; margin-block-end: .6rem; }
 
 /* ---------- Kiosk mode (dedicated till: UT_KIOSK=1) ----------
@@ -2907,7 +2942,7 @@ body.login-screen {
    fiscal_chip_test.go's TestSyncChip_*/TestFiscalChip_* assert on,
    "sync-chip ok"/"sync-chip warn"/"fiscal-chip ok"/"fiscal-chip warn") —
    no box styling of their own, nothing to define here. */
-.sync-banner { background: rgba(217, 119, 6, .12); color: var(--warning); border-radius: .5rem;
+.sync-banner { background: var(--warning-tint); color: var(--warning); border-radius: .5rem;
   padding: .6rem .9rem; margin-block-end: .8rem; }
 .sync-banner a { color: inherit; font-weight: 700; text-decoration: underline; }
 

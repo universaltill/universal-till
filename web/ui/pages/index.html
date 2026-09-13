@@ -112,14 +112,10 @@
     </div>
   </dialog>
 
-  <!-- Client-side slot of the sale screen's single notification surface
-       (ut-docs#213, docs/sale-screen-notifications.md): app.js
-       fills it on htmx request failures. Server-rendered notices ride the
-       #basket swap instead (partials/basket.html). Strings ride data-*
-       attributes so app.js stays locale-free.
-       Extracted into a shared partial by ut-docs#2179 (also used by
-       admin.html/items.html now) — same markup, same id, unchanged here. -->
-  {{ template "pos_alert" . }}
+  <!-- ut-docs#2183: #pos-alert now renders once, globally, from
+       base.html itself — see that file's own comment. Used to be
+       included here directly (ut-docs#213/#2179); removed to avoid a
+       duplicate id="pos-alert" now that base.html always provides it. -->
 
   <!-- German TSE hard gate (ADR-0048, ut-docs#715): persistent banner for
        the whole duration of an active owner override window — a status
