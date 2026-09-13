@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -72,15 +71,6 @@ func TestCheckForUpdatesFindsNewerVersion(t *testing.T) {
 	}
 	if u.ArtifactHash != "bbb" {
 		t.Fatalf("sha256: prefix not stripped: %q", u.ArtifactHash)
-	}
-
-	// GetUpdateInfo finds it by plugin id, and errors for unknown ids.
-	info, err := uc.GetUpdateInfo(ctx, "com.test.upd")
-	if err != nil || info.AvailableVersion != "1.2.0" {
-		t.Fatalf("GetUpdateInfo: %+v, %v", info, err)
-	}
-	if _, err := uc.GetUpdateInfo(ctx, "com.test.unknown"); err == nil || !strings.Contains(err.Error(), "no update available") {
-		t.Fatalf("unknown id: %v", err)
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -92,7 +91,22 @@ func RevokePermission(ctx context.Context, db *sql.DB, pluginID, permission stri
 	return nil
 }
 
-// ListPluginPermissions returns all permissions for a plugin with grant status
+// ListPluginPermissions returns all permissions for a plugin with grant status.
+//
+// No production caller (ut-docs#1566). It is the read half of a
+// permission-management surface whose write half IS live: the
+// POST /api/plugins/permissions/grant and /revoke routes (internal/pages/
+// plugin_api.go → GrantPermission/RevokePermission) exist, but no page
+// lists an installed plugin's declared permissions with their grant state
+// for an operator to act on — the two places that render permissions today
+// (the store listing card and the manual-import preview) show a manifest's
+// requested set, not the local grant status. The two production readers of
+// PluginRepo.ListPermissions (wasm_hostfns.go, wasm_tcp.go) want the raw
+// rows for net:/tcp: matching, not this Name/Granted view. Whether that
+// surface should exist is a product/UX call, so this is left in place with
+// its test (TestListPluginPermissions, cited by ut-docs'
+// pos-acceptance-matrix.md) rather than deleted or wired blind. Tracked as
+// ut-docs#2240.
 func ListPluginPermissions(ctx context.Context, db *sql.DB, pluginID string) ([]Permission, error) {
 	repo := data.NewPluginRepo(db)
 	rows, err := repo.ListPermissions(ctx, pluginID)
@@ -110,33 +124,6 @@ func ListPluginPermissions(ctx context.Context, db *sql.DB, pluginID string) ([]
 type Permission struct {
 	Name    string
 	Granted bool
-}
-
-// CheckMultiplePermissions verifies if a plugin has all required permissions
-func CheckMultiplePermissions(ctx context.Context, db *sql.DB, pluginID string, permissions []string) error {
-	var errors []string
-
-	for _, perm := range permissions {
-		if err := CheckPermission(ctx, db, pluginID, perm); err != nil {
-			errors = append(errors, err.Error())
-		}
-	}
-
-	if len(errors) > 0 {
-		return fmt.Errorf("permission checks failed: %s", strings.Join(errors, "; "))
-	}
-
-	return nil
-}
-
-// HasAnyPermission checks if a plugin has at least one of the specified permissions
-func HasAnyPermission(ctx context.Context, db *sql.DB, pluginID string, permissions []string) (bool, error) {
-	for _, perm := range permissions {
-		if err := CheckPermission(ctx, db, pluginID, perm); err == nil {
-			return true, nil
-		}
-	}
-	return false, nil
 }
 
 // auditPermissionDenial logs permission denial to audit_log

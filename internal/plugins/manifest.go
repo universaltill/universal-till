@@ -169,7 +169,17 @@ func ParseManifest(r io.Reader) (*Manifest, error) {
 	return &m, nil
 }
 
-// ComputeSHA256 calculates the SHA256 checksum of a file
+// ComputeSHA256 calculates the SHA256 checksum of a file.
+//
+// No production caller: every shipped path that needs a bundle hash
+// computes it inline while streaming the bytes it already has in hand
+// (DownloadManager.Download hashes as it writes the .part file, Exporter
+// hashes the tar.gz as it writes it), rather than re-reading a finished
+// file. Kept as a declared test helper (ut-docs#1566): it is the
+// independent "hash the file on disk" oracle those streaming hashes are
+// checked against (exporter_test.go, and internal/pages'
+// plugins_store_api_test.go across the package boundary), plus its own
+// TestComputeSHA256* cases, which ut-docs' pos-acceptance-matrix.md cites.
 func ComputeSHA256(filePath string) (string, error) {
 	f, err := os.Open(filePath)
 	if err != nil {

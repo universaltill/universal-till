@@ -384,7 +384,28 @@ func (m *Manager) InstalledIDs() []string {
 	return out
 }
 
-// CatalogList returns catalog entries with installed flag.
+// CatalogList returns catalog entries with installed flag, from the local
+// plugin_catalog mirror Init/Reload load into m.Catalog.
+//
+// No production caller (ut-docs#1566): the plugins available to install are
+// listed straight from the marketplace CatalogRepository snapshot
+// (internal/pages/plugins_store_page.go ranges snapshot.Plugins; the
+// management page's "update available" badge resolves through
+// plugins.IndexCatalog over the same snapshot), and installed ones from
+// PluginRepo.ListInstalledPlugins. The local plugin_catalog table is
+// written on install (PersistManifest's EnsureCatalogEntry exists to
+// satisfy plugins(id,version)'s foreign key; MarketplaceInstaller's
+// UpsertCatalogEntry records the listing's metadata) but nothing reads
+// those rows back for display, so nothing reads this view.
+// The DB-paginated sibling, Manager.CatalogPage, was removed in that slice
+// (its data-layer half, PluginRepo.CatalogPage, is unchanged and still on
+// the deadcode baseline). This one is kept, as the only reader of the
+// otherwise write-only m.Catalog map: deleting it alone would leave
+// loadCatalog running an unread query on every Reload, and deleting the
+// whole chain (m.Catalog, loadCatalog, CatalogEntry/CatalogView,
+// PluginRepo.ListCatalog) crosses into internal/data — flagged as a
+// follow-up instead (ut-docs#2238). TestManagerInitAndReload also covers
+// loadCatalog's tag parsing and installed flag through it.
 func (m *Manager) CatalogList() []CatalogView {
 	out := make([]CatalogView, 0, len(m.Catalog))
 	for id, c := range m.Catalog {
@@ -439,42 +460,4 @@ func parseTags(s string) []string {
 		}
 	}
 	return out
-}
-
-// CatalogPage fetches catalog entries with pagination and optional tag filter from DB.
-func (m *Manager) CatalogPage(ctx context.Context, offset, limit int, tag string) ([]CatalogView, int, error) {
-	if limit <= 0 {
-		limit = 12
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	tag = strings.TrimSpace(tag)
-
-	rows, total, err := data.NewPluginRepo(m.db).CatalogPage(ctx, offset, limit, tag)
-	if err != nil {
-		return nil, 0, fmt.Errorf("load catalog page: %w", err)
-	}
-
-	var out []CatalogView
-	for _, row := range rows {
-		c := CatalogEntry{
-			ID:          row.ID,
-			Version:     row.Version,
-			Name:        row.Name,
-			Description: row.Description,
-			Runtime:     row.Runtime,
-			Entrypoint:  row.Entrypoint,
-			PackageURL:  row.PackageURL,
-			SHA256:      row.SHA256,
-			Author:      row.Author,
-			Website:     row.Website,
-		}
-		if strings.TrimSpace(row.TagsJSON) != "" {
-			c.Tags = parseTags(row.TagsJSON)
-		}
-		_, installed := m.Installed[c.ID]
-		out = append(out, CatalogView{CatalogEntry: c, Installed: installed})
-	}
-	return out, total, nil
 }
