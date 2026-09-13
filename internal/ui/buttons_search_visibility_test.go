@@ -257,9 +257,15 @@ func TestButtonsHTTPList_TabbedPanelsCarryCrossCategorySearchWiring(t *testing.T
 	// Each top-level bucket's own buttons now render inside a
 	// "category-group" section with a header hidden until a query is
 	// active — the same q-gated header the no-subcategory case never had
-	// before this card.
-	if strings.Count(body, `<h3 class="category-header" x-show="q" x-cloak>`) != 2 {
-		t.Fatalf("expected both Food's and Drinks' own buttons to carry a q-gated category header, got: %s", body)
+	// before this card. (ut-docs#2212 widened the condition to also show
+	// while the All tab is selected — see buttons_all_tab_test.go — so this
+	// assertion checks the OR'd condition, not the original q-only one.
+	// No x-cloak: since All is the default tab, this header is visible on
+	// first paint by default, so cloaking it would hide real category
+	// labels from a client where Alpine never loads — same reasoning that
+	// already dropped x-cloak from the per-category panels themselves.)
+	if strings.Count(body, `<h3 class="category-header" x-show="q || tab === '__all__'">`) != 2 {
+		t.Fatalf("expected both Food's and Drinks' own buttons to carry a q-or-All-gated category header, got: %s", body)
 	}
 	// Exactly one no-matches message for the whole tabbed view (outside the
 	// per-panel loop), not one per panel.

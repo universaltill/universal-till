@@ -125,7 +125,7 @@ test.describe('tab-bar overflow + ARIA tabs pattern (ut-docs#424)', () => {
       await page.goto('/');
       const tabBar = page.locator('.products .tab-bar');
       await expect(tabBar).toBeVisible();
-      await expect(tabBar.locator('.tab')).toHaveCount(CATEGORY_COUNT + 2, { timeout: 10_000 }); // + seeded Food/Drinks
+      await expect(tabBar.locator('.tab')).toHaveCount(CATEGORY_COUNT + 3, { timeout: 10_000 }); // + seeded Food/Drinks + ut-docs#2212's All tab
       await waitForStableLayout(page, '.products .tab-bar, .products .tab-bar .tab');
 
       const boxes = await tabBar.locator('.tab').evaluateAll((els) =>
@@ -208,7 +208,16 @@ test.describe('tab-bar overflow + ARIA tabs pattern (ut-docs#424)', () => {
       await page.goto('/');
       const tabBar = page.locator('.products .tab-bar');
       const tabs = tabBar.getByRole('tab');
-      await expect(tabs).toHaveCount(CATEGORY_COUNT + 2, { timeout: 10_000 });
+      await expect(tabs).toHaveCount(CATEGORY_COUNT + 3, { timeout: 10_000 }); // + seeded Food/Drinks + ut-docs#2212's All tab
+
+      // ut-docs#2212's All tab is selected by default and deliberately
+      // carries no aria-controls (it owns no single panel — see
+      // buttons.html's own comment on that). This test's aria-controls/
+      // panel-identity assertions below need a REAL category active, so
+      // select the first real category tab (DOM index 1, right after All)
+      // before proceeding — the roving-tabindex/arrow-key mechanics under
+      // test are unaffected by which tab starts active.
+      await tabs.nth(1).click();
       const count = await tabs.count();
 
       // Exactly one tab is the roving-tabindex stop and carries aria-selected.

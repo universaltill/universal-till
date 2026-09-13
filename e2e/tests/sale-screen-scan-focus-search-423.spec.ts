@@ -84,9 +84,9 @@ test.describe('scan while focus is in another sale-screen field (ut-docs#423)', 
     const assertClean = watchConsole(page);
     await page.goto('/');
 
-    // Food is the default-active tab (sale-screen-category-tabs-search-418.spec.ts) —
-    // search "Butter" (Food > Dairy) rather than a Drinks item, since search
-    // filters WITHIN the active tab.
+    // Search spans every category regardless of which tab is active
+    // (ut-docs#2181; ut-docs#2212 made All, not Food, the default tab) —
+    // "Butter" (Food > Dairy) is just as findable as a Drinks item here.
     // ut-docs#2173: open the strip's search first — see the first test's
     // own comment above.
     await page.locator('.products-strip-search').click();

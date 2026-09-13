@@ -11,13 +11,14 @@ import { watchConsole, waitForStableLayout } from './helpers';
 // no JS, no scroll listener.
 //
 // Drives the real demo-seeded catalog (001_init.sql / demo_catalogue.sql),
-// same convention as sale-screen-category-tabs-search-418.spec.ts — Food's
-// default-active tab alone has enough categories/items to overflow
+// same convention as sale-screen-category-tabs-search-418.spec.ts — the
+// default-active tab (ut-docs#2212: the synthetic "All" tab, showing every
+// category at once) alone has enough categories/items to overflow
 // `.products` at a normal desktop viewport, so no viewport-shrinking trick
 // is needed to reach the "content taller than the panel" precondition this
 // spec exists to test.
 // A short viewport is used deliberately -- at the default 1280x720 the demo
-// catalog's default-active Food>Dairy tile set fits `.products` without
+// catalog's default-active tile set fits `.products` without
 // overflowing, which would make this spec assert CSS wiring against content
 // that never needs a scroll cue. 1024x480 is below the documented 1024x600
 // kiosk floor (see app.css's "DOCUMENTED KIOSK FLOOR" comment and
