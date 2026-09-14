@@ -2252,6 +2252,85 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
 .basket td:nth-child(3), .basket td:nth-child(4),
 .basket th:nth-child(3), .basket th:nth-child(4) { overflow-wrap: anywhere; }
 
+/* ut-docs#1338, phone tier (<=480px): a genuinely different row layout
+   instead of a 5th column-budget shave (".basket table"'s own comment
+   above already carries four attempts at that shape). The reserved-rem
+   budget above is what starves ITEM at 360px in the first place -- ~288px
+   total minus the four reserved columns leaves ~20px, ~2 characters, for
+   the one thing the operator most needs to read. So this tier stops
+   relying on that budget instead of re-shaving it: each line becomes a
+   2-row grid -- the name gets the FULL card width on its own row, and
+   qty/price/total/remove share a second row below, sized from the SAME
+   reserved rem widths declared above (single source, never re-tuned
+   separately for this tier -- a change to those values still applies
+   here with nothing to keep in sync). table/thead/tbody/tr/td lose their
+   table-ish display so the browser's table column algorithm (the thing
+   starving item) never runs at this width; grid-template-areas replaces
+   it with an explicit shape instead. The header row gets the identical
+   grid too -- its own th:nth-child(1) ("Item") lands alone on row 1, and
+   Qty/Price/Total line up directly above each line's own second row --
+   so the two money figures per line stay labelled, not two adjacent
+   numbers the operator has to infer which is which.
+
+   Two details in the track list are load-bearing (both from independent
+   review, both measured live at 360/414/480px x ui_scale 1/1.5/2):
+
+   1. The LEADING `1fr` spacer is what makes "full card width" literally
+      true. Four rigid rem tracks sum to a rigid 15.1rem (16rem once the
+      `.3rem` gaps this block originally carried are counted), and a
+      `name` area spanning only those four is capped at that sum no
+      matter how wide the card is -- measured 272.0px of 288.3px at 360px,
+      and 272.0px of 408.3px (33% of the row unused) at 480px, i.e. the
+      name was still being capped by the very reserved-rem budget this
+      block exists to stop relying on. The spacer absorbs the remainder
+      instead, the name area spans all FIVE tracks, and the numeric
+      columns stay flush to the inline-END -- matching both
+      `th/td:nth-child(n+2) { text-align: end }` above and where those
+      columns sit in the >=481px table.
+   2. There is deliberately NO `column-gap`. `.basket td`'s own
+      `.35rem` inline padding already separates the four; a gap is pure
+      ADDED width, and above ui_scale 1 the rem tracks already exceed a
+      phone's width (a pre-existing gap: at 360px the baseline table
+      overflows .basket-scroll by 132px at scale 1.5 and 294px at
+      scale 2 -- ut-docs#391's matrix only covers 1024/901px, both above
+      this breakpoint). A `.3rem` column-gap made that strictly worse by
+      exactly its own width -- measured +23px at scale 1.5 and +31px at
+      scale 2, at every phone width -- which is the one way this block
+      could have regressed ut-docs#391's invariant. Without it the
+      overflow is byte-for-byte the pre-existing number, so this tier is
+      no worse than before at any scale while the name goes from 0px
+      (literally invisible above scale 1) to 234-312px. Do not re-add a
+      gap here; widen the cell padding if the four ever need more air. */
+@media (max-width: 480px) {
+  .basket table, .basket thead, .basket tbody { display: block; }
+  .basket tr {
+    display: grid;
+    grid-template-columns: 1fr 4.3rem 4rem 4rem 2.8rem;
+    grid-template-areas: "name name  name  name  name"
+                         ".    qty   price total remove";
+    border-bottom: 1px solid var(--border);
+  }
+  /* tbody, not a bare :last-child: `display: block` on thead makes its
+     single header row a :last-child too, so the un-scoped rule silently
+     removed the header/body separator entirely (measured: thead tr
+     border-bottom-width 0px). The 2px width keeps the header rule
+     visually distinct from the 1px between lines, exactly as
+     `.basket th`'s own 2px does at every other width. */
+  .basket thead tr { border-bottom-width: 2px; }
+  .basket tbody tr:last-child { border-bottom: none; }
+  .basket th, .basket td { display: block; border-bottom: none; }
+  .basket th:nth-child(1), .basket td:nth-child(1) { grid-area: name; }
+  .basket th:nth-child(2), .basket td:nth-child(2) { grid-area: qty; }
+  .basket th:nth-child(3), .basket td:nth-child(3) { grid-area: price; }
+  .basket th:nth-child(4), .basket td:nth-child(4) { grid-area: total; }
+  .basket th:nth-child(5), .basket td:nth-child(5) { grid-area: remove; }
+  /* .line-item's 10.4rem cap (above) is a ceiling sized for the wider
+     table layout's leftover-space column; at this tier item owns a
+     dedicated full-width row instead, so the cap only shrinks the one
+     thing this fix exists to widen. */
+  .line-item { max-width: none; }
+}
+
 /* ---------- Sale-screen notices (ut-docs#213) ----------
    THE notification surface for the sale screen — one component, two slots:
    server-rendered inside #basket (partials/basket.html) and the client-side
