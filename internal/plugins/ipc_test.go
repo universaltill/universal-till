@@ -655,3 +655,57 @@ func TestEventBus_Unsubscribe(t *testing.T) {
 		t.Error("expected closed channel to return immediately")
 	}
 }
+
+// ut-docs#2242: a plugin subscribed to >=2 event types in one Subscribe
+// call shares one channel across those event types. Unsubscribe used to
+// close that shared channel once per event-type occurrence with no
+// dedupe, so this panicked with "close of closed channel" the moment a
+// plugin like this one was ever unsubscribed. Confirmed genuinely red
+// (panics) against the pre-fix Unsubscribe, green with the closed-map
+// dedupe in place.
+func TestEventBus_Unsubscribe_MultiEventTypeSharedChannel(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	setupAuditLog(t, db)
+
+	ctx := context.Background()
+
+	manifest := &Manifest{
+		ID:         "com.test.unsub.multi",
+		Name:       "Unsubscribe Multi-Event Test",
+		Version:    "1.0.0",
+		Entrypoint: "./test",
+		Hooks: []ManifestHook{
+			{Event: "sale.completed", Action: "test.onSale"},
+			{Event: "stock.adjusted", Action: "test.onStock"},
+		},
+		Permissions: []string{"events:receive"},
+	}
+	if err := PersistManifest(ctx, db, manifest, InstallOptions{}); err != nil {
+		t.Fatalf("persist manifest: %v", err)
+	}
+
+	if err := GrantPermission(ctx, db, manifest.ID, "events:receive"); err != nil {
+		t.Fatalf("grant permission: %v", err)
+	}
+
+	bus := NewEventBus(db)
+
+	// A single Subscribe call registering >=2 event types shares one
+	// channel across both — this is the condition that must not panic.
+	eventChan, err := bus.Subscribe(ctx, manifest.ID, []string{"sale.completed", "stock.adjusted"})
+	if err != nil {
+		t.Fatalf("Subscribe failed: %v", err)
+	}
+
+	bus.Unsubscribe(manifest.ID)
+
+	select {
+	case _, ok := <-eventChan:
+		if ok {
+			t.Errorf("expected closed channel, but received a value")
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Error("expected closed channel to return immediately")
+	}
+}
