@@ -30,7 +30,7 @@ UT_DB_PATH=./data/e2e.db go run ../../scripts/e2e_seed/main.go
 4) Start the app (terminal B):
 
 ```bash
-UT_STORE=sqlite UT_DB_PATH=./data/e2e.db UT_LISTEN_ADDR=:8080 UT_DEV_MODE=true go run .
+UT_STORE=sqlite UT_DB_PATH=./data/e2e.db UT_LISTEN_ADDR=127.0.0.1:8080 UT_DEV_MODE=true go run .
 ```
 
 5) Run the tests (terminal A):
