@@ -39,7 +39,6 @@ internal/plugins/ipc.go: unreachable func: EventBus.GetEventMode
 internal/plugins/ipc.go: unreachable func: EventBus.Subscribe
 internal/plugins/ipc.go: unreachable func: EventBus.Unsubscribe
 internal/plugins/manifest.go: unreachable func: ComputeSHA256
-internal/plugins/manifest_verifier.go: unreachable func: ManifestVerifier.VerifyArtifact
 internal/plugins/marketplace/catalog_repository.go: unreachable func: CatalogRepository.Filter
 internal/plugins/marketplace/client.go: unreachable func: Client.AckDownload
 internal/plugins/marketplace/client.go: unreachable func: Client.GetRevocations

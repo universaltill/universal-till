@@ -177,6 +177,18 @@ type bundleInstallSpec struct {
 // and installs a plugin bundle that was downloaded from the marketplace. It is
 // shared by the direct install path and the store download->install flow.
 func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundleInstallSpec) (*MarketplaceInstallResult, error) {
+	// Re-verify the bundle file's actual on-disk bytes against the
+	// marketplace-issued checksum before extracting anything. Cheap and
+	// redundant for the direct-download path (DownloadManager.Download
+	// already streamed-checksummed it moments earlier) but load-bearing for
+	// the staged path (DownloadToStore -> GetStoreDownload ->
+	// InstallFromStore), where the file may have sat on disk since download
+	// with only an os.Stat re-check — this is what actually closes the
+	// swapped-staged-file window (ut-docs#2241).
+	if err := i.verifier.VerifyArtifact(spec.BundlePath, spec.Checksum); err != nil {
+		return nil, fmt.Errorf("verify bundle file: %w", err)
+	}
+
 	extractDir := filepath.Join(i.downloadTmpDir, "extract-"+sanitizePathSegment(spec.ListingID))
 	if err := os.RemoveAll(extractDir); err != nil {
 		return nil, fmt.Errorf("cleanup extract dir: %w", err)

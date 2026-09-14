@@ -110,14 +110,67 @@ func TestInstallBundleFileRejectsWrongArchAndMissingWasm(t *testing.T) {
 func TestInstallBundleFileRejectsCorruptArchive(t *testing.T) {
 	publicKey, _, _ := ed25519.GenerateKey(rand.Reader)
 	installer := installerForBundleTests(t, publicKey)
-	p := stageBundle(t, installer, "corrupt", []byte("this is not a gzip stream"))
+	corrupt := []byte("this is not a gzip stream")
+	p := stageBundle(t, installer, "corrupt", corrupt)
 	_, err := installer.installBundleFile(context.Background(), bundleInstallSpec{
 		BundlePath: p, ListingID: "corrupt",
-		Checksum: "x", Signature: "y", SourceURL: "https://x",
+		// Checksum must match the staged bytes so the flow reaches
+		// extraction (what this test is actually about) rather than
+		// tripping the checksum re-verification added for ut-docs#2241.
+		Checksum: checksumSHA256Hex(t, corrupt), Signature: "y", SourceURL: "https://x",
 		TrustTier: "verified", DeviceArch: "any",
 	})
 	if err == nil || !strings.Contains(err.Error(), "extract plugin bundle") {
 		t.Fatalf("corrupt archive accepted: %v", err)
+	}
+}
+
+// TestInstallBundleFileRejectsSwappedStagedBundle covers the gap ut-docs#2241
+// found: the staged install path (DownloadToStore -> GetStoreDownload ->
+// InstallFromStore) never re-hashed the bundle file's actual bytes at
+// install time, only at download time — a file swapped on disk in between
+// went undetected as long as the extracted manifest's own self-declared
+// ArtifactHash field (attacker-controlled, since it lives inside the
+// swapped bundle) wasn't checked against it either. installBundleFile now
+// verifies spec.BundlePath's real bytes against spec.Checksum (the
+// marketplace-issued, out-of-band value carried through from
+// DownloadToStore) before ever extracting.
+func TestInstallBundleFileRejectsSwappedStagedBundle(t *testing.T) {
+	publicKey, privateKey, _ := ed25519.GenerateKey(rand.Reader)
+	installer := installerForBundleTests(t, publicKey)
+
+	manifest := &Manifest{
+		ID: "com.test.swapped", Name: "Swapped", Version: "1.0.0",
+		Entrypoint: "./plugin-bin", Executable: "plugin-bin",
+		Runtime: "go", CanonicalType: "page", DeviceArch: "any",
+	}
+	original := signedMarketplaceArtifactWithManifest(t, privateKey, manifest)
+	bundlePath := stageBundle(t, installer, "swapped", original)
+	originalChecksum := checksumSHA256Hex(t, original)
+
+	// Simulate the swap: the staged file on disk is overwritten sometime
+	// between the marketplace-issued checksum being recorded and install
+	// time, while spec.Checksum below is still the ORIGINAL bundle's —
+	// exactly what InstallFromStore passes through unchanged from the
+	// earlier DownloadToStore stage.
+	if err := os.WriteFile(bundlePath, []byte("swapped-by-attacker"), 0o644); err != nil {
+		t.Fatalf("overwrite staged bundle: %v", err)
+	}
+
+	_, err := installer.installBundleFile(context.Background(), bundleInstallSpec{
+		BundlePath: bundlePath,
+		ListingID:  "swapped",
+		Checksum:   originalChecksum,
+		Signature:  manifest.Signature,
+		SourceURL:  "https://x/bundle.tar.gz",
+		TrustTier:  "verified",
+		DeviceArch: "any",
+	})
+	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("swapped staged bundle accepted: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(installer.pluginBaseDir, "com.test.swapped", "1.0.0")); !os.IsNotExist(statErr) {
+		t.Fatalf("swapped bundle was installed despite checksum mismatch (stat err: %v)", statErr)
 	}
 }
 
