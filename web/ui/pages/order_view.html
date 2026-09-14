@@ -19,7 +19,7 @@
       {{ range .Sale.Lines }}
       <tr>
         <td>{{ .Name }}{{ if .SKU }} <span class="muted">{{ .SKU }}</span>{{ end }}</td>
-        <td>{{ .Qty }}</td>
+        <td>{{ qty .Qty }}</td>
         <td>{{ money .UnitPrice }}</td>
         <td>{{ money .LineTotal }}</td>
       </tr>

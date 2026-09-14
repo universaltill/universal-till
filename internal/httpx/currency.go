@@ -361,12 +361,17 @@ func formatMoney(minor int64, locale string, digitShape bool) string {
 // locale, matching FormatMoney's decimal-separator swap, and digit shape
 // follows locale the same way too ("1.5" → "۱٫۵" under fa).
 //
-// Has zero production call sites today (ut-docs#1566 dead-code sweep) —
-// every real caller uses FormatQtyLatin instead, which is correct for
-// ESC/POS printing but doesn't explain why on-screen quantity display
-// (which DOES use FormatMoney's locale-digit substitution for amounts)
-// doesn't use this for quantities. Tracked as ut-docs#2221 — don't wire
-// this up here without that card's BA/UX pass.
+// Wired into the template FuncMap as {{ qty }} (ut-docs#2221) for every
+// on-screen, non-editable quantity display: receipt.html, invoice.html,
+// order_view.html, journal_detail.html, self_order_cart.html, the
+// kiosk-counter-orders staff board, and the reports tabs (top/slow items,
+// dead stock, by-department, and the archived-EOD by-article-group/
+// by-article/by-order-type breakdowns) — the quantity-side twin of
+// FormatMoney's own {{ money }} binding. Two things stay Latin-only
+// deliberately, via FormatQtyLatin below, not this: any ESC/POS print path
+// (a thermal printer can't render Arabic-Indic glyphs), and basket.html's
+// qty-input, an editable field whose value is read back and validated
+// server-side against a plain-ASCII-digit pattern.
 func FormatQty(qty float64, locale string) string {
 	return LocalizeDigits(formatGrouped(strconv.FormatFloat(qty, 'f', -1, 64), locale), locale)
 }

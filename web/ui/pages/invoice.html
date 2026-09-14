@@ -31,7 +31,7 @@
     <thead><tr><th>{{ T "catalog.col.name" }}</th><th>{{ T "tender.scan.qty" }}</th><th style="text-align:end">{{ T "catalog.col.price" }}</th></tr></thead>
     <tbody>
       {{ range .Sale.Lines }}
-      <tr><td>{{ .Name }}</td><td>{{ .Qty }}</td><td style="text-align:end">{{ money .LineTotal }}</td></tr>
+      <tr><td>{{ .Name }}</td><td>{{ qty .Qty }}</td><td style="text-align:end">{{ money .LineTotal }}</td></tr>
       {{ end }}
     </tbody>
   </table>

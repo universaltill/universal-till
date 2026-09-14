@@ -15,7 +15,6 @@ internal/diagnostics/events.go: unreachable func: EnumValues
 internal/discovery/sweep.go: unreachable func: SweepPrinters
 internal/fiscal/tse_credential_store.go: unreachable func: NewSigningDeviceCredentialStoreAt
 internal/fiscal/tse_credential_store.go: unreachable func: SigningDeviceCredentialStore.Path
-internal/httpx/currency.go: unreachable func: FormatQty
 internal/httpx/httpx.go: unreachable func: NewRenderer
 internal/httpx/httpx.go: unreachable func: Renderer.Render
 internal/httpx/icons.go: unreachable func: IconNames

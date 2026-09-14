@@ -40,8 +40,8 @@ func TestKioskCounterOrdersPage_ListAndMarkCollected(t *testing.T) {
 	created, err := repo.Create(context.Background(), data.KioskCounterOrder{
 		OrderType: "takeaway",
 		Lines: []data.KioskCounterOrderLine{
-			{Name: "Flat White", Qty: "2"},
-			{Name: "Croissant", Qty: "1"},
+			{Name: "Flat White", Qty: 2},
+			{Name: "Croissant", Qty: 1},
 		},
 	})
 	if err != nil {
@@ -100,6 +100,40 @@ func TestKioskCounterOrdersPage_ListAndMarkCollected(t *testing.T) {
 	}
 }
 
+// ut-docs#2221: the staff board is an on-screen, non-print surface, so its
+// quantities must follow the viewing operator's locale digit-shape
+// convention the same way every other on-screen quantity now does — not
+// stay pinned to the Latin digits the SAME stored line also needs for its
+// OTHER destination, the kitchen ticket printer (see
+// TestPrintCounterOrderTicketAsync_MatchesDirectKitchenTicketRender in
+// self_order_counter_mode_test.go, which asserts that ticket stays Latin).
+func TestKioskCounterOrdersPage_ItemsFollowViewerLocaleDigitShape(t *testing.T) {
+	dp, _ := setupKioskCounterOrdersDeps(t)
+	repo := data.NewKioskCounterOrdersRepo(dp.Db)
+	if _, err := repo.Create(context.Background(), data.KioskCounterOrder{
+		OrderType: "takeaway",
+		Lines:     []data.KioskCounterOrderLine{{Name: "Flat White", Qty: 2}},
+	}); err != nil {
+		t.Fatalf("seed counter order: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	registerKioskCounterOrdersPage(mux, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/kiosk-counter-orders?lang=fa", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /ui/kiosk-counter-orders?lang=fa: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Flat White × ۲") {
+		t.Fatalf("fa-locale board must render the Persian digit-shape quantity, got: %s", body)
+	}
+	if strings.Contains(body, "× 2<") || strings.Contains(body, "× 2\n") || strings.Contains(body, "× 2 ") {
+		t.Fatalf("fa-locale board still rendered a Latin-digit quantity: %s", body)
+	}
+}
+
 // The staff board's "Age" column must show how long an order has been
 // waiting (elapsed minutes, same convention as the tables floor plan's
 // OpenMinutes/tables.status.open_minutes — internal/pages/tables_page.go),
@@ -111,7 +145,7 @@ func TestKioskCounterOrdersPage_ColumnShowsElapsedAgeNotAbsoluteTimestamp(t *tes
 	repo := data.NewKioskCounterOrdersRepo(dbase.DB)
 	created, err := repo.Create(context.Background(), data.KioskCounterOrder{
 		OrderType: "takeaway",
-		Lines:     []data.KioskCounterOrderLine{{Name: "Flat White", Qty: "1"}},
+		Lines:     []data.KioskCounterOrderLine{{Name: "Flat White", Qty: 1}},
 	})
 	if err != nil {
 		t.Fatalf("seed counter order: %v", err)

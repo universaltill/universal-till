@@ -80,7 +80,7 @@
             <thead><tr><th><span class="visually-hidden">{{ T "reports.eod.by_article_group" }}</span></th><th style="text-align:end">{{ T "reports.eod.qty" }}</th><th style="text-align:end">{{ T "reports.eod.net" }}</th><th style="text-align:end">{{ T "reports.eod.gross" }}</th></tr></thead>
             <tbody>
               {{ range .ArticleGroups }}
-              <tr><td>{{ if .Group }}{{ .Group }}{{ else }}{{ T "reports.uncategorized" }}{{ end }}</td><td style="text-align:end">{{ .Qty }}</td><td style="text-align:end">{{ money .Net }}</td><td style="text-align:end">{{ money .Gross }}</td></tr>
+              <tr><td>{{ if .Group }}{{ .Group }}{{ else }}{{ T "reports.uncategorized" }}{{ end }}</td><td style="text-align:end">{{ qty .Qty }}</td><td style="text-align:end">{{ money .Net }}</td><td style="text-align:end">{{ money .Gross }}</td></tr>
               {{ end }}
             </tbody>
           </table>
@@ -103,7 +103,7 @@
               <thead><tr><th><span class="visually-hidden">{{ T "reports.eod.by_article" }}</span></th><th style="text-align:end">{{ T "reports.eod.qty" }}</th><th style="text-align:end">{{ T "reports.eod.net" }}</th><th style="text-align:end">{{ T "reports.eod.gross" }}</th></tr></thead>
               <tbody>
                 {{ range .Articles }}
-                <tr><td>{{ .Name }}</td><td style="text-align:end">{{ .Qty }}</td><td style="text-align:end">{{ money .Net }}</td><td style="text-align:end">{{ money .Gross }}</td></tr>
+                <tr><td>{{ .Name }}</td><td style="text-align:end">{{ qty .Qty }}</td><td style="text-align:end">{{ money .Net }}</td><td style="text-align:end">{{ money .Gross }}</td></tr>
                 {{ end }}
               </tbody>
             </table>
@@ -115,7 +115,7 @@
             <thead><tr><th><span class="visually-hidden">{{ T "reports.eod.by_order_type" }}</span></th><th style="text-align:end">{{ T "reports.eod.qty" }}</th><th style="text-align:end">{{ T "reports.eod.net" }}</th><th style="text-align:end">{{ T "reports.eod.gross" }}</th></tr></thead>
             <tbody>
               {{ range .OrderTypes }}
-              <tr><td>{{ if eq .OrderType "takeaway" }}{{ T "basket.order_type.takeaway" }}{{ else }}{{ T "basket.order_type.dine_in" }}{{ end }}</td><td style="text-align:end">{{ .Qty }}</td><td style="text-align:end">{{ money .Net }}</td><td style="text-align:end">{{ money .Gross }}</td></tr>
+              <tr><td>{{ if eq .OrderType "takeaway" }}{{ T "basket.order_type.takeaway" }}{{ else }}{{ T "basket.order_type.dine_in" }}{{ end }}</td><td style="text-align:end">{{ qty .Qty }}</td><td style="text-align:end">{{ money .Net }}</td><td style="text-align:end">{{ money .Gross }}</td></tr>
               {{ end }}
             </tbody>
           </table>

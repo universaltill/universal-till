@@ -257,8 +257,8 @@ func TestPrintCounterOrderTicketAsync_MatchesDirectKitchenTicketRender(t *testin
 		OrderType: "takeaway",
 		CreatedAt: "2026-09-11T10:00:00Z",
 		Lines: []data.KioskCounterOrderLine{
-			{Name: "Flat White", Qty: "2", Modifiers: []string{"Oat milk"}},
-			{Name: "Croissant", Qty: "1"},
+			{Name: "Flat White", Qty: 2, Modifiers: []string{"Oat milk"}},
+			{Name: "Croissant", Qty: 1},
 		},
 	}
 	printCounterOrderTicketAsync(dp, order)
@@ -291,6 +291,60 @@ func TestPrintCounterOrderTicketAsync_MatchesDirectKitchenTicketRender(t *testin
 	}
 }
 
+// ut-docs#2221 review finding F6: the kitchen ticket's Qty is now formatted
+// at PRINT time (here) against httpx.DefaultLocale(), not at write time
+// against the ordering customer's own request locale (as it was before
+// KioskCounterOrderLine.Qty became a raw number rather than a
+// pre-formatted string) — matching Station/OrderLabel/OrderType, which
+// already used DefaultLocale(). A weighed line's fractional qty makes this
+// externally observable: under a comma-decimal shop locale (tr — see
+// httpx.numberSeparators), 1.5 must print as "1,5", never the request
+// locale's own convention, whatever that was.
+func TestPrintCounterOrderTicketAsync_QtyFollowsShopLocaleNotRequestLocale(t *testing.T) {
+	chdirRoot(t)
+	httpx.SetDefaultLocale("tr")
+	t.Cleanup(func() { httpx.SetDefaultLocale("en") })
+
+	dbase, err := db.Open(filepath.Join(t.TempDir(), "counter-ticket-locale.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbase.Close()
+
+	dp := &common.Deps{Db: dbase.DB, Settings: settings.NewStore(dbase.DB)}
+	printerFile := filepath.Join(t.TempDir(), "kitchen.prn")
+	if err := os.WriteFile(printerFile, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(t.Context(), keyPrinterKitchen, printerFile); err != nil {
+		t.Fatal(err)
+	}
+
+	order := data.KioskCounterOrder{
+		ID:        "co-2",
+		DisplayNo: "C-2",
+		OrderType: "takeaway",
+		CreatedAt: "2026-09-11T10:00:00Z",
+		// Qty is set directly here (bypassing completeCounterOrderCheckout's
+		// own httpx.ResolveLocale(w, r)) precisely because that write-time
+		// locale must no longer matter to what prints.
+		Lines: []data.KioskCounterOrderLine{{Name: "Ham (weighed)", Qty: 1.5}},
+	}
+	printCounterOrderTicketAsync(dp, order)
+	dp.WaitForAsyncWork()
+
+	got, err := os.ReadFile(printerFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "1,5") {
+		t.Fatalf("expected the tr shop locale's comma-decimal qty %q in the printed ticket, got: %q", "1,5", got)
+	}
+	if strings.Contains(string(got), "1.5") {
+		t.Fatalf("printed ticket used the en/Latin decimal point instead of the tr shop locale's comma: %q", got)
+	}
+}
+
 // A completed counter order must contribute NOTHING to end-of-day totals —
 // it is never a sale, so report aggregation should never see it at all.
 // Written as an explicit assertion even though it should "fall out for
@@ -307,7 +361,7 @@ func TestGenerateEOD_CounterOrderContributesNothing(t *testing.T) {
 	repo := data.NewKioskCounterOrdersRepo(dbase.DB)
 	if _, err := repo.Create(t.Context(), data.KioskCounterOrder{
 		OrderType: "takeaway",
-		Lines:     []data.KioskCounterOrderLine{{Name: "Flat White", Qty: "1"}},
+		Lines:     []data.KioskCounterOrderLine{{Name: "Flat White", Qty: 1}},
 	}); err != nil {
 		t.Fatalf("Create counter order: %v", err)
 	}

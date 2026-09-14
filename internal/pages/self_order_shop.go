@@ -576,11 +576,10 @@ func completeCounterOrderCheckout(w http.ResponseWriter, r *http.Request, d *com
 		return
 	}
 	orderLines := make([]data.KioskCounterOrderLine, 0, len(lines))
-	locale := httpx.ResolveLocale(w, r)
 	for _, l := range lines {
 		orderLines = append(orderLines, data.KioskCounterOrderLine{
 			Name:      l.Name,
-			Qty:       httpx.FormatQtyLatin(l.Qty, locale),
+			Qty:       l.Qty,
 			Modifiers: counterOrderModifierNames(l.Modifiers),
 		})
 	}
@@ -636,11 +635,21 @@ func printCounterOrderTicketAsync(d *common.Deps, order data.KioskCounterOrder) 
 			// sale), so there is nothing further to record either way.
 			return
 		}
+		// locale here is the SHOP's default, matching Station/OrderLabel/
+		// OrderType below — ut-docs#2221 moved Qty's formatting from write
+		// time (completeCounterOrderCheckout, keyed on the ordering
+		// customer's own request locale) to here, so it now follows the
+		// same locale as every other field on this ticket rather than
+		// being the one odd one out keyed on whoever happened to place the
+		// order. FormatQtyLatin (never digit-shaped) is still correct
+		// regardless of locale — an ESC/POS printer can't render
+		// Arabic-Indic glyphs — only the decimal/grouping convention for a
+		// weighed line's fractional qty can change here.
 		locale := httpx.DefaultLocale()
 		items := make([]print.KitchenItem, 0, len(order.Lines))
 		for _, l := range order.Lines {
 			items = append(items, print.KitchenItem{
-				Qty:       l.Qty,
+				Qty:       httpx.FormatQtyLatin(l.Qty, locale),
 				Name:      l.Name,
 				Modifiers: l.Modifiers,
 			})

@@ -44,12 +44,69 @@ const (
 // (this is not a sale line).
 type KioskCounterOrderLine struct {
 	Name string
-	// Qty is pre-formatted (e.g. "2"), same convention as
-	// print.KitchenItem.Qty / kitchenItemsFor's use of httpx.FormatQtyLatin
-	// (internal/pages/kitchen_print.go) — this table has no numeric
-	// quantity type of its own to parse back out of locale-formatted text.
-	Qty       string
+	// Qty is the RAW quantity, deliberately not pre-formatted (ut-docs#2221)
+	// — this one row feeds two destinations with opposite digit-shape needs:
+	// printCounterOrderTicketAsync's kitchen ticket (self_order_shop.go),
+	// which must stay Latin (an ESC/POS printer can't render Arabic-Indic
+	// glyphs, same reasoning as print.KitchenItem.Qty elsewhere), and
+	// counterOrderItemsSummary's on-screen staff board
+	// (kiosk_counter_orders_page.go), which should follow the viewing
+	// operator's locale like every other on-screen quantity. A single
+	// pre-formatted string could only ever be right for one of the two.
+	Qty       float64
 	Modifiers []string
+}
+
+// UnmarshalJSON accepts Qty as either a JSON number (the current shape) or
+// a JSON string (every row this table held before ut-docs#2221 switched
+// Qty from a pre-formatted string to a raw number) — so a row an
+// already-open counter order left behind at upgrade time still reads back
+// instead of taking down ListOpen, and with it the whole staff "pay at
+// counter" board, on its very next poll. A legacy string was produced by
+// FormatQtyLatin(qty, locale) at write time: never digit-shaped, but its
+// decimal separator followed the KIOSK CUSTOMER's locale at write time
+// (de/tr use "," — see numberSeparators), which isn't itself stored on the
+// row. Since a counter-order quantity realistically never reaches the
+// low thousands, thousands-grouping is a non-issue in practice; the only
+// real ambiguity is the decimal mark, so this tries a plain parse first
+// (covers every locale that already uses ".") and retries with "," folded
+// to "." otherwise (covers de/tr) — best-effort, not a claim of parsing
+// every locale's number format in general.
+func (l *KioskCounterOrderLine) UnmarshalJSON(b []byte) error {
+	type alias KioskCounterOrderLine
+	aux := &struct {
+		Qty json.RawMessage
+		*alias
+	}{alias: (*alias)(l)}
+	if err := json.Unmarshal(b, aux); err != nil {
+		return err
+	}
+	raw := strings.TrimSpace(string(aux.Qty))
+	if raw == "" || raw == "null" {
+		return nil
+	}
+	if raw[0] != '"' {
+		var q float64
+		if err := json.Unmarshal(aux.Qty, &q); err != nil {
+			return fmt.Errorf("unmarshal counter order line qty %s: %w", raw, err)
+		}
+		l.Qty = q
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(aux.Qty, &s); err != nil {
+		return fmt.Errorf("unmarshal legacy string counter order line qty %s: %w", raw, err)
+	}
+	s = strings.TrimSpace(s)
+	q, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		q, err = strconv.ParseFloat(strings.ReplaceAll(s, ",", "."), 64)
+	}
+	if err != nil {
+		return fmt.Errorf("parse legacy string counter order line qty %q: %w", s, err)
+	}
+	l.Qty = q
+	return nil
 }
 
 // KioskCounterOrder is one "pay at counter" kiosk order.

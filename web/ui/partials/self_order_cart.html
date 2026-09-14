@@ -28,7 +28,7 @@
         <button type="button" class="btn secondary selforder-qty-btn"
                 hx-post="/api/self-order/line" hx-vals='{{ jsonVals "key" .LineKey "delta" "-1" }}'
                 hx-target="#selforder-cart" hx-swap="outerHTML" aria-label="{{ T "selforder.decrease" }}">−</button>
-        <span class="selforder-qty-value">{{ printf "%.0f" .Qty }}</span>
+        <span class="selforder-qty-value">{{ qty .Qty }}</span>
         <button type="button" class="btn secondary selforder-qty-btn"
                 hx-post="/api/self-order/line" hx-vals='{{ jsonVals "key" .LineKey "delta" "1" }}'
                 hx-target="#selforder-cart" hx-swap="outerHTML" aria-label="{{ T "selforder.increase" }}">+</button>

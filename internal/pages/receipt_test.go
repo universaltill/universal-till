@@ -45,6 +45,7 @@ func TestRenderReceipt_WorksFromAnyWorkingDirectory(t *testing.T) {
 
 	funcs := map[string]any{
 		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
 		"barcodesvg": httpx.BarcodeSVG,
 		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T":          func(key string) string { return key },
@@ -63,6 +64,7 @@ func TestRenderReceipt_TableLabelShownWhenAssigned(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
 		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
 		"barcodesvg": httpx.BarcodeSVG,
 		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T": func(key string) string {
@@ -97,6 +99,7 @@ func TestRenderReceipt_DiscountShown(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
 		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
 		"barcodesvg": httpx.BarcodeSVG,
 		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T": func(key string) string {
@@ -152,6 +155,7 @@ func TestRenderReceipt_ShowsMaskedPANAndAuthCode(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
 		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
 		"barcodesvg": httpx.BarcodeSVG,
 		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T": func(key string) string {
@@ -190,6 +194,7 @@ func TestRenderReceipt_NoCardPresentFieldsFallsBackToReference(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
 		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
 		"barcodesvg": httpx.BarcodeSVG,
 		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T":          func(key string) string { return key },
@@ -209,6 +214,7 @@ func TestRenderReceipt_LegalText(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
 		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
 		"barcodesvg": httpx.BarcodeSVG,
 		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T": func(key string) string {
@@ -260,6 +266,7 @@ func TestRenderReceipt_NoLegalText(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
 		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
 		"barcodesvg": httpx.BarcodeSVG,
 		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T": func(key string) string {
@@ -303,6 +310,7 @@ func TestRenderReceiptHonorsDesign(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
 		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
 		"barcodesvg": httpx.BarcodeSVG,
 		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T":          func(key string) string { return key },
@@ -336,6 +344,7 @@ func TestRenderReceipt_UnsignedOverrideLine(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
 		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
 		"barcodesvg": httpx.BarcodeSVG,
 		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T":          func(key string) string { return key },
@@ -367,6 +376,7 @@ func TestRenderReceipt_UnsignedFiscalSigningLine(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
 		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
 		"barcodesvg": httpx.BarcodeSVG,
 		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T":          func(key string) string { return key },
@@ -400,6 +410,7 @@ func TestRenderReceipt_UnsignedCannotSignLine(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
 		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
 		"barcodesvg": httpx.BarcodeSVG,
 		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T":          func(key string) string { return key },
@@ -438,6 +449,7 @@ func TestRenderReceipt_TSEQRDataURIRendersNotZgotmplZ(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
 		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
 		"barcodesvg": httpx.BarcodeSVG,
 		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T":          func(key string) string { return key },
@@ -475,6 +487,7 @@ func TestRenderReceipt_IssuedVouchersListed(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
 		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
 		"barcodesvg": httpx.BarcodeSVG,
 		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T":          func(key string) string { return key },
@@ -511,6 +524,7 @@ func TestRenderReceipt_VoucherRedemptionShowsCode(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
 		"money":      func(v int64) string { return fmt.Sprintf("$%.2f", float64(v)/100) },
+		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
 		"barcodesvg": httpx.BarcodeSVG,
 		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T":          func(key string) string { return key },
