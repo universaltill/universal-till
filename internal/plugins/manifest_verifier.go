@@ -64,25 +64,19 @@ func NewManifestVerifier(publicKeyHex string) (*ManifestVerifier, error) {
 // VerifyArtifact verifies a downloaded plugin artifact against its expected
 // checksum.
 //
-// No production caller — a superseded duplicate, NOT a missing check
-// (ut-docs#1566, whose own body uses this function as the worked example):
-// the live install path verifies the artifact hash inside
-// DownloadManager.Download (download_manager.go), which hashes the bytes as
-// they stream into the .part file and fails the download with
-// errChecksumMismatch before anything is extracted; both marketplace
-// installers (installer_marketplace.go, installer_store.go) go through it
-// with the token response's ChecksumSHA256, and then VerifyManifest /
-// VerifyExecutable run on the extracted bundle. Left in place rather than
-// deleted in the ut-docs#1566 `internal/plugins` slice because it sits in
-// the trust-chain file (Ed25519 manifest verification lives here) and that
-// slice's brief was to flag, not remove, anything checksum/signature-shaped
-// — removal (together with TestVerifyArtifact, its only caller) is a
-// reviewed follow-up, not a behaviour change. That review also found a real
-// gap this function doesn't cover either: the staged install path
-// (DownloadToStore -> GetStoreDownload -> InstallFromStore) never re-hashes
-// the file at install time, only at download time. Tracked as
-// ut-docs#2241, which frames the choice as delete-or-wire-at-InstallFromStore
-// rather than a plain deletion.
+// Called from installBundleFile (installer_marketplace.go), the function
+// shared by both the direct marketplace-install path and the staged
+// download->install path (DownloadToStore -> GetStoreDownload ->
+// InstallFromStore), immediately before extraction. For the direct path
+// this is a cheap, redundant defense-in-depth re-check — DownloadManager.
+// Download (download_manager.go) already hashed the bytes as they streamed
+// into the .part file and fails closed with errChecksumMismatch before
+// anything is extracted. For the staged path it is load-bearing: the
+// bundle may have sat on disk since download with only an os.Stat
+// re-check, so this is what actually catches a file swapped in place
+// before install (ut-docs#2241 — previously an unwired duplicate of
+// Download's own check, flagged but left in place by ut-docs#1566's
+// `internal/plugins` dead-code slice for exactly this follow-up).
 func (mv *ManifestVerifier) VerifyArtifact(artifactPath, expectedChecksum string) error {
 	log := logging.L()
 

@@ -44,6 +44,16 @@ func TestVerifyArtifact(t *testing.T) {
 	if err := mv.VerifyArtifact(filepath.Join(t.TempDir(), "missing"), "x"); err == nil || !strings.Contains(err.Error(), "failed to open") {
 		t.Fatalf("missing artifact accepted: %v", err)
 	}
+	// Fail closed on an EMPTY expected checksum. Now that installBundleFile
+	// calls this on every marketplace install (ut-docs#2241), an empty
+	// spec.Checksum — a staged download whose metadata JSON was tampered
+	// with or truncated alongside its bundle — must be a rejection, never a
+	// vacuous pass. It is: the computed hash is always 64 hex chars, so it
+	// can never equal "". Pinned here because that property is now
+	// security-load-bearing rather than incidental.
+	if err := mv.VerifyArtifact(path, ""); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+		t.Fatalf("empty expected checksum accepted: %v", err)
+	}
 }
 
 func TestVerifyExecutable(t *testing.T) {
