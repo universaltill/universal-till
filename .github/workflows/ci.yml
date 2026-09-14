@@ -477,7 +477,14 @@ jobs:
         run: |
           # UT_AUTH=off is the documented CI escape hatch — the e2e suite
           # exercises the till flows, not the PIN login.
-          UT_AUTH=off UT_STORE=sqlite UT_DB_PATH=./data/e2e.db UT_LISTEN_ADDR=:8080 UT_DEV_MODE=true go run . &
+          # UT_LISTEN_ADDR is 127.0.0.1:8080, not the ambiguous ":8080" —
+          # ut-docs#2252: an unspecified/wildcard host can resolve to an
+          # IPv6-only bind on some runner images, which the curl health-check
+          # below (and Playwright's BASE_URL) can never reach over IPv4
+          # loopback. Every e2e/run-till*.sh script already binds an
+          # explicit 127.0.0.1:<port> for the same reason — this is the one
+          # place that didn't.
+          UT_AUTH=off UT_STORE=sqlite UT_DB_PATH=./data/e2e.db UT_LISTEN_ADDR=127.0.0.1:8080 UT_DEV_MODE=true go run . &
           for i in {1..30}; do
             if curl -sf http://127.0.0.1:8080/ >/dev/null; then
               echo "App is up"
