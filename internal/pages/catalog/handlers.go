@@ -233,9 +233,22 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				for _, s := range applied {
 					appliedIDs[s.ID] = true
 				}
+				// ut-docs#1324: the item's own thumbnail, resolved through
+				// item_images (role=thumbnail) — same source of truth the
+				// admin Catalog list (#1842), self-order kiosk (#1870) and
+				// AI-identify (#1875) already use, instead of this panel's
+				// old imgExists-on-disk convention check. Best-effort like
+				// those callers: "" on error just means no image, same as a
+				// genuinely missing row. The per-variant photo itself stays
+				// disk-only (no variant_id column on item_images) — this
+				// only covers the item-level thumbnail (panel header, and
+				// the per-variant-row fallback when a variant has no photo
+				// of its own).
+				itemImg, _ := repo.ItemThumbnailFor(r.Context(), itemID)
 				pdata = map[string]any{
 					"ItemID":             itemID,
 					"ItemName":           label.Name,
+					"ItemImageURL":       itemImg,
 					"Variants":           variants,
 					"ItemBarcodes":       itemBCs,
 					"CostMajor":          costMajor,
