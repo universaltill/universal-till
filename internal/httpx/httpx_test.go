@@ -147,6 +147,31 @@ func TestFuncsForExposesMoneyAndI18n(t *testing.T) {
 	}
 }
 
+// ut-docs#2221: qty is FormatQty's template twin, mirroring money above —
+// an on-screen quantity gets the same locale digit-shape substitution an
+// on-screen amount already gets. Never wire this into basket.html's
+// qty-input: that value is read back and validated server-side against a
+// plain-ASCII-digit pattern, so it deliberately keeps using FormatQtyLatin.
+func TestFuncsForExposesQty(t *testing.T) {
+	InitI18n(realI18n(t), "en")
+
+	qtyFn, ok := FuncsFor("en")["qty"].(func(any) string)
+	if !ok {
+		t.Fatalf("qty helper not found")
+	}
+	if got := qtyFn(2.0); got != "2" {
+		t.Fatalf("qty helper (float64) returned %q", got)
+	}
+	if got := qtyFn(1.5); got != "1.5" {
+		t.Fatalf("qty helper returned %q", got)
+	}
+
+	faQty := FuncsFor("fa")["qty"].(func(any) string)
+	if got := faQty(1.5); got != "۱٫۵" {
+		t.Fatalf("fa qty helper returned %q", got)
+	}
+}
+
 // ut-docs#1130: date/dateUTC accept both a time.Time and an RFC3339
 // string, follow locale's date-order/separator convention via
 // FormatDate, and an unparseable string degrades to itself (not "").

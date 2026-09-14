@@ -31,16 +31,20 @@ type counterOrderRow struct {
 // counterOrderItemsSummary joins a counter order's lines into one
 // "Name × Qty" list for the board — this staff-facing surface has no
 // per-line cells the way orders_list.html does, since a counter order
-// carries no price to put in one.
-func counterOrderItemsSummary(lines []data.KioskCounterOrderLine) string {
+// carries no price to put in one. Qty renders with the viewing operator's
+// own locale digit-shape/grouping (ut-docs#2221, mirroring FormatQty
+// everywhere else on-screen) — unlike the kitchen ticket this same stored
+// quantity also feeds (self_order_shop.go's printCounterOrderTicketAsync),
+// which formats separately and deliberately stays Latin for the printer.
+func counterOrderItemsSummary(lines []data.KioskCounterOrderLine, locale string) string {
 	parts := make([]string, 0, len(lines))
 	for _, l := range lines {
-		parts = append(parts, fmt.Sprintf("%s × %s", l.Name, l.Qty))
+		parts = append(parts, fmt.Sprintf("%s × %s", l.Name, httpx.FormatQty(l.Qty, locale)))
 	}
 	return strings.Join(parts, ", ")
 }
 
-func counterOrderRowsFor(orders []data.KioskCounterOrder) []counterOrderRow {
+func counterOrderRowsFor(orders []data.KioskCounterOrder, locale string) []counterOrderRow {
 	now := time.Now()
 	rows := make([]counterOrderRow, 0, len(orders))
 	for _, o := range orders {
@@ -48,7 +52,7 @@ func counterOrderRowsFor(orders []data.KioskCounterOrder) []counterOrderRow {
 			ID:         o.ID,
 			DisplayNo:  o.DisplayNo,
 			OrderType:  o.OrderType,
-			Items:      counterOrderItemsSummary(o.Lines),
+			Items:      counterOrderItemsSummary(o.Lines, locale),
 			AgeMinutes: elapsedMinutes(o.CreatedAt, now),
 		})
 	}
@@ -77,8 +81,9 @@ func registerKioskCounterOrdersPage(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "orders.err.server", "kiosk_counter_orders", err)
 			return
 		}
+		locale := httpx.ResolveLocale(w, r)
 		httpx.RenderPartial("ui/partials/kiosk_counter_orders_list.html", map[string]any{
-			"Orders": counterOrderRowsFor(orders),
+			"Orders": counterOrderRowsFor(orders, locale),
 		})(w, r)
 	})
 

@@ -152,6 +152,7 @@ func TestRenderReceipt_DeviceReceiptBlock(t *testing.T) {
 	chdirRoot(t)
 	funcs := map[string]any{
 		"money":      func(v int64) string { return fmt.Sprintf("₺%.2f", float64(v)/100) },
+		"qty":        func(v any) string { return fmt.Sprintf("%v", v) },
 		"barcodesvg": httpx.BarcodeSVG,
 		"bpPercent":  func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 		"T":          func(key string) string { return key },

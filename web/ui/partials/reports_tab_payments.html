@@ -15,7 +15,7 @@
   <table class="table">
     <tbody>
       {{ range .Departments }}
-      <tr><td><strong>{{ if .Department }}{{ .Department }}{{ else }}{{ T "reports.uncategorized" }}{{ end }}</strong></td><td class="muted">×{{ .Qty }}</td><td style="text-align:end">{{ money .Revenue }}</td></tr>
+      <tr><td><strong>{{ if .Department }}{{ .Department }}{{ else }}{{ T "reports.uncategorized" }}{{ end }}</strong></td><td class="muted">×{{ qty .Qty }}</td><td style="text-align:end">{{ money .Revenue }}</td></tr>
       {{ else }}
       <tr><td class="empty">{{ T "reports.none" }}</td></tr>
       {{ end }}

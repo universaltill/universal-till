@@ -57,7 +57,7 @@
     {{ if .ShowBarcode }}<div class="barcode">{{ barcodesvg .ReceiptNo }}<small>{{ .ReceiptNo }}</small></div>{{ end }}
     <ul class="receipt-lines">
       {{ range .Lines }}
-      <li><span>{{ .Name }}{{ if .SKU }} <small class="muted">{{ .SKU }}</small>{{ end }} x{{ .Qty }}{{ if .Mixed }} <small class="muted receipt-line-mode">{{ if eq .OrderType "takeaway" }}🥡 {{ T "basket.order_type.takeaway" }}{{ else }}🍽️ {{ T "basket.order_type.dine_in" }}{{ end }}</small>{{ end }}</span><span>{{ money .TotalAfterTax }}</span></li>
+      <li><span>{{ .Name }}{{ if .SKU }} <small class="muted">{{ .SKU }}</small>{{ end }} x{{ qty .Qty }}{{ if .Mixed }} <small class="muted receipt-line-mode">{{ if eq .OrderType "takeaway" }}🥡 {{ T "basket.order_type.takeaway" }}{{ else }}🍽️ {{ T "basket.order_type.dine_in" }}{{ end }}</small>{{ end }}</span><span>{{ money .TotalAfterTax }}</span></li>
       {{ end }}
     </ul>
     <div class="totals">

@@ -30,8 +30,8 @@ func TestKioskCounterOrdersRepo_CreateListMarkCollected(t *testing.T) {
 	created, err := repo.Create(ctx, KioskCounterOrder{
 		OrderType: "takeaway",
 		Lines: []KioskCounterOrderLine{
-			{Name: "Flat White", Qty: "2", Modifiers: []string{"Oat milk"}},
-			{Name: "Croissant", Qty: "1"},
+			{Name: "Flat White", Qty: 2, Modifiers: []string{"Oat milk"}},
+			{Name: "Croissant", Qty: 1},
 		},
 	})
 	if err != nil {
@@ -58,7 +58,7 @@ func TestKioskCounterOrdersRepo_CreateListMarkCollected(t *testing.T) {
 	if got.ID != created.ID || got.DisplayNo != created.DisplayNo || got.OrderType != "takeaway" {
 		t.Fatalf("ListOpen row mismatch: %+v", got)
 	}
-	if len(got.Lines) != 2 || got.Lines[0].Name != "Flat White" || got.Lines[0].Qty != "2" ||
+	if len(got.Lines) != 2 || got.Lines[0].Name != "Flat White" || got.Lines[0].Qty != 2 ||
 		len(got.Lines[0].Modifiers) != 1 || got.Lines[0].Modifiers[0] != "Oat milk" {
 		t.Fatalf("ListOpen lines round-trip mismatch: %+v", got.Lines)
 	}
@@ -89,11 +89,11 @@ func TestKioskCounterOrdersRepo_DisplayNoIncrementsAcrossOrders(t *testing.T) {
 	ctx := context.Background()
 	repo := NewKioskCounterOrdersRepo(d.DB)
 
-	first, err := repo.Create(ctx, KioskCounterOrder{Lines: []KioskCounterOrderLine{{Name: "Tea", Qty: "1"}}})
+	first, err := repo.Create(ctx, KioskCounterOrder{Lines: []KioskCounterOrderLine{{Name: "Tea", Qty: 1}}})
 	if err != nil {
 		t.Fatalf("Create first: %v", err)
 	}
-	second, err := repo.Create(ctx, KioskCounterOrder{Lines: []KioskCounterOrderLine{{Name: "Tea", Qty: "1"}}})
+	second, err := repo.Create(ctx, KioskCounterOrder{Lines: []KioskCounterOrderLine{{Name: "Tea", Qty: 1}}})
 	if err != nil {
 		t.Fatalf("Create second: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestKioskCounterOrdersRepo_MarkCollectedTwiceKeepsFirstCollectedAt(t *testi
 	ctx := context.Background()
 	repo := NewKioskCounterOrdersRepo(d.DB)
 
-	created, err := repo.Create(ctx, KioskCounterOrder{Lines: []KioskCounterOrderLine{{Name: "Tea", Qty: "1"}}})
+	created, err := repo.Create(ctx, KioskCounterOrder{Lines: []KioskCounterOrderLine{{Name: "Tea", Qty: 1}}})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -138,6 +138,44 @@ func TestKioskCounterOrdersRepo_MarkCollectedTwiceKeepsFirstCollectedAt(t *testi
 	}
 	if second != past {
 		t.Fatalf("second MarkCollected rewrote collected_at: %q -> %q (first call recorded %q)", past, second, first)
+	}
+}
+
+// ut-docs#2221 review finding F1: Qty moved from a pre-formatted string to
+// a raw float64 (so print and on-screen destinations can format it
+// independently) — but a row an already-open counter order left behind
+// across the upgrade still has "Qty":"2" (or, for a weighed line under a
+// comma-decimal kiosk locale like de/tr, "Qty":"1,5") in lines_json.
+// ListOpen must still read it back, not fail the whole query the instant
+// one legacy row is in the open set.
+func TestKioskCounterOrdersRepo_ListOpenToleratesLegacyStringQty(t *testing.T) {
+	d := openKioskCounterOrdersDB(t, "counter_orders_legacy_qty.db")
+	ctx := context.Background()
+
+	// Bypass the repo's own Create (which only ever writes the current
+	// shape) and insert exactly what the pre-#2221 code wrote: Qty as a
+	// JSON string, including a comma-decimal weighed quantity.
+	legacyLinesJSON := `[{"Name":"Flat White","Qty":"2","Modifiers":["Oat milk"]},{"Name":"Ham (weighed)","Qty":"1,5","Modifiers":null}]`
+	if _, err := d.DB.ExecContext(ctx, `
+INSERT INTO kiosk_counter_orders (id, display_no, order_type, lines_json, status, created_at)
+VALUES ('legacy-1', 'C-1', 'takeaway', ?, ?, '2026-09-10T00:00:00Z')`,
+		legacyLinesJSON, KioskCounterOrderStatusOpen); err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+
+	repo := NewKioskCounterOrdersRepo(d.DB)
+	open, err := repo.ListOpen(ctx)
+	if err != nil {
+		t.Fatalf("ListOpen must tolerate a legacy string-Qty row, got: %v", err)
+	}
+	if len(open) != 1 || len(open[0].Lines) != 2 {
+		t.Fatalf("ListOpen result = %+v", open)
+	}
+	if open[0].Lines[0].Qty != 2 {
+		t.Fatalf("legacy plain-integer qty: got %v, want 2", open[0].Lines[0].Qty)
+	}
+	if open[0].Lines[1].Qty != 1.5 {
+		t.Fatalf("legacy comma-decimal qty: got %v, want 1.5", open[0].Lines[1].Qty)
 	}
 }
 

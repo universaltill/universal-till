@@ -6,11 +6,18 @@
 -- the kitchen should make) -- deliberately NOT a sale: no money/price
 -- columns, no FK to sales, never touched by day-close/report aggregation.
 --
--- lines_json is a JSON array of {name, qty, modifiers[]} -- qty is a
--- pre-formatted string, same convention as print.KitchenItem.Qty /
--- kitchenItemsFor's use of httpx.FormatQtyLatin (internal/pages/
--- kitchen_print.go) -- this table carries no numeric quantity type of its
--- own to convert to/from.
+-- lines_json is a JSON array of {name, qty, modifiers[]}. qty is a raw
+-- number (internal/data/kiosk_counter_orders_repo.go's KioskCounterOrderLine
+-- -- ut-docs#2221): this one stored quantity feeds a kitchen ticket print
+-- (which must stay Latin digits -- an ESC/POS printer can't render
+-- Arabic-Indic glyphs) and the staff-facing on-screen "pay at counter"
+-- board (which should follow the viewing operator's locale), so it can't
+-- be pre-formatted for either at write time -- each reader formats it
+-- itself. Before ut-docs#2221, qty was a pre-formatted string instead
+-- (the same convention print.KitchenItem.Qty still uses); a row an
+-- already-open counter order left behind across that change still has
+-- qty as a JSON string, so KioskCounterOrderLine.UnmarshalJSON accepts
+-- both shapes rather than failing ListOpen on a legacy row.
 --
 -- display_no is a short, staff-callable reference -- deliberately its OWN
 -- "C-"-prefixed sequence (internal/data/kiosk_counter_orders_repo.go),

@@ -3,7 +3,7 @@
   <table class="table">
     <tbody>
       {{ range .Top }}
-      <tr><td>{{ .Name }}</td><td class="muted">×{{ .Qty }}</td><td style="text-align:end">{{ money .Revenue }}</td></tr>
+      <tr><td>{{ .Name }}</td><td class="muted">×{{ qty .Qty }}</td><td style="text-align:end">{{ money .Revenue }}</td></tr>
       {{ else }}
       <tr><td class="empty">{{ T "reports.none" }}</td></tr>
       {{ end }}
@@ -15,7 +15,7 @@
   <table class="table">
     <tbody>
       {{ range .Slow }}
-      <tr><td>{{ .Name }}</td><td class="muted">×{{ .Qty }}</td><td style="text-align:end">{{ money .Revenue }}</td></tr>
+      <tr><td>{{ .Name }}</td><td class="muted">×{{ qty .Qty }}</td><td style="text-align:end">{{ money .Revenue }}</td></tr>
       {{ else }}
       <tr><td class="empty">{{ T "reports.none" }}</td></tr>
       {{ end }}
@@ -28,7 +28,7 @@
   <table class="table">
     <tbody>
       {{ range .DeadStock }}
-      <tr><td>{{ .Name }}</td><td class="muted">{{ .SKU }}</td><td class="muted">×{{ .Qty }}</td><td style="text-align:end">{{ money .StockValue }}</td></tr>
+      <tr><td>{{ .Name }}</td><td class="muted">{{ .SKU }}</td><td class="muted">×{{ qty .Qty }}</td><td style="text-align:end">{{ money .StockValue }}</td></tr>
       {{ else }}
       <tr><td class="empty">{{ T "reports.none" }}</td></tr>
       {{ end }}

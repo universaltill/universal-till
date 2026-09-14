@@ -341,6 +341,26 @@ func minorUnits(amount any) (int64, bool) {
 	return 0, false
 }
 
+// qtyFloat coerces a template value to float64 for the qty func — the
+// numeric-ish shapes a quantity actually arrives as (a plain float64 from
+// pos.SaleLine-family structs, or an int/int32/int64 from a narrower
+// integer-only field), same spirit as minorUnits above.
+func qtyFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	}
+	return 0, false
+}
+
 func toJSON(v any) template.JS {
 	b, _ := json.Marshal(v)
 	return template.JS(string(b))
@@ -860,6 +880,21 @@ func FuncsFor(locale string) template.FuncMap {
 			return ""
 		}
 		return FormatMoney(cents, locale)
+	}
+	// {{ qty .Qty }}: locale digit-shape/grouping for an on-screen sale-line
+	// quantity, the quantity-side twin of money above (ut-docs#2221) — an
+	// on-screen amount already gets digit-shape substitution via money;
+	// on-screen quantity didn't, though every real caller of FormatQty's
+	// Latin sibling was a print path where that's correct. Never wire this
+	// into an editable quantity input: basket.html's qty-input value is
+	// read back and validated server-side against a plain-ASCII-digit
+	// pattern, so it deliberately keeps using FormatQtyLatin instead.
+	funcs["qty"] = func(v any) string {
+		q, ok := qtyFloat(v)
+		if !ok {
+			return ""
+		}
+		return FormatQty(q, locale)
 	}
 	// {{ date .IssuedAt }}: date-ordering convention follows the request
 	// locale (de-DE renders 06.09.2026, en-US renders 09/06/2026), digit
