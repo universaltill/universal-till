@@ -12,8 +12,11 @@
 
     <aside class="catalog-detail-info">
       <div class="catalog-detail-title">
-        {{ $itemThumb := printf "/public/assets/items/%s/thumb.png" .ItemID }}
-        {{ if imgExists $itemThumb }}<img class="thumb" src="{{ imgv $itemThumb }}" alt="" onerror="this.style.display='none'">{{ else }}<div class="thumb" aria-hidden="true"></div>{{ end }}
+        {{/* ut-docs#1324: resolved via item_images (ItemImageURL), same
+             source of truth as every other ImageURL consumer in this app
+             (basket.html, buttons.html, catalog_row.html) — not a disk-path
+             guess. */}}
+        {{ if .ItemImageURL }}<img class="thumb" src="{{ imgv .ItemImageURL }}" alt="" onerror="this.style.display='none'">{{ else }}<div class="thumb" aria-hidden="true"></div>{{ end }}
         {{/* ut-docs#1956: the dialog's own #item-form-title already shows
              the item name; a second visible heading right under it was
              redundant. Kept for assistive tech (and for the thumb's
@@ -134,13 +137,25 @@
         {{ range .Variants }}
         <div class="vg-cols vg-row{{ if not .IsActive }} vg-inactive{{ end }}" role="row">
           <div class="vg-img">
+            {{/* ut-docs#1324: the variant's OWN photo stays disk-only
+                 (deliberate — item_images has no variant_id column, so a
+                 variant has no row to resolve a photo from; the 2026-07-17
+                 variant-images design). The reason is structural, NOT
+                 "variant photos are per-till": that caveat from the
+                 2026-07-17 review is stale — sync_assets.go's recursive
+                 walk of the items/ asset tree carries variant thumb files
+                 (items/<item>/variants/<variant>/thumb.png) to replicas
+                 along with item ones.
+                 The FALLBACK, when a variant has no photo of its own, is
+                 the item's thumbnail — that's the same item-level concept
+                 every other surface resolves via item_images, so it now
+                 uses $.ItemImageURL instead of guessing a disk path. */}}
             {{ $variantThumb := printf "/public/assets/items/%s/variants/%s/thumb.png" $.ItemID .ID }}
-            {{ $itemThumbFallback := printf "/public/assets/items/%s/thumb.png" $.ItemID }}
             {{ if imgExists $variantThumb }}
             <img src="{{ imgv $variantThumb }}" alt=""
-                 onerror="if(!this.dataset.fb){this.dataset.fb=1;this.src='{{ imgv $itemThumbFallback }}';}else{this.style.visibility='hidden';}">
-            {{ else if imgExists $itemThumbFallback }}
-            <img src="{{ imgv $itemThumbFallback }}" alt="" onerror="this.style.visibility='hidden'">
+                 onerror="if(!this.dataset.fb){this.dataset.fb=1;{{ if $.ItemImageURL }}this.src='{{ imgv $.ItemImageURL }}';{{ else }}this.style.visibility='hidden';{{ end }}}else{this.style.visibility='hidden';}">
+            {{ else if $.ItemImageURL }}
+            <img src="{{ imgv $.ItemImageURL }}" alt="" onerror="this.style.visibility='hidden'">
             {{ else }}
             <div class="thumb-ph" aria-hidden="true"></div>
             {{ end }}
