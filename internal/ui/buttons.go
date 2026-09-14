@@ -101,6 +101,20 @@ type CategoryGroup struct {
 	Color    string
 	Buttons  []ButtonVM
 	Children []*CategoryGroup
+
+	// AncestorName is the top-level root's Name for a NESTED subcategory —
+	// empty for a root itself (a root has no ancestor to disambiguate
+	// against). ut-docs#2198: two subcategories sharing a name under
+	// different top-level categories (e.g. Food>Specials and
+	// Household>Specials) are indistinguishable once both are visible at
+	// once (a cross-category search, or the default "All" tab), so the
+	// template prefixes a nested header with this field while that
+	// ambiguity is possible. Set once, at build time, to the root's name
+	// only (not the immediate parent's) even for a grandchild — "at least
+	// the top-level category name" is what the card asks for, and a
+	// shallow label avoids a second breadcrumb-truncation problem this
+	// card never scoped.
+	AncestorName string
 }
 
 var hexColorRE = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
@@ -183,6 +197,10 @@ func BuildCategoryGroups(buttons []Button, cats []data.CategoryNode) []*Category
 	}
 	roots = kept
 
+	for _, g := range roots {
+		setAncestorNames(g, g.Name)
+	}
+
 	if len(uncategorized) > 0 {
 		roots = append(roots, &CategoryGroup{Color: uncategorizedColor, Buttons: uncategorized})
 	}
@@ -211,6 +229,17 @@ func isCategoryAncestor(id, candidateID string, nodes map[string]data.CategoryNo
 		cur = n.ParentID
 	}
 	return false
+}
+
+// setAncestorNames labels every descendant of g (recursively, all depths)
+// with ancestor — g itself is left untouched, since g is always a root when
+// called from BuildCategoryGroups and a root has no ancestor of its own
+// (ut-docs#2198).
+func setAncestorNames(g *CategoryGroup, ancestor string) {
+	for _, c := range g.Children {
+		c.AncestorName = ancestor
+		setAncestorNames(c, ancestor)
+	}
 }
 
 // pruneEmptyCategoryGroup drops child branches with no buttons anywhere in

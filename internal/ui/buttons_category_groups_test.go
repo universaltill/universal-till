@@ -139,6 +139,55 @@ func TestBuildCategoryGroups_TwoNodeCycleDoesNotDropButtons(t *testing.T) {
 	}
 }
 
+// TestBuildCategoryGroups_AncestorNameLabelsDescendantsNotRoots pins
+// ut-docs#2198's disambiguation data: a root category itself carries no
+// AncestorName (nothing to disambiguate a top-level bucket against), but
+// every descendant — direct child and grandchild alike — is labeled with
+// its OWN top-level root's name, not its immediate parent's, so two
+// same-named subcategories under different top-level categories can be
+// told apart by which root each actually traces back to.
+func TestBuildCategoryGroups_AncestorNameLabelsDescendantsNotRoots(t *testing.T) {
+	cats := []data.CategoryNode{
+		{ID: "food", Name: "Food"},
+		{ID: "household", Name: "Household"},
+		{ID: "food-specials", Name: "Specials", ParentID: "food"},
+		{ID: "household-specials", Name: "Specials", ParentID: "household"},
+		{ID: "food-specials-sub", Name: "Deep", ParentID: "food-specials"},
+	}
+	buttons := []Button{
+		{Label: "A", Code: "A1", ItemID: "i1", CategoryID: "food-specials"},
+		{Label: "B", Code: "B1", ItemID: "i2", CategoryID: "household-specials"},
+		{Label: "C", Code: "C1", ItemID: "i3", CategoryID: "food-specials-sub"},
+	}
+
+	groups := BuildCategoryGroups(buttons, cats)
+	byID := map[string]*CategoryGroup{}
+	var walk func([]*CategoryGroup)
+	walk = func(gs []*CategoryGroup) {
+		for _, g := range gs {
+			byID[g.ID] = g
+			walk(g.Children)
+		}
+	}
+	walk(groups)
+
+	if byID["food"] == nil || byID["food"].AncestorName != "" {
+		t.Fatalf("expected root Food to carry no AncestorName, got %+v", byID["food"])
+	}
+	if byID["household"] == nil || byID["household"].AncestorName != "" {
+		t.Fatalf("expected root Household to carry no AncestorName, got %+v", byID["household"])
+	}
+	if got := byID["food-specials"].AncestorName; got != "Food" {
+		t.Fatalf("expected Food's Specials child to carry AncestorName %q, got %q", "Food", got)
+	}
+	if got := byID["household-specials"].AncestorName; got != "Household" {
+		t.Fatalf("expected Household's Specials child to carry AncestorName %q, got %q", "Household", got)
+	}
+	if got := byID["food-specials-sub"].AncestorName; got != "Food" {
+		t.Fatalf("expected a grandchild to still carry its top-level root's name (Food), got %q", got)
+	}
+}
+
 // TestResolveCategoryColor_ExplicitOverridesAutoAndIsStable: a valid
 // explicit hex color always wins; an absent/malformed one falls back to a
 // deterministic per-ID color so the same category always renders the same
