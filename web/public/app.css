@@ -1501,21 +1501,21 @@ a.btn, a.btn:hover { text-decoration: none; }
    .products-strip's own height — the "same row, same height" requirement
    ut-docs#2173 was written against.
 
-   The +4px is not a fudge factor and does NOT depend on the font-size
-   (corrected by this card's independent review, which decomposed it): both
+   The +3px is not a fudge factor and does NOT depend on the font-size: both
    elements are `font: inherit` and both carry the same .5rem vertical
-   padding, which cancels. The 8px difference is entirely px constants —
-   the bar's padding-block (2+2) and border-bottom (2), plus the active
-   tab's border-block-start (3) and border-bottom (3), minus its
-   margin-bottom (-2), minus the input's own top+bottom border (1+1) = 8.
-   Half on each side is this +4px. So it holds at any font-size or rem
-   scale (verified live: bar and input both 51.640625px), and what it IS
+   padding, which cancels. The 6px difference is entirely px constants —
+   the bar's padding-block (2+2), plus the active tab's border-block-start
+   (3) and border-bottom (3), minus its margin-bottom (-2), minus the
+   input's own top+bottom border (1+1) = 6 (ut-docs#2214 dropped the bar's
+   own border-block-end, which used to add a further +2 here — re-measure
+   this constant again if that border ever comes back). Half on each side
+   is this +3px. So it holds at any font-size or rem scale, and what it IS
    brittle to is a change in any of those BORDER widths, or .tab's vertical
    padding diverging from the base input's. Change either and re-measure.
    e2e/tests/sale-screen-search-strip-2173.spec.ts pins the invariant
    (|Δheight| < 1px between rest and search mode), so a drift fails there
    rather than silently on a till. */
-.products-strip > input[type="search"] { flex: 1 1 auto; min-inline-size: 0; padding-block: calc(.5rem + 4px); }
+.products-strip > input[type="search"] { flex: 1 1 auto; min-inline-size: 0; padding-block: calc(.5rem + 3px); }
 /* The strip's tab bar: unlike the generic .tab-bar (flex-wrap: wrap, below)
    this one is ALWAYS single-row, at every width — the sale screen never
    had room to spare for a second row, so unlike .catalog-form-head
@@ -1525,6 +1525,12 @@ a.btn, a.btn:hover { text-decoration: none; }
   flex: 1 1 auto; min-inline-size: 0;
   flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
   padding-block: 2px; margin-bottom: 0;
+  /* ut-docs#2214 (product owner, on-device): the generic .tab-bar's
+     border-block-end sits directly above the category heading/quick-button
+     grid below it, reading as redundant chrome once the heading itself
+     already separates the groups — same reasoning .catalog-form-head
+     .tab-bar (ut-docs#2024, below) already applied to its own tab bar. */
+  border-block-end: 0;
 }
 /* overflow-y: hidden above (needed so the horizontal scrollbar doesn't add
    height) clips both the active tab's border-bottom indicator and its
@@ -1592,7 +1598,11 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
 .category-group { display: flex; flex-direction: column; gap: .5rem; }
 .category-group .category-group { margin-inline-start: 1rem; }
 .category-header {
-  margin: 0; padding-inline-start: .5rem; font-size: 1rem; font-weight: 700;
+  /* ut-docs#2214 (product owner, on-device): 1rem read heavier than a
+     grouping label needs to be — matches the .85rem this file already uses
+     for secondary/label text elsewhere (e.g. .field-error-msg,
+     .option-set-chip) rather than inventing a new size. */
+  margin: 0; padding-inline-start: .5rem; font-size: .85rem; font-weight: 700;
   border-inline-start: 4px solid var(--cat-color, var(--accent));
 }
 
