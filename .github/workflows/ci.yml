@@ -484,7 +484,18 @@ jobs:
           # loopback. Every e2e/run-till*.sh script already binds an
           # explicit 127.0.0.1:<port> for the same reason — this is the one
           # place that didn't.
-          UT_AUTH=off UT_STORE=sqlite UT_DB_PATH=./data/e2e.db UT_LISTEN_ADDR=127.0.0.1:8080 UT_DEV_MODE=true go run . &
+          #
+          # ut-docs#2255: build once, THEN run the binary — not `go run .`
+          # backgrounded straight away. `go run .` ties the health-check
+          # loop's clock to compile time as well as actual startup time; on
+          # this runner that compile alone has been observed taking ~31s,
+          # one second past the old 30x1s budget, failing the step before
+          # the binary had even started listening. Same pattern
+          # e2e/run-till.sh already uses (see its own comment) for a
+          # different reason (CWD); here it also means the retry loop only
+          # ever waits on real process startup, not a variable compile time.
+          go build -o /tmp/ut-e2e-app .
+          UT_AUTH=off UT_STORE=sqlite UT_DB_PATH=./data/e2e.db UT_LISTEN_ADDR=127.0.0.1:8080 UT_DEV_MODE=true /tmp/ut-e2e-app &
           for i in {1..30}; do
             if curl -sf http://127.0.0.1:8080/ >/dev/null; then
               echo "App is up"
