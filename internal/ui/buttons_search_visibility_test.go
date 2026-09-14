@@ -273,3 +273,80 @@ func TestButtonsHTTPList_TabbedPanelsCarryCrossCategorySearchWiring(t *testing.T
 		t.Fatalf("expected exactly one whole-catalogue no-matches message in the tabbed view, got: %s", body)
 	}
 }
+
+// TestButtonsHTTPList_SameNamedSubcategoriesCarryDistinctAncestorLabels
+// (ut-docs#2198): two top-level categories each with a same-named
+// subcategory ("Specials") are ambiguous the instant more than one root's
+// content is visible at once (the default "All" tab, or a cross-category
+// search) — the rendered markup must carry a distinguishing prefix per
+// subcategory, driven by that subcategory's OWN top-level ancestor, not a
+// shared/generic label. Also pins that a ROOT category's own header (no
+// ancestor to disambiguate against) never grows a spurious prefix span.
+func TestButtonsHTTPList_SameNamedSubcategoriesCarryDistinctAncestorLabels(t *testing.T) {
+	db := setupFullTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	store := NewButtonStore(db)
+	renderer, err := NewRenderer(
+		filepath.Join("web", "ui", "layouts", "base.html"),
+		filepath.Join("web", "ui", "pages", "index.html"),
+		filepath.Join("web", "ui", "partials", "buttons.html"),
+		httpx.FuncsFor("en"),
+	)
+	if err != nil {
+		t.Fatalf("NewRenderer: %v", err)
+	}
+	h := &ButtonsHTTP{Store: *store, View: renderer}
+
+	mustExec(t, db, `INSERT INTO categories(id, name, parent_id, sort_order) VALUES
+		('cat_food', 'Food', NULL, 1),
+		('cat_house', 'Household', NULL, 2),
+		('cat_food_specials', 'Specials', 'cat_food', 1),
+		('cat_house_specials', 'Specials', 'cat_house', 1)`)
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, category_id, is_active) VALUES
+		('i1', 'S1', 'Discount Bread', 99, 'cat_food_specials', 1),
+		('i2', 'S2', 'Discount Soap', 199, 'cat_house_specials', 1),
+		('i3', 'S3', 'Plain Bread', 89, 'cat_food', 1),
+		('i4', 'S4', 'Plain Soap', 179, 'cat_house', 1)`)
+	// i3/i4 give Food and Household own DIRECT buttons too (not just a
+	// nested subcategory), so their own top-level header actually renders
+	// via "category-group-body-tabbed" — needed to assert a root's header
+	// never grows a spurious ancestor prefix.
+	for _, b := range []Button{
+		{Label: "Discount Bread", Code: "C1", ItemID: "i1"},
+		{Label: "Discount Soap", Code: "C2", ItemID: "i2"},
+		{Label: "Plain Bread", Code: "C3", ItemID: "i3"},
+		{Label: "Plain Soap", Code: "C4", ItemID: "i4"},
+	} {
+		if err := store.Add(b); err != nil {
+			t.Fatalf("Add(%+v): %v", b, err)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest("GET", "/ui/buttons", nil))
+	if rec.Code != 200 {
+		t.Fatalf("List = %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	const ancestorSpanOpen = `<span class="category-header-ancestor" x-show="q || tab === '__all__'">`
+	if strings.Count(body, ancestorSpanOpen) != 2 {
+		t.Fatalf("expected exactly two ancestor-prefixed subcategory headers (one per same-named Specials), got: %s", body)
+	}
+	if !strings.Contains(body, ancestorSpanOpen+"Food › ") {
+		t.Fatalf("expected Food's Specials subcategory to carry a Food ancestor prefix, got: %s", body)
+	}
+	if !strings.Contains(body, ancestorSpanOpen+"Household › ") {
+		t.Fatalf("expected Household's Specials subcategory to carry a Household ancestor prefix, got: %s", body)
+	}
+	// The two ROOT categories (Food, Household) must never grow a spurious
+	// ancestor prefix on their own header — only a genuine descendant does.
+	rootFoodHeader := `<h3 class="category-header" x-show="q || tab === '__all__'">Food</h3>`
+	rootHouseholdHeader := `<h3 class="category-header" x-show="q || tab === '__all__'">Household</h3>`
+	if !strings.Contains(body, rootFoodHeader) {
+		t.Fatalf("expected Food's own top-level header to render unprefixed, got: %s", body)
+	}
+	if !strings.Contains(body, rootHouseholdHeader) {
+		t.Fatalf("expected Household's own top-level header to render unprefixed, got: %s", body)
+	}
+}
