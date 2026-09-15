@@ -23,4 +23,4 @@ Every sale currently on hold on this till, in one list — who it's for, which t
 - The list is empty until someone holds a sale — see **Selling & checkout** for how to hold and recall a basket.
 - An order leaves this list while it is being worked on, and comes straight back under its original name if it's held again. Once it's paid it's gone for good — the sale is in the Journal like any other.
 - This is not the **Order status** board (the kitchen's preparing / ready / collected queue) — that one lists sales that have already been paid. Open orders is about sales that haven't been paid yet.
-- Everything here is this till's own list and works fully offline. In a shop with several tills, each till shows the orders held on that till.
+- Works fully offline. In a shop with several tills, an order held on any till also shows up here on every other till while the main till is reachable, and can be picked up from any of them — so a second till or a waiter's tablet can add to a tab someone else opened. If the main till can't be reached, each till still shows and works with the orders held on that till itself, exactly as before.
