@@ -779,22 +779,23 @@ func (eb *EventBus) PublishStockAdjusted(ctx context.Context, stockEvent StockAd
 // contract, and the crash-isolation integration test uses it to simulate a
 // plugin dropping out between subscribe and publish. Safe alongside a live
 // publish for the same reason ResetSubscribers is (exclusive Lock vs.
-// publish's held RLock). Known latent bug, not fixed here (ut-docs#2242):
-// a plugin subscribed to >=2 event types in one Subscribe/SubscribeWithHandler
-// call shares one channel across those types, and this closes it once per
-// event type with no dedupe — unlike ResetSubscribers' closed map. Dormant
-// today because every caller subscribes with a single event type.
+// publish's held RLock). Dedupes by channel (ut-docs#2242) the same way
+// ResetSubscribers does: a plugin subscribed to >=2 event types in one
+// Subscribe/SubscribeWithHandler call shares one channel across those
+// types, so closing it once per event-type occurrence would panic on the
+// second close.
 func (eb *EventBus) Unsubscribe(pluginID string) {
 	eb.mu.Lock()
 	defer eb.mu.Unlock()
 
+	closed := map[chan Event]bool{}
 	for eventType, subs := range eb.subscribers {
 		filtered := make([]EventSubscriber, 0)
 		for _, sub := range subs {
 			if sub.PluginID != pluginID {
 				filtered = append(filtered, sub)
-			} else {
-				// Close the channel
+			} else if sub.Channel != nil && !closed[sub.Channel] {
+				closed[sub.Channel] = true
 				close(sub.Channel)
 			}
 		}
