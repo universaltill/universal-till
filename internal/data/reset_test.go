@@ -402,6 +402,52 @@ func TestResetThenRestoreRoundTrip_SaleTrackingToken(t *testing.T) {
 	}
 }
 
+// ADR-0093 (ut-docs#1920, migration 030, independent review): held_sales.
+// updated_at must round-trip through held_sales_archive for the exact
+// reason every earlier ALTER's own test here already established (055
+// held_sales_archive.table_id, 056 tracking_token, 007 local_date/
+// voided_local_date, 013 display_no below) — a column present on the live
+// table but missing from resetArchiveTables' "held_sales" cols string is
+// silently dropped by a Settings -> Data -> Clear/Restore cycle rather than
+// erroring, which here would mean every restored parked order comes back
+// with updated_at reset to the schema default (”) -- below any real
+// stamp, so the cross-till write-through's own ordering guard
+// (HeldSalesRepo.UpsertIfNewer) would treat a restored order as
+// "never updated" and let a stale primary write clobber it.
+func TestResetThenRestoreRoundTrip_HeldSalesUpdatedAt(t *testing.T) {
+	d, x, count := resetTestDB(t, "restore_held_sales_updated_at.db")
+	const stamp = "2026-09-15 09:30:00"
+	x(`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id, created_at, updated_at) VALUES ('h1','Held',150,1,'{}',NULL,'2026-09-15 09:00:00',?)`, stamp)
+
+	repo := data.NewPOSRepo(d.DB)
+	ctx := context.Background()
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "", "")
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	var archivedUpdatedAt string
+	if err := d.DB.QueryRow(`SELECT updated_at FROM held_sales_archive WHERE id='h1' AND reset_batch_id=?`, batchID).Scan(&archivedUpdatedAt); err != nil {
+		t.Fatalf("read archived updated_at: %v", err)
+	}
+	if archivedUpdatedAt != stamp {
+		t.Fatalf("archived held_sales updated_at = %q, want %q", archivedUpdatedAt, stamp)
+	}
+
+	if _, err := repo.RestoreResetBatch(ctx, batchID, "", ""); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if c := count("held_sales"); c != 1 {
+		t.Fatalf("held_sales after restore: %d rows, want 1", c)
+	}
+	var restoredUpdatedAt string
+	if err := d.DB.QueryRow(`SELECT updated_at FROM held_sales WHERE id='h1'`).Scan(&restoredUpdatedAt); err != nil {
+		t.Fatalf("read restored updated_at: %v", err)
+	}
+	if restoredUpdatedAt != stamp {
+		t.Fatalf("restored held_sales updated_at = %q, want %q — the cross-till ordering key must survive a reset/restore cycle", restoredUpdatedAt, stamp)
+	}
+}
+
 // ut-docs#1817: sales.display_no (migration 013) must round-trip through
 // sales_archive for the exact reason every earlier ALTER's own test here
 // already established (055/056/007 above) — a column present on the live

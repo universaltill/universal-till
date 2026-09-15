@@ -65,6 +65,15 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 		if err != nil {
 			return nil, err
 		}
+		// ADR-0093 (ut-docs#1920): on a replica, fold in the primary's live
+		// parked orders -- an order parked on another till is LISTED here
+		// (display-only: resuming one this till has no local row for goes
+		// through resumeHeldSaleWithPrimaryFallback instead, on demand --
+		// see held_sale_sync_proxy.go for why this merge must never write
+		// locally). Any failure reaching the primary leaves items exactly
+		// the local list above; the merge degrades to the local path in
+		// well under a second, never blocks page render on the primary.
+		items = mergeHeldSalesWithPrimary(ctx, d, items)
 		now := time.Now().UTC()
 		// Memoised per distinct table id: several parked orders rarely share
 		// a table (IsTableFree forbids it for a move), but a repeat lookup

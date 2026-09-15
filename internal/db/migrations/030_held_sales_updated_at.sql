@@ -1,0 +1,50 @@
+-- 030_held_sales_updated_at.sql — ADR-0093 (universaltill/ut-docs#1920,
+-- "Cross-till held-sale write-through sync"). Adds updated_at to
+-- held_sales: when the row's CONTENTS last changed. created_at
+-- deliberately never moves after the first park (HeldSalesRepo.Upsert's
+-- own doc comment -- the Open orders page's "age" must survive a re-park),
+-- so until now nothing on the row could say which of two tills' writes to
+-- the same parked order is the later one. This column is that ordering
+-- key: every content-changing repository write (Insert, Upsert, SetTable)
+-- stamps it datetime('now'), the primary's UpsertIfNewer applies an
+-- incoming row only when its stamp is >= the stored one (the same
+-- guarded-UPDATE shape ADR-0084's `balance >= ?` uses for vouchers), and a
+-- replica's open-orders merge picks the greater stamp when a row exists on
+-- both sides. Same UTC "YYYY-MM-DD HH:MM:SS" text as created_at, so the
+-- two compare as plain strings.
+--
+-- DEFAULT '' rather than the DEFAULT (datetime('now')) the ADR's text
+-- sketches: SQLite refuses ADD COLUMN with a non-constant default once the
+-- table holds any row ("Cannot add a column with non-constant default"),
+-- which is exactly a shop upgrading with an order parked -- verified
+-- against this repo's modernc.org/sqlite during ut-docs#1920 (it only
+-- passes on an EMPTY table, so a fresh install would never have shown the
+-- failure). The intent survives intact: every repository write path stamps
+-- the column explicitly, so the schema default is only ever seen by a row
+-- that bypassed the repository, and '' sorts below any datetime text, so
+-- such a row yields to the first real write under the >= guard -- the
+-- right answer for "never updated since the schema change".
+--
+-- The UPDATE backfills every pre-existing parked order to its created_at
+-- (the best available "last changed" for a row that predates the column).
+-- It is idempotent on replay by its WHERE: a row the runner already
+-- backfilled, or one written since, is never touched again. The ADD
+-- COLUMN's own replay-safety comes from db.go's execMigrationStatements
+-- (checked against pragma_table_info immediately before it runs,
+-- ut-docs#1412), the same way 029's plain ADD COLUMN already relies on it.
+ALTER TABLE held_sales ADD COLUMN updated_at TEXT NOT NULL DEFAULT '';
+UPDATE held_sales SET updated_at = created_at WHERE updated_at = '';
+
+-- held_sales_archive gets the same column, same fix shape every earlier
+-- ALTER to held_sales here has needed (055 held_sales_archive.table_id, 056
+-- tracking_token) -- independent review, ut-docs#1920: without it,
+-- ResetTransactionHistory/RestoreResetBatch's own cols string
+-- (reset_archive_repo.go's resetArchiveTables "held_sales" entry, updated in
+-- this same change) would drop the column silently on the very first
+-- go-live reset, and every order restored afterward would come back with
+-- updated_at = '' -- below any real stamp, same "never updated" meaning
+-- backfilled above, correct as a fallback but wrong as a standing state for
+-- a restored order a till might still edit. No backfill needed here (unlike
+-- held_sales above): existing archive rows predate this ADR entirely, and
+-- '' is the accurate answer for them too.
+ALTER TABLE held_sales_archive ADD COLUMN updated_at TEXT NOT NULL DEFAULT '';
