@@ -360,6 +360,7 @@ func (s *ButtonStore) Load() ([]Button, error) {
 		hasMods, _ = s.modRepo.ItemIDsWithModifiers(ctx, itemIDs)
 	}
 	var hasVariants map[string]bool
+	var currentPrices map[string]int64
 	if s.catalogRepo != nil {
 		var err error
 		hasVariants, err = s.catalogRepo.ItemIDsWithVariants(ctx, itemIDs)
@@ -374,15 +375,31 @@ func (s *ButtonStore) Load() ([]Button, error) {
 			// category error.
 			logging.L().Warnf("ui: load items-with-variants failed, every tile falls back to parent-price add (ut-docs#2209): %v", err)
 		}
+		currentPrices, err = s.catalogRepo.ItemCurrentPrices(ctx, itemIDs)
+		if err != nil {
+			// Same non-fatal-but-loud treatment as hasVariants above
+			// (ut-docs#2258): on this error every tile falls back to the
+			// STALE configured base_price it already carries in b.Price,
+			// same failure shape as ut-docs#2209's own hasVariants gap.
+			logging.L().Warnf("ui: load item current prices failed, every tile falls back to raw base_price (ut-docs#2258): %v", err)
+		}
 	}
 	var out []Button
 	for _, b := range rows {
+		// ut-docs#2258: prefer the batched price_history-aware price;
+		// b.Price (raw base_price from LoadButtons) is the fallback for an
+		// id ItemCurrentPrices didn't return (lookup error, or the item
+		// row is gone) — never a silent zero.
+		price := b.Price
+		if p, ok := currentPrices[b.ItemID]; ok {
+			price = p
+		}
 		out = append(out, Button{
 			Label:        b.Label,
 			Code:         b.Barcode,
 			ItemID:       b.ItemID,
 			ImageURL:     b.ImageURL,
-			Price:        b.Price,
+			Price:        price,
 			HasModifiers: hasMods[b.ItemID],
 			HasVariants:  hasVariants[b.ItemID],
 			CategoryID:   b.CategoryID,

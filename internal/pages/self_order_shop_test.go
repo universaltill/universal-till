@@ -92,6 +92,79 @@ func seedShopItem(t *testing.T, d *db.DB, id, sku, barcode, name string, priceMi
 	}
 }
 
+// TestLoadShopItems_ShowsCurrentPriceHistoryPrice is ut-docs#2258: the
+// kiosk browse grid must show each tile's CURRENT effective price — an
+// active price_history row when one exists, else the item's configured
+// base_price — never the raw base_price alone. Item-level counterpart to
+// ut-docs#2228's variant-picker fix, and the kiosk half of
+// TestButtonStoreLoad_ShowsCurrentPriceHistoryPrice (the cashier grid's
+// own version of this test, internal/ui/buttons_price_history_test.go).
+func TestLoadShopItems_ShowsCurrentPriceHistoryPrice(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+
+	// itm-promo has an active promotional price_history row (250 instead
+	// of its configured 310).
+	seedShopItem(t, d, "itm-promo", "S1", "5000001", "Cola", 310)
+	// itm-plain has no price_history row at all — must fall back to base_price.
+	seedShopItem(t, d, "itm-plain", "S2", "5000002", "Water", 100)
+	// itm-expired has an EXPIRED price_history row — must NOT apply.
+	seedShopItem(t, d, "itm-expired", "S3", "5000003", "Juice", 250)
+
+	if _, err := d.DB.Exec(`INSERT INTO price_history(id, item_id, price, starts_at) VALUES('ph1','itm-promo',250, datetime('now','-1 hour'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO price_history(id, item_id, price, starts_at, ends_at) VALUES('ph2','itm-expired',999, datetime('now','-2 day'), datetime('now','-1 day'))`); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := loadShopItems(context.Background(), dp)
+	if err != nil {
+		t.Fatalf("loadShopItems: %v", err)
+	}
+	byName := map[string]shopItem{}
+	for _, it := range items {
+		byName[it.Name] = it
+	}
+	if byName["Cola"].PriceMinor != 250 {
+		t.Fatalf("expected Cola tile to show the active price_history override 250, got %d", byName["Cola"].PriceMinor)
+	}
+	if byName["Water"].PriceMinor != 100 {
+		t.Fatalf("expected Water tile to show its configured price 100 (no price_history row), got %d", byName["Water"].PriceMinor)
+	}
+	if byName["Juice"].PriceMinor != 250 {
+		t.Fatalf("expected Juice tile to show its configured price 250 (price_history row EXPIRED), got %d", byName["Juice"].PriceMinor)
+	}
+}
+
+// TestSelfOrderShop_GridRendersCurrentPriceHistoryPrice closes the same
+// loop end-to-end through the real mux and the `money` template func
+// (ut-docs#2258) — the loadShopItems-level test above proves the Go field
+// is right, this proves the rendered HTML a real kiosk browser gets is
+// too, not just the value handed to the template.
+func TestSelfOrderShop_GridRendersCurrentPriceHistoryPrice(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	seedShopItem(t, d, "itm-promo", "S1", "5000001", "Cola", 310)
+	if _, err := d.DB.Exec(`INSERT INTO price_history(id, item_id, price, starts_at) VALUES('ph1','itm-promo',250, datetime('now','-1 hour'))`); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/self-order/grid", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "£2.50") {
+		t.Fatalf("expected the rendered grid to show the price_history override £2.50, got: %s", body)
+	}
+	if strings.Contains(body, "£3.10") {
+		t.Fatalf("rendered grid must not show the stale configured price £3.10: %s", body)
+	}
+}
+
 func TestSelfOrderShop_BrowseGridShowsActiveItems(t *testing.T) {
 	dp, d := setupSelfOrderShopDeps(t)
 	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
