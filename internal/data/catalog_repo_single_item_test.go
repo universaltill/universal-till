@@ -9,6 +9,7 @@ package data_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/testsupport"
 
@@ -162,6 +163,116 @@ func TestItemVariantsFor(t *testing.T) {
 
 	if got, err := repo.ItemVariantsFor(ctx, "missing"); err != nil || len(got) != 0 {
 		t.Fatalf("expected no variants for an unknown item, got %v err=%v", got, err)
+	}
+}
+
+// TestItemVariantsForSale_UsesActivePriceHistoryRow is ut-docs#2228: the
+// sale-screen/kiosk picker must show the variant's CURRENT price, not its
+// configured item_variants.price, whenever an active price_history row
+// overrides it — same contract, ordering and active-only filter as
+// ItemVariantsFor, which this test also uses side-by-side to prove the two
+// methods genuinely diverge (ItemVariantsFor must keep returning the raw
+// configured price for the catalog admin grid — see its own doc comment).
+func TestItemVariantsForSale_UsesActivePriceHistoryRow(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Cola", BasePrice: 120, IsActive: true})
+	// v1 has an active promotional price_history row (250 instead of its
+	// configured 310) — the exact £3.10-vs-£2.50 shape from the ticket.
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v1", ItemID: "i1", SKU: "S1-A", Name: "Regular", Price: 310, IsActive: true})
+	// v2 has no price_history row at all — must fall back to its configured price.
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v2", ItemID: "i1", SKU: "S1-B", Name: "Large", Price: 350, IsActive: true})
+	// v3 has an EXPIRED price_history row — must NOT apply, falls back too.
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v3", ItemID: "i1", SKU: "S1-C", Name: "Small", Price: 250, IsActive: true})
+
+	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	expiredStart := time.Now().Add(-48 * time.Hour).UTC().Format(time.RFC3339)
+	expiredEnd := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
+	if _, err := db.Exec(`INSERT INTO price_history(id, variant_id, price, starts_at) VALUES('ph1','v1',250,?)`, past); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO price_history(id, variant_id, price, starts_at, ends_at) VALUES('ph2','v3',999,?,?)`, expiredStart, expiredEnd); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.ItemVariantsForSale(ctx, "i1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 active variants, got %d: %+v", len(got), got)
+	}
+	byName := map[string]data.VariantView{}
+	for _, v := range got {
+		byName[v.Name] = v
+	}
+	if byName["Regular"].PriceMinor != 250 {
+		t.Fatalf("expected Regular's active price_history override 250, got %d", byName["Regular"].PriceMinor)
+	}
+	if byName["Large"].PriceMinor != 350 {
+		t.Fatalf("expected Large's configured price 350 (no price_history row), got %d", byName["Large"].PriceMinor)
+	}
+	if byName["Small"].PriceMinor != 250 {
+		t.Fatalf("expected Small's configured price 250 (price_history row EXPIRED), got %d", byName["Small"].PriceMinor)
+	}
+
+	// ItemVariantsFor must be completely unaffected — the catalog admin
+	// grid still needs the raw configured price to edit, never a
+	// transient promotion (ut-docs#2228's own explicit non-goal).
+	plain, err := repo.ItemVariantsFor(ctx, "i1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plainByName := map[string]data.VariantView{}
+	for _, v := range plain {
+		plainByName[v.Name] = v
+	}
+	if plainByName["Regular"].PriceMinor != 310 {
+		t.Fatalf("ItemVariantsFor must keep returning the CONFIGURED price 310 for admin editing, got %d", plainByName["Regular"].PriceMinor)
+	}
+
+	if got, err := repo.ItemVariantsForSale(ctx, "missing"); err != nil || len(got) != 0 {
+		t.Fatalf("expected no variants for an unknown item, got %v err=%v", got, err)
+	}
+}
+
+// TestItemVariantsForSale_MatchesPOSRepoResolveCurrentPrice is the direct
+// proof of the ticket's acceptance criterion: the price shown in the
+// picker equals the price the basket line receives. ItemVariantsForSale
+// and POSRepo.ResolveCurrentPrice are two independent code paths (picker
+// display vs. actual basket pricing) that must never disagree under the
+// same price_history state.
+func TestItemVariantsForSale_MatchesPOSRepoResolveCurrentPrice(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	catalogRepo := data.NewCatalogRepo(db)
+	posRepo := data.NewPOSRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Cola", BasePrice: 120, IsActive: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v1", ItemID: "i1", SKU: "S1-A", Name: "Regular", Price: 310, IsActive: true})
+
+	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	if _, err := db.Exec(`INSERT INTO price_history(id, variant_id, price, starts_at) VALUES('ph1','v1',250,?)`, past); err != nil {
+		t.Fatal(err)
+	}
+
+	sale, err := catalogRepo.ItemVariantsForSale(ctx, "i1")
+	if err != nil || len(sale) != 1 {
+		t.Fatalf("ItemVariantsForSale(i1) = %v, %v", sale, err)
+	}
+	basketPrice, err := posRepo.ResolveCurrentPrice(ctx, "", "v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sale[0].PriceMinor != basketPrice {
+		t.Fatalf("picker price %d != basket line price %d — same price_history state must resolve identically", sale[0].PriceMinor, basketPrice)
+	}
+	if sale[0].PriceMinor != 250 {
+		t.Fatalf("sanity: expected the active override 250, got %d", sale[0].PriceMinor)
 	}
 }
 

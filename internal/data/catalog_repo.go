@@ -460,13 +460,66 @@ func (r *CatalogRepo) HasOtherActiveItems(ctx context.Context, itemID string) (b
 
 // ItemVariantsFor returns ONE item's active variants (with each variant's
 // primary barcode and its own SKU), name-ordered — the single-item
-// counterpart to ItemVariants for the row-level re-render (ut-docs#1363),
-// and also what the sale-screen variant picker loads (ut-docs#2209) — SKU
-// is included so that caller can filter out a variant with no resolvable
-// code (see VariantView.SKU's doc comment).
+// counterpart to ItemVariants for the row-level re-render (ut-docs#1363).
+// PriceMinor here is the variant's CONFIGURED price (item_variants.price),
+// not necessarily what a sale charges today — the catalog admin grid
+// (row_oob.go) needs exactly that so an operator edits the configured
+// price, not a transient promotion. Money-facing sale-screen/kiosk
+// callers that DISPLAY a price to the operator must use
+// ItemVariantsForSale instead (ut-docs#2228); this method is still correct
+// for the submit-time sellable-variant/membership check in
+// resolveAndValidateModifiers, which never reads .PriceMinor. SKU is
+// included so a caller can filter out a variant with no resolvable code
+// (see VariantView.SKU's doc comment).
 func (r *CatalogRepo) ItemVariantsFor(ctx context.Context, itemID string) ([]VariantView, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT v.id, v.name, v.price, COALESCE(v.sku, ''),
+       COALESCE((SELECT b.barcode FROM variant_barcodes b WHERE b.variant_id = v.id
+                 ORDER BY b.is_primary DESC, b.barcode LIMIT 1), '')
+FROM item_variants v
+WHERE v.is_active = 1 AND v.item_id = ?
+ORDER BY v.name`, itemID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []VariantView
+	for rows.Next() {
+		var v VariantView
+		if err := rows.Scan(&v.ID, &v.Name, &v.PriceMinor, &v.SKU, &v.Barcode); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// ItemVariantsForSale is ItemVariantsFor's sale-screen/kiosk-picker
+// counterpart (ut-docs#2228): identical shape, ordering and active-only
+// filter, except PriceMinor is the variant's CURRENT EFFECTIVE price — an
+// active price_history row when one exists, else the configured
+// item_variants.price — the exact same resolution POSRepo.resolvePrice /
+// ResolveCurrentPrice applies when the basket actually prices this variant
+// (internal/data/pos_repo.go). Without this, a variant picker rendered
+// from plain ItemVariantsFor can show one price while the line that gets
+// added charges another whenever a scheduled/promotional price_history row
+// is active — the picker is where an operator reads a price as a quote to
+// the customer, so getting it wrong there is worse than the same gap on a
+// sale-screen tile. The price_history lookup is a correlated subquery
+// inside this one query (one round trip, same "batched not per-variant"
+// shape as resolveScanBarcodeTiers above), not a query per variant.
+func (r *CatalogRepo) ItemVariantsForSale(ctx context.Context, itemID string) ([]VariantView, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT v.id, v.name,
+       COALESCE(
+         (SELECT ph.price FROM price_history ph
+          WHERE ph.variant_id = v.id
+            AND datetime(ph.starts_at) <= CURRENT_TIMESTAMP
+            AND (ph.ends_at IS NULL OR datetime(ph.ends_at) > CURRENT_TIMESTAMP)
+          ORDER BY datetime(ph.starts_at) DESC LIMIT 1),
+         v.price
+       ),
+       COALESCE(v.sku, ''),
        COALESCE((SELECT b.barcode FROM variant_barcodes b WHERE b.variant_id = v.id
                  ORDER BY b.is_primary DESC, b.barcode LIMIT 1), '')
 FROM item_variants v
