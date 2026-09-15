@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ut-docs#2227: the suggestion strip and manual code entry both post a
@@ -41,6 +42,35 @@ func TestScanAPI_ParentCodeWithVariants_RedirectsToPickerInsteadOfAdding(t *test
 	}
 	if len(dp.Engine.Basket().Lines) != 0 {
 		t.Fatal("a parent code with sellable variants must not add a line before the variant is chosen")
+	}
+}
+
+// TestScanAPI_ParentCodeWithVariants_ShowsCurrentPriceHistoryPriceNotConfiguredPrice
+// is ut-docs#2228, independent review blocker 1: this /api/pos/scan guard
+// renders the SAME picker markup GET /ui/pos/modifiers does (the
+// suggestion-strip/manual-code-entry route into the picker, ut-docs#2227),
+// so it must show the same price_history-resolved price, not the variant's
+// stale configured price.
+func TestScanAPI_ParentCodeWithVariants_ShowsCurrentPriceHistoryPriceNotConfiguredPrice(t *testing.T) {
+	dp, d := setupVariantModifiersTestDeps(t)
+	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	execAll(t, d, []string{
+		`INSERT INTO price_history(id, variant_id, price, starts_at) VALUES('ph1','v-reg',230,'` + past + `')`,
+	})
+	mux := http.NewServeMux()
+	registerPOSAPI(mux, dp)
+	registerPOSModifiersAPI(mux, dp)
+
+	rec := posPostForm(mux, "/api/pos/scan", "code=COFFEE")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "£2.30") {
+		t.Errorf("scan-guard picker must show the active price_history price £2.30 for Regular: %s", body)
+	}
+	if strings.Contains(body, "£3.10") {
+		t.Errorf("scan-guard picker must NOT show Regular's configured (stale) price £3.10 once a price_history row overrides it: %s", body)
 	}
 }
 

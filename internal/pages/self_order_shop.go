@@ -213,7 +213,11 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "failed to load customization options", http.StatusInternalServerError)
 			return
 		}
-		variants, err := data.NewCatalogRepo(d.Db).ItemVariantsFor(r.Context(), itemID)
+		// ut-docs#2228: same fix as the cashier picker (pos_modifiers_api.go)
+		// — the kiosk picker also DISPLAYS a price, so it must resolve
+		// through price_history like the basket does, not show the
+		// configured base price.
+		variants, err := data.NewCatalogRepo(d.Db).ItemVariantsForSale(r.Context(), itemID)
 		if err != nil {
 			http.Error(w, "failed to load customization options", http.StatusInternalServerError)
 			return

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
@@ -118,6 +119,40 @@ func TestGetModifiers_RendersVariantFieldsetFilteringCodeless(t *testing.T) {
 	}
 	if !strings.Contains(body, `type="radio" name="variantId"`) {
 		t.Errorf("expected radio inputs for the variant picker: %s", body)
+	}
+}
+
+// TestGetModifiers_ShowsCurrentPriceHistoryPriceNotConfiguredPrice is
+// ut-docs#2228: v-reg is seeded at 310, but an active price_history row
+// overrides it to 230 — the picker must render that resolved price, never
+// the configured item_variants.price. This proves the HANDLER wires the
+// right repo method in; it does NOT prove the rendered price equals what a
+// submit would actually add (this fixture's stubResolver hardcodes each
+// code's price, independent of price_history) — that equality is what
+// TestItemVariantsForSale_MatchesPOSRepoResolveCurrentPrice
+// (catalog_repo_single_item_test.go) proves, one layer down, against the
+// real resolvers on both sides.
+func TestGetModifiers_ShowsCurrentPriceHistoryPriceNotConfiguredPrice(t *testing.T) {
+	dp, d := setupVariantModifiersTestDeps(t)
+	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	execAll(t, d, []string{
+		`INSERT INTO price_history(id, variant_id, price, starts_at) VALUES('ph1','v-reg',230,'` + past + `')`,
+	})
+
+	mux := http.NewServeMux()
+	registerPOSModifiersAPI(mux, dp)
+	req := httptest.NewRequest(http.MethodGet, "/ui/pos/modifiers?item=itm-coffee&code=COFFEE", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "£2.30") {
+		t.Errorf("picker must show the active price_history price £2.30 for Regular: %s", body)
+	}
+	if strings.Contains(body, "£3.10") {
+		t.Errorf("picker must NOT show Regular's configured (stale) price £3.10 once a price_history row overrides it: %s", body)
 	}
 }
 
@@ -270,6 +305,33 @@ func TestSelfOrderShop_GridRoutesVariantOnlyItemToPicker(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, "/api/self-order/modifiers?item=itm-tea") {
 		t.Fatalf("a variant-only kiosk tile must open the picker: %s", body)
+	}
+}
+
+// TestSelfOrderModifiers_ShowsCurrentPriceHistoryPriceNotConfiguredPrice is
+// the kiosk twin of the cashier test above — same ut-docs#2228 defect, same
+// fix (self_order_shop.go's GET /api/self-order/modifiers handler).
+func TestSelfOrderModifiers_ShowsCurrentPriceHistoryPriceNotConfiguredPrice(t *testing.T) {
+	dp, d := setupVariantModifiersTestDeps(t)
+	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	execAll(t, d, []string{
+		`INSERT INTO price_history(id, variant_id, price, starts_at) VALUES('ph1','v-reg',230,'` + past + `')`,
+	})
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+	req := httptest.NewRequest(http.MethodGet, "/api/self-order/modifiers?item=itm-coffee&code=COFFEE", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "£2.30") {
+		t.Errorf("kiosk picker must show the active price_history price £2.30 for Regular: %s", body)
+	}
+	if strings.Contains(body, "£3.10") {
+		t.Errorf("kiosk picker must NOT show Regular's configured (stale) price £3.10 once a price_history row overrides it: %s", body)
 	}
 }
 

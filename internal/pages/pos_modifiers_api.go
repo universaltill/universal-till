@@ -237,7 +237,11 @@ func registerPOSModifiersAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "failed to load customization options", http.StatusInternalServerError)
 			return
 		}
-		variants, err := data.NewCatalogRepo(d.Db).ItemVariantsFor(r.Context(), itemID)
+		// ut-docs#2228: the picker DISPLAYS a price to the operator, so it
+		// must show the current effective (price_history-aware) price, not
+		// the configured base price ItemVariantsFor returns — that's what
+		// resolveAndValidateModifiers' own membership check still uses.
+		variants, err := data.NewCatalogRepo(d.Db).ItemVariantsForSale(r.Context(), itemID)
 		if err != nil {
 			http.Error(w, "failed to load customization options", http.StatusInternalServerError)
 			return
