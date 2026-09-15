@@ -124,8 +124,14 @@ func TestGetModifiers_RendersVariantFieldsetFilteringCodeless(t *testing.T) {
 
 // TestGetModifiers_ShowsCurrentPriceHistoryPriceNotConfiguredPrice is
 // ut-docs#2228: v-reg is seeded at 310, but an active price_history row
-// overrides it to 230 — the picker must render the CURRENT price (what the
-// basket will actually charge), never the configured item_variants.price.
+// overrides it to 230 — the picker must render that resolved price, never
+// the configured item_variants.price. This proves the HANDLER wires the
+// right repo method in; it does NOT prove the rendered price equals what a
+// submit would actually add (this fixture's stubResolver hardcodes each
+// code's price, independent of price_history) — that equality is what
+// TestItemVariantsForSale_MatchesPOSRepoResolveCurrentPrice
+// (catalog_repo_single_item_test.go) proves, one layer down, against the
+// real resolvers on both sides.
 func TestGetModifiers_ShowsCurrentPriceHistoryPriceNotConfiguredPrice(t *testing.T) {
 	dp, d := setupVariantModifiersTestDeps(t)
 	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)

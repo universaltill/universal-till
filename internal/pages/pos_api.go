@@ -835,7 +835,13 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// populated by this same guard running live, never by a restored
 		// snapshot, and is cleared with scanCache on every reset/restore).
 		if base, ok := d.Engine.ResolveBase(code); ok && base.VariantID == "" && base.ItemID != "" && !base.QtyFromCode && !d.Engine.HasNoSellableVariants(base.ItemID) {
-			variants, err := data.NewCatalogRepo(d.Db).ItemVariantsFor(r.Context(), base.ItemID)
+			// ut-docs#2228: this guard renders the SAME picker markup
+			// (renderModifierPicker below) that GET /ui/pos/modifiers does,
+			// so it needs the same price_history-aware fix — ItemVariantsFor
+			// would show the suggestion-strip/manual-code-entry cashier the
+			// variant's stale configured price instead of what the basket
+			// actually charges (independent review, blocker 1).
+			variants, err := data.NewCatalogRepo(d.Db).ItemVariantsForSale(r.Context(), base.ItemID)
 			if err != nil {
 				// Fail closed (ut-docs#2227 design note item 4): unlike
 				// internal/ui/buttons.go's #2209 fallback (a whole grid
