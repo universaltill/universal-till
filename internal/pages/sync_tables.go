@@ -16,10 +16,12 @@ import (
 // and held_sales, the two sources ListTablesWithState derives Occupied
 // from, are deliberately NOT (table_claims is called out there by name as
 // "ephemeral... never meant to survive a periodic snapshot"). held_sales
-// itself STILL isn't synced or proxied cross-till at all — a replica's
-// parked order stays local-only, invisible even to the primary's own
-// held_sales table. What travels instead, since ut-docs#1704, is the
-// TABLE OCCUPANCY it implies: hold_api.go's hold handler now keeps (rather
+// itself stays out of the bundle too; since ADR-0093 (ut-docs#1920) a
+// replica's parked order reaches the primary by its own live write-through
+// at park/resume time instead (held_sale_sync_proxy.go / sync_held_sales.go)
+// — but THIS endpoint's occupancy answer never depended on that. What
+// travels for occupancy, since ut-docs#1704, is the TABLE CLAIM the order
+// implies: hold_api.go's hold handler keeps (rather
 // than releases) the table_claims row the order's table was originally
 // picked with, reusing the exact write-through + TTL-reconciliation
 // mechanism ut-docs#1703 built for the live basket — so a held order needs

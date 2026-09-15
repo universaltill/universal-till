@@ -483,6 +483,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSyncTables(mux, dp)      // cross-till table occupancy, read-only, primary side (ut-docs#1392)
 	registerSyncTablesClaim(mux, dp) // cross-till table-claim write-through, primary side (ut-docs#1703)
 	registerSyncVouchers(mux, dp)    // cross-till voucher lookup + redemption write-through, primary side (ut-docs#1668)
+	registerSyncHeldSales(mux, dp)   // cross-till held-sale (open order) write-through + list, primary side (ADR-0093, ut-docs#1920)
 	registerSyncAdmin(mux, dp)
 	registerSyncAssets(mux, dp)
 	registerSyncQuarantinePage(mux, dp) // ut-docs#1133: quarantined LAN-sync journal entries, primary-only admin panel (ADR-0065 follow-up)

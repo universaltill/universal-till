@@ -67,7 +67,10 @@ func seedFullSale(t *testing.T, x func(q string, args ...any)) {
 	// table_id.sql) is pinned by the same reset/restore tests as every other
 	// column, not left to the reviewer's manual check alone.
 	x(`INSERT INTO tables (id, label, area_zone, seat_count, shape, pos_x, pos_y, created_at, updated_at) VALUES ('tbl1','T1','Terrace',4,'rect',500,500,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
-	x(`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id) VALUES ('h1','table 4',200,1,'{}','tbl1')`)
+	// ADR-0093 (ut-docs#1920): held_sales.updated_at (030_held_sales_updated_at.sql)
+	// — seeded explicitly for the same reason as table_id above, so its
+	// round-trip through held_sales_archive is pinned by these tests too.
+	x(`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id, updated_at, primary_synced) VALUES ('h1','table 4',200,1,'{}','tbl1','2026-09-15 10:00:00',1)`)
 	x(`INSERT INTO stock_movements (id, item_id, location_id, sale_line_id, type, quantity) VALUES ('sm1','i1','loc_main','l1','sale',-1)`)
 }
 
@@ -235,6 +238,21 @@ func TestResetThenRestoreRoundTrip(t *testing.T) {
 	var tableID string
 	if err := d.DB.QueryRow(`SELECT table_id FROM held_sales WHERE id='h1'`).Scan(&tableID); err != nil || tableID != "tbl1" {
 		t.Fatalf("restored held sale: table_id=%q err=%v, want tbl1", tableID, err)
+	}
+	// ADR-0093 (ut-docs#1920), 030_held_sales_updated_at.sql: updated_at must
+	// survive the archive round-trip too — a restored row landing back at the
+	// column's '' default is exactly the silent-loss class the table_id and
+	// tracking_token fixes above closed.
+	var updatedAt string
+	if err := d.DB.QueryRow(`SELECT updated_at FROM held_sales WHERE id='h1'`).Scan(&updatedAt); err != nil || updatedAt != "2026-09-15 10:00:00" {
+		t.Fatalf("restored held sale: updated_at=%q err=%v, want 2026-09-15 10:00:00", updatedAt, err)
+	}
+	// primary_synced (ADR-0093 Amendment A) must survive too: a restored
+	// mirror landing back at 0 would turn a since-resolved order into a
+	// ghost the reconcile pass can no longer tell from an outage-taken one.
+	var primarySynced int
+	if err := d.DB.QueryRow(`SELECT primary_synced FROM held_sales WHERE id='h1'`).Scan(&primarySynced); err != nil || primarySynced != 1 {
+		t.Fatalf("restored held sale: primary_synced=%d err=%v, want 1", primarySynced, err)
 	}
 	var openingCash int64
 	if err := d.DB.QueryRow(`SELECT opening_cash FROM shifts WHERE id='sh1'`).Scan(&openingCash); err != nil || openingCash != 5000 {

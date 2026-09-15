@@ -90,6 +90,19 @@ func exempt(path string) bool {
 		// /api/sync/stock incident this switch's own comment
 		// documents. TestSyncPullPathsAreExempt pins this entry.
 		"/api/sync/tables/release-all",
+		// ADR-0093 (ut-docs#1920): the primary-side held-sale (open order)
+		// write-through trio — the guarded upsert and the delete a
+		// replica's heldSaleWriteThrough / heldSaleDeleteWriteThrough
+		// (internal/pages/held_sale_sync_proxy.go) proxy to on every
+		// park / re-park / resume, and the read-only list its Open orders
+		// page merges in (fetchHeldSalesFromPrimary). syncTill-authed in
+		// the handler exactly like /api/sync/tables/claim above. Omitting
+		// them here would silently no-op the whole feature (the proxy
+		// falls back to local-only on a 401, and a parked order is once
+		// again invisible to every other till) exactly like the
+		// /api/sync/stock incident this switch's own comment documents.
+		// TestSyncPullPathsAreExempt pins all three entries.
+		"/api/sync/held-sales", "/api/sync/held-sales/upsert", "/api/sync/held-sales/delete",
 		// ADR-0082 (ut-docs#1739): the primary-side one-shot fetch of the
 		// shop-scoped plugin-settings encryption key a replica's KeyStore
 		// makes on first use (internal/pages/sync_admin.go, SecretsKeyFetcher).

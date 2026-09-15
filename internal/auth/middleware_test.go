@@ -201,6 +201,18 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		// — missing here at first is the exact /api/sync/stock failure
 		// class again.
 		"/api/sync/tables/release-all",
+		// ADR-0093 (ut-docs#1920): the primary-side held-sale (open order)
+		// write-through trio a replica's heldSaleWriteThrough /
+		// heldSaleDeleteWriteThrough / fetchHeldSalesFromPrimary
+		// (held_sale_sync_proxy.go) hit. Bearer-authed in the handler
+		// (syncTill), same as the table-claim entries above — without
+		// these the replica authenticates perfectly and is still 401'd
+		// here, so the proxy silently falls back to local-only and a
+		// parked order never crosses tills again: the /api/sync/stock
+		// failure class, again.
+		"/api/sync/held-sales",
+		"/api/sync/held-sales/upsert",
+		"/api/sync/held-sales/delete",
 		// ut-docs#1668: the primary-side cross-till voucher lookup a
 		// replica's fetchVoucherFromPrimary (voucher_sync_proxy.go) proxies
 		// to. Bearer-authed in the handler (syncTill), same as

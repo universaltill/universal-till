@@ -118,6 +118,21 @@ func parkCurrentBasket(ctx context.Context, d *common.Deps, repo *data.HeldSales
 	// passed a typed rename -- a blank field never re-derives a label
 	// from the clock or the customer, but a genuine rename is honoured
 	// rather than silently discarded.
+	//
+	// ADR-0093 (ut-docs#1920): both branches write through
+	// heldSaleWriteThrough (held_sale_sync_proxy.go) rather than
+	// repo.Upsert / repo.Insert directly, so on a REPLICA the order's
+	// CONTENTS reach the primary -- and every other till reading through
+	// it -- the moment it is parked. Its local fallback is the same
+	// insert-or-update-on-id write both branches always made (a fresh
+	// hold-<nanos> id never collides, so the first-park branch's old
+	// Insert and this Upsert are the same statement for it), created_at
+	// honoured on insert and left alone on update, so the #1918
+	// stable-identity / age-from-first-park behaviour is unchanged on
+	// every path. A primary refusal (another till already pushed a newer
+	// edit of this same order) or any failure reaching the primary keeps
+	// the park local-only, silently -- offline-first, never a frozen or
+	// failed tap.
 	if origin := d.Engine.HeldOrigin(); !origin.IsZero() {
 		held.ID = origin.ID
 		held.Label = origin.Label
@@ -125,9 +140,6 @@ func parkCurrentBasket(ctx context.Context, d *common.Deps, repo *data.HeldSales
 			held.Label = typedLabel
 		}
 		held.CreatedAt = origin.CreatedAt
-		if err := repo.Upsert(ctx, held); err != nil {
-			return err
-		}
 	} else {
 		label := typedLabel
 		if label == "" {
@@ -138,22 +150,23 @@ func parkCurrentBasket(ctx context.Context, d *common.Deps, repo *data.HeldSales
 		}
 		held.ID = fmt.Sprintf("hold-%d", time.Now().UnixNano())
 		held.Label = label
-		if err := repo.Insert(ctx, held); err != nil {
-			return err
-		}
+	}
+	if _, err := heldSaleWriteThrough(ctx, d, repo, held); err != nil {
+		return err
 	}
 	// ut-docs#1704: the live claim the table pick wrote (ut-docs#1390) is
-	// deliberately KEPT here, not released -- it's the only signal that
-	// makes a parked order's table occupancy visible cross-till, since
-	// held_sales itself still isn't synced or proxied to the primary at
-	// all. Locally this is harmless redundancy (ListTablesWithState
+	// deliberately KEPT here, not released -- it's the signal that makes
+	// a parked order's table occupancy visible cross-till (and was the
+	// ONLY one before ADR-0093 pushed the order's contents through too;
+	// table_claims' own sync is untouched by that ADR, an explicit
+	// non-goal). Locally this is harmless redundancy (ListTablesWithState
 	// already unions held_sales and table_claims, and the held_sales row
 	// alone was always enough for THIS till's own view). On a REPLICA
 	// it's the whole fix: the claim was already write-through'd to the
 	// primary the instant the table was picked (claimTableWriteThrough,
 	// pos_api.go), and the primary's own GET /api/sync/tables already
 	// serves it to every other till (ut-docs#1392) -- parking the order
-	// needs no NEW proxy call at all, it just must not throw away the
+	// needs no NEW claim call at all, it just must not throw away the
 	// one already made. Resume re-affirms the SAME row
 	// (claimTableWriteThrough's own-claim re-take, tables_repo.go)
 	// rather than re-claiming from scratch; the held/move handler
@@ -179,8 +192,11 @@ func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 	if id == "" {
 		return resumeNotFound
 	}
-	held, found, err := repo.Get(ctx, id)
-	if err != nil || !found {
+	// ADR-0093 (ut-docs#1920): heldSaleForResume, not repo.Get -- on a
+	// replica an order parked at ANOTHER till exists only on the primary
+	// (the Open orders page lists it from there), and must open here too.
+	held, found := heldSaleForResume(ctx, d, repo, id)
+	if !found {
 		return resumeNotFound
 	}
 	var snap pos.BasketSnapshot
@@ -261,7 +277,11 @@ func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 	if prevTable != restoredTable {
 		releaseTableClaim(ctx, d, posRepo, prevTable)
 	}
-	if err := repo.Delete(ctx, id); err != nil {
+	// ADR-0093 (ut-docs#1920): heldSaleDeleteWriteThrough, not repo.Delete
+	// -- on a replica the PRIMARY's copy goes too, so the order stops
+	// showing as open on every other till; the local row is always deleted
+	// regardless, and the primary's answer never blocks the resume.
+	if _, err := heldSaleDeleteWriteThrough(ctx, d, repo, id); err != nil {
 		// The sale is restored either way; a stale row is the lesser evil.
 		_ = err
 	}
@@ -529,8 +549,20 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		// of nothing that will ever release it. SetTable's own no-op-on-
 		// missing-id tolerance is still fine for everything before this
 		// point; it just must never be reached.
-		held, found, err := repo.Get(ctx, id)
-		if err != nil || !found {
+		//
+		// ADR-0093 Amendment A (F10): this lookup goes through
+		// heldSaleForResume, the same primary-first read resumeHeldSale
+		// uses, NOT repo.Get's local-only row. A move built from the
+		// stale local mirror and written through would push THIS till's
+		// out-of-date payload/line_count/total_minor onto the primary,
+		// silently erasing whatever another till has added to the order
+		// since -- the exact F1 harm, reopened via a different call site.
+		// heldSaleForResume already drops a mirror the primary has since
+		// resolved (F2's ghost case) and falls back to the local row when
+		// the primary is unreachable, so this move gets the same
+		// offline-first degradation as every other mutation here.
+		held, found := heldSaleForResume(ctx, d, repo, id)
+		if !found {
 			renderHeldStrip(w, r)
 			return
 		}
@@ -560,7 +592,21 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 					return
 				}
 			}
-			if err := repo.SetTable(ctx, id, tableID); err != nil {
+			// ADR-0093 Amendment A (F3): the move commits through
+			// heldSaleWriteThrough -- the fetched row with only its TableID
+			// changed and UpdatedAt cleared so the write-through stamps now
+			// (a move IS a write to the order) -- not repo.SetTable's
+			// local-only UPDATE, which never reached the primary and never
+			// bumped updated_at, leaving every other till's Open orders page
+			// and this till's strip permanently disagreeing on a moved
+			// order's table. Same fallback stance as park / re-park: any
+			// failure reaching the primary, or its refusal, lands the move
+			// locally only, silently. Payload / label / created_at ride
+			// through untouched (Upsert leaves created_at alone on update).
+			moved := held
+			moved.TableID = tableID
+			moved.UpdatedAt = ""
+			if _, err := heldSaleWriteThrough(ctx, d, repo, moved); err != nil {
 				if tableID != "" {
 					// Commit failed after the claim was already taken -- undo
 					// it, mirroring pos_api.go's own "SetTable refused: undo
