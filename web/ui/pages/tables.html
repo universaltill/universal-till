@@ -125,6 +125,22 @@
   </form>
 </dialog>
 
+{{/* Self-order QR (ut-docs#815): one shared dialog, its body swapped by
+     each row's "QR" button (hx-get="/api/tables/{id}/qr") above — same
+     shape as #table-add-modal, just with its content fetched instead of
+     a form. */}}
+<dialog id="table-qr-modal" class="modifier-modal" aria-labelledby="table-qr-title">
+  <div class="modifier-actions" style="justify-content:space-between">
+    <h3 id="table-qr-title" style="margin:0">{{ T "tables.qr.title" }}</h3>
+    {{/* aria-label (review finding): a bare "✕" has no accessible name —
+         every other close/cancel control on this page carries real text.
+         Existing key, so no language-pack follow-up. */}}
+    <button type="button" class="btn secondary" aria-label="{{ T "common.close" }}"
+            onclick="document.getElementById('table-qr-modal').close()"><span aria-hidden="true">✕</span></button>
+  </div>
+  <div id="table-qr-body" style="text-align:center"></div>
+</dialog>
+
 <div class="users-layout" style="margin-block-start:1rem">
   <div class="card users-list">
     {{ if .tables }}
@@ -194,6 +210,17 @@
                 {{ if .Enabled }}{{ T "tables.deactivate" }}{{ else }}{{ T "tables.activate" }}{{ end }}
               </button>
             </form>
+            {{/* Self-order QR (ut-docs#815): only offered for an enabled
+                 table — a disabled one is exactly the case /self-order's
+                 own table-param validation refuses, so a QR for it would
+                 just print a code that silently falls back to no table. */}}
+            {{ if .Enabled }}
+            <button type="button" class="btn secondary" data-testid="table-qr-open"
+                    hx-get="/api/tables/{{ .ID }}/qr" hx-target="#table-qr-body" hx-swap="innerHTML"
+                    hx-on::after-request="if (event.detail.successful) { document.getElementById('table-qr-modal').showModal(); }">
+              {{ T "tables.qr.button" }}
+            </button>
+            {{ end }}
             {{/* Manual "Free table" override (ut-docs#1393): only offered
                  while the table actually reads occupied — releasing an
                  already-free table is a harmless no-op server-side, but

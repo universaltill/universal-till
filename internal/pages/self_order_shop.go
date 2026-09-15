@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -128,10 +129,29 @@ func loadShopItems(ctx context.Context, d *common.Deps) ([]shopItem, error) {
 func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /self-order/shop", func(w http.ResponseWriter, r *http.Request) {
 		cats, _ := data.NewCatalogRepo(d.Db).ReadLookup(r.Context(), "categories")
+		// idleResetURL (ut-docs#815 review finding, BLOCKER 2): the idle
+		// timer sends this page back to /self-order, which Reset()s the
+		// basket -- and with it the table a QR session bound
+		// (registerSelfOrder). On a shop's own kiosk terminal that is exactly
+		// right ("start fresh for the next customer"), but on a GUEST'S OWN
+		// PHONE the default 60s of not touching the screen (reading the menu,
+		// talking to the table) silently unbound their table and dropped the
+		// next checkout back onto the card/contactless path their phone
+		// cannot use. Carrying ?table= through the bounce re-binds the same
+		// table on the way back in, where it is re-validated (enabled, still
+		// exists) exactly as on the first scan -- this never resurrects a
+		// table /self-order would refuse today.
+		idleResetURL := "/self-order"
+		if d.KioskEngine != nil {
+			if tableID := d.KioskEngine.TableID(); tableID != "" {
+				idleResetURL += "?table=" + url.QueryEscape(tableID)
+			}
+		}
 		httpx.RenderPartial("ui/pages/self_order_shop.html", map[string]any{
 			"title":         "Order here",
 			"Categories":    cats,
 			"idleResetSecs": d.CurrentState().KioskIdleResetSeconds,
+			"idleResetURL":  idleResetURL,
 		})(w, r)
 	})
 
@@ -322,6 +342,25 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		if r.Form.Get("order_type") == pos.OrderTypeTakeaway {
 			orderType = pos.OrderTypeTakeaway
 		}
+		// ut-docs#815 (review finding, BLOCKER 1): a table-bound session
+		// (/self-order?table=<id> on a guest's own phone) stays dine-in.
+		// SetOrderType -> applyTablePolicyLocked clears the basket's table
+		// the moment no dine-in line remains (ADR-0073 Decision 5,
+		// ut-docs#1355), and selfOrderForcesCounterCheckout reads exactly
+		// that table to decide the checkout path -- so one tap on the cart's
+		// Takeaway button silently unbound the table AND dropped the guest
+		// back onto the card/contactless payment picker, on a phone with no
+		// card terminal attached (reproduced: it completed a real sale).
+		// Clamped here rather than by re-applying the table after the switch:
+		// re-applying would leave an all-takeaway basket holding a table,
+		// exactly the state ADR-0073 D5 forbids. The cart hides the toggle
+		// for a table-bound session too (self_order_cart.html), same
+		// UI-soft-gate + server-enforcement pairing ut-docs#1355 established
+		// for the cashier's own table picker -- this surface is anonymous and
+		// auth-exempt, so the UI alone can never be the enforcement point.
+		if orderType == pos.OrderTypeTakeaway && d.KioskEngine.TableID() != "" {
+			orderType = ""
+		}
 		d.KioskEngine.SetOrderType(orderType)
 		renderKioskCart(w, r, d)
 	})
@@ -354,7 +393,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "basket is empty", http.StatusBadRequest)
 			return
 		}
-		if d.CurrentState().KioskPaymentMode == common.KioskPaymentModeCounter {
+		if selfOrderForcesCounterCheckout(d) {
 			renderKioskCounterConfirmPicker(w, r, d)
 			return
 		}
@@ -368,11 +407,12 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 
 	mux.HandleFunc("POST /api/self-order/checkout", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
-		// ut-docs#582: counter-mode checkout is a COMPLETELY separate path
-		// -- checked before any method/ListActiveNonCashPaymentMethods code
-		// runs -- because it creates no sale/payment at all. Kiosk (default)
-		// mode below this branch is byte-identical to before this card.
-		if d.CurrentState().KioskPaymentMode == common.KioskPaymentModeCounter {
+		// ut-docs#582/#815: counter-order checkout is a COMPLETELY separate
+		// path -- checked before any method/ListActiveNonCashPaymentMethods
+		// code runs -- because it creates no sale/payment at all. Kiosk
+		// (default) mode below this branch is byte-identical to before
+		// these cards for a session with no table bound.
+		if selfOrderForcesCounterCheckout(d) {
 			completeCounterOrderCheckout(w, r, d)
 			return
 		}
@@ -553,6 +593,22 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 	})
 }
 
+// selfOrderForcesCounterCheckout reports whether THIS basket must check out
+// as a kiosk_counter_orders row (ut-docs#582's "pay at counter" path)
+// rather than attempting a sale/card payment. True whenever the till's
+// own kiosk.payment_mode is "counter" (unchanged #582 behaviour), OR
+// whenever the current self-order session is bound to a physical table
+// (ut-docs#815) -- d.KioskEngine.TableID() is only ever non-empty when
+// this session started at /self-order?table=<validEnabledTableID>
+// (registerSelfOrder). A guest's own phone has no card terminal attached
+// to it regardless of what the till itself is configured for, so a table
+// session ALWAYS forces the counter path -- a deliberate Architect
+// decision (ut-docs#815 brief), not a bug: the till's kiosk.payment_mode
+// setting only ever governs a checkout with no table bound.
+func selfOrderForcesCounterCheckout(d *common.Deps) bool {
+	return d.CurrentState().KioskPaymentMode == common.KioskPaymentModeCounter || d.KioskEngine.TableID() != ""
+}
+
 // renderKioskCounterConfirmPicker renders the "pay at counter" confirm
 // screen (ut-docs#582) — the counter-mode twin of renderKioskPaymentPicker
 // above: no payment methods to choose, just one big "place order" button.
@@ -606,7 +662,16 @@ func completeCounterOrderCheckout(w http.ResponseWriter, r *http.Request, d *com
 	repo := data.NewKioskCounterOrdersRepo(d.Db)
 	order, err := repo.Create(r.Context(), data.KioskCounterOrder{
 		OrderType: d.KioskEngine.OrderType(),
-		Lines:     orderLines,
+		// TableID/TableLabel (ut-docs#815): "" for a plain kiosk-till
+		// counter order (#582, unaffected) -- only set when this checkout
+		// is forced by a table-bound session (selfOrderForcesCounterCheckout).
+		// Read straight off the engine rather than re-querying the tables
+		// repo: SetTable (registerSelfOrder) already resolved and cached
+		// both at session start, same as CustomerID/CustomerName elsewhere
+		// on this same Service.
+		TableID:    d.KioskEngine.TableID(),
+		TableLabel: d.KioskEngine.TableLabel(),
+		Lines:      orderLines,
 	})
 	if err != nil {
 		http.Error(w, "failed to place order", http.StatusInternalServerError)
@@ -665,29 +730,42 @@ func printCounterOrderTicketAsync(d *common.Deps, order data.KioskCounterOrder) 
 		// Arabic-Indic glyphs — only the decimal/grouping convention for a
 		// weighed line's fractional qty can change here.
 		locale := httpx.DefaultLocale()
-		items := make([]print.KitchenItem, 0, len(order.Lines))
-		for _, l := range order.Lines {
-			items = append(items, print.KitchenItem{
-				Qty:       httpx.FormatQtyLatin(l.Qty, locale),
-				Name:      l.Name,
-				Modifiers: l.Modifiers,
-			})
-		}
-		ticket := print.KitchenTicket{
-			Station:    kitchenTicketText(locale, cfg.Charset, "kitchen.ticket.station_default"),
-			OrderNo:    order.DisplayNo,
-			OrderLabel: kitchenTicketText(locale, cfg.Charset, "kitchen.ticket.order_label"),
-			OrderType:  kitchenOrderTypeLabel(locale, cfg.Charset, order.OrderType),
-			Timestamp:  order.CreatedAt,
-			Charset:    cfg.Charset,
-			Items:      items,
-		}
+		ticket := kitchenTicketForCounterOrder(order, cfg, locale)
 		tr, err := print.TransportForAddress(cfg.KitchenAddress)
 		if err != nil || tr == nil {
 			return
 		}
 		_ = tr.Print(ctx, print.RenderKitchenTicket(ticket))
 	}()
+}
+
+// kitchenTicketForCounterOrder builds the print.KitchenTicket for a counter
+// order — extracted out of printCounterOrderTicketAsync's own goroutine so
+// it's unit-testable directly (byte-comparison tests still cover the
+// goroutine end-to-end via printCounterOrderTicketAsync itself). Table
+// (ut-docs#815) mirrors kitchenTicketFor's own detail.TableLabel handling
+// (kitchen_print.go, ut-docs#820) exactly: the raw, already-resolved table
+// label, "" for a plain kiosk-till counter order with no table --
+// print.KitchenTicket already treats "" as "print nothing" on that line.
+func kitchenTicketForCounterOrder(order data.KioskCounterOrder, cfg print.Config, locale string) print.KitchenTicket {
+	items := make([]print.KitchenItem, 0, len(order.Lines))
+	for _, l := range order.Lines {
+		items = append(items, print.KitchenItem{
+			Qty:       httpx.FormatQtyLatin(l.Qty, locale),
+			Name:      l.Name,
+			Modifiers: l.Modifiers,
+		})
+	}
+	return print.KitchenTicket{
+		Station:    kitchenTicketText(locale, cfg.Charset, "kitchen.ticket.station_default"),
+		OrderNo:    order.DisplayNo,
+		OrderLabel: kitchenTicketText(locale, cfg.Charset, "kitchen.ticket.order_label"),
+		OrderType:  kitchenOrderTypeLabel(locale, cfg.Charset, order.OrderType),
+		Table:      order.TableLabel,
+		Timestamp:  order.CreatedAt,
+		Charset:    cfg.Charset,
+		Items:      items,
+	}
 }
 
 // kioskSaleLinesAndTotal converts the current basket into SaleLineInput rows
@@ -759,7 +837,12 @@ func renderKioskCartWithMessage(w http.ResponseWriter, r *http.Request, d *commo
 		// something the next screen immediately contradicts. Reuses the
 		// existing "selforder.counter.place_order" key rather than adding a
 		// new one, so this costs no extra language-pack follow-up.
-		"CounterMode": d.CurrentState().KioskPaymentMode == common.KioskPaymentModeCounter,
+		//
+		// ut-docs#815 (review finding): selfOrderForcesCounterCheckout, not
+		// the till's payment mode alone — a table-bound session never takes
+		// payment on the phone either, so its cart button must not promise
+		// one (in ar/fa/tr "selforder.checkout" literally reads "Pay").
+		"CounterMode": selfOrderForcesCounterCheckout(d),
 	})(w, r)
 }
 

@@ -117,7 +117,21 @@ type KioskCounterOrder struct {
 	Status      string
 	CreatedAt   string
 	CollectedAt string
-	Lines       []KioskCounterOrderLine
+	// TableID/TableLabel (ut-docs#815, migration 029) are the physical
+	// table this order was placed from, via /self-order?table=<id> on the
+	// guest's own phone — both empty for a plain kiosk-till counter order
+	// (today's #582 flow, completely unaffected). TableID is the only
+	// field Create persists (table_id); TableLabel is never a column —
+	// Create returns it unchanged from what the caller (the checkout
+	// handler, which already resolved it via SetTable) passed in, while
+	// ListOpen resolves it fresh via a LEFT JOIN tables, the same
+	// GetSaleDetail/TableLabel convention #820 already established for a
+	// real sale. That split matters: a table can be renamed/deactivated
+	// after an order was placed, and the staff board should show what the
+	// table is called NOW, not a stale label frozen at order time.
+	TableID    string
+	TableLabel string
+	Lines      []KioskCounterOrderLine
 }
 
 type KioskCounterOrdersRepo struct {
@@ -174,9 +188,9 @@ FROM kiosk_counter_orders WHERE display_no LIKE ? || '%'`,
 	displayNo := counterOrderDisplayNoPrefix + strconv.FormatInt(next, 10)
 
 	if _, err := tx.ExecContext(ctx, `
-INSERT INTO kiosk_counter_orders (id, display_no, order_type, lines_json, status, created_at)
-VALUES (?, ?, ?, ?, ?, ?)`,
-		id, displayNo, order.OrderType, string(linesJSON), KioskCounterOrderStatusOpen, now); err != nil {
+INSERT INTO kiosk_counter_orders (id, display_no, order_type, lines_json, status, created_at, table_id)
+VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, displayNo, order.OrderType, string(linesJSON), KioskCounterOrderStatusOpen, now, nullIfEmpty(order.TableID)); err != nil {
 		return KioskCounterOrder{}, fmt.Errorf("insert counter order: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -192,9 +206,17 @@ VALUES (?, ?, ?, ?, ?, ?)`,
 // ListOpen returns every open counter order, oldest first — the natural
 // "what's still waiting" queue order for the staff-facing board.
 func (r *KioskCounterOrdersRepo) ListOpen(ctx context.Context) ([]KioskCounterOrder, error) {
+	// LEFT JOIN tables (ut-docs#815): resolves TableLabel fresh at read
+	// time, same convention as pos_repo.go's GetSaleDetail — a table can be
+	// renamed after the order was placed, and the board should show its
+	// current name. COALESCE(t.label, '') keeps a NULL table_id (the
+	// common, no-table case) and a table_id whose row is somehow gone both
+	// reading as "" rather than NULL.
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, display_no, order_type, lines_json, status, created_at, COALESCE(collected_at, '')
-FROM kiosk_counter_orders WHERE status = ? ORDER BY created_at ASC`, KioskCounterOrderStatusOpen)
+SELECT k.id, k.display_no, k.order_type, k.lines_json, k.status, k.created_at, COALESCE(k.collected_at, ''),
+       COALESCE(k.table_id, ''), COALESCE(t.label, '')
+FROM kiosk_counter_orders k LEFT JOIN tables t ON t.id = k.table_id
+WHERE k.status = ? ORDER BY k.created_at ASC`, KioskCounterOrderStatusOpen)
 	if err != nil {
 		return nil, fmt.Errorf("list open counter orders: %w", err)
 	}
@@ -204,7 +226,7 @@ FROM kiosk_counter_orders WHERE status = ? ORDER BY created_at ASC`, KioskCounte
 	for rows.Next() {
 		var o KioskCounterOrder
 		var linesJSON string
-		if err := rows.Scan(&o.ID, &o.DisplayNo, &o.OrderType, &linesJSON, &o.Status, &o.CreatedAt, &o.CollectedAt); err != nil {
+		if err := rows.Scan(&o.ID, &o.DisplayNo, &o.OrderType, &linesJSON, &o.Status, &o.CreatedAt, &o.CollectedAt, &o.TableID, &o.TableLabel); err != nil {
 			return nil, fmt.Errorf("scan counter order: %w", err)
 		}
 		if linesJSON != "" {

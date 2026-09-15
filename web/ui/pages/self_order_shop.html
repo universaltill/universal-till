@@ -139,13 +139,20 @@
       // screen) — this route is also auth-exempt/no-session, so a plain
       // client-side reload after inactivity clears the screen (and the
       // shared till-level basket) for the next customer.
+      //
+      // ut-docs#815 (review finding): idleResetURL, not a hardcoded
+      // '/self-order' — it carries ?table= back for a table-QR session, so
+      // sitting at the table without touching the phone for a minute
+      // doesn't silently unbind the table (and with it the forced
+      // pay-at-counter checkout). See the handler for the full story.
       (function () {
         var secs = {{ .idleResetSecs }};
+        var resetURL = {{ .idleResetURL }};
         if (!secs || secs <= 0) return;
         var timer;
         function reset() {
           clearTimeout(timer);
-          timer = setTimeout(function () { window.location.href = '/self-order'; }, secs * 1000);
+          timer = setTimeout(function () { window.location.href = resetURL; }, secs * 1000);
         }
         ['pointerdown', 'keydown', 'touchstart'].forEach(function (evt) {
           document.addEventListener(evt, reset, { passive: true });

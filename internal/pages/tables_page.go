@@ -1,11 +1,16 @@
 package pages
 
 import (
+	"encoding/base64"
+	"html/template"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	qrcode "github.com/skip2/go-qrcode"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
@@ -411,5 +416,59 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		http.Redirect(w, r, "/tables", http.StatusSeeOther)
+	})
+
+	// Self-order QR (ut-docs#815): a staff-facing surface (manager/back-
+	// office, same gate as every other /api/tables/* route here) that lets
+	// a shop view/print the code a guest scans AT that table to reach
+	// /self-order?table=<id> on their own phone. Same data:image/png URI
+	// pattern as orderTrackingQRView (order_tracking.go) / the enrol-token
+	// QR (sync_api.go) -- best-effort at building a dialable URL (no LAN
+	// address -> ErrKey, never a 500), so a manager previewing this on a
+	// till with no network still gets a clear message instead of a broken
+	// panel. GET, not gated by requirePrimary: previewing/printing a QR
+	// reads nothing that differs between primary and replica.
+	mux.HandleFunc("GET /api/tables/{id}/qr", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := requireManager(w, r); !ok {
+			return
+		}
+		id := r.PathValue("id")
+		t, found, err := posRepo.GetTable(r.Context(), id)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "tables.error.load_failed", "tables_qr", err)
+			return
+		}
+		if !found {
+			httpx.RenderPartial("ui/partials/table_qr.html", map[string]any{
+				"ErrKey": "tables.error.not_found",
+			})(w, r)
+			return
+		}
+		host, err := advertisableHost(r.Host)
+		if err != nil {
+			httpx.RenderPartial("ui/partials/table_qr.html", map[string]any{
+				"Label":  t.Label,
+				"ErrKey": "sync.error.no_lan_address",
+			})(w, r)
+			return
+		}
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		u := scheme + "://" + host + "/self-order?table=" + url.QueryEscape(t.ID)
+		png, err := qrcode.Encode(u, qrcode.Medium, 220)
+		if err != nil {
+			httpx.RenderPartial("ui/partials/table_qr.html", map[string]any{
+				"Label":  t.Label,
+				"ErrKey": "sync.error.no_lan_address",
+			})(w, r)
+			return
+		}
+		httpx.RenderPartial("ui/partials/table_qr.html", map[string]any{
+			"Label": t.Label,
+			"QR":    template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(png)),
+			"URL":   u,
+		})(w, r)
 	})
 }

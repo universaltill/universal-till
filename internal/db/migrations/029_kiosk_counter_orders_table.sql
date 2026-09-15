@@ -1,0 +1,29 @@
+-- 029_kiosk_counter_orders_table.sql — universaltill/ut-docs#815 ("Table
+-- ordering + order-by-barcode/QR from the table"). Adds table_id to
+-- kiosk_counter_orders (026_kiosk_counter_orders.sql, ut-docs#582) so a
+-- guest's own-phone order, placed via /self-order?table=<tables.id>, can
+-- be traced back to the physical table it came from -- the kitchen ticket
+-- and the staff "pay at counter" board both show the table's label when
+-- it's set (internal/pages/self_order_shop.go /
+-- kiosk_counter_orders_page.go), exactly the way #820 already resolves
+-- sales.table_id -> TableLabel for a normal sale/held order. NULL (the
+-- default, and every pre-existing row) means "no table" -- an ordinary
+-- kiosk-till counter order that never involved a QR/table at all is
+-- completely unaffected.
+--
+-- No ON DELETE clause: tables are soft-disabled (enabled = 0), never
+-- hard-deleted (ADR-0054) -- a real delete of a referenced row is not
+-- expected to happen in practice. SQLite's default FK action (NO ACTION,
+-- since PRAGMA foreign_keys is pinned ON -- see 001_init.sql's own note)
+-- is the same convention 002_refund_of_line_id.sql's
+-- sale_lines.refund_of_line_id FK and 001_init.sql's own
+-- sales/held_sales.table_id columns already use.
+--
+-- IF NOT EXISTS on the index only -- SQLite has no ADD COLUMN IF NOT
+-- EXISTS. db.go's execMigrationStatements already supplies that
+-- idempotence itself for every ADD COLUMN (ut-docs#1412, checked against
+-- pragma_table_info immediately before each statement runs), so this
+-- migration is safe to replay unmodified, the same way 006/008/013/017/
+-- 019's own plain ADD COLUMN migrations already are.
+ALTER TABLE kiosk_counter_orders ADD COLUMN table_id TEXT REFERENCES tables(id);
+CREATE INDEX IF NOT EXISTS idx_kiosk_counter_orders_table ON kiosk_counter_orders(table_id);

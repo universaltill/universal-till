@@ -1,0 +1,14 @@
+{{/* Self-order QR for one table (ut-docs#815) — loaded into
+     tables.html's #table-qr-modal dialog via hx-get. Same data:image/png
+     URI pattern as self_order_confirmation.html's tracking QR: ErrKey is
+     an i18n key (never raw text — this partial has no error path of its
+     own to guard against a bad server message), shown instead of the
+     image whenever the table wasn't found or no LAN-dialable address
+     could be built. */}}
+{{ if .ErrKey }}
+<p class="login-error">{{ T .ErrKey }}</p>
+{{ else }}
+<p class="muted">{{ printf (T "tables.qr.caption") .Label }}</p>
+<img src="{{ .QR }}" alt="" width="220" height="220" />
+<p class="muted" style="overflow-wrap: anywhere;">{{ .URL }}</p>
+{{ end }}

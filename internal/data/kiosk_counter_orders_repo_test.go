@@ -188,3 +188,77 @@ func TestKioskCounterOrdersRepo_MarkCollectedUnknownIDIsNoop(t *testing.T) {
 		t.Fatalf("MarkCollected on unknown id: %v", err)
 	}
 }
+
+// ut-docs#815: a counter order created from a table-QR self-order session
+// (internal/pages/self_order_shop.go) carries the table it came from.
+// Create must persist TableID, and ListOpen — reading it back for the
+// staff board — must resolve TableLabel via the same LEFT JOIN tables
+// pattern GetSaleDetail already uses for a sale's own TableLabel
+// (ut-docs#820), never a raw id the board would have to look up itself.
+func TestKioskCounterOrdersRepo_CreateAndListOpenResolveTableLabel(t *testing.T) {
+	d := openKioskCounterOrdersDB(t, "counter_orders_table.db")
+	ctx := context.Background()
+	posRepo := NewPOSRepo(d.DB)
+	tableID, err := posRepo.CreateTable(ctx, "T5", "Terrace", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+
+	repo := NewKioskCounterOrdersRepo(d.DB)
+	created, err := repo.Create(ctx, KioskCounterOrder{
+		OrderType:  "",
+		TableID:    tableID,
+		TableLabel: "T5", // as the checkout handler already knows it, not read back here
+		Lines:      []KioskCounterOrderLine{{Name: "Flat White", Qty: 1}},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if created.TableID != tableID {
+		t.Fatalf("Create result TableID = %q, want %q", created.TableID, tableID)
+	}
+
+	var gotTableID string
+	if err := d.DB.QueryRow(`SELECT COALESCE(table_id, '') FROM kiosk_counter_orders WHERE id = ?`, created.ID).Scan(&gotTableID); err != nil {
+		t.Fatal(err)
+	}
+	if gotTableID != tableID {
+		t.Fatalf("stored table_id = %q, want %q", gotTableID, tableID)
+	}
+
+	open, err := repo.ListOpen(ctx)
+	if err != nil {
+		t.Fatalf("ListOpen: %v", err)
+	}
+	if len(open) != 1 {
+		t.Fatalf("ListOpen: want 1, got %d", len(open))
+	}
+	if open[0].TableID != tableID {
+		t.Fatalf("ListOpen TableID = %q, want %q", open[0].TableID, tableID)
+	}
+	if open[0].TableLabel != "T5" {
+		t.Fatalf("ListOpen TableLabel = %q, want %q (resolved via join, not the write-time value)", open[0].TableLabel, "T5")
+	}
+}
+
+// A plain counter order with no table (the existing #582 kiosk-till flow)
+// must round-trip with empty TableID/TableLabel — no regression from this
+// card's join.
+func TestKioskCounterOrdersRepo_ListOpenNoTableIsEmpty(t *testing.T) {
+	d := openKioskCounterOrdersDB(t, "counter_orders_no_table.db")
+	ctx := context.Background()
+	repo := NewKioskCounterOrdersRepo(d.DB)
+	if _, err := repo.Create(ctx, KioskCounterOrder{Lines: []KioskCounterOrderLine{{Name: "Tea", Qty: 1}}}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	open, err := repo.ListOpen(ctx)
+	if err != nil {
+		t.Fatalf("ListOpen: %v", err)
+	}
+	if len(open) != 1 {
+		t.Fatalf("ListOpen: want 1, got %d", len(open))
+	}
+	if open[0].TableID != "" || open[0].TableLabel != "" {
+		t.Fatalf("expected no table on a plain counter order, got TableID=%q TableLabel=%q", open[0].TableID, open[0].TableLabel)
+	}
+}

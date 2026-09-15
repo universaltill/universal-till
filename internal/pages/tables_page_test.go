@@ -227,6 +227,10 @@ func TestTablesPage_CreateEditPositionDeactivateAndRender(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(body, "T1") {
 		t.Fatalf("page render: code=%d body missing table", rec.Code)
 	}
+	// ut-docs#815: an enabled table's row offers the self-order QR button.
+	if !strings.Contains(body, `hx-get="/api/tables/`+id+`/qr"`) {
+		t.Fatalf("page render: missing the self-order QR button for table %s: %s", id, body)
+	}
 
 	// Edit name/zone/seats/shape.
 	rec = postForm(mux, "/api/tables/"+id, url.Values{

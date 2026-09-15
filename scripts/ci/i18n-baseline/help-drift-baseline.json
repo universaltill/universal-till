@@ -843,17 +843,17 @@
         "headings": 3,
         "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 7,
+        "top_bullets": 8,
         "bold_leadins": 2
       },
       "english": {
         "headings": 3,
         "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 7,
+        "top_bullets": 8,
         "bold_leadins": 0
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#815: a new bullet (per-table self-order QR) added to English and this locale keeps top_bullets in sync (7->8); the pre-existing bold_leadins gap (tr uses two bold lead-ins English does not) is untouched."
     },
     {
       "locale": "tr",
