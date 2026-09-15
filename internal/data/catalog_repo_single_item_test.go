@@ -373,6 +373,192 @@ func TestItemCurrentPrices_MatchesPOSRepoResolveCurrentPrice(t *testing.T) {
 	}
 }
 
+// TestGetItemLabel_UsesActivePriceHistoryRow is ut-docs#2260: a printed
+// shelf label must show the item's CURRENT effective price, not its
+// configured base_price, whenever an active price_history row overrides
+// it — same root-cause shape as ut-docs#2228 (variant picker) and
+// ut-docs#2258 (sale-screen/kiosk tile), for the label-print surface.
+func TestGetItemLabel_UsesActivePriceHistoryRow(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	// i1 has an active promotional price_history row (250 instead of its
+	// configured 310) — the exact £3.10-vs-£2.50 shape from the ticket.
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Cola", BasePrice: 310, IsActive: true})
+	// i2 has no price_history row at all — must fall back to base_price.
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i2", SKU: "S2", Name: "Water", BasePrice: 100, IsActive: true})
+	// i3 has an EXPIRED price_history row — must NOT apply, falls back too.
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i3", SKU: "S3", Name: "Juice", BasePrice: 250, IsActive: true})
+	// i4 has a FUTURE-DATED price_history row — must NOT apply either.
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i4", SKU: "S4", Name: "Muffin", BasePrice: 180, IsActive: true})
+
+	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	expiredStart := time.Now().Add(-48 * time.Hour).UTC().Format(time.RFC3339)
+	expiredEnd := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
+	future := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	if _, err := db.Exec(`INSERT INTO price_history(id, item_id, price, starts_at) VALUES('ph1','i1',250,?)`, past); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO price_history(id, item_id, price, starts_at, ends_at) VALUES('ph2','i3',999,?,?)`, expiredStart, expiredEnd); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO price_history(id, item_id, price, starts_at) VALUES('ph3','i4',999,?)`, future); err != nil {
+		t.Fatal(err)
+	}
+
+	l, ok, err := repo.GetItemLabel(ctx, "i1")
+	if err != nil || !ok {
+		t.Fatalf("expected label, got ok=%v err=%v", ok, err)
+	}
+	if l.PriceMinor != 250 {
+		t.Fatalf("expected i1's active price_history override 250, got %d", l.PriceMinor)
+	}
+
+	l2, ok, err := repo.GetItemLabel(ctx, "i2")
+	if err != nil || !ok {
+		t.Fatalf("expected label, got ok=%v err=%v", ok, err)
+	}
+	if l2.PriceMinor != 100 {
+		t.Fatalf("expected i2's configured price 100 (no price_history row), got %d", l2.PriceMinor)
+	}
+
+	l3, ok, err := repo.GetItemLabel(ctx, "i3")
+	if err != nil || !ok {
+		t.Fatalf("expected label, got ok=%v err=%v", ok, err)
+	}
+	if l3.PriceMinor != 250 {
+		t.Fatalf("expected i3's configured price 250 (price_history row EXPIRED), got %d", l3.PriceMinor)
+	}
+
+	l4, ok, err := repo.GetItemLabel(ctx, "i4")
+	if err != nil || !ok {
+		t.Fatalf("expected label, got ok=%v err=%v", ok, err)
+	}
+	if l4.PriceMinor != 180 {
+		t.Fatalf("expected i4's configured price 180 (price_history row FUTURE-DATED), got %d", l4.PriceMinor)
+	}
+}
+
+// TestGetItemLabel_MatchesPOSRepoResolveCurrentPrice is the direct proof of
+// ut-docs#2260's acceptance criterion: the price printed on the shelf label
+// equals the price the basket line receives when that item is sold.
+func TestGetItemLabel_MatchesPOSRepoResolveCurrentPrice(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	catalogRepo := data.NewCatalogRepo(db)
+	posRepo := data.NewPOSRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Cola", BasePrice: 310, IsActive: true})
+
+	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	if _, err := db.Exec(`INSERT INTO price_history(id, item_id, price, starts_at) VALUES('ph1','i1',250,?)`, past); err != nil {
+		t.Fatal(err)
+	}
+
+	label, ok, err := catalogRepo.GetItemLabel(ctx, "i1")
+	if err != nil || !ok {
+		t.Fatalf("expected label, got ok=%v err=%v", ok, err)
+	}
+	basketPrice, err := posRepo.ResolveCurrentPrice(ctx, "i1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if label.PriceMinor != basketPrice {
+		t.Fatalf("printed label price %d != basket line price %d — same price_history state must resolve identically", label.PriceMinor, basketPrice)
+	}
+	if label.PriceMinor != 250 {
+		t.Fatalf("sanity: expected the active override 250, got %d", label.PriceMinor)
+	}
+}
+
+// TestGetVariantLabel_UsesActivePriceHistoryRow is ut-docs#2260's variant
+// counterpart to TestGetItemLabel_UsesActivePriceHistoryRow above.
+func TestGetVariantLabel_UsesActivePriceHistoryRow(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Cola", BasePrice: 120, IsActive: true})
+	// v1 has an active promotional price_history row (250 instead of its
+	// configured 310).
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v1", ItemID: "i1", SKU: "S1-A", Name: "Regular", Price: 310, IsActive: true})
+	// v2 has no price_history row at all — must fall back to its configured price.
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v2", ItemID: "i1", SKU: "S1-B", Name: "Large", Price: 350, IsActive: true})
+	// v3 has an EXPIRED price_history row — must NOT apply, falls back too.
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v3", ItemID: "i1", SKU: "S1-C", Name: "Small", Price: 250, IsActive: true})
+
+	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	expiredStart := time.Now().Add(-48 * time.Hour).UTC().Format(time.RFC3339)
+	expiredEnd := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
+	if _, err := db.Exec(`INSERT INTO price_history(id, variant_id, price, starts_at) VALUES('ph1','v1',250,?)`, past); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO price_history(id, variant_id, price, starts_at, ends_at) VALUES('ph2','v3',999,?,?)`, expiredStart, expiredEnd); err != nil {
+		t.Fatal(err)
+	}
+
+	l1, ok, err := repo.GetVariantLabel(ctx, "v1")
+	if err != nil || !ok {
+		t.Fatalf("expected label, got ok=%v err=%v", ok, err)
+	}
+	if l1.PriceMinor != 250 {
+		t.Fatalf("expected v1's active price_history override 250, got %d", l1.PriceMinor)
+	}
+
+	l2, ok, err := repo.GetVariantLabel(ctx, "v2")
+	if err != nil || !ok {
+		t.Fatalf("expected label, got ok=%v err=%v", ok, err)
+	}
+	if l2.PriceMinor != 350 {
+		t.Fatalf("expected v2's configured price 350 (no price_history row), got %d", l2.PriceMinor)
+	}
+
+	l3, ok, err := repo.GetVariantLabel(ctx, "v3")
+	if err != nil || !ok {
+		t.Fatalf("expected label, got ok=%v err=%v", ok, err)
+	}
+	if l3.PriceMinor != 250 {
+		t.Fatalf("expected v3's configured price 250 (price_history row EXPIRED), got %d", l3.PriceMinor)
+	}
+}
+
+// TestGetVariantLabel_MatchesPOSRepoResolveCurrentPrice is the direct proof
+// of ut-docs#2260's acceptance criterion for the variant label surface.
+func TestGetVariantLabel_MatchesPOSRepoResolveCurrentPrice(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	catalogRepo := data.NewCatalogRepo(db)
+	posRepo := data.NewPOSRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Cola", BasePrice: 120, IsActive: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v1", ItemID: "i1", SKU: "S1-A", Name: "Regular", Price: 310, IsActive: true})
+
+	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	if _, err := db.Exec(`INSERT INTO price_history(id, variant_id, price, starts_at) VALUES('ph1','v1',250,?)`, past); err != nil {
+		t.Fatal(err)
+	}
+
+	label, ok, err := catalogRepo.GetVariantLabel(ctx, "v1")
+	if err != nil || !ok {
+		t.Fatalf("expected label, got ok=%v err=%v", ok, err)
+	}
+	basketPrice, err := posRepo.ResolveCurrentPrice(ctx, "", "v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if label.PriceMinor != basketPrice {
+		t.Fatalf("printed label price %d != basket line price %d — same price_history state must resolve identically", label.PriceMinor, basketPrice)
+	}
+	if label.PriceMinor != 250 {
+		t.Fatalf("sanity: expected the active override 250, got %d", label.PriceMinor)
+	}
+}
+
 // The variant-deactivate and barcode-delete endpoints can be called with no
 // item id in the form at all (no panel open) — the affected row's item has
 // to be resolved server-side so its summary line can still be re-rendered.
