@@ -101,6 +101,19 @@ func exempt(path string) bool {
 		// switch's own comment documents. TestSyncPullPathsAreExempt pins
 		// this entry.
 		"/api/sync/secrets-key",
+		// ADR-0093 (ut-docs#1920): the primary-side held-sale (parked
+		// order) write-through trio a replica's heldSaleWriteThrough /
+		// heldSaleDeleteWriteThrough / fetchHeldSalesFromPrimary
+		// (internal/pages/held_sale_sync_proxy.go) proxy to — syncTill-
+		// authed in the handler exactly like /api/sync/tables/claim above.
+		// Omitting any of them here would silently no-op the whole feature
+		// (every proxy call falls back to local-only on a 401, so a parked
+		// order goes back to living on exactly one till) exactly like the
+		// /api/sync/stock incident this switch's own comment documents.
+		// Exact entries, not a prefix, so no future /api/sync/held-sales/
+		// <other action> is ever exempted by accident.
+		// TestSyncPullPathsAreExempt pins all three.
+		"/api/sync/held-sales", "/api/sync/held-sales/upsert", "/api/sync/held-sales/delete",
 		"/api/setup/join",
 		"/api/setup/discover-primaries", "/api/setup/pair-start", "/api/setup/pair-status",
 		// ut-docs#1550: the wizard's "joined — restarting" trigger, the

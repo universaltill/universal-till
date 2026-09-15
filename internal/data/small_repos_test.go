@@ -21,7 +21,9 @@ func newHeldSalesTestDB(t *testing.T) *HeldSalesRepo {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = dbc.Close() })
-	if _, err := dbc.Exec(`CREATE TABLE held_sales (id TEXT PRIMARY KEY, label TEXT NOT NULL DEFAULT '', total_minor INTEGER NOT NULL DEFAULT 0, line_count INTEGER NOT NULL DEFAULT 0, payload TEXT NOT NULL, table_id TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))`); err != nil {
+	// updated_at mirrors migration 030 (ADR-0093): every content-changing
+	// write stamps it, and UpsertIfNewer's ordering guard reads it.
+	if _, err := dbc.Exec(`CREATE TABLE held_sales (id TEXT PRIMARY KEY, label TEXT NOT NULL DEFAULT '', total_minor INTEGER NOT NULL DEFAULT 0, line_count INTEGER NOT NULL DEFAULT 0, payload TEXT NOT NULL, table_id TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT '')`); err != nil {
 		t.Fatal(err)
 	}
 	return NewHeldSalesRepo(dbc)

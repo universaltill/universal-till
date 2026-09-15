@@ -38,7 +38,10 @@ func newHoldTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if _, err := db.Exec(`CREATE TABLE held_sales (id TEXT PRIMARY KEY, label TEXT NOT NULL DEFAULT '', total_minor INTEGER NOT NULL DEFAULT 0, line_count INTEGER NOT NULL DEFAULT 0, payload TEXT NOT NULL, table_id TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')));`); err != nil {
+	// updated_at mirrors migration 030 (ADR-0093): every content-changing
+	// repo write now stamps it, so the hand-rolled schema needs the column
+	// or hold/resume errors on the very first park.
+	if _, err := db.Exec(`CREATE TABLE held_sales (id TEXT PRIMARY KEY, label TEXT NOT NULL DEFAULT '', total_minor INTEGER NOT NULL DEFAULT 0, line_count INTEGER NOT NULL DEFAULT 0, payload TEXT NOT NULL, table_id TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT '');`); err != nil {
 		t.Fatalf("create held_sales: %v", err)
 	}
 	// ut-docs#820: POST /api/pos/held/table validates the target table is

@@ -125,7 +125,10 @@ func parkCurrentBasket(ctx context.Context, d *common.Deps, repo *data.HeldSales
 			held.Label = typedLabel
 		}
 		held.CreatedAt = origin.CreatedAt
-		if err := repo.Upsert(ctx, held); err != nil {
+		// ADR-0093: heldSaleWriteThrough, not repo.Upsert -- on a replica
+		// the primary holds the order too (held_sale_sync_proxy.go), and
+		// on any failure reaching it this is exactly the local Upsert.
+		if err := heldSaleWriteThrough(ctx, d, repo, held); err != nil {
 			return err
 		}
 	} else {
@@ -138,15 +141,19 @@ func parkCurrentBasket(ctx context.Context, d *common.Deps, repo *data.HeldSales
 		}
 		held.ID = fmt.Sprintf("hold-%d", time.Now().UnixNano())
 		held.Label = label
-		if err := repo.Insert(ctx, held); err != nil {
+		// ADR-0093: the same write-through as the re-park branch above; on
+		// its local fallback Upsert is an Insert for this fresh id (see
+		// heldSaleWriteThrough's doc for why one fallback path, not two).
+		if err := heldSaleWriteThrough(ctx, d, repo, held); err != nil {
 			return err
 		}
 	}
 	// ut-docs#1704: the live claim the table pick wrote (ut-docs#1390) is
-	// deliberately KEPT here, not released -- it's the only signal that
-	// makes a parked order's table occupancy visible cross-till, since
-	// held_sales itself still isn't synced or proxied to the primary at
-	// all. Locally this is harmless redundancy (ListTablesWithState
+	// deliberately KEPT here, not released -- it's the signal that makes a
+	// parked order's table occupancy visible cross-till (and the one that
+	// still works when the primary was unreachable for ADR-0093's held-sale
+	// write-through above, which then only wrote locally). Locally this is
+	// harmless redundancy (ListTablesWithState
 	// already unions held_sales and table_claims, and the held_sales row
 	// alone was always enough for THIS till's own view). On a REPLICA
 	// it's the whole fix: the claim was already write-through'd to the
@@ -180,8 +187,22 @@ func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 		return resumeNotFound
 	}
 	held, found, err := repo.Get(ctx, id)
-	if err != nil || !found {
+	if err != nil {
 		return resumeNotFound
+	}
+	if !found {
+		// ADR-0093 (ut-docs#1920): not parked HERE doesn't mean not parked
+		// -- it may have been parked on, or last moved by, a different
+		// till and never mirrored to this one (mergeHeldSalesWithPrimary
+		// deliberately never mirrors on a render; see that file's own
+		// comment for why). One on-demand check before giving up: if the
+		// primary has it, this till is genuinely about to become the one
+		// holding it, so mirroring it locally NOW -- not on every render
+		// -- is exactly the moment that mirror is true.
+		held, found = resumeHeldSaleWithPrimaryFallback(ctx, d, repo, id)
+		if !found {
+			return resumeNotFound
+		}
 	}
 	var snap pos.BasketSnapshot
 	if err := json.Unmarshal([]byte(held.Payload), &snap); err != nil {
@@ -261,7 +282,11 @@ func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 	if prevTable != restoredTable {
 		releaseTableClaim(ctx, d, posRepo, prevTable)
 	}
-	if err := repo.Delete(ctx, id); err != nil {
+	// ADR-0093: heldSaleDeleteWriteThrough, not repo.Delete -- on a replica
+	// the primary drops the order too, so it stops being listed on every
+	// other till the moment it goes live here; locally it is the same
+	// Delete as before, primary reachable or not.
+	if err := heldSaleDeleteWriteThrough(ctx, d, repo, id); err != nil {
 		// The sale is restored either way; a stale row is the lesser evil.
 		_ = err
 	}
@@ -569,6 +594,26 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 				}
 				renderHeldStrip(w, r)
 				return
+			}
+			// ADR-0093: a table move is a content change under the
+			// cross-till ordering key, so the moved row is pushed to the
+			// primary the same way a park is -- reusing /upsert with the
+			// row's current full state rather than a fourth endpoint. Read
+			// back after SetTable so what travels is exactly what was just
+			// committed (table_id and the stamp SetTable wrote); the
+			// write-through's own local write is then a same-content
+			// rewrite on either branch, and it cannot fail the move: the
+			// local commit above already succeeded, and its fallback IS
+			// that same local write. A !found here means the order was
+			// resumed in the last few microseconds -- nothing left to push;
+			// a genuine read error is logged rather than silently treated
+			// the same as that harmless race.
+			if moved, found, err := repo.Get(ctx, id); err != nil {
+				log.Printf("held table move %s: read-back before primary push failed: %v", id, err)
+			} else if found {
+				if err := heldSaleWriteThrough(ctx, d, repo, moved); err != nil {
+					log.Printf("held table move %s: primary write-through failed: %v", id, err)
+				}
 			}
 			// Move confirmed -- only now let go of the old table's claim.
 			// Logged loudly (Errorf, not the usual silent fire-and-forget)

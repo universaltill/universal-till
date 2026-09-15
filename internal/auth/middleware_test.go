@@ -230,6 +230,18 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		// credential reads as "not configured" on the replica forever: the
 		// /api/sync/stock failure class, again.
 		"/api/sync/secrets-key",
+		// ADR-0093 (ut-docs#1920): the primary-side held-sale (parked
+		// order) write-through trio a replica's heldSaleWriteThrough /
+		// heldSaleDeleteWriteThrough / fetchHeldSalesFromPrimary
+		// (held_sale_sync_proxy.go) proxy to. Bearer-authed in the handler
+		// (syncTill), same as /api/sync/tables/claim — without these
+		// entries the replica authenticates perfectly and is still 401'd
+		// here, so every proxy call silently falls back to local-only and
+		// a parked order goes back to living on exactly one till: the
+		// /api/sync/stock failure class, again.
+		"/api/sync/held-sales",
+		"/api/sync/held-sales/upsert",
+		"/api/sync/held-sales/delete",
 	} {
 		if !exempt(p) {
 			t.Errorf("%s is not exempt — this middleware will 401 it before the "+
@@ -287,6 +299,14 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		"/api/sync/vouchers/GS-0001/redeem/extra",
 		"/api/sync/vouchers/GS-0001/release/extra",
 		"/api/sync/vouchers//redeem",
+		// ADR-0093 review-shape pin: the held-sales trio is three EXACT
+		// entries, not a prefix — the human-facing page (/open-orders), the
+		// bare trailing-slash form and any not-yet-existing action under
+		// the prefix must all stay session-gated.
+		"/open-orders",
+		"/api/sync/held-sales/",
+		"/api/sync/held-sales/purge",
+		"/api/sync/held-sales/upsert/extra",
 	} {
 		if exempt(p) {
 			t.Errorf("%s must NOT be exempt — it is an operator surface", p)
