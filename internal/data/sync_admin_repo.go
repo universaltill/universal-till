@@ -345,7 +345,7 @@ var nonAdminTables = map[string]string{
 	// cross-till reporting is export_repo.go's job, not LAN admin sync's.
 	"sales":                            "per-till sale header — append-only ledger, wrong shape for this bundle",
 	"sales_archive":                    "archived sales rows — same reasoning",
-	"held_sales":                       "a parked/suspended sale basket on this till — a primary-wins bundle with deleteMissing pruning would erase a satellite's own genuinely-parked orders on every pull, worse than not syncing; but this now means table occupancy doesn't cross tills even though the floor plan (tables) does — flagged in ut-docs#1672",
+	"held_sales":                       "a parked/suspended sale basket on this till — a primary-wins bundle with deleteMissing pruning would erase a satellite's own genuinely-parked orders on every pull, worse than not syncing (ut-docs#1672); since ADR-0093 (ut-docs#1920) it crosses tills by a live, idempotent write-through to the primary at park/resume time instead (internal/pages/held_sale_sync_proxy.go + sync_held_sales.go), which this exclusion is precisely what leaves room for",
 	"held_sales_archive":               "archived held_sales rows — same reasoning",
 	"sale_lines":                       "sale line items, child of sales — same reasoning",
 	"sale_lines_archive":               "archived sale_lines — same reasoning",

@@ -60,8 +60,19 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 	// full /open-orders page and the sale screen's parked-orders popup
 	// (ut-docs#2137). One reader, so the two can never disagree about what is
 	// parked, what it is worth, or which table it is on.
+	//
+	// ADR-0093 (ut-docs#1920): heldSalesForDisplay (held_sale_sync_proxy.go),
+	// not the bare repo.List -- on a REPLICA it merges the primary's live
+	// list (GET /api/sync/held-sales, same 800ms budget as every other
+	// proxy) with the local table, primary's copy winning per id and a
+	// local-only row (taken during an outage) still shown, so an order
+	// parked at another till is listed -- and resumable -- here. ANY
+	// failure reaching the primary is the local list alone, silently: the
+	// page renders either way, never a blocking error over a primary that
+	// happens to be off. On the primary itself, or a standalone till, this
+	// IS repo.List.
 	listOpenOrders := func(ctx context.Context) ([]openOrderRow, error) {
-		items, err := repo.List(ctx)
+		items, err := heldSalesForDisplay(ctx, d, repo)
 		if err != nil {
 			return nil, err
 		}

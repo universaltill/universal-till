@@ -21,10 +21,165 @@ func newHeldSalesTestDB(t *testing.T) *HeldSalesRepo {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = dbc.Close() })
-	if _, err := dbc.Exec(`CREATE TABLE held_sales (id TEXT PRIMARY KEY, label TEXT NOT NULL DEFAULT '', total_minor INTEGER NOT NULL DEFAULT 0, line_count INTEGER NOT NULL DEFAULT 0, payload TEXT NOT NULL, table_id TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')))`); err != nil {
+	// updated_at / primary_synced mirror migration 030 (ADR-0093 + Amendment
+	// A): a constant '' placeholder default, which the repo's own writes
+	// always override explicitly, and the "confirmed on the primary" marker.
+	if _, err := dbc.Exec(`CREATE TABLE held_sales (id TEXT PRIMARY KEY, label TEXT NOT NULL DEFAULT '', total_minor INTEGER NOT NULL DEFAULT 0, line_count INTEGER NOT NULL DEFAULT 0, payload TEXT NOT NULL, table_id TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT '', primary_synced INTEGER NOT NULL DEFAULT 0)`); err != nil {
 		t.Fatal(err)
 	}
 	return NewHeldSalesRepo(dbc)
+}
+
+// TestHeldSalesRepo_UpsertIfNewer (ADR-0093, ut-docs#1920): the predicate-
+// guarded write behind POST /api/sync/held-sales/upsert. Same idiom as
+// DebitVoucherForRedemption's `balance >= ?` guard: the predicate lives in
+// the statement itself and the affected-row count is the answer, so two
+// near-simultaneous upserts for one id serialize in SQLite and whichever
+// carries the OLDER updated_at is refused cleanly (applied=false, no
+// error, row untouched) rather than silently overwriting the newer edit.
+func TestHeldSalesRepo_UpsertIfNewer(t *testing.T) {
+	base := HeldSale{ID: "h1", Label: "Table 4", TotalMinor: 1200, LineCount: 3, Payload: `{"v":1}`, TableID: "tbl-1", CreatedAt: "2026-09-09 10:00:00", UpdatedAt: "2026-09-09 10:05:00"}
+	cases := []struct {
+		name        string
+		seed        *HeldSale // nil: no existing row
+		in          HeldSale
+		wantApplied bool
+		wantPayload string // what the row must hold afterwards
+	}{
+		{
+			name:        "fresh id inserts",
+			in:          base,
+			wantApplied: true,
+			wantPayload: `{"v":1}`,
+		},
+		{
+			name:        "newer updated_at applies",
+			seed:        &base,
+			in:          HeldSale{ID: "h1", Label: "Table 4", TotalMinor: 1500, LineCount: 4, Payload: `{"v":2}`, TableID: "tbl-1", UpdatedAt: "2026-09-09 10:06:00"},
+			wantApplied: true,
+			wantPayload: `{"v":2}`,
+		},
+		{
+			name:        "equal updated_at applies (idempotent retry of the same write)",
+			seed:        &base,
+			in:          HeldSale{ID: "h1", Label: "Table 4", TotalMinor: 1500, LineCount: 4, Payload: `{"v":2}`, TableID: "tbl-1", UpdatedAt: "2026-09-09 10:05:00"},
+			wantApplied: true,
+			wantPayload: `{"v":2}`,
+		},
+		{
+			name:        "older updated_at refuses and leaves the row unchanged",
+			seed:        &base,
+			in:          HeldSale{ID: "h1", Label: "Stale", TotalMinor: 1, LineCount: 1, Payload: `{"v":0}`, TableID: "", UpdatedAt: "2026-09-09 10:04:59"},
+			wantApplied: false,
+			wantPayload: `{"v":1}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newHeldSalesTestDB(t)
+			ctx := context.Background()
+			if tc.seed != nil {
+				if applied, err := repo.UpsertIfNewer(ctx, *tc.seed); err != nil || !applied {
+					t.Fatalf("seed: applied=%v err=%v", applied, err)
+				}
+			}
+			applied, err := repo.UpsertIfNewer(ctx, tc.in)
+			if err != nil {
+				t.Fatalf("UpsertIfNewer: %v", err)
+			}
+			if applied != tc.wantApplied {
+				t.Fatalf("applied = %v, want %v", applied, tc.wantApplied)
+			}
+			got, ok, err := repo.Get(ctx, "h1")
+			if err != nil || !ok {
+				t.Fatalf("Get after upsert: ok=%v err=%v", ok, err)
+			}
+			if got.Payload != tc.wantPayload {
+				t.Fatalf("row payload = %q, want %q", got.Payload, tc.wantPayload)
+			}
+			if tc.wantApplied {
+				if got.UpdatedAt != tc.in.UpdatedAt {
+					t.Fatalf("an applied write must store the caller's updated_at, got %q want %q", got.UpdatedAt, tc.in.UpdatedAt)
+				}
+				if got.Label != tc.in.Label || got.TotalMinor != tc.in.TotalMinor || got.LineCount != tc.in.LineCount || got.TableID != tc.in.TableID {
+					t.Fatalf("an applied write must land every field, got %+v", got)
+				}
+			} else {
+				if got.UpdatedAt != tc.seed.UpdatedAt || got.Label != tc.seed.Label || got.TotalMinor != tc.seed.TotalMinor || got.TableID != tc.seed.TableID {
+					t.Fatalf("a refused write must leave the row byte-for-byte as it was, got %+v", got)
+				}
+			}
+			if tc.seed != nil && got.CreatedAt != tc.seed.CreatedAt {
+				t.Fatalf("created_at must never move on the update path (ut-docs#1918 age), got %q", got.CreatedAt)
+			}
+			list, err := repo.List(ctx)
+			if err != nil || len(list) != 1 {
+				t.Fatalf("exactly one row expected, got %d err=%v", len(list), err)
+			}
+		})
+	}
+
+	// No caller-supplied updated_at: falls back to now, never the ''
+	// placeholder -- otherwise EVERY later write would beat it and the
+	// guard would be meaningless for that row.
+	repo := newHeldSalesTestDB(t)
+	if applied, err := repo.UpsertIfNewer(context.Background(), HeldSale{ID: "h2", Payload: `{}`}); err != nil || !applied {
+		t.Fatalf("no updated_at: applied=%v err=%v", applied, err)
+	}
+	if got, _, _ := repo.Get(context.Background(), "h2"); got.UpdatedAt == "" {
+		t.Fatal("UpsertIfNewer without UpdatedAt must fall back to now, got empty")
+	}
+}
+
+// TestHeldSalesRepo_WritesStampUpdatedAt (ADR-0093): the ordinary local
+// writes -- Insert (a fresh park) and Upsert (a re-park) -- stamp
+// updated_at with now on every write, both branches, so a row this till
+// wrote locally always carries a real value for the guard to compare and
+// List/Get both read it back.
+func TestHeldSalesRepo_WritesStampUpdatedAt(t *testing.T) {
+	repo := newHeldSalesTestDB(t)
+	ctx := context.Background()
+
+	if err := repo.Insert(ctx, HeldSale{ID: "h1", Label: "Table 4", Payload: `{}`}); err != nil {
+		t.Fatal(err)
+	}
+	got, _, _ := repo.Get(ctx, "h1")
+	if got.UpdatedAt == "" {
+		t.Fatal("Insert must stamp updated_at, got empty")
+	}
+	if got.UpdatedAt != got.CreatedAt {
+		t.Fatalf("on a fresh insert updated_at and created_at are the same instant, got %q vs %q", got.UpdatedAt, got.CreatedAt)
+	}
+
+	// Upsert's update branch must move updated_at forward -- backdate the
+	// row first so a same-second re-park is still observable.
+	if _, err := repo.db.Exec(`UPDATE held_sales SET updated_at = '2020-01-01 00:00:00' WHERE id = 'h1'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Upsert(ctx, HeldSale{ID: "h1", Label: "Table 4", Payload: `{"v":2}`, CreatedAt: got.CreatedAt}); err != nil {
+		t.Fatal(err)
+	}
+	after, _, _ := repo.Get(ctx, "h1")
+	if after.UpdatedAt <= "2020-01-01 00:00:00" {
+		t.Fatalf("Upsert's update branch must stamp updated_at with now, got %q", after.UpdatedAt)
+	}
+	if after.CreatedAt != got.CreatedAt {
+		t.Fatalf("Upsert must still leave created_at alone (ut-docs#1918), got %q want %q", after.CreatedAt, got.CreatedAt)
+	}
+
+	// Upsert's insert branch too.
+	if err := repo.Upsert(ctx, HeldSale{ID: "h2", Payload: `{}`}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := repo.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range list {
+		if h.UpdatedAt == "" {
+			t.Fatalf("List must read updated_at back for every row, %s has none", h.ID)
+		}
+	}
 }
 
 func TestHeldSalesRepo_InsertGetListDelete(t *testing.T) {
@@ -638,5 +793,126 @@ VALUES('sale1', 'R1', 'completed', 'sale', 'GBP', 100, 0, 20, 120, '2026-01-01T1
 	}
 	if net != 0 || tax != 0 || gross != 0 {
 		t.Fatalf("Totals over an empty range = net=%d tax=%d gross=%d, want all zero", net, tax, gross)
+	}
+}
+
+// TestHeldSalesRepo_PrimarySyncedIsWrittenAndSticky (ADR-0093 Amendment A):
+// Insert/Upsert/UpsertIfNewer write primary_synced from the struct on
+// insert (false by default -- a local-only fallback park is never
+// "confirmed"), List/Get read it back, and on the update path it is only
+// ever RAISED: a later local-only write over a confirmed mirror keeps the
+// mark, since the primary still knows that id.
+func TestHeldSalesRepo_PrimarySyncedIsWrittenAndSticky(t *testing.T) {
+	repo := newHeldSalesTestDB(t)
+	ctx := context.Background()
+
+	if err := repo.Insert(ctx, HeldSale{ID: "local", Payload: `{}`}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Upsert(ctx, HeldSale{ID: "fallback", Payload: `{}`}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.UpsertIfNewer(ctx, HeldSale{ID: "primary-own", Payload: `{}`, UpdatedAt: "2026-09-15 10:00:00"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"local", "fallback", "primary-own"} {
+		if got, _, _ := repo.Get(ctx, id); got.PrimarySynced {
+			t.Fatalf("%s: a write that never confirmed the row on a primary must leave primary_synced false, got %+v", id, got)
+		}
+	}
+
+	// The replica's mirror path: UpsertIfNewer with PrimarySynced=true.
+	if applied, err := repo.UpsertIfNewer(ctx, HeldSale{ID: "mirror", Payload: `{"v":1}`, UpdatedAt: "2026-09-15 10:00:00", PrimarySynced: true}); err != nil || !applied {
+		t.Fatalf("mirror insert: applied=%v err=%v", applied, err)
+	}
+	if got, _, _ := repo.Get(ctx, "mirror"); !got.PrimarySynced {
+		t.Fatalf("a mirror must read back primary_synced, got %+v", got)
+	}
+	// Sticky across a local-only Upsert (fallback re-park over the mirror)...
+	if err := repo.Upsert(ctx, HeldSale{ID: "mirror", Payload: `{"v":2}`}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := repo.Get(ctx, "mirror"); !got.PrimarySynced || got.Payload != `{"v":2}` {
+		t.Fatalf("a local-only Upsert over a mirror must keep primary_synced (and land the write), got %+v", got)
+	}
+	// ...and across an applied UpsertIfNewer that does not claim it.
+	if applied, err := repo.UpsertIfNewer(ctx, HeldSale{ID: "mirror", Payload: `{"v":3}`, UpdatedAt: "2999-01-01 00:00:00"}); err != nil || !applied {
+		t.Fatalf("newer unmarked upsert: applied=%v err=%v", applied, err)
+	}
+	if got, _, _ := repo.Get(ctx, "mirror"); !got.PrimarySynced || got.Payload != `{"v":3}` {
+		t.Fatalf("an applied UpsertIfNewer must never lower primary_synced, got %+v", got)
+	}
+	// Raised by an Upsert that does claim it (the mirror path's own
+	// fallback when UpsertIfNewer refuses on a backwards clock).
+	if err := repo.Upsert(ctx, HeldSale{ID: "fallback", Payload: `{}`, PrimarySynced: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := repo.Get(ctx, "fallback"); !got.PrimarySynced {
+		t.Fatalf("Upsert with PrimarySynced must raise the mark on an existing row, got %+v", got)
+	}
+	list, err := repo.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	synced := map[string]bool{}
+	for _, h := range list {
+		synced[h.ID] = h.PrimarySynced
+	}
+	if !synced["mirror"] || !synced["fallback"] || synced["local"] || synced["primary-own"] {
+		t.Fatalf("List must read primary_synced back per row, got %v", synced)
+	}
+}
+
+// TestHeldSalesRepo_ReconcileWithPrimary (ADR-0093 Amendment A, F2): after
+// one successful fetch of the primary's list, a confirmed mirror the
+// primary no longer lists is dropped (resolved on another till), a local
+// row the primary DID list is marked confirmed, and a never-confirmed row
+// absent from the list -- the outage-taken order -- is left exactly alone.
+func TestHeldSalesRepo_ReconcileWithPrimary(t *testing.T) {
+	repo := newHeldSalesTestDB(t)
+	ctx := context.Background()
+	seed := func(id string, synced bool) {
+		t.Helper()
+		if err := repo.Upsert(ctx, HeldSale{ID: id, Label: id, Payload: `{}`, PrimarySynced: synced}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seed("ghost", true)       // mirrored, since resolved on the primary
+	seed("still-open", true)  // mirrored, still listed
+	seed("outage", false)     // never confirmed, not listed: keep
+	seed("newly-seen", false) // never confirmed, but the primary lists it now
+
+	dropped, err := repo.ReconcileWithPrimary(ctx, []string{"still-open", "newly-seen", "primary-only-id"})
+	if err != nil {
+		t.Fatalf("ReconcileWithPrimary: %v", err)
+	}
+	if dropped != 1 {
+		t.Fatalf("exactly the ghost must be dropped, got %d", dropped)
+	}
+	if _, ok, _ := repo.Get(ctx, "ghost"); ok {
+		t.Fatal("a confirmed mirror the primary no longer lists must be dropped")
+	}
+	if got, ok, _ := repo.Get(ctx, "outage"); !ok || got.PrimarySynced {
+		t.Fatalf("a never-confirmed row absent from the list must be kept, unmarked, got ok=%v %+v", ok, got)
+	}
+	if got, ok, _ := repo.Get(ctx, "still-open"); !ok || !got.PrimarySynced {
+		t.Fatalf("a listed mirror must be kept and stay confirmed, got ok=%v %+v", ok, got)
+	}
+	if got, ok, _ := repo.Get(ctx, "newly-seen"); !ok || !got.PrimarySynced {
+		t.Fatalf("a local row the primary now lists must be marked confirmed, got ok=%v %+v", ok, got)
+	}
+	if _, ok, _ := repo.Get(ctx, "primary-only-id"); ok {
+		t.Fatal("reconcile must never invent a local row for a primary-only id")
+	}
+
+	// An EMPTY (but successful) list: every confirmed mirror is gone from
+	// the primary; every never-confirmed row stays.
+	dropped, err = repo.ReconcileWithPrimary(ctx, nil)
+	if err != nil || dropped != 2 {
+		t.Fatalf("empty list must drop the two confirmed rows only: dropped=%d err=%v", dropped, err)
+	}
+	list, err := repo.List(ctx)
+	if err != nil || len(list) != 1 || list[0].ID != "outage" {
+		t.Fatalf("only the outage-taken row may remain, got %+v err=%v", list, err)
 	}
 }
