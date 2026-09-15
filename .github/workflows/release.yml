@@ -404,7 +404,17 @@ jobs:
           distribution: temurin
           java-version: "17"
       # Installs cmdline-tools and sets ANDROID_HOME/ANDROID_SDK_ROOT.
+      # `packages` must be overridden: the action's own default is
+      # "tools platform-tools", and Google has removed the legacy `tools`
+      # package from the SDK repository, so the action's built-in
+      # `sdkmanager tools platform-tools` call now fails outright before
+      # any step of ours runs (ut-docs#2257). We only ever needed
+      # platform-tools here anyway — the NDK/platform/build-tools versions
+      # this app actually depends on are installed explicitly by the next
+      # step. https://github.com/android-actions/setup-android/blob/v3/action.yml
       - uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools"
       - name: Install NDK + platform + build-tools
         # Versions match what this app was built/verified against locally
         # (ut-docs/adr/0023-android-ios-till-strategy.md) — gomobile bind
