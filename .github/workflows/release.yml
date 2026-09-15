@@ -404,7 +404,12 @@ jobs:
           distribution: temurin
           java-version: "17"
       # Installs cmdline-tools and sets ANDROID_HOME/ANDROID_SDK_ROOT.
+      # The action's default package list includes the obsolete `tools`
+      # package, which no longer exists in the current Android repository and
+      # makes the release fail before the NDK build starts.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - name: Install NDK + platform + build-tools
         # Versions match what this app was built/verified against locally
         # (ut-docs/adr/0023-android-ios-till-strategy.md) — gomobile bind
