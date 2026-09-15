@@ -180,13 +180,29 @@ type ItemLabel struct {
 	Code       string // primary barcode, else SKU
 }
 
-// GetItemLabel loads label data for one item: name, price, and the primary
-// barcode (falling back to any barcode, then the SKU).
+// GetItemLabel loads label data for one item: name, CURRENT effective price
+// (an active price_history row when one exists, else the configured
+// base_price — same resolution as ItemCurrentPrices/POSRepo.ResolveCurrentPrice,
+// ut-docs#2260), and the primary barcode (falling back to any barcode, then
+// the SKU). Without this, a printed shelf label could disagree with what the
+// till actually charges whenever a scheduled/promotional price_history row
+// is active — worse than the same gap on a screen tile (ut-docs#2228/#2258),
+// since a physical label persists after the promotion starts or ends.
 func (r *CatalogRepo) GetItemLabel(ctx context.Context, itemID string) (ItemLabel, bool, error) {
 	var l ItemLabel
 	var sku string
 	err := r.db.QueryRowContext(ctx, `
-SELECT name, base_price, COALESCE(sku, '') FROM items WHERE id = ?`, itemID).
+SELECT i.name,
+       COALESCE(
+         (SELECT ph.price FROM price_history ph
+          WHERE ph.item_id = i.id
+            AND datetime(ph.starts_at) <= CURRENT_TIMESTAMP
+            AND (ph.ends_at IS NULL OR datetime(ph.ends_at) > CURRENT_TIMESTAMP)
+          ORDER BY datetime(ph.starts_at) DESC LIMIT 1),
+         i.base_price
+       ),
+       COALESCE(i.sku, '')
+FROM items i WHERE i.id = ?`, itemID).
 		Scan(&l.Name, &l.PriceMinor, &sku)
 	if err == sql.ErrNoRows {
 		return ItemLabel{}, false, nil
@@ -672,12 +688,24 @@ type VariantLabel struct {
 	Code       string
 }
 
-// GetVariantLabel loads a variant's label data (item name + variant name).
+// GetVariantLabel loads a variant's label data (item name + variant name)
+// and its CURRENT effective price (an active price_history row when one
+// exists, else the configured item_variants.price — same resolution as
+// ItemVariantsForSale/POSRepo.ResolveCurrentPrice, ut-docs#2260); see
+// GetItemLabel's doc comment for why a printed label needs this.
 func (r *CatalogRepo) GetVariantLabel(ctx context.Context, variantID string) (VariantLabel, bool, error) {
 	var l VariantLabel
 	var itemName, vName, sku string
 	err := r.db.QueryRowContext(ctx, `
-SELECT i.name, v.name, COALESCE(v.sku, ''), v.price,
+SELECT i.name, v.name, COALESCE(v.sku, ''),
+       COALESCE(
+         (SELECT ph.price FROM price_history ph
+          WHERE ph.variant_id = v.id
+            AND datetime(ph.starts_at) <= CURRENT_TIMESTAMP
+            AND (ph.ends_at IS NULL OR datetime(ph.ends_at) > CURRENT_TIMESTAMP)
+          ORDER BY datetime(ph.starts_at) DESC LIMIT 1),
+         v.price
+       ),
        COALESCE((SELECT b.barcode FROM variant_barcodes b WHERE b.variant_id = v.id
                  ORDER BY b.is_primary DESC, b.barcode LIMIT 1), '')
 FROM item_variants v JOIN items i ON i.id = v.item_id
