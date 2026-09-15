@@ -1,0 +1,192 @@
+package pages
+
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+
+	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/pages/common"
+)
+
+// Cross-till held-sale (open order) sync, primary side (ADR-0093,
+// ut-docs#1920). held_sales is deliberately NOT part of the admin-bundle
+// sync (sync_admin_repo.go's nonAdminTables: a deleteMissing-pruning bundle
+// would erase a satellite's own genuinely-parked order on every pull), so
+// before this card an order's CONTENTS never crossed tills at all -- only
+// the table occupancy it implied (table_claims' own write-through,
+// ut-docs#1703/#1704). Now the PRIMARY's held_sales is the shop-wide copy a
+// replica writes through to at the moment it matters, exactly the way
+// sync_tables_claim.go does for a claim, and reads back from for its Open
+// orders page:
+//
+//   - POST /api/sync/held-sales/upsert -- the full row. Runs
+//     HeldSalesRepo.UpsertIfNewer, a predicate-guarded upsert (`WHERE
+//     held_sales.updated_at <= excluded.updated_at`), so two tills pushing
+//     an update to the SAME order close together serialize on the primary's
+//     single-writer database and whichever carries the OLDER updated_at is
+//     answered applied=false on a 200 -- a clean, detectable refusal, never
+//     a silent clobber of a newer edit. Same depth ADR-0084 shipped for a
+//     voucher balance (sync_vouchers.go's /redeem), not a per-line merge
+//     (explicit ADR-0093 non-goal).
+//   - POST /api/sync/held-sales/delete -- {id}, for resume-to-active. A
+//     plain delete: naturally idempotent, so an already-gone row is still
+//     200/deleted=true, same as /api/sync/tables/release.
+//   - GET /api/sync/held-sales -- every currently-open held sale on the
+//     primary, for a replica's open_orders_page.go merge.
+//
+// Bearer-authed via syncTill, JSON envelope { "data": …, "error": null },
+// snake_case -- same conventions as every other /api/sync/* endpoint.
+// JSON bodies (not form-encoded like the claim endpoints) because the row
+// carries the basket snapshot as a JSON payload string. All three must
+// stay on internal/auth/middleware.go's exempt list
+// (TestSyncPullPathsAreExempt pins them), or a replica is 401'd before
+// syncTill ever runs and the proxy silently falls back to local-only --
+// the /api/sync/stock failure class that comment documents.
+
+// syncHeldSaleRow is the wire form of one data.HeldSale. created_at rides
+// along so a re-park after a cross-till resume (the primary's row was
+// deleted by the resume, this recreates it) keeps the ORIGINAL first-parked
+// time the Open orders page shows as the order's age (ut-docs#1918) --
+// honoured on insert, left alone on update, exactly as the repo's own
+// Upsert does. updated_at is the predicate the guard compares.
+type syncHeldSaleRow struct {
+	ID         string `json:"id"`
+	Label      string `json:"label"`
+	TableID    string `json:"table_id"`
+	Payload    string `json:"payload"`
+	LineCount  int    `json:"line_count"`
+	TotalMinor int64  `json:"total_minor"`
+	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
+}
+
+func heldSaleToSyncRow(h data.HeldSale) syncHeldSaleRow {
+	return syncHeldSaleRow{
+		ID:         h.ID,
+		Label:      h.Label,
+		TableID:    h.TableID,
+		Payload:    h.Payload,
+		LineCount:  h.LineCount,
+		TotalMinor: h.TotalMinor,
+		CreatedAt:  h.CreatedAt,
+		UpdatedAt:  h.UpdatedAt,
+	}
+}
+
+func heldSaleFromSyncRow(row syncHeldSaleRow) data.HeldSale {
+	return data.HeldSale{
+		ID:         row.ID,
+		Label:      row.Label,
+		TableID:    row.TableID,
+		Payload:    row.Payload,
+		LineCount:  row.LineCount,
+		TotalMinor: row.TotalMinor,
+		CreatedAt:  row.CreatedAt,
+		UpdatedAt:  row.UpdatedAt,
+	}
+}
+
+// syncHeldSaleUpsertResult is the wire form of an upsert outcome.
+// applied=false on a 200 is the predicate refusal: the primary already
+// holds a NEWER write for this id.
+type syncHeldSaleUpsertResult struct {
+	Applied bool `json:"applied"`
+}
+
+// syncHeldSaleDeleteRequest is POST .../delete's body.
+type syncHeldSaleDeleteRequest struct {
+	ID string `json:"id"`
+}
+
+// syncHeldSaleDeleteResult is the wire form of a delete outcome -- always
+// deleted=true on a 200: delete is idempotent, so there is no failure to
+// report beyond auth/validation (same as syncTableReleaseResult).
+type syncHeldSaleDeleteResult struct {
+	Deleted bool `json:"deleted"`
+}
+
+// registerSyncHeldSales mounts the primary-side held-sale endpoints on the
+// bearer-authed /api/sync/* surface, next to registerSyncTablesClaim's.
+func registerSyncHeldSales(mux *http.ServeMux, d *common.Deps) {
+	tills := data.NewTillsRepo(d.Db)
+	repo := data.NewHeldSalesRepo(d.Db)
+
+	// Upsert the full row, guarded on updated_at. 200 with applied=false is
+	// the ordinary "a newer write already landed" answer -- a business
+	// refusal against the primary's live state, never an error status.
+	mux.HandleFunc("POST /api/sync/held-sales/upsert", func(w http.ResponseWriter, r *http.Request) {
+		till, ok := syncTill(r, tills)
+		if !ok {
+			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")
+			return
+		}
+		var in syncHeldSaleRow
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			writeSyncOrdersJSON(w, http.StatusBadRequest, nil, "invalid body")
+			return
+		}
+		in.ID = strings.TrimSpace(in.ID)
+		if in.ID == "" || in.Payload == "" {
+			writeSyncOrdersJSON(w, http.StatusBadRequest, nil, "id and payload required")
+			return
+		}
+		applied, err := repo.UpsertIfNewer(r.Context(), heldSaleFromSyncRow(in))
+		if err != nil {
+			logging.L().Errorf("sync held sale upsert %s from %s: %v", in.ID, till.Name, err)
+			writeSyncOrdersJSON(w, http.StatusInternalServerError, nil, "server error")
+			return
+		}
+		if !applied {
+			logging.L().Debugf("sync held sale upsert %s from %s: refused, a newer write already holds the row (ADR-0093)", in.ID, till.Name)
+		}
+		writeSyncOrdersJSON(w, http.StatusOK, syncHeldSaleUpsertResult{Applied: applied}, nil)
+	})
+
+	// Delete by id. Idempotent -- a delete with nothing to delete is still
+	// 200/deleted.
+	mux.HandleFunc("POST /api/sync/held-sales/delete", func(w http.ResponseWriter, r *http.Request) {
+		till, ok := syncTill(r, tills)
+		if !ok {
+			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")
+			return
+		}
+		var in syncHeldSaleDeleteRequest
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			writeSyncOrdersJSON(w, http.StatusBadRequest, nil, "invalid body")
+			return
+		}
+		in.ID = strings.TrimSpace(in.ID)
+		if in.ID == "" {
+			writeSyncOrdersJSON(w, http.StatusBadRequest, nil, "id required")
+			return
+		}
+		if err := repo.Delete(r.Context(), in.ID); err != nil {
+			logging.L().Errorf("sync held sale delete %s from %s: %v", in.ID, till.Name, err)
+			writeSyncOrdersJSON(w, http.StatusInternalServerError, nil, "server error")
+			return
+		}
+		writeSyncOrdersJSON(w, http.StatusOK, syncHeldSaleDeleteResult{Deleted: true}, nil)
+	})
+
+	// The primary's live open orders -- the same rows its own Open orders
+	// page and held strip read.
+	mux.HandleFunc("GET /api/sync/held-sales", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := syncTill(r, tills); !ok {
+			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")
+			return
+		}
+		items, err := repo.List(r.Context())
+		if err != nil {
+			logging.L().Errorf("sync held sales list: %v", err)
+			writeSyncOrdersJSON(w, http.StatusInternalServerError, nil, "server error")
+			return
+		}
+		rows := make([]syncHeldSaleRow, 0, len(items))
+		for _, h := range items {
+			rows = append(rows, heldSaleToSyncRow(h))
+		}
+		writeSyncOrdersJSON(w, http.StatusOK, rows, nil)
+	})
+}

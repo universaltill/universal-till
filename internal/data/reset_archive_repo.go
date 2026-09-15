@@ -162,7 +162,11 @@ var resetArchiveTables = []resetArchiveTable{
 	// 056 tracking_token, 007 local_date/voided_local_date) — see
 	// reset_test.go's round-trip tests for the precedent this follows.
 	{"sales", "id, receipt_no, status, sale_type, tender_type, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, rounding, note, created_at, completed_at, voided_at, till_id, service_charge_amount, order_type, order_status, order_status_updated_at, kitchen_print_failed_at, receipt_print_failed_at, table_id, tracking_token, service_charge_tax_basis_bp, voucher_issue_total, local_date, voided_local_date, display_no"},
-	{"held_sales", "id, label, total_minor, line_count, payload, created_at, table_id"},
+	// updated_at and primary_synced (ADR-0093 + Amendment A, ut-docs#1920,
+	// migration 030): added to held_sales_archive in the same migration and
+	// to this cols string here, same fix shape as every earlier ALTER's own
+	// note above.
+	{"held_sales", "id, label, total_minor, line_count, payload, created_at, table_id, updated_at, primary_synced"},
 	{"shifts", "id, register_id, cashier_id, opened_at, closed_at, opening_cash, closing_cash, expected_cash, note, new_float, count_protocol"},
 }
 
