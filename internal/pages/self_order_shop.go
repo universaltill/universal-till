@@ -62,6 +62,13 @@ func loadShopItems(ctx context.Context, d *common.Deps) ([]shopItem, error) {
 		// adding the PARENT base price, so it must never fail silently.
 		logging.L().Warnf("kiosk: load items-with-variants failed, every tile falls back to parent-price add (ut-docs#2209): %v", variantsErr)
 	}
+	currentPrices, pricesErr := repo.ItemCurrentPrices(ctx, ids)
+	if pricesErr != nil {
+		// Same non-fatal-but-loud treatment as hasVariants above
+		// (ut-docs#2258): on this error every kiosk tile falls back to the
+		// STALE configured base_price it.BasePrice already carries below.
+		logging.L().Warnf("kiosk: load item current prices failed, every tile falls back to raw base_price (ut-docs#2258): %v", pricesErr)
+	}
 	thumbnails, _ := repo.ItemThumbnails(ctx) // best-effort: a read error just means every tile falls back to no-image, same as a missing row
 
 	out := make([]shopItem, 0, len(items))
@@ -77,13 +84,21 @@ func loadShopItems(ctx context.Context, d *common.Deps) ([]shopItem, error) {
 		if it.CategoryID != nil {
 			categoryID = *it.CategoryID
 		}
+		// ut-docs#2258: prefer the batched price_history-aware price;
+		// it.BasePrice is the fallback for an id ItemCurrentPrices didn't
+		// return (lookup error, or the item row is gone) — never a silent
+		// zero.
+		price := it.BasePrice
+		if p, ok := currentPrices[it.ID]; ok {
+			price = p
+		}
 		out = append(out, shopItem{
 			ItemID:       it.ID,
 			Name:         it.Name,
 			Description:  it.Description,
 			CategoryID:   categoryID,
 			Code:         code,
-			PriceMinor:   it.BasePrice,
+			PriceMinor:   price,
 			HasModifiers: hasMods[it.ID],
 			HasVariants:  hasVariants[it.ID],
 			// item_images (ut-docs#1870), not a hardcoded upload-only path:

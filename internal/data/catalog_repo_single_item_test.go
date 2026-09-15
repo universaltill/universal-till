@@ -276,6 +276,103 @@ func TestItemVariantsForSale_MatchesPOSRepoResolveCurrentPrice(t *testing.T) {
 	}
 }
 
+// TestItemCurrentPrices_UsesActivePriceHistoryRow is ut-docs#2258, the
+// item-level counterpart to TestItemVariantsForSale_UsesActivePriceHistoryRow
+// above: the sale-screen shortcut grid and the kiosk browse grid must show
+// each item's CURRENT price, not its configured base_price, whenever an
+// active price_history row overrides it.
+func TestItemCurrentPrices_UsesActivePriceHistoryRow(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	// i1 has an active promotional price_history row (250 instead of its
+	// configured 310).
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Cola", BasePrice: 310, IsActive: true})
+	// i2 has no price_history row at all — must fall back to base_price.
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i2", SKU: "S2", Name: "Water", BasePrice: 100, IsActive: true})
+	// i3 has an EXPIRED price_history row — must NOT apply, falls back too.
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i3", SKU: "S3", Name: "Juice", BasePrice: 250, IsActive: true})
+	// i4 has a FUTURE-DATED price_history row (a scheduled price change
+	// that hasn't started yet) — must NOT apply either. This is literally
+	// the "scheduled ... price change" case the ticket names; the expired
+	// case above alone wouldn't catch a starts_at/ends_at bound swapped
+	// the wrong way.
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i4", SKU: "S4", Name: "Muffin", BasePrice: 180, IsActive: true})
+
+	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	expiredStart := time.Now().Add(-48 * time.Hour).UTC().Format(time.RFC3339)
+	expiredEnd := time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
+	future := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	if _, err := db.Exec(`INSERT INTO price_history(id, item_id, price, starts_at) VALUES('ph1','i1',250,?)`, past); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO price_history(id, item_id, price, starts_at, ends_at) VALUES('ph2','i3',999,?,?)`, expiredStart, expiredEnd); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO price_history(id, item_id, price, starts_at) VALUES('ph3','i4',999,?)`, future); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.ItemCurrentPrices(ctx, []string{"i1", "i2", "i3", "i4", "missing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["i1"] != 250 {
+		t.Fatalf("expected i1's active price_history override 250, got %d", got["i1"])
+	}
+	if got["i2"] != 100 {
+		t.Fatalf("expected i2's configured price 100 (no price_history row), got %d", got["i2"])
+	}
+	if got["i4"] != 180 {
+		t.Fatalf("expected i4's configured price 180 (price_history row is FUTURE-DATED, not started yet), got %d", got["i4"])
+	}
+	if got["i3"] != 250 {
+		t.Fatalf("expected i3's configured price 250 (price_history row EXPIRED), got %d", got["i3"])
+	}
+	if _, ok := got["missing"]; ok {
+		t.Fatalf("expected an unknown item id to be absent from the map, got %d", got["missing"])
+	}
+
+	if got, err := repo.ItemCurrentPrices(ctx, nil); err != nil || len(got) != 0 {
+		t.Fatalf("expected an empty map for no ids, got %v err=%v", got, err)
+	}
+}
+
+// TestItemCurrentPrices_MatchesPOSRepoResolveCurrentPrice is the direct
+// proof of ut-docs#2258's acceptance criterion: the price shown on a tile
+// equals the price the basket line receives when that item is tapped.
+func TestItemCurrentPrices_MatchesPOSRepoResolveCurrentPrice(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	catalogRepo := data.NewCatalogRepo(db)
+	posRepo := data.NewPOSRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Cola", BasePrice: 310, IsActive: true})
+
+	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	if _, err := db.Exec(`INSERT INTO price_history(id, item_id, price, starts_at) VALUES('ph1','i1',250,?)`, past); err != nil {
+		t.Fatal(err)
+	}
+
+	prices, err := catalogRepo.ItemCurrentPrices(ctx, []string{"i1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	basketPrice, err := posRepo.ResolveCurrentPrice(ctx, "i1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prices["i1"] != basketPrice {
+		t.Fatalf("tile price %d != basket line price %d — same price_history state must resolve identically", prices["i1"], basketPrice)
+	}
+	if prices["i1"] != 250 {
+		t.Fatalf("sanity: expected the active override 250, got %d", prices["i1"])
+	}
+}
+
 // The variant-deactivate and barcode-delete endpoints can be called with no
 // item id in the form at all (no panel open) — the affected row's item has
 // to be resolved server-side so its summary line can still be re-rendered.

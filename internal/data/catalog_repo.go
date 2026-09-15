@@ -590,6 +590,66 @@ WHERE v.is_active = 1
 	return result, rows.Err()
 }
 
+// ItemCurrentPrices is ItemVariantsForSale's item-level counterpart
+// (ut-docs#2258): for the given item ids, returns each item's CURRENT
+// EFFECTIVE price — an active price_history row when one exists, else the
+// item's configured base_price — keyed by item id. The sale-screen
+// shortcut grid (ui.ButtonStore.Load) and the kiosk browse grid
+// (loadShopItems) both render a tile price straight from raw base_price
+// today, the identical pre-existing gap ut-docs#2228 fixed for the variant
+// picker: a scheduled/promotional price_history row is invisible on the
+// tile until the item is actually added to the basket, which then charges
+// a different price. One batched query (a correlated subquery per row
+// over the whole id set), not one query per item — the N+1 risk ut-docs#2228's
+// own review flagged for exactly this follow-up.
+//
+// Deliberately no `is_active` filter here (ut-docs#2258 review, N2), unlike
+// ResolveCurrentPrice's own item-price fallback query: every caller today
+// (ButtonStore.Load's LoadButtons join, loadShopItems' already-active
+// ListItems, the suggestions chip's already-active SuggestForBasket) either
+// already filters to active items upstream or doesn't filter at all for the
+// row it's replacing — this stays consistent with the raw price each
+// caller already had, rather than introducing a NEW filter no existing
+// caller applied.
+//
+// An id absent from the returned map had no matching `items` row (unknown
+// id, or the caller passed an id for an item that no longer exists) —
+// callers must fall back to their own already-loaded base_price for those,
+// same "absent == not found" contract as ItemIDsWithVariants.
+func (r *CatalogRepo) ItemCurrentPrices(ctx context.Context, itemIDs []string) (map[string]int64, error) {
+	result := map[string]int64{}
+	if len(itemIDs) == 0 {
+		return result, nil
+	}
+	placeholders, args := inPlaceholders(itemIDs)
+	query := `
+SELECT i.id,
+       COALESCE(
+         (SELECT ph.price FROM price_history ph
+          WHERE ph.item_id = i.id
+            AND datetime(ph.starts_at) <= CURRENT_TIMESTAMP
+            AND (ph.ends_at IS NULL OR datetime(ph.ends_at) > CURRENT_TIMESTAMP)
+          ORDER BY datetime(ph.starts_at) DESC LIMIT 1),
+         i.base_price
+       )
+FROM items i
+WHERE i.id IN (` + placeholders + `)`
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("item current prices: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var price int64
+		if err := rows.Scan(&id, &price); err != nil {
+			return nil, fmt.Errorf("scan item current price: %w", err)
+		}
+		result[id] = price
+	}
+	return result, rows.Err()
+}
+
 // VariantEditView is one variant in the item's edit panel: everything the
 // operator can change, including inactive variants (so they can be
 // reactivated) and every barcode attached to the variant.
