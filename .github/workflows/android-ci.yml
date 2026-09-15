@@ -97,9 +97,17 @@ jobs:
           distribution: temurin
           java-version: "17"
       # Installs cmdline-tools and sets ANDROID_HOME/ANDROID_SDK_ROOT —
-      # same action release.yml's android-app job uses.
+      # same action release.yml's android-app job uses. `packages` must be
+      # overridden the same way: the action's own default is "tools
+      # platform-tools", and Google has removed the legacy `tools` package
+      # from the SDK repository, so the unmodified default now fails
+      # outright (ut-docs#2257). platform-tools is all this job ever
+      # needed from the default set — NDK/platform/build-tools are
+      # installed explicitly by the next step.
       - uses: android-actions/setup-android@v3
         if: steps.filter.outputs.match == 'true'
+        with:
+          packages: "platform-tools"
       - name: Install NDK + platform + build-tools
         if: steps.filter.outputs.match == 'true'
         # Versions matched to release.yml's android-app job — gomobile
