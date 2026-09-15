@@ -24,7 +24,12 @@
            marks the order collected, the row removes itself immediately
            instead of waiting for the next 15s poll. */}}
       <tr id="counter-order-row-{{ .ID }}">
-        <td>{{ .DisplayNo }}</td>
+        {{/* ut-docs#815: a table-bound order appends the table's label
+             next to its own reference ("C-004 · Table 5" style, ADR-0054's
+             reference screenshots) — reuses basket.table.label (just the
+             word "Table") rather than a new key. Plain kiosk-till orders
+             (no table, #582's original flow) render this cell unchanged. */}}
+        <td>{{ .DisplayNo }}{{ if .TableLabel }} · {{ T "basket.table.label" }} {{ .TableLabel }}{{ end }}</td>
         <td>{{ if eq .OrderType "takeaway" }}{{ T "basket.order_type.takeaway" }}{{ else if eq .OrderType "mixed" }}{{ T "basket.order_type.mixed" }}{{ else }}{{ T "selforder.order_type.dine_in" }}{{ end }}</td>
         <td>{{ .Items }}</td>
         <td>{{ printf (T "tables.status.open_minutes") .AgeMinutes }}</td>

@@ -206,3 +206,62 @@ func TestKioskCounterOrdersPage_CollectUnknownIDIsNoop(t *testing.T) {
 		t.Fatalf("POST collect (unknown id): want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// ut-docs#815: a table-bound counter order's ref cell must append the
+// table label ("C-004 · Table 5" style, ADR-0054's reference screenshots),
+// reusing the existing basket.table.label word rather than a new key.
+func TestKioskCounterOrdersPage_TableBoundOrderShowsTableLabel(t *testing.T) {
+	dp, _ := setupKioskCounterOrdersDeps(t)
+	posRepo := data.NewPOSRepo(dp.Db)
+	tableID, err := posRepo.CreateTable(context.Background(), "5", "Terrace", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	repo := data.NewKioskCounterOrdersRepo(dp.Db)
+	created, err := repo.Create(context.Background(), data.KioskCounterOrder{
+		TableID: tableID,
+		Lines:   []data.KioskCounterOrderLine{{Name: "Flat White", Qty: 1}},
+	})
+	if err != nil {
+		t.Fatalf("seed table-bound counter order: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	registerKioskCounterOrdersPage(mux, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/kiosk-counter-orders", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /ui/kiosk-counter-orders: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	want := created.DisplayNo + " · Table 5"
+	if !strings.Contains(rec.Body.String(), want) {
+		t.Fatalf("expected the ref cell to read %q, got: %s", want, rec.Body.String())
+	}
+}
+
+// A plain counter order (no table — today's #582 flow) must render with no
+// table suffix at all, byte-for-byte unchanged.
+func TestKioskCounterOrdersPage_NoTableOrderShowsNoTableSuffix(t *testing.T) {
+	dp, _ := setupKioskCounterOrdersDeps(t)
+	repo := data.NewKioskCounterOrdersRepo(dp.Db)
+	created, err := repo.Create(context.Background(), data.KioskCounterOrder{
+		Lines: []data.KioskCounterOrderLine{{Name: "Tea", Qty: 1}},
+	})
+	if err != nil {
+		t.Fatalf("seed counter order: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	registerKioskCounterOrdersPage(mux, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/kiosk-counter-orders", nil))
+	body := rec.Body.String()
+	if strings.Contains(body, "·") {
+		t.Fatalf("no-table order must not render a table suffix: %s", body)
+	}
+	if !strings.Contains(body, created.DisplayNo) {
+		t.Fatalf("missing display_no in board: %s", body)
+	}
+}

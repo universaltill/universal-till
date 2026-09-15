@@ -1,5 +1,19 @@
 <div class="selforder-cart" id="selforder-cart">
   {{ if .Basket.ToastMessage }}<div class="toast info">{{ .Basket.ToastMessage }}</div>{{ end }}
+  {{/* ut-docs#815 (review finding): a table-bound session — the guest
+       scanned the QR card ON table 5 — is dine-in by definition, so show
+       WHICH table this order is going to instead of a toggle whose
+       Takeaway side silently unbinds it (ADR-0073 D5 clears the table
+       once no dine-in line remains, which dropped the guest back onto a
+       card/contactless picker their own phone can't use). The server
+       clamps this too — the UI is never the enforcement point on an
+       anonymous surface, see POST /api/self-order/order-type. Reuses the
+       existing basket.table.label word, so no new i18n key and no
+       language-pack follow-up; it is also the only place the guest ever
+       gets to confirm they scanned the right table's code. */}}
+  {{ if .Basket.TableLabel }}
+  <p class="muted selforder-order-type">{{ T "basket.table.label" }} {{ .Basket.TableLabel }}</p>
+  {{ else }}
   <div class="order-type-toggle selforder-order-type" role="group" aria-label="{{ T "selforder.order_type.label" }}">
     <button type="button" class="btn btn-touch{{ if eq .Basket.OrderType "takeaway" }} secondary{{ end }}"
             aria-pressed="{{ if ne .Basket.OrderType "takeaway" }}true{{ else }}false{{ end }}"
@@ -10,6 +24,7 @@
             hx-post="/api/self-order/order-type" hx-vals='{"order_type":"takeaway"}' hx-target="#selforder-cart" hx-swap="outerHTML">
       {{ if eq .Basket.OrderType "takeaway" }}✓ {{ end }}{{ T "selforder.order_type.takeaway" }}</button>
   </div>
+  {{ end }}
   {{ if .Basket.Lines }}
   <ul class="selforder-cart-lines">
     {{ range .Basket.Lines }}

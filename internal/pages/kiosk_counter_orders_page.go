@@ -26,6 +26,11 @@ type counterOrderRow struct {
 	OrderType  string
 	Items      string
 	AgeMinutes int
+	// TableLabel (ut-docs#815) is the physical table this order was
+	// placed from via /self-order?table=<id>, "" for a plain kiosk-till
+	// counter order (today's #582 flow, unaffected) — the template
+	// appends it to DisplayNo only when set ("C-004 · Table 5" style).
+	TableLabel string
 }
 
 // counterOrderItemsSummary joins a counter order's lines into one
@@ -54,6 +59,7 @@ func counterOrderRowsFor(orders []data.KioskCounterOrder, locale string) []count
 			OrderType:  o.OrderType,
 			Items:      counterOrderItemsSummary(o.Lines, locale),
 			AgeMinutes: elapsedMinutes(o.CreatedAt, now),
+			TableLabel: o.TableLabel,
 		})
 	}
 	return rows
