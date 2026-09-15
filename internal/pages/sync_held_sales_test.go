@@ -199,7 +199,7 @@ func TestSyncHeldSales_DeleteIsIdempotent(t *testing.T) {
 	mux, dp, repo := newSyncHeldSalesTestDeps(t)
 	seedSyncOrdersTill(t, dp, "Till 2", "bearer-t2")
 	ctx := context.Background()
-	if err := repo.Insert(ctx, data.HeldSale{ID: "h1", Label: "Table 4", Payload: `{}`}); err != nil {
+	if err := repo.Upsert(ctx, data.HeldSale{ID: "h1", Label: "Table 4", Payload: `{}`}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 

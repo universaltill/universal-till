@@ -40,10 +40,10 @@ func TestHeldSalesRepo_InsertGetListDelete(t *testing.T) {
 		t.Fatalf("expected an empty list, got %+v err=%v", list, err)
 	}
 
-	if err := repo.Insert(ctx, HeldSale{ID: "h1", Label: "Table 4", TotalMinor: 1200, LineCount: 3, Payload: `{"lines":[]}`}); err != nil {
+	if err := repo.Upsert(ctx, HeldSale{ID: "h1", Label: "Table 4", TotalMinor: 1200, LineCount: 3, Payload: `{"lines":[]}`}); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.Insert(ctx, HeldSale{ID: "h2", Label: "Table 5", TotalMinor: 500, LineCount: 1, Payload: `{}`}); err != nil {
+	if err := repo.Upsert(ctx, HeldSale{ID: "h2", Label: "Table 5", TotalMinor: 500, LineCount: 1, Payload: `{}`}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -150,10 +150,10 @@ func TestHeldSalesRepo_TableID(t *testing.T) {
 	repo := newHeldSalesTestDB(t)
 	ctx := context.Background()
 
-	if err := repo.Insert(ctx, HeldSale{ID: "h1", Label: "Table 4", TotalMinor: 1200, LineCount: 3, Payload: `{"lines":[]}`, TableID: "tbl-1"}); err != nil {
+	if err := repo.Upsert(ctx, HeldSale{ID: "h1", Label: "Table 4", TotalMinor: 1200, LineCount: 3, Payload: `{"lines":[]}`, TableID: "tbl-1"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.Insert(ctx, HeldSale{ID: "h2", Label: "Walk-in", TotalMinor: 500, LineCount: 1, Payload: `{}`}); err != nil {
+	if err := repo.Upsert(ctx, HeldSale{ID: "h2", Label: "Walk-in", TotalMinor: 500, LineCount: 1, Payload: `{}`}); err != nil {
 		t.Fatal(err)
 	}
 

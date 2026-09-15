@@ -225,10 +225,10 @@ func TestHeldSaleDeleteWriteThrough_DeletesOnPrimaryAndLocally(t *testing.T) {
 	primary, primaryRepo, _ := newHeldSaleSyncPrimary(t, "b-123")
 	_, dp, repo := newHeldSaleSyncReplica(t, primary.URL, "b-123")
 	ctx := context.Background()
-	if err := primaryRepo.Insert(ctx, sampleHeldSale("h1", "Table 4")); err != nil {
+	if err := primaryRepo.Upsert(ctx, sampleHeldSale("h1", "Table 4")); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.Insert(ctx, sampleHeldSale("h1", "Table 4")); err != nil {
+	if err := repo.Upsert(ctx, sampleHeldSale("h1", "Table 4")); err != nil {
 		t.Fatal(err)
 	}
 	if err := heldSaleDeleteWriteThrough(ctx, dp, repo, "h1"); err != nil {
@@ -252,7 +252,7 @@ func TestHeldSaleDeleteWriteThrough_StillDeletesLocallyWhenPrimaryUnreachable(t 
 	dead.Close()
 	_, dp, repo := newHeldSaleSyncReplica(t, deadURL, "b-123")
 	ctx := context.Background()
-	if err := repo.Insert(ctx, sampleHeldSale("h1", "Table 4")); err != nil {
+	if err := repo.Upsert(ctx, sampleHeldSale("h1", "Table 4")); err != nil {
 		t.Fatal(err)
 	}
 	if err := heldSaleDeleteWriteThrough(ctx, dp, repo, "h1"); err != nil {
@@ -452,7 +452,7 @@ func TestOpenOrdersOnReplica_UnreachablePrimaryRendersLocalOnly(t *testing.T) {
 	deadURL := dead.URL
 	dead.Close()
 	mux, _, repo := newHeldSaleSyncReplica(t, deadURL, "b-123")
-	if err := repo.Insert(context.Background(), sampleHeldSale("h2", "Only here")); err != nil {
+	if err := repo.Upsert(context.Background(), sampleHeldSale("h2", "Only here")); err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
@@ -509,7 +509,7 @@ func TestFetchHeldSalesFromPrimary_Contract(t *testing.T) {
 	if !ok || len(rows) != 0 {
 		t.Fatalf("an empty primary must report ok=true with no rows, got ok=%v rows=%+v", ok, rows)
 	}
-	if err := primaryRepo.Insert(ctx, sampleHeldSale("h1", "Table 4")); err != nil {
+	if err := primaryRepo.Upsert(ctx, sampleHeldSale("h1", "Table 4")); err != nil {
 		t.Fatal(err)
 	}
 	rows, ok = fetchHeldSalesFromPrimary(ctx, dp, heldSaleProxyClient)

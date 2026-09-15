@@ -50,19 +50,14 @@ func NewHeldSalesRepo(db *sql.DB) *HeldSalesRepo {
 
 var heldSalesObs = newRepoObservability("held_sales")
 
-func (r *HeldSalesRepo) Insert(ctx context.Context, h HeldSale) error {
-	var err error
-	done := heldSalesObs.trace("insert")
-	defer func() { done(err) }()
-	_, err = r.db.ExecContext(ctx, `
-INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-`, h.ID, h.Label, h.TotalMinor, h.LineCount, h.Payload, nullIfEmpty(h.TableID))
-	if err != nil {
-		return heldSalesObs.wrapf("insert", "insert held sale %s", err, h.ID)
-	}
-	return nil
-}
+// Insert was removed (ADR-0093, ut-docs#1920, CI's deadcode-baseline guard):
+// parkCurrentBasket's first-park branch was its only production caller, and
+// that branch now goes through heldSaleWriteThrough -> Upsert (an Insert
+// for a freshly minted id, since no conflict is possible -- see
+// heldSaleWriteThrough's own doc comment for why one fallback path replaced
+// two). Every remaining caller was a test using it as a plain seed helper;
+// those now call Upsert directly, which is exactly equivalent for a
+// not-yet-existing id.
 
 // Upsert (ut-docs#1918) writes a held sale under a caller-chosen, STABLE id:
 // a re-park of an order that was resumed from an existing row. Insert-or-

@@ -24,8 +24,11 @@ func TestHeldSalesRepo_UpdatedAtAdvancesOnEveryContentWrite(t *testing.T) {
 	repo := newHeldSalesTestDB(t)
 	ctx := context.Background()
 
-	// Insert stamps it -- a fresh first park is never the schema default.
-	if err := repo.Insert(ctx, HeldSale{ID: "h1", Label: "Table 4", Payload: `{}`}); err != nil {
+	// Upsert-as-insert stamps it -- a fresh first park is never the schema
+	// default (Insert itself was removed, ut-docs#1920 CI review: it had no
+	// production caller left once parkCurrentBasket switched to the
+	// write-through, so Upsert is now the only insert-or-update path).
+	if err := repo.Upsert(ctx, HeldSale{ID: "h1", Label: "Table 4", Payload: `{}`}); err != nil {
 		t.Fatal(err)
 	}
 	got, _, err := repo.Get(ctx, "h1")
