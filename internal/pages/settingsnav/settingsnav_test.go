@@ -42,6 +42,7 @@ func TestResolve_ZeroAmendmentsMatchesCoreSettingsExactly(t *testing.T) {
 		{Key: "settings-order-no", Label: "Order numbers"},
 		{Key: "settings-barcode", Label: "Barcode types"},
 		{Key: "settings-catalog-import-barcode-default", Label: "Catalog import defaults"},
+		{Key: "settings-categories-tab", Label: "Categories tab"},
 		{Key: "settings-stock-tracking", Label: "Stock"},
 		{Key: "settings-backup", Label: "Backups"},
 		{Key: "settings-data", Label: "🧹 Data management"},

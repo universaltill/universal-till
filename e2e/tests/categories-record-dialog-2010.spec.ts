@@ -480,8 +480,20 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
         (a.className ? '.' + String(a.className).trim().split(/\s+/).join('.') : '');
       return { inside: !!a && (d.contains(a) || !!(osk && osk.contains(a))), desc };
     });
+    // ut-docs#2284: the dialog is no longer one name field — it carries the
+    // colour grid (one Tab stop by design: roving tabindex) and a checkbox
+    // per customization group / kitchen station the shop has, so the
+    // number of Tabs needed to lap every control depends on the data. Count
+    // the dialog's own tabbable controls (record-dialog.js's FOCUSABLE,
+    // minus the tabindex=-1 tiles the roving grid hides) and go one lap
+    // plus a margin, instead of a fixed 12.
+    const stops = await dlg.evaluate((d) => Array.prototype.filter.call(
+      d.querySelectorAll('a[href], button:not([disabled]), input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'),
+      (el: Element) => el.getAttribute('tabindex') !== '-1' && el.getClientRects().length > 0,
+    ).length);
+    const laps = Math.max(12, stops + 3);
     const seen: string[] = [];
-    for (let i = 1; i <= 12; i++) {
+    for (let i = 1; i <= laps; i++) {
       await page.keyboard.press('Tab');
       const w = await where();
       expect(w.inside, `Tab #${i} landed on ${w.desc}, outside the open dialog`).toBe(true);
@@ -490,7 +502,7 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
     expect(seen.some((d) => d.includes('record-dialog-close')), `Close never reached: ${seen.join(' → ')}`).toBe(true);
     expect(seen.some((d) => d.includes('record-dialog-save')), `Save never reached: ${seen.join(' → ')}`).toBe(true);
     expect(seen.some((d) => d.includes('btn-icon-danger')), `the trash button never reached: ${seen.join(' → ')}`).toBe(true);
-    for (let i = 1; i <= 12; i++) {
+    for (let i = 1; i <= laps; i++) {
       await page.keyboard.press('Shift+Tab');
       const w = await where();
       expect(w.inside, `Shift+Tab #${i} landed on ${w.desc}, outside the open dialog`).toBe(true);

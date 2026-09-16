@@ -49,6 +49,24 @@
   --radius: 10px;
   --radius-lg: 14px;
   --shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 1px 3px rgba(15, 23, 42, .08);
+  /* ut-docs#2308: sell-screen basket/products divider geometry. Read by
+     BOTH sides of the feature so the numbers only live here: app.css's own
+     `.pos-container` grid-template-columns (the real, foolproof clamp —
+     the grid simply refuses to size either track past what these allow,
+     regardless of what JS or a persisted setting asks for) and the drag
+     handler's own live clamp (index.html, via getComputedStyle at drag
+     time) that keeps the divider from visibly fighting that CSS floor
+     mid-drag. Also mirrored (for the value the settings API accepts
+     before it's ever persisted) in internal/pages/common/state.go's
+     MinBasketPanelWidthRem/MaxBasketPanelWidthRem — keep all three in
+     sync by hand if any of this ever changes. Never overridden by a
+     built-in theme (web/public/themes/*.css) — this is layout, not
+     palette — but nothing stops a theme plugin from doing so, same as any
+     other custom property here. */
+  --pos-basket-min-w: 22rem;      /* matches ut-docs#213's basket-column floor */
+  --pos-basket-max-w: 60rem;      /* generous sanity ceiling; real day-to-day limit is whatever leaves --pos-products-min-w free */
+  --pos-products-min-w: 16.5rem;  /* two 7rem .grid tiles + .5rem gap + .products' own .7rem/.8rem padding, plus a small margin */
+  --pos-divider-w: 1.5rem;        /* >=24px hit area even though the visible grip is thinner (ut-docs#2308 AC2) */
 }
 
 /* ---------- Base ---------- */
@@ -1169,7 +1187,19 @@ body.osk-padded .modifier-groups-modal { block-size: calc(100% - var(--osk-reser
      wider font metrics (Linux/CI, some kiosk builds), the narrower column
      wrapped item names to 3 lines and pushed the remove button past the
      panel edge — tall rows broke the >=4-visible-lines AC (ut-docs#213). */
-  grid-template-columns: minmax(22rem, 26.25rem) 1fr;
+  /* ut-docs#2308: a THIRD track (--pos-divider-w) carries the draggable
+     basket/products divider between the two original tracks. The basket
+     track's own max grew a live-settable custom property,
+     `--basket-col-width` (unset by default -> falls back to the original
+     26.25rem, exactly the pre-#2308 rendering) -- set inline on this
+     element by index_page.go/index.html from the persisted
+     display.basket_panel_width_rem setting, and live-updated by the drag
+     handler's own container.style.setProperty during a drag. Both outer
+     tracks keep their own minmax() floor regardless of what that property
+     says, so the grid itself is the ultimate clamp (see the --pos-*
+     tokens' own comment on :root above) -- a runaway/corrupt custom
+     property value can shrink a pane down to its floor, never past it. */
+  grid-template-columns: minmax(var(--pos-basket-min-w), var(--basket-col-width, 26.25rem)) var(--pos-divider-w) minmax(var(--pos-products-min-w), 1fr);
   /* ut-docs#213: the basket is a full-height first-class column (the
      operator must see what's rung up — the old stacked basket/tender
      split left ~1 visible line at 1280x800). The tender panel sits under
@@ -1245,9 +1275,16 @@ body.osk-padded .modifier-groups-modal { block-size: calc(100% - var(--osk-reser
      tender the same way and was never guarded against before either. */
   grid-template-rows: minmax(8rem, 5fr) minmax(0, 2fr);
   grid-template-areas:
-    "basket products"
-    "basket tender";
-  gap: .8rem;
+    "basket divider products"
+    "basket divider tender";
+  /* ut-docs#2308: split from a single `gap` shorthand -- the divider
+     column now provides its own visual separation between basket and
+     products/tender (it's a real, wide-enough-to-see grid track, not a
+     hairline), so a column-gap on top would double it up. row-gap is
+     unchanged (still separates products from tender, the same .8rem as
+     before this feature). */
+  row-gap: .8rem;
+  column-gap: 0;
   align-items: stretch;
   /* Fill whatever space is left below the nav + kiosk header — robust to
      the nav wrapping to two rows (a fixed calc() assumed one row and
@@ -1304,6 +1341,40 @@ body.osk-padded .modifier-groups-modal { block-size: calc(100% - var(--osk-reser
 .pos-container > .products { grid-area: products; }
 .pos-container > .journal { grid-area: journal; display: none; } /* own page */
 .pos-container > .tender { grid-area: tender; }
+
+/* ut-docs#2308: the basket/products divider. Fills its whole grid track
+   (align-items: stretch on .pos-container above) so the hit area is the
+   full height of the sale screen, not just a short handle in the middle --
+   a touch-and-hold can land anywhere along it. cursor: col-resize signals
+   the affordance to a mouse/trackpad user; touch-action: none stops the
+   browser's own pan/scroll gesture from competing with the JS drag
+   (index.html) once a hold has armed it. The grip itself
+   (.pos-divider-grip) is deliberately narrower than the >=24px hit area
+   (ut-docs#2308 AC2) -- both its resting and held/hover colour come from
+   the existing --border/--accent theme tokens, never a hardcoded colour,
+   so a monochrome or dark theme (web/public/themes/*.css) repaints it
+   automatically along with everything else. */
+.pos-container > .pos-divider {
+  grid-area: divider;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  touch-action: none;
+  min-height: 0;
+}
+.pos-divider-grip {
+  inline-size: .3rem;
+  block-size: 3rem;
+  border-radius: var(--radius-lg);
+  background: var(--border);
+  pointer-events: none; /* the grip is decorative -- .pos-divider itself is the hit target */
+  transition: background-color .12s ease;
+}
+.pos-container > .pos-divider:hover .pos-divider-grip,
+.pos-container > .pos-divider.dragging .pos-divider-grip {
+  background: var(--accent);
+}
 
 /* Panels are cards; each scrolls internally so nothing gets pushed around. */
 .pos-container > .basket,
@@ -1421,6 +1492,15 @@ body.osk-padded .modifier-groups-modal { block-size: calc(100% - var(--osk-reser
     height: auto;
   }
   .pos-container > .basket { max-height: 45dvh; }
+  /* ut-docs#2308 AC3: below the same breakpoint .pos-container itself
+     stacks at, the divider is inactive -- not just visually hidden, never
+     rendered as interactive. `display: none` alone is sufficient (a
+     display:none element receives no pointer events at all), but the drag
+     handler's own isActive() check (index.html) re-confirms this at
+     pointerdown time too, belt-and-braces against a theme overriding this
+     rule. There's also no "divider" cell in the single-column
+     grid-template-areas above for it to occupy even if it weren't hidden. */
+  .pos-container > .pos-divider { display: none; }
 }
 /* ut-docs#413: at the tablet tier above, `grid-template-rows: auto` is a
    single track token applied to all three implicit rows (basket/tender/
@@ -1711,6 +1791,55 @@ html[dir="rtl"] .tile-sheet-move .btn-ico svg { transform: scaleX(-1); }
   margin: 0; padding-inline-start: .5rem; font-size: .85rem; font-weight: 700;
   border-inline-start: 4px solid var(--cat-color, var(--accent));
 }
+
+/* ---------- Categories tab (ut-docs#2283) ----------
+   .category-tile reuses the .grid it sits in (buttons.html) — same
+   auto-fill/7rem column floor the product-tile grid already uses, so the
+   two densities stay visually consistent when an operator flips between
+   the Categories tab and any per-category tab. min-height is bumped past
+   .btn-tile's own 6.5rem (not just matched) — the card's own "at least as
+   large as product-tile" floor, and a plain name-only tile has far less
+   content than a tile with a thumbnail/price, so a little extra height
+   keeps it from reading as a visually lighter, easier-to-mis-tap target
+   next to the item tiles it sits beside once a category is open. Same
+   --cat-color-accent/border-inline-start recipe as .btn-tile (ut-docs#1325)
+   -- one color per category, carried on the tile itself since (unlike a
+   category panel) this view has no ancestor already carrying it.
+
+   min-height measured, not guessed: a .btn-tile with a two-line-clamped
+   name AND a price line (no thumbnail) renders at ~140px in a real
+   browser at the 7rem grid-column floor both share — noticeably taller
+   than the 6.5rem/104px number .btn-tile's own CSS states as ITS floor,
+   because that number is only ever the floor for a short one-line name
+   with no price growth. .category-tile has no price line to grow past its
+   own name, so matching .btn-tile's stated floor is not enough once a
+   real (especially a longer, translated) category name wraps to two
+   lines — confirmed live by e2e/tests/sell-screen-categories-tab-2283
+   .spec.ts's geometry case, which is what caught this the first time
+   (measured 119px against a real 140.75px product tile, both two-line
+   names, neither one hand-picked to make a point). 9.5rem/152px clears
+   that measured case with margin. */
+.category-tile {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: .3rem; padding: .6rem .5rem; min-height: 9.5rem; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow);
+  font: inherit; color: var(--text); cursor: pointer; text-align: center;
+  transition: border-color .12s ease, box-shadow .12s ease, transform .05s ease;
+  user-select: none; touch-action: manipulation; -webkit-touch-callout: none;
+  border-inline-start: 4px solid var(--cat-color, var(--accent));
+}
+.category-tile:hover { border-color: #cbd5e1; box-shadow: 0 3px 8px rgba(15, 23, 42, .12); }
+.category-tile:active { transform: scale(.97); }
+.category-tile-name {
+  font-weight: 600; font-size: .95rem; line-height: 1.25;
+  overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+/* Wider than the base .modifier-modal (28rem/90vw) — this holds a full
+   item grid, not a handful of buttons — same "widen the dialog, not the
+   content" call .barcode-backfill-modal made for its own wide table. */
+.category-items-modal { max-width: 44rem; width: 94vw; }
+.category-items-modal-body { max-height: 60vh; overflow-y: auto; margin-block: .5rem; }
 
 /* ---------- Product tiles ----------
    The whole tile is one touch target: image, name, price. */
@@ -3558,6 +3687,28 @@ body.login-screen {
 .item-color-tile { flex-direction: column; gap: .3rem; min-block-size: 3.6rem; padding: .5rem .4rem; font-size: .78rem; font-weight: 500; }
 .swatch-dot { display: block; inline-size: 1.15rem; block-size: 1.15rem; border-radius: 50%;
               background: var(--swatch, transparent); border: 1px solid rgba(15, 23, 42, .18); }
+/* Category editor pickers (ut-docs#2284): the colour grid reuses the item
+   swatch picker above unchanged; these only space the dialog's three
+   sections and let the group/station checkbox rows wrap (the base
+   .field-checks is a single non-wrapping row sized for three fixed
+   toggles). .category-swatch is the same dot drawn inline beside a list
+   row's name, so the list shows the colour without opening the row.
+   Logical properties only — the dialog renders RTL for fa/ar/he. */
+.category-dialog-section { margin-block-start: .9rem; }
+.category-dialog-label { font-size: .82rem; margin-block-end: .25rem; }
+.category-dialog-help { font-size: .82rem; margin-block: 0 .4rem; }
+.category-dialog-checks { flex-wrap: wrap; gap: .5rem 1rem; }
+/* Item editor: inherited-group rows in the nested customization dialog and
+   the kitchen-routing section under the Variants tab (ut-docs#2284). The
+   inherited row reuses .modifier-admin-group-row's flex layout, with the
+   name given the flex share a text input would otherwise take. */
+.modifier-inherited-name { flex: 1 1 10rem; min-inline-size: 8rem; font-weight: 600; }
+.modifier-inherited-options { flex: 2 1 12rem; font-size: .85rem; }
+.catalog-inherited-help, .catalog-routing-help, .catalog-routing-inherited { font-size: .85rem; margin-block: .2rem; }
+.catalog-detail-routing { margin-block-start: 1rem; }
+.catalog-routing-form { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; }
+.catalog-routing-form .field-checks { margin: 0; }
+.category-swatch { display: inline-block; vertical-align: middle; inline-size: .85rem; block-size: .85rem; margin-inline-end: .15rem; }
 /* Catalog card grid (ut-docs#1951): the empty-state placeholder lives
    inside the same .grid as the cards (so a beforeend OOB insert has one
    stable parent whether the catalog is empty or not — see

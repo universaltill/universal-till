@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
@@ -901,5 +902,83 @@ func TestBuildKitchenTargets_SurfacesSettingsReadError(t *testing.T) {
 
 	if _, err := buildKitchenTargets(ctx, dp, "R-1533", ""); err == nil {
 		t.Fatal("expected buildKitchenTargets to surface the settings read error, got nil")
+	}
+}
+
+// ut-docs#2284: the kitchen-ticket routing precedence, table-driven at the
+// level that actually groups the ticket (buildKitchenTargets, over the
+// real ResolveKitchenStations):
+//
+//	item route (explicit) > category route > default kitchen printer
+//
+// "Default" here is exactly what the codebase has always meant by it: the
+// shared KITCHEN bucket sent to printer.kitchen_addr — there is no separate
+// "default station" row, and this test deliberately does not invent one.
+// Every case seeds the same item (Steak, in Food) and varies only which
+// rule tiers exist; the expected outcome is the set of target station
+// names the ticket splits into.
+func TestBuildKitchenTargets_RoutingPrecedence(t *testing.T) {
+	cases := []struct {
+		name          string
+		itemRoutes    []string // station names the item is explicitly routed to
+		categoryRoute []string // station names the category is routed to
+		want          []string // target station names, in buildKitchenTargets' order
+	}{
+		{"neither tier: default kitchen printer", nil, nil, []string{kitchenStation}},
+		{"category only: category's station", nil, []string{"Bar"}, []string{"Bar"}},
+		{"item only: item's station", []string{"Grill"}, nil, []string{"Grill"}},
+		{"both tiers: item wins outright, no union", []string{"Grill"}, []string{"Bar"}, []string{"Grill"}},
+		{"item routed to two stations: both, category ignored", []string{"Bar", "Grill"}, []string{"Pass"}, []string{"Bar", "Grill"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dp, dbase := kitchenRoutingDeps(t)
+			ctx := context.Background()
+			repo := data.NewPOSRepo(dbase.DB)
+			if err := dp.Settings.Set(ctx, keyPrinterKitchen, printerFile(t, "kitchen.prn")); err != nil {
+				t.Fatal(err)
+			}
+			stationIDs := map[string]string{}
+			for _, name := range []string{"Bar", "Grill", "Pass"} {
+				id, err := repo.CreateKitchenStation(ctx, name, data.KitchenDestinationPrinter, printerFile(t, name+".prn"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				stationIDs[name] = id
+			}
+			ids := func(names []string) []string {
+				out := make([]string, 0, len(names))
+				for _, n := range names {
+					out = append(out, stationIDs[n])
+				}
+				return out
+			}
+			if len(c.categoryRoute) > 0 {
+				if err := repo.SetCategoryStationRoutes(ctx, "cat-food", ids(c.categoryRoute)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if len(c.itemRoutes) > 0 {
+				if err := repo.SetItemStationRoutes(ctx, "itm-steak", ids(c.itemRoutes)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			seedKitchenSale(t, dbase, "R-2284", "itm-steak")
+
+			targets, err := buildKitchenTargets(ctx, dp, "R-2284", "")
+			if err != nil {
+				t.Fatalf("buildKitchenTargets: %v", err)
+			}
+			got := make([]string, 0, len(targets))
+			for _, tg := range targets {
+				got = append(got, tg.station)
+				if len(tg.items) != 1 || !strings.Contains(tg.items[0].Name, "Steak") {
+					t.Errorf("target %q must carry exactly the Steak line, got %+v", tg.station, tg.items)
+				}
+			}
+			if strings.Join(got, ",") != strings.Join(c.want, ",") {
+				t.Fatalf("targets = %v, want %v", got, c.want)
+			}
+		})
 	}
 }

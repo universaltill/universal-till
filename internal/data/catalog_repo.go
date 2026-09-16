@@ -1394,6 +1394,15 @@ func (e *ErrCategoryHasItems) Error() string {
 // the existing list (current max + 1, or 0 for the first category) so a
 // newly-created category shows up last, not interleaved.
 func (r *CatalogRepo) CreateCategory(ctx context.Context, name string) (string, error) {
+	return r.CreateCategoryWithColor(ctx, name, "")
+}
+
+// CreateCategoryWithColor is CreateCategory plus the category's tile/tab
+// colour (ut-docs#2284) — one of catalogtypes.ItemColors()' hex values, or
+// "" for none, stored as NULL. Validation against the palette is the
+// caller's job (categories_page.go, same as the item editor's
+// validateLookups): the repo stays a plain persistence layer.
+func (r *CatalogRepo) CreateCategoryWithColor(ctx context.Context, name, color string) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return "", ErrCategoryNameRequired
@@ -1408,8 +1417,8 @@ func (r *CatalogRepo) CreateCategory(ctx context.Context, name string) (string, 
 	}
 	id := uuid.NewString()
 	if _, err := r.db.ExecContext(ctx,
-		`INSERT INTO categories (id, name, sort_order, is_active) VALUES (?, ?, ?, 1)`,
-		id, name, sortOrder); err != nil {
+		`INSERT INTO categories (id, name, sort_order, is_active, color) VALUES (?, ?, ?, 1, ?)`,
+		id, name, sortOrder, nullableString(strings.TrimSpace(color))); err != nil {
 		return "", fmt.Errorf("create category: %w", err)
 	}
 	return id, nil
@@ -1425,6 +1434,29 @@ func (r *CatalogRepo) RenameCategory(ctx context.Context, id, name string) error
 	res, err := r.db.ExecContext(ctx, `UPDATE categories SET name = ? WHERE id = ?`, name, id)
 	if err != nil {
 		return fmt.Errorf("rename category: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrCategoryNotFound
+	}
+	return nil
+}
+
+// UpdateCategory writes a category's name AND colour in one statement —
+// the category editor's Save (ut-docs#2284) submits both together, so a
+// two-call rename-then-recolour could half-apply. Same contract as
+// RenameCategory otherwise: blank name → ErrCategoryNameRequired, unknown
+// id → ErrCategoryNotFound, nothing else on the row (sort order, active
+// flag, parent) is touched. An empty colour clears the column (NULL,
+// read back as "") — how the picker's "No colour" tile is stored.
+func (r *CatalogRepo) UpdateCategory(ctx context.Context, id, name, color string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ErrCategoryNameRequired
+	}
+	res, err := r.db.ExecContext(ctx, `UPDATE categories SET name = ?, color = ? WHERE id = ?`,
+		name, nullableString(strings.TrimSpace(color)), id)
+	if err != nil {
+		return fmt.Errorf("update category: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrCategoryNotFound

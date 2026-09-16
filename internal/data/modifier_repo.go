@@ -747,6 +747,114 @@ func (r *ModifierRepo) UnlinkGroupFromCategory(ctx context.Context, categoryID, 
 	return nil
 }
 
+// SetCategoryModifierGroups replaces a category's linked modifier groups
+// with exactly the given set, in one transaction — the category editor's
+// multi-select Save (ut-docs#2284). The same replace-all shape as
+// POSRepo.SetCategoryStationRoutes, and for the same reason: a diff-based
+// sequence of LinkGroupToCategory/UnlinkGroupFromCategory calls could
+// half-apply if a second save raced it. It manages the exact same
+// category_modifier_group_links rows those two primitives do (both still
+// serve a caller that wants one link at a time), so every ADR-0094
+// consequence holds unchanged: a category never becomes a group's owner,
+// item links and opt-out rows are untouched, and the sale-time resolver
+// sees the new set on the very next add-to-basket. Submitted order becomes
+// each link's sort_order (the order the category's items are asked in);
+// blank and repeated ids are dropped; an empty set clears every link.
+func (r *ModifierRepo) SetCategoryModifierGroups(ctx context.Context, categoryID string, groupIDs []string) error {
+	if categoryID == "" {
+		return errors.New("category_id required")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("set category modifier groups: begin: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+	if _, err := tx.ExecContext(ctx, `DELETE FROM category_modifier_group_links WHERE category_id = ?`, categoryID); err != nil {
+		return fmt.Errorf("set category modifier groups: delete: %w", err)
+	}
+	seen := map[string]bool{}
+	sortOrder := 0
+	for _, gid := range groupIDs {
+		gid = strings.TrimSpace(gid)
+		if gid == "" || seen[gid] {
+			continue
+		}
+		seen[gid] = true
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO category_modifier_group_links (category_id, group_id, sort_order) VALUES (?, ?, ?)`,
+			categoryID, gid, sortOrder); err != nil {
+			return fmt.Errorf("set category modifier groups: insert: %w", err)
+		}
+		sortOrder++
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("set category modifier groups: commit: %w", err)
+	}
+	return nil
+}
+
+// AllCategoryModifierGroupLinks returns every category's linked group ids
+// (active or not — this is the admin editor's configured state, same as
+// ListAllGroupsForCategory) in one query, keyed by category id, each list
+// in the category link's own sort_order/name order — the categories admin
+// list's per-row prefill (ut-docs#2284), mirroring
+// POSRepo.AllCategoryStationRoutes so rendering N category rows never
+// costs N per-category queries.
+func (r *ModifierRepo) AllCategoryModifierGroupLinks(ctx context.Context) (map[string][]string, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT l.category_id, l.group_id
+FROM category_modifier_group_links l
+JOIN item_modifier_groups g ON g.id = l.group_id
+ORDER BY l.category_id, l.sort_order, g.name`)
+	if err != nil {
+		return nil, fmt.Errorf("all category modifier group links: %w", err)
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var catID, groupID string
+		if err := rows.Scan(&catID, &groupID); err != nil {
+			return nil, fmt.Errorf("scan category modifier group link: %w", err)
+		}
+		out[catID] = append(out[catID], groupID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate category modifier group links: %w", err)
+	}
+	return out, nil
+}
+
+// ListActiveModifierGroups returns every ACTIVE modifier group in the shop,
+// by name, with no item scoping and no options loaded — the category
+// editor's multi-select source (ut-docs#2284), the category-side twin of
+// ListAttachableModifierGroups' item-scoped picker and with the same
+// active-only rule (offering a group nobody can currently sell would only
+// confuse). Deliberately NOT ListShopModifierGroups' per-link fan-out: a
+// group linked to three items must appear once here, not three times.
+func (r *ModifierRepo) ListActiveModifierGroups(ctx context.Context) ([]ModifierGroup, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT g.id, g.name, g.required, g.min_select, g.max_select
+FROM item_modifier_groups g
+WHERE g.is_active = 1
+ORDER BY g.name`)
+	if err != nil {
+		return nil, fmt.Errorf("list active modifier groups: %w", err)
+	}
+	defer rows.Close()
+	var groups []ModifierGroup
+	for rows.Next() {
+		var g ModifierGroup
+		var required int
+		if err := rows.Scan(&g.ID, &g.Name, &required, &g.MinSelect, &g.MaxSelect); err != nil {
+			return nil, fmt.Errorf("scan active modifier group: %w", err)
+		}
+		g.Required = required == 1
+		g.IsActive = true
+		groups = append(groups, g)
+	}
+	return groups, rows.Err()
+}
+
 // OptOutItemFromGroup records that an item declines a category-inherited
 // modifier group — ADR-0094 Decision 2 (ut-docs#1915): a presence-only row
 // in item_modifier_group_opt_outs, which ResolveGroupsForItem subtracts from
