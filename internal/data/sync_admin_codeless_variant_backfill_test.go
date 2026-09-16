@@ -79,11 +79,15 @@ func TestApplyAdmin_BackfillsCodelessSyncedVariant(t *testing.T) {
 
 	// Re-applying the identical bundle (a repeat poll from a primary that is
 	// STILL on the old, pre-fix state) must not error, and must never leave
-	// the row genuinely codeless again: the generic upsert re-writes
-	// sku=NULL from the stale bundle first (primary wins), so the backfill
-	// re-fires and hands out a fresh code. The exact value need not be
-	// STABLE across repeats — only ever-present — until the lagging primary
-	// itself boots the fix and the version skew resolves for good.
+	// the row genuinely codeless again. ut-docs#2246: unlike every other
+	// adminTables column, item_variants.sku is sticky against a blank
+	// incoming value once it has a real one — the generic upsert's
+	// COALESCE(NULLIF(excluded.sku, ''), sku) (mirroring CatalogRepo.
+	// UpdateVariant's own long-standing "blank never means clear" rule)
+	// leaves the already-backfilled SKU untouched, so the value must be
+	// STABLE across repeats, not just ever-present: a shelf label printed
+	// from the replica between two polls must keep scanning.
+	first := *sku
 	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
 		t.Fatalf("re-apply: %v", err)
 	}
@@ -91,11 +95,62 @@ func TestApplyAdmin_BackfillsCodelessSyncedVariant(t *testing.T) {
 	if err := replica.DB.QueryRow(`SELECT sku FROM item_variants WHERE id = 'v-codeless'`).Scan(&again); err != nil {
 		t.Fatal(err)
 	}
-	if again == nil || !generatedSyncSKUPattern.MatchString(*again) {
+	if again == nil || *again != first {
 		got := "<nil>"
 		if again != nil {
 			got = *again
 		}
-		t.Fatalf("v-codeless sku after re-applying a still-stale bundle = %q, want to match %s (must never go back to codeless)", got, generatedSyncSKUPattern.String())
+		t.Fatalf("v-codeless sku after re-applying a still-stale bundle = %q, want unchanged %q (a backfilled SKU must survive repeated blank polls, or a printed/scanned label breaks)", got, first)
+	}
+}
+
+// TestApplyAdmin_RealSKUStillOverwritesBackfilledOne covers the other half
+// of ut-docs#2246's contract: stickiness must never become permanent
+// resistance to the primary — once the lagging primary itself boots the
+// fix (or otherwise starts sending a real SKU for a variant this replica
+// already backfilled), that real value must win, exactly like every other
+// synced field ("primary always wins").
+func TestApplyAdmin_RealSKUStillOverwritesBackfilledOne(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary-codeless-catchup.db")
+	replica := openMigratedDB(t, "replica-codeless-catchup.db")
+
+	mustExec(t, primary, `INSERT INTO items (id, sku, name, base_price) VALUES ('itm1', 'ITEM-1', 'Coffee', 300)`)
+	mustExec(t, primary, `INSERT INTO item_variants (id, item_id, sku, name, price, is_active) VALUES ('v-codeless', 'itm1', NULL, 'Small', 250, 1)`)
+
+	repo := NewSyncAdminRepo(primary.DB)
+	bundle, err := repo.DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var backfilled *string
+	if err := replica.DB.QueryRow(`SELECT sku FROM item_variants WHERE id = 'v-codeless'`).Scan(&backfilled); err != nil {
+		t.Fatalf("synced variant missing: %v", err)
+	}
+	if backfilled == nil || !generatedSyncSKUPattern.MatchString(*backfilled) {
+		t.Fatalf("v-codeless sku on replica after first apply = %v, want a generated SKU", backfilled)
+	}
+
+	// The primary now catches up (boots ut-docs#1900's fix, or the sku is
+	// otherwise assigned for real) and sends a real, non-blank sku.
+	mustExec(t, primary, `UPDATE item_variants SET sku = 'REAL-001' WHERE id = 'v-codeless'`)
+	bundle2, err := repo.DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump 2: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+		t.Fatalf("apply 2: %v", err)
+	}
+
+	var final string
+	if err := replica.DB.QueryRow(`SELECT sku FROM item_variants WHERE id = 'v-codeless'`).Scan(&final); err != nil {
+		t.Fatalf("synced variant missing: %v", err)
+	}
+	if final != "REAL-001" {
+		t.Fatalf("v-codeless sku after primary caught up = %q, want REAL-001 (primary must still win over a stale backfilled value)", final)
 	}
 }

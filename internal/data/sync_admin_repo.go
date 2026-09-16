@@ -62,6 +62,16 @@ type adminTable struct {
 	// has the primary's real tills rows, bearer_hash included, baked in
 	// from day one — skipCols's "leave it alone" would let that real
 	// secret sit there forever; redactCols actively scrubs it every pull).
+	stickyNonBlankCols []string // columns where a blank (NULL/'') incoming
+	// value never overwrites an existing non-blank local value, even though
+	// the column otherwise travels normally (unlike skipCols, a real
+	// incoming value still wins and does write through — this only refuses
+	// a blank one). Mirrors CatalogRepo.UpdateVariant's own long-standing
+	// SET sku = COALESCE(NULLIF(?, ''), sku): blank has never meant "clear
+	// it" anywhere else in this codebase, and the generic upsert below is
+	// the one path that didn't follow that rule (ut-docs#2246) — a still-
+	// behind primary's blank sku kept invalidating item_variants.sku
+	// backfillCodelessSyncedVariants had already fixed, on every poll.
 }
 
 // adminTables is the shop-wide state a replica mirrors. Deliberately NOT
@@ -146,7 +156,14 @@ var adminTables = []adminTable{
 	{name: "role_permissions", pk: []string{"role", "action"}},
 	{name: "items", pk: []string{"id"}, hasIsActive: true, unique: []string{"sku"}},
 	{name: "item_barcodes", pk: []string{"barcode"}},
-	{name: "item_variants", pk: []string{"id"}, hasIsActive: true, unique: []string{"sku"}},
+	// stickyNonBlankCols: []string{"sku"} — ut-docs#2246: without this, a
+	// primary still behind on ut-docs#1900 (or its own #2230 fix) that keeps
+	// sending a blank sku for a variant this replica already backfilled
+	// (see backfillCodelessSyncedVariants below) would have that backfill
+	// undone on every single poll, changing the scannable code a shelf
+	// label was just printed with. A real, non-blank incoming sku still
+	// overwrites normally — this only refuses a blank one.
+	{name: "item_variants", pk: []string{"id"}, hasIsActive: true, unique: []string{"sku"}, stickyNonBlankCols: []string{"sku"}},
 	{name: "variant_barcodes", pk: []string{"barcode"}},
 	// ut-docs#1900: reusable option sets (migration 017) are catalog
 	// structure of exactly the same shop-wide kind as item_modifier_groups
@@ -1257,6 +1274,10 @@ func resolveUpsertRow(t adminTable, cols []string, rec map[string]any) resolvedU
 	for _, c := range t.redactCols {
 		redact[c] = true
 	}
+	sticky := map[string]bool{}
+	for _, c := range t.stickyNonBlankCols {
+		sticky[c] = true
+	}
 	var names []string
 	var args []any
 	var sets []string
@@ -1284,7 +1305,14 @@ func resolveUpsertRow(t adminTable, cols []string, rec map[string]any) resolvedU
 		names = append(names, c)
 		args = append(args, v)
 		if !isPK[c] {
-			sets = append(sets, c+" = excluded."+c)
+			if sticky[c] {
+				// A blank incoming value leaves the existing local value
+				// untouched; a real one still overwrites — see
+				// stickyNonBlankCols' own doc comment.
+				sets = append(sets, c+" = COALESCE(NULLIF(excluded."+c+", ''), "+c+")")
+			} else {
+				sets = append(sets, c+" = excluded."+c)
+			}
 		}
 	}
 	return resolvedUpsertRow{names: names, sets: sets, args: args}
