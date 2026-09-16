@@ -520,17 +520,17 @@
         "headings": 2,
         "numbered_steps": 3,
         "sub_bullets": 0,
-        "top_bullets": 0,
+        "top_bullets": 1,
         "bold_leadins": 1
       },
       "english": {
         "headings": 3,
         "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 4,
+        "top_bullets": 5,
         "bold_leadins": 3
       },
-      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2285: both English and this locale gained one more top-level bullet (a cross-reference to the sell screen's new long-press tile-actions sheet) — the pre-existing gap this entry tracks is unchanged in size, just shifted by +1/+1."
     },
     {
       "locale": "fa",
@@ -881,17 +881,17 @@
         "headings": 2,
         "numbered_steps": 3,
         "sub_bullets": 0,
-        "top_bullets": 0,
+        "top_bullets": 1,
         "bold_leadins": 1
       },
       "english": {
         "headings": 3,
         "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 4,
+        "top_bullets": 5,
         "bold_leadins": 3
       },
-      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2285: both English and this locale gained one more top-level bullet (a cross-reference to the sell screen's new long-press tile-actions sheet) — the pre-existing gap this entry tracks is unchanged in size, just shifted by +1/+1."
     },
     {
       "locale": "tr",
@@ -1014,17 +1014,17 @@
         "headings": 2,
         "numbered_steps": 3,
         "sub_bullets": 0,
-        "top_bullets": 0,
+        "top_bullets": 1,
         "bold_leadins": 0
       },
       "english": {
         "headings": 3,
         "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 4,
+        "top_bullets": 5,
         "bold_leadins": 3
       },
-      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2285: both English and this locale gained one more top-level bullet (a cross-reference to the sell screen's new long-press tile-actions sheet) — the pre-existing gap this entry tracks is unchanged in size, just shifted by +1/+1."
     },
     {
       "locale": "de",
@@ -1033,17 +1033,17 @@
         "headings": 2,
         "numbered_steps": 3,
         "sub_bullets": 0,
-        "top_bullets": 0,
+        "top_bullets": 1,
         "bold_leadins": 0
       },
       "english": {
         "headings": 3,
         "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 4,
+        "top_bullets": 5,
         "bold_leadins": 3
       },
-      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2285: both English and this locale gained one more top-level bullet (a cross-reference to the sell screen's new long-press tile-actions sheet) — the pre-existing gap this entry tracks is unchanged in size, just shifted by +1/+1."
     },
     {
       "locale": "ar",
