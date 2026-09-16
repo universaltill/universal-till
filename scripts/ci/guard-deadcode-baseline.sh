@@ -7,8 +7,10 @@
 # IMPORTANT — this is a WHOLE-PROGRAM analysis, not scoped to
 # cmd/unitill-desktop alone (independent review, ut-docs#1581): only 1 of
 # the 78 seeded baseline entries is actually under cmd/unitill-desktop/; the
-# other 77 are `internal/**` code unreachable from either of this script's
-# two roots. That's deliberate, not a bug -- `deadcode` needs real entry
+# other 77 are `internal/**` code unreachable from any of this script's
+# three roots (`.`, `./cmd/unitill-desktop`, `./cmd/unitill-uninstall` —
+# see the `go run` invocation below). That's deliberate, not a bug --
+# `deadcode` needs real entry
 # points to compute reachability, and scoping the *roots* to just
 # cmd/unitill-desktop (dropping `.`, the server main) would make every
 # internal/ function only the server ever calls look "unreachable" too, a
