@@ -37,9 +37,10 @@ import (
 // runtime calls, and understated the real figure by more than 3x). Per
 // full-package run this package performs ~263 fully-migrated opens:
 //   - 50 through newRealDBDeps — what this helper fixes;
-//   - 138 through openPagesTestDB (ui_smoke_test.go) — by far the largest
-//     remaining lever, and one function, so the identical treatment applies;
-//   - ~74 ad-hoc db.Open call sites across 46 other files in this package.
+//   - ~138 through openPagesTestDB (ui_smoke_test.go) — fixed by
+//     ut-docs#2219, the identical treatment applied to that helper;
+//   - ~74 ad-hoc db.Open call sites across 46 other files in this package —
+//     now the largest remaining lever.
 //
 // So this change removes roughly a fifth of the migration work, and the
 // full-package -race gate still exceeds any reasonable timeout without the
