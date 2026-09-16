@@ -13,7 +13,10 @@ import (
 // The blocking payment-provider gate (payment.<key>.authorize/.refund): the
 // method's owning plugin approves (nil), declines (error propagates and the
 // caller must stop the sale/refund), and methods without an entry or a
-// subscriber pass through untouched (cash stays cash).
+// subscriber pass through untouched (cash stays cash). Exercised through
+// blockingPaymentEventWithResponse — the function the refund gate really
+// calls — with the response discarded (ut-docs#1566: the err-only wrapper
+// this test used to go through had no production caller and was deleted).
 func TestBlockingPaymentEventGate(t *testing.T) {
 	chdirRoot(t)
 	db := openPagesTestDB(t)
@@ -45,7 +48,7 @@ func TestBlockingPaymentEventGate(t *testing.T) {
 	bus := plugins.SharedBus(db)
 
 	// No subscriber yet → no gate.
-	if err := blockingPaymentEvent(ctx, d, "stripe", "refund", map[string]any{"amount": int64(100)}); err != nil {
+	if _, err := blockingPaymentEventWithResponse(ctx, d, "stripe", "refund", map[string]any{"amount": int64(100)}); err != nil {
 		t.Fatalf("no-subscriber gate: %v", err)
 	}
 
@@ -63,15 +66,15 @@ func TestBlockingPaymentEventGate(t *testing.T) {
 		t.Fatalf("subscribe: %v", err)
 	}
 
-	if err := blockingPaymentEvent(ctx, d, "stripe", "refund", map[string]any{"amount": int64(100)}); err != nil {
+	if _, err := blockingPaymentEventWithResponse(ctx, d, "stripe", "refund", map[string]any{"amount": int64(100)}); err != nil {
 		t.Fatalf("approving provider should not block: %v", err)
 	}
 	decline = true
-	if err := blockingPaymentEvent(ctx, d, "stripe", "refund", map[string]any{"amount": int64(100)}); err == nil {
+	if _, err := blockingPaymentEventWithResponse(ctx, d, "stripe", "refund", map[string]any{"amount": int64(100)}); err == nil {
 		t.Fatal("declining provider must block the refund")
 	}
 	// A different method (cash) has no entry — never gated.
-	if err := blockingPaymentEvent(ctx, d, "cash", "refund", map[string]any{"amount": int64(100)}); err != nil {
+	if _, err := blockingPaymentEventWithResponse(ctx, d, "cash", "refund", map[string]any{"amount": int64(100)}); err != nil {
 		t.Fatalf("cash must not be gated: %v", err)
 	}
 }

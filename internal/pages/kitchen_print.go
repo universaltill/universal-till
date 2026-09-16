@@ -110,6 +110,18 @@ func isASCII(s string) bool {
 // timestamp, no prices. Kept as the canonical zero-stations ticket — with no
 // kitchen stations configured, printKitchen sends exactly these bytes
 // (pinned by TestPrintKitchen_ZeroStations_ByteIdenticalLegacyTicket).
+//
+// Test-only-reachable by design, kept deliberately (ut-docs#1566 — on
+// scripts/ci/deadcode-baseline.txt, not a deletion candidate): production
+// printing goes through printKitchen → buildKitchenTargets (ut-docs#516/
+// #2098 station routing), which assembles every ticket from the same
+// kitchenTicketFor/kitchenItemsFor this wraps. It stays for two reasons.
+// It is the INDEPENDENT oracle for the byte-identical pin above — deriving
+// the expected bytes from buildKitchenTargets' own default bucket would
+// compare printKitchen against itself and prove nothing. And the
+// ticket-content tests (kitchen_print_test.go, line_order_type_test.go)
+// assert on modifiers/order-type/charset through it without the
+// station-routing fixtures buildKitchenTargets needs.
 func buildKitchenTicket(ctx context.Context, d *common.Deps, receiptNo string) (print.KitchenTicket, error) {
 	detail, ok, err := data.NewPOSRepo(d.Db).GetSaleDetail(ctx, receiptNo)
 	if err != nil {

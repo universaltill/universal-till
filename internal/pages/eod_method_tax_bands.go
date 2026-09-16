@@ -80,10 +80,15 @@ func apportionAmount(total int64, shares []int64, totalShares int64) []int64 {
 //
 // This calls SalesForTaxBands itself — a standalone read, independent of
 // any TaxBands computation — for callers/tests that only need the
-// cross-tab. The two production call sites in eod_api.go do NOT use this
-// directly; they call attachEODBands, which reads sales ONCE and feeds
-// both computeEODTaxBandsFromSales and computeEODMethodTaxBandsFromSales
-// from that single snapshot (see attachEODBands' doc comment for why).
+// cross-tab. Neither production call site in eod_api.go uses this
+// directly: generateEOD reads SalesForTaxBandsInstant itself and calls
+// computeEODMethodTaxBandsFromSales, and the range-export handler calls
+// attachEODBands — either way sales are read ONCE and feed both
+// computeEODTaxBandsFromSales and computeEODMethodTaxBandsFromSales from
+// that single snapshot (see attachEODBands' doc comment for why). So this
+// is test-only-reachable, kept deliberately (ut-docs#1566 — on
+// scripts/ci/deadcode-baseline.txt, not a deletion candidate): its callers
+// are attachEODMethodTaxBands and, through it, this package's own tests.
 //
 // Output order is deterministic: ascending by Method, then by RateBP —
 // grouping a method's rates together, the way the posting batch reads,
@@ -185,6 +190,11 @@ func computeEODMethodTaxBandsFromSales(sales []data.EODTaxBandSale) []data.Metho
 // (Day for the single-day form, From/To for a range) — the same contract
 // as attachEODTaxBands: an error is an error, callers must fail rather
 // than archive/print/export a report without its cross-tab.
+//
+// Test-only-reachable today (ut-docs#1004 then commit 8548a3af moved both
+// production call sites off this function; the range export now uses
+// attachEODBands, generateEOD reads inline); kept deliberately
+// (ut-docs#1566) — see computeEODMethodTaxBands' doc comment.
 func attachEODMethodTaxBands(ctx context.Context, repo *data.POSRepo, rep *data.EODReport) error {
 	from, to := rep.Day, rep.Day
 	if rep.Day == "" {
@@ -211,12 +221,19 @@ func attachEODMethodTaxBands(ctx context.Context, repo *data.POSRepo, rep *data.
 // the matching TaxBand) in exactly the artifact an accountant reconciles
 // against. One shared snapshot removes the window entirely.
 //
-// This is the function generateEOD and the range handler actually call.
-// attachEODTaxBands/attachEODMethodTaxBands remain as their own
-// independent-read equivalents — still correct on their own, just not
-// mutually consistent with each other if called back to back — for any
-// caller (this package's own tests included) that only needs one
-// breakdown and doesn't care about that consistency.
+// This is the function the range-export handler actually calls. generateEOD
+// applies the same one-read rule inline instead — it must read
+// SalesForTaxBandsInstant (ADR-0066 Decision 6), never the calendar-date
+// SalesForTaxBands this function's rep.Day=="" fallback would resolve to,
+// so it feeds the two *FromSales aggregations from its own single read
+// (see its comment in eod_api.go). attachEODTaxBands/attachEODMethodTaxBands
+// remain as their own independent-read equivalents — still correct on
+// their own, just not mutually consistent with each other if called back
+// to back — for any caller that only needs one breakdown and doesn't care
+// about that consistency. Today those callers are exclusively this
+// package's own tests, which is why they and their compute* halves sit on
+// scripts/ci/deadcode-baseline.txt as test-only-reachable entries, kept
+// deliberately (ut-docs#1566).
 func attachEODBands(ctx context.Context, repo *data.POSRepo, rep *data.EODReport) error {
 	from, to := rep.Day, rep.Day
 	if rep.Day == "" {

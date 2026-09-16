@@ -33,9 +33,11 @@ func etbPayment(t *testing.T, d *db.DB, saleID, id, methodID string, amount, cha
 VALUES (?, ?, ?, ?, 'GBP', ?, ?, ?)`, id, saleID, methodID, amount, changeGiven, tipAmount, "2026-01-01T12:00:00Z")
 }
 
-// emtbEndOfDay runs the REAL production trio — POSRepo.EndOfDay +
-// attachEODTaxBands + attachEODMethodTaxBands — exactly as generateEOD
-// does after ut-docs#1004.
+// emtbEndOfDay runs POSRepo.EndOfDay + attachEODTaxBands +
+// attachEODMethodTaxBands, the standalone trio generateEOD's own inline
+// read (repo.EndOfDay + repo.SalesForTaxBandsInstant + both
+// computeEOD*TaxBandsFromSales calls) is consistent with, not the trio
+// generateEOD itself calls (ut-docs#1566).
 func emtbEndOfDay(t *testing.T, d *db.DB, day string) data.EODReport {
 	t.Helper()
 	repo := data.NewPOSRepo(d.DB)
