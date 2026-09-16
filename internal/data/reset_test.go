@@ -809,11 +809,11 @@ func TestCleanupObsoleteItems(t *testing.T) {
 	x(`INSERT INTO items (id, name, base_price, is_active) VALUES ('live','Current Product',100,1)`)
 
 	repo := data.NewPOSRepo(d.DB)
-	preview, err := repo.ListObsoleteItems(context.Background(), 100)
+	preview, err := repo.ListObsoleteItems(context.Background(), 100, false)
 	if err != nil || len(preview) != 1 || preview[0].ID != "obs" {
 		t.Fatalf("preview should list only 'obs': err=%v got=%+v", err, preview)
 	}
-	n, err := repo.CleanupObsoleteItems(context.Background(), "", "")
+	n, err := repo.CleanupObsoleteItems(context.Background(), "", "", false)
 	if err != nil || n != 1 {
 		t.Fatalf("cleanup: n=%d err=%v", n, err)
 	}
@@ -831,6 +831,127 @@ func TestCleanupObsoleteItems(t *testing.T) {
 	var action string
 	if err := d.DB.QueryRow(`SELECT action FROM audit_log WHERE action='catalog_cleanup'`).Scan(&action); err != nil {
 		t.Fatalf("cleanup not audited: %v", err)
+	}
+}
+
+// TestCleanupObsoleteItems_IncludeActiveMode (ut-docs#2281 cause B): the
+// plain (includeActive=false) mode only ever considers is_active=0 items,
+// so a catalog imported wrong -- every item still active -- could never be
+// wiped via this path (0 removed, every time, regardless of how obviously
+// unsold the catalog is). includeActive=true widens the predicate to
+// never-sold ACTIVE items too, so a shop can clear a wrongly imported
+// catalog before go-live; everything with real sale/stock history stays
+// untouched in EITHER mode.
+func TestCleanupObsoleteItems_IncludeActiveMode(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "cleanup-active.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	x := func(q string, a ...any) {
+		if _, err := d.DB.Exec(q, a...); err != nil {
+			t.Fatalf("seed %q: %v", q, err)
+		}
+	}
+	// active, never sold -- only removable with includeActive=true.
+	x(`INSERT INTO items (id, name, base_price, is_active) VALUES ('active-unsold','Wrong Import',100,1)`)
+	// active, WITH a sale line -- must be kept in either mode.
+	x(`INSERT INTO items (id, name, base_price, is_active) VALUES ('active-sold','Sold Item',100,1)`)
+	x(`INSERT INTO sales (id, receipt_no, subtotal, total) VALUES ('s1','R1',100,100)`)
+	x(`INSERT INTO sale_lines (id, sale_id, line_no, name_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax, item_id)
+	   VALUES ('l1','s1',1,'Sold Item',1,100,0,0,100,100,'active-sold')`)
+
+	repo := data.NewPOSRepo(d.DB)
+	ctx := context.Background()
+
+	count, err := repo.CountObsoleteItems(ctx, false)
+	if err != nil {
+		t.Fatalf("CountObsoleteItems(false): %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected 0 obsolete items in plain mode (both seeded items are active), got %d", count)
+	}
+	preview, err := repo.ListObsoleteItems(ctx, 100, false)
+	if err != nil || len(preview) != 0 {
+		t.Fatalf("expected an empty preview in plain mode: err=%v got=%+v", err, preview)
+	}
+
+	countAll, err := repo.CountObsoleteItems(ctx, true)
+	if err != nil {
+		t.Fatalf("CountObsoleteItems(true): %v", err)
+	}
+	if countAll != 1 {
+		t.Fatalf("expected 1 obsolete item with includeActive, got %d", countAll)
+	}
+	previewAll, err := repo.ListObsoleteItems(ctx, 100, true)
+	if err != nil || len(previewAll) != 1 || previewAll[0].ID != "active-unsold" {
+		t.Fatalf("expected only 'active-unsold' with includeActive: err=%v got=%+v", err, previewAll)
+	}
+
+	n, err := repo.CleanupObsoleteItems(ctx, "", "", true)
+	if err != nil || n != 1 {
+		t.Fatalf("CleanupObsoleteItems(includeActive=true): n=%d err=%v", n, err)
+	}
+	var c int
+	if err := d.DB.QueryRow(`SELECT count(*) FROM items WHERE id='active-unsold'`).Scan(&c); err != nil {
+		t.Fatal(err)
+	}
+	if c != 0 {
+		t.Fatal("active never-sold item not removed with includeActive=true")
+	}
+	if err := d.DB.QueryRow(`SELECT count(*) FROM items WHERE id='active-sold'`).Scan(&c); err != nil {
+		t.Fatal(err)
+	}
+	if c != 1 {
+		t.Fatal("active item WITH sale history must survive even with includeActive=true")
+	}
+}
+
+// TestCleanupObsoleteItems_ExcludesHeldSaleReference (ut-docs#2281 review):
+// an item referenced by a currently PARKED sale is not "history" yet under
+// obsoleteItemsPredicate's own sale_lines/stock_movements check, so without
+// a dedicated held-sale exclusion, cleanup could delete it out from under
+// the parked sale -- resuming that sale later would then reference a gone
+// item. Mirrors demoItemReasonCaseSQL's own held_sales/held_sales_archive
+// payload-LIKE check (demo_seed_repo.go).
+func TestCleanupObsoleteItems_ExcludesHeldSaleReference(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "cleanup-held.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	x := func(q string, a ...any) {
+		if _, err := d.DB.Exec(q, a...); err != nil {
+			t.Fatalf("seed %q: %v", q, err)
+		}
+	}
+	x(`INSERT INTO items (id, name, base_price, is_active) VALUES ('held-item','Parked Item',100,0)`)
+	x(`INSERT INTO held_sales (id, label, total_minor, line_count, payload) VALUES ('h1','Table 4',100,1,'{"lines":[{"item_id":"held-item","qty":1}]}')`)
+
+	repo := data.NewPOSRepo(d.DB)
+	ctx := context.Background()
+	preview, err := repo.ListObsoleteItems(ctx, 100, false)
+	if err != nil {
+		t.Fatalf("ListObsoleteItems: %v", err)
+	}
+	for _, it := range preview {
+		if it.ID == "held-item" {
+			t.Fatal("an item referenced by a currently parked sale must not be previewed as obsolete")
+		}
+	}
+	n, err := repo.CleanupObsoleteItems(ctx, "", "", false)
+	if err != nil {
+		t.Fatalf("CleanupObsoleteItems: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("cleanup removed %d item(s), want 0 -- held-item is parked-sale-referenced", n)
+	}
+	var c int
+	if err := d.DB.QueryRow(`SELECT count(*) FROM items WHERE id='held-item'`).Scan(&c); err != nil {
+		t.Fatal(err)
+	}
+	if c != 1 {
+		t.Fatal("item referenced by a held sale was removed")
 	}
 }
 
@@ -861,7 +982,7 @@ func TestCleanupObsoleteItems_ItemWithKitchenStationRouteCascades(t *testing.T) 
 		t.Fatalf("SetItemStationRoutes: %v", err)
 	}
 
-	n, err := repo.CleanupObsoleteItems(context.Background(), "", "")
+	n, err := repo.CleanupObsoleteItems(context.Background(), "", "", false)
 	if err != nil {
 		t.Fatalf("cleanup must not fail on an item with a station route: %v", err)
 	}
@@ -895,7 +1016,7 @@ func TestCleanupObsoleteItems_KeepsItemReferencedOnlyByArchive(t *testing.T) {
 	// obsoleteItemsWhere.
 	x(`UPDATE items SET is_active = 0 WHERE id = 'i1'`)
 
-	preview, err := repo.ListObsoleteItems(ctx, 100)
+	preview, err := repo.ListObsoleteItems(ctx, 100, false)
 	if err != nil {
 		t.Fatalf("ListObsoleteItems: %v", err)
 	}
@@ -905,7 +1026,7 @@ func TestCleanupObsoleteItems_KeepsItemReferencedOnlyByArchive(t *testing.T) {
 		}
 	}
 
-	n, err := repo.CleanupObsoleteItems(ctx, "", "")
+	n, err := repo.CleanupObsoleteItems(ctx, "", "", false)
 	if err != nil {
 		t.Fatalf("CleanupObsoleteItems: %v", err)
 	}
@@ -1071,7 +1192,7 @@ func TestCountObsoleteItems_NotCappedLikeList(t *testing.T) {
 
 	// The preview really is capped -- this is the trap being guarded against,
 	// asserted rather than assumed so the test fails loudly if the clamp moves.
-	preview, err := repo.ListObsoleteItems(ctx, 0)
+	preview, err := repo.ListObsoleteItems(ctx, 0, false)
 	if err != nil {
 		t.Fatalf("ListObsoleteItems: %v", err)
 	}
@@ -1079,7 +1200,7 @@ func TestCountObsoleteItems_NotCappedLikeList(t *testing.T) {
 		t.Fatalf("ListObsoleteItems should clamp to 200, got %d", len(preview))
 	}
 
-	count, err := repo.CountObsoleteItems(ctx)
+	count, err := repo.CountObsoleteItems(ctx, false)
 	if err != nil {
 		t.Fatalf("CountObsoleteItems: %v", err)
 	}
@@ -1088,7 +1209,7 @@ func TestCountObsoleteItems_NotCappedLikeList(t *testing.T) {
 	}
 
 	// And the count must equal what the deletion really removes.
-	deleted, err := repo.CleanupObsoleteItems(ctx, "", "")
+	deleted, err := repo.CleanupObsoleteItems(ctx, "", "", false)
 	if err != nil {
 		t.Fatalf("CleanupObsoleteItems: %v", err)
 	}
@@ -1133,7 +1254,7 @@ func TestCleanupObsoleteItems_ReanchorsSharedModifierGroupToSurvivingItem(t *tes
 		t.Fatal(err)
 	}
 
-	n, err := data.NewPOSRepo(d.DB).CleanupObsoleteItems(ctx, "", "")
+	n, err := data.NewPOSRepo(d.DB).CleanupObsoleteItems(ctx, "", "", false)
 	if err != nil || n != 1 {
 		t.Fatalf("cleanup: n=%d err=%v", n, err)
 	}

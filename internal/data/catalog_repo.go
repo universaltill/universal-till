@@ -626,7 +626,9 @@ WHERE v.is_active = 1
 // already filters to active items upstream or doesn't filter at all for the
 // row it's replacing — this stays consistent with the raw price each
 // caller already had, rather than introducing a NEW filter no existing
-// caller applied.
+// caller applied. (ut-docs#2281: LoadButtons' own join now filters
+// is_active=1 too, so ButtonStore.Load is "already-active" same as the
+// other two callers listed here.)
 //
 // An id absent from the returned map had no matching `items` row (unknown
 // id, or the caller passed an id for an item that no longer exists) —
