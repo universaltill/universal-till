@@ -882,12 +882,29 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 // self-resolving the moment that primary itself boots the fix — but it can
 // never go back to being genuinely codeless, which is the actual
 // correctness property this guards.
+//
+// Also catches a revived retire-mangled sku (ut-docs#2273): deleteMissing's
+// FK-blocked retire-in-place rewrites item_variants.sku to "<sku>~<id>" — a
+// non-blank value — on retire, and stripRetireMangle (which undoes that same
+// mangle for every OTHER reader) is never applied here. Without this extra
+// clause, ut-docs#2246's sticky COALESCE on this column would treat a
+// revived row's local mangled sku as "real" and freeze it in place forever
+// once a version-skewed primary sends a blank sku for the same id, instead
+// of this function generating a fresh, real-looking one the same way it
+// already does for a genuinely blank sku. The `v.sku LIKE '%~' || v.id`
+// match mirrors the exact suffix shape the retire-in-place CASE above
+// produces. Same ambiguity stripRetireMangle's own doc comment already
+// accepts (a real value that happens to end in "~"+its own id is
+// indistinguishable from a mangle) — here that risk is a persisted
+// overwrite rather than a display-only misread, but item_variants.id is
+// always a generated uuid.NewString(), never user-chosen, so a real sku
+// coinciding with "~"+its own row's UUID is not a reachable case.
 func backfillCodelessSyncedVariants(ctx context.Context, tx *sql.Tx) error {
 	rows, err := tx.QueryContext(ctx, `
 SELECT v.id
 FROM item_variants v
 WHERE v.is_active = 1
-  AND (v.sku IS NULL OR TRIM(v.sku) = '')
+  AND (v.sku IS NULL OR TRIM(v.sku) = '' OR v.sku LIKE '%~' || v.id)
   AND NOT EXISTS (SELECT 1 FROM variant_barcodes b WHERE b.variant_id = v.id)`)
 	if err != nil {
 		return fmt.Errorf("find codeless synced variants: %w", err)
