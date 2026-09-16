@@ -414,11 +414,29 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if err != nil {
 			log.Printf("[catalog] inherited modifier groups for item %s: %v", itemID, err)
 		}
+		// ut-docs#2284 review finding: a group both category-inherited AND
+		// directly linked rendered twice — once under its own direct-link
+		// section, once again under "from this item's category" with a
+		// Skip button that reported success but changed nothing, because
+		// ResolveGroupsForItem's direct link always wins regardless of the
+		// category opt-out (see that resolver's own dedup). Filter it out
+		// here exactly like the read-only summary above already does,
+		// rather than offering a control with no effect.
+		ownIDs := make(map[string]bool, len(groups))
+		for _, g := range groups {
+			ownIDs[g.ID] = true
+		}
+		visibleInherited := make([]data.ModifierGroup, 0, len(inherited))
+		for _, g := range inherited {
+			if !ownIDs[g.ID] {
+				visibleInherited = append(visibleInherited, g)
+			}
+		}
 		httpx.RenderWith(modifierGroupAdminFiles, funcs)("modifier_groups_item_panel", modifierAdminItem{
 			ItemID:           itemID,
 			ModifierGroups:   groups,
 			AttachableGroups: attachable,
-			InheritedGroups:  inherited,
+			InheritedGroups:  visibleInherited,
 			Target:           "modifier-groups-modal-list",
 			Notice:           notice,
 		})(w, r)

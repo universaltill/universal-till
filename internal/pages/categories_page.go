@@ -363,7 +363,33 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 	// change up on its next admin pull exactly like an item-level link.
 	// Reports false after answering the request itself.
 	saveCategoryLinks := func(w http.ResponseWriter, r *http.Request, id string, f categoryForm) bool {
-		if err := modRepo.SetCategoryModifierGroups(r.Context(), id, f.groupIDs); err != nil {
+		// Review finding (ut-docs#2284): the group picker lists ACTIVE
+		// groups only, so a link to a group deactivated AFTER it was linked
+		// has no checkbox in the dialog at all — an untickable box is not
+		// an unticked one. Without this, the very next unrelated Save (a
+		// rename) would replace-all the links and silently drop it, and
+		// reactivating the group would NOT bring the inheritance back.
+		// Existing inactive links are therefore carried through the
+		// replace-all write, appended after the ticked ones (the picker
+		// can't express their order either). Stations need no equivalent:
+		// that picker lists disabled stations too, labelled, so their tick
+		// survives on its own.
+		groupIDs := f.groupIDs
+		if linked, err := modRepo.ListAllGroupsForCategory(r.Context(), id); err == nil {
+			submitted := make(map[string]bool, len(groupIDs))
+			for _, gid := range groupIDs {
+				submitted[gid] = true
+			}
+			for _, g := range linked {
+				if !g.IsActive && !submitted[g.ID] {
+					groupIDs = append(groupIDs, g.ID)
+				}
+			}
+		} else {
+			renderCategoryDialogError(w, r, "categories.error.update", 0)
+			return false
+		}
+		if err := modRepo.SetCategoryModifierGroups(r.Context(), id, groupIDs); err != nil {
 			renderCategoryDialogError(w, r, "categories.error.update", 0)
 			return false
 		}
@@ -431,7 +457,10 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		if !saveCategoryLinks(w, r, id, f) {
 			return
 		}
-		audit(r, actor.ID, id, "category_rename")
+		// "category_update", not "category_rename" — this same handler now
+		// also writes colour and the modifier-group/kitchen-station links
+		// (ut-docs#2284), not just the name.
+		audit(r, actor.ID, id, "category_update")
 		redirectCategories(w, r, "/categories")
 	})
 

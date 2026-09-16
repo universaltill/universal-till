@@ -92,9 +92,17 @@ func TestItemModifierGroupsPanel_InheritedGroupsWithOptOutToggle(t *testing.T) {
 			t.Errorf("panel lost the item's own group %s:\n%s", want, body)
 		}
 	}
-	// The inherited section, labelled, with a skip toggle per inherited group.
-	if !strings.Contains(body, `data-inherited-group="gMilk"`) || !strings.Contains(body, `data-inherited-group="gBoth"`) {
-		t.Fatalf("panel missing the category-inherited rows:\n%s", body)
+	// The inherited section, labelled, with a skip toggle per inherited
+	// group — but NOT for gBoth: it is already directly linked, so its
+	// direct-link row is where it belongs, and a second "skip" control
+	// there would report success while changing nothing (the direct link
+	// always wins in ResolveGroupsForItem regardless of a category
+	// opt-out). Review finding, ut-docs#2284.
+	if !strings.Contains(body, `data-inherited-group="gMilk"`) {
+		t.Fatalf("panel missing the category-inherited row for gMilk:\n%s", body)
+	}
+	if strings.Contains(body, `data-inherited-group="gBoth"`) {
+		t.Fatalf("gBoth is already directly linked — must not also render as an inherited row with a no-op skip toggle:\n%s", body)
 	}
 	if !strings.Contains(body, `hx-post="/api/catalog/modifier-group/opt-out"`) {
 		t.Fatalf("inherited rows carry no opt-out toggle:\n%s", body)

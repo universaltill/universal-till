@@ -201,11 +201,20 @@
   function paintColor() {
     if (!grid || !colorInput) return;
     var hex = colorInput.value || '';
-    grid.querySelectorAll('.item-color-tile').forEach(function (btn) {
+    var tiles = grid.querySelectorAll('.item-color-tile');
+    var anyPressed = false;
+    tiles.forEach(function (btn) {
       var pressed = (btn.dataset.color || '') === hex;
+      if (pressed) anyPressed = true;
       btn.setAttribute('aria-pressed', pressed ? 'true' : 'false');
       btn.setAttribute('tabindex', pressed ? '0' : '-1');
     });
+    // A colour that matches no tile (a future palette change leaving an
+    // older category's stored value off-list) would otherwise leave every
+    // tile at tabindex="-1" — a keyboard user can Tab past the whole grid
+    // but never Tab INTO it. Fall back to the first tile so the picker
+    // stays reachable.
+    if (!anyPressed && tiles.length) tiles[0].setAttribute('tabindex', '0');
   }
 
   function tick(name, csv) {
@@ -225,8 +234,16 @@
       btn.focus();
     });
     grid.addEventListener('keydown', function (ev) {
-      var step = (ev.key === 'ArrowRight' || ev.key === 'ArrowDown') ? 1
-               : (ev.key === 'ArrowLeft' || ev.key === 'ArrowUp') ? -1 : 0;
+      // RTL (fa/ar): the grid's own tile ORDER in the DOM doesn't change,
+      // but "next" must still mean "the tile visually to the left" —
+      // logical-CSS rule, same reasoning as this repo's CSS (never
+      // left/right) applied to a keyboard direction instead of a style.
+      var rtl = document.documentElement.getAttribute('dir') === 'rtl';
+      var horizontalStep = rtl ? -1 : 1;
+      var step = (ev.key === 'ArrowRight') ? horizontalStep
+               : (ev.key === 'ArrowLeft') ? -horizontalStep
+               : (ev.key === 'ArrowDown') ? 1
+               : (ev.key === 'ArrowUp') ? -1 : 0;
       if (!step) return;
       var tiles = Array.prototype.slice.call(grid.querySelectorAll('.item-color-tile'));
       var i = tiles.indexOf(document.activeElement);

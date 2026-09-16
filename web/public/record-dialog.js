@@ -137,6 +137,26 @@
     });
   }
 
+  // setField only records a hidden input's default lazily, the first time
+  // an EDIT-mode prefill touches that field — so a plain create-mode open
+  // (nothing to prefill) never records anything, and a page script that
+  // writes a hidden input directly (e.g. categories.html's colour-tile
+  // click, before any row has ever been edited) leaks straight through
+  // form.reset() on every later create, same class of bug as the one
+  // setField's own comment already describes, just without an edit in
+  // between to trigger the recording. Capture every hidden input's
+  // default ONCE per open(), same "first sight, never live afterwards"
+  // rule defaultAction already uses for the form's action — so a later
+  // page-script write can never be mistaken for the template's own
+  // default, whatever mode this particular open() is in.
+  function rememberHiddenDefaults(form) {
+    Array.prototype.forEach.call(form.querySelectorAll('input[type="hidden"]'), function (el) {
+      if (!el.hasAttribute('data-record-default-value')) {
+        el.setAttribute('data-record-default-value', el.getAttribute('value') || '');
+      }
+    });
+  }
+
   function firstField(form) {
     return form.querySelector(
       'input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled])'
@@ -189,7 +209,7 @@
     var title = dialog.querySelector('[data-record-dialog-title]');
     var destructive = dialog.querySelector('[data-record-dialog-destructive]');
     var mode = row ? 'edit' : 'create';
-    if (form) { defaultAction(form); form.reset(); resetHiddenDefaults(form); }
+    if (form) { defaultAction(form); rememberHiddenDefaults(form); form.reset(); resetHiddenDefaults(form); }
     // ut-docs#2020: a message left over from a previous refused save must
     // not appear to describe THIS open — every open starts clean. Emptying
     // the text is enough to hide it too: app.css's

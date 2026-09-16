@@ -978,3 +978,57 @@ func TestCategoriesPage_UnknownGroupOrStationRefused(t *testing.T) {
 		t.Fatalf("nothing may be written on a refused selection, rows=%d err=%v", n, err)
 	}
 }
+
+// Review finding (ut-docs#2284): the dialog's group picker lists ACTIVE
+// groups only, so a category link to a group that was deactivated AFTER it
+// was linked has no checkbox to tick — and a replace-all Save driven by
+// "every ticked id" would silently delete that link on the next unrelated
+// edit (a rename), with reactivating the group NOT restoring the
+// inheritance. An untickable box is not an unticked one: the link survives.
+func TestCategoriesPage_SaveKeepsLinkToDeactivatedGroup(t *testing.T) {
+	mux, d := newCategoriesTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	ctx := t.Context()
+	modRepo := data.NewModifierRepo(d.Db)
+
+	if _, err := modRepo.CreateGroup(ctx, "g-syrup", "itm1", "Syrups", false, 0, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	if rec := postForm(mux, "/api/categories", url.Values{
+		"name": {"Drinks"}, "group_id": {"g-syrup"},
+	}, &manager); rec.Code != http.StatusSeeOther {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	var catID string
+	if err := d.Db.QueryRow(`SELECT id FROM categories WHERE name = 'Drinks'`).Scan(&catID); err != nil {
+		t.Fatal(err)
+	}
+
+	// The group is deactivated for the season — the dialog stops offering it.
+	if err := modRepo.UpdateGroup(ctx, "g-syrup", "Syrups", false, 0, 1, 0, false); err != nil {
+		t.Fatal(err)
+	}
+	// An unrelated rename, submitting no group_id at all, must not touch it.
+	if rec := postForm(mux, "/api/categories/"+catID, url.Values{"name": {"Beverages"}}, &manager); rec.Code != http.StatusSeeOther {
+		t.Fatalf("rename: %d %s", rec.Code, rec.Body.String())
+	}
+	links, err := modRepo.AllCategoryModifierGroupLinks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(links[catID]) != 1 || links[catID][0] != "g-syrup" {
+		t.Fatalf("rename dropped the deactivated group's category link: %v", links[catID])
+	}
+
+	// Reactivated, it is offered again and is still inherited — and an
+	// explicit untick of the now-active group still removes it.
+	if err := modRepo.UpdateGroup(ctx, "g-syrup", "Syrups", false, 0, 1, 0, true); err != nil {
+		t.Fatal(err)
+	}
+	if rec := postForm(mux, "/api/categories/"+catID, url.Values{"name": {"Beverages"}}, &manager); rec.Code != http.StatusSeeOther {
+		t.Fatalf("untick: %d %s", rec.Code, rec.Body.String())
+	}
+	if links, _ := modRepo.AllCategoryModifierGroupLinks(ctx); len(links[catID]) != 0 {
+		t.Fatalf("unticking an ACTIVE group must still remove its link, got %v", links[catID])
+	}
+}
