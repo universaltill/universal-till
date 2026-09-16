@@ -44,7 +44,12 @@ async function supportsViewTransitions(page: import('@playwright/test').Page): P
 //   TestBaseHTMLCarriesTheViewTransitionOptInInline) — a failure mode this
 //   spec structurally cannot see, because the transition never runs here.
 async function revealAndReadDirection(page: import('@playwright/test').Page): Promise<{ dir: string | null; typesAdded: string[] }> {
-  return page.evaluate(() => {
+  // The navigation itself ran as a reduced-motion user (fixtures.ts), so no
+  // real transition was started; the shipped listener bails out under that
+  // media query, so flip it to no-preference for the synthetic dispatch
+  // only — `matchMedia().matches` is live — and back afterwards.
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  const r = await page.evaluate(() => {
     const typesAdded: string[] = [];
     const fakeViewTransition = { types: { add: (t: string) => typesAdded.push(t) } };
     const ev = new Event('pagereveal') as Event & { viewTransition?: unknown };
@@ -52,6 +57,8 @@ async function revealAndReadDirection(page: import('@playwright/test').Page): Pr
     window.dispatchEvent(ev);
     return { dir: document.documentElement.getAttribute('data-nav-dir'), typesAdded };
   });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  return r;
 }
 
 // A second automation-only artifact, recorded by the first cut of this
@@ -138,7 +145,7 @@ test.describe('cross-document page transition direction (ut-docs#2223)', () => {
   });
 });
 
-test.describe('fixed nav rail / statusbar / page are named view-transition groups (ut-docs#2223)', () => {
+test.describe('only the fixed nav rail / statusbar are named view-transition groups (ut-docs#2223)', () => {
   test('computed view-transition-name matches the design tokens', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.goto('/menu');
@@ -150,7 +157,11 @@ test.describe('fixed nav rail / statusbar / page are named view-transition group
     }));
     expect(names.rail).toBe('ut-rail');
     expect(names.statusbar).toBe('ut-statusbar');
-    expect(names.page).toBe('ut-page');
+    // <main> must NOT be named: a view-transition-name makes its element
+    // the containing block for every position:fixed descendant, and the
+    // payment overlay / hold / elevation dialogs all live inside <main>
+    // (bugreport-panel.spec.ts is the regression test that caught it).
+    expect(names.page).toBe('none');
 
     assertClean();
   });
@@ -222,6 +233,9 @@ test.describe('reduced motion kills the in-page swap ease and pre-existing motio
   test('WITHOUT reduced motion, an htmx-swapped #basket really runs ut-swap-in', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.addInitScript(animRecorder);
+    // The suite runs as a reduced-motion user (playwright.config.ts); this
+    // case is about the ease actually running, so opt back in.
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
     await page.goto('/');
     await page.locator('.scan-row input[name="code"]').fill('5000000000012');
     await page.locator('.scan-row button[type=submit]').click();
@@ -259,6 +273,7 @@ test.describe('only operator-caused swaps ease; polls, load triggers and hx-swap
   test('a `load`/`every` poll swap never eases; a user swap on the same page does', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.addInitScript(animRecorder);
+    await page.emulateMedia({ reducedMotion: 'no-preference' }); // suite default is 'reduce'
     await page.goto('/');
     // base.html's #pairing-notice-mount polls with hx-trigger="load, every 30s";
     // the sale screen's basket/buttons/held-sales/chips all fetch on load.
@@ -278,6 +293,7 @@ test.describe('only operator-caused swaps ease; polls, load triggers and hx-swap
   test('hx-swap="none" fires afterSettle on its issuing element but must not ease it', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.addInitScript(animRecorder);
+    await page.emulateMedia({ reducedMotion: 'no-preference' }); // suite default is 'reduce'
     await page.goto('/menu');
     // Two probes processed by the live htmx: one swaps nothing, one swaps a
     // target. Both POST the same harmless endpoint.
@@ -304,6 +320,7 @@ test.describe('a reload is not a navigation direction (ut-docs#2223, review)', (
     test.skip(!(await supportsViewTransitions(page)), 'engine without View Transitions / Navigation API');
     await page.goto('/menu');
     await page.reload();
+    await page.emulateMedia({ reducedMotion: 'no-preference' }); // so the skip below is the RELOAD branch, not reduced motion's
     // navigation.activation.navigationType is the browser's genuine 'reload'
     // here; only the event delivery is stood in for (see the note at the top).
     const r = await page.evaluate(() => {

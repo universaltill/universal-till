@@ -79,8 +79,21 @@
           if (act.navigationType === 'traverse') return 'push';
           return depth(act.entry.url) < depth(act.from.url) ? 'pop' : 'push';
         }
+        // Reduced motion, enforced in JS as well as CSS (belt and braces):
+        // the `@media (prefers-reduced-motion: reduce) { @view-transition {
+        // navigation: none } }` rule is the spec'd opt-out and every engine
+        // tested honours it; this covers one that evaluates the media rule
+        // late or not at all, because a transition that never reveals
+        // leaves the page dead to input. Skipping on the OUTGOING page
+        // (pageswap) means no snapshot is even captured; the pagereveal
+        // skip covers an engine that fires only one of the two.
+        var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
+        window.addEventListener('pageswap', function (e) {
+          if (e.viewTransition && reduce && reduce.matches) e.viewTransition.skipTransition();
+        });
         window.addEventListener('pagereveal', function (e) {
           var vt = e.viewTransition; if (!vt) return;
+          if (reduce && reduce.matches) { if (vt.skipTransition) vt.skipTransition(); return; }
           var act = navigation.activation;
           // A reload is not a move anywhere (pull-to-refresh on the tablet,
           // the eight location.reload() sites, the server's HX-Refresh) --
@@ -90,6 +103,13 @@
           var d = dirFor(act);
           document.documentElement.setAttribute('data-nav-dir', d);
           if (vt.types && d === 'pop') vt.types.add('back');
+          // Watchdog: a transition must never hold the screen. The motion
+          // is 200ms; anything still running at 600ms is jank or a stuck
+          // engine (CI's Linux headless Chromium never revealed the new
+          // document at all, ut-docs#2223) -- skip it so the live page
+          // takes input. Cleared as soon as the transition finishes.
+          var guard = setTimeout(function () { if (vt.skipTransition) vt.skipTransition(); }, 600);
+          if (vt.finished && vt.finished.then) vt.finished.then(function () { clearTimeout(guard); }, function () { clearTimeout(guard); });
         });
       })();
     </script>

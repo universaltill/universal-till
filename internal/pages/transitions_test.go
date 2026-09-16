@@ -16,6 +16,7 @@ package pages
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -85,15 +86,14 @@ func TestAppCSSDeclaresCrossDocumentViewTransition(t *testing.T) {
 	}
 }
 
-func TestAppCSSNamesTheFixedRailAndPageAsViewTransitionGroups(t *testing.T) {
+func TestAppCSSNamesOnlyTheFixedRailAndStatusbar(t *testing.T) {
 	css := readAppCSS(t)
 	for _, want := range []string{
 		"view-transition-name: ut-rail",
 		"view-transition-name: ut-statusbar",
-		"view-transition-name: ut-page",
 	} {
 		if !strings.Contains(css, want) {
-			t.Errorf("app.css missing %q — the nav rail/statusbar/page must each be a named view-transition group so the fixed furniture doesn't cross-fade with the page", want)
+			t.Errorf("app.css missing %q — the nav rail/statusbar must each be a named view-transition group so the fixed furniture doesn't slide with the page", want)
 		}
 	}
 	// The rail/statusbar groups must be pinned to no animation — that's
@@ -101,6 +101,30 @@ func TestAppCSSNamesTheFixedRailAndPageAsViewTransitionGroups(t *testing.T) {
 	// fixed, never slides/cross-fades).
 	if !strings.Contains(css, "::view-transition-old(ut-rail)") || !strings.Contains(css, "::view-transition-new(ut-rail)") {
 		t.Errorf("app.css must suppress the default cross-fade on the ut-rail group (::view-transition-old/new(ut-rail) { animation: none })")
+	}
+	// It is the ROOT pair that slides — the whole document minus the two
+	// named groups — never a named <main>.
+	if !strings.Contains(css, "::view-transition-new(root) { animation: var(--ut-motion-ms)") {
+		t.Errorf("app.css must animate ::view-transition-new(root) with the page slide")
+	}
+	// A `view-transition-name` gives its element a stacking context with
+	// layout containment, which makes it the containing block for every
+	// `position: fixed` descendant. <main> hosts the payment overlay,
+	// #hold-modal, #elevation-modal, .tile-sheet and .item-form-modal —
+	// naming it made every one of them unreachable, with no transition
+	// running (e2e bugreport-panel.spec.ts caught it; confirmed by toggling
+	// the single declaration). Only the rail and statusbar — which host no
+	// fixed descendants — may ever carry a name.
+	named := regexp.MustCompile(`(?m)^([^/\n{]+)\{[^}]*view-transition-name:\s*ut-`).FindAllStringSubmatch(css, -1)
+	allowed := map[string]bool{".nav": true, ".statusbar": true}
+	for _, m := range named {
+		sel := strings.TrimSpace(m[1])
+		if !allowed[sel] {
+			t.Errorf("app.css names %q as a view-transition group — only .nav and .statusbar may be named (a named element becomes the containing block for its fixed-position dialogs)", sel)
+		}
+	}
+	if len(named) != 2 {
+		t.Errorf("expected exactly 2 named view-transition groups (.nav, .statusbar), found %d: %v", len(named), named)
 	}
 }
 
@@ -287,8 +311,8 @@ func TestAppCSSDirectionSelectorsHaveNoDescendantCombinator(t *testing.T) {
 		}
 	}
 	for _, good := range []string{
-		":root:active-view-transition-type(back)::view-transition-new(ut-page)",
-		`html[data-nav-dir="pop"]::view-transition-new(ut-page)`,
+		":root:active-view-transition-type(back)::view-transition-new(root)",
+		`html[data-nav-dir="pop"]::view-transition-new(root)`,
 	} {
 		if !strings.Contains(css, good) {
 			t.Errorf("app.css must contain %q (the pop direction selector)", good)
@@ -326,5 +350,38 @@ func TestBaseHTMLPageRevealSkipsReloads(t *testing.T) {
 	html := readBaseHTML(t)
 	if !strings.Contains(html, "act.navigationType === 'reload'") || !strings.Contains(html, "skipTransition") {
 		t.Fatalf("base.html's pagereveal script must skipTransition() on a reload navigation")
+	}
+}
+
+// TestBaseHTMLPageRevealHasASkipWatchdog: the motion is 200ms; a transition
+// still running long after that is jank or a stuck engine, and while it
+// runs the live page takes no input. The script must arm a timer that
+// skips the transition (~600ms) and clear it on finish.
+func TestBaseHTMLPageRevealHasASkipWatchdog(t *testing.T) {
+	html := readBaseHTML(t)
+	if !strings.Contains(html, "var guard = setTimeout(function () { if (vt.skipTransition) vt.skipTransition(); }, 600);") {
+		t.Fatalf("base.html's pagereveal script must arm a 600ms skipTransition watchdog")
+	}
+	if !strings.Contains(html, "vt.finished.then(function () { clearTimeout(guard); }") {
+		t.Fatalf("the watchdog must be cleared when the transition finishes")
+	}
+}
+
+// TestBaseHTMLSkipsTransitionsUnderReducedMotionInJS: belt and braces
+// for the CSS opt-out (`@media (prefers-reduced-motion: reduce) {
+// @view-transition { navigation: none } }`) — a transition that starts
+// but never reveals leaves the page dead to input, so the script must
+// also skip on pageswap (outgoing) and pagereveal (incoming) when the
+// media query matches.
+func TestBaseHTMLSkipsTransitionsUnderReducedMotionInJS(t *testing.T) {
+	html := readBaseHTML(t)
+	for _, want := range []string{
+		"window.addEventListener('pageswap'",
+		"if (e.viewTransition && reduce && reduce.matches) e.viewTransition.skipTransition();",
+		"if (reduce && reduce.matches) { if (vt.skipTransition) vt.skipTransition(); return; }",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("base.html must skip view transitions in JS under prefers-reduced-motion; missing %q", want)
+		}
 	}
 }

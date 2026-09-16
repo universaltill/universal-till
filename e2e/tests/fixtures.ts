@@ -32,6 +32,26 @@ import { drainParkedOrders } from './helpers';
 const resetDoneForFile = new Set<string>();
 
 export const test = base.extend<{ resetPosOncePerFile: void }>({
+  // ut-docs#2223: every page runs as a reduced-motion user. The product's
+  // cross-document View Transitions are switched off under
+  // `prefers-reduced-motion: reduce` (CSS in base.html/app.css AND the
+  // pageswap/pagereveal skip in base.html's script), and they must be off
+  // here: in headless Chromium a link-click or POST->303 navigation starts
+  // the transition but the new document is never revealed -- no
+  // `pagereveal`, no paint, every hit-tested action on it hangs until the
+  // test timeout (categories-record-dialog-2010, bugreport-panel, the full
+  // CI suite going from ~10 min to a runner-limit hang on the first push,
+  // run 35138264312). The motion itself is verified on the real devices.
+  // Done here, not in playwright.config.ts: Playwright 1.61 silently drops
+  // `reducedMotion` from `use`/`test.use` (verified -- `colorScheme` in the
+  // same call applies, `reducedMotion` does not), while
+  // `page.emulateMedia` works. A spec that needs the in-page ease opts back
+  // in with `page.emulateMedia({ reducedMotion: 'no-preference' })`
+  // (page-transitions-2223 does, for the swap-ease cases only).
+  page: async ({ page }, use) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await use(page);
+  },
   // Auto fixture — every test opts in with no changes to the test body.
   // Resets the shared till's basket ONCE per spec FILE, before that
   // file's first TEST BODY, not before every individual test: a file's
