@@ -238,9 +238,26 @@ type RuntimeState struct {
 	ServiceChargeRateBasisPoints int
 	AllowNegativeInventory       bool
 	UIScale                      float64 // interface scale for this till's screen (0 = unset)
-	IdleLockMinutes              int     // idle auto-lock window in minutes (0 = off)
-	OSKMode                      string  // on-screen keyboard: auto|on|off ("" = auto)
-	KioskIdleResetSeconds        int     // self-order kiosk: reload to start after N idle seconds (ADR-0020); 0 = off
+	// BasketPanelWidthRem is the sell screen's basket-column width in rem,
+	// set by dragging the basket/products divider (ut-docs#2308); 0 means
+	// "unset, use app.css's own built-in split" — same "0 = unset" shape as
+	// UIScale above. See common.MinBasketPanelWidthRem/
+	// MaxBasketPanelWidthRem/ClampBasketPanelWidthRem (state.go) for the
+	// bounds this is clamped to on both load and save.
+	BasketPanelWidthRem float64
+	// BasketPanelWidthRemChanged marks that THIS save deliberately means to
+	// set BasketPanelWidthRem, INCLUDING back to 0 (reset to default) —
+	// unlike UIScale, this field has a real "reset" affordance (Settings ->
+	// Display's Reset button, and a double-tap/double-click on the divider
+	// itself), and a plain `> 0` guard alone (UIScale's own shape) could
+	// never tell "reset" apart from "this save just didn't touch it". Same
+	// per-save-intent-flag shape as WindowModeChanged/LaunchOnStartupChanged
+	// below, minus their out-of-band re-read dance — nothing else writes
+	// this key out-of-band, so that extra machinery isn't needed here.
+	BasketPanelWidthRemChanged bool
+	IdleLockMinutes            int    // idle auto-lock window in minutes (0 = off)
+	OSKMode                    string // on-screen keyboard: auto|on|off ("" = auto)
+	KioskIdleResetSeconds      int    // self-order kiosk: reload to start after N idle seconds (ADR-0020); 0 = off
 	// KioskPaymentMode (ut-docs#582): "kiosk" (default, ADR-0020's own
 	// card/contactless payment picker) or "counter" ("pay at counter" — the
 	// kiosk takes the order, prints a kitchen ticket, and creates NO sale;
@@ -289,6 +306,7 @@ func (d *Deps) UpdateState(fn func(*RuntimeState)) RuntimeState {
 	fn(&d.State)
 	d.State.WindowModeChanged = false
 	d.State.LaunchOnStartupChanged = false
+	d.State.BasketPanelWidthRemChanged = false
 	return d.State
 }
 
@@ -318,6 +336,7 @@ func (d *Deps) SetState(st RuntimeState) {
 	defer d.StateMu.Unlock()
 	st.WindowModeChanged = false
 	st.LaunchOnStartupChanged = false
+	st.BasketPanelWidthRemChanged = false
 	d.State = st
 }
 
