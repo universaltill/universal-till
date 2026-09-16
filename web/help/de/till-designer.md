@@ -21,3 +21,5 @@ Ordnen Sie die Schnellwahltasten und das Produktraster auf dem Verkaufsbildschir
 Schnellwahltasten sind geschäftsweit und werden immer von der **Hauptkasse** aus verwaltet: An einer beigetretenen Kasse zeigt das Hinzufügen, Entfernen oder Neuanordnen einer Schaltfläche eine Meldung, die Sie zur Hauptkasse zurückverweist, statt eine nur lokal gültige Änderung anzunehmen.
 
 Dies ist nicht dieselbe Seite wie der **Belegdesigner** (Einstellungen → Belegdrucker → Belegdesigner), der anpasst, was auf Belegen gedruckt wird — siehe [Belegdesigner](/help/designer).
+
+- Auf dem Verkaufsbildschirm selbst können Sie eine Schaltfläche gedrückt halten (oder mit der rechten Maustaste klicken), um sie zu verschieben, aus den Schnellwahltasten zu entfernen oder im Katalog zu bearbeiten — dieselben drei Aktionen, ohne diese Seite zu öffnen.

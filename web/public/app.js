@@ -1328,6 +1328,150 @@ function initOfflineOverride(updateFn){
   }, 5000);
 })();
 
+// utTileLongPress (ut-docs#2285): a long-press (~500ms hold, cancelled by
+// >10px movement) or a right-click/contextmenu (desktop, and Android's own
+// long-press-to-contextmenu gesture) on a sell-screen tile opens the
+// tile-actions sheet (#tile-sheet, web/ui/partials/tile_sheet.html)
+// instead of adding the item to the basket. The tricky part: a real
+// long-press still ends in the SAME native 'click' htmx's own
+// hx-trigger="click" scan handler is listening for on the tile (pointerup
+// -> click is the browser's standard sequence, hold or not) — so that
+// click has to be swallowed, in the capture phase, before it ever reaches
+// the tile's own handler, or the item gets added to the basket AND the
+// sheet opens.
+//
+// Scoped to the SALE screen only: the Designer's own admin tiles
+// (buttons_admin.html) also sit inside a `.products` root and also carry
+// data-code, but that page has no #tile-sheet — and a gesture handler that
+// eats right-click / a slow tap on the Designer's ▲▼ buttons is a real
+// regression, not a harmless no-op (independent review, 2026-09-16). So
+// every entry point below bails when the page has no #tile-sheet.
+(function () {
+  var HOLD_MS = 500;
+  var MOVE_CANCEL_PX = 10;
+  var SWALLOW_MS = 1000; // how long a long-press's own trailing click stays ours to eat
+  var REOPEN_GUARD_MS = 300; // contextmenu/timer race de-dupe (real on Android: OS long-press ~500ms too)
+
+  var timer = null;
+  var startX = 0, startY = 0, trackedPointerId = null;
+  var suppressed = null; // { code, until } -- the long-press whose trailing click is still pending
+  var lastOpenedCode = null, lastOpenedAt = 0;
+
+  function sheet() { return document.getElementById('tile-sheet'); }
+  function tileFor(el) {
+    return el && el.closest ? el.closest('.products .btn-tile[data-code]') : null;
+  }
+  function clearHoldTimer() {
+    if (timer) { clearTimeout(timer); timer = null; }
+    trackedPointerId = null;
+  }
+  function openSheet(code) {
+    var now = Date.now();
+    if (code === lastOpenedCode && now - lastOpenedAt < REOPEN_GUARD_MS) return;
+    lastOpenedCode = code; lastOpenedAt = now;
+    var dialog = sheet();
+    if (!dialog || !window.htmx) return;
+    // Blank first, show only on a real 2xx: htmx.ajax's promise resolves on
+    // ANY completed response (a 404 for a tile whose code is gone — stale
+    // tab, item deactivated elsewhere — included) and a 4xx swaps nothing,
+    // so without this the sheet would reopen showing the PREVIOUS tile's
+    // actions and Remove/Move would act on the wrong tile (independent
+    // review, 2026-09-16). An empty dialog is never shown.
+    dialog.innerHTML = '';
+    htmx.ajax('GET', '/ui/pos/tile-sheet?code=' + encodeURIComponent(code), { target: '#tile-sheet', swap: 'innerHTML' })
+      .then(function () { if (dialog.firstElementChild) dialog.show(); });
+  }
+
+  document.addEventListener('pointerdown', function (e) {
+    if (!sheet()) return;
+    var tile = tileFor(e.target);
+    if (!tile) return;
+    clearHoldTimer();
+    startX = e.clientX; startY = e.clientY; trackedPointerId = e.pointerId;
+    var code = tile.dataset.code;
+    timer = setTimeout(function () {
+      timer = null;
+      suppressed = { code: code, until: Date.now() + SWALLOW_MS };
+      if (navigator.vibrate) navigator.vibrate(15);
+      openSheet(code);
+    }, HOLD_MS);
+  });
+  document.addEventListener('pointermove', function (e) {
+    if (timer === null || e.pointerId !== trackedPointerId) return;
+    if (Math.abs(e.clientX - startX) > MOVE_CANCEL_PX || Math.abs(e.clientY - startY) > MOVE_CANCEL_PX) clearHoldTimer();
+  });
+  // pointerup re-arms the swallow window from the RELEASE, not from the
+  // moment the sheet opened: an operator who holds the tile, watches the
+  // sheet appear, reads it for a second and only then lifts their finger
+  // still produces a trailing click at release time, well after the
+  // timer-stamped window would have expired — reproduced live at a 1.8s
+  // hold (independent review, 2026-09-16): sheet open AND item added.
+  // pointerleave is deliberately not listened for: it doesn't bubble, so a
+  // document-level listener never sees a tile's own.
+  document.addEventListener('pointerup', function (e) {
+    if (e.pointerId !== trackedPointerId) return;
+    if (suppressed && timer === null) suppressed.until = Date.now() + SWALLOW_MS;
+    clearHoldTimer();
+  });
+  document.addEventListener('pointercancel', function (e) {
+    if (e.pointerId === trackedPointerId) clearHoldTimer();
+  });
+
+  // Capture phase, deliberately: must run BEFORE the tile's own bubbling
+  // hx-trigger="click" handler sees this same click.
+  document.addEventListener('click', function (e) {
+    if (!suppressed) return;
+    var tile = tileFor(e.target);
+    if (tile && tile.dataset.code === suppressed.code && Date.now() < suppressed.until) {
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      suppressed = null;
+    }
+  }, true);
+
+  document.addEventListener('contextmenu', function (e) {
+    if (!sheet()) return;
+    var tile = tileFor(e.target);
+    if (!tile) return;
+    e.preventDefault();
+    clearHoldTimer();
+    openSheet(tile.dataset.code);
+  });
+
+  // Close on an outside pointerdown. dialog.open is false for the
+  // INITIATING long-press's own pointerdown (the sheet hasn't opened yet
+  // at that instant — it opens later, from the timer above), so this
+  // never fights the gesture that's opening it; a pointerdown on anything
+  // else once it IS open (another tile included) closes it, same as any
+  // other click-outside sheet/popover on this screen.
+  document.addEventListener('pointerdown', function (e) {
+    var dialog = sheet();
+    if (!dialog || !dialog.open || dialog.contains(e.target)) return;
+    dialog.close();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    var dialog = sheet();
+    if (dialog && dialog.open) dialog.close();
+  });
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest ? e.target.closest('[data-close-sheet]') : null;
+    if (btn) { var d = sheet(); if (d) d.close(); }
+  });
+
+  // The sheet's Remove button posts hx-swap="none" (its response body, the
+  // re-rendered Designer admin grid, has nowhere useful to go here) — close
+  // the sheet from here instead, once ITS OWN request (data-closes-sheet)
+  // actually succeeds. Scoped to #tile-sheet so an unrelated htmx request
+  // elsewhere on the page can never close this.
+  document.body.addEventListener('htmx:afterRequest', function (e) {
+    var elt = e.detail && e.detail.elt;
+    if (!elt || !elt.closest || !elt.closest('#tile-sheet') || !elt.hasAttribute('data-closes-sheet')) return;
+    if (!e.detail.successful) return;
+    var dialog = sheet();
+    if (dialog) dialog.close();
+  });
+})();
+
 // utPostWithElevation (ut-docs#794): a raw-fetch equivalent of the
 // checkOrElevate/elevation_prompt.html dialog (elevation.go, ut-docs#557)
 // for the handful of endpoints that can't be driven by htmx at all —
