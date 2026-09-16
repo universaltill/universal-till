@@ -42,8 +42,9 @@ import (
 // detectable refusal (heldSaleSyncRefused) -- the same depth ADR-0084
 // shipped for a voucher balance, not a per-line merge of two tills' edits
 // to the same order (explicit ADR-0093 non-goal; the refused till's own
-// local copy is kept as-is, and its next write-through for that id carries
-// a newer timestamp and applies).
+// local copy is kept as-is, and its next write-through for that id is
+// stamped by the PRIMARY's own clock -- at or after the value already
+// stored there, so it applies; ut-docs#2271).
 
 // heldSaleProxyClient is the replica→primary client for the held-sale
 // write-through and the Open orders page's list fetch. Same 800ms budget
@@ -54,9 +55,15 @@ import (
 var heldSaleProxyClient = &http.Client{Timeout: 800 * time.Millisecond}
 
 // heldSaleTimeLayout is the UTC text shape held_sales.created_at /
-// updated_at use (SQLite's datetime('now')), so a timestamp this till
-// stamps on the wire compares correctly as plain text against a value the
-// primary's own datetime('now') wrote.
+// updated_at use (SQLite's datetime('now')), so a Go-formatted timestamp
+// compares correctly as plain text against a value datetime('now') wrote.
+//
+// A REPLICA deliberately never formats a wire timestamp with it any more
+// (ut-docs#2271 -- that is the clock-skew bug this closed; see
+// heldSaleWriteThrough). Its live use is the PRIMARY side:
+// sync_held_sales.go's upsert handler stamps a blank incoming updated_at
+// with it, which is the same second-resolution UTC text its own
+// datetime('now') writes, so the two are directly comparable in the guard.
 const heldSaleTimeLayout = "2006-01-02 15:04:05"
 
 // heldSaleSyncOutcome reports how heldSaleWriteThrough landed a write.
@@ -118,14 +125,18 @@ func postHeldSaleOnPrimary(ctx context.Context, d *common.Deps, client *http.Cli
 // network error, timeout, non-200, malformed body -- and the caller falls
 // back to the local write. When ok, applied is the primary's authoritative
 // answer: false means a newer write for this id already landed there.
-func upsertHeldSaleOnPrimary(ctx context.Context, d *common.Deps, client *http.Client, h data.HeldSale) (ok, applied bool) {
+// updatedAt is the value the primary actually stamped/stored (ut-docs#2271:
+// the primary is the one clock that decides this, not the caller), so a
+// caller mirroring the row locally carries the exact value the primary
+// holds rather than re-deriving its own.
+func upsertHeldSaleOnPrimary(ctx context.Context, d *common.Deps, client *http.Client, h data.HeldSale) (ok, applied bool, updatedAt string) {
 	var out struct {
 		Data *syncHeldSaleUpsertResult `json:"data"`
 	}
 	if !postHeldSaleOnPrimary(ctx, d, client, "upsert", heldSaleToSyncRow(h), &out) || out.Data == nil {
-		return false, false
+		return false, false, ""
 	}
-	return true, out.Data.Applied
+	return true, out.Data.Applied, out.Data.UpdatedAt
 }
 
 // deleteHeldSaleOnPrimary tries POST /api/sync/held-sales/delete on the
@@ -191,16 +202,21 @@ func fetchHeldSalesFromPrimary(ctx context.Context, d *common.Deps, client *http
 // Upsert (insert-or-update on the id, created_at honoured on insert and
 // left alone on update, ut-docs#1918), exactly the pre-ADR behaviour.
 //
-// h.UpdatedAt is stamped here with now (UTC, heldSaleTimeLayout) when the
-// caller left it empty: it is the value the primary's guard compares, and
-// "this write happened now" is what a park / re-park means. Same
-// wall-clock-across-tills caveat every other timestamp comparison in the
-// LAN sync already accepts.
+// h.UpdatedAt is left exactly as the caller passed it (empty, for every
+// real caller -- hold_api.go never sets it before calling in). It is
+// deliberately NOT stamped here (ut-docs#2271, closing an ADR-0093
+// Decision 2 residual): stamping it with THIS till's own clock is what let
+// a genuinely newer edit from a slow-clocked till lose the primary's
+// updated_at guard to an older edit from a fast-clocked one. The primary
+// is the single serialization point for this table already (its guard is
+// what makes the write-through safe at all), so it is also the one clock
+// that gets to say "now" -- sync_held_sales.go's upsert handler stamps a
+// blank incoming value with ITS OWN clock and hands the applied value back
+// on the wire, read below via upsertHeldSaleOnPrimary's updatedAt. The
+// local-only fallback (repo.Upsert) is unaffected either way: it always
+// stamps its own now() regardless of h.UpdatedAt, same as before.
 func heldSaleWriteThrough(ctx context.Context, d *common.Deps, repo *data.HeldSalesRepo, h data.HeldSale) (heldSaleSyncOutcome, error) {
-	if h.UpdatedAt == "" {
-		h.UpdatedAt = time.Now().UTC().Format(heldSaleTimeLayout)
-	}
-	ok, applied := upsertHeldSaleOnPrimary(ctx, d, heldSaleProxyClient, h)
+	ok, applied, primaryUpdatedAt := upsertHeldSaleOnPrimary(ctx, d, heldSaleProxyClient, h)
 	switch {
 	case !ok:
 		return heldSaleSyncedLocalOnly, repo.Upsert(ctx, h)
@@ -215,6 +231,23 @@ func heldSaleWriteThrough(ctx context.Context, d *common.Deps, repo *data.HeldSa
 		// later resolves it on another till.
 		h.PrimarySynced = true
 		return heldSaleSyncRefused, repo.Upsert(ctx, h)
+	}
+	// The primary is now authoritative for updated_at too (ut-docs#2271):
+	// mirror exactly what it applied, not whatever this till's own clock
+	// would have said, so the local copy and the primary's genuinely agree.
+	//
+	// Guarded on non-blank for the mixed-version window of a rollout: a
+	// PRE-#2271 primary applies the write but answers without the
+	// updated_at field at all, which decodes to "". The write itself is
+	// still correct there -- that older primary's UpsertIfNewer COALESCEs
+	// a blank to its OWN datetime('now'), so the guard was already being
+	// measured against the primary's clock, which is the whole point --
+	// only the reported value is missing. Blanking h.UpdatedAt on that
+	// answer would discard a value the caller passed in; leaving it lets
+	// mirrorHeldSaleFromPrimary fall back exactly as it did before
+	// (UpsertIfNewer COALESCEs a blank to local now).
+	if primaryUpdatedAt != "" {
+		h.UpdatedAt = primaryUpdatedAt
 	}
 	mirrorHeldSaleFromPrimary(ctx, repo, h)
 	return heldSaleSyncedPrimary, nil

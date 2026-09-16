@@ -594,15 +594,27 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 			// ADR-0093 Amendment A (F3): the move commits through
 			// heldSaleWriteThrough -- the fetched row with only its TableID
-			// changed and UpdatedAt cleared so the write-through stamps now
-			// (a move IS a write to the order) -- not repo.SetTable's
-			// local-only UPDATE, which never reached the primary and never
-			// bumped updated_at, leaving every other till's Open orders page
-			// and this till's strip permanently disagreeing on a moved
-			// order's table. Same fallback stance as park / re-park: any
-			// failure reaching the primary, or its refusal, lands the move
-			// locally only, silently. Payload / label / created_at ride
-			// through untouched (Upsert leaves created_at alone on update).
+			// changed -- not repo.SetTable's local-only UPDATE, which never
+			// reached the primary and never bumped updated_at, leaving every
+			// other till's Open orders page and this till's strip permanently
+			// disagreeing on a moved order's table. Same fallback stance as
+			// park / re-park: any failure reaching the primary, or its
+			// refusal, lands the move locally only, silently. Payload /
+			// label / created_at ride through untouched (Upsert leaves
+			// created_at alone on update).
+			//
+			// Clearing UpdatedAt is load-bearing, and NOT merely cosmetic
+			// (ut-docs#2271): `held` came from heldSaleForResume, so on a
+			// replica it carries the PRIMARY's own stored updated_at for
+			// this row. Sent as-is that value is honoured verbatim by the
+			// primary's upsert handler, and the guard
+			// (`held_sales.updated_at <= excluded.updated_at`) would compare
+			// EQUAL -- the move would still land, but without advancing
+			// updated_at at all, so a concurrent older edit from another
+			// till would go on applying over it. Blanking it is what hands
+			// the stamp to the primary's own clock, which is the one clock
+			// allowed to say "now" for this table; a move IS a write to the
+			// order and must advance the row.
 			moved := held
 			moved.TableID = tableID
 			moved.UpdatedAt = ""
