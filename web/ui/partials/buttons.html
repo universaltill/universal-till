@@ -149,6 +149,62 @@
          The stash lives on window, not storage: it is per page life, so a
          real navigation still starts on All as before. No double quotes
          inside these attributes -- see the note above this section. */}}
+    {{/* ut-docs#2283: openCategoryPicker(tileEl), the Categories-tab tile
+         click handler defined inside x-data below, in full (kept out of
+         that attribute itself -- same "no double quotes inside x-data"
+         rule the comment just above this one gives, and this explanation
+         needs them).
+
+         Populates #category-items-modal (index.html) from the
+         ALREADY-RENDERED markup of that category's own tab panel
+         (data-cat-panel names its id) rather than issuing a second
+         fetch/render of the catalogue -- the panel exists whether or not
+         it is the currently selected tab (x-show never removes it from the
+         DOM), so its tiles are always there to read. Collects every
+         .btn-tile under that panel, not just its own top-level .grid -- a
+         category with subcategories nests THEIR .grid's inside the same
+         panel too (category-group-body-tabbed/category-group below), and
+         "that category's items" means all of them, not just the ones with
+         no subcategory of their own. (The tile GRID itself still only ever
+         shows top-level categories -- see this file's #2283 comment above
+         the panel loop; this is a separate decision about what a tap on
+         ONE tile then reveals.)
+
+         Each tile is cloned rather than moved (the source panel must stay
+         intact for when the operator taps that category's own tab
+         directly), then two things are stripped that would otherwise break
+         it in the modal's context:
+
+         1. The x-show="matches($el)" attribute. This clone sits OUTSIDE
+            this component's own x-data scope (the modal is a sibling
+            <dialog> in index.html, not a descendant of this <section>), so
+            Alpine has no "matches"/"q" to resolve there at all -- evaluating
+            it would either throw or just never show the tile. There is no
+            search inside this modal to filter against anyway.
+         2. Any inline display:none that attribute may have already set
+            (e.g. the panel was cloned while a sale-screen search was
+            active and had hidden a non-matching tile) -- left in place,
+            the tile would silently never appear.
+
+         htmx.process(body) re-wires every cloned tile's hx-get/hx-post
+         after they land in the DOM -- htmx reads an element's hx-*
+         attributes and binds its listeners ONCE, at first "process" time
+         (ut-docs repo's reference/list-and-dialog-pattern.md, "hx-boost
+         reads action/method ONCE -- not fresh per submit"); a clone is, to
+         htmx, an element it has never seen, so without this call every tap
+         inside the modal would silently no-op (an item add, or a modifier
+         item's own picker open). A modifier tile's own
+         hx-on::after-request still calls
+         document.getElementById('modifier-modal').showModal() exactly as
+         it does on the sale screen proper -- that dialog's native
+         top-layer behavior makes everything outside it (this modal
+         included) inert while it's open, then restores focus here on
+         close, same as it already does over the plain sale-screen grid.
+
+         The modal is deliberately left open after a tap (no auto-close):
+         it's a picker for possibly several items from the same category in
+         a row, not a single-shot chooser -- closes only via its own Close
+         button, same as #parked-orders-modal. */}}
     <section class="products-finder" aria-labelledby="products-panel-title" x-data="{
       tab: '{{ if $hasTabs }}__all__{{ end }}',
       q: '',
@@ -206,6 +262,31 @@
         const i = Math.max(0, tabs.indexOf(document.activeElement));
         const next = tabs[(i + dir + tabs.length) % tabs.length];
         next.click(); next.focus();
+      },
+      /* ut-docs#2283 category-tile click handler; see this file's own
+         comment above .products-finder's opening tag for the full
+         reasoning -- kept out of THIS attribute on purpose, same rule the
+         note near the top of this file gives for x-data. */
+      openCategoryPicker(tileEl) {
+        const panel = document.getElementById(tileEl.dataset.catPanel);
+        const body = document.getElementById('category-items-modal-body');
+        const nameEl = document.getElementById('category-items-modal-name');
+        if (!panel || !body || !nameEl) return;
+        nameEl.textContent = tileEl.dataset.catName || '';
+        body.innerHTML = '';
+        const grid = document.createElement('div');
+        grid.className = 'grid';
+        panel.querySelectorAll('.btn-tile').forEach((tile) => {
+          const clone = tile.cloneNode(true);
+          clone.removeAttribute('x-show');
+          clone.style.removeProperty('display');
+          clone.hidden = false;
+          grid.appendChild(clone);
+        });
+        body.appendChild(grid);
+        if (window.htmx) { window.htmx.process(body); }
+        const modal = document.getElementById('category-items-modal');
+        if (modal) modal.show();
       }
     }" x-init="restoreGridState()">
       <!-- ut-docs#2173 (closes ut-docs#993): the sale screen used to spend
@@ -255,6 +336,28 @@
              time, so the tab itself is now what carries the color instead
              of losing it. */}}
         <div class="tab-bar" role="tablist" x-show="!searching" @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
+          {{/* ut-docs#2283: the optional "Categories" tab — settings-gated
+               (Settings → Categories tab), OFF by default, so a shop that
+               never opens that toggle sees exactly today's tab bar. Always
+               first when it renders at all (card requirement — even before
+               the ut-docs#2212 All tab), because it's a different KIND of
+               view (a grid of category tiles, not a flattened item list)
+               and reads as a top-level "browse by category" entry point.
+               No --cat-color: it isn't one category, so it has nothing to
+               color-code with — same reason the All tab below renders none.
+               It DOES carry aria-controls, though, unlike All: its own
+               panel (#cat-panel-categories, below) is a NEW grid it alone
+               owns, one tab to exactly one panel, where All owns no single
+               panel but reveals every existing one at once. Review fix
+               (ut-docs#2283): that panel is therefore a real
+               role="tabpanel" aria-labelledby="cat-tab-categories", not a
+               role="group" — a role="tab" whose aria-controls points at a
+               non-tabpanel is an incomplete tablist relationship, and this
+               comment previously claimed "no aria-controls" while the
+               button set one anyway. */}}
+          {{ if .CategoriesTabEnabled }}
+          <button type="button" id="cat-tab-categories" class="tab" role="tab" :class="tab === '__categories__' && 'active'" :aria-selected="tab === '__categories__'" :tabindex="tab === '__categories__' ? 0 : -1" aria-controls="cat-panel-categories" @click="tab = '__categories__'; $el.scrollIntoView({ block: 'nearest', inline: 'nearest' })">{{ T "products.categories" }}</button>
+          {{ end }}
           {{/* ut-docs#2212: the All tab, always first, always selected by
                default (tab's own initial value above). Deliberately no
                aria-controls — unlike a real category tab, All doesn't own
@@ -306,6 +409,40 @@
         </div>
         <p class="empty" x-show="!sectionHasMatch($el.parentElement)">{{ T "products.no_matches" }}</p>
         {{ else if $hasTabs }}
+        {{ if .CategoriesTabEnabled }}
+        {{/* ut-docs#2283: the Categories tab's own panel — a grid of tiles,
+             one per top-level category (.Groups is already flattened to
+             top-level roots only, and already pruned of any branch with no
+             buttons anywhere in its subtree by ui.BuildCategoryGroups — see
+             that func's own doc comment — so "hide zero-active-item
+             categories" and "flatten nested categories to top-level tiles
+             only" both fall out of reusing .Groups exactly as-is, no extra
+             filtering needed here). Each tile reuses .grid/.category-tile
+             (app.css), sized to at least the .btn-tile touch-target floor.
+             Tapping a tile does not navigate to a second-level view — it
+             opens #category-items-modal (index.html), populated by cloning
+             this category's ALREADY-RENDERED tiles out of its own
+             #cat-panel-<id> below (openCategoryPicker(), x-init'd search
+             wiring further down this file) rather than re-fetching or
+             re-rendering the catalogue a third time — same "reuse, don't
+             re-render" idiom the All tab (ut-docs#2212) already uses for
+             its own panels. No --cat-color on the panel itself: unlike a
+             real category's panel, this one has no single category to
+             color-code with (each TILE carries its own --cat-color
+             instead, one per category). */}}
+        <div id="cat-panel-categories" class="products-tab-panel" role="tabpanel" aria-labelledby="cat-tab-categories" x-show="tab === '__categories__' && !q">
+          <div class="grid category-tile-grid">
+            {{ range $g := .Groups }}
+            <button type="button" class="category-tile" style="--cat-color: {{ $g.Color }}"
+                    data-cat-panel="cat-panel-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}"
+                    data-cat-name="{{ if $g.ID }}{{ $g.Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}"
+                    @click="openCategoryPicker($el)">
+              <span class="category-tile-name">{{ if $g.ID }}{{ $g.Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</span>
+            </button>
+            {{ end }}
+          </div>
+        </div>
+        {{ end }}
         {{ range $g := .Groups }}
         {{/* ut-docs#2212: no panel is x-cloak'd any more — the default tab
              is now the synthetic All (above), which makes every panel

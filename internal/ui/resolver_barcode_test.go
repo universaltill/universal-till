@@ -35,7 +35,9 @@ func seedEmbeddedFixture(t *testing.T) (*ButtonStore, *sql.DB) {
 	t.Helper()
 	db := setupFullTestDB(t)
 	t.Cleanup(func() { db.Close() })
-	mustExec(t, db, `CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`)
+	// ut-docs#2283: setupFullTestDB now creates `settings` itself (every
+	// caller through ButtonStore.CategoriesTabEnabled queries it), so this
+	// fixture no longer needs its own copy — it used to be the only one.
 
 	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active, is_weighed) VALUES('itm-ban','BAN','Bananas', 200, 1, 1)`)
 	mustExec(t, db, `INSERT INTO item_barcodes(barcode, item_id, is_primary) VALUES('2312345000000','itm-ban',1)`)
