@@ -154,3 +154,58 @@ func TestApplyAdmin_RealSKUStillOverwritesBackfilledOne(t *testing.T) {
 		t.Fatalf("v-codeless sku after primary caught up = %q, want REAL-001 (primary must still win over a stale backfilled value)", final)
 	}
 }
+
+// TestApplyAdmin_BackfillsRevivedRetireMangledVariant covers ut-docs#2273:
+// deleteMissing's FK-blocked retire-in-place mangles item_variants.sku to
+// "<sku>~<id>" (a non-blank value) on retire. ut-docs#2246's
+// stickyNonBlankCols then treats that mangled value as "real" forever — if
+// the same variant ID is later revived by a bundle from a primary still
+// behind on ut-docs#1900/#2230 (so it sends a blank sku), the sticky
+// COALESCE freezes the mangled garbage in place instead of the pre-#2246
+// behaviour of overwriting to NULL and letting backfillCodelessSyncedVariants
+// generate a fresh, real-looking SKU. A revived variant must never surface a
+// "~<id>"-suffixed sku to staff.
+func TestApplyAdmin_BackfillsRevivedRetireMangledVariant(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary-revived-mangled.db")
+	replica := openMigratedDB(t, "replica-revived-mangled.db")
+
+	mustExec(t, primary, `INSERT INTO items (id, sku, name, base_price) VALUES ('itm1', 'ITEM-1', 'Coffee', 300)`)
+	// The primary is still behind on ut-docs#1900/#2230, so the revived row
+	// travels with a blank sku — the version-skewed-primary shape the card
+	// describes.
+	mustExec(t, primary, `INSERT INTO item_variants (id, item_id, sku, name, price, is_active) VALUES ('v1', 'itm1', NULL, 'Small', 250, 1)`)
+
+	// The replica already has this row locally, in the state a prior
+	// FK-blocked retire-in-place (deleteMissing) would have left it:
+	// inactive, sku mangled to "<sku>~<id>" — the exact suffix the generic
+	// retire-in-place CASE in sync_admin_repo.go produces.
+	mustExec(t, replica, `INSERT INTO items (id, sku, name, base_price) VALUES ('itm1', 'ITEM-1', 'Coffee', 300)`)
+	mustExec(t, replica, `INSERT INTO item_variants (id, item_id, sku, name, price, is_active) VALUES ('v1', 'itm1', 'REAL-001~v1', 'Small', 250, 0)`)
+
+	repo := NewSyncAdminRepo(primary.DB)
+	bundle, err := repo.DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var sku *string
+	var isActive int
+	if err := replica.DB.QueryRow(`SELECT sku, is_active FROM item_variants WHERE id = 'v1'`).Scan(&sku, &isActive); err != nil {
+		t.Fatalf("revived variant missing: %v", err)
+	}
+	if isActive != 1 {
+		t.Fatalf("v1 is_active on replica = %d, want 1 (revived by the primary)", isActive)
+	}
+	if sku == nil || !generatedSyncSKUPattern.MatchString(*sku) {
+		got := "<nil>"
+		if sku != nil {
+			got = *sku
+		}
+		t.Fatalf("v1 sku on replica after revival = %q, want to match %s (a revived variant must never keep a retire-mangled sku frozen forever)", got, generatedSyncSKUPattern.String())
+	}
+}
