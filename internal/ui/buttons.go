@@ -257,6 +257,80 @@ func pruneEmptyCategoryGroup(g *CategoryGroup) bool {
 	return hasAny
 }
 
+// CategoryTile is one top-level category's summary for the sell-screen
+// Categories tab's tile grid (ut-docs#2283) — flat, top-level only, no
+// nested/child tiles, mirroring category_filter.html's existing
+// `{{ if not .ParentID }}` convention. .Color is always a resolved
+// #RRGGBB (explicit or a deterministic auto-color, same as CategoryGroup's
+// own .Color — see resolveCategoryColor).
+type CategoryTile struct {
+	ID    string
+	Name  string
+	Color string
+}
+
+// TopLevelCategoryTiles returns one CategoryTile per top-level category
+// (an empty .ParentID) that has at least one active button anywhere in its
+// subtree — itself or any descendant, however deep. A top-level category
+// with zero active buttons anywhere underneath is excluded entirely,
+// mirroring pruneEmptyCategoryGroup's "no buttons anywhere in this branch"
+// intent, just counted across the whole top-level subtree rather than
+// pruning a nested tree.
+//
+// Deliberately does NOT reuse BuildCategoryGroups: that builds the nested
+// tree the "All"/per-category tab panels render (deep, pruned, with
+// synthetic uncategorized bucket) — this is a separate, flat,
+// top-level-only list for the Categories tab's own tile grid, which never
+// drills into subcategories (out of scope per the UX decision recorded on
+// ut-docs#2283).
+func TopLevelCategoryTiles(buttons []Button, cats []data.CategoryNode) []CategoryTile {
+	directCount := make(map[string]int, len(cats))
+	for _, b := range buttons {
+		if b.CategoryID != "" {
+			directCount[b.CategoryID]++
+		}
+	}
+	childrenOf := make(map[string][]string, len(cats))
+	for _, c := range cats {
+		if c.ParentID != "" {
+			childrenOf[c.ParentID] = append(childrenOf[c.ParentID], c.ID)
+		}
+	}
+
+	var tiles []CategoryTile
+	for _, c := range cats {
+		if c.ParentID != "" {
+			continue // top-level only (category_filter.html:45's convention)
+		}
+		if subtreeButtonCount(c.ID, directCount, childrenOf) == 0 {
+			continue // zero-active-hidden (mirrors pruneEmptyCategoryGroup's intent)
+		}
+		tiles = append(tiles, CategoryTile{ID: c.ID, Name: c.Name, Color: resolveCategoryColor(c)})
+	}
+	return tiles
+}
+
+// subtreeButtonCount sums directCount[id] plus every descendant's (via
+// childrenOf), depth-first. A local seen-set bounds the walk even against a
+// malformed cyclic ParentID chain not involving id itself, so this always
+// terminates — same defensive posture as isCategoryAncestor above.
+func subtreeButtonCount(id string, directCount map[string]int, childrenOf map[string][]string) int {
+	seen := map[string]bool{}
+	var walk func(string) int
+	walk = func(cur string) int {
+		if seen[cur] {
+			return 0
+		}
+		seen[cur] = true
+		n := directCount[cur]
+		for _, child := range childrenOf[cur] {
+			n += walk(child)
+		}
+		return n
+	}
+	return walk(id)
+}
+
 // ButtonStore persists shortcut buttons in the shortcut_buttons table via repo.
 type ButtonStore struct {
 	repo        *data.ShortcutsRepo
@@ -673,6 +747,14 @@ func (r *Renderer) Render(w http.ResponseWriter, name string, data any) error {
 type ButtonsHTTP struct {
 	Store ButtonStore
 	View  TplRenderer
+	// CategoriesTabEnabled (ut-docs#2283) gates the sell-screen's optional
+	// Categories tab (buttons.html) — read from the per-till
+	// display.categories_tab_enabled setting by the /ui/buttons handler
+	// (internal/pages/buttons_api.go) and threaded through here, same
+	// "settings.RuntimeState reaches the template via the constructing
+	// handler" shape every other per-till display setting already uses.
+	// Default false (the zero value): the tab is opt-in.
+	CategoriesTabEnabled bool
 }
 
 func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
@@ -686,7 +768,9 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 		logging.L().Errorf("buttons list: load categories: %v", err)
 	}
 	_ = h.View.Render(w, "buttons", map[string]any{
-		"Groups": BuildCategoryGroups(btns, cats),
+		"Groups":               BuildCategoryGroups(btns, cats),
+		"CategoriesTabEnabled": h.CategoriesTabEnabled,
+		"CategoryTiles":        TopLevelCategoryTiles(btns, cats),
 	})
 }
 

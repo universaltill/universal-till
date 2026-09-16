@@ -255,6 +255,22 @@
              time, so the tab itself is now what carries the color instead
              of losing it. */}}
         <div class="tab-bar" role="tablist" x-show="!searching" @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
+          {{/* ut-docs#2283: the optional Categories tab, gated on the
+               per-till display.categories_tab_enabled setting (default
+               off) -- when on, it renders BEFORE All (the true first tab),
+               selecting the synthetic '__categories__' sentinel. Its own
+               panel (below, alongside the per-category ones) shows one
+               large tile per top-level category via CategoryTiles
+               (ui.TopLevelCategoryTiles) -- a tile is a distinct component
+               from product-tile, not a reuse of it (UX sizing decision on
+               ut-docs#2283); tapping one opens #category-picker-modal
+               (index.html) with that category's own already-rendered
+               product-tile grid, copied in by web/public/app.js's
+               utCategoryPicker. No --cat-color: like All, this tab isn't
+               one category, it has nothing of its own to color-code with. */}}
+          {{ if .CategoriesTabEnabled }}
+          <button type="button" id="cat-tab-categories" class="tab" role="tab" :class="tab === '__categories__' && 'active'" :aria-selected="tab === '__categories__'" :tabindex="tab === '__categories__' ? 0 : -1" aria-controls="categories-tab-panel" @click="tab = '__categories__'; $el.scrollIntoView({ block: 'nearest', inline: 'nearest' })">{{ T "products.categories" }}</button>
+          {{ end }}
           {{/* ut-docs#2212: the All tab, always first, always selected by
                default (tab's own initial value above). Deliberately no
                aria-controls — unlike a real category tab, All doesn't own
@@ -340,6 +356,23 @@
              literal string. */}}
         <div id="cat-panel-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}" :role="(q || tab === '__all__') ? 'group' : 'tabpanel'" :aria-labelledby="(q || tab === '__all__') ? null : 'cat-tab-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}'" class="products-tab-panel" style="--cat-color: {{ $g.Color }}" x-show="panelVisible('{{ $g.ID }}', $el)">
           {{ template "category-group-body-tabbed" $g }}
+        </div>
+        {{ end }}
+        {{/* ut-docs#2283: the Categories tab's own panel — one large tile
+             per top-level category (CategoryTiles), never merged into the
+             All/search panelVisible() reuse above: it holds category
+             tiles, not product-tiles, so there is nothing for a
+             cross-category search to match here -- hidden outright while
+             a query is active (!q) rather than folded into the search
+             results view. x-cloak is safe here (unlike the per-category
+             panels above): '__categories__' is never the default tab
+             (that's still the All sentinel), so this is never visible on
+             first paint. */}}
+        {{ if .CategoriesTabEnabled }}
+        <div id="categories-tab-panel" role="tabpanel" aria-labelledby="cat-tab-categories" class="products-tab-panel" x-show="tab === '__categories__' && !q" x-cloak>
+          <div class="category-tiles-grid">
+            {{ range .CategoryTiles }}{{ template "category-tile" . }}{{ end }}
+          </div>
         </div>
         {{ end }}
         {{/* ut-docs#2181: one "no matches" message for the whole tabbed
@@ -437,7 +470,18 @@
      tab, this can be visible on first paint, so cloaking it would hide a
      real disambiguating label from a client where Alpine never loads. */}}
 {{ define "category-group" }}
-<section class="category-group" style="--cat-color: {{ .Color }}" x-show="sectionHasMatch($el)">
+{{/* ut-docs#2283: id="cat-panel-<ID>" on a REAL category (never on the
+     synthetic uncategorized bucket, which has no ID) so the Categories
+     tab's category-picker modal has a stable element to copy this
+     category's rendered .grid out of, in EVERY branch this template is
+     used from — including the single-real-category "else" branch above
+     (buttons.html's #buttons-grid), which has no tab bar and so no
+     cat-panel-<ID> wrapper of its own the way the $hasTabs branch's outer
+     div already provides. Nested/child calls of this same template (a
+     subcategory rendered recursively) get one too, harmlessly unused by
+     the modal today (top-level tiles only, per the UX decision) but never
+     colliding: every category ID is unique. */}}
+<section class="category-group" {{ if .ID }}id="cat-panel-{{ .ID }}" {{ end }}style="--cat-color: {{ .Color }}" x-show="sectionHasMatch($el)">
   <h3 class="category-header">{{ if .AncestorName }}<span class="category-header-ancestor" x-show="q || tab === '__all__'">{{ .AncestorName }} › </span>{{ end }}{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</h3>
   {{ if .Buttons }}
   <div class="grid">
@@ -492,4 +536,29 @@
     {{ if .Price }}<span class="tile-price">{{ money .Price }}</span>{{ end }}
   </button>
   {{ end }}
+{{ end }}
+
+{{/* ut-docs#2283: one Categories-tab tile per top-level category
+     (ui.CategoryTile / ui.TopLevelCategoryTiles) — deliberately a distinct
+     component from "product-tile" above, not a reuse of it: the UX sizing
+     decision on the card calls for a bigger touch target than a product
+     tile (app.css's .category-tile floors both its min-height and its
+     grid column wider than .btn-tile's own), since this tile carries only
+     a category name, not a name+price+thumbnail. data-category-id/
+     data-category-name feed web/public/app.js's utCategoryPicker, which
+     opens #category-picker-modal (index.html) with THIS category's
+     already-rendered product-tile grid (copied from
+     #cat-panel-<ID> -- see "category-group"'s own id comment above for
+     why that id exists in every render branch, not just the tabbed one).
+     A plain <button>, not an hx-get trigger: the grid it opens is already
+     on the page (rendered once by THIS same /ui/buttons response, in the
+     per-category panel), so there is nothing to fetch — copying is
+     strictly cheaper and can never race a second server round trip
+     showing stale content. --cat-color, same convention as every other
+     category-colored element in this file. */}}
+{{ define "category-tile" }}
+<button type="button" class="category-tile" style="--cat-color: {{ .Color }}"
+        data-category-id="{{ .ID }}" data-category-name="{{ .Name }}">
+  <span class="category-tile-name">{{ .Name }}</span>
+</button>
 {{ end }}

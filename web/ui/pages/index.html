@@ -122,6 +122,36 @@
     </div>
   </dialog>
 
+  <!-- ut-docs#2283: opened by tapping a Categories-tab tile
+       (web/ui/partials/buttons.html's category-tile, gated on the
+       per-till display.categories_tab_enabled setting). Non-modal
+       .show(), same reasoning as #parked-orders-modal just above (and
+       every other .show()-opened dialog in this file): showModal()'s
+       inert-outside behaviour would make the nav rail's status/lock/
+       exit-to-OS affordances unreachable while this is open, which
+       universal-till/CLAUDE.md's offline-first rule requires stay
+       reachable on every surface. #category-picker-body starts empty —
+       web/public/app.js's utCategoryPicker fills it (by copying, not
+       fetching — see that comment for why) with the tapped category's
+       ALREADY-rendered product-tile grid, then calls htmx.process() on
+       it so every hx-* trigger inside (a plain item's hx-post scan AND a
+       modifier/variant item's own hx-get picker) works exactly as it
+       does on the sell screen itself — this vendored htmx (1.9.12) has no
+       MutationObserver auto-processing, so content injected outside
+       htmx's own swap machinery is otherwise never scanned for hx-*
+       attributes at all (same precedent as tills.html/setup.html's own
+       discovery-list injection). -->
+  <dialog id="category-picker-modal" class="modifier-modal"
+          aria-labelledby="category-picker-modal-title">
+    <h3 id="category-picker-modal-title">{{ T "products.categories" }}</h3>
+    <div id="category-picker-body"></div>
+    <div class="modifier-actions">
+      <button type="button" class="btn secondary"
+              onclick="document.getElementById('category-picker-modal').close();">
+        {{ T "common.close" }}</button>
+    </div>
+  </dialog>
+
   <!-- ut-docs#2183: #pos-alert now renders once, globally, from
        base.html itself — see that file's own comment. Used to be
        included here directly (ut-docs#213/#2179); removed to avoid a

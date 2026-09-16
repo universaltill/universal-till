@@ -1332,6 +1332,42 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		settingsRespondSaved(w, r, elev)
 	})
 
+	// Sell-screen Categories tab (ut-docs#2283): an optional leading tab,
+	// off by default, showing one large tile per top-level category —
+	// tapping a tile opens a modal with that category's items
+	// (web/ui/partials/buttons.html, internal/ui.TopLevelCategoryTiles).
+	// Same manager-gated, elevation-wired, persist-a-bool shape as
+	// allow-negative-inventory just above.
+	mux.HandleFunc("POST /api/settings/categories-tab", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		_ = r.ParseForm()
+		b, err := strconv.ParseBool(strings.TrimSpace(r.Form.Get("enabled")))
+		if err != nil {
+			http.Error(w, "enabled must be a boolean", http.StatusBadRequest)
+			return
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			summaryKey := "elevation.summary.categories_tab_off"
+			if b {
+				summaryKey = "elevation.summary.categories_tab_on"
+			}
+			renderElevationPrompt(w, r, "/api/settings/categories-tab", "#categories-tab-enabled-msg",
+				httpx.T(locale, summaryKey),
+				[]elevationHiddenField{{Name: "enabled", Value: r.Form.Get("enabled")}}, elev)
+			return
+		}
+		st := d.CurrentState()
+		st.CategoriesTabEnabled = b
+		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		d.SetState(st)
+		settingsAudit(r, posRepo, elev, "settings", common.KeyCategoriesTabEnabled, "categories_tab_changed", map[string]any{"enabled": b})
+		settingsRespondSaved(w, r, elev)
+	})
+
 	// Barcode symbology checklist (ADR-0059 Decision §2, ut-docs#935): one
 	// checkbox per internal/barcode registry entry, persisted immediately
 	// via SettingsRepo.SetEnabledBarcodeSymbologies — same manager-gated,

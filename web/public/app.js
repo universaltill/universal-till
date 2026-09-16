@@ -1472,6 +1472,94 @@ function initOfflineOverride(updateFn){
   });
 })();
 
+// utCategoryPicker (ut-docs#2283): tapping a Categories-tab tile
+// (.category-tile, buttons.html) opens #category-picker-modal
+// (index.html) showing that category's own product-tile grid.
+//
+// Copies, does not fetch: the grid is already on the page, rendered once
+// by the SAME /ui/buttons response that drew the tile, inside that
+// category's own (possibly hidden) panel -- #cat-panel-<id>, always
+// present regardless of which tab happens to be active (x-show hides it,
+// it never leaves the DOM). Copying its innerHTML is strictly cheaper
+// than a second server round trip and can never show stale content.
+//
+// Two things the copy needs to get right, neither of them htmx:
+//
+// 1. htmx.process(). This vendored htmx is 1.9.12 -- no MutationObserver
+//    auto-processing (that's a 2.x feature) -- so hx-* attributes on
+//    content inserted outside htmx's own swap machinery are never scanned
+//    on their own. Without this, neither a plain item's hx-post scan NOR
+//    a modifier/variant item's own hx-get picker (product-tile's other
+//    branch, buttons.html) would do anything when tapped inside this
+//    modal. Same precedent as tills.html/setup.html's own discovery-list
+//    injection (see those files' own comments for the general rule) --
+//    the modifier-tile case here is the one place in this codebase where
+//    the injected markup ALSO opens a SECOND dialog of its own
+//    (#modifier-modal) on click, so this is also what pins that nested
+//    case actually works, not just a flat list of buttons.
+//
+// 2. Alpine must NOT re-initialize the copy. The source panel's own
+//    tiles carry Alpine directives (x-show="matches($el)" and friends)
+//    that only resolve inside the sale screen's own x-data scope
+//    (.products-finder, buttons.html) -- #category-picker-body sits
+//    OUTSIDE that scope entirely (a sibling dialog in index.html), so if
+//    Alpine's own MutationObserver picked up these newly-inserted
+//    elements (it does, by default, for ANY DOM change, independently of
+//    htmx.process() above) it would try to evaluate `matches` with no
+//    such method in scope and throw -- reproduced live as a console error
+//    on the very first tap. Alpine.mutateDom() (public API, already used
+//    elsewhere in this codebase -- see catalog.html's window.Alpine.nextTick)
+//    pauses Alpine's global observer for exactly the innerHTML assignment
+//    below, so the copy's x-show attributes stay inert, unprocessed
+//    markup: harmless, and the tiles simply keep whatever inline
+//    display the ORIGINAL render already resolved (search-filtered
+//    display:none included -- the explicit style.display reset below
+//    clears that, since a category picked from the Categories tab should
+//    show every one of its items regardless of an unrelated search the
+//    operator may have had open on another tab).
+(function () {
+  function modal() { return document.getElementById('category-picker-modal'); }
+
+  function copyInto(body, panel) {
+    if (window.Alpine && typeof window.Alpine.mutateDom === 'function') {
+      window.Alpine.mutateDom(function () { body.innerHTML = panel.innerHTML; });
+    } else {
+      body.innerHTML = panel.innerHTML;
+    }
+    // Show every tile regardless of whatever x-show="matches($el)" had
+    // resolved to on the SOURCE panel (an active cross-category search
+    // elsewhere on the sale screen must not leave items hidden in here).
+    Array.prototype.forEach.call(body.querySelectorAll('.btn-tile'), function (el) {
+      el.style.display = '';
+    });
+    if (window.htmx) htmx.process(body);
+  }
+
+  document.addEventListener('click', function (e) {
+    var tile = e.target.closest ? e.target.closest('.category-tile') : null;
+    if (!tile) return;
+    var dialog = modal();
+    var body = document.getElementById('category-picker-body');
+    var panel = document.getElementById('cat-panel-' + tile.dataset.categoryId);
+    if (!dialog || !body || !panel) return;
+    copyInto(body, panel);
+    var title = document.getElementById('category-picker-modal-title');
+    if (title) title.textContent = tile.dataset.categoryName || '';
+    dialog.show();
+  });
+
+  document.addEventListener('pointerdown', function (e) {
+    var dialog = modal();
+    if (!dialog || !dialog.open || dialog.contains(e.target)) return;
+    dialog.close();
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    var dialog = modal();
+    if (dialog && dialog.open) dialog.close();
+  });
+})();
+
 // utPostWithElevation (ut-docs#794): a raw-fetch equivalent of the
 // checkOrElevate/elevation_prompt.html dialog (elevation.go, ut-docs#557)
 // for the handful of endpoints that can't be driven by htmx at all —

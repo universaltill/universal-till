@@ -59,11 +59,18 @@ const (
 	// KeyShopType holds the ADR-0026 shop-type taxonomy value chosen in the
 	// setup wizard (cafe|retail|service|hospitality|market_stall|other) —
 	// ut-docs#539. Optional: empty/missing is fine.
-	KeyShopType       = "shop.type"
-	KeyUIScale        = "display.ui_scale"
-	KeyOSK            = "display.osk"
-	KeyIdleLock       = "auth.idle_lock_minutes"
-	KeyKioskIdleReset = "kiosk.idle_reset_seconds"
+	KeyShopType = "shop.type"
+	KeyUIScale  = "display.ui_scale"
+	// KeyCategoriesTabEnabled is the per-till "Categories tab" toggle
+	// (ut-docs#2283), surfaced in Settings' Display card as "Show a
+	// Categories tab on the sell screen". Same shape as KeyUIScale's
+	// sibling display.* settings: a per-till preference (never LAN-syncs).
+	// Default false — the sell screen keeps its existing tab bar (All plus
+	// one tab per top-level category) until an operator opts in.
+	KeyCategoriesTabEnabled = "display.categories_tab_enabled"
+	KeyOSK                  = "display.osk"
+	KeyIdleLock             = "auth.idle_lock_minutes"
+	KeyKioskIdleReset       = "kiosk.idle_reset_seconds"
 	// KeyKioskPaymentMode is the self-order kiosk's checkout mode
 	// (universaltill/ut-docs#582): "kiosk" (default — the existing
 	// card/contactless payment-picker flow, ADR-0020) or "counter" (the
@@ -291,6 +298,11 @@ func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) R
 			st.AllowNegativeInventory = b
 		}
 	}
+	if v := get(KeyCategoriesTabEnabled, strconv.FormatBool(st.CategoriesTabEnabled)); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			st.CategoriesTabEnabled = b
+		}
+	}
 	st.IdleLockMinutes = DefaultIdleLockMinutes
 	if v := get(KeyIdleLock, ""); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
@@ -456,6 +468,7 @@ func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) erro
 		KeyTaxRate:                strconv.Itoa(st.TaxRatePct),
 		KeyServiceChargeRate:      FormatServiceChargeRatePercent(st.ServiceChargeRateBasisPoints),
 		KeyAllowNegativeInventory: strconv.FormatBool(st.AllowNegativeInventory),
+		KeyCategoriesTabEnabled:   strconv.FormatBool(st.CategoriesTabEnabled),
 		KeyIdleLock:               strconv.Itoa(st.IdleLockMinutes),
 		KeyKioskIdleReset:         strconv.Itoa(st.KioskIdleResetSeconds),
 		KeyKioskPaymentMode:       ClampKioskPaymentMode(st.KioskPaymentMode),

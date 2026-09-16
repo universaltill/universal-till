@@ -266,6 +266,12 @@ type RuntimeState struct {
 	// zero value), which is exactly "I'm not touching this field."
 	WindowModeChanged      bool
 	LaunchOnStartupChanged bool
+	// CategoriesTabEnabled (ut-docs#2283) gates the sell-screen's optional
+	// Categories tab (web/ui/partials/buttons.html): one large tile per
+	// top-level category, tapping a tile opens a modal with that
+	// category's items. Default false — opt-in, per the card's "optional"
+	// framing. See common.KeyCategoriesTabEnabled (state.go).
+	CategoriesTabEnabled bool
 }
 
 // CurrentState returns a consistent copy of the runtime state for rendering.

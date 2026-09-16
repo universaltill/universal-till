@@ -1708,6 +1708,38 @@ html[dir="rtl"] .tile-sheet-move .btn-ico svg { transform: scaleX(-1); }
 .thumb.small { width: 40px; height: 40px; aspect-ratio: auto; margin-inline-end: .5rem;
                vertical-align: middle; }
 
+/* ut-docs#2283: the Categories tab's own tile grid — one big tile per
+   top-level category, a distinct component from .btn-tile above (a
+   category tile carries only a name, no price/thumbnail). UX sizing
+   decision: at least as large as a product tile at the 1024x600 kiosk
+   floor — both the column floor (10rem vs .grid's 7rem) and the tile's
+   own min-height (7.5rem vs .btn-tile's 6.5rem) are set strictly larger,
+   never merely equal, so this reads as a deliberately bigger touch target
+   even at odd viewport widths where auto-fill's actual column count
+   could otherwise land the two grids on the same rendered cell size. */
+.category-tiles-grid { display: grid; gap: .6rem; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); }
+.category-tile {
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  /* ut-docs#2283 review: .btn-tile's min-height (6.5rem) is only a FLOOR —
+     real content (thumb + name + price + padding) measured live at
+     ~9.2rem once actually rendered, comfortably over that floor. 10rem
+     clears the measured real case with margin, not just the other
+     tile's own CSS floor. */
+  min-height: 10rem; padding: .6rem .7rem; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow);
+  font: inherit; color: var(--text); cursor: pointer;
+  transition: border-color .12s ease, box-shadow .12s ease, transform .05s ease;
+  user-select: none; touch-action: manipulation; -webkit-touch-callout: none;
+  border-inline-start: 6px solid var(--cat-color, var(--accent));
+}
+.category-tile:hover { border-color: #cbd5e1; box-shadow: 0 3px 8px rgba(15, 23, 42, .12); }
+.category-tile:active { transform: scale(.97); }
+.category-tile-name {
+  font-weight: 700; font-size: 1.05rem; line-height: 1.25; white-space: normal;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: anywhere;
+}
+
 /* ---------- Basket ---------- */
 /* Screen-reader-only text (aria-label is ignored on generic spans). */
 .visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px;
@@ -1881,6 +1913,22 @@ html[dir="rtl"] .tile-sheet-move .btn-ico svg { transform: scaleX(-1); }
    explicit fixed position replaces reliance on the browser's native
    top-layer centering, which fixes both. */
 #table-add-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
+/* Categories-tab category-picker modal (ut-docs#2283) — same non-modal
+   .show() family as #hold-modal/#pfand-modal/#elevation-modal/
+   #table-add-modal above, and for the identical reason (the nav rail's
+   status/lock/exit-to-OS affordances, universal-till/CLAUDE.md's
+   offline-first rule, must stay reachable). Wider than the base
+   .modifier-modal (28rem/90vw): this holds a real product-tile grid, not
+   a form — 40rem clears a realistic 3-4 column grid at the 1024x600
+   kiosk floor without wrapping to a narrow single column. #category-picker-body
+   scrolls internally rather than growing the dialog past the viewport,
+   same "the Close button must always stay reachable" reasoning as
+   .parked-orders-list's own max-height/overflow-y rule. */
+#category-picker-modal {
+  position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500;
+  min-width: min(40rem, 92vw); max-width: 92vw;
+}
+#category-picker-body { max-height: 60vh; overflow-y: auto; }
 /* Category-filter popover (ut-docs#2165) — same non-modal .show() family
    as #hold-modal/#pfand-modal/#elevation-modal/#table-add-modal above and
    for the identical reason (the custom on-screen keyboard must stay

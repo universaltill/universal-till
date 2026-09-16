@@ -56,7 +56,7 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
 			return
 		}
-		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore, View: renderer}
+		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore, View: renderer, CategoriesTabEnabled: d.CurrentState().CategoriesTabEnabled}
 		btnHTTP.List(w, r)
 	})
 
