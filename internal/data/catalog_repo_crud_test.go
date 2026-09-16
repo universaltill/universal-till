@@ -2,9 +2,11 @@ package data_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
@@ -559,6 +561,81 @@ func TestSetItemPrice_FallsBackFromItemToVariant(t *testing.T) {
 	}
 	if err := repo.SetItemPrice(ctx, "does-not-exist", 100); err == nil {
 		t.Fatal("expected an error when neither an item nor a variant matches")
+	}
+}
+
+// TestSetItemPrice_UpdatesPriceHistory is ut-docs#2314's cloud-directive
+// counterpart to the catalog-form edit tests in
+// catalog_repo_price_history_edit_2314_test.go: the cloud's SetItemPrice
+// remote-price directive (ADR-0018) must ALSO end the currently active
+// price_history row and start a new one — for both the item branch and the
+// variant fallback branch — and must NOT touch price_history at all when
+// the price didn't actually change.
+func TestSetItemPrice_UpdatesPriceHistory(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	posRepo := data.NewPOSRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Item", BasePrice: 100, IsActive: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v1", ItemID: "i1", SKU: "S1-V", Name: "Variant", Price: 150, IsActive: true})
+
+	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	if _, err := db.Exec(`INSERT INTO price_history(id, item_id, price, starts_at) VALUES('ph-item','i1',180,?)`, past); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO price_history(id, variant_id, price, starts_at) VALUES('ph-var','v1',275,?)`, past); err != nil {
+		t.Fatal(err)
+	}
+
+	// Item branch: 199 differs from the active row's 180, so the old row
+	// must close and a new one must open.
+	if err := repo.SetItemPrice(ctx, "i1", 199); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := posRepo.ResolveCurrentPrice(ctx, "i1", ""); err != nil || got != 199 {
+		t.Fatalf("expected resolved item price 199, got %d err=%v", got, err)
+	}
+	var itemEnds sql.NullString
+	if err := db.QueryRow(`SELECT ends_at FROM price_history WHERE id = 'ph-item'`).Scan(&itemEnds); err != nil {
+		t.Fatal(err)
+	}
+	if !itemEnds.Valid {
+		t.Fatal("expected the old item price_history row to be closed (ends_at set)")
+	}
+
+	// Variant fallback branch (the id is a variant's, not an item's): 299
+	// differs from the active row's 275, same close-and-append.
+	if err := repo.SetItemPrice(ctx, "v1", 299); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := posRepo.ResolveCurrentPrice(ctx, "", "v1"); err != nil || got != 299 {
+		t.Fatalf("expected resolved variant price 299, got %d err=%v", got, err)
+	}
+	var varEnds sql.NullString
+	if err := db.QueryRow(`SELECT ends_at FROM price_history WHERE id = 'ph-var'`).Scan(&varEnds); err != nil {
+		t.Fatal(err)
+	}
+	if !varEnds.Valid {
+		t.Fatal("expected the old variant price_history row to be closed (ends_at set)")
+	}
+
+	// No-op directive (resubmits the currently resolved price) must not
+	// create a spurious new price_history row.
+	var before int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM price_history`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetItemPrice(ctx, "i1", 199); err != nil {
+		t.Fatal(err)
+	}
+	var after int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM price_history`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("expected no new price_history row when SetItemPrice resubmits the unchanged current price, before=%d after=%d", before, after)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/barcode"
@@ -726,11 +727,31 @@ WHERE v.id = ?`, variantID).Scan(&itemName, &vName, &sku, &l.PriceMinor, &l.Code
 }
 
 // VariantsForItem returns ALL of one item's variants (active and retired)
-// with their barcodes — the catalog's per-item edit panel.
+// with their barcodes — the catalog's per-item edit panel, including the
+// variant edit form's own Price field.
+//
+// PriceMinor is the variant's CURRENT EFFECTIVE price (ut-docs#2314): an
+// active price_history row when one exists, else the configured
+// item_variants.price — same resolution GetVariantLabel/ItemVariantsForSale
+// already apply (ut-docs#2260/#2228), so an operator opening the edit form
+// sees (and, if they don't touch the field, round-trips unchanged) what the
+// till actually charges today, not a stale configured price a scheduled or
+// promotional price_history row has already overridden. Deliberately not
+// filtered to active variants (unlike ItemVariantsForSale) — this method's
+// own contract above returns retired variants too, for reactivation.
 func (r *CatalogRepo) VariantsForItem(ctx context.Context, itemID string) ([]VariantEditView, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, COALESCE(sku, ''), price, COALESCE(cost_price, 0), is_active
-FROM item_variants WHERE item_id = ? ORDER BY is_active DESC, name`, itemID)
+SELECT v.id, v.name, COALESCE(v.sku, ''),
+       COALESCE(
+         (SELECT ph.price FROM price_history ph
+          WHERE ph.variant_id = v.id
+            AND datetime(ph.starts_at) <= CURRENT_TIMESTAMP
+            AND (ph.ends_at IS NULL OR datetime(ph.ends_at) > CURRENT_TIMESTAMP)
+          ORDER BY datetime(ph.starts_at) DESC LIMIT 1),
+         v.price
+       ),
+       COALESCE(v.cost_price, 0), v.is_active
+FROM item_variants v WHERE v.item_id = ? ORDER BY v.is_active DESC, v.name`, itemID)
 	if err != nil {
 		return nil, err
 	}
@@ -1764,6 +1785,107 @@ type execer interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
+// resolveCurrentPriceExec is POSRepo.ResolveCurrentPrice's execer-based
+// twin (ut-docs#2314): same resolution order (an active price_history row
+// wins over the configured base_price/item_variants.price), generalized
+// over execer so a catalog write path can read the PRE-UPDATE resolved
+// price inside the SAME transaction as the write it's guarding — race
+// safety, not a second, separately-timed read (see
+// UpdateItemReturningWasActive's doc comment, ut-docs#1399, for why a
+// read-then-write split is the exact bug shape this avoids).
+//
+// Unlike ResolveCurrentPrice, this deliberately carries no is_active
+// filter on the base_price/item_variants.price fallback — same reasoning
+// ItemCurrentPrices' own doc comment gives: this is "what was the price
+// before this edit," not a sellability check, and an update can itself be
+// the one reactivating the row. ok is false when neither a price_history
+// row nor a matching items/item_variants row exists at all (id not
+// found) — callers treat that the same conservative way
+// UpdateItemReturningWasActive already treats a failed wasActive probe:
+// skip the price-history append rather than fail the whole write.
+func resolveCurrentPriceExec(ctx context.Context, ex execer, itemID, variantID string) (price int64, ok bool, err error) {
+	column, id := "item_id", itemID
+	if variantID != "" {
+		column, id = "variant_id", variantID
+	}
+	row := ex.QueryRowContext(ctx, fmt.Sprintf(`
+SELECT price FROM price_history
+WHERE %s = ?
+  AND datetime(starts_at) <= CURRENT_TIMESTAMP
+  AND (ends_at IS NULL OR datetime(ends_at) > CURRENT_TIMESTAMP)
+ORDER BY datetime(starts_at) DESC
+LIMIT 1
+`, column), id)
+	if err := row.Scan(&price); err == nil {
+		return price, true, nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return 0, false, fmt.Errorf("lookup price_history: %w", err)
+	}
+
+	var configuredErr error
+	if variantID != "" {
+		configuredErr = ex.QueryRowContext(ctx, `SELECT price FROM item_variants WHERE id = ?`, variantID).Scan(&price)
+	} else {
+		configuredErr = ex.QueryRowContext(ctx, `SELECT base_price FROM items WHERE id = ?`, itemID).Scan(&price)
+	}
+	if errors.Is(configuredErr, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if configuredErr != nil {
+		return 0, false, fmt.Errorf("load configured price: %w", configuredErr)
+	}
+	return price, true, nil
+}
+
+// appendPriceHistoryItemExec/appendPriceHistoryVariantExec are
+// POSRepo.AppendPriceHistoryItem/Variant's execer-based twins (ut-docs#2314):
+// same "close the currently active row, insert a new one starting now"
+// shape (including the starts_at-bounded close that leaves a future-dated
+// SCHEDULED row alone — see AppendPriceHistoryItem's own doc comment),
+// except this never opens its own transaction — the caller already holds
+// one (extending it, per ut-docs#1399's race-safety precedent, rather than
+// adding a second transaction that could race the caller's own write).
+func appendPriceHistoryItemExec(ctx context.Context, ex execer, itemID string, price int64, startsAt time.Time) error {
+	ts := startsAt.Format(time.RFC3339)
+	if _, err := ex.ExecContext(ctx, `UPDATE price_history SET ends_at = ? WHERE item_id = ? AND ends_at IS NULL AND datetime(starts_at) <= datetime(?)`, ts, itemID, ts); err != nil {
+		return fmt.Errorf("close previous price: %w", err)
+	}
+	if _, err := ex.ExecContext(ctx, `INSERT INTO price_history(id, item_id, price, starts_at) VALUES(?,?,?,?)`, uuid.New().String(), itemID, price, ts); err != nil {
+		return fmt.Errorf("insert price_history: %w", err)
+	}
+	return nil
+}
+
+func appendPriceHistoryVariantExec(ctx context.Context, ex execer, variantID string, price int64, startsAt time.Time) error {
+	ts := startsAt.Format(time.RFC3339)
+	if _, err := ex.ExecContext(ctx, `UPDATE price_history SET ends_at = ? WHERE variant_id = ? AND ends_at IS NULL AND datetime(starts_at) <= datetime(?)`, ts, variantID, ts); err != nil {
+		return fmt.Errorf("close previous price: %w", err)
+	}
+	if _, err := ex.ExecContext(ctx, `INSERT INTO price_history(id, variant_id, price, starts_at) VALUES(?,?,?,?)`, uuid.New().String(), variantID, price, ts); err != nil {
+		return fmt.Errorf("insert price_history: %w", err)
+	}
+	return nil
+}
+
+// recordPriceChangeExec is the shared "only touch price_history when the
+// price actually changed" gate every write path that can change an item's
+// or variant's price needs (ut-docs#2314: the catalog item/variant edit
+// form, and the cloud's SetItemPrice directive) — a no-op when oldPrice
+// (the caller's already resolveCurrentPriceExec-read PRE-write price)
+// equals newPrice, so an unrelated field edit (rename, category change,
+// …) never inserts a spurious price_history row. Exactly one of
+// itemID/variantID must be set, same contract as
+// resolveCurrentPriceExec/ResolveCurrentPrice.
+func recordPriceChangeExec(ctx context.Context, ex execer, itemID, variantID string, oldPrice, newPrice int64, now time.Time) error {
+	if oldPrice == newPrice {
+		return nil
+	}
+	if variantID != "" {
+		return appendPriceHistoryVariantExec(ctx, ex, variantID, newPrice, now)
+	}
+	return appendPriceHistoryItemExec(ctx, ex, itemID, newPrice, now)
+}
+
 // CreateItemTx is CreateItem's item insert, run inside a caller-supplied
 // transaction instead of autocommitting on its own — additive alongside
 // CreateItem (ut-docs#310), which keeps its existing autocommit behavior
@@ -2002,23 +2124,64 @@ func (r *CatalogRepo) ItemCostPrice(ctx context.Context, itemID string) (int64, 
 // remote price directive (ADR-0018); everything else on the item is
 // untouched. The id may be an item OR a variant (the snapshot lists both);
 // a miss on both reports "item not found" so the directive result says WHY.
+//
+// ut-docs#2314: same price_history obligation as
+// UpdateItemReturningWasActive/UpdateVariant above — a directive that only
+// writes base_price/item_variants.price is invisible at checkout whenever
+// an active price_history row exists. Wrapped in one transaction (again
+// free BEGIN IMMEDIATE race-safety via the DSN's _txlock=immediate) so both
+// branches' pre-write resolved-price reads happen atomically with whichever
+// UPDATE actually matches.
 func (r *CatalogRepo) SetItemPrice(ctx context.Context, itemID string, priceMinor int64) error {
 	if itemID == "" {
 		return errors.New("id required")
 	}
-	res, err := r.db.ExecContext(ctx, `UPDATE items SET base_price = ?, updated_at = datetime('now') WHERE id = ?`, priceMinor, itemID)
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("set item price: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Resolve both the item and (should the id turn out to be a variant's)
+	// the variant branch's pre-write price up front, before either UPDATE
+	// runs — id collisions between the two tables don't happen in practice
+	// (see the fallback shape below), so at most one of these ever
+	// resolves to priceKnown=true, and reading both here keeps the "read
+	// OLD price before the write" ordering correct without a second read
+	// after learning which branch matched.
+	oldItemPrice, itemPriceKnown, _ := resolveCurrentPriceExec(ctx, tx, itemID, "")
+	oldVariantPrice, variantPriceKnown, _ := resolveCurrentPriceExec(ctx, tx, "", itemID)
+
+	res, err := tx.ExecContext(ctx, `UPDATE items SET base_price = ?, updated_at = datetime('now') WHERE id = ?`, priceMinor, itemID)
 	if err != nil {
 		return fmt.Errorf("set item price: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n > 0 {
+		if itemPriceKnown {
+			if err := recordPriceChangeExec(ctx, tx, itemID, "", oldItemPrice, priceMinor, time.Now()); err != nil {
+				return fmt.Errorf("set item price: record price change: %w", err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("set item price: commit: %w", err)
+		}
 		return nil
 	}
-	res, err = r.db.ExecContext(ctx, `UPDATE item_variants SET price = ? WHERE id = ? AND is_active = 1`, priceMinor, itemID)
+
+	res, err = tx.ExecContext(ctx, `UPDATE item_variants SET price = ? WHERE id = ? AND is_active = 1`, priceMinor, itemID)
 	if err != nil {
 		return fmt.Errorf("set variant price: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return errors.New("item not found")
+	}
+	if variantPriceKnown {
+		if err := recordPriceChangeExec(ctx, tx, "", itemID, oldVariantPrice, priceMinor, time.Now()); err != nil {
+			return fmt.Errorf("set variant price: record price change: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("set variant price: commit: %w", err)
 	}
 	return nil
 }
@@ -2162,8 +2325,23 @@ func (r *CatalogRepo) UpdateItemReturningWasActive(ctx context.Context, in catal
 	if prev, ok, err := getItemExec(ctx, tx, in.ID); err == nil && ok {
 		wasActive = prev.IsActive
 	}
+	// ut-docs#2314: read the item's PRE-UPDATE resolved price (price_history-
+	// aware, same resolution ItemCurrentPrices/ResolveCurrentPrice use) inside
+	// this SAME transaction, before the write — same race-safety reasoning
+	// this transaction already exists for above (ut-docs#1399): a second,
+	// separately-timed read here would let a concurrent price edit on the
+	// same item race the "did the price actually change" comparison below.
+	// Same conservative swallow-the-read-error default as wasActive's own
+	// probe just above: an unresolvable pre-update price (id not found) just
+	// skips the price_history append, it never fails the item write itself.
+	oldPrice, priceKnown, _ := resolveCurrentPriceExec(ctx, tx, in.ID, "")
 	if err := updateItemExec(ctx, tx, in); err != nil {
 		return true, err
+	}
+	if priceKnown {
+		if err := recordPriceChangeExec(ctx, tx, in.ID, "", oldPrice, in.BasePrice, time.Now()); err != nil {
+			return true, fmt.Errorf("update item: record price change: %w", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return true, fmt.Errorf("update item: commit: %w", err)
@@ -2329,6 +2507,13 @@ func generatedVariantSKU() string {
 	return "VAR-" + strings.ToUpper(uuid.NewString()[:8])
 }
 
+// UpdateVariant is UpdateItemReturningWasActive's variant counterpart for
+// price_history (ut-docs#2314): wrapped in its own transaction (the DSN's
+// _txlock=immediate, ut-docs#311, makes this BeginTx take the write lock at
+// BEGIN same as UpdateItemReturningWasActive's does, so the same
+// read-before-write race safety applies here for free) so the pre-update
+// resolved price is read and, if it changed, the price_history append
+// happens atomically with the write, not in a second racing transaction.
 func (r *CatalogRepo) UpdateVariant(ctx context.Context, in catalogtypes.VariantInput) error {
 	if in.ID == "" {
 		return errors.New("id required")
@@ -2340,7 +2525,15 @@ func (r *CatalogRepo) UpdateVariant(ctx context.Context, in catalogtypes.Variant
 	if !in.IsActive {
 		active = 0
 	}
-	_, err := r.db.ExecContext(ctx, `
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("update variant: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	// Same conservative swallow-the-read-error default as
+	// UpdateItemReturningWasActive's own price probe.
+	oldPrice, priceKnown, _ := resolveCurrentPriceExec(ctx, tx, "", in.ID)
+	_, err = tx.ExecContext(ctx, `
 UPDATE item_variants
 SET sku = COALESCE(NULLIF(?, ''), sku),
     name = ?,
@@ -2354,6 +2547,14 @@ WHERE id = ?
 			return ErrSKUExists
 		}
 		return fmt.Errorf("update variant: %w", err)
+	}
+	if priceKnown {
+		if err := recordPriceChangeExec(ctx, tx, "", in.ID, oldPrice, in.Price, time.Now()); err != nil {
+			return fmt.Errorf("update variant: record price change: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("update variant: commit: %w", err)
 	}
 	return nil
 }

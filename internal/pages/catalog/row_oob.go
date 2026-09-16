@@ -69,9 +69,23 @@ type catalogRowVM struct {
 // buildCatalogRows assembles the initial grid's card view models from the
 // whole-catalog listing maps — the one remaining place a full-list render
 // is correct (the /catalog page's first paint).
-func buildCatalogRows(items []catalogtypes.ItemInput, barcodes map[string][]string, variants map[string][]data.VariantView, thumbnails map[string]string) []catalogRowVM {
+//
+// currentPrices (repo.ItemCurrentPrices, ut-docs#2314) overrides each item's
+// Item.BasePrice with its CURRENT EFFECTIVE price — an active price_history
+// row when one exists, else the same base_price — before it's handed to
+// catalog_row.html. That template uses Item.BasePrice for both the visible
+// tile-price AND the edit form's Price field (the client reads it off the
+// row's data-price attribute, catalog.html's row-click handler); an item id
+// missing from currentPrices (shouldn't happen for a row built from this
+// same items slice, but ItemCurrentPrices' own contract allows it) leaves
+// the item's raw base_price as configured, same fallback ItemCurrentPrices'
+// own callers already use.
+func buildCatalogRows(items []catalogtypes.ItemInput, barcodes map[string][]string, variants map[string][]data.VariantView, thumbnails map[string]string, currentPrices map[string]int64) []catalogRowVM {
 	rows := make([]catalogRowVM, 0, len(items))
 	for _, itm := range items {
+		if price, ok := currentPrices[itm.ID]; ok {
+			itm.BasePrice = price
+		}
 		rows = append(rows, catalogRowVM{
 			Item: itm, Barcodes: barcodes[itm.ID], Variants: variants[itm.ID],
 			ImageURL: thumbnails[itm.ID],
@@ -152,6 +166,20 @@ func writeCatalogRowOOB(w io.Writer, r *http.Request, repo *data.CatalogRepo, fu
 	thumbURL, err := repo.ItemThumbnailFor(ctx, itemID)
 	if err != nil {
 		return err
+	}
+	// ut-docs#2314: same override buildCatalogRows applies at first paint —
+	// the row this mutation just re-renders (including the just-saved
+	// item's own row, so a save that changed the price reflects the
+	// price_history-resolved value immediately, not the raw base_price it
+	// still shows for one more render if this were skipped) must show the
+	// CURRENT EFFECTIVE price, not raw base_price, in both its tile-price
+	// and its data-price (the edit form's Price field source). Best-effort:
+	// a lookup failure here falls back to the raw base_price GetItem
+	// already returned, same as every other best-effort read in this file.
+	if currentPrices, err := repo.ItemCurrentPrices(ctx, []string{itemID}); err == nil {
+		if price, ok := currentPrices[itemID]; ok {
+			itm.BasePrice = price
+		}
 	}
 	name := "catalog_row_update_oob"
 	if insert {
