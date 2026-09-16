@@ -118,6 +118,10 @@ func seedQCResolverFixture(t *testing.T, db *sql.DB) {
 		`CREATE TABLE item_modifier_groups (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, name TEXT, is_active INTEGER NOT NULL DEFAULT 1);`,
 		// Migration 025 (ADR-0090): ItemIDsWithModifiers joins through this.
 		`CREATE TABLE item_modifier_group_links (item_id TEXT NOT NULL, group_id TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (item_id, group_id));`,
+		// Migration 031 (ADR-0094): ItemIDsWithModifiers's UNION also reads
+		// these, unconditionally, even when no row exists in either.
+		`CREATE TABLE category_modifier_group_links (category_id TEXT NOT NULL, group_id TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (category_id, group_id));`,
+		`CREATE TABLE item_modifier_group_opt_outs (item_id TEXT NOT NULL, group_id TEXT NOT NULL, PRIMARY KEY (item_id, group_id));`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {

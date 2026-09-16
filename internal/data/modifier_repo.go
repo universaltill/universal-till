@@ -35,6 +35,14 @@ type ModifierGroup struct {
 	// every other query already scopes to one caller-known item, so it
 	// would just be redundant there. Left "" by every other query.
 	ItemName string
+	// OptedOut is only populated by ListInheritedGroupsForItem (ADR-0094,
+	// ut-docs#1915) — true when the item has declined this category-
+	// inherited group via item_modifier_group_opt_outs, for #2284's
+	// "inherited, greyed, can override" item panel. The sale-time resolver
+	// (ResolveGroupsForItem) drops an opted-out group entirely rather than
+	// flagging it, and no other query knows about an item at all. Left false
+	// by every other query.
+	OptedOut bool
 }
 
 // ModifierOption is one selectable choice within a ModifierGroup. Price
@@ -92,7 +100,6 @@ WHERE l.item_id = ?`
 	defer groupRows.Close()
 
 	var groups []ModifierGroup
-	byID := map[string]*ModifierGroup{}
 	for groupRows.Next() {
 		var g ModifierGroup
 		var required, active int
@@ -109,18 +116,32 @@ WHERE l.item_id = ?`
 	if len(groups) == 0 {
 		return nil, nil
 	}
-	// (item_id, group_id) is the link table's PRIMARY KEY, so one group
-	// appears at most once per item here and a pointer per id is safe —
-	// unlike listShopModifierGroups below, where the same group recurs once
-	// per linked item.
+	if err := r.attachOptions(ctx, groups, includeInactive); err != nil {
+		return nil, err
+	}
+	return groups, nil
+}
+
+// attachOptions loads the options for every group in groups (one batch
+// query, not N+1) and appends them to each group's Options in place. Shared
+// by every query here whose result holds each group id AT MOST ONCE
+// (listGroupsForItem, listGroupsForCategory, the ADR-0094 inherited/resolver
+// paths) — a pointer per id is safe there because each of those reads
+// through a link table whose PRIMARY KEY includes group_id. It is NOT used
+// by listShopModifierGroups, where the same group recurs once per linked
+// item and needs its own fan-out. Callers guard the empty slice themselves
+// (SQLite rejects "IN ()").
+//
+// Options belong to a group, not to an item or category: scope by the group
+// ids already fetched rather than joining through a link table a second
+// time.
+func (r *ModifierRepo) attachOptions(ctx context.Context, groups []ModifierGroup, includeInactive bool) error {
+	byID := make(map[string]*ModifierGroup, len(groups))
 	groupIDs := make([]string, len(groups))
 	for i := range groups {
 		byID[groups[i].ID] = &groups[i]
 		groupIDs[i] = groups[i].ID
 	}
-
-	// Options belong to a group, not to an item: scope by the group ids just
-	// fetched rather than joining through the link table a second time.
 	placeholders, args := inPlaceholders(groupIDs)
 	optQuery := `
 SELECT o.id, o.group_id, o.name, o.price_delta_minor, o.sort_order, o.is_active
@@ -133,14 +154,14 @@ WHERE o.group_id IN (` + placeholders + `)`
 
 	optRows, err := r.db.QueryContext(ctx, optQuery, args...)
 	if err != nil {
-		return nil, fmt.Errorf("list modifier options: %w", err)
+		return fmt.Errorf("list modifier options: %w", err)
 	}
 	defer optRows.Close()
 	for optRows.Next() {
 		var o ModifierOption
 		var active int
 		if err := optRows.Scan(&o.ID, &o.GroupID, &o.Name, &o.PriceDeltaMinor, &o.SortOrder, &active); err != nil {
-			return nil, fmt.Errorf("scan modifier option: %w", err)
+			return fmt.Errorf("scan modifier option: %w", err)
 		}
 		o.IsActive = active == 1
 		if g, ok := byID[o.GroupID]; ok {
@@ -148,7 +169,203 @@ WHERE o.group_id IN (` + placeholders + `)`
 		}
 	}
 	if err := optRows.Err(); err != nil {
-		return nil, fmt.Errorf("list modifier options: %w", err)
+		return fmt.Errorf("list modifier options: %w", err)
+	}
+	return nil
+}
+
+// ResolveGroupsForItem is the SALE-TIME resolver behind every add-to-basket
+// customization step (the cashier picker and submit path in
+// pos_modifiers_api.go, the self-order kiosk in self_order_shop.go, and the
+// barcode/variant path in pos_api.go) since ADR-0094 (ut-docs#1915):
+//
+//	resolved(item) = item's own directly-linked ACTIVE groups
+//	               ∪ ( item.category's directly-linked ACTIVE groups
+//	                   \ item's opt-out set )
+//
+// The item's own groups come first, in exactly ListGroupsForItem's order
+// (that query is unchanged and still serves any caller wanting only the
+// narrower direct-link scope); the surviving category-inherited groups are
+// appended after them in the category link's own sort_order/name order —
+// two ordered runs, never one merged sort. A group both directly linked and
+// category-linked appears once, as the item's OWN copy (its own link's
+// ItemID/SortOrder — the more specific attachment wins for display
+// position, ADR-0094 §3). An item with no category, or no surviving
+// inherited group, resolves to exactly what ListGroupsForItem returns.
+//
+// This is a read-time join, deliberately not a per-item snapshot or cache
+// (ADR-0094 §3): editing a category's groups, an item's category or an
+// opt-out takes effect on the very next add-to-basket, with no backfill.
+// Active options are loaded for every returned group, same as
+// ListGroupsForItem.
+func (r *ModifierRepo) ResolveGroupsForItem(ctx context.Context, itemID string) ([]ModifierGroup, error) {
+	own, err := r.listGroupsForItem(ctx, itemID, false)
+	if err != nil {
+		return nil, err
+	}
+	inherited, err := r.inheritedGroupsForItem(ctx, itemID)
+	if err != nil {
+		return nil, err
+	}
+	if len(inherited) == 0 {
+		return own, nil
+	}
+	ownIDs := make(map[string]bool, len(own))
+	for _, g := range own {
+		ownIDs[g.ID] = true
+	}
+	// Opt-out wins over inheritance; a directly-linked copy wins over an
+	// inherited one. OptedOut itself stays false on everything returned —
+	// it is ListInheritedGroupsForItem's field, not this resolver's.
+	var extra []ModifierGroup
+	for _, g := range inherited {
+		if g.OptedOut || ownIDs[g.ID] {
+			continue
+		}
+		extra = append(extra, g)
+	}
+	if len(extra) == 0 {
+		return own, nil
+	}
+	if err := r.attachOptions(ctx, extra, false); err != nil {
+		return nil, err
+	}
+	return append(own, extra...), nil
+}
+
+// ListInheritedGroupsForItem returns the ACTIVE modifier groups an item
+// inherits from its category — every group linked to the item's category
+// via category_modifier_group_links, whether or not the item has opted out —
+// with OptedOut set on each from item_modifier_group_opt_outs and active
+// options loaded. This is the read behind #2284's item-panel "inherited,
+// greyed, can override" display (ADR-0094 §5): the admin needs to see an
+// opted-out group to be able to opt back IN, which is exactly why this is a
+// separate method from ResolveGroupsForItem (which drops opted-out groups).
+// An item with no category (items.category_id IS NULL), or one that doesn't
+// exist, inherits nothing: nil, nil. ItemID is left "" — an inherited group
+// is category-attached, not item-scoped identity, and SortOrder is the
+// CATEGORY link's own position.
+func (r *ModifierRepo) ListInheritedGroupsForItem(ctx context.Context, itemID string) ([]ModifierGroup, error) {
+	if itemID == "" {
+		return nil, errors.New("item_id required")
+	}
+	groups, err := r.inheritedGroupsForItem(ctx, itemID)
+	if err != nil || len(groups) == 0 {
+		return nil, err
+	}
+	if err := r.attachOptions(ctx, groups, false); err != nil {
+		return nil, err
+	}
+	return groups, nil
+}
+
+// inheritedGroupsForItem is the shared read under ResolveGroupsForItem and
+// ListInheritedGroupsForItem: the item's category's ACTIVE linked groups,
+// in the category link's sort_order/name order, each with OptedOut set from
+// item_modifier_group_opt_outs — options NOT yet loaded, because the two
+// callers want them on different subsets (the resolver first drops the
+// opted-out rows). One query: the category comes from joining items on
+// category_id, so an item with a NULL category_id (or no items row at all)
+// simply matches no rows — nil, nil — with no separate lookup round trip.
+// (category_id, group_id) is the link table's PRIMARY KEY and an item has
+// one category, so each group id appears at most once here (attachOptions'
+// precondition).
+func (r *ModifierRepo) inheritedGroupsForItem(ctx context.Context, itemID string) ([]ModifierGroup, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT g.id, g.name, g.required, g.min_select, g.max_select, l.sort_order, g.is_active,
+       EXISTS (
+         SELECT 1 FROM item_modifier_group_opt_outs oo
+         WHERE oo.item_id = i.id AND oo.group_id = g.id
+       )
+FROM items i
+JOIN category_modifier_group_links l ON l.category_id = i.category_id
+JOIN item_modifier_groups g ON g.id = l.group_id
+WHERE i.id = ? AND g.is_active = 1
+ORDER BY l.sort_order, g.name`, itemID)
+	if err != nil {
+		return nil, fmt.Errorf("list inherited modifier groups: %w", err)
+	}
+	defer rows.Close()
+	var groups []ModifierGroup
+	for rows.Next() {
+		var g ModifierGroup
+		var required, active, optedOut int
+		if err := rows.Scan(&g.ID, &g.Name, &required, &g.MinSelect, &g.MaxSelect, &g.SortOrder, &active, &optedOut); err != nil {
+			return nil, fmt.Errorf("scan inherited modifier group: %w", err)
+		}
+		g.Required = required == 1
+		g.IsActive = active == 1
+		g.OptedOut = optedOut == 1
+		groups = append(groups, g)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list inherited modifier groups: %w", err)
+	}
+	return groups, nil
+}
+
+// ListGroupsForCategory returns a category's ACTIVE linked modifier groups
+// (with their active options nested), in the category link's own
+// sort_order/name order — ADR-0094 (ut-docs#1915). This is the category-side
+// twin of ListGroupsForItem for #2284's category editor; sale-time
+// resolution goes through ResolveGroupsForItem, which applies the item's
+// opt-outs on top of this set. ItemID is left "" on every result — a
+// category link is not item-scoped identity.
+func (r *ModifierRepo) ListGroupsForCategory(ctx context.Context, categoryID string) ([]ModifierGroup, error) {
+	return r.listGroupsForCategory(ctx, categoryID, false)
+}
+
+// ListAllGroupsForCategory returns EVERY modifier group and option linked
+// to a category, active or not — the admin category editor (#2284) needs to
+// show (and let a manager unlink) a deactivated group, same reason
+// ListAllGroupsForItem exists beside the sale-time ListGroupsForItem.
+func (r *ModifierRepo) ListAllGroupsForCategory(ctx context.Context, categoryID string) ([]ModifierGroup, error) {
+	return r.listGroupsForCategory(ctx, categoryID, true)
+}
+
+// Membership is read through category_modifier_group_links (ADR-0094),
+// the exact mirror of listGroupsForItem over item_modifier_group_links:
+// the link row says which categories offer a group and where it sits in
+// each category's list, the group row carries the shared rule set.
+func (r *ModifierRepo) listGroupsForCategory(ctx context.Context, categoryID string, includeInactive bool) ([]ModifierGroup, error) {
+	if categoryID == "" {
+		return nil, errors.New("category_id required")
+	}
+	groupQuery := `
+SELECT g.id, g.name, g.required, g.min_select, g.max_select, l.sort_order, g.is_active
+FROM item_modifier_groups g
+JOIN category_modifier_group_links l ON l.group_id = g.id
+WHERE l.category_id = ?`
+	if !includeInactive {
+		groupQuery += ` AND g.is_active = 1`
+	}
+	groupQuery += ` ORDER BY l.sort_order, g.name`
+
+	groupRows, err := r.db.QueryContext(ctx, groupQuery, categoryID)
+	if err != nil {
+		return nil, fmt.Errorf("list category modifier groups: %w", err)
+	}
+	defer groupRows.Close()
+
+	var groups []ModifierGroup
+	for groupRows.Next() {
+		var g ModifierGroup
+		var required, active int
+		if err := groupRows.Scan(&g.ID, &g.Name, &required, &g.MinSelect, &g.MaxSelect, &g.SortOrder, &active); err != nil {
+			return nil, fmt.Errorf("scan category modifier group: %w", err)
+		}
+		g.Required = required == 1
+		g.IsActive = active == 1
+		groups = append(groups, g)
+	}
+	if err := groupRows.Err(); err != nil {
+		return nil, fmt.Errorf("list category modifier groups: %w", err)
+	}
+	if len(groups) == 0 {
+		return nil, nil
+	}
+	if err := r.attachOptions(ctx, groups, includeInactive); err != nil {
+		return nil, err
 	}
 	return groups, nil
 }
@@ -300,21 +517,40 @@ WHERE EXISTS (
 }
 
 // ItemIDsWithModifiers reports which of the given item IDs have at least
-// one active modifier group — one batch query, not N+1, for rendering a
-// button grid where each tile needs to know whether tapping it should open
-// the customization step first. Items with no active groups are simply
-// absent from the returned set (not present == false).
+// one active modifier group AVAILABLE AT SALE TIME — direct links, or a
+// non-opted-out category inheritance (ADR-0094, ut-docs#1915) — one batch
+// query, not N+1, for rendering a button grid where each tile needs to know
+// whether tapping it should open the customization step first. This MUST
+// stay in lockstep with ResolveGroupsForItem's own resolution rule
+// (independent-review finding on ut-docs#1915: shipped once reading only
+// item_modifier_group_links, which left every category-only item's tile
+// skipping the picker and adding straight to the basket — the tile-tap gate
+// disagreeing with the sale-time resolver is a correctness bug, not a
+// cosmetic one). Items with no active/reachable group are simply absent
+// from the returned set (not present == false).
 func (r *ModifierRepo) ItemIDsWithModifiers(ctx context.Context, itemIDs []string) (map[string]bool, error) {
 	result := map[string]bool{}
 	if len(itemIDs) == 0 {
 		return result, nil
 	}
-	placeholders, args := inPlaceholders(itemIDs)
+	placeholders, directArgs := inPlaceholders(itemIDs)
+	_, inheritedArgs := inPlaceholders(itemIDs)
+	args := append(directArgs, inheritedArgs...)
 	query := `
 SELECT DISTINCT l.item_id
 FROM item_modifier_group_links l
 JOIN item_modifier_groups g ON g.id = l.group_id
-WHERE g.is_active = 1 AND l.item_id IN (` + placeholders + `)`
+WHERE g.is_active = 1 AND l.item_id IN (` + placeholders + `)
+UNION
+SELECT DISTINCT i.id
+FROM items i
+JOIN category_modifier_group_links cl ON cl.category_id = i.category_id
+JOIN item_modifier_groups g ON g.id = cl.group_id
+WHERE g.is_active = 1 AND i.id IN (` + placeholders + `)
+  AND NOT EXISTS (
+    SELECT 1 FROM item_modifier_group_opt_outs oo
+    WHERE oo.item_id = i.id AND oo.group_id = g.id
+  )`
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("item ids with modifiers: %w", err)
@@ -460,6 +696,103 @@ WHERE item_id = ? AND group_id = ?
 	return n > 0, nil
 }
 
+// LinkGroupToCategory attaches an existing modifier group to a category, so
+// every item in that category inherits it at sale time (ResolveGroupsForItem)
+// unless the item opts out — ADR-0094 (ut-docs#1915), the category-side
+// twin of LinkGroupToItem, to be wired up by #2284's category editor. Same
+// ON CONFLICT DO UPDATE shape: re-linking an already-linked group just
+// updates its per-category sort order, so a resubmit settles safely. A
+// category never becomes a group's owner through this (ADR-0094 Decision
+// 1): the group's item anchor and its item_modifier_group_links rows are
+// untouched, and UnlinkGroupFromItemUnlessLastLink's "at least one ITEM
+// link" invariant still counts item links only.
+func (r *ModifierRepo) LinkGroupToCategory(ctx context.Context, categoryID, groupID string, sortOrder int) error {
+	if categoryID == "" {
+		return errors.New("category_id required")
+	}
+	if groupID == "" {
+		return errors.New("group_id required")
+	}
+	_, err := r.db.ExecContext(ctx, `
+INSERT INTO category_modifier_group_links (category_id, group_id, sort_order)
+VALUES (?, ?, ?)
+ON CONFLICT(category_id, group_id) DO UPDATE SET sort_order = excluded.sort_order
+`, categoryID, groupID, sortOrder)
+	if err != nil {
+		return fmt.Errorf("link modifier group to category: %w", err)
+	}
+	return nil
+}
+
+// UnlinkGroupFromCategory detaches a modifier group from one category —
+// ADR-0094 (ut-docs#1915). A plain unconditional DELETE, deliberately
+// without UnlinkGroupFromItemUnlessLastLink's "last link" guard: a category
+// is never a group's sole owner (ADR-0094 Decision 1 — the group keeps its
+// item anchor and item links regardless), so removing a category link can
+// never orphan the group or make it unreachable in the UI. Existing opt-out
+// rows for (item, group) are left alone: they are keyed by item and group,
+// not by category, and simply become dormant until the group is inherited
+// again.
+func (r *ModifierRepo) UnlinkGroupFromCategory(ctx context.Context, categoryID, groupID string) error {
+	if categoryID == "" {
+		return errors.New("category_id required")
+	}
+	if groupID == "" {
+		return errors.New("group_id required")
+	}
+	_, err := r.db.ExecContext(ctx, `DELETE FROM category_modifier_group_links WHERE category_id = ? AND group_id = ?`, categoryID, groupID)
+	if err != nil {
+		return fmt.Errorf("unlink modifier group from category: %w", err)
+	}
+	return nil
+}
+
+// OptOutItemFromGroup records that an item declines a category-inherited
+// modifier group — ADR-0094 Decision 2 (ut-docs#1915): a presence-only row
+// in item_modifier_group_opt_outs, which ResolveGroupsForItem subtracts from
+// the item's inherited set and ListInheritedGroupsForItem reports as
+// OptedOut. INSERT OR IGNORE, so opting out twice is a no-op rather than a
+// PK violation. This only ever suppresses a CATEGORY-inherited group: a
+// group the item is DIRECTLY linked to via item_modifier_group_links is
+// unaffected by an opt-out row — detaching that is
+// UnlinkGroupFromItemUnlessLastLink's job, keeping the two mechanisms
+// non-overlapping (direct links are added/removed; inheritance is
+// accepted/opted-out). No FK or existence check beyond the row's own
+// foreign keys: an opt-out for a group the category doesn't (yet) link is
+// simply dormant, not an error.
+func (r *ModifierRepo) OptOutItemFromGroup(ctx context.Context, itemID, groupID string) error {
+	if itemID == "" {
+		return errors.New("item_id required")
+	}
+	if groupID == "" {
+		return errors.New("group_id required")
+	}
+	_, err := r.db.ExecContext(ctx, `INSERT OR IGNORE INTO item_modifier_group_opt_outs (item_id, group_id) VALUES (?, ?)`, itemID, groupID)
+	if err != nil {
+		return fmt.Errorf("opt item out of modifier group: %w", err)
+	}
+	return nil
+}
+
+// OptInItemToGroup reverses OptOutItemFromGroup: deleting the opt-out row
+// is the whole of "opting back in" (ADR-0094 Decision 2 — there is no
+// separate "explicit yes" state to model, symmetric with how
+// item_modifier_group_links has no "explicit no" row for a group an item
+// was never linked to). Deleting a row that isn't there is a no-op.
+func (r *ModifierRepo) OptInItemToGroup(ctx context.Context, itemID, groupID string) error {
+	if itemID == "" {
+		return errors.New("item_id required")
+	}
+	if groupID == "" {
+		return errors.New("group_id required")
+	}
+	_, err := r.db.ExecContext(ctx, `DELETE FROM item_modifier_group_opt_outs WHERE item_id = ? AND group_id = ?`, itemID, groupID)
+	if err != nil {
+		return fmt.Errorf("opt item in to modifier group: %w", err)
+	}
+	return nil
+}
+
 // ListAttachableModifierGroups returns every ACTIVE modifier group in the
 // shop not already linked to itemID — backs the "attach an existing group"
 // picker (ut-docs#2046). Only active groups are offered: putting a group
@@ -574,7 +907,7 @@ WHERE item_id = ?
 
 // ReanchorGroupsBeforeBulkItemDelete is the batch form for a caller that
 // deletes items matching a WHERE predicate rather than one known id (e.g.
-// POSRepo.CleanupObsoleteItems' obsoleteItemsWhere). itemIDSubquery must be
+// POSRepo.CleanupObsoleteItems' obsoleteItemsPredicate). itemIDSubquery must be
 // a complete, parameter-free "SELECT id FROM items WHERE ..." SQL string
 // selecting exactly the item ids about to be deleted — pass the SAME
 // subquery text the caller's own DELETE FROM items uses (see pos_repo.go's
