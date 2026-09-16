@@ -1690,6 +1690,55 @@ html[dir="rtl"] .tile-sheet-move .btn-ico svg { transform: scaleX(-1); }
   border-inline-start: 4px solid var(--cat-color, var(--accent));
 }
 
+/* ---------- Categories tab (ut-docs#2283) ----------
+   .category-tile reuses the .grid it sits in (buttons.html) — same
+   auto-fill/7rem column floor the product-tile grid already uses, so the
+   two densities stay visually consistent when an operator flips between
+   the Categories tab and any per-category tab. min-height is bumped past
+   .btn-tile's own 6.5rem (not just matched) — the card's own "at least as
+   large as product-tile" floor, and a plain name-only tile has far less
+   content than a tile with a thumbnail/price, so a little extra height
+   keeps it from reading as a visually lighter, easier-to-mis-tap target
+   next to the item tiles it sits beside once a category is open. Same
+   --cat-color-accent/border-inline-start recipe as .btn-tile (ut-docs#1325)
+   -- one color per category, carried on the tile itself since (unlike a
+   category panel) this view has no ancestor already carrying it.
+
+   min-height measured, not guessed: a .btn-tile with a two-line-clamped
+   name AND a price line (no thumbnail) renders at ~140px in a real
+   browser at the 7rem grid-column floor both share — noticeably taller
+   than the 6.5rem/104px number .btn-tile's own CSS states as ITS floor,
+   because that number is only ever the floor for a short one-line name
+   with no price growth. .category-tile has no price line to grow past its
+   own name, so matching .btn-tile's stated floor is not enough once a
+   real (especially a longer, translated) category name wraps to two
+   lines — confirmed live by e2e/tests/sell-screen-categories-tab-2283
+   .spec.ts's geometry case, which is what caught this the first time
+   (measured 119px against a real 140.75px product tile, both two-line
+   names, neither one hand-picked to make a point). 9.5rem/152px clears
+   that measured case with margin. */
+.category-tile {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: .3rem; padding: .6rem .5rem; min-height: 9.5rem; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow);
+  font: inherit; color: var(--text); cursor: pointer; text-align: center;
+  transition: border-color .12s ease, box-shadow .12s ease, transform .05s ease;
+  user-select: none; touch-action: manipulation; -webkit-touch-callout: none;
+  border-inline-start: 4px solid var(--cat-color, var(--accent));
+}
+.category-tile:hover { border-color: #cbd5e1; box-shadow: 0 3px 8px rgba(15, 23, 42, .12); }
+.category-tile:active { transform: scale(.97); }
+.category-tile-name {
+  font-weight: 600; font-size: .95rem; line-height: 1.25;
+  overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+/* Wider than the base .modifier-modal (28rem/90vw) — this holds a full
+   item grid, not a handful of buttons — same "widen the dialog, not the
+   content" call .barcode-backfill-modal made for its own wide table. */
+.category-items-modal { max-width: 44rem; width: 94vw; }
+.category-items-modal-body { max-height: 60vh; overflow-y: auto; margin-block: .5rem; }
+
 /* ---------- Product tiles ----------
    The whole tile is one touch target: image, name, price. */
 /* 2026-08-30 (product owner, comparing against a competitor POS — "sumup

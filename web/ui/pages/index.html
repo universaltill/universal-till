@@ -157,6 +157,29 @@
     </div>
   </dialog>
 
+  <!-- ut-docs#2283: the Categories tab's item-picker modal — same shell as
+       #parked-orders-modal just above (.modifier-modal frame, non-modal
+       .show(), OSK stays reachable), populated client-side by
+       buttons.html's openCategoryPicker() (cloned already-rendered tiles,
+       never a fetch) instead of an hx-get body like parked-orders-modal's
+       own. The title is two parts: a translated, visually-hidden prefix
+       (this dialog can hold ANY category, so one static heading can't name
+       it) plus the tapped category's own name — merchant data, not a
+       translation concern, set as plain text via .textContent, never
+       innerHTML. -->
+  <dialog id="category-items-modal" class="modifier-modal category-items-modal"
+          aria-labelledby="category-items-modal-title">
+    <h3 id="category-items-modal-title">
+      <span class="visually-hidden">{{ T "products.categories_modal_title" }}: </span><span id="category-items-modal-name"></span>
+    </h3>
+    <div id="category-items-modal-body" class="category-items-modal-body"></div>
+    <div class="modifier-actions">
+      <button type="button" class="btn secondary"
+              onclick="document.getElementById('category-items-modal').close();">
+        {{ T "common.close" }}</button>
+    </div>
+  </dialog>
+
   <!-- ut-docs#2183: #pos-alert now renders once, globally, from
        base.html itself — see that file's own comment. Used to be
        included here directly (ut-docs#213/#2179); removed to avoid a

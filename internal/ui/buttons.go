@@ -259,19 +259,35 @@ func pruneEmptyCategoryGroup(g *CategoryGroup) bool {
 
 // ButtonStore persists shortcut buttons in the shortcut_buttons table via repo.
 type ButtonStore struct {
-	repo        *data.ShortcutsRepo
-	posRepo     *data.POSRepo
-	modRepo     *data.ModifierRepo
-	catalogRepo *data.CatalogRepo
+	repo         *data.ShortcutsRepo
+	posRepo      *data.POSRepo
+	modRepo      *data.ModifierRepo
+	catalogRepo  *data.CatalogRepo
+	settingsRepo *data.SettingsRepo
 }
 
 func NewButtonStore(db *sql.DB) *ButtonStore {
 	return &ButtonStore{
-		repo:        data.NewShortcutsRepo(db),
-		posRepo:     data.NewPOSRepo(db),
-		modRepo:     data.NewModifierRepo(db),
-		catalogRepo: data.NewCatalogRepo(db),
+		repo:         data.NewShortcutsRepo(db),
+		posRepo:      data.NewPOSRepo(db),
+		modRepo:      data.NewModifierRepo(db),
+		catalogRepo:  data.NewCatalogRepo(db),
+		settingsRepo: data.NewSettingsRepo(db),
 	}
+}
+
+// CategoriesTabEnabled reports whether ut-docs#2283's optional "Categories"
+// tab should render on the sell screen — settings-gated
+// (data.SellScreenCategoriesTabKey), default off. A read error is treated
+// as "off" by the caller (ButtonsHTTP.List), the same non-fatal-but-logged
+// shape LoadCategories already uses for its own error: losing this ONE
+// optional tab is much better than failing the whole sale-screen render.
+func (s *ButtonStore) CategoriesTabEnabled(ctx context.Context) (bool, error) {
+	v, _, err := s.settingsRepo.Get(ctx, data.SellScreenCategoriesTabKey)
+	if err != nil {
+		return false, err
+	}
+	return v == "1", nil
 }
 
 // LoadCategories returns the flat category list the sale-screen grid nests
@@ -685,8 +701,16 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 		// loses category grouping/coloring with no visible sign why.
 		logging.L().Errorf("buttons list: load categories: %v", err)
 	}
+	categoriesTabEnabled, err := h.Store.CategoriesTabEnabled(r.Context())
+	if err != nil {
+		// Same non-fatal-but-logged shape as the categories load above
+		// (ut-docs#2283) — a settings-read error just means the optional
+		// tab stays off this render, not that the whole sale screen fails.
+		logging.L().Warnf("buttons list: load categories-tab setting: %v", err)
+	}
 	_ = h.View.Render(w, "buttons", map[string]any{
-		"Groups": BuildCategoryGroups(btns, cats),
+		"Groups":               BuildCategoryGroups(btns, cats),
+		"CategoriesTabEnabled": categoriesTabEnabled,
 	})
 }
 
