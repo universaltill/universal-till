@@ -3,6 +3,7 @@ package common
 import (
 	"context"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
@@ -77,6 +78,9 @@ func TestLoadState_DefaultsWhenStoreEmpty(t *testing.T) {
 	if st.UIScale != 0 {
 		t.Errorf("UIScale = %v, want 0 (unset) when never configured", st.UIScale)
 	}
+	if st.BasketPanelWidthRem != 0 {
+		t.Errorf("BasketPanelWidthRem = %v, want 0 (unset) when never configured", st.BasketPanelWidthRem)
+	}
 	if st.WindowMode != DefaultWindowMode {
 		t.Errorf("WindowMode = %q, want default %q", st.WindowMode, DefaultWindowMode)
 	}
@@ -95,6 +99,7 @@ func TestLoadState_OverridesFromStore(t *testing.T) {
 		KeyRegion:                      "BY",
 		KeyTaxInclusive:                "true",
 		KeyUIScale:                     "1.75",
+		KeyBasketPanelWidth:            "28.5",
 		KeyTaxRate:                     "1900",
 		"pos.allow_negative_inventory": "true",
 		KeyIdleLock:                    "15",
@@ -127,6 +132,9 @@ func TestLoadState_OverridesFromStore(t *testing.T) {
 	}
 	if st.UIScale != 1.75 {
 		t.Errorf("UIScale = %v, want 1.75", st.UIScale)
+	}
+	if st.BasketPanelWidthRem != 28.5 {
+		t.Errorf("BasketPanelWidthRem = %v, want 28.5", st.BasketPanelWidthRem)
 	}
 	if st.TaxRatePct != 1900 {
 		t.Errorf("TaxRatePct = %d, want 1900", st.TaxRatePct)
@@ -168,6 +176,37 @@ func TestLoadState_InvalidStoredWindowModeFallsBackToDefault(t *testing.T) {
 	}
 }
 
+// A stored basket-panel-width value outside [MinBasketPanelWidthRem,
+// MaxBasketPanelWidthRem] must be clamped into range, not trusted outright —
+// same "defense against a corrupt/hand-edited row" reasoning as
+// TestLoadState_InvalidStoredWindowModeFallsBackToDefault above, but a clamp
+// rather than a fallback-to-default since any value in range is legitimate
+// here (there's no single closed enum to fall back into).
+func TestLoadState_BasketPanelWidthClampsOutOfRangeStoredValue(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	tests := []struct {
+		name  string
+		store string
+		want  float64
+	}{
+		{"below floor", "5", MinBasketPanelWidthRem},
+		{"above ceiling", "999", MaxBasketPanelWidthRem},
+		{"within range", "30", 30},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := store.Set(ctx, KeyBasketPanelWidth, tc.store); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			st := LoadState(ctx, store, baseCfg())
+			if st.BasketPanelWidthRem != tc.want {
+				t.Errorf("BasketPanelWidthRem = %v from stored %q, want %v", st.BasketPanelWidthRem, tc.store, tc.want)
+			}
+		})
+	}
+}
+
 // A negative stored idle-lock/kiosk-reset value must not override the
 // positive default — both guard with "n >= 0" specifically to reject that.
 func TestLoadState_NegativeOverridesIgnored(t *testing.T) {
@@ -205,7 +244,7 @@ func TestLoadState_NegativeOverridesIgnored(t *testing.T) {
 func TestLoadState_UnparsableValuesFallBackToCfgDefault(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t)
-	for _, k := range []string{KeyTaxInclusive, KeyUIScale, KeyTaxRate, KeyIdleLock, KeyKioskIdleReset, "pos.allow_negative_inventory"} {
+	for _, k := range []string{KeyTaxInclusive, KeyUIScale, KeyBasketPanelWidth, KeyTaxRate, KeyIdleLock, KeyKioskIdleReset, "pos.allow_negative_inventory"} {
 		if err := store.Set(ctx, k, "not-a-number"); err != nil {
 			t.Fatalf("seed %s: %v", k, err)
 		}
@@ -221,6 +260,9 @@ func TestLoadState_UnparsableValuesFallBackToCfgDefault(t *testing.T) {
 	}
 	if st.UIScale != 0 {
 		t.Errorf("UIScale = %v from unparsable value, want 0", st.UIScale)
+	}
+	if st.BasketPanelWidthRem != 0 {
+		t.Errorf("BasketPanelWidthRem = %v from unparsable value, want 0", st.BasketPanelWidthRem)
 	}
 	if st.TaxRatePct != 2000 {
 		t.Errorf("TaxRatePct = %d from unparsable value, want cfg default 2000", st.TaxRatePct)
@@ -409,6 +451,7 @@ func TestSaveState_RoundTripsThroughLoadState(t *testing.T) {
 		TaxRatePct:             1900,
 		AllowNegativeInventory: true,
 		UIScale:                1.5,
+		BasketPanelWidthRem:    27.5,
 		IdleLockMinutes:        20,
 		OSKMode:                "off",
 		KioskIdleResetSeconds:  45,
@@ -443,6 +486,64 @@ func TestSaveState_ZeroUIScaleDoesNotClobberPriorValue(t *testing.T) {
 	st := LoadState(ctx, store, baseCfg())
 	if st.UIScale != 1.5 {
 		t.Fatalf("UIScale = %v after a zero-value save, want the untouched prior value 1.5", st.UIScale)
+	}
+}
+
+// Unlike UIScale, a save with BasketPanelWidthRem=0 and
+// BasketPanelWidthRemChanged left false (the zero value — every SaveState
+// caller that isn't the reset handler itself) must NOT clobber a
+// previously-saved width, same "0 means untouched by default" contract as
+// TestSaveState_ZeroUIScaleDoesNotClobberPriorValue.
+func TestSaveState_ZeroBasketPanelWidthWithoutChangedFlagDoesNotClobberPriorValue(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	if err := SaveState(ctx, store, RuntimeState{BasketPanelWidthRem: 30}); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+	if err := SaveState(ctx, store, RuntimeState{BasketPanelWidthRem: 0}); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+
+	st := LoadState(ctx, store, baseCfg())
+	if st.BasketPanelWidthRem != 30 {
+		t.Fatalf("BasketPanelWidthRem = %v after an untouched-zero save, want the prior value 30", st.BasketPanelWidthRem)
+	}
+}
+
+// BasketPanelWidthRemChanged=true is exactly what the reset handler
+// (POST /api/settings/basket-panel-width, width_rem=0) sets — a save with
+// it set MUST clear a previously-saved width back to "unset", proving the
+// reset affordance actually works (the whole reason this field carries its
+// own *Changed flag instead of reusing UIScale's plain `> 0` guard — see
+// that flag's own doc comment, deps.go).
+func TestSaveState_ExplicitZeroBasketPanelWidthResetsPriorValue(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	if err := SaveState(ctx, store, RuntimeState{BasketPanelWidthRem: 30}); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+	if err := SaveState(ctx, store, RuntimeState{BasketPanelWidthRem: 0, BasketPanelWidthRemChanged: true}); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+
+	st := LoadState(ctx, store, baseCfg())
+	if st.BasketPanelWidthRem != 0 {
+		t.Fatalf("BasketPanelWidthRem = %v after an explicit reset save, want 0 (cleared)", st.BasketPanelWidthRem)
+	}
+}
+
+// SaveState clamps an out-of-range BasketPanelWidthRem before persisting it
+// — defense in depth, matching ClampWindowMode/ClampKioskPaymentMode's own
+// "used when loading AND when saving" convention (the HTTP handler already
+// validates this range, but SaveState has other callers, e.g. the wizard).
+func TestSaveState_ClampsOutOfRangeBasketPanelWidth(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	if err := SaveState(ctx, store, RuntimeState{BasketPanelWidthRem: 999}); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+	if raw, _, _ := store.Get(ctx, KeyBasketPanelWidth); raw != strconv.FormatFloat(MaxBasketPanelWidthRem, 'f', -1, 64) {
+		t.Fatalf("stored %s = %q, want the clamped ceiling %v", KeyBasketPanelWidth, raw, MaxBasketPanelWidthRem)
 	}
 }
 
