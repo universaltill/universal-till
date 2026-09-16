@@ -47,15 +47,24 @@ func chdirRoot(t *testing.T) {
 // its own ~50-statement CREATE TABLE copy of the schema, which let a column
 // added to the real schema and not mirrored here go undetected (the
 // hand-rolled copy silently diverging from what a till actually runs).
-// Benchmarked at ~52ms per migrated open — negligible against this
-// package's existing 84–130s test runtime even called once per test (82
-// call sites).
+//
+// ut-docs#2219: rather than running the whole migration chain from scratch
+// on every one of this helper's ~138 call sites, it clones the same
+// once-built, fully-migrated template file demo_seed_opt_in_test.go's
+// realDBTemplate builds for newRealDBDeps (ut-docs#2191/universal-till#1145)
+// — same package, so no need for a second sync.Once/build. migrate()'s
+// verifyAppliedMigrations pass on the clone still catches a migration file
+// edited after the template was built; see realDBTemplate's own comment for
+// the mechanism and measured cost.
 func openPagesTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "pages_test.db")
+	if err := os.WriteFile(path, realDBTemplate(t), 0o600); err != nil {
+		t.Fatalf("clone template db: %v", err)
+	}
 	migrated, err := db.Open(path)
 	if err != nil {
-		t.Fatalf("open+migrate sqlite: %v", err)
+		t.Fatalf("open cloned sqlite: %v", err)
 	}
 	sqlDB := migrated.DB
 	sqlDB.SetMaxOpenConns(1)
@@ -106,6 +115,42 @@ func TestOpenPagesTestDB_NoFsyncOnHotPath(t *testing.T) {
 	}
 	if synchronous != 0 {
 		t.Errorf("synchronous = %d, want 0 (OFF — this DB is disposable test scratch, not data worth an fsync)", synchronous)
+	}
+}
+
+// TestOpenPagesTestDB_TemplateClonesAreIsolatedAndFullyMigrated guards
+// ut-docs#2219's fix the same way TestNewRealDBDeps_TemplateClonesAreIsolatedAndFullyMigrated
+// guards newRealDBDeps: the shared template must stay cached across calls,
+// each clone must carry the full migrated schema, and one clone's writes
+// must never leak into another's.
+func TestOpenPagesTestDB_TemplateClonesAreIsolatedAndFullyMigrated(t *testing.T) {
+	first := realDBTemplate(t)
+	second := realDBTemplate(t)
+	if len(first) == 0 {
+		t.Fatal("realDBTemplate returned an empty template")
+	}
+	if &first[0] != &second[0] {
+		t.Fatal("realDBTemplate rebuilt the template on a second call; want the sync.Once-cached bytes")
+	}
+
+	a := openPagesTestDB(t)
+	defer a.Close()
+	seedForPages(t, a)
+	var n int
+	if err := a.QueryRow(`SELECT COUNT(*) FROM plugin_catalog`).Scan(&n); err != nil {
+		t.Fatalf("count plugin_catalog on first db: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("first db plugin_catalog count = %d, want 1 (seedForPages wrote one row)", n)
+	}
+
+	b := openPagesTestDB(t)
+	defer b.Close()
+	if err := b.QueryRow(`SELECT COUNT(*) FROM plugin_catalog`).Scan(&n); err != nil {
+		t.Fatalf("count plugin_catalog on second db: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("second db plugin_catalog count = %d, want 0 — template clone is not isolated from the first db's writes", n)
 	}
 }
 
