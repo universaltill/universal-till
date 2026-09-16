@@ -2022,6 +2022,21 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
 .btn-x { padding: .3rem .4rem; font-size: .8rem; min-height: 0; }
 
 .order-type-row { display: flex; align-items: center; gap: .5rem; margin-bottom: .6rem; }
+/* ut-docs#2282: at_pay mode asks dine-in/takeaway on Pay instead -- the
+   basket-top toggle (and the Mixed chip) has no useful default to show
+   without a choice made yet, so both are dropped from the DOM's
+   rendered layout entirely rather than just visually hidden (kept out
+   of tab order / screen-reader flow too). Targets the toggle-group and
+   chip specifically, NOT the whole .order-type-row -- #table-picker
+   (the Table-assignment button, basket.html) is a SIBLING inside that
+   same row and must stay visible/reachable regardless of this setting
+   (ADR-0054 is unrelated to this card). Driven off
+   body[data-order-type-prompt-stage], set once at page load from the
+   till setting (index_page.go) -- no per-basket-render Go change
+   needed, since this rule reaches every #basket swap the same way any
+   other body-scoped CSS does. -->
+body[data-order-type-prompt-stage="at_pay"] .order-type-toggle-group,
+body[data-order-type-prompt-stage="at_pay"] .order-type-mixed { display: none; }
 /* 2026-08-31 (product owner, live on the tablet, ut-docs#1379): a compact
    two-segment control replacing the single sliding switch this row
    briefly had (2026-08-30) — the switch's one-label-that-changes-on-tap

@@ -95,6 +95,39 @@
     </form>
   </dialog>
 
+  <!-- ut-docs#2282: dine-in/takeaway prompt for the before_sale/at_pay
+       settings (sale.order_type_prompt_stage) -- opened by this page's own
+       script below, never server-rendered open. cart_top (the default)
+       never opens it; the button markup renders regardless (cheap, static)
+       but is dead code at that setting. Both choice buttons hx-post the
+       SAME /api/pos/order-type endpoint the basket-top toggle already uses
+       (pos_api.go, basket.html) -- no new endpoint -- and reuse the
+       existing basket.order_type.dine_in/takeaway keys for their labels
+       (UX gate-check, ut-docs#2282: already shipped, already proven not to
+       overflow in every locale); only the modal's own title is a new key.
+       .show() not .showModal(), same OSK-reachability reasoning as every
+       other dialog on this page (see #hold-modal's own comment above); no
+       autofocus on either choice button (UX gate-check: avoids any
+       OSK-popup-on-load risk). -->
+  <dialog id="order-type-modal" class="modifier-modal" aria-labelledby="order-type-modal-title">
+    <h3 id="order-type-modal-title">{{ T "order_type.modal.title" }}</h3>
+    <div class="modifier-actions">
+      <button type="button" class="btn secondary" data-testid="order-type-modal-cancel"
+              onclick="document.getElementById('order-type-modal').close();">
+        {{ T "common.cancel" }}</button>
+      <button type="button" class="btn primary" data-testid="order-type-modal-dine-in"
+              hx-post="/api/pos/order-type" hx-vals='{{ jsonVals "order_type" "" }}'
+              hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              hx-on::after-request="orderTypeModalAnswered(event)">
+        {{ T "basket.order_type.dine_in" }}</button>
+      <button type="button" class="btn primary" data-testid="order-type-modal-takeaway"
+              hx-post="/api/pos/order-type" hx-vals='{{ jsonVals "order_type" "takeaway" }}'
+              hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              hx-on::after-request="orderTypeModalAnswered(event)">
+        {{ T "basket.order_type.takeaway" }}</button>
+    </div>
+  </dialog>
+
   <!-- ut-docs#2137: opened non-modally with .show(), same reasoning as
        #hold-modal and #payment-overlay above -- showModal()'s inert-outside
        behaviour makes the custom on-screen keyboard untappable, and a kiosk
@@ -496,6 +529,103 @@
           btn.disabled = false;
         }
         document.body.addEventListener('htmx:afterSwap', refresh);
+      })();
+      // ut-docs#2282: client-side gating for WHERE the dine-in/takeaway
+      // order-type prompt appears -- cart_top (default) needs nothing here,
+      // the basket-top toggle (basket.html) just renders as it always has.
+      // No new server-side "asked this sale" state (Architect note: keep
+      // pos.Service/Basket untouched) -- both gates below are plain client
+      // flags/DOM reads, reset the same way the till itself resets: a fresh
+      // page load, or the basket swapping back to empty.
+      (function () {
+        var stage = document.body.getAttribute('data-order-type-prompt-stage') || 'cart_top';
+        if (stage !== 'before_sale' && stage !== 'at_pay') return;
+
+        var modal = document.getElementById('order-type-modal');
+        var pendingIssueRequest = null; // before_sale: the intercepted add, resumed once answered
+        var pendingPurpose = null;      // 'add' | 'pay'
+        var atPayAsked = false;         // at_pay: asked-once-per-sale flag
+
+        function basketItemCount() {
+          var el = document.querySelector('#basket .basket-count');
+          var n = el ? parseInt(el.textContent || '0', 10) : 0;
+          return isNaN(n) ? 0 : n;
+        }
+
+        // Wired via hx-on::after-request on both #order-type-modal choice
+        // buttons below -- runs after /api/pos/order-type (the SAME
+        // whole-basket endpoint the basket-top toggle already posts to,
+        // pos_api.go) has swapped #basket in.
+        window.orderTypeModalAnswered = function (event) {
+          if (!(event.detail && event.detail.successful)) return;
+          modal.close();
+          if (pendingPurpose === 'add' && pendingIssueRequest) {
+            var issue = pendingIssueRequest;
+            pendingIssueRequest = null;
+            pendingPurpose = null;
+            issue();
+          } else if (pendingPurpose === 'pay') {
+            atPayAsked = true;
+            pendingPurpose = null;
+            var overlay = document.getElementById('payment-overlay');
+            if (overlay) overlay.show();
+          }
+        };
+
+        if (stage === 'before_sale') {
+          // htmx's own custom-confirm hook (fires for every hx-triggered
+          // request, not only ones carrying hx-confirm) -- preventDefault()
+          // pauses the request, evt.detail.issueRequest() resumes the exact
+          // same one later. Matches every first-add entry point that funnels
+          // through /api/pos/scan or /api/pos/scan-with-modifiers (scan-row,
+          // product tiles, suggestions, and the item-customization modal's
+          // own submit) -- see buttons.html/suggestions.html/
+          // modifier_picker.html.
+          //
+          // Known gap (ut-docs#2282, flagged rather than silently fixed):
+          // /api/pos/scan is also how a customer loyalty code is linked to
+          // the sale (pos_api.go) -- scanning one on a genuinely empty
+          // basket also opens this modal even though it isn't an item add,
+          // and (since the basket is still empty afterwards) the very next
+          // real item add asks again. Narrow edge case; not handled here.
+          document.body.addEventListener('htmx:confirm', function (evt) {
+            var path = evt.detail.path;
+            var isAdd = path === '/api/pos/scan' || path === '/api/pos/scan-with-modifiers';
+            if (!isAdd || basketItemCount() > 0) return;
+            evt.preventDefault();
+            pendingIssueRequest = evt.detail.issueRequest;
+            pendingPurpose = 'add';
+            modal.show();
+          });
+        }
+
+        if (stage === 'at_pay') {
+          // Reset the once-per-sale flag whenever the basket swaps back to
+          // empty -- sale completed, reset, or held (all three re-render
+          // #basket with ItemCount 0 -- pos_api.go's own reset/hold/tender
+          // handlers).
+          document.body.addEventListener('htmx:afterSwap', function (evt) {
+            if (evt.target && evt.target.id === 'basket' && basketItemCount() === 0) {
+              atPayAsked = false;
+            }
+          });
+          // Capture phase, ahead of the Pay button's own inline onclick
+          // (which opens #payment-overlay directly) -- stopPropagation here
+          // keeps that onclick from ever running until this modal is
+          // answered. The quick-pay ⚡ one-tap button is a SEPARATE control
+          // (charges the preferred method immediately, no overlay) and is
+          // deliberately out of scope here, same as the Architect note only
+          // naming the Payment button.
+          document.body.addEventListener('click', function (evt) {
+            var btn = evt.target.closest('.payment-trigger');
+            if (!btn || btn.disabled) return;
+            if (atPayAsked || basketItemCount() === 0) return;
+            evt.preventDefault();
+            evt.stopPropagation();
+            pendingPurpose = 'pay';
+            modal.show();
+          }, true);
+        }
       })();
       // ut-docs#2173: sale-screen category strip scroll-fade wiring — the
       // same window.utTabBarFade recipe catalog.html's item-form tab strip

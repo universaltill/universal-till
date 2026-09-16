@@ -583,6 +583,30 @@
     </label>
   </form>
 </div>
+
+<!-- ut-docs#2282: WHERE the cashier is asked for the sale-level dine-in/
+     takeaway order type -- cart_top (today's basket-top toggle, unchanged),
+     before_sale (a modal the moment the first item is added to an empty
+     basket) or at_pay (a modal on Pay, before the tender screen opens).
+     Unconditional, same shape as #settings-order-no just above (own card,
+     elevation-gated + audited write, helpLink "sell" since that's where the
+     dine-in/takeaway behaviour itself is documented). -->
+<div class="card" id="settings-order-type-prompt">
+  <h2>{{ T "settings.order_type_prompt.title" }} {{ helpLink "sell" }}</h2>
+  <p class="muted">{{ T "settings.order_type_prompt.help" }}</p>
+  <form hx-post="/api/settings/sale-order-type-prompt" hx-target="#order-type-prompt-stage-msg" hx-swap="innerHTML">
+    {{ $orderTypePromptStage := index .settingsMap "sale.order_type_prompt_stage" }}
+    <label class="set-row">{{ T "settings.order_type_prompt.stage" }}
+      <select name="stage">
+        <option value="cart_top" {{ if or (eq $orderTypePromptStage "") (eq $orderTypePromptStage "cart_top") }}selected{{ end }}>{{ T "settings.order_type_prompt.stage_cart_top" }}</option>
+        <option value="before_sale" {{ if eq $orderTypePromptStage "before_sale" }}selected{{ end }}>{{ T "settings.order_type_prompt.stage_before_sale" }}</option>
+        <option value="at_pay" {{ if eq $orderTypePromptStage "at_pay" }}selected{{ end }}>{{ T "settings.order_type_prompt.stage_at_pay" }}</option>
+      </select>
+      <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
+      <span id="order-type-prompt-stage-msg" aria-live="polite"></span>
+    </label>
+  </form>
+</div>
 <div class="card" id="settings-barcode">
   <!-- ADR-0059 Decision §2, ut-docs#935: shop-selectable barcode symbology
        checklist. One checkbox per internal/barcode registry entry, saved

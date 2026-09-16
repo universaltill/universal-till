@@ -806,6 +806,44 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "plugins.settings.saved"))
 	})
 
+	// Order-type prompt stage (ut-docs#2282): WHERE in the sale flow the
+	// cashier is asked for the sale-level dine-in/takeaway order type --
+	// cart_top (today's basket-top toggle, unchanged), before_sale (a modal
+	// on the first add to an empty basket) or at_pay (a modal on Pay,
+	// before the tender screen opens). Purely a UI-placement choice: no
+	// server-side behaviour reads this outside rendering the settings page
+	// and the sale screen's own initial data-attribute (index_page.go) --
+	// SetOrderType/tax resolution are completely unaffected (see
+	// tax_takeaway_realchain_test.go's / pos_api_test.go's own coverage
+	// proving that path is unchanged). Same elevation+audit shape as
+	// order-no-scheme just above.
+	mux.HandleFunc("POST /api/settings/sale-order-type-prompt", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = r.ParseForm()
+		stage := strings.TrimSpace(r.Form.Get("stage"))
+		if stage != data.OrderTypePromptStageCartTop &&
+			stage != data.OrderTypePromptStageBeforeSale &&
+			stage != data.OrderTypePromptStageAtPay {
+			http.Error(w, "stage must be cart_top, before_sale or at_pay", http.StatusBadRequest)
+			return
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/settings/sale-order-type-prompt", "#order-type-prompt-stage-msg",
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.order_type_prompt_stage"), httpx.T(locale, "settings.order_type_prompt.stage_"+stage)),
+				[]elevationHiddenField{{Name: "stage", Value: stage}}, elev)
+			return
+		}
+		if err := d.Settings.Set(r.Context(), data.OrderTypePromptStageKey, stage); err != nil {
+			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+			return
+		}
+		settingsAudit(r, posRepo, elev, "settings", data.OrderTypePromptStageKey, "order_type_prompt_stage_changed",
+			map[string]any{"stage": stage})
+		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "plugins.settings.saved"))
+	})
+
 	// Per-provider fee rules (B4): percent + fixed per transaction, feeding
 	// the checkout cost hints. Stored as JSON per method.
 	mux.HandleFunc("POST /api/settings/payments-fee", func(w http.ResponseWriter, r *http.Request) {

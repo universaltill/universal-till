@@ -62,6 +62,9 @@ Two segments above the basket — **Dine in** and **Takeaway** — set the whole
 
 The same product in both modes always sits on two separate lines rather than a quantity of 2 — that's deliberate, since they carry different tax — and an item scanned again joins whichever line is in the currently selected mode. A mixed sale can still have a table (there is someone sitting down); only an all-takeaway sale can't. Holding and recalling a mixed sale keeps every item's choice, and the receipt, journal entry and kitchen ticket each mark which items were to stay and which to go — a plain dine-in or takeaway sale prints exactly as before.
 
+
+Settings has a matching **Ask dine-in or takeaway** control (Settings → Ask dine-in or takeaway) for WHERE this choice is made: at the top of the basket as described above (the default), in a pop-up the moment the first item is added to an empty basket, or in the same pop-up when you press Pay — with Pay, the basket shows no dine-in/takeaway control at all until you answer it. Whichever is chosen, the per-item icons described above still work the same way.
+
 ## Linking a customer to a sale
 
 If you keep a customer list, scanning or typing their code into the barcode box links them to the current sale instead of adding an item — the same box you scan products into. This only recognizes a **customer code** in the shape the till expects (starting `CUST` or `LOY`) — a phone number or any other loyalty number typed in on its own isn't recognized as a customer lookup and is refused as "Item not found" like an unmatched product barcode; issue customers a code in the recognized shape (see **Users, PINs & shifts** or your customer-management plugin's own setup) if you want to look them up this way. A recognized-but-unknown code gets its own message instead ("Customer not found"). Once linked, a success message names the customer and their name shows above the basket totals for the rest of the sale.

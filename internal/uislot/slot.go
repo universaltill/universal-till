@@ -485,6 +485,7 @@ var CoreSettings = []Entry{
 	{Key: "settings-display", Href: "#settings-display", LabelKey: "settings.display.title", Order: 600},
 	{Key: "settings-payments", Href: "#settings-payments", LabelKey: "settings.payments.title", Order: 700},
 	{Key: "settings-order-no", Href: "#settings-order-no", LabelKey: "settings.order_no.title", Order: 800},
+	{Key: "settings-order-type-prompt", Href: "#settings-order-type-prompt", LabelKey: "settings.order_type_prompt.title", Order: 850},
 	{Key: "settings-barcode", Href: "#settings-barcode", LabelKey: "settings.barcode.symbologies_title", Order: 900},
 	{Key: "settings-catalog-import-barcode-default", Href: "#settings-catalog-import-barcode-default", LabelKey: "settings.catalog_import_barcode_default.title", Order: 1000},
 	{Key: "settings-stock-tracking", Href: "#settings-stock-tracking", LabelKey: "settings.stock_tracking.title", Order: 1100},

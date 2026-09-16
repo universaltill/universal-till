@@ -29,6 +29,9 @@ Sepetin üstündeki iki bölüm — **Burada** ve **Paket** — tüm satışı t
 
 Aynı ürün iki modda her zaman 2 adet yerine iki ayrı satırda durur — bu bilinçlidir, çünkü farklı vergi taşırlar — ve yeniden okutulan bir ürün o anda seçili moddaki satıra katılır. Karışık bir satışa yine masa atanabilir (oturan biri vardır); yalnızca tümü paket olan satışa atanamaz. Karışık bir satışı bekletip geri çağırmak her ürünün seçimini korur; fiş, kayıt ve mutfak fişi hangi ürünlerin burada, hangilerinin paket olduğunu işaretler — yalnızca burada ya da yalnızca paket olan bir satış eskisi gibi yazdırılır.
 
+
+Ayarlar'da bunun karşılığı olan **Burada mı paket mi sorusu** seçeneği vardır (Ayarlar → Burada mı paket mi sorusu); bu seçim NE ZAMAN yapılacağını belirler: yukarıda açıklandığı gibi sepetin üstünde (varsayılan), boş bir sepete ilk ürün eklendiği anda açılan bir pencerede, ya da Öde'ye bastığınızda aynı pencerede — bu durumda sepet siz yanıtlayana kadar hiçbir burada/paket kontrolü göstermez. Hangi seçenek seçilirse seçilsin, yukarıdaki ürün başına simgeler aynı şekilde çalışmaya devam eder.
+
 ## Ürün özelleştirme
 
 Bazı ürünler kataloğa özelleştirme gruplarıyla kurulmuştur — bir kahvenin boyutu, bir sandviçin ekmeği, bir burgerin ekleri — her birinin kendi fiyatı vardır. Bazı ürünlerin bunun yerine (veya buna ek olarak) varyantları vardır — Küçük/Orta/Büyük olarak satılan bir kahve gibi, her biri tek bir taban fiyata ek yerine kendi fiyatına sahiptir. İkisini de kurmak için **Katalog, varyantlar ve barkodlar**'a bakın; bu bölüm bir tane kaydetmek içindir.

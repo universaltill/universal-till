@@ -191,6 +191,17 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			payItemCount = b.ItemCount()
 			payTotal = b.Total
 		}
+		// ut-docs#2282: WHERE the cashier is asked for the sale-level dine-in/
+		// takeaway order type -- read once here (not per-basket-render) and
+		// handed to the client as a body data-attribute (base.html) so
+		// app.css/this page's own script can gate the basket-top toggle and
+		// the client-side add/Pay intercepts off it with no further server
+		// round-trip. Normalized so an unset/corrupted row can never produce
+		// anything but the pre-#2282 always-visible-toggle behaviour.
+		orderTypePromptStage := data.NormalizeOrderTypePromptStage(func() string {
+			v, _, _ := d.Settings.Get(r.Context(), data.OrderTypePromptStageKey)
+			return v
+		}())
 		data := map[string]any{
 			"title":                "Universal Till",
 			"saleScreen":           true,
@@ -208,6 +219,7 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			"tseKickoffRejected":   tseRejectedView,
 			"payItemCount":         payItemCount,
 			"payTotal":             payTotal,
+			"orderTypePromptStage": orderTypePromptStage,
 		}
 		httpx.Render("ui/pages/index.html", data)(w, r)
 	})

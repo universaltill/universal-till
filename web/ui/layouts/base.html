@@ -56,7 +56,8 @@
         data-number-thousands="{{ thousandssep }}" data-number-decimal="{{ decimalsep }}"
         data-osk="{{ oskmode }}"
         data-notice-dismiss="{{ T "notice.dismiss" }}"
-        {{ if idlelocksecs }}data-idle-lock="{{ idlelocksecs }}"{{ end }}>
+        {{ if idlelocksecs }}data-idle-lock="{{ idlelocksecs }}"{{ end }}
+        {{ if .orderTypePromptStage }}data-order-type-prompt-stage="{{ .orderTypePromptStage }}"{{ end }}>
     {{ template "nav" . }}
     <!-- ut-docs#1551: nav-level dismissible notice for a pending pairing
          request -- a sibling of <nav>/<main>, not squeezed into the icon
