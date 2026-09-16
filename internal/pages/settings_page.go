@@ -1287,6 +1287,46 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		settingsRespondSaved(w, r, elev)
 	})
 
+	// ut-docs#2283: whether the sell screen shows the optional "Categories"
+	// tab (a grid of category tiles, each opening an item-picker modal for
+	// that category) — same manager-gated, elevation-wired, persist-a-bool,
+	// no-RuntimeState-field shape as catalog-import-barcode-default just
+	// above: internal/ui/buttons.go's ButtonsHTTP.List reads this same key
+	// fresh on every /ui/buttons render, so it's purely presentational
+	// (which tab renders), never behaviour a sale itself depends on — a
+	// shop that never opens this toggle keeps today's tab bar exactly as
+	// it is, no seeded row required.
+	mux.HandleFunc("POST /api/settings/categories-tab", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		_ = r.ParseForm()
+		b, err := strconv.ParseBool(strings.TrimSpace(r.Form.Get("enabled")))
+		if err != nil {
+			http.Error(w, "enabled must be a boolean", http.StatusBadRequest)
+			return
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			summaryKey := "elevation.summary.categories_tab_off"
+			if b {
+				summaryKey = "elevation.summary.categories_tab_on"
+			}
+			renderElevationPrompt(w, r, "/api/settings/categories-tab", "#categories-tab-msg",
+				httpx.T(locale, summaryKey),
+				[]elevationHiddenField{{Name: "enabled", Value: r.Form.Get("enabled")}}, elev)
+			return
+		}
+		val := "0"
+		if b {
+			val = "1"
+		}
+		if err := d.Settings.Set(r.Context(), data.SellScreenCategoriesTabKey, val); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		settingsAudit(r, posRepo, elev, "settings", data.SellScreenCategoriesTabKey, "categories_tab_changed", map[string]any{"enabled": b})
+		settingsRespondSaved(w, r, elev)
+	})
+
 	// "Sell items without tracking stock" (ut-docs#1843). Same manager-
 	// gated, elevation-wired, persist-a-bool shape as launch-on-startup
 	// above, but this one changes what the till DOES, not just what it
