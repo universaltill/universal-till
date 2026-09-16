@@ -385,7 +385,14 @@ func isParamSegment(s string) bool {
 
 // RouteCovered reports whether a registered page route is claimed by some
 // topic — exactly, or by a parameter-compatible declared pattern. The CI
-// page-route coverage guard (scripts/ci/checkhelptopics) is its caller.
+// page-route/manual-completeness guard (scripts/ci/checkhelptopics) is its
+// only non-test caller, passed as a method value (uncoveredRoutes(routes,
+// lib.RouteCovered)), so a plain grep for "RouteCovered(" won't find the
+// call site. Kept deliberately (ut-docs#1566 — on
+// scripts/ci/deadcode-baseline.txt, not a deletion candidate): that guard
+// is a `go run` main under scripts/, not one of the shipped-binary roots
+// the whole-program deadcode analysis starts from, so the analysis can't
+// see it.
 func (l *Library) RouteCovered(pattern string) bool {
 	if _, ok := l.routes[pattern]; ok {
 		return true
@@ -398,10 +405,26 @@ func (l *Library) RouteCovered(pattern string) bool {
 	return false
 }
 
-// IDs lists every topic id (English is the authoritative set).
+// IDs lists every topic id (English is the authoritative set). The CI
+// translation-drift guard (scripts/ci/checkhelpdrift) is its only non-test
+// caller: it walks every id to compare each translated topic's structure
+// against the English original. Kept deliberately (ut-docs#1566 — on
+// scripts/ci/deadcode-baseline.txt, not a deletion candidate): that guard is
+// a `go run` main under scripts/, not one of the shipped-binary roots the
+// whole-program deadcode analysis starts from, so the analysis can't see it.
 func (l *Library) IDs() []string { return append([]string(nil), l.ids...) }
 
-// Locales lists the locales that have at least one topic file.
+// Locales lists the locales that have at least one topic file, in sorted
+// order. The CI translation-drift guard (scripts/ci/checkhelpdrift) is its
+// only non-test caller: it iterates these to find which translations to
+// compare against English. Note the sibling guard scripts/ci/checkhelptopics
+// deliberately does NOT use it (see the comment at its MissingTranslations
+// call site): "at least one topic file" makes this blind to a locale whose
+// whole web/help/<locale>/ tree is missing, which that guard must catch.
+// Kept deliberately (ut-docs#1566 — on scripts/ci/deadcode-baseline.txt, not
+// a deletion candidate): the caller is a `go run` main under scripts/, not
+// one of the shipped-binary roots the whole-program deadcode analysis
+// starts from.
 func (l *Library) Locales() []string {
 	out := make([]string, 0, len(l.byLocale))
 	for loc := range l.byLocale {
@@ -412,7 +435,13 @@ func (l *Library) Locales() []string {
 }
 
 // MissingTranslations lists the topic ids a locale hasn't translated yet.
-// The i18n card and the CI guard both read this.
+// The CI page-route/manual-completeness guard (scripts/ci/checkhelptopics)
+// is its only non-test caller: it fails the build when any shipped locale is
+// missing a topic English has (a locale with no topic files at all reports
+// every id missing, which is what that guard wants). Kept deliberately
+// (ut-docs#1566 — on scripts/ci/deadcode-baseline.txt, not a deletion
+// candidate): the caller is a `go run` main under scripts/, not one of the
+// shipped-binary roots the whole-program deadcode analysis starts from.
 func (l *Library) MissingTranslations(locale string) []string {
 	var missing []string
 	for _, id := range l.ids {
