@@ -205,14 +205,15 @@ func TestPrinterConfig_ReceiptPolicy_UnansweredOrMalformedIsUnrestricted(t *test
 	}
 }
 
-// --- ADR-0089 Decision 3: the interim Germany carve-out ------------------
+// --- ADR-0089 addendum (2026-09-16, ut-docs#2286): Decision 3 rescinded ---
 
-// store.country == "DE" forces "always" — after the plugin clamp, so it is the
-// final word regardless of the stored value AND of any plugin's answer.
-func TestPrinterConfig_ReceiptPolicy_GermanyForcesAlways(t *testing.T) {
+// A DE shop keeps its own stored policy — the former core-only lock to
+// "always" no longer applies, same as every other country.
+func TestPrinterConfig_ReceiptPolicy_GermanyKeepsStoredValue(t *testing.T) {
 	for _, country := range []string{"DE", "de", " De "} {
 		t.Run(fmt.Sprintf("country=%q", country), func(t *testing.T) {
 			_, dp := newPrintAPITestDeps(t)
+			plugins.SharedBus(dp.Db).ResetSubscribers()
 			ctx := context.Background()
 			if err := dp.Settings.SetMany(ctx, map[string]string{
 				keyPrinterReceiptPolicy: receiptPolicyNever,
@@ -220,20 +221,18 @@ func TestPrinterConfig_ReceiptPolicy_GermanyForcesAlways(t *testing.T) {
 			}); err != nil {
 				t.Fatalf("seed: %v", err)
 			}
-			// A plugin that would only ever permit "never" must still lose.
-			subscribeReceiptPolicy(t, dp.Db, `{"allowed_policies":["never"]}`, nil)
 			cfg := printerConfig(ctx, dp)
-			if cfg.ReceiptPolicy != receiptPolicyAlways {
-				t.Fatalf("DE shop resolved to %q, want %q regardless of stored value and plugin answer", cfg.ReceiptPolicy, receiptPolicyAlways)
+			if cfg.ReceiptPolicy != receiptPolicyNever {
+				t.Fatalf("DE shop resolved to %q, want the stored %q — the DE lock is rescinded", cfg.ReceiptPolicy, receiptPolicyNever)
 			}
-			if !cfg.AutoPrint {
-				t.Fatal("DE shop must auto-print")
+			if cfg.AutoPrint {
+				t.Fatal("DE shop with policy=never must not auto-print")
 			}
 		})
 	}
 }
 
-// Any other country is untouched by the carve-out.
+// Any other country was never touched by the carve-out either.
 func TestPrinterConfig_ReceiptPolicy_NonGermanyKeepsStoredValue(t *testing.T) {
 	_, dp := newPrintAPITestDeps(t)
 	plugins.SharedBus(dp.Db).ResetSubscribers()
@@ -599,8 +598,9 @@ func TestPostSettingsPrinter_RejectsReceiptPolicyOutsidePluginSet(t *testing.T) 
 	}
 }
 
-// A shop in Germany can only save "always" (ADR-0089 Decision 3).
-func TestPostSettingsPrinter_GermanyOnlyAcceptsAlways(t *testing.T) {
+// A shop in Germany can save any of the three policies (ADR-0089 addendum,
+// 2026-09-16, ut-docs#2286 — Decision 3's lock is rescinded).
+func TestPostSettingsPrinter_GermanyAcceptsAllPolicies(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPrintAPITestDeps(t)
 	plugins.SharedBus(dp.Db).ResetSubscribers()
@@ -608,30 +608,61 @@ func TestPostSettingsPrinter_GermanyOnlyAcceptsAlways(t *testing.T) {
 	if err := dp.Settings.Set(ctx, keyStoreCountry, "DE"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	for _, policy := range []string{receiptPolicyAsk, receiptPolicyNever} {
+	for _, policy := range []string{receiptPolicyAlways, receiptPolicyAsk, receiptPolicyNever} {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, "/api/settings/printer",
 			strings.NewReader("mode=off&receiptPolicy="+policy))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		mux.ServeHTTP(rec, req)
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("DE shop saving %q: expected 400, got %d: %s", policy, rec.Code, rec.Body.String())
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("DE shop saving %q: expected 204, got %d: %s", policy, rec.Code, rec.Body.String())
+		}
+		if v, _, err := dp.Settings.Get(ctx, keyPrinterReceiptPolicy); err != nil || v != policy {
+			t.Fatalf("DE shop saving %q: stored %q, err %v", policy, v, err)
 		}
 	}
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/settings/printer",
-		strings.NewReader("mode=off&receiptPolicy=always"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("DE shop saving always: expected 204, got %d: %s", rec.Code, rec.Body.String())
+}
+
+// Card acceptance criterion (ut-docs#2286): every completed sale is still
+// TSE-signed regardless of the receipt policy chosen — printing has always
+// been architecturally downstream of signing (printReceiptAsync fires after
+// fiscal.sign.ask resolves, pos_api.go), never a precondition of it. Proven
+// here using the same installed wasm fiscal-signing plugin and approved-sale
+// assertion as TestFiscalSignAsk_ApprovedSaleHasNoMarker, repeated for all
+// three receipt policies including "never" (the policy most likely to be
+// mistaken for also skipping fiscal signing).
+func TestFiscalSignAsk_ApprovedRegardlessOfReceiptPolicy(t *testing.T) {
+	for _, policy := range []string{receiptPolicyAlways, receiptPolicyAsk, receiptPolicyNever} {
+		t.Run("policy="+policy, func(t *testing.T) {
+			mux, dp := newFiscalSignDeps(t)
+			installFiscalSignWasmPlugin(t, dp, "com.test.fiscal-sign-ok-"+policy, "fiscalsign_guest")
+			if err := dp.Settings.Set(context.Background(), keyPrinterReceiptPolicy, policy); err != nil {
+				t.Fatalf("seed receipt policy: %v", err)
+			}
+			if _, err := dp.Engine.Scan("ABC"); err != nil {
+				t.Fatal(err)
+			}
+
+			rec := fiscalSignTender(t, mux, false)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if got := countSales(t, dp); got != 1 {
+				t.Fatalf("expected 1 sale, got %d", got)
+			}
+			if n := countAuditRows(t, dp, "unsigned_fiscal_signing"); n != 0 {
+				t.Fatalf("receiptPolicy=%s: approved sale must carry no unsigned_fiscal_signing marker, got %d", policy, n)
+			}
+		})
 	}
 }
 
 // --- Settings page --------------------------------------------------------
 
 // The printer card offers the three-way control, pre-selecting the stored
-// policy; for a DE shop it is locked to "always" with the explanatory text.
+// policy, unlocked for every country; a DE shop additionally sees a
+// non-blocking factual advisory under the control (ADR-0089 addendum,
+// 2026-09-16, ut-docs#2286).
 func TestSettingsPage_ReceiptPolicyControl(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	plugins.SharedBus(d.Db).ResetSubscribers()
@@ -656,40 +687,46 @@ func TestSettingsPage_ReceiptPolicyControl(t *testing.T) {
 	if strings.Contains(body, `name="autoPrint"`) {
 		t.Fatal("the legacy autoPrint checkbox must be gone")
 	}
+	if strings.Contains(body, `name="receiptPolicy" disabled`) {
+		t.Fatal("the receiptPolicy control must never be disabled — the DE lock is rescinded")
+	}
 	if !strings.Contains(body, `value="ask" selected`) {
 		t.Fatalf("stored policy ask is not pre-selected:\n%s", body)
 	}
-	if strings.Contains(body, "settings.printer.receipt_policy.locked_de") || strings.Contains(body, "receipt-policy-locked") {
-		t.Fatal("a non-DE shop must not see the Germany lock")
+	if strings.Contains(body, "settings.printer.receipt_policy.advisory_de") || strings.Contains(body, "receipt-policy-advisory-de") {
+		t.Fatal("a non-DE shop must not see the DE advisory")
 	}
 
 	if err := d.Settings.Set(ctx, common.KeyCountry, "DE"); err != nil {
 		t.Fatalf("set country: %v", err)
 	}
 	body = get()
-	if !strings.Contains(body, "receipt-policy-locked") {
-		t.Fatalf("DE shop: expected the locked explanation, got:\n%s", body)
+	if !strings.Contains(body, "receipt-policy-advisory-de") {
+		t.Fatalf("DE shop: expected the advisory, got:\n%s", body)
 	}
-	if !strings.Contains(body, `value="always" selected`) {
-		t.Fatalf("DE shop: always must be the selected option:\n%s", body)
+	if strings.Contains(body, `name="receiptPolicy" disabled`) {
+		t.Fatal("DE shop: the control must not be disabled")
 	}
-	if !strings.Contains(body, `name="receiptPolicy" disabled`) {
-		t.Fatalf("DE shop: the control must be disabled:\n%s", body)
+	if !strings.Contains(body, `value="ask" selected`) {
+		t.Fatalf("DE shop: the stored policy (ask) must still be pre-selected, not forced to always:\n%s", body)
 	}
 }
 
-// Belt and braces for the DE lock: even with a bogus/unknown policy stored
-// (or a hand-edited settings row), the settings page's own POST path for a DE
-// shop cannot store anything but "always" through the real registered mux.
-func TestSettingsPage_GermanyLockSurvivesFormReplay(t *testing.T) {
+// A DE shop's chosen policy survives the real registered save handler, not
+// just printerConfig's own read path — belt and braces now that the former
+// lock (which this same test used to prove survived form replay) is gone.
+func TestSettingsPage_GermanySavesChosenPolicy(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	plugins.SharedBus(d.Db).ResetSubscribers()
 	registerPrintAPI(mux, d)
 	if err := d.Settings.Set(context.Background(), common.KeyCountry, "DE"); err != nil {
 		t.Fatalf("set country: %v", err)
 	}
-	if rec := postForm(mux, "/api/settings/printer", url.Values{"mode": {"off"}, "receiptPolicy": {"never"}}, &mgrUser); rec.Code != http.StatusBadRequest {
-		t.Fatalf("DE replay of never = %d, want 400", rec.Code)
+	if rec := postForm(mux, "/api/settings/printer", url.Values{"mode": {"off"}, "receiptPolicy": {"never"}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("DE saving never = %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+	if got := printerConfig(context.Background(), d).ReceiptPolicy; got != receiptPolicyNever {
+		t.Fatalf("DE shop resolved to %q after saving never, want %q", got, receiptPolicyNever)
 	}
 }
 

@@ -1584,6 +1584,10 @@ html[dir="rtl"] .products-finder .tab-bar::after {
    the same in LTR and RTL, but "back" must point startward, so it's
    mirrored here instead of drawn twice. */
 html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
+/* ut-docs#2285: the tile-sheet's Move-earlier/-later pair, same mirroring
+   precedent as .products-strip-back just above — chevron-left/-right read
+   as ◀/▶ (start/end), not literal left/right. */
+html[dir="rtl"] .tile-sheet-move .btn-ico svg { transform: scaleX(-1); }
 .products-finder input[type="search"] { width: 100%; }
 /* Unlike .tender's tab-panel (app.css, "Tender" section below), .products
    itself already scrolls (.pos-container > .products has its own
@@ -1642,6 +1646,11 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
   font: inherit; color: var(--text); cursor: pointer; text-align: center;
   transition: border-color .12s ease, box-shadow .12s ease, transform .05s ease;
   user-select: none; touch-action: manipulation;
+  /* ut-docs#2285: a long-press (utTileLongPress, app.js) must never pop the
+     platform's own "save image"/text-selection callout menu partway
+     through the hold — iOS/WebKit's -webkit-touch-callout is the one
+     piece of that user-select already covers on other engines does not. */
+  -webkit-touch-callout: none;
 }
 /* Same [hidden]-override precedent as .btn/.field-pair/.field-checks/label
    above: this class's own `display: flex` always beats the UA
@@ -1783,6 +1792,29 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
    larger cap keep the common case scroll-free; the table wrapper's
    overflow:auto is the remaining safety net for a still-longer row. */
 .barcode-backfill-modal { max-width: 38rem; }
+/* ut-docs#2285: the sell-screen tile's long-press/right-click sheet — a
+   small card, deliberately narrower than .modifier-modal's own 28rem/90vw
+   (this holds a heading and a handful of buttons, not a form). Logical
+   properties only (inset-inline/margin-inline), never left/right — same
+   RTL rule as everywhere else in this file (universal-till/CLAUDE.md).
+
+   position: fixed/z-index: same non-modal .show() treatment as
+   #hold-modal/#pfand-modal/#elevation-modal/#table-add-modal above (see
+   #hold-modal's own comment) — this replaces reliance on the browser's
+   native top-layer centering, which a NON-modally-opened <dialog> never
+   gets. Measured live at 360x640: without this, the phone-width
+   .tender-quickpay "Add items to pay" button (position: fixed, declared
+   later in index.html) painted ON TOP of this dialog's Move-later button,
+   exactly the #hold-modal/.payment-overlay stacking bug that comment
+   already describes for a different pair of elements. 500 matches every
+   sibling in this family except #hold-modal's own 550 (that bump is
+   specific to #hold-modal needing to clear #payment-overlay while it's
+   ALSO open, which this dialog never coexists with). */
+.tile-sheet { position: fixed; inset-block-start: 8vh; max-width: 22rem; width: 92vw; inset-inline: 0; margin-inline: auto; z-index: 500; }
+.tile-sheet-actions { display: flex; flex-direction: column; gap: .5rem; margin-block: .75rem; }
+.tile-sheet-move-row { display: flex; gap: .5rem; }
+.tile-sheet-move-row .btn { flex: 1; }
+.tile-sheet-hint { margin-block-start: -.25rem; }
 /* ut-docs#2095: #tax-codes-modal/#import-modal are .item-form-modal, not
    .modifier-modal (independent review, F1/F2 -- both dialogs hold real
    text inputs, so they need the same OSK-reachable .show()/no-top-layer

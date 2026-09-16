@@ -669,8 +669,14 @@ func TestButtonsPartial_RootCarriesRefreshTrigger(t *testing.T) {
 	if !strings.Contains(body, `hx-get="/ui/buttons"`) {
 		t.Fatalf(`swapped-in root must re-declare hx-get="/ui/buttons" so it can refetch itself, got: %.500s`, body)
 	}
-	if !strings.Contains(body, `hx-trigger="modifiers-changed from:body"`) {
-		t.Fatalf(`swapped-in root must listen for hx-trigger="modifiers-changed from:body", got: %.500s`, body)
+	// ut-docs#2285: the root also listens for buttons-changed now (emitted
+	// by /api/buttons/move|remove|add and the Designer's own reorder route)
+	// so a tile moved/removed/added via the sell-screen long-press sheet
+	// (or the Designer, in another tab) refreshes the very same way a
+	// modifier-group change already does — same self-refreshing root, one
+	// more event name in the same hx-trigger attribute.
+	if !strings.Contains(body, `hx-trigger="modifiers-changed from:body, buttons-changed from:body"`) {
+		t.Fatalf(`swapped-in root must listen for hx-trigger="modifiers-changed from:body, buttons-changed from:body", got: %.500s`, body)
 	}
 	if !strings.Contains(body, `hx-swap="outerHTML"`) {
 		t.Fatalf(`swapped-in root must keep hx-swap="outerHTML" so it can keep replacing itself, got: %.500s`, body)
