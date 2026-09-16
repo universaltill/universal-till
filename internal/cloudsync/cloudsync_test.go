@@ -418,6 +418,52 @@ func TestApplySetSettingAndInstallPluginGaps(t *testing.T) {
 	}
 }
 
+// set_till_setting (ut-docs#2289, Decision 1 of the ut-docs#2306 portal-till
+// configuration design — proposed ADR-0095, pending merge): dispatch mirrors
+// set_setting exactly — nil hook and blank key both fail cleanly with a
+// message the cloud can show, and a well-formed directive reaches the hook
+// with key + value. The whitelist itself lives in the hook (pages'
+// cloudSetTillSetting), deliberately NOT in this generic dispatch, so the
+// dispatch shape is all this test covers.
+func TestApplySetTillSetting(t *testing.T) {
+	status, msg := apply(context.Background(), directive{Type: "set_till_setting", Payload: map[string]any{"key": "receipt.footer", "value": "v"}}, Hooks{})
+	if status != "failed" || msg != "set_till_setting is not supported on this till" {
+		t.Fatalf("nil hook: status=%q msg=%q", status, msg)
+	}
+
+	var gotKey, gotValue string
+	hooks := Hooks{
+		SetTillSetting: func(ctx context.Context, key, value string) (string, error) {
+			gotKey, gotValue = key, value
+			return key + " = " + value, nil
+		},
+	}
+	status, msg = apply(context.Background(), directive{Type: "set_till_setting", Payload: map[string]any{"value": "v"}}, hooks)
+	if status != "failed" || msg != "missing setting key" {
+		t.Fatalf("empty key: status=%q msg=%q", status, msg)
+	}
+	if gotKey != "" {
+		t.Fatalf("hook must not run for a blank key, got key=%q", gotKey)
+	}
+
+	status, msg = apply(context.Background(), directive{Type: "set_till_setting", Payload: map[string]any{"key": " receipt.footer ", "value": " Thanks! "}}, hooks)
+	if status != "applied" || msg != "receipt.footer = Thanks!" {
+		t.Fatalf("valid: status=%q msg=%q", status, msg)
+	}
+	if gotKey != "receipt.footer" || gotValue != "Thanks!" {
+		t.Fatalf("hook args = (%q, %q), want trimmed key/value", gotKey, gotValue)
+	}
+
+	// A hook error is the directive's failure message, same as every type.
+	hooks.SetTillSetting = func(context.Context, string, string) (string, error) {
+		return "", errors.New("printer.address is not a remote-configurable till setting")
+	}
+	status, msg = apply(context.Background(), directive{Type: "set_till_setting", Payload: map[string]any{"key": "printer.address", "value": "x"}}, hooks)
+	if status != "failed" || msg != "printer.address is not a remote-configurable till setting" {
+		t.Fatalf("hook error: status=%q msg=%q", status, msg)
+	}
+}
+
 // Every hook-present-but-item_id-blank branch: the giant fixture table only
 // ever sent these directives with a real item_id (it varied the OTHER
 // field — price, delta, name — to test rejection), so this specific

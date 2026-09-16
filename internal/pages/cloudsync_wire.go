@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -54,13 +55,124 @@ func rejectRemoteFiscalPostureWrite(d *common.Deps, key string) error {
 	return nil
 }
 
+// allowedRemoteTillSettingKeys is the till-side whitelist for the
+// set_till_setting directive (ut-docs#2289; Decision 1 of the shared
+// portal-till configuration design in universaltill/ut-docs#2306, proposed
+// as ADR-0095 — that PR is still open, so every citation in this slice
+// names the issue rather than an ADR number not yet accepted on ut-docs'
+// main; swap them for "ADR-0095" once it merges): the safe,
+// non-device-bound shop-config keys the cloud panel may write. It MUST match
+// ut-cloud's claims.AllowedTillSettingKeys byte-for-byte — the portal
+// filters too, but this list is the one that holds when the portal is
+// stale or wrong, which is exactly why it's re-checked here rather than
+// trusted. Built from the same constants the till's own settings pages
+// write (print_api.go, common.KeyKioskIdleReset), never re-typed strings,
+// so it can't drift from what those pages store.
+//
+// Never on this list, by decision: printer addresses/device paths,
+// payment-terminal pairing, fiscal/TSE credentials or posture, PINs, network
+// or sync topology, store.country (its fiscal side-effects are
+// SetSetting's job). Intentionally extensible: order-type prompt placement,
+// the Categories-tab toggle and the order-number scheme are expected
+// follow-ups once those settings exist (concurrent, unmerged work).
+var allowedRemoteTillSettingKeys = map[string]bool{
+	keyPrinterReceiptPolicy:  true,
+	keyReceiptHeader1:        true,
+	keyReceiptHeader2:        true,
+	keyReceiptHeader3:        true,
+	keyReceiptFooter:         true,
+	common.KeyKioskIdleReset: true,
+}
+
+// cloudSetTillSetting is the set_till_setting hook: whitelist check, then the
+// SAME value validation the local settings form for that key applies
+// (ut-docs#2306's design: "the till still validates each payload exactly as
+// it would the same action performed by hand"), then the write and the state
+// re-derive the generic SetSetting hook also does (kiosk.idle_reset_seconds
+// lives in the derived State, so without it the new window wouldn't apply
+// until a restart). A refused key or value writes nothing and re-derives
+// nothing.
+func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(context.Context), key, value string) (string, error) {
+	if !allowedRemoteTillSettingKeys[key] {
+		return "", fmt.Errorf("%s is not a remote-configurable till setting", key)
+	}
+	value = strings.TrimSpace(value)
+	switch key {
+	case keyPrinterReceiptPolicy:
+		// Mirrors /api/settings/printer (print_api.go): case-folded, must be
+		// one of the three values, permitted by the installed country plugin
+		// (ADR-0089 Decision 2). The former DE-only lock (Decision 3) was
+		// removed core-wide by ut-docs#2286/universal-till#1188 — German
+		// shops now choose freely like every other country, so this hook has
+		// no country-specific branch left to mirror. Unlike the local form,
+		// an unknown value is refused rather than silently defaulted — a
+		// remote result column should say why nothing changed.
+		value = strings.ToLower(value)
+		if !isReceiptPolicy(value) {
+			return "", fmt.Errorf("%s must be one of always, ask, never", key)
+		}
+		if allowed, ok := receiptPolicyAskerFor(d.Db).AskReceiptPolicy(ctx); !receiptPolicyPermitted(value, allowed, ok) {
+			return "", fmt.Errorf("%s is not permitted by the installed country plugin (allowed: %s)", key, strings.Join(allowed, ", "))
+		}
+	case common.KeyKioskIdleReset:
+		// Mirrors /api/settings/kiosk-idle-reset (settings_page.go): 0..600.
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 600 {
+			return "", fmt.Errorf("%s must be between 0 and 600 seconds", key)
+		}
+		value = strconv.Itoa(n)
+	case keyReceiptHeader1, keyReceiptHeader2, keyReceiptHeader3, keyReceiptFooter:
+		// Receipt header/footer lines: free text, trimmed, blank clears —
+		// exactly what receipt_designer.go's save does.
+	default:
+		// Unreachable while this switch covers every whitelisted key — and
+		// that is exactly the point (review of ut-docs#2289). A key added
+		// to allowedRemoteTillSettingKeys without a decision about what its
+		// local form validates lands here and is refused, instead of
+		// silently inheriting the free-text treatment above. Fail closed:
+		// the whitelist says which keys are remote-settable, this switch
+		// says how each one is checked, and neither may grow without the
+		// other.
+		return "", fmt.Errorf("%s has no remote validation rule on this till", key)
+	}
+	if err := d.Settings.Set(ctx, key, value); err != nil {
+		return "", err
+	}
+	if rederive != nil {
+		rederive(ctx)
+	}
+	return key + " = " + value, nil
+}
+
+// remoteTillSettingsReport is the read side (ut-docs#2306 Decision 2,
+// proposed ADR-0095, pending merge): the current value of every whitelisted
+// key, unset ones as "", for the heartbeat's device record — the cloud's
+// till-settings forms pre-fill from this so the merchant sees applied state,
+// not just what was queued. Only whitelisted keys are ever reported; nothing
+// else in the settings table rides along.
+func remoteTillSettingsReport(ctx context.Context, d *common.Deps) map[string]string {
+	out := make(map[string]string, len(allowedRemoteTillSettingKeys))
+	for key := range allowedRemoteTillSettingKeys {
+		v, _, _ := d.Settings.Get(ctx, key)
+		out[key] = v
+	}
+	return out
+}
+
 // StartCloudSync wires the ADR-0018 directive hooks to the till's real
 // action paths and starts the cloud sync loop. Every hook is the same move
 // an operator makes locally — remote installs still go through the
 // download-token + Ed25519 verification path, remote settings through the
 // same store + state re-derive as the settings pages.
 func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.Context), wg *sync.WaitGroup) {
-	hooks := cloudsync.Hooks{
+	cloudsync.Start(ctx, d.Cfg, d.Db, buildCloudHooks(d, rederive), wg)
+}
+
+// buildCloudHooks is StartCloudSync's hook set, split out so tests can
+// exercise the wiring (which hook handles which directive, what the device
+// report carries) without starting the sync goroutine.
+func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.Hooks {
+	return cloudsync.Hooks{
 		SetSetting: func(ctx context.Context, key, value string) (string, error) {
 			if err := rejectRemoteFiscalPostureWrite(d, key); err != nil {
 				return "", err
@@ -83,6 +195,12 @@ func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.C
 				rederive(ctx)
 			}
 			return key + " = " + value, nil
+		},
+		// set_till_setting (ut-docs#2289, design in ut-docs#2306): the
+		// whitelisted, value-validated sibling of SetSetting above — see
+		// cloudSetTillSetting for the list and the checks.
+		SetTillSetting: func(ctx context.Context, key, value string) (string, error) {
+			return cloudSetTillSetting(ctx, d, rederive, key, value)
 		},
 		InstallPlugin: func(ctx context.Context, listingID string) (string, error) {
 			return cloudInstallPlugin(ctx, d, listingID)
@@ -181,10 +299,14 @@ func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.C
 				"theme":    d.CurrentState().Theme,
 				"themes":   themes,
 				"problems": collectProblems(ctx, d),
+				// ut-docs#2306 Decision 2 (proposed ADR-0095,
+				// pending merge): the applied value of every
+				// remote-configurable setting, for the portal's
+				// forms.
+				"till_settings": remoteTillSettingsReport(ctx, d),
 			}
 		},
 	}
-	cloudsync.Start(ctx, d.Cfg, d.Db, hooks, wg)
 }
 
 // cloudInstallPlugin mirrors handleInstallFromMarketplace for a directive:
