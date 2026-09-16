@@ -1704,3 +1704,145 @@ window.utTabBarFade = function (el) {
     }
   });
 })();
+
+// ut-docs#2282: WHEN/WHERE the sale screen asks the cashier dine-in or
+// takeaway is a shop setting (Settings → Dine-in/takeaway prompt) with
+// three placements -- "top" (today's always-visible toggle, unchanged, the
+// default) needs nothing from this file at all. "before_item" and
+// "at_pay" both gate on the SAME two pieces of live state, read fresh on
+// every check rather than cached, since either can change under this
+// script between checks (a #basket swap, a settings change on another
+// tab):
+//   - <body data-order-type-prompt-mode> (base.html/httpx.InitOrderTypePromptMode)
+//     -- WHICH placement is configured. Lives on <body>, not #basket,
+//     because it never changes basket-to-basket and #basket gets replaced
+//     wholesale (outerHTML) on nearly every action; <body> is the one
+//     element that survives every swap.
+//   - #basket's data-lines-count/data-order-type-chosen (basket.html) --
+//     is the basket empty, and has the cashier already answered THIS sale.
+//
+// Both gated actions (an item add, the Pay button) are things the cashier
+// is already IN THE MIDDLE of doing when the gate fires, so the modal must
+// not lose that action -- it must ANSWER, then CONTINUE it, not just answer
+// and leave the cashier to repeat the tap.
+//
+// The item-add/quick-pay cases are htmx requests that haven't been SENT
+// yet when the gate fires -- htmx's own htmx:confirm event (fired before
+// every request, cancelable) hands back evt.detail.issueRequest, which
+// looks tailor-made for "defer, then resume": a closure over the
+// already-built request, invokable at any later time. It is NOT used here
+// on purpose (tried first, and it real-bug-found itself out): htmx
+// resolves hx-target to a concrete DOM node BEFORE htmx:confirm fires, not
+// lazily at delivery time. The choice buttons below POST to
+// /api/pos/order-type against that SAME #basket first and swap it
+// (outerHTML) -- so by the time issueRequest() finally runs, its captured
+// target is the ORIGINAL, now-detached #basket node. The deferred
+// request's response really does land, but swapping into a detached node
+// has NO VISIBLE EFFECT -- exactly ut-docs#1337's failure mode, self-
+// inflicted here by deferring across a #basket swap instead of racing two
+// live requests. htmx.ajax(verb, path, {target: '#basket', values: ...})
+// below is the fix: target is a SELECTOR, re-resolved fresh against the
+// CURRENT #basket at the moment it actually runs. Values are read via
+// htmx.values(elt, 'post') rather than a {source: elt} option -- tried
+// first, and NOT equivalent: source only affects whose hx-headers/
+// hx-swap-oob context applies, it does not itself walk elt's own form
+// fields/hx-vals/hx-include the way a real trigger's value-gathering does,
+// which silently posted an empty body (confirmed live: the item never
+// landed, no error either). htmx.values(elt, verb) is the same resolved
+// value bag a real trigger on elt would have sent.
+//
+// at_pay's OTHER entry point, the main Pay button, is a plain onclick
+// (posOpenPayment below), not an htmx request at all -- there is no
+// request object to defer or replay, so its own resume is simply "open
+// #payment-overlay once the modal is answered".
+(function () {
+  function promptMode() {
+    return (document.body && document.body.dataset.orderTypePromptMode) || 'top';
+  }
+  function basketEmpty() {
+    var b = document.getElementById('basket');
+    return !b || b.dataset.linesCount === '0' || !b.dataset.linesCount;
+  }
+  function orderTypeChosen() {
+    var b = document.getElementById('basket');
+    return !!b && b.dataset.orderTypeChosen === 'true';
+  }
+  // Opens #order-type-prompt-modal and calls onChosen() once a real choice
+  // is made (the modal's own Dine-in/Takeaway buttons set
+  // window.posOrderTypePromptResolve before closing themselves, per
+  // index.html's hx-on::after-request). Tapping Cancel just closes the
+  // dialog -- onChosen is never called, so the gated action (item add /
+  // Pay) simply does not happen, same as the cashier never having tapped
+  // it. No modal in the DOM (a page that doesn't carry the sale screen's
+  // markup) is a same-tick passthrough, never a stuck gate.
+  function showOrderTypePromptModal(onChosen) {
+    var modal = document.getElementById('order-type-prompt-modal');
+    if (!modal) { onChosen(); return; }
+    window.posOrderTypePromptResolve = function () {
+      window.posOrderTypePromptResolve = null;
+      onChosen();
+    };
+    modal.show();
+  }
+
+  // "before_item": intercept the very first item landing in an empty
+  // basket. Matched by REQUEST PATH, not by the triggering element, so
+  // every item-add surface is covered with one listener -- the manual
+  // scan-row form, every catalog tile button, the modifier picker's
+  // "Add to basket" submit, and the suggestions strip all POST to one of
+  // these same two endpoints (web/ui/pages/index.html, buttons.html,
+  // modifier_picker.html, suggestions.html).
+  document.body.addEventListener('htmx:confirm', function (evt) {
+    var path = evt.detail.path || '';
+    var isItemAdd = path === '/api/pos/scan' || path === '/api/pos/scan-with-modifiers';
+    if (!isItemAdd || promptMode() !== 'before_item' || !basketEmpty() || orderTypeChosen()) return;
+    evt.preventDefault();
+    var elt = evt.detail.elt;
+    // Snapshot NOW, not inside the callback below: this same native
+    // 'submit' event ALSO reaches this file's own document-level
+    // 'submit' listener (ut-docs#1177, registered earlier, further up
+    // this file) that unconditionally clears the scan-row's code field a
+    // tick later regardless of whether htmx's own request actually goes
+    // ahead -- our evt.preventDefault() above only cancels HTMX's
+    // pipeline, not that unrelated sibling listener on the same native
+    // event. Confirmed live: reading htmx.values(elt, 'post') from inside
+    // the onChosen callback below (i.e. after the modal round-trip) came
+    // back with code:"" every time, even though the cashier really did
+    // type/tap a real value -- the field was already wiped before the
+    // modal was even answered.
+    var values = htmx.values(elt, 'post');
+    showOrderTypePromptModal(function () {
+      htmx.ajax('post', path, { target: '#basket', swap: 'outerHTML', values: values });
+    });
+  });
+
+  // "at_pay", the one-tap quick-pay path (a direct hx-post tender, no
+  // overlay in between) -- the OTHER at_pay entry point, the main Pay
+  // button that opens the overlay, is posOpenPayment() below (a plain
+  // onclick, not an htmx request, so it can't go through htmx:confirm).
+  document.body.addEventListener('htmx:confirm', function (evt) {
+    var elt = evt.detail.elt;
+    var isQuickPay = elt && elt.matches && elt.matches('[data-testid="quick-pay"]');
+    if (!isQuickPay || promptMode() !== 'at_pay' || orderTypeChosen()) return;
+    evt.preventDefault();
+    var path = evt.detail.path || '/api/pos/tender';
+    // Snapshot now, same reasoning as the item-add handler above (values
+    // are static hx-vals here, not a typed field, so less exposed to that
+    // exact bug -- captured up front anyway, on the same principle: never
+    // trust a value read to still be live after an arbitrary-length modal
+    // round-trip when reading it now costs nothing).
+    var values = htmx.values(elt, 'post');
+    showOrderTypePromptModal(function () {
+      htmx.ajax('post', path, { target: '#basket', swap: 'outerHTML', values: values });
+    });
+  });
+
+  // Called by index.html's Pay button (data-testid="payment-open") in
+  // place of a bare document.getElementById('payment-overlay').show().
+  window.posOpenPayment = function () {
+    var overlay = document.getElementById('payment-overlay');
+    if (!overlay) return;
+    if (promptMode() !== 'at_pay' || orderTypeChosen()) { overlay.show(); return; }
+    showOrderTypePromptModal(function () { overlay.show(); });
+  };
+})();

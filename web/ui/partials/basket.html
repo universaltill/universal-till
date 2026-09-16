@@ -4,8 +4,20 @@
      Read by index.html's own pay-voucher-btn script on every htmx:afterSwap,
      the same data-attribute bridge .total's data-minor already uses for the
      fee-hint script, since the payment overlay's pay-grid lives OUTSIDE this
-     swapped fragment and can't react to it any other way. -->
-<div class="basket" id="basket" data-voucher-id="{{ .VoucherID }}" data-voucher-balance-minor="{{ .VoucherBalance.Minor }}">
+     swapped fragment and can't react to it any other way.
+
+     data-lines-count/data-order-type-chosen (ut-docs#2282): same bridge,
+     read by app.js's order-type-prompt interception before an item-add/Pay
+     action goes out -- data-lines-count is the empty-basket check for the
+     "before first item" placement, data-order-type-chosen is
+     Basket.OrderTypeChosen (has the cashier answered yet THIS sale), read
+     for both the "before first item" and "at Pay" placements. The THIRD
+     piece the interception needs, WHICH placement is configured, is not
+     here: it never changes basket-to-basket, so it lives on the one
+     element that survives every #basket swap instead, <body>'s own
+     data-order-type-prompt-mode (base.html, httpx.InitOrderTypePromptMode). -->
+<div class="basket" id="basket" data-voucher-id="{{ .VoucherID }}" data-voucher-balance-minor="{{ .VoucherBalance.Minor }}"
+     data-lines-count="{{ len .Lines }}" data-order-type-chosen="{{ .OrderTypeChosen }}">
   {{ if .ToastMessage }}
     {{ if eq .ToastLevel "error" }}
     <div class="pos-notice error" id="toast-message" role="alert">
@@ -56,15 +68,23 @@
          un-synced hole in an otherwise-fixed set. -->
     <!-- ut-docs#1181 (ADR-0073): .OrderType is now the DERIVED summary of
          the lines -- "" (all dine in), "takeaway" (all takeaway) or "mixed".
-         The two segments stay the fast whole-basket action (one tap
-         converts EVERY line and sets the default for new ones). On a mixed
-         basket neither segment is "checked": a filled segment would claim a
-         state the basket isn't in, so instead a Mixed chip carries the
-         status and the segments read as the bulk actions they are ("All
-         dine in" / "All takeaway"). Per-line control lives on each row. -->
-    {{ if eq .OrderType "mixed" }}
-    <span class="order-type-mixed" data-testid="order-type-mixed" role="status" title="{{ T "basket.order_type.mixed_hint" }}">⚖️ {{ T "basket.order_type.mixed" }}</span>
-    {{ end }}
+         The two segments are the whole-basket action (one tap converts
+         EVERY line and sets the default for new ones).
+         ut-docs#2282/#2309 (product-owner scope change, outcome 1 taken):
+         the per-line Dine-in/Takeaway control that used to sit on each row,
+         and the "Mixed" status chip that went with it, are REMOVED here --
+         order type is sale-level only from the cashier's side now. "mixed"
+         itself is NOT dead as a value (a basket resumed from a held sale
+         parked by a pre-#2282 build, or synced from an older peer, can
+         still carry genuinely different per-line values -- the sale_lines
+         column and SummarizeOrderType/NormalizeLineOrderType are
+         unchanged, kept for history/reporting/DSFinV-K, per the issue
+         comment), so these two segments keep reading as the bulk actions
+         they've always been ("All dine in" / "All takeaway" when the
+         basket they land on is mixed) -- a single tap still normalizes
+         such a basket back to one uniform type. Only the STATUS chip
+         (informational, no action of its own) and the per-line buttons
+         (the cashier-facing control being withdrawn) are gone. -->
     <div class="order-type-toggle-group" role="radiogroup" aria-label="{{ T "basket.order_type.label" }}">
       <button type="button" class="order-type-option{{ if eq .OrderType "" }} is-active{{ end }}"
               role="radio" aria-checked="{{ if eq .OrderType "" }}true{{ else }}false{{ end }}"
@@ -115,31 +135,6 @@
                       {{ end }}
                     </ul>
                     {{ end }}
-                    <!-- ut-docs#1181 (ADR-0073 Decision 2): THIS line's mode.
-                         Same always-both-visible two-segment shape as the
-                         whole-basket control above (ut-docs#1379's lesson: a
-                         label-changing single switch reads as "tap to switch
-                         TO"), but ICON-ONLY at the remove button's size --
-                         the product owner's live feedback (2026-09-02) was
-                         that a labelled pair per line is far too heavy and
-                         spills out of the ~10rem item column. The words ride
-                         as title (tooltip) + visually-hidden text, so the
-                         screen-reader name is still "Dine in"/"Takeaway".
-                         Keyed by LineKey never SKU (ADR-0020), and on the
-                         same hx-sync guard as every other #basket trigger
-                         (ut-docs#1337). One tap re-rates this line only. -->
-                    <div class="line-order-type" role="radiogroup" aria-label="{{ T "basket.order_type.line_label" }}">
-                      <button type="button" class="line-order-type-option{{ if ne .OrderType "takeaway" }} is-active{{ end }}"
-                              role="radio" aria-checked="{{ if ne .OrderType "takeaway" }}true{{ else }}false{{ end }}"
-                              data-testid="line-order-type-{{ .LineKey }}-dine-in" title="{{ T "basket.order_type.dine_in" }}"
-                              hx-post="/api/pos/line-order-type" hx-vals='{{ jsonVals "key" .LineKey "order_type" "" }}'
-                              hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">🍽️<span class="visually-hidden">{{ T "basket.order_type.dine_in" }}</span></button>
-                      <button type="button" class="line-order-type-option{{ if eq .OrderType "takeaway" }} is-active{{ end }}"
-                              role="radio" aria-checked="{{ if eq .OrderType "takeaway" }}true{{ else }}false{{ end }}"
-                              data-testid="line-order-type-{{ .LineKey }}-takeaway" title="{{ T "basket.order_type.takeaway" }}"
-                              hx-post="/api/pos/line-order-type" hx-vals='{{ jsonVals "key" .LineKey "order_type" "takeaway" }}'
-                              hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">🥡<span class="visually-hidden">{{ T "basket.order_type.takeaway" }}</span></button>
-                    </div>
                   </span>
                 </div>
               </td>
@@ -176,27 +171,6 @@
                          hx-target="#basket"
                          hx-swap="outerHTML"
                          hx-sync="#basket:replace" />
-                  <!-- Phone tier (<=480px, ut-docs#413's breakpoint): the ITEM
-                       column is ~32px there (ut-docs#1314), too narrow for the
-                       pill under the item name, so the SAME control renders
-                       here in the qty column, stacked vertically. Exactly one
-                       of the two instances is displayed at any width
-                       (app.css) -- display:none removes the other from the
-                       accessibility tree too, so a screen reader never meets
-                       two radiogroups for one line. Same <tr>, so "tbody tr"
-                       counts in the e2e suite are unchanged. -->
-                  <div class="line-order-type line-order-type-phone" role="radiogroup" aria-label="{{ T "basket.order_type.line_label" }}">
-                    <button type="button" class="line-order-type-option{{ if ne .OrderType "takeaway" }} is-active{{ end }}"
-                            role="radio" aria-checked="{{ if ne .OrderType "takeaway" }}true{{ else }}false{{ end }}"
-                            data-testid="line-order-type-phone-{{ .LineKey }}-dine-in" title="{{ T "basket.order_type.dine_in" }}"
-                            hx-post="/api/pos/line-order-type" hx-vals='{{ jsonVals "key" .LineKey "order_type" "" }}'
-                            hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">🍽️<span class="visually-hidden">{{ T "basket.order_type.dine_in" }}</span></button>
-                    <button type="button" class="line-order-type-option{{ if eq .OrderType "takeaway" }} is-active{{ end }}"
-                            role="radio" aria-checked="{{ if eq .OrderType "takeaway" }}true{{ else }}false{{ end }}"
-                            data-testid="line-order-type-phone-{{ .LineKey }}-takeaway" title="{{ T "basket.order_type.takeaway" }}"
-                            hx-post="/api/pos/line-order-type" hx-vals='{{ jsonVals "key" .LineKey "order_type" "takeaway" }}'
-                            hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">🥡<span class="visually-hidden">{{ T "basket.order_type.takeaway" }}</span></button>
-                  </div>
                 </div>
               </td>
               <td>{{ money .PriceCents }}</td>

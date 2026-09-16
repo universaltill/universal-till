@@ -152,6 +152,7 @@
         data-currency-display="{{ currency.Display }}" data-currency-suffix="{{ if currency.Suffix }}1{{ end }}"
         data-number-thousands="{{ thousandssep }}" data-number-decimal="{{ decimalsep }}"
         data-osk="{{ oskmode }}"
+        data-order-type-prompt-mode="{{ ordertypepromptmode }}"
         data-notice-dismiss="{{ T "notice.dismiss" }}"
         {{ if idlelocksecs }}data-idle-lock="{{ idlelocksecs }}"{{ end }}>
     {{ template "nav" . }}

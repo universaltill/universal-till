@@ -105,6 +105,41 @@
     </form>
   </dialog>
 
+  <!-- ut-docs#2282: dine-in/takeaway intercept for the "before first item" /
+       "at Pay" prompt placements (Settings → Dine-in/takeaway prompt).
+       Structure copied verbatim from #hold-modal just above
+       (.modifier-modal/.modifier-actions/.btn primary/.btn secondary,
+       non-modal .show()/.close() for the same on-screen-keyboard reason —
+       this dialog needs no typing itself, but the whole sale screen stays
+       consistent on the point). No autofocus on either choice button
+       (#hold-modal's same on-screen-keyboard-popup caution). The two
+       choice buttons reuse the EXISTING basket.order_type.dine_in/takeaway
+       labels (already shipped, already proven not to overflow at
+       ut-docs#1379) rather than minting new ones — only the title and the
+       Settings copy are new keys. web/public/app.js opens this via
+       showOrderTypePromptModal() and resumes whatever action was
+       intercepted once a choice POST to /api/pos/order-type succeeds
+       (same endpoint the always-visible basket-top toggle posts to — this
+       modal is just an earlier, gated way to reach it, not a new one). -->
+  <dialog id="order-type-prompt-modal" class="modifier-modal" aria-labelledby="order-type-prompt-title">
+    <h3 id="order-type-prompt-title">{{ T "basket.order_type.prompt_title" }}</h3>
+    <div class="modifier-actions">
+      <button type="button" class="btn secondary" data-testid="order-type-prompt-cancel"
+              onclick="document.getElementById('order-type-prompt-modal').close();">
+        {{ T "common.cancel" }}</button>
+      <button type="button" class="btn secondary" data-testid="order-type-prompt-dine-in"
+              hx-post="/api/pos/order-type" hx-vals='{{ jsonVals "order_type" "" }}'
+              hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              hx-on::after-request="if (event.detail.successful) { document.getElementById('order-type-prompt-modal').close(); if (window.posOrderTypePromptResolve) window.posOrderTypePromptResolve(); }">
+        🍽️ {{ T "basket.order_type.dine_in" }}</button>
+      <button type="button" class="btn primary" data-testid="order-type-prompt-takeaway"
+              hx-post="/api/pos/order-type" hx-vals='{{ jsonVals "order_type" "takeaway" }}'
+              hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              hx-on::after-request="if (event.detail.successful) { document.getElementById('order-type-prompt-modal').close(); if (window.posOrderTypePromptResolve) window.posOrderTypePromptResolve(); }">
+        🥡 {{ T "basket.order_type.takeaway" }}</button>
+    </div>
+  </dialog>
+
   <!-- ut-docs#2137: opened non-modally with .show(), same reasoning as
        #hold-modal and #payment-overlay above -- showModal()'s inert-outside
        behaviour makes the custom on-screen keyboard untappable, and a kiosk
@@ -364,9 +399,20 @@
            htmx swap, the same data-attribute-bridge pattern the fee-hint
            and pay-voucher-btn scripts further down already use for an
            element that lives outside the swapped #basket fragment. -->
+      <!-- ut-docs#2282: the "at Pay" placement needs first refusal on this
+           tap (open the intercept modal instead, THEN the overlay once
+           answered) -- routed through app.js's posOpenPayment() rather
+           than calling .show() directly here so that gate lives in one
+           place. app.js is a deferred, non-module script loaded in
+           base.html's <head> and always finishes running before body
+           content becomes interactive, so this global is guaranteed to
+           exist by the time a real tap could ever reach it; on the "top"/
+           "before_item" placements (or if the cashier already answered
+           this sale) it's a same-tick passthrough to the original
+           .show(). -->
       <button type="button" class="btn primary payment-trigger" data-testid="payment-open"
               {{ if eq .payItemCount 0 }}disabled{{ end }}
-              onclick="document.getElementById('payment-overlay').show()">
+              onclick="posOpenPayment()">
         {{ if eq .payItemCount 0 }}{{ T "tender.pay_empty" }}{{ else }}{{ printf (T "tender.pay_with_total") (money .payTotal) }}{{ end }}</button>
     </div>
 
