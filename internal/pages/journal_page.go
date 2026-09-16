@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -16,7 +17,7 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/journal", func(w http.ResponseWriter, r *http.Request) {
 		_, invoicingOn := sellerConfig(r.Context(), d)
 		httpx.Render("ui/pages/journal.html", map[string]any{
-			"title":       "Journal",
+			"title":       httpx.T(httpx.RequestLocale(r), "page.title.journal"),
 			"theme":       d.CurrentState().Theme,
 			"menuItems":   d.MenuSnapshot(),
 			"InvoicingOn": invoicingOn && canPerform(d, r, "reports"),
@@ -48,7 +49,7 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 		}
 		inv, hasInvoice, _ := data.NewInvoiceRepo(d.Db).BySale(r.Context(), sale.ID, invKind)
 		httpx.Render("ui/pages/journal_detail.html", map[string]any{
-			"title":       "Receipt " + sale.ReceiptNo,
+			"title":       fmt.Sprintf(httpx.T(httpx.RequestLocale(r), "page.title.receipt_detail"), sale.ReceiptNo),
 			"theme":       d.CurrentState().Theme,
 			"menuItems":   d.MenuSnapshot(),
 			"Sale":        sale,

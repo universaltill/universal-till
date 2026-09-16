@@ -63,7 +63,7 @@ func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 			activeTable := d.KioskEngine.TableID()
 			if requestedTable != "" && activeTable != "" && requestedTable != activeTable && len(d.KioskEngine.Lines()) > 0 {
 				httpx.RenderPartial("ui/pages/self_order.html", map[string]any{
-					"title":    "Self-order",
+					"title":    httpx.T(httpx.RequestLocale(r), "page.title.self_order"),
 					"shopName": d.Cfg.StoreName,
 					"Busy":     true,
 				})(w, r)
@@ -91,7 +91,7 @@ func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 		}
 		st := d.CurrentState()
 		httpx.RenderPartial("ui/pages/self_order.html", map[string]any{
-			"title":         "Self-order",
+			"title":         httpx.T(httpx.RequestLocale(r), "page.title.self_order"),
 			"idleResetSecs": st.KioskIdleResetSeconds,
 			"shopName":      d.Cfg.StoreName,
 		})(w, r)

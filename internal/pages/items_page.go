@@ -47,7 +47,7 @@ func registerItemsPage(mux *http.ServeMux, d *common.Deps) {
 		// the right panel is never empty on a bare /items load.
 		current := sections[0].Href
 		data := map[string]any{
-			"title":       "Items",
+			"title":       httpx.T(locale, "page.title.items"),
 			"theme":       d.CurrentState().Theme,
 			"menuItems":   d.MenuSnapshot(),
 			"Sections":    sections,

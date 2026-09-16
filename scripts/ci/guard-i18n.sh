@@ -612,11 +612,38 @@ if dup_hits:
         for k in dupes:
             print(f"  {path}: {k}")
 
+# 10. Hardcoded page <title> literals (ut-docs#2297): "title" is the
+#     template-data key every internal/pages/*.go handler sets for
+#     web/ui/layouts/*.html's `<title>{{ .title }}</title>` -- a raw English
+#     literal there is invisible to checks 1-2 (template-only) and check 3
+#     (only catches a literal written straight to the response body, not one
+#     placed in the data map T later reads). The established pattern is
+#     `httpx.T(httpx.RequestLocale(r), "page.title.<name>")` (or
+#     `fmt.Sprintf(httpx.T(...), ...)` for a title with a dynamic suffix,
+#     e.g. journal_page.go's receipt number) -- a bare quoted string
+#     starting with an uppercase letter is the regression this catches.
+title_hits = []
+title_re = re.compile(r'^\s*"title":\s*"[A-Z]')
+for f in sorted(glob.glob("internal/pages/*.go")):
+    if f.endswith("_test.go"):
+        continue
+    for lineno, line in enumerate(open(f), start=1):
+        if "i18n:ignore" in line:
+            continue
+        if title_re.match(line):
+            title_hits.append((f, lineno, line.strip()))
+
+if title_hits:
+    fail = True
+    print("guard-i18n: hardcoded page <title> literal (use httpx.T(locale, \"page.title.<name>\")):")
+    for f, lineno, line in title_hits:
+        print(f"  {f}:{lineno}: {line}")
+
 if fail:
     sys.exit(1)
 print(f"✓ i18n guard: {len(used)} template keys resolve; all locales match en.json; "
       f"no hardcoded Go-side response strings found; no hand-written hx-vals literals found; "
       f"no hardcoded inline-JS status strings found; no hardcoded ToastMessage literals found; "
       f"no missing Go-side i18n key literals found; no format/template verb mismatches found; "
-      f"no duplicate keys found")
+      f"no duplicate keys found; no hardcoded page <title> literals found")
 PY

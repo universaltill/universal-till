@@ -199,7 +199,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		categoriesData := map[string]any{
-			"title":      "Categories",
+			"title":      httpx.T(httpx.RequestLocale(r), "page.title.categories"),
 			"theme":      d.CurrentState().Theme,
 			"menuItems":  d.MenuSnapshot(),
 			"categories": rows,

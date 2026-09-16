@@ -107,7 +107,7 @@ func registerLocations(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		locationsData := map[string]any{
-			"title":     "Locations",
+			"title":     httpx.T(httpx.RequestLocale(r), "page.title.locations"),
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
 			"locations": locs,

@@ -148,7 +148,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 		httpx.RenderPartial("ui/pages/self_order_shop.html", map[string]any{
-			"title":         "Order here",
+			"title":         httpx.T(httpx.RequestLocale(r), "page.title.order_here"),
 			"Categories":    cats,
 			"idleResetSecs": d.CurrentState().KioskIdleResetSeconds,
 			"idleResetURL":  idleResetURL,

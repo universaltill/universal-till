@@ -192,7 +192,7 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			payTotal = b.Total
 		}
 		data := map[string]any{
-			"title":                "Universal Till",
+			"title":                "Universal Till", // i18n:ignore -- brand name, stays Latin in every locale (ut-docs#2297)
 			"saleScreen":           true,
 			"theme":                d.CurrentState().Theme,
 			"menuItems":            d.MenuSnapshot(),

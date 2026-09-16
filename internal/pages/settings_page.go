@@ -638,7 +638,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// all, not merely be visually hidden).
 		showDataCard := isManager || sampleCount > 0 || len(pendingBasePluginRows) > 0 || restorePromptDeferred
 		data := map[string]any{
-			"title":       "Settings",
+			"title":       httpx.T(httpx.RequestLocale(r), "page.title.settings"),
 			"theme":       st.Theme,
 			"themes":      availableThemes(r.Context(), d),
 			"settings":    st,

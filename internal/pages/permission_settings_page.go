@@ -71,7 +71,7 @@ func registerPermissionSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		httpx.Render("ui/pages/permissions.html", map[string]any{
-			"title":     "Permissions",
+			"title":     httpx.T(httpx.RequestLocale(r), "page.title.permissions"),
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
 			"Roles":     roles,

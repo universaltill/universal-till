@@ -146,7 +146,7 @@ func registerInventoryPage(mux *http.ServeMux, d *common.Deps) {
 		pickerJSON, _ := json.Marshal(picker)
 
 		data := map[string]any{
-			"title":                 "Inventory",
+			"title":                 httpx.T(httpx.RequestLocale(r), "page.title.inventory"),
 			"theme":                 d.CurrentState().Theme,
 			"menuItems":             d.MenuSnapshot(),
 			"StockLevels":           levels,

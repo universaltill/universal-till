@@ -106,7 +106,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			currencyUnconfirmed = cerr != nil || confirmedVal != "true"
 		}
 		importData := map[string]any{
-			"title":               "Import",
+			"title":               httpx.T(httpx.RequestLocale(r), "page.title.import"),
 			"theme":               d.CurrentState().Theme,
 			"menuItems":           d.MenuSnapshot(),
 			"stagedID":            stagedID,

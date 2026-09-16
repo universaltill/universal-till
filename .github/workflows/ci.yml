@@ -111,6 +111,8 @@ jobs:
         run: bash scripts/ci/guard-i18n_verbcheck_test.sh
       - name: i18n coverage guard duplicate-key regression test
         run: bash scripts/ci/guard-i18n_dupkey_test.sh
+      - name: i18n coverage guard page-title regression test
+        run: bash scripts/ci/guard-i18n_title_test.sh
       - name: Compliance-claims wording guard
         run: bash scripts/ci/guard-compliance-claims.sh
       - name: Compliance-claims wording guard regression test
