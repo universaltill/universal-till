@@ -128,9 +128,14 @@
     <title>{{ .title }}</title>
     <link rel="icon" type="image/x-icon" href="/public/assets/logo/ut-logo.ico">
     <link rel="stylesheet" href="/public/app.css?v={{ assetv "public/app.css" }}" />
-    {{ if and .theme (ne .theme "default") }}
-    <link rel="stylesheet" href="/themes/{{ .theme }}.css?v={{ assetv "public/app.css" }}" />
-    {{ end }}
+    <!-- ut-docs#2343: id="theme-css" is ALWAYS rendered, even for the
+         "default" theme (which has no override CSS of its own, hence no
+         href below) -- GET /ui/theme-sync's out-of-band swap targets this
+         id by document.getElementById, so it needs a real element to swap
+         into no matter which theme the page started on, "default" included
+         (an htmx OOB swap with no matching id in the DOM has nothing to
+         replace). -->
+    <link id="theme-css" rel="stylesheet" {{ if and .theme (ne .theme "default") }}href="/themes/{{ .theme }}.css?v={{ assetv "public/app.css" }}"{{ end }} />
     <!-- Vendored locally: the till must work fully offline. -->
     <script defer src="/public/vendor/htmx.min.js?v={{ assetv "public/vendor/htmx.min.js" }}"></script>
     <script defer src="/public/vendor/alpine.min.js?v={{ assetv "public/vendor/alpine.min.js" }}"></script>
@@ -191,6 +196,16 @@
          dismiss script (getElementById('pairing-notice')) would resolve to
          this outer, dataset-less placeholder instead of the real banner. -->
     <div id="pairing-notice-mount" hx-get="/ui/pairing-notice" hx-trigger="load, every 30s"></div>
+    <!-- ut-docs#2343: theme-sync poll, every 30s from every open page --
+         hx-swap="none" because this div has no content of its own to
+         receive; the actual update is an out-of-band swap of #theme-css
+         above (GET /ui/theme-sync's response), which htmx processes
+         independently of this div's own swap setting. Passes back the
+         theme this page was actually rendered with (not "default" as a
+         magic default value: an untouched till and one already showing
+         "default" must look identical to the handler, both meaning
+         "no override pending"). -->
+    <div hx-get="/ui/theme-sync?theme={{ .theme }}" hx-trigger="load, every 30s" hx-swap="none"></div>
     <!-- ut-docs#2183: the app-wide client-side request-failure surface
          (ut-docs#213, docs/sale-screen-notifications.md) — app.js's
          htmx:responseError/htmx:sendError listeners already fill this in

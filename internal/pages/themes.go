@@ -3,9 +3,11 @@ package pages
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -160,5 +162,52 @@ func registerThemes(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 		http.NotFound(w, r)
+	})
+}
+
+// registerThemeSync wires GET /ui/theme-sync (ut-docs#2343). base.html polls
+// it from every open page every 30s (mirrors GET /ui/pairing-notice's
+// pattern), passing back the theme key it was rendered with. A theme applied
+// via a cloud set_setting directive (ADR-0018) already lands in d.State the
+// moment the directive is applied (SetSetting -> rederive -> LoadState,
+// cloudsync_wire.go) -- exactly like a local Settings-page change -- so any
+// FUTURE page render already shows it. The gap this closes is a kiosk
+// session that stays on one already-rendered page for hours: the local
+// Settings page forces a refresh with its own window.location.reload()
+// (settings.html), but a directive landing in the background has no client
+// to tell to reload. Answering with an out-of-band swap of the stylesheet
+// <link> (id="theme-css") instead of a reload is the safer choice here: no
+// navigation, so an in-progress sale's on-screen state is never disturbed --
+// the offline-first "checkout must never be blocked" rule applies to a
+// forced reload too, not just to the network being down.
+func registerThemeSync(mux *http.ServeMux, d *common.Deps) {
+	mux.HandleFunc("GET /ui/theme-sync", func(w http.ResponseWriter, r *http.Request) {
+		live := d.CurrentState().Theme
+		clientTheme := r.URL.Query().Get("theme")
+		if live == "" || live == clientTheme {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if live == "default" {
+			// "default" has no override CSS of its own (base.html renders
+			// #theme-css with no href for it) -- swap to the same,
+			// clearing whatever override was active, rather than pointing
+			// at a /themes/default.css that was never served.
+			fmt.Fprint(w, `<link id="theme-css" hx-swap-oob="true" rel="stylesheet">`)
+			return
+		}
+		// url.PathEscape doubles as HTML-escaping here: every byte it would
+		// otherwise leave unescaped (letters/digits/-._~) is inert in both
+		// an href attribute and a URL path, so a theme key holding
+		// HTML-breaking characters can't escape the attribute it's placed
+		// in. Defence in depth -- nothing on the write path (cloud
+		// directive or local settings) constrains the key's charset today.
+		// No cache-busting query param needed here (unlike base.html's own
+		// static <link>): the href's PATH changes with the theme key, so
+		// the browser can never serve a stale cached response for the new
+		// theme under the old one's URL.
+		fmt.Fprintf(w, `<link id="theme-css" hx-swap-oob="true" rel="stylesheet" href="/themes/%s.css">`,
+			url.PathEscape(live))
 	})
 }
