@@ -46,6 +46,12 @@
 //   data-record-default-action                set HERE on the dialog's form
 //     the first time it is seen: the server-rendered action, captured once
 //     so the create fallback never reads an action a previous open() wrote
+//   record-dialog:open (CustomEvent on the dialog, bubbles; detail.row is
+//     the opened row or null for create, detail.mode "edit"/"create") —
+//     fired inside open() after the generic data-field-* prefill and before
+//     the discard-guard snapshot, for a page to finish a prefill this file
+//     can't express generically (ut-docs#2284: categories.html's colour
+//     tiles and same-named checkbox sets)
 //
 // Dialogs are opened with .show(), never .showModal(): the on-screen
 // keyboard (#osk, osk.js) is appended to <body>, and showModal()'s
@@ -205,6 +211,17 @@
     }
 
     dialog.setAttribute('data-record-mode', mode);
+    // ut-docs#2284: a page whose dialog holds something setField() cannot
+    // express as one form control — a set of same-named checkboxes ticked
+    // from the row, a swatch grid whose pressed tile mirrors a hidden input
+    // — finishes its own prefill here. Dispatched synchronously, after the
+    // generic prefill above and BEFORE the snapshot below, so whatever the
+    // page ticks on open is part of the "clean" state and never trips the
+    // discard guard. detail.row is null in create mode. Bubbles, so a page
+    // may listen on the dialog itself or on document.
+    if (typeof CustomEvent === 'function') {
+      dialog.dispatchEvent(new CustomEvent('record-dialog:open', { bubbles: true, detail: { row: row || null, mode: mode } }));
+    }
     if (openers && !dialog.open) openers.set(dialog, opener || document.activeElement);
     if (!dialog.open) dialog.show();
     if (form && snapshots) snapshots.set(dialog, serialize(form));

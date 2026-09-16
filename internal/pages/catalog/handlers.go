@@ -50,7 +50,14 @@ type modifierAdminItem struct {
 	// options (ut-docs#2046): every other active shop group not already
 	// linked to ItemID. Left nil when there is nothing left to attach.
 	AttachableGroups []data.ModifierGroup
-	Target           string
+	// InheritedGroups is what ItemID inherits from its CATEGORY (ADR-0094,
+	// ut-docs#2284): ListInheritedGroupsForItem's shape, OptedOut set per
+	// group, so the item-scoped dialog can show each one greyed/labelled
+	// and offer the skip / use-again toggle. Only the item-scoped panel
+	// renders it (modifier_groups_item_panel); the shop-wide /modifiers
+	// list leaves it nil.
+	InheritedGroups []data.ModifierGroup
+	Target          string
 	// Notice is an already-translated, already-formatted message to show
 	// inline above this fragment (ut-docs#2046, independent-review finding)
 	// — e.g. the detach-guard's refusal. Plain http.Error/LocalizedError
@@ -217,6 +224,29 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 						activeModGroupNames = append(activeModGroupNames, g.Name)
 					}
 				}
+				// ut-docs#2284: the groups the item inherits from its category
+				// (ADR-0094), minus its opt-outs and minus any it also links
+				// directly (the summary names that one once, as its own) —
+				// so an item whose customization comes entirely from its
+				// category never reads "no customization groups yet".
+				ownIDs := make(map[string]bool, len(modGroups))
+				for _, g := range modGroups {
+					ownIDs[g.ID] = true
+				}
+				inheritedGroups, _ := data.NewModifierRepo(d.Db).ListInheritedGroupsForItem(r.Context(), itemID)
+				var inheritedNames []string
+				for _, g := range inheritedGroups {
+					if !g.OptedOut && !ownIDs[g.ID] {
+						inheritedNames = append(inheritedNames, g.Name)
+					}
+				}
+				// ut-docs#2284: kitchen-printer routing from the item's side —
+				// what its category routes to, and the item's own override
+				// (item_station_routes, which ResolveKitchenStations lets win
+				// outright). Best-effort like every other read here: a shop
+				// with no stations (or a fixture without the tables) simply
+				// renders no routing section.
+				stationChecks, categoryStationNames, hasItemRoutes := itemRoutingData(r.Context(), repo, posRepo, itemID)
 				// ut-docs#1900: the shop's option sets (active only — the
 				// checkbox row offers what can be applied now) and which of
 				// them this item's range is generated from.
@@ -246,18 +276,22 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				// of its own).
 				itemImg, _ := repo.ItemThumbnailFor(r.Context(), itemID)
 				pdata = map[string]any{
-					"ItemID":             itemID,
-					"ItemName":           label.Name,
-					"ItemImageURL":       itemImg,
-					"Variants":           variants,
-					"ItemBarcodes":       itemBCs,
-					"CostMajor":          costMajor,
-					"LeadTimeDays":       leadTimeDays,
-					"ReorderLevel":       reorderLevel,
-					"ModifierGroups":     modGroups,
-					"ModifierGroupNames": strings.Join(activeModGroupNames, ", "),
-					"OptionSets":         optionSets,
-					"AppliedSetIDs":      appliedIDs,
+					"ItemID":               itemID,
+					"ItemName":             label.Name,
+					"ItemImageURL":         itemImg,
+					"Variants":             variants,
+					"ItemBarcodes":         itemBCs,
+					"CostMajor":            costMajor,
+					"LeadTimeDays":         leadTimeDays,
+					"ReorderLevel":         reorderLevel,
+					"ModifierGroups":       modGroups,
+					"ModifierGroupNames":   strings.Join(activeModGroupNames, ", "),
+					"InheritedGroupNames":  strings.Join(inheritedNames, ", "),
+					"Stations":             stationChecks,
+					"CategoryStationNames": categoryStationNames,
+					"HasItemRoutes":        hasItemRoutes,
+					"OptionSets":           optionSets,
+					"AppliedSetIDs":        appliedIDs,
 				}
 				for k, v := range extra {
 					pdata[k] = v
@@ -376,10 +410,15 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if err != nil {
 			log.Printf("[catalog] attachable modifier groups for item %s: %v", itemID, err)
 		}
+		inherited, err := modRepo.ListInheritedGroupsForItem(r.Context(), itemID)
+		if err != nil {
+			log.Printf("[catalog] inherited modifier groups for item %s: %v", itemID, err)
+		}
 		httpx.RenderWith(modifierGroupAdminFiles, funcs)("modifier_groups_item_panel", modifierAdminItem{
 			ItemID:           itemID,
 			ModifierGroups:   groups,
 			AttachableGroups: attachable,
+			InheritedGroups:  inherited,
 			Target:           "modifier-groups-modal-list",
 			Notice:           notice,
 		})(w, r)
@@ -1251,6 +1290,96 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		renderModifierMutationResult(w, r, itemID, http.StatusOK, "")
 	})
 
+	// Opt an item OUT of / back IN to a category-inherited modifier group
+	// (ADR-0094 Decision 2, ut-docs#2284). Deliberately NOT the detach
+	// route above: an opt-out is a presence row in
+	// item_modifier_group_opt_outs that only ever suppresses the CATEGORY
+	// attachment — a group the item is ALSO directly linked to keeps that
+	// link and stays offered (see OptOutItemFromGroup's own doc comment and
+	// UnlinkGroupFromItemUnlessLastLink for why the two must never be
+	// conflated: an unlink can orphan a group, an opt-out never can).
+	// Answered through renderModifierMutationResult like every other group
+	// mutation, so the item-scoped dialog re-renders and the sale screen's
+	// tile gate refetches (HX-Trigger: modifiers-changed).
+	optToggle := func(action string, apply func(context.Context, string, string) error) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
+				return
+			}
+			_ = r.ParseForm()
+			itemID := strings.TrimSpace(r.Form.Get("itemId"))
+			groupID := strings.TrimSpace(r.Form.Get("groupId"))
+			if itemID == "" || groupID == "" {
+				http.Error(w, "itemId and groupId required", http.StatusBadRequest)
+				return
+			}
+			if err := apply(r.Context(), itemID, groupID); err != nil {
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "modifiers.error.server", "catalog "+action, err)
+				return
+			}
+			renderModifierMutationResult(w, r, itemID, http.StatusOK, "")
+		}
+	}
+	mux.HandleFunc("/api/catalog/modifier-group/opt-out", optToggle("opt-out", modRepo.OptOutItemFromGroup))
+	mux.HandleFunc("/api/catalog/modifier-group/opt-in", optToggle("opt-in", modRepo.OptInItemToGroup))
+
+	// Item-level kitchen-station override from the item editor
+	// (ut-docs#2284): the SAME replace-all write kitchen_stations_page.go's
+	// POST /api/kitchen-stations/routes/items/{itemID} does from the
+	// station's side (every ticked station_id; none ticked clears the
+	// override and the item follows its category again) — one write path,
+	// SetItemStationRoutes, so the two screens can never disagree. Station
+	// ids are checked against the shop's stations first: a stale panel must
+	// not be able to route an item to a station that no longer exists
+	// (the FK would refuse anyway, but as an opaque 500, not this 400).
+	// item_station_routes is an adminTables entry, so a satellite picks the
+	// change up on its next admin pull like the category-side write.
+	mux.HandleFunc("/api/catalog/item-station-routes", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
+			return
+		}
+		_ = r.ParseForm()
+		itemID := strings.TrimSpace(r.Form.Get("itemId"))
+		if itemID == "" {
+			http.Error(w, "itemId required", http.StatusBadRequest)
+			return
+		}
+		stations, err := posRepo.ListKitchenStations(r.Context())
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
+			return
+		}
+		known := make(map[string]bool, len(stations))
+		for _, s := range stations {
+			known[s.ID] = true
+		}
+		var stationIDs []string
+		for _, id := range r.Form["station_id"] {
+			id = strings.TrimSpace(id)
+			if id == "" {
+				continue
+			}
+			if !known[id] {
+				common.LocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request")
+				return
+			}
+			stationIDs = append(stationIDs, id)
+		}
+		if err := posRepo.SetItemStationRoutes(r.Context(), itemID, stationIDs); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
+			return
+		}
+		renderVariantsPanel(w, r, strings.TrimSpace(r.Form.Get("panelItem")), false)
+	})
+
 	// Deactivate variant
 	mux.HandleFunc("/api/catalog/variant/deactivate", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -2097,4 +2226,54 @@ func optionSetAwareError(w http.ResponseWriter, r *http.Request, status int, err
 		return
 	}
 	common.LogAndLocalizedError(w, r, status, "catalog.error.invalid_request", "catalog", err)
+}
+
+// itemStationCheck is one kitchen-station checkbox on the item editor's
+// routing section (ut-docs#2284): Checked when the item's OWN override
+// routes to it. Every station is listed, a disabled one labelled, for the
+// same reason categories.html lists them all — an override pointing at a
+// since-disabled station must keep its tick rather than silently lose the
+// route on the next save.
+type itemStationCheck struct {
+	ID      string
+	Name    string
+	Checked bool
+	Enabled bool
+}
+
+// itemRoutingData assembles the Variants panel's routing section
+// (ut-docs#2284): the station checkboxes (ticked from item_station_routes),
+// the item's category's own routes as a display string, and whether an
+// item-level override exists at all. Every read is best-effort — a repo
+// error (including the hand-rolled catalog test schema having no station
+// tables) yields "no stations", and the template then renders no routing
+// section rather than failing the whole panel.
+func itemRoutingData(ctx context.Context, repo *data.CatalogRepo, posRepo *data.POSRepo, itemID string) ([]itemStationCheck, string, bool) {
+	stations, err := posRepo.ListKitchenStations(ctx)
+	if err != nil || len(stations) == 0 {
+		return nil, "", false
+	}
+	byID := make(map[string]string, len(stations))
+	for _, s := range stations {
+		byID[s.ID] = s.Name
+	}
+	itemRoutes, _ := posRepo.ItemStationRoutes(ctx, itemID)
+	routed := make(map[string]bool, len(itemRoutes))
+	for _, id := range itemRoutes {
+		routed[id] = true
+	}
+	checks := make([]itemStationCheck, 0, len(stations))
+	for _, s := range stations {
+		checks = append(checks, itemStationCheck{ID: s.ID, Name: s.Name, Checked: routed[s.ID], Enabled: s.Enabled})
+	}
+	var categoryNames []string
+	if item, ok, err := repo.GetItem(ctx, itemID); err == nil && ok && item.CategoryID != nil && *item.CategoryID != "" {
+		catRoutes, _ := posRepo.CategoryStationRoutes(ctx, *item.CategoryID)
+		for _, id := range catRoutes {
+			if name, ok := byID[id]; ok {
+				categoryNames = append(categoryNames, name)
+			}
+		}
+	}
+	return checks, strings.Join(categoryNames, ", "), len(itemRoutes) > 0
 }

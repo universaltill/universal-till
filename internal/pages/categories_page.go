@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -121,6 +122,7 @@ func renderCategoryDialogError(w http.ResponseWriter, r *http.Request, errKey st
 func registerCategories(mux *http.ServeMux, d *common.Deps) {
 	catRepo := data.NewCatalogRepo(d.Db)
 	posRepo := data.NewPOSRepo(d.Db)
+	modRepo := data.NewModifierRepo(d.Db)
 
 	// requireManager gates on the "settings" action, same as
 	// tables_page.go/kitchen_stations_page.go — no narrower catalog-admin
@@ -192,17 +194,64 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		_ = posRepo.InsertAudit(r.Context(), nil, actorID, "category", targetID, action, nil, now, "")
 	}
 
+	// categoryRow is one list row: the admin read plus the comma-joined
+	// modifier-group and kitchen-station ids the row's data-groups/
+	// data-stations attributes hand categories.html's own script for
+	// ticking the dialog's checkboxes on open (ut-docs#2284). Joined here,
+	// not in the template, so the attribute is one plain string.
+	type categoryRow struct {
+		data.CategoryAdminRow
+		Groups   string
+		Stations string
+	}
+
 	renderCategories := func(w http.ResponseWriter, r *http.Request, errKey string, errCount int) {
-		rows, err := catRepo.ListCategoriesForAdmin(r.Context())
+		ctx := r.Context()
+		rows, err := catRepo.ListCategoriesForAdmin(ctx)
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
+		}
+		// ut-docs#2284: the dialog's three pickers. Groups and stations are
+		// each ONE shop-wide query plus ONE all-categories link query (not
+		// a per-row lookup — an N+1 over the whole category list on every
+		// render), same shape kitchen_stations_page.go's renderPage uses.
+		groups, err := modRepo.ListActiveModifierGroups(ctx)
+		if err != nil {
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
+			return
+		}
+		stations, err := posRepo.ListKitchenStations(ctx)
+		if err != nil {
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
+			return
+		}
+		groupLinks, err := modRepo.AllCategoryModifierGroupLinks(ctx)
+		if err != nil {
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
+			return
+		}
+		stationRoutes, err := posRepo.AllCategoryStationRoutes(ctx)
+		if err != nil {
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
+			return
+		}
+		catRows := make([]categoryRow, 0, len(rows))
+		for _, c := range rows {
+			catRows = append(catRows, categoryRow{
+				CategoryAdminRow: c,
+				Groups:           strings.Join(groupLinks[c.ID], ","),
+				Stations:         strings.Join(stationRoutes[c.ID], ","),
+			})
 		}
 		categoriesData := map[string]any{
 			"title":      "Categories",
 			"theme":      d.CurrentState().Theme,
 			"menuItems":  d.MenuSnapshot(),
-			"categories": rows,
+			"categories": catRows,
+			"groups":     groups,
+			"stations":   stations,
+			"itemColors": catalogtypes.ItemColors(),
 			"errKey":     errKey,
 			"errCount":   errCount,
 		}
@@ -232,6 +281,99 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		renderCategories(w, r, httpx.QueryErrKey(r), count)
 	})
 
+	// categoryForm is the dialog's submitted state (ut-docs#2284): name and
+	// colour on the row itself, plus the two link sets one Save replaces
+	// wholesale (SetCategoryModifierGroups / SetCategoryStationRoutes —
+	// "every ticked id", so an unticked box is a removal, same as
+	// kitchen_stations_page.go's setRoutes).
+	type categoryForm struct {
+		name       string
+		color      string
+		groupIDs   []string
+		stationIDs []string
+	}
+
+	// parseCategoryForm reads and validates the dialog's form. The colour
+	// is checked against the SAME fixed palette the item editor uses
+	// (catalogtypes.ValidItemColor, see ItemColors' own doc comment on why
+	// that allowlist is a real security control: the value flows into a
+	// CSS custom property on the sale screen's category tab). Group and
+	// station ids are checked against what actually exists — a stale
+	// dialog or a tampered form must not be able to link a deactivated
+	// group or an unknown station — and refused as a whole so nothing
+	// half-saves.
+	parseCategoryForm := func(r *http.Request) (categoryForm, string) {
+		_ = r.ParseForm()
+		f := categoryForm{
+			name:  strings.TrimSpace(r.PostFormValue("name")),
+			color: strings.TrimSpace(r.PostFormValue("color")),
+		}
+		if f.name == "" {
+			return f, "categories.error.name_required"
+		}
+		if !catalogtypes.ValidItemColor(f.color) {
+			return f, "categories.error.color_invalid"
+		}
+		for _, id := range r.PostForm["group_id"] {
+			if id = strings.TrimSpace(id); id != "" {
+				f.groupIDs = append(f.groupIDs, id)
+			}
+		}
+		for _, id := range r.PostForm["station_id"] {
+			if id = strings.TrimSpace(id); id != "" {
+				f.stationIDs = append(f.stationIDs, id)
+			}
+		}
+		if len(f.groupIDs) > 0 {
+			groups, err := modRepo.ListActiveModifierGroups(r.Context())
+			if err != nil {
+				return f, "categories.error.update"
+			}
+			known := make(map[string]bool, len(groups))
+			for _, g := range groups {
+				known[g.ID] = true
+			}
+			for _, id := range f.groupIDs {
+				if !known[id] {
+					return f, "categories.error.invalid_selection"
+				}
+			}
+		}
+		if len(f.stationIDs) > 0 {
+			stations, err := posRepo.ListKitchenStations(r.Context())
+			if err != nil {
+				return f, "categories.error.update"
+			}
+			known := make(map[string]bool, len(stations))
+			for _, s := range stations {
+				known[s.ID] = true
+			}
+			for _, id := range f.stationIDs {
+				if !known[id] {
+					return f, "categories.error.invalid_selection"
+				}
+			}
+		}
+		return f, ""
+	}
+
+	// saveCategoryLinks writes the two link sets after the row itself is
+	// saved. Both tables are adminTables (sync_admin_repo.go) with their
+	// own sync-version triggers (023/031), so a satellite picks either
+	// change up on its next admin pull exactly like an item-level link.
+	// Reports false after answering the request itself.
+	saveCategoryLinks := func(w http.ResponseWriter, r *http.Request, id string, f categoryForm) bool {
+		if err := modRepo.SetCategoryModifierGroups(r.Context(), id, f.groupIDs); err != nil {
+			renderCategoryDialogError(w, r, "categories.error.update", 0)
+			return false
+		}
+		if err := posRepo.SetCategoryStationRoutes(r.Context(), id, f.stationIDs); err != nil {
+			renderCategoryDialogError(w, r, "categories.error.update", 0)
+			return false
+		}
+		return true
+	}
+
 	mux.HandleFunc("POST /api/categories", func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := requireManager(w, r)
 		if !ok {
@@ -240,19 +382,21 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		if !requirePrimary(w, r) {
 			return
 		}
-		_ = r.ParseForm()
-		name := strings.TrimSpace(r.PostFormValue("name"))
-		if name == "" {
-			renderCategoryDialogError(w, r, "categories.error.name_required", 0)
+		f, errKey := parseCategoryForm(r)
+		if errKey != "" {
+			renderCategoryDialogError(w, r, errKey, 0)
 			return
 		}
-		id, err := catRepo.CreateCategory(r.Context(), name)
+		id, err := catRepo.CreateCategoryWithColor(r.Context(), f.name, f.color)
 		if err != nil {
 			key := "categories.error.create"
 			if err == data.ErrCategoryNameRequired {
 				key = "categories.error.name_required"
 			}
 			renderCategoryDialogError(w, r, key, 0)
+			return
+		}
+		if !saveCategoryLinks(w, r, id, f) {
 			return
 		}
 		audit(r, actor.ID, id, "category_create")
@@ -268,18 +412,23 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		id := r.PathValue("id")
-		_ = r.ParseForm()
-		name := strings.TrimSpace(r.PostFormValue("name"))
-		if name == "" {
-			renderCategoryDialogError(w, r, "categories.error.name_required", 0)
+		f, errKey := parseCategoryForm(r)
+		if errKey != "" {
+			renderCategoryDialogError(w, r, errKey, 0)
 			return
 		}
-		if err := catRepo.RenameCategory(r.Context(), id, name); err != nil {
+		if err := catRepo.UpdateCategory(r.Context(), id, f.name, f.color); err != nil {
 			key := "categories.error.rename"
-			if err == data.ErrCategoryNameRequired {
+			switch err {
+			case data.ErrCategoryNameRequired:
 				key = "categories.error.name_required"
+			case data.ErrCategoryNotFound:
+				key = "categories.error.not_found"
 			}
 			renderCategoryDialogError(w, r, key, 0)
+			return
+		}
+		if !saveCategoryLinks(w, r, id, f) {
 			return
 		}
 		audit(r, actor.ID, id, "category_rename")

@@ -10,7 +10,9 @@
        - one full-screen {{ template "record_dialog" }} per page, and the
          page owes it the two {{ define }} slots at the bottom of this file.
      All behaviour is web/public/record-dialog.js reading data-* attributes;
-     the only inline script is the pre-existing reorder (ut-docs#1221). */}}
+     the inline scripts are the pre-existing reorder (ut-docs#1221) and, since
+     ut-docs#2284, the dialog's own picker sync (colour tiles + the two
+     checkbox sets), driven by record-dialog.js's record-dialog:open hook. */}}
 {{ define "content" }}
 <div class="page-head">
   <h1>{{ T "categories.title" }} {{ helpLink "categories" }}</h1>
@@ -56,8 +58,16 @@
           data-record-action="/api/categories/{{ .ID }}"
           data-record-destructive-action="/api/categories/{{ .ID }}/active"
           data-field-name="{{ .Name }}"
+          data-field-color="{{ .Color }}"
+          data-groups="{{ .Groups }}"
+          data-stations="{{ .Stations }}"
           data-field-active="{{ if .IsActive }}1{{ else }}0{{ end }}">
-        <td>{{ .Name }}</td>
+        {{/* ut-docs#2284: data-field-color is a plain hidden-input prefill
+             record-dialog.js handles itself; data-groups/data-stations are
+             deliberately NOT data-field-* — a set of same-named checkboxes
+             is not a single form control, so the page's own script ticks
+             them from these on record-dialog:open (see the script below). */}}
+        <td>{{ if .Color }}<span class="swatch-dot category-swatch" style="--swatch: {{ .Color }}" aria-hidden="true"></span> {{ end }}{{ .Name }}</td>
         <td>{{ printf (T "categories.item_count") .ItemCount }}</td>
         <td>{{ if .IsActive }}{{ T "categories.active" }}{{ else }}<span class="muted">{{ T "categories.inactive" }}</span>{{ end }}</td>
         <td class="list-actions">
@@ -163,6 +173,59 @@
   refreshEdgeStates();
 })();
 </script>
+
+<script>
+(function () {
+  'use strict';
+  // ut-docs#2284: the category dialog's three pickers. record-dialog.js
+  // owns open/close/prefill of ordinary fields (the name input and the
+  // hidden colour input, via data-field-*); this script only paints what
+  // that generic prefill can't express — which colour TILE is pressed, and
+  // which of the group/station checkboxes are ticked — inside the
+  // record-dialog:open hook, which fires synchronously BEFORE record-
+  // dialog.js snapshots the form for its discard guard, so a freshly
+  // opened row never reads as "dirty". Colour tiles reuse catalog.html's
+  // #item-color-grid contract exactly (data-color, aria-pressed, one hidden
+  // input actually submitted, the "none" tile clears it).
+  var dialog = document.getElementById('category-dialog');
+  if (!dialog) return;
+  var form = document.getElementById('category-form');
+  var grid = document.getElementById('category-color-grid');
+  var colorInput = document.getElementById('category-color');
+
+  function paintColor() {
+    if (!grid || !colorInput) return;
+    var hex = colorInput.value || '';
+    grid.querySelectorAll('.item-color-tile').forEach(function (btn) {
+      btn.setAttribute('aria-pressed', ((btn.dataset.color || '') === hex) ? 'true' : 'false');
+    });
+  }
+
+  function tick(name, csv) {
+    var want = {};
+    (csv || '').split(',').forEach(function (id) { if (id) want[id] = true; });
+    form.querySelectorAll('input[type="checkbox"][name="' + name + '"]').forEach(function (box) {
+      box.checked = !!want[box.value];
+    });
+  }
+
+  if (grid) {
+    grid.addEventListener('click', function (ev) {
+      var btn = ev.target.closest ? ev.target.closest('.item-color-tile') : null;
+      if (!btn || !colorInput) return;
+      colorInput.value = btn.dataset.color || '';
+      paintColor();
+    });
+  }
+
+  dialog.addEventListener('record-dialog:open', function (ev) {
+    var row = ev.detail && ev.detail.row;
+    paintColor();
+    tick('group_id', row ? row.getAttribute('data-groups') : '');
+    tick('station_id', row ? row.getAttribute('data-stations') : '');
+  });
+})();
+</script>
 {{ end }}
 
 {{/* The two slots record_dialog.html owes to this page — see that partial's
@@ -191,6 +254,68 @@
   <label>{{ T "categories.col.name" }}
     <input type="text" name="name" required placeholder="{{ T "categories.create_placeholder" }}" />
   </label>
+
+  {{/* ut-docs#2284 (a): the category's tab/tile colour — the SAME fixed
+       swatch palette and picker markup as catalog.html's #item-color-grid
+       (catalogtypes.ItemColors, validated server-side by the same
+       ValidItemColor allowlist in categories_page.go's parseCategoryForm),
+       not a free colour picker. #category-color is the one field submitted;
+       the "no colour" tile clears it. Painting which tile is pressed is the
+       page script's job (record-dialog:open). No links inside this form:
+       hx-boost on the form would boost them too and swap a whole page into
+       #category-dialog-msg — hints below are plain text on purpose. */}}
+  <div class="category-dialog-section">
+    <div class="category-dialog-label">{{ T "catalog.color" }}</div>
+    <div id="category-color-grid" class="picker-grid item-color-grid" role="group" aria-label="{{ T "catalog.color" }}">
+      {{ range .root.itemColors }}
+      <button type="button" class="picker-tile item-color-tile" data-color="{{ .Hex }}" aria-pressed="false" title="{{ T .I18nKey }}" style="--swatch: {{ .Hex }}">
+        <span class="swatch-dot" aria-hidden="true"></span>
+        <span>{{ T .I18nKey }}</span>
+      </button>
+      {{ end }}
+      <button type="button" class="picker-tile item-color-tile" data-color="" aria-pressed="true">{{ T "catalog.color.none" }}</button>
+    </div>
+    <input type="hidden" name="color" id="category-color">
+  </div>
+
+  {{/* ut-docs#2284 (b): category-level modifier groups (ADR-0094). Every
+       ticked group is offered for every item in this category at sale time
+       unless the item opts out from its own editor; one checkbox per ACTIVE
+       group in the shop, replace-all on save (SetCategoryModifierGroups). */}}
+  <div class="category-dialog-section">
+    <div class="category-dialog-label">{{ T "catalog.modifiers.title" }}</div>
+    <p class="muted category-dialog-help">{{ T "categories.modifiers.help" }}</p>
+    {{ if .root.groups }}
+    <div class="field-checks category-dialog-checks" role="group" aria-label="{{ T "catalog.modifiers.title" }}">
+      {{ range .root.groups }}
+      <label><input type="checkbox" name="group_id" value="{{ .ID }}"> {{ .Name }}</label>
+      {{ end }}
+    </div>
+    {{ else }}
+    <p class="muted">{{ T "categories.modifiers.none" }}</p>
+    {{ end }}
+  </div>
+
+  {{/* ut-docs#2284 (c): kitchen-printer routing — the SAME
+       category_station_routes rows kitchen_stations.html ticks from the
+       station's side, exposed from the category's side here; an item
+       overrides this from its own editor (item_station_routes). Every
+       station is listed, a disabled one labelled, so a category routed to
+       a since-disabled station keeps its tick rather than silently losing
+       the route on the next save. */}}
+  <div class="category-dialog-section">
+    <div class="category-dialog-label">{{ T "categories.routing.title" }}</div>
+    <p class="muted category-dialog-help">{{ T "categories.routing.help" }}</p>
+    {{ if .root.stations }}
+    <div class="field-checks category-dialog-checks" role="group" aria-label="{{ T "categories.routing.title" }}">
+      {{ range .root.stations }}
+      <label><input type="checkbox" name="station_id" value="{{ .ID }}"> {{ .Name }}{{ if not .Enabled }} <span class="muted">({{ T "kitchenstations.inactive" }})</span>{{ end }}</label>
+      {{ end }}
+    </div>
+    {{ else }}
+    <p class="muted">{{ T "categories.routing.none" }}</p>
+    {{ end }}
+  </div>
 </form>
 {{ end }}
 
