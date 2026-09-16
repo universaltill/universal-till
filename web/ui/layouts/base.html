@@ -88,11 +88,23 @@
         // (pageswap) means no snapshot is even captured; the pagereveal
         // skip covers an engine that fires only one of the two.
         var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
+        // A skipped transition rejects its ready/updateCallbackDone/finished
+        // promises with AbortError ("Transition was skipped") -- by spec,
+        // not a fault -- and an unhandled rejection is a console error on
+        // every skip. Settle all three the moment we hold the object.
+        function quiet(vt) {
+          ['ready', 'updateCallbackDone', 'finished'].forEach(function (k) {
+            if (vt[k] && vt[k].catch) vt[k].catch(function () {});
+          });
+        }
         window.addEventListener('pageswap', function (e) {
-          if (e.viewTransition && reduce && reduce.matches) e.viewTransition.skipTransition();
+          if (!e.viewTransition) return;
+          quiet(e.viewTransition);
+          if (reduce && reduce.matches) e.viewTransition.skipTransition();
         });
         window.addEventListener('pagereveal', function (e) {
           var vt = e.viewTransition; if (!vt) return;
+          quiet(vt);
           if (reduce && reduce.matches) { if (vt.skipTransition) vt.skipTransition(); return; }
           var act = navigation.activation;
           // A reload is not a move anywhere (pull-to-refresh on the tablet,

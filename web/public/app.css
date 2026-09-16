@@ -239,11 +239,17 @@ body.login-screen, body.tracking-screen { padding-inline-start: 0; }
    (probed on the device; NOT the Chromium 152 that merely sits installed
    there), Windows shell WebView2 153.
 
-   The OPT-IN itself is ALSO declared inline in base.html's <head> — Chrome
-   on the pilot tablet read the incoming page's opt-in before this 244K
-   stylesheet had arrived and aborted every transition INTO a till page
-   ("ViewTransition opt-in disabled"); see base.html. The copy here keeps
-   the stylesheet self-describing.
+   The OPT-IN (`@view-transition { navigation: auto }`) lives ONLY in
+   base.html's inline <head> block, not here, for two reasons found on
+   real targets: (1) Chrome on the pilot tablet read the incoming page's
+   opt-in before this 244K stylesheet had arrived and aborted every
+   transition INTO a till page ("ViewTransition opt-in disabled"); (2) the
+   pages that load this file WITHOUT base.html (login, setup, self-order,
+   order tracking) have none of the script's guards -- reduced-motion
+   skip, watchdog, settled promises -- so an opt-in here gave them
+   transitions that surfaced as uncaught "Transition was skipped" errors
+   and, in headless Chromium, never revealed at all. The rules below are
+   inert on a page that has not opted in.
 
    WHAT MOVES: the ROOT snapshot — i.e. the whole document MINUS the two
    named groups below — slides 4% and cross-fades over --ut-motion-ms.
@@ -273,7 +279,6 @@ body.login-screen, body.tracking-screen { padding-inline-start: 0; }
    <html> itself, so `:root ::view-transition-new(x)` can never match.
    RTL mirrors the travel direction through --ut-nav-dir (one variable,
    not two mirrored sets of keyframes), no left/right literal anywhere. */
-@view-transition { navigation: auto; }
 :root { --ut-nav-dir: 1; --ut-motion-ms: 200ms; }
 [dir="rtl"] { --ut-nav-dir: -1; }
 .nav        { view-transition-name: ut-rail; }
@@ -323,7 +328,8 @@ html[data-nav-dir="pop"]::view-transition-old(root) { animation-name: ut-page-ou
    wildcard rather than an enumerated list, so a future motion rule added
    anywhere in app.css is automatically covered too. */
 @media (prefers-reduced-motion: reduce) {
-  @view-transition { navigation: none; }
+  /* (the `@view-transition { navigation: none }` half of this lives next
+     to the opt-in in base.html) */
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
   *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; scroll-behavior: auto !important; }
   /* Progress spinners are essential motion (WCAG 2.3.3 exempts them):

@@ -72,16 +72,22 @@ func extractBlock(t *testing.T, src, marker string) string {
 	return ""
 }
 
-func TestAppCSSDeclaresCrossDocumentViewTransition(t *testing.T) {
+func TestAppCSSDoesNotOptInStandalonePages(t *testing.T) {
 	css := readAppCSS(t)
-	if !strings.Contains(css, "@view-transition { navigation: auto; }") &&
-		!strings.Contains(css, "@view-transition {\n  navigation: auto;\n}") &&
-		!strings.Contains(css, "@view-transition{navigation:auto;}") {
-		// Be liberal about exact whitespace but strict about the two
-		// tokens actually being adjacent in one rule.
-		block := extractBlock(t, css, "@view-transition")
-		if !strings.Contains(block, "navigation: auto") && !strings.Contains(block, "navigation:auto") {
-			t.Fatalf("expected `@view-transition { navigation: auto; }` in app.css (cross-document navigation opt-in), got block: %s", block)
+	// The opt-in lives ONLY in base.html's inline head block: app.css is
+	// also loaded by login/setup/self-order/tracking, which have none of
+	// the script's guards (reduced-motion skip, watchdog, settled promises)
+	// — an opt-in here gave them transitions that surfaced as uncaught
+	// "Transition was skipped" errors and, in headless Chromium, never
+	// revealed at all (CI auth project, 2026-09-16).
+	// Match the RULE (at-rule followed by its block), not the words in a
+	// comment explaining why it is absent.
+	if regexp.MustCompile(`(?m)^\s*@view-transition\s*\{`).MatchString(css) {
+		t.Fatalf("app.css must not contain an @view-transition rule — the opt-in (and its reduced-motion override) belong in base.html's <head> only")
+	}
+	for _, want := range []string{"--ut-motion-ms", "::view-transition-new(root)", "@keyframes ut-page-in"} {
+		if !strings.Contains(css, want) {
+			t.Errorf("app.css must still carry the transition animation rules (%q)", want)
 		}
 	}
 }
@@ -166,7 +172,7 @@ func TestAppCSSReducedMotionBlockCoversEverything(t *testing.T) {
 	css := readAppCSS(t)
 	block := extractBlock(t, css, "@media (prefers-reduced-motion: reduce)")
 
-	if !strings.Contains(block, "navigation: none") {
+	if !strings.Contains(block, "animation: none !important") {
 		t.Errorf("reduced-motion block must set `@view-transition { navigation: none; }` (or equivalent), got: %s", block)
 	}
 	if !strings.Contains(block, "animation-duration: 0s !important") {
@@ -377,11 +383,27 @@ func TestBaseHTMLSkipsTransitionsUnderReducedMotionInJS(t *testing.T) {
 	html := readBaseHTML(t)
 	for _, want := range []string{
 		"window.addEventListener('pageswap'",
-		"if (e.viewTransition && reduce && reduce.matches) e.viewTransition.skipTransition();",
+		"if (reduce && reduce.matches) e.viewTransition.skipTransition();",
 		"if (reduce && reduce.matches) { if (vt.skipTransition) vt.skipTransition(); return; }",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("base.html must skip view transitions in JS under prefers-reduced-motion; missing %q", want)
 		}
+	}
+}
+
+// TestBaseHTMLQuietsSkippedTransitionPromises: skipTransition() rejects
+// the transition's ready/updateCallbackDone/finished promises with
+// AbortError ("Transition was skipped") — by spec — and an unhandled
+// rejection is a console error on every skip (CI's auth project caught
+// it through watchConsole). The script must settle all three.
+func TestBaseHTMLQuietsSkippedTransitionPromises(t *testing.T) {
+	html := readBaseHTML(t)
+	if !strings.Contains(html, "['ready', 'updateCallbackDone', 'finished'].forEach(function (k) {") ||
+		!strings.Contains(html, "if (vt[k] && vt[k].catch) vt[k].catch(function () {});") {
+		t.Fatalf("base.html must attach no-op catch handlers to a view transition's ready/updateCallbackDone/finished before skipping it")
+	}
+	if strings.Count(html, "quiet(") < 3 {
+		t.Fatalf("quiet() must be applied in both the pageswap and the pagereveal handlers")
 	}
 }
