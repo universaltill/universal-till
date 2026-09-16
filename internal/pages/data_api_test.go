@@ -18,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/settings"
 )
 
@@ -208,6 +209,14 @@ func TestResetTransactions_ClearsSalesWhenConfirmed(t *testing.T) {
 	// so (and must NOT claim anything was permanently cleared/deleted).
 	if data == nil || !strings.HasPrefix(msg, "archived 1 sales") {
 		t.Fatalf("expected an archived-count message under data, got %+v", body)
+	}
+	// ut-docs#2281: the settings page's own JS renders an i18n'd notice
+	// from these machine-readable fields rather than the English message
+	// above verbatim.
+	archivedField, _ := data["archived"].(float64)
+	batchID, _ := data["batch_id"].(string)
+	if archivedField != 1 || batchID == "" {
+		t.Fatalf("expected archived=1 and a non-empty batch_id under data, got %+v", body)
 	}
 	var count int
 	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&count); err != nil {
@@ -926,6 +935,143 @@ func TestCleanupCatalog_RemovesObsoleteItemsWhenConfirmed(t *testing.T) {
 	}
 }
 
+// ut-docs#2281 cause B: the plain (no include_active) mode never removes an
+// ACTIVE item, so a wrongly imported catalog (every item active) could not
+// be cleared this way. include_active=1 opts into removing a never-sold
+// ACTIVE item too, and its shortcut_buttons row must cascade away with it
+// (ON DELETE CASCADE, 001_init.sql) — a dangling sale-screen tile pointing
+// at a now-gone item would be exactly the ut-docs#2281 symptom this whole
+// card exists to close.
+func TestCleanupCatalog_IncludeActive_RemovesNeverSoldActiveItemAndCascadesButton(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO items(id,sku,name,base_price,is_active) VALUES('active1','ACT','Wrongly Imported Product',100,1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO shortcut_buttons(barcode,item_id,label) VALUES('BTN-ACT','active1','Wrongly Imported Product')`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := postForm(mux, "/api/data/cleanup-catalog", url.Values{"override_pin": {dataAPITestManagerPIN}, "include_active": {"1"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := dataAPIJSONBody(t, rec)
+	if body["error"] != nil {
+		t.Fatalf("expected error:null, got %+v", body)
+	}
+	respData, _ := body["data"].(map[string]any)
+	removed, _ := respData["removed"].(float64)
+	// itm1 (seedForPages, active, genuinely never sold — it has an
+	// inventory row but no sale_lines/stock_movements) is ALSO in scope
+	// once include_active widens the predicate, so the total can be more
+	// than 1 — the assertion that matters here is 'active1' specifically,
+	// checked below.
+	if respData == nil || removed < 1 {
+		t.Fatalf("expected removed>=1 under data, got %+v", body)
+	}
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE id='active1'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("expected the never-sold active item removed, still found %d rows", count)
+	}
+	var btnCount int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM shortcut_buttons WHERE item_id='active1'`).Scan(&btnCount); err != nil {
+		t.Fatal(err)
+	}
+	if btnCount != 0 {
+		t.Fatalf("expected the item's shortcut_buttons row to cascade-delete, still found %d rows", btnCount)
+	}
+}
+
+// The same never-sold ACTIVE item, without include_active, must be kept —
+// the plain mode stays scoped to already-deactivated items.
+func TestCleanupCatalog_WithoutIncludeActive_KeepsActiveItem(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO items(id,sku,name,base_price,is_active) VALUES('active1','ACT','Wrongly Imported Product',100,1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := postForm(mux, "/api/data/cleanup-catalog", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := dataAPIJSONBody(t, rec)
+	if body["error"] != nil {
+		t.Fatalf("expected error:null, got %+v", body)
+	}
+	respData, _ := body["data"].(map[string]any)
+	removed, _ := respData["removed"].(float64)
+	if respData == nil || removed != 0 {
+		t.Fatalf("expected removed=0 under data (no include_active), got %+v", body)
+	}
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE id='active1'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("expected the active item kept without include_active, got %d rows", count)
+	}
+}
+
+// An active item WITH a sale line must be kept even with include_active=1
+// — sale/stock history is never overridden by the wider mode.
+func TestCleanupCatalog_IncludeActive_KeepsActiveItemWithSaleHistory(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO items(id,sku,name,base_price,is_active) VALUES('active-sold','SOLD','Actually Sold Product',100,1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s-sold','R900','completed','sale','GBP',100,0,0,100,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sale_lines(id,sale_id,line_no,name_snapshot,quantity,unit_price,tax_rate_bp,tax_amount,total_before_tax,total_after_tax,item_id) VALUES('sl-sold','s-sold',1,'Actually Sold Product',1,100,0,0,100,100,'active-sold')`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := postForm(mux, "/api/data/cleanup-catalog", url.Values{"override_pin": {dataAPITestManagerPIN}, "include_active": {"1"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE id='active-sold'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("expected the sold active item kept even with include_active, got %d rows", count)
+	}
+}
+
+// The preview endpoint (GET /api/data/obsolete-items) honours
+// include_active the same way the cleanup POST does.
+func TestGetObsoleteItems_IncludeActiveHonoured(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO items(id,sku,name,base_price,is_active) VALUES('active1','ACT','Wrongly Imported Product',100,1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/data/obsolete-items", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if strings.Contains(rec.Body.String(), "Wrongly Imported Product") {
+		t.Fatalf("expected the active item excluded from the plain preview, got: %s", rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/data/obsolete-items?include_active=1", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Wrongly Imported Product") {
+		t.Fatalf("expected the active item included with include_active=1, got: %s", rec.Body.String())
+	}
+}
+
 // ut-docs#1841 (ADR-0087): a valid manager PIN records the APPROVER's id as
 // the audit row's actor — not the session user checkStepUp actually
 // blocked — with dual attribution (InsertAuditElevated's blocked_actor_id)
@@ -1050,5 +1196,84 @@ func TestDataManagementEndpoints_ValidPIN_AuditRecordsApprover(t *testing.T) {
 				t.Fatalf("audit blocked_actor_id = %v, want the originally-blocked session user %q", blockedActorID, sessionMgrID)
 			}
 		})
+	}
+}
+
+// ut-docs#2281 review finding 1: the LIVE cashier basket is memory-only, so
+// the cleanup predicate's sale_lines/held_sales clauses cannot see it. A
+// wipe with a candidate item still in the basket must be refused (409, an
+// i18n'd message naming the basket) BEFORE any PIN prompt, and must delete
+// nothing — otherwise checkout of that basket would fail sale_lines' item
+// FK. Kiosk basket: same guard, kiosk-specific message, cashier checked
+// first (mirrors demoDataInLiveBasket's documented order).
+func TestCleanupCatalog_RefusesWhileCandidateInLiveBasket(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO items(id,sku,name,base_price,is_active) VALUES('active1','ACT','Wrongly Imported Product',100,1)`); err != nil {
+		t.Fatal(err)
+	}
+	dp.KioskEngine = pos.NewServiceWithResolver(pos.Config{}, nil)
+	dp.KioskEngine.AddLineWithModifiers(pos.BasketLine{SKU: "ACT", Name: "Wrongly Imported Product", ItemID: "active1", PriceCents: 100}, 1, nil)
+
+	rec := postForm(mux, "/api/data/cleanup-catalog", url.Values{"override_pin": {dataAPITestManagerPIN}, "include_active": {"1"}}, nil)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected 409 while the kiosk basket holds a candidate, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "kiosk") || strings.Contains(body, "current basket") {
+		t.Fatalf("expected the kiosk-specific refusal, got %s", body)
+	}
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE id='active1'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("refused cleanup must delete nothing; item rows = %d", count)
+	}
+
+	// Cashier basket wins the message when both hold a candidate.
+	dp.Engine = pos.NewServiceWithResolver(pos.Config{}, nil)
+	dp.Engine.AddLineWithModifiers(pos.BasketLine{SKU: "ACT", Name: "Wrongly Imported Product", ItemID: "active1", PriceCents: 100}, 1, nil)
+	rec = postForm(mux, "/api/data/cleanup-catalog", url.Values{"include_active": {"1"}}, nil)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "current basket") {
+		t.Fatalf("expected the cashier-basket refusal first, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// A basket line whose item the cleanup would NOT touch must not block
+	// it: the guard is about candidates, not any line. In the plain
+	// (inactive-only) mode an ACTIVE item is never a candidate.
+	dp.KioskEngine = nil
+	rec = postForm(mux, "/api/data/cleanup-catalog", url.Values{}, nil)
+	if rec.Code == http.StatusConflict {
+		t.Fatalf("a non-candidate basket line must not block cleanup: %s", rec.Body.String())
+	}
+}
+
+// ut-docs#2281 review finding 2: the manager must approve the count they
+// were shown. Without a PIN, POST with include_active=1 must render the
+// elevation prompt carrying include_active as a hidden field (so the PIN
+// re-POST keeps the mode) and the "_all" summary with the widened count,
+// while the plain mode renders the inactive-only summary.
+func TestCleanupCatalog_ElevationPromptCarriesIncludeActiveAndWidenedSummary(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO items(id,sku,name,base_price,is_active) VALUES('active1','ACT','Wrongly Imported Product',100,1),('inact1','INA','Old Product',100,0)`); err != nil {
+		t.Fatal(err)
+	}
+	rec := postForm(mux, "/api/data/cleanup-catalog", url.Values{"include_active": {"1"}}, nil)
+	body := rec.Body.String()
+	if !strings.Contains(body, `name="include_active"`) || !strings.Contains(body, `value="1"`) {
+		t.Fatalf("elevation prompt must carry include_active=1 as a hidden field: %s", body)
+	}
+	if !strings.Contains(body, "including active ones") {
+		t.Fatalf("expected the widened (_all) summary, got: %s", body)
+	}
+	if strings.Contains(body, "remove 1 ") {
+		t.Fatalf("widened count must include the active item (seed has itm1 + active1 + inact1 candidates), got: %s", body)
+	}
+
+	rec = postForm(mux, "/api/data/cleanup-catalog", url.Values{}, nil)
+	body = rec.Body.String()
+	if strings.Contains(body, "including active ones") || !strings.Contains(body, "inactive product(s)") {
+		t.Fatalf("plain mode must render the inactive-only summary, got: %s", body)
 	}
 }

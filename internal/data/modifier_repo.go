@@ -907,7 +907,7 @@ WHERE item_id = ?
 
 // ReanchorGroupsBeforeBulkItemDelete is the batch form for a caller that
 // deletes items matching a WHERE predicate rather than one known id (e.g.
-// POSRepo.CleanupObsoleteItems' obsoleteItemsWhere). itemIDSubquery must be
+// POSRepo.CleanupObsoleteItems' obsoleteItemsPredicate). itemIDSubquery must be
 // a complete, parameter-free "SELECT id FROM items WHERE ..." SQL string
 // selecting exactly the item ids about to be deleted — pass the SAME
 // subquery text the caller's own DELETE FROM items uses (see pos_repo.go's
