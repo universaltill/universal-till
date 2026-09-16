@@ -659,14 +659,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// bypass.
 			"androidUpdateSessionAuth": androidUpdateSessionAuthorizes(d, r),
 			"printer":                  printerConfig(r.Context(), d),
-			// ADR-0089 Decision 3: the interim Germany carve-out locks the
-			// receipt-policy control to "always" — read from the same
-			// settings row the save handler and printerConfig key off, not
-			// CurrentState, so a country changed via /api/settings/upsert in
-			// this same session renders consistently with what the save
-			// handler will actually accept.
-			"receiptPolicyLocked": receiptPolicyLockedForCountry(all[common.KeyCountry]),
-			"backups":             listBackupsForUI(d, locale),
+			// ADR-0089 addendum (2026-09-16, ut-docs#2286): Decision 3's DE
+			// lock is rescinded — German shops choose freely among the three
+			// policies. This only decides whether the factual advisory shows
+			// under the control, read from the same settings row the save
+			// handler and printerConfig key off (not CurrentState), so a
+			// country changed via /api/settings/upsert in this same session
+			// renders consistently.
+			"receiptPolicyAdvisoryDE": strings.EqualFold(strings.TrimSpace(all[common.KeyCountry]), "DE"),
+			"backups":                 listBackupsForUI(d, locale),
 			// ut-docs#1613: a restore staged in an earlier visit (or before
 			// a page reload) must still offer its restart trigger here —
 			// otherwise the operator who reloads mid-flow lands back on the
