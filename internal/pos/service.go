@@ -67,6 +67,14 @@ type Service struct {
 	// its own OrderType, which is what taxAsker is asked with. What (if
 	// anything) the mode does to tax is entirely up to taxAsker.
 	orderType string
+	// orderTypeChosen (ut-docs#2282) is true once SetOrderType has been
+	// called for the CURRENT sale -- distinguishes "never asked" from
+	// "explicitly chose dine-in" (orderType == "" either way). Drives the
+	// settings-configurable prompt-placement feature: a "before first item"
+	// or "at Pay" prompt gates on this being false. Cleared on every new
+	// sale (resetLocked) and after a completed Tender; set true by
+	// RestoreHeld (a resumed held sale must never re-prompt).
+	orderTypeChosen bool
 	// tableID/tableLabel (ut-docs#820, ADR-0054) are the dining table this
 	// sale is assigned to — both empty when unassigned. tableLabel is
 	// carried alongside the id purely for display (the basket header, the
@@ -393,6 +401,16 @@ type Basket struct {
 	// OrderTypeMixed. With no lines it is the default the next line
 	// inherits, so the control shows the cashier's choice on an empty basket.
 	OrderType string `json:"orderType,omitempty"`
+	// OrderTypeChosen (ut-docs#2282) is true once the cashier has explicitly
+	// set the order type for THIS sale (SetOrderType called at least once
+	// since the last reset/tender), false on a fresh/resumed-empty basket
+	// that has never been asked. See Service.orderTypeChosen's own doc
+	// comment -- this is its published, per-render copy, refreshed by
+	// commitTotalsLocked same as OrderType above. Drives the settings
+	// "before first item"/"at Pay" prompt placements: the sale screen's own
+	// JS reads it off #basket's data attribute to decide whether an
+	// intercept modal is still owed before the action it's about to take.
+	OrderTypeChosen bool `json:"orderTypeChosen,omitempty"`
 	// TableID/TableLabel (ut-docs#820) are the assigned dining table, both
 	// empty when the sale has none.
 	TableID    string `json:"tableId,omitempty"`
@@ -963,6 +981,7 @@ func (s *Service) commitTotalsLocked(snap totalsSnapshot, c computedTotals) {
 	s.basket.CustomerID = snap.customerID
 	s.basket.CustomerName = snap.customerName
 	s.basket.OrderType = SummarizeOrderType(snap.lines, snap.orderType)
+	s.basket.OrderTypeChosen = s.orderTypeChosen
 	s.basket.TableID = snap.tableID
 	s.basket.TableLabel = snap.tableLabel
 	s.basket.Tax = c.tax
@@ -1052,6 +1071,7 @@ func (s *Service) Tender(amount money.Money, method string) (map[string]any, err
 	s.basket = Basket{}
 	s.lines = nil
 	s.orderType = ""
+	s.orderTypeChosen = false
 	s.tableID = ""
 	s.tableLabel = ""
 	s.heldOrigin = HeldOrigin{}
@@ -1110,6 +1130,10 @@ func (s *Service) SetOrderType(orderType string) *Basket {
 	defer s.mu.Unlock()
 	orderType = NormalizeLineOrderType(orderType)
 	s.orderType = orderType
+	// ut-docs#2282: ANY call marks the choice made for this sale, even
+	// picking dine-in explicitly -- the cashier answered the prompt, the
+	// zero value just happens to match what was already the default.
+	s.orderTypeChosen = true
 	for i := range s.lines {
 		s.lines[i].OrderType = orderType
 	}
@@ -1140,6 +1164,17 @@ func (s *Service) SetOrderType(orderType string) *Basket {
 // label's weight, a price-embedded label's single unit) flip whole — a
 // "unit" isn't meaningful there. Tapping the mode the line already has
 // is a no-op.
+//
+// ut-docs#2282/#2309: this method is deliberately KEPT even though the
+// cashier-facing per-line control and its POST /api/pos/line-order-type
+// handler (its only production caller) were removed — the data model it
+// writes through stays for history/reporting/DSFinV-K, and a resumed held
+// sale or a synced legacy peer can still carry genuinely different
+// per-line values. With no production caller left it is only reachable
+// from _test.go files, so `deadcode -test=false` reports it as
+// unreachable: it therefore carries an entry in
+// scripts/ci/deadcode-baseline.txt (the "test-only-reachable" shape that
+// guard's own header documents), NOT because it is dead.
 func (s *Service) SetLineOrderType(key, orderType string) (*Basket, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1419,6 +1454,7 @@ func (s *Service) resetLocked() {
 	s.scanCache = map[string]BasketLine{}
 	s.noSellableVariants = nil
 	s.orderType = ""
+	s.orderTypeChosen = false
 	s.tableID = ""
 	s.tableLabel = ""
 	s.tenderAttemptID = ""

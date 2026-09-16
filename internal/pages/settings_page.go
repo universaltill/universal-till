@@ -807,6 +807,39 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "plugins.settings.saved"))
 	})
 
+	// Dine-in/takeaway prompt placement (ut-docs#2282): WHEN/WHERE the sale
+	// screen asks the cashier -- top of basket (always visible, the
+	// pre-this-card default), before the first item lands in an empty
+	// basket, or deferred until Pay. Same elevation+audit shape as
+	// order-no-scheme just above, and the same live-republish-after-write
+	// pattern as display-mode (further down this file): the setting must
+	// take effect on THIS till immediately, not just after a restart.
+	mux.HandleFunc("POST /api/settings/order-type-prompt", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = r.ParseForm()
+		mode := strings.TrimSpace(r.Form.Get("mode"))
+		if mode != data.OrderTypePromptModeTop && mode != data.OrderTypePromptModeBeforeItem && mode != data.OrderTypePromptModeAtPay {
+			http.Error(w, "mode must be top, before_item, or at_pay", http.StatusBadRequest)
+			return
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/settings/order-type-prompt", "#order-type-prompt-msg",
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.order_type_prompt"), httpx.T(locale, "settings.order_type_prompt.mode_"+mode)),
+				[]elevationHiddenField{{Name: "mode", Value: mode}}, elev)
+			return
+		}
+		if err := d.Settings.Set(r.Context(), data.OrderTypePromptModeKey, mode); err != nil {
+			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+			return
+		}
+		httpx.InitOrderTypePromptMode(mode)
+		settingsAudit(r, posRepo, elev, "settings", data.OrderTypePromptModeKey, "order_type_prompt_changed",
+			map[string]any{"mode": mode})
+		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "plugins.settings.saved"))
+	})
+
 	// Per-provider fee rules (B4): percent + fixed per transaction, feeding
 	// the checkout cost hints. Stored as JSON per method.
 	mux.HandleFunc("POST /api/settings/payments-fee", func(w http.ResponseWriter, r *http.Request) {
@@ -2807,6 +2840,17 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				}
 				setSessionCookie(w, "", -1)
 			}
+		case data.OrderTypePromptModeKey:
+			// ut-docs#2282, same ut-docs#2121 class of gap as display.mode
+			// just above: this generic key/value door needs the identical
+			// live-republish the dedicated POST /api/settings/order-type-
+			// prompt handler does right after its own d.Settings.Set, or the
+			// sale screen's data-order-type-prompt-mode attribute (and so
+			// the intercept behaviour it drives) stays stale on THIS till
+			// until it restarts. InitOrderTypePromptMode already falls back
+			// to "top" for anything not one of the three valid values, so no
+			// extra validation is needed here.
+			httpx.InitOrderTypePromptMode(value)
 		}
 		settingsRespondSaved(w, r, elev)
 	})

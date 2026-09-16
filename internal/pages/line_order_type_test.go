@@ -14,97 +14,55 @@ import (
 )
 
 // ut-docs#1181 / ADR-0073 — page-layer wiring for per-line order type.
+//
+// ut-docs#2282/#2309 (product-owner scope change, outcome 1 taken): the
+// cashier-facing per-line control and its POST /api/pos/line-order-type
+// HTTP endpoint are REMOVED (order type is sale-level only now) — the
+// handler-level tests that drove that endpoint directly
+// (TestLineOrderTypeHandler_FlipsOneLineByKey,
+// TestLineOrderTypeHandler_SplitsOneUnitOfMultiQtyLine,
+// TestTender_PersistsPerLineOrderTypes,
+// TestTender_DefaultTakeawayButLineDineIn_PersistsDineIn,
+// TestLineOrderType_ClaimReleasedWhenBasketTurnsAllTakeaway) went with it.
+// Everything below this point exercises the DATA MODEL the issue comment
+// says to keep (sale_lines.order_type, journal replay, kitchen tickets,
+// receipts, sale.completed) — still reachable via pos.Service.SetLineOrderType
+// directly (internal/pos/order_type_line_test.go) for a resumed held sale or
+// a synced legacy peer, just no longer from a cashier-facing HTTP control.
 
-// POST /api/pos/line-order-type flips ONE line by key, leaves the rest and
-// the default alone, and renders the basket with the mixed summary.
-func TestLineOrderTypeHandler_FlipsOneLineByKey(t *testing.T) {
+// Review (ut-docs#2282): the removal above deleted tests, it never added one
+// that PINS the removal — a re-added handler (or a revert of that hunk)
+// would have gone unnoticed by the Go suite, since the e2e spec only checks
+// that no markup renders a control, not that the route is gone. This is the
+// endpoint half of that contract: POST /api/pos/line-order-type must 404
+// (nothing registers it any more), while /api/pos/order-type — the
+// sale-level endpoint the basket-top toggle AND the new #2282 intercept
+// modal both post to — must still be registered and working. Kept as one
+// test so a future "let's put the per-line control back" lands on a single,
+// self-explaining failure.
+func TestLineOrderTypeEndpointIsGone_SaleLevelEndpointRemains(t *testing.T) {
 	mux, dp := newPOSTestDeps(t)
 	posPostForm(mux, "/api/pos/scan", "code=PLAIN")
-	posPostForm(mux, "/api/pos/scan", "code=VAR")
-	b := dp.Engine.Basket()
-	if len(b.Lines) != 2 {
-		t.Fatalf("seed lines = %d", len(b.Lines))
-	}
-	rec := posPostForm(mux, "/api/pos/line-order-type", "key="+b.Lines[0].LineKey+"&order_type=takeaway")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-	b = dp.Engine.Basket()
-	if b.Lines[0].OrderType != pos.OrderTypeTakeaway || b.Lines[1].OrderType != "" {
-		t.Fatalf("line modes = %q/%q, want takeaway/dine-in", b.Lines[0].OrderType, b.Lines[1].OrderType)
-	}
-	if b.OrderType != pos.OrderTypeMixed {
-		t.Fatalf("summary = %q, want mixed", b.OrderType)
-	}
-	if dp.Engine.OrderType() != "" {
-		t.Fatalf("default changed to %q by a per-line edit", dp.Engine.OrderType())
-	}
-	body := rec.Body.String()
-	// Per-line control renders on every line, keyed by LineKey, and the
-	// basket shows the mixed status + both bulk actions.
-	if !strings.Contains(body, `data-testid="line-order-type-`) {
-		t.Fatalf("expected per-line order-type controls in the basket, got: %s", body)
-	}
-	if !strings.Contains(body, `hx-post="/api/pos/line-order-type"`) {
-		t.Fatalf("expected the per-line control to post to /api/pos/line-order-type, got: %s", body)
-	}
-	if !strings.Contains(body, `data-testid="order-type-mixed"`) {
-		t.Fatalf("expected the mixed status marker, got: %s", body)
-	}
-	if !strings.Contains(body, `hx-sync="#basket:replace"`) {
-		t.Fatalf("expected hx-sync race guard, got: %s", body)
-	}
-	// Unknown value is a 400, not a silent clamp (ADR-0073 D2 "rejects an
-	// unknown value at the HTTP boundary").
-	rec = posPostForm(mux, "/api/pos/line-order-type", "key="+b.Lines[0].LineKey+"&order_type=mixed")
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("mixed as a line value: expected 400, got %d", rec.Code)
-	}
-	// Unknown key: basket re-rendered unchanged, 200 (a stale page's tap
-	// after a remove must not error the whole basket).
-	rec = posPostForm(mux, "/api/pos/line-order-type", "key=nope&order_type=takeaway")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("unknown key: expected 200 re-render, got %d", rec.Code)
-	}
-}
 
-// The whole-basket control still converts every line (bulk) and the
-// tender persists each line's own mode + derived header.
-func TestTender_PersistsPerLineOrderTypes(t *testing.T) {
-	mux, dp := newPOSTestDeps(t)
-	posPostForm(mux, "/api/pos/scan", "code=PLAIN")
-	posPostForm(mux, "/api/pos/scan", "code=VAR")
-	b := dp.Engine.Basket()
-	posPostForm(mux, "/api/pos/line-order-type", "key="+b.Lines[1].LineKey+"&order_type=takeaway")
+	rec := posPostForm(mux, "/api/pos/line-order-type",
+		"key="+dp.Engine.Basket().Lines[0].LineKey+"&order_type=takeaway")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("POST /api/pos/line-order-type = %d, want 404: the per-line "+
+			"cashier control was withdrawn by ut-docs#2282/#2309 (order type is "+
+			"sale-level only) — re-registering this route needs a product-owner "+
+			"decision and a superseding ADR, not just a handler", rec.Code)
+	}
+	// ...and the line it names is untouched by that rejected request.
+	if got := dp.Engine.Basket().Lines[0].OrderType; got != "" {
+		t.Fatalf("line order type = %q after a 404'd request, want unchanged", got)
+	}
 
-	body := `{"payments":[{"method_id":"cash","amount":100000}]}`
-	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("tender: %d %s", rec.Code, rec.Body.String())
+	// The sale-level endpoint is still there and still flips every line.
+	if rec = posPostForm(mux, "/api/pos/order-type", "order_type=takeaway"); rec.Code != http.StatusOK {
+		t.Fatalf("POST /api/pos/order-type = %d, want 200", rec.Code)
 	}
-	var header string
-	if err := dp.Db.QueryRow(`SELECT order_type FROM sales WHERE status='completed'`).Scan(&header); err != nil {
-		t.Fatal(err)
-	}
-	if header != pos.OrderTypeMixed {
-		t.Fatalf("persisted header = %q, want mixed", header)
-	}
-	rows, err := dp.Db.Query(`SELECT sku_snapshot, order_type FROM sale_lines ORDER BY line_no`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	got := map[string]string{}
-	for rows.Next() {
-		var sku, ot string
-		_ = rows.Scan(&sku, &ot)
-		got[sku] = ot
-	}
-	if got["PLAIN"] != "" || got["VAR"] != pos.OrderTypeTakeaway {
-		t.Fatalf("persisted line modes = %v", got)
+	if got := dp.Engine.Basket().Lines[0].OrderType; got != pos.OrderTypeTakeaway {
+		t.Fatalf("line order type after the sale-level toggle = %q, want takeaway", got)
 	}
 }
 
@@ -319,35 +277,6 @@ func TestRenderReceipt_MixedSaleMarksLines_UniformUnchanged(t *testing.T) {
 	}
 }
 
-// Review B1 (ut-docs#1181): the live tender must persist the basket's
-// DERIVED summary, never the default-for-new-lines. Otherwise "bulk
-// Takeaway → scan → flip the line back to dine-in" tenders a dine-in-taxed
-// line under a takeaway header, which CompleteSale's legacy rule would then
-// rewrite to takeaway.
-func TestTender_DefaultTakeawayButLineDineIn_PersistsDineIn(t *testing.T) {
-	mux, dp := newPOSTestDeps(t)
-	posPostForm(mux, "/api/pos/order-type", "order_type=takeaway")
-	posPostForm(mux, "/api/pos/scan", "code=PLAIN")
-	b := dp.Engine.Basket()
-	posPostForm(mux, "/api/pos/line-order-type", "key="+b.Lines[0].LineKey+"&order_type=")
-	if dp.Engine.OrderType() != pos.OrderTypeTakeaway || dp.Engine.Basket().OrderType != "" {
-		t.Fatalf("seed: default=%q summary=%q", dp.Engine.OrderType(), dp.Engine.Basket().OrderType)
-	}
-	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender", strings.NewReader(`{"payments":[{"method_id":"cash","amount":100000}]}`))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("tender: %d %s", rec.Code, rec.Body.String())
-	}
-	var header, line string
-	_ = dp.Db.QueryRow(`SELECT order_type FROM sales WHERE status='completed'`).Scan(&header)
-	_ = dp.Db.QueryRow(`SELECT order_type FROM sale_lines`).Scan(&line)
-	if header != "" || line != "" {
-		t.Fatalf("persisted header=%q line=%q, want dine-in/dine-in", header, line)
-	}
-}
-
 // Second-round review BLOCKER-1 (ut-docs#1181): a pre-ADR-0073 peer's
 // journaled RETURN has header "" and untyped lines. Its lines must inherit
 // the original sale's persisted modes on replay, or the per-mode refund
@@ -377,83 +306,5 @@ func TestApplyJournal_LegacyReturnInheritsOriginalLineModes(t *testing.T) {
 	}
 	if returned[data.RefundLineKey("itm1", "", 100, pos.OrderTypeTakeaway)] != 1 {
 		t.Fatalf("returned pool = %v, want the unit under the takeaway key", returned)
-	}
-}
-
-// ut-docs#1390 × ADR-0073 D5: when a per-line flip or a void turns the
-// basket all-takeaway, the engine clears the table AND the persisted
-// table_claims row must be released, or the table reads occupied with
-// nothing on it.
-func TestLineOrderType_ClaimReleasedWhenBasketTurnsAllTakeaway(t *testing.T) {
-	mux, dp := newPOSTestDeps(t)
-	t1 := createTestTable(t, dp, "T1")
-	posPostForm(mux, "/api/pos/scan", "code=PLAIN")
-	posPostForm(mux, "/api/pos/scan", "code=VAR")
-	if rec := posPostForm(mux, "/api/pos/table", "table_id="+t1); rec.Code != http.StatusOK {
-		t.Fatalf("assign: %d", rec.Code)
-	}
-	if !tableOccupied(t, dp, t1) {
-		t.Fatal("T1 should be claimed")
-	}
-	b := dp.Engine.Basket()
-	posPostForm(mux, "/api/pos/line-order-type", "key="+b.Lines[0].LineKey+"&order_type=takeaway")
-	if !tableOccupied(t, dp, t1) {
-		t.Fatal("mixed basket must keep its claim")
-	}
-	posPostForm(mux, "/api/pos/line-order-type", "key="+b.Lines[1].LineKey+"&order_type=takeaway")
-	if dp.Engine.TableID() != "" || tableOccupied(t, dp, t1) {
-		t.Fatalf("all-takeaway via per-line flip: table=%q occupied=%v, want cleared+released", dp.Engine.TableID(), tableOccupied(t, dp, t1))
-	}
-	// Void path: dine-in + takeaway, table, void the dine-in line.
-	posPostForm(mux, "/api/pos/reset", "")
-	posPostForm(mux, "/api/pos/scan", "code=PLAIN")
-	posPostForm(mux, "/api/pos/scan", "code=VAR")
-	b = dp.Engine.Basket()
-	posPostForm(mux, "/api/pos/line-order-type", "key="+b.Lines[1].LineKey+"&order_type=takeaway")
-	posPostForm(mux, "/api/pos/table", "table_id="+t1)
-	if !tableOccupied(t, dp, t1) {
-		t.Fatal("T1 should be claimed (mixed)")
-	}
-	posPostForm(mux, "/api/pos/remove", "key="+b.Lines[0].LineKey)
-	if dp.Engine.TableID() != "" || tableOccupied(t, dp, t1) {
-		t.Fatalf("all-takeaway via void: table=%q occupied=%v, want cleared+released", dp.Engine.TableID(), tableOccupied(t, dp, t1))
-	}
-}
-
-// Product owner 2026-09-02: "2 americano, one takeaway and the other one
-// dine in" — through the real handler, one tap on the per-line icon of a
-// qty-2 line yields two lines, and the tender persists them separately
-// with each line's own tax rate.
-func TestLineOrderTypeHandler_SplitsOneUnitOfMultiQtyLine(t *testing.T) {
-	mux, dp := newPOSTestDeps(t)
-	posPostForm(mux, "/api/pos/scan", "code=PLAIN&qty=2")
-	b := dp.Engine.Basket()
-	if len(b.Lines) != 1 || b.Lines[0].Qty != 2 {
-		t.Fatalf("seed: %+v", b.Lines)
-	}
-	rec := posPostForm(mux, "/api/pos/line-order-type", "key="+b.Lines[0].LineKey+"&order_type=takeaway")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("flip: %d %s", rec.Code, rec.Body.String())
-	}
-	b = dp.Engine.Basket()
-	if len(b.Lines) != 2 || b.Lines[0].Qty != 1 || b.Lines[1].Qty != 1 || b.Lines[0].OrderType != "" || b.Lines[1].OrderType != pos.OrderTypeTakeaway {
-		t.Fatalf("after one tap: %+v", b.Lines)
-	}
-	if strings.Count(rec.Body.String(), `data-testid="line-order-type-`) < 4 {
-		t.Fatalf("expected two rendered lines each with a control, got: %s", rec.Body.String())
-	}
-	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender", strings.NewReader(`{"payments":[{"method_id":"cash","amount":100000}]}`))
-	req.Header.Set("Content-Type", "application/json")
-	rec = httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("tender: %d %s", rec.Code, rec.Body.String())
-	}
-	var n int
-	_ = dp.Db.QueryRow(`SELECT COUNT(*) FROM sale_lines`).Scan(&n)
-	var header string
-	_ = dp.Db.QueryRow(`SELECT order_type FROM sales WHERE status='completed'`).Scan(&header)
-	if n != 2 || header != pos.OrderTypeMixed {
-		t.Fatalf("persisted lines=%d header=%q, want 2/mixed", n, header)
 	}
 }
