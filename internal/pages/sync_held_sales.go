@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -21,7 +22,13 @@ import (
 // sync_tables_claim.go does for a claim, and reads back from for its Open
 // orders page:
 //
-//   - POST /api/sync/held-sales/upsert -- the full row. Runs
+//   - POST /api/sync/held-sales/upsert -- the full row. A blank incoming
+//     updated_at is stamped with THIS (primary) process's own clock before
+//     the guard runs (ut-docs#2271), never the replica's -- the primary is
+//     the single serialization point below, so it is also the one clock
+//     the guard should ever measure two tills' writes against; the applied
+//     value is handed back on the wire (syncHeldSaleUpsertResult.UpdatedAt)
+//     so the replica can mirror the exact value locally. Runs
 //     HeldSalesRepo.UpsertIfNewer, a predicate-guarded upsert (`WHERE
 //     held_sales.updated_at <= excluded.updated_at`), so two tills pushing
 //     an update to the SAME order close together serialize on the primary's
@@ -90,9 +97,14 @@ func heldSaleFromSyncRow(row syncHeldSaleRow) data.HeldSale {
 
 // syncHeldSaleUpsertResult is the wire form of an upsert outcome.
 // applied=false on a 200 is the predicate refusal: the primary already
-// holds a NEWER write for this id.
+// holds a NEWER write for this id. UpdatedAt (ut-docs#2271) is the value
+// the primary actually stored -- either the caller's own, when it sent
+// one, or the primary's own clock, when it left it blank -- so the caller
+// can mirror the row locally under the exact value the primary holds
+// rather than re-deriving one from its own, possibly skewed, clock.
 type syncHeldSaleUpsertResult struct {
-	Applied bool `json:"applied"`
+	Applied   bool   `json:"applied"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 // syncHeldSaleDeleteRequest is POST .../delete's body.
@@ -132,6 +144,17 @@ func registerSyncHeldSales(mux *http.ServeMux, d *common.Deps) {
 			writeSyncOrdersJSON(w, http.StatusBadRequest, nil, "id and payload required")
 			return
 		}
+		// ut-docs#2271: a blank incoming updated_at is stamped with THIS
+		// process's own clock -- the primary is the single serialization
+		// point for this table already (that's what makes the guard below
+		// safe), so it is also the one clock two tills' predicate comparison
+		// should ever be measured against, closing the clock-skew residual
+		// ADR-0093 Decision 2 accepted. A caller-supplied value (a direct/
+		// test caller, or a future non-blank use) is still honoured as-is.
+		in.UpdatedAt = strings.TrimSpace(in.UpdatedAt)
+		if in.UpdatedAt == "" {
+			in.UpdatedAt = time.Now().UTC().Format(heldSaleTimeLayout)
+		}
 		applied, err := repo.UpsertIfNewer(r.Context(), heldSaleFromSyncRow(in))
 		if err != nil {
 			logging.L().Errorf("sync held sale upsert %s from %s: %v", in.ID, till.Name, err)
@@ -141,7 +164,7 @@ func registerSyncHeldSales(mux *http.ServeMux, d *common.Deps) {
 		if !applied {
 			logging.L().Debugf("sync held sale upsert %s from %s: refused, a newer write already holds the row (ADR-0093)", in.ID, till.Name)
 		}
-		writeSyncOrdersJSON(w, http.StatusOK, syncHeldSaleUpsertResult{Applied: applied}, nil)
+		writeSyncOrdersJSON(w, http.StatusOK, syncHeldSaleUpsertResult{Applied: applied, UpdatedAt: in.UpdatedAt}, nil)
 	})
 
 	// Delete by id. Idempotent -- a delete with nothing to delete is still

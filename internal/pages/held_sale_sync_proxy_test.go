@@ -43,10 +43,18 @@ type heldSaleProxyPrimary struct {
 	lastAuth    atomic.Value
 	lastUpsert  atomic.Value // syncHeldSaleRow
 	lastDelete  atomic.Value // string id
+	lastUpdated atomic.Value // string, the updated_at this fake primary answered with
 	applied     bool
 	listRows    []syncHeldSaleRow
 }
 
+// newHeldSaleProxyPrimary's fake upsert handler mimics the real primary's
+// own stamping (ut-docs#2271, sync_held_sales.go): a blank incoming
+// updated_at is stamped with THIS fake primary's clock, never the caller's,
+// and the applied value is always the one handed back on the wire -- so a
+// test asserting the replica's local mirror matches "the primary's value"
+// can read it from lastUpdated rather than from whatever (if anything) it
+// sent.
 func newHeldSaleProxyPrimary(t *testing.T, applied bool, listRows ...syncHeldSaleRow) *heldSaleProxyPrimary {
 	t.Helper()
 	p := &heldSaleProxyPrimary{applied: applied, listRows: listRows}
@@ -59,7 +67,12 @@ func newHeldSaleProxyPrimary(t *testing.T, applied bool, listRows ...syncHeldSal
 			var row syncHeldSaleRow
 			_ = json.NewDecoder(r.Body).Decode(&row)
 			p.lastUpsert.Store(row)
-			fmt.Fprintf(w, `{"data":{"applied":%v},"error":null}`, p.applied)
+			updatedAt := row.UpdatedAt
+			if updatedAt == "" {
+				updatedAt = time.Now().UTC().Format(heldSaleTimeLayout)
+			}
+			p.lastUpdated.Store(updatedAt)
+			fmt.Fprintf(w, `{"data":{"applied":%v,"updated_at":%q},"error":null}`, p.applied, updatedAt)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/sync/held-sales/delete":
 			p.deleteCalls.Add(1)
 			var in syncHeldSaleDeleteRequest
@@ -145,8 +158,12 @@ func TestHeldSaleWriteThrough_ReplicaUpsertsOnPrimaryAndMirrorsLocally(t *testin
 	if sent.ID != "h1" || sent.Label != "Table 4" || sent.TotalMinor != 1250 || sent.LineCount != 3 || sent.Payload != `{"lines":[]}` {
 		t.Fatalf("the full row must reach the primary, got %+v", sent)
 	}
-	if sent.UpdatedAt == "" {
-		t.Fatal("the write-through must stamp updated_at on the wire -- it is the value the primary's guard compares")
+	if sent.UpdatedAt != "" {
+		t.Fatalf("the write-through must NOT pre-stamp updated_at on the wire (ut-docs#2271) -- this till's own clock is exactly what let a slow-clocked till lose the guard to a fast-clocked one; the PRIMARY is the one clock that stamps it now, got %q", sent.UpdatedAt)
+	}
+	primaryUpdatedAt, _ := primary.lastUpdated.Load().(string)
+	if primaryUpdatedAt == "" {
+		t.Fatal("the fake primary must have stamped and reported an updated_at")
 	}
 	// Mirrored locally, carrying the SAME updated_at the primary now holds,
 	// so this till's own strip / popup / Open orders page still read it even
@@ -155,8 +172,8 @@ func TestHeldSaleWriteThrough_ReplicaUpsertsOnPrimaryAndMirrorsLocally(t *testin
 	if !ok || got.Payload != `{"lines":[]}` {
 		t.Fatalf("a primary-applied write must be mirrored into the local row, got ok=%v %+v", ok, got)
 	}
-	if got.UpdatedAt != sent.UpdatedAt {
-		t.Fatalf("the local mirror must carry the primary's updated_at %q, got %q", sent.UpdatedAt, got.UpdatedAt)
+	if got.UpdatedAt != primaryUpdatedAt {
+		t.Fatalf("the local mirror must carry the primary's updated_at %q, got %q", primaryUpdatedAt, got.UpdatedAt)
 	}
 	// ADR-0093 Amendment A: a mirror of a primary-applied write is marked
 	// confirmed-on-primary, so a later successful list can tell it apart
@@ -261,8 +278,81 @@ func TestHeldSaleWriteThrough_ReplicaFallsBackWhenPrimaryAnswersMalformedBody(t 
 	}))
 	defer bad.Close()
 	setReplicaSettings(t, dp.Settings, bad.URL, "b-123")
-	if ok, _ := upsertHeldSaleOnPrimary(context.Background(), dp, heldSaleProxyClient, proxyTestHeldSale); ok {
+	if ok, _, _ := upsertHeldSaleOnPrimary(context.Background(), dp, heldSaleProxyClient, proxyTestHeldSale); ok {
 		t.Fatal("a 200 with a null data object must report ok=false")
+	}
+}
+
+// TestHeldSaleWriteThrough_PreFixPrimaryOmittingUpdatedAtStillMirrors is the
+// mixed-version window of a ut-docs#2271 rollout (independent review): a
+// REPLICA on this version talking to a primary still on the PRE-#2271
+// build. That older primary applies the write and answers
+// `{"applied":true}` with NO updated_at field at all, which decodes to "".
+//
+// The write itself is already correct against such a primary -- its
+// UpsertIfNewer COALESCEs a blank updated_at to its OWN datetime('now'),
+// so the guard is measured against the primary's clock either way, which
+// is the entire point of the fix. What must not happen is the replica
+// treating that missing field as an authoritative "" and mirroring a
+// blank/garbage timestamp locally: the local row must still land, still be
+// marked primary_synced, and still carry a usable updated_at.
+func TestHeldSaleWriteThrough_PreFixPrimaryOmittingUpdatedAtStillMirrors(t *testing.T) {
+	_, dp := newPOSTestDeps(t)
+	repo := data.NewHeldSalesRepo(dp.Db)
+	var sent atomic.Value
+	// A pre-#2271 primary: applies, reports applied only, never updated_at.
+	old := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var row syncHeldSaleRow
+		_ = json.NewDecoder(r.Body).Decode(&row)
+		sent.Store(row)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"data":{"applied":true},"error":null}`)
+	}))
+	defer old.Close()
+	setReplicaSettings(t, dp.Settings, old.URL, "b-123")
+
+	outcome, err := heldSaleWriteThrough(context.Background(), dp, repo, proxyTestHeldSale)
+	if err != nil || outcome != heldSaleSyncedPrimary {
+		t.Fatalf("an applied write must still report synced-on-primary: outcome=%v err=%v", outcome, err)
+	}
+	// Still no replica-side stamping, even against an old primary -- the
+	// blank is exactly what makes that primary's own COALESCE take over.
+	if row, _ := sent.Load().(syncHeldSaleRow); row.UpdatedAt != "" {
+		t.Fatalf("the wire row must stay unstamped against a pre-fix primary too, got %q", row.UpdatedAt)
+	}
+	got, ok := heldSaleRowOnLocal(t, dp, "h1")
+	if !ok || got.Payload != `{"lines":[]}` {
+		t.Fatalf("the row must still be mirrored locally, got ok=%v %+v", ok, got)
+	}
+	if !got.PrimarySynced {
+		t.Fatalf("an applied write is a confirmed sighting on the primary, got %+v", got)
+	}
+	if strings.TrimSpace(got.UpdatedAt) == "" {
+		t.Fatalf("a primary that omits updated_at must not leave the local mirror with a blank one, got %+v", got)
+	}
+	if _, err := time.Parse(heldSaleTimeLayout, got.UpdatedAt); err != nil {
+		t.Fatalf("the mirrored updated_at %q must still be a usable %s timestamp: %v", got.UpdatedAt, heldSaleTimeLayout, err)
+	}
+
+	// And the case that actually distinguishes "report nothing" from
+	// "report a blank": a caller that DID supply an updated_at. The old
+	// primary stores that value verbatim (its COALESCE only fires on a
+	// blank), so the local mirror must keep it too -- a missing field on
+	// the wire must never be read as an authoritative "" that silently
+	// re-derives the row's timestamp from this till's own clock, which is
+	// the very thing ut-docs#2271 set out to stop.
+	explicit := proxyTestHeldSale
+	explicit.ID = "h-explicit"
+	explicit.UpdatedAt = "2026-09-15 10:00:00"
+	if _, err := heldSaleWriteThrough(context.Background(), dp, repo, explicit); err != nil {
+		t.Fatal(err)
+	}
+	gotExplicit, ok := heldSaleRowOnLocal(t, dp, "h-explicit")
+	if !ok {
+		t.Fatal("the caller-timestamped row must be mirrored locally")
+	}
+	if gotExplicit.UpdatedAt != "2026-09-15 10:00:00" {
+		t.Fatalf("against a primary that reports no updated_at, the local mirror must keep the value the caller sent (which is what that primary stored), got %q", gotExplicit.UpdatedAt)
 	}
 }
 

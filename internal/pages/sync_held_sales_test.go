@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
@@ -232,5 +233,77 @@ func TestSyncHeldSales_StaleUpsertIsRefused(t *testing.T) {
 	}
 	if got, _, _ := data.NewHeldSalesRepo(dp.Db).Get(t.Context(), "h1"); got.Payload != `{"v":"retry"}` {
 		t.Fatalf("the retry must have landed, got %+v", got)
+	}
+}
+
+// TestSyncHeldSales_BlankUpdatedAtIsStampedByPrimaryClock is ut-docs#2271,
+// closing an ADR-0093 Decision 2 accepted residual: a replica used to
+// stamp updated_at with its OWN wall clock before pushing a write, so a
+// genuinely newer edit from a slow-clocked till could lose the guard to an
+// older edit from a fast-clocked one (refused cleanly, but still the wrong
+// outcome). The fix is that a replica going through the real write-through
+// path (held_sale_sync_proxy.go's heldSaleWriteThrough) never sends
+// updated_at at all any more -- this pins the PRIMARY side of that fix: a
+// blank incoming updated_at is stamped with the primary's OWN clock (the
+// single serialization point the guard already depends on), and the
+// stamped value is handed back on the wire so a replica can mirror the
+// row locally under the exact value the primary holds.
+func TestSyncHeldSales_BlankUpdatedAtIsStampedByPrimaryClock(t *testing.T) {
+	mux, dp := newSyncHeldSalesTestDeps(t)
+	seedSyncOrdersTill(t, dp, "Till 2", "bearer-t2")
+
+	before := time.Now().UTC()
+	row := syncHeldSaleRow{ID: "h1", Label: "Table 4", Payload: `{"lines":[]}`, LineCount: 1, TotalMinor: 100}
+	// UpdatedAt deliberately left blank -- exactly what heldSaleWriteThrough
+	// now sends, never a caller/replica-stamped value.
+	rec := postSyncHeldSaleJSON(mux, "upsert", upsertBody(t, row), "bearer-t2")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("upsert: status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	res := decodeSyncHeldSaleUpsert(t, rec)
+	if !res.Applied {
+		t.Fatalf("a fresh upsert with a blank updated_at must still apply, got %+v", res)
+	}
+	if res.UpdatedAt == "" {
+		t.Fatal("the primary must report the value it actually stamped, so a replica can mirror it exactly")
+	}
+	stamped, err := time.Parse(heldSaleTimeLayout, res.UpdatedAt)
+	if err != nil {
+		t.Fatalf("stamped updated_at %q must parse as %s: %v", res.UpdatedAt, heldSaleTimeLayout, err)
+	}
+	if stamped.Before(before.Add(-2 * time.Second)) {
+		t.Fatalf("the stamped updated_at %v must be close to this process's own clock (test ran at %v) -- it must come from the PRIMARY, never an unrelated/caller clock", stamped, before)
+	}
+
+	got, ok, err := data.NewHeldSalesRepo(dp.Db).Get(t.Context(), "h1")
+	if err != nil || !ok {
+		t.Fatalf("Get h1: ok=%v err=%v", ok, err)
+	}
+	if got.UpdatedAt != res.UpdatedAt {
+		t.Fatalf("the stored row must hold exactly the stamped/reported value, got %q want %q", got.UpdatedAt, res.UpdatedAt)
+	}
+
+	// A second blank-timestamped push, moments later, is measured against
+	// the primary's own clock again -- never against whatever a replica's
+	// clock might have forged -- and must never regress behind the first.
+	second := syncHeldSaleRow{ID: "h1", Label: "Table 4", Payload: `{"v":"second"}`, LineCount: 1, TotalMinor: 200}
+	rec = postSyncHeldSaleJSON(mux, "upsert", upsertBody(t, second), "bearer-t2")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second upsert: status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	res2 := decodeSyncHeldSaleUpsert(t, rec)
+	if !res2.Applied {
+		t.Fatalf("a second blank-timestamped upsert must apply (equal-or-later always applies), got %+v", res2)
+	}
+	if res2.UpdatedAt < res.UpdatedAt {
+		t.Fatalf("the primary's own second stamp %q must never be earlier than its first %q", res2.UpdatedAt, res.UpdatedAt)
+	}
+
+	// A caller-supplied (non-blank) updated_at is still honoured exactly as
+	// before -- this fix only changes what happens when it is left blank.
+	explicit := syncHeldSaleRow{ID: "h2", Label: "Table 5", Payload: `{"v":"explicit"}`, LineCount: 1, TotalMinor: 300, UpdatedAt: "2026-09-15 10:00:00"}
+	rec = postSyncHeldSaleJSON(mux, "upsert", upsertBody(t, explicit), "bearer-t2")
+	if res3 := decodeSyncHeldSaleUpsert(t, rec); !res3.Applied || res3.UpdatedAt != "2026-09-15 10:00:00" {
+		t.Fatalf("a caller-supplied updated_at must be honoured as-is, got %+v", res3)
 	}
 }
