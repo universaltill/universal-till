@@ -193,11 +193,18 @@
   var grid = document.getElementById('category-color-grid');
   var colorInput = document.getElementById('category-color');
 
+  // Roving tabindex (WAI-ARIA toolbar/radio-group pattern): the grid is ONE
+  // Tab stop — the pressed tile — and the arrow keys walk the tiles, so a
+  // keyboard user isn't made to Tab through nine swatches to reach the
+  // checkboxes and Save (found by the ut-docs#2010 (c4) focus-trap e2e the
+  // moment the picker landed in this dialog). Enter/Space press natively.
   function paintColor() {
     if (!grid || !colorInput) return;
     var hex = colorInput.value || '';
     grid.querySelectorAll('.item-color-tile').forEach(function (btn) {
-      btn.setAttribute('aria-pressed', ((btn.dataset.color || '') === hex) ? 'true' : 'false');
+      var pressed = (btn.dataset.color || '') === hex;
+      btn.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+      btn.setAttribute('tabindex', pressed ? '0' : '-1');
     });
   }
 
@@ -215,6 +222,17 @@
       if (!btn || !colorInput) return;
       colorInput.value = btn.dataset.color || '';
       paintColor();
+      btn.focus();
+    });
+    grid.addEventListener('keydown', function (ev) {
+      var step = (ev.key === 'ArrowRight' || ev.key === 'ArrowDown') ? 1
+               : (ev.key === 'ArrowLeft' || ev.key === 'ArrowUp') ? -1 : 0;
+      if (!step) return;
+      var tiles = Array.prototype.slice.call(grid.querySelectorAll('.item-color-tile'));
+      var i = tiles.indexOf(document.activeElement);
+      if (i < 0) return;
+      ev.preventDefault();
+      tiles[(i + step + tiles.length) % tiles.length].focus();
     });
   }
 

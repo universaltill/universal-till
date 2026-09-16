@@ -113,10 +113,28 @@
     if (el.type === 'checkbox') {
       el.checked = (value === '1' || value === 'true' || value === el.value);
     } else {
+      // ut-docs#2284: a hidden input's .value setter writes its `value`
+      // CONTENT attribute (the "default" value mode, unlike a text input),
+      // so form.reset() on the next create-mode open would restore the
+      // previous row's prefill, not the template's own blank. Remember
+      // the template's default once so resetHiddenDefaults() can put it
+      // back (a real, e2e-reproduced bug: New after editing a coloured
+      // category kept that row's colour).
+      if (el.type === 'hidden' && !el.hasAttribute('data-record-default-value')) {
+        el.setAttribute('data-record-default-value', el.getAttribute('value') || '');
+      }
       // Also covers a RadioNodeList (radios sharing a name): assigning
       // .value selects the matching radio.
       el.value = value;
     }
+  }
+
+  // See setField: form.reset() cannot undo a hidden input's prefill, so
+  // create mode restores each one's recorded template default by hand.
+  function resetHiddenDefaults(form) {
+    Array.prototype.forEach.call(form.querySelectorAll('input[type="hidden"][data-record-default-value]'), function (el) {
+      el.value = el.getAttribute('data-record-default-value') || '';
+    });
   }
 
   function firstField(form) {
@@ -171,7 +189,7 @@
     var title = dialog.querySelector('[data-record-dialog-title]');
     var destructive = dialog.querySelector('[data-record-dialog-destructive]');
     var mode = row ? 'edit' : 'create';
-    if (form) { defaultAction(form); form.reset(); }
+    if (form) { defaultAction(form); form.reset(); resetHiddenDefaults(form); }
     // ut-docs#2020: a message left over from a previous refused save must
     // not appear to describe THIS open — every open starts clean. Emptying
     // the text is enough to hide it too: app.css's
