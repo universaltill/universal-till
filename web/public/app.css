@@ -2034,7 +2034,7 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
    body[data-order-type-prompt-stage], set once at page load from the
    till setting (index_page.go) -- no per-basket-render Go change
    needed, since this rule reaches every #basket swap the same way any
-   other body-scoped CSS does. -->
+   other body-scoped CSS does. */
 body[data-order-type-prompt-stage="at_pay"] .order-type-toggle-group,
 body[data-order-type-prompt-stage="at_pay"] .order-type-mixed { display: none; }
 /* 2026-08-31 (product owner, live on the tablet, ut-docs#1379): a compact

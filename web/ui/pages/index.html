@@ -543,6 +543,7 @@
 
         var modal = document.getElementById('order-type-modal');
         var pendingIssueRequest = null; // before_sale: the intercepted add, resumed once answered
+        var pendingFields = null;       // before_sale: that add's form values, captured when it was paused
         var pendingPurpose = null;      // 'add' | 'pay'
         var atPayAsked = false;         // at_pay: asked-once-per-sale flag
 
@@ -550,6 +551,47 @@
           var el = document.querySelector('#basket .basket-count');
           var n = el ? parseInt(el.textContent || '0', 10) : 0;
           return isNaN(n) ? 0 : n;
+        }
+
+        // ut-docs#2282 (independent review, 2026-09-16): htmx serializes AND
+        // HTML5-validates the triggering form when the request is finally
+        // ISSUED, not when it was triggered. app.js's ut-docs#1177 handler
+        // clears the scan row's `code` input on the native `submit` event,
+        // on a setTimeout(...,0) whose own comment says it runs "after the
+        // value has already been read and sent" -- true for an ordinary
+        // submit, false the moment htmx:confirm pauses the request in
+        // between. Without this, the resumed add serializes an EMPTY,
+        // `required`-failing form and htmx halts it silently
+        // (htmx:validation:halted): the cashier scans, answers the prompt,
+        // and nothing ever lands in the basket. Confirmed live before the
+        // fix, and this is exactly what the card's own e2e spec catches.
+        // So: snapshot the trigger's field values while we hold the
+        // request, put them back immediately before resuming, and restore
+        // the cleared state straight afterwards so the row ends up exactly
+        // as an uninterrupted submit would have left it. (htmx reads the
+        // values synchronously inside issueRequest(), before it returns.)
+        // Entry points that carry their values in hx-vals rather than a
+        // form -- product tiles, suggestions -- snapshot to null and are
+        // unaffected either way.
+        function snapshotFields(el) {
+          var form = el && (el.tagName === 'FORM' ? el : el.form);
+          if (!form) return null;
+          var nodes = form.querySelectorAll('input, select, textarea');
+          var snap = [];
+          for (var i = 0; i < nodes.length; i++) { snap.push([nodes[i], nodes[i].value]); }
+          return snap;
+        }
+        function readFields(snap) {
+          if (!snap) return null;
+          var now = [];
+          for (var i = 0; i < snap.length; i++) { now.push([snap[i][0], snap[i][0].value]); }
+          return now;
+        }
+        function writeFields(snap) {
+          if (!snap) return;
+          for (var i = 0; i < snap.length; i++) {
+            if (snap[i][0].value !== snap[i][1]) { snap[i][0].value = snap[i][1]; }
+          }
         }
 
         // Wired via hx-on::after-request on both #order-type-modal choice
@@ -561,9 +603,14 @@
           modal.close();
           if (pendingPurpose === 'add' && pendingIssueRequest) {
             var issue = pendingIssueRequest;
+            var snap = pendingFields;
             pendingIssueRequest = null;
+            pendingFields = null;
             pendingPurpose = null;
+            var cleared = readFields(snap);
+            writeFields(snap);
             issue();
+            writeFields(cleared);
           } else if (pendingPurpose === 'pay') {
             atPayAsked = true;
             pendingPurpose = null;
@@ -588,12 +635,18 @@
           // basket also opens this modal even though it isn't an item add,
           // and (since the basket is still empty afterwards) the very next
           // real item add asks again. Narrow edge case; not handled here.
+          // (Independent review confirmed it is broader than a loyalty code
+          // -- a voucher `GS-` scan and a promo code take the same
+          // /api/pos/scan branch -- but the same harmless shape: the
+          // intercepted request still lands, and the basket-top toggle is
+          // still on screen in this mode. Tracked for a follow-up card.)
           document.body.addEventListener('htmx:confirm', function (evt) {
             var path = evt.detail.path;
             var isAdd = path === '/api/pos/scan' || path === '/api/pos/scan-with-modifiers';
             if (!isAdd || basketItemCount() > 0) return;
             evt.preventDefault();
             pendingIssueRequest = evt.detail.issueRequest;
+            pendingFields = snapshotFields(evt.detail.elt);
             pendingPurpose = 'add';
             modal.show();
           });

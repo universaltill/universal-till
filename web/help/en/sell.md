@@ -62,7 +62,6 @@ Two segments above the basket — **Dine in** and **Takeaway** — set the whole
 
 The same product in both modes always sits on two separate lines rather than a quantity of 2 — that's deliberate, since they carry different tax — and an item scanned again joins whichever line is in the currently selected mode. A mixed sale can still have a table (there is someone sitting down); only an all-takeaway sale can't. Holding and recalling a mixed sale keeps every item's choice, and the receipt, journal entry and kitchen ticket each mark which items were to stay and which to go — a plain dine-in or takeaway sale prints exactly as before.
 
-
 Settings has a matching **Ask dine-in or takeaway** control (Settings → Ask dine-in or takeaway) for WHERE this choice is made: at the top of the basket as described above (the default), in a pop-up the moment the first item is added to an empty basket, or in the same pop-up when you press Pay — with Pay, the basket shows no dine-in/takeaway control at all until you answer it. Whichever is chosen, the per-item icons described above still work the same way.
 
 ## Linking a customer to a sale

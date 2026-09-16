@@ -69,8 +69,17 @@ test.describe('order-type prompt stage (ut-docs#2282)', () => {
 
     await page.locator('[data-testid="order-type-modal-takeaway"]').click();
     await expect(page.locator('#order-type-modal')).toBeHidden();
-    // Answering the modal resumes the original add.
+    // Answering the modal resumes the original add. Pinned by the review of
+    // ut-docs#2282: htmx serializes AND HTML5-validates the scan form when
+    // the paused request is finally ISSUED, while app.js's ut-docs#1177
+    // handler has already blanked the `required` code input on the native
+    // submit -- so without index.html's snapshot/restore the resumed add is
+    // silently halted (htmx:validation:halted) and nothing ever lands.
     await expect(page.locator('#basket')).toContainText('Coca-Cola');
+    // ...and the scan field is left blank afterwards, exactly as an
+    // uninterrupted submit leaves it (ut-docs#1177 must not regress: a
+    // stale value here concatenates onto the next scan).
+    await expect(page.locator('.scan-row input[name="code"]')).toHaveValue('');
     // The basket-top toggle still renders and reflects the answer.
     await expect(page.locator('.order-type-toggle-group')).toBeVisible();
     await expect(page.locator('[data-testid="order-type-takeaway"]')).toHaveClass(/is-active/);

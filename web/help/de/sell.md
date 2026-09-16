@@ -51,7 +51,6 @@ Zwei Segmente über dem Warenkorb — **Vor Ort** und **Außer Haus** — stelle
 
 Dasselbe Produkt liegt in beiden Modi immer auf zwei getrennten Zeilen statt einer Menge von 2 — das ist Absicht, da sie unterschiedliche Steuer tragen —, und ein erneut gescannter Artikel schließt sich der jeweils gerade gewählten Modus-Zeile an. Ein gemischter Verkauf kann weiterhin einen Tisch haben (es sitzt ja jemand); nur ein reiner Außer-Haus-Verkauf kann keinen haben. Das Halten und Abrufen eines gemischten Verkaufs behält die Wahl jedes Artikels bei, und Beleg, Kassenjournal-Eintrag und Küchenbon markieren jeweils, welche Artikel blieben und welche mitgenommen wurden — ein reiner Vor-Ort- oder Außer-Haus-Verkauf wird genau wie bisher gedruckt.
 
-
 In den Einstellungen gibt es dazu die passende Option **Frage nach Vor Ort oder Außer Haus** (Einstellungen → Frage nach Vor Ort oder Außer Haus), die festlegt, WANN diese Wahl getroffen wird: oben im Warenkorb wie oben beschrieben (Standard), in einem Popup, sobald der erste Artikel in einen leeren Warenkorb gelegt wird, oder im selben Popup, wenn Sie auf Bezahlen tippen — dann zeigt der Warenkorb gar keine Vor-Ort/Außer-Haus-Kontrolle, bis Sie geantwortet haben. Unabhängig von der gewählten Option funktionieren die Symbole pro Artikel oben weiterhin genauso.
 
 ## Einen Kunden mit einem Verkauf verknüpfen
