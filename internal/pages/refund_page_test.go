@@ -1625,6 +1625,49 @@ func TestPostRefund_EnsurePaymentMethodFailureShowsLocalizedMessageNotRawError(t
 	}
 }
 
+// TestPostRefund_ListPaymentEntriesDBError_FailsClosed is ut-docs#2278:
+// blockingPaymentEventWithResponseAndID used to treat a genuine
+// ListPaymentEntries DB error identically to "no payment entry configured"
+// -- (nil, nil) -- silently letting the refund proceed with no chance for a
+// payment plugin to veto it. Dropping plugin_entries forces that exact DB
+// error. The refund here uses "cash" -- a method with no plugin entry at
+// all -- specifically to prove the fix fails closed on the error itself,
+// not on some plugin lookup succeeding: before the fix this refund would
+// have gone through unblocked (cash is correctly ungated in the healthy
+// case), so seeing it blocked here is the regression signal.
+func TestPostRefund_ListPaymentEntriesDBError_FailsClosed(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+	if _, err := dp.Db.Exec(`DROP TABLE plugin_entries`); err != nil {
+		t.Fatalf("drop plugin_entries: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("expected 402 (fail-closed on a ListPaymentEntries DB error), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "plugin_entries") || strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("raw driver error leaked into the operator-facing response: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "The payment provider declined this refund") {
+		t.Fatalf("expected the refund.error.provider_declined copy, got: %s", rec.Body.String())
+	}
+
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales WHERE sale_type = 'return'`).Scan(&count); err != nil {
+		t.Fatalf("query sales: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected no return to be recorded when the payment-gate DB lookup failed, got %d", count)
+	}
+}
+
 // ut-docs#950 (flagged by the ut-docs#944 review as a separate follow-up,
 // ut-docs#924 increment 2): the payment-provider refund gate
 // (payment.<key>.refund) leaked a raw PLUGIN-originated error string,
