@@ -82,8 +82,10 @@ VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?)`,
 		fmt.Sprintf("%s-l%d", saleID, lineNo), saleID, lineNo, itemID, name, qty, after, rateBP, taxAmt, before, after)
 }
 
-// etbEndOfDay runs the REAL production pair — POSRepo.EndOfDay +
-// attachEODTaxBands — exactly as generateEOD does.
+// etbEndOfDay runs POSRepo.EndOfDay + attachEODTaxBands, the standalone
+// single-breakdown equivalent generateEOD's own inline read (repo.EndOfDay
+// + repo.SalesForTaxBandsInstant + computeEODTaxBandsFromSales) is
+// consistent with, not the pair generateEOD itself calls (ut-docs#1566).
 func etbEndOfDay(t *testing.T, d *db.DB, day string) data.EODReport {
 	t.Helper()
 	repo := data.NewPOSRepo(d.DB)

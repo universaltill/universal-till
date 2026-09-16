@@ -140,14 +140,18 @@ type Deps struct {
 	// tripping "sql: database is closed" and (via t.TempDir()'s
 	// RemoveAll racing SQLite's WAL sidecar files) "directory not empty"
 	// on cleanup. Any such goroutine should `AsyncWork.Add(1)` before
-	// starting and `defer AsyncWork.Done()`; callers that need every
+	// starting and `defer AsyncWork.Done()`; a test that needs every
 	// background effect to have settled before tearing down shared state
-	// (tests closing Db, graceful shutdown) call WaitForAsyncWork first —
-	// same shape as WasmRuntime's own wg/Close (ut-docs#380).
+	// (closing Db, removing its TempDir) calls WaitForAsyncWork first —
+	// same shape as WasmRuntime's own wg/Close (ut-docs#380). Production
+	// shutdown drains the same WaitGroup a different way — see
+	// WaitForAsyncWork's own doc comment below.
 	//
 	// Known sharp edge, not yet fixed (ut-docs#513 code review, 2026-08-12):
-	// since app.Run's shutdown now calls WaitForAsyncWork in production
-	// (previously test-only), sync.WaitGroup's own documented misuse case
+	// since app.Run's shutdown now drains AsyncWork in production (via
+	// app.drainBackgroundServices(&deps.AsyncWork, …), a timeout-bounded
+	// Wait — not this package's WaitForAsyncWork, which stays test-only),
+	// sync.WaitGroup's own documented misuse case
 	// is reachable there — Add taking the counter 0→1 concurrently with an
 	// in-flight Wait panics ("WaitGroup misuse: Add called concurrently
 	// with Wait"). server.Start bounds its own graceful shutdown at a fixed
@@ -194,6 +198,20 @@ type BrokenRefetchState struct {
 // Call this before closing Db or removing any directory Db's file lives in
 // — see AsyncWork's doc comment for why skipping it is a real race, not a
 // theoretical one.
+//
+// Test helper by design (ut-docs#1566 — kept on
+// scripts/ci/deadcode-baseline.txt as test-only-reachable, not a deletion
+// candidate): every caller is a test in the pages package (this struct's
+// own package is common), either `t.Cleanup(dp.WaitForAsyncWork)` before
+// the DB/TempDir teardown, or a test joining a background goroutine —
+// print/fiscal-sign among them, but also inventory/journal/receipt-policy/
+// invoice tests — before asserting on its side effects. Production
+// shutdown does NOT go through it — app.Run drains the
+// same WaitGroup via drainBackgroundServices(&deps.AsyncWork, …)
+// (ut-docs#513), which bounds the wait with asyncWorkDrainTimeout so a
+// wedged printer can't hang shutdown. This method is deliberately the
+// UNBOUNDED form: a test wants a leaked goroutine to hang and fail loudly,
+// not be timed out and silently pass.
 func (d *Deps) WaitForAsyncWork() {
 	d.AsyncWork.Wait()
 }

@@ -269,8 +269,8 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// Payment authorization (docs: wasm-runtime.md): a plugin method
 	// whose plugin hooks `payment.<key>.authorize` gets a BLOCKING call
 	// BEFORE the sale completes — a declined card must stop the sale.
-	// blockingPaymentEvent (refund_page.go) is the same gate the refund
-	// flow uses for payment.<key>.refund; no subscriber = no gate
+	// blockingPaymentEventWithResponse (refund_page.go) is the same gate the
+	// refund flow uses for payment.<key>.refund; no subscriber = no gate
 	// (back-compat with post-settle-only plugins like qrpay).
 	// Additive basket fields for a fiscal-DEVICE payment plugin (Turkey's
 	// YN ÖKC, fiscal_device_hook.go): the device prints the legal receipt
