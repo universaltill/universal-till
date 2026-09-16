@@ -1,6 +1,16 @@
 import { test, expect, Page } from '@playwright/test';
 import { ADMIN_PIN, watchConsole, fieldGeometry, expectStacked, setOskMode } from './helpers';
 
+// ut-docs#2223: this spec is exempt from tests/fixtures.ts (see
+// scripts/ci/guard-e2e-fixtures-import.sh), so it does not inherit the
+// shared `page` fixture's reduced-motion emulation — apply it here for the
+// same reason: headless Chromium never reveals a document that is the
+// destination of a cross-document View Transition, and every hit-tested
+// action on it then hangs.
+test.beforeEach(async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+});
+
 // Drives the AUTH project's server (playwright.config.ts) — a genuinely
 // fresh install with auth ON, separate from every other spec's
 // already-logged-in-by-default till. Covers the real day-one flow: a
@@ -20,6 +30,10 @@ test.describe.serial('first-boot setup and PIN login', () => {
 
   test.beforeAll(async ({ browser }) => {
     page = await browser.newPage();
+    // ut-docs#2223: the shared page bypasses the beforeEach above (that one
+    // sees the per-test fixture page, not this one) — same reduced-motion
+    // emulation, same reason.
+    await page.emulateMedia({ reducedMotion: 'reduce' });
     assertClean = watchConsole(page);
   });
   test.afterAll(async () => {
@@ -67,6 +81,7 @@ test.describe.serial('first-boot setup and PIN login', () => {
   test('a bad pairing code reports the error instead of silently doing nothing', async ({ browser }) => {
     const ctx = await browser.newContext();
     const p = await ctx.newPage();
+    await p.emulateMedia({ reducedMotion: 'reduce' }); // ut-docs#2223, see beforeAll
     try {
       await p.goto('/setup');
       await p.locator('button:visible', { hasText: 'Join an existing shop' }).click();
@@ -111,6 +126,7 @@ test.describe.serial('first-boot setup and PIN login', () => {
   test('the on-screen keyboard actually appears when a touch device taps a setup field', async ({ browser }) => {
     const ctx = await browser.newContext({ hasTouch: true });
     const p = await ctx.newPage();
+    await p.emulateMedia({ reducedMotion: 'reduce' }); // ut-docs#2223, see beforeAll
     try {
       await p.goto('/setup');
       await p.locator('[data-step="1"] .setup-nav button', { hasText: 'Next' }).click();
@@ -154,6 +170,7 @@ test.describe.serial('first-boot setup and PIN login', () => {
     // e.g. basket-no-horizontal-scroll-391.spec.ts).
     const ctx = await browser.newContext({ hasTouch: true, viewport: { width: 1024, height: 600 } });
     const p = await ctx.newPage();
+    await p.emulateMedia({ reducedMotion: 'reduce' }); // ut-docs#2223, see beforeAll
     try {
       await p.goto('/setup');
 
@@ -237,6 +254,7 @@ test.describe.serial('first-boot setup and PIN login', () => {
   test('a detected country shows alone at first, with an explicit toggle to see the rest', async ({ browser }) => {
     const ctx = await browser.newContext({ hasTouch: true, viewport: { width: 1024, height: 600 } });
     const p = await ctx.newPage();
+    await p.emulateMedia({ reducedMotion: 'reduce' }); // ut-docs#2223, see beforeAll
     try {
       const step = (n: number) => p.locator(`[data-step="${n}"]`);
       await p.goto('/setup');
@@ -333,6 +351,7 @@ test.describe.serial('first-boot setup and PIN login', () => {
     const measure = async (viewport: { width: number; height: number }) => {
       const ctx = await browser.newContext({ hasTouch: true, viewport });
       const p = await ctx.newPage();
+    await p.emulateMedia({ reducedMotion: 'reduce' }); // ut-docs#2223, see beforeAll
       try {
         await p.goto('/setup');
         const rootFontSize = parseFloat(await p.evaluate(() => getComputedStyle(document.documentElement).fontSize));
@@ -655,6 +674,7 @@ test.describe.serial('first-boot setup and PIN login', () => {
     const measure = async (viewport: { width: number; height: number }) => {
       const ctx = await browser.newContext({ hasTouch: true, viewport });
       const p = await ctx.newPage();
+    await p.emulateMedia({ reducedMotion: 'reduce' }); // ut-docs#2223, see beforeAll
       try {
         await p.goto('/login');
         await expect(p.locator('.pin-pad')).toBeVisible();
@@ -693,6 +713,7 @@ test.describe.serial('first-boot setup and PIN login', () => {
   test('the login screen itself offers a PIN-gated exit to OS, without a session', async ({ browser }) => {
     const ctx = await browser.newContext();
     const p = await ctx.newPage();
+    await p.emulateMedia({ reducedMotion: 'reduce' }); // ut-docs#2223, see beforeAll
     const assertOwnClean = watchConsole(p, /^Failed to load resource: .*(403|429|503)/);
     try {
       await p.goto('/login');
@@ -754,6 +775,7 @@ test.describe.serial('first-boot setup and PIN login', () => {
   test('the login-screen exit-to-os form calls window.AndroidKiosk.exitLockdown only on a real (2xx) exit', async ({ browser }) => {
     const ctx = await browser.newContext();
     const p = await ctx.newPage();
+    await p.emulateMedia({ reducedMotion: 'reduce' }); // ut-docs#2223, see beforeAll
     await p.addInitScript(`
       window.__androidKioskCalls = [];
       window.AndroidKiosk = { exitLockdown: function () { window.__androidKioskCalls.push('exitLockdown'); } };
