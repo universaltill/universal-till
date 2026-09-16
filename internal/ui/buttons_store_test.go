@@ -24,6 +24,12 @@ func setupFullTestDB(t *testing.T) *sql.DB {
 		// Migration 025 (ADR-0090): ItemIDsWithModifiers reads membership
 		// through the link table, not item_modifier_groups.item_id.
 		`CREATE TABLE item_modifier_group_links (item_id TEXT NOT NULL, group_id TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (item_id, group_id));`,
+		// Migration 031 (ADR-0094): ItemIDsWithModifiers's UNION also reads
+		// category-inherited (non-opted-out) groups, so both new tables must
+		// exist here even where no test row is inserted into them — the
+		// query itself references them unconditionally.
+		`CREATE TABLE category_modifier_group_links (category_id TEXT NOT NULL, group_id TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (category_id, group_id));`,
+		`CREATE TABLE item_modifier_group_opt_outs (item_id TEXT NOT NULL, group_id TEXT NOT NULL, PRIMARY KEY (item_id, group_id));`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {

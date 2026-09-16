@@ -867,7 +867,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 			if sellable := sellableVariants(variants); len(sellable) > 0 {
-				groups, err := data.NewModifierRepo(d.Db).ListGroupsForItem(r.Context(), base.ItemID)
+				groups, err := data.NewModifierRepo(d.Db).ResolveGroupsForItem(r.Context(), base.ItemID)
 				if err != nil {
 					// Same fail-closed reasoning as above — checked BEFORE
 					// any header is set (review finding, non-blocker 5): a
