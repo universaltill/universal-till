@@ -250,7 +250,15 @@
     <div class="muted catalog-detail-label">{{ T "catalog.modifiers.title" }}</div>
     {{ if .ModifierGroupNames }}
     <p class="catalog-modifiers-summary-line">{{ .ModifierGroupNames }}</p>
-    {{ else }}
+    {{ end }}
+    {{/* ut-docs#2284: groups inherited from the item's category (ADR-0094),
+         minus its opt-outs — named here so an item customised entirely
+         through its category never reads "no customization groups yet";
+         the skip/use-again toggle lives in the nested dialog below. */}}
+    {{ if .InheritedGroupNames }}
+    <p class="catalog-modifiers-summary-line muted">{{ printf (T "catalog.modifiers.inherited_summary") .InheritedGroupNames }}</p>
+    {{ end }}
+    {{ if and (not .ModifierGroupNames) (not .InheritedGroupNames) }}
     <p class="muted">{{ T "catalog.modifiers.summary_none" }}</p>
     {{ end }}
     <button type="button" class="btn secondary" id="manage-modifiers-btn" data-item-id="{{ .ItemID }}"
@@ -260,6 +268,34 @@
       {{ T "catalog.modifiers.manage" }}
     </button>
   </div>
+
+  <!-- ut-docs#2284: kitchen-printer routing from the item's side. What the
+       item's category routes to is shown as text (edited on /categories or
+       /kitchen-stations); the checkboxes are the item's OWN override —
+       item_station_routes, the same replace-all rows the kitchen-stations
+       page's per-item override edits, written through the same
+       SetItemStationRoutes. Precedence is ResolveKitchenStations' (item
+       rows win outright, no union; none → the category's; none there → the
+       default kitchen printer). Absent when the shop has no stations at
+       all (.Stations empty) — nothing to route to, nothing to show. -->
+  {{ if .Stations }}
+  <div class="catalog-detail-routing">
+    <div class="muted catalog-detail-label">{{ T "catalog.routing.title" }}</div>
+    <p class="muted catalog-routing-inherited">{{ if .CategoryStationNames }}{{ printf (T "catalog.routing.inherited") .CategoryStationNames }}{{ else }}{{ T "catalog.routing.inherited_default" }}{{ end }}</p>
+    {{ if .HasItemRoutes }}<p class="catalog-modifiers-summary-line">{{ T "catalog.routing.override_active" }}</p>{{ end }}
+    <form id="item-routing-form" hx-post="/api/catalog/item-station-routes" hx-target="#catalog-variants" hx-swap="outerHTML" class="catalog-routing-form">
+      <input type="hidden" name="panelItem" value="{{ .ItemID }}">
+      <input type="hidden" name="itemId" value="{{ .ItemID }}">
+      <div class="field-checks category-dialog-checks" role="group" aria-label="{{ T "catalog.routing.title" }}">
+        {{ range .Stations }}
+        <label><input type="checkbox" name="station_id" value="{{ .ID }}"{{ if .Checked }} checked{{ end }}> {{ .Name }}{{ if not .Enabled }} <span class="muted">({{ T "kitchenstations.inactive" }})</span>{{ end }}</label>
+        {{ end }}
+      </div>
+      <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
+    </form>
+    <p class="muted catalog-routing-help">{{ T "catalog.routing.override_help" }}</p>
+  </div>
+  {{ end }}
 
   <script>
     (function () {

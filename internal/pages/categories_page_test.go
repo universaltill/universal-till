@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/catalog"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -843,5 +844,191 @@ func TestCategoriesPageReorder_AcceptsMultipartUrlencodedAndCommaJoined(t *testi
 		if got := readOrder(); strings.Join(got, ",") != strings.Join(c.want, ",") {
 			t.Errorf("%s: order after reorder = %v, want %v", c.label, got, c.want)
 		}
+	}
+}
+
+// ut-docs#2284: the category editor gains colour, a modifier-group
+// multi-select (every item in the category inherits them at sale time,
+// ADR-0094) and kitchen-station routing (category_station_routes, the same
+// rows the kitchen-stations page ticks from the station's side). One Save
+// writes all three; the list rows carry the prefill for every one of them;
+// the dialog renders the pickers.
+func TestCategoriesPage_CreateAndEditWithColorGroupsAndStations(t *testing.T) {
+	mux, d := newCategoriesTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	ctx := t.Context()
+	modRepo := data.NewModifierRepo(d.Db)
+	posRepo := data.NewPOSRepo(d.Db)
+	// A shop-wide group (anchored to seedForPages' itm1) and one station.
+	if _, err := modRepo.CreateGroup(ctx, "g-milk", "itm1", "Milk", false, 0, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	grill, err := posRepo.CreateKitchenStation(ctx, "Grill", data.KitchenDestinationPrinter, "192.0.2.1:9100")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := postForm(mux, "/api/categories", url.Values{
+		"name":       {"Drinks"},
+		"color":      {"#0f766e"},
+		"group_id":   {"g-milk"},
+		"station_id": {grill},
+	}, &manager)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/categories" {
+		t.Fatalf("create: code=%d loc=%q body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
+	}
+	var catID, color string
+	if err := d.Db.QueryRow(`SELECT id, COALESCE(color,'') FROM categories WHERE name = 'Drinks'`).Scan(&catID, &color); err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if color != "#0f766e" {
+		t.Fatalf("colour not persisted on create: %q", color)
+	}
+	if links, _ := modRepo.AllCategoryModifierGroupLinks(ctx); len(links[catID]) != 1 || links[catID][0] != "g-milk" {
+		t.Fatalf("category modifier links after create = %v, want [g-milk]", links[catID])
+	}
+	if routes, _ := posRepo.CategoryStationRoutes(ctx, catID); len(routes) != 1 || routes[0] != grill {
+		t.Fatalf("category station routes after create = %v, want [%s]", routes, grill)
+	}
+
+	// The list row carries the prefill for all three, and the dialog
+	// renders the colour grid plus one checkbox per group and per station.
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/categories", nil), manager)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-field-color="#0f766e"`,
+		`data-groups="g-milk"`,
+		`data-stations="` + grill + `"`,
+		`id="category-color-grid"`,
+		`name="color" id="category-color"`,
+		`type="checkbox" name="group_id" value="g-milk"`,
+		`type="checkbox" name="station_id" value="` + grill + `"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET /categories missing %s:\n%s", want, body)
+		}
+	}
+
+	// Edit: rename, clear the colour, untick everything.
+	rec = postForm(mux, "/api/categories/"+catID, url.Values{"name": {"Beverages"}, "color": {""}}, &manager)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/categories" {
+		t.Fatalf("edit: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	var name string
+	if err := d.Db.QueryRow(`SELECT name, COALESCE(color,'') FROM categories WHERE id = ?`, catID).Scan(&name, &color); err != nil || name != "Beverages" || color != "" {
+		t.Fatalf("edit did not take effect: name=%q color=%q err=%v", name, color, err)
+	}
+	if links, _ := modRepo.AllCategoryModifierGroupLinks(ctx); len(links[catID]) != 0 {
+		t.Fatalf("unticking every group must clear the links, got %v", links[catID])
+	}
+	if routes, _ := posRepo.CategoryStationRoutes(ctx, catID); len(routes) != 0 {
+		t.Fatalf("unticking every station must clear the routes, got %v", routes)
+	}
+}
+
+// The colour is validated against the SAME fixed palette the item editor
+// uses (catalogtypes.ValidItemColor) — the value flows into a CSS custom
+// property on the sale screen's category tab, so an arbitrary string must
+// never reach storage. Refused in the dialog, nothing written.
+func TestCategoriesPage_InvalidColorRefused(t *testing.T) {
+	mux, d := newCategoriesTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	rec := postForm(mux, "/api/categories", url.Values{"name": {"Drinks"}, "color": {"#123456"}}, &manager)
+	if got := rec.Header().Get("Location"); got != "/categories?err=categories.error.color_invalid" {
+		t.Fatalf("invalid colour on create: loc=%q", got)
+	}
+	var n int
+	if err := d.Db.QueryRow(`SELECT count(*) FROM categories WHERE name = 'Drinks'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("category must not be created with an invalid colour, rows=%d err=%v", n, err)
+	}
+	// Same gate on edit, and the htmx branch answers in-dialog.
+	if _, err := d.Db.Exec(`INSERT INTO categories (id, name) VALUES ('cat-x', 'Existing')`); err != nil {
+		t.Fatal(err)
+	}
+	rec = postFormHtmx(mux, "/api/categories/cat-x", url.Values{"name": {"Existing"}, "color": {"red; background:url(x)"}}, &manager)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid colour on htmx edit: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var color string
+	if err := d.Db.QueryRow(`SELECT COALESCE(color,'') FROM categories WHERE id = 'cat-x'`).Scan(&color); err != nil || color != "" {
+		t.Fatalf("colour must stay empty after a refused edit, got %q err=%v", color, err)
+	}
+}
+
+// A submitted group or station id that isn't an active group / a known
+// station (a stale dialog, or a tampered form) is refused as a whole — no
+// partial save of the parts that did validate.
+func TestCategoriesPage_UnknownGroupOrStationRefused(t *testing.T) {
+	mux, d := newCategoriesTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	rec := postForm(mux, "/api/categories", url.Values{"name": {"Drinks"}, "group_id": {"nope"}}, &manager)
+	if got := rec.Header().Get("Location"); got != "/categories?err=categories.error.invalid_selection" {
+		t.Fatalf("unknown group: loc=%q", got)
+	}
+	rec = postForm(mux, "/api/categories", url.Values{"name": {"Drinks"}, "station_id": {"nope"}}, &manager)
+	if got := rec.Header().Get("Location"); got != "/categories?err=categories.error.invalid_selection" {
+		t.Fatalf("unknown station: loc=%q", got)
+	}
+	var n int
+	if err := d.Db.QueryRow(`SELECT count(*) FROM categories WHERE name = 'Drinks'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("nothing may be written on a refused selection, rows=%d err=%v", n, err)
+	}
+}
+
+// Review finding (ut-docs#2284): the dialog's group picker lists ACTIVE
+// groups only, so a category link to a group that was deactivated AFTER it
+// was linked has no checkbox to tick — and a replace-all Save driven by
+// "every ticked id" would silently delete that link on the next unrelated
+// edit (a rename), with reactivating the group NOT restoring the
+// inheritance. An untickable box is not an unticked one: the link survives.
+func TestCategoriesPage_SaveKeepsLinkToDeactivatedGroup(t *testing.T) {
+	mux, d := newCategoriesTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	ctx := t.Context()
+	modRepo := data.NewModifierRepo(d.Db)
+
+	if _, err := modRepo.CreateGroup(ctx, "g-syrup", "itm1", "Syrups", false, 0, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	if rec := postForm(mux, "/api/categories", url.Values{
+		"name": {"Drinks"}, "group_id": {"g-syrup"},
+	}, &manager); rec.Code != http.StatusSeeOther {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	var catID string
+	if err := d.Db.QueryRow(`SELECT id FROM categories WHERE name = 'Drinks'`).Scan(&catID); err != nil {
+		t.Fatal(err)
+	}
+
+	// The group is deactivated for the season — the dialog stops offering it.
+	if err := modRepo.UpdateGroup(ctx, "g-syrup", "Syrups", false, 0, 1, 0, false); err != nil {
+		t.Fatal(err)
+	}
+	// An unrelated rename, submitting no group_id at all, must not touch it.
+	if rec := postForm(mux, "/api/categories/"+catID, url.Values{"name": {"Beverages"}}, &manager); rec.Code != http.StatusSeeOther {
+		t.Fatalf("rename: %d %s", rec.Code, rec.Body.String())
+	}
+	links, err := modRepo.AllCategoryModifierGroupLinks(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(links[catID]) != 1 || links[catID][0] != "g-syrup" {
+		t.Fatalf("rename dropped the deactivated group's category link: %v", links[catID])
+	}
+
+	// Reactivated, it is offered again and is still inherited — and an
+	// explicit untick of the now-active group still removes it.
+	if err := modRepo.UpdateGroup(ctx, "g-syrup", "Syrups", false, 0, 1, 0, true); err != nil {
+		t.Fatal(err)
+	}
+	if rec := postForm(mux, "/api/categories/"+catID, url.Values{"name": {"Beverages"}}, &manager); rec.Code != http.StatusSeeOther {
+		t.Fatalf("untick: %d %s", rec.Code, rec.Body.String())
+	}
+	if links, _ := modRepo.AllCategoryModifierGroupLinks(ctx); len(links[catID]) != 0 {
+		t.Fatalf("unticking an ACTIVE group must still remove its link, got %v", links[catID])
 	}
 }
