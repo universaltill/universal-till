@@ -324,6 +324,20 @@
       <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
     </label>
   </form>
+  <!-- ut-docs#2308: the sell-screen basket/products divider's own reset --
+       the drag itself lives on the sell screen (a live, no-reload
+       fetch() POST, see index.html), so this is only the "I want the
+       default back" affordance for an operator who isn't looking at the
+       sell screen right now. width_rem="0" is the exact same reset shape
+       the divider's own double-tap/double-click sends -- plain htmx form,
+       same hx-on::after-request reload pattern as ui-scale/osk above,
+       since THIS control (unlike the live drag) has no basket-loss risk
+       to protect against. -->
+  <form hx-post="/api/settings/basket-panel-width" hx-swap="none" hx-on::after-request="if(event.detail.successful){window.location.reload()}else{document.getElementById('settings-save-error').hidden=false}" class="set-gap">
+    <input type="hidden" name="width_rem" value="0">
+    <p class="muted">{{ T "settings.display.basket_panel_help" }}</p>
+    <button class="btn secondary" type="submit" data-testid="basket-panel-reset">{{ T "settings.display.basket_panel_reset_btn" }}</button>
+  </form>
   <!-- ut-docs#867: the display-mode/window-mode/launch-on-startup forms below
        render unconditionally — all three POST to elevation-wired endpoints
        (checkOrElevate), so the server-side PIN dialog is the authorization
