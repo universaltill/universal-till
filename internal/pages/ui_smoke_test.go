@@ -49,7 +49,7 @@ func chdirRoot(t *testing.T) {
 // hand-rolled copy silently diverging from what a till actually runs).
 //
 // ut-docs#2219: rather than running the whole migration chain from scratch
-// on every one of this helper's ~138 call sites, it clones the same
+// on every one of this helper's ~144 call sites, it clones the same
 // once-built, fully-migrated template file demo_seed_opt_in_test.go's
 // realDBTemplate builds for newRealDBDeps (ut-docs#2191/universal-till#1145)
 // — same package, so no need for a second sync.Once/build. migrate()'s
@@ -122,7 +122,12 @@ func TestOpenPagesTestDB_NoFsyncOnHotPath(t *testing.T) {
 // ut-docs#2219's fix the same way TestNewRealDBDeps_TemplateClonesAreIsolatedAndFullyMigrated
 // guards newRealDBDeps: the shared template must stay cached across calls,
 // each clone must carry the full migrated schema, and one clone's writes
-// must never leak into another's.
+// must never leak into another's. This is a safety net for the isolation
+// property, not a red-first guard for the performance change itself — it
+// would pass just as well against the old from-scratch db.Open, since
+// isolation doesn't depend on which mechanism populates the DB. The
+// distinguishing signal for the actual fix is wall-clock time, not this
+// test's pass/fail.
 func TestOpenPagesTestDB_TemplateClonesAreIsolatedAndFullyMigrated(t *testing.T) {
 	first := realDBTemplate(t)
 	second := realDBTemplate(t)
