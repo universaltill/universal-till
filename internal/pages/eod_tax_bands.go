@@ -41,6 +41,23 @@ import (
 // pos.VATBandsForSale call per completed sale, sign-flipped for returns
 // (mirroring the report's other figures), merged per rate and ordered
 // ascending (0%, 7%, 19% — the card's reference layout).
+//
+// Test-only-reachable, kept deliberately (ut-docs#1566 — on
+// scripts/ci/deadcode-baseline.txt, not a deletion candidate): no
+// production path calls this read+aggregate form today. ut-docs#1004
+// first moved both production call sites onto attachEODBands, a single
+// shared sales read feeding both TaxBands and MethodTaxBands; commit
+// 8548a3af (ADR-0066, 2026-09-04) then moved generateEOD off
+// attachEODBands onto its own inline SalesForTaxBandsInstant read, so
+// today generateEOD reads SalesForTaxBandsInstant itself and calls
+// computeEODTaxBandsFromSales directly, while only the range-export
+// handler still goes through attachEODBands — both so TaxBands and
+// MethodTaxBands come from ONE sales read. This standalone form remains
+// the single-breakdown
+// equivalent this package's own tests exercise (eod_tax_bands_test.go,
+// tax_summary_test.go, eod_method_tax_bands_test.go — via
+// attachEODTaxBands), including the test that proves attachEODBands
+// matches the two separate calls.
 func computeEODTaxBands(ctx context.Context, repo *data.POSRepo, from, to string) ([]data.TaxBand, error) {
 	sales, err := repo.SalesForTaxBands(ctx, from, to)
 	if err != nil {
@@ -95,6 +112,11 @@ func computeEODTaxBandsFromSales(sales []data.EODTaxBandSale) []data.TaxBand {
 // single-day form, From/To for a range). An error is an error — a Z-report
 // missing its VAT table is not a Z-report, so callers must fail rather
 // than archive/print/export one without it.
+//
+// Test-only-reachable today (ut-docs#1004 then commit 8548a3af moved both
+// production call sites off this function; the range export now uses
+// attachEODBands, generateEOD reads inline); kept deliberately
+// (ut-docs#1566) — see computeEODTaxBands' doc comment.
 func attachEODTaxBands(ctx context.Context, repo *data.POSRepo, rep *data.EODReport) error {
 	from, to := rep.Day, rep.Day
 	if rep.Day == "" {

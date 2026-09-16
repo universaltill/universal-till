@@ -971,34 +971,25 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	})
 }
 
-// blockingPaymentEvent publishes `payment.<key>.<suffix>` for the method's
-// owning payment plugin and BLOCKS on the result. Returns nil when the method
-// has no payment entry, no subscriber, or the plugin approves; returns an
-// error when the plugin declines OR the payment-entries lookup itself failed
-// (ut-docs#2278 — the caller must treat a DB error as a decline, fail
-// closed, not as "nothing to report"). Shared by the tender authorize gate
-// and the refund gate — the two blocking legs of the payment-provider
-// contract.
-func blockingPaymentEvent(ctx context.Context, d *common.Deps, method, suffix string, payload map[string]any) error {
-	_, err := blockingPaymentEventWithResponse(ctx, d, method, suffix, payload)
-	return err
-}
-
-// blockingPaymentEventWithResponse behaves exactly like blockingPaymentEvent
-// but also returns the responding plugin's raw response instead of
-// discarding it — the tender authorize gate uses this to read back
-// plugin-reported data (e.g. a reader-captured tip amount) alongside the
-// approve/decline verdict. resp is nil in every case blockingPaymentEvent
-// would return nil with nothing to report (no entry configured, or no
-// subscriber for the entry's event — both correctly ungated: cash and
-// other hook-less methods must stay ungated). A non-nil error usually means
-// the plugin declined (the original contract); it may also mean the
-// payment-entries lookup itself failed (ut-docs#2278) — either way the
-// caller must treat it as a decline (fail closed), never as "nothing to
-// report", since on a lookup failure this gate can no longer tell whether
-// the method WOULD have been vetoed. Uses a fresh event id per call, same
-// as always — callers that need the SAME id across a retry (the tender
-// authorize gate) use blockingPaymentEventWithResponseAndID instead.
+// blockingPaymentEventWithResponse publishes `payment.<key>.<suffix>` for
+// the method's owning payment plugin and BLOCKS on the result: (nil, nil)
+// when the method has no payment entry or no subscriber (cash stays cash),
+// the plugin's raw response when it approves, and a non-nil error when it
+// declines OR the payment-entries lookup itself failed (ut-docs#2278) — the
+// caller must treat either case as a decline and stop the sale/refund (fail
+// closed), never as "nothing to report", since on a lookup failure this
+// gate can no longer tell whether the method WOULD have been vetoed. This
+// is the refund gate's blocking leg of the payment-provider contract; the
+// tender authorize gate, the other blocking leg, uses
+// blockingPaymentEventWithResponseAndID below because it needs the SAME
+// event id across a retry, while this form mints a fresh id per call. The
+// response is what lets a gate read back plugin-reported data (e.g. a
+// reader-captured tip amount) alongside the approve/decline verdict.
+//
+// ut-docs#1566: the former err-only wrapper blockingPaymentEvent was
+// deleted here — both gates had already moved to the response-returning
+// forms, leaving it with zero production callers; its tests now call this
+// function directly and discard the response.
 func blockingPaymentEventWithResponse(ctx context.Context, d *common.Deps, method, suffix string, payload map[string]any) (json.RawMessage, error) {
 	return blockingPaymentEventWithResponseAndID(ctx, d, method, suffix, "", payload)
 }
