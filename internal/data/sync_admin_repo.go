@@ -213,6 +213,27 @@ var adminTables = []adminTable{
 	// gate already covering item_modifier_groups/options. Its three
 	// sync_admin_version triggers ship in migration 025.
 	{name: "item_modifier_group_links", pk: []string{"item_id", "group_id"}},
+	// ADR-0094 / ut-docs#1915: which CATEGORIES offer which modifier group,
+	// so every item in the category inherits it at sale time — catalog
+	// structure of exactly the same shop-wide kind as
+	// item_modifier_group_links above, and a satellite that had the groups
+	// but not the category links would offer every item in a category none
+	// of its inherited groups. Pure link rows, no is_active, no UNIQUE
+	// beyond the PK, same as item_modifier_group_links. FKs onto
+	// categories(id) and item_modifier_groups(id), both already applied
+	// above, so it must sit after them. Mutation is primary-only via the
+	// same requirePrimary gate covering item_modifier_groups/options (the
+	// editor surface itself is ut-docs#2284's card, not built by #1915).
+	// Its three sync_admin_version triggers ship in migration 031.
+	{name: "category_modifier_group_links", pk: []string{"category_id", "group_id"}},
+	// ADR-0094 / ut-docs#1915: which items have DECLINED a category-inherited
+	// modifier group (presence-only — opting back in is deleting the row).
+	// Same shop-wide catalog structure as the two link tables above: a
+	// satellite missing an opt-out would offer a group the primary's admin
+	// deliberately removed from that item. FKs onto items(id) and
+	// item_modifier_groups(id), both applied above. Its three
+	// sync_admin_version triggers ship in migration 031.
+	{name: "item_modifier_group_opt_outs", pk: []string{"item_id", "group_id"}},
 	{name: "item_modifier_options", pk: []string{"id"}, hasIsActive: true},
 	{name: "promotions", pk: []string{"code"}, hasIsActive: true},
 	{name: "shortcut_buttons", pk: []string{"barcode"}},
