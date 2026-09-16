@@ -220,6 +220,10 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			"payItemCount":         payItemCount,
 			"payTotal":             payTotal,
 			"orderTypePromptStage": orderTypePromptStage,
+			// ut-docs#2308: the basket/products divider's persisted position
+			// (0 = unset, use app.css's own built-in split) — see
+			// common.RuntimeState.BasketPanelWidthRem's own doc comment.
+			"basketPanelWidthRem": d.CurrentState().BasketPanelWidthRem,
 		}
 		httpx.Render("ui/pages/index.html", data)(w, r)
 	})

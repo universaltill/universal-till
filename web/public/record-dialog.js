@@ -46,6 +46,12 @@
 //   data-record-default-action                set HERE on the dialog's form
 //     the first time it is seen: the server-rendered action, captured once
 //     so the create fallback never reads an action a previous open() wrote
+//   record-dialog:open (CustomEvent on the dialog, bubbles; detail.row is
+//     the opened row or null for create, detail.mode "edit"/"create") —
+//     fired inside open() after the generic data-field-* prefill and before
+//     the discard-guard snapshot, for a page to finish a prefill this file
+//     can't express generically (ut-docs#2284: categories.html's colour
+//     tiles and same-named checkbox sets)
 //
 // Dialogs are opened with .show(), never .showModal(): the on-screen
 // keyboard (#osk, osk.js) is appended to <body>, and showModal()'s
@@ -107,10 +113,48 @@
     if (el.type === 'checkbox') {
       el.checked = (value === '1' || value === 'true' || value === el.value);
     } else {
+      // ut-docs#2284: a hidden input's .value setter writes its `value`
+      // CONTENT attribute (the "default" value mode, unlike a text input),
+      // so form.reset() on the next create-mode open would restore the
+      // previous row's prefill, not the template's own blank. Remember
+      // the template's default once so resetHiddenDefaults() can put it
+      // back (a real, e2e-reproduced bug: New after editing a coloured
+      // category kept that row's colour).
+      if (el.type === 'hidden' && !el.hasAttribute('data-record-default-value')) {
+        el.setAttribute('data-record-default-value', el.getAttribute('value') || '');
+      }
       // Also covers a RadioNodeList (radios sharing a name): assigning
       // .value selects the matching radio.
       el.value = value;
     }
+  }
+
+  // See setField: form.reset() cannot undo a hidden input's prefill, so
+  // create mode restores each one's recorded template default by hand.
+  function resetHiddenDefaults(form) {
+    Array.prototype.forEach.call(form.querySelectorAll('input[type="hidden"][data-record-default-value]'), function (el) {
+      el.value = el.getAttribute('data-record-default-value') || '';
+    });
+  }
+
+  // setField only records a hidden input's default lazily, the first time
+  // an EDIT-mode prefill touches that field — so a plain create-mode open
+  // (nothing to prefill) never records anything, and a page script that
+  // writes a hidden input directly (e.g. categories.html's colour-tile
+  // click, before any row has ever been edited) leaks straight through
+  // form.reset() on every later create, same class of bug as the one
+  // setField's own comment already describes, just without an edit in
+  // between to trigger the recording. Capture every hidden input's
+  // default ONCE per open(), same "first sight, never live afterwards"
+  // rule defaultAction already uses for the form's action — so a later
+  // page-script write can never be mistaken for the template's own
+  // default, whatever mode this particular open() is in.
+  function rememberHiddenDefaults(form) {
+    Array.prototype.forEach.call(form.querySelectorAll('input[type="hidden"]'), function (el) {
+      if (!el.hasAttribute('data-record-default-value')) {
+        el.setAttribute('data-record-default-value', el.getAttribute('value') || '');
+      }
+    });
   }
 
   function firstField(form) {
@@ -165,7 +209,7 @@
     var title = dialog.querySelector('[data-record-dialog-title]');
     var destructive = dialog.querySelector('[data-record-dialog-destructive]');
     var mode = row ? 'edit' : 'create';
-    if (form) { defaultAction(form); form.reset(); }
+    if (form) { defaultAction(form); rememberHiddenDefaults(form); form.reset(); resetHiddenDefaults(form); }
     // ut-docs#2020: a message left over from a previous refused save must
     // not appear to describe THIS open — every open starts clean. Emptying
     // the text is enough to hide it too: app.css's
@@ -205,6 +249,17 @@
     }
 
     dialog.setAttribute('data-record-mode', mode);
+    // ut-docs#2284: a page whose dialog holds something setField() cannot
+    // express as one form control — a set of same-named checkboxes ticked
+    // from the row, a swatch grid whose pressed tile mirrors a hidden input
+    // — finishes its own prefill here. Dispatched synchronously, after the
+    // generic prefill above and BEFORE the snapshot below, so whatever the
+    // page ticks on open is part of the "clean" state and never trips the
+    // discard guard. detail.row is null in create mode. Bubbles, so a page
+    // may listen on the dialog itself or on document.
+    if (typeof CustomEvent === 'function') {
+      dialog.dispatchEvent(new CustomEvent('record-dialog:open', { bubbles: true, detail: { row: row || null, mode: mode } }));
+    }
     if (openers && !dialog.open) openers.set(dialog, opener || document.activeElement);
     if (!dialog.open) dialog.show();
     if (form && snapshots) snapshots.set(dialog, serialize(form));

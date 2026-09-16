@@ -296,3 +296,69 @@ func TestListCategoriesForAdmin(t *testing.T) {
 		t.Errorf("Multi category = %+v, want ItemCount=1 (active only) IsActive=true", got)
 	}
 }
+
+// ut-docs#2284: the category editor gains a colour swatch — the column has
+// existed since 001 and every reader already carries it (CategoryAdminRow.
+// Color, CategoryNode.Color), but nothing wrote it. UpdateCategory writes
+// name AND colour in one statement (the dialog saves both together), and
+// CreateCategoryWithColor lets a brand-new category start with one. An
+// empty colour clears the column back to "no colour" — the exact
+// convention the item editor's own "No colour" tile uses.
+func TestUpdateCategory_WritesNameAndColor(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	id, err := repo.CreateCategoryWithColor(ctx, "Drinks", "#0f766e")
+	if err != nil || id == "" {
+		t.Fatalf("CreateCategoryWithColor: id=%q err=%v", id, err)
+	}
+	rows, err := repo.ListCategoriesForAdmin(ctx)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("ListCategoriesForAdmin: %+v err=%v", rows, err)
+	}
+	if rows[0].Color != "#0f766e" || rows[0].Name != "Drinks" {
+		t.Fatalf("created category = %+v, want Drinks/#0f766e", rows[0])
+	}
+
+	if err := repo.UpdateCategory(ctx, id, "Beverages", "#4338ca"); err != nil {
+		t.Fatalf("UpdateCategory: %v", err)
+	}
+	rows, _ = repo.ListCategoriesForAdmin(ctx)
+	if rows[0].Name != "Beverages" || rows[0].Color != "#4338ca" {
+		t.Fatalf("after update = %+v, want Beverages/#4338ca", rows[0])
+	}
+
+	// Clearing: an empty colour stores NULL, read back as "".
+	if err := repo.UpdateCategory(ctx, id, "Beverages", ""); err != nil {
+		t.Fatalf("UpdateCategory clear: %v", err)
+	}
+	rows, _ = repo.ListCategoriesForAdmin(ctx)
+	if rows[0].Color != "" {
+		t.Fatalf("colour must clear to empty, got %q", rows[0].Color)
+	}
+
+	// Same validation as RenameCategory: blank name refused, unknown id
+	// reported, nothing written.
+	if err := repo.UpdateCategory(ctx, id, "   ", "#4338ca"); err != data.ErrCategoryNameRequired {
+		t.Fatalf("blank name: err=%v, want ErrCategoryNameRequired", err)
+	}
+	if err := repo.UpdateCategory(ctx, "nope", "X", ""); err != data.ErrCategoryNotFound {
+		t.Fatalf("unknown id: err=%v, want ErrCategoryNotFound", err)
+	}
+	if _, err := repo.CreateCategoryWithColor(ctx, "", "#4338ca"); err != data.ErrCategoryNameRequired {
+		t.Fatalf("create blank name: err=%v, want ErrCategoryNameRequired", err)
+	}
+	// The plain CreateCategory keeps its contract: no colour.
+	id2, err := repo.CreateCategory(ctx, "Snacks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, _ = repo.ListCategoriesForAdmin(ctx)
+	for _, r := range rows {
+		if r.ID == id2 && r.Color != "" {
+			t.Fatalf("CreateCategory must leave colour empty, got %q", r.Color)
+		}
+	}
+}

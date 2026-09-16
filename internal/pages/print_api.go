@@ -39,9 +39,9 @@ const (
 	// resolved from (ut-docs#1728). Owned by settings.SaveRuntimeConfig.
 	keyStoreCurrency = "store.currency"
 	keyStoreLocale   = "store.locale"
-	// keyStoreCountry: read-only here too — the interim Germany receipt-
-	// policy carve-out keys off it (ADR-0089 Decision 3,
-	// receiptPolicyLockedForCountry). Same row every other reader uses.
+	// keyStoreCountry: no longer read by this file (ADR-0089 addendum,
+	// 2026-09-16 — the DE receipt-policy carve-out is rescinded); kept for
+	// the tests in this package that still exercise country-keyed rows.
 	keyStoreCountry = common.KeyCountry
 )
 
@@ -123,12 +123,6 @@ func printerConfigChecked(ctx context.Context, d *common.Deps) (print.Config, er
 		if allowed, ok := receiptPolicyAskerFor(d.Db).AskReceiptPolicy(ctx); ok {
 			cfg.ReceiptPolicy = clampReceiptPolicy(cfg.ReceiptPolicy, allowed)
 		}
-	}
-	// ADR-0089 Decision 3: INTERIM core-only Germany carve-out, applied LAST
-	// so it is the final word regardless of the stored value or any plugin
-	// answer. Temporary pending ut-docs#1908 — see receiptPolicyLockedForCountry.
-	if receiptPolicyLockedForCountry(get(keyStoreCountry, "")) {
-		cfg.ReceiptPolicy = receiptPolicyAlways
 	}
 	// AutoPrint stays the one bit printReceiptAsync gates on: only "always"
 	// prints unprompted; "ask" and "never" both leave printing to the
@@ -571,13 +565,6 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		// see the refusal, not a silently different effective setting.
 		if allowed, ok := receiptPolicyAskerFor(d.Db).AskReceiptPolicy(r.Context()); !receiptPolicyPermitted(receiptPolicy, allowed, ok) {
 			http.Error(w, "receiptPolicy is not permitted by the installed country plugin (allowed: "+strings.Join(allowed, ", ")+")", http.StatusBadRequest)
-			return
-		}
-		// ADR-0089 Decision 3: interim Germany carve-out — only "always"
-		// saves for a DE shop (see receiptPolicyLockedForCountry).
-		if country, _, err := d.Settings.Get(r.Context(), keyStoreCountry); err == nil &&
-			receiptPolicyLockedForCountry(country) && receiptPolicy != receiptPolicyAlways {
-			http.Error(w, "receiptPolicy must be always for a shop in Germany", http.StatusBadRequest)
 			return
 		}
 		// drawerPin: empty (a client that predates this field) silently

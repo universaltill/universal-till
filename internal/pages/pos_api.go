@@ -343,6 +343,15 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		requestID := fmt.Sprintf("%s:%d:%x", attemptID, i, payloadDigest[:8])
 		resp, err := blockingPaymentEventWithResponseAndID(ctx, d, p.MethodID, "authorize", requestID, payload)
 		if err != nil {
+			// ut-docs#2278 review finding: paymentDeclinedError carries no
+			// detail to the operator by design (a plugin-originated decline
+			// reason must never leak verbatim, same policy as the refund
+			// gate's blocked-error handling) -- but that means a genuine
+			// ListPaymentEntries DB error (as opposed to an actual plugin
+			// decline) would otherwise leave zero server-side trace, making
+			// a till that refuses every sale undiagnosable. Log it here,
+			// the one place this error is still available.
+			log.Printf("tender declined for method %q (attempt %s): %v", p.MethodID, requestID, err)
 			return "", &paymentDeclinedError{Method: p.MethodID}
 		}
 		// ut-docs#1779: an independent, per-leg backstop. MethodKeyOKC's own
@@ -858,7 +867,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 			if sellable := sellableVariants(variants); len(sellable) > 0 {
-				groups, err := data.NewModifierRepo(d.Db).ListGroupsForItem(r.Context(), base.ItemID)
+				groups, err := data.NewModifierRepo(d.Db).ResolveGroupsForItem(r.Context(), base.ItemID)
 				if err != nil {
 					// Same fail-closed reasoning as above — checked BEFORE
 					// any header is set (review finding, non-blocker 5): a

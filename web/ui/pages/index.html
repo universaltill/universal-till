@@ -51,6 +51,16 @@
        with modifier groups; closed by its own Cancel/submit handlers. -->
   <dialog id="modifier-modal" class="modifier-modal"></dialog>
 
+  <!-- ut-docs#2285: a long-press (~500ms hold, cancelled by >10px movement)
+       or a right-click/contextmenu on a sell-screen tile (app.js's
+       utTileLongPress) opens this with Move earlier/later, Remove from the
+       quick buttons and Edit-in-catalog actions for that one tile — see
+       web/ui/partials/tile_sheet.html for the fragment it's populated
+       with. Opened with .show(), NEVER showModal() — same ut-docs#1385
+       reasoning as #modifier-modal just above: the left nav rail
+       (status/lock/exit-to-OS) must stay reachable while this is open. -->
+  <dialog id="tile-sheet" class="modifier-modal tile-sheet" aria-label="{{ T "tile_sheet.aria" }}"></dialog>
+
   <!-- Name-this-tab step for Hold Sale (ut-docs#46): optional free-text
        label so multiple concurrent held sales read like "Tab 1" instead
        of only a CRM customer name or a bare timestamp. Static (no server
@@ -175,9 +185,40 @@
   </div>
   {{ end }}
 
-  <div class="pos-container" data-currency="{{ or .currency "GBP" }}">
+  {{/* ut-docs#2308: `or` (the same idiom .currency uses just above) supplies a
+       float64 0 when basketPanelWidthRem is absent from the data map entirely.
+       A bare `gt .basketPanelWidthRem 0.0` is a HARD render error ("invalid
+       type for comparison") on a nil, and index.html's content block is also
+       rendered by internal/ui.NewRenderer (/ui/buttons, buttons_api.go), whose
+       data map does not carry this key — caught by
+       internal/ui.TestButtonsNewRenderer_WorksFromAnyWorkingDirectory. */}}
+  <div class="pos-container" data-currency="{{ or .currency "GBP" }}"{{ if gt (or .basketPanelWidthRem 0.0) 0.0 }} style="--basket-col-width: {{ .basketPanelWidthRem }}rem;"{{ end }}>
     <!-- Basket loads on page load -->
     <div class="basket" hx-get="/ui/basket" hx-trigger="load" hx-swap="outerHTML"></div>
+
+    <!-- ut-docs#2308: the basket/products divider. Touch-and-hold (~300ms)
+         then drag horizontally (mouse: plain drag, no hold) resizes both
+         panes live; a plain tap or a swipe starting elsewhere never
+         reaches this element at all (it's its own thin grid track, app.css
+         `.pos-container`), so it can never steal a tap meant for a tile or
+         a basket line. Double-tap/double-click resets to the built-in
+         default. Inactive (not rendered as interactive) below the same
+         900px breakpoint `.pos-container` itself stacks at (app.css hides
+         it there with `display: none`). role="separator" so a screen
+         reader announces this as a pane boundary; tabindex="-1" (not "0")
+         because there is no keyboard-operable resize here yet -- a
+         focusable-but-inert stop would be worse than none (deliberate
+         scope cut, see this feature's code review). The self-order kiosk
+         page (web/ui/pages/self_order.html) is a fully separate template
+         that never renders `.pos-container` at all, so no extra kiosk-mode
+         gating is needed here -- see that page's own template for the
+         customer-containment surface this divider would otherwise need
+         disabling on. -->
+    <div class="pos-divider" id="pos-divider" role="separator" aria-orientation="vertical"
+         aria-label="{{ T "pos.divider.label" }}" title="{{ T "pos.divider.label" }}"
+         tabindex="-1" data-testid="pos-divider">
+      <span class="pos-divider-grip" aria-hidden="true"></span>
+    </div>
 
     <!-- Product buttons panel loads on page load -->
     <div class="products" hx-get="/ui/buttons" hx-trigger="load" hx-swap="outerHTML"></div>
@@ -721,6 +762,190 @@
           window.addEventListener('resize', recompute);
           window.addEventListener('orientationchange', recompute);
         }
+      })();
+      // ut-docs#2308: basket/products divider drag. Touch-and-hold (~300ms)
+      // then drag (mouse: plain drag, no hold) resizes the basket column
+      // live via the `--basket-col-width` custom property app.css's
+      // `.pos-container` reads, clamped against the CURRENT container's
+      // real width (adapts to whatever viewport/orientation/ui-scale is
+      // active right now) as well as the fixed CSS floors on both tracks
+      // (the ultimate backstop — see app.css's `--pos-*` tokens). Saved
+      // ONCE per gesture, on release, via a plain fetch() POST — never
+      // htmx, never a form submit — so a drag mid-sale can never trigger
+      // the page navigation/reload that would lose the in-progress basket
+      // (the one hard requirement every other settings control's own
+      // hx-on::after-request reload pattern in this codebase would
+      // violate here).
+      (function () {
+        var divider = document.getElementById('pos-divider');
+        var container = document.querySelector('.pos-container');
+        if (!divider || !container) return;
+        // ut-docs#2308 fix: .basket and .products are each their own
+        // hx-trigger="load" hx-swap="outerHTML" fragment (index.html) --
+        // htmx REPLACES the whole element once that fetch lands, shortly
+        // after this script itself already ran, so an element reference
+        // captured once here would go stale/detached (a detached node's
+        // getBoundingClientRect() is all-zero, which silently broke both
+        // the visual-first check and the live width read the first time
+        // this was tried). Query live at each use instead.
+        function liveBasketEl() { return container.querySelector(':scope > .basket'); }
+        function liveProductsEl() { return container.querySelector(':scope > .products'); }
+        if (!liveBasketEl() || !liveProductsEl()) return;
+
+        function rootVarRem(name, fallback) {
+          var f = parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name));
+          return isNaN(f) ? fallback : f;
+        }
+        function remPx() {
+          return parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+        }
+        var MIN_REM = rootVarRem('--pos-basket-min-w', 22);
+        var MAX_REM = rootVarRem('--pos-basket-max-w', 60);
+        var PRODUCTS_MIN_REM = rootVarRem('--pos-products-min-w', 16.5);
+        var DIVIDER_REM = rootVarRem('--pos-divider-w', 1.5);
+        var HOLD_MS = 300;
+        // A hold/click that drifts this far before it's "armed" (the hold
+        // timer fired, for touch/pen; immediately, for mouse) reads as a
+        // swipe/scroll or a plain click, not a deliberate resize -- and
+        // conversely, staying under it on release is what makes a gesture
+        // a TAP candidate for the double-tap/double-click reset below.
+        var MOVE_THRESHOLD_PX = 8;
+        // A second tap/click within this long of, and this close to, the
+        // first counts as a double-tap/double-click reset.
+        var DOUBLE_TAP_MS = 350;
+
+        function currentBasketWidthRem() {
+          var v = parseFloat(getComputedStyle(container).getPropertyValue('--basket-col-width'));
+          if (!isNaN(v)) return v;
+          var b = liveBasketEl();
+          return b ? b.getBoundingClientRect().width / remPx() : MIN_REM;
+        }
+        function isBasketVisuallyFirst() {
+          // ut-docs#2308: a runtime DOM-rect measurement, not a hardcoded
+          // "basket is always the left pane" assumption -- this single
+          // check is what makes the SAME drag-direction math come out
+          // correct both under RTL (basket renders on the visual right
+          // there, same real-measurement idea as this page's own
+          // focusTab()'s getComputedStyle().direction check above, just
+          // measured directly instead of inferred from `direction`) and
+          // under an external theme plugin (theme-buttons-left,
+          // theme-screen-top -- not present in this checkout, see this
+          // feature's own review notes) that reorders which pane renders
+          // on which side. Whichever pane's left edge is smaller is the
+          // one dragging right should GROW.
+          var b = liveBasketEl(), p = liveProductsEl();
+          if (!b || !p) return true;
+          return b.getBoundingClientRect().left <= p.getBoundingClientRect().left;
+        }
+        function liveMaxRem() {
+          var totalRem = container.getBoundingClientRect().width / remPx();
+          var cap = totalRem - PRODUCTS_MIN_REM - DIVIDER_REM;
+          return Math.max(MIN_REM, Math.min(MAX_REM, cap));
+        }
+        function clampRem(rem) {
+          return Math.max(MIN_REM, Math.min(liveMaxRem(), rem));
+        }
+        function applyWidth(rem) {
+          container.style.setProperty('--basket-col-width', rem + 'rem');
+        }
+        function persist(rem) {
+          var body = new URLSearchParams();
+          body.set('width_rem', rem > 0 ? String(Math.round(rem * 100) / 100) : '0');
+          fetch('/api/settings/basket-panel-width', { method: 'POST', body: body, credentials: 'same-origin' })
+            .catch(function () { /* offline-first: a failed save just means the drag isn't remembered next load -- the resize itself already happened and stays until this page unloads */ });
+        }
+        function resetToDefault() {
+          container.style.removeProperty('--basket-col-width');
+          persist(0);
+        }
+        function isActive() {
+          // Inert below the same breakpoint app.css hides the divider at
+          // (display: none there means no pointer event reaches here in
+          // the first place) -- this is a defensive second check, belt-
+          // and-braces against a theme overriding that rule.
+          return getComputedStyle(divider).display !== 'none';
+        }
+
+        var pointerId = null, holdTimer = null, holdFired = false, dragging = false;
+        var downX = 0, downY = 0, startWidthRem = 0, sign = 1;
+        var lastTapTime = 0, lastTapX = 0, lastTapY = 0;
+
+        function cancelHold() {
+          if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+        }
+        function endGesture() {
+          cancelHold();
+          if (pointerId !== null) {
+            try { divider.releasePointerCapture(pointerId); } catch (e) { /* already released/never captured */ }
+          }
+          pointerId = null;
+          dragging = false;
+          divider.classList.remove('dragging');
+        }
+        function maybeDoubleTap(x, y) {
+          var now = Date.now();
+          var isDouble = lastTapTime !== 0 && (now - lastTapTime) < DOUBLE_TAP_MS &&
+            Math.abs(x - lastTapX) < 24 && Math.abs(y - lastTapY) < 24;
+          if (isDouble) {
+            lastTapTime = 0; // consumed -- a third quick tap starts fresh, not a re-trigger
+          } else {
+            lastTapTime = now; lastTapX = x; lastTapY = y;
+          }
+          return isDouble;
+        }
+
+        divider.addEventListener('pointerdown', function (e) {
+          if (!isActive() || pointerId !== null) return;
+          if (e.pointerType === 'mouse' && e.button !== 0) return;
+          pointerId = e.pointerId;
+          downX = e.clientX; downY = e.clientY;
+          dragging = false;
+          startWidthRem = currentBasketWidthRem();
+          sign = isBasketVisuallyFirst() ? 1 : -1;
+          try { divider.setPointerCapture(pointerId); } catch (err) { /* fine without it, just less robust off-element */ }
+          if (e.pointerType === 'touch' || e.pointerType === 'pen') {
+            holdFired = false;
+            holdTimer = setTimeout(function () { holdTimer = null; holdFired = true; }, HOLD_MS);
+          } else {
+            // Mouse: plain drag, no hold -- movement alone (below) arms it.
+            holdFired = true;
+          }
+        });
+        divider.addEventListener('pointermove', function (e) {
+          if (e.pointerId !== pointerId) return;
+          var dx = e.clientX - downX, dy = e.clientY - downY;
+          if (!holdFired) {
+            // Touch/pen still waiting on the hold timer: real movement
+            // this early is a swipe/scroll starting here, not a
+            // deliberate hold-then-drag -- abandon the whole gesture
+            // rather than let it resize.
+            if (Math.abs(dx) > MOVE_THRESHOLD_PX || Math.abs(dy) > MOVE_THRESHOLD_PX) endGesture();
+            return;
+          }
+          if (!dragging) {
+            if (Math.abs(dx) < MOVE_THRESHOLD_PX && Math.abs(dy) < MOVE_THRESHOLD_PX) return;
+            dragging = true;
+            divider.classList.add('dragging');
+          }
+          e.preventDefault();
+          applyWidth(clampRem(startWidthRem + sign * (dx / remPx())));
+        });
+        function onPointerEnd(e) {
+          if (e.pointerId !== pointerId) return;
+          var wasDragging = dragging;
+          var tapX = e.clientX, tapY = e.clientY;
+          endGesture();
+          if (wasDragging) {
+            persist(currentBasketWidthRem());
+            return;
+          }
+          if (maybeDoubleTap(tapX, tapY)) resetToDefault();
+        }
+        divider.addEventListener('pointerup', onPointerEnd);
+        divider.addEventListener('pointercancel', function (e) {
+          if (e.pointerId !== pointerId) return;
+          endGesture(); // aborted -- no persist, no double-tap credit
+        });
       })();
     </script>
     <!-- ut-docs#925: the split-tender panel's own status/validation copy is

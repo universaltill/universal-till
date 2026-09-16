@@ -257,14 +257,34 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 			}
 			continue
 		}
+		// ut-docs#2280: a ListPluginHookEvents error used to be folded into
+		// the same "continue" as "this plugin genuinely has no hooks" —
+		// the module above still counted as loaded, but ended up with ZERO
+		// registered event subscriptions. That reopens the exact fail-open
+		// ut-docs#2278 closed one layer up: a blocking payment gate
+		// (blockingPaymentEventWithResponseAndID) treats "no subscribers"
+		// as "nothing to check, proceed," so an active payment plugin with
+		// no subscriptions due to a transient DB error let a sale/refund
+		// proceed with no plugin consulted and no error anywhere. Treat
+		// this exactly like a load failure — mark broken, log it, don't
+		// register the plugin as loaded — rather than treat "the lookup
+		// failed" as "there was nothing to look up."
+		events, err := repo.ListPluginHookEvents(ctx, row.ID)
+		if err != nil {
+			logging.L().Errorf("wasm load %s: list hook events: %v", row.ID, err)
+			failed = append(failed, row.ID)
+			if markBroken(ctx, repo, row) {
+				stateChanged = true
+			}
+			continue
+		}
 		loaded = append(loaded, row.ID)
 		if row.InstallState == data.PluginStateBroken {
 			if markHealed(ctx, repo, row) {
 				stateChanged = true
 			}
 		}
-		events, err := repo.ListPluginHookEvents(ctx, row.ID)
-		if err != nil || len(events) == 0 {
+		if len(events) == 0 {
 			continue
 		}
 		// Authorization events run BLOCKING: the tender waits for the
@@ -344,14 +364,16 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 	}
 }
 
-// markBroken flips a wasm plugin whose module failed to load to
-// install_state='broken' (ut-docs#368). It deliberately does NOT touch the
-// plugin's install-status record: that record's State tracks the INSTALL
-// lifecycle (Requested/Downloading/Installing/Active/Failed — Failed means
-// "the install attempt itself failed", and the store page renders it as
-// not-installed with a retry affordance), while a plugin that installed
-// fine and later broke at LOAD time is still installed. Demoting the record
-// to Failed also broke convergePluginSet's prune loop (sync_admin.go),
+// markBroken flips a wasm plugin whose module failed to load — or whose
+// module loaded but couldn't be wired up with its event subscriptions
+// (ut-docs#2280) — to install_state='broken' (ut-docs#368). It deliberately
+// does NOT touch the plugin's install-status record: that record's State
+// tracks the INSTALL lifecycle (Requested/Downloading/Installing/Active/
+// Failed — Failed means "the install attempt itself failed", and the store
+// page renders it as not-installed with a retry affordance), while a
+// plugin that installed fine and later broke at LOAD time is still
+// installed. Demoting the record to Failed also broke
+// convergePluginSet's prune loop (sync_admin.go),
 // which only prunes Active records — a broken plugin removed on the primary
 // became permanently un-uninstallable on its replicas (round-2 review
 // BLOCKER). plugins.install_state='broken' is the single source of truth

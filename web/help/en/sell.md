@@ -85,6 +85,10 @@ Several small chips near the bottom of the left-hand menu tell you, at a glance,
 - If your shop has a TSE configured, a fiscal signing chip shows its health — see **German shops: TSE and real sales** below.
 - A bug-report chip is also there if that feature is enabled — see **Reporting a bug**.
 
+## Resizing the basket and products panels
+
+On a touchscreen till, press and hold the thin divider between the basket and the product grid for about half a second, then drag it left or right to make either side bigger; on a mouse or trackpad till, just click and drag it — no holding needed. Both panels keep a minimum usable width, so neither one can be dragged away to nothing, and the product grid re-flows into more or fewer columns as you resize it. Double-tap or double-click the divider to put it back to the default split. Your choice is saved on this till and comes back the next time you open the sell screen; Settings → Display also has a Reset button for the same thing. The divider isn't shown once the screen gets narrow enough to stack the basket above the products instead of side by side.
+
 ## Selling with no network connection
 
 The till is built to keep selling when the internet, the shop's own network, or another till it syncs with is unreachable — a network outage never blocks checkout. What actually changes on screen:

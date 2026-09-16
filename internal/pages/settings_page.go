@@ -659,14 +659,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// bypass.
 			"androidUpdateSessionAuth": androidUpdateSessionAuthorizes(d, r),
 			"printer":                  printerConfig(r.Context(), d),
-			// ADR-0089 Decision 3: the interim Germany carve-out locks the
-			// receipt-policy control to "always" — read from the same
-			// settings row the save handler and printerConfig key off, not
-			// CurrentState, so a country changed via /api/settings/upsert in
-			// this same session renders consistently with what the save
-			// handler will actually accept.
-			"receiptPolicyLocked": receiptPolicyLockedForCountry(all[common.KeyCountry]),
-			"backups":             listBackupsForUI(d, locale),
+			// ADR-0089 addendum (2026-09-16, ut-docs#2286): Decision 3's DE
+			// lock is rescinded — German shops choose freely among the three
+			// policies. This only decides whether the factual advisory shows
+			// under the control, read from the same settings row the save
+			// handler and printerConfig key off (not CurrentState), so a
+			// country changed via /api/settings/upsert in this same session
+			// renders consistently.
+			"receiptPolicyAdvisoryDE": strings.EqualFold(strings.TrimSpace(all[common.KeyCountry]), "DE"),
+			"backups":                 listBackupsForUI(d, locale),
 			// ut-docs#1613: a restore staged in an earlier visit (or before
 			// a page reload) must still offer its restart trigger here —
 			// otherwise the operator who reloads mid-flow lands back on the
@@ -1574,6 +1575,43 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		d.SetState(st)
 		httpx.InitUIScale(f)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// Sell-screen basket/products divider width for this till's screen
+	// (ut-docs#2308): dragging the divider between the basket and the
+	// product grid resizes both panes live, then saves ONCE on pointer
+	// release via a plain fetch() POST — not htmx, and no
+	// hx-on::after-request reload like every sibling control in this file
+	// (ui-scale/osk above) — an operator mid-drag mid-sale must never lose
+	// their in-progress basket to a page reload. width_rem omitted, empty,
+	// or "0" resets to the built-in default (app.css's own split); this is
+	// the same request shape the divider's own double-tap/double-click
+	// reset AND the Settings -> Display "Reset" button (settings.html) both
+	// send — see common.RuntimeState.BasketPanelWidthRemChanged's own doc
+	// comment for why a plain `>0` guard (UIScale's own shape) can't
+	// support that reset affordance by itself.
+	mux.HandleFunc("POST /api/settings/basket-panel-width", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		raw := strings.TrimSpace(r.Form.Get("width_rem"))
+		st := d.CurrentState()
+		if raw == "" || raw == "0" {
+			st.BasketPanelWidthRem = 0
+			st.BasketPanelWidthRemChanged = true
+		} else {
+			f, err := strconv.ParseFloat(raw, 64)
+			if err != nil || f < common.MinBasketPanelWidthRem || f > common.MaxBasketPanelWidthRem {
+				http.Error(w, fmt.Sprintf("width_rem must be between %g and %g, or 0 to reset", common.MinBasketPanelWidthRem, common.MaxBasketPanelWidthRem), http.StatusBadRequest)
+				return
+			}
+			st.BasketPanelWidthRem = f
+			st.BasketPanelWidthRemChanged = false
+		}
+		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		d.SetState(st)
 		w.WriteHeader(http.StatusNoContent)
 	})
 

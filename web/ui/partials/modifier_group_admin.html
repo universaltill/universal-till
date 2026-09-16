@@ -153,5 +153,41 @@
        fallback to fall through to). */}}
   {{ if .Notice }}<p class="field-error-msg" role="alert">{{ .Notice }}</p>{{ end }}
   {{ template "modifier_group_admin" . }}
+
+  {{/* ut-docs#2284 / ADR-0094 §5: the groups this item INHERITS from its
+       category — read-only here (a category link is edited on /categories,
+       and the group itself on /modifiers or via its own item), shown greyed
+       once the item has skipped it, with the one per-item control the ADR
+       gives: skip (opt out) / use again (opt in). Deliberately separate
+       from the "Remove from this item" button above — that one deletes a
+       DIRECT link and is guarded against orphaning the group; an opt-out is
+       a presence row that only ever suppresses the category attachment and
+       never touches a direct link (see handlers.go's optToggle). Only this
+       item-scoped wrapper renders it; the shop-wide /modifiers list does
+       not (InheritedGroups is nil there). */}}
+  <div class="catalog-detail-modifiers catalog-detail-inherited">
+    <div class="muted catalog-detail-label">{{ T "catalog.modifiers.inherited_title" }}</div>
+    <p class="muted catalog-inherited-help">{{ T "catalog.modifiers.inherited_help" }}</p>
+    {{ if not .InheritedGroups }}<p class="muted">{{ T "catalog.modifiers.inherited_none" }}</p>{{ end }}
+    {{ range .InheritedGroups }}
+    <div class="modifier-admin-group modifier-admin-inherited{{ if .OptedOut }} vg-inactive{{ end }}" data-inherited-group="{{ .ID }}">
+      <div class="modifier-admin-group-row">
+        <span class="modifier-inherited-name">{{ .Name }}{{ if .OptedOut }} <span class="muted">({{ T "catalog.modifiers.opted_out" }})</span>{{ end }}</span>
+        <span class="muted modifier-inherited-options">{{ range $i, $o := .Options }}{{ if $i }}, {{ end }}{{ $o.Name }}{{ end }}</span>
+        {{ if .OptedOut }}
+        <button type="button" class="btn secondary"
+                hx-post="/api/catalog/modifier-group/opt-in"
+                hx-vals='{{ jsonVals "itemId" $.ItemID "groupId" .ID "panelItem" $.ItemID }}'
+                hx-target="#{{ $.Target }}" hx-swap="outerHTML">{{ T "catalog.modifiers.opt_in" }}</button>
+        {{ else }}
+        <button type="button" class="btn secondary"
+                hx-post="/api/catalog/modifier-group/opt-out"
+                hx-vals='{{ jsonVals "itemId" $.ItemID "groupId" .ID "panelItem" $.ItemID }}'
+                hx-target="#{{ $.Target }}" hx-swap="outerHTML">{{ T "catalog.modifiers.opt_out" }}</button>
+        {{ end }}
+      </div>
+    </div>
+    {{ end }}
+  </div>
 </div>
 {{ end }}

@@ -17,8 +17,19 @@
      create/update a group (including the Active toggle), attach, detach,
      create/update an option -- so a quick button whose item's
      customization changed reflects it on the very next render, with the
-     button itself never rebuilt. */}}
-<div class="products" hx-get="/ui/buttons" hx-trigger="modifiers-changed from:body" hx-swap="outerHTML">
+     button itself never rebuilt.
+
+     buttons-changed (ut-docs#2285) is the same self-refreshing idea for
+     the button SET itself, not one item's customization: it's emitted by
+     every successful /api/buttons/move, /api/buttons/remove and
+     /api/buttons/add (internal/ui/buttons.go's ButtonsHTTP.Add/Remove and
+     internal/pages/buttons_api.go's reorder/move routes) so a tile moved
+     or removed via the sell-screen long-press sheet shows up here on the
+     very next render, same as modifiers-changed already does for a
+     customization change. (An HX-Trigger only dispatches in the requesting
+     document, so a change made on the Designer page in another tab does
+     NOT reach an open sale screen — that still needs a reload, as before.) */}}
+<div class="products" hx-get="/ui/buttons" hx-trigger="modifiers-changed from:body, buttons-changed from:body" hx-swap="outerHTML">
   {{ if not .Groups }}
   <div class="products-header">
     <h2>{{ T "products.title" }}</h2>
@@ -125,6 +136,19 @@
             internal/pages/buttons_api_test.go would have caught it in one
             second; it was missed by re-running only go build/go vet after
             that edit instead of the full gate. */}}
+    {{/* ut-docs#2285: this whole root is outerHTML-swapped on
+         buttons-changed (a Move/Remove from the tile sheet), which rebuilds
+         this x-data from scratch -- tab back to All, search cleared. Until
+         #2285 the only swap trigger was modifiers-changed, emitted from the
+         catalog admin screens and never while an operator was on the sale
+         screen, so the state loss was invisible; a reorder-within-category
+         that snaps the operator out of that very category is not
+         (independent review, 2026-09-16). x-init restores tab/q from a
+         page-level stash the $watch calls keep current, and only restores a
+         tab that still exists in the fresh render (a category can be gone).
+         The stash lives on window, not storage: it is per page life, so a
+         real navigation still starts on All as before. No double quotes
+         inside these attributes -- see the note above this section. */}}
     <section class="products-finder" aria-labelledby="products-panel-title" x-data="{
       tab: '{{ if $hasTabs }}__all__{{ end }}',
       q: '',
@@ -146,6 +170,17 @@
         return this.q ? this.sectionHasMatch(panelEl) : (this.tab === id || this.tab === '__all__');
       },
       searching: false,
+      restoreGridState() {
+        const st = window.utSaleGridState;
+        if (st) {
+          const tabStillExists = st.tab === '__all__' ? !!document.getElementById('cat-tab-all')
+            : !!document.getElementById('cat-tab-' + (st.tab || 'uncategorized'));
+          if (typeof st.tab === 'string' && tabStillExists) this.tab = st.tab;
+          if (st.q) { this.q = st.q; this.searching = true; }
+        }
+        this.$watch('tab', v => { window.utSaleGridState = Object.assign({}, window.utSaleGridState, { tab: v }); });
+        this.$watch('q', v => { window.utSaleGridState = Object.assign({}, window.utSaleGridState, { q: v }); });
+      },
       openSearch() { this.searching = true; this.$nextTick(() => { const i = this.$refs.search; if (i) i.focus(); }); },
       closeSearch() {
         this.searching = false;
@@ -172,7 +207,7 @@
         const next = tabs[(i + dir + tabs.length) % tabs.length];
         next.click(); next.focus();
       }
-    }">
+    }" x-init="restoreGridState()">
       <!-- ut-docs#2173 (closes ut-docs#993): the sale screen used to spend
            TWO full rows of height before the first product tile -- this
            .products-header row (title + an always-expanded search input +
@@ -427,6 +462,7 @@
   <button
     class="btn-tile{{ if $colored }} tile-colored{{ end }}"
     data-name="{{ .Label }}"
+    data-code="{{ .Code }}" data-item-id="{{ .ItemID }}"
     x-show="matches($el)"
     {{ if $colored }}style="--tile-color: {{ .Color }}"{{ end }}
     hx-get="/ui/pos/modifiers?item={{ .ItemID }}&code={{ .Code }}"
@@ -442,6 +478,7 @@
   <button
     class="btn-tile{{ if $colored }} tile-colored{{ end }}"
     data-name="{{ .Label }}"
+    data-code="{{ .Code }}" data-item-id="{{ .ItemID }}"
     x-show="matches($el)"
     {{ if $colored }}style="--tile-color: {{ .Color }}"{{ end }}
     hx-post="/api/pos/scan"

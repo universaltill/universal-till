@@ -175,20 +175,20 @@
       "locale": "ar",
       "topic": "sell",
       "signature": {
-        "headings": 16,
+        "headings": 17,
         "numbered_steps": 6,
         "sub_bullets": 0,
         "top_bullets": 16,
         "bold_leadins": 6
       },
       "english": {
-        "headings": 17,
+        "headings": 18,
         "numbered_steps": 6,
         "sub_bullets": 0,
         "top_bullets": 20,
         "bold_leadins": 10
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2308: a new heading (basket/products divider resizing) added to English and this locale with a real translation matching the same structure; the pre-existing 1-heading/4-top-bullet/4-bold-leadin gap is unchanged in size, just shifted (16->17 headings, English 17->18)."
     },
     {
       "locale": "ar",
@@ -232,20 +232,20 @@
       "locale": "de",
       "topic": "sell",
       "signature": {
-        "headings": 16,
+        "headings": 17,
         "numbered_steps": 6,
         "sub_bullets": 0,
         "top_bullets": 16,
         "bold_leadins": 6
       },
       "english": {
-        "headings": 17,
+        "headings": 18,
         "numbered_steps": 6,
         "sub_bullets": 0,
         "top_bullets": 20,
         "bold_leadins": 10
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2308: a new heading (basket/products divider resizing) added to English and this locale with a real translation matching the same structure; the pre-existing 1-heading/4-top-bullet/4-bold-leadin gap is unchanged in size, just shifted (16->17 headings, English 17->18)."
     },
     {
       "locale": "fa",
@@ -479,20 +479,20 @@
       "locale": "fa",
       "topic": "sell",
       "signature": {
-        "headings": 16,
+        "headings": 17,
         "numbered_steps": 6,
         "sub_bullets": 0,
         "top_bullets": 16,
         "bold_leadins": 6
       },
       "english": {
-        "headings": 17,
+        "headings": 18,
         "numbered_steps": 6,
         "sub_bullets": 0,
         "top_bullets": 20,
         "bold_leadins": 10
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2308: a new heading (basket/products divider resizing) added to English and this locale with a real translation matching the same structure; the pre-existing 1-heading/4-top-bullet/4-bold-leadin gap is unchanged in size, just shifted (16->17 headings, English 17->18)."
     },
     {
       "locale": "fa",
@@ -520,17 +520,17 @@
         "headings": 2,
         "numbered_steps": 3,
         "sub_bullets": 0,
-        "top_bullets": 0,
+        "top_bullets": 1,
         "bold_leadins": 1
       },
       "english": {
         "headings": 3,
         "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 4,
+        "top_bullets": 5,
         "bold_leadins": 3
       },
-      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2285: both English and this locale gained one more top-level bullet (a cross-reference to the sell screen's new long-press tile-actions sheet) — the pre-existing gap this entry tracks is unchanged in size, just shifted by +1/+1."
     },
     {
       "locale": "fa",
@@ -821,20 +821,20 @@
       "locale": "tr",
       "topic": "sell",
       "signature": {
-        "headings": 16,
+        "headings": 17,
         "numbered_steps": 6,
         "sub_bullets": 0,
         "top_bullets": 16,
         "bold_leadins": 6
       },
       "english": {
-        "headings": 17,
+        "headings": 18,
         "numbered_steps": 6,
         "sub_bullets": 0,
         "top_bullets": 20,
         "bold_leadins": 10
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2308: a new heading (basket/products divider resizing) added to English and this locale with a real translation matching the same structure; the pre-existing 1-heading/4-top-bullet/4-bold-leadin gap is unchanged in size, just shifted (16->17 headings, English 17->18)."
     },
     {
       "locale": "tr",
@@ -881,17 +881,17 @@
         "headings": 2,
         "numbered_steps": 3,
         "sub_bullets": 0,
-        "top_bullets": 0,
+        "top_bullets": 1,
         "bold_leadins": 1
       },
       "english": {
         "headings": 3,
         "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 4,
+        "top_bullets": 5,
         "bold_leadins": 3
       },
-      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2285: both English and this locale gained one more top-level bullet (a cross-reference to the sell screen's new long-press tile-actions sheet) — the pre-existing gap this entry tracks is unchanged in size, just shifted by +1/+1."
     },
     {
       "locale": "tr",
@@ -938,17 +938,17 @@
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 13,
-        "top_bullets": 6,
-        "bold_leadins": 15
+        "top_bullets": 7,
+        "bold_leadins": 16
       },
       "english": {
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 13,
-        "top_bullets": 7,
-        "bold_leadins": 16
+        "top_bullets": 8,
+        "bold_leadins": 17
       },
-      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1. ut-docs#2284: both English and this locale gained one more bullet (the item editor's inherited-groups / kitchen-routing tip), translated for real this time, so the tracked gap is again unchanged in size, shifted by a further +1/+1."
     },
     {
       "locale": "de",
@@ -957,17 +957,17 @@
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 13,
-        "top_bullets": 6,
-        "bold_leadins": 15
+        "top_bullets": 7,
+        "bold_leadins": 16
       },
       "english": {
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 13,
-        "top_bullets": 7,
-        "bold_leadins": 16
+        "top_bullets": 8,
+        "bold_leadins": 17
       },
-      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1. ut-docs#2284: both English and this locale gained one more bullet (the item editor's inherited-groups / kitchen-routing tip), translated for real this time, so the tracked gap is again unchanged in size, shifted by a further +1/+1."
     },
     {
       "locale": "fa",
@@ -976,17 +976,17 @@
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 13,
-        "top_bullets": 6,
-        "bold_leadins": 15
+        "top_bullets": 7,
+        "bold_leadins": 16
       },
       "english": {
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 13,
-        "top_bullets": 7,
-        "bold_leadins": 16
+        "top_bullets": 8,
+        "bold_leadins": 17
       },
-      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1. ut-docs#2284: both English and this locale gained one more bullet (the item editor's inherited-groups / kitchen-routing tip), translated for real this time, so the tracked gap is again unchanged in size, shifted by a further +1/+1."
     },
     {
       "locale": "tr",
@@ -995,17 +995,17 @@
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 13,
-        "top_bullets": 6,
-        "bold_leadins": 15
+        "top_bullets": 7,
+        "bold_leadins": 16
       },
       "english": {
         "headings": 3,
         "numbered_steps": 7,
         "sub_bullets": 13,
-        "top_bullets": 7,
-        "bold_leadins": 16
+        "top_bullets": 8,
+        "bold_leadins": 17
       },
-      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2119: both English and this locale gained one more bullet (a new \"Filter by category\" tip) — English got the real text, this locale got the same still-untranslated English literal (NAS translation endpoint unreachable from this sandbox), so the pre-existing 1-bullet/1-bold-leadin gap this entry already tracked is unchanged in size, just shifted by +1/+1. ut-docs#2284: both English and this locale gained one more bullet (the item editor's inherited-groups / kitchen-routing tip), translated for real this time, so the tracked gap is again unchanged in size, shifted by a further +1/+1."
     },
     {
       "locale": "ar",
@@ -1014,17 +1014,17 @@
         "headings": 2,
         "numbered_steps": 3,
         "sub_bullets": 0,
-        "top_bullets": 0,
+        "top_bullets": 1,
         "bold_leadins": 0
       },
       "english": {
         "headings": 3,
         "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 4,
+        "top_bullets": 5,
         "bold_leadins": 3
       },
-      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2285: both English and this locale gained one more top-level bullet (a cross-reference to the sell screen's new long-press tile-actions sheet) — the pre-existing gap this entry tracks is unchanged in size, just shifted by +1/+1."
     },
     {
       "locale": "de",
@@ -1033,17 +1033,17 @@
         "headings": 2,
         "numbered_steps": 3,
         "sub_bullets": 0,
-        "top_bullets": 0,
+        "top_bullets": 1,
         "bold_leadins": 0
       },
       "english": {
         "headings": 3,
         "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 4,
+        "top_bullets": 5,
         "bold_leadins": 3
       },
-      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr). ut-docs#2285: both English and this locale gained one more top-level bullet (a cross-reference to the sell screen's new long-press tile-actions sheet) — the pre-existing gap this entry tracks is unchanged in size, just shifted by +1/+1."
     },
     {
       "locale": "ar",

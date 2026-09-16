@@ -74,6 +74,10 @@ Yan menünün alt kısmına yakın birkaç küçük çip, kasayla ilgili durumla
 - Dükkanınızda yapılandırılmış bir TSE varsa, bir mali imzalama çipi sağlığını gösterir — aşağıda **Almanya'daki mağazalar: TSE ve gerçek satışlar**'a bakın.
 - Bu özellik etkinleştirilmişse bir hata raporu çipi de orada — **Bir sorun bildirme**'ye bakın.
 
+## Sepet ve ürün panellerinin boyutunu değiştirme
+
+Dokunmatik bir kasada, sepet ile ürün ızgarası arasındaki ince ayırıcıyı yaklaşık yarım saniye basılı tutun, ardından herhangi bir tarafı büyütmek için sola ya da sağa sürükleyin; fare veya im-pad kullanılan bir kasada ise basılı tutmaya gerek yok, yalnızca tıklayıp sürüklemeniz yeterli. Her iki panel de kullanılabilir bir minimum genişliği korur, böylece hiçbiri yok olacak şekilde sürüklenemez ve ürün ızgarası yeniden boyutlandırdıkça daha fazla veya daha az sütuna yeniden düzenlenir. Ayırıcıya çift dokunmak veya çift tıklamak onu varsayılan bölünmeye geri döndürür. Seçiminiz bu kasada kaydedilir ve satış ekranını bir sonraki açışınızda geri gelir; Ayarlar → Görünüm bölümünde de aynı işlevi gören bir Sıfırla düğmesi vardır. Ekran, sepet ile ürünlerin yan yana değil üst üste dizilecek kadar daraldığında ayırıcı artık gösterilmez.
+
 ## Ağ bağlantısı olmadan satış
 
 Kasa, internet, dükkanın kendi ağı, veya senkronize olduğu başka bir kasa erişilemezken satışa devam etmek için yapılandırılmıştır — bir ağ kesintisi asla ödemeyi engellemez. Ekranda gerçekten değişen şey:

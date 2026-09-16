@@ -186,6 +186,42 @@ var cloudAllowedTypes = map[string]bool{
 	"diagnostic_gap": true,
 }
 
+// cloudEventFields mirrors ut-cloud/internal/diagnostics.eventFieldAllowlist's
+// per-type field-NAME sets — the field-name half of the cross-repo mirror
+// guard (ut-docs#2266) alongside cloudAllowedTypes' type-set mirror above.
+// Only names, never the `diag` kind or enum vocabulary (that's
+// ut-cloud/internal/diagnostics.eventFieldKind's own, separate mirror —
+// ut-docs#2272). Kept in step by hand, the same discipline cloudAllowedTypes
+// already uses, since the two repos are different Go modules with no shared
+// package: TestEventFieldNamesMatchCloudAllowlist fails if either side gains
+// or loses a field without the other being updated to match.
+var cloudEventFields = map[string]map[string]bool{
+	"plugin_ask": {
+		"event": true, "plugin_id": true, "plugin_version": true,
+		"cache_hit": true, "generation": true, "duration_ms": true,
+		"correlation_id": true, "outcome": true,
+	},
+	"tax_provenance": {
+		"tax_code_id": true, "from": true, "to": true,
+	},
+	"table_assignment": {
+		"table_id": true, "action": true, "outcome": true, "via": true,
+	},
+	"order_status": {
+		"order_id": true, "status": true, "applied": true, "via": true,
+	},
+	"environment": {
+		"app_version": true, "os": true, "arch": true, "device_model": true,
+		"till_id": true, "display_mode": true,
+	},
+	"plugin_state": {
+		"plugin_id": true, "version": true, "checksum": true, "state": true,
+	},
+	"diagnostic_gap": {
+		"dropped_count": true,
+	},
+}
+
 // enumValues is the closed vocabulary per `diag:"enum"` field, keyed by
 // "<type>.<json name>". Both the static check (every enum field must have a
 // non-empty entry; every entry must name a real field) and Emit (a value
