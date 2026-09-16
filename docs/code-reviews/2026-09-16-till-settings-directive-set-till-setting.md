@@ -264,3 +264,20 @@ locally and not applicable — no `scripts/ci/*.sh` file changed.
    queued by the portal and refused by the till. A guard in the same shape
    as `manifest-contract-guard` is the obvious follow-up and belongs on its
    own card.
+
+## Post-review update (merge conflict, same day)
+
+`universal-till#1188` (ut-docs#2286) merged to `main` while this PR was in
+flight, removing `receiptPolicyLockedForCountry` and its DE-only lock
+core-wide per a direct product-owner decision — German shops now choose
+freely among always/ask/never like every other country. The Germany-lock
+verification above (line-by-line comparison, adversarial testing) was
+accurate *at review time*; merging `main` into this branch required
+removing `cloudSetTillSetting`'s now-dead call to the deleted function and
+replacing `TestCloudSetTillSetting_ReceiptPolicyLockedForGermany` with
+`TestCloudSetTillSetting_ReceiptPolicyFreeForGermany`, asserting the new
+(simpler) behavior: a DE shop's remote write is validated only against the
+installed country plugin's allow-list, same as every other country, with
+no country-specific branch left to keep in sync. Re-verified after the
+merge: full gate green, adversarial/whitelist tests unaffected (they don't
+touch country logic).

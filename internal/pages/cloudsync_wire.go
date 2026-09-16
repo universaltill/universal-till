@@ -101,20 +101,18 @@ func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(cont
 	case keyPrinterReceiptPolicy:
 		// Mirrors /api/settings/printer (print_api.go): case-folded, must be
 		// one of the three values, permitted by the installed country plugin
-		// (ADR-0089 Decision 2) and, for a DE shop, locked to "always"
-		// (Decision 3). Unlike the local form, an unknown value is refused
-		// rather than silently defaulted — a remote result column should say
-		// why nothing changed.
+		// (ADR-0089 Decision 2). The former DE-only lock (Decision 3) was
+		// removed core-wide by ut-docs#2286/universal-till#1188 — German
+		// shops now choose freely like every other country, so this hook has
+		// no country-specific branch left to mirror. Unlike the local form,
+		// an unknown value is refused rather than silently defaulted — a
+		// remote result column should say why nothing changed.
 		value = strings.ToLower(value)
 		if !isReceiptPolicy(value) {
 			return "", fmt.Errorf("%s must be one of always, ask, never", key)
 		}
 		if allowed, ok := receiptPolicyAskerFor(d.Db).AskReceiptPolicy(ctx); !receiptPolicyPermitted(value, allowed, ok) {
 			return "", fmt.Errorf("%s is not permitted by the installed country plugin (allowed: %s)", key, strings.Join(allowed, ", "))
-		}
-		if country, _, err := d.Settings.Get(ctx, keyStoreCountry); err == nil &&
-			receiptPolicyLockedForCountry(country) && value != receiptPolicyAlways {
-			return "", fmt.Errorf("%s must be always for a shop in Germany", key)
 		}
 	case common.KeyKioskIdleReset:
 		// Mirrors /api/settings/kiosk-idle-reset (settings_page.go): 0..600.

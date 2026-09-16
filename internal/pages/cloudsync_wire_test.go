@@ -560,22 +560,24 @@ func TestCloudSetTillSetting_ValidatesValuesLikeTheLocalForms(t *testing.T) {
 	}
 }
 
-// ADR-0089 Decision 3's interim Germany carve-out applies to the remote path
-// exactly as to the local printer form: only "always" saves for a DE shop.
-func TestCloudSetTillSetting_ReceiptPolicyLockedForGermany(t *testing.T) {
+// The ADR-0089 Decision 3 Germany lock was removed core-wide
+// (ut-docs#2286/universal-till#1188) — a DE shop now chooses freely among
+// always/ask/never via the remote path exactly as the local printer form
+// does, with no country-specific branch left in cloudSetTillSetting.
+func TestCloudSetTillSetting_ReceiptPolicyFreeForGermany(t *testing.T) {
 	dp := newCloudSyncTestDeps(t)
 	ctx := t.Context()
 	if err := dp.Settings.Set(ctx, keyStoreCountry, "DE"); err != nil {
 		t.Fatalf("set country: %v", err)
 	}
-	if _, err := cloudSetTillSetting(ctx, dp, nil, keyPrinterReceiptPolicy, "ask"); err == nil {
-		t.Fatalf("DE shop: want 'ask' refused, got nil")
+	if _, err := cloudSetTillSetting(ctx, dp, nil, keyPrinterReceiptPolicy, "ask"); err != nil {
+		t.Fatalf("DE shop: 'ask' must save now the lock is removed: %v", err)
 	}
-	if v, ok, _ := dp.Settings.Get(ctx, keyPrinterReceiptPolicy); ok && v == "ask" {
-		t.Fatalf("DE shop: refused policy must not be written")
+	if v, ok, _ := dp.Settings.Get(ctx, keyPrinterReceiptPolicy); !ok || v != "ask" {
+		t.Fatalf("DE shop: 'ask' must actually be written, got %q (ok=%v)", v, ok)
 	}
 	if _, err := cloudSetTillSetting(ctx, dp, nil, keyPrinterReceiptPolicy, "always"); err != nil {
-		t.Fatalf("DE shop: 'always' must save: %v", err)
+		t.Fatalf("DE shop: 'always' must still save: %v", err)
 	}
 }
 

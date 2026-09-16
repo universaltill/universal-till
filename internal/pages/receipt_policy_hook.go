@@ -236,26 +236,3 @@ func receiptPolicyPermitted(policy string, allowed []string, ok bool) bool {
 	}
 	return false
 }
-
-// receiptPolicyLockedForCountry is the INTERIM core-only Germany carve-out
-// (ADR-0089 Decision 3), mirroring the Turkey/service-charge precedent in
-// internal/pos/charge_policy.go (ut-docs#962): whether "ask, and print
-// nothing on decline" satisfies §146a Abs. 2 AO is an open accountant
-// question (ut-docs#1908), and no plugin should encode a legal answer nobody
-// has confirmed — so core itself forces "always" for a shop whose
-// store.country is DE, applied AFTER the plugin clamp so it is the final
-// word regardless of any plugin's answer or the merchant's own setting.
-//
-// This is TEMPORARY and explicitly not the long-term mechanism: once
-// ut-docs#1908 returns an answer, ut-plugin-tax-de answers
-// receipt.policy.ask itself (Decision 2) and this function — and its four
-// call sites (printerConfigChecked, the printer-settings save handler, the
-// settings page's locked control, and cloudSetTillSetting's
-// printer.receipt_policy branch in cloudsync_wire.go, which re-applies this
-// same lock to a remote set_till_setting write) — should be deleted, NOT
-// extended to a second country. Same case-fold/trim as
-// fiscal_device_page.go's own TR check: store.country is free text via
-// /api/settings/upsert.
-func receiptPolicyLockedForCountry(country string) bool {
-	return strings.EqualFold(strings.TrimSpace(country), "DE")
-}
