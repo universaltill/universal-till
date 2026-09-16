@@ -1854,7 +1854,7 @@
   "settings.printer.mode_system": "Normal yazıcı (sistem / HP, düz metin)",
   "settings.printer.receipt_policy.always": "Her zaman yazdır",
   "settings.printer.receipt_policy.ask": "Müşteriye sor",
-  "settings.printer.receipt_policy.locked_de": "Almanya'daki mağazalar için şimdilik “Her zaman yazdır” olarak sabittir: Alman mağazaları için fiş kuralları doğrulanana kadar kasa her satış için fiş yazdırır.",
+  "settings.printer.receipt_policy.advisory_de": "Alman kanunu (§146a Abs. 2 AO), her müşteriye fiş sunulmasını zorunlu kılar — “Müşteriye sor” bu şartı karşılar. “Hiçbir zaman otomatik yazdırma” yalnızca mağaza zaten dijital fiş sunuyorsa veya §148 AO muafiyetine sahipse uygundur; seçim mağazanın sorumluluğundadır.",
   "settings.printer.receipt_policy.never": "Hiçbir zaman otomatik yazdırma",
   "settings.printer.receipt_policy.title": "Her satıştan sonra fiş",
   "settings.printer.system_hint": "Normal bir ofis yazıcısı (örn. HP) için “Normal yazıcı”yı seçin — fişler düz metin olarak sistem varsayılan yazıcısına gönderilir. Belirli bir yazıcıyı hedeflemek için Adres alanına adını yazın, varsayılan için boş bırakın. Termal yazıcılar Ağ veya USB aygıtı (ESC/POS) kullanır.",

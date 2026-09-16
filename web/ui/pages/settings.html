@@ -1507,26 +1507,24 @@
       </select>
     </label>
     <p class="muted" style="margin:.2rem 0 0">{{ T "settings.printer.system_hint" }}</p>
-    <!-- ADR-0089 (ut-docs#1907): the old "print automatically" checkbox is
-         now a three-way receipt policy — always / ask the customer / never.
-         $p.ReceiptPolicy is the RESOLVED value (legacy auto_print
-         derivation, plugin clamp and the interim Germany carve-out already
-         applied), so what is pre-selected is what actually happens at the
-         till. For a DE shop the control is locked to "always" (a disabled
-         <select> is not submitted, hence the hidden field carrying the one
-         value the save handler will accept) with a factual note — no
-         compliance-outcome claim (ADR-0040); this lock is temporary,
-         pending ut-docs#1908, see receiptPolicyLockedForCountry. -->
+    <!-- ADR-0089 (ut-docs#1907), addendum 2026-09-16 (ut-docs#2286): the old
+         "print automatically" checkbox is a three-way receipt policy —
+         always / ask the customer / never. $p.ReceiptPolicy is the RESOLVED
+         value (legacy auto_print derivation and plugin clamp applied), so
+         what is pre-selected is what actually happens at the till. The
+         former DE lock (Decision 3) is rescinded — German shops choose
+         freely, same as every other country; a DE shop instead sees a
+         factual, non-blocking advisory under the control — no
+         compliance-outcome claim (ADR-0040). -->
     <label>{{ T "settings.printer.receipt_policy.title" }}
-      <select name="receiptPolicy" {{ if .receiptPolicyLocked }}disabled{{ end }}>
+      <select name="receiptPolicy">
         <option value="always" {{ if eq $p.ReceiptPolicy "always" }}selected{{ end }}>{{ T "settings.printer.receipt_policy.always" }}</option>
         <option value="ask" {{ if eq $p.ReceiptPolicy "ask" }}selected{{ end }}>{{ T "settings.printer.receipt_policy.ask" }}</option>
         <option value="never" {{ if eq $p.ReceiptPolicy "never" }}selected{{ end }}>{{ T "settings.printer.receipt_policy.never" }}</option>
       </select>
     </label>
-    {{ if .receiptPolicyLocked }}
-    <input type="hidden" name="receiptPolicy" value="always">
-    <p class="muted receipt-policy-locked" style="margin:.2rem 0 0">{{ T "settings.printer.receipt_policy.locked_de" }}</p>
+    {{ if .receiptPolicyAdvisoryDE }}
+    <p class="muted receipt-policy-advisory-de" style="margin:.2rem 0 0">{{ T "settings.printer.receipt_policy.advisory_de" }}</p>
     {{ end }}
     <!-- ut-docs#2168: kitchen printer moved into its own fieldset/legend,
          after every receipt-printer control (mode/charset/address/device/
