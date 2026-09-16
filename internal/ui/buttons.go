@@ -343,6 +343,161 @@ func (s *ButtonStore) SearchItems(ctx context.Context, q string, offset, limit i
 	return out, nil
 }
 
+// LoadAllActive returns EVERY active catalog item as a Button-shaped tile
+// (ut-docs#2294) — unlike Load (shortcut_buttons rows only, i.e. Designer
+// quick buttons), this is sourced straight from the catalog itself
+// (CatalogRepo.ListItems, already `WHERE is_active = 1 ORDER BY name`), so
+// an item with no quick button still shows on the sell screen's All tab.
+// Sorted by name (ListItems' own ORDER BY) — a flat A-Z grid, not grouped
+// by category: the card explicitly allows this simplification over
+// reusing BuildCategoryGroups' tree machinery for a second, parallel grid;
+// noted as a deliberate simplification, not an oversight.
+//
+// A code with neither a real barcode nor a SKU falls back to the same
+// synthesizedButtonCodePrefix scheme ButtonStore.Add already uses for a
+// codeless quick button (ut-docs#1459) — resolvable here too because
+// ut-docs#2294 also taught POSRepo.ResolveShortcutLineDecoded to resolve
+// that prefix straight against the items table, not just against a
+// shortcut_buttons row (see internal/data's itemIDCodePrefix).
+func (s *ButtonStore) LoadAllActive(ctx context.Context) ([]Button, error) {
+	items, err := s.catalogRepo.ListItems(ctx)
+	if err != nil {
+		return nil, err
+	}
+	itemIDs := make([]string, 0, len(items))
+	for _, it := range items {
+		itemIDs = append(itemIDs, it.ID)
+	}
+	barcodes, err := s.catalogRepo.ItemBarcodes(ctx)
+	if err != nil {
+		// Not fatal to the render (every tile still shows) — same
+		// non-fatal-but-loud treatment Load gives its own batched-lookup
+		// errors below. Every tile falls back to its SKU (or the
+		// synthesized item: code) instead of a real barcode.
+		logging.L().Warnf("ui: load all-active items barcodes failed, tiles fall back to SKU/synthesized code: %v", err)
+	}
+	thumbs, err := s.catalogRepo.ItemThumbnails(ctx)
+	if err != nil {
+		logging.L().Warnf("ui: load all-active items thumbnails failed, tiles fall back to no image: %v", err)
+	}
+	var hasMods map[string]bool
+	if s.modRepo != nil {
+		hasMods, _ = s.modRepo.ItemIDsWithModifiers(ctx, itemIDs)
+	}
+	var hasVariants map[string]bool
+	var currentPrices map[string]int64
+	if s.catalogRepo != nil {
+		hasVariants, err = s.catalogRepo.ItemIDsWithVariants(ctx, itemIDs)
+		if err != nil {
+			// Same money-correctness-affecting non-fatal-but-loud treatment
+			// as Load's own hasVariants error handling (ut-docs#2209 review
+			// finding 5): on this error every tile falls back to
+			// straight-to-basket at the parent's base price.
+			logging.L().Warnf("ui: load all-active items-with-variants failed, every tile falls back to parent-price add (ut-docs#2209): %v", err)
+		}
+		currentPrices, err = s.catalogRepo.ItemCurrentPrices(ctx, itemIDs)
+		if err != nil {
+			// Same as Load's own currentPrices error handling (ut-docs#2258).
+			logging.L().Warnf("ui: load all-active current prices failed, every tile falls back to raw base_price (ut-docs#2258): %v", err)
+		}
+	}
+	out := make([]Button, 0, len(items))
+	for _, it := range items {
+		code := ""
+		if bcs := barcodes[it.ID]; len(bcs) > 0 {
+			code = bcs[0] // ItemBarcodes orders primary first
+		}
+		if code == "" {
+			code = it.SKU
+		}
+		if code == "" {
+			code = synthesizedButtonCodePrefix + it.ID
+		}
+		price := it.BasePrice
+		if p, ok := currentPrices[it.ID]; ok {
+			price = p
+		}
+		catID := ""
+		if it.CategoryID != nil {
+			catID = *it.CategoryID
+		}
+		out = append(out, Button{
+			Label:        it.Name,
+			Code:         code,
+			ItemID:       it.ID,
+			ImageURL:     thumbs[it.ID],
+			Price:        price,
+			HasModifiers: hasMods[it.ID],
+			HasVariants:  hasVariants[it.ID],
+			CategoryID:   catID,
+			Color:        it.Color,
+		})
+	}
+	return out, nil
+}
+
+// SearchSellable finds every active catalog item matching q — the
+// sell-screen's own live search (ut-docs#2294), distinct from SearchItems
+// (which returns a lighter SearchResult shape for the Designer's
+// add-to-shortcuts flow). Returns tile-ready Buttons so results render
+// through the exact same "product-tile" template a quick-button/All-tab
+// tile already uses (identical price/variant/modifier/color behavior),
+// rather than the Designer's own "tap to add as a shortcut" affordance.
+func (s *ButtonStore) SearchSellable(ctx context.Context, q string, limit int) ([]Button, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	results, err := s.posRepo.SearchItemsForShortcuts(ctx, q, 0, limit)
+	if err != nil {
+		return nil, err
+	}
+	itemIDs := make([]string, 0, len(results))
+	for _, r := range results {
+		itemIDs = append(itemIDs, r.ItemID)
+	}
+	var hasMods map[string]bool
+	if s.modRepo != nil {
+		hasMods, _ = s.modRepo.ItemIDsWithModifiers(ctx, itemIDs)
+	}
+	var hasVariants map[string]bool
+	var currentPrices map[string]int64
+	if s.catalogRepo != nil {
+		hasVariants, err = s.catalogRepo.ItemIDsWithVariants(ctx, itemIDs)
+		if err != nil {
+			logging.L().Warnf("ui: search-sellable items-with-variants failed, every result falls back to parent-price add (ut-docs#2209): %v", err)
+		}
+		currentPrices, err = s.catalogRepo.ItemCurrentPrices(ctx, itemIDs)
+		if err != nil {
+			logging.L().Warnf("ui: search-sellable current prices failed, every result falls back to raw base_price (ut-docs#2258): %v", err)
+		}
+	}
+	out := make([]Button, 0, len(results))
+	for _, r := range results {
+		code := r.Barcode
+		if code == "" {
+			code = r.SKU
+		}
+		if code == "" {
+			code = synthesizedButtonCodePrefix + r.ItemID
+		}
+		price := r.BasePrice
+		if p, ok := currentPrices[r.ItemID]; ok {
+			price = p
+		}
+		out = append(out, Button{
+			Label:        r.Name,
+			Code:         code,
+			ItemID:       r.ItemID,
+			ImageURL:     r.Image,
+			Price:        price,
+			HasModifiers: hasMods[r.ItemID],
+			HasVariants:  hasVariants[r.ItemID],
+			Color:        r.Color,
+		})
+	}
+	return out, nil
+}
+
 func (s *ButtonStore) Load() ([]Button, error) {
 	ctx := context.Background()
 	rows, err := s.repo.LoadButtons(ctx)
@@ -530,6 +685,16 @@ func (r *Renderer) Render(w http.ResponseWriter, name string, data any) error {
 type ButtonsHTTP struct {
 	Store ButtonStore
 	View  TplRenderer
+	// HideAllTab (ut-docs#2294) turns off the sell screen's All tab —
+	// settings.sale.show_all_tab, default ON. Named in the INVERTED sense
+	// (like catalogtypes.ItemInput.StockUntracked) so the Go zero value
+	// (false) means "show it": every existing &ButtonsHTTP{Store: ...,
+	// View: ...} literal in this package's own test suite (and in
+	// internal/pages/buttons_api.go before this card) leaves this field
+	// unset, and the actual settings default is ALSO "on" — a
+	// straight-named ShowAllTab field would have silently flipped every
+	// one of those to "off" instead.
+	HideAllTab bool
 }
 
 func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
@@ -542,8 +707,45 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 		// loses category grouping/coloring with no visible sign why.
 		logging.L().Errorf("buttons list: load categories: %v", err)
 	}
+	// ut-docs#2294: the All grid is loaded once per /ui/buttons render
+	// (this handler is only ever fetched on page load and on
+	// "modifiers-changed from:body" -- see buttons.html's own top comment
+	// -- never on a basket mutation), not re-queried per basket change.
+	// Skipped entirely when the setting is off, so a till that never wants
+	// the tab pays nothing for it.
+	var allBtns []Button
+	if !h.HideAllTab {
+		allBtns, err = h.Store.LoadAllActive(r.Context())
+		if err != nil {
+			logging.L().Errorf("buttons list: load all-active items: %v", err)
+		}
+	}
 	_ = h.View.Render(w, "buttons", map[string]any{
-		"Groups": BuildCategoryGroups(btns, cats),
+		"Groups":     BuildCategoryGroups(btns, cats),
+		"AllButtons": ToVM(allBtns),
+		"ShowAllTab": !h.HideAllTab,
+	})
+}
+
+// Search renders the sell screen's live, server-backed search results
+// (ut-docs#2294): every active catalog item matching q, as the same
+// "product-tile" component a quick-button/All-tab tile already uses — not
+// just whatever happens to be rendered in the currently active tab. An
+// empty q renders nothing (the client only wires this up while the search
+// box actually has input in it — see buttons.html's own search comments).
+func (h *ButtonsHTTP) Search(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	var results []Button
+	if q != "" {
+		var err error
+		results, err = h.Store.SearchSellable(r.Context(), q, 30)
+		if err != nil {
+			logging.L().Errorf("buttons search: %v", err)
+		}
+	}
+	_ = h.View.Render(w, "products-search-results", map[string]any{
+		"Results": ToVM(results),
+		"Query":   q,
 	})
 }
 

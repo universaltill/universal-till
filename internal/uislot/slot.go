@@ -451,7 +451,7 @@ func IsProtectedSettingsKey(key string) bool {
 }
 
 // CoreSettings is the /settings page's declared section list (ADR-0088
-// Decision C, ut-docs#1913): the 25 `.card` sections
+// Decision C, ut-docs#1913): the `.card` sections
 // web/ui/pages/settings.html always declared as static, hand-ordered
 // markup, now ALSO available as data so a `layout` plugin can amend the
 // SIDEBAR's presentation of them. Key is the card's own `id` attribute
@@ -487,6 +487,7 @@ var CoreSettings = []Entry{
 	{Key: "settings-order-no", Href: "#settings-order-no", LabelKey: "settings.order_no.title", Order: 800},
 	{Key: "settings-barcode", Href: "#settings-barcode", LabelKey: "settings.barcode.symbologies_title", Order: 900},
 	{Key: "settings-catalog-import-barcode-default", Href: "#settings-catalog-import-barcode-default", LabelKey: "settings.catalog_import_barcode_default.title", Order: 1000},
+	{Key: "settings-sell-screen", Href: "#settings-sell-screen", LabelKey: "settings.sell_screen.title", Order: 1050},
 	{Key: "settings-stock-tracking", Href: "#settings-stock-tracking", LabelKey: "settings.stock_tracking.title", Order: 1100},
 	{Key: "settings-backup", Href: "#settings-backup", LabelKey: "settings.backup.title", Order: 1200},
 	{Key: "settings-data", Href: "#settings-data", LabelKey: "settings.data.title", Order: 1300},

@@ -19,7 +19,22 @@
      customization changed reflects it on the very next render, with the
      button itself never rebuilt. */}}
 <div class="products" hx-get="/ui/buttons" hx-trigger="modifiers-changed from:body" hx-swap="outerHTML">
-  {{ if not .Groups }}
+  {{/* ut-docs#2294: $showAllTab (settings.sale.show_all_tab, .ShowAllTab,
+       default true, ANDed with there being at least one active item to
+       show) is computed up here, ahead of the empty-state branch below,
+       because that branch's own condition needs it: the empty state now
+       only fires when there is NEITHER a quick button NOR a showable All
+       tab -- before this card, a till with zero quick buttons configured
+       (but a real catalog behind it) always fell into this branch and hid
+       everything, All included, even though All's whole point is to work
+       with no quick buttons set up at all. Deliberately NOT keyed off the
+       raw .AllButtons/.ShowAllTab fields directly: with the setting OFF
+       (or no active items at all), a till with zero quick buttons must
+       still fall back to this exact empty state -- the pre-#2212 behavior
+       "off" is supposed to restore -- not render a silently blank screen
+       with nothing sellable and no CTA telling the operator why. */}}
+  {{ $showAllTab := and .ShowAllTab .AllButtons }}
+  {{ if and (not .Groups) (not $showAllTab) }}
   <div class="products-header">
     <h2>{{ T "products.title" }}</h2>
     <!-- 2026-08-30 (product owner, live on the tablet, comparing against a
@@ -40,8 +55,25 @@
          render it via "category-group" (its own header, unchanged from
          before this feature) with no tab bar, same "nothing to switch
          between" reasoning. Search applies in all three cases. */}}
-    {{ $flat := and (eq (len .Groups) 1) (eq (index .Groups 0).ID "") }}
-    {{ $hasTabs := gt (len .Groups) 1 }}
+    {{/* ut-docs#2294: $showAllTab was computed above (ahead of the
+         empty-state branch, which needs it too) — see that comment for
+         what it means. $hasTabs widens from "2+ quick-button categories"
+         to "that, OR the All tab is showing" -- All is a real,
+         independently useful tab now (it works even for a shop with zero
+         quick buttons configured), not just an extra button bolted onto
+         the existing category tab bar, so it must be able to pull a till
+         that would otherwise have had no tab bar at all into the tabbed
+         branch below. $defaultTab is the initial active tab: '__all__'
+         when $showAllTab, else the first category's own ID -- restoring
+         the exact pre-#2212 default (the first tab) for a till with the
+         setting off, per the card's own requirement. Indexing .Groups 0
+         here is only reached when $showAllTab is false, and by
+         construction $hasTabs was only true via `gt (len .Groups) 1` in
+         that case, so the index is always safe (len >= 2). */}}
+    {{ $hasTabs := or $showAllTab (gt (len .Groups) 1) }}
+    {{ $flat := and (not $hasTabs) (eq (len .Groups) 1) (eq (index .Groups 0).ID "") }}
+    {{ $defaultTab := "__all__" }}
+    {{ if not $showAllTab }}{{ if $hasTabs }}{{ $defaultTab = (index .Groups 0).ID }}{{ end }}{{ end }}
     {{/* .ID is interpolated raw into an Alpine JS string literal below
          (x-data, :class, @click) — html/template auto-escapes this as a
          plain HTML attribute (a literal ' survives as &#39;, which the
@@ -126,25 +158,29 @@
             second; it was missed by re-running only go build/go vet after
             that edit instead of the full gate. */}}
     <section class="products-finder" aria-labelledby="products-panel-title" x-data="{
-      tab: '{{ if $hasTabs }}__all__{{ end }}',
+      tab: '{{ if $hasTabs }}{{ $defaultTab }}{{ end }}',
       q: '',
       matches(tileEl) { return !this.q || tileEl.dataset.name.toLowerCase().includes(this.q.toLowerCase()); },
       sectionHasMatch(el) { return !this.q || Array.from(el.querySelectorAll('.btn-tile')).some(t => this.matches(t)); },
-      {{/* ut-docs#2212: the category strip's first tab is a synthetic "All"
+      {{/* ut-docs#2212 gave the category strip a synthetic "All" tab
            (sentinel '__all__' — never a real category ID, which is always
            either a server-generated uuid or "" for the uncategorized
-           bucket), selected by default, so an operator who has tapped into
-           one category always has an escape hatch back to the whole
-           catalogue. Reuses the EXISTING per-category panels rather than
-           rendering the catalogue a third time: selecting All just makes
-           every panelVisible() call for every panel return true at once,
-           the same "several panels visible together" shape ut-docs#2181
-           already built for a cross-category search — see this file's
-           other #2212 comments below for the ARIA/header side of that
-           reuse. */}}
+           bucket). ut-docs#2294 changed what selecting it shows: it used
+           to reuse the EXISTING per-category panels (every panelVisible()
+           call returning true at once); it now has its own dedicated grid
+           (every ACTIVE catalog item, not just quick-button ones — see
+           showAllGrid() below and the #buttons-grid-all block), so a
+           category panel is visible ONLY for its own tab now, never under
+           All — otherwise a quick-button item would render twice at once
+           (once in its own category's reused panel, once in the All
+           grid). */}}
       panelVisible(id, panelEl) {
-        return this.q ? this.sectionHasMatch(panelEl) : (this.tab === id || this.tab === '__all__');
+        return this.q ? this.sectionHasMatch(panelEl) : this.tab === id;
       },
+      {{/* showAllGrid(): the All tab's own dedicated grid (ut-docs#2294) —
+           see panelVisible's comment above for why All no longer reuses
+           the category panels it used to. */}}
+      showAllGrid() { return this.tab === '__all__'; },
       searching: false,
       openSearch() { this.searching = true; this.$nextTick(() => { const i = this.$refs.search; if (i) i.focus(); }); },
       closeSearch() {
@@ -220,17 +256,23 @@
              time, so the tab itself is now what carries the color instead
              of losing it. */}}
         <div class="tab-bar" role="tablist" x-show="!searching" @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
+          {{ if $showAllTab }}
           {{/* ut-docs#2212: the All tab, always first, always selected by
-               default (tab's own initial value above). Deliberately no
-               aria-controls — unlike a real category tab, All doesn't own
-               ONE panel, it makes every existing panel visible at once, so
-               claiming a single aria-controls target would assert a
-               relationship that isn't true (same reasoning #2181 already
-               used to drop role="tabpanel"/aria-labelledby on a panel while
-               a cross-category search shows several of them at once — see
-               the panel loop below). No --cat-color either: All isn't one
-               category, so it has nothing to color-code with. */}}
+               default (tab's own initial value above) when it renders at
+               all — ut-docs#2294 made that conditional on
+               settings.sale.show_all_tab (.ShowAllTab, default on) AND
+               there being at least one active item to show ($showAllTab).
+               Deliberately no aria-controls — unlike a real category tab,
+               All doesn't own a panel owned by anything else, it shows its
+               OWN dedicated grid (#buttons-grid-all below, every active
+               catalog item — see showAllGrid() above), so aria-controls
+               would be redundant with :aria-selected here rather than
+               wrong, but is still omitted to match every other
+               no-single-owned-target tab in this file. No --cat-color
+               either: All isn't one category, so it has nothing to
+               color-code with. */}}
           <button type="button" id="cat-tab-all" class="tab" role="tab" :class="tab === '__all__' && 'active'" :aria-selected="tab === '__all__'" :tabindex="tab === '__all__' ? 0 : -1" @click="tab = '__all__'; $el.scrollIntoView({ block: 'nearest', inline: 'nearest' })">{{ T "products.all" }}</button>
+          {{ end }}
           {{ range .Groups }}
           {{/* $el.scrollIntoView({ block: 'nearest', inline: 'nearest' }):
                ut-docs#2173 made this bar horizontally-scrolling, so
@@ -243,8 +285,23 @@
           {{ end }}
         </div>
         {{ end }}
-        <input type="search" id="products-search" x-model="q" x-ref="search"
+        {{/* ut-docs#2294: search is now a real server round trip (matches
+             every active catalog item — barcode/SKU/name — not just what
+             happens to be rendered on screen), not the old purely
+             client-side substring filter over already-rendered tiles.
+             name="q" + hx-params="*" (same convention as buttons_admin.
+             html's own Designer search box) is what lets htmx serialize
+             this input's own value as the request's ?q= query param;
+             "input changed delay:300ms" is the exact debounce
+             /api/buttons/search already uses, reused rather than
+             hand-rolling a second one. x-model="q" is UNCHANGED — q still
+             drives #buttons-grid's own visibility below (hidden while a
+             query is active) and closeSearch()'s restore-the-tab behavior;
+             it just no longer drives any client-side tile filtering
+             itself. */}}
+        <input type="search" id="products-search" name="q" x-model="q" x-ref="search"
                x-show="searching" x-cloak
+               hx-get="/ui/buttons/search" hx-target="#search-results" hx-trigger="input changed delay:300ms" hx-params="*"
                placeholder="{{ T "products.search_ph" }}" aria-label="{{ T "products.search_ph" }}"
                autocomplete="off" @keydown.escape="closeSearch()">
         <button type="button" x-show="!searching" x-ref="searchBtn"
@@ -259,7 +316,17 @@
           <span class="btn-ico" aria-hidden="true">{{ icon "pencil" }}</span>
         </a>
       </div>
-      <div id="buttons-grid" class="category-groups">
+      {{/* ut-docs#2294: search results are a SEPARATE view from the tabs/
+           grid below, not a filter layered on top of them — while q is
+           non-empty, #buttons-grid hides (x-show="!q" below) and this
+           shows instead; clearing q (closeSearch(), or the input going
+           empty) hides this and reveals #buttons-grid again with `tab`
+           untouched, which is what "clearing the search restores the
+           tab" falls out of for free. hx-target of the search input
+           above. No x-cloak: q starts '' (search closed) on every fresh
+           load, so this is never visible pre-hydration regardless. */}}
+      <div id="search-results" class="category-groups" x-show="q"></div>
+      <div id="buttons-grid" class="category-groups" x-show="!q">
         {{ if $flat }}
         {{/* No category-group wrapper here to inherit #422's
              sectionHasMatch($el) wiring from, so the no-matches message
@@ -271,12 +338,34 @@
         </div>
         <p class="empty" x-show="!sectionHasMatch($el.parentElement)">{{ T "products.no_matches" }}</p>
         {{ else if $hasTabs }}
+        {{ if $showAllTab }}
+        {{/* ut-docs#2294: the All tab's own dedicated grid — EVERY active
+             catalog item (.AllButtons, sorted by name; see
+             ButtonStore.LoadAllActive), not just the quick-button items a
+             category panel shows. Reuses the shared "product-tile"
+             partial so price/variant/modifier/color behavior is pixel-
+             and-behavior-identical to a quick-button tile. No x-cloak:
+             All is the default active tab whenever it renders at all (see
+             $defaultTab above), so this is visible on first paint before
+             Alpine hydrates — cloaking it would hide real content from a
+             client where Alpine never loads, same reasoning the category
+             panels below apply in the opposite direction (they're NOT the
+             default any more, so THEY get cloaked). */}}
+        <div id="buttons-grid-all" class="grid" x-show="showAllGrid()">
+          {{ range .AllButtons }}{{ template "product-tile" . }}{{ end }}
+        </div>
+        {{ end }}
         {{ range $g := .Groups }}
-        {{/* ut-docs#2212: no panel is x-cloak'd any more — the default tab
-             is now the synthetic All (above), which makes every panel
-             visible at once, so cloaking "all but the first" (the old
-             single-default-category behavior) would hide real content
-             pre-hydration instead of preventing a flash of wrong content.
+        {{/* ut-docs#2294: a category panel is x-cloak'd unless it's the
+             DEFAULT tab ($defaultTab, computed above) — the inverse of
+             ut-docs#2212's own rule here (every panel visible-by-default,
+             none cloaked), because All no longer reuses these panels (see
+             panelVisible's own comment above): the default tab is now
+             either All (its own grid, handled above) or, when the setting
+             is off, the first category — so every OTHER category panel
+             must stay hidden until Alpine actually hydrates and picks a
+             tab, or it would flash visible pre-hydration stacked on top
+             of whichever panel/grid IS the default.
              --cat-color set here too (ut-docs#1325), not just on the tab
              button above: a top-level group's OWN buttons render straight
              into this panel via "category-group-body-tabbed" (own
@@ -303,7 +392,7 @@
              than assert a relationship that no longer holds; Alpine
              removes an :attr bound to null/false, it doesn't render the
              literal string. */}}
-        <div id="cat-panel-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}" :role="(q || tab === '__all__') ? 'group' : 'tabpanel'" :aria-labelledby="(q || tab === '__all__') ? null : 'cat-tab-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}'" class="products-tab-panel" style="--cat-color: {{ $g.Color }}" x-show="panelVisible('{{ $g.ID }}', $el)">
+        <div id="cat-panel-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}" :role="(q || tab === '__all__') ? 'group' : 'tabpanel'" :aria-labelledby="(q || tab === '__all__') ? null : 'cat-tab-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}'" class="products-tab-panel" style="--cat-color: {{ $g.Color }}" x-show="panelVisible('{{ $g.ID }}', $el)" {{ if ne $g.ID $defaultTab }}x-cloak{{ end }}>
           {{ template "category-group-body-tabbed" $g }}
         </div>
         {{ end }}
@@ -443,6 +532,64 @@
     class="btn-tile{{ if $colored }} tile-colored{{ end }}"
     data-name="{{ .Label }}"
     x-show="matches($el)"
+    {{ if $colored }}style="--tile-color: {{ .Color }}"{{ end }}
+    hx-post="/api/pos/scan"
+    hx-vals='{{ jsonVals "code" .Code }}'
+    hx-trigger="click"
+    hx-target="#basket"
+    hx-swap="outerHTML"
+    hx-sync="#basket:replace">
+    {{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}
+    <span class="tile-name">{{ .Label }}</span>
+    {{ if .Price }}<span class="tile-price">{{ money .Price }}</span>{{ end }}
+  </button>
+  {{ end }}
+{{ end }}
+
+{{/* ut-docs#2294: the sell-screen live search's own results — ButtonsHTTP.
+     Search's response, swapped into #search-results by the search input's
+     own hx-get above. A tile here reuses "product-tile-result" (below),
+     NOT "product-tile": these results already came back from a
+     server-truth match against name/SKU/barcode (POSRepo.
+     SearchItemsForShortcuts), so "product-tile"'s own client-side
+     x-show="matches($el)" (a NAME-only substring check) would wrongly
+     re-hide a tile that matched by barcode/SKU rather than by name. */}}
+{{ define "products-search-results" }}
+{{ if .Results }}
+<div class="grid">
+  {{ range .Results }}{{ template "product-tile-result" . }}{{ end }}
+</div>
+{{ else if .Query }}
+<p class="empty">{{ T "products.no_matches" }}</p>
+{{ end }}
+{{ end }}
+
+{{/* product-tile-result is "product-tile" (above) minus the client-side
+     x-show="matches($el)" gate — see "products-search-results"' own
+     comment for why. Otherwise identical markup/behavior (price, image,
+     color swatch, and the same modifier/variant-vs-straight-to-basket
+     branch), so a search result looks and behaves exactly like a
+     quick-button/All-tab tile, per the card's own requirement. */}}
+{{ define "product-tile-result" }}
+  {{ $colored := and (not .ImageURL) .Color }}
+  {{ if or .HasModifiers .HasVariants }}
+  <button
+    class="btn-tile{{ if $colored }} tile-colored{{ end }}"
+    data-name="{{ .Label }}"
+    {{ if $colored }}style="--tile-color: {{ .Color }}"{{ end }}
+    hx-get="/ui/pos/modifiers?item={{ .ItemID }}&code={{ .Code }}"
+    hx-trigger="click"
+    hx-target="#modifier-modal"
+    hx-swap="innerHTML"
+    hx-on::after-request="document.getElementById('modifier-modal').showModal()">
+    {{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}
+    <span class="tile-name">{{ .Label }}</span>
+    {{ if .Price }}<span class="tile-price">{{ money .Price }}</span>{{ end }}
+  </button>
+  {{ else }}
+  <button
+    class="btn-tile{{ if $colored }} tile-colored{{ end }}"
+    data-name="{{ .Label }}"
     {{ if $colored }}style="--tile-color: {{ .Color }}"{{ end }}
     hx-post="/api/pos/scan"
     hx-vals='{{ jsonVals "code" .Code }}'

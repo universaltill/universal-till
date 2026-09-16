@@ -273,12 +273,21 @@ func TestButtonsHTTPList_RendersNestedColorCodedGroups(t *testing.T) {
 	}
 	drinksIdx := strings.Index(body, ">Drinks<")
 	hotIdx := strings.Index(body, ">Hot Drinks<")
-	latteIdx := strings.Index(body, "Latte")
-	if drinksIdx == -1 || hotIdx == -1 || latteIdx == -1 {
-		t.Fatalf("expected Drinks, Hot Drinks and Latte all present, got: %s", body)
+	if drinksIdx == -1 || hotIdx == -1 {
+		t.Fatalf("expected Drinks and Hot Drinks both present, got: %s", body)
 	}
-	if !(drinksIdx < hotIdx && hotIdx < latteIdx) {
-		t.Fatalf("expected Drinks, then nested Hot Drinks, then Latte in document order, got: %s", body)
+	// ut-docs#2294: Latte now ALSO appears earlier in the document, inside
+	// the All tab's own dedicated grid (#buttons-grid-all, which renders
+	// before the category panels) -- expected, not a regression, since
+	// All's whole point is to list every active item independently of
+	// category nesting. So this only pins the ORIGINAL invariant scoped to
+	// the Drinks/Hot-Drinks panel itself: Latte still appears inside the
+	// nested Hot Drinks section, after both headers.
+	if strings.Index(body[hotIdx:], "Latte") == -1 {
+		t.Fatalf("expected Latte inside the nested Hot Drinks section, got: %s", body)
+	}
+	if !(drinksIdx < hotIdx) {
+		t.Fatalf("expected Drinks, then nested Hot Drinks, in document order, got: %s", body)
 	}
 	if strings.Contains(body, "Uncategorized") {
 		t.Fatalf("did not expect an uncategorized bucket when every button has a category: %s", body)
@@ -290,9 +299,18 @@ func TestButtonsHTTPList_RendersNestedColorCodedGroups(t *testing.T) {
 // the grid was flat until this feature) must render its tiles flat, not
 // under a single pointless "Uncategorized" header — a real regression an
 // earlier version of this change shipped with (caught by independent
-// review) since every button's synthetic bucket was still just "a group".
+// review) since every button's synthetic bucket was still just "a group").
+// ut-docs#2294: HideAllTab: true here, since with the All tab ON (the
+// default), All's own existence now gives even a fully-flat catalog
+// something worth a tab bar for (see
+// TestButtonsHTTPList_AllTabRendersEvenWithNoQuickButtonCategories in
+// buttons_all_tab_test.go for THAT coverage) — this test's own invariant
+// ("nothing to switch between stays flat, no tab bar") only still holds
+// with the setting off, i.e. it's now pinning the pre-#2212 fallback the
+// setting restores, not the till's default state.
 func TestButtonsHTTPList_FlatWhenNoCategoriesConfigured(t *testing.T) {
 	h, db := newButtonsHTTPWithDB(t, "buttons.html")
+	h.HideAllTab = true
 
 	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','S1','Loose Sweet', 10, 1)`)
 	mustExec(t, db, `INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('B1','Loose Sweet','itm1',0)`)
@@ -370,8 +388,13 @@ func TestButtonsHTTPList_RendersTabBarAndSearchWithMultipleCategories(t *testing
 // TestButtonsHTTPList_NoTabBarWithOneCategory: a single real category has
 // nothing to switch between, so no tab bar renders — search alone still
 // applies. Distinct from the fully-flat (zero categories) case above.
+// ut-docs#2294: HideAllTab: true — with All ON (the default), a single
+// quick-button category DOES get a tab bar now (All + that one category),
+// same reasoning as TestButtonsHTTPList_FlatWhenNoCategoriesConfigured's
+// own comment just above; this test pins the setting-off fallback.
 func TestButtonsHTTPList_NoTabBarWithOneCategory(t *testing.T) {
 	h, db := newButtonsHTTPWithDB(t, "buttons.html")
+	h.HideAllTab = true
 
 	mustExec(t, db, `INSERT INTO categories(id,name,parent_id,sort_order,color) VALUES('drinks','Drinks',NULL,0,NULL)`)
 	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active, category_id) VALUES('itm1','S1','Cola', 150, 1, 'drinks')`)
