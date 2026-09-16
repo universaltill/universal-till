@@ -893,7 +893,12 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 // of this function generating a fresh, real-looking one the same way it
 // already does for a genuinely blank sku. The `v.sku LIKE '%~' || v.id`
 // match mirrors the exact suffix shape the retire-in-place CASE above
-// produces.
+// produces. Same ambiguity stripRetireMangle's own doc comment already
+// accepts (a real value that happens to end in "~"+its own id is
+// indistinguishable from a mangle) — here that risk is a persisted
+// overwrite rather than a display-only misread, but item_variants.id is
+// always a generated uuid.NewString(), never user-chosen, so a real sku
+// coinciding with "~"+its own row's UUID is not a reachable case.
 func backfillCodelessSyncedVariants(ctx context.Context, tx *sql.Tx) error {
 	rows, err := tx.QueryContext(ctx, `
 SELECT v.id
