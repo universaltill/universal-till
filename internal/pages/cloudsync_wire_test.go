@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -454,5 +455,229 @@ func TestRejectRemoteFiscalPostureWrite(t *testing.T) {
 		if err := rejectRemoteFiscalPostureWrite(d, key); err == nil {
 			t.Fatalf("rejectRemoteFiscalPostureWrite(%q): want an error, got nil — a remote directive must not be able to flip this compliance gate", key)
 		}
+	}
+}
+
+// --- set_till_setting (ut-docs#2289, Decision 1 of the ut-docs#2306
+// portal-till configuration design; proposed ADR-0095, pending merge) ---
+
+// The remote till-settings hook is DELIBERATELY a separate, stricter path
+// from the generic SetSetting hook: only an explicit whitelist of safe,
+// non-device-bound keys may be written from the cloud, enforced here on the
+// till as well as on the portal, so a stale or compromised portal can't push
+// a printer address, a TSE credential, a PIN or a network setting through.
+func TestCloudSetTillSetting_WhitelistedKeysWrite(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	cases := []struct{ key, value, want string }{
+		{keyPrinterReceiptPolicy, "ask", "ask"},
+		{keyPrinterReceiptPolicy, " Never ", "never"}, // case-folded + trimmed like the local form
+		{keyReceiptHeader1, " Corner Shop ", "Corner Shop"},
+		{keyReceiptHeader2, "High Street 1", "High Street 1"},
+		{keyReceiptHeader3, "", ""}, // blank clears a line, same as the local designer
+		{keyReceiptFooter, "Thank you!", "Thank you!"},
+		{common.KeyKioskIdleReset, "90", "90"},
+	}
+	covered := map[string]bool{}
+	for _, c := range cases {
+		msg, err := cloudSetTillSetting(ctx, dp, nil, c.key, c.value)
+		if err != nil {
+			t.Fatalf("%s=%q: %v", c.key, c.value, err)
+		}
+		if !strings.Contains(msg, c.key) {
+			t.Fatalf("%s: result %q should name the key", c.key, msg)
+		}
+		got, _, err := dp.Settings.Get(ctx, c.key)
+		if err != nil || got != c.want {
+			t.Fatalf("%s: stored %q (err %v), want %q", c.key, got, err, c.want)
+		}
+		covered[c.key] = true
+	}
+	// Review of ut-docs#2289: the table must exercise EVERY whitelisted key,
+	// so a key added to allowedRemoteTillSettingKeys can't ship with no
+	// accepted-value coverage at all — the runtime twin of
+	// cloudSetTillSetting's fail-closed `default` branch.
+	for key := range allowedRemoteTillSettingKeys {
+		if !covered[key] {
+			t.Fatalf("whitelisted key %q has no accepted-value case in this table — add one (and a validation branch in cloudSetTillSetting)", key)
+		}
+	}
+}
+
+func TestCloudSetTillSetting_RejectsNonWhitelistedKeysWithoutWriting(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	for _, key := range []string{
+		keyPrinterAddress,                  // LAN device identifier
+		keyPrinterDevice,                   // local device path
+		"fiscal.tse_puk",                   // TSE credential
+		"fiscal.signing_device_configured", // compliance posture (owner-only)
+		"auth.admin_pin",                   // PIN
+		"sync.primary_url",                 // network topology
+		common.KeyCountry,                  // has fiscal side-effects; set_setting's job
+		"theme",                            // legitimately remote-settable, but only via set_setting
+		"",                                 // blank
+		" " + keyReceiptFooter,             // exact names only, no trimming games
+	} {
+		if _, err := cloudSetTillSetting(ctx, dp, nil, key, "x"); err == nil {
+			t.Fatalf("key %q: want a refusal, got nil", key)
+		}
+		if v, ok, _ := dp.Settings.Get(ctx, key); ok && v == "x" {
+			t.Fatalf("key %q: refused key must not be written, found %q", key, v)
+		}
+	}
+}
+
+// Values go through the SAME validation the local settings forms apply
+// (ut-docs#2306's design: "the till still validates each payload exactly as
+// it would the same action performed by hand") — a remote write can't store
+// what the local form would refuse.
+func TestCloudSetTillSetting_ValidatesValuesLikeTheLocalForms(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	for _, c := range []struct{ key, value string }{
+		{keyPrinterReceiptPolicy, "sometimes"},
+		{keyPrinterReceiptPolicy, ""},
+		{common.KeyKioskIdleReset, "-1"},
+		{common.KeyKioskIdleReset, "601"}, // /api/settings/kiosk-idle-reset's own 0..600 bound
+		{common.KeyKioskIdleReset, "ninety"},
+	} {
+		if _, err := cloudSetTillSetting(ctx, dp, nil, c.key, c.value); err == nil {
+			t.Fatalf("%s=%q: want a validation error, got nil", c.key, c.value)
+		}
+		if v, ok, _ := dp.Settings.Get(ctx, c.key); ok && v == c.value {
+			t.Fatalf("%s: rejected value %q must not be written", c.key, c.value)
+		}
+	}
+	// Boundary values the local form accepts.
+	for _, v := range []string{"0", "600"} {
+		if _, err := cloudSetTillSetting(ctx, dp, nil, common.KeyKioskIdleReset, v); err != nil {
+			t.Fatalf("%s=%q: %v", common.KeyKioskIdleReset, v, err)
+		}
+	}
+}
+
+// ADR-0089 Decision 3's interim Germany carve-out applies to the remote path
+// exactly as to the local printer form: only "always" saves for a DE shop.
+func TestCloudSetTillSetting_ReceiptPolicyLockedForGermany(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, keyStoreCountry, "DE"); err != nil {
+		t.Fatalf("set country: %v", err)
+	}
+	if _, err := cloudSetTillSetting(ctx, dp, nil, keyPrinterReceiptPolicy, "ask"); err == nil {
+		t.Fatalf("DE shop: want 'ask' refused, got nil")
+	}
+	if v, ok, _ := dp.Settings.Get(ctx, keyPrinterReceiptPolicy); ok && v == "ask" {
+		t.Fatalf("DE shop: refused policy must not be written")
+	}
+	if _, err := cloudSetTillSetting(ctx, dp, nil, keyPrinterReceiptPolicy, "always"); err != nil {
+		t.Fatalf("DE shop: 'always' must save: %v", err)
+	}
+}
+
+// The kiosk idle-reset lives in the derived State (common.LoadState), so the
+// hook re-derives after a write the same way the generic SetSetting hook
+// does — otherwise the new window wouldn't apply until the next restart.
+func TestCloudSetTillSetting_RederivesState(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	rederived := 0
+	rederive := func(context.Context) { rederived++ }
+	if _, err := cloudSetTillSetting(ctx, dp, rederive, common.KeyKioskIdleReset, "75"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if rederived != 1 {
+		t.Fatalf("rederive called %d times, want 1", rederived)
+	}
+	// A refused write must NOT re-derive (nothing changed).
+	if _, err := cloudSetTillSetting(ctx, dp, rederive, keyPrinterAddress, "x"); err == nil {
+		t.Fatalf("want refusal")
+	}
+	if rederived != 1 {
+		t.Fatalf("rederive after a refused write: %d, want still 1", rederived)
+	}
+}
+
+// Read side (ut-docs#2306 Decision 2, proposed ADR-0095, pending merge): the
+// heartbeat reports the current value of every whitelisted key — unset keys
+// as "" so the cloud form shows the blank rather than a stale value — and
+// nothing else (no key outside the whitelist rides along, whatever else is
+// in the settings table).
+func TestRemoteTillSettingsReport(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	for k, v := range map[string]string{
+		keyPrinterReceiptPolicy:  "ask",
+		keyReceiptHeader1:        "Corner Shop",
+		keyReceiptFooter:         "Thank you!",
+		common.KeyKioskIdleReset: "90",
+		keyPrinterAddress:        "192.168.1.50:9100", // must NOT be reported
+	} {
+		if err := dp.Settings.Set(ctx, k, v); err != nil {
+			t.Fatalf("seed %s: %v", k, err)
+		}
+	}
+
+	got := remoteTillSettingsReport(ctx, dp)
+	if len(got) != len(allowedRemoteTillSettingKeys) {
+		t.Fatalf("report has %d keys, want exactly the %d whitelisted: %+v", len(got), len(allowedRemoteTillSettingKeys), got)
+	}
+	for key := range allowedRemoteTillSettingKeys {
+		if _, ok := got[key]; !ok {
+			t.Fatalf("whitelisted key %q missing from report: %+v", key, got)
+		}
+	}
+	if got[keyPrinterReceiptPolicy] != "ask" || got[keyReceiptHeader1] != "Corner Shop" ||
+		got[keyReceiptFooter] != "Thank you!" || got[common.KeyKioskIdleReset] != "90" {
+		t.Fatalf("reported values: %+v", got)
+	}
+	if got[keyReceiptHeader2] != "" || got[keyReceiptHeader3] != "" {
+		t.Fatalf("unset keys should report blank: %+v", got)
+	}
+	if _, leaked := got[keyPrinterAddress]; leaked {
+		t.Fatalf("printer.address must never be reported: %+v", got)
+	}
+}
+
+// The hooks StartCloudSync wires carry both halves: the DeviceExtra report
+// includes till_settings, and SetTillSetting is the whitelisted hook (not the
+// generic one).
+func TestBuildCloudHooks_WiresTillSettings(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, keyReceiptFooter, "Bye!"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	hooks := buildCloudHooks(dp, nil)
+
+	extra := hooks.DeviceExtra(ctx)
+	ts, ok := extra["till_settings"].(map[string]string)
+	if !ok {
+		t.Fatalf("till_settings missing or wrong type in DeviceExtra: %#v", extra["till_settings"])
+	}
+	if ts[keyReceiptFooter] != "Bye!" {
+		t.Fatalf("till_settings = %+v", ts)
+	}
+	for _, k := range []string{"theme", "themes", "problems"} {
+		if _, present := extra[k]; !present {
+			t.Fatalf("existing DeviceExtra field %q lost", k)
+		}
+	}
+
+	if hooks.SetTillSetting == nil {
+		t.Fatalf("SetTillSetting hook not wired")
+	}
+	if _, err := hooks.SetTillSetting(ctx, keyPrinterAddress, "x"); err == nil {
+		t.Fatalf("wired SetTillSetting must enforce the whitelist")
+	}
+	if _, err := hooks.SetTillSetting(ctx, keyReceiptFooter, "Thanks"); err != nil {
+		t.Fatalf("wired SetTillSetting: %v", err)
+	}
+	if v, _, _ := dp.Settings.Get(ctx, keyReceiptFooter); v != "Thanks" {
+		t.Fatalf("stored footer = %q", v)
 	}
 }

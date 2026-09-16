@@ -61,7 +61,18 @@ func firstDelay() time.Duration   { return time.Duration(firstDelayNS.Load()) }
 // short human message for the cloud's result column. A nil hook marks the
 // directive type unsupported on this till.
 type Hooks struct {
-	SetSetting     func(ctx context.Context, key, value string) (string, error)
+	SetSetting func(ctx context.Context, key, value string) (string, error)
+	// SetTillSetting handles the "set_till_setting" directive (ut-docs#2289;
+	// Decision 1 of the shared portal-till configuration design in
+	// universaltill/ut-docs#2306 — proposed as ADR-0095, PR not yet merged):
+	// the same {key, value} shape as set_setting, but the hook itself
+	// (pages.cloudSetTillSetting) refuses any key outside an explicit
+	// whitelist of safe, non-device-bound shop-config keys — the
+	// till-side half of a check the portal also makes, so a stale or buggy
+	// portal can never push a printer address, a TSE credential, a PIN or a
+	// network setting through. Deliberately a separate hook from SetSetting:
+	// that one stays the generic, unrestricted channel and is untouched.
+	SetTillSetting func(ctx context.Context, key, value string) (string, error)
 	InstallPlugin  func(ctx context.Context, listingID string) (string, error)
 	RemovePlugin   func(ctx context.Context, pluginID string) (string, error)
 	SetPrice       func(ctx context.Context, itemID string, priceMinor int64) (string, error)
@@ -213,6 +224,15 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", "missing setting key"
 		}
 		msg, err = hooks.SetSetting(ctx, key, str("value"))
+	case "set_till_setting":
+		if hooks.SetTillSetting == nil {
+			return "failed", "set_till_setting is not supported on this till"
+		}
+		key := str("key")
+		if key == "" {
+			return "failed", "missing setting key"
+		}
+		msg, err = hooks.SetTillSetting(ctx, key, str("value"))
 	case "install_plugin":
 		if hooks.InstallPlugin == nil {
 			return "failed", "install_plugin is not supported on this till"

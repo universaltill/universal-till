@@ -248,11 +248,14 @@ func receiptPolicyPermitted(policy string, allowed []string, ok bool) bool {
 //
 // This is TEMPORARY and explicitly not the long-term mechanism: once
 // ut-docs#1908 returns an answer, ut-plugin-tax-de answers
-// receipt.policy.ask itself (Decision 2) and this function — and its three
-// call sites (printerConfigChecked, the printer-settings save handler, and
-// the settings page's locked control) — should be deleted, NOT extended to
-// a second country. Same case-fold/trim as fiscal_device_page.go's own TR
-// check: store.country is free text via /api/settings/upsert.
+// receipt.policy.ask itself (Decision 2) and this function — and its four
+// call sites (printerConfigChecked, the printer-settings save handler, the
+// settings page's locked control, and cloudSetTillSetting's
+// printer.receipt_policy branch in cloudsync_wire.go, which re-applies this
+// same lock to a remote set_till_setting write) — should be deleted, NOT
+// extended to a second country. Same case-fold/trim as
+// fiscal_device_page.go's own TR check: store.country is free text via
+// /api/settings/upsert.
 func receiptPolicyLockedForCountry(country string) bool {
 	return strings.EqualFold(strings.TrimSpace(country), "DE")
 }
