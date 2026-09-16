@@ -21,3 +21,5 @@ Satış ekranında görünen hızlı satış düğmelerini ve ürün ızgarasın
 Hızlı satış düğmeleri mağaza geneli bir öğedir ve her zaman **ana kasadan** yönetilir: katılmış bir kasada bir düğme eklemek, kaldırmak veya yeniden sıralamak, uygulanmak yerine sizi ana kasaya yönlendiren bir mesaj gösterir.
 
 Bu, fişlerde neyin basılı çıkacağını özelleştiren **Fiş ve ekran tasarımcısı** (Ayarlar → Fiş tasarımı) ile aynı sayfa değildir.
+
+- Satış ekranının kendisinde bir kutucuğu basılı tutarak (veya sağ tıklayarak) taşıyabilir, hızlı satış düğmelerinden kaldırabilir veya katalogda düzenleyebilirsiniz — bu sayfayı hiç açmadan aynı üç işlem.
