@@ -1630,3 +1630,77 @@ window.utTabBarFade = function (el) {
   el.classList.toggle('tab-bar--fade-start', pos > 1);
   el.classList.toggle('tab-bar--fade-end', pos < max - 1);
 };
+
+// ut-docs#2223: after every in-page htmx swap, replay a short opacity ease
+// on the swapped-in region (app.css's .ut-swap-fx/@keyframes ut-swap-in) —
+// zero latency: no swap delay, no settle-timing dependency, ut-docs#239's
+// defaultSettleDelay:0 stays untouched. Compositor-only (opacity); restarts
+// on the next swap (interrupting, never queuing); skipped entirely under
+// prefers-reduced-motion.
+//
+// Which element to animate — verified against the actual vendored
+// web/public/vendor/htmx.min.js (1.9.12), not assumed:
+// `evt.detail.target` is the element htmx resolved as the swap target
+// BEFORE the swap ran. For an "innerHTML"-style swap (the default) that
+// element is never removed, so it's still the right, live node afterward.
+// But for `hx-swap="outerHTML"` (e.g. #basket) htmx's internal outerHTML
+// handler (`Ie()` in the minified source) inserts the new content, drops
+// the OLD node from its own settle-info list, and only THEN removes the
+// old node from the document — `detail.target` is never repointed at the
+// replacement, so by the time "htmx:afterSwap" fires it's a DETACHED
+// element (`!isConnected`). Confirmed by tracing `Ie`/`ce`/`Mr` in
+// htmx.min.js: `ce()` (the event dispatcher) sets `detail.elt` to whatever
+// node the event is actually dispatched ON, which for outerHTML IS the
+// live replacement — so that's the fallback once `target.isConnected` is
+// false. A same-id lookup is tried first since it's the simplest correct
+// answer for the common case (the replacement partial keeps the same root
+// id, e.g. basket.html's `id="basket"`).
+(function () {
+  var mq = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
+  // afterSETTLE, not afterSwap (independent review + tester trace,
+  // 2026-09-16): for an id-matched target (every outerHTML swap here, e.g.
+  // #basket) htmx's settle step clones the OLD element's attributes onto
+  // the new one and then restores the new ones -- overwriting `class`. It
+  // runs synchronously right after htmx:afterSwap (settleDelay is 0), so a
+  // class added in afterSwap was wiped before the first frame: the
+  // animation never ran once, and a MutationObserver-based test still saw
+  // the transient add and passed. afterSettle fires after that restore,
+  // in the same tick -- still zero added latency.
+  document.addEventListener('htmx:afterSettle', function (evt) {
+    if (mq && mq.matches) return;
+    var d = evt.detail || {};
+    // Only a swap the OPERATOR caused gets the ease (independent review,
+    // 2026-09-16): htmx fires afterSwap identically for `hx-trigger="load"`
+    // and `every Ns` polls — the orders list, the customer-facing counter
+    // display, the floor plan, and the rail's sync/fiscal/diagnostics chips
+    // all re-swap on a timer with unchanged content, and would otherwise
+    // dim to 55% and fade back every 15–30 s (inside the rail the card says
+    // must read as fixed). htmx 1.9.12 sets requestConfig.triggeringEvent
+    // to the DOM event that issued the request (click/submit/keyup/custom
+    // events like `buttons-changed from:body`) and leaves it undefined for
+    // load/every/htmx.ajax-without-event — exactly the split we want.
+    var rc = d.requestConfig;
+    if (!rc || !rc.triggeringEvent) return;
+    // `hx-swap="none"` swaps nothing, but htmx still fires afterSwap on the
+    // target (its issuing element for every one of the ~45 such sites,
+    // e.g. whole settings forms and the catalog delete button) — no
+    // content changed, so no ease.
+    var issuer = d.elt;
+    var swapOwner = issuer && issuer.closest ? issuer.closest('[hx-swap]') : null;
+    if (swapOwner && swapOwner.getAttribute('hx-swap') === 'none') return;
+    var t = d.target;
+    if (t && !t.isConnected) {
+      t = (t.id && document.getElementById(t.id)) || d.elt;
+    }
+    if (!t || !t.classList || t === document.body || t === document.documentElement) return;
+    // Restart only when an ease is still running (a second swap inside
+    // 150 ms) — the forced reflow is not free on the sale screen's basket.
+    if (t.classList.contains('ut-swap-fx')) { t.classList.remove('ut-swap-fx'); void t.offsetWidth; }
+    t.classList.add('ut-swap-fx');
+  });
+  document.addEventListener('animationend', function (e) {
+    if (e.animationName === 'ut-swap-in' && e.target && e.target.classList) {
+      e.target.classList.remove('ut-swap-fx');
+    }
+  });
+})();

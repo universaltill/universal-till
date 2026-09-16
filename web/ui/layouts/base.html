@@ -16,6 +16,83 @@
          risk of a ReferenceError if htmx.min.js ever fails to load (unlike
          a DOMContentLoaded listener referencing `htmx` directly). -->
     <meta name="htmx-config" content='{"defaultSettleDelay":0}'>
+    <!-- ut-docs#2223: the cross-document View Transition OPT-IN lives HERE,
+         inline, and not only in app.css -- found on the pilot tablet, not
+         predicted: Chrome (Android 153, and by construction any Chromium)
+         reads the INCOMING document's `@view-transition` opt-in as soon as
+         the head is parsed, before the render-blocking app.css (244K) has
+         necessarily arrived. When that read lands first the navigation is
+         aborted with "ViewTransition opt-in disabled" and the page cuts in
+         with no motion -- silently, and racily (3 of 3 runs on the tablet
+         with the opt-in only in app.css, 0 of 3 with this inline block;
+         more deferred scripts competing for the Wi-Fi made it worse). The
+         same page as the OUTGOING document was always fine, which is why
+         it looked like "the till pages can't be transitioned INTO" until
+         Chrome's own console abort message named the state. WebKitGTK
+         (the Pi 5 shell) never showed the race. The reduced-motion
+         override has to sit next to it for the same timing reason;
+         app.css still carries both rules so the opt-in is complete for a
+         reader of the stylesheet alone. -->
+    <style>@view-transition{navigation:auto}@media (prefers-reduced-motion:reduce){@view-transition{navigation:none}}</style>
+    <!-- ut-docs#2223: page/menu transition PUSH-vs-POP direction. Must be
+         inline here, not in app.js (loaded `defer`, may run after the
+         first render opportunity/`pagereveal` already fired) -- ~30 lines,
+         no dependencies, fully feature-checked so an engine without
+         Navigation API / View Transitions support just no-ops (today's
+         instant swap, unchanged).
+
+         `pageswap` is deliberately NOT used: on the OUTGOING document the
+         old snapshot is captured before navigation happens, and the
+         animation itself runs in the NEW document -- which is exactly
+         where `pagereveal` fires. One listener is enough.
+
+         Depth heuristic (Sell "/" = 0, Menu hub "/menu" = 1, everything
+         else = 2 + extra path segments): a browser back/forward
+         (`navigation.activation.navigationType === "traverse"`) is pop
+         only when it moved to an EARLIER history entry (index compares
+         lower) -- forward-traversal re-plays a push. Any other navigation
+         (a tap on a link/tile) is pop only when it lands SHALLOWER than
+         where it came from; equal depth (lateral, e.g. Settings->Reports
+         via the rail) or deeper counts as push. So: Menu->Reports push,
+         Reports->Menu (rail tap) pop, Sell->Menu push, Menu->Sell pop,
+         browser back pop, Settings->Reports (lateral) push.
+
+         `data-nav-dir` is set on <html> on EVERY revealed navigation that
+         carries a transition -- e2e asserts on this attribute rather than
+         racing the animation itself. CSS keys primarily off
+         `:active-view-transition-type(back)` (app.css); the
+         `html[data-nav-dir="pop"]` selectors there are the same flip for
+         an engine that supports View Transitions but not the newer
+         `types` API -- belt and braces, both cheap. -->
+    <script>
+      (function () {
+        if (!('navigation' in window) || !window.CSS || !CSS.supports('view-transition-name: x')) return;
+        function depth(u) {
+          var p = new URL(u, location.href).pathname.replace(/\/+$/, '') || '/';
+          if (p === '/') return 0;
+          if (p === '/menu') return 1;
+          return 1 + p.split('/').filter(Boolean).length;
+        }
+        function dirFor(act) {
+          if (!act || !act.from) return 'push';
+          if (act.navigationType === 'traverse' && act.entry && act.entry.index < act.from.index) return 'pop';
+          if (act.navigationType === 'traverse') return 'push';
+          return depth(act.entry.url) < depth(act.from.url) ? 'pop' : 'push';
+        }
+        window.addEventListener('pagereveal', function (e) {
+          var vt = e.viewTransition; if (!vt) return;
+          var act = navigation.activation;
+          // A reload is not a move anywhere (pull-to-refresh on the tablet,
+          // the eight location.reload() sites, the server's HX-Refresh) --
+          // from === entry, so the depth heuristic would read it as a push
+          // and slide the same page in from the side. Skip the motion.
+          if (act && act.navigationType === 'reload') { if (vt.skipTransition) vt.skipTransition(); return; }
+          var d = dirFor(act);
+          document.documentElement.setAttribute('data-nav-dir', d);
+          if (vt.types && d === 'pop') vt.types.add('back');
+        });
+      })();
+    </script>
     <title>{{ .title }}</title>
     <link rel="icon" type="image/x-icon" href="/public/assets/logo/ut-logo.ico">
     <link rel="stylesheet" href="/public/app.css?v={{ assetv "public/app.css" }}" />

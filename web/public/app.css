@@ -210,6 +210,108 @@ body { padding-inline-start: var(--rail-width); }
    shorthand happens to reset it — so they are not listed here.) */
 body.login-screen, body.tracking-screen { padding-inline-start: 0; }
 .statusbar { padding-inline-start: calc(var(--rail-width) + 1rem); }
+
+/* ============================================================================
+   ut-docs#2223 — page & menu transitions "like an app".
+
+   Cross-document CSS View Transitions (Chromium 126+; every real deployment
+   target — pilot tablet Android WebView 151/Chrome 153, Pi 5 `unitill-desktop` =
+   WebKitGTK 2.52 — probed on the device, NOT the Chromium 152 that merely
+   sits installed there — Windows shell WebView2 — supports this). Progressive enhancement only: an
+   engine without support (`@view-transition` unknown, or no `navigation`
+   global) just keeps today's instant full-document swap — nothing here
+   requires JS to degrade gracefully, the browser itself no-ops the whole
+   block.
+
+   `.nav`/`.statusbar`/`main.container` are each a NAMED view-transition
+   group so the fixed nav rail and footer statusbar are pinned to "no
+   animation, always drawn from the new page" while the page content between
+   them slides. Direction (push vs pop) is decided by the inline
+   `pagereveal` script in base.html's <head> (must run before first paint,
+   so it can't live in app.js, which is `defer`) — it sets `data-nav-dir` on
+   <html> and, where supported, `vt.types.add('back')` so
+   `:active-view-transition-type(back)` can flip the animation direction;
+   the `html[data-nav-dir="pop"]` selectors below are the same flip via a
+   plain attribute (NB: written with NO descendant combinator -- every
+   ::view-transition-* pseudo originates on <html> itself, so
+   `:root ::view-transition-new(x)` can never match), belt-and-braces for an engine that supports View
+   Transitions but not the newer `types`/`:active-view-transition-type()`
+   API (both shipped Chromium 125+, so in practice always together on our
+   real targets, but cheap to cover independently). RTL mirrors the travel
+   direction through --ut-nav-dir (a plain variable, not two mirrored sets
+   of keyframes) so logical `translateX` math flips for fa/ar without any
+   left/right literal anywhere in this block. */
+@view-transition { navigation: auto; }
+:root { --ut-nav-dir: 1; --ut-motion-ms: 200ms; }
+[dir="rtl"] { --ut-nav-dir: -1; }
+.nav        { view-transition-name: ut-rail; }
+.statusbar  { view-transition-name: ut-statusbar; }
+main.container { view-transition-name: ut-page; }
+/* root + fixed furniture: no cross-fade at all -- the rail/statusbar must
+   read as fixed, never a sliding/fading snapshot of their own.
+   `mix-blend-mode: normal` matters as much as `animation: none`: the UA
+   stylesheet blends old+new with `plus-lighter` (correct for a cross-fade
+   whose opacities sum to 1, wrong for two fully-opaque images -- they ADD
+   and the background flashes brighter for the whole 200ms). With normal
+   blending the new image simply covers the old one. */
+::view-transition-old(root), ::view-transition-new(root),
+::view-transition-old(ut-rail), ::view-transition-new(ut-rail),
+::view-transition-old(ut-statusbar), ::view-transition-new(ut-statusbar) { animation: none; mix-blend-mode: normal; }
+/* ...and the OLD image of each is hidden outright rather than merely
+   covered: the images are `inline-size: 100%; block-size: auto`, so at
+   phone width (sticky top bar, see the <=480px block) an old bar taller
+   than the new one would peek out below it for the whole transition. */
+::view-transition-old(root), ::view-transition-old(ut-rail), ::view-transition-old(ut-statusbar) { opacity: 0; }
+/* The page group's own geometry morph (the UA default is 250ms) runs at
+   the slide's duration so the two never visibly disagree -- Sell
+   (`max-width: none`) and Menu (`max-width: 1500px`) differ in width on
+   a wide desktop shell. */
+::view-transition-group(ut-page) { animation-duration: var(--ut-motion-ms); }
+/* `.nav` precedes <main> in DOM order, so without an explicit stacking
+   order the page's sliding view-transition-group snapshot paints OVER the
+   rail/statusbar for the ~200ms the page group animates -- confirmed live,
+   this is the fix. */
+::view-transition-group(ut-rail), ::view-transition-group(ut-statusbar) { animation-duration: 0s; z-index: 2; }
+/* content: push = new slides in from the inline-end, old slides out to the
+   inline-start; pop = mirrored. Transform + opacity only (compositor-only,
+   no layout) -- 4% travel keeps it legible without a long path. */
+::view-transition-old(ut-page) { animation: var(--ut-motion-ms) cubic-bezier(.2,.8,.2,1) both ut-page-out; }
+::view-transition-new(ut-page) { animation: var(--ut-motion-ms) cubic-bezier(.2,.8,.2,1) both ut-page-in; }
+@keyframes ut-page-in  { from { opacity: 0; transform: translateX(calc(var(--ut-nav-dir) * 4%)); } }
+@keyframes ut-page-out { to   { opacity: 0; transform: translateX(calc(var(--ut-nav-dir) * -4%)); } }
+:root:active-view-transition-type(back)::view-transition-new(ut-page) { animation-name: ut-page-in-back; }
+:root:active-view-transition-type(back)::view-transition-old(ut-page) { animation-name: ut-page-out-back; }
+/* Fallback for an engine with View Transitions but no `types`/
+   `:active-view-transition-type()` support -- base.html's script sets this
+   attribute on every revealed transition regardless. */
+html[data-nav-dir="pop"]::view-transition-new(ut-page) { animation-name: ut-page-in-back; }
+html[data-nav-dir="pop"]::view-transition-old(ut-page) { animation-name: ut-page-out-back; }
+@keyframes ut-page-in-back  { from { opacity: 0; transform: translateX(calc(var(--ut-nav-dir) * -4%)); } }
+@keyframes ut-page-out-back { to   { opacity: 0; transform: translateX(calc(var(--ut-nav-dir) * 4%)); } }
+
+/* In-page htmx swaps ease instead of blinking -- zero latency: no swap
+   delay, no settle-timing dependency (ut-docs#239's defaultSettleDelay:0
+   stays untouched). app.js's htmx:afterSwap listener (re)applies this
+   class to the swapped-in element; starts from .55 (not 0) so a cashier
+   scanning fast is never left waiting for content that's already there. */
+.ut-swap-fx { animation: ut-swap-in 150ms ease-out both; }
+@keyframes ut-swap-in { from { opacity: .55; } to { opacity: 1; } }
+
+/* Reduced motion: ONE block, kills everything -- the new view-transition
+   rules above AND every pre-existing `transition:`/`animation:` rule
+   already in this file (.menu-tile, .tab/.tab-active, etc.), via the
+   wildcard rather than an enumerated list, so a future motion rule added
+   anywhere in app.css is automatically covered too. */
+@media (prefers-reduced-motion: reduce) {
+  @view-transition { navigation: none; }
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
+  *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; scroll-behavior: auto !important; }
+  /* Progress spinners are essential motion (WCAG 2.3.3 exempts them):
+     frozen at 0s they read as "hung". Keep them turning. */
+  #refresh-indicator, .animate-spin { animation-duration: 1s !important; }
+}
+/* ============================================================================ */
+
 /* ut-docs#298: .nav's background is always var(--brand) — dark in every
    shipped theme (fresh/slate/amber/monarch all set it near-black/navy) — so
    the light-glyph mark (unitill-logo-light.svg, transparent background)
