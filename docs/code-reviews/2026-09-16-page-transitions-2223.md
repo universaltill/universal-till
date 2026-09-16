@@ -1,7 +1,7 @@
 # Review: page & menu transitions "like an app" (ut-docs#2223)
 
 **Card:** universaltill/ut-docs#2223 · **Lane:** `lane:local` · **Branch:** `feat/2223-page-transitions`
-**Dev:** Sonnet subagent (complexity:medium) · **Independent review:** Opus subagent in an isolated worktree, on the pre-review snapshot `bff8705c` · **ADR:** ut-docs ADR-0096
+**Dev:** Sonnet subagent (complexity:medium) · **Independent review:** Opus subagent in an isolated worktree, on the pre-review snapshot `bff8705c` · **ADR:** ut-docs ADR-0097 (0096 was taken by the CSRF ADR minutes earlier)
 
 ## What shipped
 
