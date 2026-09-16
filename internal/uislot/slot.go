@@ -485,6 +485,14 @@ var CoreSettings = []Entry{
 	{Key: "settings-display", Href: "#settings-display", LabelKey: "settings.display.title", Order: 600},
 	{Key: "settings-payments", Href: "#settings-payments", LabelKey: "settings.payments.title", Order: 700},
 	{Key: "settings-order-no", Href: "#settings-order-no", LabelKey: "settings.order_no.title", Order: 800},
+	// ut-docs#2282: added right after settings-order-no in both places (the
+	// template declares it immediately after that card too) — see this
+	// slot's own doc comment: a matching CoreSettings entry is what keeps a
+	// new card from being invisible to the sidebar AND to a layout plugin's
+	// amendments (settings_page_test.go's own
+	// TestSettingsPage_CoreSettingsAndFilterMatchTheRealTemplate pins the
+	// template's .card ids against this list, in order).
+	{Key: "settings-order-type-prompt", Href: "#settings-order-type-prompt", LabelKey: "settings.order_type_prompt.title", Order: 850},
 	{Key: "settings-barcode", Href: "#settings-barcode", LabelKey: "settings.barcode.symbologies_title", Order: 900},
 	{Key: "settings-catalog-import-barcode-default", Href: "#settings-catalog-import-barcode-default", LabelKey: "settings.catalog_import_barcode_default.title", Order: 1000},
 	{Key: "settings-categories-tab", Href: "#settings-categories-tab", LabelKey: "settings.categories_tab.title", Order: 1050},

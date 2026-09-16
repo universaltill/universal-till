@@ -597,6 +597,27 @@
     </label>
   </form>
 </div>
+<!-- ut-docs#2282: WHEN/WHERE the sale screen asks the cashier dine-in or
+     takeaway -- top of basket (always visible, the pre-this-card default),
+     before the first item lands in an empty basket, or deferred until Pay.
+     Same unconditional/elevation-gated/audited shape as #settings-order-no
+     just above (no "no data yet" state either). -->
+<div class="card" id="settings-order-type-prompt">
+  <h2>{{ T "settings.order_type_prompt.title" }} {{ helpLink "sell" }}</h2>
+  <p class="muted">{{ T "settings.order_type_prompt.help" }}</p>
+  <form hx-post="/api/settings/order-type-prompt" hx-target="#order-type-prompt-msg" hx-swap="innerHTML">
+    {{ $orderTypePromptMode := index .settingsMap "sale.order_type_prompt" }}
+    <label class="set-row">{{ T "settings.order_type_prompt.label" }}
+      <select name="mode">
+        <option value="top" {{ if or (eq $orderTypePromptMode "") (eq $orderTypePromptMode "top") }}selected{{ end }}>{{ T "settings.order_type_prompt.mode_top" }}</option>
+        <option value="before_item" {{ if eq $orderTypePromptMode "before_item" }}selected{{ end }}>{{ T "settings.order_type_prompt.mode_before_item" }}</option>
+        <option value="at_pay" {{ if eq $orderTypePromptMode "at_pay" }}selected{{ end }}>{{ T "settings.order_type_prompt.mode_at_pay" }}</option>
+      </select>
+      <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
+      <span id="order-type-prompt-msg" aria-live="polite"></span>
+    </label>
+  </form>
+</div>
 <div class="card" id="settings-barcode">
   <!-- ADR-0059 Decision §2, ut-docs#935: shop-selectable barcode symbology
        checklist. One checkbox per internal/barcode registry entry, saved

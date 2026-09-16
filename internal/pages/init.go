@@ -185,6 +185,14 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		httpx.InitDisplayMode(mode)
 	}
 
+	// ut-docs#2282: publish the dine-in/takeaway prompt-placement setting so
+	// the sale screen's own JS (base.html's data-order-type-prompt-mode)
+	// knows from the very first request whether it owes the cashier an
+	// intercept modal before an item-add/Pay action, same "read straight
+	// from the store, not part of RuntimeState" shape as display.mode above.
+	promptMode, _, _ := setStore.Get(ctx, data.OrderTypePromptModeKey)
+	httpx.InitOrderTypePromptMode(promptMode) // "" (unset) falls back to top
+
 	// Boot sweep: drop THIS till's own live-basket table claims
 	// (ut-docs#1390). The engine constructed just below always starts with an
 	// empty basket, so any of its own table_claims rows still present belong
