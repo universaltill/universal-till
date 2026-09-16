@@ -1540,6 +1540,43 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	// Sell-screen basket/products divider width for this till's screen
+	// (ut-docs#2308): dragging the divider between the basket and the
+	// product grid resizes both panes live, then saves ONCE on pointer
+	// release via a plain fetch() POST — not htmx, and no
+	// hx-on::after-request reload like every sibling control in this file
+	// (ui-scale/osk above) — an operator mid-drag mid-sale must never lose
+	// their in-progress basket to a page reload. width_rem omitted, empty,
+	// or "0" resets to the built-in default (app.css's own split); this is
+	// the same request shape the divider's own double-tap/double-click
+	// reset AND the Settings -> Display "Reset" button (settings.html) both
+	// send — see common.RuntimeState.BasketPanelWidthRemChanged's own doc
+	// comment for why a plain `>0` guard (UIScale's own shape) can't
+	// support that reset affordance by itself.
+	mux.HandleFunc("POST /api/settings/basket-panel-width", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		raw := strings.TrimSpace(r.Form.Get("width_rem"))
+		st := d.CurrentState()
+		if raw == "" || raw == "0" {
+			st.BasketPanelWidthRem = 0
+			st.BasketPanelWidthRemChanged = true
+		} else {
+			f, err := strconv.ParseFloat(raw, 64)
+			if err != nil || f < common.MinBasketPanelWidthRem || f > common.MaxBasketPanelWidthRem {
+				http.Error(w, fmt.Sprintf("width_rem must be between %g and %g, or 0 to reset", common.MinBasketPanelWidthRem, common.MaxBasketPanelWidthRem), http.StatusBadRequest)
+				return
+			}
+			st.BasketPanelWidthRem = f
+			st.BasketPanelWidthRemChanged = false
+		}
+		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		d.SetState(st)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	// On-screen keyboard mode for this till's screen (auto|on|off).
 	mux.HandleFunc("POST /api/settings/osk", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()

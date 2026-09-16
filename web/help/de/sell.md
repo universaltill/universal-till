@@ -72,6 +72,10 @@ Mehrere kleine Chips unten im linken Menü zeigen Ihnen auf einen Blick, was mit
 - Hat Ihr Geschäft eine TSE konfiguriert, zeigt ein Fiskalsignatur-Chip deren Zustand — siehe „Deutsche Geschäfte: TSE und echte Verkäufe“ unten.
 - Ein Fehlerberichts-Chip ist ebenfalls vorhanden, wenn diese Funktion aktiviert ist — siehe „Ein Problem melden“.
 
+## Größe der Bereiche für Warenkorb und Produkte ändern
+
+Auf einem Touchscreen-Kassensystem den schmalen Trennbalken zwischen Warenkorb und Produktraster etwa eine halbe Sekunde lang gedrückt halten und dann nach links oder rechts ziehen, um eine Seite zu vergrößern; mit Maus oder Trackpad genügt ein einfaches Klicken und Ziehen — kein Gedrückthalten nötig. Beide Bereiche behalten eine nutzbare Mindestbreite, sodass keiner von beiden auf nichts zusammengezogen werden kann, und das Produktraster ordnet sich beim Ändern der Größe automatisch in mehr oder weniger Spalten neu an. Ein Doppeltipp oder Doppelklick auf den Trennbalken setzt ihn auf die Standardaufteilung zurück. Die gewählte Aufteilung wird auf diesem Kassensystem gespeichert und beim nächsten Öffnen des Verkaufsbildschirms wiederhergestellt; unter Einstellungen → Anzeige gibt es dafür ebenfalls eine Zurücksetzen-Schaltfläche. Sobald der Bildschirm so schmal wird, dass Warenkorb und Produkte übereinander statt nebeneinander angezeigt werden, wird der Trennbalken nicht mehr angezeigt.
+
 ## Verkaufen ohne Netzwerkverbindung
 
 Die Kasse ist so gebaut, dass sie weiterverkauft, wenn das Internet, das eigene Netzwerk des Geschäfts oder eine andere Kasse, mit der sie synchronisiert, nicht erreichbar ist — ein Netzwerkausfall blockiert nie das Kassieren. Was sich tatsächlich auf dem Bildschirm ändert:
