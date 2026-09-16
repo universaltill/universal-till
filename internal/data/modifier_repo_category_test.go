@@ -613,3 +613,118 @@ func TestModifierRepo_ResolveGroupsForItem_DirectLinkSurvivesOptOutOfSameGroup(t
 		t.Fatalf("direct link must keep the tile-tap gate true despite the opt-out row: %+v", gate)
 	}
 }
+
+// ut-docs#2284: the category editor saves its modifier-group multi-select
+// as ONE replace-all write (SetCategoryModifierGroups) — the same shape
+// kitchen_stations_repo.go's SetCategoryStationRoutes has for stations —
+// so a save can never half-apply (a link added, a removal lost) if a
+// second write races it. It composes the same category_modifier_group_links
+// rows LinkGroupToCategory/UnlinkGroupFromCategory manage one at a time:
+// submitted order becomes the link's sort_order, an id submitted twice
+// counts once, blank ids are ignored, and an empty set clears every link.
+func TestModifierRepo_SetCategoryModifierGroups_ReplaceAll(t *testing.T) {
+	d := openModifierTestDB(t)
+	seedCategoryFixture(t, d)
+	ctx := context.Background()
+	repo := data.NewModifierRepo(d.DB)
+	createAnchoredGroup(t, repo, "gA", "Milk", 0)
+	createAnchoredGroup(t, repo, "gB", "Extras", 0)
+	createAnchoredGroup(t, repo, "gC", "Syrup", 0)
+	if err := repo.LinkGroupToCategory(ctx, "cat1", "gC", 9); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.SetCategoryModifierGroups(ctx, "cat1", []string{"gB", " gA ", "gB", ""}); err != nil {
+		t.Fatalf("SetCategoryModifierGroups: %v", err)
+	}
+	got, err := repo.ListAllGroupsForCategory(ctx, "cat1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// gC (not submitted) is gone; submitted order is the link order.
+	assertGroupIDs(t, got, "gB", "gA")
+	if got[0].SortOrder != 0 || got[1].SortOrder != 1 {
+		t.Fatalf("sort_order must follow submitted order: %+v", got)
+	}
+	// The sale-time resolver sees the new set immediately (read-time join).
+	resolved, err := repo.ResolveGroupsForItem(ctx, "itm1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertGroupIDs(t, resolved, "gB", "gA")
+
+	// Empty set clears everything.
+	if err := repo.SetCategoryModifierGroups(ctx, "cat1", nil); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = repo.ListAllGroupsForCategory(ctx, "cat1")
+	if len(got) != 0 {
+		t.Fatalf("empty set must clear every link, got %+v", got)
+	}
+	if err := repo.SetCategoryModifierGroups(ctx, "", []string{"gA"}); err == nil {
+		t.Fatal("empty category_id must error")
+	}
+}
+
+// AllCategoryModifierGroupLinks feeds the categories admin list's per-row
+// prefill in ONE query (not one ListAllGroupsForCategory per row — an N+1
+// over the whole category list on every page render), mirroring
+// POSRepo.AllCategoryStationRoutes for stations. Link order per category
+// is the link's own sort_order, same as ListGroupsForCategory.
+func TestModifierRepo_AllCategoryModifierGroupLinks(t *testing.T) {
+	d := openModifierTestDB(t)
+	seedCategoryFixture(t, d)
+	ctx := context.Background()
+	repo := data.NewModifierRepo(d.DB)
+	if _, err := d.DB.ExecContext(ctx, `INSERT INTO categories (id, name) VALUES ('cat2', 'Food')`); err != nil {
+		t.Fatal(err)
+	}
+	createAnchoredGroup(t, repo, "gA", "Milk", 0)
+	createAnchoredGroup(t, repo, "gB", "Extras", 0)
+	if err := repo.SetCategoryModifierGroups(ctx, "cat1", []string{"gB", "gA"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetCategoryModifierGroups(ctx, "cat2", []string{"gA"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.AllCategoryModifierGroupLinks(ctx)
+	if err != nil {
+		t.Fatalf("AllCategoryModifierGroupLinks: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %+v, want two categories", got)
+	}
+	if c := got["cat1"]; len(c) != 2 || c[0] != "gB" || c[1] != "gA" {
+		t.Fatalf("cat1 links = %v, want [gB gA]", c)
+	}
+	if c := got["cat2"]; len(c) != 1 || c[0] != "gA" {
+		t.Fatalf("cat2 links = %v, want [gA]", c)
+	}
+}
+
+// ListActiveModifierGroups is the category editor's multi-select source:
+// every ACTIVE group in the shop, by name, no item scoping and no options
+// (the picker renders a checkbox per group, nothing more) — the category-
+// side counterpart of ListAttachableModifierGroups' item-scoped picker.
+func TestModifierRepo_ListActiveModifierGroups(t *testing.T) {
+	d := openModifierTestDB(t)
+	seedCategoryFixture(t, d)
+	ctx := context.Background()
+	repo := data.NewModifierRepo(d.DB)
+	createAnchoredGroup(t, repo, "gB", "Extras", 0)
+	createAnchoredGroup(t, repo, "gA", "Milk", 0)
+	createAnchoredGroup(t, repo, "gRetired", "Retired", 0)
+	if err := repo.UpdateGroup(ctx, "gRetired", "Retired", false, 0, 1, 0, false); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.ListActiveModifierGroups(ctx)
+	if err != nil {
+		t.Fatalf("ListActiveModifierGroups: %v", err)
+	}
+	assertGroupIDs(t, got, "gB", "gA")
+	for _, g := range got {
+		if !g.IsActive || g.Name == "" {
+			t.Fatalf("unexpected group row: %+v", g)
+		}
+	}
+}

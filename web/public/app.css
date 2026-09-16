@@ -3456,6 +3456,28 @@ body.login-screen {
 .item-color-tile { flex-direction: column; gap: .3rem; min-block-size: 3.6rem; padding: .5rem .4rem; font-size: .78rem; font-weight: 500; }
 .swatch-dot { display: block; inline-size: 1.15rem; block-size: 1.15rem; border-radius: 50%;
               background: var(--swatch, transparent); border: 1px solid rgba(15, 23, 42, .18); }
+/* Category editor pickers (ut-docs#2284): the colour grid reuses the item
+   swatch picker above unchanged; these only space the dialog's three
+   sections and let the group/station checkbox rows wrap (the base
+   .field-checks is a single non-wrapping row sized for three fixed
+   toggles). .category-swatch is the same dot drawn inline beside a list
+   row's name, so the list shows the colour without opening the row.
+   Logical properties only — the dialog renders RTL for fa/ar/he. */
+.category-dialog-section { margin-block-start: .9rem; }
+.category-dialog-label { font-size: .82rem; margin-block-end: .25rem; }
+.category-dialog-help { font-size: .82rem; margin-block: 0 .4rem; }
+.category-dialog-checks { flex-wrap: wrap; gap: .5rem 1rem; }
+/* Item editor: inherited-group rows in the nested customization dialog and
+   the kitchen-routing section under the Variants tab (ut-docs#2284). The
+   inherited row reuses .modifier-admin-group-row's flex layout, with the
+   name given the flex share a text input would otherwise take. */
+.modifier-inherited-name { flex: 1 1 10rem; min-inline-size: 8rem; font-weight: 600; }
+.modifier-inherited-options { flex: 2 1 12rem; font-size: .85rem; }
+.catalog-inherited-help, .catalog-routing-help, .catalog-routing-inherited { font-size: .85rem; margin-block: .2rem; }
+.catalog-detail-routing { margin-block-start: 1rem; }
+.catalog-routing-form { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; }
+.catalog-routing-form .field-checks { margin: 0; }
+.category-swatch { display: inline-block; vertical-align: middle; inline-size: .85rem; block-size: .85rem; margin-inline-end: .15rem; }
 /* Catalog card grid (ut-docs#1951): the empty-state placeholder lives
    inside the same .grid as the cards (so a beforeend OOB insert has one
    stable parent whether the catalog is empty or not — see
