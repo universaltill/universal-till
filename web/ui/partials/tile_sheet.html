@@ -1,0 +1,107 @@
+<!-- web/ui/partials/tile_sheet.html -->
+{{/* ut-docs#2285: the sell-screen tile's long-press (~500ms hold) / right-
+     click sheet — Move earlier/later (within the tile's own category),
+     Remove from the quick buttons, Edit in catalog, Close. Rendered by
+     internal/pages/buttons_api.go's GET /ui/pos/tile-sheet?code=<code>
+     (swapped into #tile-sheet, hx-swap="innerHTML") and re-rendered IN
+     PLACE by POST /api/buttons/move's own response (same target/swap), so
+     the sheet stays open with a freshly-edge-disabled Move button after a
+     move rather than closing and reopening.
+
+     #tile-sheet itself (index.html) is opened with .show(), NEVER
+     showModal() — see index.html's own ut-docs#1385 comment on
+     #modifier-modal for why: showModal()'s inert-outside/top-layer
+     behaviour would make the left nav rail (status/lock/exit-to-OS)
+     unreachable while this is open, which this product's own
+     offline-first/kiosk standing rule (universal-till/CLAUDE.md) forbids
+     on every surface except self-order kiosk containment — this is the
+     cashier's own sale screen, nowhere near that exception.
+
+     Server-authoritative Move-earlier/later: HasPrev/HasNext (and the
+     move itself) are computed from the SAME sameCategoryNeighborIndex walk
+     (internal/ui/buttons.go) — this partial only ever renders what the
+     server already decided, never re-derives "is this an edge" from
+     anything client-side. */}}
+{{ define "tile_sheet" }}
+<div class="tile-sheet-body">
+  <h3 class="tile-sheet-title">{{ .Label }}</h3>
+  <div class="tile-sheet-actions">
+    <div class="tile-sheet-move-row">
+      <!-- designer.move_up/move_down (ut-docs#2285 reuses these two
+           existing keys, unchanged, rather than adding a near-duplicate
+           pair: "Move earlier"/"Move later" reads correctly here too,
+           even though this sheet lays the two buttons out horizontally
+           where buttons_admin.html's own reorder pair is vertical). -->
+      <button type="button" class="btn secondary tile-sheet-move" data-testid="tile-sheet-move-earlier"
+              hx-post="/api/buttons/move" hx-vals='{{ jsonVals "code" .Code "dir" -1 }}'
+              hx-target="#tile-sheet" hx-swap="innerHTML"
+              aria-label="{{ T "designer.move_up" }}" title="{{ T "designer.move_up" }}"
+              {{ if or (not .HasPrev) .IsReplica }}disabled{{ end }}>
+        <span class="btn-ico" aria-hidden="true">{{ icon "chevron-left" }}</span>
+        <span class="btn-label">{{ T "designer.move_up" }}</span>
+      </button>
+      <button type="button" class="btn secondary tile-sheet-move" data-testid="tile-sheet-move-later"
+              hx-post="/api/buttons/move" hx-vals='{{ jsonVals "code" .Code "dir" 1 }}'
+              hx-target="#tile-sheet" hx-swap="innerHTML"
+              aria-label="{{ T "designer.move_down" }}" title="{{ T "designer.move_down" }}"
+              {{ if or (not .HasNext) .IsReplica }}disabled{{ end }}>
+        <span class="btn-label">{{ T "designer.move_down" }}</span>
+        <span class="btn-ico" aria-hidden="true">{{ icon "chevron-right" }}</span>
+      </button>
+    </div>
+    <!-- ut-docs#2285: hx-swap="none" -- this button's own response body
+         (the re-rendered Designer admin grid, ButtonsHTTP.Remove's
+         existing shape) has nowhere useful to go on the SALE screen, so
+         it's discarded; app.js's document-level htmx:afterRequest
+         listener (data-closes-sheet) closes #tile-sheet once the request
+         actually succeeds, and buttons.html's root refetches itself on
+         the HX-Trigger: buttons-changed this same handler now always
+         sets (ButtonsHTTP.Remove). hx-confirm's %s is the item's own
+         label, formatted server-side (printf, same pattern
+         categories.html/tender.pay_with_total already use) rather than
+         client-side string replacement -- the label is already known at
+         render time, unlike catalog.html's item-form delete button whose
+         name can change without a fresh render. -->
+    <button type="button" class="btn danger tile-sheet-remove" data-testid="tile-sheet-remove"
+            hx-post="/api/buttons/remove" hx-vals='{{ jsonVals "code" .Code }}'
+            hx-confirm="{{ printf (T "tile_sheet.remove_confirm") .Label }}"
+            hx-swap="none" data-closes-sheet
+            aria-label="{{ T "tile_sheet.remove" }}" title="{{ T "tile_sheet.remove" }}"
+            {{ if .IsReplica }}disabled{{ end }}>
+      <span class="btn-ico" aria-hidden="true">{{ icon "trash-2" }}</span>
+      <span class="btn-label">{{ T "tile_sheet.remove" }}</span>
+    </button>
+    {{/* Edit in catalog: a plain navigation, never htmx -- return=/ sends
+         catalog.html back to the sale screen (the only page this sheet
+         renders on) once the item dialog it deep-links to is closed, or
+         saved -- see catalog.html's own `return` handling. A replica
+         renders a disabled BUTTON here instead of a live link (a real
+         <a href> has no `disabled` attribute semantics a screen reader
+         reliably announces, and a merchant tapping through to /catalog
+         from a replica till can still VIEW the item there -- editing is
+         what the replica gate actually blocks, not navigation -- but this
+         sheet's own Edit affordance stays consistently disabled alongside
+         Move/Remove above rather than silently behaving differently). */}}
+    {{ if .IsReplica }}
+    <button type="button" class="btn primary" disabled data-testid="tile-sheet-edit"
+            aria-label="{{ T "tile_sheet.edit" }}" title="{{ T "tile_sheet.edit" }}">
+      <span class="btn-ico" aria-hidden="true">{{ icon "pencil" }}</span>
+      <span class="btn-label">{{ T "tile_sheet.edit" }}</span>
+    </button>
+    {{ else }}
+    <a class="btn primary" data-testid="tile-sheet-edit" href="/catalog?item={{ .ItemID }}&return=/"
+       aria-label="{{ T "tile_sheet.edit" }}" title="{{ T "tile_sheet.edit" }}">
+      <span class="btn-ico" aria-hidden="true">{{ icon "pencil" }}</span>
+      <span class="btn-label">{{ T "tile_sheet.edit" }}</span>
+    </a>
+    {{ end }}
+  </div>
+  {{ if .IsReplica }}
+  <p class="tile-sheet-hint muted">{{ T "designer.error.replica_use_primary" }}</p>
+  {{ end }}
+  <button type="button" class="btn secondary tile-sheet-close" data-testid="tile-sheet-close" data-close-sheet
+          aria-label="{{ T "common.close" }}" title="{{ T "common.close" }}">
+    {{ T "common.close" }}
+  </button>
+</div>
+{{ end }}
