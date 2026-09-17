@@ -1,23 +1,29 @@
 #!/usr/bin/env bash
 #
-# Regression test for guard-price-history-sync.sh (ut-docs#1671): proves
-# the guard flags a real caller of AppendPriceHistoryItem/Variant planted
-# outside internal/pos/pricing.go — including one planted in a DIFFERENT
-# file inside internal/pos itself, proving the exclusion is scoped to
-# pricing.go specifically, not the whole package (independent review
-# finding) — proves it does NOT flag a call planted in a _test.go file,
-# proves it fails closed (not open) when the classification file is
-# missing (independent review finding), and proves it gets out of the way
-# once price_history is no longer classified in nonAdminTables. Also
-# proves the guard still passes on the real, unmodified codebase.
+# Regression test for guard-price-history-sync.sh (ADR-0099 Decision 3,
+# ut-docs#2348; originally ut-docs#1671): proves the guard flags a SQL write
+# to price_history (INSERT INTO / UPDATE / DELETE FROM) planted in a
+# function that is not on its explicit file:function allowlist — in a file
+# outside internal/data entirely, AND in a new file inside internal/data
+# (the allowlist is per file, not per package), AND in a function that
+# merely REUSES an allowlisted function's name in a different file (the
+# allowlist is file:function, not function-name-only), AND as a
+# package-level string with no enclosing func at all — proves it does NOT
+# flag a write planted in a _test.go file or under .claude/worktrees/
+# (ut-docs#2129), proves it fails closed (not open) when the classification
+# file is missing, and proves it gets out of the way once price_history is
+# no longer classified in nonAdminTables. Also proves the guard still passes
+# on the real codebase — which is the end-to-end proof that every real
+# writer, including sync_admin_repo.go's own invalidation UPDATE, is
+# correctly allowlisted.
 #
-# Unlike an earlier version of this test, none of this mutates the real,
-# tracked internal/data/sync_admin_repo.go — the reclassification and
-# missing-file cases instead point the guard's SYNC_CLASSIFICATION_FILE
-# override at scratch files, the same convention
+# None of this mutates the real, tracked internal/data/sync_admin_repo.go —
+# the reclassification and missing-file cases instead point the guard's
+# SYNC_CLASSIFICATION_FILE override at scratch files, the same convention
 # guard-migration-version-collision.sh's MIGRATIONS_DIR override uses, so
 # a killed run can never leave a stray .bak or a clobbered file mode on
-# real source.
+# real source. The planted files are plain text to the guard (it never
+# compiles them) and are removed by the EXIT trap.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -83,6 +89,13 @@ expect_fail() {
     echo "❌ FAIL: expected guard to reject ${label}, but it passed" >&2
     cat /tmp/guard_price_history_test_out.$$ >&2
     FAIL_COUNT=$((FAIL_COUNT + 1))
+  elif ! grep -q '❌ price-history-sync guard:' /tmp/guard_price_history_test_out.$$; then
+    # A non-zero exit alone is not a rejection — a bash syntax error or a
+    # crashed awk/sed pipeline also exits non-zero. Require the guard's own
+    # rejection banner so a broken guard can't pass its own test.
+    echo "❌ FAIL: guard exited non-zero on ${label}, but without its own rejection message (crashed, not rejected?)" >&2
+    cat /tmp/guard_price_history_test_out.$$ >&2
+    FAIL_COUNT=$((FAIL_COUNT + 1))
   else
     echo "✓ guard correctly rejected ${label}"
   fi
@@ -102,76 +115,84 @@ expect_pass() {
   rm -f /tmp/guard_price_history_test_out.$$
 }
 
-# A real caller planted outside internal/pos entirely (an admin page, say)
-# while price_history is still non-admin must be rejected.
-plant "internal/pages" "pages" "RealCaller" 'import (
-	"context"
-	"time"
-
-	"github.com/universaltill/universal-till/internal/pos"
-)
-
-func zzGuardTestRealCaller(ctx context.Context, repo pos.PricingRepo) {
-	_ = pos.AppendPriceHistoryItem(ctx, repo, "itm1", 100, time.Now())
+# A write planted outside internal/data entirely (an admin page, say)
+# while price_history is still non-admin must be rejected — one case per
+# statement kind the guard matches.
+plant "internal/pages" "pages" "UpdateWriter" 'func zzGuardTestUpdateWriter() string {
+	return `UPDATE price_history SET ends_at = NULL WHERE item_id = ?`
 }'
-expect_fail "a caller of AppendPriceHistoryItem outside internal/pos"
+expect_fail "an UPDATE price_history planted outside internal/data"
 clear_fixtures
 
-plant "internal/pages" "pages" "RealCallerVariant" 'import (
-	"context"
-	"time"
-
-	"github.com/universaltill/universal-till/internal/pos"
-)
-
-func zzGuardTestRealCallerVariant(ctx context.Context, repo pos.PricingRepo) {
-	_ = pos.AppendPriceHistoryVariant(ctx, repo, "var1", 100, time.Now())
+plant "internal/pages" "pages" "InsertWriter" 'func zzGuardTestInsertWriter() string {
+	return `INSERT INTO price_history(id, item_id, price, starts_at) VALUES(?,?,?,?)`
 }'
-expect_fail "a caller of AppendPriceHistoryVariant outside internal/pos"
+expect_fail "an INSERT INTO price_history planted outside internal/data"
 clear_fixtures
 
-# A call planted inside internal/pos itself, but in a DIFFERENT file than
-# pricing.go, must ALSO be rejected — the exclusion is scoped to
-# pricing.go specifically (the file that legitimately wraps these), not
-# the whole package, which is 40 files of real production code including
-# exactly the kind of scheduled-price-change logic that would matter here.
-plant "internal/pos" "pos" "OtherFileInPos" 'import (
-	"context"
-	"time"
-)
-
-func zzGuardTestOtherFileInPos(ctx context.Context, repo PricingRepo) {
-	_ = repo.AppendPriceHistoryItem(ctx, "itm1", 100, time.Now())
+plant "internal/pages" "pages" "DeleteWriter" 'func zzGuardTestDeleteWriter() string {
+	return `DELETE FROM price_history WHERE item_id = ?`
 }'
-expect_fail "a caller inside internal/pos but outside pricing.go"
+expect_fail "a DELETE FROM price_history planted outside internal/data"
 clear_fixtures
 
-# ut-docs#2129: a real caller planted under .claude/worktrees/ (an agent
+# A write planted INSIDE internal/data, in a new file, must ALSO be
+# rejected — the allowlist is per file:function, not "anything in the data
+# layer is fine" (guard-data-access.sh already allows raw SQL there; this
+# guard is the narrower question of WHICH functions may write this table).
+plant "internal/data" "data" "NewDataWriter" 'func zzGuardTestNewDataWriter() string {
+	return `UPDATE price_history SET ends_at = CURRENT_TIMESTAMP WHERE ends_at IS NULL`
+}'
+expect_fail "a write inside internal/data but in a function not on the allowlist"
+clear_fixtures
+
+# Reusing an allowlisted function NAME in a different file must not pass:
+# the key is file:function, so a same-named function elsewhere is a new,
+# unreviewed writer.
+plant "internal/data" "data" "NameSquatter" 'func AppendPriceHistoryItem() string {
+	return `INSERT INTO price_history(id) VALUES(?)`
+}'
+expect_fail "an allowlisted function NAME reused in a non-allowlisted file"
+clear_fixtures
+
+# A package-level SQL string with no enclosing func can never be allowlisted
+# (the unit of review is a named function) and must fail.
+plant "internal/data" "data" "PackageLevel" 'var zzGuardTestPackageLevel = `DELETE FROM price_history WHERE 1`'
+expect_fail "a package-level price_history write string with no enclosing func"
+clear_fixtures
+
+# ut-docs#2129: a write planted under .claude/worktrees/ (an agent
 # worktree's own copy of this repo's files at some other commit — see
 # universal-till/CLAUDE.md's "Agent worktree hygiene") must NOT trip the
-# guard, even though it is a real, textually-matching call outside
-# internal/pos/pricing.go — it's a copy of a caller tracked (or planted)
-# elsewhere, not a new one, and the same false failure that motivated this
-# card was reproduced exactly this way. A dedicated, uniquely-named
-# directory (never touching the real .claude/worktrees/agent-* trees a
-# live Agent(isolation: "worktree") run may have checked out) so this test
-# can never step on one; removed with an absolute-path `rm -rf`, never a
-# glob, on this test's own directory only.
+# guard, even though it is a real, textually-matching write in a
+# non-allowlisted location — it's a copy of a writer tracked (or planted)
+# elsewhere, not a new one. A dedicated, uniquely-named directory (never
+# touching the real .claude/worktrees/agent-* trees a live
+# Agent(isolation: "worktree") run may have checked out) so this test can
+# never step on one; removed with an absolute-path `rm -rf`, never a glob,
+# on this test's own directory only.
 worktree_decoy_root="${ROOT_DIR}/.claude/worktrees/zz-guard-test-fixture-2129"
 worktree_decoy_dir="${worktree_decoy_root}/internal/pages"
 mkdir -p "${worktree_decoy_dir}"
 worktree_decoy_path="${worktree_decoy_dir}/zz_guard_test_WorktreeDecoy.go"
-printf 'package pages\n\nimport (\n\t"context"\n\t"time"\n\n\t"github.com/universaltill/universal-till/internal/pos"\n)\n\nfunc zzGuardTestWorktreeDecoy(ctx context.Context, repo pos.PricingRepo) {\n\t_ = pos.AppendPriceHistoryItem(ctx, repo, "itm1", 100, time.Now())\n}\n' >"${worktree_decoy_path}"
-expect_pass "a caller planted under .claude/worktrees/ (agent worktree copy)"
+printf 'package pages\n\nfunc zzGuardTestWorktreeDecoy() string {\n\treturn `UPDATE price_history SET ends_at = NULL`\n}\n' >"${worktree_decoy_path}"
+expect_pass "a write planted under .claude/worktrees/ (agent worktree copy)"
 rm -rf "${worktree_decoy_root}"
 worktree_decoy_root=""
 
-# A call planted in a _test.go file outside internal/pos must not trip the
-# guard (mirrors the deadcode guard's own test-file exclusion).
-path="internal/pages/zz_guard_test_TestFileCall_test.go"
+# A write planted in a _test.go file must not trip the guard (test
+# fixtures INSERT into price_history all the time — mirrors the deadcode
+# guard's own test-file exclusion).
+path="internal/pages/zz_guard_test_TestFileWrite_test.go"
 fixtures+=("${path}")
-printf 'package pages\n\nimport (\n\t"context"\n\t"testing"\n\t"time"\n\n\t"github.com/universaltill/universal-till/internal/pos"\n)\n\nfunc TestZzGuardTestFileCall(t *testing.T) {\n\t_ = pos.AppendPriceHistoryItem(context.Background(), nil, "itm1", 100, time.Now())\n}\n' >"${path}"
-expect_pass "a call inside a _test.go file"
+printf 'package pages\n\nimport "testing"\n\nfunc TestZzGuardTestFileWrite(t *testing.T) {\n\t_ = `INSERT INTO price_history(id, item_id, price, starts_at) VALUES(?,?,?,?)`\n}\n' >"${path}"
+expect_pass "a write inside a _test.go file"
+clear_fixtures
+
+# A whole-line comment mentioning the statement is prose, not a write.
+plant "internal/pages" "pages" "CommentOnly" '// This page never runs UPDATE price_history itself; see ADR-0099.
+func zzGuardTestCommentOnly() {}'
+expect_pass "a whole-line comment naming the statement"
 clear_fixtures
 
 # Missing classification file must fail CLOSED (loud error), not silently
@@ -183,26 +204,24 @@ expect_fail "a missing SYNC_CLASSIFICATION_FILE" \
 
 # Once price_history is no longer classified non-admin (a deliberate
 # re-classification), the guard must get out of the way even with a real
-# caller present — verified against a scratch classification file, never
-# the real tracked one.
+# non-allowlisted writer present — verified against a scratch
+# classification file, never the real tracked one.
 printf 'package data\n\nvar nonAdminTables = map[string]string{\n\t"other_table": "unrelated",\n}\n' >"${scratch_dir}/sync_admin_repo.go"
-plant "internal/pages" "pages" "ReclassifiedCaller" 'import (
-	"context"
-	"time"
-
-	"github.com/universaltill/universal-till/internal/pos"
-)
-
-func zzGuardTestReclassifiedCaller(ctx context.Context, repo pos.PricingRepo) {
-	_ = pos.AppendPriceHistoryItem(ctx, repo, "itm1", 100, time.Now())
+plant "internal/pages" "pages" "ReclassifiedWriter" 'func zzGuardTestReclassifiedWriter() string {
+	return `UPDATE price_history SET ends_at = NULL`
 }'
-expect_pass "a caller once price_history is no longer classified in nonAdminTables" \
+expect_pass "a writer once price_history is no longer classified in nonAdminTables" \
   "SYNC_CLASSIFICATION_FILE=${scratch_dir}/sync_admin_repo.go"
 clear_fixtures
 
-# Baseline: the guard must still pass on the real, unmodified codebase.
+# Baseline: the guard must still pass on the real, unmodified codebase —
+# every real writer (pos_repo.go's append pair and CleanupObsoleteItems,
+# demo_seed_repo.go's RemoveDemoItem, catalog_repo.go's #2314 exec twins,
+# and sync_admin_repo.go's own ADR-0099 invalidation UPDATE) must be
+# correctly attributed to its allowlisted function. This is the end-to-end
+# proof the attribution + allowlist actually work on real gofmt'd code.
 if run_guard >/tmp/guard_price_history_test_out.$$ 2>&1; then
-  echo "✓ guard still passes on the clean codebase"
+  echo "✓ guard still passes on the clean codebase (every real writer allowlisted)"
 else
   echo "❌ FAIL: guard rejects the clean codebase (false positive introduced)" >&2
   cat /tmp/guard_price_history_test_out.$$ >&2
