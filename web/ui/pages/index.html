@@ -548,7 +548,7 @@
           });
         }
         document.body.addEventListener('htmx:afterSwap', refresh);
-        document.addEventListener('DOMContentLoaded', refresh);
+        UT.ready(refresh);
       })();
       // Pay-with-voucher button (ut-docs#1833): shown/relabeled off the
       // #basket fragment's own data-voucher-* attributes (basket.html) --
@@ -575,7 +575,7 @@
           btn.hidden = false;
         }
         document.body.addEventListener('htmx:afterSwap', refresh);
-        document.addEventListener('DOMContentLoaded', refresh);
+        UT.ready(refresh);
       })();
       // Payment button empty/non-empty label + disabled state (ut-docs#1984):
       // the server already renders the correct state at page load
@@ -635,15 +635,17 @@
           window.utTabBarFade(bar);
         }
         document.body.addEventListener('htmx:afterSwap', function () { wire(liveTabBar()); });
-        document.addEventListener('DOMContentLoaded', function () { wire(liveTabBar()); });
+        UT.ready(function () { wire(liveTabBar()); });
         // ut-docs#2032's own cross-breakpoint gap (catalog.html): scroll
         // alone misses a viewport resize/rotation while nothing scrolls.
-        // This script never runs twice, so the guard is belt-and-braces
-        // rather than load-bearing here — kept for the same reason and
-        // the same shape as catalog.html's __catalogTabBarFadeResizeWired,
-        // under its own flag name so the two never collide.
-        if (!window.__saleTabBarFadeResizeWired) {
-          window.__saleTabBarFadeResizeWired = true;
+        // The once-only flag lives on the #ut-page element, not on window:
+        // under the persistent shell (ADR-0098) the shell drops this page's
+        // window listeners when the page is swapped away, so a window flag
+        // would leave the SECOND visit with no listener at all (independent
+        // review, 2026-09-17). Same shape as catalog.html's guard.
+        var pageEl = document.getElementById('ut-page') || document.body;
+        if (!pageEl.__saleTabBarFadeResizeWired) {
+          pageEl.__saleTabBarFadeResizeWired = true;
           var recompute = function () { window.utTabBarFade(liveTabBar()); };
           window.addEventListener('resize', recompute);
           window.addEventListener('orientationchange', recompute);

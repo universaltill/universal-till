@@ -109,5 +109,5 @@ func newPublicFallbackFS(diskDir, embedRoot string) fs.FS {
 }
 
 func registerStatic(mux *http.ServeMux) {
-	mux.Handle("/public/", http.StripPrefix("/public/", http.FileServerFS(newPublicFallbackFS(filepath.Join("web", "public"), "public"))))
+	mux.Handle("/public/", assetCacheControl(http.StripPrefix("/public/", http.FileServerFS(newPublicFallbackFS(filepath.Join("web", "public"), "public")))))
 }
