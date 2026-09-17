@@ -159,6 +159,87 @@ func remoteTillSettingsReport(ctx context.Context, d *common.Deps) map[string]st
 	return out
 }
 
+// requirePrimaryDirective refuses a cloud directive that would write a
+// table synced shop-wide via the primary-wins admin pull (adminTables,
+// sync_admin_repo.go) — shortcut_buttons is one of them (ut-docs#1697):
+// applying the write on a replica would just get silently reverted on the
+// very next admin pull, with no indication to the cloud operator that
+// nothing actually stuck. Same rule buttons_api.go's own requirePrimary
+// closure enforces for the LAN designer routes; a directive has no HTTP
+// response to redirect or refuse with a status code, so this returns a
+// plain error that lands in the directive's result column instead.
+func requirePrimaryDirective(ctx context.Context, d *common.Deps) error {
+	if d.SyncPrimaryURL(ctx) != "" {
+		return fmt.Errorf("this till follows a primary till — quick-sale button layout is managed from the primary till")
+	}
+	return nil
+}
+
+// auditCloudDirective writes one audit_log row for a cloud-directive-driven
+// write, mirroring auditDiagnostics's shape (diagnostics_settings.go) for
+// the same "system" actor — a directive has no HTTP session/user to
+// attribute the change to, and "system" is the established id for exactly
+// this situation (see sync_orders.go's auditActorID, and
+// DiagnosticModeRevoke's own use of auditDiagnostics below).
+func auditCloudDirective(ctx context.Context, d *common.Deps, entityType, entityID, action string, payload map[string]any) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := data.NewPOSRepo(d.Db).InsertAudit(ctx, nil, "system", entityType, entityID, action, payload, now, ""); err != nil {
+		logging.L().Errorf("cloudsync: audit %s: %v", action, err)
+	}
+}
+
+// cloudSetQuickButtonLayout is the set_quick_button_layout hook: reorders
+// the quick-sale (shortcut) buttons from the cloud's layout panel — the
+// same ShortcutsRepo.UpdateOrder call the Designer's own move-up/move-down
+// reorder makes locally via POST /api/buttons/reorder. Gated to the primary
+// till (requirePrimaryDirective) for the same reason that LAN route is
+// (ut-docs#1697): shortcut_buttons syncs shop-wide as a primary-wins admin
+// table, so a write applied on a replica would vanish on the very next
+// admin pull. A barcode the till doesn't recognize is silently a no-op
+// (UpdateOrder's own `WHERE barcode = ?` matches nothing) — the same
+// behavior the LAN route already has, not a new gap introduced here.
+// Checked directly (not just relying on cloudsync.apply's own dispatch-level
+// check) since this is called both from that dispatch and directly by
+// buildCloudHooks' wiring/tests.
+func cloudSetQuickButtonLayout(ctx context.Context, d *common.Deps, barcodes []string) (string, error) {
+	if len(barcodes) == 0 {
+		return "", fmt.Errorf("missing barcodes")
+	}
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	if err := data.NewShortcutsRepo(d.Db).UpdateOrder(ctx, barcodes); err != nil {
+		return "", err
+	}
+	auditCloudDirective(ctx, d, "quick_buttons", "-", "quick_button_layout_set", map[string]any{"barcodes": barcodes})
+	return fmt.Sprintf("layout applied to %d buttons", len(barcodes)), nil
+}
+
+// remoteQuickButtonsReport is the read side for DeviceExtra: the currently
+// applied quick-sale button layout (barcode + label, in the same sort order
+// LoadButtons itself orders by), so the cloud's layout panel shows applied
+// state, not just what was queued — same "report what's actually there"
+// pattern as remoteTillSettingsReport above. A read error reports an empty
+// list rather than failing the whole heartbeat.
+func remoteQuickButtonsReport(ctx context.Context, d *common.Deps) []map[string]any {
+	buttons, err := data.NewShortcutsRepo(d.Db).LoadButtons(ctx)
+	if err != nil {
+		logging.L().Warnf("cloudsync: quick button layout report failed: %v", err)
+		return []map[string]any{}
+	}
+	out := make([]map[string]any, 0, len(buttons))
+	for i, b := range buttons {
+		// sort_order mirrors this button's position in the (already
+		// sort_order-ordered) list LoadButtons returns — the cloud side
+		// decodes it into QuickButtonReport.SortOrder so a single entry is
+		// self-describing without its slice context (claims.go's own doc
+		// comment on that field), even though the panel today only reads
+		// the report's array order, not this field, to render the list.
+		out = append(out, map[string]any{"barcode": b.Barcode, "label": b.Label, "sort_order": i})
+	}
+	return out
+}
+
 // StartCloudSync wires the ADR-0018 directive hooks to the till's real
 // action paths and starts the cloud sync loop. Every hook is the same move
 // an operator makes locally — remote installs still go through the
@@ -292,6 +373,12 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 			}
 			return msg, err
 		},
+		// set_quick_button_layout: the cloud's quick-sale button layout
+		// panel — same UpdateOrder call the Designer's own reorder makes,
+		// gated to the primary till. See cloudSetQuickButtonLayout.
+		SetQuickButtonLayout: func(ctx context.Context, barcodes []string) (string, error) {
+			return cloudSetQuickButtonLayout(ctx, d, barcodes)
+		},
 		// The cloud's Design picker offers exactly what this till could pick
 		// locally (built-in + plugin-contributed themes); applying one comes
 		// back as a plain `set_setting theme` directive. cloudThemeOptions
@@ -310,6 +397,11 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 				// remote-configurable setting, for the portal's
 				// forms.
 				"till_settings": remoteTillSettingsReport(ctx, d),
+				// The applied quick-sale button layout (barcode + label, in
+				// sort order), for the cloud's layout panel to pre-fill from
+				// real state rather than only what was queued. See
+				// remoteQuickButtonsReport.
+				"quick_buttons": remoteQuickButtonsReport(ctx, d),
 			}
 		},
 	}
