@@ -199,7 +199,7 @@ SELECT i.name,
           WHERE ph.item_id = i.id
             AND datetime(ph.starts_at) <= CURRENT_TIMESTAMP
             AND (ph.ends_at IS NULL OR datetime(ph.ends_at) > CURRENT_TIMESTAMP)
-          ORDER BY datetime(ph.starts_at) DESC LIMIT 1),
+          ORDER BY datetime(ph.starts_at) DESC, ph.rowid DESC LIMIT 1),
          i.base_price
        ),
        COALESCE(i.sku, '')
@@ -533,7 +533,7 @@ SELECT v.id, v.name,
           WHERE ph.variant_id = v.id
             AND datetime(ph.starts_at) <= CURRENT_TIMESTAMP
             AND (ph.ends_at IS NULL OR datetime(ph.ends_at) > CURRENT_TIMESTAMP)
-          ORDER BY datetime(ph.starts_at) DESC LIMIT 1),
+          ORDER BY datetime(ph.starts_at) DESC, ph.rowid DESC LIMIT 1),
          v.price
        ),
        COALESCE(v.sku, ''),
@@ -648,7 +648,7 @@ SELECT i.id,
           WHERE ph.item_id = i.id
             AND datetime(ph.starts_at) <= CURRENT_TIMESTAMP
             AND (ph.ends_at IS NULL OR datetime(ph.ends_at) > CURRENT_TIMESTAMP)
-          ORDER BY datetime(ph.starts_at) DESC LIMIT 1),
+          ORDER BY datetime(ph.starts_at) DESC, ph.rowid DESC LIMIT 1),
          i.base_price
        )
 FROM items i
@@ -706,7 +706,7 @@ SELECT i.name, v.name, COALESCE(v.sku, ''),
           WHERE ph.variant_id = v.id
             AND datetime(ph.starts_at) <= CURRENT_TIMESTAMP
             AND (ph.ends_at IS NULL OR datetime(ph.ends_at) > CURRENT_TIMESTAMP)
-          ORDER BY datetime(ph.starts_at) DESC LIMIT 1),
+          ORDER BY datetime(ph.starts_at) DESC, ph.rowid DESC LIMIT 1),
          v.price
        ),
        COALESCE((SELECT b.barcode FROM variant_barcodes b WHERE b.variant_id = v.id
@@ -747,7 +747,7 @@ SELECT v.id, v.name, COALESCE(v.sku, ''),
           WHERE ph.variant_id = v.id
             AND datetime(ph.starts_at) <= CURRENT_TIMESTAMP
             AND (ph.ends_at IS NULL OR datetime(ph.ends_at) > CURRENT_TIMESTAMP)
-          ORDER BY datetime(ph.starts_at) DESC LIMIT 1),
+          ORDER BY datetime(ph.starts_at) DESC, ph.rowid DESC LIMIT 1),
          v.price
        ),
        COALESCE(v.cost_price, 0), v.is_active
@@ -1814,7 +1814,7 @@ SELECT price FROM price_history
 WHERE %s = ?
   AND datetime(starts_at) <= CURRENT_TIMESTAMP
   AND (ends_at IS NULL OR datetime(ends_at) > CURRENT_TIMESTAMP)
-ORDER BY datetime(starts_at) DESC
+ORDER BY datetime(starts_at) DESC, rowid DESC
 LIMIT 1
 `, column), id)
 	if err := row.Scan(&price); err == nil {
