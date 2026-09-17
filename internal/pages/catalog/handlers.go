@@ -153,21 +153,42 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// item/variant-image and icon handlers below that have no
 	// requirePrimary call to anchor before (item_images is deliberately
 	// excluded from the sync bundle — see their own doc comments).
-	requireCatalogManagement := func(w http.ResponseWriter, r *http.Request) bool {
+	// catalogManagementAllowed is the bare boolean check both gate variants
+	// below share, so a full-page GET handler and an HTMX/API mutation
+	// handler read the identical auth decision from one place.
+	catalogManagementAllowed := func(r *http.Request) bool {
 		if auth.Disabled(os.Getenv("UT_AUTH")) {
 			return true
 		}
 		u, ok := auth.FromContext(r.Context())
 		if !ok {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return false
 		}
 		can, err := d.AuthSvc.Can(r.Context(), u, "catalog_management")
-		if err != nil || !can {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
-			return false
+		return err == nil && can
+	}
+
+	requireCatalogManagement := func(w http.ResponseWriter, r *http.Request) bool {
+		if catalogManagementAllowed(r) {
+			return true
 		}
-		return true
+		common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+		return false
+	}
+
+	// requireCatalogManagementPage is requireCatalogManagement's counterpart
+	// for the three full-page GET routes below (/catalog, /modifiers,
+	// /catalog/option-sets, ut-docs#2357): a page route must render the
+	// shell's own themed 403 via httpx.RenderError, same as
+	// tax_codes_page.go/locations_page.go gate their own GET handler —
+	// LocalizedError's bare http.Error body is for the HTMX/API mutation
+	// routes above, not a full document load.
+	requireCatalogManagementPage := func(w http.ResponseWriter, r *http.Request) bool {
+		if catalogManagementAllowed(r) {
+			return true
+		}
+		httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
+		return false
 	}
 
 	writeJSON := func(w http.ResponseWriter, status int, data any, errMsg string) {
@@ -688,6 +709,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("/catalog", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagementPage(w, r) {
+			return
+		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		items, err := repo.ListItems(r.Context())
 		if err != nil {
@@ -784,6 +808,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// group/option too, so a manager can reactivate one from here — the
 	// same reason the per-item panel always used ListAllGroupsForItem.
 	mux.HandleFunc("/modifiers", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagementPage(w, r) {
+			return
+		}
 		groups, err := modRepo.ListAllShopModifierGroups(r.Context())
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "modifiers.error.server", err)
@@ -816,6 +843,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// separate from checkout-time modifiers (/modifiers, ADR-0020), which
 	// change nothing here.
 	mux.HandleFunc("GET /catalog/option-sets", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagementPage(w, r) {
+			return
+		}
 		sets, err := data.NewOptionSetRepo(d.Db).ListOptionSets(r.Context())
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "catalog.error.server", err)
