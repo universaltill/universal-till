@@ -75,7 +75,7 @@ func counterOrderRowsFor(orders []data.KioskCounterOrder, locale string) []count
 func registerKioskCounterOrdersPage(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /kiosk-counter-orders", func(w http.ResponseWriter, r *http.Request) {
 		httpx.Render("ui/pages/kiosk_counter_orders.html", map[string]any{
-			"title":     "Pay at counter",
+			"title":     httpx.T(httpx.RequestLocale(r), "page.title.pay_at_counter"),
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
 		})(w, r)

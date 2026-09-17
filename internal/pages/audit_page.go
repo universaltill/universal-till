@@ -49,7 +49,7 @@ func registerAuditPage(mux *http.ServeMux, d *common.Deps) {
 		actors, _ := data.NewAuthRepo(d.Db).ListUsers(r.Context())
 
 		httpx.Render("ui/pages/audit.html", map[string]any{
-			"title":       "Audit trail",
+			"title":       httpx.T(httpx.RequestLocale(r), "page.title.audit_trail"),
 			"theme":       d.CurrentState().Theme,
 			"menuItems":   d.MenuSnapshot(),
 			"Entries":     entries,

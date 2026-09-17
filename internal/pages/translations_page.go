@@ -238,7 +238,7 @@ func registerTranslations(mux *http.ServeMux, d *common.Deps, i18n *config.I18n)
 			editLocale = httpx.ResolveLocale(w, r)
 		}
 		translationsData := map[string]any{
-			"title":      "Translations",
+			"title":      httpx.T(httpx.RequestLocale(r), "page.title.translations"),
 			"theme":      d.CurrentState().Theme,
 			"menuItems":  d.MenuSnapshot(),
 			"editLocale": editLocale,

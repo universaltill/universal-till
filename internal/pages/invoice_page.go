@@ -355,7 +355,7 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		httpx.Render("ui/pages/invoices.html", map[string]any{
-			"title":     "Invoices",
+			"title":     httpx.T(httpx.RequestLocale(r), "page.title.invoices"),
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
 			"Items":     list,

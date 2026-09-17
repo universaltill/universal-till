@@ -452,6 +452,33 @@ func TestCategoriesPage_NonHXRequestStillRendersFullPage(t *testing.T) {
 	}
 }
 
+// ut-docs#2297: the page <title> must actually follow the operator's
+// locale (httpx.T(httpx.RequestLocale(r), "page.title.categories")), not a
+// hardcoded English literal — this is the exact regression class that
+// left German (and every other non-English) admin pages' <title> stuck in
+// English regardless of the rest of the page being fully translated.
+func TestCategoriesPage_TitleFollowsLocale(t *testing.T) {
+	mux, _ := newCategoriesTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	enReq := auth.WithUser(httptest.NewRequest(http.MethodGet, "/categories", nil), manager)
+	enRec := httptest.NewRecorder()
+	mux.ServeHTTP(enRec, enReq)
+	if body := enRec.Body.String(); !strings.Contains(body, "<title>Categories</title>") {
+		t.Errorf("default (en) locale: expected <title>Categories</title>, got: %s", body)
+	}
+
+	arReq := auth.WithUser(httptest.NewRequest(http.MethodGet, "/categories?lang=ar", nil), manager)
+	arRec := httptest.NewRecorder()
+	mux.ServeHTTP(arRec, arReq)
+	if body := arRec.Body.String(); !strings.Contains(body, "<title>الفئات</title>") {
+		t.Errorf("ar locale: expected <title>الفئات</title>, got: %s", body)
+	}
+	if body := arRec.Body.String(); strings.Contains(body, "<title>Categories</title>") {
+		t.Errorf("ar locale: title still rendered in English")
+	}
+}
+
 // ut-docs#2091: /categories returns a different body depending on the
 // HX-Request header (a bare fragment vs. the full standalone page) — with
 // no Vary header, a browser/WebView cache keyed on the URL alone can serve

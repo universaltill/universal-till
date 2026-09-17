@@ -20,7 +20,7 @@ func registerDesigner(mux *http.ServeMux, d *common.Deps) {
 		}
 		btns, _ := d.BtnStore.Load()
 		data := map[string]any{
-			"title":     "Quick Buttons",
+			"title":     httpx.T(httpx.RequestLocale(r), "page.title.quick_buttons"),
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
 			"Buttons":   ui.ToVM(btns),

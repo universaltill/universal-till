@@ -236,7 +236,7 @@ func registerBluetoothDevices(mux *http.ServeMux, d *common.Deps) {
 			devices = []bluetooth.Device{}
 		}
 		httpx.Render("ui/pages/bluetooth_devices.html", map[string]any{
-			"title":              "Bluetooth devices",
+			"title":              httpx.T(httpx.RequestLocale(r), "page.title.bluetooth_devices"),
 			"theme":              d.CurrentState().Theme,
 			"menuItems":          d.MenuSnapshot(),
 			"devices":            devices,

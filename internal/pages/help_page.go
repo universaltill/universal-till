@@ -108,7 +108,7 @@ func renderHelpPage(w http.ResponseWriter, r *http.Request, d *common.Deps, topi
 	}
 
 	data := map[string]any{
-		"title":     "Help",
+		"title":     httpx.T(locale, "page.title.help"),
 		"theme":     d.CurrentState().Theme,
 		"menuItems": d.MenuSnapshot(),
 		"sections":  l.Tree(locale),

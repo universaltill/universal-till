@@ -65,7 +65,7 @@ func registerIssueReportPage(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		httpx.Render("ui/pages/report_issue.html", map[string]any{
-			"title":     "Report an issue",
+			"title":     httpx.T(httpx.RequestLocale(r), "page.title.report_an_issue"),
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
 			// The capture UI lives in the shared bug-report panel now
