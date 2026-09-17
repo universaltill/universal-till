@@ -86,6 +86,10 @@ export default defineConfig({
   // projects' servers are never driven concurrently either.
   workers: 1,
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
+  // ut-docs#2223: the suite runs as a reduced-motion user -- see the `page`
+  // fixture in tests/fixtures.ts for why, and why it is NOT a
+  // `use: { reducedMotion }` here (Playwright 1.61 silently drops that
+  // option from `use`/`test.use`; `page.emulateMedia` works).
   webServer: [
     {
       command: 'bash ./run-till.sh',

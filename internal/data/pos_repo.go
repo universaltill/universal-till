@@ -4782,6 +4782,29 @@ const (
 	DisplayNoSchemeLifetimeNoReset = "lifetime_no_reset"
 )
 
+// OrderTypePromptModeKey (ut-docs#2282) selects WHEN/WHERE the sale screen
+// asks the cashier for dine-in/takeaway -- see the three
+// OrderTypePromptMode* constants below. Unset (new install, or a
+// pre-ut-docs#2282 database) reads as "" from the settings table, which
+// every reader treats the same as OrderTypePromptModeTop (the documented
+// default) -- an existing shop sees no behaviour change until it opts in.
+const OrderTypePromptModeKey = "sale.order_type_prompt"
+
+const (
+	// OrderTypePromptModeTop pins the dine-in/takeaway toggle at the top of
+	// the basket, always visible -- the only behaviour before this card,
+	// and the default.
+	OrderTypePromptModeTop = "top"
+	// OrderTypePromptModeBeforeItem defers the choice until the very first
+	// item is about to be added to an empty basket: an intercept modal asks
+	// before the item lands.
+	OrderTypePromptModeBeforeItem = "before_item"
+	// OrderTypePromptModeAtPay defers the choice until the cashier presses
+	// Pay: an intercept modal asks before the payment action (opening the
+	// tender overlay, or a direct one-tap charge) proceeds.
+	OrderTypePromptModeAtPay = "at_pay"
+)
+
 // NextDisplayNo allocates the next short, customer-facing order number for
 // a sale -- an ADDITIONAL identity to receipt_no (ut-docs#1817), never a
 // replacement: receipt_no keeps its own independent, gapless allocation

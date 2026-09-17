@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -317,5 +318,80 @@ func TestScanWithModifiers_RejectsTooManySelections(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("want 400 when a single-select group gets 2 selections, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// ut-docs#2284 / ADR-0094: the sale screen's customization picker (the
+// fragment the tile tap and the barcode path both fetch) prompts for the
+// item's OWN groups plus every group its CATEGORY links, minus the item's
+// opt-outs — driven through the real /ui/pos/modifiers handler, not the
+// resolver alone. The pre-existing per-item links keep working unchanged
+// (the item's own Extras/Size groups from setupModifiersTestDeps are
+// asserted throughout as the regression pin).
+func TestGetModifiers_PromptsForCategoryInheritedGroupsMinusOptOuts(t *testing.T) {
+	dp, d := setupModifiersTestDeps(t)
+	mux := http.NewServeMux()
+	registerPOSModifiersAPI(mux, dp)
+
+	// The coffee joins a category; a "Milk" group (anchored to another
+	// item so no direct link to the coffee exists) is linked to that
+	// category, not to the item.
+	for _, q := range []string{
+		`INSERT INTO categories (id, name) VALUES ('cat-hot', 'Hot drinks')`,
+		`UPDATE items SET category_id = 'cat-hot' WHERE id = 'itm-coffee'`,
+		`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-anchor', 'ANCHOR', 'Anchor', 100, 1)`,
+		`INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order) VALUES ('g-milk', 'itm-anchor', 'Milk', 0, 0, 1, 0)`,
+		`INSERT INTO item_modifier_group_links (item_id, group_id, sort_order) VALUES ('itm-anchor', 'g-milk', 0)`,
+		`INSERT INTO item_modifier_options (id, group_id, name, price_delta_minor, sort_order) VALUES ('o-oatmilk', 'g-milk', 'Oat', 30, 1)`,
+		`INSERT INTO category_modifier_group_links (category_id, group_id, sort_order) VALUES ('cat-hot', 'g-milk', 0)`,
+	} {
+		if _, err := d.DB.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+
+	fetch := func() string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/ui/pos/modifiers?item=itm-coffee&code=COFFEE", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+
+	body := fetch()
+	// Own groups (regression) AND the inherited one, in own-first order.
+	for _, want := range []string{`name="mod_g-extras"`, `name="mod_g-size"`, `name="mod_g-milk"`, "Milk", "Oat"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("picker missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Index(body, `name="mod_g-milk"`) < strings.Index(body, `name="mod_g-size"`) {
+		t.Errorf("category-inherited group must follow the item's own groups, not precede them")
+	}
+
+	// The item opts out of Milk: the picker drops it, keeps its own groups.
+	if err := data.NewModifierRepo(d.DB).OptOutItemFromGroup(t.Context(), "itm-coffee", "g-milk"); err != nil {
+		t.Fatal(err)
+	}
+	body = fetch()
+	if strings.Contains(body, `name="mod_g-milk"`) {
+		t.Errorf("opted-out inherited group must not be prompted for:\n%s", body)
+	}
+	for _, want := range []string{`name="mod_g-extras"`, `name="mod_g-size"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("opt-out must not touch the item's own group %q:\n%s", want, body)
+		}
+	}
+
+	// Opting back in restores it on the very next fetch — read-time
+	// resolution, no snapshot anywhere to go stale.
+	if err := data.NewModifierRepo(d.DB).OptInItemToGroup(t.Context(), "itm-coffee", "g-milk"); err != nil {
+		t.Fatal(err)
+	}
+	if body = fetch(); !strings.Contains(body, `name="mod_g-milk"`) {
+		t.Errorf("opt-in must restore the inherited group:\n%s", body)
 	}
 }

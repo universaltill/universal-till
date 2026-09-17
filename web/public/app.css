@@ -49,6 +49,24 @@
   --radius: 10px;
   --radius-lg: 14px;
   --shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 1px 3px rgba(15, 23, 42, .08);
+  /* ut-docs#2308: sell-screen basket/products divider geometry. Read by
+     BOTH sides of the feature so the numbers only live here: app.css's own
+     `.pos-container` grid-template-columns (the real, foolproof clamp —
+     the grid simply refuses to size either track past what these allow,
+     regardless of what JS or a persisted setting asks for) and the drag
+     handler's own live clamp (index.html, via getComputedStyle at drag
+     time) that keeps the divider from visibly fighting that CSS floor
+     mid-drag. Also mirrored (for the value the settings API accepts
+     before it's ever persisted) in internal/pages/common/state.go's
+     MinBasketPanelWidthRem/MaxBasketPanelWidthRem — keep all three in
+     sync by hand if any of this ever changes. Never overridden by a
+     built-in theme (web/public/themes/*.css) — this is layout, not
+     palette — but nothing stops a theme plugin from doing so, same as any
+     other custom property here. */
+  --pos-basket-min-w: 22rem;      /* matches ut-docs#213's basket-column floor */
+  --pos-basket-max-w: 60rem;      /* generous sanity ceiling; real day-to-day limit is whatever leaves --pos-products-min-w free */
+  --pos-products-min-w: 16.5rem;  /* two 7rem .grid tiles + .5rem gap + .products' own .7rem/.8rem padding, plus a small margin */
+  --pos-divider-w: 1.5rem;        /* >=24px hit area even though the visible grip is thinner (ut-docs#2308 AC2) */
 }
 
 /* ---------- Base ---------- */
@@ -210,6 +228,116 @@ body { padding-inline-start: var(--rail-width); }
    shorthand happens to reset it — so they are not listed here.) */
 body.login-screen, body.tracking-screen { padding-inline-start: 0; }
 .statusbar { padding-inline-start: calc(var(--rail-width) + 1rem); }
+
+/* ============================================================================
+   ut-docs#2223 — page & menu transitions "like an app".
+
+   Cross-document CSS View Transitions, as a progressive enhancement only:
+   an engine without support (`@view-transition` unknown) keeps today's
+   instant full-document swap. Every real target has it — pilot tablet
+   Android WebView 151/Chrome 153, Pi 5 `unitill-desktop` = WebKitGTK 2.52
+   (probed on the device; NOT the Chromium 152 that merely sits installed
+   there), Windows shell WebView2 153.
+
+   The OPT-IN (`@view-transition { navigation: auto }`) lives ONLY in
+   base.html's inline <head> block, not here, for two reasons found on
+   real targets: (1) Chrome on the pilot tablet read the incoming page's
+   opt-in before this 244K stylesheet had arrived and aborted every
+   transition INTO a till page ("ViewTransition opt-in disabled"); (2) the
+   pages that load this file WITHOUT base.html (login, setup, self-order,
+   order tracking) have none of the script's guards -- reduced-motion
+   skip, watchdog, settled promises -- so an opt-in here gave them
+   transitions that surfaced as uncaught "Transition was skipped" errors
+   and, in headless Chromium, never revealed at all. The rules below are
+   inert on a page that has not opted in.
+
+   WHAT MOVES: the ROOT snapshot — i.e. the whole document MINUS the two
+   named groups below — slides 4% and cross-fades over --ut-motion-ms.
+   `.nav` (rail) and `.statusbar` are named view-transition groups pinned
+   to "no animation, always drawn from the new page, above the sliding
+   root", so the rail reads as fixed furniture (ut-docs#1830).
+
+   Deliberately NOT named: <main>, or anything else that hosts a
+   `position: fixed` dialog. A `view-transition-name` makes its element a
+   stacking context with layout containment, which turns it into the
+   containing block for every fixed-position descendant — the payment
+   overlay, #hold-modal, #elevation-modal, .tile-sheet, .item-form-modal
+   all live inside <main> and every one of them stopped being reachable
+   the moment <main> carried a name (found by e2e bugreport-panel.spec.ts,
+   confirmed by toggling the single declaration; the property has this
+   effect with NO transition running). The rail and statusbar host no
+   fixed descendants (checked), which is why they can be named.
+
+   Direction (push vs pop) is decided by the inline `pagereveal` script in
+   base.html's <head> (must run before first paint, so it can't live in
+   app.js, which is `defer`) — it sets `data-nav-dir` on <html> and, where
+   supported, `vt.types.add('back')` so `:active-view-transition-type(back)`
+   flips the animation; the `html[data-nav-dir="pop"]` selectors are the
+   same flip via a plain attribute, belt-and-braces for an engine with
+   View Transitions but not the newer `types` API. NB: written with NO
+   descendant combinator — every ::view-transition-* pseudo originates on
+   <html> itself, so `:root ::view-transition-new(x)` can never match.
+   RTL mirrors the travel direction through --ut-nav-dir (one variable,
+   not two mirrored sets of keyframes), no left/right literal anywhere. */
+:root { --ut-nav-dir: 1; --ut-motion-ms: 200ms; }
+[dir="rtl"] { --ut-nav-dir: -1; }
+.nav        { view-transition-name: ut-rail; }
+.statusbar  { view-transition-name: ut-statusbar; }
+/* Fixed furniture: no cross-fade at all, new image simply covers the old.
+   `mix-blend-mode: normal` matters as much as `animation: none`: the UA
+   stylesheet blends old+new with `plus-lighter` (right for a cross-fade
+   whose opacities sum to 1, wrong for two opaque images -- they ADD and
+   the bar flashes brighter); and the OLD image is hidden outright (the
+   images are `inline-size: 100%; block-size: auto`, so at phone width --
+   sticky top bar -- an old bar taller than the new one would otherwise
+   peek out below it for the whole transition). */
+::view-transition-old(ut-rail), ::view-transition-new(ut-rail),
+::view-transition-old(ut-statusbar), ::view-transition-new(ut-statusbar) { animation: none; mix-blend-mode: normal; }
+::view-transition-old(ut-rail), ::view-transition-old(ut-statusbar) { opacity: 0; }
+/* `.nav` precedes <main> in DOM order, so without an explicit stacking
+   order the sliding root snapshot paints OVER the rail/statusbar for the
+   ~200ms it animates -- confirmed live, this is the fix. */
+::view-transition-group(ut-rail), ::view-transition-group(ut-statusbar) { animation-duration: 0s; z-index: 2; }
+/* Content = the root pair: push = new slides in from the inline-end, old
+   slides out to the inline-start; pop = mirrored. Transform + opacity only
+   (compositor-only, no layout) -- 4% travel keeps it legible without a
+   long path. */
+::view-transition-old(root) { animation: var(--ut-motion-ms) cubic-bezier(.2,.8,.2,1) both ut-page-out; }
+::view-transition-new(root) { animation: var(--ut-motion-ms) cubic-bezier(.2,.8,.2,1) both ut-page-in; }
+@keyframes ut-page-in  { from { opacity: 0; transform: translateX(calc(var(--ut-nav-dir) * 4%)); } }
+@keyframes ut-page-out { to   { opacity: 0; transform: translateX(calc(var(--ut-nav-dir) * -4%)); } }
+:root:active-view-transition-type(back)::view-transition-new(root) { animation-name: ut-page-in-back; }
+:root:active-view-transition-type(back)::view-transition-old(root) { animation-name: ut-page-out-back; }
+html[data-nav-dir="pop"]::view-transition-new(root) { animation-name: ut-page-in-back; }
+html[data-nav-dir="pop"]::view-transition-old(root) { animation-name: ut-page-out-back; }
+@keyframes ut-page-in-back  { from { opacity: 0; transform: translateX(calc(var(--ut-nav-dir) * -4%)); } }
+@keyframes ut-page-out-back { to   { opacity: 0; transform: translateX(calc(var(--ut-nav-dir) * 4%)); } }
+
+/* In-page htmx swaps ease instead of blinking -- zero latency: no swap
+   delay, no settle-timing dependency (ut-docs#239's defaultSettleDelay:0
+   stays untouched). app.js's htmx:afterSettle listener (re)applies this
+   class to the swapped-in element for OPERATOR-caused swaps only; starts
+   from .55 (not 0) so a cashier scanning fast is never left waiting for
+   content that's already there. */
+.ut-swap-fx { animation: ut-swap-in 150ms ease-out both; }
+@keyframes ut-swap-in { from { opacity: .55; } to { opacity: 1; } }
+
+/* Reduced motion: ONE block, kills everything -- the new view-transition
+   rules above AND every pre-existing `transition:`/`animation:` rule
+   already in this file (.menu-tile, .tab/.tab-active, etc.), via the
+   wildcard rather than an enumerated list, so a future motion rule added
+   anywhere in app.css is automatically covered too. */
+@media (prefers-reduced-motion: reduce) {
+  /* (the `@view-transition { navigation: none }` half of this lives next
+     to the opt-in in base.html) */
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
+  *, *::before, *::after { transition-duration: 0s !important; animation-duration: 0s !important; scroll-behavior: auto !important; }
+  /* Progress spinners are essential motion (WCAG 2.3.3 exempts them):
+     frozen at 0s they read as "hung". Keep them turning. */
+  #refresh-indicator, .animate-spin { animation-duration: 1s !important; }
+}
+/* ============================================================================ */
+
 /* ut-docs#298: .nav's background is always var(--brand) — dark in every
    shipped theme (fresh/slate/amber/monarch all set it near-black/navy) — so
    the light-glyph mark (unitill-logo-light.svg, transparent background)
@@ -1067,7 +1195,19 @@ body.osk-padded .modifier-groups-modal { block-size: calc(100% - var(--osk-reser
      wider font metrics (Linux/CI, some kiosk builds), the narrower column
      wrapped item names to 3 lines and pushed the remove button past the
      panel edge — tall rows broke the >=4-visible-lines AC (ut-docs#213). */
-  grid-template-columns: minmax(22rem, 26.25rem) 1fr;
+  /* ut-docs#2308: a THIRD track (--pos-divider-w) carries the draggable
+     basket/products divider between the two original tracks. The basket
+     track's own max grew a live-settable custom property,
+     `--basket-col-width` (unset by default -> falls back to the original
+     26.25rem, exactly the pre-#2308 rendering) -- set inline on this
+     element by index_page.go/index.html from the persisted
+     display.basket_panel_width_rem setting, and live-updated by the drag
+     handler's own container.style.setProperty during a drag. Both outer
+     tracks keep their own minmax() floor regardless of what that property
+     says, so the grid itself is the ultimate clamp (see the --pos-*
+     tokens' own comment on :root above) -- a runaway/corrupt custom
+     property value can shrink a pane down to its floor, never past it. */
+  grid-template-columns: minmax(var(--pos-basket-min-w), var(--basket-col-width, 26.25rem)) var(--pos-divider-w) minmax(var(--pos-products-min-w), 1fr);
   /* ut-docs#213: the basket is a full-height first-class column (the
      operator must see what's rung up — the old stacked basket/tender
      split left ~1 visible line at 1280x800). The tender panel sits under
@@ -1143,9 +1283,16 @@ body.osk-padded .modifier-groups-modal { block-size: calc(100% - var(--osk-reser
      tender the same way and was never guarded against before either. */
   grid-template-rows: minmax(8rem, 5fr) minmax(0, 2fr);
   grid-template-areas:
-    "basket products"
-    "basket tender";
-  gap: .8rem;
+    "basket divider products"
+    "basket divider tender";
+  /* ut-docs#2308: split from a single `gap` shorthand -- the divider
+     column now provides its own visual separation between basket and
+     products/tender (it's a real, wide-enough-to-see grid track, not a
+     hairline), so a column-gap on top would double it up. row-gap is
+     unchanged (still separates products from tender, the same .8rem as
+     before this feature). */
+  row-gap: .8rem;
+  column-gap: 0;
   align-items: stretch;
   /* Fill whatever space is left below the nav + kiosk header — robust to
      the nav wrapping to two rows (a fixed calc() assumed one row and
@@ -1202,6 +1349,40 @@ body.osk-padded .modifier-groups-modal { block-size: calc(100% - var(--osk-reser
 .pos-container > .products { grid-area: products; }
 .pos-container > .journal { grid-area: journal; display: none; } /* own page */
 .pos-container > .tender { grid-area: tender; }
+
+/* ut-docs#2308: the basket/products divider. Fills its whole grid track
+   (align-items: stretch on .pos-container above) so the hit area is the
+   full height of the sale screen, not just a short handle in the middle --
+   a touch-and-hold can land anywhere along it. cursor: col-resize signals
+   the affordance to a mouse/trackpad user; touch-action: none stops the
+   browser's own pan/scroll gesture from competing with the JS drag
+   (index.html) once a hold has armed it. The grip itself
+   (.pos-divider-grip) is deliberately narrower than the >=24px hit area
+   (ut-docs#2308 AC2) -- both its resting and held/hover colour come from
+   the existing --border/--accent theme tokens, never a hardcoded colour,
+   so a monochrome or dark theme (web/public/themes/*.css) repaints it
+   automatically along with everything else. */
+.pos-container > .pos-divider {
+  grid-area: divider;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: col-resize;
+  touch-action: none;
+  min-height: 0;
+}
+.pos-divider-grip {
+  inline-size: .3rem;
+  block-size: 3rem;
+  border-radius: var(--radius-lg);
+  background: var(--border);
+  pointer-events: none; /* the grip is decorative -- .pos-divider itself is the hit target */
+  transition: background-color .12s ease;
+}
+.pos-container > .pos-divider:hover .pos-divider-grip,
+.pos-container > .pos-divider.dragging .pos-divider-grip {
+  background: var(--accent);
+}
 
 /* Panels are cards; each scrolls internally so nothing gets pushed around. */
 .pos-container > .basket,
@@ -1319,6 +1500,15 @@ body.osk-padded .modifier-groups-modal { block-size: calc(100% - var(--osk-reser
     height: auto;
   }
   .pos-container > .basket { max-height: 45dvh; }
+  /* ut-docs#2308 AC3: below the same breakpoint .pos-container itself
+     stacks at, the divider is inactive -- not just visually hidden, never
+     rendered as interactive. `display: none` alone is sufficient (a
+     display:none element receives no pointer events at all), but the drag
+     handler's own isActive() check (index.html) re-confirms this at
+     pointerdown time too, belt-and-braces against a theme overriding this
+     rule. There's also no "divider" cell in the single-column
+     grid-template-areas above for it to occupy even if it weren't hidden. */
+  .pos-container > .pos-divider { display: none; }
 }
 /* ut-docs#413: at the tablet tier above, `grid-template-rows: auto` is a
    single track token applied to all three implicit rows (basket/tender/
@@ -1610,6 +1800,55 @@ html[dir="rtl"] .tile-sheet-move .btn-ico svg { transform: scaleX(-1); }
   border-inline-start: 4px solid var(--cat-color, var(--accent));
 }
 
+/* ---------- Categories tab (ut-docs#2283) ----------
+   .category-tile reuses the .grid it sits in (buttons.html) — same
+   auto-fill/7rem column floor the product-tile grid already uses, so the
+   two densities stay visually consistent when an operator flips between
+   the Categories tab and any per-category tab. min-height is bumped past
+   .btn-tile's own 6.5rem (not just matched) — the card's own "at least as
+   large as product-tile" floor, and a plain name-only tile has far less
+   content than a tile with a thumbnail/price, so a little extra height
+   keeps it from reading as a visually lighter, easier-to-mis-tap target
+   next to the item tiles it sits beside once a category is open. Same
+   --cat-color-accent/border-inline-start recipe as .btn-tile (ut-docs#1325)
+   -- one color per category, carried on the tile itself since (unlike a
+   category panel) this view has no ancestor already carrying it.
+
+   min-height measured, not guessed: a .btn-tile with a two-line-clamped
+   name AND a price line (no thumbnail) renders at ~140px in a real
+   browser at the 7rem grid-column floor both share — noticeably taller
+   than the 6.5rem/104px number .btn-tile's own CSS states as ITS floor,
+   because that number is only ever the floor for a short one-line name
+   with no price growth. .category-tile has no price line to grow past its
+   own name, so matching .btn-tile's stated floor is not enough once a
+   real (especially a longer, translated) category name wraps to two
+   lines — confirmed live by e2e/tests/sell-screen-categories-tab-2283
+   .spec.ts's geometry case, which is what caught this the first time
+   (measured 119px against a real 140.75px product tile, both two-line
+   names, neither one hand-picked to make a point). 9.5rem/152px clears
+   that measured case with margin. */
+.category-tile {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: .3rem; padding: .6rem .5rem; min-height: 9.5rem; border: 1px solid var(--border);
+  border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow);
+  font: inherit; color: var(--text); cursor: pointer; text-align: center;
+  transition: border-color .12s ease, box-shadow .12s ease, transform .05s ease;
+  user-select: none; touch-action: manipulation; -webkit-touch-callout: none;
+  border-inline-start: 4px solid var(--cat-color, var(--accent));
+}
+.category-tile:hover { border-color: #cbd5e1; box-shadow: 0 3px 8px rgba(15, 23, 42, .12); }
+.category-tile:active { transform: scale(.97); }
+.category-tile-name {
+  font-weight: 600; font-size: .95rem; line-height: 1.25;
+  overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+/* Wider than the base .modifier-modal (28rem/90vw) — this holds a full
+   item grid, not a handful of buttons — same "widen the dialog, not the
+   content" call .barcode-backfill-modal made for its own wide table. */
+.category-items-modal { max-width: 44rem; width: 94vw; }
+.category-items-modal-body { max-height: 60vh; overflow-y: auto; margin-block: .5rem; }
+
 /* ---------- Product tiles ----------
    The whole tile is one touch target: image, name, price. */
 /* 2026-08-30 (product owner, comparing against a competitor POS — "sumup
@@ -1861,6 +2100,14 @@ html[dir="rtl"] .tile-sheet-move .btn-ico svg { transform: scaleX(-1); }
    same reasoning .payment-overlay's own z-index comment above gives. */
 #hold-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 550; }
 #hold-label-input { width: 100%; margin-block: .5rem .75rem; }
+/* ut-docs#2282: same non-modal .show() treatment as #hold-modal/#pfand-modal
+   above and for the identical reason (the custom on-screen keyboard must
+   stay reachable, even though this dialog itself needs no typing -- the
+   whole sale screen stays consistent on the point). 500, not #hold-modal's
+   550 bump: this dialog is only ever opened BEFORE #payment-overlay (the
+   "at Pay" placement gates opening the overlay until a choice is made), so
+   the two never coexist and there is nothing here to clear. */
+#order-type-prompt-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
 /* Keep the payout dialog out of the native top layer: the custom on-screen
    keyboard is appended to <body> and must remain clickable while it is open. */
 #pfand-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
@@ -2024,8 +2271,10 @@ html[dir="rtl"] .tile-sheet-move .btn-ico svg { transform: scaleX(-1); }
    overlapping by ~11-12px in that shared gap — a real misclick risk
    between qty and discount, worse than the current undersized-but-
    unambiguous targets. (A third stacked child, `.line-order-type-phone`,
-   joins this column below 480px — whoever designs the ut-docs#2217
-   overlay has to account for it too, not just the qty/disc pair.)
+   used to join this column below 480px, which is why the ut-docs#2217
+   overlay was flagged as needing to account for it too, not just the
+   qty/disc pair -- removed by ut-docs#2282/#2309, so that's now moot;
+   left as historical context for why this paragraph reads the way it does.)
    An ASYMMETRIC overlay — qty's hit-area growing into the row's own
    `.55rem` cell padding upward, disc's growing into it downward, never
    into the shared gap or the next row — reaches ~39px each without
@@ -2089,46 +2338,15 @@ html[dir="rtl"] .tile-sheet-move .btn-ico svg { transform: scaleX(-1); }
   transition: background .15s ease, color .15s ease;
 }
 .order-type-option.is-active { background: var(--accent); color: #fff; }
-/* ut-docs#1181 (ADR-0073): mixed-basket status chip next to the bulk
-   segments -- a status, not a control, so it is deliberately not styled
-   like .order-type-option (which reads as tappable). */
-.order-type-mixed {
-  flex: 0 0 auto; display: inline-flex; align-items: center; gap: .3rem;
-  min-height: 2.5rem; padding: .35rem .6rem; border-radius: 999px;
-  border: 1px dashed var(--accent); color: var(--text); font-weight: 600;
-  font-size: .8rem; white-space: nowrap;
-}
-/* Per-line dine-in/takeaway segments (ADR-0073 Decision 2) under the item
-   name: an icon-only pill the height of the remove button (.btn-x), so a
-   row's height and the item column's width are unchanged by it. 2rem/32px
-   squares (matching .line-thumb) rather than the 2.5rem .btn.compact floor
-   -- product owner's live call (2026-09-02): the labelled 2.5rem pair
-   "is too big for each item and has a bad design". A 32px target is
-   still above WCAG 2.5.8's 24px minimum. Logical properties for RTL. */
-.line-order-type {
-  display: inline-flex; margin-block-start: .2rem; border: 1px solid var(--border);
-  border-radius: 999px; overflow: hidden; vertical-align: middle;
-}
-.line-order-type-option {
-  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
-  width: 2rem; height: 2rem; min-height: 0; padding: 0; border: none;
-  background: var(--surface); color: var(--text); font-size: .95rem; line-height: 1;
-  cursor: pointer; opacity: .55;
-  transition: background .15s ease, opacity .15s ease;
-}
-.line-order-type-option.is-active { background: var(--accent); opacity: 1; }
-.line-order-type-option:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: -2px; opacity: 1; }
-/* Phone-only instance (basket.html, inside .line-inputs): hidden wherever
-   the pill under the item name fits; swapped in below 480px where the item
-   column is ~32px (ut-docs#1314) -- stacked vertically so it stays 2rem
-   wide inside the 3.4rem qty column and never widens the table
-   (ut-docs#391's no-horizontal-scroll invariant). */
-.line-order-type-phone { display: none; }
+/* ut-docs#2282/#2309: the per-line dine-in/takeaway segments (ADR-0073
+   Decision 2) and the mixed-basket status chip that used to live here were
+   REMOVED with the cashier-facing per-line control (product-owner scope
+   change, outcome 1) -- see basket.html's own comment on the two bulk
+   segments above for why "mixed" itself is still a value worth handling
+   there, just no longer with a dedicated status chip. */
 @media (max-width: 480px) {
-  .line-item .line-order-type { display: none; }
-  .line-order-type-phone { display: inline-flex; flex-direction: column; border-radius: 1rem; }
-  /* The bulk segments + Mixed chip must wrap, never push the basket wider
-     than the phone (ut-docs#391's no-horizontal-scroll invariant). */
+  /* The bulk segments must wrap, never push the basket wider than the
+     phone (ut-docs#391's no-horizontal-scroll invariant). */
   .order-type-row { flex-wrap: wrap; }
 }
 /* Table-assignment button + dialog (ut-docs#820, ADR-0054) — collapsed
@@ -3456,6 +3674,28 @@ body.login-screen {
 .item-color-tile { flex-direction: column; gap: .3rem; min-block-size: 3.6rem; padding: .5rem .4rem; font-size: .78rem; font-weight: 500; }
 .swatch-dot { display: block; inline-size: 1.15rem; block-size: 1.15rem; border-radius: 50%;
               background: var(--swatch, transparent); border: 1px solid rgba(15, 23, 42, .18); }
+/* Category editor pickers (ut-docs#2284): the colour grid reuses the item
+   swatch picker above unchanged; these only space the dialog's three
+   sections and let the group/station checkbox rows wrap (the base
+   .field-checks is a single non-wrapping row sized for three fixed
+   toggles). .category-swatch is the same dot drawn inline beside a list
+   row's name, so the list shows the colour without opening the row.
+   Logical properties only — the dialog renders RTL for fa/ar/he. */
+.category-dialog-section { margin-block-start: .9rem; }
+.category-dialog-label { font-size: .82rem; margin-block-end: .25rem; }
+.category-dialog-help { font-size: .82rem; margin-block: 0 .4rem; }
+.category-dialog-checks { flex-wrap: wrap; gap: .5rem 1rem; }
+/* Item editor: inherited-group rows in the nested customization dialog and
+   the kitchen-routing section under the Variants tab (ut-docs#2284). The
+   inherited row reuses .modifier-admin-group-row's flex layout, with the
+   name given the flex share a text input would otherwise take. */
+.modifier-inherited-name { flex: 1 1 10rem; min-inline-size: 8rem; font-weight: 600; }
+.modifier-inherited-options { flex: 2 1 12rem; font-size: .85rem; }
+.catalog-inherited-help, .catalog-routing-help, .catalog-routing-inherited { font-size: .85rem; margin-block: .2rem; }
+.catalog-detail-routing { margin-block-start: 1rem; }
+.catalog-routing-form { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; }
+.catalog-routing-form .field-checks { margin: 0; }
+.category-swatch { display: inline-block; vertical-align: middle; inline-size: .85rem; block-size: .85rem; margin-inline-end: .15rem; }
 /* Catalog card grid (ut-docs#1951): the empty-state placeholder lives
    inside the same .grid as the cards (so a beforeend OOB insert has one
    stable parent whether the catalog is empty or not — see

@@ -1,6 +1,16 @@
 import { test, expect, Page } from '@playwright/test';
 import { ensureOperator } from './helpers';
 
+// ut-docs#2223: this spec is exempt from tests/fixtures.ts (see
+// scripts/ci/guard-e2e-fixtures-import.sh), so it does not inherit the
+// shared `page` fixture's reduced-motion emulation — apply it here for the
+// same reason: headless Chromium never reveals a document that is the
+// destination of a cross-document View Transition, and every hit-tested
+// action on it then hangs.
+test.beforeEach(async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+});
+
 // ut-docs#2144: hold/resume/scan are all hx-post forms under /api/pos/*,
 // and tender is a raw fetch() to the same prefix. Before this fix, a
 // session that expired mid-sale left the operator staring at a fully

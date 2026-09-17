@@ -523,9 +523,10 @@ func TestButtonsHTTPList_AllTabDoesNotScaleWithCatalogSize(t *testing.T) {
 		t.Fatalf("List() SELECT count scales with catalog size: 3 items -> %d SELECTs, 30 items -> %d SELECTs (want equal -- the All grid must cost the same regardless of catalog size, i.e. never re-query per item/basket state)", small, large)
 	}
 
-	// Pin the mechanism: the ONLY thing that re-fetches /ui/buttons is
-	// modifiers-changed, never a basket/scan/sale event.
-	const wantTrigger = `hx-get="/ui/buttons" hx-trigger="modifiers-changed from:body"`
+	// Pin the mechanism: /ui/buttons re-fetches on modifiers-changed (and,
+	// since ut-docs#2285, buttons-changed -- a tile move/remove/edit, also
+	// unrelated to basket state) -- never on a basket/scan/sale event.
+	const wantTrigger = `hx-get="/ui/buttons" hx-trigger="modifiers-changed from:body, buttons-changed from:body"`
 	if !strings.Contains(smallBody, wantTrigger) {
 		t.Fatalf("expected the .products root's own re-fetch trigger %q in the rendered body -- got a different mechanism, which this test can no longer see is safe", wantTrigger)
 	}

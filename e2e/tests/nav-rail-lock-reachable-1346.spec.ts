@@ -1,6 +1,16 @@
 import { test, expect } from '@playwright/test';
 import { ensureOperator, watchConsole } from './helpers';
 
+// ut-docs#2223: this spec is exempt from tests/fixtures.ts (see
+// scripts/ci/guard-e2e-fixtures-import.sh), so it does not inherit the
+// shared `page` fixture's reduced-motion emulation — apply it here for the
+// same reason: headless Chromium never reveals a document that is the
+// destination of a cross-document View Transition, and every hit-tested
+// action on it then hangs.
+test.beforeEach(async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+});
+
 // ut-docs#1346: independent review (universal-till PR #670, ut-docs#1332's
 // nav-rail change) simulated the real session_chip.html markup (3 manager
 // admin links + operator + Lock) on /settings at 1024x600 and measured

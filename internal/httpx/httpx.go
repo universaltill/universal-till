@@ -454,6 +454,31 @@ func oskModeVal() string {
 	return "auto"
 }
 
+var orderTypePromptMode atomic.Value // string: top|before_item|at_pay
+
+// InitOrderTypePromptMode publishes the dine-in/takeaway prompt placement
+// (ut-docs#2282, data.OrderTypePromptMode* constants) to templates
+// (data-order-type-prompt-mode on <body>) -- read by the sale screen's own
+// JS to decide whether an item-add/Pay action still owes the cashier an
+// intercept modal before proceeding. An unknown value (never persisted, or
+// a pre-ut-docs#2282 database that has never set this key) falls back to
+// "top", the documented default -- same fail-safe shape as InitOSKMode.
+func InitOrderTypePromptMode(mode string) {
+	switch mode {
+	case "before_item", "at_pay":
+	default:
+		mode = "top"
+	}
+	orderTypePromptMode.Store(mode)
+}
+
+func orderTypePromptModeVal() string {
+	if v, ok := orderTypePromptMode.Load().(string); ok && v != "" {
+		return v
+	}
+	return "top"
+}
+
 // idleLockSecs drives the cosmetic client-side idle timer (data-idle-lock on
 // <body>); 0/unset renders no attribute. The server-side check in auth.Service
 // is authoritative — pages.Init keeps both in sync.
@@ -1024,6 +1049,7 @@ func FuncsFor(locale string) template.FuncMap {
 	funcs["uiscale"] = uiScaleCSS
 	funcs["oskmode"] = oskModeVal
 	funcs["idlelocksecs"] = func() int64 { return idleLockSecs.Load() }
+	funcs["ordertypepromptmode"] = orderTypePromptModeVal
 	funcs["barcodesvg"] = BarcodeSVG // scannable CODE39 for receipt numbers
 	funcs["locale"] = func() string { return locale }
 	// defaultlocale is the shop's configured DEFAULT locale (Settings'

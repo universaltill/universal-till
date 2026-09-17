@@ -66,11 +66,16 @@ const (
 	// KeyShopType holds the ADR-0026 shop-type taxonomy value chosen in the
 	// setup wizard (cafe|retail|service|hospitality|market_stall|other) —
 	// ut-docs#539. Optional: empty/missing is fine.
-	KeyShopType       = "shop.type"
-	KeyUIScale        = "display.ui_scale"
-	KeyOSK            = "display.osk"
-	KeyIdleLock       = "auth.idle_lock_minutes"
-	KeyKioskIdleReset = "kiosk.idle_reset_seconds"
+	KeyShopType = "shop.type"
+	KeyUIScale  = "display.ui_scale"
+	// KeyBasketPanelWidth is the sell screen's basket/products divider
+	// position (ut-docs#2308), persisted per till: the basket column's
+	// width in rem, so it applies at whatever ui_scale/root-font-size is
+	// active. Empty/unset (or 0) means "use app.css's own built-in split".
+	KeyBasketPanelWidth = "display.basket_panel_width_rem"
+	KeyOSK              = "display.osk"
+	KeyIdleLock         = "auth.idle_lock_minutes"
+	KeyKioskIdleReset   = "kiosk.idle_reset_seconds"
 	// KeyKioskPaymentMode is the self-order kiosk's checkout mode
 	// (universaltill/ut-docs#582): "kiosk" (default — the existing
 	// card/contactless payment-picker flow, ADR-0020) or "counter" (the
@@ -253,6 +258,51 @@ func ClampKioskPaymentMode(mode string) string {
 	return DefaultKioskPaymentMode
 }
 
+// MinBasketPanelWidthRem is the sell-screen basket column's minimum width in
+// rem when an operator drags the basket/products divider (ut-docs#2308) —
+// matches app.css's own pre-existing `.pos-container` basket-column floor
+// (`minmax(22rem, ...)`, ut-docs#213: below this the item-name column wraps
+// to 3 lines on classic scrollbars/wider font metrics and pushes the remove
+// button off-panel). Also mirrored in app.css's `--pos-basket-min-w` root
+// custom property, which is what the live drag handler (index.html) and the
+// CSS grid track itself actually clamp against — this constant only bounds
+// the value the settings API accepts before it's ever persisted; keep both
+// numbers in sync by hand if either ever changes.
+const MinBasketPanelWidthRem = 22.0
+
+// MaxBasketPanelWidthRem is a generous sanity ceiling on the PERSISTED
+// value alone (mirrored in app.css's `--pos-basket-max-w`) — the real
+// day-to-day clamp is enforced live, both by the CSS grid track floor on
+// the products/tender column (app.css's own `--pos-products-min-w` on that
+// track, so the grid itself refuses to starve the products pane regardless
+// of what this says) and by the drag handler's own live
+// getBoundingClientRect() measurement (index.html), which never lets a
+// drag exceed the CURRENT container's real available width. This bound
+// only guards a directly-POSTed or hand-edited value, nowhere near a real
+// screen, from being stored at all.
+const MaxBasketPanelWidthRem = 60.0
+
+// ClampBasketPanelWidthRem clamps v into [MinBasketPanelWidthRem,
+// MaxBasketPanelWidthRem] and rounds to 2 decimal places (a live drag's raw
+// pixel-to-rem conversion can carry long float tails; nothing needs more
+// precision than that here). v<=0 passes through unchanged as 0 — the
+// "unset, use the built-in default" sentinel, never itself a size to clamp
+// into range. Used on load (defense against a corrupt/hand-edited row) and
+// on save (defense in depth — the HTTP handler already validates, mirrors
+// ClampWindowMode/ClampKioskPaymentMode above).
+func ClampBasketPanelWidthRem(v float64) float64 {
+	if v <= 0 {
+		return 0
+	}
+	if v < MinBasketPanelWidthRem {
+		v = MinBasketPanelWidthRem
+	}
+	if v > MaxBasketPanelWidthRem {
+		v = MaxBasketPanelWidthRem
+	}
+	return math.Round(v*100) / 100
+}
+
 // LoadState pulls settings from the DB-backed settings store with cfg defaults.
 func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) RuntimeState {
 	get := func(key, def string) string {
@@ -282,6 +332,11 @@ func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) R
 	if v := get(KeyUIScale, ""); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			st.UIScale = f
+		}
+	}
+	if v := get(KeyBasketPanelWidth, ""); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			st.BasketPanelWidthRem = ClampBasketPanelWidthRem(f)
 		}
 	}
 	if v := get(KeyTaxRate, strconv.Itoa(cfg.Locales.TaxRate)); v != "" {
@@ -482,6 +537,15 @@ func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) erro
 	}
 	if st.UIScale > 0 {
 		kv[KeyUIScale] = strconv.FormatFloat(st.UIScale, 'f', -1, 64)
+	}
+	// Unlike UIScale's plain `> 0` guard, a 0 here is written when the
+	// caller deliberately means it (BasketPanelWidthRemChanged, set by the
+	// reset handler) — see that field's own doc comment (deps.go) for why
+	// UIScale's shape alone can't support a real reset affordance.
+	if w := ClampBasketPanelWidthRem(st.BasketPanelWidthRem); w > 0 {
+		kv[KeyBasketPanelWidth] = strconv.FormatFloat(w, 'f', -1, 64)
+	} else if st.BasketPanelWidthRemChanged {
+		kv[KeyBasketPanelWidth] = ""
 	}
 	if st.OSKMode != "" {
 		kv[KeyOSK] = st.OSKMode
