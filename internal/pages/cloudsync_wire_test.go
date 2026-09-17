@@ -1553,6 +1553,318 @@ func TestBuildCloudHooks_WiresQuickButtonLayout(t *testing.T) {
 	}
 }
 
+// --- cloudUpdateItemDetails ---
+
+// seedFullDetailItem creates one category and one brand row (satisfying the
+// FK columns, PRAGMA foreign_keys is ON for every till DB) and a catalog
+// item with every partial-update-eligible field AND every out-of-scope
+// field (category/brand/tax code) set to a real, non-default value, so a
+// test can prove a single-field update leaves everything else — including
+// name/price/category/brand/tax-code — exactly as it was.
+func seedFullDetailItem(t *testing.T, dp *common.Deps) catalogtypes.ItemInput {
+	t.Helper()
+	ctx := t.Context()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO categories(id, name, color) VALUES ('cat-full', 'Full Cat', '#4338ca')`); err != nil {
+		t.Fatalf("seed category: %v", err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO brands(id, name) VALUES ('brand-full', 'Full Brand')`); err != nil {
+		t.Fatalf("seed brand: %v", err)
+	}
+	catID, brandID, taxID := "cat-full", "brand-full", "tax_std"
+	in := catalogtypes.ItemInput{
+		SKU:            "ORIG-SKU",
+		Name:           "Original Name",
+		BasePrice:      1234,
+		Unit:           "kg",
+		CategoryID:     &catID,
+		BrandID:        &brandID,
+		TaxCodeID:      &taxID,
+		IsWeighed:      true,
+		Description:    "Original description",
+		IsActive:       true,
+		StockUntracked: true,
+		Color:          "#0f766e",
+	}
+	id, err := data.NewCatalogRepo(dp.Db).CreateItem(ctx, in)
+	if err != nil {
+		t.Fatalf("seed item: %v", err)
+	}
+	in.ID = id
+	return in
+}
+
+func assertItemUnchangedExcept(t *testing.T, dp *common.Deps, before catalogtypes.ItemInput, changed map[string]bool) {
+	t.Helper()
+	after, ok, err := data.NewCatalogRepo(dp.Db).GetItem(t.Context(), before.ID)
+	if err != nil || !ok {
+		t.Fatalf("re-read item: ok=%v err=%v", ok, err)
+	}
+	check := func(field string, want bool, eq bool) {
+		if changed[field] {
+			return
+		}
+		if !eq {
+			t.Fatalf("field %q changed but was not expected to: before=%+v after=%+v", field, before, after)
+		}
+	}
+	check("sku", false, after.SKU == before.SKU)
+	check("name", false, after.Name == before.Name)
+	check("base_price", false, after.BasePrice == before.BasePrice)
+	check("unit", false, after.Unit == before.Unit)
+	check("description", false, after.Description == before.Description)
+	check("color", false, after.Color == before.Color)
+	check("is_weighed", false, after.IsWeighed == before.IsWeighed)
+	check("stock_untracked", false, after.StockUntracked == before.StockUntracked)
+	check("is_active", false, after.IsActive == before.IsActive)
+	beforeCat, afterCat := "", ""
+	if before.CategoryID != nil {
+		beforeCat = *before.CategoryID
+	}
+	if after.CategoryID != nil {
+		afterCat = *after.CategoryID
+	}
+	check("category_id", false, afterCat == beforeCat)
+	beforeBrand, afterBrand := "", ""
+	if before.BrandID != nil {
+		beforeBrand = *before.BrandID
+	}
+	if after.BrandID != nil {
+		afterBrand = *after.BrandID
+	}
+	check("brand_id", false, afterBrand == beforeBrand)
+	beforeTax, afterTax := "", ""
+	if before.TaxCodeID != nil {
+		beforeTax = *before.TaxCodeID
+	}
+	if after.TaxCodeID != nil {
+		afterTax = *after.TaxCodeID
+	}
+	check("tax_code_id", false, afterTax == beforeTax)
+}
+
+func strp(s string) *string { return &s }
+func boolp(b bool) *bool    { return &b }
+
+// TestCloudUpdateItemDetails_SkuOnlyLeavesEverythingElseUnchanged is the
+// crux test for this directive's whole reason to exist: a payload that
+// names only `sku` must be a TRUE partial update, not a full-item
+// overwrite. The seeded item has non-default values in every other
+// updatable field, plus the three fields this card explicitly does NOT
+// touch (category/brand/tax code, ADR-0095 Decision 2 / ut-docs#2354) — all
+// of those must survive the read-modify-write untouched too.
+func TestCloudUpdateItemDetails_SkuOnlyLeavesEverythingElseUnchanged(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	before := seedFullDetailItem(t, dp)
+
+	msg, err := cloudUpdateItemDetails(ctx, dp, before.ID, strp("NEW-SKU"), nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("cloudUpdateItemDetails: %v", err)
+	}
+	if msg != "details updated: sku" {
+		t.Fatalf("msg = %q, want %q", msg, "details updated: sku")
+	}
+
+	after, ok, err := data.NewCatalogRepo(dp.Db).GetItem(ctx, before.ID)
+	if err != nil || !ok {
+		t.Fatalf("re-read item: ok=%v err=%v", ok, err)
+	}
+	if after.SKU != "NEW-SKU" {
+		t.Fatalf("sku = %q, want NEW-SKU", after.SKU)
+	}
+	assertItemUnchangedExcept(t, dp, before, map[string]bool{"sku": true})
+}
+
+// A multi-field payload updates exactly those fields and nothing else.
+func TestCloudUpdateItemDetails_MultipleFieldsUpdateOnlyThose(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	before := seedFullDetailItem(t, dp)
+
+	msg, err := cloudUpdateItemDetails(ctx, dp, before.ID, nil, strp("New description"), nil, strp("#be185d"), boolp(false), nil)
+	if err != nil {
+		t.Fatalf("cloudUpdateItemDetails: %v", err)
+	}
+	if msg != "details updated: description, color, is_weighed" {
+		t.Fatalf("msg = %q", msg)
+	}
+
+	after, ok, err := data.NewCatalogRepo(dp.Db).GetItem(ctx, before.ID)
+	if err != nil || !ok {
+		t.Fatalf("re-read item: ok=%v err=%v", ok, err)
+	}
+	if after.Description != "New description" || after.Color != "#be185d" || after.IsWeighed {
+		t.Fatalf("after = %+v", after)
+	}
+	assertItemUnchangedExcept(t, dp, before, map[string]bool{"description": true, "color": true, "is_weighed": true})
+}
+
+// An off-palette colour is refused, and — matching cloudUpsertCategory's
+// validate-before-write order — writes nothing at all, not even the other
+// fields that rode along in the same payload.
+func TestCloudUpdateItemDetails_InvalidColorRejectedWritesNothing(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	before := seedFullDetailItem(t, dp)
+
+	_, err := cloudUpdateItemDetails(ctx, dp, before.ID, strp("SHOULD-NOT-STICK"), nil, nil, strp("#ff0000"), nil, nil)
+	if err == nil {
+		t.Fatalf("expected an error for an off-palette colour")
+	}
+
+	after, ok, err := data.NewCatalogRepo(dp.Db).GetItem(ctx, before.ID)
+	if err != nil || !ok {
+		t.Fatalf("re-read item: ok=%v err=%v", ok, err)
+	}
+	if after.SKU != before.SKU || after.Color != before.Color {
+		t.Fatalf("refused call must write nothing: before=%+v after=%+v", before, after)
+	}
+}
+
+func TestCloudUpdateItemDetails_UnknownItemIDFailsCleanly(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudUpdateItemDetails(ctx, dp, "no-such-item", strp("X"), nil, nil, nil, nil, nil); err == nil {
+		t.Fatalf("expected an error for an unknown item_id")
+	}
+}
+
+func TestCloudUpdateItemDetails_NoFieldsIsANoOp(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	before := seedFullDetailItem(t, dp)
+
+	msg, err := cloudUpdateItemDetails(ctx, dp, before.ID, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("cloudUpdateItemDetails with no fields: %v", err)
+	}
+	if msg != "no changes" {
+		t.Fatalf("msg = %q, want %q", msg, "no changes")
+	}
+	assertItemUnchangedExcept(t, dp, before, nil)
+}
+
+// The genuine concurrent-write regression test for ut-docs#2324 review
+// finding S1 (UpdateItemPartial's own BEGIN IMMEDIATE transaction must
+// serialize against a concurrent single-column writer) lives at
+// internal/data.TestUpdateItemPartialConcurrentRace — a sequential
+// same-goroutine test at this layer cannot actually interleave a write
+// between cloudUpdateItemDetails's read and write, so it would pass
+// identically whether or not the transaction existed (verified directly:
+// reverting UpdateItemPartial to a non-transactional GetItem+UpdateItem
+// still passed a sequential version of this test). The data-package test
+// uses real goroutines against a file-backed database to force the race.
+
+// TestCloudUpdateItemDetails_BlankSkuAndUnitAreNoOps is the regression test
+// for ut-docs#2324 review finding S3: updateItemExec's own SQL makes a
+// blank sku a true no-op but silently DEFAULTS a blank unit to "each" —
+// neither is a meaningful "clear this field" request, so a directive
+// carrying only blank sku/unit values must report "no changes" and write
+// nothing, never falsely claim (or audit) a change that didn't happen.
+func TestCloudUpdateItemDetails_BlankSkuAndUnitAreNoOps(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	before := seedFullDetailItem(t, dp)
+
+	msg, err := cloudUpdateItemDetails(ctx, dp, before.ID, strp("  "), nil, strp(""), nil, nil, nil)
+	if err != nil {
+		t.Fatalf("cloudUpdateItemDetails: %v", err)
+	}
+	if msg != "no changes" {
+		t.Fatalf("msg = %q, want %q (blank sku/unit must not count as a change)", msg, "no changes")
+	}
+	assertItemUnchangedExcept(t, dp, before, nil)
+
+	var count int
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM audit_log WHERE entity_type = 'item' AND entity_id = ? AND action = 'cloud_item_details_updated'`,
+		before.ID,
+	).Scan(&count); err != nil {
+		t.Fatalf("query audit_log: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("blank sku/unit must not write an audit row, found %d", count)
+	}
+}
+
+// items is an admin-synced table (primary-wins pull) — same
+// requirePrimaryDirective gate every other catalog-mutating directive has
+// (ut-docs#2353).
+func TestCloudUpdateItemDetails_RefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	before := seedFullDetailItem(t, dp)
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	if _, err := cloudUpdateItemDetails(ctx, dp, before.ID, strp("SHOULD-NOT-STICK"), nil, nil, nil, nil, nil); err == nil {
+		t.Fatalf("expected cloudUpdateItemDetails to refuse on a replica till")
+	}
+
+	after, ok, err := data.NewCatalogRepo(dp.Db).GetItem(ctx, before.ID)
+	if err != nil || !ok {
+		t.Fatalf("re-read item: ok=%v err=%v", ok, err)
+	}
+	if after.SKU != before.SKU {
+		t.Fatalf("sku must not change on a replica till, got %q", after.SKU)
+	}
+}
+
+func TestCloudUpdateItemDetails_WritesAuditRowWithOnlyProvidedFields(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	before := seedFullDetailItem(t, dp)
+
+	if _, err := cloudUpdateItemDetails(ctx, dp, before.ID, strp("NEW-SKU"), nil, nil, strp("#be185d"), nil, nil); err != nil {
+		t.Fatalf("cloudUpdateItemDetails: %v", err)
+	}
+
+	var actorID, payloadJSON string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT actor_id, data_json FROM audit_log WHERE entity_type = 'item' AND entity_id = ? AND action = 'cloud_item_details_updated'`,
+		before.ID,
+	).Scan(&actorID, &payloadJSON); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if actorID != "system" {
+		t.Fatalf("expected actor_id 'system', got %q", actorID)
+	}
+	if !strings.Contains(payloadJSON, `"sku"`) || !strings.Contains(payloadJSON, `"color"`) {
+		t.Fatalf("payload missing provided fields: %s", payloadJSON)
+	}
+	for _, absent := range []string{`"description"`, `"unit"`, `"is_weighed"`, `"stock_untracked"`} {
+		if strings.Contains(payloadJSON, absent) {
+			t.Fatalf("payload must omit absent fields, found %s: %s", absent, payloadJSON)
+		}
+	}
+}
+
+func TestBuildCloudHooks_WiresUpdateItemDetails(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	before := seedFullDetailItem(t, dp)
+	hooks := buildCloudHooks(dp, nil)
+	if hooks.UpdateItemDetails == nil {
+		t.Fatalf("UpdateItemDetails hook not wired")
+	}
+	if _, err := hooks.UpdateItemDetails(ctx, before.ID, nil, nil, nil, strp("#ff0000"), nil, nil); err == nil {
+		t.Fatalf("wired UpdateItemDetails must enforce the colour palette")
+	}
+	msg, err := hooks.UpdateItemDetails(ctx, before.ID, strp("WIRED-SKU"), nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("wired UpdateItemDetails: %v", err)
+	}
+	if msg != "details updated: sku" {
+		t.Fatalf("msg = %q", msg)
+	}
+	after, ok, err := data.NewCatalogRepo(dp.Db).GetItem(ctx, before.ID)
+	if err != nil || !ok || after.SKU != "WIRED-SKU" {
+		t.Fatalf("wired update did not stick: ok=%v err=%v after=%+v", ok, err, after)
+	}
+}
+
 // --- cloudUpsertModifierGroup ---
 
 // TestCloudUpsertModifierGroup_CreatesGroupWithOptions: CREATE-ONLY (no id
