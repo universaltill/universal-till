@@ -4240,7 +4240,11 @@ body.login-screen {
    selection behaviour — it's a tap target, not part of the drag surface. */
 .bugreport-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem;
   cursor: move; touch-action: none; user-select: none; }
-.bugreport-head h2 { margin: 0; font-size: 1rem; }
+.bugreport-head h2 { margin: 0; font-size: 1rem; flex: 1 1 auto; }
+/* ut-docs#2342: Discard sits in the head next to ✕ — small, secondary, and
+   it must not steal the drag handle's width from the title on the 26rem
+   panel ("Verwerfen"/"Descartar" are the long ones). */
+.bugreport-head .bugreport-discard { flex: 0 0 auto; padding-block: .25rem; padding-inline: .6rem; font-size: .85rem; min-block-size: 2.1rem; }
 .bugreport-close { background: none; border: 0; cursor: pointer; font-size: 1.1rem;
   color: var(--muted, #64748b); padding: .25rem .5rem; border-radius: .4rem;
   touch-action: auto; user-select: auto; }
