@@ -33,8 +33,17 @@ func TestAppendPriceHistoryItem_AppendsAndEndsPrevious(t *testing.T) {
 	defer db.Close()
 
 	now := time.Now().UTC()
-	// existing open price
-	_, _ = db.Exec(`INSERT INTO price_history(id,item_id,price,starts_at) VALUES('p1','itm1',100,?)`, now.Add(-time.Hour))
+	// existing open price. ut-docs#2314: starts_at is stored as
+	// time.RFC3339 text everywhere real code writes it (see
+	// AppendPriceHistoryItem/Variant, both here and in
+	// internal/data/pos_repo.go) — this fixture must match that, not a raw
+	// time.Time binding, because the closing UPDATE's WHERE clause now
+	// compares via SQLite's datetime(), which can't parse Go's default
+	// time.Time string format (modernc.org/sqlite's driver serializes an
+	// unformatted time.Time param as e.g. "2026-01-02 15:04:05.999999999
+	// +0000 UTC", which datetime() reads as NULL, so the row would never
+	// be recognized as closeable).
+	_, _ = db.Exec(`INSERT INTO price_history(id,item_id,price,starts_at) VALUES('p1','itm1',100,?)`, now.Add(-time.Hour).Format(time.RFC3339))
 
 	repo := &testPricingRepo{db: db}
 	if err := AppendPriceHistoryItem(ctx, repo, "itm1", 200, now); err != nil {
@@ -64,7 +73,8 @@ func TestAppendPriceHistoryVariant_AppendsAndEndsPrevious(t *testing.T) {
 	defer db.Close()
 
 	now := time.Now().UTC()
-	_, _ = db.Exec(`INSERT INTO price_history(id,variant_id,price,starts_at) VALUES('pv1','var1',500,?)`, now.Add(-time.Hour))
+	// Same RFC3339 fixture fix as TestAppendPriceHistoryItem_AppendsAndEndsPrevious above.
+	_, _ = db.Exec(`INSERT INTO price_history(id,variant_id,price,starts_at) VALUES('pv1','var1',500,?)`, now.Add(-time.Hour).Format(time.RFC3339))
 
 	repo := &testPricingRepo{db: db}
 	if err := AppendPriceHistoryVariant(ctx, repo, "var1", 750, now); err != nil {

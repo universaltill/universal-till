@@ -6,10 +6,34 @@
 # open price_history row BEFORE items' synced price, so it overrides it) —
 # see internal/data/sync_admin_repo.go's nonAdminTables entry for the full
 # reasoning. It stays out of adminTables today because nothing in
-# production writes it: AppendPriceHistoryItem/Variant have no caller
-# outside internal/pos and its own tests (confirmed via
-# scripts/ci/deadcode-baseline.txt — the whole internal/pos/pricing.go file
-# is currently whole-program-unreachable).
+# production writes it THROUGH THESE TWO METHODS:
+# AppendPriceHistoryItem/Variant have no caller outside internal/pos and
+# its own tests (confirmed via scripts/ci/deadcode-baseline.txt — the whole
+# internal/pos/pricing.go file is currently whole-program-unreachable).
+#
+# ut-docs#2314 UPDATE — read this before trusting a green check here.
+# price_history now HAS real production writers; they just aren't these two
+# methods. The catalog item/variant edit form and the cloud's SetItemPrice
+# directive write it via internal/data/catalog_repo.go's execer-based twins
+# (appendPriceHistoryItemExec/appendPriceHistoryVariantExec, called through
+# recordPriceChangeExec), which exist so the pre-write resolved-price read
+# and the append share the caller's own BEGIN IMMEDIATE transaction. The
+# grep below matches `.AppendPriceHistoryItem(`/`.AppendPriceHistoryVariant(`
+# only, so those twins are invisible to it — the same direct-caller blind
+# spot this header's "Known limitation" note already describes, reached via
+# a sibling implementation rather than a one-hop wrapper.
+#
+# That is deliberate, not an oversight: the guard's own second acceptable
+# answer ("confirm the new caller stays primary-gated so a satellite never
+# writes it at all") holds for the catalog form — /api/catalog/item/update
+# and /api/catalog/variant are both behind requirePrimary
+# (internal/pages/catalog/handlers.go). The cloud SetItemPrice directive is
+# NOT primary-gated, and the classification question that leaves open is
+# tracked as its own card, ut-docs#2348. Widening the grep to catch the
+# twins would just fail the build until #2348 lands, which is why it was
+# left alone — but do NOT read this guard's ✓ as "nothing writes
+# price_history" any more. It means only "no new caller of those two
+# POSRepo methods".
 #
 # That's a decision, not a fact that holds forever: the moment a real
 # caller appears (a scheduled-price-change admin page, say), a satellite
@@ -93,3 +117,4 @@ if [[ -n "${callers}" ]]; then
 fi
 
 echo "✓ price-history-sync guard: no production caller of AppendPriceHistoryItem/Variant outside internal/pos"
+echo "  (ut-docs#2314: this does NOT mean price_history is unwritten — catalog_repo.go's exec twins write it; see this script's header and ut-docs#2348)"
