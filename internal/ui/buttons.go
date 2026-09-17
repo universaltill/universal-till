@@ -67,6 +67,21 @@ type ButtonVM struct {
 	// --tile-color, ONLY when the tile has no ImageURL: a real photo
 	// always wins.
 	Color string `json:"color,omitempty"`
+	// Pos (ut-docs#2339) is this button's index in the GLOBAL sort_order
+	// list (the order Load returns) — set by BuildCategoryGroups only, so
+	// it's 0 (meaningless) on a ButtonVM built via ToVM for the Designer's
+	// flat admin grid, where the slice index already IS the global index.
+	// The sale-screen grid groups tiles by category, so its DOM order
+	// stops being the global order the moment categories interleave;
+	// product-tile (buttons.html) renders this as data-pos, and app.js's
+	// utTileJiggle uses it to rebuild the full global list it POSTs to
+	// /api/buttons/reorder after a drag: the reordered group's tiles are
+	// re-dealt into the slots that same group already occupied, so a drag
+	// within one category never moves another category's buttons in the
+	// Designer's flat list — the same "nearest same-category neighbour"
+	// outcome the retired ut-docs#2285 sheet's server-side Move produced,
+	// computed client-side from these indices instead.
+	Pos int `json:"pos"`
 }
 
 func ToVM(b []Button) []ButtonVM {
@@ -180,13 +195,15 @@ func BuildCategoryGroups(buttons []Button, cats []data.CategoryNode) []*Category
 	}
 
 	var uncategorized []ButtonVM
-	for _, b := range buttons {
+	for i, b := range buttons {
+		vm := toButtonVM(b)
+		vm.Pos = i // global sort index — see ButtonVM.Pos
 		g, ok := byID[b.CategoryID]
 		if b.CategoryID == "" || !ok {
-			uncategorized = append(uncategorized, toButtonVM(b))
+			uncategorized = append(uncategorized, vm)
 			continue
 		}
-		g.Buttons = append(g.Buttons, toButtonVM(b))
+		g.Buttons = append(g.Buttons, vm)
 	}
 
 	kept := roots[:0]
@@ -443,149 +460,6 @@ func (s *ButtonStore) UpdateOrder(ctx context.Context, codes []string) error {
 	return s.repo.UpdateOrder(ctx, codes)
 }
 
-// ErrButtonNotFound is returned by Move (and reported by BuildTileSheetView
-// as ok=false) when code doesn't match any current button — data.ShortcutsRepo
-// has no dedicated not-found error of its own for a barcode lookup, so this
-// is defined here rather than borrowed from internal/data.
-var ErrButtonNotFound = errors.New("button not found")
-
-// findButtonIndex returns the index of the button whose Code matches code in
-// btns (btns is assumed to be in display/sort_order, as Load returns it),
-// or ok=false if none matches.
-func findButtonIndex(btns []Button, code string) (idx int, ok bool) {
-	for i, b := range btns {
-		if b.Code == code {
-			return i, true
-		}
-	}
-	return -1, false
-}
-
-// sameCategoryNeighborIndex walks btns from idx in steps of dir (+1 = later
-// in the global order, -1 = earlier) and returns the index of the nearest
-// button sharing btns[idx]'s CategoryID (an empty CategoryID — the
-// synthetic "uncategorized" bucket — counts as one shared category, same as
-// buttons.html's own grouping), or -1 if the walk runs off the slice with
-// no match (an edge — the tile has no same-category neighbour in that
-// direction).
-//
-// This is the SINGLE definition of "the tile's same-category neighbour" —
-// shared by Move below (which relocates the moving button to sit next to
-// whatever this returns) and BuildTileSheetView (which uses it only to
-// decide HasPrev/HasNext) — so the sheet's Move-earlier/later buttons can
-// never be enabled for a move Move itself would refuse as a no-op, or
-// disabled for one it would actually perform.
-func sameCategoryNeighborIndex(btns []Button, idx, dir int) int {
-	cat := btns[idx].CategoryID
-	for j := idx + dir; j >= 0 && j < len(btns); j += dir {
-		if btns[j].CategoryID == cat {
-			return j
-		}
-	}
-	return -1
-}
-
-// Move relocates the button identified by code to sit immediately before
-// (dir=-1, "earlier") or after (dir=+1, "later") its nearest same-category
-// neighbour in the GLOBAL sale-screen order (see sameCategoryNeighborIndex)
-// — the sale-screen grid groups tiles by category, so the nearest
-// same-category button is the one visually adjacent to it, even though
-// other-category buttons may sit between them in the flat sort_order the
-// grid is otherwise built from.
-//
-// moved=false, err=nil at an edge (no same-category neighbour in that
-// direction) — a deliberate no-op, not a failure: the caller (the tile
-// sheet's POST /api/buttons/move handler) still re-renders the sheet with
-// that direction's button disabled, same shape BuildTileSheetView's own
-// HasPrev/HasNext already report before the move was even attempted.
-// Returns ErrButtonNotFound if code matches no current button.
-func (s *ButtonStore) Move(ctx context.Context, code string, dir int) (moved bool, err error) {
-	btns, err := s.Load()
-	if err != nil {
-		return false, err
-	}
-	idx, ok := findButtonIndex(btns, code)
-	if !ok {
-		return false, ErrButtonNotFound
-	}
-	nb := sameCategoryNeighborIndex(btns, idx, dir)
-	if nb == -1 {
-		return false, nil
-	}
-
-	codes := make([]string, len(btns))
-	for i, b := range btns {
-		codes[i] = b.Code
-	}
-	moving := codes[idx]
-	codes = append(codes[:idx], codes[idx+1:]...)
-	// nb was computed against the PRE-removal slice; removing idx shifts
-	// every index after it left by one.
-	insertAt := nb
-	if nb > idx {
-		insertAt--
-	}
-	if dir > 0 {
-		// "later": insert immediately AFTER the neighbour.
-		insertAt++
-	}
-	// dir < 0 ("earlier"): insert immediately BEFORE the neighbour —
-	// insertAt is already the neighbour's own (post-removal) position.
-	newCodes := make([]string, 0, len(codes)+1)
-	newCodes = append(newCodes, codes[:insertAt]...)
-	newCodes = append(newCodes, moving)
-	newCodes = append(newCodes, codes[insertAt:]...)
-
-	if err := s.UpdateOrder(ctx, newCodes); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-// TileSheetView is the view-model for the "tile_sheet" partial (ut-docs#2285)
-// — the sell-screen tile's long-press/right-click sheet. HasPrev/HasNext
-// reuse the exact same sameCategoryNeighborIndex walk Move itself performs,
-// so the sheet can never offer (or grey out) a direction Move would
-// actually disagree with.
-type TileSheetView struct {
-	Label     string
-	Code      string
-	ItemID    string
-	HasPrev   bool
-	HasNext   bool
-	IsReplica bool
-}
-
-// BuildTileSheetView resolves code against a freshly-loaded button list.
-// ok=false (with a nil error) means code matched no button — the caller
-// (GET /ui/pos/tile-sheet, and POST /api/buttons/move's own re-render)
-// renders a 404 in that case, same convention Move's ErrButtonNotFound
-// uses for the mutating side of the same lookup. isReplica is threaded in
-// by the caller (internal/pages/buttons_api.go, via
-// common.Deps.SyncPrimaryURL) rather than resolved here: internal/ui has no
-// access to common.Deps (internal/pages/common already imports internal/ui,
-// so the reverse import would be a cycle), and isReplica has nothing to do
-// with the button data itself.
-func (s *ButtonStore) BuildTileSheetView(code string, isReplica bool) (view TileSheetView, ok bool, err error) {
-	btns, err := s.Load()
-	if err != nil {
-		return TileSheetView{}, false, err
-	}
-	idx, found := findButtonIndex(btns, code)
-	if !found {
-		return TileSheetView{}, false, nil
-	}
-	b := btns[idx]
-	return TileSheetView{
-		Label:     b.Label,
-		Code:      b.Code,
-		ItemID:    b.ItemID,
-		HasPrev:   sameCategoryNeighborIndex(btns, idx, -1) != -1,
-		HasNext:   sameCategoryNeighborIndex(btns, idx, 1) != -1,
-		IsReplica: isReplica,
-	}, true, nil
-}
-
 // synthesizedButtonCodePrefix marks a shortcut-button code that ButtonStore.Add
 // generated itself (ut-docs#1459) rather than one carrying a real barcode or
 // SKU — see Add below. Never a real barcode/SKU value, so it's a safe
@@ -790,9 +664,10 @@ func (h *ButtonsHTTP) Remove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// ut-docs#2285: see Add's comment above — same contract. This is the
-	// one that actually matters on the sale screen: the tile sheet's own
-	// Remove button posts to this same route, and this header is what
-	// makes the grid drop the tile without a reload.
+	// one that actually matters on the sale screen: the jiggle edit mode's
+	// per-tile remove badge (ut-docs#2339, buttons.html's product-tile)
+	// posts to this same route, and this header is what makes the grid
+	// drop the tile without a reload.
 	w.Header().Set("HX-Trigger", "buttons-changed")
 	btns, _ := h.Store.Load()
 	_ = h.View.Render(w, "buttons_admin_grid", map[string]any{

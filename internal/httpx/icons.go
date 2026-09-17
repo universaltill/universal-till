@@ -209,14 +209,14 @@ var railIcons = map[string]string{
 	// ward, so app.css mirrors this one under `html[dir="rtl"]` instead of
 	// drawing a second path. Lucide's "arrow-left" path, unmodified.
 	"arrow-left": `<path d="m12 19-7-7 7-7"/><path d="M19 12H5"/>`,
-	// Move earlier / move later (ut-docs#2285) — the sell-screen tile's
-	// long-press/right-click sheet reuses designer.move_up/move_down's
-	// existing "Move earlier"/"Move later" wording, but unlike
-	// buttons_admin.html's own ▲/▼ text glyphs (a VERTICAL admin list) the
-	// sheet's two buttons sit side by side and read as ◀ ▶ — a second
-	// direction-dependent pair, same "app.css mirrors it under
-	// html[dir="rtl"]" treatment "arrow-left" above already established,
-	// scoped to `.tile-sheet-move` there rather than reusing that class
+	// Move earlier / move later (ut-docs#2285) — added for the sell-screen
+	// tile's long-press sheet, which ut-docs#2339 retired in favour of the
+	// drag-to-reorder jiggle edit mode; kept in the registry (an unused
+	// entry costs nothing and a future side-by-side ◀ ▶ pair will want
+	// them) but no template renders them today, so the html[dir="rtl"]
+	// mirroring rule app.css carried for them went with the sheet. A
+	// second direction-dependent pair, same "app.css mirrors it under
+	// html[dir="rtl"]" treatment "arrow-left" above already established
 	// (this is a genuinely different pair of glyphs). No chevron-left/
 	// chevron-right existed in this registry before — following this set's
 	// own growth precedent ("filter"/"landmark"/"scan-barcode" above), not
