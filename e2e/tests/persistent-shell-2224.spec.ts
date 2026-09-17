@@ -31,8 +31,10 @@ test.describe('persistent app shell (ut-docs#2224)', () => {
     );
     expect(fetched.filter((p) => p.startsWith('/public/') || p.startsWith('/themes/')), 'no asset may be re-fetched on navigation').toEqual([]);
     // `#pairing-notice-mount` and the rail chips are hx-preserve'd, so the
-    // navigation is the page itself plus (at most) the input heartbeat.
-    expect(fetched.filter((p) => p.startsWith('/ui/'))).toEqual([]);
+    // navigation is the page itself plus (at most) the input heartbeat and
+    // ut-docs#2343's theme-sync poll (deliberately not preserved: its OOB
+    // response carries its own id).
+    expect(fetched.filter((p) => p.startsWith('/ui/') && p !== '/ui/theme-sync')).toEqual([]);
     expect(await page.title()).toBe('Menu');
     assertClean();
   });
