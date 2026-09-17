@@ -161,6 +161,28 @@ func TestGetItemLabel(t *testing.T) {
 	}
 }
 
+func TestGetItemLabel_StripsRetireMangledSKU(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	// items.sku is a mangle-eligible unique column (sync_admin_repo.go's
+	// adminTables), so an FK-blocked retire-in-place mangles it to
+	// "<sku>~<id>" exactly like item_variants.sku — same gap, same
+	// POST /api/print/labels caller, one function up in this file
+	// (found reviewing ut-docs#2355's GetVariantLabel fix).
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "SKU1~i1", Name: "Latte", BasePrice: 320, IsActive: false})
+
+	l, ok, err := repo.GetItemLabel(ctx, "i1")
+	if err != nil || !ok {
+		t.Fatalf("expected label, got ok=%v err=%v", ok, err)
+	}
+	if l.Code != "SKU1" {
+		t.Fatalf("expected retire-mangle stripped from sku, got %q", l.Code)
+	}
+}
+
 func TestItemExists(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
 	defer db.Close()
@@ -224,6 +246,29 @@ func TestGetVariantLabel(t *testing.T) {
 
 	if _, ok, err := repo.GetVariantLabel(ctx, "missing"); err != nil || ok {
 		t.Fatalf("expected ok=false for a missing variant, got ok=%v err=%v", ok, err)
+	}
+}
+
+func TestGetVariantLabel_StripsRetireMangledSKU(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Latte", BasePrice: 300, IsActive: true})
+	// A retired-in-place variant carries deleteMissing's FK-blocked retire
+	// mangle on its sku ("<sku>~<id>") — same premise as
+	// TestVariantsForItem_StripsRetireMangledSKU above, but read through
+	// GetVariantLabel (ut-docs#2355), which POST /api/print/labels calls
+	// directly with a client-supplied variant_id and no active-state filter.
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v1", ItemID: "i1", SKU: "S1-S~v1", Name: "Small", Price: 250, IsActive: false})
+
+	l, ok, err := repo.GetVariantLabel(ctx, "v1")
+	if err != nil || !ok {
+		t.Fatalf("expected label, got ok=%v err=%v", ok, err)
+	}
+	if l.Code != "S1-S" {
+		t.Fatalf("expected retire-mangle stripped from sku, got %q", l.Code)
 	}
 }
 
