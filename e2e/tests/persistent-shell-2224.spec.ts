@@ -29,7 +29,20 @@ test.describe('persistent app shell (ut-docs#2224)', () => {
     const fetched = await page.evaluate(() =>
       performance.getEntriesByType('resource').map((e) => new URL(e.name).pathname)
     );
-    expect(fetched.filter((p) => p.startsWith('/public/') || p.startsWith('/themes/')), 'no asset may be re-fetched on navigation').toEqual([]);
+    // ut-docs#2363: Chromium refetches the <link rel="icon"> target itself
+    // on every history.pushState() navigation (a browser-internal favicon
+    // probe, resourceTiming initiatorType "other") — verified this is not
+    // triggered by any app JS (nothing touches the <link> or <head>) and is
+    // not a caching gap: forcing `Cache-Control: public, max-age=31536000,
+    // immutable` on the response still doesn't stop it, so it bypasses the
+    // renderer's HTTP cache entirely. Excluded here as a known, accepted
+    // exception to the guarantee below rather than something fixable
+    // app-side; every other asset must still never re-fetch.
+    const FAVICON_PATH = '/public/assets/logo/ut-logo.ico';
+    expect(
+      fetched.filter((p) => (p.startsWith('/public/') || p.startsWith('/themes/')) && p !== FAVICON_PATH),
+      'no asset may be re-fetched on navigation (except the browser\'s own favicon probe, ut-docs#2363)'
+    ).toEqual([]);
     // `#pairing-notice-mount` and the rail chips are hx-preserve'd, so the
     // navigation is the page itself plus (at most) the input heartbeat and
     // ut-docs#2343's theme-sync poll (deliberately not preserved: its OOB
