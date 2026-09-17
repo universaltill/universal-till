@@ -261,6 +261,30 @@ func TestVariantsForItem_IncludesInactiveWithBarcodes(t *testing.T) {
 	}
 }
 
+func TestVariantsForItem_StripsRetireMangledSKU(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Latte", BasePrice: 300, IsActive: true})
+	// A retired-in-place variant carries deleteMissing's FK-blocked retire
+	// mangle on its sku ("<sku>~<id>") — item_variants' own mangle-eligible
+	// unique column, per sync_admin_repo.go's adminTable entry.
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v1", ItemID: "i1", SKU: "S1-S~v1", Name: "Small", Price: 250, IsActive: false})
+
+	out, err := repo.VariantsForItem(ctx, "i1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("expected 1 variant, got %d: %+v", len(out), out)
+	}
+	if out[0].SKU != "S1-S" {
+		t.Fatalf("expected retire-mangle stripped from sku, got %q", out[0].SKU)
+	}
+}
+
 func TestBarcodesForItem(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
 	defer db.Close()

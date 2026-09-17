@@ -763,6 +763,7 @@ FROM item_variants v WHERE v.item_id = ? ORDER BY v.is_active DESC, v.name`, ite
 		if err := rows.Scan(&v.ID, &v.Name, &v.SKU, &v.PriceMinor, &v.CostMinor, &v.IsActive); err != nil {
 			return nil, err
 		}
+		v.SKU = stripRetireMangle(v.ID, v.SKU)
 		byID[v.ID] = len(out)
 		out = append(out, v)
 	}
