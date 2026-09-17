@@ -159,6 +159,90 @@ func remoteTillSettingsReport(ctx context.Context, d *common.Deps) map[string]st
 	return out
 }
 
+// cloudSetQuickButtonLayout is the set_quick_button_layout hook: reorders
+// the quick-sale (shortcut) buttons from the cloud's layout panel — the
+// same ShortcutsRepo.UpdateOrder call the Designer's own move-up/move-down
+// reorder makes locally via POST /api/buttons/reorder. Gated to the primary
+// till (requirePrimaryDirective) for the same reason that LAN route is
+// (ut-docs#1697): shortcut_buttons syncs shop-wide as a primary-wins admin
+// table, so a write applied on a replica would vanish on the very next
+// admin pull.
+//
+// buttons_api.go's own reorder route documents its payload as "the FULL
+// global list" — UpdateOrder sets sort_order = index only for the barcodes
+// it's given, so a PARTIAL list leaves the omitted rows on their old
+// sort_order values, which can collide with a listed row's new one
+// (verified: an independent review's probe reproduced a real duplicate
+// sort_order from a partial payload, ut-docs#2321 review). A cloud
+// directive's payload isn't validated against the till by anything but
+// this function, so — unlike the LAN route, which trusts its own page to
+// always post the full list — this rejects a payload that doesn't cover
+// EXACTLY the till's current button set (missing or unknown barcodes
+// both refused, named in the error) rather than silently applying a
+// partial reorder.
+func cloudSetQuickButtonLayout(ctx context.Context, d *common.Deps, barcodes []string) (string, error) {
+	if len(barcodes) == 0 {
+		return "", fmt.Errorf("missing barcodes")
+	}
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	repo := data.NewShortcutsRepo(d.Db)
+	current, err := repo.LoadButtons(ctx)
+	if err != nil {
+		return "", err
+	}
+	currentSet := make(map[string]bool, len(current))
+	for _, b := range current {
+		currentSet[b.Barcode] = true
+	}
+	given := make(map[string]bool, len(barcodes))
+	for _, bc := range barcodes {
+		if given[bc] {
+			return "", fmt.Errorf("duplicate barcode %q in the new layout", bc)
+		}
+		given[bc] = true
+		if !currentSet[bc] {
+			return "", fmt.Errorf("barcode %q is not one of this till's quick buttons", bc)
+		}
+	}
+	for bc := range currentSet {
+		if !given[bc] {
+			return "", fmt.Errorf("the new layout is missing barcode %q — it must list every current quick button", bc)
+		}
+	}
+	if err := repo.UpdateOrder(ctx, barcodes); err != nil {
+		return "", err
+	}
+	auditCloudDirective(ctx, d, "quick_buttons", "-", "quick_button_layout_set", map[string]any{"barcodes": barcodes})
+	return fmt.Sprintf("layout applied to %d buttons", len(barcodes)), nil
+}
+
+// remoteQuickButtonsReport is the read side for DeviceExtra: the currently
+// applied quick-sale button layout (barcode + label, in the same sort order
+// LoadButtons itself orders by), so the cloud's layout panel shows applied
+// state, not just what was queued — same "report what's actually there"
+// pattern as remoteTillSettingsReport above. A read error reports an empty
+// list rather than failing the whole heartbeat.
+func remoteQuickButtonsReport(ctx context.Context, d *common.Deps) []map[string]any {
+	buttons, err := data.NewShortcutsRepo(d.Db).LoadButtons(ctx)
+	if err != nil {
+		logging.L().Warnf("cloudsync: quick button layout report failed: %v", err)
+		return []map[string]any{}
+	}
+	out := make([]map[string]any, 0, len(buttons))
+	for i, b := range buttons {
+		// sort_order mirrors this button's position in the (already
+		// sort_order-ordered) list LoadButtons returns — the cloud side
+		// decodes it into QuickButtonReport.SortOrder so a single entry is
+		// self-describing without its slice context (claims.go's own doc
+		// comment on that field), even though the panel today only reads
+		// the report's array order, not this field, to render the list.
+		out = append(out, map[string]any{"barcode": b.Barcode, "label": b.Label, "sort_order": i})
+	}
+	return out
+}
+
 // StartCloudSync wires the ADR-0018 directive hooks to the till's real
 // action paths and starts the cloud sync loop. Every hook is the same move
 // an operator makes locally — remote installs still go through the
@@ -263,6 +347,12 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 			}
 			return msg, err
 		},
+		// set_quick_button_layout: the cloud's quick-sale button layout
+		// panel — same UpdateOrder call the Designer's own reorder makes,
+		// gated to the primary till. See cloudSetQuickButtonLayout.
+		SetQuickButtonLayout: func(ctx context.Context, barcodes []string) (string, error) {
+			return cloudSetQuickButtonLayout(ctx, d, barcodes)
+		},
 		// The cloud's Design picker offers exactly what this till could pick
 		// locally (built-in + plugin-contributed themes); applying one comes
 		// back as a plain `set_setting theme` directive. cloudThemeOptions
@@ -281,6 +371,11 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 				// remote-configurable setting, for the portal's
 				// forms.
 				"till_settings": remoteTillSettingsReport(ctx, d),
+				// The applied quick-sale button layout (barcode + label, in
+				// sort order), for the cloud's layout panel to pre-fill from
+				// real state rather than only what was queued. See
+				// remoteQuickButtonsReport.
+				"quick_buttons": remoteQuickButtonsReport(ctx, d),
 			}
 		},
 	}
@@ -575,18 +670,20 @@ func collectProblems(ctx context.Context, d *common.Deps) []map[string]any {
 	return out
 }
 
-// requirePrimaryDirective refuses a catalog-mutating directive on a replica
-// till, matching the local admin path's requirePrimary gate (ut-docs#2353):
-// items/item_variants/item_barcodes/variant_barcodes are all admin-synced
-// tables (primary-wins pull, sync_admin_repo.go's adminTables), so a write
-// accepted here would silently vanish on the next admin pull. Directive
-// hooks have no http.ResponseWriter to answer with an HTTP status, so this
-// returns a plain error surfaced in the directive's result column instead —
-// same shape as this file's other refusals (e.g. cloudCreateItem's barcode
+// requirePrimaryDirective refuses a directive that would write to a table
+// synced shop-wide via the primary-wins admin pull, matching the local
+// admin path's requirePrimary gate (ut-docs#2353): items/item_variants/
+// item_barcodes/variant_barcodes (catalog) and shortcut_buttons (quick-sale
+// button layout, ut-docs#2321) are all admin-synced tables (primary-wins
+// pull, sync_admin_repo.go's adminTables), so a write accepted here would
+// silently vanish on the next admin pull. Directive hooks have no
+// http.ResponseWriter to answer with an HTTP status, so this returns a
+// plain error surfaced in the directive's result column instead — same
+// shape as this file's other refusals (e.g. cloudCreateItem's barcode
 // conflict).
 func requirePrimaryDirective(ctx context.Context, d *common.Deps) error {
 	if primary := d.SyncPrimaryURL(ctx); primary != "" {
-		return fmt.Errorf("catalog is primary-wins synced; make this change on the shop's primary till (%s)", primary)
+		return fmt.Errorf("this data is primary-wins synced; make this change on the shop's primary till (%s)", primary)
 	}
 	return nil
 }
