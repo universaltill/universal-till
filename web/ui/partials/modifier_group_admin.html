@@ -24,7 +24,24 @@
 
   {{ range .ModifierGroups }}
   {{ $group := . }}
-  <div class="modifier-admin-group{{ if not .IsActive }} vg-inactive{{ end }}">
+  <div class="modifier-admin-group{{ if not .IsActive }} vg-inactive{{ end }}" data-group-id="{{ .ID }}">
+    {{ if $.AttachOnly }}
+    {{/* ut-docs#2330: the item-editor's own surface is attach/detach only —
+         no rename/required/min-max/option editing reachable from here (that
+         stays exclusively on /modifiers, the .AttachOnly-false branch
+         below). Same visual shape as InheritedGroups' read-only rows further
+         down this same file, for consistency between the two read-only
+         group listings this dialog now shows. */}}
+    <div class="modifier-admin-group-row">
+      <span class="modifier-admin-group-name">{{ .Name }}</span>
+      <span class="muted modifier-admin-options-list">{{ range $i, $o := .Options }}{{ if $i }}, {{ end }}{{ $o.Name }}{{ end }}</span>
+      <button type="button" class="btn secondary"
+              hx-post="/api/catalog/modifier-group/detach"
+              hx-vals='{{ jsonVals "itemId" $.ItemID "groupId" .ID "panelItem" $.ItemID }}'
+              hx-confirm="{{ T "catalog.modifiers.detach_confirm" }}"
+              hx-target="#{{ $.Target }}" hx-swap="outerHTML">{{ T "catalog.modifiers.detach" }}</button>
+    </div>
+    {{ else }}
     <form hx-post="/api/catalog/modifier-group" hx-target="#{{ $.Target }}" hx-swap="outerHTML" class="modifier-admin-group-row">
       <input type="hidden" name="panelItem" value="{{ $.ItemID }}">
       <input type="hidden" name="itemId" value="{{ $.ItemID }}">
@@ -82,9 +99,11 @@
         <button class="btn" type="submit">{{ T "catalog.modifiers.add_option" }}</button>
       </form>
     </div>
+    {{ end }}
   </div>
   {{ end }}
 
+  {{ if not .AttachOnly }}
   <form hx-post="/api/catalog/modifier-group" hx-target="#{{ .Target }}" hx-swap="outerHTML" class="modifier-admin-group-row modifier-admin-group-new">
     <input type="hidden" name="panelItem" value="{{ .ItemID }}">
     <input type="hidden" name="itemId" value="{{ .ItemID }}">
@@ -95,6 +114,7 @@
     <label>{{ T "catalog.modifiers.max" }} <input type="number" name="maxSelect" value="1" min="1" style="max-inline-size:4rem"></label>
     <button class="btn" type="submit">{{ T "catalog.modifiers.add_group" }}</button>
   </form>
+  {{ end }}
 
   {{/* ut-docs#2046 / ADR-0090 §5: attach an existing shop-wide group to this
        item instead of recreating it. Only rendered when there is something
@@ -103,6 +123,25 @@
        already linked to .ItemID, computed server-side
        (ModifierRepo.ListAttachableModifierGroups). */}}
   {{ if .AttachableGroups }}
+  {{ if .AttachOnly }}
+  {{/* ut-docs#2330: the item-editor's attach control is a real multi-select
+       (product-owner request, 2026-09-16) — checkboxes rather than a native
+       <select multiple>, which touch browsers handle poorly (no reliable
+       tap-to-multi-select, tiny option rows) and would fail this product's
+       own touch-target/kiosk-floor bar (`ux` skill, 1024×600) on a
+       touchscreen till. One submit attaches every checked group in
+       a single request (handlers.go's attach handler accepts multiple
+       groupId values for exactly this). */}}
+  <form hx-post="/api/catalog/modifier-group/attach" hx-target="#{{ .Target }}" hx-swap="outerHTML" class="modifier-admin-group-row modifier-admin-group-attach modifier-admin-attach-multi">
+    <input type="hidden" name="panelItem" value="{{ .ItemID }}">
+    <input type="hidden" name="itemId" value="{{ .ItemID }}">
+    <div class="muted catalog-detail-label">{{ T "catalog.modifiers.attach_placeholder" }}</div>
+    {{ range .AttachableGroups }}
+    <label class="modifier-attach-option"><input type="checkbox" name="groupId" value="{{ .ID }}"> {{ .Name }}</label>
+    {{ end }}
+    <button class="btn secondary" type="submit">{{ T "catalog.modifiers.attach" }}</button>
+  </form>
+  {{ else }}
   <form hx-post="/api/catalog/modifier-group/attach" hx-target="#{{ .Target }}" hx-swap="outerHTML" class="modifier-admin-group-row modifier-admin-group-attach">
     <input type="hidden" name="panelItem" value="{{ .ItemID }}">
     <input type="hidden" name="itemId" value="{{ .ItemID }}">
@@ -114,6 +153,7 @@
     </select>
     <button class="btn secondary" type="submit">{{ T "catalog.modifiers.attach" }}</button>
   </form>
+  {{ end }}
   {{ end }}
 
   <script>

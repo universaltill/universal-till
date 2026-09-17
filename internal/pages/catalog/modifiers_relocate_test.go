@@ -88,17 +88,17 @@ func TestModifierGroupHandler_HxTargetModifierGroupsModalList_ScopedToOneItem(t 
 	if !strings.Contains(body, "Extras") {
 		t.Fatal("expected itm1's own newly created group")
 	}
-	// ut-docs#2046: the fragment stays scoped to itm1's OWN linked groups —
-	// itm2's "Milk" must never appear as one of itm1's editable/linked rows
-	// (those render the group's name as an <input value="...">) — but it
-	// now legitimately appears as an "attach existing group" picker option
-	// (a plain <option>), since that picker's whole job is offering every
-	// OTHER active shop group not yet linked to this item.
-	if strings.Contains(body, `value="Milk"`) {
-		t.Fatal("must not include itm2's group as one of itm1's own linked/editable groups")
+	// ut-docs#2046 / ut-docs#2330: the fragment stays scoped to itm1's OWN
+	// linked groups — itm2's "Milk" must never appear as one of itm1's own
+	// rows (those render the group's name as a read-only <span>) — but it
+	// now legitimately appears as an attach-picker checkbox, since that
+	// picker's whole job is offering every OTHER active shop group not yet
+	// linked to this item.
+	if strings.Contains(body, `class="modifier-admin-group-name">Milk<`) {
+		t.Fatal("must not include itm2's group as one of itm1's own linked groups")
 	}
-	if !strings.Contains(body, ">Milk<") {
-		t.Fatal("expected itm2's group to be offered in the attach-existing picker")
+	if !strings.Contains(body, `class="modifier-attach-option"><input type="checkbox" name="groupId" value=`) || !strings.Contains(body, " Milk</label>") {
+		t.Fatal("expected itm2's group to be offered as a checkbox in the attach-existing picker")
 	}
 }
 

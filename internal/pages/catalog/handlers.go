@@ -58,6 +58,14 @@ type modifierAdminItem struct {
 	// list leaves it nil.
 	InheritedGroups []data.ModifierGroup
 	Target          string
+	// AttachOnly restricts modifier_group_admin.html to attach/detach only —
+	// no inline group/option create/edit/delete (ut-docs#2330, product-owner
+	// request 2026-09-16: the item-editor's own surface should be a
+	// multi-select of EXISTING groups, never a place to author new ones).
+	// Set true only for the item-scoped dialog (renderItemModifierGroupsPanel
+	// below); the shop-wide /modifiers page leaves it false (its zero value)
+	// since that page's whole job is full CRUD.
+	AttachOnly bool
 	// Notice is an already-translated, already-formatted message to show
 	// inline above this fragment (ut-docs#2046, independent-review finding)
 	// — e.g. the detach-guard's refusal. Plain http.Error/LocalizedError
@@ -500,6 +508,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			InheritedGroups:  visibleInherited,
 			Target:           "modifier-groups-modal-list",
 			Notice:           notice,
+			AttachOnly:       true,
 		})(w, r)
 	}
 
@@ -1368,8 +1377,24 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		}
 		_ = r.ParseForm()
 		itemID := strings.TrimSpace(r.Form.Get("itemId"))
-		groupID := strings.TrimSpace(r.Form.Get("groupId"))
-		if itemID == "" || groupID == "" {
+		// ut-docs#2330: the item-editor's attach-only surface is a multi-
+		// select — one submission can carry several groupId values (a
+		// checkbox list, all under the same field name). A single-group
+		// submission (the /modifiers page's own picker, and every existing
+		// caller/test) is just the one-element case of the same slice, so
+		// this stays fully backward compatible with r.Form.Get's old
+		// single-value behavior.
+		var groupIDs []string
+		seen := map[string]bool{}
+		for _, raw := range r.Form["groupId"] {
+			id := strings.TrimSpace(raw)
+			if id == "" || seen[id] {
+				continue
+			}
+			seen[id] = true
+			groupIDs = append(groupIDs, id)
+		}
+		if itemID == "" || len(groupIDs) == 0 {
 			http.Error(w, "itemId and groupId required", http.StatusBadRequest)
 			return
 		}
@@ -1378,29 +1403,36 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "modifiers.error.server", "catalog", err)
 			return
 		}
-		valid := false
+		attachableIDs := make(map[string]bool, len(attachable))
 		for _, g := range attachable {
-			if g.ID == groupID {
-				valid = true
-				break
+			attachableIDs[g.ID] = true
+		}
+		var valid []string
+		for _, id := range groupIDs {
+			if attachableIDs[id] {
+				valid = append(valid, id)
 			}
 		}
-		if !valid {
+		if len(valid) == 0 {
 			renderModifierMutationResult(w, r, itemID, http.StatusConflict, httpx.T(httpx.RequestLocale(r), "catalog.error.invalid_request"))
 			return
 		}
-		// Appended after itemID's own existing groups (independent-review
-		// finding — see NextGroupSortOrderForItem's own doc comment on why
-		// this must be MAX(sort_order)+1 per item, not a plain count of
-		// either side of the relationship).
-		sortOrder, err := modRepo.NextGroupSortOrderForItem(r.Context(), itemID)
-		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "modifiers.error.server", "catalog", err)
-			return
-		}
-		if err := modRepo.LinkGroupToItem(r.Context(), itemID, groupID, sortOrder); err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
-			return
+		for _, groupID := range valid {
+			// Appended after itemID's own existing groups (independent-review
+			// finding — see NextGroupSortOrderForItem's own doc comment on
+			// why this must be MAX(sort_order)+1 per item, not a plain count
+			// of either side of the relationship). Recomputed per group so
+			// each of a multi-select's attachments gets its own increasing
+			// sort_order rather than all colliding on the same value.
+			sortOrder, err := modRepo.NextGroupSortOrderForItem(r.Context(), itemID)
+			if err != nil {
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "modifiers.error.server", "catalog", err)
+				return
+			}
+			if err := modRepo.LinkGroupToItem(r.Context(), itemID, groupID, sortOrder); err != nil {
+				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
+				return
+			}
 		}
 		renderModifierMutationResult(w, r, itemID, http.StatusOK, "")
 	})
