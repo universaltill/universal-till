@@ -108,6 +108,17 @@ merged tree. (One earlier run showed 3 `ERR_CONNECTION_REFUSED` failures —
 a port collision with a background run, the known shared-ports trap; the
 clean rerun is the result.)
 
+## CI after the review
+
+Two more findings came from CI itself, both fixed in follow-up commits on
+the branch: `guard-docs-shots` (the single-tab comment was added to
+`bugreport-draft.js` after the shots were taken — surface hash re-recorded
+with `update-docs-shots-surface-hash.sh`, `Docs-Shots-Unchanged: true`),
+and `TestPersistentShell_SignatureCoversEveryHeadAsset` — the new `<head>`
+script was not in `httpx.HeadAssets`, so a self-update would not have
+changed the shell signature for it (a boosted swap could keep an old
+document running against a new store version). Added.
+
 ## Verdict
 
 Safe to merge. Deferred: #6 (client-side size pre-check), #10, #12, #13 as
