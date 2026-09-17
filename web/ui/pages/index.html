@@ -210,6 +210,20 @@
   </div>
   {{ end }}
 
+  <!-- ut-docs#2193: one-shot success banner for a redirect that carried
+       "?msg=<key>" (index_page.go, httpx.QueryMsgKey) -- currently only
+       /open-orders' own resume route on the auto-park case, telling the
+       cashier their own prior sale was parked, same message the sale-screen
+       popup's htmx fragment path already shows (hold_api.go). Dismissible,
+       and gone on any plain revisit -- same one-shot shape as
+       tseKickoffRejected above. -->
+  {{ if .msgKey }}
+  <div class="pos-notice success" role="status" data-testid="resume-notice-banner">
+    <span class="notice-text">{{ T .msgKey }}</span>
+    <button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}">✕</button>
+  </div>
+  {{ end }}
+
   {{/* ut-docs#2308: `or` (the same idiom .currency uses just above) supplies a
        float64 0 when basketPanelWidthRem is absent from the data map entirely.
        A bare `gt .basketPanelWidthRem 0.0` is a HARD render error ("invalid

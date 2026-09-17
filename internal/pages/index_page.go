@@ -192,8 +192,15 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			payTotal = b.Total
 		}
 		data := map[string]any{
-			"title":                "Universal Till",
-			"saleScreen":           true,
+			"title":      "Universal Till",
+			"saleScreen": true,
+			// ut-docs#2193: one-shot success banner for a redirect that just
+			// carried a notice (currently only /open-orders' own resume
+			// route, on the auto-park case) -- same QueryMsgKey validation
+			// (ut-docs#2148) tseKickoffRejected below already relies on, so
+			// an unrecognised value falls back to the generic key rather
+			// than rendering verbatim.
+			"msgKey":               httpx.QueryMsgKey(r),
 			"theme":                d.CurrentState().Theme,
 			"menuItems":            d.MenuSnapshot(),
 			"currency":             d.CurrentState().Currency,
