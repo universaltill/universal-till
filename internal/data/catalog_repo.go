@@ -199,7 +199,7 @@ SELECT i.name,
           WHERE ph.item_id = i.id
             AND datetime(ph.starts_at) <= CURRENT_TIMESTAMP
             AND (ph.ends_at IS NULL OR datetime(ph.ends_at) > CURRENT_TIMESTAMP)
-          ORDER BY datetime(ph.starts_at) DESC LIMIT 1),
+          ORDER BY datetime(ph.starts_at) DESC, ph.rowid DESC LIMIT 1),
          i.base_price
        ),
        COALESCE(i.sku, '')
@@ -533,7 +533,7 @@ SELECT v.id, v.name,
           WHERE ph.variant_id = v.id
             AND datetime(ph.starts_at) <= CURRENT_TIMESTAMP
             AND (ph.ends_at IS NULL OR datetime(ph.ends_at) > CURRENT_TIMESTAMP)
-          ORDER BY datetime(ph.starts_at) DESC LIMIT 1),
+          ORDER BY datetime(ph.starts_at) DESC, ph.rowid DESC LIMIT 1),
          v.price
        ),
        COALESCE(v.sku, ''),
@@ -648,7 +648,7 @@ SELECT i.id,
           WHERE ph.item_id = i.id
             AND datetime(ph.starts_at) <= CURRENT_TIMESTAMP
             AND (ph.ends_at IS NULL OR datetime(ph.ends_at) > CURRENT_TIMESTAMP)
-          ORDER BY datetime(ph.starts_at) DESC LIMIT 1),
+          ORDER BY datetime(ph.starts_at) DESC, ph.rowid DESC LIMIT 1),
          i.base_price
        )
 FROM items i
@@ -706,7 +706,7 @@ SELECT i.name, v.name, COALESCE(v.sku, ''),
           WHERE ph.variant_id = v.id
             AND datetime(ph.starts_at) <= CURRENT_TIMESTAMP
             AND (ph.ends_at IS NULL OR datetime(ph.ends_at) > CURRENT_TIMESTAMP)
-          ORDER BY datetime(ph.starts_at) DESC LIMIT 1),
+          ORDER BY datetime(ph.starts_at) DESC, ph.rowid DESC LIMIT 1),
          v.price
        ),
        COALESCE((SELECT b.barcode FROM variant_barcodes b WHERE b.variant_id = v.id
@@ -747,7 +747,7 @@ SELECT v.id, v.name, COALESCE(v.sku, ''),
           WHERE ph.variant_id = v.id
             AND datetime(ph.starts_at) <= CURRENT_TIMESTAMP
             AND (ph.ends_at IS NULL OR datetime(ph.ends_at) > CURRENT_TIMESTAMP)
-          ORDER BY datetime(ph.starts_at) DESC LIMIT 1),
+          ORDER BY datetime(ph.starts_at) DESC, ph.rowid DESC LIMIT 1),
          v.price
        ),
        COALESCE(v.cost_price, 0), v.is_active
@@ -1814,7 +1814,7 @@ SELECT price FROM price_history
 WHERE %s = ?
   AND datetime(starts_at) <= CURRENT_TIMESTAMP
   AND (ends_at IS NULL OR datetime(ends_at) > CURRENT_TIMESTAMP)
-ORDER BY datetime(starts_at) DESC
+ORDER BY datetime(starts_at) DESC, rowid DESC
 LIMIT 1
 `, column), id)
 	if err := row.Scan(&price); err == nil {
@@ -2282,6 +2282,62 @@ func (r *CatalogRepo) SetItemReorderLevel(ctx context.Context, itemID string, le
 
 func (r *CatalogRepo) UpdateItem(ctx context.Context, in catalogtypes.ItemInput) error {
 	return updateItemExec(ctx, r.db, in)
+}
+
+// UpdateItemPartial applies a PARTIAL update to sku/description/unit/color/
+// is_weighed/stock_untracked, read-modify-write in a single BEGIN IMMEDIATE
+// transaction (ut-docs#2324 review finding S1; mirrors
+// UpdateItemReturningWasActive's ut-docs#1399 reasoning above). A caller
+// doing this as two separate calls — GetItem, then UpdateItem with the
+// merged struct — has the same race UpdateItemReturningWasActive's own
+// comment describes: a genuinely concurrent local edit to ANY other column
+// (price, name, active state, category/brand/tax) landing between the read
+// and the write would be silently reverted by this call's own stale read.
+// BEGIN IMMEDIATE takes the write lock at BEGIN, before the read, so a
+// concurrent writer blocks until this transaction commits instead.
+//
+// A nil pointer leaves that field exactly as read — never "cleared" or
+// "false". Returns (false, nil) for an unknown itemID (GetItem's own
+// missing-row convention), never an error, so callers can distinguish "not
+// found" from a real failure.
+func (r *CatalogRepo) UpdateItemPartial(ctx context.Context, itemID string, sku, description, unit, color *string, isWeighed, stockUntracked *bool) (bool, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("update item partial: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	cur, ok, err := getItemExec(ctx, tx, itemID)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, nil
+	}
+	if sku != nil {
+		cur.SKU = *sku
+	}
+	if description != nil {
+		cur.Description = *description
+	}
+	if unit != nil {
+		cur.Unit = *unit
+	}
+	if color != nil {
+		cur.Color = *color
+	}
+	if isWeighed != nil {
+		cur.IsWeighed = *isWeighed
+	}
+	if stockUntracked != nil {
+		cur.StockUntracked = *stockUntracked
+	}
+	if err := updateItemExec(ctx, tx, cur); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("update item partial: commit: %w", err)
+	}
+	return true, nil
 }
 
 // UpdateItemReturningWasActive wraps the read of the item's previous
