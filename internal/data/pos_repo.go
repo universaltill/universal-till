@@ -4769,6 +4769,29 @@ const (
 	DisplayNoSchemeLifetimeNoReset = "lifetime_no_reset"
 )
 
+// OrderTypePromptModeKey (ut-docs#2282) selects WHEN/WHERE the sale screen
+// asks the cashier for dine-in/takeaway -- see the three
+// OrderTypePromptMode* constants below. Unset (new install, or a
+// pre-ut-docs#2282 database) reads as "" from the settings table, which
+// every reader treats the same as OrderTypePromptModeTop (the documented
+// default) -- an existing shop sees no behaviour change until it opts in.
+const OrderTypePromptModeKey = "sale.order_type_prompt"
+
+const (
+	// OrderTypePromptModeTop pins the dine-in/takeaway toggle at the top of
+	// the basket, always visible -- the only behaviour before this card,
+	// and the default.
+	OrderTypePromptModeTop = "top"
+	// OrderTypePromptModeBeforeItem defers the choice until the very first
+	// item is about to be added to an empty basket: an intercept modal asks
+	// before the item lands.
+	OrderTypePromptModeBeforeItem = "before_item"
+	// OrderTypePromptModeAtPay defers the choice until the cashier presses
+	// Pay: an intercept modal asks before the payment action (opening the
+	// tender overlay, or a direct one-tap charge) proceeds.
+	OrderTypePromptModeAtPay = "at_pay"
+)
+
 // NextDisplayNo allocates the next short, customer-facing order number for
 // a sale -- an ADDITIONAL identity to receipt_no (ut-docs#1817), never a
 // replacement: receipt_no keeps its own independent, gapless allocation
@@ -6153,12 +6176,24 @@ func (r *POSRepo) EraseCustomer(ctx context.Context, id, actorID, blockedActorID
 	return true, nil
 }
 
-// obsoleteItemsWhere selects items that are safe to permanently delete during
-// catalog cleanup: they are already deactivated (is_active = 0) AND have no
-// financial or stock history whatsoever — neither the item nor any of its
-// variants appears in sale_lines or stock_movements, LIVE OR ARCHIVED.
-// Anything ever sold or moved is KEPT (deactivated at most) so audit/tax
-// history stays intact.
+// obsoleteItemsPredicate returns the row filter for a catalog-cleanup
+// candidate: safe to permanently delete because it has no financial or
+// stock history whatsoever — neither the item nor any of its variants
+// appears in sale_lines or stock_movements, LIVE OR ARCHIVED — and it is
+// not referenced by any currently PARKED (held) sale either, live or
+// archived. Anything ever sold or moved, or currently sitting in a parked
+// basket, is KEPT (deactivated at most) so audit/tax history and in-flight
+// sales stay intact.
+//
+// includeActive (ut-docs#2281) controls whether the item also has to be
+// deactivated (is_active = 0) to be eligible — the ORIGINAL and still
+// default behavior, kept for the plain "remove products I already deleted
+// and never sold" case. A shop whose catalog import went wrong has every
+// item ACTIVE, so that predicate alone removes nothing at all; passing
+// includeActive=true opts into the wider "wipe a wrongly imported catalog
+// before go-live" mode by simply omitting the is_active clause — anything
+// with sale/stock history or a held-sale reference is still protected in
+// EITHER mode, exactly the same as before.
 //
 // The *_archive clauses (ut-docs#640) close a gap found in independent
 // review of ut-docs#187 (see ErrArchiveReferencesRemoved's doc comment,
@@ -6171,9 +6206,22 @@ func (r *POSRepo) EraseCustomer(ctx context.Context, id, actorID, blockedActorID
 // item_variants itself is never archived (reset only clears transactional
 // tables), so a variant_id recorded in an archive row still resolves
 // against the live item_variants table exactly like the live clauses above.
-const obsoleteItemsWhere = `
-is_active = 0
-AND id NOT IN (SELECT item_id FROM sale_lines WHERE item_id IS NOT NULL)
+//
+// The held_sales/held_sales_archive clauses (ut-docs#2281 review) close a
+// second, distinct gap: a sale currently parked in a held basket (or an
+// archived one, same reasoning as the *_archive clauses above) is not
+// "history" yet — it has no sale_lines/stock_movements row at all — so
+// without this an obsolete-looking item could be deleted out from under a
+// parked sale, and resuming that sale later would then reference a gone
+// item. Mirrors demoItemReasonCaseSQL's own held_sales payload-LIKE check
+// (demo_seed_repo.go) — same shape, same reasoning, a different removal
+// path.
+func obsoleteItemsPredicate(includeActive bool) string {
+	activeClause := "is_active = 0\nAND "
+	if includeActive {
+		activeClause = ""
+	}
+	return activeClause + `id NOT IN (SELECT item_id FROM sale_lines WHERE item_id IS NOT NULL)
 AND id NOT IN (SELECT item_id FROM stock_movements WHERE item_id IS NOT NULL)
 AND id NOT IN (SELECT v.item_id FROM item_variants v
               WHERE v.id IN (SELECT variant_id FROM sale_lines WHERE variant_id IS NOT NULL))
@@ -6184,7 +6232,14 @@ AND id NOT IN (SELECT item_id FROM stock_movements_archive WHERE item_id IS NOT 
 AND id NOT IN (SELECT v.item_id FROM item_variants v
               WHERE v.id IN (SELECT variant_id FROM sale_lines_archive WHERE variant_id IS NOT NULL))
 AND id NOT IN (SELECT v.item_id FROM item_variants v
-              WHERE v.id IN (SELECT variant_id FROM stock_movements_archive WHERE variant_id IS NOT NULL))`
+              WHERE v.id IN (SELECT variant_id FROM stock_movements_archive WHERE variant_id IS NOT NULL))
+AND NOT EXISTS (SELECT 1 FROM held_sales h WHERE h.payload LIKE '%"item_id":"' || items.id || '"%')
+AND NOT EXISTS (SELECT 1 FROM held_sales h JOIN item_variants v ON v.item_id = items.id
+              WHERE h.payload LIKE '%"variant_id":"' || v.id || '"%')
+AND NOT EXISTS (SELECT 1 FROM held_sales_archive h WHERE h.payload LIKE '%"item_id":"' || items.id || '"%')
+AND NOT EXISTS (SELECT 1 FROM held_sales_archive h JOIN item_variants v ON v.item_id = items.id
+              WHERE h.payload LIKE '%"variant_id":"' || v.id || '"%')`
+}
 
 // ObsoleteItem is a row in the catalog-cleanup preview.
 type ObsoleteItem struct {
@@ -6204,27 +6259,30 @@ type ObsoleteItem struct {
 // deletes every matching row. Reusing the list's length as the count would
 // therefore promise "remove 200 products" and then delete 350 — understating
 // a destructive action in the exact sentence that exists to prevent one.
-// Same obsoleteItemsWhere predicate as both, so the three can never disagree
-// about which rows are in scope.
-func (r *POSRepo) CountObsoleteItems(ctx context.Context) (int64, error) {
+// Same obsoleteItemsPredicate as all three, so they can never disagree
+// about which rows are in scope. includeActive (ut-docs#2281) is the
+// opt-in "include active products that were never sold" mode — see
+// obsoleteItemsPredicate's own doc comment.
+func (r *POSRepo) CountObsoleteItems(ctx context.Context, includeActive bool) (int64, error) {
 	var n int64
 	if err := r.db.QueryRowContext(ctx, `
 SELECT COUNT(*) FROM items
-WHERE `+obsoleteItemsWhere).Scan(&n); err != nil {
+WHERE `+obsoleteItemsPredicate(includeActive)).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count obsolete items: %w", err)
 	}
 	return n, nil
 }
 
-// ListObsoleteItems returns the inactive, never-sold items that CleanupObsoleteItems
-// would remove, so the manager can preview before confirming.
-func (r *POSRepo) ListObsoleteItems(ctx context.Context, limit int) ([]ObsoleteItem, error) {
+// ListObsoleteItems returns the never-sold items that CleanupObsoleteItems
+// would remove, so the manager can preview before confirming. includeActive
+// (ut-docs#2281) is the same opt-in mode CountObsoleteItems takes.
+func (r *POSRepo) ListObsoleteItems(ctx context.Context, limit int, includeActive bool) ([]ObsoleteItem, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 200
 	}
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, COALESCE(sku,''), name FROM items
-WHERE `+obsoleteItemsWhere+`
+WHERE `+obsoleteItemsPredicate(includeActive)+`
 ORDER BY name LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list obsolete items: %w", err)
@@ -6241,9 +6299,52 @@ ORDER BY name LIMIT ?`, limit)
 	return out, rows.Err()
 }
 
-// CleanupObsoleteItems permanently deletes inactive, never-sold items and their
-// operational children (inventory levels, price history; barcodes/images/variants
-// cascade). Items with any sale or stock history are left untouched. Audited.
+// ObsoleteItemsAmong reports which of the given item ids — or the parent
+// items of the given variant ids — the cleanup predicate would remove
+// (ut-docs#2281 review, finding 1). The cleanup handler uses it to refuse
+// while a LIVE cashier/kiosk basket still references a candidate: the live
+// basket is in memory only, so nothing in the predicate's sale_lines /
+// held_sales clauses can see it, and completing that sale after the item
+// was deleted would fail sale_lines' item FK at checkout. Returns the
+// matching item ids, deduplicated, in no particular order.
+func (r *POSRepo) ObsoleteItemsAmong(ctx context.Context, itemIDs, variantIDs []string, includeActive bool) ([]string, error) {
+	if len(itemIDs) == 0 && len(variantIDs) == 0 {
+		return nil, nil
+	}
+	var parts []string
+	var args []any
+	if len(itemIDs) > 0 {
+		ph, a := inPlaceholders(itemIDs)
+		parts = append(parts, `items.id IN (`+ph+`)`)
+		args = append(args, a...)
+	}
+	if len(variantIDs) > 0 {
+		ph, a := inPlaceholders(variantIDs)
+		parts = append(parts, `items.id IN (SELECT item_id FROM item_variants WHERE id IN (`+ph+`))`)
+		args = append(args, a...)
+	}
+	rows, err := r.db.QueryContext(ctx, `SELECT id FROM items WHERE (`+strings.Join(parts, " OR ")+`)
+AND `+obsoleteItemsPredicate(includeActive), args...)
+	if err != nil {
+		return nil, fmt.Errorf("obsolete items among: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// CleanupObsoleteItems permanently deletes never-sold items (inactive-only
+// by default; also active ones when includeActive is set, ut-docs#2281)
+// and their operational children (inventory levels, price history;
+// barcodes/images/variants cascade). Items with any sale or stock history,
+// or referenced by a currently parked sale, are left untouched. Audited.
 // Returns the number of items removed.
 //
 // blockedActorID (ut-docs#1841, ADR-0087): see ResetTransactionHistory's
@@ -6251,7 +6352,7 @@ ORDER BY name LIMIT ?`, limit)
 // originally-blocked session user once a checkStepUp PIN elevated the
 // request; the audit row uses InsertAuditElevated instead of InsertAudit
 // exactly when this is non-empty.
-func (r *POSRepo) CleanupObsoleteItems(ctx context.Context, actorID, blockedActorID string) (int64, error) {
+func (r *POSRepo) CleanupObsoleteItems(ctx context.Context, actorID, blockedActorID string, includeActive bool) (int64, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -6259,7 +6360,7 @@ func (r *POSRepo) CleanupObsoleteItems(ctx context.Context, actorID, blockedActo
 	defer func() { _ = tx.Rollback() }()
 
 	// The set of item ids we're about to delete, and the variants under them.
-	itemSet := `SELECT id FROM items WHERE ` + obsoleteItemsWhere
+	itemSet := `SELECT id FROM items WHERE ` + obsoleteItemsPredicate(includeActive)
 	variantSet := `SELECT id FROM item_variants WHERE item_id IN (` + itemSet + `)`
 
 	// Operational children without ON DELETE CASCADE must go first.
@@ -6279,7 +6380,7 @@ func (r *POSRepo) CleanupObsoleteItems(ctx context.Context, actorID, blockedActo
 	if err := NewModifierRepo(r.db).ReanchorGroupsBeforeBulkItemDelete(ctx, tx, itemSet); err != nil {
 		return 0, err
 	}
-	res, err := tx.ExecContext(ctx, `DELETE FROM items WHERE `+obsoleteItemsWhere)
+	res, err := tx.ExecContext(ctx, `DELETE FROM items WHERE `+obsoleteItemsPredicate(includeActive))
 	if err != nil {
 		return 0, fmt.Errorf("cleanup items: %w", err)
 	}

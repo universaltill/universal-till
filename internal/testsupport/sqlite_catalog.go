@@ -49,6 +49,12 @@ func NewCatalogTestDB(t *testing.T) *sql.DB {
 		// so a fixture that inserts a group row directly must add its link
 		// row too (SeedModifierGroup does both).
 		`CREATE TABLE item_modifier_group_links (item_id TEXT NOT NULL, group_id TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, FOREIGN KEY (item_id) REFERENCES items (id) ON DELETE CASCADE, FOREIGN KEY (group_id) REFERENCES item_modifier_groups (id) ON DELETE CASCADE, PRIMARY KEY (item_id, group_id));`,
+		// Mirrors migration 031 (ADR-0094, ut-docs#1915): category-level
+		// modifier-group inheritance + per-item opt-out. ItemIDsWithModifiers'
+		// UNION references both tables unconditionally, so any fixture built
+		// on this helper needs them even with zero rows in either.
+		`CREATE TABLE category_modifier_group_links (category_id TEXT NOT NULL, group_id TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, FOREIGN KEY (category_id) REFERENCES categories (id) ON DELETE CASCADE, FOREIGN KEY (group_id) REFERENCES item_modifier_groups (id) ON DELETE CASCADE, PRIMARY KEY (category_id, group_id));`,
+		`CREATE TABLE item_modifier_group_opt_outs (item_id TEXT NOT NULL, group_id TEXT NOT NULL, FOREIGN KEY (item_id) REFERENCES items (id) ON DELETE CASCADE, FOREIGN KEY (group_id) REFERENCES item_modifier_groups (id) ON DELETE CASCADE, PRIMARY KEY (item_id, group_id));`,
 		// Mirrors migration 017 (ut-docs#1900): reusable option sets and the
 		// links that make the variant generator idempotent.
 		`CREATE TABLE option_sets (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, is_active INTEGER NOT NULL DEFAULT 1);`,

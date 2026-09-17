@@ -67,6 +67,21 @@ type ButtonVM struct {
 	// --tile-color, ONLY when the tile has no ImageURL: a real photo
 	// always wins.
 	Color string `json:"color,omitempty"`
+	// Pos (ut-docs#2339) is this button's index in the GLOBAL sort_order
+	// list (the order Load returns) — set by BuildCategoryGroups only, so
+	// it's 0 (meaningless) on a ButtonVM built via ToVM for the Designer's
+	// flat admin grid, where the slice index already IS the global index.
+	// The sale-screen grid groups tiles by category, so its DOM order
+	// stops being the global order the moment categories interleave;
+	// product-tile (buttons.html) renders this as data-pos, and app.js's
+	// utTileJiggle uses it to rebuild the full global list it POSTs to
+	// /api/buttons/reorder after a drag: the reordered group's tiles are
+	// re-dealt into the slots that same group already occupied, so a drag
+	// within one category never moves another category's buttons in the
+	// Designer's flat list — the same "nearest same-category neighbour"
+	// outcome the retired ut-docs#2285 sheet's server-side Move produced,
+	// computed client-side from these indices instead.
+	Pos int `json:"pos"`
 }
 
 func ToVM(b []Button) []ButtonVM {
@@ -180,13 +195,15 @@ func BuildCategoryGroups(buttons []Button, cats []data.CategoryNode) []*Category
 	}
 
 	var uncategorized []ButtonVM
-	for _, b := range buttons {
+	for i, b := range buttons {
+		vm := toButtonVM(b)
+		vm.Pos = i // global sort index — see ButtonVM.Pos
 		g, ok := byID[b.CategoryID]
 		if b.CategoryID == "" || !ok {
-			uncategorized = append(uncategorized, toButtonVM(b))
+			uncategorized = append(uncategorized, vm)
 			continue
 		}
-		g.Buttons = append(g.Buttons, toButtonVM(b))
+		g.Buttons = append(g.Buttons, vm)
 	}
 
 	kept := roots[:0]
@@ -259,19 +276,35 @@ func pruneEmptyCategoryGroup(g *CategoryGroup) bool {
 
 // ButtonStore persists shortcut buttons in the shortcut_buttons table via repo.
 type ButtonStore struct {
-	repo        *data.ShortcutsRepo
-	posRepo     *data.POSRepo
-	modRepo     *data.ModifierRepo
-	catalogRepo *data.CatalogRepo
+	repo         *data.ShortcutsRepo
+	posRepo      *data.POSRepo
+	modRepo      *data.ModifierRepo
+	catalogRepo  *data.CatalogRepo
+	settingsRepo *data.SettingsRepo
 }
 
 func NewButtonStore(db *sql.DB) *ButtonStore {
 	return &ButtonStore{
-		repo:        data.NewShortcutsRepo(db),
-		posRepo:     data.NewPOSRepo(db),
-		modRepo:     data.NewModifierRepo(db),
-		catalogRepo: data.NewCatalogRepo(db),
+		repo:         data.NewShortcutsRepo(db),
+		posRepo:      data.NewPOSRepo(db),
+		modRepo:      data.NewModifierRepo(db),
+		catalogRepo:  data.NewCatalogRepo(db),
+		settingsRepo: data.NewSettingsRepo(db),
 	}
+}
+
+// CategoriesTabEnabled reports whether ut-docs#2283's optional "Categories"
+// tab should render on the sell screen — settings-gated
+// (data.SellScreenCategoriesTabKey), default off. A read error is treated
+// as "off" by the caller (ButtonsHTTP.List), the same non-fatal-but-logged
+// shape LoadCategories already uses for its own error: losing this ONE
+// optional tab is much better than failing the whole sale-screen render.
+func (s *ButtonStore) CategoriesTabEnabled(ctx context.Context) (bool, error) {
+	v, _, err := s.settingsRepo.Get(ctx, data.SellScreenCategoriesTabKey)
+	if err != nil {
+		return false, err
+	}
+	return v == "1", nil
 }
 
 // LoadCategories returns the flat category list the sale-screen grid nests
@@ -542,8 +575,16 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 		// loses category grouping/coloring with no visible sign why.
 		logging.L().Errorf("buttons list: load categories: %v", err)
 	}
+	categoriesTabEnabled, err := h.Store.CategoriesTabEnabled(r.Context())
+	if err != nil {
+		// Same non-fatal-but-logged shape as the categories load above
+		// (ut-docs#2283) — a settings-read error just means the optional
+		// tab stays off this render, not that the whole sale screen fails.
+		logging.L().Warnf("buttons list: load categories-tab setting: %v", err)
+	}
 	_ = h.View.Render(w, "buttons", map[string]any{
-		"Groups": BuildCategoryGroups(btns, cats),
+		"Groups":               BuildCategoryGroups(btns, cats),
+		"CategoriesTabEnabled": categoriesTabEnabled,
 	})
 }
 
@@ -581,6 +622,17 @@ func (h *ButtonsHTTP) Add(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`<div class="error">` + html.EscapeString(httpx.T(locale, designerErrorServerKey)) + `</div>`))
 		return
 	}
+	// ut-docs#2285: every route that changes the button SET sets the same
+	// HX-Trigger, so the one listener (buttons.html's root,
+	// hx-trigger="... buttons-changed from:body") refreshes the sale screen
+	// whichever route was used. An HX-Trigger only ever dispatches in the
+	// document that made the request, so on the Designer page (where /add
+	// is actually called from, and nothing listens for buttons-changed)
+	// this header is a harmless no-op — it does NOT reach another open
+	// tab/window. Set unconditionally anyway so the contract is "the
+	// button set changed => buttons-changed", with no per-route exceptions
+	// for a future caller to trip over.
+	w.Header().Set("HX-Trigger", "buttons-changed")
 	// Re-render admin grid so htmx swaps only the grid in designer
 	btns, _ := h.Store.Load()
 	_ = h.View.Render(w, "buttons_admin_grid", map[string]any{
@@ -611,6 +663,12 @@ func (h *ButtonsHTTP) Remove(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`<div class="error">` + html.EscapeString(httpx.T(locale, designerErrorServerKey)) + `</div>`))
 		return
 	}
+	// ut-docs#2285: see Add's comment above — same contract. This is the
+	// one that actually matters on the sale screen: the jiggle edit mode's
+	// per-tile remove badge (ut-docs#2339, buttons.html's product-tile)
+	// posts to this same route, and this header is what makes the grid
+	// drop the tile without a reload.
+	w.Header().Set("HX-Trigger", "buttons-changed")
 	btns, _ := h.Store.Load()
 	_ = h.View.Render(w, "buttons_admin_grid", map[string]any{
 		"Buttons": ToVM(btns),

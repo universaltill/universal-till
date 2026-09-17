@@ -42,12 +42,20 @@ func (r *ShortcutsRepo) LoadButtons(ctx context.Context) ([]ShortcutButton, erro
 	// up in the catalog list but never on the actual sale-screen tile,
 	// since shortcut_buttons.image_path is a separate column nothing ever
 	// populates from a plain catalog image upload — confirmed live 2026-07-29.
+	// INNER JOIN (not LEFT) is deliberate (ut-docs#2281 cause A): a button
+	// whose item was soft-deleted (is_active=0, Catalog "Delete item") or
+	// whose item row is gone entirely must not come back as a tile — it
+	// used to via the old LEFT JOIN with no is_active filter, so the tile
+	// stayed on the sell screen after "deletion" and tapping it silently
+	// did nothing, since POSRepo.ResolveShortcutLineDecoded already filters
+	// i.is_active = 1 when actually resolving the tap. This makes
+	// LoadButtons agree with that resolver.
 	rows, err := r.db.QueryContext(ctx, `
 SELECT sb.label, sb.barcode, sb.item_id,
        COALESCE(sb.image_path, (SELECT path FROM item_images img WHERE img.item_id = sb.item_id AND img.role = 'thumbnail' LIMIT 1)),
        COALESCE(i.base_price, 0), COALESCE(i.category_id, ''), COALESCE(i.color, '')
 FROM shortcut_buttons sb
-LEFT JOIN items i ON i.id = sb.item_id
+JOIN items i ON i.id = sb.item_id AND i.is_active = 1
 ORDER BY sb.sort_order, sb.label`)
 	if err != nil {
 		return nil, shortcutsObs.wrap("load_buttons", err)

@@ -974,9 +974,12 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 // blockingPaymentEventWithResponse publishes `payment.<key>.<suffix>` for
 // the method's owning payment plugin and BLOCKS on the result: (nil, nil)
 // when the method has no payment entry or no subscriber (cash stays cash),
-// the plugin's raw response when it approves, and the plugin's error when
-// it declines — the caller must stop the sale/refund on an error. This is
-// the refund gate's blocking leg of the payment-provider contract; the
+// the plugin's raw response when it approves, and a non-nil error when it
+// declines OR the payment-entries lookup itself failed (ut-docs#2278) — the
+// caller must treat either case as a decline and stop the sale/refund (fail
+// closed), never as "nothing to report", since on a lookup failure this
+// gate can no longer tell whether the method WOULD have been vetoed. This
+// is the refund gate's blocking leg of the payment-provider contract; the
 // tender authorize gate, the other blocking leg, uses
 // blockingPaymentEventWithResponseAndID below because it needs the SAME
 // event id across a retry, while this form mints a fresh id per call. The
@@ -1003,7 +1006,18 @@ func blockingPaymentEventWithResponse(ctx context.Context, d *common.Deps, metho
 // contract, used by the refund gate).
 func blockingPaymentEventWithResponseAndID(ctx context.Context, d *common.Deps, method, suffix, requestID string, payload map[string]any) (json.RawMessage, error) {
 	entries, err := data.NewPluginRepo(d.Db).ListPaymentEntries(ctx)
-	if err != nil || len(entries) == 0 {
+	if err != nil {
+		// ut-docs#2278: fail closed. Both callers already treat a non-nil
+		// error here as a decline (the refund gate's `blocked != nil` check,
+		// the tender-authorize gate's `if err != nil`) — before this fix,
+		// a genuine DB error was folded into the same (nil, nil) return as
+		// "no entry configured," silently skipping the plugin veto entirely.
+		// ListPaymentEntries already wraps its own error with "list payment
+		// entries: ..." — naming the method and this gate here instead of
+		// re-wrapping the identical phrase avoids a doubled-up message.
+		return nil, fmt.Errorf("payment gate: payment-entries lookup for %q: %w", method, err)
+	}
+	if len(entries) == 0 {
 		return nil, nil
 	}
 	for _, e := range entries {

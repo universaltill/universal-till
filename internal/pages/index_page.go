@@ -192,8 +192,15 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			payTotal = b.Total
 		}
 		data := map[string]any{
-			"title":                "Universal Till", // i18n:ignore -- brand name, stays Latin in every locale (ut-docs#2297)
-			"saleScreen":           true,
+			"title":      "Universal Till", // i18n:ignore -- brand name, stays Latin in every locale (ut-docs#2297)
+			"saleScreen": true,
+			// ut-docs#2193: one-shot success banner for a redirect that just
+			// carried a notice (currently only /open-orders' own resume
+			// route, on the auto-park case) -- same QueryMsgKey validation
+			// (ut-docs#2148) tseKickoffRejected below already relies on, so
+			// an unrecognised value falls back to the generic key rather
+			// than rendering verbatim.
+			"msgKey":               httpx.QueryMsgKey(r),
 			"theme":                d.CurrentState().Theme,
 			"menuItems":            d.MenuSnapshot(),
 			"currency":             d.CurrentState().Currency,
@@ -208,6 +215,10 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			"tseKickoffRejected":   tseRejectedView,
 			"payItemCount":         payItemCount,
 			"payTotal":             payTotal,
+			// ut-docs#2308: the basket/products divider's persisted position
+			// (0 = unset, use app.css's own built-in split) — see
+			// common.RuntimeState.BasketPanelWidthRem's own doc comment.
+			"basketPanelWidthRem": d.CurrentState().BasketPanelWidthRem,
 		}
 		httpx.Render("ui/pages/index.html", data)(w, r)
 	})

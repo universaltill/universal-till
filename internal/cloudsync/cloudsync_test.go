@@ -418,6 +418,133 @@ func TestApplySetSettingAndInstallPluginGaps(t *testing.T) {
 	}
 }
 
+// set_till_setting (ut-docs#2289, Decision 1 of the ut-docs#2306 portal-till
+// configuration design — proposed ADR-0095, pending merge): dispatch mirrors
+// set_setting exactly — nil hook and blank key both fail cleanly with a
+// message the cloud can show, and a well-formed directive reaches the hook
+// with key + value. The whitelist itself lives in the hook (pages'
+// cloudSetTillSetting), deliberately NOT in this generic dispatch, so the
+// dispatch shape is all this test covers.
+func TestApplySetTillSetting(t *testing.T) {
+	status, msg := apply(context.Background(), directive{Type: "set_till_setting", Payload: map[string]any{"key": "receipt.footer", "value": "v"}}, Hooks{})
+	if status != "failed" || msg != "set_till_setting is not supported on this till" {
+		t.Fatalf("nil hook: status=%q msg=%q", status, msg)
+	}
+
+	var gotKey, gotValue string
+	hooks := Hooks{
+		SetTillSetting: func(ctx context.Context, key, value string) (string, error) {
+			gotKey, gotValue = key, value
+			return key + " = " + value, nil
+		},
+	}
+	status, msg = apply(context.Background(), directive{Type: "set_till_setting", Payload: map[string]any{"value": "v"}}, hooks)
+	if status != "failed" || msg != "missing setting key" {
+		t.Fatalf("empty key: status=%q msg=%q", status, msg)
+	}
+	if gotKey != "" {
+		t.Fatalf("hook must not run for a blank key, got key=%q", gotKey)
+	}
+
+	status, msg = apply(context.Background(), directive{Type: "set_till_setting", Payload: map[string]any{"key": " receipt.footer ", "value": " Thanks! "}}, hooks)
+	if status != "applied" || msg != "receipt.footer = Thanks!" {
+		t.Fatalf("valid: status=%q msg=%q", status, msg)
+	}
+	if gotKey != "receipt.footer" || gotValue != "Thanks!" {
+		t.Fatalf("hook args = (%q, %q), want trimmed key/value", gotKey, gotValue)
+	}
+
+	// A hook error is the directive's failure message, same as every type.
+	hooks.SetTillSetting = func(context.Context, string, string) (string, error) {
+		return "", errors.New("printer.address is not a remote-configurable till setting")
+	}
+	status, msg = apply(context.Background(), directive{Type: "set_till_setting", Payload: map[string]any{"key": "printer.address", "value": "x"}}, hooks)
+	if status != "failed" || msg != "printer.address is not a remote-configurable till setting" {
+		t.Fatalf("hook error: status=%q msg=%q", status, msg)
+	}
+}
+
+// upsert_category (ut-docs#2323, ADR-0095 Decision 1): dispatch mirrors
+// set_till_setting — nil hook and blank name both fail cleanly with a message
+// the cloud can show; a well-formed directive reaches the hook with the
+// trimmed id/name/colour. An empty id means "create", a present one "update";
+// an empty colour is valid ("no colour"). Colour validation and the
+// create-vs-update decision live in the hook (pages' cloudUpsertCategory),
+// deliberately NOT in this generic dispatch.
+func TestApplyUpsertCategory(t *testing.T) {
+	status, msg := apply(context.Background(), directive{Type: "upsert_category", Payload: map[string]any{"name": "Drinks"}}, Hooks{})
+	if status != "failed" || msg != "upsert_category is not supported on this till" {
+		t.Fatalf("nil hook: status=%q msg=%q", status, msg)
+	}
+
+	var calls int
+	var gotID, gotName, gotColor string
+	hooks := Hooks{
+		UpsertCategory: func(ctx context.Context, id, name, color string) (string, error) {
+			calls++
+			gotID, gotName, gotColor = id, name, color
+			if id == "" {
+				return "created category " + name, nil
+			}
+			return "updated category " + name, nil
+		},
+	}
+
+	// Blank (or whitespace-only) name: refused before the hook runs.
+	for _, payload := range []map[string]any{
+		{"id": "cat-1", "color": "#0f172a"},
+		{"id": "cat-1", "name": "   "},
+		{},
+	} {
+		status, msg = apply(context.Background(), directive{Type: "upsert_category", Payload: payload}, hooks)
+		if status != "failed" || msg != "missing name" {
+			t.Fatalf("blank name %v: status=%q msg=%q", payload, status, msg)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("hook must not run for a blank name, ran %d times", calls)
+	}
+
+	// Create: no id, colour optional — both trimmed on the way through.
+	status, msg = apply(context.Background(), directive{Type: "upsert_category", Payload: map[string]any{"name": " Drinks ", "color": " #0f172a "}}, hooks)
+	if status != "applied" || msg != "created category Drinks" {
+		t.Fatalf("create: status=%q msg=%q", status, msg)
+	}
+	if gotID != "" || gotName != "Drinks" || gotColor != "#0f172a" {
+		t.Fatalf("create hook args = (%q, %q, %q)", gotID, gotName, gotColor)
+	}
+
+	// Create with no colour at all: "" reaches the hook, not a failure.
+	status, msg = apply(context.Background(), directive{Type: "upsert_category", Payload: map[string]any{"name": "Snacks"}}, hooks)
+	if status != "applied" || msg != "created category Snacks" {
+		t.Fatalf("create no colour: status=%q msg=%q", status, msg)
+	}
+	if gotID != "" || gotName != "Snacks" || gotColor != "" {
+		t.Fatalf("create no-colour hook args = (%q, %q, %q)", gotID, gotName, gotColor)
+	}
+
+	// Update: id present.
+	status, msg = apply(context.Background(), directive{Type: "upsert_category", Payload: map[string]any{"id": " cat-1 ", "name": "Hot drinks", "color": "#4338ca"}}, hooks)
+	if status != "applied" || msg != "updated category Hot drinks" {
+		t.Fatalf("update: status=%q msg=%q", status, msg)
+	}
+	if gotID != "cat-1" || gotName != "Hot drinks" || gotColor != "#4338ca" {
+		t.Fatalf("update hook args = (%q, %q, %q)", gotID, gotName, gotColor)
+	}
+	if calls != 3 {
+		t.Fatalf("hook ran %d times, want 3", calls)
+	}
+
+	// A hook error is the directive's failure message, same as every type.
+	hooks.UpsertCategory = func(context.Context, string, string, string) (string, error) {
+		return "", errors.New("category not found")
+	}
+	status, msg = apply(context.Background(), directive{Type: "upsert_category", Payload: map[string]any{"id": "nope", "name": "x"}}, hooks)
+	if status != "failed" || msg != "category not found" {
+		t.Fatalf("hook error: status=%q msg=%q", status, msg)
+	}
+}
+
 // Every hook-present-but-item_id-blank branch: the giant fixture table only
 // ever sent these directives with a real item_id (it varied the OTHER
 // field — price, delta, name — to test rejection), so this specific

@@ -167,6 +167,13 @@ jobs:
   goreleaser:
     needs: [prepare, linux-shells]
     runs-on: ubuntu-latest
+    # ut-docs#2274: a "Run tests before releasing" run hung with zero step
+    # movement for hours (historical baseline for that step alone is ~6.5m,
+    # ut-docs#643/#753/#776) and occupied the runner silently instead of
+    # failing loudly. 40m gives generous headroom over that baseline plus
+    # goreleaser's own cross-platform build/upload, while still bounding a
+    # genuine hang to a fraction of GitHub's 360m default.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
         with:

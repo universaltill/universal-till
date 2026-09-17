@@ -60,7 +60,11 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	// Reorder from the Designer (move-up/move-down buttons, ut-docs#1221 --
-	// formerly drag&drop): codes arrive in display order.
+	// formerly drag&drop) AND from the sell screen's own jiggle edit mode
+	// (ut-docs#2339, app.js's utTileJiggle -- which replaced the
+	// ut-docs#2285 long-press sheet and its POST /api/buttons/move route):
+	// codes arrive in display order, the FULL global list, exactly once per
+	// edit session (on Done), never per drag step.
 	mux.HandleFunc("POST /api/buttons/reorder", func(w http.ResponseWriter, r *http.Request) {
 		if !requirePrimary(w, r) {
 			return
@@ -87,6 +91,13 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
 			return
 		}
+		// ut-docs#2285: the Designer's own move-up/move-down reorder changes
+		// the sale screen's button set too, same as /api/buttons/remove|add
+		// below -- see buttons.html's root comment on buttons-changed. (The
+		// sell screen's jiggle-mode Done, ut-docs#2339, posts here as well;
+		// its own DOM already shows the new order, so that refetch is a
+		// harmless re-render from the now-persisted truth.)
+		w.Header().Set("HX-Trigger", "buttons-changed")
 		w.WriteHeader(http.StatusNoContent)
 	})
 

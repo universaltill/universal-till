@@ -324,6 +324,20 @@
       <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
     </label>
   </form>
+  <!-- ut-docs#2308: the sell-screen basket/products divider's own reset --
+       the drag itself lives on the sell screen (a live, no-reload
+       fetch() POST, see index.html), so this is only the "I want the
+       default back" affordance for an operator who isn't looking at the
+       sell screen right now. width_rem="0" is the exact same reset shape
+       the divider's own double-tap/double-click sends -- plain htmx form,
+       same hx-on::after-request reload pattern as ui-scale/osk above,
+       since THIS control (unlike the live drag) has no basket-loss risk
+       to protect against. -->
+  <form hx-post="/api/settings/basket-panel-width" hx-swap="none" hx-on::after-request="if(event.detail.successful){window.location.reload()}else{document.getElementById('settings-save-error').hidden=false}" class="set-gap">
+    <input type="hidden" name="width_rem" value="0">
+    <p class="muted">{{ T "settings.display.basket_panel_help" }}</p>
+    <button class="btn secondary" type="submit" data-testid="basket-panel-reset">{{ T "settings.display.basket_panel_reset_btn" }}</button>
+  </form>
   <!-- ut-docs#867: the display-mode/window-mode/launch-on-startup forms below
        render unconditionally — all three POST to elevation-wired endpoints
        (checkOrElevate), so the server-side PIN dialog is the authorization
@@ -583,6 +597,27 @@
     </label>
   </form>
 </div>
+<!-- ut-docs#2282: WHEN/WHERE the sale screen asks the cashier dine-in or
+     takeaway -- top of basket (always visible, the pre-this-card default),
+     before the first item lands in an empty basket, or deferred until Pay.
+     Same unconditional/elevation-gated/audited shape as #settings-order-no
+     just above (no "no data yet" state either). -->
+<div class="card" id="settings-order-type-prompt">
+  <h2>{{ T "settings.order_type_prompt.title" }} {{ helpLink "sell" }}</h2>
+  <p class="muted">{{ T "settings.order_type_prompt.help" }}</p>
+  <form hx-post="/api/settings/order-type-prompt" hx-target="#order-type-prompt-msg" hx-swap="innerHTML">
+    {{ $orderTypePromptMode := index .settingsMap "sale.order_type_prompt" }}
+    <label class="set-row">{{ T "settings.order_type_prompt.label" }}
+      <select name="mode">
+        <option value="top" {{ if or (eq $orderTypePromptMode "") (eq $orderTypePromptMode "top") }}selected{{ end }}>{{ T "settings.order_type_prompt.mode_top" }}</option>
+        <option value="before_item" {{ if eq $orderTypePromptMode "before_item" }}selected{{ end }}>{{ T "settings.order_type_prompt.mode_before_item" }}</option>
+        <option value="at_pay" {{ if eq $orderTypePromptMode "at_pay" }}selected{{ end }}>{{ T "settings.order_type_prompt.mode_at_pay" }}</option>
+      </select>
+      <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
+      <span id="order-type-prompt-msg" aria-live="polite"></span>
+    </label>
+  </form>
+</div>
 <div class="card" id="settings-barcode">
   <!-- ADR-0059 Decision §2, ut-docs#935: shop-selectable barcode symbology
        checklist. One checkbox per internal/barcode registry entry, saved
@@ -667,6 +702,40 @@
   var cb = document.getElementById('catalog-import-barcode-default-cb');
   if (!cb) return;
   var msg = document.getElementById('catalog-import-barcode-default-msg');
+  var T = { saved: "{{ T "settings.display.change_saved" }}" };
+  cb.addEventListener('htmx:afterRequest', function (ev) {
+    var ct = ev.detail.xhr.getResponseHeader('Content-Type') || '';
+    if (ev.detail.successful && ct.indexOf('text/html') === -1) { renderNotice(msg, 'success', T.saved); }
+  });
+})();
+</script>
+<!-- ut-docs#2283: optional "Categories" tab on the sell screen (a grid of
+     category tiles, each opening an item-picker modal) — OFF by default,
+     so a till that never opens this toggle keeps today's tab bar (All +
+     one tab per category) unchanged. Same single-checkbox
+     hx-post/revert-on-failure/elevation-gated shape as the card just
+     above; internal/ui/buttons.go's ButtonsHTTP.List reads this same
+     settings key fresh on every /ui/buttons render, so flipping it takes
+     effect on the sale screen's very next render, no restart needed. -->
+<div class="card" id="settings-categories-tab">
+  <h2>{{ T "settings.categories_tab.title" }} {{ helpLink "sell" }}</h2>
+  <label style="display:block; margin:.35rem 0">
+    <input type="checkbox" id="categories-tab-cb" name="enabled"
+           hx-post="/api/settings/categories-tab" hx-trigger="change" hx-swap="none"
+           hx-vals="js:{enabled: document.getElementById('categories-tab-cb').checked}"
+           hx-on::before-request="document.getElementById('categories-tab-msg').textContent=''"
+           hx-on::after-request="if(!event.detail.successful){this.checked=!this.checked;document.getElementById('settings-save-error').hidden=false}"
+           {{ if eq (index .settingsMap "sell_screen_categories_tab_enabled") "1" }}checked{{ end }}>
+    {{ T "settings.categories_tab.label" }}
+  </label>
+  <p class="muted">{{ T "settings.categories_tab.hint" }}</p>
+  <div id="categories-tab-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
+</div>
+<script>
+(function () {
+  var cb = document.getElementById('categories-tab-cb');
+  if (!cb) return;
+  var msg = document.getElementById('categories-tab-msg');
   var T = { saved: "{{ T "settings.display.change_saved" }}" };
   cb.addEventListener('htmx:afterRequest', function (ev) {
     var ct = ev.detail.xhr.getResponseHeader('Content-Type') || '';
@@ -839,6 +908,10 @@
   <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
   <h3 style="margin:0 0 .3rem">{{ T "settings.data.catalog_title" }}</h3>
   <p class="muted">{{ T "settings.data.catalog_help" }}</p>
+  <div style="display:flex; align-items:center; gap:.4rem; flex-wrap:wrap">
+    <label><input type="checkbox" id="cat-include-active"> {{ T "settings.data.catalog_include_active" }}</label>
+  </div>
+  <p class="muted">{{ T "settings.data.catalog_include_active_help" }}</p>
   <div style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap">
     <button class="btn secondary" id="cat-preview-btn">{{ T "settings.data.catalog_preview_btn" }}</button>
     <button class="btn secondary" id="cat-cleanup-btn" data-testid="data-cleanup" disabled>{{ T "settings.data.catalog_cleanup_btn" }}</button>
@@ -1017,8 +1090,16 @@
   if (!btn) return;
   var msg = document.getElementById('data-reset-msg');
   var T = {
-    clearing: "{{ T "settings.data.reset_clearing" }}"
+    clearing: "{{ T "settings.data.reset_clearing" }}",
+    // ut-docs#2281: rendered from the response's own archived/batch_id
+    // fields (data_api.go), not the server's English `message` verbatim.
+    resetDone: "{{ T "settings.data.reset_done" }}"
   };
+  function fmt(template, a, b) {
+    // function replacements: a literal '$' in a value must never be read as a
+    // replacement pattern (ut-docs#2281 review, nit 7)
+    return String(template || '').replace('%d', function () { return a; }).replace('%s', function () { return b; });
+  }
   btn.addEventListener('click', function () {
     // ut-docs#1841 (ADR-0087): step-up re-authentication (a manager PIN,
     // required at the moment of the act) replaces the old typed-word
@@ -1034,7 +1115,8 @@
     window.utPostWithElevation('/api/data/reset-transactions', {}, function (r) {
       return r.json().catch(function () { return {}; }).then(function (j) {
         btn.disabled = false;
-        renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
+        var okMsg = (j.data && typeof j.data.archived === 'number') ? fmt(T.resetDone, j.data.archived, j.data.batch_id) : (j.data && j.data.message);
+        renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? okMsg : j.error) || ('HTTP ' + r.status));
       });
     }, function () { btn.disabled = false; msg.textContent = ''; })
     // ut-docs#1841 review finding 1: utPostWithElevation only guards the
@@ -1173,10 +1255,22 @@
   var run = document.getElementById('cat-cleanup-btn');
   var out = document.getElementById('cat-results');
   var msg = document.getElementById('cat-msg');
+  var includeActive = document.getElementById('cat-include-active');
+  var T = {
+    previewNone: "{{ T "settings.data.catalog_preview_none" }}",
+    previewCount: "{{ T "settings.data.catalog_preview_count" }}",
+    removing: "{{ T "settings.data.catalog_removing" }}",
+    removed: "{{ T "settings.data.catalog_removed" }}",
+    removedNone: "{{ T "settings.data.catalog_removed_none" }}"
+  };
+  function fmt(template, a) {
+    return String(template || '').replace('%d', function () { return a; });
+  }
   function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
   pv.addEventListener('click', function () {
     msg.textContent = '…'; // not renderNotice — persists past the 2.5s auto-expire (ut-docs#918 review finding 2)
-    fetch('/api/data/obsolete-items')
+    var qs = includeActive && includeActive.checked ? '?include_active=1' : '';
+    fetch('/api/data/obsolete-items' + qs)
       .then(function (r) {
         // ut-docs#2157: a session-expired 401 answers with the auth
         // middleware's {code,message} error object — j.data below would be
@@ -1196,8 +1290,8 @@
         msg.textContent = '';
         var list = (j.data && j.data.items) || [];
         run.disabled = list.length === 0;
-        if (!list.length) { out.innerHTML = '<p class="muted">Nothing to remove — no inactive, never-sold products.</p>'; return; } // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
-        out.innerHTML = '<p class="muted">' + list.length + ' product(s) will be removed:</p>'
+        if (!list.length) { out.innerHTML = '<p class="muted">' + esc(T.previewNone) + '</p>'; return; }
+        out.innerHTML = '<p class="muted">' + esc(fmt(T.previewCount, list.length)) + '</p>'
           + list.map(function (it) {
               return '<div style="margin:.15rem 0">' + esc(it.Name) + (it.SKU ? ' · ' + esc(it.SKU) : '') + '</div>';
             }).join('');
@@ -1208,10 +1302,19 @@
     // typed CLEANUP word AND the plain window.confirm() dialog — the
     // elevation dialog itself states the count and requires a real
     // manager PIN, a strictly stronger confirmation than either did alone.
-    run.disabled = true; msg.textContent = 'removing…'; // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205); not renderNotice — persists past the 2.5s auto-expire (ut-docs#918 review finding 2)
-    window.utPostWithElevation('/api/data/cleanup-catalog', {}, function (r) {
+    run.disabled = true; msg.textContent = T.removing; // not renderNotice — persists past the 2.5s auto-expire (ut-docs#918 review finding 2)
+    var params = (includeActive && includeActive.checked) ? { include_active: '1' } : {};
+    window.utPostWithElevation('/api/data/cleanup-catalog', params, function (r) {
       return r.json().catch(function () { return {}; }).then(function (j) {
-        renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
+        var n = (j.data && typeof j.data.removed === 'number') ? j.data.removed : null;
+        if (r.ok && n !== null) {
+          // ut-docs#2281: 0 removed is not a success — the notice renders
+          // as an error/warning style so an operator doesn't read a no-op
+          // as confirmation the catalog was cleared.
+          renderNotice(msg, n > 0 ? 'success' : 'error', n > 0 ? fmt(T.removed, n) : T.removedNone);
+        } else {
+          renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
+        }
         if (r.ok) { out.innerHTML = ''; run.disabled = true; }
         else { run.disabled = false; }
       });
@@ -1459,26 +1562,24 @@
       </select>
     </label>
     <p class="muted" style="margin:.2rem 0 0">{{ T "settings.printer.system_hint" }}</p>
-    <!-- ADR-0089 (ut-docs#1907): the old "print automatically" checkbox is
-         now a three-way receipt policy — always / ask the customer / never.
-         $p.ReceiptPolicy is the RESOLVED value (legacy auto_print
-         derivation, plugin clamp and the interim Germany carve-out already
-         applied), so what is pre-selected is what actually happens at the
-         till. For a DE shop the control is locked to "always" (a disabled
-         <select> is not submitted, hence the hidden field carrying the one
-         value the save handler will accept) with a factual note — no
-         compliance-outcome claim (ADR-0040); this lock is temporary,
-         pending ut-docs#1908, see receiptPolicyLockedForCountry. -->
+    <!-- ADR-0089 (ut-docs#1907), addendum 2026-09-16 (ut-docs#2286): the old
+         "print automatically" checkbox is a three-way receipt policy —
+         always / ask the customer / never. $p.ReceiptPolicy is the RESOLVED
+         value (legacy auto_print derivation and plugin clamp applied), so
+         what is pre-selected is what actually happens at the till. The
+         former DE lock (Decision 3) is rescinded — German shops choose
+         freely, same as every other country; a DE shop instead sees a
+         factual, non-blocking advisory under the control — no
+         compliance-outcome claim (ADR-0040). -->
     <label>{{ T "settings.printer.receipt_policy.title" }}
-      <select name="receiptPolicy" {{ if .receiptPolicyLocked }}disabled{{ end }}>
+      <select name="receiptPolicy">
         <option value="always" {{ if eq $p.ReceiptPolicy "always" }}selected{{ end }}>{{ T "settings.printer.receipt_policy.always" }}</option>
         <option value="ask" {{ if eq $p.ReceiptPolicy "ask" }}selected{{ end }}>{{ T "settings.printer.receipt_policy.ask" }}</option>
         <option value="never" {{ if eq $p.ReceiptPolicy "never" }}selected{{ end }}>{{ T "settings.printer.receipt_policy.never" }}</option>
       </select>
     </label>
-    {{ if .receiptPolicyLocked }}
-    <input type="hidden" name="receiptPolicy" value="always">
-    <p class="muted receipt-policy-locked" style="margin:.2rem 0 0">{{ T "settings.printer.receipt_policy.locked_de" }}</p>
+    {{ if .receiptPolicyAdvisoryDE }}
+    <p class="muted receipt-policy-advisory-de" style="margin:.2rem 0 0">{{ T "settings.printer.receipt_policy.advisory_de" }}</p>
     {{ end }}
     <!-- ut-docs#2168: kitchen printer moved into its own fieldset/legend,
          after every receipt-printer control (mode/charset/address/device/

@@ -945,6 +945,54 @@ func TestTenderHandler_TRSystemOfRecordCashOnly_NoDeviceEvidence_Refused(t *test
 	}
 }
 
+// TestTenderHandler_ListPaymentEntriesDBError_FailsClosed is ut-docs#2278:
+// blockingPaymentEventWithResponseAndID used to treat a genuine
+// ListPaymentEntries DB error identically to "no payment entry configured"
+// -- (nil, nil) -- so the tender-authorize gate silently let the sale
+// complete with no chance for a payment plugin to veto it, even though its
+// own caller already has a correct `if err != nil` fail-closed branch right
+// there. Dropping plugin_entries forces that exact DB error. The tender
+// here uses "cash" -- a method with no plugin entry at all -- specifically
+// to prove the fix fails closed on the error itself, not on some plugin
+// lookup succeeding: before the fix this tender would have completed
+// unblocked (cash is correctly ungated in the healthy case), so seeing it
+// refused here is the regression signal.
+func TestTenderHandler_ListPaymentEntriesDBError_FailsClosed(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	if _, err := dp.Db.Exec(`DROP TABLE plugin_entries`); err != nil {
+		t.Fatalf("drop plugin_entries: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"cash","amount":120}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("expected 402 (fail-closed on a ListPaymentEntries DB error), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "plugin_entries") || strings.Contains(rec.Body.String(), "no such table") {
+		t.Fatalf("raw driver error leaked into the operator-facing response: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Payment declined") {
+		t.Fatalf("expected the pos.toast.payment_declined copy, got: %s", rec.Body.String())
+	}
+
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&count); err != nil {
+		t.Fatalf("query sales: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected no sale to be recorded when the payment-gate DB lookup failed, got %d", count)
+	}
+}
+
 // TestTenderHandler_TRSystemOfRecordForgedEvidenceFromNonOKCPlugin_StillRefused is
 // the independent-review BLOCKER-1 regression: the check must gate on
 // PAYMENT-LEG IDENTITY (was any leg's MethodID == fiscal.MethodKeyOKC),

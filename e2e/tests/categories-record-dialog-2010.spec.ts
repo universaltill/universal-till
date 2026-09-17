@@ -28,14 +28,24 @@ import { watchConsole, openNewItemForm, closeItemForm } from './helpers';
 const DIALOG = '#category-dialog';
 const NAME = '#category-form input[name="name"]';
 
+// Every successful mutation here answers HX-Redirect (categories_page.go),
+// i.e. a REAL browser navigation back to /categories. The page is already
+// at /categories, so `page.waitForURL(/\/categories$/)` resolves at once
+// against the OLD document and guards nothing — the next row click can then
+// land in the NEW document before record-dialog.js has bound its document
+// click listener, and is silently dropped (seen live under 4 parallel
+// workers, ut-docs#2345: (b3) sat 30s on a Deactivate button inside a
+// dialog that never opened). Await the new document's `load` instead,
+// registered BEFORE the click that triggers it.
+async function clickThenReload(page: Page, click: () => Promise<void>) {
+  await Promise.all([page.waitForEvent('load'), click()]);
+}
+
 async function createCategory(page: Page, name: string) {
   await page.locator('#categories-new').click();
   await expect(page.locator(DIALOG)).toBeVisible();
   await page.locator(NAME).fill(name);
-  await Promise.all([
-    page.waitForURL(/\/categories$/),
-    page.locator(`${DIALOG} .record-dialog-save`).click(),
-  ]);
+  await clickThenReload(page, () => page.locator(`${DIALOG} .record-dialog-save`).click());
   await expect(page.locator('#categories-table .category-row', { hasText: name })).toHaveCount(1);
 }
 
@@ -148,10 +158,7 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
     await createCategory(page, name);
     await row(page, name).locator('td').first().click();
     await page.locator(NAME).fill(name + ' B');
-    await Promise.all([
-      page.waitForURL(/\/categories$/),
-      page.locator(`${DIALOG} .record-dialog-save`).click(),
-    ]);
+    await clickThenReload(page, () => page.locator(`${DIALOG} .record-dialog-save`).click());
     await expect(row(page, name + ' B')).toHaveCount(1);
     await expect(page.locator('.login-error')).toHaveCount(0);
     assertClean();
@@ -165,10 +172,7 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
     await row(page, name).locator('td').first().click();
     let msg = '';
     page.once('dialog', (d) => { msg = d.message(); d.accept(); });
-    await Promise.all([
-      page.waitForURL(/\/categories$/),
-      page.locator(`${DIALOG} form[data-record-when="active=1"] button`).click(),
-    ]);
+    await clickThenReload(page, () => page.locator(`${DIALOG} form[data-record-when="active=1"] button`).click());
     expect(msg).toContain('Deactivate');
     await expect(row(page, name)).toContainText('inactive');
 
@@ -177,7 +181,7 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
     await expect(page.locator(`${DIALOG} form[data-record-when="active=1"]`)).toBeHidden();
     const activate = page.locator(`${DIALOG} form[data-record-when="active=0"] button`);
     await expect(activate).toBeVisible();
-    await Promise.all([page.waitForURL(/\/categories$/), activate.click()]);
+    await clickThenReload(page, () => activate.click());
     await expect(row(page, name)).toContainText(/\bactive\b/);
     await expect(row(page, name)).not.toContainText('inactive');
     assertClean();
@@ -480,8 +484,20 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
         (a.className ? '.' + String(a.className).trim().split(/\s+/).join('.') : '');
       return { inside: !!a && (d.contains(a) || !!(osk && osk.contains(a))), desc };
     });
+    // ut-docs#2284: the dialog is no longer one name field — it carries the
+    // colour grid (one Tab stop by design: roving tabindex) and a checkbox
+    // per customization group / kitchen station the shop has, so the
+    // number of Tabs needed to lap every control depends on the data. Count
+    // the dialog's own tabbable controls (record-dialog.js's FOCUSABLE,
+    // minus the tabindex=-1 tiles the roving grid hides) and go one lap
+    // plus a margin, instead of a fixed 12.
+    const stops = await dlg.evaluate((d) => Array.prototype.filter.call(
+      d.querySelectorAll('a[href], button:not([disabled]), input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'),
+      (el: Element) => el.getAttribute('tabindex') !== '-1' && el.getClientRects().length > 0,
+    ).length);
+    const laps = Math.max(12, stops + 3);
     const seen: string[] = [];
-    for (let i = 1; i <= 12; i++) {
+    for (let i = 1; i <= laps; i++) {
       await page.keyboard.press('Tab');
       const w = await where();
       expect(w.inside, `Tab #${i} landed on ${w.desc}, outside the open dialog`).toBe(true);
@@ -490,7 +506,7 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
     expect(seen.some((d) => d.includes('record-dialog-close')), `Close never reached: ${seen.join(' → ')}`).toBe(true);
     expect(seen.some((d) => d.includes('record-dialog-save')), `Save never reached: ${seen.join(' → ')}`).toBe(true);
     expect(seen.some((d) => d.includes('btn-icon-danger')), `the trash button never reached: ${seen.join(' → ')}`).toBe(true);
-    for (let i = 1; i <= 12; i++) {
+    for (let i = 1; i <= laps; i++) {
       await page.keyboard.press('Shift+Tab');
       const w = await where();
       expect(w.inside, `Shift+Tab #${i} landed on ${w.desc}, outside the open dialog`).toBe(true);

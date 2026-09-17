@@ -151,6 +151,15 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 			http.Redirect(w, r, "/open-orders?err=hold.error.not_found", http.StatusSeeOther)
 		case resumeFailed:
 			http.Redirect(w, r, "/open-orders?err=hold.error.failed", http.StatusSeeOther)
+		case resumeOKParkedPrior:
+			// ut-docs#2193: this page's own redirect had no success-notice
+			// mechanism (only "/open-orders?err=" above) -- unlike the
+			// sale-screen popup's htmx fragment path (hold_api.go), which
+			// already tells the cashier both things happened via
+			// hold.toast.parked_and_resumed. Reuses httpx.QueryMsgKey
+			// (ut-docs#2148) exactly as index_page.go's tseKickoffRejected
+			// one-shot banner does.
+			http.Redirect(w, r, "/?msg=hold.toast.parked_and_resumed", http.StatusSeeOther)
 		default:
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 		}

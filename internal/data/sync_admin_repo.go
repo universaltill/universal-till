@@ -213,6 +213,27 @@ var adminTables = []adminTable{
 	// gate already covering item_modifier_groups/options. Its three
 	// sync_admin_version triggers ship in migration 025.
 	{name: "item_modifier_group_links", pk: []string{"item_id", "group_id"}},
+	// ADR-0094 / ut-docs#1915: which CATEGORIES offer which modifier group,
+	// so every item in the category inherits it at sale time — catalog
+	// structure of exactly the same shop-wide kind as
+	// item_modifier_group_links above, and a satellite that had the groups
+	// but not the category links would offer every item in a category none
+	// of its inherited groups. Pure link rows, no is_active, no UNIQUE
+	// beyond the PK, same as item_modifier_group_links. FKs onto
+	// categories(id) and item_modifier_groups(id), both already applied
+	// above, so it must sit after them. Mutation is primary-only via the
+	// same requirePrimary gate covering item_modifier_groups/options (the
+	// editor surface itself is ut-docs#2284's card, not built by #1915).
+	// Its three sync_admin_version triggers ship in migration 031.
+	{name: "category_modifier_group_links", pk: []string{"category_id", "group_id"}},
+	// ADR-0094 / ut-docs#1915: which items have DECLINED a category-inherited
+	// modifier group (presence-only — opting back in is deleting the row).
+	// Same shop-wide catalog structure as the two link tables above: a
+	// satellite missing an opt-out would offer a group the primary's admin
+	// deliberately removed from that item. FKs onto items(id) and
+	// item_modifier_groups(id), both applied above. Its three
+	// sync_admin_version triggers ship in migration 031.
+	{name: "item_modifier_group_opt_outs", pk: []string{"item_id", "group_id"}},
 	{name: "item_modifier_options", pk: []string{"id"}, hasIsActive: true},
 	{name: "promotions", pk: []string{"code"}, hasIsActive: true},
 	{name: "shortcut_buttons", pk: []string{"barcode"}},
@@ -861,12 +882,29 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 // self-resolving the moment that primary itself boots the fix — but it can
 // never go back to being genuinely codeless, which is the actual
 // correctness property this guards.
+//
+// Also catches a revived retire-mangled sku (ut-docs#2273): deleteMissing's
+// FK-blocked retire-in-place rewrites item_variants.sku to "<sku>~<id>" — a
+// non-blank value — on retire, and stripRetireMangle (which undoes that same
+// mangle for every OTHER reader) is never applied here. Without this extra
+// clause, ut-docs#2246's sticky COALESCE on this column would treat a
+// revived row's local mangled sku as "real" and freeze it in place forever
+// once a version-skewed primary sends a blank sku for the same id, instead
+// of this function generating a fresh, real-looking one the same way it
+// already does for a genuinely blank sku. The `v.sku LIKE '%~' || v.id`
+// match mirrors the exact suffix shape the retire-in-place CASE above
+// produces. Same ambiguity stripRetireMangle's own doc comment already
+// accepts (a real value that happens to end in "~"+its own id is
+// indistinguishable from a mangle) — here that risk is a persisted
+// overwrite rather than a display-only misread, but item_variants.id is
+// always a generated uuid.NewString(), never user-chosen, so a real sku
+// coinciding with "~"+its own row's UUID is not a reachable case.
 func backfillCodelessSyncedVariants(ctx context.Context, tx *sql.Tx) error {
 	rows, err := tx.QueryContext(ctx, `
 SELECT v.id
 FROM item_variants v
 WHERE v.is_active = 1
-  AND (v.sku IS NULL OR TRIM(v.sku) = '')
+  AND (v.sku IS NULL OR TRIM(v.sku) = '' OR v.sku LIKE '%~' || v.id)
   AND NOT EXISTS (SELECT 1 FROM variant_barcodes b WHERE b.variant_id = v.id)`)
 	if err != nil {
 		return fmt.Errorf("find codeless synced variants: %w", err)

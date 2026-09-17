@@ -61,7 +61,18 @@ func firstDelay() time.Duration   { return time.Duration(firstDelayNS.Load()) }
 // short human message for the cloud's result column. A nil hook marks the
 // directive type unsupported on this till.
 type Hooks struct {
-	SetSetting     func(ctx context.Context, key, value string) (string, error)
+	SetSetting func(ctx context.Context, key, value string) (string, error)
+	// SetTillSetting handles the "set_till_setting" directive (ut-docs#2289;
+	// Decision 1 of the shared portal-till configuration design in
+	// universaltill/ut-docs#2306 — proposed as ADR-0095, PR not yet merged):
+	// the same {key, value} shape as set_setting, but the hook itself
+	// (pages.cloudSetTillSetting) refuses any key outside an explicit
+	// whitelist of safe, non-device-bound shop-config keys — the
+	// till-side half of a check the portal also makes, so a stale or buggy
+	// portal can never push a printer address, a TSE credential, a PIN or a
+	// network setting through. Deliberately a separate hook from SetSetting:
+	// that one stays the generic, unrestricted channel and is untouched.
+	SetTillSetting func(ctx context.Context, key, value string) (string, error)
 	InstallPlugin  func(ctx context.Context, listingID string) (string, error)
 	RemovePlugin   func(ctx context.Context, pluginID string) (string, error)
 	SetPrice       func(ctx context.Context, itemID string, priceMinor int64) (string, error)
@@ -85,6 +96,13 @@ type Hooks struct {
 	// queue for that session in one step, so a revoked till doesn't spend
 	// N more ticks rediscovering "not active" one 409 at a time.
 	DiagnosticModeRevoke func(ctx context.Context, sessionID string) (string, error)
+	// UpsertCategory handles the "upsert_category" directive (ut-docs#2323,
+	// ADR-0095 Decision 1) — creates a category (empty id) or updates an
+	// existing one's name/colour, through the same repo calls the local
+	// admin category editor uses. Modifier-group and kitchen-station
+	// attachment are deliberately out of scope here (need the read-side
+	// StoreSnapshot extension ADR-0095 Decision 2 hasn't shipped yet).
+	UpsertCategory func(ctx context.Context, id, name, color string) (string, error)
 	// DeviceExtra contributes extra fields to the device report (e.g. the
 	// current theme + the themes this till can switch to, so the cloud can
 	// render a real design picker instead of a raw key/value form). Keys must
@@ -213,6 +231,15 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", "missing setting key"
 		}
 		msg, err = hooks.SetSetting(ctx, key, str("value"))
+	case "set_till_setting":
+		if hooks.SetTillSetting == nil {
+			return "failed", "set_till_setting is not supported on this till"
+		}
+		key := str("key")
+		if key == "" {
+			return "failed", "missing setting key"
+		}
+		msg, err = hooks.SetTillSetting(ctx, key, str("value"))
 	case "install_plugin":
 		if hooks.InstallPlugin == nil {
 			return "failed", "install_plugin is not supported on this till"
@@ -315,6 +342,18 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", "missing session_id"
 		}
 		msg, err = hooks.DiagnosticModeRevoke(ctx, id)
+	case "upsert_category":
+		if hooks.UpsertCategory == nil {
+			return "failed", "upsert_category is not supported on this till"
+		}
+		// id is optional (empty = create), color is optional (empty = no
+		// colour); only name is required. Palette validation and the
+		// create-vs-update decision belong to the hook, not this dispatch.
+		name := str("name")
+		if name == "" {
+			return "failed", "missing name"
+		}
+		msg, err = hooks.UpsertCategory(ctx, str("id"), name, str("color"))
 	default:
 		return "failed", "unknown directive type " + d.Type
 	}

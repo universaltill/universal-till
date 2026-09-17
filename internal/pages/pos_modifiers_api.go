@@ -131,7 +131,7 @@ func resolveAndValidateModifiers(ctx context.Context, d *common.Deps, engine *po
 		base = variantBase
 	}
 
-	groups, err := data.NewModifierRepo(d.Db).ListGroupsForItem(ctx, itemID)
+	groups, err := data.NewModifierRepo(d.Db).ResolveGroupsForItem(ctx, itemID)
 	if err != nil {
 		return pos.BasketLine{}, nil, "", fmt.Errorf("load customization options: %w", err)
 	}
@@ -232,7 +232,7 @@ func registerPOSModifiersAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "item not found", http.StatusNotFound)
 			return
 		}
-		groups, err := data.NewModifierRepo(d.Db).ListGroupsForItem(r.Context(), itemID)
+		groups, err := data.NewModifierRepo(d.Db).ResolveGroupsForItem(r.Context(), itemID)
 		if err != nil {
 			http.Error(w, "failed to load customization options", http.StatusInternalServerError)
 			return

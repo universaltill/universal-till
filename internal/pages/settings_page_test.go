@@ -595,6 +595,62 @@ func TestTelemetryEndpoint(t *testing.T) {
 	}
 }
 
+// POST /api/settings/basket-panel-width (ut-docs#2308): the sell-screen
+// basket/products divider's persisted position. Mirrors
+// TestDisplayAndStoreSettings' own ui-scale bounds coverage just below, plus
+// the reset shape (width_rem omitted/"0") that ui-scale itself has no
+// equivalent of.
+func TestBasketPanelWidthSettings(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	// Bounds: [common.MinBasketPanelWidthRem, common.MaxBasketPanelWidthRem].
+	if rec := postForm(mux, "/api/settings/basket-panel-width", url.Values{"width_rem": {"5"}}, nil); rec.Code != http.StatusBadRequest {
+		t.Fatalf("below-floor width = %d, want 400", rec.Code)
+	}
+	if rec := postForm(mux, "/api/settings/basket-panel-width", url.Values{"width_rem": {"999"}}, nil); rec.Code != http.StatusBadRequest {
+		t.Fatalf("above-ceiling width = %d, want 400", rec.Code)
+	}
+
+	// A valid save is reflected into runtime state immediately (no reload
+	// needed — d.CurrentState() is what index_page.go's next render reads).
+	if rec := postForm(mux, "/api/settings/basket-panel-width", url.Values{"width_rem": {"30"}}, nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("valid width = %d, want 204", rec.Code)
+	}
+	if d.CurrentState().BasketPanelWidthRem != 30 {
+		t.Fatalf("basket panel width = %v, want 30", d.CurrentState().BasketPanelWidthRem)
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), common.KeyBasketPanelWidth); v != "30" {
+		t.Fatalf("stored %s = %q, want %q", common.KeyBasketPanelWidth, v, "30")
+	}
+
+	// Reset: width_rem="0" (the divider's own double-tap/double-click and
+	// the Settings -> Display Reset button both send exactly this) clears
+	// the override back to 0 (unset, app.css's own built-in default) —
+	// unlike ui-scale, which has no reset affordance and would silently
+	// keep the prior value on a bare "0" (see
+	// common.TestSaveState_ZeroUIScaleDoesNotClobberPriorValue).
+	if rec := postForm(mux, "/api/settings/basket-panel-width", url.Values{"width_rem": {"0"}}, nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("reset = %d, want 204", rec.Code)
+	}
+	if d.CurrentState().BasketPanelWidthRem != 0 {
+		t.Fatalf("basket panel width after reset = %v, want 0", d.CurrentState().BasketPanelWidthRem)
+	}
+	if v, ok, _ := d.Settings.Get(t.Context(), common.KeyBasketPanelWidth); ok && v != "" {
+		t.Fatalf("stored %s = %q after reset, want cleared", common.KeyBasketPanelWidth, v)
+	}
+
+	// An omitted width_rem is the same reset shape as an explicit "0".
+	if rec := postForm(mux, "/api/settings/basket-panel-width", url.Values{"width_rem": {"32"}}, nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("valid width = %d, want 204", rec.Code)
+	}
+	if rec := postForm(mux, "/api/settings/basket-panel-width", url.Values{}, nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("omitted width_rem = %d, want 204", rec.Code)
+	}
+	if d.CurrentState().BasketPanelWidthRem != 0 {
+		t.Fatalf("basket panel width after omitted-reset = %v, want 0", d.CurrentState().BasketPanelWidthRem)
+	}
+}
+
 // UI scale / theme are ungated per-till display preferences; save/upsert are
 // manager-gated (ut-docs#179) store-wide settings. All validate and reflect
 // into runtime state for a manager.
@@ -2056,6 +2112,7 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 		{"save", http.MethodPost, "/api/settings/save", url.Values{"currency": {"GBP"}}, gateElevation},
 		{"upsert", http.MethodPost, "/api/settings/upsert", url.Values{"key": {"x"}, "value": {"y"}}, gateElevation},
 		{"catalog-import-barcode-default", http.MethodPost, "/api/settings/catalog-import-barcode-default", url.Values{"enabled": {"true"}}, gateElevation},
+		{"categories-tab", http.MethodPost, "/api/settings/categories-tab", url.Values{"enabled": {"true"}}, gateElevation},
 	}
 
 	doReq := func(tc matrixCase, u auth.User) *httptest.ResponseRecorder {

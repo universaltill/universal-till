@@ -243,7 +243,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "item not found", http.StatusNotFound)
 			return
 		}
-		groups, err := data.NewModifierRepo(d.Db).ListGroupsForItem(r.Context(), itemID)
+		groups, err := data.NewModifierRepo(d.Db).ResolveGroupsForItem(r.Context(), itemID)
 		if err != nil {
 			http.Error(w, "failed to load customization options", http.StatusInternalServerError)
 			return

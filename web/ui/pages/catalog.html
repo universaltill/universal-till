@@ -169,7 +169,7 @@
 {{ if .SyncPrimary }}
 <div class="sync-banner">⚠ {{ T "sync.banner_replica" }}
   {{ if crossdevicelinkactionable }}
-  <a href="{{ .SyncPrimary }}/catalog" target="_blank" rel="noopener">{{ T "sync.banner_open_primary" }}</a>
+  <a href="{{ .SyncPrimary }}/catalog" target="_blank" rel="noopener" hx-boost="false">{{ T "sync.banner_open_primary" }}</a>
   {{ else }}
   <span>{{ T "sync.banner_open_primary_unavailable" }}</span>
   {{ end }}
@@ -537,6 +537,36 @@
   // for a new item, a catalog row click for edit) rather than always
   // being on screen.
   var modal = document.getElementById('item-form-modal');
+  // ut-docs#2285: the sell-screen tile sheet's "Edit in catalog" link
+  // deep-links here as /catalog?item=<id>&return=<path> so closing (or
+  // saving) the item it opens sends the operator back to the sale screen
+  // instead of stranding them on /catalog. Read once at load -- nothing on
+  // this page ever rewrites the query string afterward. Validated by
+  // RESOLVING it against this page's own origin and keeping only the
+  // resulting path+query+hash if the origin is unchanged — not by string
+  // prefix checks: the first cut rejected "//evil" but let "/\\evil.example"
+  // through, which the WHATWG URL parser treats as "//evil.example" for
+  // http(s) and which Chromium verifiably followed off-origin (independent
+  // review, 2026-09-16). Anything that doesn't resolve same-origin
+  // (missing, absolute URL, protocol-relative, backslash variants, a
+  // scheme) is treated as absent, same as if `return` had never been given.
+  var returnTo = null;
+  try {
+    var rawReturn = new URLSearchParams(location.search).get('return');
+    if (rawReturn && rawReturn.charAt(0) === '/') {
+      var returnURL = new URL(rawReturn, location.origin);
+      if (returnURL.origin === location.origin) returnTo = returnURL.pathname + returnURL.search + returnURL.hash;
+    }
+  } catch (e) { returnTo = null; }
+  // Closing this dialog -- the explicit Close button (item-form-close-btn's
+  // onclick calls modal.close() directly), AND the post-save auto-close
+  // below (search "auto-close") -- both end up calling modal.close(),
+  // which fires this native 'close' event exactly once either way. One
+  // listener covers BOTH of ut-docs#2285's "navigate back" cases (closing,
+  // and after a successful save) without duplicating the returnTo check.
+  if (returnTo) {
+    modal.addEventListener('close', function () { location.assign(returnTo); });
+  }
   // ut-docs#2024: the ≤700px tab strip (app.css) becomes a single
   // horizontally-scrollable row with no visual hint that more tabs sit
   // off-screen. tabBarFade() (below) drives app.css's
@@ -564,8 +594,16 @@
   // resolving the CURRENT live modal/tab-bar from the document at event
   // time — never closing over this render's `modal`/`tabBar` — fixes both
   // the leak and the staleness a swap would otherwise leave behind.
-  if (!window.__catalogTabBarFadeResizeWired) {
-    window.__catalogTabBarFadeResizeWired = true;
+  // The once-only flag lives on the #ut-page element, not on window: under
+  // the persistent shell (ADR-0098) `window` now outlives a page VISIT too —
+  // the shell drops this page's window listeners when the page is swapped
+  // away, so a window flag would leave the second visit with no listener at
+  // all (independent review, 2026-09-17). #ut-page is replaced on every
+  // boosted arrival (fresh flag) and survives the fragment swaps within a
+  // visit that this guard exists for.
+  var pageEl = document.getElementById('ut-page') || document.body;
+  if (!pageEl.__catalogTabBarFadeResizeWired) {
+    pageEl.__catalogTabBarFadeResizeWired = true;
     var recomputeLiveTabBarFade = function () {
       var liveModal = document.getElementById('item-form-modal');
       if (!liveModal || !liveModal.open) return;
@@ -1059,11 +1097,13 @@
   // state) if the id is missing or the item was deactivated/deleted since
   // the link was shown — catalog_row.html only renders active items, so a
   // stale id simply matches nothing here.
-  // Deferred to DOMContentLoaded: this inline block runs at parse time,
-  // before app.js's own `defer`red load — openCatalogRow reaches into
-  // window.utCurrency, which app.js doesn't define until then, so running
-  // this any earlier throws mid-way through and leaves the dialog closed.
-  document.addEventListener('DOMContentLoaded', function () {
+  // Deferred via UT.ready (ADR-0098): on a full load this inline block runs
+  // at parse time, before app.js's own `defer`red load — openCatalogRow
+  // reaches into window.utCurrency, which app.js doesn't define until then,
+  // so running this any earlier throws mid-way through and leaves the
+  // dialog closed. On a boosted arrival the document (and app.js) already
+  // exist and UT.ready runs it on the next microtask.
+  UT.ready(function () {
     var deepLinkID = new URLSearchParams(location.search).get('item');
     if (!deepLinkID) return;
     var deepLinkRow = document.getElementById('catalog-row-' + deepLinkID);

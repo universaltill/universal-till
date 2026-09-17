@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/pos"
 )
 
 // maxExportRangeDays bounds POST /api/data/export's [from, to] span
@@ -225,7 +227,16 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 		// Refresh the in-memory shift/menu state is unnecessary — the basket is
 		// in memory and unaffected; the next receipt number restarts from 1.
 		// ADR-0042: nothing was destroyed — say so.
-		respond(w, http.StatusOK, true, fmt.Sprintf("archived %d sales and related records (batch %s) — restorable from Settings → Data until the till trades again", n, batchID))
+		// ut-docs#2281: `archived`/`batch_id` are machine-readable fields for
+		// the settings page's own JS, which renders an i18n'd notice from
+		// them (settings.data.reset_done) rather than this English message
+		// verbatim — `message` is kept for non-browser API callers.
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
+			"message":  fmt.Sprintf("archived %d sales and related records (batch %s) — restorable from Settings → Data until the till trades again", n, batchID),
+			"archived": n,
+			"batch_id": batchID,
+		}, "error": nil})
 	})
 
 	// ADR-0042: list the archived reset batches, newest first.
@@ -393,13 +404,16 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 		respond(w, http.StatusOK, true, "customer erased")
 	})
 
-	// Catalog cleanup: preview the inactive, never-sold items that can be removed.
+	// Catalog cleanup: preview the never-sold items that can be removed.
+	// include_active=1 (ut-docs#2281) widens the preview to never-sold
+	// ACTIVE items too — see obsoleteItemsPredicate's doc comment.
 	mux.HandleFunc("GET /api/data/obsolete-items", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "data_management") {
 			respond(w, http.StatusForbidden, false, "manager only")
 			return
 		}
-		list, err := data.NewPOSRepo(d.Db).ListObsoleteItems(r.Context(), 200)
+		includeActive := r.URL.Query().Get("include_active") == "1"
+		list, err := data.NewPOSRepo(d.Db).ListObsoleteItems(r.Context(), 200, includeActive)
 		if err != nil {
 			respond(w, http.StatusInternalServerError, false, err.Error())
 			return
@@ -410,13 +424,37 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 
 	// Catalog cleanup: permanently remove the previewed obsolete items.
 	// Step-up re-authentication (ut-docs#1841, ADR-0087) replaces the typed
-	// CLEANUP word.
+	// CLEANUP word. include_active=1 (ut-docs#2281) is the opt-in "wipe a
+	// wrongly imported catalog before go-live" mode — see
+	// obsoleteItemsPredicate's doc comment (pos_repo.go).
 	mux.HandleFunc("POST /api/data/cleanup-catalog", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "data_management") {
 			respond(w, http.StatusForbidden, false, "manager only")
 			return
 		}
 		_ = r.ParseForm()
+		includeActive := r.FormValue("include_active") == "1"
+		// ut-docs#2281 (review finding 1): the LIVE cashier/kiosk basket is
+		// memory-only, so neither the sale_lines nor the held_sales clauses
+		// of the cleanup predicate can see it — a wipe with a line still in
+		// the basket would delete the item, and checkout would then fail
+		// sale_lines' item FK. Same guard shape as remove-demo-catalogue's
+		// demoDataInLiveBasket (settings_page.go, ut-docs#633/#746), same
+		// accepted non-atomicity (one request wide). Checked BEFORE the PIN
+		// prompt so a manager is never asked to approve a removal that will
+		// be refused.
+		if kind, err := cleanupInLiveBasket(r.Context(), d, includeActive); err != nil {
+			respond(w, http.StatusInternalServerError, false, err.Error())
+			return
+		} else if kind != noBasketMatch {
+			locale := httpx.ResolveLocale(w, r)
+			key := "settings.data.catalog_in_basket_cashier"
+			if kind == kioskBasketMatch {
+				key = "settings.data.catalog_in_basket_kiosk"
+			}
+			respond(w, http.StatusConflict, false, httpx.T(locale, key))
+			return
+		}
 		elev := checkStepUp(d, r, "data_management", r.FormValue("override_pin"))
 		if elev.Outcome != elevated {
 			// The elevation summary states the count (ut-docs#1841's own
@@ -432,22 +470,31 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			// deletion at that moment is the safe answer, and the
 			// operator simply retries.
 			locale := httpx.ResolveLocale(w, r)
-			count, cerr := data.NewPOSRepo(d.Db).CountObsoleteItems(r.Context())
+			count, cerr := data.NewPOSRepo(d.Db).CountObsoleteItems(r.Context(), includeActive)
 			if cerr != nil {
 				respond(w, http.StatusInternalServerError, false, cerr.Error())
 				return
 			}
+			summaryKey := "elevation.summary.data_catalog_cleanup"
+			if includeActive {
+				summaryKey = "elevation.summary.data_catalog_cleanup_all"
+			}
 			renderElevationPrompt(w, r, "/api/data/cleanup-catalog", "#cat-msg",
-				fmt.Sprintf(httpx.T(locale, "elevation.summary.data_catalog_cleanup"), count), nil, elev)
+				fmt.Sprintf(httpx.T(locale, summaryKey), count),
+				[]elevationHiddenField{{Name: "include_active", Value: r.FormValue("include_active")}}, elev)
 			return
 		}
 		actorID, blockedActorID := elevationActors(elev)
-		n, err := data.NewPOSRepo(d.Db).CleanupObsoleteItems(r.Context(), actorID, blockedActorID)
+		n, err := data.NewPOSRepo(d.Db).CleanupObsoleteItems(r.Context(), actorID, blockedActorID, includeActive)
 		if err != nil {
 			respond(w, http.StatusInternalServerError, false, err.Error())
 			return
 		}
-		respond(w, http.StatusOK, true, fmt.Sprintf("removed %d obsolete products", n))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{
+			"message": fmt.Sprintf("removed %d obsolete products", n),
+			"removed": n,
+		}, "error": nil})
 	})
 
 	// Dispatch a date-ranged export/report to a SPECIFIC installed export-
@@ -742,4 +789,41 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 	// POST /api/data/import — the import-type counterpart (ut-docs#599),
 	// kept in its own file to spare this one more bulk.
 	registerImportDispatch(mux, d)
+}
+
+// cleanupInLiveBasket reports whether the cashier basket (checked first,
+// like demoDataInLiveBasket) or the self-order kiosk basket still holds a
+// line whose item the catalog cleanup would remove in the given mode
+// (ut-docs#2281 review, finding 1). noBasketMatch when neither does.
+func cleanupInLiveBasket(ctx context.Context, d *common.Deps, includeActive bool) (demoBasketMatch, error) {
+	baskets := []struct {
+		kind demoBasketMatch
+		e    *pos.Service
+	}{
+		{cashierBasketMatch, d.Engine},
+		{kioskBasketMatch, d.KioskEngine},
+	}
+	repo := data.NewPOSRepo(d.Db)
+	for _, b := range baskets {
+		if b.e == nil {
+			continue
+		}
+		var itemIDs, variantIDs []string
+		for _, l := range b.e.Lines() {
+			if l.ItemID != "" {
+				itemIDs = append(itemIDs, l.ItemID)
+			}
+			if l.VariantID != "" {
+				variantIDs = append(variantIDs, l.VariantID)
+			}
+		}
+		hits, err := repo.ObsoleteItemsAmong(ctx, itemIDs, variantIDs, includeActive)
+		if err != nil {
+			return noBasketMatch, err
+		}
+		if len(hits) > 0 {
+			return b.kind, nil
+		}
+	}
+	return noBasketMatch, nil
 }

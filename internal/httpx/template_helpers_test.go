@@ -615,6 +615,37 @@ func TestInitOSKModeValidatesInput(t *testing.T) {
 	}
 }
 
+// ut-docs#2282: the sale-screen prompt-placement setting is published to
+// templates (data-order-type-prompt-mode on <body>) the same fail-safe way
+// InitOSKMode publishes data-osk -- an unrecognized/unset value must never
+// surface as-is (a typo'd or pre-this-card empty settings row would
+// otherwise render an attribute the sale screen's JS doesn't know how to
+// read), it must fall back to "top", the documented default.
+func TestInitOrderTypePromptModeValidatesInput(t *testing.T) {
+	defer InitOrderTypePromptMode("top")
+	InitOrderTypePromptMode("before_item")
+	if got := orderTypePromptModeVal(); got != "before_item" {
+		t.Fatalf("orderTypePromptModeVal = %q; want before_item", got)
+	}
+	InitOrderTypePromptMode("at_pay")
+	if got := orderTypePromptModeVal(); got != "at_pay" {
+		t.Fatalf("orderTypePromptModeVal = %q; want at_pay", got)
+	}
+	InitOrderTypePromptMode("bogus")
+	if got := orderTypePromptModeVal(); got != "top" {
+		t.Fatalf("orderTypePromptModeVal after invalid mode = %q; want top", got)
+	}
+}
+
+func TestOrderTypePromptModeExposedToTemplates(t *testing.T) {
+	defer InitOrderTypePromptMode("top")
+	InitOrderTypePromptMode("at_pay")
+	fn := FuncsFor("en")["ordertypepromptmode"].(func() string)
+	if got := fn(); got != "at_pay" {
+		t.Fatalf("ordertypepromptmode template func = %q; want at_pay", got)
+	}
+}
+
 func TestInitIdleLockConvertsMinutesAndClampsNegative(t *testing.T) {
 	defer InitIdleLock(0)
 	InitIdleLock(5)

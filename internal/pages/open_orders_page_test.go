@@ -213,8 +213,15 @@ func TestOpenOrdersResume_BusyBasketIsAutoParkedThenTargetOpens(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("POST /open-orders/resume = %d, want %d: %s", rec.Code, http.StatusSeeOther, rec.Body.String())
 	}
-	if got := rec.Header().Get("Location"); got != "/" {
-		t.Fatalf("expected a redirect to the sale screen, got %q", got)
+	// ut-docs#2193: the auto-park case must carry an on-screen cue to the
+	// sale screen -- unlike a plain resume (see
+	// TestOpenOrdersResume_SuccessRedirectsToSaleScreenWithBasketLoaded,
+	// still "/"), this redirect auto-parked the cashier's OWN prior sale,
+	// which the fragment path (hold_api.go) already tells the cashier via
+	// hold.toast.parked_and_resumed -- this page's own redirect had no
+	// equivalent until now.
+	if got := rec.Header().Get("Location"); got != "/?msg=hold.toast.parked_and_resumed" {
+		t.Fatalf("expected a redirect to the sale screen carrying the parked-and-resumed notice, got %q", got)
 	}
 	// h1's seeded payload is an empty snapshot ('{}') -- this test is about
 	// which order ends up live and which gets auto-parked, not about line

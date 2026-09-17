@@ -659,14 +659,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// bypass.
 			"androidUpdateSessionAuth": androidUpdateSessionAuthorizes(d, r),
 			"printer":                  printerConfig(r.Context(), d),
-			// ADR-0089 Decision 3: the interim Germany carve-out locks the
-			// receipt-policy control to "always" — read from the same
-			// settings row the save handler and printerConfig key off, not
-			// CurrentState, so a country changed via /api/settings/upsert in
-			// this same session renders consistently with what the save
-			// handler will actually accept.
-			"receiptPolicyLocked": receiptPolicyLockedForCountry(all[common.KeyCountry]),
-			"backups":             listBackupsForUI(d, locale),
+			// ADR-0089 addendum (2026-09-16, ut-docs#2286): Decision 3's DE
+			// lock is rescinded — German shops choose freely among the three
+			// policies. This only decides whether the factual advisory shows
+			// under the control, read from the same settings row the save
+			// handler and printerConfig key off (not CurrentState), so a
+			// country changed via /api/settings/upsert in this same session
+			// renders consistently.
+			"receiptPolicyAdvisoryDE": strings.EqualFold(strings.TrimSpace(all[common.KeyCountry]), "DE"),
+			"backups":                 listBackupsForUI(d, locale),
 			// ut-docs#1613: a restore staged in an earlier visit (or before
 			// a page reload) must still offer its restart trigger here —
 			// otherwise the operator who reloads mid-flow lands back on the
@@ -803,6 +804,39 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		settingsAudit(r, posRepo, elev, "settings", data.SaleDisplayNoSchemeKey, "order_no_scheme_changed",
 			map[string]any{"scheme": scheme})
+		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "plugins.settings.saved"))
+	})
+
+	// Dine-in/takeaway prompt placement (ut-docs#2282): WHEN/WHERE the sale
+	// screen asks the cashier -- top of basket (always visible, the
+	// pre-this-card default), before the first item lands in an empty
+	// basket, or deferred until Pay. Same elevation+audit shape as
+	// order-no-scheme just above, and the same live-republish-after-write
+	// pattern as display-mode (further down this file): the setting must
+	// take effect on THIS till immediately, not just after a restart.
+	mux.HandleFunc("POST /api/settings/order-type-prompt", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = r.ParseForm()
+		mode := strings.TrimSpace(r.Form.Get("mode"))
+		if mode != data.OrderTypePromptModeTop && mode != data.OrderTypePromptModeBeforeItem && mode != data.OrderTypePromptModeAtPay {
+			http.Error(w, "mode must be top, before_item, or at_pay", http.StatusBadRequest)
+			return
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/settings/order-type-prompt", "#order-type-prompt-msg",
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.order_type_prompt"), httpx.T(locale, "settings.order_type_prompt.mode_"+mode)),
+				[]elevationHiddenField{{Name: "mode", Value: mode}}, elev)
+			return
+		}
+		if err := d.Settings.Set(r.Context(), data.OrderTypePromptModeKey, mode); err != nil {
+			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+			return
+		}
+		httpx.InitOrderTypePromptMode(mode)
+		settingsAudit(r, posRepo, elev, "settings", data.OrderTypePromptModeKey, "order_type_prompt_changed",
+			map[string]any{"mode": mode})
 		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "plugins.settings.saved"))
 	})
 
@@ -1286,6 +1320,46 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		settingsRespondSaved(w, r, elev)
 	})
 
+	// ut-docs#2283: whether the sell screen shows the optional "Categories"
+	// tab (a grid of category tiles, each opening an item-picker modal for
+	// that category) — same manager-gated, elevation-wired, persist-a-bool,
+	// no-RuntimeState-field shape as catalog-import-barcode-default just
+	// above: internal/ui/buttons.go's ButtonsHTTP.List reads this same key
+	// fresh on every /ui/buttons render, so it's purely presentational
+	// (which tab renders), never behaviour a sale itself depends on — a
+	// shop that never opens this toggle keeps today's tab bar exactly as
+	// it is, no seeded row required.
+	mux.HandleFunc("POST /api/settings/categories-tab", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		_ = r.ParseForm()
+		b, err := strconv.ParseBool(strings.TrimSpace(r.Form.Get("enabled")))
+		if err != nil {
+			http.Error(w, "enabled must be a boolean", http.StatusBadRequest)
+			return
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			summaryKey := "elevation.summary.categories_tab_off"
+			if b {
+				summaryKey = "elevation.summary.categories_tab_on"
+			}
+			renderElevationPrompt(w, r, "/api/settings/categories-tab", "#categories-tab-msg",
+				httpx.T(locale, summaryKey),
+				[]elevationHiddenField{{Name: "enabled", Value: r.Form.Get("enabled")}}, elev)
+			return
+		}
+		val := "0"
+		if b {
+			val = "1"
+		}
+		if err := d.Settings.Set(r.Context(), data.SellScreenCategoriesTabKey, val); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		settingsAudit(r, posRepo, elev, "settings", data.SellScreenCategoriesTabKey, "categories_tab_changed", map[string]any{"enabled": b})
+		settingsRespondSaved(w, r, elev)
+	})
+
 	// "Sell items without tracking stock" (ut-docs#1843). Same manager-
 	// gated, elevation-wired, persist-a-bool shape as launch-on-startup
 	// above, but this one changes what the till DOES, not just what it
@@ -1536,6 +1610,43 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		d.SetState(st)
 		httpx.InitUIScale(f)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// Sell-screen basket/products divider width for this till's screen
+	// (ut-docs#2308): dragging the divider between the basket and the
+	// product grid resizes both panes live, then saves ONCE on pointer
+	// release via a plain fetch() POST — not htmx, and no
+	// hx-on::after-request reload like every sibling control in this file
+	// (ui-scale/osk above) — an operator mid-drag mid-sale must never lose
+	// their in-progress basket to a page reload. width_rem omitted, empty,
+	// or "0" resets to the built-in default (app.css's own split); this is
+	// the same request shape the divider's own double-tap/double-click
+	// reset AND the Settings -> Display "Reset" button (settings.html) both
+	// send — see common.RuntimeState.BasketPanelWidthRemChanged's own doc
+	// comment for why a plain `>0` guard (UIScale's own shape) can't
+	// support that reset affordance by itself.
+	mux.HandleFunc("POST /api/settings/basket-panel-width", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		raw := strings.TrimSpace(r.Form.Get("width_rem"))
+		st := d.CurrentState()
+		if raw == "" || raw == "0" {
+			st.BasketPanelWidthRem = 0
+			st.BasketPanelWidthRemChanged = true
+		} else {
+			f, err := strconv.ParseFloat(raw, 64)
+			if err != nil || f < common.MinBasketPanelWidthRem || f > common.MaxBasketPanelWidthRem {
+				http.Error(w, fmt.Sprintf("width_rem must be between %g and %g, or 0 to reset", common.MinBasketPanelWidthRem, common.MaxBasketPanelWidthRem), http.StatusBadRequest)
+				return
+			}
+			st.BasketPanelWidthRem = f
+			st.BasketPanelWidthRemChanged = false
+		}
+		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		d.SetState(st)
 		w.WriteHeader(http.StatusNoContent)
 	})
 
@@ -2769,6 +2880,17 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				}
 				setSessionCookie(w, "", -1)
 			}
+		case data.OrderTypePromptModeKey:
+			// ut-docs#2282, same ut-docs#2121 class of gap as display.mode
+			// just above: this generic key/value door needs the identical
+			// live-republish the dedicated POST /api/settings/order-type-
+			// prompt handler does right after its own d.Settings.Set, or the
+			// sale screen's data-order-type-prompt-mode attribute (and so
+			// the intercept behaviour it drives) stays stale on THIS till
+			// until it restarts. InitOrderTypePromptMode already falls back
+			// to "top" for anything not one of the three valid values, so no
+			// extra validation is needed here.
+			httpx.InitOrderTypePromptMode(value)
 		}
 		settingsRespondSaved(w, r, elev)
 	})

@@ -257,59 +257,92 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 			}
 			continue
 		}
+		// ut-docs#2280: a ListPluginHookEvents error used to be folded into
+		// the same "continue" as "this plugin genuinely has no hooks" —
+		// the module above still counted as loaded, but ended up with ZERO
+		// registered event subscriptions. That reopens the exact fail-open
+		// ut-docs#2278 closed one layer up: a blocking payment gate
+		// (blockingPaymentEventWithResponseAndID) treats "no subscribers"
+		// as "nothing to check, proceed," so an active payment plugin with
+		// no subscriptions due to a transient DB error let a sale/refund
+		// proceed with no plugin consulted and no error anywhere. Treat
+		// this exactly like a load failure — mark broken, log it, don't
+		// register the plugin as loaded — rather than treat "the lookup
+		// failed" as "there was nothing to look up."
+		events, err := repo.ListPluginHookEvents(ctx, row.ID)
+		if err != nil {
+			logging.L().Errorf("wasm load %s: list hook events: %v", row.ID, err)
+			failed = append(failed, row.ID)
+			if markBroken(ctx, repo, row) {
+				stateChanged = true
+			}
+			continue
+		}
+		if len(events) > 0 {
+			// Authorization events run BLOCKING: the tender waits for the
+			// verdict (docs: wasm-runtime.md payment authorization). ".ask"
+			// events are the generic value-returning hook (EventBus.Ask) — also
+			// blocking, since the caller is waiting on the plugin's answer.
+			// ".refund" events block the same way: a refund's payment leg
+			// (blockingPaymentEventWithResponse in internal/pages/refund_page.go)
+			// waits on the plugin's decline/approve answer before letting the
+			// refund proceed (ut-docs#434).
+			for _, evName := range events {
+				if strings.HasSuffix(evName, ".authorize") || strings.HasSuffix(evName, ".ask") || strings.HasSuffix(evName, ".refund") {
+					bus.SetEventMode(evName, Blocking)
+				}
+			}
+			pluginID := row.ID
+			handle := func(hctx context.Context, ev Event) (json.RawMessage, error) {
+				w.mu.Lock()
+				stale := gen != w.unsubGen
+				w.mu.Unlock()
+				if stale {
+					return nil, nil
+				}
+				resp, err := w.HandleEvent(hctx, pluginID, ev)
+				if err != nil {
+					logging.L().Errorf("wasm %s handling %s: %v", pluginID, ev.Type, err)
+					return nil, err
+				}
+				return resp, nil
+			}
+			// The handler runs synchronously for Blocking events; for the default
+			// non-blocking mode events land on the channel, so drain it too.
+			ch, err := bus.SubscribeWithHandler(ctx, pluginID, events, handle)
+			if err != nil {
+				// ut-docs#2304: this used to be a bare `continue` reached
+				// AFTER the plugin was already counted `loaded` (and healed)
+				// below — a subscribe-time DB error (HasActiveHook, reading
+				// the same plugin_hooks table ListPluginHookEvents just read
+				// successfully) left the plugin marked 'installed' with zero
+				// registered subscriptions: the identical silent fail-open
+				// ut-docs#2280 closed one step earlier in this same loop,
+				// just reached through the subscribe call instead. Treat it
+				// identically — mark broken, log, and do not count this
+				// plugin as loaded.
+				logging.L().Errorf("wasm subscribe %s: %v", pluginID, err)
+				failed = append(failed, row.ID)
+				if markBroken(ctx, repo, row) {
+					stateChanged = true
+				}
+				continue
+			}
+			w.wg.Add(1)
+			go func() {
+				defer w.wg.Done()
+				for ev := range ch {
+					_, _ = handle(context.Background(), ev)
+				}
+			}()
+			logging.L().Infof("wasm plugin %s loaded, handling %v", pluginID, events)
+		}
 		loaded = append(loaded, row.ID)
 		if row.InstallState == data.PluginStateBroken {
 			if markHealed(ctx, repo, row) {
 				stateChanged = true
 			}
 		}
-		events, err := repo.ListPluginHookEvents(ctx, row.ID)
-		if err != nil || len(events) == 0 {
-			continue
-		}
-		// Authorization events run BLOCKING: the tender waits for the
-		// verdict (docs: wasm-runtime.md payment authorization). ".ask"
-		// events are the generic value-returning hook (EventBus.Ask) — also
-		// blocking, since the caller is waiting on the plugin's answer.
-		// ".refund" events block the same way: a refund's payment leg
-		// (blockingPaymentEventWithResponse in internal/pages/refund_page.go)
-		// waits on the plugin's decline/approve answer before letting the
-		// refund proceed (ut-docs#434).
-		for _, evName := range events {
-			if strings.HasSuffix(evName, ".authorize") || strings.HasSuffix(evName, ".ask") || strings.HasSuffix(evName, ".refund") {
-				bus.SetEventMode(evName, Blocking)
-			}
-		}
-		pluginID := row.ID
-		handle := func(hctx context.Context, ev Event) (json.RawMessage, error) {
-			w.mu.Lock()
-			stale := gen != w.unsubGen
-			w.mu.Unlock()
-			if stale {
-				return nil, nil
-			}
-			resp, err := w.HandleEvent(hctx, pluginID, ev)
-			if err != nil {
-				logging.L().Errorf("wasm %s handling %s: %v", pluginID, ev.Type, err)
-				return nil, err
-			}
-			return resp, nil
-		}
-		// The handler runs synchronously for Blocking events; for the default
-		// non-blocking mode events land on the channel, so drain it too.
-		ch, err := bus.SubscribeWithHandler(ctx, pluginID, events, handle)
-		if err != nil {
-			logging.L().Errorf("wasm subscribe %s: %v", pluginID, err)
-			continue
-		}
-		w.wg.Add(1)
-		go func() {
-			defer w.wg.Done()
-			for ev := range ch {
-				_, _ = handle(context.Background(), ev)
-			}
-		}()
-		logging.L().Infof("wasm plugin %s loaded, handling %v", pluginID, events)
 	}
 
 	if stateChanged {
@@ -344,14 +377,18 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 	}
 }
 
-// markBroken flips a wasm plugin whose module failed to load to
-// install_state='broken' (ut-docs#368). It deliberately does NOT touch the
-// plugin's install-status record: that record's State tracks the INSTALL
-// lifecycle (Requested/Downloading/Installing/Active/Failed — Failed means
-// "the install attempt itself failed", and the store page renders it as
-// not-installed with a retry affordance), while a plugin that installed
-// fine and later broke at LOAD time is still installed. Demoting the record
-// to Failed also broke convergePluginSet's prune loop (sync_admin.go),
+// markBroken flips a wasm plugin whose module failed to load — or whose
+// module loaded but couldn't be wired up with its event subscriptions,
+// whether the failure is in listing its hooks (ut-docs#2280) or in the
+// subsequent subscribe call itself (ut-docs#2304) — to install_state='broken'
+// (ut-docs#368). It deliberately
+// does NOT touch the plugin's install-status record: that record's State
+// tracks the INSTALL lifecycle (Requested/Downloading/Installing/Active/
+// Failed — Failed means "the install attempt itself failed", and the store
+// page renders it as not-installed with a retry affordance), while a
+// plugin that installed fine and later broke at LOAD time is still
+// installed. Demoting the record to Failed also broke
+// convergePluginSet's prune loop (sync_admin.go),
 // which only prunes Active records — a broken plugin removed on the primary
 // became permanently un-uninstallable on its replicas (round-2 review
 // BLOCKER). plugins.install_state='broken' is the single source of truth

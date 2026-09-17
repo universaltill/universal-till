@@ -24,6 +24,22 @@ func setupFullTestDB(t *testing.T) *sql.DB {
 		// Migration 025 (ADR-0090): ItemIDsWithModifiers reads membership
 		// through the link table, not item_modifier_groups.item_id.
 		`CREATE TABLE item_modifier_group_links (item_id TEXT NOT NULL, group_id TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (item_id, group_id));`,
+		// Migration 031 (ADR-0094): ItemIDsWithModifiers's UNION also reads
+		// category-inherited (non-opted-out) groups, so both new tables must
+		// exist here even where no test row is inserted into them — the
+		// query itself references them unconditionally.
+		`CREATE TABLE category_modifier_group_links (category_id TEXT NOT NULL, group_id TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (category_id, group_id));`,
+		`CREATE TABLE item_modifier_group_opt_outs (item_id TEXT NOT NULL, group_id TEXT NOT NULL, PRIMARY KEY (item_id, group_id));`,
+		// ut-docs#2283: data.SettingsRepo (CategoriesTabEnabled) queries this
+		// table on every /ui/buttons render — absent from the base fixture
+		// because nothing before this card needed it here. Column spelling
+		// copied verbatim from internal/db/migrations/001_init.sql (review
+		// fix: this first landed as "updated_at DATETIME NOT NULL", dropping
+		// the real schema's DEFAULT CURRENT_TIMESTAMP, which would fail any
+		// repo INSERT that legitimately relies on it — a fixture that is
+		// stricter than production only ever costs a confusing false
+		// failure).
+		`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
@@ -150,6 +166,49 @@ func TestButtonStoreLoad_ThumbnailFallbackPriceOrderAndModifiers(t *testing.T) {
 	}
 }
 
+// TestButtonStoreLoad_ExcludesInactiveOrMissingItems pins ut-docs#2281 cause
+// A at the ButtonStore.Load level (the sale-screen grid's actual caller): a
+// shortcut button for a soft-deleted item (is_active=0, e.g. via Catalog
+// "Delete item") must not come back as a tile — it used to, so the tile
+// stayed on the sell screen and tapping it silently did nothing, since
+// POSRepo.ResolveShortcutLineDecoded already filters is_active=1 when
+// resolving the tap. A button whose item row is gone entirely (dangling
+// item_id, no matching items row) must also be dropped, not surfaced with
+// a zeroed-out price.
+func TestButtonStoreLoad_ExcludesInactiveOrMissingItems(t *testing.T) {
+	db := setupFullTestDB(t)
+	defer db.Close()
+
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Coffee', 350, 1)`)
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm2','SKU2','Discontinued Cake', 280, 0)`)
+	mustExec(t, db, `INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('C1','Coffee Tile','itm1',0)`)
+	mustExec(t, db, `INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('D1','Discontinued Tile','itm2',1)`)
+	// Dangling: no matching items row at all.
+	mustExec(t, db, `INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('G1','Ghost Tile','itm-missing',2)`)
+
+	store := NewButtonStore(db)
+	btns, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	byLabel := map[string]Button{}
+	for _, b := range btns {
+		byLabel[b.Label] = b
+	}
+	if _, ok := byLabel["Coffee Tile"]; !ok {
+		t.Fatalf("expected the active item's tile, got %+v", btns)
+	}
+	if _, ok := byLabel["Discontinued Tile"]; ok {
+		t.Fatalf("expected the deactivated item's tile excluded, got %+v", btns)
+	}
+	if _, ok := byLabel["Ghost Tile"]; ok {
+		t.Fatalf("expected a tile whose item row is gone excluded, got %+v", btns)
+	}
+	if len(btns) != 1 {
+		t.Fatalf("expected exactly 1 tile, got %d: %+v", len(btns), btns)
+	}
+}
+
 // Save has no production caller today (the Designer adds/removes/reorders
 // one button at a time) — this pins its replace-all contract so wiring it
 // up later doesn't inherit surprises.
@@ -157,6 +216,14 @@ func TestButtonStoreSave_ReplacesAllAndPersistsOrder(t *testing.T) {
 	db := setupFullTestDB(t)
 	defer db.Close()
 	store := NewButtonStore(db)
+
+	// ut-docs#2281: Load's join now requires a matching active item row, so
+	// seed one per button code used below — this test is about Save/Load's
+	// replace-all + order-persistence mechanics, not item data, so these are
+	// otherwise-unused placeholder items.
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('i1','S1','One', 100, 1)`)
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('i2','S2','Two', 100, 1)`)
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('i3','S3','Three', 100, 1)`)
 
 	if err := store.Save([]Button{
 		{Label: "B", Code: "B1", ItemID: "i1"},

@@ -185,6 +185,14 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		httpx.InitDisplayMode(mode)
 	}
 
+	// ut-docs#2282: publish the dine-in/takeaway prompt-placement setting so
+	// the sale screen's own JS (base.html's data-order-type-prompt-mode)
+	// knows from the very first request whether it owes the cashier an
+	// intercept modal before an item-add/Pay action, same "read straight
+	// from the store, not part of RuntimeState" shape as display.mode above.
+	promptMode, _, _ := setStore.Get(ctx, data.OrderTypePromptModeKey)
+	httpx.InitOrderTypePromptMode(promptMode) // "" (unset) falls back to top
+
 	// Boot sweep: drop THIS till's own live-basket table claims
 	// (ut-docs#1390). The engine constructed just below always starts with an
 	// empty basket, so any of its own table_claims rows still present belong
@@ -451,6 +459,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerDesigner(mux, dp)
 	registerSettings(mux, dp)
 	registerThemes(mux, dp)
+	registerThemeSync(mux, dp) // ut-docs#2343: base.html's every-30s theme-sync poll
 	registerPluginIcons(mux)
 	registerPluginsPage(mux, dp)
 	registerPluginAPI(mux, dp)
@@ -567,13 +576,16 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerCountrySettings(mux, dp)  // per-country defaults (ut-docs#659)
 	registerTranslations(mux, dp, i18n)
 	registerSetup(mux, dp, authSvc)
+	// Boosted navigation (ADR-0098) is addressed per response, innermost so
+	// auth's own HX-Redirect for an expired session is untouched.
+	boosted := httpx.BoostedNavigation(mux)
 	if authDisabled {
 		log.Warnf("UT_AUTH=off — operator login disabled")
-		return recoverMiddleware(mux), dp
+		return recoverMiddleware(boosted), dp
 	}
 	// recoverMiddleware wraps auth.Middleware itself (ut-docs#1271), not just
 	// mux, so a panic anywhere in the chain gets a clean response.
-	return recoverMiddleware(auth.Middleware(mux, authSvc)), dp
+	return recoverMiddleware(auth.Middleware(boosted, authSvc)), dp
 }
 
 // newRederiveSettings builds the shared settings re-derive: everything

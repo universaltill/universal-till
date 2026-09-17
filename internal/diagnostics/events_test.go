@@ -49,6 +49,61 @@ func TestAllowlistedEvents_FieldTypesAreClosed(t *testing.T) {
 	}
 }
 
+// TestEventFieldNamesMatchCloudAllowlist is the field-NAME half of the
+// cross-repo mirror guard (ut-docs#2266) — the type-SET half already exists
+// above via cloudAllowedTypes. It fails if any allowlisted event struct's
+// json-tagged field names diverge from cloudEventFields' registered set for
+// that type, in either direction: a field added here with no matching
+// cloudEventFields entry would be silently rejected by ut-cloud's real
+// eventFieldAllowlist on upload — a 400 that internal/cloudsync/diagnostics.go
+// treats as terminal for that batch, not retried — and a field removed here
+// but left in cloudEventFields is a stale entry that's the earliest sign this
+// mirror has already drifted once.
+//
+// Deliberately does NOT reach across the repo boundary (no go/ast parsing of
+// a sibling ut-cloud checkout, unlike that repo's own
+// TestCanonicalManifestMirrorsPOS) — cloudEventFields is a hand-maintained
+// mirror, same discipline as cloudAllowedTypes, because staying free of any
+// cross-module dependency is the whole point of restating the vocabulary here
+// instead of importing it.
+func TestEventFieldNamesMatchCloudAllowlist(t *testing.T) {
+	if len(allEvents) == 0 {
+		t.Fatal("allEvents registry is empty — nothing is being checked")
+	}
+	emitted := make(map[string]bool, len(allEvents))
+	for _, ev := range allEvents {
+		typ := reflect.TypeOf(ev)
+		emitted[ev.eventType()] = true
+		want, ok := cloudEventFields[ev.eventType()]
+		if !ok {
+			t.Errorf("%s (type %q): no entry in cloudEventFields — add one mirroring ut-cloud's eventFieldAllowlist", typ.Name(), ev.eventType())
+			continue
+		}
+		got := make(map[string]bool, typ.NumField())
+		for i := 0; i < typ.NumField(); i++ {
+			got[jsonName(typ.Field(i))] = true
+		}
+		for name := range got {
+			if !want[name] {
+				t.Errorf("%s field %q has no matching entry in cloudEventFields[%q] — ut-cloud's real eventFieldAllowlist will reject this field with a terminal 400 until both sides are updated", typ.Name(), name, ev.eventType())
+			}
+		}
+		for name := range want {
+			if !got[name] {
+				t.Errorf("cloudEventFields[%q] names %q, which %s no longer declares — remove the stale entry from both sides", ev.eventType(), name, typ.Name())
+			}
+		}
+	}
+	// A cloudEventFields entry for a type no longer in allEvents at all would
+	// never surface in the loop above (which only walks allEvents) — catch it
+	// here so a removed event type's mirror entry doesn't linger unnoticed.
+	for typ := range cloudEventFields {
+		if !emitted[typ] {
+			t.Errorf("cloudEventFields[%q] has no corresponding event in allEvents — remove the orphaned entry", typ)
+		}
+	}
+}
+
 // Violating shapes the checker MUST reject — proves the static check above
 // is not vacuous. Each is the exact class of mistake a future contributor
 // could make: a free-text field with no declaration, a made-up kind, an

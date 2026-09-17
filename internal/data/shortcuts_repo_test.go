@@ -152,3 +152,60 @@ func TestLoadButtons_CarriesItemColor(t *testing.T) {
 		t.Fatalf("expected empty Color for an item with no color set, got %q", got)
 	}
 }
+
+// TestLoadButtons_ExcludesInactiveOrMissingItems pins ut-docs#2281 cause A:
+// Catalog "Delete item" is a soft delete (CatalogRepo.DeactivateItem ->
+// is_active=0), but LoadButtons used to return a button for it regardless,
+// so the sell-screen tile stayed put — tapping it silently did nothing,
+// since POSRepo.ResolveShortcutLineDecoded already filters i.is_active = 1
+// when actually resolving a tap. A button whose item row is gone entirely
+// must also be dropped, not surfaced with zeroed-out fields (ON DELETE
+// CASCADE ordinarily removes it with the item; this forces the dangling
+// row directly to pin the join's own defensive behavior too).
+func TestLoadButtons_ExcludesInactiveOrMissingItems(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "shortcuts.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	ctx := context.Background()
+	ex := func(q string, args ...any) {
+		if _, err := d.DB.ExecContext(ctx, q, args...); err != nil {
+			t.Fatalf("seed %q: %v", q, err)
+		}
+	}
+
+	ex(`INSERT INTO items (id, sku, name, base_price, is_active, is_weighed, unit) VALUES ('item-a','SKU-A','Latte',320,1,0,'each')`)
+	ex(`INSERT INTO shortcut_buttons (barcode, item_id, label, sort_order) VALUES ('BTN-A','item-a','Latte',1)`)
+
+	ex(`INSERT INTO items (id, sku, name, base_price, is_active, is_weighed, unit) VALUES ('item-b','SKU-B','Discontinued Cake',280,0,0,'each')`)
+	ex(`INSERT INTO shortcut_buttons (barcode, item_id, label, sort_order) VALUES ('BTN-B','item-b','Discontinued Cake',2)`)
+
+	ex(`PRAGMA foreign_keys = OFF`)
+	ex(`INSERT INTO items (id, sku, name, base_price, is_active, is_weighed, unit) VALUES ('item-c','SKU-C','Ghost',150,1,0,'each')`)
+	ex(`INSERT INTO shortcut_buttons (barcode, item_id, label, sort_order) VALUES ('BTN-C','item-c','Ghost',3)`)
+	ex(`DELETE FROM items WHERE id = 'item-c'`)
+	ex(`PRAGMA foreign_keys = ON`)
+
+	repo := data.NewShortcutsRepo(d.DB)
+	btns, err := repo.LoadButtons(ctx)
+	if err != nil {
+		t.Fatalf("LoadButtons: %v", err)
+	}
+	byLabel := map[string]data.ShortcutButton{}
+	for _, b := range btns {
+		byLabel[b.Label] = b
+	}
+	if _, ok := byLabel["Latte"]; !ok {
+		t.Fatalf("expected the active item's button to load, got %+v", btns)
+	}
+	if _, ok := byLabel["Discontinued Cake"]; ok {
+		t.Fatalf("expected the deactivated item's button excluded, got %+v", btns)
+	}
+	if _, ok := byLabel["Ghost"]; ok {
+		t.Fatalf("expected a button whose item row is gone excluded, got %+v", btns)
+	}
+	if len(btns) != 1 {
+		t.Fatalf("expected exactly 1 button, got %d: %+v", len(btns), btns)
+	}
+}

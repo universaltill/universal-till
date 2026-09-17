@@ -51,6 +51,14 @@
        with modifier groups; closed by its own Cancel/submit handlers. -->
   <dialog id="modifier-modal" class="modifier-modal"></dialog>
 
+  <!-- ut-docs#2339: the ut-docs#2285 per-tile long-press sheet
+       (<dialog id="tile-sheet">) that used to sit here is gone -- a
+       long-press/right-click on a tile now puts the WHOLE grid into an
+       iOS-style jiggle edit mode in place (app.js's utTileJiggle, the
+       .tile-cell badges + .jiggle-bar in web/ui/partials/buttons.html).
+       Nothing overlays the screen, so the nav rail's status/lock/exit stay
+       reachable throughout, same as before. -->
+
   <!-- Name-this-tab step for Hold Sale (ut-docs#46): optional free-text
        label so multiple concurrent held sales read like "Tab 1" instead
        of only a CRM customer name or a bare timestamp. Static (no server
@@ -95,6 +103,41 @@
     </form>
   </dialog>
 
+  <!-- ut-docs#2282: dine-in/takeaway intercept for the "before first item" /
+       "at Pay" prompt placements (Settings → Dine-in/takeaway prompt).
+       Structure copied verbatim from #hold-modal just above
+       (.modifier-modal/.modifier-actions/.btn primary/.btn secondary,
+       non-modal .show()/.close() for the same on-screen-keyboard reason —
+       this dialog needs no typing itself, but the whole sale screen stays
+       consistent on the point). No autofocus on either choice button
+       (#hold-modal's same on-screen-keyboard-popup caution). The two
+       choice buttons reuse the EXISTING basket.order_type.dine_in/takeaway
+       labels (already shipped, already proven not to overflow at
+       ut-docs#1379) rather than minting new ones — only the title and the
+       Settings copy are new keys. web/public/app.js opens this via
+       showOrderTypePromptModal() and resumes whatever action was
+       intercepted once a choice POST to /api/pos/order-type succeeds
+       (same endpoint the always-visible basket-top toggle posts to — this
+       modal is just an earlier, gated way to reach it, not a new one). -->
+  <dialog id="order-type-prompt-modal" class="modifier-modal" aria-labelledby="order-type-prompt-title">
+    <h3 id="order-type-prompt-title">{{ T "basket.order_type.prompt_title" }}</h3>
+    <div class="modifier-actions">
+      <button type="button" class="btn secondary" data-testid="order-type-prompt-cancel"
+              onclick="document.getElementById('order-type-prompt-modal').close();">
+        {{ T "common.cancel" }}</button>
+      <button type="button" class="btn secondary" data-testid="order-type-prompt-dine-in"
+              hx-post="/api/pos/order-type" hx-vals='{{ jsonVals "order_type" "" }}'
+              hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              hx-on::after-request="if (event.detail.successful) { document.getElementById('order-type-prompt-modal').close(); if (window.posOrderTypePromptResolve) window.posOrderTypePromptResolve(); }">
+        🍽️ {{ T "basket.order_type.dine_in" }}</button>
+      <button type="button" class="btn primary" data-testid="order-type-prompt-takeaway"
+              hx-post="/api/pos/order-type" hx-vals='{{ jsonVals "order_type" "takeaway" }}'
+              hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              hx-on::after-request="if (event.detail.successful) { document.getElementById('order-type-prompt-modal').close(); if (window.posOrderTypePromptResolve) window.posOrderTypePromptResolve(); }">
+        🥡 {{ T "basket.order_type.takeaway" }}</button>
+    </div>
+  </dialog>
+
   <!-- ut-docs#2137: opened non-modally with .show(), same reasoning as
        #hold-modal and #payment-overlay above -- showModal()'s inert-outside
        behaviour makes the custom on-screen keyboard untappable, and a kiosk
@@ -108,6 +151,29 @@
     <div class="modifier-actions">
       <button type="button" class="btn secondary"
               onclick="document.getElementById('parked-orders-modal').close();">
+        {{ T "common.close" }}</button>
+    </div>
+  </dialog>
+
+  <!-- ut-docs#2283: the Categories tab's item-picker modal — same shell as
+       #parked-orders-modal just above (.modifier-modal frame, non-modal
+       .show(), OSK stays reachable), populated client-side by
+       buttons.html's openCategoryPicker() (cloned already-rendered tiles,
+       never a fetch) instead of an hx-get body like parked-orders-modal's
+       own. The title is two parts: a translated, visually-hidden prefix
+       (this dialog can hold ANY category, so one static heading can't name
+       it) plus the tapped category's own name — merchant data, not a
+       translation concern, set as plain text via .textContent, never
+       innerHTML. -->
+  <dialog id="category-items-modal" class="modifier-modal category-items-modal"
+          aria-labelledby="category-items-modal-title">
+    <h3 id="category-items-modal-title">
+      <span class="visually-hidden">{{ T "products.categories_modal_title" }}: </span><span id="category-items-modal-name"></span>
+    </h3>
+    <div id="category-items-modal-body" class="category-items-modal-body"></div>
+    <div class="modifier-actions">
+      <button type="button" class="btn secondary"
+              onclick="document.getElementById('category-items-modal').close();">
         {{ T "common.close" }}</button>
     </div>
   </dialog>
@@ -142,9 +208,54 @@
   </div>
   {{ end }}
 
-  <div class="pos-container" data-currency="{{ or .currency "GBP" }}">
+  <!-- ut-docs#2193: one-shot success banner for a redirect that carried
+       "?msg=<key>" (index_page.go, httpx.QueryMsgKey) -- currently only
+       /open-orders' own resume route on the auto-park case, telling the
+       cashier their own prior sale was parked, same message the sale-screen
+       popup's htmx fragment path already shows (hold_api.go). Dismissible,
+       and gone on any plain revisit -- same one-shot shape as
+       tseKickoffRejected above. -->
+  {{ if .msgKey }}
+  <div class="pos-notice success" role="status" data-testid="resume-notice-banner">
+    <span class="notice-text">{{ T .msgKey }}</span>
+    <button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}">✕</button>
+  </div>
+  {{ end }}
+
+  {{/* ut-docs#2308: `or` (the same idiom .currency uses just above) supplies a
+       float64 0 when basketPanelWidthRem is absent from the data map entirely.
+       A bare `gt .basketPanelWidthRem 0.0` is a HARD render error ("invalid
+       type for comparison") on a nil, and index.html's content block is also
+       rendered by internal/ui.NewRenderer (/ui/buttons, buttons_api.go), whose
+       data map does not carry this key — caught by
+       internal/ui.TestButtonsNewRenderer_WorksFromAnyWorkingDirectory. */}}
+  <div class="pos-container" data-currency="{{ or .currency "GBP" }}"{{ if gt (or .basketPanelWidthRem 0.0) 0.0 }} style="--basket-col-width: {{ .basketPanelWidthRem }}rem;"{{ end }}>
     <!-- Basket loads on page load -->
     <div class="basket" hx-get="/ui/basket" hx-trigger="load" hx-swap="outerHTML"></div>
+
+    <!-- ut-docs#2308: the basket/products divider. Touch-and-hold (~300ms)
+         then drag horizontally (mouse: plain drag, no hold) resizes both
+         panes live; a plain tap or a swipe starting elsewhere never
+         reaches this element at all (it's its own thin grid track, app.css
+         `.pos-container`), so it can never steal a tap meant for a tile or
+         a basket line. Double-tap/double-click resets to the built-in
+         default. Inactive (not rendered as interactive) below the same
+         900px breakpoint `.pos-container` itself stacks at (app.css hides
+         it there with `display: none`). role="separator" so a screen
+         reader announces this as a pane boundary; tabindex="-1" (not "0")
+         because there is no keyboard-operable resize here yet -- a
+         focusable-but-inert stop would be worse than none (deliberate
+         scope cut, see this feature's code review). The self-order kiosk
+         page (web/ui/pages/self_order.html) is a fully separate template
+         that never renders `.pos-container` at all, so no extra kiosk-mode
+         gating is needed here -- see that page's own template for the
+         customer-containment surface this divider would otherwise need
+         disabling on. -->
+    <div class="pos-divider" id="pos-divider" role="separator" aria-orientation="vertical"
+         aria-label="{{ T "pos.divider.label" }}" title="{{ T "pos.divider.label" }}"
+         tabindex="-1" data-testid="pos-divider">
+      <span class="pos-divider-grip" aria-hidden="true"></span>
+    </div>
 
     <!-- Product buttons panel loads on page load -->
     <div class="products" hx-get="/ui/buttons" hx-trigger="load" hx-swap="outerHTML"></div>
@@ -300,9 +411,20 @@
            htmx swap, the same data-attribute-bridge pattern the fee-hint
            and pay-voucher-btn scripts further down already use for an
            element that lives outside the swapped #basket fragment. -->
+      <!-- ut-docs#2282: the "at Pay" placement needs first refusal on this
+           tap (open the intercept modal instead, THEN the overlay once
+           answered) -- routed through app.js's posOpenPayment() rather
+           than calling .show() directly here so that gate lives in one
+           place. app.js is a deferred, non-module script loaded in
+           base.html's <head> and always finishes running before body
+           content becomes interactive, so this global is guaranteed to
+           exist by the time a real tap could ever reach it; on the "top"/
+           "before_item" placements (or if the cashier already answered
+           this sale) it's a same-tick passthrough to the original
+           .show(). -->
       <button type="button" class="btn primary payment-trigger" data-testid="payment-open"
               {{ if eq .payItemCount 0 }}disabled{{ end }}
-              onclick="document.getElementById('payment-overlay').show()">
+              onclick="posOpenPayment()">
         {{ if eq .payItemCount 0 }}{{ T "tender.pay_empty" }}{{ else }}{{ printf (T "tender.pay_with_total") (money .payTotal) }}{{ end }}</button>
     </div>
 
@@ -438,7 +560,7 @@
           });
         }
         document.body.addEventListener('htmx:afterSwap', refresh);
-        document.addEventListener('DOMContentLoaded', refresh);
+        UT.ready(refresh);
       })();
       // Pay-with-voucher button (ut-docs#1833): shown/relabeled off the
       // #basket fragment's own data-voucher-* attributes (basket.html) --
@@ -465,7 +587,7 @@
           btn.hidden = false;
         }
         document.body.addEventListener('htmx:afterSwap', refresh);
-        document.addEventListener('DOMContentLoaded', refresh);
+        UT.ready(refresh);
       })();
       // Payment button empty/non-empty label + disabled state (ut-docs#1984):
       // the server already renders the correct state at page load
@@ -525,19 +647,205 @@
           window.utTabBarFade(bar);
         }
         document.body.addEventListener('htmx:afterSwap', function () { wire(liveTabBar()); });
-        document.addEventListener('DOMContentLoaded', function () { wire(liveTabBar()); });
+        UT.ready(function () { wire(liveTabBar()); });
         // ut-docs#2032's own cross-breakpoint gap (catalog.html): scroll
         // alone misses a viewport resize/rotation while nothing scrolls.
-        // This script never runs twice, so the guard is belt-and-braces
-        // rather than load-bearing here — kept for the same reason and
-        // the same shape as catalog.html's __catalogTabBarFadeResizeWired,
-        // under its own flag name so the two never collide.
-        if (!window.__saleTabBarFadeResizeWired) {
-          window.__saleTabBarFadeResizeWired = true;
+        // The once-only flag lives on the #ut-page element, not on window:
+        // under the persistent shell (ADR-0098) the shell drops this page's
+        // window listeners when the page is swapped away, so a window flag
+        // would leave the SECOND visit with no listener at all (independent
+        // review, 2026-09-17). Same shape as catalog.html's guard.
+        var pageEl = document.getElementById('ut-page') || document.body;
+        if (!pageEl.__saleTabBarFadeResizeWired) {
+          pageEl.__saleTabBarFadeResizeWired = true;
           var recompute = function () { window.utTabBarFade(liveTabBar()); };
           window.addEventListener('resize', recompute);
           window.addEventListener('orientationchange', recompute);
         }
+      })();
+      // ut-docs#2308: basket/products divider drag. Touch-and-hold (~300ms)
+      // then drag (mouse: plain drag, no hold) resizes the basket column
+      // live via the `--basket-col-width` custom property app.css's
+      // `.pos-container` reads, clamped against the CURRENT container's
+      // real width (adapts to whatever viewport/orientation/ui-scale is
+      // active right now) as well as the fixed CSS floors on both tracks
+      // (the ultimate backstop — see app.css's `--pos-*` tokens). Saved
+      // ONCE per gesture, on release, via a plain fetch() POST — never
+      // htmx, never a form submit — so a drag mid-sale can never trigger
+      // the page navigation/reload that would lose the in-progress basket
+      // (the one hard requirement every other settings control's own
+      // hx-on::after-request reload pattern in this codebase would
+      // violate here).
+      (function () {
+        var divider = document.getElementById('pos-divider');
+        var container = document.querySelector('.pos-container');
+        if (!divider || !container) return;
+        // ut-docs#2308 fix: .basket and .products are each their own
+        // hx-trigger="load" hx-swap="outerHTML" fragment (index.html) --
+        // htmx REPLACES the whole element once that fetch lands, shortly
+        // after this script itself already ran, so an element reference
+        // captured once here would go stale/detached (a detached node's
+        // getBoundingClientRect() is all-zero, which silently broke both
+        // the visual-first check and the live width read the first time
+        // this was tried). Query live at each use instead.
+        function liveBasketEl() { return container.querySelector(':scope > .basket'); }
+        function liveProductsEl() { return container.querySelector(':scope > .products'); }
+        if (!liveBasketEl() || !liveProductsEl()) return;
+
+        function rootVarRem(name, fallback) {
+          var f = parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name));
+          return isNaN(f) ? fallback : f;
+        }
+        function remPx() {
+          return parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+        }
+        var MIN_REM = rootVarRem('--pos-basket-min-w', 22);
+        var MAX_REM = rootVarRem('--pos-basket-max-w', 60);
+        var PRODUCTS_MIN_REM = rootVarRem('--pos-products-min-w', 16.5);
+        var DIVIDER_REM = rootVarRem('--pos-divider-w', 1.5);
+        var HOLD_MS = 300;
+        // A hold/click that drifts this far before it's "armed" (the hold
+        // timer fired, for touch/pen; immediately, for mouse) reads as a
+        // swipe/scroll or a plain click, not a deliberate resize -- and
+        // conversely, staying under it on release is what makes a gesture
+        // a TAP candidate for the double-tap/double-click reset below.
+        var MOVE_THRESHOLD_PX = 8;
+        // A second tap/click within this long of, and this close to, the
+        // first counts as a double-tap/double-click reset.
+        var DOUBLE_TAP_MS = 350;
+
+        function currentBasketWidthRem() {
+          var v = parseFloat(getComputedStyle(container).getPropertyValue('--basket-col-width'));
+          if (!isNaN(v)) return v;
+          var b = liveBasketEl();
+          return b ? b.getBoundingClientRect().width / remPx() : MIN_REM;
+        }
+        function isBasketVisuallyFirst() {
+          // ut-docs#2308: a runtime DOM-rect measurement, not a hardcoded
+          // "basket is always the left pane" assumption -- this single
+          // check is what makes the SAME drag-direction math come out
+          // correct both under RTL (basket renders on the visual right
+          // there, same real-measurement idea as this page's own
+          // focusTab()'s getComputedStyle().direction check above, just
+          // measured directly instead of inferred from `direction`) and
+          // under an external theme plugin (theme-buttons-left,
+          // theme-screen-top -- not present in this checkout, see this
+          // feature's own review notes) that reorders which pane renders
+          // on which side. Whichever pane's left edge is smaller is the
+          // one dragging right should GROW.
+          var b = liveBasketEl(), p = liveProductsEl();
+          if (!b || !p) return true;
+          return b.getBoundingClientRect().left <= p.getBoundingClientRect().left;
+        }
+        function liveMaxRem() {
+          var totalRem = container.getBoundingClientRect().width / remPx();
+          var cap = totalRem - PRODUCTS_MIN_REM - DIVIDER_REM;
+          return Math.max(MIN_REM, Math.min(MAX_REM, cap));
+        }
+        function clampRem(rem) {
+          return Math.max(MIN_REM, Math.min(liveMaxRem(), rem));
+        }
+        function applyWidth(rem) {
+          container.style.setProperty('--basket-col-width', rem + 'rem');
+        }
+        function persist(rem) {
+          var body = new URLSearchParams();
+          body.set('width_rem', rem > 0 ? String(Math.round(rem * 100) / 100) : '0');
+          fetch('/api/settings/basket-panel-width', { method: 'POST', body: body, credentials: 'same-origin' })
+            .catch(function () { /* offline-first: a failed save just means the drag isn't remembered next load -- the resize itself already happened and stays until this page unloads */ });
+        }
+        function resetToDefault() {
+          container.style.removeProperty('--basket-col-width');
+          persist(0);
+        }
+        function isActive() {
+          // Inert below the same breakpoint app.css hides the divider at
+          // (display: none there means no pointer event reaches here in
+          // the first place) -- this is a defensive second check, belt-
+          // and-braces against a theme overriding that rule.
+          return getComputedStyle(divider).display !== 'none';
+        }
+
+        var pointerId = null, holdTimer = null, holdFired = false, dragging = false;
+        var downX = 0, downY = 0, startWidthRem = 0, sign = 1;
+        var lastTapTime = 0, lastTapX = 0, lastTapY = 0;
+
+        function cancelHold() {
+          if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+        }
+        function endGesture() {
+          cancelHold();
+          if (pointerId !== null) {
+            try { divider.releasePointerCapture(pointerId); } catch (e) { /* already released/never captured */ }
+          }
+          pointerId = null;
+          dragging = false;
+          divider.classList.remove('dragging');
+        }
+        function maybeDoubleTap(x, y) {
+          var now = Date.now();
+          var isDouble = lastTapTime !== 0 && (now - lastTapTime) < DOUBLE_TAP_MS &&
+            Math.abs(x - lastTapX) < 24 && Math.abs(y - lastTapY) < 24;
+          if (isDouble) {
+            lastTapTime = 0; // consumed -- a third quick tap starts fresh, not a re-trigger
+          } else {
+            lastTapTime = now; lastTapX = x; lastTapY = y;
+          }
+          return isDouble;
+        }
+
+        divider.addEventListener('pointerdown', function (e) {
+          if (!isActive() || pointerId !== null) return;
+          if (e.pointerType === 'mouse' && e.button !== 0) return;
+          pointerId = e.pointerId;
+          downX = e.clientX; downY = e.clientY;
+          dragging = false;
+          startWidthRem = currentBasketWidthRem();
+          sign = isBasketVisuallyFirst() ? 1 : -1;
+          try { divider.setPointerCapture(pointerId); } catch (err) { /* fine without it, just less robust off-element */ }
+          if (e.pointerType === 'touch' || e.pointerType === 'pen') {
+            holdFired = false;
+            holdTimer = setTimeout(function () { holdTimer = null; holdFired = true; }, HOLD_MS);
+          } else {
+            // Mouse: plain drag, no hold -- movement alone (below) arms it.
+            holdFired = true;
+          }
+        });
+        divider.addEventListener('pointermove', function (e) {
+          if (e.pointerId !== pointerId) return;
+          var dx = e.clientX - downX, dy = e.clientY - downY;
+          if (!holdFired) {
+            // Touch/pen still waiting on the hold timer: real movement
+            // this early is a swipe/scroll starting here, not a
+            // deliberate hold-then-drag -- abandon the whole gesture
+            // rather than let it resize.
+            if (Math.abs(dx) > MOVE_THRESHOLD_PX || Math.abs(dy) > MOVE_THRESHOLD_PX) endGesture();
+            return;
+          }
+          if (!dragging) {
+            if (Math.abs(dx) < MOVE_THRESHOLD_PX && Math.abs(dy) < MOVE_THRESHOLD_PX) return;
+            dragging = true;
+            divider.classList.add('dragging');
+          }
+          e.preventDefault();
+          applyWidth(clampRem(startWidthRem + sign * (dx / remPx())));
+        });
+        function onPointerEnd(e) {
+          if (e.pointerId !== pointerId) return;
+          var wasDragging = dragging;
+          var tapX = e.clientX, tapY = e.clientY;
+          endGesture();
+          if (wasDragging) {
+            persist(currentBasketWidthRem());
+            return;
+          }
+          if (maybeDoubleTap(tapX, tapY)) resetToDefault();
+        }
+        divider.addEventListener('pointerup', onPointerEnd);
+        divider.addEventListener('pointercancel', function (e) {
+          if (e.pointerId !== pointerId) return;
+          endGesture(); // aborted -- no persist, no double-tap credit
+        });
       })();
     </script>
     <!-- ut-docs#925: the split-tender panel's own status/validation copy is
