@@ -1829,3 +1829,193 @@ func TestBuildCloudHooks_WiresUpsertModifierGroup(t *testing.T) {
 	}
 	t.Fatalf("wired UpsertModifierGroup did not create the group, groups = %+v", groups)
 }
+
+// 2026-09-17 review (ut-docs#2322): the dedupe scan reads
+// ListAllGroupsForItem, which deliberately INCLUDES deactivated groups. It
+// must still only treat an ACTIVE same-named group as "already applied" —
+// exactly like cloudUpsertCategory's own `c.IsActive &&` filter. Otherwise
+// a group the merchant retired at the till would block every future
+// cloud-side create of that name forever, while the portal was told the
+// directive applied.
+func TestCloudUpsertModifierGroup_DeactivatedGroupDoesNotBlockCreate(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	modRepo := data.NewModifierRepo(dp.Db)
+
+	if _, err := cloudUpsertModifierGroup(ctx, dp, "itm1", "Extras", false, 0, 1, nil); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	groups, err := modRepo.ListAllGroupsForItem(ctx, "itm1")
+	if err != nil {
+		t.Fatalf("ListAllGroupsForItem: %v", err)
+	}
+	var oldID string
+	for _, g := range groups {
+		if g.Name == "Extras" {
+			oldID = g.ID
+		}
+	}
+	if oldID == "" {
+		t.Fatalf("expected the first Extras group to exist")
+	}
+	// Retire it at the till, the way the local admin editor does.
+	if err := modRepo.UpdateGroup(ctx, oldID, "Extras", false, 0, 1, 0, false); err != nil {
+		t.Fatalf("deactivate: %v", err)
+	}
+
+	msg, err := cloudUpsertModifierGroup(ctx, dp, "itm1", "Extras", false, 0, 1,
+		[]cloudsync.ModifierGroupOption{{Name: "Cheese", PriceDeltaMinor: 150}})
+	if err != nil {
+		t.Fatalf("create after deactivation: %v", err)
+	}
+	if strings.Contains(msg, "already exists") {
+		t.Fatalf("a deactivated group must not count as already applied, msg = %q", msg)
+	}
+	groups, err = modRepo.ListAllGroupsForItem(ctx, "itm1")
+	if err != nil {
+		t.Fatalf("ListAllGroupsForItem: %v", err)
+	}
+	active := 0
+	for _, g := range groups {
+		if g.Name == "Extras" && g.IsActive {
+			active++
+			if len(g.Options) != 1 || g.Options[0].Name != "Cheese" {
+				t.Fatalf("new group's options = %+v", g.Options)
+			}
+		}
+	}
+	if active != 1 {
+		t.Fatalf("expected exactly one ACTIVE Extras group, got %d (all: %+v)", active, groups)
+	}
+}
+
+// 2026-09-17 review (ut-docs#2322): CreateGroup is transactional in itself,
+// but the per-option CreateOption calls after it are separate statements. A
+// real DB error partway through must NOT leave a half-created group behind
+// — the name dedupe would then report the next at-least-once retry as
+// "already exists", cementing the missing options forever. The trigger here
+// stands in for that DB error (SQLITE_BUSY, disk I/O) deterministically.
+func TestCloudUpsertModifierGroup_OptionFailureRollsBackTheGroup(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `
+CREATE TRIGGER trg_test_boom BEFORE INSERT ON item_modifier_options
+WHEN NEW.name = 'BOOM'
+BEGIN
+    SELECT RAISE(ABORT, 'boom');
+END;`); err != nil {
+		t.Fatalf("install failure trigger: %v", err)
+	}
+
+	_, err := cloudUpsertModifierGroup(ctx, dp, "itm1", "Extras", false, 0, 2, []cloudsync.ModifierGroupOption{
+		{Name: "Cheese", PriceDeltaMinor: 150},
+		{Name: "BOOM", PriceDeltaMinor: 200},
+	})
+	if err == nil {
+		t.Fatalf("expected the failing option insert to surface as an error")
+	}
+
+	var groups, options int
+	if err := dp.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM item_modifier_groups WHERE name = 'Extras'`).Scan(&groups); err != nil {
+		t.Fatalf("count groups: %v", err)
+	}
+	if groups != 0 {
+		t.Fatalf("half-created group left behind: %d rows", groups)
+	}
+	if err := dp.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM item_modifier_options WHERE name = 'Cheese'`).Scan(&options); err != nil {
+		t.Fatalf("count options: %v", err)
+	}
+	if options != 0 {
+		t.Fatalf("orphaned option rows left behind: %d", options)
+	}
+	var links int
+	if err := dp.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM item_modifier_group_links WHERE item_id = 'itm1'`).Scan(&links); err != nil {
+		t.Fatalf("count links: %v", err)
+	}
+	if links != 0 {
+		t.Fatalf("orphaned link rows left behind: %d", links)
+	}
+
+	// And the retry (once the fault clears) creates the group cleanly
+	// rather than being waved through by the name dedupe.
+	if _, err := dp.Db.ExecContext(ctx, `DROP TRIGGER trg_test_boom`); err != nil {
+		t.Fatalf("drop failure trigger: %v", err)
+	}
+	if _, err := cloudUpsertModifierGroup(ctx, dp, "itm1", "Extras", false, 0, 2, []cloudsync.ModifierGroupOption{
+		{Name: "Cheese", PriceDeltaMinor: 150},
+		{Name: "BOOM", PriceDeltaMinor: 200},
+	}); err != nil {
+		t.Fatalf("retry after the fault cleared: %v", err)
+	}
+	all, err := data.NewModifierRepo(dp.Db).ListAllGroupsForItem(ctx, "itm1")
+	if err != nil {
+		t.Fatalf("ListAllGroupsForItem: %v", err)
+	}
+	for _, g := range all {
+		if g.Name == "Extras" {
+			if len(g.Options) != 2 {
+				t.Fatalf("retry left an incomplete group: %+v", g.Options)
+			}
+			return
+		}
+	}
+	t.Fatalf("retry did not create the group, groups = %+v", all)
+}
+
+// 2026-09-17 review (ut-docs#2322): a cloud-created group must land inside
+// the same envelope the LOCAL admin creator enforces
+// (catalog/handlers.go's POST /api/catalog/modifier-group): max_select at
+// least 1, and a "required" group asking for at least one pick. The
+// sale-time validator (pos_modifiers_api.go) checks only MinSelect/
+// MaxSelect and never Required, so required+min_select=0 would show the
+// picker's "*" while still letting the pick be skipped server-side.
+func TestCloudUpsertModifierGroup_NormalisesRequiredAndMaxSelect(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudUpsertModifierGroup(ctx, dp, "itm1", "Size", true, 0, 1, nil); err != nil {
+		t.Fatalf("required group: %v", err)
+	}
+	if _, err := cloudUpsertModifierGroup(ctx, dp, "itm1", "Sauce", false, 0, 0, nil); err != nil {
+		t.Fatalf("zero max_select group: %v", err)
+	}
+	groups, err := data.NewModifierRepo(dp.Db).ListAllGroupsForItem(ctx, "itm1")
+	if err != nil {
+		t.Fatalf("ListAllGroupsForItem: %v", err)
+	}
+	byName := map[string]data.ModifierGroup{}
+	for _, g := range groups {
+		byName[g.Name] = g
+	}
+	if g := byName["Size"]; g.MinSelect != 1 || g.MaxSelect != 1 || !g.Required {
+		t.Fatalf("a required group must ask for at least one pick, got %+v", g)
+	}
+	if g := byName["Sauce"]; g.MinSelect != 0 || g.MaxSelect != 1 {
+		t.Fatalf("max_select must be clamped to at least 1, got %+v", g)
+	}
+}
+
+// The till re-validates option names itself rather than trusting the cloud's
+// own check (the cloudsync decoder only TRIMS a name, it does not reject a
+// blank one) — and nothing is written when it refuses.
+func TestCloudUpsertModifierGroup_BlankOptionNameFails(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudUpsertModifierGroup(ctx, dp, "itm1", "Blank Option", false, 0, 1, []cloudsync.ModifierGroupOption{
+		{Name: "Cheese", PriceDeltaMinor: 100},
+		{Name: "   ", PriceDeltaMinor: 0},
+	}); err == nil {
+		t.Fatalf("expected an error for a blank option name")
+	}
+	groups, err := data.NewModifierRepo(dp.Db).ListShopModifierGroups(ctx)
+	if err != nil {
+		t.Fatalf("ListShopModifierGroups: %v", err)
+	}
+	for _, g := range groups {
+		if g.Name == "Blank Option" {
+			t.Fatalf("no group must be created when an option is refused")
+		}
+	}
+}

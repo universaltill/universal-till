@@ -927,9 +927,9 @@ func cloudUpsertCategory(ctx context.Context, d *common.Deps, id, name, color st
 // directive is (requirePrimaryDirective/auditCloudDirective, ut-docs#2353).
 //
 // Directives are at-least-once, so a retried CREATE must not duplicate: an
-// existing group already linked to this item with the same name
-// (case-insensitive, matching cloudUpsertCategory's own dedupe) counts as
-// success and is left untouched — the retry is a no-op, not a silent edit
+// existing ACTIVE group already linked to this item with the same name
+// (case-insensitive, matching cloudUpsertCategory's own active-only dedupe)
+// counts as success and is left untouched — the retry is a no-op, not a silent edit
 // of a group the merchant may have changed locally since. The idempotency
 // scan and the item-existence check both run BEFORE the primary gate, same
 // reasoning as cloudCreateItem/cloudUpsertCategory: a replica replaying an
@@ -941,10 +941,14 @@ func cloudUpsertCategory(ctx context.Context, d *common.Deps, id, name, color st
 // too, but this till does not trust that — "validate all external input"),
 // mirroring the till's own CHECK constraints
 // (min_select >= 0 AND max_select >= min_select; price_delta_minor >= 0,
-// additive-only per data.ModifierRepo.CreateOption's own rule). Options are
-// created in the given order, their sort_order following that order —
-// zero options is valid, a group may exist with none yet, same as
-// CreateGroup's own rule.
+// additive-only per data.ModifierRepo.CreateOption's own rule), plus the
+// local admin creator's own two normalisations (max_select is clamped to at
+// least 1; a "required" group's min_select is raised to at least 1) so a
+// cloud-created group is always within the same envelope a locally created
+// one is. Options are created in the given order, their sort_order
+// following that order — zero options is valid, a group may exist with none
+// yet, same as CreateGroup's own rule; if an option insert fails partway,
+// the whole group is rolled back rather than left half-created.
 func cloudUpsertModifierGroup(ctx context.Context, d *common.Deps, itemID, name string, required bool, minSelect, maxSelect int, options []cloudsync.ModifierGroupOption) (string, error) {
 	itemID = strings.TrimSpace(itemID)
 	name = strings.TrimSpace(name)
@@ -954,8 +958,26 @@ func cloudUpsertModifierGroup(ctx context.Context, d *common.Deps, itemID, name 
 	if name == "" {
 		return "", fmt.Errorf("name required")
 	}
-	if minSelect < 0 || maxSelect < 0 || minSelect > maxSelect {
-		return "", fmt.Errorf("min_select must be >= 0 and <= max_select")
+	if minSelect < 0 || maxSelect < 0 {
+		return "", fmt.Errorf("min_select and max_select must be >= 0")
+	}
+	// The same two normalisations the LOCAL admin creator applies
+	// (catalog/handlers.go's POST /api/catalog/modifier-group): a group that
+	// can never be picked from is meaningless, and a "required" group that
+	// asks for zero picks is a contradiction the sale-time validator cannot
+	// enforce — pos_modifiers_api.go checks only MinSelect/MaxSelect, never
+	// Required, so required+min_select=0 would render the picker's "*" and
+	// still let a pick be skipped server-side. Mirrored here so a
+	// cloud-created group can never land in a state the till's own admin UI
+	// would refuse to produce (2026-09-17 review, ut-docs#2322).
+	if maxSelect < 1 {
+		maxSelect = 1
+	}
+	if required && minSelect < 1 {
+		minSelect = 1
+	}
+	if minSelect > maxSelect {
+		return "", fmt.Errorf("min_select must be <= max_select")
 	}
 	for _, opt := range options {
 		if strings.TrimSpace(opt.Name) == "" {
@@ -979,7 +1001,13 @@ func cloudUpsertModifierGroup(ctx context.Context, d *common.Deps, itemID, name 
 		return "", err
 	}
 	for _, g := range existing {
-		if strings.EqualFold(g.Name, name) {
+		// ACTIVE groups only, exactly like cloudUpsertCategory's own dedupe
+		// (`c.IsActive && strings.EqualFold(...)`): ListAllGroupsForItem
+		// deliberately includes deactivated groups, and treating one of
+		// those as "already exists" would refuse a genuinely new create
+		// forever while reporting success to the portal — the merchant's
+		// request silently dropped (2026-09-17 review, ut-docs#2322).
+		if g.IsActive && strings.EqualFold(g.Name, name) {
 			return "modifier group " + g.Name + " already exists on this item", nil
 		}
 	}
@@ -998,6 +1026,20 @@ func cloudUpsertModifierGroup(ctx context.Context, d *common.Deps, itemID, name 
 	}
 	for i, opt := range options {
 		if _, err := modRepo.CreateOption(ctx, uuid.NewString(), groupID, strings.TrimSpace(opt.Name), opt.PriceDeltaMinor, i); err != nil {
+			// CreateGroup wraps its own group+link inserts in one
+			// transaction, but these option inserts are separate
+			// statements, so a real DB error (SQLITE_BUSY, disk I/O) on
+			// option N would leave a HALF-created group behind. That is
+			// worse than a plain partial write here: directives are
+			// at-least-once, and the name dedupe above would then report
+			// the retry as "already exists", cementing the missing options
+			// forever while telling the merchant it worked. Undo the whole
+			// create instead — DeleteGroup cascades the link row and any
+			// options already inserted (foreign_keys is ON, db.go) — so the
+			// retry recreates it cleanly (2026-09-17 review, ut-docs#2322).
+			if derr := modRepo.DeleteGroup(ctx, groupID); derr != nil {
+				log.Printf("[cloudsync] roll back half-created modifier group %s: %v", groupID, derr)
+			}
 			return "", err
 		}
 	}
