@@ -103,6 +103,18 @@ type Hooks struct {
 	// attachment are deliberately out of scope here (need the read-side
 	// StoreSnapshot extension ADR-0095 Decision 2 hasn't shipped yet).
 	UpsertCategory func(ctx context.Context, id, name, color string) (string, error)
+	// UpdateItemDetails handles the "update_item_details" directive
+	// (ut-docs#2324, ADR-0095 Decision 1) — a partial update of an existing
+	// item's sku/description/unit/colour/is_weighed/stock_untracked, through
+	// the same read-modify-write the local admin item editor's
+	// catalogtypes.ItemInput round-trip makes. Each *string/*bool pointer is
+	// nil when its field is ABSENT from the directive's payload, meaning
+	// "leave this field untouched" — not "clear it" or "set false". Only
+	// item_id is required; every other field is optional. Category/brand/
+	// tax-code assignment is deliberately out of scope here (needs the
+	// read-side lookup sync ADR-0095 Decision 2 hasn't shipped yet,
+	// ut-docs#2354).
+	UpdateItemDetails func(ctx context.Context, itemID string, sku, description, unit, color *string, isWeighed, stockUntracked *bool) (string, error)
 	// SetQuickButtonLayout handles the "set_quick_button_layout" directive
 	// (ut-docs#2321, order-only slice of ADR-0095's Decision 1 — per-item
 	// colour/tab reassignment from the cloud panel is explicit deferred
@@ -415,6 +427,47 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", "missing name"
 		}
 		msg, err = hooks.UpsertCategory(ctx, str("id"), name, str("color"))
+	case "update_item_details":
+		if hooks.UpdateItemDetails == nil {
+			return "failed", "update_item_details is not supported on this till"
+		}
+		id := str("item_id")
+		if id == "" {
+			return "failed", "missing item_id"
+		}
+		// Presence-aware readers: str/num/fnum/strs above all return the
+		// zero value when the key is absent, which can't distinguish
+		// "absent" (leave untouched) from "present but empty/false" — the
+		// whole point of this directive's partial-update contract. strp/
+		// boolp instead return nil exactly when the key is missing from
+		// the payload.
+		strp := func(k string) *string {
+			v, ok := d.Payload[k]
+			if !ok {
+				return nil
+			}
+			s, _ := v.(string)
+			s = strings.TrimSpace(s)
+			return &s
+		}
+		boolp := func(k string) *bool {
+			v, ok := d.Payload[k]
+			if !ok {
+				return nil
+			}
+			switch t := v.(type) {
+			case bool:
+				return &t
+			case string:
+				b, err := strconv.ParseBool(strings.TrimSpace(t))
+				if err != nil {
+					return nil
+				}
+				return &b
+			}
+			return nil
+		}
+		msg, err = hooks.UpdateItemDetails(ctx, id, strp("sku"), strp("description"), strp("unit"), strp("color"), boolp("is_weighed"), boolp("stock_untracked"))
 	case "set_quick_button_layout":
 		if hooks.SetQuickButtonLayout == nil {
 			return "failed", "set_quick_button_layout is not supported on this till"

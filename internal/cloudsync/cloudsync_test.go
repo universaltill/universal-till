@@ -545,6 +545,111 @@ func TestApplyUpsertCategory(t *testing.T) {
 	}
 }
 
+// update_item_details (ut-docs#2324, ADR-0095 Decision 1): item_id is
+// required; every other field is optional and the dispatch must hand the
+// hook a nil pointer for anything ABSENT from the payload (not a pointer to
+// the zero value) — that's the whole partial-update contract, so this test
+// checks nil-vs-non-nil precisely rather than just the pointed-to values.
+func TestApplyUpdateItemDetails(t *testing.T) {
+	status, msg := apply(context.Background(), directive{Type: "update_item_details", Payload: map[string]any{"item_id": "itm-1"}}, Hooks{})
+	if status != "failed" || msg != "update_item_details is not supported on this till" {
+		t.Fatalf("nil hook: status=%q msg=%q", status, msg)
+	}
+
+	var calls int
+	var gotID string
+	var gotSKU, gotDesc, gotUnit, gotColor *string
+	var gotWeighed, gotUntracked *bool
+	hooks := Hooks{
+		UpdateItemDetails: func(ctx context.Context, itemID string, sku, description, unit, color *string, isWeighed, stockUntracked *bool) (string, error) {
+			calls++
+			gotID = itemID
+			gotSKU, gotDesc, gotUnit, gotColor = sku, description, unit, color
+			gotWeighed, gotUntracked = isWeighed, stockUntracked
+			return "details updated", nil
+		},
+	}
+
+	// Missing item_id: refused before the hook runs.
+	for _, payload := range []map[string]any{
+		{"sku": "ABC"},
+		{"item_id": "   "},
+		{},
+	} {
+		status, msg = apply(context.Background(), directive{Type: "update_item_details", Payload: payload}, hooks)
+		if status != "failed" || msg != "missing item_id" {
+			t.Fatalf("missing item_id %v: status=%q msg=%q", payload, status, msg)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("hook must not run without item_id, ran %d times", calls)
+	}
+
+	// Only item_id and sku present: every other field must reach the hook
+	// as a nil pointer (absent), not a pointer to "" or false.
+	status, msg = apply(context.Background(), directive{Type: "update_item_details", Payload: map[string]any{"item_id": " itm-1 ", "sku": " NEW-SKU "}}, hooks)
+	if status != "applied" || msg != "details updated" {
+		t.Fatalf("sku-only: status=%q msg=%q", status, msg)
+	}
+	if gotID != "itm-1" {
+		t.Fatalf("item id = %q, want trimmed itm-1", gotID)
+	}
+	if gotSKU == nil || *gotSKU != "NEW-SKU" {
+		t.Fatalf("sku pointer = %v, want non-nil \"NEW-SKU\"", gotSKU)
+	}
+	if gotDesc != nil || gotUnit != nil || gotColor != nil {
+		t.Fatalf("absent fields must be nil: desc=%v unit=%v color=%v", gotDesc, gotUnit, gotColor)
+	}
+	if gotWeighed != nil || gotUntracked != nil {
+		t.Fatalf("absent bool fields must be nil: weighed=%v untracked=%v", gotWeighed, gotUntracked)
+	}
+
+	// Every field present, including explicit falsy/blank values: each
+	// pointer must be non-nil and carry the given value.
+	status, msg = apply(context.Background(), directive{Type: "update_item_details", Payload: map[string]any{
+		"item_id":         "itm-2",
+		"sku":             "",
+		"description":     "A description",
+		"unit":            "kg",
+		"color":           "#0f172a",
+		"is_weighed":      true,
+		"stock_untracked": false,
+	}}, hooks)
+	if status != "applied" || msg != "details updated" {
+		t.Fatalf("all fields: status=%q msg=%q", status, msg)
+	}
+	if gotSKU == nil || *gotSKU != "" {
+		t.Fatalf("explicit blank sku must still be a non-nil pointer, got %v", gotSKU)
+	}
+	if gotDesc == nil || *gotDesc != "A description" {
+		t.Fatalf("description = %v", gotDesc)
+	}
+	if gotUnit == nil || *gotUnit != "kg" {
+		t.Fatalf("unit = %v", gotUnit)
+	}
+	if gotColor == nil || *gotColor != "#0f172a" {
+		t.Fatalf("color = %v", gotColor)
+	}
+	if gotWeighed == nil || *gotWeighed != true {
+		t.Fatalf("is_weighed = %v, want non-nil true", gotWeighed)
+	}
+	if gotUntracked == nil || *gotUntracked != false {
+		t.Fatalf("stock_untracked = %v, want non-nil false", gotUntracked)
+	}
+	if calls != 2 {
+		t.Fatalf("hook ran %d times, want 2", calls)
+	}
+
+	// A hook error is the directive's failure message, same as every type.
+	hooks.UpdateItemDetails = func(context.Context, string, *string, *string, *string, *string, *bool, *bool) (string, error) {
+		return "", errors.New("item not found")
+	}
+	status, msg = apply(context.Background(), directive{Type: "update_item_details", Payload: map[string]any{"item_id": "nope"}}, hooks)
+	if status != "failed" || msg != "item not found" {
+		t.Fatalf("hook error: status=%q msg=%q", status, msg)
+	}
+}
+
 // set_quick_button_layout: dispatch decodes the JSON array payload into an
 // ordered []string and hands it straight to the hook — no per-code
 // validation here (an unrecognized barcode is the hook/repo's concern, same
