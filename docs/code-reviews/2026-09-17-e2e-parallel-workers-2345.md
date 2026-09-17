@@ -97,9 +97,10 @@ threshold.
   Opus review itself (571-572/572 passing; one run's single flake was the
   #423/#548 wedge-scanner race, independently reproduced and fixed as F1);
   1 more after applying F1-F3/F5 (571/572, 1 flaky — the held-sales-chip
-  race that became F7 above); 1 more after fixing F7 — see this PR's own
-  CI run and/or the orchestrator's cycle summary for that result, since
-  this record is being committed while it's still in flight.
+  race that became F7 above); 1 final run after fixing F7: **572/572
+  passed, 0 flaky, 7.2 minutes**, including the exact previously-flaky
+  case (`held-sales chips … at 1024x600 (kiosk floor), 1-3 held sales`)
+  passing cleanly. No leaked ports/processes/temp dirs afterward.
 - No leaked ports/processes/temp dirs after any run, including the one
   run that contained a real failure + worker restart.
 - `go build ./...`, `go vet ./...`, `gofmt -l .` clean. No non-`e2e`
