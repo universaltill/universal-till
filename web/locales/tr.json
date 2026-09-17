@@ -160,6 +160,7 @@
   "bluetoothdevices.scan_help": "Cihazı eşleştirme moduna alın, sonra tarayın. Tarama yaklaşık on saniye sürer ve yalnızca bulduklarını listeler — siz Eşleştir'e dokunana kadar hiçbir şey eşleştirilmez.",
   "bluetoothdevices.scanning": "Taranıyor… yaklaşık on saniye sürer.",
   "bluetoothdevices.title": "Bluetooth cihazları",
+  "buttons.edit_mode.title": "Hızlı satış düğmeleri düzenleniyor — sıralamak için bir kutucuğu sürükleyin",
   "catalog.active": "Etkin",
   "catalog.add_item_btn": "Ürün ekle",
   "catalog.attach_barcode": "Barkod ekle",

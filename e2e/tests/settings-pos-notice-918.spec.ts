@@ -96,10 +96,18 @@ test('customer search progress indicator is plain text and survives past the 2.5
   const msg = page.locator('#cust-msg');
   const q = page.locator('#cust-q');
   await expect(q).toBeVisible();
-  // Stall the response so the progress text has time to be observed —
-  // and to still be there past 2.5s, proving no auto-expire fired.
+  // Hold the response until the test says so, so the progress text has
+  // time to be observed — and is still there past 2.5s, proving no
+  // auto-expire fired. Held by a promise the test releases, NOT a fixed
+  // delay: the earlier 2800ms stall against a 2600ms wait left ~200ms for
+  // the fill, click and two assertions, which a loaded runner blew through
+  // (ut-docs#2345, 4 parallel workers: the real response landed first and
+  // the message had already been replaced by the time the last assertion
+  // ran).
+  let releaseResponse!: () => void;
+  const released = new Promise<void>((r) => (releaseResponse = r));
   await page.route('**/api/data/customers**', async (route) => {
-    await new Promise((r) => setTimeout(r, 2800));
+    await released;
     await route.continue();
   });
   await q.fill('nobody-matches-this');
@@ -110,11 +118,11 @@ test('customer search progress indicator is plain text and survives past the 2.5
   await page.waitForTimeout(2600); // past the 2.5s pos-notice auto-expire window
   await expect(msg).toHaveText('…'); // still there — never became a .pos-notice, so nothing dismissed it
 
-  // Let the stalled (2800ms) handler actually continue the request before
-  // unrouting: unroute does not wait for an in-flight handler, and on a
-  // loaded runner the ~200ms margin above was enough for route.continue()
-  // to land after it and throw "Route is already handled" (seen once while
+  // Let the held handler actually continue the request before unrouting:
+  // unroute does not wait for an in-flight handler, and route.continue()
+  // landing after it throws "Route is already handled" (seen once while
   // driving this spec for ut-docs#1960).
+  releaseResponse();
   await page.waitForResponse('**/api/data/customers**');
   await page.unroute('**/api/data/customers**');
   assertClean();

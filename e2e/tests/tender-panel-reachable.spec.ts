@@ -278,8 +278,18 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
           // Every chip held so far must be reachable once scrolled into view --
           // not just the newest one, since an earlier fix could in principle
           // regress an EARLIER chip while leaving the latest one fine.
-          const chipCount = await page.locator('.held-chip').count();
-          expect(chipCount, `expected ${i + 1} held chip(s) in the DOM`).toBe(i + 1);
+          // ut-docs#2345: #held-sales is NOT part of the /api/pos/hold
+          // response's own #basket swap above -- it refreshes itself via a
+          // SEPARATE `hx-get="/ui/held" hx-trigger="held-changed from:body"`
+          // round trip (internal/pages/hold_api.go), fired off the back of
+          // this same request but not awaited by anything Playwright already
+          // waited on. A bare, one-shot `.count()` right after the modal
+          // closes samples the DOM before that second fetch necessarily
+          // lands -- rare but real under a loaded host (ut-docs#2345's own
+          // 4-worker parallel run hit it live). `toHaveCount` polls instead
+          // of sampling once, so it waits out that second round trip.
+          await expect(page.locator('.held-chip'), `expected ${i + 1} held chip(s) in the DOM`).toHaveCount(i + 1);
+          const chipCount = i + 1;
           for (let c = 0; c < chipCount; c++) {
             const chip = page.locator('.held-chip').nth(c);
             await chip.scrollIntoViewIfNeeded();

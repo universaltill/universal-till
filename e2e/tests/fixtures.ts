@@ -1,9 +1,12 @@
 import { test as base, expect } from '@playwright/test';
 import { drainParkedOrders } from './helpers';
+import { startWorkerTill } from './worker-till';
 
-// ut-docs#1315: every spec in a project shares ONE live till server
-// (`Engine` is a server-side singleton — see playwright.config.ts's
-// `workers: 1` comment), so a spec file that leaves state behind (a
+// ut-docs#1315: every spec in a WORKER shares ONE live till server
+// (`Engine` is a server-side singleton — since ut-docs#2345 the `default`
+// project boots one server per worker, see `workerServerURL` below, and
+// the other projects still share a single static one), so a spec file
+// that leaves state behind (a
 // non-empty basket, a discount, an assigned table) can make an unrelated
 // LATER file's exact-total/exact-copy assertions fail for reasons that
 // have nothing to do with what that file is actually testing.
@@ -31,7 +34,52 @@ import { drainParkedOrders } from './helpers';
 // share state to begin with.
 const resetDoneForFile = new Set<string>();
 
-export const test = base.extend<{ resetPosOncePerFile: void }>({
+// ut-docs#2345: worker-level options/fixtures.
+//  - `e2eWorkerServer` is a project-level OPTION (set via `use:` in
+//    playwright.config.ts). Only the `default` project sets it; every
+//    other project leaves it at the `false` default and is untouched by
+//    the fixture below — same static `baseURL` from its `use:` block,
+//    same `webServer` entry, no behaviour change.
+//  - `workerServerURL` boots one till per WORKER when that option is on
+//    (worker-till.ts: own port, own throwaway data dir, torn down when
+//    the worker ends) and resolves to `undefined` otherwise.
+//  - `baseURL` (Playwright's own, test-scoped option) is then overridden
+//    to prefer the worker's server. It must stay TEST-scoped: Playwright
+//    refuses to re-register a fixture at a different scope (load error
+//    "has already been registered as a { scope: 'test' } fixture"), which
+//    is why the worker server lives in its own fixture and `baseURL` only
+//    forwards it. `page`, `context` and `request` all derive their base
+//    URL from this option, so a `page.goto('/')` and the reset POST
+//    below both land on the worker's own server.
+type WorkerOpts = { e2eWorkerServer: boolean; workerServerURL: string | undefined };
+
+export const test = base.extend<{ resetPosOncePerFile: void }, WorkerOpts>({
+  e2eWorkerServer: [false, { scope: 'worker', option: true }],
+  workerServerURL: [
+    async ({ e2eWorkerServer }, use, workerInfo) => {
+      if (!e2eWorkerServer) {
+        await use(undefined);
+        return;
+      }
+      const till = await startWorkerTill(workerInfo.parallelIndex);
+      try {
+        await use(till.url);
+      } finally {
+        await till.stop();
+      }
+    },
+    // A worker-scoped fixture with no explicit timeout inherits
+    // `workerFixtureTimeout`, which Playwright sets from `project.timeout`
+    // (30_000 here) — well under `worker-till.ts`'s own BOOT_TIMEOUT_MS
+    // (60s), so the fixture itself would kill a slow-but-healthy boot
+    // (cold-cache seeds, or the binary fallback build) before that budget
+    // is ever reached. Match run-till.sh's old `webServer` entry, which
+    // carried its own explicit `timeout: 120_000`.
+    { scope: 'worker', timeout: 120_000 },
+  ],
+  baseURL: async ({ baseURL, workerServerURL }, use) => {
+    await use(workerServerURL ?? baseURL);
+  },
   // ut-docs#2223: every page runs as a reduced-motion user. The product's
   // cross-document View Transitions are switched off under
   // `prefers-reduced-motion: reduce` (CSS in base.html/app.css AND the
@@ -58,10 +106,11 @@ export const test = base.extend<{ resetPosOncePerFile: void }>({
   // own tests are free to build on each other's basket state exactly as
   // before (e.g. tender-panel-reachable.spec.ts holding several sales in
   // a row within one test). Only what a DIFFERENT file left behind gets
-  // cleared. Safe because `playwright.config.ts` pins `workers: 1` for
-  // this project — every file runs sequentially in the same worker
-  // process, so this module-level Set sees every file exactly once
-  // across the whole run.
+  // cleared. Safe with parallel workers (ut-docs#2345): each worker is
+  // its own Node process with its own copy of this module-level Set AND
+  // (on the `default` project) its own till server, and Playwright never
+  // splits one spec file across two workers — so within any one server
+  // every file is still seen exactly once, sequentially.
   //
   // Ordering caveat (found in review, ut-docs#1315): this is a test-scoped
   // auto fixture, and Playwright runs `test.beforeAll` BEFORE test-scoped
