@@ -30,6 +30,16 @@ func setupFullTestDB(t *testing.T) *sql.DB {
 		// query itself references them unconditionally.
 		`CREATE TABLE category_modifier_group_links (category_id TEXT NOT NULL, group_id TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (category_id, group_id));`,
 		`CREATE TABLE item_modifier_group_opt_outs (item_id TEXT NOT NULL, group_id TEXT NOT NULL, PRIMARY KEY (item_id, group_id));`,
+		// ut-docs#2283: data.SettingsRepo (CategoriesTabEnabled) queries this
+		// table on every /ui/buttons render — absent from the base fixture
+		// because nothing before this card needed it here. Column spelling
+		// copied verbatim from internal/db/migrations/001_init.sql (review
+		// fix: this first landed as "updated_at DATETIME NOT NULL", dropping
+		// the real schema's DEFAULT CURRENT_TIMESTAMP, which would fail any
+		// repo INSERT that legitimately relies on it — a fixture that is
+		// stricter than production only ever costs a confusing false
+		// failure).
+		`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {

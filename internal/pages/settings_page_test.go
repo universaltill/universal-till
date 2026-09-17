@@ -2112,6 +2112,7 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 		{"save", http.MethodPost, "/api/settings/save", url.Values{"currency": {"GBP"}}, gateElevation},
 		{"upsert", http.MethodPost, "/api/settings/upsert", url.Values{"key": {"x"}, "value": {"y"}}, gateElevation},
 		{"catalog-import-barcode-default", http.MethodPost, "/api/settings/catalog-import-barcode-default", url.Values{"enabled": {"true"}}, gateElevation},
+		{"categories-tab", http.MethodPost, "/api/settings/categories-tab", url.Values{"enabled": {"true"}}, gateElevation},
 	}
 
 	doReq := func(tc matrixCase, u auth.User) *httptest.ResponseRecorder {

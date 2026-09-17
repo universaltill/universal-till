@@ -61,6 +61,7 @@ internal/pos/pricing.go: unreachable func: appendPriceHistoryItemSQL
 internal/pos/pricing.go: unreachable func: appendPriceHistoryVariantSQL
 internal/pos/pricing.go: unreachable func: resolveCurrentPriceSQL
 internal/pos/service.go: unreachable func: Service.ScanQty
+internal/pos/service.go: unreachable func: Service.SetLineOrderType
 internal/pos/service.go: unreachable func: Service.Tender
 internal/pos/tax.go: unreachable func: BasisPointsTaxEngine.Compute
 internal/pos/tax.go: unreachable func: PercentTaxEngine.Compute

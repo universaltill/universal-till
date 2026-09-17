@@ -1139,34 +1139,17 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		_ = basketView.Render(w, *b)
 	})
 
-	// Per-line order type (ut-docs#1181, ADR-0073 Decision 2): flip ONE
-	// line's dine-in/takeaway mode by LineKey, leaving every other line and
-	// the default for new lines untouched. Unlike the whole-basket endpoint
-	// above, an unknown value is a 400 (the ADR: "rejects an unknown value at
-	// the HTTP boundary") — "mixed" is a summary, never a line value, and a
-	// client sending it has a bug worth surfacing. An unknown key just
-	// re-renders the basket unchanged: a tap on a stale page after the line
-	// was removed must not error the whole basket.
-	mux.HandleFunc("/api/pos/line-order-type", func(w http.ResponseWriter, r *http.Request) {
-		_ = r.ParseForm()
-		key := strings.TrimSpace(r.Form.Get("key"))
-		orderType := r.Form.Get("order_type")
-		if orderType != "" && orderType != pos.OrderTypeTakeaway {
-			http.Error(w, "invalid order_type", http.StatusBadRequest)
-			return
-		}
-		// Flipping the LAST dine-in line to takeaway clears the basket's
-		// table (ADR-0073 D5); the persisted claim goes with it, same
-		// before/after shape as the bulk endpoint above (ut-docs#1390).
-		prevTable := d.Engine.TableID()
-		b, _ := d.Engine.SetLineOrderType(key, orderType)
-		if prevTable != "" && b.TableID == "" {
-			releaseTableClaim(r.Context(), d, repo, prevTable)
-		}
-		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-		basketView, _ := ui.NewBasketView(funcs)
-		_ = basketView.Render(w, *b)
-	})
+	// ut-docs#2282/#2309 (product-owner scope change, outcome 1 taken): the
+	// per-line order-type HTTP endpoint that used to live here
+	// (POST /api/pos/line-order-type, ADR-0073 Decision 2) is REMOVED along
+	// with the cashier-facing per-line control that was its only caller --
+	// order type is sale-level only now (POST /api/pos/order-type above).
+	// pos.Service.SetLineOrderType itself, and the sale_lines.order_type
+	// COLUMN it writes through recomputeTotals, are UNCHANGED and still
+	// covered by internal/pos/order_type_line_test.go -- kept for
+	// history/reporting/DSFinV-K per the issue comment (a resumed held sale
+	// or a synced legacy peer can still carry genuinely different per-line
+	// values even with no cashier-facing way to create new ones).
 
 	// Table assignment (ut-docs#820, ADR-0054): assign the current basket to
 	// a dining table, or clear the assignment when table_id is empty. The

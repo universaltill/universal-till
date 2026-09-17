@@ -414,11 +414,39 @@ func TestTaxHookEmitsPluginAsk(t *testing.T) {
 		t.Fatalf("missing correlation id: %v", miss)
 	}
 	for _, ev := range evs {
-		raw, _ := json.Marshal(ev)
-		if strings.Contains(string(raw), "4321") || strings.Contains(string(raw), "tok_") || strings.Contains(string(raw), "700") {
+		raw := leakScanJSON(t, ev)
+		if strings.Contains(raw, "4321") || strings.Contains(raw, "tok_") || strings.Contains(raw, "700") {
 			t.Fatalf("plugin_ask leaked payload/response content: %s", raw)
 		}
 	}
+}
+
+// leakScanJSON renders a ring event for a "did any payload/response content
+// leak into it" substring scan, with the fields that legitimately carry
+// arbitrary digits stripped first: correlation_id is a random UUID, at/
+// duration_ms/generation are clocks and counters, and a caller names any
+// further random-id field of its own event shape (table_id). Scanning them
+// made the check flaky — main went red on 2026-09-16 because a correlation
+// id happened to contain "700", the rate the test's plugin answers with.
+// Every content-bearing field is still scanned.
+func leakScanJSON(t *testing.T, ev map[string]any, moreVolatile ...string) string {
+	t.Helper()
+	volatile := map[string]bool{"correlation_id": true, "at": true, "duration_ms": true, "generation": true}
+	for _, k := range moreVolatile {
+		volatile[k] = true
+	}
+	scrubbed := make(map[string]any, len(ev))
+	for k, v := range ev {
+		if volatile[k] {
+			continue
+		}
+		scrubbed[k] = v
+	}
+	raw, err := json.Marshal(scrubbed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
 }
 
 // The "clean no_opinion" that motivated ADR-0092 is exactly what must be
@@ -490,8 +518,8 @@ func TestClaimTableWriteThroughEmitsTableAssignment(t *testing.T) {
 		t.Fatalf("second: %v", evs[1])
 	}
 	for _, ev := range evs {
-		raw, _ := json.Marshal(ev)
-		if strings.Contains(string(raw), "Window") || strings.Contains(string(raw), "4321") {
+		raw := leakScanJSON(t, ev, "table_id")
+		if strings.Contains(raw, "Window") || strings.Contains(raw, "4321") {
 			t.Fatalf("table label leaked: %s", raw)
 		}
 	}

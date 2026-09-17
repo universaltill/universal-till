@@ -221,6 +221,12 @@ func (s *Service) RestoreHeld(snap BasketSnapshot, origin HeldOrigin) {
 	// sale was uniformly takeaway; a mixed or dine-in sale defaults to
 	// dine-in (the product's standing default). Never OrderTypeMixed.
 	s.orderType = legacyLineMode
+	// ut-docs#2282: a resumed sale must never re-trigger the "before first
+	// item"/"at Pay" prompt -- whatever lines it carries already had their
+	// order type settled (or it was parked empty, in which case there is
+	// nothing to prompt about yet either way, same as a brand-new basket
+	// until its own first SetOrderType call).
+	s.orderTypeChosen = true
 	s.tableID = snap.TableID
 	s.tableLabel = snap.TableLabel
 	s.applyTablePolicyLocked()

@@ -105,6 +105,41 @@
     </form>
   </dialog>
 
+  <!-- ut-docs#2282: dine-in/takeaway intercept for the "before first item" /
+       "at Pay" prompt placements (Settings → Dine-in/takeaway prompt).
+       Structure copied verbatim from #hold-modal just above
+       (.modifier-modal/.modifier-actions/.btn primary/.btn secondary,
+       non-modal .show()/.close() for the same on-screen-keyboard reason —
+       this dialog needs no typing itself, but the whole sale screen stays
+       consistent on the point). No autofocus on either choice button
+       (#hold-modal's same on-screen-keyboard-popup caution). The two
+       choice buttons reuse the EXISTING basket.order_type.dine_in/takeaway
+       labels (already shipped, already proven not to overflow at
+       ut-docs#1379) rather than minting new ones — only the title and the
+       Settings copy are new keys. web/public/app.js opens this via
+       showOrderTypePromptModal() and resumes whatever action was
+       intercepted once a choice POST to /api/pos/order-type succeeds
+       (same endpoint the always-visible basket-top toggle posts to — this
+       modal is just an earlier, gated way to reach it, not a new one). -->
+  <dialog id="order-type-prompt-modal" class="modifier-modal" aria-labelledby="order-type-prompt-title">
+    <h3 id="order-type-prompt-title">{{ T "basket.order_type.prompt_title" }}</h3>
+    <div class="modifier-actions">
+      <button type="button" class="btn secondary" data-testid="order-type-prompt-cancel"
+              onclick="document.getElementById('order-type-prompt-modal').close();">
+        {{ T "common.cancel" }}</button>
+      <button type="button" class="btn secondary" data-testid="order-type-prompt-dine-in"
+              hx-post="/api/pos/order-type" hx-vals='{{ jsonVals "order_type" "" }}'
+              hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              hx-on::after-request="if (event.detail.successful) { document.getElementById('order-type-prompt-modal').close(); if (window.posOrderTypePromptResolve) window.posOrderTypePromptResolve(); }">
+        🍽️ {{ T "basket.order_type.dine_in" }}</button>
+      <button type="button" class="btn primary" data-testid="order-type-prompt-takeaway"
+              hx-post="/api/pos/order-type" hx-vals='{{ jsonVals "order_type" "takeaway" }}'
+              hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              hx-on::after-request="if (event.detail.successful) { document.getElementById('order-type-prompt-modal').close(); if (window.posOrderTypePromptResolve) window.posOrderTypePromptResolve(); }">
+        🥡 {{ T "basket.order_type.takeaway" }}</button>
+    </div>
+  </dialog>
+
   <!-- ut-docs#2137: opened non-modally with .show(), same reasoning as
        #hold-modal and #payment-overlay above -- showModal()'s inert-outside
        behaviour makes the custom on-screen keyboard untappable, and a kiosk
@@ -118,6 +153,29 @@
     <div class="modifier-actions">
       <button type="button" class="btn secondary"
               onclick="document.getElementById('parked-orders-modal').close();">
+        {{ T "common.close" }}</button>
+    </div>
+  </dialog>
+
+  <!-- ut-docs#2283: the Categories tab's item-picker modal — same shell as
+       #parked-orders-modal just above (.modifier-modal frame, non-modal
+       .show(), OSK stays reachable), populated client-side by
+       buttons.html's openCategoryPicker() (cloned already-rendered tiles,
+       never a fetch) instead of an hx-get body like parked-orders-modal's
+       own. The title is two parts: a translated, visually-hidden prefix
+       (this dialog can hold ANY category, so one static heading can't name
+       it) plus the tapped category's own name — merchant data, not a
+       translation concern, set as plain text via .textContent, never
+       innerHTML. -->
+  <dialog id="category-items-modal" class="modifier-modal category-items-modal"
+          aria-labelledby="category-items-modal-title">
+    <h3 id="category-items-modal-title">
+      <span class="visually-hidden">{{ T "products.categories_modal_title" }}: </span><span id="category-items-modal-name"></span>
+    </h3>
+    <div id="category-items-modal-body" class="category-items-modal-body"></div>
+    <div class="modifier-actions">
+      <button type="button" class="btn secondary"
+              onclick="document.getElementById('category-items-modal').close();">
         {{ T "common.close" }}</button>
     </div>
   </dialog>
@@ -148,6 +206,20 @@
   {{ if .tseKickoffRejected }}
   <div class="pos-notice error" role="alert" data-testid="tse-kickoff-rejected-banner">
     <span class="notice-text">{{ if .tseKickoffRejected.ReasonKey }}{{ printf (T .tseKickoffRejected.MessageKey) (T .tseKickoffRejected.ReasonKey) }}{{ else }}{{ T .tseKickoffRejected.MessageKey }}{{ end }} {{ T "settings.tse.see_settings" }}</span>
+    <button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}">✕</button>
+  </div>
+  {{ end }}
+
+  <!-- ut-docs#2193: one-shot success banner for a redirect that carried
+       "?msg=<key>" (index_page.go, httpx.QueryMsgKey) -- currently only
+       /open-orders' own resume route on the auto-park case, telling the
+       cashier their own prior sale was parked, same message the sale-screen
+       popup's htmx fragment path already shows (hold_api.go). Dismissible,
+       and gone on any plain revisit -- same one-shot shape as
+       tseKickoffRejected above. -->
+  {{ if .msgKey }}
+  <div class="pos-notice success" role="status" data-testid="resume-notice-banner">
+    <span class="notice-text">{{ T .msgKey }}</span>
     <button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}">✕</button>
   </div>
   {{ end }}
@@ -341,9 +413,20 @@
            htmx swap, the same data-attribute-bridge pattern the fee-hint
            and pay-voucher-btn scripts further down already use for an
            element that lives outside the swapped #basket fragment. -->
+      <!-- ut-docs#2282: the "at Pay" placement needs first refusal on this
+           tap (open the intercept modal instead, THEN the overlay once
+           answered) -- routed through app.js's posOpenPayment() rather
+           than calling .show() directly here so that gate lives in one
+           place. app.js is a deferred, non-module script loaded in
+           base.html's <head> and always finishes running before body
+           content becomes interactive, so this global is guaranteed to
+           exist by the time a real tap could ever reach it; on the "top"/
+           "before_item" placements (or if the cashier already answered
+           this sale) it's a same-tick passthrough to the original
+           .show(). -->
       <button type="button" class="btn primary payment-trigger" data-testid="payment-open"
               {{ if eq .payItemCount 0 }}disabled{{ end }}
-              onclick="document.getElementById('payment-overlay').show()">
+              onclick="posOpenPayment()">
         {{ if eq .payItemCount 0 }}{{ T "tender.pay_empty" }}{{ else }}{{ printf (T "tender.pay_with_total") (money .payTotal) }}{{ end }}</button>
     </div>
 

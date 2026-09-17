@@ -214,6 +214,38 @@ export async function setOskMode(page: Page, mode: string) {
   await page.waitForEvent('load');
 }
 
+// ut-docs#2282: the dine-in/takeaway prompt-placement setting is a SERVER-
+// side setting shared by every spec on this server, same as OSK mode above
+// -- callers must restore 'top' (the default) in an afterEach even when the
+// test body fails, or a failed run leaks e.g. before_item/at_pay into
+// unrelated later specs (this file's own settings-display.png topic among
+// them, whose screenshot stages nothing that would notice a stray modal,
+// but a later sell-screen spec very much would). Same real-select-via-the-
+// real-form shape as setOskMode, not a raw page.request.post: this drives
+// the actual Settings UI once per call site so a regression in the form
+// itself (wrong hx-post path, a select option renamed) fails an e2e spec
+// instead of only the Go-side unit tests.
+export async function setOrderTypePromptMode(page: Page, mode: 'top' | 'before_item' | 'at_pay') {
+  await page.waitForLoadState('load').catch(() => {});
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await page.goto('/settings#settings-order-type-prompt');
+      break;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const isNavigationRace = /interrupted by another navigation|ERR_ABORTED/.test(message);
+      if (!isNavigationRace || attempt >= 3) throw err;
+      await page.waitForLoadState('load').catch(() => {});
+    }
+  }
+  const select = page.locator('form[hx-post="/api/settings/order-type-prompt"] select');
+  await select.selectOption(mode);
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/api/settings/order-type-prompt')),
+    select.locator('..').locator('button[type=submit]').click(),
+  ]);
+}
+
 // Same PIN tests-docs/docs-shots.spec.ts sets during its own first-boot
 // wizard completion, so a shared AUTH-project server (8092) already set up
 // by one spec file in this run still logs in for another.
