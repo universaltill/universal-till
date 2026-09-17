@@ -459,6 +459,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerDesigner(mux, dp)
 	registerSettings(mux, dp)
 	registerThemes(mux, dp)
+	registerThemeSync(mux, dp) // ut-docs#2343: base.html's every-30s theme-sync poll
 	registerPluginIcons(mux)
 	registerPluginsPage(mux, dp)
 	registerPluginAPI(mux, dp)
@@ -575,13 +576,16 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerCountrySettings(mux, dp)  // per-country defaults (ut-docs#659)
 	registerTranslations(mux, dp, i18n)
 	registerSetup(mux, dp, authSvc)
+	// Boosted navigation (ADR-0098) is addressed per response, innermost so
+	// auth's own HX-Redirect for an expired session is untouched.
+	boosted := httpx.BoostedNavigation(mux)
 	if authDisabled {
 		log.Warnf("UT_AUTH=off — operator login disabled")
-		return recoverMiddleware(mux), dp
+		return recoverMiddleware(boosted), dp
 	}
 	// recoverMiddleware wraps auth.Middleware itself (ut-docs#1271), not just
 	// mux, so a panic anywhere in the chain gets a clean response.
-	return recoverMiddleware(auth.Middleware(mux, authSvc)), dp
+	return recoverMiddleware(auth.Middleware(boosted, authSvc)), dp
 }
 
 // newRederiveSettings builds the shared settings re-derive: everything

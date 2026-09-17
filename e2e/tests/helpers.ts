@@ -207,11 +207,19 @@ export async function setOskMode(page: Page, mode: string) {
   }
   const osk = page.locator('form[hx-post="/api/settings/osk"] select');
   await osk.selectOption(mode);
+  // The form's hx-on::after-request does `window.location.reload()` on
+  // success (settings.html), so a fresh `load` always follows the 204 —
+  // but it must be awaited from BEFORE the click, in the same Promise.all
+  // as the response. Registering `waitForEvent('load')` only after the
+  // response resolved left a gap the reload's `load` could land in first,
+  // and then the wait never returned (ut-docs#2345: seen as a 30s hang in
+  // osk-central-guard once 4 parallel workers loaded the event loop —
+  // trace showed the POST answering in 18ms and the wait starting after).
   await Promise.all([
+    page.waitForEvent('load'),
     page.waitForResponse((r) => r.url().includes('/api/settings/osk')),
     osk.locator('..').locator('button[type=submit]').click(),
   ]);
-  await page.waitForEvent('load');
 }
 
 // ut-docs#2282: the dine-in/takeaway prompt-placement setting is a SERVER-
@@ -487,4 +495,61 @@ export async function drainParkedOrders(request: APIRequestContext) {
     await request.post('/api/pos/resume', { form: { id } });
   }
   throw new Error('drainParkedOrders: more than 50 parked orders; refusing to loop further');
+}
+
+// app.js's wedge-scanner buffer resets on any keydown-to-keydown gap over
+// this many ms (`if (now - last > 100) buf = ""`) — keep in sync.
+const SCAN_GAP_MS = 100;
+
+// Emulating a wedge scanner means EVERY keystroke, Enter included, has to
+// land inside app.js's fast-typing window above. `keyboard.type({ delay: 5
+// })` asks for that, but each key is its own CDP round trip, and on a
+// loaded host (ut-docs#2345: parallel e2e workers) a single gap can exceed
+// 100ms — at which point the app, correctly, treats the keystrokes as a
+// human typing: the buffer resets, Enter carries no (or a partial) code,
+// and the test fails on a harness artefact rather than on the product
+// (seen live, ut-docs#423: qty submitted as `3` + the barcode; ut-docs#548:
+// a scan silently dropped after a camera-overlay cycle). So the keydown
+// gaps the page ACTUALLY saw are measured, and an attempt that never
+// reached scanner speed is discarded and redone from a clean basket —
+// bounded, and never asserting an outcome the input didn't earn. `setup`
+// puts the page back in the exact pre-scan state (fresh `/`, focus where
+// the scenario wants it) before each attempt.
+export async function scanAtScannerSpeed(page: Page, barcode: string, setup: () => Promise<void>): Promise<void> {
+  const ATTEMPTS = 3;
+  for (let attempt = 1; ; attempt++) {
+    await setup();
+    await page.evaluate(() => {
+      const w = window as unknown as { __kdGaps: number[]; __kdListener: () => void };
+      let last = 0;
+      w.__kdGaps = [];
+      w.__kdListener = () => {
+        const now = Date.now();
+        if (last) w.__kdGaps.push(now - last);
+        last = now;
+      };
+      window.addEventListener('keydown', w.__kdListener);
+    });
+    // Registered before Enter so it can't miss the response, but only
+    // awaited once the attempt is known to have been scanner-speed: a
+    // reset buffer means Enter hits the scan-row form's own `required`
+    // code input's validation and no request is made at all.
+    const scanResponse = page.waitForResponse((r) => r.url().includes('/api/pos/scan')).catch(() => null);
+    await page.keyboard.type(`${barcode}\n`, { delay: 5 }); // "\n" presses Enter
+    const maxGap = await page.evaluate(() => {
+      const w = window as unknown as { __kdGaps: number[]; __kdListener: () => void };
+      window.removeEventListener('keydown', w.__kdListener);
+      return w.__kdGaps.reduce((m, g) => Math.max(m, g), 0);
+    });
+    if (maxGap <= SCAN_GAP_MS) {
+      await scanResponse;
+      return;
+    }
+    if (attempt >= ATTEMPTS) {
+      throw new Error(
+        `keystrokes never reached wedge-scanner speed in ${ATTEMPTS} attempts (slowest gap ${maxGap}ms > ${SCAN_GAP_MS}ms) — host too loaded to emulate a scanner`,
+      );
+    }
+    await page.request.post('/api/pos/reset');
+  }
 }

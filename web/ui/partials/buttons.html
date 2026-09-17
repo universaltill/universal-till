@@ -21,14 +21,19 @@
 
      buttons-changed (ut-docs#2285) is the same self-refreshing idea for
      the button SET itself, not one item's customization: it's emitted by
-     every successful /api/buttons/move, /api/buttons/remove and
+     every successful /api/buttons/reorder, /api/buttons/remove and
      /api/buttons/add (internal/ui/buttons.go's ButtonsHTTP.Add/Remove and
      internal/pages/buttons_api.go's reorder/move routes) so a tile moved
-     or removed via the sell-screen long-press sheet shows up here on the
-     very next render, same as modifiers-changed already does for a
-     customization change. (An HX-Trigger only dispatches in the requesting
-     document, so a change made on the Designer page in another tab does
-     NOT reach an open sale screen — that still needs a reload, as before.)
+     or removed via the sell-screen long-press sheet, or reordered/removed
+     via the sell screen's own jiggle edit mode (ut-docs#2339, see
+     product-tile below), shows up here on the very next render, same as
+     modifiers-changed already does for a customization change. (An
+     HX-Trigger only dispatches in the requesting document, so a change
+     made on the Designer page in another tab does NOT reach an open sale
+     screen — that still needs a reload, as before.) app.js's utTileJiggle
+     re-enters edit mode on this root's htmx:afterSettle when it was active
+     before the swap, so a Remove from inside edit mode doesn't drop the
+     operator out of it (iOS keeps jiggling after a delete too).
      Both are configuration-change events, never a basket/sale mutation —
      see ut-docs#2294's own query-count test for why that distinction is
      load-bearing: the All grid must re-fetch on either of these, but never
@@ -468,6 +473,24 @@
            above. No x-cloak: q starts '' (search closed) on every fresh
            load, so this is never visible pre-hydration regardless. */}}
       <div id="search-results" class="category-groups" x-show="q"></div>
+      {{/* ut-docs#2339: the jiggle edit mode's Done bar. Hidden at rest;
+           app.js's utTileJiggle unhides it (and adds .jiggle-mode to
+           #buttons-grid below) after a long-press/right-click on a tile,
+           and hides it again on Done / Escape / a tap outside the grid --
+           the one moment the new order is POSTed to /api/buttons/reorder.
+           Sticky at the top of .products' own scroll, so Done is always
+           reachable however far down the grid the drag ended. The label
+           doubles as the live-region announcement of the mode change
+           (aria-live on the bar, role=status: assertive would interrupt
+           the tile's own accessible name mid-read). The Done button is a
+           real <button>, tabbable, so a keyboard user can leave the mode
+           the same way they can move tiles in it (ArrowLeft/ArrowRight on
+           a focused tile -- app.js). common.done is the existing generic
+           key (settings/plugins modals use it too), not a new one. */}}
+      <div class="jiggle-bar" data-testid="jiggle-bar" role="status" aria-live="polite" hidden>
+        <span class="jiggle-bar-title">{{ T "buttons.edit_mode.title" }}</span>
+        <button type="button" class="btn primary compact jiggle-done" data-testid="jiggle-done">{{ T "common.done" }}</button>
+      </div>
       <div id="buttons-grid" class="category-groups" x-show="!q">
         {{ if $flat }}
         {{/* No category-group wrapper here to inherit #422's
@@ -686,14 +709,45 @@
      that actually applies --tile-color as the background; the inline
      style below only ever sets the custom property itself, mirroring how
      --cat-color is set inline per category elsewhere in this file. */}}
+{{/* ut-docs#2339 -- the tile-cell wrapper and its two corner badges.
+
+     Each tile is wrapped in <div class="tile-cell"> that also holds two
+     small circular badges: edit (inline-start corner, a plain link into
+     the catalog's item dialog with return=/ so closing it comes back
+     here) and remove (inline-end corner, the exact same hx-post/hx-confirm
+     /hx-swap="none" the retired ut-docs#2285 sheet's Remove used --
+     buttons-changed from ButtonsHTTP.Remove refreshes this root). They're
+     SIBLINGS of the tile, never children of it: a <button> nested inside
+     the tile's own <button> is invalid HTML the parser actively
+     restructures (it closes the outer button at the nested start tag), so
+     the badges could only ever have been non-interactive spans there.
+     As real <a>/<button> siblings they are tabbable and screen-reader
+     reachable in edit mode, with tile_sheet.edit/.remove reused verbatim
+     as their aria-labels.
+
+     At rest the wrapper is display: contents (app.css .tile-cell) so the
+     tile button itself is still the grid item -- the resting render is
+     pixel-identical to the pre-#2339 grid -- and the badges are
+     display: none. In .jiggle-mode the wrapper becomes the positioned grid
+     cell the badges anchor to. x-show="matches($el)" therefore lives on
+     the WRAPPER (data-name duplicated here for matches()), not the tile:
+     hiding only the inner button would leave an empty positioned cell in
+     the grid while a search is open in edit mode. sectionHasMatch() and
+     openCategoryPicker() still query .btn-tile and still find the
+     buttons; the picker's clone strips x-show off the tile it copies,
+     which is now a no-op, and never copies the wrapper or the badges.
+
+     data-pos is the tile's index in the GLOBAL sort order (ui.ButtonVM.Pos)
+     -- what utTileJiggle needs to rebuild the full list /api/buttons/reorder
+     expects, since this grid's DOM order is grouped by category. */}}
 {{ define "product-tile" }}
   {{ $colored := and (not .ImageURL) .Color }}
+  <div class="tile-cell" data-name="{{ .Label }}" x-show="matches($el)">
   {{ if or .HasModifiers .HasVariants }}
   <button
     class="btn-tile{{ if $colored }} tile-colored{{ end }}"
     data-name="{{ .Label }}"
-    data-code="{{ .Code }}" data-item-id="{{ .ItemID }}"
-    x-show="matches($el)"
+    data-code="{{ .Code }}" data-item-id="{{ .ItemID }}" data-pos="{{ .Pos }}"
     {{ if $colored }}style="--tile-color: {{ .Color }}"{{ end }}
     hx-get="/ui/pos/modifiers?item={{ .ItemID }}&code={{ .Code }}"
     hx-trigger="click"
@@ -708,8 +762,7 @@
   <button
     class="btn-tile{{ if $colored }} tile-colored{{ end }}"
     data-name="{{ .Label }}"
-    data-code="{{ .Code }}" data-item-id="{{ .ItemID }}"
-    x-show="matches($el)"
+    data-code="{{ .Code }}" data-item-id="{{ .ItemID }}" data-pos="{{ .Pos }}"
     {{ if $colored }}style="--tile-color: {{ .Color }}"{{ end }}
     hx-post="/api/pos/scan"
     hx-vals='{{ jsonVals "code" .Code }}'
@@ -722,6 +775,16 @@
     {{ if .Price }}<span class="tile-price">{{ money .Price }}</span>{{ end }}
   </button>
   {{ end }}
+    <span class="tile-badges" role="group" aria-label="{{ T "tile_sheet.aria" }}">
+      <a class="tile-badge tile-badge-edit" data-testid="tile-badge-edit" href="/catalog?item={{ .ItemID }}&return=/"
+         aria-label="{{ T "tile_sheet.edit" }}" title="{{ T "tile_sheet.edit" }}"><span class="tile-badge-dot" aria-hidden="true">{{ icon "pencil" }}</span></a>
+      <button type="button" class="tile-badge tile-badge-remove" data-testid="tile-badge-remove"
+              hx-post="/api/buttons/remove" hx-vals='{{ jsonVals "code" .Code }}'
+              hx-confirm="{{ printf (T "tile_sheet.remove_confirm") .Label }}"
+              hx-swap="none"
+              aria-label="{{ T "tile_sheet.remove" }}" title="{{ T "tile_sheet.remove" }}"><span class="tile-badge-dot" aria-hidden="true">{{ icon "trash-2" }}</span></button>
+    </span>
+  </div>
 {{ end }}
 
 {{/* ut-docs#2294: the sell-screen live search's own results — ButtonsHTTP.

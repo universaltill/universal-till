@@ -3,6 +3,8 @@ package pages
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"html"
 	"io"
 	"io/fs"
 	"net/http"
@@ -135,7 +137,7 @@ func resolvePluginThemeCSS(ctx context.Context, d *common.Deps, key string) stri
 // at. Plugin themes can restyle the POS and reposition the screen panels via
 // the pos-container grid areas.
 func registerThemes(mux *http.ServeMux, d *common.Deps) {
-	mux.HandleFunc("GET /themes/{file}", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /themes/{file}", assetCacheControl(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		file := r.PathValue("file")
 		key := strings.TrimSuffix(file, ".css")
 		// Theme keys are single path segments; reject anything path-like.
@@ -155,10 +157,63 @@ func registerThemes(mux *http.ServeMux, d *common.Deps) {
 		if path := resolvePluginThemeCSS(r.Context(), d, key); path != "" {
 			if _, err := os.Stat(path); err == nil {
 				w.Header().Set("Content-Type", "text/css; charset=utf-8")
+				// A plugin theme's CSS changes on a plugin update with no
+				// process restart and no new `?v=` (base.html versions the
+				// link by the built-in file's mtime, else boot time), so it
+				// must keep revalidating — only built-in themes are
+				// immutable (ADR-0098).
+				w.Header().Set("Cache-Control", "no-cache")
 				http.ServeFile(w, r, path)
 				return
 			}
 		}
 		http.NotFound(w, r)
+	})))
+}
+
+// registerThemeSync wires GET /ui/theme-sync (ut-docs#2343). base.html polls
+// it from every open page every 30s (mirrors GET /ui/pairing-notice's
+// pattern). A theme applied via a cloud set_setting directive (ADR-0018)
+// already lands in d.State the moment the directive is applied (SetSetting
+// -> rederive -> LoadState, cloudsync_wire.go) -- exactly like a local
+// Settings-page change -- so any FUTURE page render already shows it. The
+// gap this closes is a kiosk session that stays on one already-rendered
+// page for hours: the local Settings page forces a refresh with its own
+// window.location.reload() (settings.html), but a directive landing in the
+// background has no client to tell to reload.
+//
+// This unconditionally reports the live theme, every poll -- no
+// query-string round-trip, no server-side "did it change" comparison. The
+// response is a plain, always-body-safe <div id="theme-sync-poll"
+// hx-swap-oob="true" data-theme="...">, NOT the <link> it ultimately
+// updates: an OOB fragment consisting of a bare <link> (or any other
+// head-only element) gets parsed by htmx's DOMParser.parseFromString into a
+// throwaway document's <head>, leaving <body> -- which is all
+// handleOutOfBandSwaps ever scans -- empty, so the swap silently no-ops
+// (verified live in a real browser against this repo's own vendored htmx
+// 1.9.12; independent review of an earlier draft that emitted the <link>
+// directly). Routing the value through a body-safe div's data-theme
+// attribute and letting a small htmx:oobAfterSwap listener (base.html)
+// apply it to #theme-css itself avoids that trap entirely, and also means
+// the client -- not a stale value baked into the poll URL at render time --
+// decides whether anything actually changed, so a settled page stops
+// touching the stylesheet at all once it has caught up (no repeating
+// no-op fetch of /themes/*.css every 30s for the rest of the session).
+//
+// The response div re-asserts hx-get/hx-trigger/hx-swap on itself, not just
+// data-theme -- an OOB swap's default mode is outerHTML, which replaces the
+// ENTIRE element base.html rendered, polling wiring included. Without this,
+// verified live in a real browser: the very first swap silently kills its
+// own polling (the replacement carries no hx-get/hx-trigger at all), so the
+// poll never fires again and every FUTURE theme change is missed. "load" is
+// deliberately not repeated here -- only base.html's initially-rendered div
+// needs it, for the very first poll; every replacement thereafter only
+// needs its own interval to keep going.
+func registerThemeSync(mux *http.ServeMux, d *common.Deps) {
+	mux.HandleFunc("GET /ui/theme-sync", func(w http.ResponseWriter, r *http.Request) {
+		live := d.CurrentState().Theme
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprintf(w, `<div id="theme-sync-poll" hx-swap-oob="true" hx-get="/ui/theme-sync" hx-trigger="every 30s" hx-swap="none" data-theme="%s"></div>`,
+			html.EscapeString(live))
 	})
 }

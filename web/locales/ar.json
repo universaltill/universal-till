@@ -160,6 +160,7 @@
   "bluetoothdevices.scan_help": "ضع الجهاز في وضع الاقتران ثم ابحث. يستغرق البحث نحو عشر ثوانٍ ولا يعرض إلا ما يجده — لا يُقترن أي شيء حتى تضغط على «اقتران».",
   "bluetoothdevices.scanning": "جارٍ البحث… يستغرق نحو عشر ثوانٍ.",
   "bluetoothdevices.title": "أجهزة البلوتوث",
+  "buttons.edit_mode.title": "تحرير أزرار البيع السريع — اسحب زرًا لإعادة الترتيب",
   "catalog.active": "نشط",
   "catalog.add_item_btn": "إضافة صنف",
   "catalog.attach_barcode": "إرفاق باركود",

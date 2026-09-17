@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { scanAtScannerSpeed, watchConsole } from './helpers';
 
 // ut-docs#548: camera barcode/QR scan as an alternative input mode on the
 // cashier sale screen, alongside the existing wedge/HID scanner path
@@ -90,15 +90,17 @@ test.describe('camera barcode scan on the sale screen (ut-docs#548)', () => {
     // Regression check (same class of bug as ut-docs#423): the wedge-scanner
     // keydown path must still work after the camera overlay has opened and
     // closed once — nothing it does may detach or shadow the global listener.
+    // ut-docs#2345: scanAtScannerSpeed (see helpers.ts) measures the actual
+    // keydown gaps and redoes an attempt that fell below wedge-scanner speed
+    // under a loaded (parallel-workers) host, rather than asserting an
+    // outcome a slow CDP round trip never earned — same fix already applied
+    // to ut-docs#423's own spec for the identical pattern.
     const codeInput = page.locator('form.scan-row input[name="code"]');
-    await codeInput.click();
     // Butter 250g (itm009): 001_init.sql seeds '...093', corrected to the
     // real EAN-13 check digit '...098' by migration 031 (ut-docs#191).
-    await page.keyboard.type('2000010000098', { delay: 5 });
-    await Promise.all([
-      page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
-      page.keyboard.press('Enter'),
-    ]);
+    await scanAtScannerSpeed(page, '2000010000098', async () => {
+      await codeInput.click();
+    });
     await expect(page.locator('#basket')).toContainText('Butter 250g');
 
     assertClean();

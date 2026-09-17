@@ -837,7 +837,10 @@ function scheduleToastDismiss(){
   });
 }
 
-document.addEventListener('DOMContentLoaded', scheduleToastDismiss);
+// ADR-0098: app.js loads once per document (defer) -- the readyState guard
+// covers the deferred-script case; boosted arrivals come through afterSwap.
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', scheduleToastDismiss);
+else scheduleToastDismiss();
 document.addEventListener('htmx:afterSwap', scheduleToastDismiss);
 
 // ut-docs#2162: web/ui/layouts/base.html's own <title> only ever renders
@@ -1328,147 +1331,451 @@ function initOfflineOverride(updateFn){
   }, 5000);
 })();
 
-// utTileLongPress (ut-docs#2285): a long-press (~500ms hold, cancelled by
-// >10px movement) or a right-click/contextmenu (desktop, and Android's own
-// long-press-to-contextmenu gesture) on a sell-screen tile opens the
-// tile-actions sheet (#tile-sheet, web/ui/partials/tile_sheet.html)
-// instead of adding the item to the basket. The tricky part: a real
-// long-press still ends in the SAME native 'click' htmx's own
-// hx-trigger="click" scan handler is listening for on the tile (pointerup
-// -> click is the browser's standard sequence, hold or not) — so that
-// click has to be swallowed, in the capture phase, before it ever reaches
-// the tile's own handler, or the item gets added to the basket AND the
-// sheet opens.
+// utTileJiggle (ut-docs#2339): iOS-springboard-style edit mode for the
+// sell-screen quick-button grid. A long-press (~500ms hold, cancelled by
+// >10px movement) or a right-click/contextmenu on a tile puts the WHOLE
+// #buttons-grid into .jiggle-mode: every tile wobbles in place (app.css's
+// ut-jiggle), grows two corner badges (edit = a plain link into the
+// catalog, remove = an hx-post/hx-confirm button -- both server-rendered in
+// buttons.html's product-tile, so entering the mode is a pure class toggle
+// with ZERO network calls), and can be dragged to reorder. Done / Escape /
+// a tap outside the grid exits, and THAT is the one moment the new order
+// is POSTed to /api/buttons/reorder -- never per drag step.
 //
-// Scoped to the SALE screen only: the Designer's own admin tiles
-// (buttons_admin.html) also sit inside a `.products` root and also carry
-// data-code, but that page has no #tile-sheet — and a gesture handler that
-// eats right-click / a slow tap on the Designer's ▲▼ buttons is a real
-// regression, not a harmless no-op (independent review, 2026-09-16). So
-// every entry point below bails when the page has no #tile-sheet.
+// This replaced the ut-docs#2285 per-tile long-press sheet (#tile-sheet,
+// GET /ui/pos/tile-sheet, POST /api/buttons/move -- all gone). The hold
+// detection itself is that card's, unchanged: HOLD_MS/MOVE_CANCEL_PX and
+// the delegated document-level listeners; only what a successful hold DOES
+// changed. Its trailing-click problem is the same too -- a real long-press
+// still ends in the SAME native 'click' htmx's own hx-trigger="click" scan
+// handler is listening for on the tile (pointerup -> click is the browser's
+// standard sequence, hold or not) -- and is solved more simply now: while
+// the mode is on, EVERY click on a tile is eaten in the capture phase,
+// which covers the hold's own trailing click, a tap on a jiggling tile,
+// and a keyboard Enter/Space on a focused one alike. Badges are siblings
+// of the tile, not children (see product-tile), so their clicks are never
+// matched by that check and go through untouched.
+//
+// Drag is Pointer Events, never HTML5 drag-and-drop: WebKitGTK (and
+// browsers generally) never synthesize dragstart/dragover/drop from a
+// touch pointer on the real till hardware -- the reason buttons_admin.html
+// abandoned HTML5 DnD (ut-docs#1221). Same shape as tables.html's
+// floor-plan editor (pointerdown captures the pointer, pointermove tracks
+// it, pointerup/pointercancel commit -- NOT lostpointercapture, see
+// capture() below for why that differs from tables.html), adapted from a
+// freeform XY canvas to a grid: on every move the pointer is hit-tested
+// against the sibling cells of the dragged tile's own .grid, and when it
+// crosses a sibling's midpoint (along the reading direction, so RTL flips
+// for free) the dragged cell is moved before/after it in the DOM -- the
+// siblings reflow live (FLIP-animated on the .tile-cell wrapper, app.css
+// .shuffling) so it reads as tiles sliding out of the way, iOS-style.
+// Reordering is confined to the tile's own .grid: dragging a tile into
+// ANOTHER category's grid would mean re-categorising the item, which is
+// catalog data, not button order -- the Designer/catalog own that.
+//
+// Persisting: /api/buttons/reorder rewrites sort_order = index for EVERY
+// code it's given, so it must get the full global list, and this grid's
+// DOM order is grouped by category, not global. Each tile carries its
+// global index (data-pos, ui.ButtonVM.Pos); orderedCodes() re-deals each
+// .grid's tiles, in their new DOM order, into the set of global slots that
+// same grid already occupied -- so a drag within one category never moves
+// another category's buttons in the Designer's flat list (the outcome the
+// retired sheet's server-side "nearest same-category neighbour" Move had).
+// Only the SET of slots per grid matters, so a stale data-pos after a
+// persisted reorder is harmless; they're refreshed client-side anyway.
+//
+// Scoped to the sale screen by the #buttons-grid ancestor in every
+// selector: the Designer's admin tiles (#buttons-grid-admin) and the
+// Categories-tab item picker's cloned tiles (#category-items-modal,
+// outside #buttons-grid) never match, and the plugin-contributed
+// #plugin-buttons strip is a sibling of the grid, not inside it.
 (function () {
   var HOLD_MS = 500;
   var MOVE_CANCEL_PX = 10;
-  var SWALLOW_MS = 1000; // how long a long-press's own trailing click stays ours to eat
-  var REOPEN_GUARD_MS = 300; // contextmenu/timer race de-dupe (real on Android: OS long-press ~500ms too)
+  var DRAG_START_PX = 3;      // jitter under a resting finger isn't a drag
+  var EDGE_SCROLL_PX = 40;    // auto-scroll band at the products panel's top/bottom
+  var EDGE_SCROLL_STEP = 10;
 
-  var timer = null;
-  var startX = 0, startY = 0, trackedPointerId = null;
-  var suppressed = null; // { code, until } -- the long-press whose trailing click is still pending
-  var lastOpenedCode = null, lastOpenedAt = 0;
+  var active = false;   // edit mode on
+  var dirty = false;    // a reorder happened since the last persist
+  var hold = null;      // { timer, pointerId, x, y, tile } -- an armed long-press
+  var drag = null;      // { tile, cell, pointerId, offX, offY, moved, onLost }
 
-  function sheet() { return document.getElementById('tile-sheet'); }
-  function tileFor(el) {
-    return el && el.closest ? el.closest('.products .btn-tile[data-code]') : null;
-  }
-  function clearHoldTimer() {
-    if (timer) { clearTimeout(timer); timer = null; }
-    trackedPointerId = null;
-  }
-  function openSheet(code) {
-    var now = Date.now();
-    if (code === lastOpenedCode && now - lastOpenedAt < REOPEN_GUARD_MS) return;
-    lastOpenedCode = code; lastOpenedAt = now;
-    var dialog = sheet();
-    if (!dialog || !window.htmx) return;
-    // Blank first, show only on a real 2xx: htmx.ajax's promise resolves on
-    // ANY completed response (a 404 for a tile whose code is gone — stale
-    // tab, item deactivated elsewhere — included) and a 4xx swaps nothing,
-    // so without this the sheet would reopen showing the PREVIOUS tile's
-    // actions and Remove/Move would act on the wrong tile (independent
-    // review, 2026-09-16). An empty dialog is never shown.
-    dialog.innerHTML = '';
-    htmx.ajax('GET', '/ui/pos/tile-sheet?code=' + encodeURIComponent(code), { target: '#tile-sheet', swap: 'innerHTML' })
-      .then(function () { if (dialog.firstElementChild) dialog.show(); });
+  function grid() { return document.getElementById('buttons-grid'); }
+  function bar() { return document.querySelector('.products-finder .jiggle-bar'); }
+  function tileFor(el) { return el && el.closest ? el.closest('#buttons-grid .btn-tile[data-code]') : null; }
+  function badgeFor(el) { return el && el.closest ? el.closest('#buttons-grid .tile-badge') : null; }
+  function isRTL(el) { return getComputedStyle(el).direction === 'rtl'; }
+  function visibleCells(gridEl) {
+    return Array.prototype.filter.call(gridEl.children, function (c) {
+      return c.classList.contains('tile-cell') && c.getClientRects().length > 0;
+    });
   }
 
+  function enter() {
+    var g = grid(), b = bar();
+    if (!g) return;
+    active = true;
+    g.classList.add('jiggle-mode');
+    if (b) b.hidden = false;
+  }
+  function exit() {
+    if (!active) return;
+    endDrag(null);
+    clearHold();
+    active = false;
+    var g = grid(), b = bar();
+    if (g) g.classList.remove('jiggle-mode');
+    if (b) {
+      // Done itself is about to be display:none'd; keep keyboard focus on
+      // the screen rather than letting it fall to <body>.
+      if (b.contains(document.activeElement) && g) {
+        var first = g.querySelector('.btn-tile[data-code]');
+        if (first) first.focus();
+      }
+      b.hidden = true;
+    }
+    if (dirty) { dirty = false; persistOrder(); }
+  }
+
+  // ---- order + persistence ----
+  function orderedCodes() {
+    var tiles = Array.prototype.slice.call(document.querySelectorAll('#buttons-grid .btn-tile[data-code]'));
+    var n = tiles.length;
+    var result = new Array(n), ok = true;
+    var byGrid = [];
+    tiles.forEach(function (t) {
+      var g = t.closest('.grid');
+      var entry = null;
+      for (var i = 0; i < byGrid.length; i++) { if (byGrid[i].grid === g) { entry = byGrid[i]; break; } }
+      if (!entry) { entry = { grid: g, tiles: [] }; byGrid.push(entry); }
+      entry.tiles.push(t);
+    });
+    byGrid.forEach(function (entry) {
+      var slots = entry.tiles.map(function (t) { return parseInt(t.dataset.pos, 10); });
+      if (slots.some(isNaN)) { ok = false; return; }
+      slots.sort(function (a, b) { return a - b; });
+      entry.tiles.forEach(function (t, i) {
+        var slot = slots[i];
+        if (slot < 0 || slot >= n || result[slot] !== undefined) { ok = false; return; }
+        result[slot] = t.dataset.code;
+      });
+    });
+    for (var i = 0; ok && i < n; i++) { if (result[i] === undefined) ok = false; }
+    if (!ok) {
+      // A tile without a usable data-pos (shouldn't happen -- every render
+      // sets it): fall back to plain DOM order. Still a complete list of
+      // every code, just grouped by category in the Designer afterwards.
+      return tiles.map(function (t) { return t.dataset.code; });
+    }
+    return result;
+  }
+  // After a persisted reorder each .grid's tiles own the same slot SET
+  // but in a new order -- re-deal so data-pos stays exact (see the header
+  // for why even a stale one would still have been harmless).
+  function refreshPositions() {
+    var seen = [];
+    Array.prototype.forEach.call(document.querySelectorAll('#buttons-grid .btn-tile[data-code]'), function (t) {
+      var g = t.closest('.grid');
+      if (seen.indexOf(g) !== -1) return;
+      seen.push(g);
+      var tiles = Array.prototype.slice.call(g.querySelectorAll(':scope > .tile-cell > .btn-tile[data-code]'));
+      var slots = tiles.map(function (x) { return parseInt(x.dataset.pos, 10); });
+      if (slots.some(isNaN)) return;
+      slots.sort(function (a, b) { return a - b; });
+      tiles.forEach(function (x, i) { x.dataset.pos = String(slots[i]); });
+    });
+  }
+  function showAlert(text, kind) {
+    var box = document.getElementById('pos-alert');
+    if (!box) return;
+    var msg = text || (kind === 'network' ? box.dataset.msgNetwork : box.dataset.msgServer);
+    box.hidden = false;
+    var span = box.querySelector('.notice-text');
+    if (span) span.textContent = msg || '';
+  }
+  function refetchGrid() {
+    // buttons.html's root listens for this on body and re-renders itself
+    // from the server's (now authoritative) order.
+    if (window.htmx) window.htmx.trigger(document.body, 'buttons-changed');
+  }
+  function persistOrder() {
+    var codes = orderedCodes();
+    if (!codes.length) return Promise.resolve();
+    var body = new URLSearchParams();
+    codes.forEach(function (c) { body.append('codes', c); });
+    // A plain fetch, same as buttons_admin.html's persistOrder: this is
+    // one localhost call to the till's own Go backend, never a cloud
+    // round-trip, so it works fully offline. Not htmx, so the page-level
+    // htmx:responseError banner never sees it -- surfaced by hand below,
+    // with the server's own localized text (a 409 replica refusal says
+    // exactly why) rather than the generic fallback where one exists.
+    return fetch('/api/buttons/reorder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString()
+    }).then(function (res) {
+      if (res.ok) { refreshPositions(); return; }
+      return res.text().then(function (text) {
+        showAlert((text || '').trim(), 'server');
+        refetchGrid(); // the DOM shows an order that never took -- reload it
+      });
+    }).catch(function () {
+      showAlert('', 'network');
+      refetchGrid();
+    });
+  }
+
+  // ---- long-press ----
+  function clearHold() {
+    if (hold) { clearTimeout(hold.timer); hold = null; }
+  }
   document.addEventListener('pointerdown', function (e) {
-    if (!sheet()) return;
+    if (!grid()) return;
+    if (e.button !== undefined && e.button !== 0) return; // right-click: see contextmenu below
+    if (badgeFor(e.target)) return; // a badge tap is that badge's own action, never a hold or a drag
     var tile = tileFor(e.target);
-    if (!tile) return;
-    clearHoldTimer();
-    startX = e.clientX; startY = e.clientY; trackedPointerId = e.pointerId;
-    var code = tile.dataset.code;
-    timer = setTimeout(function () {
-      timer = null;
-      suppressed = { code: code, until: Date.now() + SWALLOW_MS };
+    if (!tile) {
+      // Outside the grid (basket, nav rail, category strip, ...) while
+      // editing: leave the mode -- except the Done bar, whose own button
+      // does that on click. A pointerdown INSIDE the grid but between
+      // tiles (a header, a gap) is neither an exit nor a hold.
+      if (active && !(e.target.closest && (e.target.closest('#buttons-grid') || e.target.closest('.jiggle-bar')))) exit();
+      return;
+    }
+    if (active) { startDrag(e, tile); return; }
+    clearHold();
+    var h = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, tile: tile };
+    h.timer = setTimeout(function () {
+      hold = null;
       if (navigator.vibrate) navigator.vibrate(15);
-      openSheet(code);
+      enter();
+      // The finger is still down on this tile: let the very same gesture
+      // continue straight into a drag (iOS does exactly this), so a hold-
+      // and-slide reorders in one motion instead of hold, lift, press again.
+      startDrag({ pointerId: h.pointerId, clientX: h.x, clientY: h.y, preventDefault: function () {} }, tile);
     }, HOLD_MS);
+    hold = h;
   });
   document.addEventListener('pointermove', function (e) {
-    if (timer === null || e.pointerId !== trackedPointerId) return;
-    if (Math.abs(e.clientX - startX) > MOVE_CANCEL_PX || Math.abs(e.clientY - startY) > MOVE_CANCEL_PX) clearHoldTimer();
+    if (hold && e.pointerId === hold.pointerId &&
+        (Math.abs(e.clientX - hold.x) > MOVE_CANCEL_PX || Math.abs(e.clientY - hold.y) > MOVE_CANCEL_PX)) {
+      clearHold();
+    }
+    onDragMove(e);
   });
-  // pointerup re-arms the swallow window from the RELEASE, not from the
-  // moment the sheet opened: an operator who holds the tile, watches the
-  // sheet appear, reads it for a second and only then lifts their finger
-  // still produces a trailing click at release time, well after the
-  // timer-stamped window would have expired — reproduced live at a 1.8s
-  // hold (independent review, 2026-09-16): sheet open AND item added.
-  // pointerleave is deliberately not listened for: it doesn't bubble, so a
-  // document-level listener never sees a tile's own.
   document.addEventListener('pointerup', function (e) {
-    if (e.pointerId !== trackedPointerId) return;
-    if (suppressed && timer === null) suppressed.until = Date.now() + SWALLOW_MS;
-    clearHoldTimer();
+    if (hold && e.pointerId === hold.pointerId) clearHold();
+    endDrag(e);
   });
   document.addEventListener('pointercancel', function (e) {
-    if (e.pointerId === trackedPointerId) clearHoldTimer();
+    if (hold && e.pointerId === hold.pointerId) clearHold();
+    endDrag(e);
+  });
+  document.addEventListener('contextmenu', function (e) {
+    var tile = tileFor(e.target);
+    if (!tile) return;
+    e.preventDefault(); // desktop right-click, and Android's own long-press-to-contextmenu
+    clearHold();
+    if (!active) enter();
   });
 
   // Capture phase, deliberately: must run BEFORE the tile's own bubbling
-  // hx-trigger="click" handler sees this same click.
+  // hx-trigger="click" handler sees the same click. Eats the hold's
+  // trailing click, taps on jiggling tiles, and keyboard activation alike.
   document.addEventListener('click', function (e) {
-    if (!suppressed) return;
-    var tile = tileFor(e.target);
-    if (tile && tile.dataset.code === suppressed.code && Date.now() < suppressed.until) {
-      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-      suppressed = null;
-    }
+    if (!active) return;
+    if (!tileFor(e.target)) return;
+    e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
   }, true);
 
-  document.addEventListener('contextmenu', function (e) {
-    if (!sheet()) return;
+  // ---- drag ----
+  function startDrag(e, tile) {
+    if (drag) return;
+    e.preventDefault(); // no text selection / native image drag under the finger
+    // Offsets are measured against the CELL, never the tile: the tile
+    // carries the jiggle rotation and, once .dragging, a scale, both of
+    // which skew its own rect; the cell is never transformed and the tile
+    // fills it exactly in edit mode (app.css).
+    var rect = tile.parentElement.getBoundingClientRect();
+    drag = {
+      tile: tile, cell: tile.parentElement, pointerId: e.pointerId,
+      offX: e.clientX - rect.left, offY: e.clientY - rect.top, moved: false
+    };
+    capture();
+  }
+  // Pointer capture is a nicety here (keeps moves coming when the finger
+  // wanders off the grid or out of the window), NOT what ends the drag:
+  // unlike tables.html's node, the dragged cell is moved in the DOM on
+  // every reorder, and that momentary detach makes the browser drop the
+  // capture (lostpointercapture) -- ending the drag on it, as tables.html
+  // does, killed every drag after its first crossing (found by the e2e
+  // spec: [A,B,C] dragged past C ended as [B,A,C]). So the drag ends only
+  // on pointerup/pointercancel, both delegated on document and delivered
+  // whether or not a capture is in effect, and capture is simply
+  // re-acquired after each DOM move (the pointer is still active, so the
+  // browser allows it).
+  function capture() {
+    if (!drag || !drag.tile.setPointerCapture) return;
+    try { drag.tile.setPointerCapture(drag.pointerId); } catch (err) { /* keep dragging uncaptured */ }
+  }
+  function positionDragged(x, y) {
+    var rect = drag.cell.getBoundingClientRect();
+    var dx = x - drag.offX - rect.left, dy = y - drag.offY - rect.top;
+    drag.tile.style.transform = 'translate(' + dx + 'px,' + dy + 'px) scale(1.06)';
+  }
+  function onDragMove(e) {
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    var x = e.clientX, y = e.clientY;
+    if (!drag.moved) {
+      var r = drag.cell.getBoundingClientRect();
+      if (Math.abs(x - drag.offX - r.left) < DRAG_START_PX && Math.abs(y - drag.offY - r.top) < DRAG_START_PX) return;
+      drag.moved = true;
+      drag.tile.classList.add('dragging');
+    }
+    reorderAt(x, y);
+    positionDragged(x, y);
+    edgeScroll(y);
+  }
+  // Move the dragged cell before/after the sibling cell under the pointer
+  // once the pointer has crossed that sibling's midpoint along the reading
+  // direction (a later sibling: past its centre toward the inline-end; an
+  // earlier one: past its centre toward the inline-start).
+  function reorderAt(x, y) {
+    var cell = drag.cell, gridEl = cell.parentElement;
+    if (!gridEl) return;
+    var cells = visibleCells(gridEl);
+    var from = cells.indexOf(cell);
+    if (from === -1) return;
+    var rtl = isRTL(gridEl);
+    for (var i = 0; i < cells.length; i++) {
+      var s = cells[i];
+      if (s === cell) continue;
+      var r = s.getBoundingClientRect();
+      if (x < r.left || x > r.right || y < r.top || y > r.bottom) continue;
+      var midX = r.left + r.width / 2;
+      var towardEnd = rtl ? x < midX : x > midX;
+      var later = i > from;
+      if (later && towardEnd) { moveCell(cells, cell, function () { s.after(cell); }); }
+      else if (!later && !towardEnd) { moveCell(cells, cell, function () { s.before(cell); }); }
+      return;
+    }
+  }
+  // FLIP on the sibling CELLS (the tile buttons carry the jiggle animation
+  // on transform, which would override a FLIP transform set on them).
+  function moveCell(cells, cell, domMove) {
+    var before = cells.filter(function (c) { return c !== cell; }).map(function (c) { return { c: c, r: c.getBoundingClientRect() }; });
+    domMove();
+    dirty = true;
+    if (drag && drag.cell === cell) capture();
+    before.forEach(function (b) {
+      var r2 = b.c.getBoundingClientRect();
+      var dx = b.r.left - r2.left, dy = b.r.top - r2.top;
+      if (!dx && !dy) return;
+      var c = b.c;
+      c.classList.remove('shuffling');
+      c.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+      void c.offsetWidth; // commit the start frame before transitioning
+      c.classList.add('shuffling');
+      c.style.transform = '';
+      c.addEventListener('transitionend', function done() { c.classList.remove('shuffling'); c.removeEventListener('transitionend', done); });
+    });
+  }
+  function edgeScroll(y) {
+    var sc = drag.tile.closest('.products');
+    if (!sc) return;
+    var r = sc.getBoundingClientRect();
+    if (y < r.top + EDGE_SCROLL_PX) sc.scrollTop -= EDGE_SCROLL_STEP;
+    else if (y > r.bottom - EDGE_SCROLL_PX) sc.scrollTop += EDGE_SCROLL_STEP;
+  }
+  function endDrag(e) {
+    if (!drag || (e && e.pointerId !== undefined && e.pointerId !== drag.pointerId)) return;
+    var d = drag; drag = null;
+    d.tile.classList.remove('dragging');
+    d.tile.style.transform = '';
+    if (d.tile.hasPointerCapture && d.tile.hasPointerCapture(d.pointerId)) {
+      try { d.tile.releasePointerCapture(d.pointerId); } catch (err) { /* already released */ }
+    }
+  }
+
+  // ---- keyboard: Escape exits; ArrowLeft/ArrowRight on a focused tile
+  // moves it one place among its visible siblings (DOM step flipped under
+  // RTL, same convention as buttons.html's focusTab), so the reorder the
+  // retired sheet offered by keyboard (Move earlier/later) is still there.
+  document.addEventListener('keydown', function (e) {
+    if (!active) return;
+    if (e.key === 'Escape') { e.preventDefault(); exit(); return; }
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     var tile = tileFor(e.target);
     if (!tile) return;
     e.preventDefault();
-    clearHoldTimer();
-    openSheet(tile.dataset.code);
+    var cell = tile.parentElement, gridEl = cell.parentElement;
+    var cells = visibleCells(gridEl);
+    var i = cells.indexOf(cell);
+    var step = (e.key === 'ArrowRight') ? 1 : -1;
+    if (isRTL(gridEl)) step = -step;
+    var target = cells[i + step];
+    if (i === -1 || !target) return;
+    moveCell(cells, cell, function () { if (step > 0) target.after(cell); else target.before(cell); });
+    tile.focus();
   });
 
-  // Close on an outside pointerdown. dialog.open is false for the
-  // INITIATING long-press's own pointerdown (the sheet hasn't opened yet
-  // at that instant — it opens later, from the timer above), so this
-  // never fights the gesture that's opening it; a pointerdown on anything
-  // else once it IS open (another tile included) closes it, same as any
-  // other click-outside sheet/popover on this screen.
-  document.addEventListener('pointerdown', function (e) {
-    var dialog = sheet();
-    if (!dialog || !dialog.open || dialog.contains(e.target)) return;
-    dialog.close();
-  });
-  document.addEventListener('keydown', function (e) {
-    if (e.key !== 'Escape') return;
-    var dialog = sheet();
-    if (dialog && dialog.open) dialog.close();
-  });
   document.addEventListener('click', function (e) {
-    var btn = e.target.closest ? e.target.closest('[data-close-sheet]') : null;
-    if (btn) { var d = sheet(); if (d) d.close(); }
+    var btn = e.target.closest ? e.target.closest('.jiggle-bar .jiggle-done') : null;
+    if (btn) exit();
   });
 
-  // The sheet's Remove button posts hx-swap="none" (its response body, the
-  // re-rendered Designer admin grid, has nowhere useful to go here) — close
-  // the sheet from here instead, once ITS OWN request (data-closes-sheet)
-  // actually succeeds. Scoped to #tile-sheet so an unrelated htmx request
-  // elsewhere on the page can never close this.
-  document.body.addEventListener('htmx:afterRequest', function (e) {
+  // The edit badge is a plain <a href> into the catalog: following it tears
+  // this document down, which would silently discard an unsaved reorder --
+  // the same hazard the two htmx hooks below already close for the remove
+  // badge and for a grid refetch, and the one member of that family a
+  // navigation (not an htmx request) takes. Found by independent review,
+  // 2026-09-17: drag a tile, then tap the pencil instead of Done, and the
+  // drag was lost with ZERO reorder POSTs. Persist first, then navigate.
+  // Not in the capture-phase swallow above -- that one is scoped to tiles
+  // and must never eat a badge's own click.
+  document.addEventListener('click', function (e) {
+    var edit = e.target.closest ? e.target.closest('#buttons-grid .tile-badge-edit') : null;
+    if (!edit || !active || !dirty) return;
+    var href = edit.getAttribute('href');
+    if (!href) return;
+    e.preventDefault();
+    dirty = false;
+    // Navigate even if the POST failed: persistOrder() surfaces its own
+    // error and never rejects, so this resolves either way.
+    persistOrder().then(function () { window.location.href = href; });
+  });
+
+  // ---- htmx interplay ----
+  // The remove badge's own hx-confirm/hx-post: if a drag is still
+  // unsaved, confirm first (htmx's own question, so the operator sees the
+  // same dialog either way), then persist the order, THEN let htmx issue
+  // the remove -- its buttons-changed refresh re-renders the grid from the
+  // server, which would otherwise silently drop the unsaved reorder.
+  document.body.addEventListener('htmx:confirm', function (e) {
     var elt = e.detail && e.detail.elt;
-    if (!elt || !elt.closest || !elt.closest('#tile-sheet') || !elt.hasAttribute('data-closes-sheet')) return;
-    if (!e.detail.successful) return;
-    var dialog = sheet();
-    if (dialog) dialog.close();
+    if (!elt || !elt.classList || !elt.classList.contains('tile-badge-remove')) return;
+    if (!dirty) return; // nothing pending: htmx's own confirm + request as usual
+    e.preventDefault();
+    if (e.detail.question && !window.confirm(e.detail.question)) return;
+    dirty = false;
+    persistOrder().then(function () { e.detail.issueRequest(true); });
+  });
+  // Any OTHER refetch of the grid root while a reorder is unsaved (a
+  // modifiers-changed from elsewhere): persist first, then re-trigger it.
+  document.body.addEventListener('htmx:beforeRequest', function (e) {
+    var elt = e.detail && e.detail.elt;
+    if (!active || !dirty || !elt || !elt.matches || !elt.matches('.products[hx-get="/ui/buttons"]')) return;
+    e.preventDefault();
+    dirty = false;
+    persistOrder().then(refetchGrid);
+  });
+  // The grid root outerHTML-swaps itself on buttons-changed (a Remove from
+  // inside the mode does exactly that): the fresh render has no
+  // .jiggle-mode class and a hidden bar, so put the mode back -- iOS keeps
+  // jiggling after a delete too. Idempotent, so any settle is fine.
+  document.body.addEventListener('htmx:afterSettle', function () {
+    if (active && grid() && !grid().classList.contains('jiggle-mode')) enter();
   });
 })();
 
@@ -1681,6 +1988,10 @@ window.utTabBarFade = function (el) {
     // load/every/htmx.ajax-without-event — exactly the split we want.
     var rc = d.requestConfig;
     if (!rc || !rc.triggeringEvent) return;
+    // ADR-0098: a boosted page navigation swaps #ut-page under its own
+    // same-document View Transition (the ADR-0097 root slide) -- one motion,
+    // not the slide plus this ease on top.
+    if (rc.boosted && d.target && d.target.id === 'ut-page') return;
     // `hx-swap="none"` swaps nothing, but htmx still fires afterSwap on the
     // target (its issuing element for every one of the ~45 such sites,
     // e.g. whole settings forms and the catalog delete button) — no
