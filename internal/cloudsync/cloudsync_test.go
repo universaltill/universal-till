@@ -615,6 +615,135 @@ func TestApplySetQuickButtonLayout(t *testing.T) {
 	}
 }
 
+// upsert_modifier_group (ut-docs#2322, ADR-0095 Decision 1): dispatch
+// requires item_id and name, decodes required as a bool, min_select/
+// max_select through the same tolerant `num` helper set_price's
+// price_minor uses (float64 after a JSON round-trip, or a numeric string),
+// and options through modifierGroupOptions — the same "JSON array inside a
+// string payload field" shape "barcodes" uses (see TestApplySetQuickButtonLayout's
+// own comment), just decoding into structs instead of strings. CREATE-ONLY:
+// there is no id field at all, mirroring upsert_category's own dispatch —
+// the create-vs-anything decision lives entirely in the hook (pages'
+// cloudUpsertModifierGroup), deliberately NOT in this generic dispatch.
+func TestApplyUpsertModifierGroup(t *testing.T) {
+	status, msg := apply(context.Background(), directive{Type: "upsert_modifier_group", Payload: map[string]any{"item_id": "itm1", "name": "Extras"}}, Hooks{})
+	if status != "failed" || msg != "upsert_modifier_group is not supported on this till" {
+		t.Fatalf("nil hook: status=%q msg=%q", status, msg)
+	}
+
+	var calls int
+	var gotItemID, gotName string
+	var gotRequired bool
+	var gotMin, gotMax int
+	var gotOptions []ModifierGroupOption
+	hooks := Hooks{
+		UpsertModifierGroup: func(ctx context.Context, itemID, name string, required bool, minSelect, maxSelect int, options []ModifierGroupOption) (string, error) {
+			calls++
+			gotItemID, gotName, gotRequired, gotMin, gotMax, gotOptions = itemID, name, required, minSelect, maxSelect, options
+			return "created modifier group " + name, nil
+		},
+	}
+
+	// Missing item_id or name: refused before the hook runs.
+	for _, payload := range []map[string]any{
+		{"name": "Extras", "min_select": float64(0), "max_select": float64(1)},
+		{"item_id": "itm1", "name": "   ", "min_select": float64(0), "max_select": float64(1)},
+		{"item_id": "itm1", "min_select": float64(0), "max_select": float64(1)},
+	} {
+		status, msg = apply(context.Background(), directive{Type: "upsert_modifier_group", Payload: payload}, hooks)
+		if status != "failed" || msg != "missing item_id or name" {
+			t.Fatalf("payload %v: status=%q msg=%q", payload, status, msg)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("hook must not run for a missing item_id/name, ran %d times", calls)
+	}
+
+	// Missing/invalid min_select or max_select: refused before the hook runs.
+	for _, payload := range []map[string]any{
+		{"item_id": "itm1", "name": "Extras", "max_select": float64(1)},
+		{"item_id": "itm1", "name": "Extras", "min_select": float64(0)},
+		{"item_id": "itm1", "name": "Extras", "min_select": "not-a-number", "max_select": float64(1)},
+	} {
+		status, msg = apply(context.Background(), directive{Type: "upsert_modifier_group", Payload: payload}, hooks)
+		if status != "failed" || msg != "missing or invalid min_select/max_select" {
+			t.Fatalf("payload %v: status=%q msg=%q", payload, status, msg)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("hook must not run for a missing/invalid min_select/max_select, ran %d times", calls)
+	}
+
+	// Well-formed, with options riding as a JSON-encoded string (the wire
+	// shape — a raw JSON number/bool for required is decoded straight since
+	// it isn't string-encoded, unlike "options"). item_id/name are trimmed
+	// by the same `str` helper rename_item/add_barcode already use.
+	status, msg = apply(context.Background(), directive{Type: "upsert_modifier_group", Payload: map[string]any{
+		"item_id": " item-1 ", "name": " Extras ", "required": true,
+		"min_select": float64(1), "max_select": float64(2),
+		"options": `[{"name":"Cheese","price_delta_minor":150},{"name":"Bacon","price_delta_minor":200}]`,
+	}}, hooks)
+	if status != "applied" || msg != "created modifier group Extras" {
+		t.Fatalf("well-formed: status=%q msg=%q", status, msg)
+	}
+	if gotItemID != "item-1" || gotName != "Extras" {
+		t.Fatalf("hook args item_id/name = (%q, %q)", gotItemID, gotName)
+	}
+	if !gotRequired || gotMin != 1 || gotMax != 2 {
+		t.Fatalf("hook args required/min/max = (%v, %d, %d)", gotRequired, gotMin, gotMax)
+	}
+	wantOptions := []ModifierGroupOption{{Name: "Cheese", PriceDeltaMinor: 150}, {Name: "Bacon", PriceDeltaMinor: 200}}
+	if len(gotOptions) != len(wantOptions) {
+		t.Fatalf("hook options = %+v, want %+v", gotOptions, wantOptions)
+	}
+	for i := range wantOptions {
+		if gotOptions[i] != wantOptions[i] {
+			t.Fatalf("hook options = %+v, want %+v", gotOptions, wantOptions)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("hook ran %d times, want 1", calls)
+	}
+
+	// A missing/blank options field decodes as no options, not a failure —
+	// a group may be created with zero options (mirrors
+	// data.ModifierRepo.CreateGroup's own rule).
+	status, msg = apply(context.Background(), directive{Type: "upsert_modifier_group", Payload: map[string]any{
+		"item_id": "item-1", "name": "Extras", "min_select": float64(0), "max_select": float64(1),
+	}}, hooks)
+	if status != "applied" {
+		t.Fatalf("blank options: status=%q msg=%q", status, msg)
+	}
+	if gotOptions != nil {
+		t.Fatalf("blank options: hook options = %+v, want none", gotOptions)
+	}
+
+	// Malformed options JSON: refused before the hook runs (the hook's own
+	// call count from above is the baseline; it must not increase).
+	before := calls
+	status, msg = apply(context.Background(), directive{Type: "upsert_modifier_group", Payload: map[string]any{
+		"item_id": "item-1", "name": "Extras", "min_select": float64(0), "max_select": float64(1),
+		"options": `not json`,
+	}}, hooks)
+	if status != "failed" {
+		t.Fatalf("malformed options: status=%q msg=%q, want failed", status, msg)
+	}
+	if calls != before {
+		t.Fatalf("hook must not run for malformed options, ran %d times (before=%d)", calls, before)
+	}
+
+	// A hook error is the directive's failure message, same as every type.
+	hooks.UpsertModifierGroup = func(context.Context, string, string, bool, int, int, []ModifierGroupOption) (string, error) {
+		return "", errors.New("item not found")
+	}
+	status, msg = apply(context.Background(), directive{Type: "upsert_modifier_group", Payload: map[string]any{
+		"item_id": "nope", "name": "x", "min_select": float64(0), "max_select": float64(1),
+	}}, hooks)
+	if status != "failed" || msg != "item not found" {
+		t.Fatalf("hook error: status=%q msg=%q", status, msg)
+	}
+}
+
 // Every hook-present-but-item_id-blank branch: the giant fixture table only
 // ever sent these directives with a real item_id (it varied the OTHER
 // field — price, delta, name — to test rejection), so this specific
