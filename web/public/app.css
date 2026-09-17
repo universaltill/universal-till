@@ -273,7 +273,7 @@ body.login-screen, body.tracking-screen { padding-inline-start: 0; }
    `position: fixed` dialog. A `view-transition-name` makes its element a
    stacking context with layout containment, which turns it into the
    containing block for every fixed-position descendant — the payment
-   overlay, #hold-modal, #elevation-modal, .tile-sheet, .item-form-modal
+   overlay, #hold-modal, #elevation-modal, .item-form-modal
    all live inside <main> and every one of them stopped being reachable
    the moment <main> carried a name (found by e2e bugreport-panel.spec.ts,
    confirmed by toggling the single declaration; the property has this
@@ -1786,10 +1786,6 @@ html[dir="rtl"] .products-finder .tab-bar::after {
    the same in LTR and RTL, but "back" must point startward, so it's
    mirrored here instead of drawn twice. */
 html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
-/* ut-docs#2285: the tile-sheet's Move-earlier/-later pair, same mirroring
-   precedent as .products-strip-back just above — chevron-left/-right read
-   as ◀/▶ (start/end), not literal left/right. */
-html[dir="rtl"] .tile-sheet-move .btn-ico svg { transform: scaleX(-1); }
 .products-finder input[type="search"] { width: 100%; }
 /* Unlike .tender's tab-panel (app.css, "Tender" section below), .products
    itself already scrolls (.pos-container > .products has its own
@@ -1897,10 +1893,11 @@ html[dir="rtl"] .tile-sheet-move .btn-ico svg { transform: scaleX(-1); }
   font: inherit; color: var(--text); cursor: pointer; text-align: center;
   transition: border-color .12s ease, box-shadow .12s ease, transform .05s ease;
   user-select: none; touch-action: manipulation;
-  /* ut-docs#2285: a long-press (utTileLongPress, app.js) must never pop the
-     platform's own "save image"/text-selection callout menu partway
-     through the hold — iOS/WebKit's -webkit-touch-callout is the one
-     piece of that user-select already covers on other engines does not. */
+  /* ut-docs#2285 (kept by ut-docs#2339's utTileJiggle, app.js, which owns
+     the same hold): a long-press must never pop the platform's own "save
+     image"/text-selection callout menu partway through the hold —
+     iOS/WebKit's -webkit-touch-callout is the one piece of that
+     user-select already covers on other engines does not. */
   -webkit-touch-callout: none;
 }
 /* Same [hidden]-override precedent as .btn/.field-pair/.field-checks/label
@@ -2043,29 +2040,112 @@ html[dir="rtl"] .tile-sheet-move .btn-ico svg { transform: scaleX(-1); }
    larger cap keep the common case scroll-free; the table wrapper's
    overflow:auto is the remaining safety net for a still-longer row. */
 .barcode-backfill-modal { max-width: 38rem; }
-/* ut-docs#2285: the sell-screen tile's long-press/right-click sheet — a
-   small card, deliberately narrower than .modifier-modal's own 28rem/90vw
-   (this holds a heading and a handful of buttons, not a form). Logical
-   properties only (inset-inline/margin-inline), never left/right — same
-   RTL rule as everywhere else in this file (universal-till/CLAUDE.md).
+/* ---------- Sell-screen jiggle edit mode (ut-docs#2339) ----------
+   Replaces the ut-docs#2285 per-tile long-press sheet (.tile-sheet, gone)
+   with an iOS-springboard-style edit mode over the WHOLE grid: app.js's
+   utTileJiggle adds .jiggle-mode to #buttons-grid after a ~500ms hold (or
+   a right-click) on a tile; every tile then wobbles in place, grows two
+   corner badges (edit / remove), and can be dragged to reorder. Nothing
+   overlays the screen, so the nav rail's status/lock/exit stay reachable
+   throughout (universal-till/CLAUDE.md's standing rule).
 
-   position: fixed/z-index: same non-modal .show() treatment as
-   #hold-modal/#pfand-modal/#elevation-modal/#table-add-modal above (see
-   #hold-modal's own comment) — this replaces reliance on the browser's
-   native top-layer centering, which a NON-modally-opened <dialog> never
-   gets. Measured live at 360x640: without this, the phone-width
-   .tender-quickpay "Add items to pay" button (position: fixed, declared
-   later in index.html) painted ON TOP of this dialog's Move-later button,
-   exactly the #hold-modal/.payment-overlay stacking bug that comment
-   already describes for a different pair of elements. 500 matches every
-   sibling in this family except #hold-modal's own 550 (that bump is
-   specific to #hold-modal needing to clear #payment-overlay while it's
-   ALSO open, which this dialog never coexists with). */
-.tile-sheet { position: fixed; inset-block-start: 8vh; max-width: 22rem; width: 92vw; inset-inline: 0; margin-inline: auto; z-index: 500; }
-.tile-sheet-actions { display: flex; flex-direction: column; gap: .5rem; margin-block: .75rem; }
-.tile-sheet-move-row { display: flex; gap: .5rem; }
-.tile-sheet-move-row .btn { flex: 1; }
-.tile-sheet-hint { margin-block-start: -.25rem; }
+   .tile-cell (buttons.html's product-tile) wraps each tile + its badges.
+   At rest it is display: contents, so the tile <button> is still the grid
+   item and the resting render is pixel-identical to the pre-#2339 grid;
+   the badges are display: none. In edit mode the wrapper becomes the real,
+   positioned grid cell the badges anchor to, and the tile fills it. Alpine
+   toggles x-show on the wrapper via an inline display:none, which beats
+   `contents` and `block` alike, so search-hiding keeps working in both
+   states.
+
+   Logical properties only (inset-inline-start/-end, never left/right):
+   the edit badge sits at the inline-START corner and remove at the
+   inline-END corner, so an RTL locale (fa/ar) mirrors them for free.
+
+   Touch-target floor (ut-docs#161): the visible badge is a 22px dot, but
+   the badge ELEMENT is a 44x44 CSS px hit area centred on that dot, the
+   same floor every other tappable thing here honours. The hit box hangs
+   8px past the tile's corner; adjacent tiles' boxes overlap only inside
+   the .5rem grid gap, where no dot is drawn, so a finger on a dot always
+   hits that dot's own badge.
+
+   touch-action: none on the tile ONLY in edit mode (the tables.html
+   pattern, ut-docs#1025): outside it the tile keeps `manipulation` so a
+   vertical finger-pan starting on a tile still scrolls the products
+   panel. Inside it the drag owns the gesture -- pointerdown's
+   preventDefault + setPointerCapture -- and this just stops the browser
+   from ALSO panning underneath it. */
+.tile-cell { display: contents; }
+.tile-badges { display: none; }
+.jiggle-mode .tile-cell { display: block; position: relative; min-inline-size: 0; }
+.jiggle-mode .tile-cell > .btn-tile { inline-size: 100%; block-size: 100%; touch-action: none; cursor: grab; }
+.jiggle-mode .tile-badges { display: contents; }
+.tile-badge {
+  position: absolute; inset-block-start: -8px; z-index: 2;
+  inline-size: 44px; block-size: 44px; padding: 0; margin: 0; border: 0;
+  background: transparent; display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--text); font: inherit; text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.tile-badge-edit { inset-inline-start: -8px; }
+.tile-badge-remove { inset-inline-end: -8px; }
+.tile-badge-dot {
+  display: flex; align-items: center; justify-content: center;
+  inline-size: 22px; block-size: 22px; border-radius: 50%;
+  background: var(--surface); border: 1px solid var(--border);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, .25);
+}
+.tile-badge-dot svg { inline-size: 13px; block-size: 13px; display: block; }
+.tile-badge-remove .tile-badge-dot { color: var(--danger); }
+.tile-badge:focus-visible .tile-badge-dot { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* The wobble: rotate-only (compositor, no layout), ~1.2deg either way,
+   alternating, infinite while the mode is on. The per-nth-child delay/
+   duration nudges are what make it read as the organic iOS shake rather
+   than a row of tiles ticking in lock-step. No prefers-reduced-motion
+   block of its own: the ONE global reduced-motion rule earlier in this
+   file zeroes animation-duration on everything, and a 0s infinite
+   animation with no fill-mode has no effect at all -- the tiles simply sit
+   still, badges and drag still fully usable. */
+@keyframes ut-jiggle { from { transform: rotate(-1.2deg); } to { transform: rotate(1.2deg); } }
+.jiggle-mode .tile-cell > .btn-tile { animation: ut-jiggle .25s ease-in-out infinite alternate; }
+.jiggle-mode .tile-cell:nth-child(2n) > .btn-tile { animation-delay: -.13s; }
+.jiggle-mode .tile-cell:nth-child(3n) > .btn-tile { animation-duration: .29s; }
+.jiggle-mode .tile-cell:nth-child(5n) > .btn-tile { animation-delay: -.07s; animation-duration: .23s; }
+/* The tile under the finger: animation off (an animation's transform
+   would override the inline translate the drag writes), no transition lag
+   on that translate, lifted above its siblings and slightly enlarged --
+   the iOS "picked up" affordance. Siblings shuffle via a short transform
+   transition on their CELLS (app.js's FLIP step -- the tile itself is
+   already animating transform, which would override a FLIP set on it) so
+   the reflow reads as tiles sliding out of the way rather than snapping. */
+.jiggle-mode .tile-cell > .btn-tile.dragging {
+  animation: none; transition: none; cursor: grabbing;
+  z-index: 10; position: relative; transform: scale(1.06);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, .3);
+}
+.jiggle-mode .tile-cell.shuffling { transition: transform .15s ease; }
+/* The dragged tile's OWN badges: hidden for the duration of the drag.
+   They anchor to the .tile-cell, which stays put while the tile itself
+   rides an inline translate under the finger — so without this they
+   detach and hover over the empty slot the tile just left (measured live
+   during independent review, 2026-09-17: tile moved 25px, badges moved 0).
+   A general-sibling selector, not :has(): the badges span always follows
+   the tile inside .tile-cell (buttons.html's product-tile), so this needs
+   no extra class and no :has() support from WebKitGTK. Only the dragged
+   tile's badges go — every other tile keeps showing its own. */
+.jiggle-mode .tile-cell > .btn-tile.dragging ~ .tile-badges { display: none; }
+/* Done bar: sticky at the top of .products' own scroll so Done is always
+   in reach however far the drag went. Same [hidden]-override precedent as
+   .btn/.btn-tile[hidden]: display: flex would otherwise beat the UA's
+   [hidden]{display:none}. */
+.jiggle-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: .5rem;
+  position: sticky; inset-block-start: 0; z-index: 3;
+  padding: .3rem .4rem; border-radius: var(--radius);
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+.jiggle-bar[hidden] { display: none; }
+.jiggle-bar-title { font-size: .85rem; font-weight: 600; color: var(--muted); min-inline-size: 0; }
 /* ut-docs#2095: #tax-codes-modal/#import-modal are .item-form-modal, not
    .modifier-modal (independent review, F1/F2 -- both dialogs hold real
    text inputs, so they need the same OSK-reachable .show()/no-top-layer
