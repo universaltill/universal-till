@@ -2,7 +2,7 @@
 <div class="page-head">
   <h1>🧾 {{ T "invoice.list_title" }}</h1>
   <div style="display:flex; gap:.4rem; align-items:center">
-    <a class="btn" href="/api/invoices/export?from={{ .From }}&to={{ .To }}" download>{{ T "invoice.export_btn" }}</a>
+    <a class="btn" hx-boost="false" href="/api/invoices/export?from={{ .From }}&to={{ .To }}" download>{{ T "invoice.export_btn" }}</a>
     <a class="btn secondary" href="/journal">← {{ T "journal.title" }}</a>
   </div>
 </div>

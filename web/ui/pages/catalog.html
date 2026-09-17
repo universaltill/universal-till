@@ -169,7 +169,7 @@
 {{ if .SyncPrimary }}
 <div class="sync-banner">⚠ {{ T "sync.banner_replica" }}
   {{ if crossdevicelinkactionable }}
-  <a href="{{ .SyncPrimary }}/catalog" target="_blank" rel="noopener">{{ T "sync.banner_open_primary" }}</a>
+  <a href="{{ .SyncPrimary }}/catalog" target="_blank" rel="noopener" hx-boost="false">{{ T "sync.banner_open_primary" }}</a>
   {{ else }}
   <span>{{ T "sync.banner_open_primary_unavailable" }}</span>
   {{ end }}
@@ -594,8 +594,16 @@
   // resolving the CURRENT live modal/tab-bar from the document at event
   // time — never closing over this render's `modal`/`tabBar` — fixes both
   // the leak and the staleness a swap would otherwise leave behind.
-  if (!window.__catalogTabBarFadeResizeWired) {
-    window.__catalogTabBarFadeResizeWired = true;
+  // The once-only flag lives on the #ut-page element, not on window: under
+  // the persistent shell (ADR-0098) `window` now outlives a page VISIT too —
+  // the shell drops this page's window listeners when the page is swapped
+  // away, so a window flag would leave the second visit with no listener at
+  // all (independent review, 2026-09-17). #ut-page is replaced on every
+  // boosted arrival (fresh flag) and survives the fragment swaps within a
+  // visit that this guard exists for.
+  var pageEl = document.getElementById('ut-page') || document.body;
+  if (!pageEl.__catalogTabBarFadeResizeWired) {
+    pageEl.__catalogTabBarFadeResizeWired = true;
     var recomputeLiveTabBarFade = function () {
       var liveModal = document.getElementById('item-form-modal');
       if (!liveModal || !liveModal.open) return;
@@ -1089,11 +1097,13 @@
   // state) if the id is missing or the item was deactivated/deleted since
   // the link was shown — catalog_row.html only renders active items, so a
   // stale id simply matches nothing here.
-  // Deferred to DOMContentLoaded: this inline block runs at parse time,
-  // before app.js's own `defer`red load — openCatalogRow reaches into
-  // window.utCurrency, which app.js doesn't define until then, so running
-  // this any earlier throws mid-way through and leaves the dialog closed.
-  document.addEventListener('DOMContentLoaded', function () {
+  // Deferred via UT.ready (ADR-0098): on a full load this inline block runs
+  // at parse time, before app.js's own `defer`red load — openCatalogRow
+  // reaches into window.utCurrency, which app.js doesn't define until then,
+  // so running this any earlier throws mid-way through and leaves the
+  // dialog closed. On a boosted arrival the document (and app.js) already
+  // exist and UT.ready runs it on the next microtask.
+  UT.ready(function () {
     var deepLinkID = new URLSearchParams(location.search).get('item');
     if (!deepLinkID) return;
     var deepLinkRow = document.getElementById('catalog-row-' + deepLinkID);

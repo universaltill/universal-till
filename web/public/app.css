@@ -126,14 +126,19 @@ body { display: flex; flex-direction: column; min-height: 100dvh; margin: 0; }
    till displays (ut-docs#161). Admin/reports/settings pages keep the
    1500px reading-width cap above. */
 body.sale-screen .container { max-width: none; }
+/* ADR-0098: #ut-page (the boosted page region: rail + notices + main) is
+   the body's flex child now; it is itself the same flex column, so main's
+   own rules below read exactly as they did when main was body's child. */
+#ut-page { display: flex; flex-direction: column; flex: 1 0 auto; min-height: 0; }
 /* Main grows to fill the viewport so the status bar never floats mid-screen
    on short pages (menu, settings, …). */
-body > main.container { flex: 1 0 auto; }
+#ut-page > main.container { flex: 1 0 auto; }
 /* Sale screen gets a DEFINITE height (not just min-height) so the grid's
    1fr rows resolve and the basket scrolls internally instead of growing
    and pushing the tender panel off-screen. */
 body.sale-screen { height: 100dvh; overflow: hidden; }
-body.sale-screen > main.container { flex: 1 1 auto; min-height: 0; display: flex;
+body.sale-screen #ut-page { flex: 1 1 auto; }
+body.sale-screen #ut-page > main.container { flex: 1 1 auto; min-height: 0; display: flex;
   flex-direction: column; padding-top: .6rem; padding-bottom: 0; }
 /* ---------- Touch: the till is an operator surface, not a document ----------
    ut-docs#1021 — root-caused on the physical Pi 5 till (WebKitGTK 2.52,

@@ -157,7 +157,7 @@
 </script>
 
 <div class="card" style="margin-top:1rem">
-  <a class="btn secondary" href="/api/reports/worker-allocations/export?from={{ .From }}&amp;to={{ .To }}{{ if .CashierFilter }}&amp;cashier={{ .CashierFilter }}{{ end }}">{{ T "reports.tips.export_btn" }}</a>
+  <a class="btn secondary" hx-boost="false" href="/api/reports/worker-allocations/export?from={{ .From }}&amp;to={{ .To }}{{ if .CashierFilter }}&amp;cashier={{ .CashierFilter }}{{ end }}">{{ T "reports.tips.export_btn" }}</a>
 </div>
 {{ end }}
 {{ end }}
