@@ -258,6 +258,297 @@ func TestCloudCreateItem_BarcodeAlreadyTakenFails(t *testing.T) {
 	}
 }
 
+// TestCloudCreateItem_RefusedOnReplica: items is an admin-synced table
+// (primary-wins pull, sync_admin_repo.go's adminTables) — same reasoning
+// as the local admin item-create handler's own requirePrimary gate
+// (catalog/handlers.go). A directive landing on a replica till must be
+// refused the same way, or the created row silently vanishes on the next
+// admin pull (ut-docs#2353).
+func TestCloudCreateItem_RefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	_, err := cloudCreateItem(ctx, dp, "Replica Widget", 500, "")
+	if err == nil {
+		t.Fatalf("expected cloudCreateItem to refuse on a replica till")
+	}
+
+	repo := data.NewCatalogRepo(dp.Db)
+	_, exists, err := repo.FindActiveItemByName(ctx, "Replica Widget")
+	if err != nil {
+		t.Fatalf("FindActiveItemByName: %v", err)
+	}
+	if exists {
+		t.Fatalf("item must not be created on a replica till")
+	}
+}
+
+// TestCloudCreateItem_WritesAuditRow: the local admin item-create path has
+// no audit call of its own to mirror (verified: catalog/handlers.go's
+// POST /api/catalog/item never calls InsertAudit), but a cloud-originated
+// mutation still needs a "the merchant changed this from the cloud portal"
+// trail distinct from an operator's own actions — same "system"-actor
+// pattern as cloudAdjustStock/sync_admin.go's admin_pulled (ut-docs#2353).
+func TestCloudCreateItem_WritesAuditRow(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudCreateItem(ctx, dp, "Audited Widget", 500, ""); err != nil {
+		t.Fatalf("cloudCreateItem: %v", err)
+	}
+
+	repo := data.NewCatalogRepo(dp.Db)
+	id, exists, err := repo.FindActiveItemByName(ctx, "Audited Widget")
+	if err != nil || !exists {
+		t.Fatalf("expected item to exist: exists=%v err=%v", exists, err)
+	}
+
+	var actorID, action string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT actor_id, action FROM audit_log WHERE entity_type = 'item' AND entity_id = ? AND action = 'cloud_item_created'`,
+		id,
+	).Scan(&actorID, &action); err != nil {
+		t.Fatalf("expected an audit row for the cloud-originated create: %v", err)
+	}
+	if actorID != "system" {
+		t.Fatalf("expected actor_id 'system', got %q", actorID)
+	}
+}
+
+// TestCloudCreateItem_IdempotentRetryWritesNoSecondAuditRow: a retry of an
+// already-created item (the at-least-once directive replay this hook's own
+// idempotency handles) must not add a second audit row for a no-op.
+func TestCloudCreateItem_IdempotentRetryWritesNoSecondAuditRow(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudCreateItem(ctx, dp, "Retry Widget", 500, ""); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	if _, err := cloudCreateItem(ctx, dp, "Retry Widget", 500, ""); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+
+	repo := data.NewCatalogRepo(dp.Db)
+	id, exists, err := repo.FindActiveItemByName(ctx, "Retry Widget")
+	if err != nil || !exists {
+		t.Fatalf("expected item to exist: exists=%v err=%v", exists, err)
+	}
+
+	var count int
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM audit_log WHERE entity_type = 'item' AND entity_id = ? AND action = 'cloud_item_created'`,
+		id,
+	).Scan(&count); err != nil {
+		t.Fatalf("count audit rows: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly one audit row across the create + retry, got %d", count)
+	}
+}
+
+// --- cloudSetPrice ---
+
+func TestCloudSetPrice_RefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	if _, err := cloudSetPrice(ctx, dp, "itm1", 999); err == nil {
+		t.Fatalf("expected cloudSetPrice to refuse on a replica till")
+	}
+
+	var price int64
+	if err := dp.Db.QueryRowContext(ctx, `SELECT base_price FROM items WHERE id = 'itm1'`).Scan(&price); err != nil {
+		t.Fatalf("read base_price: %v", err)
+	}
+	if price == 999 {
+		t.Fatalf("price must not change on a replica till")
+	}
+}
+
+func TestCloudSetPrice_WritesAuditRow(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudSetPrice(ctx, dp, "itm1", 777); err != nil {
+		t.Fatalf("cloudSetPrice: %v", err)
+	}
+
+	var actorID string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT actor_id FROM audit_log WHERE entity_type = 'item' AND entity_id = 'itm1' AND action = 'cloud_price_set'`,
+	).Scan(&actorID); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if actorID != "system" {
+		t.Fatalf("expected actor_id 'system', got %q", actorID)
+	}
+}
+
+// --- cloudRenameItem ---
+
+func TestCloudRenameItem_RefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	if _, err := cloudRenameItem(ctx, dp, "itm1", "Replica Name"); err == nil {
+		t.Fatalf("expected cloudRenameItem to refuse on a replica till")
+	}
+
+	var name string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT name FROM items WHERE id = 'itm1'`).Scan(&name); err != nil {
+		t.Fatalf("read name: %v", err)
+	}
+	if name == "Replica Name" {
+		t.Fatalf("name must not change on a replica till")
+	}
+}
+
+func TestCloudRenameItem_WritesAuditRow(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudRenameItem(ctx, dp, "itm1", "Renamed Apple"); err != nil {
+		t.Fatalf("cloudRenameItem: %v", err)
+	}
+
+	var actorID string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT actor_id FROM audit_log WHERE entity_type = 'item' AND entity_id = 'itm1' AND action = 'cloud_item_renamed'`,
+	).Scan(&actorID); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if actorID != "system" {
+		t.Fatalf("expected actor_id 'system', got %q", actorID)
+	}
+}
+
+// --- cloudAddBarcode ---
+
+func TestCloudAddBarcode_RefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	if _, err := cloudAddBarcode(ctx, dp, "itm1", "9990001"); err == nil {
+		t.Fatalf("expected cloudAddBarcode to refuse on a replica till")
+	}
+
+	repo := data.NewCatalogRepo(dp.Db)
+	if taken, _ := repo.BarcodeExists(ctx, "9990001"); taken {
+		t.Fatalf("barcode must not be attached on a replica till")
+	}
+}
+
+func TestCloudAddBarcode_WritesAuditRowForItem(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudAddBarcode(ctx, dp, "itm1", "9990002"); err != nil {
+		t.Fatalf("cloudAddBarcode: %v", err)
+	}
+
+	var entityType, actorID string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT entity_type, actor_id FROM audit_log WHERE entity_id = 'itm1' AND action = 'cloud_barcode_added'`,
+	).Scan(&entityType, &actorID); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if entityType != "item" || actorID != "system" {
+		t.Fatalf("unexpected audit row: entity_type=%q actor_id=%q", entityType, actorID)
+	}
+}
+
+func TestCloudAddBarcode_WritesAuditRowForVariant(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudAddBarcode(ctx, dp, "var1", "9990003"); err != nil {
+		t.Fatalf("cloudAddBarcode: %v", err)
+	}
+
+	var entityType string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT entity_type FROM audit_log WHERE entity_id = 'var1' AND action = 'cloud_barcode_added'`,
+	).Scan(&entityType); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if entityType != "item_variant" {
+		t.Fatalf("expected entity_type 'item_variant', got %q", entityType)
+	}
+}
+
+// --- cloudDeactivateItem ---
+
+func TestCloudDeactivateItem_RefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	if _, err := cloudDeactivateItem(ctx, dp, "itm1"); err == nil {
+		t.Fatalf("expected cloudDeactivateItem to refuse on a replica till")
+	}
+
+	var active int
+	if err := dp.Db.QueryRowContext(ctx, `SELECT is_active FROM items WHERE id = 'itm1'`).Scan(&active); err != nil {
+		t.Fatalf("read is_active: %v", err)
+	}
+	if active == 0 {
+		t.Fatalf("item must not be deactivated on a replica till")
+	}
+}
+
+func TestCloudDeactivateItem_WritesAuditRowForItem(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudDeactivateItem(ctx, dp, "itm1"); err != nil {
+		t.Fatalf("cloudDeactivateItem: %v", err)
+	}
+
+	var entityType, actorID string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT entity_type, actor_id FROM audit_log WHERE entity_id = 'itm1' AND action = 'cloud_item_deactivated'`,
+	).Scan(&entityType, &actorID); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if entityType != "item" || actorID != "system" {
+		t.Fatalf("unexpected audit row: entity_type=%q actor_id=%q", entityType, actorID)
+	}
+}
+
+func TestCloudDeactivateItem_WritesAuditRowForVariant(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudDeactivateItem(ctx, dp, "var1"); err != nil {
+		t.Fatalf("cloudDeactivateItem: %v", err)
+	}
+
+	var entityType string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT entity_type FROM audit_log WHERE entity_id = 'var1' AND action = 'cloud_variant_deactivated'`,
+	).Scan(&entityType); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if entityType != "item_variant" {
+		t.Fatalf("expected entity_type 'item_variant', got %q", entityType)
+	}
+}
+
 // --- cloudRemovePlugin ---
 
 func TestCloudRemovePlugin_RejectsPathTraversalID(t *testing.T) {
@@ -883,6 +1174,97 @@ func TestCloudUpsertCategory_UnknownIDAndBlankName(t *testing.T) {
 	}
 	if _, ghost := findCategoryByName(t, dp, "Ghost"); ghost {
 		t.Fatalf("unknown-id update must not fall back to creating")
+	}
+}
+
+func TestCloudUpsertCategory_CreateRefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	if _, err := cloudUpsertCategory(ctx, dp, "", "Replica Category", "#0f172a"); err == nil {
+		t.Fatalf("expected cloudUpsertCategory to refuse creating on a replica till")
+	}
+	if _, exists := findCategoryByName(t, dp, "Replica Category"); exists {
+		t.Fatalf("category must not be created on a replica till")
+	}
+}
+
+func TestCloudUpsertCategory_UpdateRefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	// Create while still primary, then simulate the till becoming a replica.
+	if _, err := cloudUpsertCategory(ctx, dp, "", "Drinks", "#0f172a"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	row, exists := findCategoryByName(t, dp, "Drinks")
+	if !exists {
+		t.Fatalf("expected category to exist")
+	}
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	if _, err := cloudUpsertCategory(ctx, dp, row.ID, "Renamed on replica", "#4338ca"); err == nil {
+		t.Fatalf("expected cloudUpsertCategory to refuse updating on a replica till")
+	}
+	if got, _ := findCategoryByName(t, dp, "Renamed on replica"); got.ID != "" {
+		t.Fatalf("category must not be renamed on a replica till")
+	}
+}
+
+func TestCloudUpsertCategory_CreateWritesAuditRow(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudUpsertCategory(ctx, dp, "", "Audited Category", "#0f172a"); err != nil {
+		t.Fatalf("cloudUpsertCategory: %v", err)
+	}
+	row, exists := findCategoryByName(t, dp, "Audited Category")
+	if !exists {
+		t.Fatalf("expected category to exist")
+	}
+
+	var actorID string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT actor_id FROM audit_log WHERE entity_type = 'category' AND entity_id = ? AND action = 'cloud_category_created'`,
+		row.ID,
+	).Scan(&actorID); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if actorID != "system" {
+		t.Fatalf("expected actor_id 'system', got %q", actorID)
+	}
+}
+
+func TestCloudUpsertCategory_UpdateWritesAuditRow(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudUpsertCategory(ctx, dp, "", "Drinks", "#0f172a"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	row, exists := findCategoryByName(t, dp, "Drinks")
+	if !exists {
+		t.Fatalf("expected category to exist")
+	}
+
+	if _, err := cloudUpsertCategory(ctx, dp, row.ID, "Hot drinks", "#4338ca"); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+
+	var actorID string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT actor_id FROM audit_log WHERE entity_type = 'category' AND entity_id = ? AND action = 'cloud_category_updated'`,
+		row.ID,
+	).Scan(&actorID); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if actorID != "system" {
+		t.Fatalf("expected actor_id 'system', got %q", actorID)
 	}
 }
 
