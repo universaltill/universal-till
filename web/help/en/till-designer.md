@@ -10,7 +10,7 @@ keywords: [designer, quick buttons, buttons, layout, product grid, quick sale, s
 
 # Quick Buttons
 
-Arrange the quick-sale buttons and product grid shown on the sale screen. Any item already in your [Catalog](/help/catalog) can become a quick button; Quick Buttons doesn't create items, it just picks which ones get a tile and what order they appear in.
+Arrange the quick-sale buttons and product grid shown on the sale screen. Any item already in your [Catalog](/help/catalog) can become a quick button; Quick Buttons doesn't create items, it just picks which ones get a tile and what order they appear in. Managers and admins only: a cashier doesn't see Quick Buttons in the menu at all, and adding, removing or reordering a button — from this page or from the sale screen's own edit mode below — asks for a manager's PIN first.
 
 ## How to use it
 
@@ -25,4 +25,4 @@ Arrange the quick-sale buttons and product grid shown on the sale screen. Any it
 - No buttons set up yet? The grid shows "No products yet." — search and add your first one to get started.
 - If the till refuses a reorder (for example, a server error), the page reloads to show the sale screen's real, saved order rather than leave a tile sitting in a position that never actually took. If your connection drops entirely instead, the tile still shows in its new spot on screen but the move wasn't saved — reload the page yourself to check, and repeat the move if it reverted.
 - This is not the same page as the **Receipt designer** (Settings → Receipt printer → Receipt designer), which customises what prints on receipts — see [Receipt designer](/help/designer).
-- On the sale screen itself, hold a tile (or right-click it) and the whole grid goes into an edit mode where the tiles wobble: drag any tile to reorder it within its category, or use the small pencil/bin badges on its corners to edit it in the catalog or remove it from the quick buttons — then tap Done. The same actions, without opening this page at all (see **Selling & checkout → Rearranging the quick buttons**).
+- On the sale screen itself, hold a tile (or right-click it) and the whole grid goes into an edit mode where the tiles wobble: drag any tile to reorder it within its category, or use the small pencil/bin badges on its corners to edit it in the catalog or remove it from the quick buttons — then tap Done. The same actions, without opening this page at all (see **Selling & checkout → Rearranging the quick buttons**). A cashier can enter this edit mode too — dragging to reorder or tapping the bin badge asks for a manager's PIN on the spot before it actually saves, the same [manager-approval prompt](/help/elevation) used elsewhere. The pencil badge always opens the catalog to look at the item; a cashier can look but can't save — a manager or admin has to make the change.

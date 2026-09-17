@@ -65,9 +65,13 @@ func TestMenuPage_GoldenZeroPluginTileOrder(t *testing.T) {
 	// orders (ut-docs#582 -- also ungated, any operator needs to see which
 	// orders are waiting) — no /admin either, since visibleAdminEntries is
 	// empty for a cashier (every one of the six it gates behind is itself
-	// settings/fiscal/stock_location_management-gated).
+	// settings/fiscal/stock_location_management-gated). ut-docs#2312:
+	// /designer and /items now also carry VisibleIf "catalog_management",
+	// so a cashier no longer sees either -- goldenManagerTiles[:11] (this
+	// used to be a plain slice of it) would still include both, so the
+	// cashier list is spelled out explicitly here instead.
 	cashier := menuTileHrefs(getMenu(t, mux))
-	wantCashier := goldenManagerTiles[:11]
+	wantCashier := []string{"/shifts", "/journal", "/orders", "/reports", "/settings", "/plugins", "/open-orders", "/help", "/kiosk-counter-orders"}
 	if strings.Join(cashier, " ") != strings.Join(wantCashier, " ") {
 		t.Fatalf("zero-plugin cashier tiles drifted:\n got %v\nwant %v", cashier, wantCashier)
 	}
@@ -144,6 +148,11 @@ func TestMenuPage_HiddenTileRouteStillServes(t *testing.T) {
 // Decision G: label_key resolves through T; an unresolvable key falls back
 // to the CORE label, never to the raw key string.
 func TestMenuPage_LabelKeyResolvesOrFallsBackToCoreLabel(t *testing.T) {
+	// ut-docs#2312: /items now carries VisibleIf "catalog_management" --
+	// this test is about label resolution, not permissions, so bypass the
+	// gate the same way every other auth-agnostic test in this package
+	// does rather than hiding the /items tile it asserts on.
+	t.Setenv("UT_AUTH", "off")
 	mux, dp := newMenuPageTestDeps(t, baseMenu)
 
 	dp.MenuAmendments = []uislot.Amendment{{PluginID: "p", Key: "/items", LabelKey: "salon.nonexistent.key"}}
@@ -169,6 +178,11 @@ func TestMenuPage_LabelKeyResolvesOrFallsBackToCoreLabel(t *testing.T) {
 // Decision H: icon is a name in core's set; an unknown name falls back to
 // the core entry's own icon, then to genericFallbackIcon.
 func TestMenuPage_IconNameResolvesOrFallsBack(t *testing.T) {
+	// ut-docs#2312: /items now carries VisibleIf "catalog_management" --
+	// this test is about icon resolution, not permissions, so bypass the
+	// gate the same way every other auth-agnostic test in this package
+	// does rather than hiding the /items tile this test asserts on.
+	t.Setenv("UT_AUTH", "off")
 	mux, dp := newMenuPageTestDeps(t, append(append([]common.MenuItem{}, baseMenu...), common.MenuItem{Href: "/some-plugin-page", Label: "Custom Plugin"}))
 
 	tileIcon := func(body, href string) string {
@@ -205,6 +219,12 @@ func TestMenuPage_IconNameResolvesOrFallsBack(t *testing.T) {
 }
 
 func TestMenuPage_ReorderAndGroupHeading(t *testing.T) {
+	// ut-docs#2312: /items now carries VisibleIf "catalog_management" --
+	// this test is about reorder/group-heading placement, not permissions,
+	// so bypass the gate the same way every other auth-agnostic test in
+	// this package does rather than hiding the /items tile this test
+	// reorders.
+	t.Setenv("UT_AUTH", "off")
 	mux, dp := newMenuPageTestDeps(t, baseMenu)
 	fifty := 50
 	dp.MenuAmendments = []uislot.Amendment{{PluginID: "p", Key: "/items", Order: &fifty, Group: "nav.catalog"}}
