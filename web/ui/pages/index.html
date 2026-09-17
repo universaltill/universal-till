@@ -103,22 +103,32 @@
     </form>
   </dialog>
 
-  <!-- ut-docs#2282: dine-in/takeaway intercept for the "before first item" /
-       "at Pay" prompt placements (Settings → Dine-in/takeaway prompt).
-       Structure copied verbatim from #hold-modal just above
-       (.modifier-modal/.modifier-actions/.btn primary/.btn secondary,
-       non-modal .show()/.close() for the same on-screen-keyboard reason —
-       this dialog needs no typing itself, but the whole sale screen stays
-       consistent on the point). No autofocus on either choice button
-       (#hold-modal's same on-screen-keyboard-popup caution). The two
-       choice buttons reuse the EXISTING basket.order_type.dine_in/takeaway
-       labels (already shipped, already proven not to overflow at
+  <!-- ut-docs#2282/#2371: dine-in/takeaway intercept for the "before first
+       item" / "at Pay" prompt placements (Settings → Dine-in/takeaway
+       prompt). Structure copied verbatim from #hold-modal just above
+       (.modifier-modal/.modifier-actions/.btn primary/.btn secondary) —
+       but unlike #hold-modal, this one IS a real showModal() modal
+       (app.js/app.css): it needs no typing itself, so #hold-modal/
+       #pfand-modal's non-modal .show() on-screen-keyboard reason doesn't
+       apply, and a real top-layer modal is what ut-docs#2371 fixed (it
+       used to open with .show(), which left the sale screen tappable
+       underneath it and let #modifier-modal paint over it). No autofocus
+       on either choice button (#hold-modal's same on-screen-keyboard-popup
+       caution — irrelevant to typing here, but still the right default
+       for a dialog that can now also open unprompted at sale start). The
+       two choice buttons reuse the EXISTING basket.order_type.dine_in/
+       takeaway labels (already shipped, already proven not to overflow at
        ut-docs#1379) rather than minting new ones — only the title and the
        Settings copy are new keys. web/public/app.js opens this via
        showOrderTypePromptModal() and resumes whatever action was
        intercepted once a choice POST to /api/pos/order-type succeeds
        (same endpoint the always-visible basket-top toggle posts to — this
-       modal is just an earlier, gated way to reach it, not a new one). -->
+       modal is just an earlier, gated way to reach it, not a new one).
+       ut-docs#2371 also opens it unprompted at sale start (New Sale,
+       when the receipt after a tender is left, page load) via app.js's
+       maybePromptAtSaleStart, and Cancel/Escape (native on a real
+       showModal() dialog now) suppress just that sale-start nag for the
+       rest of the sale, not the per-item/per-Pay gates above. -->
   <dialog id="order-type-prompt-modal" class="modifier-modal" aria-labelledby="order-type-prompt-title">
     <h3 id="order-type-prompt-title">{{ T "basket.order_type.prompt_title" }}</h3>
     <div class="modifier-actions">

@@ -32,13 +32,11 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 	// mutation with dual attribution (ut-docs#2312, mechanism ut-docs#557)
 	// -- actorID is the APPROVER who actually performed it, blockedActorID
 	// the originally-denied session operator (elev.ActorID), same shape as
-	// users_page.go's own auditElevated. Scoped to the two routes below
-	// (reorder/move) that call d.BtnStore directly inline; Add/Remove
-	// delegate to ui.ButtonsHTTP, which writes its own response with no
-	// success/failure signal back to this closure to audit against --
-	// auditing those two is deferred (see registerButtonsAPI's own routes
-	// below for the note) rather than restructuring ButtonsHTTP's return
-	// shape for this card.
+	// users_page.go's own auditElevated. Used by all three routes below
+	// (add/remove/reorder) -- ut-docs#2358 gave ui.ButtonsHTTP.Add/Remove a
+	// bool return so add/remove could call this symmetrically with
+	// reorder/move, which already called it inline (they write straight to
+	// d.BtnStore, so they never needed the extra signal Add/Remove do).
 	auditButtonsElevated := func(r *http.Request, actorID, blockedActorID, targetID, action string, payload map[string]any) {
 		now := time.Now().UTC().Format(time.RFC3339)
 		_ = posRepo.InsertAuditElevated(r.Context(), nil, actorID, blockedActorID, "shortcut_button", targetID, action, payload, now, "")
@@ -164,10 +162,6 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 				}, elev)
 			return
 		}
-		// ut-docs#2312: dual-attribution audit for the elevated case is
-		// deferred here -- see registerButtonsAPI's own auditButtonsElevated
-		// doc comment (ButtonsHTTP.Add writes its own response with no
-		// success/failure signal back to this closure).
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		renderer, err := ui.NewRenderer(
 			filepath.Join("web", "ui", "layouts", "base.html"),
@@ -180,7 +174,14 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore, View: renderer}
-		btnHTTP.Add(w, r)
+		// ut-docs#2358: ButtonsHTTP.Add now reports success/failure back to
+		// this closure, so the dual-attribution audit that reorder/move
+		// already write can fire symmetrically here too -- only on an
+		// actual persisted add, and only for the elevated (PIN-override)
+		// case, same as reorder's own auditButtonsElevated call above.
+		if ok := btnHTTP.Add(w, r); ok && elev.Outcome == elevated {
+			auditButtonsElevated(r, elev.ApproverID, elev.ActorID, itemID, "buttons_add", map[string]any{"label": label, "code": code, "item_id": itemID})
+		}
 	})
 
 	mux.HandleFunc("/api/buttons/remove", func(w http.ResponseWriter, r *http.Request) {
@@ -217,10 +218,6 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 				[]elevationHiddenField{{Name: "code", Value: code}}, elev)
 			return
 		}
-		// ut-docs#2312: dual-attribution audit for the elevated case is
-		// deferred here -- see registerButtonsAPI's own auditButtonsElevated
-		// doc comment (ButtonsHTTP.Remove writes its own response with no
-		// success/failure signal back to this closure).
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		renderer, err := ui.NewRenderer(
 			filepath.Join("web", "ui", "layouts", "base.html"),
@@ -233,7 +230,11 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore, View: renderer}
-		btnHTTP.Remove(w, r)
+		// ut-docs#2358: same rationale as /api/buttons/add above -- audit
+		// only on an actual persisted removal, elevated case only.
+		if ok := btnHTTP.Remove(w, r); ok && elev.Outcome == elevated {
+			auditButtonsElevated(r, elev.ApproverID, elev.ActorID, code, "buttons_remove", map[string]any{"code": code})
+		}
 	})
 
 	// Item search for shortcuts (HTMX fragment)
