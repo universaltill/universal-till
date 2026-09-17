@@ -23,17 +23,41 @@ function dividerLocator(page) {
   return page.getByTestId('pos-divider');
 }
 
+// Both panes are `hx-trigger="load" hx-swap="outerHTML"` placeholders in
+// index.html — an empty, zero-height div until /ui/basket and /ui/buttons
+// swap the real fragment in. `page.goto` resolves on `load`, which is also
+// what fires those swaps, so measuring straight after it can land on the
+// placeholder, whose boundingBox() is null (seen live under 4 parallel
+// workers, ut-docs#2345). Wait for the swapped-in fragment itself: only
+// the placeholders carry `hx-trigger="load"` (the real fragments re-trigger
+// on their own body events instead), so that attribute's absence is a
+// content-independent "swapped in" marker — the basket partial's
+// `id="basket"` would do too, but the buttons partial has no such id and
+// its `.products-header` only renders for an EMPTY catalog.
+const SWAPPED_IN = ':not([hx-trigger="load"])';
+
 async function basketWidth(page) {
-  const box = await page.locator('.pos-container > .basket').boundingBox();
+  const basket = page.locator(`.pos-container > .basket${SWAPPED_IN}`);
+  await expect(basket).toBeVisible();
+  const box = await basket.boundingBox();
   expect(box, '.basket must have a measurable box').toBeTruthy();
   return box!.width;
 }
 
+async function productsWidth(page) {
+  const products = page.locator(`.pos-container > .products${SWAPPED_IN}`);
+  await expect(products).toBeVisible();
+  const box = await products.boundingBox();
+  expect(box, '.products must have a measurable box').toBeTruthy();
+  return box!.width;
+}
+
 async function resetDividerSetting(page) {
-  // Shared till (workers: 1, see playwright.config.ts) — every mutating
-  // test here must leave the persisted setting exactly as it found it
-  // (unset/default), same "restore default so later specs sharing this
-  // server aren't affected" discipline as ui-scale-basket.spec.ts.
+  // Shared till (every file in this worker drives the same server, see
+  // playwright.config.ts) — every mutating test here must leave the
+  // persisted setting exactly as it found it (unset/default), same
+  // "restore default so later specs sharing this server aren't affected"
+  // discipline as ui-scale-basket.spec.ts.
   await page.request.post('/api/settings/basket-panel-width', { form: { width_rem: '0' } });
 }
 
@@ -50,7 +74,7 @@ test.describe('sell-screen basket/products divider (ut-docs#2308)', () => {
     await expect(divider).toBeVisible();
 
     const startBasket = await basketWidth(page);
-    const startProducts = (await page.locator('.pos-container > .products').boundingBox())!.width;
+    const startProducts = await productsWidth(page);
 
     const box = (await divider.boundingBox())!;
     const cx = box.x + box.width / 2;
@@ -63,7 +87,7 @@ test.describe('sell-screen basket/products divider (ut-docs#2308)', () => {
     await page.mouse.up();
 
     const grownBasket = await basketWidth(page);
-    const grownProducts = (await page.locator('.pos-container > .products').boundingBox())!.width;
+    const grownProducts = await productsWidth(page);
     expect(grownBasket, 'basket should have grown').toBeGreaterThan(startBasket + 50);
     expect(grownProducts, 'products should have shrunk').toBeLessThan(startProducts - 50);
 
@@ -74,7 +98,7 @@ test.describe('sell-screen basket/products divider (ut-docs#2308)', () => {
     await page.mouse.down();
     await page.mouse.move(cx + 100 + 2000, cy, { steps: 5 });
     await page.mouse.up();
-    const clampedProducts = (await page.locator('.pos-container > .products').boundingBox())!.width;
+    const clampedProducts = await productsWidth(page);
     // 16.5rem at a 16px root is 264px; a healthy margin above that (still
     // well short of "collapsed") proves the clamp held, not a precise
     // pixel assertion of the exact floor.
@@ -238,8 +262,12 @@ test.describe('sell-screen basket/products divider (ut-docs#2308)', () => {
     const divider = dividerLocator(page);
     await expect(divider).toBeVisible();
 
-    const basketBox = await page.locator('.pos-container > .basket').boundingBox();
-    const productsBox = await page.locator('.pos-container > .products').boundingBox();
+    // Same swapped-in-fragment wait as basketWidth/productsWidth above —
+    // here the x positions are what's compared, so read the boxes directly.
+    await basketWidth(page);
+    await productsWidth(page);
+    const basketBox = await page.locator(`.pos-container > .basket${SWAPPED_IN}`).boundingBox();
+    const productsBox = await page.locator(`.pos-container > .products${SWAPPED_IN}`).boundingBox();
     expect(
       basketBox!.x,
       'basket (DOM-first) should render visually to the RIGHT under RTL, same mirroring this page\'s own focusTab() RTL handling documents',

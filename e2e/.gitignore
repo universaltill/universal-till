@@ -1,3 +1,6 @@
 node_modules/
 test-results/
 playwright-report/
+# ut-docs#2345: the till binary global-setup.ts builds once per run for
+# the per-worker `default`-project servers.
+.bin/

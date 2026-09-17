@@ -288,9 +288,8 @@ func TestSemanticTintBackgrounds_MonochromeIsColourless(t *testing.T) {
 	}
 	// None of the affected rules may still paint a hardcoded semantic rgba()
 	// as a BACKGROUND — every one of them must read a --*-tint var instead.
-	// (Their borders are explicitly out of scope for this card and are
-	// expected to still carry the literal rgba(...,.35) — this only checks
-	// `background:`.)
+	// (Their BORDERS are covered by the sibling test below, ut-docs#2207 —
+	// this only checks `background:`.)
 	for _, bad := range []string{
 		"background: rgba(22, 163, 74", "background: rgba(220, 38, 38", "background: rgba(217, 119, 6",
 	} {
@@ -329,6 +328,77 @@ func TestSemanticTintBackgrounds_MonochromeIsColourless(t *testing.T) {
 	for _, key := range []string{"amber", "fresh", "monarch", "slate", "dark"} {
 		css := get("/themes/" + key + ".css")
 		for _, tok := range []string{"--success-tint", "--danger-tint", "--warning-tint"} {
+			if strings.Contains(css, tok) {
+				t.Errorf("%s.css: unexpectedly overrides %q — expected it to inherit app.css's default", key, tok)
+			}
+		}
+	}
+}
+
+// ut-docs#2207: same shape as TestSemanticTintBackgrounds_MonochromeIsColourless
+// above, one step later — the notice/block BORDER colour (--success-tint-border/
+// --danger-tint-border/--warning-tint-border) was still a literal coloured
+// rgba() no theme could reach, so a Monochrome notice had a colourless wash
+// but a coloured outline. Reads the real embedded assets, same as the sibling
+// test, so an edit to either file is what this actually exercises.
+func TestSemanticTintBorders_MonochromeIsColourless(t *testing.T) {
+	mux := http.NewServeMux()
+	registerStatic(mux)
+	registerThemes(mux, &common.Deps{})
+
+	get := func(path string) string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d, want 200", path, rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	appCSS := get("/public/app.css")
+	for _, tok := range []string{"--success-tint-border:", "--danger-tint-border:", "--warning-tint-border:"} {
+		if !strings.Contains(appCSS, tok) {
+			t.Errorf("app.css: missing base token %q", tok)
+		}
+	}
+	// None of the 4 affected rules may still paint a hardcoded semantic
+	// rgba() as a BORDER — every one of them must read a --*-tint-border
+	// var instead.
+	for _, bad := range []string{
+		"border-color: rgba(22, 163, 74", "border-color: rgba(220, 38, 38",
+		"border: 1px solid rgba(217, 119, 6", "border: 1px solid rgba(22, 163, 74",
+	} {
+		if strings.Contains(appCSS, bad) {
+			t.Errorf("app.css: found a hardcoded tint border %q — should read a --*-tint-border var instead", bad)
+		}
+	}
+	for _, want := range []string{
+		".pos-notice.success { background: var(--success-tint); color: var(--success);\n  border-color: var(--success-tint-border); }",
+		".pos-notice.error { background: var(--danger-tint); color: var(--danger);\n  border-color: var(--danger-tint-border); }",
+		".notice-block-warn { background: var(--warning-tint); border: 1px solid var(--warning-tint-border);",
+		".notice-block-success { background: var(--success-tint); border: 1px solid var(--success-tint-border);",
+	} {
+		if !strings.Contains(appCSS, want) {
+			t.Errorf("app.css: expected to find %q", want)
+		}
+	}
+
+	// Monochrome overrides all three to a neutral grayscale border — no hue.
+	monoCSS := get("/themes/monochrome.css")
+	for _, tok := range []string{"--success-tint-border: rgba(0, 0, 0,", "--danger-tint-border: rgba(0, 0, 0,", "--warning-tint-border: rgba(0, 0, 0,"} {
+		if !strings.Contains(monoCSS, tok) {
+			t.Errorf("monochrome.css: expected %q, got body:\n%s", tok, monoCSS)
+		}
+	}
+
+	// Every other built-in theme (amber/fresh/monarch/slate/dark) must NOT
+	// override the tint-border tokens — they all inherit app.css's defaults,
+	// so they render byte-identical to before this change.
+	for _, key := range []string{"amber", "fresh", "monarch", "slate", "dark"} {
+		css := get("/themes/" + key + ".css")
+		for _, tok := range []string{"--success-tint-border", "--danger-tint-border", "--warning-tint-border"} {
 			if strings.Contains(css, tok) {
 				t.Errorf("%s.css: unexpectedly overrides %q — expected it to inherit app.css's default", key, tok)
 			}
