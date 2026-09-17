@@ -339,6 +339,44 @@ html[data-nav-dir="pop"]::view-transition-old(root) { animation-name: ut-page-ou
 .ut-swap-fx { animation: ut-swap-in 150ms ease-out both; }
 @keyframes ut-swap-in { from { opacity: .55; } to { opacity: 1; } }
 
+/* ut-docs#2338: the rail-driven in-panel swaps (#items-panel, #admin-panel,
+   #manual-panel -- master-detail navigation, not a live update) get a
+   slightly longer version of the generic .ut-swap-fx ease above, on the
+   SAME safe opacity-only shape -- deliberately never a directional
+   transform. A first cut of this rule used `transform: translateX(...)`
+   for a page-slide-like feel and was caught in independent review before
+   merge (ut-docs#2338's own review record): the swapped panel sits inside
+   `<main>`, which hosts `.record-dialog`/`.item-form-modal`
+   (`position: fixed` descendants, ut-docs#2010) -- ANY non-`none`
+   `transform` on an ancestor makes it their containing block, the exact
+   hazard ADR-0097 rule 2 already names for `view-transition-name` and
+   already broke once for real. Swapping the mechanism (CSS transform
+   instead of the View Transition API) doesn't avoid that hazard, it just
+   hides from the one guard (TestAppCSSNamesOnlyTheFixedRailAndStatusbar)
+   written to catch the View-Transition-API shape of it. Starting from
+   opacity 0 was ALSO a separate violation on its own -- ADR-0097 rule 5
+   requires the swap ease be "readable from frame one, never a flash to
+   blank", which is exactly what .ut-swap-fx's own .55-start already
+   gets right. So: opacity-only, same .55 start, just a touch longer
+   (180ms vs .ut-swap-fx's 150ms) as the one intentional difference.
+   app.js's htmx:afterSettle listener applies this class instead of
+   .ut-swap-fx for these three targets specifically. */
+.ut-panel-fx { animation: ut-panel-in 180ms ease-out both; }
+@keyframes ut-panel-in { from { opacity: .55; } to { opacity: 1; } }
+
+/* ut-docs#2010 / ut-docs#2338: a record-dialog.js standard dialog fades and
+   scales in on open -- zero added latency, dialog.show() already ran
+   synchronously beforehand (record-dialog.js), this only eases the very
+   next frames. Deliberately NOT applied to close(): delaying the native
+   .close() to let an exit animation finish would add latency to
+   Cancel/Save, which ADR-0097's rule 1 forbids on a cashier-facing
+   surface. Uniform scale, so RTL needs nothing extra. */
+.ut-dialog-fx { animation: ut-dialog-in 150ms ease-out both; }
+@keyframes ut-dialog-in {
+  from { opacity: 0; transform: scale(.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
 /* Reduced motion: ONE block, kills everything -- the new view-transition
    rules above AND every pre-existing `transition:`/`animation:` rule
    already in this file (.menu-tile, .tab/.tab-active, etc.), via the

@@ -31,6 +31,26 @@ func readAppCSS(t *testing.T) string {
 	return string(b)
 }
 
+func readAppJS(t *testing.T) string {
+	t.Helper()
+	chdirRoot(t)
+	b, err := os.ReadFile("web/public/app.js")
+	if err != nil {
+		t.Fatalf("read app.js: %v", err)
+	}
+	return string(b)
+}
+
+func readRecordDialogJS(t *testing.T) string {
+	t.Helper()
+	chdirRoot(t)
+	b, err := os.ReadFile("web/public/record-dialog.js")
+	if err != nil {
+		t.Fatalf("read record-dialog.js: %v", err)
+	}
+	return string(b)
+}
+
 func readBaseHTML(t *testing.T) string {
 	t.Helper()
 	chdirRoot(t)
@@ -405,5 +425,122 @@ func TestBaseHTMLQuietsSkippedTransitionPromises(t *testing.T) {
 	}
 	if strings.Count(html, "quiet(") < 3 {
 		t.Fatalf("quiet() must be applied in both the pageswap and the pagereveal handlers")
+	}
+}
+
+// ut-docs#2338: extend the ADR-0097 motion vocabulary to the /items rail's
+// in-panel swap (#items-panel) and to record-dialog.js's dialog open —
+// deliberately plain compositor CSS animations, not the View Transition
+// API: ::view-transition-new(root) (asserted above) unconditionally carries
+// the full page-navigation slide, and neither of these is a page
+// navigation — reusing it would slide the whole content area (or the whole
+// screen behind a dialog) on every panel click / dialog open.
+
+func TestAppCSSHasPanelSwapEaseAnimation(t *testing.T) {
+	css := readAppCSS(t)
+	if !strings.Contains(css, ".ut-panel-fx") {
+		t.Errorf("app.css missing .ut-panel-fx (the in-panel-swap ease class)")
+	}
+	if !strings.Contains(css, "@keyframes ut-panel-in") {
+		t.Errorf("app.css missing @keyframes ut-panel-in")
+	}
+	// Opacity-only, deliberately never a transform (independent review,
+	// ut-docs#2338): a first cut used `translateX(var(--ut-nav-dir) * ...)`
+	// for a page-slide-like feel, which both (a) violated ADR-0097 rule 5
+	// ("readable from frame one, never a flash to blank" — it started from
+	// opacity 0, not .55 like .ut-swap-fx) and (b) put a non-`none`
+	// `transform` on an ancestor of `.record-dialog`/`.item-form-modal`
+	// (`position: fixed` descendants living inside the swapped panel),
+	// which makes it their containing block — the exact hazard ADR-0097
+	// rule 2 already names for `view-transition-name`, just reached via a
+	// different CSS property. Pin both corrections here.
+	block := extractBlock(t, css, "@keyframes ut-panel-in")
+	if strings.Contains(block, "transform") {
+		t.Errorf("@keyframes ut-panel-in must never use `transform` — the swapped panel hosts position:fixed dialog descendants, and any non-`none` transform on an ancestor becomes their containing block (ADR-0097 rule 2's hazard), got: %s", block)
+	}
+	if !strings.Contains(block, "opacity: .55") {
+		t.Errorf("@keyframes ut-panel-in must start from opacity: .55, never 0 (ADR-0097 rule 5: readable from frame one, never a flash to blank), got: %s", block)
+	}
+	if !strings.Contains(block, "opacity: 1") {
+		t.Errorf("@keyframes ut-panel-in must end at opacity: 1, got: %s", block)
+	}
+}
+
+func TestAppCSSHasDialogOpenEaseAnimation(t *testing.T) {
+	css := readAppCSS(t)
+	if !strings.Contains(css, ".ut-dialog-fx") {
+		t.Errorf("app.css missing .ut-dialog-fx (the record-dialog.js open ease class)")
+	}
+	if !strings.Contains(css, "@keyframes ut-dialog-in") {
+		t.Errorf("app.css missing @keyframes ut-dialog-in")
+	}
+}
+
+// The reduced-motion wildcard block (TestAppCSSReducedMotionBlockCoversEverything
+// above) already asserts `*, *::before, *::after { animation-duration: 0s
+// !important }`, which covers these two new keyframes automatically — no
+// separate CSS assertion needed here, only that app.js/record-dialog.js
+// also carry the belt-and-braces JS-side skip, checked below.
+
+func TestAppJSAppliesPanelEaseInsteadOfSwapEaseForItemsPanel(t *testing.T) {
+	js := readAppJS(t)
+	// Independent review, ut-docs#2338: the original version of this
+	// assertion was `strings.Contains(js, "items-panel")`, which passes
+	// even with this whole card reverted — the literal "items-panel"
+	// already appears elsewhere in app.js (the X-UT-Page-Title allowlist).
+	// Assert the actual expression, and all three rail-driven panel ids
+	// (#items-panel, #admin-panel, #manual-panel), not just one.
+	if !strings.Contains(js, "['items-panel', 'admin-panel', 'manual-panel'].indexOf(t.id) !== -1") {
+		t.Fatalf("app.js's swap-ease listener must special-case all three rail-driven panel targets (#items-panel, #admin-panel, #manual-panel)")
+	}
+	if !strings.Contains(js, "isPanelNav ? 'ut-panel-fx' : 'ut-swap-fx'") {
+		t.Fatalf("app.js must apply the 'ut-panel-fx' class for a panel-nav swap, 'ut-swap-fx' otherwise")
+	}
+	// The animationend cleanup must remove BOTH classes it can ever add —
+	// a stale class on an element that never gets a matching animationend
+	// (e.g. one class added, the id read wrong) would stick forever.
+	if !strings.Contains(js, "'ut-swap-in' || e.animationName === 'ut-panel-in'") {
+		t.Fatalf("app.js's animationend cleanup must match both ut-swap-in and ut-panel-in")
+	}
+	if !strings.Contains(js, "remove('ut-swap-fx', 'ut-panel-fx')") {
+		t.Fatalf("app.js's animationend cleanup must remove both ut-swap-fx and ut-panel-fx")
+	}
+}
+
+func TestRecordDialogJSAppliesOpenEaseAndSkipsUnderReducedMotion(t *testing.T) {
+	js := readRecordDialogJS(t)
+	if !strings.Contains(js, "prefers-reduced-motion: reduce") {
+		t.Fatalf("record-dialog.js must feature-check prefers-reduced-motion before applying the open ease")
+	}
+	if !strings.Contains(js, "'ut-dialog-fx'") {
+		t.Fatalf("record-dialog.js must apply the 'ut-dialog-fx' class on open")
+	}
+	// The reduced-motion check must gate adding the class (belt-and-braces
+	// alongside the CSS wildcard), not just exist somewhere unrelated in
+	// the file.
+	openIdx := strings.Index(js, "function open(dialog, row, opener)")
+	if openIdx < 0 {
+		t.Fatalf("open(dialog, row, opener) not found in record-dialog.js")
+	}
+	closeIdx := strings.Index(js, "function close(dialog)")
+	if closeIdx < 0 || closeIdx < openIdx {
+		t.Fatalf("close(dialog) not found after open() in record-dialog.js")
+	}
+	openBody := js[openIdx:closeIdx]
+	if !strings.Contains(openBody, "ut-dialog-fx") {
+		t.Fatalf("open() must add the ut-dialog-fx class, got body: %s", openBody)
+	}
+	if !strings.Contains(openBody, "reduceMotion") {
+		t.Fatalf("open() must consult the reduced-motion flag before adding ut-dialog-fx")
+	}
+	// Never applied to close(): delaying the native .close() for an exit
+	// animation would add latency to Cancel/Save.
+	closeBody := js[closeIdx:]
+	closeEnd := strings.Index(closeBody, "\n  }\n")
+	if closeEnd > 0 {
+		closeBody = closeBody[:closeEnd]
+	}
+	if strings.Contains(closeBody, "ut-dialog-fx") {
+		t.Fatalf("close() must NOT add/remove ut-dialog-fx — no exit animation, zero added latency on Cancel/Save, got body: %s", closeBody)
 	}
 }
