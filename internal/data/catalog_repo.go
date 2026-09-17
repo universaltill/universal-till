@@ -214,7 +214,7 @@ FROM items i WHERE i.id = ?`, itemID).
 SELECT barcode FROM item_barcodes WHERE item_id = ?
 ORDER BY is_primary DESC LIMIT 1`, itemID).Scan(&l.Code)
 	if l.Code == "" {
-		l.Code = sku
+		l.Code = stripRetireMangle(itemID, sku)
 	}
 	return l, true, nil
 }
@@ -720,7 +720,7 @@ WHERE v.id = ?`, variantID).Scan(&itemName, &vName, &sku, &l.PriceMinor, &l.Code
 	}
 	l.Name = strings.TrimSpace(itemName + " " + vName)
 	if l.Code == "" {
-		l.Code = sku
+		l.Code = stripRetireMangle(variantID, sku)
 	}
 	return l, true, nil
 }
