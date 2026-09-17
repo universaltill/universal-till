@@ -11,8 +11,6 @@ import (
 )
 
 const (
-	pluginUpdateCheckInitialDelay = 30 * time.Second
-	pluginUpdateCheckInterval     = 15 * time.Minute
 	// pluginUpdateCanonicalTypeLanguage is the one canonical type (per
 	// ADR-0002's plugin taxonomy) this scheduler auto-applies without asking. A
 	// language pack is content, not code, and a stale one silently degrades
@@ -22,12 +20,28 @@ const (
 	pluginUpdateCanonicalTypeLanguage = "language"
 )
 
+// pluginUpdateCheckInitialDelay/pluginUpdateCheckInterval are vars, not
+// consts, so a test can shrink both to observe StartPluginUpdateScheduler's
+// actual timing (ut-docs#2299) — the production values (30s, 15m) are
+// unchanged. Restore both (e.g. via t.Cleanup) after overriding.
+var (
+	pluginUpdateCheckInitialDelay = 30 * time.Second
+	pluginUpdateCheckInterval     = 15 * time.Minute
+)
+
 // pluginApplyUpdateFn is applyPluginUpdate, indirected through a var so a
 // test can fake the install outcome (success/failure) without a real
 // signed marketplace artifact — same seam shape as update_api.go's
 // autoUpdateApply. Restore the original value (e.g. via t.Cleanup) after
 // overriding it.
 var pluginApplyUpdateFn = applyPluginUpdate
+
+// pluginUpdateTickFn is pluginUpdateCheckTick, indirected through a var so a
+// test can observe WHEN StartPluginUpdateScheduler invokes it (e.g. a
+// counting/signalling stub) without needing a real *common.Deps with a live
+// DB and catalog repo — same seam shape as pluginApplyUpdateFn above.
+// Restore the original value (e.g. via t.Cleanup) after overriding it.
+var pluginUpdateTickFn = pluginUpdateCheckTick
 
 // StartPluginUpdateScheduler runs the background installed-plugin update
 // check (ut-docs#1953). Before this, plugins.UpdateChecker.CheckForUpdates
@@ -50,13 +64,13 @@ func StartPluginUpdateScheduler(ctx context.Context, d *common.Deps, wg *sync.Wa
 		case <-ctx.Done():
 			return
 		}
-		pluginUpdateCheckTick(ctx, d)
+		pluginUpdateTickFn(ctx, d)
 		t := time.NewTicker(pluginUpdateCheckInterval)
 		defer t.Stop()
 		for {
 			select {
 			case <-t.C:
-				pluginUpdateCheckTick(ctx, d)
+				pluginUpdateTickFn(ctx, d)
 			case <-ctx.Done():
 				return
 			}
@@ -105,17 +119,28 @@ func pluginUpdateCheckTick(ctx context.Context, d *common.Deps) {
 	}
 
 	pending := 0
+	languagePending := false
 	for _, u := range found {
-		if isReplica || u.CanonicalType != pluginUpdateCanonicalTypeLanguage {
+		isLanguage := u.CanonicalType == pluginUpdateCanonicalTypeLanguage
+		if isReplica || !isLanguage {
 			pending++
+			if isLanguage {
+				// A joined till never applies a language-pack update itself
+				// (ut-docs#460) — it waits for the main till, so this is
+				// pending indefinitely rather than for one tick, and the
+				// merchant deserves to know it's specifically the language
+				// pack that's behind (ut-docs#2299), not just "N updates".
+				languagePending = true
+			}
 			continue
 		}
 		if _, _, err := pluginApplyUpdateFn(ctx, d, u.PluginID); err != nil {
 			log.Warnf("[PluginUpdateScheduler] auto-update of %s failed: %v", u.PluginID, err)
 			pending++ // surface it rather than silently dropping a failed language-pack update
+			languagePending = true
 			continue
 		}
 		log.Infof("[PluginUpdateScheduler] auto-applied %s %s -> %s", u.PluginID, u.InstalledVersion, u.AvailableVersion)
 	}
-	plugins.SetPendingUpdates(pending)
+	plugins.SetPendingUpdates(pending, languagePending)
 }
