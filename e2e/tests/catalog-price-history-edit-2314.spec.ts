@@ -35,6 +35,13 @@ import { watchConsole, closeItemForm } from './helpers';
 // price edit actually takes back to the sale screen instead.
 test.describe('catalog price edit updates price_history (ut-docs#2314)', () => {
   const ITEM_NAME = 'Coca-Cola Can 330ml';
+  // The demo seed's shortcut_buttons.label for itm001 — separate from the
+  // item's own catalog name above. The sale-screen tile and the basket
+  // line both render this label (buttons.html's data-name/.tile-name,
+  // basket.html's .line-name all come from the shortcut/basket-line's own
+  // Label, not the item's Name), confirmed by driving this spec for real:
+  // the basket line reads "Coca-Cola 330ml", never "Coca-Cola Can 330ml".
+  const TILE_LABEL = 'Coca-Cola 330ml';
   const ORIGINAL_PRICE_MAJOR = '1.20';
   const ORIGINAL_PRICE_MINOR = '120';
   const NEW_PRICE_MAJOR = '4.75';
@@ -51,6 +58,7 @@ test.describe('catalog price edit updates price_history (ut-docs#2314)', () => {
     await page.goto('/catalog');
     const row = page.locator(`.catalog-row[data-name="${ITEM_NAME}"]`);
     await expect(row).toBeVisible();
+    const itemId = await row.getAttribute('data-id') as string;
 
     // Precondition: the demo seed's active price_history row (120) equals
     // base_price (120) today, so this also incidentally proves the fix
@@ -64,7 +72,7 @@ test.describe('catalog price edit updates price_history (ut-docs#2314)', () => {
       // (catalog-active-checkbox-1367.spec.ts's own established pattern for
       // editing an EXISTING item, not openNewItemForm).
       await row.click();
-      await expect(page.locator('#item-id')).toHaveValue(await row.getAttribute('data-id') as string);
+      await expect(page.locator('#item-id')).toHaveValue(itemId);
       // The Price field must be pre-filled with the RESOLVED price (120),
       // which today happens to equal base_price — this only becomes a
       // meaningful assertion once combined with the post-edit check below.
@@ -89,7 +97,14 @@ test.describe('catalog price edit updates price_history (ut-docs#2314)', () => {
       // to `return`) — a real navigation, so this is the sale-screen grid's
       // OWN fresh render, not a live in-page patch.
       await page.goto('/');
-      const tile = page.locator(`.btn-tile[data-name="${ITEM_NAME}"]`);
+      // The sale-screen tile's data-name is the shortcut button's OWN label
+      // ("Coca-Cola 330ml", shorter than the item's real name), a separate
+      // string from the catalog row's data-name (item.Name, "Coca-Cola Can
+      // 330ml") — buttons.html sets data-name="{{ .Label }}". data-item-id
+      // ties directly to the item this test just edited, sidestepping that
+      // label/name mismatch entirely (same attribute
+      // sell-tile-long-press-2285.spec.ts already keys off).
+      const tile = page.locator(`.btn-tile[data-item-id="${itemId}"]`);
       await expect(tile).toBeVisible();
       await expect(async () => {
         expect(digitsOf(await tile.locator('.tile-price').innerText())).toBe(NEW_PRICE_MINOR);
@@ -99,7 +114,7 @@ test.describe('catalog price edit updates price_history (ut-docs#2314)', () => {
       // check: this is what the original bug report said stayed broken
       // ("the till goes on charging the old price forever").
       await tile.click();
-      const line = page.locator('#basket-lines tr').filter({ has: page.locator('.line-name', { hasText: ITEM_NAME }) });
+      const line = page.locator('#basket-lines tr').filter({ has: page.locator('.line-name', { hasText: TILE_LABEL }) });
       await expect(line).toBeVisible();
       const unitPriceCell = line.locator('td').nth(2); // name/qty-inputs, then unit price, then line total
       expect(digitsOf(await unitPriceCell.innerText())).toBe(NEW_PRICE_MINOR);
