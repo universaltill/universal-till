@@ -146,6 +146,12 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 		ctx := r.Context()
 		_ = r.ParseForm()
 		id := strings.TrimSpace(r.Form.Get("id"))
+		// ut-docs#2347: bare "/" (and "/?msg=...") re-applies whatever
+		// display.mode landing preference is current instead of landing on
+		// the sale screen with the resumed basket visible -- the same
+		// ut-docs#2146 shape saleScreenReturnURL was built to fix for this
+		// page's own "Back to sale" link, just not yet applied here.
+		mode, _, _ := d.Settings.Get(ctx, "display.mode")
 		switch resumeHeldSale(ctx, d, repo, posRepo, id) {
 		case resumeNotFound:
 			http.Redirect(w, r, "/open-orders?err=hold.error.not_found", http.StatusSeeOther)
@@ -158,10 +164,12 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 			// already tells the cashier both things happened via
 			// hold.toast.parked_and_resumed. Reuses httpx.QueryMsgKey
 			// (ut-docs#2148) exactly as index_page.go's tseKickoffRejected
-			// one-shot banner does.
-			http.Redirect(w, r, "/?msg=hold.toast.parked_and_resumed", http.StatusSeeOther)
+			// one-shot banner does -- saleScreenReturnURLWithMsg keeps the
+			// notice from being dropped by a backoffice-mode till's own
+			// "?stay=1" target (ut-docs#2347).
+			http.Redirect(w, r, saleScreenReturnURLWithMsg(mode, "hold.toast.parked_and_resumed"), http.StatusSeeOther)
 		default:
-			http.Redirect(w, r, "/", http.StatusSeeOther)
+			http.Redirect(w, r, saleScreenReturnURL(mode), http.StatusSeeOther)
 		}
 	})
 
