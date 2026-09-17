@@ -1396,6 +1396,9 @@ func TestCloudSetQuickButtonLayout_RefusedOnReplica(t *testing.T) {
 	}
 	got := quickButtonOrder(t, dp)
 	want := []string{"b1", "b2", "b3"} // unchanged
+	if len(got) != len(want) {
+		t.Fatalf("replica write leaked through: order = %v, want unchanged %v", got, want)
+	}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("replica write leaked through: order = %v, want unchanged %v", got, want)
@@ -1417,6 +1420,81 @@ func TestCloudSetQuickButtonLayout_EmptyListRefused(t *testing.T) {
 	}
 	got := quickButtonOrder(t, dp)
 	want := []string{"b1", "b2", "b3"}
+	if len(got) != len(want) {
+		t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+		}
+	}
+}
+
+// A partial list (missing an existing barcode) must be refused, not silently
+// applied — buttons_api.go's LAN reorder route documents its own payload as
+// "the FULL global list," and UpdateOrder only touches the barcodes it's
+// given: applying a partial list leaves the omitted row(s) on a stale
+// sort_order that can collide with a listed row's new one (independent
+// review's own probe reproduced a real duplicate sort_order this way,
+// ut-docs#2321 review).
+func TestCloudSetQuickButtonLayout_MissingBarcodeRefused(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+
+	if _, err := cloudSetQuickButtonLayout(ctx, dp, []string{"b3", "b1"}); err == nil {
+		t.Fatalf("expected refusal for a partial list missing b2")
+	}
+	got := quickButtonOrder(t, dp)
+	want := []string{"b1", "b2", "b3"}
+	if len(got) != len(want) {
+		t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+		}
+	}
+}
+
+// A barcode the till doesn't recognize is refused outright — the till is the
+// only thing that can validate a cloud directive's payload before applying
+// it, so an unknown barcode must not be a silent, unexplained no-op.
+func TestCloudSetQuickButtonLayout_UnknownBarcodeRefused(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+
+	if _, err := cloudSetQuickButtonLayout(ctx, dp, []string{"b3", "b1", "does-not-exist"}); err == nil {
+		t.Fatalf("expected refusal for an unrecognized barcode")
+	}
+	got := quickButtonOrder(t, dp)
+	want := []string{"b1", "b2", "b3"}
+	if len(got) != len(want) {
+		t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+		}
+	}
+}
+
+// A duplicate barcode in the payload is refused — "the new order" is
+// ambiguous once a barcode appears twice.
+func TestCloudSetQuickButtonLayout_DuplicateBarcodeRefused(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+
+	if _, err := cloudSetQuickButtonLayout(ctx, dp, []string{"b1", "b1", "b2"}); err == nil {
+		t.Fatalf("expected refusal for a duplicate barcode")
+	}
+	got := quickButtonOrder(t, dp)
+	want := []string{"b1", "b2", "b3"}
+	if len(got) != len(want) {
+		t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+	}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)

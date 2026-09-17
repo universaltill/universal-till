@@ -103,13 +103,17 @@ type Hooks struct {
 	// attachment are deliberately out of scope here (need the read-side
 	// StoreSnapshot extension ADR-0095 Decision 2 hasn't shipped yet).
 	UpsertCategory func(ctx context.Context, id, name, color string) (string, error)
-	// SetQuickButtonLayout handles the "set_quick_button_layout" directive:
-	// reorders the shop's quick-sale (shortcut) buttons from the cloud's
-	// layout panel — barcodes arrive as an ordered list, display order
-	// first — the same UpdateOrder call the till's own Designer
-	// move-up/move-down reorder makes locally. An id the hook doesn't
-	// recognize is left to it to decide (mirrors the LAN route: an unknown
-	// barcode is silently a no-op, not a failure).
+	// SetQuickButtonLayout handles the "set_quick_button_layout" directive
+	// (ut-docs#2321, order-only slice of ADR-0095's Decision 1 — per-item
+	// colour/tab reassignment from the cloud panel is explicit deferred
+	// scope, tracked as a follow-up card, not implemented here): reorders
+	// the shop's quick-sale (shortcut) buttons from the cloud's layout
+	// panel — barcodes arrive as the FULL ordered list, display order
+	// first, the same UpdateOrder call the till's own Designer
+	// move-up/move-down reorder makes locally. Unlike the LAN route (which
+	// trusts its own page to always post the full list), the hook rejects
+	// a payload that doesn't cover exactly the till's current button set —
+	// a missing or unrecognized barcode is refused, not a silent no-op.
 	SetQuickButtonLayout func(ctx context.Context, barcodes []string) (string, error)
 	// DeviceExtra contributes extra fields to the device report (e.g. the
 	// current theme + the themes this till can switch to, so the cloud can

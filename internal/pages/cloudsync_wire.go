@@ -166,12 +166,20 @@ func remoteTillSettingsReport(ctx context.Context, d *common.Deps) map[string]st
 // till (requirePrimaryDirective) for the same reason that LAN route is
 // (ut-docs#1697): shortcut_buttons syncs shop-wide as a primary-wins admin
 // table, so a write applied on a replica would vanish on the very next
-// admin pull. A barcode the till doesn't recognize is silently a no-op
-// (UpdateOrder's own `WHERE barcode = ?` matches nothing) — the same
-// behavior the LAN route already has, not a new gap introduced here.
-// Checked directly (not just relying on cloudsync.apply's own dispatch-level
-// check) since this is called both from that dispatch and directly by
-// buildCloudHooks' wiring/tests.
+// admin pull.
+//
+// buttons_api.go's own reorder route documents its payload as "the FULL
+// global list" — UpdateOrder sets sort_order = index only for the barcodes
+// it's given, so a PARTIAL list leaves the omitted rows on their old
+// sort_order values, which can collide with a listed row's new one
+// (verified: an independent review's probe reproduced a real duplicate
+// sort_order from a partial payload, ut-docs#2321 review). A cloud
+// directive's payload isn't validated against the till by anything but
+// this function, so — unlike the LAN route, which trusts its own page to
+// always post the full list — this rejects a payload that doesn't cover
+// EXACTLY the till's current button set (missing or unknown barcodes
+// both refused, named in the error) rather than silently applying a
+// partial reorder.
 func cloudSetQuickButtonLayout(ctx context.Context, d *common.Deps, barcodes []string) (string, error) {
 	if len(barcodes) == 0 {
 		return "", fmt.Errorf("missing barcodes")
@@ -179,7 +187,31 @@ func cloudSetQuickButtonLayout(ctx context.Context, d *common.Deps, barcodes []s
 	if err := requirePrimaryDirective(ctx, d); err != nil {
 		return "", err
 	}
-	if err := data.NewShortcutsRepo(d.Db).UpdateOrder(ctx, barcodes); err != nil {
+	repo := data.NewShortcutsRepo(d.Db)
+	current, err := repo.LoadButtons(ctx)
+	if err != nil {
+		return "", err
+	}
+	currentSet := make(map[string]bool, len(current))
+	for _, b := range current {
+		currentSet[b.Barcode] = true
+	}
+	given := make(map[string]bool, len(barcodes))
+	for _, bc := range barcodes {
+		if given[bc] {
+			return "", fmt.Errorf("duplicate barcode %q in the new layout", bc)
+		}
+		given[bc] = true
+		if !currentSet[bc] {
+			return "", fmt.Errorf("barcode %q is not one of this till's quick buttons", bc)
+		}
+	}
+	for bc := range currentSet {
+		if !given[bc] {
+			return "", fmt.Errorf("the new layout is missing barcode %q — it must list every current quick button", bc)
+		}
+	}
+	if err := repo.UpdateOrder(ctx, barcodes); err != nil {
 		return "", err
 	}
 	auditCloudDirective(ctx, d, "quick_buttons", "-", "quick_button_layout_set", map[string]any{"barcodes": barcodes})
@@ -638,18 +670,20 @@ func collectProblems(ctx context.Context, d *common.Deps) []map[string]any {
 	return out
 }
 
-// requirePrimaryDirective refuses a catalog-mutating directive on a replica
-// till, matching the local admin path's requirePrimary gate (ut-docs#2353):
-// items/item_variants/item_barcodes/variant_barcodes are all admin-synced
-// tables (primary-wins pull, sync_admin_repo.go's adminTables), so a write
-// accepted here would silently vanish on the next admin pull. Directive
-// hooks have no http.ResponseWriter to answer with an HTTP status, so this
-// returns a plain error surfaced in the directive's result column instead —
-// same shape as this file's other refusals (e.g. cloudCreateItem's barcode
+// requirePrimaryDirective refuses a directive that would write to a table
+// synced shop-wide via the primary-wins admin pull, matching the local
+// admin path's requirePrimary gate (ut-docs#2353): items/item_variants/
+// item_barcodes/variant_barcodes (catalog) and shortcut_buttons (quick-sale
+// button layout, ut-docs#2321) are all admin-synced tables (primary-wins
+// pull, sync_admin_repo.go's adminTables), so a write accepted here would
+// silently vanish on the next admin pull. Directive hooks have no
+// http.ResponseWriter to answer with an HTTP status, so this returns a
+// plain error surfaced in the directive's result column instead — same
+// shape as this file's other refusals (e.g. cloudCreateItem's barcode
 // conflict).
 func requirePrimaryDirective(ctx context.Context, d *common.Deps) error {
 	if primary := d.SyncPrimaryURL(ctx); primary != "" {
-		return fmt.Errorf("catalog is primary-wins synced; make this change on the shop's primary till (%s)", primary)
+		return fmt.Errorf("this data is primary-wins synced; make this change on the shop's primary till (%s)", primary)
 	}
 	return nil
 }

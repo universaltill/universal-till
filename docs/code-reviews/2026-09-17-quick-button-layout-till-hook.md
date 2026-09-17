@@ -27,18 +27,23 @@ Designer UI applies via `POST /api/buttons/reorder`.
 
 ## Step 1 — merge conflict / dedup check
 
-`universaltill/universal-till#1219` (ut-docs#2353, "Gate + audit every cloud
-catalog directive on primary-till only") — which independently introduces its
-own `requirePrimaryDirective`/`auditCloudDirective` — is confirmed **not
-merged** into `main` as of this review; it exists only as an unmerged branch
-(commit `2bc0285a`, branch `pr-1219-inspect`, not an ancestor of
-`origin/main`). Local `main` was fast-forwarded from `f401ab51` to `309923cf`
-(10 commits) to be truly in sync with `origin/main` first; none of those 10
-commits touch `internal/cloudsync/**` or `internal/pages/cloudsync_wire*.go`,
-so no rebase conflict. **No dedup was needed** — this diff's two helpers are
-the only definitions on `main` today. (Whoever lands #1219 later will need to
-dedupe against this branch's copies instead — flagged for that future PR, not
-actionable here.)
+**Superseded by events — corrected below (2026-09-17, same day).** At the
+time this Reviewer pass first ran, `universaltill/universal-till#1219`
+(ut-docs#2353) was genuinely unmerged (confirmed: commit `2bc0285a`, branch
+`pr-1219-inspect`, not an ancestor of `origin/main`), so "no dedup needed" was
+an accurate statement of the state at that moment. **#1219 merged to `main`
+as `dbb51e68` four minutes before this PR (#1224) was even opened**, and CI
+on this PR's first push (`6fe22cdb`) failed exactly as this section predicted
+it would for a *later* dedup: `requirePrimaryDirective`/`auditCloudDirective`
+redeclared (`internal/pages/cloudsync_wire.go:679`/`695` vs `:171`/`:184`).
+Fixed by the orchestrator, not this Reviewer pass: `git merge origin/main`
+(commit `1053e63d`), then a follow-up commit (`2db970f8`) removing this
+branch's own copies of both helpers and keeping `main`'s canonical ones
+(`payload any` vs. this branch's `payload map[string]any` — a strict
+supertype, so no call-site changes needed). Full build/vet/test/lint/guard
+gate re-run clean after the merge; see the genuine independent review below,
+which re-verified this from scratch against the real head rather than
+trusting the fix narrative.
 
 ## Independent review
 
@@ -176,21 +181,98 @@ list rather than failing the whole heartbeat, consistent with
 fixtures use `b1`/`b2`/`b3`/`Alpha`/`Beta`/`Gamma`); no secret-shaped literal
 values anywhere in the diff.
 
+## Independent review — round 2 (genuine Opus, orchestrator-run)
+
+The Tooling-note degradation above meant this diff had not actually received
+the model-independent review the card's `complexity:medium` label requires.
+The orchestrator ran a real `Agent(model: "opus")` pass against the pushed PR
+head (`2db970f8`, in its own isolated worktree, fully independent of this
+Reviewer subagent's own context) as a genuine second opinion. It re-derived
+everything above from scratch (did not trust this record's claims) and found:
+
+- **Confirmed correct, re-verified independently:** the primary-till gate is
+  real and load-bearing (`sync_admin_repo.go`'s `adminTables` does list
+  `shortcut_buttons`, checked directly); TDD claim reproduced a second time
+  (remove the gate → real DB mutation on a "replica" → restore → green);
+  `strs()` has no panic/type-confusion path; no offline-first/checkout
+  coupling; the (2) elevation-asymmetry finding above independently
+  reconfirmed as a non-issue.
+- **New findings this pass caught that round 1 missed, fixed by the
+  orchestrator after this record was first written:**
+  - **R2 correction:** "(5c) both happen or neither" overclaimed —
+    `auditCloudDirective` logs and swallows its own insert error *after*
+    `UpdateOrder` already committed, so a write-without-audit path exists in
+    principle (matches `#1219`'s own established helper design, not a new
+    gap this diff introduces, but the record's wording was wrong to call it
+    symmetric). Also: a directive whose barcodes match no rows previously
+    committed a vacuous transaction and still wrote an audit row claiming
+    success — resolved as a side effect of the R4 fix below (a fully
+    mismatched barcode set is now refused before any write or audit).
+  - **R3/R4 — real bug, fixed, not just documented:** (5b)'s "unknown
+    barcode = silent no-op, matches the LAN route" reasoning turned out to
+    hide a genuine defect rather than excuse one. `buttons_api.go`'s own
+    reorder route documents its payload as "the FULL global list";
+    `UpdateOrder` only touches barcodes it's given, so a *partial* list (not
+    just an unknown one) leaves omitted rows on a stale `sort_order` that
+    can collide with a newly-assigned one. The review's own probe
+    reproduced a real duplicate `sort_order` this way. Unlike the LAN route
+    (which trusts its own page to always post the full list), a cloud
+    directive's payload isn't validated by anything else, so
+    `cloudSetQuickButtonLayout` now loads the till's current button set and
+    refuses the directive outright — naming the missing/unknown/duplicate
+    barcode — unless the payload is exactly a permutation of what's
+    actually there. New tests:
+    `TestCloudSetQuickButtonLayout_MissingBarcodeRefused`,
+    `_UnknownBarcodeRefused`, `_DuplicateBarcodeRefused` (TDD-confirmed:
+    removing the new "missing barcode" check fails
+    `_MissingBarcodeRefused` with a real, non-panicking assertion failure).
+    This also makes the success message accurate again (`len(barcodes)`
+    now always equals the actual row count, by construction).
+  - **R5 — fixed:** `requirePrimaryDirective`'s shared message/doc comment
+    (owned by `#1219`, now used by six call sites including this one) said
+    "catalog is primary-wins synced" / "refuses a catalog-mutating
+    directive" — both narrower than reality once `shortcut_buttons` (not
+    catalog data) started using it too. Generalized the message to "this
+    data is primary-wins synced" and widened the doc comment to name
+    `shortcut_buttons` alongside the catalog tables. Purely a string/comment
+    change; no call site or test depends on the old exact wording (checked).
+  - **N1 — fixed:** `_RefusedOnReplica`/`_EmptyListRefused` indexed
+    `got[i]` against a fixed-length `want` without checking `len(got)`
+    first (a future regression that deleted rows would panic, not fail
+    cleanly) — added the length check both places, matching
+    `_AppliesOrderAndAudits`'s own existing pattern.
+  - **N4 — fixed:** `Hooks.SetQuickButtonLayout`'s doc comment now states
+    explicitly that colour/tab-per-item reassignment is deferred scope (a
+    follow-up card, not implemented here), and no longer claims an unknown
+    barcode is "silently a no-op" now that R4 changed that.
+- **Accepted, not fixed:** R6 (no upper-bound cap on barcode-list length) —
+  same reasoning as round 1's (5a): real, not a regression against the LAN
+  route or the wider cloud-directive channel (neither caps today either),
+  worth a Backlog card, not a blocker. N2 (finding numbering gaps in this
+  record, cosmetic) and N3 (`fmt.Errorf` with no verbs where `errors.New`
+  would do, not lint-enforced) — left as-is, genuinely cosmetic.
+
+All gates re-run clean after these fixes: `gofmt`, `go build ./...`,
+`go vet ./...`, `go test ./internal/cloudsync/... ./internal/pages/...
+./internal/data/...`, `golangci-lint run ./...` (0 issues),
+`guard-data-access.sh`, `guard-i18n.sh`, `guard-kiosk-engine.sh`, and
+`guard-docs-shots.sh` (via the documented `update-docs-shots-surface-hash.sh`
+escape hatch, twice — this diff touches `internal/pages/cloudsync_wire.go`
+but adds no rendered UI, confirmed by there being zero `web/` paths in the
+diff both times).
+
 ## Verdict
 
-**Safe to merge.** All CI-blocking gates relevant to this diff's scope pass;
-the TDD claim for the primary-till gate was independently re-verified with a
-real revert/restore showing an actual DB mutation on failure; no blockers
-found. One item is explicitly deferred rather than fixed:
+**Safe to merge**, after the round-2 fixes above (R3/R4/R5/N1/N4) landed on
+top of round 1's own findings. All CI-blocking gates pass; the primary-till
+gate's TDD claim was independently re-verified twice, by two different
+review passes; the full-set-validation TDD claim was verified once, freshly,
+by the orchestrator. No blockers remain.
 
-- **Backlog suggestion:** add a sane upper-bound cap on the barcode list
-  length for `set_quick_button_layout` (dispatch-time in `cloudsync.apply()`
-  or inside `cloudSetQuickButtonLayout`), and consider having
+- **Backlog suggestion (not filed by this Reviewer pass — orchestrator's
+  call):** add a sane upper-bound cap on the barcode-list length for
+  `set_quick_button_layout` (R6/5a), and consider having
   `ShortcutsRepo.UpdateOrder` return an affected-row count so a future pass
-  can surface partial-success on both the LAN and cloud reorder paths. Not
-  created as a card by this Reviewer pass per process (orchestrator's call).
-
-Also flagged for the orchestrator, non-blocking: this review could not use
-the pipeline's specified `Agent`/opus-subagent mechanism (tool unavailable to
-this execution; CCR `create_session` fallback failed repeatedly with a
-permission-mode resolution error) — see "Tooling note" above.
+  can surface partial-success symmetrically — largely mooted for THIS
+  directive by the full-set-validation fix above, but the underlying
+  `UpdateOrder`/LAN-route gap is still real and unrelated to this card.
