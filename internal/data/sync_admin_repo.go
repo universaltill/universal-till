@@ -461,14 +461,19 @@ var nonAdminTables = map[string]string{
 	// ceiling, unlike every current-state table in that list. Resolved by
 	// NOT syncing the table at all: invalidateStalePriceHistoryOnSync (the
 	// post-apply step at the end of ApplyAdmin) closes every locally-open
-	// price_history row for a synced item/variant on every poll instead,
-	// so a satellite can never keep charging a stale override once the
-	// primary has moved the underlying price. Guarded by
+	// price_history row for a synced item/variant on the next admin bundle
+	// that actually changes (ApplyAdmin only runs when the primary's admin
+	// fingerprint moves — sync_admin.go's `!Unchanged` check — not
+	// literally every poll; a primary-side price edit always moves it,
+	// since items/item_variants are themselves admin tables), so a
+	// satellite can never keep charging a stale override once the primary
+	// has moved the underlying price. Guarded by
 	// scripts/ci/guard-price-history-sync.sh (every SQL write to this table
 	// must sit in an explicitly allowlisted function). Still open, NOT
 	// closed by this: the cloud SetPrice directive path is not
 	// primary-gated today (ut-docs#2353), so a satellite can write its own
-	// row directly and the invalidation only cleans that up on the next poll.
+	// row directly and the invalidation only cleans that up on the next
+	// admin bundle that changes — an unbounded window, not "next poll".
 	"price_history": "ever-growing price-change ledger, never synced (ADR-0099); a satellite's stale open override is closed by invalidateStalePriceHistoryOnSync on every ApplyAdmin instead, so checkout falls through to the synced items/item_variants price",
 
 	// Resolved classification (ut-docs#1668): correctly excluded, same
@@ -882,10 +887,15 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 // items.base_price / item_variants.price, and nothing ever revisits that
 // row. So instead of syncing the table itself, every admin-bundle apply
 // closes any locally-open price_history row for an item/variant this
-// bundle just synced. Because DumpAdmin sends the FULL items/item_variants
-// tables on every poll (not incremental), "every id now in
-// items/item_variants" is already exactly the bundle's contents — there is
-// no narrower per-id targeting to preserve.
+// bundle just synced. DumpAdmin sends the FULL items/item_variants tables
+// (not incremental) whenever it sends them at all, so for a complete
+// bundle "every id now in items/item_variants" IS the bundle's contents —
+// there is no narrower per-id targeting to preserve. (A bundle from an
+// older primary that omits one of these tables entirely just means Phase
+// 1/2 skip it above; this step still closes every open row against
+// whatever items/item_variants already hold locally, which is the safe
+// direction — it can only ever remove a stale override, never introduce
+// one.)
 //
 // Deliberately closes ANY open row, not only a currently-active one
 // (starts_at <= now) — a future-dated open row would otherwise activate
@@ -901,7 +911,11 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 // set-based (two statements, no per-row loop). It does NOT close the
 // cloud-directive write path — a satellite can still receive an ungated
 // SetPrice directive (internal/pages/cloudsync_wire.go, ut-docs#2353) and
-// write its own row directly; this only cleans that up on the NEXT poll.
+// write its own row directly; this only cleans that up on the next
+// admin bundle that actually changes (sync_admin.go's `!Unchanged`
+// check gates whether ApplyAdmin runs at all) — an unbounded window on a
+// steady-state shop whose admin state never moves again, not literally
+// "the next poll".
 func invalidateStalePriceHistoryOnSync(ctx context.Context, tx *sql.Tx) error {
 	if _, err := tx.ExecContext(ctx, `
 UPDATE price_history SET ends_at = CURRENT_TIMESTAMP
