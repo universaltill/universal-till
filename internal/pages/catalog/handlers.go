@@ -790,7 +790,11 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		modifiersData := map[string]any{
-			"title":        "Customization options",
+			// ut-docs#2211: was a hardcoded English literal — missed by
+			// ut-docs#2297/PR#1189's `internal/pages/*.go` sweep because
+			// this handler lives one directory deeper, in
+			// internal/pages/catalog/. Same page-title bug, same fix.
+			"title":        httpx.T(httpx.RequestLocale(r), "modifiers.title"),
 			"menuItems":    d.MenuSnapshot(),
 			"theme":        d.CurrentState().Theme,
 			"Groups":       groupModifierAdminByItem(groups, "modifiers-list"),

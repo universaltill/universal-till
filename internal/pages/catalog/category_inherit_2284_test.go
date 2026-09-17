@@ -202,7 +202,7 @@ func TestCatalogVariantsPanel_SummaryNamesInheritedGroups(t *testing.T) {
 	if !strings.Contains(body, "Milk (from category)") {
 		t.Fatalf("summary must name the inherited group as from category:\n%s", body)
 	}
-	if strings.Contains(body, "No customization groups yet.") {
+	if strings.Contains(body, "No Modifiers yet.") { // ut-docs#2211 rename
 		t.Fatalf("summary must not claim no groups when the category adds one:\n%s", body)
 	}
 }
