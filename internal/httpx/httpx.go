@@ -116,7 +116,14 @@ var baseFuncs = template.FuncMap{
 	// instead of the core app.
 	"pluginupdatesavailable": func() bool { return plugins.CurrentPendingUpdates().Count > 0 },
 	"pluginupdatescount":     func() int { return plugins.CurrentPendingUpdates().Count },
-	"jsonVals":               jsonVals,
+	// languagepackupdateavailable: a language pack normally auto-applies
+	// silently (see pluginupdatesavailable above), so this is only true in
+	// the two cases that leave one pending anyway — a joined till, which
+	// never applies locally (ut-docs#460), or a failed auto-apply — and
+	// distinguishes that specifically from the generic "N plugin updates"
+	// count above (ut-docs#2299).
+	"languagepackupdateavailable": func() bool { return plugins.CurrentPendingUpdates().LanguagePending },
+	"jsonVals":                    jsonVals,
 	// Default target for the nav's contextual "?" — the manual's index.
 	// Render() overrides this per request with the topic documenting the page
 	// actually being rendered; fragment renderers that also parse nav.html
