@@ -545,6 +545,76 @@ func TestApplyUpsertCategory(t *testing.T) {
 	}
 }
 
+// set_quick_button_layout: dispatch decodes the JSON array payload into an
+// ordered []string and hands it straight to the hook — no per-code
+// validation here (an unrecognized barcode is the hook/repo's concern, same
+// as the LAN reorder route), only "is there at least one code at all".
+// The wire payload is a JSON-array-encoded STRING (matching ut-cloud's
+// claims.DirectiveTypes["set_quick_button_layout"] = "barcodes" contract:
+// the generic queueDirective field check requires payload[field].(string),
+// so the array rides inside one string field, exactly like apply_design/
+// set_setting's own "JSON array inside a string field" shape) — never a
+// raw JSON array value.
+func TestApplySetQuickButtonLayout(t *testing.T) {
+	status, msg := apply(context.Background(), directive{Type: "set_quick_button_layout", Payload: map[string]any{"barcodes": `["b1","b2"]`}}, Hooks{})
+	if status != "failed" || msg != "set_quick_button_layout is not supported on this till" {
+		t.Fatalf("nil hook: status=%q msg=%q", status, msg)
+	}
+
+	var calls int
+	var got []string
+	hooks := Hooks{
+		SetQuickButtonLayout: func(ctx context.Context, barcodes []string) (string, error) {
+			calls++
+			got = barcodes
+			return "layout applied", nil
+		},
+	}
+
+	// Missing/empty/wrong-type payload: refused before the hook runs.
+	for _, payload := range []map[string]any{
+		{},
+		{"barcodes": `[]`},
+		{"barcodes": "b1,b2"},     // a string, but not JSON at all
+		{"barcodes": []any{"b1"}}, // a raw array value, not the string-encoded shape the wire actually uses
+	} {
+		status, msg = apply(context.Background(), directive{Type: "set_quick_button_layout", Payload: payload}, hooks)
+		if status != "failed" || msg != "missing barcodes" {
+			t.Fatalf("payload %v: status=%q msg=%q", payload, status, msg)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("hook must not run for a missing/empty barcode list, ran %d times", calls)
+	}
+
+	// Well-formed: whitespace trimmed, blank entries dropped, order preserved.
+	status, msg = apply(context.Background(), directive{Type: "set_quick_button_layout", Payload: map[string]any{"barcodes": `[" b3 ", "b1", "", "b2"]`}}, hooks)
+	if status != "applied" || msg != "layout applied" {
+		t.Fatalf("well-formed: status=%q msg=%q", status, msg)
+	}
+	want := []string{"b3", "b1", "b2"}
+	if len(got) != len(want) {
+		t.Fatalf("hook barcodes = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("hook barcodes = %v, want %v", got, want)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("hook ran %d times, want 1", calls)
+	}
+
+	// A hook error is the directive's failure message, same as every type.
+	hooks.SetQuickButtonLayout = func(context.Context, []string) (string, error) {
+		return "", errors.New("this till follows a primary till")
+	}
+	status, msg = apply(context.Background(), directive{Type: "set_quick_button_layout", Payload: map[string]any{"barcodes": `["b1"]`}}, hooks)
+	if status != "failed" || msg != "this till follows a primary till" {
+		t.Fatalf("hook error: status=%q msg=%q", status, msg)
+	}
+}
+
 // Every hook-present-but-item_id-blank branch: the giant fixture table only
 // ever sent these directives with a real item_id (it varied the OTHER
 // field — price, delta, name — to test rejection), so this specific
