@@ -10,12 +10,20 @@ import "sync/atomic"
 // so the till can show a status-bar chip without a per-request DB query.
 type PendingUpdateStatus struct {
 	Count int
+	// LanguagePending is true when at least one pending update (Count > 0)
+	// is a language pack that this tick did NOT auto-apply — the two cases
+	// where "content, not code" still leaves one waiting: a joined till
+	// (ut-docs#460, joined tills never apply locally, they wait for the
+	// main till) or an auto-apply that itself failed. Distinct from Count
+	// because "N plugin updates available" doesn't tell a merchant that a
+	// stale German/Turkish/... UI is specifically what's behind (ut-docs#2299).
+	LanguagePending bool
 }
 
 var pendingUpdateState atomic.Value // PendingUpdateStatus
 
-// CurrentPendingUpdates returns the last-known pending-update count (the
-// zero value, Count 0, before the background scheduler's first tick).
+// CurrentPendingUpdates returns the last-known pending-update status (the
+// zero value before the background scheduler's first tick).
 func CurrentPendingUpdates() PendingUpdateStatus {
 	if s, ok := pendingUpdateState.Load().(PendingUpdateStatus); ok {
 		return s
@@ -26,12 +34,17 @@ func CurrentPendingUpdates() PendingUpdateStatus {
 // SetPendingUpdates records the outcome of one scheduler tick. Exported so
 // internal/pages' StartPluginUpdateScheduler (which owns the DB/catalog
 // access needed to actually run the check) can publish the result here for
-// the status-chip template funcs to read.
-func SetPendingUpdates(count int) {
+// the status-chip template funcs to read. languagePending is ignored (forced
+// false) whenever count is clamped to zero, so the two fields can never
+// disagree about there being anything pending at all.
+func SetPendingUpdates(count int, languagePending bool) {
 	if count < 0 {
 		count = 0
 	}
-	pendingUpdateState.Store(PendingUpdateStatus{Count: count})
+	if count == 0 {
+		languagePending = false
+	}
+	pendingUpdateState.Store(PendingUpdateStatus{Count: count, LanguagePending: languagePending})
 }
 
 // NotePendingUpdateApplied decrements the published count by one, never
@@ -51,7 +64,11 @@ func NotePendingUpdateApplied() {
 		if current.Count <= 0 {
 			return
 		}
-		if pendingUpdateState.CompareAndSwap(current, PendingUpdateStatus{Count: current.Count - 1}) {
+		next := PendingUpdateStatus{Count: current.Count - 1, LanguagePending: current.LanguagePending}
+		if next.Count == 0 {
+			next.LanguagePending = false
+		}
+		if pendingUpdateState.CompareAndSwap(current, next) {
 			return
 		}
 	}
