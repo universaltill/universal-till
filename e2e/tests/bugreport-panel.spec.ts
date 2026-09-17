@@ -128,7 +128,7 @@ test('scrollable underneath: a long page still scrolls with the panel open', asy
   assertClean();
 });
 
-test('a typed report sends inline — success reported without navigating', async ({ page }) => {
+test('a typed report sends inline — success reported without navigating', async ({ page, baseURL }) => {
   const assertClean = watchConsole(page);
   await page.goto('/');
   await page.getByTestId('bugreport-toggle').click();
@@ -138,8 +138,10 @@ test('a typed report sends inline — success reported without navigating', asyn
 
   // Outcome lands inline in the panel's status line…
   await expect(page.locator('#ir-status')).toContainText('Saved');
-  // …and the page never navigated.
-  await expect(page).toHaveURL('http://127.0.0.1:8091/');
+  // …and the page never navigated. Resolved against this worker's own
+  // till (ut-docs#2345: the port is 9091 + parallelIndex, not a fixed
+  // 8091), so the assertion can't be a literal URL.
+  await expect(page).toHaveURL(new URL('/', baseURL).href);
   await expect(page.getByTestId('bugreport-panel')).toBeVisible();
   assertClean();
 });

@@ -96,6 +96,13 @@ type Hooks struct {
 	// queue for that session in one step, so a revoked till doesn't spend
 	// N more ticks rediscovering "not active" one 409 at a time.
 	DiagnosticModeRevoke func(ctx context.Context, sessionID string) (string, error)
+	// UpsertCategory handles the "upsert_category" directive (ut-docs#2323,
+	// ADR-0095 Decision 1) — creates a category (empty id) or updates an
+	// existing one's name/colour, through the same repo calls the local
+	// admin category editor uses. Modifier-group and kitchen-station
+	// attachment are deliberately out of scope here (need the read-side
+	// StoreSnapshot extension ADR-0095 Decision 2 hasn't shipped yet).
+	UpsertCategory func(ctx context.Context, id, name, color string) (string, error)
 	// DeviceExtra contributes extra fields to the device report (e.g. the
 	// current theme + the themes this till can switch to, so the cloud can
 	// render a real design picker instead of a raw key/value form). Keys must
@@ -335,6 +342,18 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", "missing session_id"
 		}
 		msg, err = hooks.DiagnosticModeRevoke(ctx, id)
+	case "upsert_category":
+		if hooks.UpsertCategory == nil {
+			return "failed", "upsert_category is not supported on this till"
+		}
+		// id is optional (empty = create), color is optional (empty = no
+		// colour); only name is required. Palette validation and the
+		// create-vs-update decision belong to the hook, not this dispatch.
+		name := str("name")
+		if name == "" {
+			return "failed", "missing name"
+		}
+		msg, err = hooks.UpsertCategory(ctx, str("id"), name, str("color"))
 	default:
 		return "failed", "unknown directive type " + d.Type
 	}
