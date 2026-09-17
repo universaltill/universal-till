@@ -103,6 +103,18 @@ type Hooks struct {
 	// attachment are deliberately out of scope here (need the read-side
 	// StoreSnapshot extension ADR-0095 Decision 2 hasn't shipped yet).
 	UpsertCategory func(ctx context.Context, id, name, color string) (string, error)
+	// SetQuickButtonLayout handles the "set_quick_button_layout" directive
+	// (ut-docs#2321, order-only slice of ADR-0095's Decision 1 — per-item
+	// colour/tab reassignment from the cloud panel is explicit deferred
+	// scope, tracked as a follow-up card, not implemented here): reorders
+	// the shop's quick-sale (shortcut) buttons from the cloud's layout
+	// panel — barcodes arrive as the FULL ordered list, display order
+	// first, the same UpdateOrder call the till's own Designer
+	// move-up/move-down reorder makes locally. Unlike the LAN route (which
+	// trusts its own page to always post the full list), the hook rejects
+	// a payload that doesn't cover exactly the till's current button set —
+	// a missing or unrecognized barcode is refused, not a silent no-op.
+	SetQuickButtonLayout func(ctx context.Context, barcodes []string) (string, error)
 	// DeviceExtra contributes extra fields to the device report (e.g. the
 	// current theme + the themes this till can switch to, so the cloud can
 	// render a real design picker instead of a raw key/value form). Keys must
@@ -209,6 +221,34 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return n, err == nil
 		}
 		return 0, false
+	}
+	// strs decodes a JSON-array-encoded STRING payload field into an ordered
+	// []string, trimming whitespace and dropping blank entries. The array
+	// rides inside one string field, not as a raw JSON array value — the
+	// cloud side's generic queueDirective field check requires
+	// payload[field].(string) (see claims.DirectiveTypes' own doc comment
+	// on "set_quick_button_layout"), the same "JSON array inside a string
+	// field" shape apply_design/set_setting already use on the portal side.
+	// A payload field that isn't a string, or doesn't decode as a JSON
+	// array (missing, wrong type, malformed) returns nil rather than
+	// guessing — the dispatch below then reports "missing barcodes" instead
+	// of silently reinterpreting the payload.
+	strs := func(k string) []string {
+		raw, ok := d.Payload[k].(string)
+		if !ok {
+			return nil
+		}
+		var arr []string
+		if err := json.Unmarshal([]byte(raw), &arr); err != nil {
+			return nil
+		}
+		out := make([]string, 0, len(arr))
+		for _, s := range arr {
+			if s = strings.TrimSpace(s); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
 	}
 	fnum := func(k string) (float64, bool) {
 		switch v := d.Payload[k].(type) {
@@ -354,6 +394,15 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", "missing name"
 		}
 		msg, err = hooks.UpsertCategory(ctx, str("id"), name, str("color"))
+	case "set_quick_button_layout":
+		if hooks.SetQuickButtonLayout == nil {
+			return "failed", "set_quick_button_layout is not supported on this till"
+		}
+		barcodes := strs("barcodes")
+		if len(barcodes) == 0 {
+			return "failed", "missing barcodes"
+		}
+		msg, err = hooks.SetQuickButtonLayout(ctx, barcodes)
 	default:
 		return "failed", "unknown directive type " + d.Type
 	}

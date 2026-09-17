@@ -1298,3 +1298,256 @@ func TestBuildCloudHooks_WiresUpsertCategory(t *testing.T) {
 		t.Fatalf("wired update did not rename")
 	}
 }
+
+// --- set_quick_button_layout ---
+
+// seedQuickButtons inserts three shortcut_buttons rows, all pointing at
+// seedForPages' itm1 (their only FK requirement), in barcode order b1,b2,b3
+// (sort_order 0,1,2) — the starting layout each test below reorders away
+// from.
+func seedQuickButtons(t *testing.T, dp *common.Deps) {
+	t.Helper()
+	for _, s := range []string{
+		`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('b1','Alpha','itm1',0)`,
+		`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('b2','Beta','itm1',1)`,
+		`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('b3','Gamma','itm1',2)`,
+	} {
+		if _, err := dp.Db.Exec(s); err != nil {
+			t.Fatalf("seed shortcut_buttons: %v", err)
+		}
+	}
+}
+
+// quickButtonOrder returns the button barcodes in persisted sort order.
+func quickButtonOrder(t *testing.T, dp *common.Deps) []string {
+	t.Helper()
+	rows, err := dp.Db.Query(`SELECT barcode FROM shortcut_buttons ORDER BY sort_order`)
+	if err != nil {
+		t.Fatalf("query shortcut_buttons: %v", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var b string
+		if err := rows.Scan(&b); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		out = append(out, b)
+	}
+	return out
+}
+
+// On a primary (or standalone) till, cloudSetQuickButtonLayout applies the
+// new order — the same UpdateOrder call the Designer's own reorder makes —
+// and records one audit_log row so the change is traceable back to a cloud
+// directive rather than a local operator action.
+func TestCloudSetQuickButtonLayout_AppliesOrderAndAudits(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+
+	msg, err := cloudSetQuickButtonLayout(ctx, dp, []string{"b3", "b1", "b2"})
+	if err != nil {
+		t.Fatalf("cloudSetQuickButtonLayout: %v", err)
+	}
+	if !strings.Contains(msg, "3") {
+		t.Fatalf("expected message to mention the button count, got %q", msg)
+	}
+	got := quickButtonOrder(t, dp)
+	want := []string{"b3", "b1", "b2"}
+	if len(got) != len(want) {
+		t.Fatalf("order = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order = %v, want %v", got, want)
+		}
+	}
+
+	var actorID, entityType, action string
+	row := dp.Db.QueryRow(`SELECT actor_id, entity_type, action FROM audit_log ORDER BY created_at DESC, rowid DESC LIMIT 1`)
+	if err := row.Scan(&actorID, &entityType, &action); err != nil {
+		t.Fatalf("query audit_log: %v", err)
+	}
+	if actorID != "system" {
+		t.Fatalf("audit actor_id = %q, want system", actorID)
+	}
+	if action == "" || entityType == "" {
+		t.Fatalf("audit row incomplete: entity_type=%q action=%q", entityType, action)
+	}
+}
+
+// A replica till follows shortcut_buttons from the primary via the
+// admin-table pull (sync_admin_repo.go) — a write here would just be
+// reverted on the next pull with no indication to the cloud operator that
+// nothing actually stuck (same class as ut-docs#1697's LAN-route gate).
+// The directive is refused before any DB write, matching requirePrimary's
+// own refusal shape for the LAN reorder route.
+func TestCloudSetQuickButtonLayout_RefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed primary url: %v", err)
+	}
+
+	if _, err := cloudSetQuickButtonLayout(ctx, dp, []string{"b3", "b1", "b2"}); err == nil {
+		t.Fatalf("expected refusal on a replica till")
+	}
+	got := quickButtonOrder(t, dp)
+	want := []string{"b1", "b2", "b3"} // unchanged
+	if len(got) != len(want) {
+		t.Fatalf("replica write leaked through: order = %v, want unchanged %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("replica write leaked through: order = %v, want unchanged %v", got, want)
+		}
+	}
+}
+
+// An empty barcode list is refused directly by the hook too (not just by
+// cloudsync.apply's own dispatch-level check) -- cloudSetQuickButtonLayout
+// is called directly by buildCloudHooks' wiring and by tests, so it must not
+// rely solely on the caller having already checked.
+func TestCloudSetQuickButtonLayout_EmptyListRefused(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+
+	if _, err := cloudSetQuickButtonLayout(ctx, dp, nil); err == nil {
+		t.Fatalf("expected refusal for an empty barcode list")
+	}
+	got := quickButtonOrder(t, dp)
+	want := []string{"b1", "b2", "b3"}
+	if len(got) != len(want) {
+		t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+		}
+	}
+}
+
+// A partial list (missing an existing barcode) must be refused, not silently
+// applied — buttons_api.go's LAN reorder route documents its own payload as
+// "the FULL global list," and UpdateOrder only touches the barcodes it's
+// given: applying a partial list leaves the omitted row(s) on a stale
+// sort_order that can collide with a listed row's new one (independent
+// review's own probe reproduced a real duplicate sort_order this way,
+// ut-docs#2321 review).
+func TestCloudSetQuickButtonLayout_MissingBarcodeRefused(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+
+	if _, err := cloudSetQuickButtonLayout(ctx, dp, []string{"b3", "b1"}); err == nil {
+		t.Fatalf("expected refusal for a partial list missing b2")
+	}
+	got := quickButtonOrder(t, dp)
+	want := []string{"b1", "b2", "b3"}
+	if len(got) != len(want) {
+		t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+		}
+	}
+}
+
+// A barcode the till doesn't recognize is refused outright — the till is the
+// only thing that can validate a cloud directive's payload before applying
+// it, so an unknown barcode must not be a silent, unexplained no-op.
+func TestCloudSetQuickButtonLayout_UnknownBarcodeRefused(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+
+	if _, err := cloudSetQuickButtonLayout(ctx, dp, []string{"b3", "b1", "does-not-exist"}); err == nil {
+		t.Fatalf("expected refusal for an unrecognized barcode")
+	}
+	got := quickButtonOrder(t, dp)
+	want := []string{"b1", "b2", "b3"}
+	if len(got) != len(want) {
+		t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+		}
+	}
+}
+
+// A duplicate barcode in the payload is refused — "the new order" is
+// ambiguous once a barcode appears twice.
+func TestCloudSetQuickButtonLayout_DuplicateBarcodeRefused(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+
+	if _, err := cloudSetQuickButtonLayout(ctx, dp, []string{"b1", "b1", "b2"}); err == nil {
+		t.Fatalf("expected refusal for a duplicate barcode")
+	}
+	got := quickButtonOrder(t, dp)
+	want := []string{"b1", "b2", "b3"}
+	if len(got) != len(want) {
+		t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+		}
+	}
+}
+
+// The hook set StartCloudSync wires carries SetQuickButtonLayout, and the
+// DeviceExtra report includes the applied layout (barcode + label, in sort
+// order) so the cloud's layout panel can pre-fill from real state.
+func TestBuildCloudHooks_WiresQuickButtonLayout(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+	hooks := buildCloudHooks(dp, nil)
+
+	if hooks.SetQuickButtonLayout == nil {
+		t.Fatalf("SetQuickButtonLayout hook not wired")
+	}
+	if _, err := hooks.SetQuickButtonLayout(ctx, []string{"b2", "b3", "b1"}); err != nil {
+		t.Fatalf("wired SetQuickButtonLayout: %v", err)
+	}
+	got := quickButtonOrder(t, dp)
+	want := []string{"b2", "b3", "b1"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("wired order = %v, want %v", got, want)
+		}
+	}
+
+	extra := hooks.DeviceExtra(ctx)
+	qb, ok := extra["quick_buttons"].([]map[string]any)
+	if !ok {
+		t.Fatalf("quick_buttons missing or wrong type in DeviceExtra: %#v", extra["quick_buttons"])
+	}
+	if len(qb) != 3 {
+		t.Fatalf("quick_buttons length = %d, want 3", len(qb))
+	}
+	wantOrder := []string{"b2", "b3", "b1"}
+	for i, code := range wantOrder {
+		if qb[i]["barcode"] != code {
+			t.Fatalf("quick_buttons[%d] = %+v, want barcode %q", i, qb[i], code)
+		}
+		// sort_order must mirror this entry's actual position — the cloud
+		// side decodes it into QuickButtonReport.SortOrder independently of
+		// the report's own array order (ut-docs#2321 review).
+		if so, ok := qb[i]["sort_order"].(int); !ok || so != i {
+			t.Fatalf("quick_buttons[%d][\"sort_order\"] = %#v, want %d", i, qb[i]["sort_order"], i)
+		}
+	}
+	for _, k := range []string{"theme", "themes", "problems", "till_settings"} {
+		if _, present := extra[k]; !present {
+			t.Fatalf("existing DeviceExtra field %q lost", k)
+		}
+	}
+}
