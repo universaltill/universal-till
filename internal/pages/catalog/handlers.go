@@ -724,6 +724,16 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		barcodes, _ := repo.ItemBarcodes(r.Context())
 		variants, _ := repo.ItemVariants(r.Context())
 		thumbnails, _ := repo.ItemThumbnails(r.Context())
+		// ut-docs#2314: the catalog list/edit form must show each item's
+		// CURRENT EFFECTIVE price (price_history-resolved), not raw
+		// base_price, same resolution ItemVariantsForSale/the sale-screen
+		// tiles already use (ut-docs#2258) — see buildCatalogRows' own doc
+		// comment for what this overrides and why.
+		itemIDs := make([]string, len(items))
+		for i, itm := range items {
+			itemIDs[i] = itm.ID
+		}
+		currentPrices, _ := repo.ItemCurrentPrices(r.Context(), itemIDs)
 		// ut-docs#2090: whether this render is an /items-shell fragment
 		// swap (true) or a bare/standalone page (false) — catalog.html's
 		// own Modifiers/Option-sets top-action buttons and their
@@ -734,7 +744,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"title":                 "Catalog",
 			"menuItems":             d.MenuSnapshot(),
 			"theme":                 d.CurrentState().Theme,
-			"Rows":                  buildCatalogRows(items, barcodes, variants, thumbnails),
+			"Rows":                  buildCatalogRows(items, barcodes, variants, thumbnails, currentPrices),
 			"Categories":            cats,
 			"CategoryFilterOptions": categoryFilterOptions,
 			"CategoryNodesJSON":     categoryFilterNodesJSON(categoryFilterOptions),

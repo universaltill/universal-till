@@ -454,7 +454,7 @@ var nonAdminTables = map[string]string{
 	// Genuinely open classification questions — excluded (not synced) rather
 	// than guessed into adminTables, each split into its own follow-up card
 	// per this var's own top comment.
-	"price_history": "NOT a pure append-only audit trail (AppendPriceHistoryItem/Variant UPDATE the prior row's ends_at, and item deletion DELETEs rows) and NOT inert to checkout — ResolveCurrentPrice consults an open price_history row BEFORE items' synced price, so it can override it. Currently latent (nothing in production writes this table yet), but a satellite that ever does would diverge on price silently. Needs an Architect pass before either classification is safe; flagged in ut-docs#1671",
+	"price_history": "NOT a pure append-only audit trail (AppendPriceHistoryItem/Variant UPDATE the prior row's ends_at, and item deletion DELETEs rows) and NOT inert to checkout — ResolveCurrentPrice consults an open price_history row BEFORE items' synced price, so it can override it. No longer latent as of ut-docs#2314: the catalog item/variant edit form and the cloud's SetItemPrice directive both write this table now, so a satellite that isn't kept in sync WILL diverge on price silently, not just hypothetically. Needs an Architect pass before either classification is safe; flagged in ut-docs#1671",
 
 	// Resolved classification (ut-docs#1668): correctly excluded, same
 	// concurrency reasoning ut-docs#1554 gave role_permissions — a periodic
