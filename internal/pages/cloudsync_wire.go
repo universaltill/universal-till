@@ -335,6 +335,14 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		UpsertCategory: func(ctx context.Context, id, name, color string) (string, error) {
 			return cloudUpsertCategory(ctx, d, id, name, color)
 		},
+		// update_item_details (ut-docs#2324, ADR-0095 Decision 1): the cloud
+		// panel's item "More…" disclosure form — a partial update of sku/
+		// description/unit/colour/is_weighed/stock_untracked. See
+		// cloudUpdateItemDetails for the nil-means-untouched contract and
+		// why category/brand/tax-code are excluded.
+		UpdateItemDetails: func(ctx context.Context, itemID string, sku, description, unit, color *string, isWeighed, stockUntracked *bool) (string, error) {
+			return cloudUpdateItemDetails(ctx, d, itemID, sku, description, unit, color, isWeighed, stockUntracked)
+		},
 		// diagnostic_mode_revoke (ADR-0092 §1/§4, ut-docs#2169): Universal
 		// Till ended this till's diagnostic session — clear the local flag
 		// and drain that session's whole pending queue in one step. Same
@@ -897,6 +905,111 @@ func cloudUpsertCategory(ctx context.Context, d *common.Deps, id, name, color st
 	}
 	auditCloudDirective(ctx, d, "category", id, "cloud_category_updated", map[string]any{"name": name, "color": color})
 	return "updated category " + name, nil
+}
+
+// cloudUpdateItemDetails is the update_item_details hook (ut-docs#2324,
+// ADR-0095 Decision 1): a PARTIAL update of sku/description/unit/colour/
+// is_weighed/stock_untracked — read-modify-write via
+// CatalogRepo.UpdateItemPartial (a single BEGIN IMMEDIATE transaction,
+// ut-docs#2324 review finding S1) rather than two separate GetItem/
+// UpdateItem calls, so a genuinely concurrent local edit to any OTHER
+// column (price, name, active state, category/brand/tax) can't be silently
+// reverted by a stale read here — same race UpdateItemReturningWasActive's
+// own doc comment describes for the local admin editor's own update path.
+// sku/description/unit/color are nil when absent from the directive's
+// payload; is_weighed/stock_untracked are nil the same way — nil means
+// "leave untouched", never "unset" or "false".
+//
+// A blank sku or unit is normalized to "absent" here (ut-docs#2324 review
+// finding S3): updateItemExec's own SQL makes a blank sku a true no-op
+// (COALESCE(NULLIF(?,”), sku)) but silently DEFAULTS a blank unit to
+// "each" — neither is a meaningful "clear this field" the way blank IS for
+// colour (see below), so reporting/auditing either as a real change would
+// be false attribution. This normalization runs before the "any fields
+// left?" check, so a request carrying only a blank sku/unit correctly
+// reports "no changes" rather than a change that didn't actually happen.
+//
+// Colour is different: "" is a real, valid "no colour" state (same as
+// cloudUpsertCategory), so a present-but-empty colour DOES proceed as a
+// real, audited change — validated against the SAME fixed palette
+// cloudUpsertCategory checks (catalogtypes.ValidItemColor) before anything
+// else runs, so a refused colour never reaches the primary gate or the
+// write.
+//
+// CategoryID/BrandID/TaxCodeID are deliberately never touched here, even
+// though they're part of catalogtypes.ItemInput: the merchant portal has no
+// safe way to offer that picker yet (needs the read-side lookup sync ADR-
+// 0095 Decision 2 hasn't shipped, ut-docs#2354) — UpdateItemPartial only
+// ever applies the six optional overrides above onto whatever it reads
+// inside its own transaction.
+//
+// items is an admin-synced table (primary-wins pull, sync_admin_repo.go's
+// adminTables), so this is gated and audited the same way every other
+// catalog-mutating directive is (requirePrimaryDirective/
+// auditCloudDirective, ut-docs#2353) — a write accepted here on a replica
+// would silently vanish on the next admin pull. The gate runs after colour
+// validation (a malformed request should report that specific problem) but
+// before the existence check, which now happens inside UpdateItemPartial's
+// own transaction — a replica correctly refuses regardless of whether the
+// item exists.
+func cloudUpdateItemDetails(ctx context.Context, d *common.Deps, itemID string, sku, description, unit, color *string, isWeighed, stockUntracked *bool) (string, error) {
+	if sku != nil && strings.TrimSpace(*sku) == "" {
+		sku = nil
+	}
+	if unit != nil && strings.TrimSpace(*unit) == "" {
+		unit = nil
+	}
+	if color != nil {
+		c := strings.TrimSpace(*color)
+		if !catalogtypes.ValidItemColor(c) {
+			return "", fmt.Errorf("colour %q is not one of the item palette colours", c)
+		}
+		color = &c
+	}
+
+	var changed []string
+	auditPayload := map[string]any{}
+	if sku != nil {
+		changed = append(changed, "sku")
+		auditPayload["sku"] = *sku
+	}
+	if description != nil {
+		changed = append(changed, "description")
+		auditPayload["description"] = *description
+	}
+	if unit != nil {
+		changed = append(changed, "unit")
+		auditPayload["unit"] = *unit
+	}
+	if color != nil {
+		changed = append(changed, "color")
+		auditPayload["color"] = *color
+	}
+	if isWeighed != nil {
+		changed = append(changed, "is_weighed")
+		auditPayload["is_weighed"] = *isWeighed
+	}
+	if stockUntracked != nil {
+		changed = append(changed, "stock_untracked")
+		auditPayload["stock_untracked"] = *stockUntracked
+	}
+
+	if len(changed) == 0 {
+		return "no changes", nil
+	}
+
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	ok, err := data.NewCatalogRepo(d.Db).UpdateItemPartial(ctx, itemID, sku, description, unit, color, isWeighed, stockUntracked)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("item not found")
+	}
+	auditCloudDirective(ctx, d, "item", itemID, "cloud_item_details_updated", auditPayload)
+	return "details updated: " + strings.Join(changed, ", "), nil
 }
 
 // cloudCreateItem creates a catalog item from a directive. Directives are
