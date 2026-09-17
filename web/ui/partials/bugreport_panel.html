@@ -12,6 +12,14 @@
          role="region" aria-label="{{ T "issuereport.panel_title" }}">
   <div class="bugreport-head">
     <h2>{{ T "issuereport.panel_title" }}</h2>
+    <!-- ut-docs#2342: the panel is a DRAFT that outlives the page, so it
+         needs an explicit way to throw that draft away. ✕ only HIDES the
+         panel (the draft is kept and reopens from the 🐞 chip); Discard
+         asks, then drops the note, every screenshot and any recording, and
+         closes. Send (below) clears the draft on success. Nothing else ever
+         closes the panel — never a navigation. -->
+    <button type="button" class="btn secondary bugreport-discard" id="bugreport-discard"
+            data-testid="bugreport-discard">{{ T "issuereport.discard" }}</button>
     <!-- ut-docs#1859: was a bare ✕ emoji-adjacent glyph (platform-font
          metrics risk, guard-emoji-font.sh's class of problem); aria-label
          already carries the accessible name, so the icon is aria-hidden. -->
@@ -79,14 +87,16 @@
     <div id="ir-screenshot-thumbs" class="bugreport-thumbs"></div>
   </div>
 
-  <!-- Recording ending on navigation is EXPECTED behaviour for this card
-       (keeping it alive across navigation is ut-docs#349) — say so, and keep
-       it next to the recorders it actually applies to. -->
-  <p class="set-gap muted bugreport-nav-note">{{ T "issuereport.nav_ends_recording" }}</p>
+  <!-- ut-docs#2342 (was: "recording stops if you navigate"): a recording
+       keeps running across a boosted rail navigation (the panel lives
+       outside #ut-page, ADR-0098) and a FULL load keeps what was captured
+       up to that point (timeslice chunks persisted as they land, see
+       bugreport-draft.js) — say that instead, next to the recorders. -->
+  <p class="set-gap muted bugreport-nav-note">{{ T "issuereport.recording_across_pages" }}</p>
   <p class="muted">{{ T "issuereport.logs_note" }}</p>
   <!-- "My reports" (ut-docs#348): where sent reports and their statuses
-       live. A plain link, not htmx — it's a full page, and navigating away
-       ends any in-progress recording (the note above already says so). -->
+       live. A plain link, not htmx — it's a full page; the draft (and what a
+       running recording has captured so far) survives it (ut-docs#2342). -->
   <p><a href="/my-reports">{{ T "issuereport.view_my_reports" }}</a></p>
 </section>
 
@@ -109,6 +119,9 @@
     screenshotUnsupported: "{{ T "issuereport.screenshot_unsupported" }}",
     screenshotError: "{{ T "issuereport.screenshot_error" }}",
     screenshotRemove: "{{ T "issuereport.screenshot_remove" }}",
+    screenshotLimit: "{{ T "issuereport.screenshot_limit" }}",
+    recordingKeptAfterReload: "{{ T "issuereport.recording_kept_after_reload" }}",
+    discardConfirm: "{{ T "issuereport.discard_confirm" }}",
     saving: "{{ T "issuereport.saving" }}",
     saved: "{{ T "issuereport.saved" }}",
     saveError: "{{ T "issuereport.save_error" }}"
@@ -127,6 +140,16 @@
 
     var VOICE_MAX_MS = 120000; // 2 min, matches spec 012's client-side cap
     var SCREEN_MAX_MS = 60000; // 60s
+    var SCREENSHOT_MAX = 12;   // ut-docs#2342: a draft now persists, so bound it
+    // ut-docs#2342: a recorder emits a chunk every CHUNK_MS and each chunk is
+    // persisted the moment it lands, so a full document load mid-recording
+    // loses at most CHUNK_MS of footage instead of all of it. WebM chunks
+    // from one MediaRecorder concatenate into a playable file (the first
+    // carries the header), which is how the interrupted recording is
+    // rebuilt on the next page.
+    var CHUNK_MS = 1000;
+    var draft = window.UT && window.UT.bugreportDraft;
+    var discardPending = false;
 
     var voiceBtn = document.getElementById('ir-voice-btn');
     var voicePreview = document.getElementById('ir-voice-preview');
@@ -170,20 +193,26 @@
             return;
           }
           voiceChunks = [];
+          var voiceSeq = 0;
           voiceRecorder.addEventListener('dataavailable', function (e) {
-            if (e.data && e.data.size > 0) voiceChunks.push(e.data);
+            if (!(e.data && e.data.size > 0)) return;
+            voiceChunks.push(e.data);
+            if (draft) draft.put(draft.key('voice-chunk', voiceSeq++), e.data);
           });
           voiceRecorder.addEventListener('stop', function () {
             clearTimeout(voiceTimer);
-            voiceBlob = new Blob(voiceChunks, { type: mime });
-            voicePreview.src = URL.createObjectURL(voiceBlob);
-            voicePreview.style.display = '';
+            setVoiceBlob(new Blob(voiceChunks, { type: mime }), true);
             stream.getTracks().forEach(function (t) { t.stop(); });
             voiceRecording = false;
             voiceBtn.disabled = false;
             voiceBtn.textContent = T.voiceRecord;
+            if (discardPending) finishDiscard();
           });
-          voiceRecorder.start();
+          // The store never holds a finished recording AND a newer one's
+          // chunks: drop the old blob now, so a full load mid-recording
+          // restores the recording that was actually running.
+          if (draft) draft.del(draft.key('voice'));
+          voiceRecorder.start(CHUNK_MS);
           voiceRecording = true;
           voiceBtn.disabled = false;
           voiceBtn.textContent = T.voiceStop;
@@ -223,18 +252,20 @@
             return;
           }
           screenChunks = [];
+          var screenSeq = 0;
           screenRecorder.addEventListener('dataavailable', function (e) {
-            if (e.data && e.data.size > 0) screenChunks.push(e.data);
+            if (!(e.data && e.data.size > 0)) return;
+            screenChunks.push(e.data);
+            if (draft) draft.put(draft.key('screen-chunk', screenSeq++), e.data);
           });
           screenRecorder.addEventListener('stop', function () {
             clearTimeout(screenTimer);
-            screenBlob = new Blob(screenChunks, { type: mime });
-            screenPreview.src = URL.createObjectURL(screenBlob);
-            screenPreview.style.display = '';
+            setScreenBlob(new Blob(screenChunks, { type: mime }), true);
             screenStream.getTracks().forEach(function (t) { t.stop(); });
             screenRecording = false;
             screenBtn.disabled = false;
             screenBtn.textContent = T.screenRecord;
+            if (discardPending) finishDiscard();
           });
           // The user can also stop by using the browser's own "Stop sharing"
           // control, not just this button — that tears the stream down without
@@ -243,7 +274,8 @@
           stream.getVideoTracks()[0].addEventListener('ended', function () {
             if (screenRecording) screenRecorder.stop();
           });
-          screenRecorder.start();
+          if (draft) draft.del(draft.key('screen')); // see the voice recorder
+          screenRecorder.start(CHUNK_MS);
           screenRecording = true;
           screenBtn.disabled = false;
           screenBtn.textContent = T.screenStop;
@@ -266,9 +298,43 @@
     // several screenshots can ride along with one report.
     var screenshotBtn = document.getElementById('ir-screenshot-btn');
     var screenshotThumbs = document.getElementById('ir-screenshot-thumbs');
-    var screenshots = []; // { blob, thumbnailEl }
+    var screenshots = []; // { blob, thumbnailEl, key }
 
-    function addScreenshotThumb(blob) {
+    // ut-docs#2342: a finished recording is one blob in the draft store; the
+    // chunks that built it are dropped (they'd only double the footprint).
+    // `persist` is false when restoring a blob that is already stored (a
+    // multi-MB re-write on every full load for nothing). The previous
+    // preview's object URL is revoked before it is overwritten: the document
+    // now lives for the whole till session (ADR-0098), so every leaked URL
+    // pins a full recording in memory until the till is restarted.
+    var voiceURL = null, screenURL = null;
+    function setVoiceBlob(blob, persist) {
+      voiceBlob = blob;
+      if (voiceURL) URL.revokeObjectURL(voiceURL);
+      voiceURL = URL.createObjectURL(blob);
+      voicePreview.src = voiceURL;
+      voicePreview.style.display = '';
+      if (persist && draft && !discardPending) draft.keys('voice-chunk').then(function (ks) { ks.forEach(draft.del); }).then(function () { draft.put(draft.key('voice'), blob); });
+    }
+    function setScreenBlob(blob, persist) {
+      screenBlob = blob;
+      if (screenURL) URL.revokeObjectURL(screenURL);
+      screenURL = URL.createObjectURL(blob);
+      screenPreview.src = screenURL;
+      screenPreview.style.display = '';
+      if (persist && draft && !discardPending) draft.keys('screen-chunk').then(function (ks) { ks.forEach(draft.del); }).then(function () { draft.put(draft.key('screen'), blob); });
+    }
+    function syncScreenshotCap() {
+      var full = screenshots.length >= SCREENSHOT_MAX;
+      screenshotBtn.disabled = full;
+      if (full) statusEl.textContent = T.screenshotLimit;
+    }
+
+    // `key` is set when restoring an already-persisted screenshot; a fresh
+    // capture gets a new key and is persisted here.
+    function addScreenshotThumb(blob, key) {
+      if (screenshots.length >= SCREENSHOT_MAX) { syncScreenshotCap(); return; }
+      if (!key && draft) { key = draft.key('shot', Date.now()); draft.put(key, blob); }
       var wrap = document.createElement('span');
       wrap.className = 'bugreport-thumb';
       var img = document.createElement('img');
@@ -283,12 +349,15 @@
       wrap.appendChild(img);
       wrap.appendChild(remove);
       screenshotThumbs.appendChild(wrap);
-      var entry = { blob: blob, thumbnailEl: wrap };
+      var entry = { blob: blob, thumbnailEl: wrap, key: key, url: objectURL };
       screenshots.push(entry);
+      syncScreenshotCap();
       remove.addEventListener('click', function () {
         var i = screenshots.indexOf(entry);
         if (i !== -1) screenshots.splice(i, 1);
         wrap.remove();
+        if (key && draft) draft.del(key);
+        syncScreenshotCap();
         // Revoke, or the discarded full-resolution PNG stays pinned in memory
         // for the life of the document. Unlike the voice/screen previews —
         // one each, overwritten on re-record — screenshots are explicitly
@@ -297,6 +366,73 @@
         URL.revokeObjectURL(objectURL);
       });
     }
+
+    // ut-docs#2342: reset every capture + the note, and empty the draft
+    // store. Send (the report is gone) and Discard both come here.
+    function resetDraft() {
+      noteEl.value = '';
+      screenshots.slice().forEach(function (s) { s.thumbnailEl.remove(); URL.revokeObjectURL(s.url); });
+      screenshots = [];
+      voiceBlob = null; voicePreview.removeAttribute('src'); voicePreview.style.display = 'none';
+      screenBlob = null; screenPreview.removeAttribute('src'); screenPreview.style.display = 'none';
+      if (voiceURL) { URL.revokeObjectURL(voiceURL); voiceURL = null; }
+      if (screenURL) { URL.revokeObjectURL(screenURL); screenURL = null; }
+      syncScreenshotCap();
+      if (draft) { draft.clearBlobs(); draft.set({ note: '' }); }
+    }
+
+    // ut-docs#2342: restore what the previous document left in the draft
+    // store. Orphan `*-chunk` entries mean a recording was running when that
+    // document went away — rebuild what it captured and say so; the user
+    // decides whether that is enough or records again.
+    function restoreDraft() {
+      if (!draft) return;
+      var m = draft.meta();
+      if (m && typeof m.note === 'string' && !noteEl.value) noteEl.value = m.note;
+      draft.entries('shot').then(function (es) {
+        es.forEach(function (e) { addScreenshotThumb(e.blob, e.key); });
+      });
+      ['voice', 'screen'].forEach(function (kind) {
+        var set = kind === 'voice' ? setVoiceBlob : setScreenBlob;
+        // Chunks first: they belong to the recording that was RUNNING when
+        // the previous document went away, which always supersedes an
+        // older finished one (the recorder deletes that on start anyway).
+        draft.entries(kind + '-chunk').then(function (es) {
+          if (es.length) {
+            set(new Blob(es.map(function (e) { return e.blob; }), { type: es[0].blob.type }), true);
+            statusEl.textContent = T.recordingKeptAfterReload;
+            return;
+          }
+          return draft.get(draft.key(kind)).then(function (blob) { if (blob) set(blob, false); });
+        });
+      });
+    }
+
+    noteEl.addEventListener('input', function () {
+      if (draft) draft.set({ note: noteEl.value });
+    });
+
+    // MediaRecorder.stop() is asynchronous (the `stop` event lands after the
+    // final chunk), so a discard with a recorder still running finishes from
+    // that recorder's stop handler, and the blob setters skip persisting
+    // while a discard is pending — otherwise the just-cleared store would be
+    // repopulated by the stop that was already in flight.
+    function finishDiscard() {
+      if (voiceRecording || screenRecording) return;
+      discardPending = false;
+      resetDraft();
+      statusEl.textContent = '';
+      closePanel();
+    }
+    document.getElementById('bugreport-discard').addEventListener('click', function () {
+      if (!window.confirm(T.discardConfirm)) return;
+      discardPending = true;
+      if (voiceRecording) voiceRecorder.stop();
+      if (screenRecording) screenRecorder.stop();
+      finishDiscard();
+    });
+
+    restoreDraft();
 
     function grabFrameFromStream(stream, done) {
       var track = stream.getVideoTracks()[0];
@@ -402,6 +538,7 @@
       fetch('/api/issue-reports', { method: 'POST', body: fd })
         .then(function (r) { if (!r.ok) throw new Error('save failed'); return r.json(); })
         .then(function () {
+          resetDraft(); // ut-docs#2342: sent = gone; the panel stays open
           statusEl.textContent = T.saved;
           saveBtn.disabled = false;
         })
@@ -428,13 +565,16 @@
   // storage-blocked browser just falls back to today's per-page behaviour,
   // never throws. Written only by the two explicit user actions below
   // (close / toggle-open); read-only everywhere else.
-  var DISMISS_KEY = 'ut-bugreport-dismissed';
+  // ut-docs#2342: the open/closed state is part of the session's draft
+  // (bugreport-draft.js), which replaced the older `ut-bugreport-dismissed`
+  // sessionStorage flag: "the user closed it" and "the user opened it" are
+  // the same bit, and a full load restores whichever it was — the panel
+  // never reappears after ✕, and never vanishes after 🐞.
+  var draftStore = window.UT && window.UT.bugreportDraft;
   function dismissed(v) {
-    try {
-      if (v === undefined) return sessionStorage.getItem(DISMISS_KEY) === '1';
-      if (v) sessionStorage.setItem(DISMISS_KEY, '1');
-      else sessionStorage.removeItem(DISMISS_KEY);
-    } catch (e) { return false; }
+    if (!draftStore) return false;
+    if (v === undefined) { var m = draftStore.meta(); return !!(m && m.open === false); }
+    draftStore.set({ open: !v });
   }
 
   function openPanel() {
@@ -491,11 +631,14 @@
     ];
   }
 
-  function moveTo(x, y) {
+  // `persist` (ut-docs#2342): write the position to the draft so it survives
+  // a full load — once per drag end / reclamp, not on every pointermove.
+  function moveTo(x, y, persist) {
     var xy = clampIntoViewport(x, y);
     panel.style.insetInlineEnd = 'auto';
     panel.style.left = xy[0] + 'px';
     panel.style.top = xy[1] + 'px';
+    if (persist && draftStore) draftStore.set({ pos: xy });
   }
 
   // Only ever re-positions a panel that was actually dragged — an untouched
@@ -504,7 +647,19 @@
   // clamp has to be redone once it has a box again).
   function reclampIfDragged() {
     if (!panel.style.left) return;
-    moveTo(parseFloat(panel.style.left) || 0, parseFloat(panel.style.top) || 0);
+    moveTo(parseFloat(panel.style.left) || 0, parseFloat(panel.style.top) || 0, true);
+  }
+
+  // ut-docs#395's resize guard — a dragged panel holds fixed pixel offsets,
+  // so shrinking the window or rotating a tablet can strand it off-screen
+  // with no head bar left to grab; re-clamp instead. Armed once per
+  // document: on the first drag (a till that never drags pays nothing), or
+  // at boot when a dragged position is restored (ut-docs#2342), since a
+  // restored panel is just as capable of being stranded.
+  function armResizeGuard() {
+    if (resizeGuarded) return;
+    resizeGuarded = true;
+    window.addEventListener('resize', reclampIfDragged);
   }
 
   function onDragMove(e) {
@@ -513,7 +668,7 @@
     // the panel with one hand and tapping the till with the other, which is
     // exactly the workflow this panel exists for — hijacks the drag.
     if (e.pointerId !== dragPointerId) return;
-    moveTo(panelStartX + (e.clientX - dragStartX), panelStartY + (e.clientY - dragStartY));
+    moveTo(panelStartX + (e.clientX - dragStartX), panelStartY + (e.clientY - dragStartY), false);
   }
 
   function endDrag(e) {
@@ -523,6 +678,7 @@
     if (dragPointerId === null || (e && e.pointerId !== dragPointerId)) return;
     if (head.hasPointerCapture(dragPointerId)) head.releasePointerCapture(dragPointerId);
     dragPointerId = null;
+    reclampIfDragged(); // persists the final position (ut-docs#2342)
     document.removeEventListener('pointermove', onDragMove);
     document.removeEventListener('pointerup', endDrag);
     document.removeEventListener('pointercancel', endDrag);
@@ -535,7 +691,7 @@
     // 'click' for a press-and-release at the same target with no
     // intervening pointer capture elsewhere, which the capture on `head`
     // guarantees here).
-    if (e.target.closest('#bugreport-close')) return;
+    if (e.target.closest('#bugreport-close, #bugreport-discard')) return; // buttons in the head are not drag handles
     if (dragPointerId !== null) return;   // one drag at a time
     if (e.button !== 0) return;           // primary press only; a right-click drag isn't one
     // Suppress the browser's OWN drag gesture before it starts. Without this
@@ -567,16 +723,7 @@
     // gesture stolen) without ever sending pointerup/pointercancel.
     head.addEventListener('lostpointercapture', endDrag, { once: true });
 
-    if (!resizeGuarded) {
-      resizeGuarded = true;
-      // A dragged panel holds fixed pixel offsets, so shrinking the window
-      // (desktop shell) or rotating a tablet till can strand it entirely
-      // off-screen — and the position survives close/reopen, so there'd be no
-      // head bar left to grab it back by. Re-clamp instead. Attached on the
-      // first drag only: a till that never drags pays nothing, same as the
-      // capture machinery's lazy init above.
-      window.addEventListener('resize', reclampIfDragged);
-    }
+    armResizeGuard();
   });
 
   // /report-issue renders the panel already open (server-side class, so it
@@ -586,14 +733,46 @@
   // stay closed. Correcting client-side rather than server-side keeps the
   // handler's no-JS first paint intact while still honoring the dismissal
   // for everyone who does run JS.
-  if (panel.classList.contains('open')) {
-    if (dismissed()) {
-      panel.classList.remove('open');
-      syncToggle(false);
-    } else {
-      initCapture();
+  // ut-docs#2342: the 🐞 chip lives inside #ut-page and is brand new after
+  // every boosted swap — re-tell it whether the panel (which persists) is
+  // open. This listener is outside #ut-page, so the shell keeps it.
+  document.addEventListener('htmx:afterSettle', function () {
+    syncToggle(panel.classList.contains('open'));
+  });
+
+  // Boot. The draft store is a deferred script, so it is only guaranteed
+  // to exist from DOMContentLoaded on (UT.ready — base.html's shell). A
+  // draft that says `open` wins over the server's default-closed markup;
+  // a dismissed one wins over /report-issue's pre-opened markup.
+  window.UT.ready(function () {
+    draftStore = window.UT.bugreportDraft;
+    if (draftStore) {
+      draftStore.purgeStale();
+      var m = draftStore.meta();
+      // Raw placement, no clamp: a closed panel has no box to clamp against
+      // yet; openPanel's reclampIfDragged re-clamps it once it is visible.
+      if (m && m.pos && m.pos.length === 2) {
+        panel.style.insetInlineEnd = 'auto';
+        panel.style.left = m.pos[0] + 'px';
+        panel.style.top = m.pos[1] + 'px';
+        armResizeGuard();
+      }
+      if (m && m.open === true && !panel.classList.contains('open')) { openPanel(); return; }
     }
-  }
+    if (panel.classList.contains('open')) {
+      if (dismissed()) {
+        panel.classList.remove('open');
+        syncToggle(false);
+      } else {
+        // Server-opened (/report-issue): record it as open, or the first
+        // store write (a keystroke, a screenshot) would default `open` to
+        // false and the next full load would hide a panel nobody closed.
+        dismissed(false);
+        initCapture();
+        reclampIfDragged();
+      }
+    }
+  });
 })();
 </script>
 {{ end }}

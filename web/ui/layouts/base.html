@@ -380,6 +380,10 @@
          a no-op on any page without that markup, same pattern as
          record-dialog.js above. -->
     <script defer src="/public/category-filter.js?v={{ assetv "public/category-filter.js" }}"></script>
+    <!-- ut-docs#2342: the bug-report panel's draft store (sessionStorage +
+         IndexedDB) so an open report survives a full document load. Deferred
+         like the rest; the panel reads it from UT.ready on. -->
+    <script defer src="/public/bugreport-draft.js?v={{ assetv "public/bugreport-draft.js" }}"></script>
   </head>
   <body class="{{ if kiosk }}kiosk{{ end }}{{ if .saleScreen }} sale-screen{{ end }}{{ if .menuScreen }} menu-screen{{ end }}"
         data-shell-classes="{{ if kiosk }}kiosk{{ end }}{{ if .saleScreen }} sale-screen{{ end }}{{ if .menuScreen }} menu-screen{{ end }}"
