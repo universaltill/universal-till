@@ -3878,6 +3878,16 @@ body.login-screen {
   margin-inline-start: .5rem;
 }
 .statusbar a.sb-plugin-update:hover { background: #22c55e; }
+/* Language-pack-specific update chip (ut-docs#2299) — same green pill as
+   sb-plugin-update above; a separate class only so it can render alongside
+   it (a joined till can have both a pending language pack AND some other
+   pending plugin type at once) and be targeted/tested independently. */
+.statusbar .sb-language-pack-update {
+  color: #052e16; background: #4ade80; text-decoration: none;
+  padding: .05rem .5rem; border-radius: 999px; font-weight: 700;
+  margin-inline-start: .5rem;
+}
+.statusbar a.sb-language-pack-update:hover { background: #22c55e; }
 /* ut-docs#413: confirmed live at 360px — `.statusbar`'s row (conn chip +
    the optional enrol/update pills + the version, none of it wrapping)
    needs more width than a phone viewport has. Wrapping the bar itself
@@ -3900,7 +3910,12 @@ body.login-screen {
   .statusbar .sb-update,
   .statusbar .sb-enrol,
   .statusbar .sb-power,
-  .statusbar .sb-plugin-update {
+  .statusbar .sb-plugin-update,
+  /* ut-docs#2299: sb-language-pack-update's own text ("Language pack
+     update available") is longer than sb-plugin-update's, and its
+     ar/fa/tr translations are comparable in length — same overflow risk
+     this block already exists to cap, so it gets the same treatment. */
+  .statusbar .sb-language-pack-update {
     overflow: hidden; text-overflow: ellipsis; max-inline-size: 70vw;
   }
 }

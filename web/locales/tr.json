@@ -2105,6 +2105,7 @@
   "status.offline": "Çevrimdışı",
   "status.online": "Çevrimiçi",
   "status.plugin_updates_available": "Eklenti güncellemeleri mevcut",
+  "status.language_pack_update_available": "Dil paketi güncellemesi mevcut",
   "status.psu_underpowered": "Güç kaynağı yetersiz",
   "status.psu_underpowered_hint": "Bu cihazın güç kaynağı yeterli akım sağlayamıyor — dokunmatik ekran gibi USB çevre birimleri düzgün çalışmayabilir. Bu kart için resmi güç kaynağıyla değiştirin.",
   "status.register_till": "Pazar yeri: bağlı değil",
