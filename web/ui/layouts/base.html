@@ -130,12 +130,16 @@
     <link rel="stylesheet" href="/public/app.css?v={{ assetv "public/app.css" }}" />
     <!-- ut-docs#2343: id="theme-css" is ALWAYS rendered, even for the
          "default" theme (which has no override CSS of its own, hence no
-         href below) -- GET /ui/theme-sync's out-of-band swap targets this
-         id by document.getElementById, so it needs a real element to swap
-         into no matter which theme the page started on, "default" included
-         (an htmx OOB swap with no matching id in the DOM has nothing to
-         replace). -->
-    <link id="theme-css" rel="stylesheet" {{ if and .theme (ne .theme "default") }}href="/themes/{{ .theme }}.css?v={{ assetv "public/app.css" }}"{{ end }} />
+         href below) -- the #theme-sync-poll listener below (a sibling of
+         <main>) needs a real element to update no matter which theme the
+         page started on, "default" included. data-theme is that listener's
+         OWN record of "what #theme-css currently shows", compared against
+         each poll's live value so a settled page stops touching the
+         stylesheet once it has caught up -- deliberately NOT the query
+         string GET /ui/theme-sync is called with (there isn't one; see
+         that handler's own comment for why a bare <link> OOB fragment
+         can't be swapped directly). -->
+    <link id="theme-css" rel="stylesheet" data-theme="{{ .theme }}" {{ if and .theme (ne .theme "default") }}href="/themes/{{ .theme }}.css?v={{ assetv "public/app.css" }}"{{ end }} />
     <!-- Vendored locally: the till must work fully offline. -->
     <script defer src="/public/vendor/htmx.min.js?v={{ assetv "public/vendor/htmx.min.js" }}"></script>
     <script defer src="/public/vendor/alpine.min.js?v={{ assetv "public/vendor/alpine.min.js" }}"></script>
@@ -196,16 +200,43 @@
          dismiss script (getElementById('pairing-notice')) would resolve to
          this outer, dataset-less placeholder instead of the real banner. -->
     <div id="pairing-notice-mount" hx-get="/ui/pairing-notice" hx-trigger="load, every 30s"></div>
-    <!-- ut-docs#2343: theme-sync poll, every 30s from every open page --
-         hx-swap="none" because this div has no content of its own to
-         receive; the actual update is an out-of-band swap of #theme-css
-         above (GET /ui/theme-sync's response), which htmx processes
-         independently of this div's own swap setting. Passes back the
-         theme this page was actually rendered with (not "default" as a
-         magic default value: an untouched till and one already showing
-         "default" must look identical to the handler, both meaning
-         "no override pending"). -->
-    <div hx-get="/ui/theme-sync?theme={{ .theme }}" hx-trigger="load, every 30s" hx-swap="none"></div>
+    <!-- ut-docs#2343: theme-sync poll, every 30s from every open page.
+         hx-swap="none" -- GET /ui/theme-sync's response is an OOB swap of
+         THIS div's own id (id="theme-sync-poll", carrying the live theme
+         in data-theme), never this element's own innerHTML; htmx processes
+         an OOB swap independently of the triggering element's own swap
+         setting. The response is deliberately a plain <div>, not the
+         <link> it ultimately updates -- see the handler's own comment
+         (themes.go) for why a bare <link>/other head-only element in an
+         OOB fragment gets silently dropped by htmx's response parser. The
+         listener just below applies data-theme to #theme-css, and only
+         when it actually differs from what #theme-css already shows -- so
+         a page that has already caught up stops touching the stylesheet
+         at every subsequent poll. -->
+    <div id="theme-sync-poll" hx-get="/ui/theme-sync" hx-trigger="load, every 30s" hx-swap="none"></div>
+    <script>
+      document.addEventListener('htmx:oobAfterSwap', function (e) {
+        if (e.detail.target.id !== 'theme-sync-poll') return;
+        // Re-read #theme-sync-poll's data-theme fresh from the DOM rather
+        // than trusting e.detail.target directly: on the very FIRST swap
+        // (this page's own "load" trigger), e.detail.target reads back the
+        // pre-swap element -- which has no data-theme at all -- not the
+        // just-inserted replacement, so live theme "" would otherwise look
+        // like a genuine change and wrongly clear #theme-css on every
+        // single page load. A fresh getElementById always sees the current,
+        // already-swapped-in DOM.
+        var poll = document.getElementById('theme-sync-poll');
+        var live = (poll && poll.dataset.theme) || '';
+        var link = document.getElementById('theme-css');
+        if (!link || live === (link.dataset.theme || '')) return;
+        link.dataset.theme = live;
+        if (live && live !== 'default') {
+          link.setAttribute('href', '/themes/' + encodeURIComponent(live) + '.css');
+        } else {
+          link.removeAttribute('href');
+        }
+      });
+    </script>
     <!-- ut-docs#2183: the app-wide client-side request-failure surface
          (ut-docs#213, docs/sale-screen-notifications.md) — app.js's
          htmx:responseError/htmx:sendError listeners already fill this in

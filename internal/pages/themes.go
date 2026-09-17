@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"io/fs"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -167,47 +167,47 @@ func registerThemes(mux *http.ServeMux, d *common.Deps) {
 
 // registerThemeSync wires GET /ui/theme-sync (ut-docs#2343). base.html polls
 // it from every open page every 30s (mirrors GET /ui/pairing-notice's
-// pattern), passing back the theme key it was rendered with. A theme applied
-// via a cloud set_setting directive (ADR-0018) already lands in d.State the
-// moment the directive is applied (SetSetting -> rederive -> LoadState,
-// cloudsync_wire.go) -- exactly like a local Settings-page change -- so any
-// FUTURE page render already shows it. The gap this closes is a kiosk
-// session that stays on one already-rendered page for hours: the local
-// Settings page forces a refresh with its own window.location.reload()
-// (settings.html), but a directive landing in the background has no client
-// to tell to reload. Answering with an out-of-band swap of the stylesheet
-// <link> (id="theme-css") instead of a reload is the safer choice here: no
-// navigation, so an in-progress sale's on-screen state is never disturbed --
-// the offline-first "checkout must never be blocked" rule applies to a
-// forced reload too, not just to the network being down.
+// pattern). A theme applied via a cloud set_setting directive (ADR-0018)
+// already lands in d.State the moment the directive is applied (SetSetting
+// -> rederive -> LoadState, cloudsync_wire.go) -- exactly like a local
+// Settings-page change -- so any FUTURE page render already shows it. The
+// gap this closes is a kiosk session that stays on one already-rendered
+// page for hours: the local Settings page forces a refresh with its own
+// window.location.reload() (settings.html), but a directive landing in the
+// background has no client to tell to reload.
+//
+// This unconditionally reports the live theme, every poll -- no
+// query-string round-trip, no server-side "did it change" comparison. The
+// response is a plain, always-body-safe <div id="theme-sync-poll"
+// hx-swap-oob="true" data-theme="...">, NOT the <link> it ultimately
+// updates: an OOB fragment consisting of a bare <link> (or any other
+// head-only element) gets parsed by htmx's DOMParser.parseFromString into a
+// throwaway document's <head>, leaving <body> -- which is all
+// handleOutOfBandSwaps ever scans -- empty, so the swap silently no-ops
+// (verified live in a real browser against this repo's own vendored htmx
+// 1.9.12; independent review of an earlier draft that emitted the <link>
+// directly). Routing the value through a body-safe div's data-theme
+// attribute and letting a small htmx:oobAfterSwap listener (base.html)
+// apply it to #theme-css itself avoids that trap entirely, and also means
+// the client -- not a stale value baked into the poll URL at render time --
+// decides whether anything actually changed, so a settled page stops
+// touching the stylesheet at all once it has caught up (no repeating
+// no-op fetch of /themes/*.css every 30s for the rest of the session).
+//
+// The response div re-asserts hx-get/hx-trigger/hx-swap on itself, not just
+// data-theme -- an OOB swap's default mode is outerHTML, which replaces the
+// ENTIRE element base.html rendered, polling wiring included. Without this,
+// verified live in a real browser: the very first swap silently kills its
+// own polling (the replacement carries no hx-get/hx-trigger at all), so the
+// poll never fires again and every FUTURE theme change is missed. "load" is
+// deliberately not repeated here -- only base.html's initially-rendered div
+// needs it, for the very first poll; every replacement thereafter only
+// needs its own interval to keep going.
 func registerThemeSync(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /ui/theme-sync", func(w http.ResponseWriter, r *http.Request) {
 		live := d.CurrentState().Theme
-		clientTheme := r.URL.Query().Get("theme")
-		if live == "" || live == clientTheme {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if live == "default" {
-			// "default" has no override CSS of its own (base.html renders
-			// #theme-css with no href for it) -- swap to the same,
-			// clearing whatever override was active, rather than pointing
-			// at a /themes/default.css that was never served.
-			fmt.Fprint(w, `<link id="theme-css" hx-swap-oob="true" rel="stylesheet">`)
-			return
-		}
-		// url.PathEscape doubles as HTML-escaping here: every byte it would
-		// otherwise leave unescaped (letters/digits/-._~) is inert in both
-		// an href attribute and a URL path, so a theme key holding
-		// HTML-breaking characters can't escape the attribute it's placed
-		// in. Defence in depth -- nothing on the write path (cloud
-		// directive or local settings) constrains the key's charset today.
-		// No cache-busting query param needed here (unlike base.html's own
-		// static <link>): the href's PATH changes with the theme key, so
-		// the browser can never serve a stale cached response for the new
-		// theme under the old one's URL.
-		fmt.Fprintf(w, `<link id="theme-css" hx-swap-oob="true" rel="stylesheet" href="/themes/%s.css">`,
-			url.PathEscape(live))
+		fmt.Fprintf(w, `<div id="theme-sync-poll" hx-swap-oob="true" hx-get="/ui/theme-sync" hx-trigger="every 30s" hx-swap="none" data-theme="%s"></div>`,
+			html.EscapeString(live))
 	})
 }
