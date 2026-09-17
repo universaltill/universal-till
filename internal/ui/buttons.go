@@ -588,10 +588,16 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *ButtonsHTTP) Add(w http.ResponseWriter, r *http.Request) {
+// Add returns whether the button was actually persisted -- ut-docs#2358:
+// the caller (registerButtonsAPI) needs a success/failure signal to call
+// auditButtonsElevated symmetrically with move/reorder, which write their
+// own audit row directly rather than through a handler-shaped method like
+// this one. false on every early-return (bad form, store validation
+// failure); true only once Store.Add has actually succeeded.
+func (h *ButtonsHTTP) Add(w http.ResponseWriter, r *http.Request) bool {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return false
 	}
 	itemID := strings.TrimSpace(r.Form.Get("itemId"))
 	img := strings.TrimSpace(r.Form.Get("imageUrl"))
@@ -620,7 +626,7 @@ func (h *ButtonsHTTP) Add(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`<div class="error">` + html.EscapeString(httpx.T(locale, designerErrorServerKey)) + `</div>`))
-		return
+		return false
 	}
 	// ut-docs#2285: every route that changes the button SET sets the same
 	// HX-Trigger, so the one listener (buttons.html's root,
@@ -638,12 +644,16 @@ func (h *ButtonsHTTP) Add(w http.ResponseWriter, r *http.Request) {
 	_ = h.View.Render(w, "buttons_admin_grid", map[string]any{
 		"Buttons": ToVM(btns),
 	})
+	return true
 }
 
-func (h *ButtonsHTTP) Remove(w http.ResponseWriter, r *http.Request) {
+// Remove returns whether the button was actually deleted -- ut-docs#2358,
+// same rationale as Add's own doc comment above: false on every
+// early-return, true only once Store.Remove has actually succeeded.
+func (h *ButtonsHTTP) Remove(w http.ResponseWriter, r *http.Request) bool {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+		return false
 	}
 	if err := h.Store.Remove(r.Form.Get("code")); err != nil {
 		// ut-docs#1697: this raw http.Error(w, err.Error(), 400) used to be
@@ -661,7 +671,7 @@ func (h *ButtonsHTTP) Remove(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`<div class="error">` + html.EscapeString(httpx.T(locale, designerErrorServerKey)) + `</div>`))
-		return
+		return false
 	}
 	// ut-docs#2285: see Add's comment above — same contract. This is the
 	// one that actually matters on the sale screen: the jiggle edit mode's
@@ -673,6 +683,7 @@ func (h *ButtonsHTTP) Remove(w http.ResponseWriter, r *http.Request) {
 	_ = h.View.Render(w, "buttons_admin_grid", map[string]any{
 		"Buttons": ToVM(btns),
 	})
+	return true
 }
 
 type PriceResolverAdapter struct{ Store *ButtonStore }
