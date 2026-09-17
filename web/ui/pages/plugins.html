@@ -66,7 +66,7 @@
                   @click="act('/api/plugins/' + p.id + '/enable', 'POST')">{{ T "plugins.manage.action.enable" }}</button>
           <button class="btn" x-show="p.hasUpdate"
                   @click="act('/api/plugins/' + p.id + '/update', 'POST')">{{ T "plugins.manage.action.update" }}</button>
-          <a class="btn secondary"
+          <a class="btn secondary" hx-boost="false"
              :href="'/api/plugins/' + encodeURIComponent(p.id) + '/export?version=' + encodeURIComponent(p.version)"
              :download="p.id + '-' + p.version + '.tar.gz'">{{ T "plugins.manage.action.export" }}</a>
           <button class="btn danger"

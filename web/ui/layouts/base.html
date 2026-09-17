@@ -15,7 +15,16 @@
          the body — no load-order dependency on script placement, and no
          risk of a ReferenceError if htmx.min.js ever fails to load (unlike
          a DOMContentLoaded listener referencing `htmx` directly). -->
-    <meta name="htmx-config" content='{"defaultSettleDelay":0}'>
+    <meta name="htmx-config" content='{"defaultSettleDelay":0,"historyCacheSize":0,"refreshOnHistoryMiss":true}'>
+    <!-- ut-docs#2224 / ADR-0098: navigation inside the shell is boosted (the
+         #ut-page region below), so `historyCacheSize:0` (htmx then REMOVES
+         its localStorage history cache -- no basket/receipt/customer detail
+         is ever serialised onto a shared device) and `refreshOnHistoryMiss`
+         (back/forward = a full reload from the local server, offline-safe,
+         exactly what it was before boosting). The shell signature is what
+         decides whether a boosted response may be swapped at all -- see
+         httpx.ShellSignature and the inline shell script below. -->
+    <meta name="ut-shell" content="{{ shellsig .theme }}">
     <!-- ut-docs#2223: the cross-document View Transition OPT-IN lives HERE,
          inline, and not only in app.css -- found on the pilot tablet, not
          predicted: Chrome (Android 153, and by construction any Chromium)
@@ -125,6 +134,210 @@
         });
       })();
     </script>
+    <!-- ut-docs#2224 / ADR-0098: the persistent app shell. Inline on purpose
+         (it must exist before the first boosted swap and it persists for the
+         document's life). Four jobs, all hung off htmx events on document:
+           1. htmx:beforeSwap -- the shell-signature gate. A boosted response
+              is swapped only when it carries <meta name="ut-shell"> equal to
+              this document's; otherwise (a page outside base.html, a non-HTML
+              response, an error page, a theme/language change, the FIRST
+              navigation after a self-update) the swap is cancelled and the
+              browser navigates to the response's final URL as a full document.
+           2. Same event -- sync what lives OUTSIDE the swapped region from the
+              response's <html>/<body> opening tags: lang, dir, the server's
+              body class list (runtime classes like osk-padded survive; the
+              server's own list is carried in data-shell-classes) and every
+              data-* attribute. Parsed from those two tags only.
+           3. Push/pop direction (ADR-0097's depth heuristic, now from the
+              current URL to the final URL) on every boosted swap, and
+              htmx:beforeTransition cancelled under reduced motion so the
+              same-document View Transition never runs for that user.
+           4. UT.ready(fn) -- the boost-safe DOMContentLoaded: runs fn on
+              DOMContentLoaded while the document is still loading, else on the
+              next microtask (after Alpine's MutationObserver has initialised
+              the swapped-in nodes). A Go guard rejects a bare listener.
+           5. Page-scoped listeners -- a window/document/body listener added by
+              a script inside #ut-page is dropped when that page is swapped
+              away, so re-running inline scripts never stack handlers. -->
+    <script>
+      (function () {
+        var UT = window.UT = window.UT || {};
+        UT.ready = function (fn) {
+          if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function () { fn(); }, { once: true });
+          else if (window.queueMicrotask) queueMicrotask(fn);
+          else Promise.resolve().then(fn);
+        };
+        // Set once at boot and never re-parsed: the document IS the shell now.
+        UT.shellBootAt = Date.now();
+        // Page-scoped listeners. A page's inline <script> runs again on every
+        // boosted arrival (htmx re-evaluates scripts in swapped content), so a
+        // `document.body.addEventListener('htmx:afterSwap', …)` in index.html
+        // would stack one more handler per visit. Any listener a script INSIDE
+        // #ut-page adds to window/document/body is recorded here and removed
+        // when that page is swapped away; shell scripts (app.js and friends,
+        // base.html's own blocks outside the region) are untouched because
+        // document.currentScript is not inside #ut-page for them.
+        var pageListeners = [];
+        if (window.EventTarget && EventTarget.prototype.addEventListener) {
+          var origAdd = EventTarget.prototype.addEventListener;
+          EventTarget.prototype.addEventListener = function (type, fn, opts) {
+            var cs = document.currentScript;
+            if (cs && cs.closest && (this === window || this === document || this === document.body) && cs.closest('#ut-page')) {
+              pageListeners.push([this, type, fn, opts]);
+            }
+            return origAdd.call(this, type, fn, opts);
+          };
+        }
+        function dropPageListeners() {
+          var l = pageListeners; pageListeners = [];
+          l.forEach(function (r) { try { r[0].removeEventListener(r[1], r[2], r[3]); } catch (e) { /* already gone */ } });
+        }
+        // Forms are never boosted: htmx would boost every plain <form> inside
+        // the region, skipping an onsubmit guard (tables.html's confirm) and
+        // turning a POST error into a re-GET. Marking each form before htmx
+        // processes it is the one per-element switch htmx honours.
+        document.addEventListener('htmx:beforeProcessNode', function (e) {
+          var t = e.target;
+          if (!t || !t.tagName) return;
+          if (t.tagName === 'FORM' && !t.hasAttribute('hx-boost')) t.setAttribute('hx-boost', 'false');
+          // …but a plain link INSIDE such a form (a "clear filters" or Back
+          // link) is still a page navigation: opt it back in explicitly, since
+          // it would otherwise inherit the form's hx-boost="false".
+          if (t.tagName === 'A' && !t.hasAttribute('hx-boost') && t.closest('form') && t.closest('#ut-page')) { t.setAttribute('hx-boost', 'true'); t.setAttribute('data-ut-shell-nav', ''); }
+        });
+        // No page content in localStorage, ever (ADR-0098). historyCacheSize:0
+        // makes htmx store nothing new; this clears what an earlier build's
+        // boosted dialog forms may already have snapshotted on this device --
+        // at boot and again on every boosted swap (htmx skips its own purge
+        // when hx-history="false" is present).
+        function purgeHistoryCache() { try { localStorage.removeItem('htmx-history-cache'); } catch (e) { /* storage unavailable */ } }
+        purgeHistoryCache();
+        function meta(doc) { var m = doc.querySelector('meta[name="ut-shell"]'); return m ? m.getAttribute('content') : ''; }
+        function openTag(html, name) {
+          var m = new RegExp('<' + name + '\\b[^>]*>', 'i').exec(html);
+          if (!m) return null;
+          // Only the opening tag is parsed -- never the whole document twice.
+          var d = new DOMParser().parseFromString(m[0] + '</' + name + '>', 'text/html');
+          return name === 'body' ? d.body : d.documentElement;
+        }
+        function finalURL(d) {
+          var xhr = d.xhr, pi = d.pathInfo || {};
+          return (xhr && xhr.responseURL) || pi.finalRequestPath || pi.requestPath || location.href;
+        }
+        function depth(u) {
+          var p = new URL(u, location.href).pathname.replace(/\/+$/, '') || '/';
+          if (p === '/') return 0;
+          if (p === '/menu') return 1;
+          return 1 + p.split('/').filter(Boolean).length;
+        }
+        var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
+        // Belt and braces from ADR-0097, kept for the same-document case: a
+        // skipped/aborted transition rejects its promises (a console error per
+        // skip otherwise), and nothing may ever hold the screen -- 600 ms
+        // watchdog, cleared on finish.
+        if (document.startViewTransition) {
+          var orig = document.startViewTransition;
+          document.startViewTransition = function () {
+            var vt = orig.apply(document, arguments);
+            try {
+              ['ready', 'updateCallbackDone', 'finished'].forEach(function (k) { if (vt[k] && vt[k].catch) vt[k].catch(function () {}); });
+              var guard = setTimeout(function () { if (vt.skipTransition) vt.skipTransition(); }, 600);
+              if (vt.finished && vt.finished.then) vt.finished.then(function () { clearTimeout(guard); }, function () { clearTimeout(guard); });
+            } catch (e) { /* engine without the promise trio: nothing to quiet */ }
+            return vt;
+          };
+        }
+        // A request is a SHELL navigation only when its boost comes from
+        // #ut-page itself. A dialog form with its own hx-boost + hx-target
+        // (the list-and-dialog pattern) is boosted too, but its refusal
+        // fragment must keep landing in its own message slot -- so the
+        // client marks shell navigations with a header, and the server
+        // retargets only those (httpx.BoostedNavigation).
+        function shellNav(elt) {
+          var owner = elt && elt.closest ? elt.closest('[hx-boost]') : null;
+          if (!owner) return false;
+          // The region itself, or an in-form anchor the beforeProcessNode
+          // hook below opted back in (it then carries its own hx-boost, so
+          // closest() stops at the anchor, not at #ut-page).
+          return owner.id === 'ut-page' || (owner === elt && elt.hasAttribute('data-ut-shell-nav'));
+        }
+        document.addEventListener('htmx:configRequest', function (e) {
+          var d = e.detail || {};
+          if (d.boosted && shellNav(d.elt)) d.headers['UT-Shell-Nav'] = '1';
+        });
+        document.addEventListener('htmx:beforeSwap', function (e) {
+          var d = e.detail || {};
+          var rc = d.requestConfig || {};
+          // requestConfig.elt is the anchor that issued the request; detail.elt
+          // here is the pre-retarget swap target (body), not the issuer.
+          if (!rc.boosted || !shellNav(rc.elt)) return;
+          var xhr = d.xhr;
+          var url = finalURL(d);
+          var ct = (xhr && xhr.getResponseHeader && xhr.getResponseHeader('Content-Type')) || '';
+          var html = typeof d.serverResponse === 'string' ? d.serverResponse : '';
+          var mine = meta(document);
+          var theirs = '';
+          if (ct.indexOf('text/html') === 0 && html) {
+            var m = /<meta\s+name="ut-shell"\s+content="([^"]*)"/i.exec(html.slice(0, 8192));
+            theirs = m ? m[1] : '';
+          }
+          if (!theirs || theirs !== mine) {
+            // Not a page of THIS shell (login/setup/self-order, an export, a
+            // plain-text error, a theme/language change, a self-update): the
+            // only correct rendering is a full document load of where we
+            // ended up. (A base.html error page -- RenderError's 403/404/500
+            // -- carries the signature and swaps in place below, rail intact.)
+            d.shouldSwap = false;
+            document.documentElement.setAttribute('data-shell-fallback', theirs ? 'signature' : 'no-shell');
+            window.location.assign(url);
+            return;
+          }
+          d.shouldSwap = true;
+          purgeHistoryCache();
+          // Direction is informational as well as motion (the CSS fallback
+          // selectors and the e2e suite read it), so it is set on every
+          // boosted swap, motion or not; beforeTransition below only decides
+          // whether the transition itself runs.
+          document.documentElement.setAttribute('data-nav-dir', depth(url) < depth(location.href) ? 'pop' : 'push');
+          dropPageListeners();
+          var h = openTag(html, 'html');
+          if (h) {
+            ['lang', 'dir'].forEach(function (a) {
+              var v = h.getAttribute(a);
+              if (v) document.documentElement.setAttribute(a, v); else document.documentElement.removeAttribute(a);
+            });
+            // Only --ui-scale is merged from <html style>: osk.js keeps
+            // --osk-reserved-height on the same element at runtime and a
+            // wholesale replace would silently reset it to the CSS default.
+            var scale = /--ui-scale:\s*([^;"]+)/.exec(h.getAttribute('style') || '');
+            if (scale) document.documentElement.style.setProperty('--ui-scale', scale[1].trim());
+          }
+          var b = openTag(html, 'body');
+          if (b) {
+            // The server's own class list for the CURRENT page is carried in
+            // data-shell-classes (synced below along with the rest), so only
+            // those are removed -- classes JS added at runtime survive.
+            var prev = (document.body.getAttribute('data-shell-classes') || '').split(/\s+/).filter(Boolean);
+            var next = (b.className || '').split(/\s+/).filter(Boolean);
+            prev.forEach(function (c) { if (next.indexOf(c) < 0) document.body.classList.remove(c); });
+            next.forEach(function (c) { document.body.classList.add(c); });
+            var keep = {};
+            Array.prototype.forEach.call(b.attributes, function (at) {
+              if (at.name.indexOf('data-') === 0) { keep[at.name] = true; document.body.setAttribute(at.name, at.value); }
+            });
+            Array.prototype.slice.call(document.body.attributes).forEach(function (at) {
+              if (at.name.indexOf('data-') === 0 && !keep[at.name]) document.body.removeAttribute(at.name);
+            });
+          }
+        });
+        document.addEventListener('htmx:beforeTransition', function (e) {
+          var d = e.detail || {};
+          var rc = d.requestConfig || {};
+          if (!rc.boosted || !shellNav(rc.elt)) return;
+          if ((reduce && reduce.matches) || !document.startViewTransition) e.preventDefault();
+        });
+      })();
+    </script>
     <title>{{ .title }}</title>
     <link rel="icon" type="image/x-icon" href="/public/assets/logo/ut-logo.ico">
     <link rel="stylesheet" href="/public/app.css?v={{ assetv "public/app.css" }}" />
@@ -139,7 +352,7 @@
          string GET /ui/theme-sync is called with (there isn't one; see
          that handler's own comment for why a bare <link> OOB fragment
          can't be swapped directly). -->
-    <link id="theme-css" rel="stylesheet" data-theme="{{ .theme }}" {{ if and .theme (ne .theme "default") }}href="/themes/{{ .theme }}.css?v={{ assetv "public/app.css" }}"{{ end }} />
+    <link id="theme-css" rel="stylesheet" data-theme="{{ .theme }}" {{ if and .theme (ne .theme "default") }}href="/themes/{{ .theme }}.css?v={{ assetv (printf "public/themes/%s.css" .theme) }}"{{ end }} />
     <!-- Vendored locally: the till must work fully offline. -->
     <script defer src="/public/vendor/htmx.min.js?v={{ assetv "public/vendor/htmx.min.js" }}"></script>
     <script defer src="/public/vendor/alpine.min.js?v={{ assetv "public/vendor/alpine.min.js" }}"></script>
@@ -169,6 +382,7 @@
     <script defer src="/public/category-filter.js?v={{ assetv "public/category-filter.js" }}"></script>
   </head>
   <body class="{{ if kiosk }}kiosk{{ end }}{{ if .saleScreen }} sale-screen{{ end }}{{ if .menuScreen }} menu-screen{{ end }}"
+        data-shell-classes="{{ if kiosk }}kiosk{{ end }}{{ if .saleScreen }} sale-screen{{ end }}{{ if .menuScreen }} menu-screen{{ end }}"
         data-currency="{{ currency.Code }}" data-currency-decimals="{{ currency.Decimals }}"
         data-currency-display="{{ currency.Display }}" data-currency-suffix="{{ if currency.Suffix }}1{{ end }}"
         data-number-thousands="{{ thousandssep }}" data-number-decimal="{{ decimalsep }}"
@@ -176,6 +390,20 @@
         data-order-type-prompt-mode="{{ ordertypepromptmode }}"
         data-notice-dismiss="{{ T "notice.dismiss" }}"
         {{ if idlelocksecs }}data-idle-lock="{{ idlelocksecs }}"{{ end }}>
+    <!-- ut-docs#2224 / ADR-0098: everything a navigation changes lives in
+         this one region; an <a> inside it is boosted and the response's own
+         #ut-page replaces this one (outerHTML). The head, the scripts,
+         Alpine, and everything after the end marker below persist.
+         ONLY hx-boost goes on this element: hx-target/hx-select/hx-swap here
+         would be inherited by every hx-get chip and poller inside the region
+         (their first `load` then outerHTML-swaps the region away with an
+         empty selection -- verified live). httpx.BoostedNavigation sets
+         HX-Retarget/HX-Reselect/HX-Reswap per boosted response instead.
+         Forms are never boosted (the shell script marks each one
+         hx-boost="false" before htmx processes it): a boosted form skips
+         onsubmit guards and turns a POST error into a re-GET.
+         `hx-history-elt` + `hx-history="false"`: htmx snapshots nothing. -->
+    <div id="ut-page" hx-boost="true" hx-history-elt hx-history="false">
     {{ template "nav" . }}
     <!-- ut-docs#1551: nav-level dismissible notice for a pending pairing
          request -- a sibling of <nav>/<main>, not squeezed into the icon
@@ -199,7 +427,7 @@
          otherwise coexist as nested duplicate ids, and the partial's own
          dismiss script (getElementById('pairing-notice')) would resolve to
          this outer, dataset-less placeholder instead of the real banner. -->
-    <div id="pairing-notice-mount" hx-get="/ui/pairing-notice" hx-trigger="load, every 30s"></div>
+    <div id="pairing-notice-mount" hx-get="/ui/pairing-notice" hx-trigger="load, every 30s" hx-preserve></div>
     <!-- ut-docs#2343: theme-sync poll, every 30s from every open page.
          hx-swap="none" -- GET /ui/theme-sync's response is an OOB swap of
          THIS div's own id (id="theme-sync-poll", carrying the live theme
@@ -213,6 +441,10 @@
          when it actually differs from what #theme-css already shows -- so
          a page that has already caught up stops touching the stylesheet
          at every subsequent poll. -->
+    <!-- Deliberately NOT hx-preserve'd (ADR-0098): its response is an OOB
+         swap of this very id, and a preserved element would keep the OLD
+         node and drop the fresh data-theme it exists to deliver. One small
+         request per navigation is the price. -->
     <div id="theme-sync-poll" hx-get="/ui/theme-sync" hx-trigger="load, every 30s" hx-swap="none"></div>
     <script>
       document.addEventListener('htmx:oobAfterSwap', function (e) {
@@ -256,27 +488,6 @@
          first. -->
     {{ template "pos_alert" . }}
     <main class="container">{{ template "content" . }}</main>
-    <!-- Floating, NON-modal bug-report capture panel (ut-docs#346) — a
-         sibling of <main>, not inside it, so it's independent of whatever
-         the current page renders. Closed by default; opened by the 🐞 nav
-         chip, or pre-opened server-side by /report-issue. -->
-    {{ template "bugreport_panel" . }}
-    <!-- Manager-override-elevation dialog (ut-docs#557). Empty/pre-built
-         placeholder, OUTSIDE any <form> — same precedent as index.html's
-         #modifier-modal/#hold-modal (and menu.html's #pfand-modal, moved
-         there in ut-docs#1334). checkOrElevate's
-         needsElevation branch (elevation.go's renderElevationPrompt) fills
-         this in via hx-swap-oob="true" targeting this id: rendering the
-         dialog's own <form> straight into the triggering action's own
-         hx-target (e.g. tills.html's #promote-msg, itself inside
-         <form hx-post="/api/sync/promote">) would nest a <form> inside a
-         <form> — invalid, and silently mangled by the HTML fragment-parsing
-         algorithm. Declared once here (not once per triggering page) since
-         base.html's "content" block wraps every page that can reach
-         checkOrElevate (backup_api.go, sync_api.go,
-         permission_settings_page.go) and an extra closed, empty <dialog> on
-         pages that never trigger it costs nothing. -->
-    <dialog id="elevation-modal" class="modifier-modal"></dialog>
     <footer class="statusbar" aria-label="Status">
       <!-- data-conn-*, not data-online: html/template strips "data-" and
            treats on*-named attributes as JS context, JSON-quoting the value. -->
@@ -318,7 +529,7 @@
         ><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.download" }}</button>
         {{ else if updatedownloadlink }}
         <a class="sb-item sb-update" href="https://www.universaltill.com/download"
-           rel="noopener" target="_blank"><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.download" }}</a>
+           rel="noopener" target="_blank" hx-boost="false"><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.download" }}</a>
         {{ else }}
         <!-- ut-docs#159: on a unix kiosk (fullscreen, no browser chrome) a
              website link is a dead end with no way out — state it plainly
@@ -554,6 +765,28 @@
         });
       })();
     </script>
+    </div><!-- /ut-page -->
+    <!-- Floating, NON-modal bug-report capture panel (ut-docs#346) — a
+         sibling of <main>, not inside it, so it's independent of whatever
+         the current page renders. Closed by default; opened by the 🐞 nav
+         chip, or pre-opened server-side by /report-issue. -->
+    {{ template "bugreport_panel" . }}
+    <!-- Manager-override-elevation dialog (ut-docs#557). Empty/pre-built
+         placeholder, OUTSIDE any <form> — same precedent as index.html's
+         #modifier-modal/#hold-modal (and menu.html's #pfand-modal, moved
+         there in ut-docs#1334). checkOrElevate's
+         needsElevation branch (elevation.go's renderElevationPrompt) fills
+         this in via hx-swap-oob="true" targeting this id: rendering the
+         dialog's own <form> straight into the triggering action's own
+         hx-target (e.g. tills.html's #promote-msg, itself inside
+         <form hx-post="/api/sync/promote">) would nest a <form> inside a
+         <form> — invalid, and silently mangled by the HTML fragment-parsing
+         algorithm. Declared once here (not once per triggering page) since
+         base.html's "content" block wraps every page that can reach
+         checkOrElevate (backup_api.go, sync_api.go,
+         permission_settings_page.go) and an extra closed, empty <dialog> on
+         pages that never trigger it costs nothing. -->
+    <dialog id="elevation-modal" class="modifier-modal"></dialog>
   </body>
 </html>
 {{- end }}
