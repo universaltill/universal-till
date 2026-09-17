@@ -116,7 +116,7 @@ func TestAppCSSNamesOnlyTheFixedRailAndStatusbar(t *testing.T) {
 	// A `view-transition-name` gives its element a stacking context with
 	// layout containment, which makes it the containing block for every
 	// `position: fixed` descendant. <main> hosts the payment overlay,
-	// #hold-modal, #elevation-modal, .tile-sheet and .item-form-modal —
+	// #hold-modal, #elevation-modal and .item-form-modal —
 	// naming it made every one of them unreachable, with no transition
 	// running (e2e bugreport-panel.spec.ts caught it; confirmed by toggling
 	// the single declaration). Only the rail and statusbar — which host no

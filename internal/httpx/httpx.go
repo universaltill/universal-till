@@ -831,9 +831,21 @@ func saleScreenReturnURLFor(mode string) string {
 // a file (e.g. an item image upload) shows immediately despite browser cache.
 func imgVersion(url string) string {
 	if rel, ok := strings.CutPrefix(url, "/"); ok && strings.HasPrefix(rel, "public/") {
-		return url + "?v=" + assetVersion(rel)
+		return url + "?v=" + uploadVersion(rel)
 	}
 	return url
+}
+
+// uploadVersion versions a file the shop can replace at runtime (item and
+// variant photos, the receipt logo): nanosecond mtime plus size, because a
+// versioned /public/ URL is cached as immutable for a year (ADR-0098) and a
+// bulk import can replace a photo within the same second as the previous
+// upload — a whole-second mtime would leave the old image on screen.
+func uploadVersion(rel string) string {
+	if info, ok := statAsset(rel); ok {
+		return strconv.FormatInt(info.ModTime().UnixNano(), 36) + "-" + strconv.FormatInt(info.Size(), 36)
+	}
+	return strconv.FormatInt(bootTime, 10)
 }
 
 func assetVersion(rel string) string {
@@ -1072,6 +1084,13 @@ func FuncsFor(locale string) template.FuncMap {
 			lang = lang[:i]
 		}
 		return lang
+	}
+	// shellsig gates boosted navigation (ADR-0098) — see ShellSignature.
+	// `any`, not string: RenderError and other minimal renders pass no
+	// .theme at all, and a nil would abort the template mid-<head>.
+	funcs["shellsig"] = func(theme any) string {
+		t, _ := theme.(string)
+		return ShellSignature(locale, t)
 	}
 	// dir drives <html dir=…> so RTL locales lay out right-to-left.
 	funcs["dir"] = func() string {
@@ -1367,8 +1386,13 @@ func RenderContentFragment(tplPath string, data any) http.HandlerFunc {
 // content at the same route applies the identical rule — /items' five
 // section destinations (ut-docs#1950) need it five times over.
 func IsFragmentSwap(w http.ResponseWriter, r *http.Request) bool {
-	w.Header().Set("Vary", "HX-Request")
+	w.Header().Add("Vary", "HX-Request")
 	if strings.EqualFold(r.Header.Get("HX-History-Restore-Request"), "true") {
+		return false
+	}
+	// A boosted navigation (ADR-0098) needs the whole document — its
+	// #ut-page region and shell signature — never the bare fragment.
+	if IsBoosted(r) {
 		return false
 	}
 	return strings.EqualFold(r.Header.Get("HX-Request"), "true")

@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { scanAtScannerSpeed, watchConsole } from './helpers';
 
 // ut-docs#423: filed from independent review of ut-docs#418 (sale screen
 // category tabs + search). #products-search (web/ui/partials/buttons.html)
@@ -21,24 +21,20 @@ test.describe('scan while focus is in another sale-screen field (ut-docs#423)', 
 
   test('a scan rings up the item, not filtered into the search box', async ({ page }) => {
     const assertClean = watchConsole(page);
-    await page.goto('/');
-
-    // ut-docs#2173: the search box is no longer always on screen — tap the
-    // strip's search icon first to swap the category strip for the input,
-    // same as a real cashier would.
-    await page.locator('.products-strip-search').click();
     const search = page.locator('#products-search');
-    await search.click();
-    await expect(search).toBeFocused();
 
     // Scanner-speed keystrokes (well under app.js's 100ms fast-typing
     // window), landing in the focused search box exactly like a cashier's
     // tap-then-scan would.
-    await page.keyboard.type(BARCODE, { delay: 5 });
-    await Promise.all([
-      page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
-      page.keyboard.press('Enter'),
-    ]);
+    await scanAtScannerSpeed(page, BARCODE, async () => {
+      await page.goto('/');
+      // ut-docs#2173: the search box is no longer always on screen — tap
+      // the strip's search icon first to swap the category strip for the
+      // input, same as a real cashier would.
+      await page.locator('.products-strip-search').click();
+      await search.click();
+      await expect(search).toBeFocused();
+    });
 
     await expect(page.locator('#basket')).toContainText('Coca-Cola 330ml');
     // The scan must not be left sitting in the search box as a stray filter
@@ -58,19 +54,15 @@ test.describe('scan while focus is in another sale-screen field (ut-docs#423)', 
   // scanner injected and leave the cashier's real quantity submitting.
   test('a scan with focus in the qty box rings up the cashier’s quantity, not the barcode', async ({ page }) => {
     const assertClean = watchConsole(page);
-    await page.goto('/');
-
     const qty = page.locator('form.scan-row input[name="qty"]');
-    await qty.fill('3');
-    await qty.click();
-    await page.keyboard.press('End');
-    await page.waitForTimeout(200); // let the scan buffer's fast-typing window lapse
 
-    await page.keyboard.type(BARCODE, { delay: 5 });
-    await Promise.all([
-      page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
-      page.keyboard.press('Enter'),
-    ]);
+    await scanAtScannerSpeed(page, BARCODE, async () => {
+      await page.goto('/');
+      await qty.fill('3');
+      await qty.click();
+      await page.keyboard.press('End');
+      await page.waitForTimeout(200); // let the scan buffer's fast-typing window lapse
+    });
 
     const basket = page.locator('#basket');
     await expect(basket).toContainText('Coca-Cola 330ml');
