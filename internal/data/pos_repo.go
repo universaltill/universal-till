@@ -7771,13 +7771,18 @@ func (r *POSRepo) ResolveCurrentPrice(ctx context.Context, itemID, variantID str
 }
 
 func (r *POSRepo) lookupPriceHistory(ctx context.Context, column, id string) (int64, bool, error) {
+	// rowid DESC is a tiebreak (ut-docs#2259): two rows can tie on
+	// datetime(starts_at) (mixed raw formats normalize to the same
+	// instant), and every other price-resolution query in this repo
+	// shares this exact shape and must agree with this one on which row
+	// wins in that case — see catalog_repo.go's own copies.
 	query := fmt.Sprintf(`
 SELECT price
 FROM price_history
 WHERE %s = ?
   AND datetime(starts_at) <= CURRENT_TIMESTAMP
   AND (ends_at IS NULL OR datetime(ends_at) > CURRENT_TIMESTAMP)
-ORDER BY datetime(starts_at) DESC
+ORDER BY datetime(starts_at) DESC, rowid DESC
 LIMIT 1
 `, column)
 	var price int64
