@@ -76,44 +76,48 @@ test.describe('cross-document page transition direction (ut-docs#2223)', () => {
     await page.request.post('/api/pos/reset');
   });
 
+  // ut-docs#2224 / ADR-0098: a rail/tile tap is now a BOOSTED navigation —
+  // the document persists and the shell script sets `data-nav-dir` on the
+  // swap itself (motion or not), so the direction is read straight off
+  // <html> once the URL has changed. Browser back is a full reload
+  // (refreshOnHistoryMiss), i.e. still the cross-document path, so that hop
+  // keeps the synthetic-pagereveal read.
+  const boostedDir = async (page: import('@playwright/test').Page, url: RegExp) => {
+    await expect(page).toHaveURL(url);
+    return page.evaluate(() => document.documentElement.getAttribute('data-nav-dir'));
+  };
+
   test('Menu -> Reports is push; browser back from there is pop', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.goto('/menu');
     test.skip(!(await supportsViewTransitions(page)), 'browser has no View Transitions support');
 
-    // Menu (depth 1) -> Reports (depth 2): push. The one hit-tested click
-    // this browsing context ever does.
+    // Menu (depth 1) -> Reports (depth 2): push, boosted.
     await page.locator('.menu-tile[href="/reports"]').click();
-    await page.waitForLoadState('load');
-    await expect(page).toHaveURL(/\/reports/);
-    let r = await revealAndReadDirection(page);
-    expect(r.dir).toBe('push');
-    expect(r.typesAdded).toEqual([]);
+    expect(await boostedDir(page, /\/reports/)).toBe('push');
 
-    // Browser back -> pop. Not hit-tested, safe even on a transitioned doc.
+    // Browser back after a boosted hop is a full reload of the local
+    // server's page (ADR-0098 rule 5: no client history cache). A reload is
+    // not a move anywhere, so the shipped pagereveal listener deliberately
+    // skips the motion and sets no direction — the same hard cut a reload
+    // always had.
     await page.goBack();
     await page.waitForLoadState('load');
     await expect(page).toHaveURL(/\/menu/);
-    r = await revealAndReadDirection(page);
-    expect(r.dir).toBe('pop');
-    expect(r.typesAdded).toEqual(['back']);
+    const r = await revealAndReadDirection(page);
+    expect(r.dir).toBeNull();
+    expect(r.typesAdded).toEqual([]);
 
     assertClean();
   });
 
   test('Reports -> Menu via the rail is pop (shallower)', async ({ page }) => {
     const assertClean = watchConsole(page);
-    // Fresh context, so this document never received a transition itself —
-    // the one hit-tested click below is safe.
     await page.goto('/reports');
     test.skip(!(await supportsViewTransitions(page)), 'browser has no View Transitions support');
 
     await page.locator('[data-testid="nav-menu"]').click();
-    await page.waitForLoadState('load');
-    await expect(page).toHaveURL(/\/menu/);
-    const r = await revealAndReadDirection(page);
-    expect(r.dir).toBe('pop');
-    expect(r.typesAdded).toEqual(['back']);
+    expect(await boostedDir(page, /\/menu/)).toBe('pop');
 
     assertClean();
   });
@@ -124,9 +128,7 @@ test.describe('cross-document page transition direction (ut-docs#2223)', () => {
     test.skip(!(await supportsViewTransitions(page)), 'browser has no View Transitions support');
 
     await page.locator('[data-testid="nav-menu"]').click();
-    await page.waitForLoadState('load');
-    const r = await revealAndReadDirection(page);
-    expect(r.dir).toBe('push');
+    expect(await boostedDir(page, /\/menu/)).toBe('push');
 
     assertClean();
   });
@@ -137,9 +139,7 @@ test.describe('cross-document page transition direction (ut-docs#2223)', () => {
     test.skip(!(await supportsViewTransitions(page)), 'browser has no View Transitions support');
 
     await page.locator('[data-testid="nav-till"]').click();
-    await page.waitForLoadState('load');
-    const r = await revealAndReadDirection(page);
-    expect(r.dir).toBe('pop');
+    expect(await boostedDir(page, /\/$/)).toBe('pop');
 
     assertClean();
   });
@@ -254,7 +254,7 @@ test.describe('a second navigation interrupts an in-flight transition cleanly (u
 
     await page.locator('.menu-tile[href="/reports"]').click();
     // Immediately interrupt with a second, different navigation — do not
-    // await load first, that's the point of this test.
+    // await the boosted swap first, that's the point of this test.
     await page.goto('/settings');
     await page.waitForLoadState('load');
     await expect(page).toHaveURL(/\/settings/);

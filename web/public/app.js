@@ -837,7 +837,10 @@ function scheduleToastDismiss(){
   });
 }
 
-document.addEventListener('DOMContentLoaded', scheduleToastDismiss);
+// ADR-0098: app.js loads once per document (defer) -- the readyState guard
+// covers the deferred-script case; boosted arrivals come through afterSwap.
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', scheduleToastDismiss);
+else scheduleToastDismiss();
 document.addEventListener('htmx:afterSwap', scheduleToastDismiss);
 
 // ut-docs#2162: web/ui/layouts/base.html's own <title> only ever renders
@@ -1997,6 +2000,10 @@ window.utTabBarFade = function (el) {
     // load/every/htmx.ajax-without-event — exactly the split we want.
     var rc = d.requestConfig;
     if (!rc || !rc.triggeringEvent) return;
+    // ADR-0098: a boosted page navigation swaps #ut-page under its own
+    // same-document View Transition (the ADR-0097 root slide) -- one motion,
+    // not the slide plus this ease on top.
+    if (rc.boosted && d.target && d.target.id === 'ut-page') return;
     // `hx-swap="none"` swaps nothing, but htmx still fires afterSwap on the
     // target (its issuing element for every one of the ~45 such sites,
     // e.g. whole settings forms and the catalog delete button) — no

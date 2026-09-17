@@ -55,7 +55,9 @@
 </div>
 
 <script>
-const pluginInstallText = {
+// ADR-0098: this partial re-runs on every boosted arrival at /plugins; a
+// top-level `const` would be re-declared (SyntaxError) on the second visit.
+var pluginInstallText = {
 	title: '{{ T "plugins.install.modal.title" }}',
 	description: '{{ T "plugins.install.modal.description" }}',
 	progressFetching: '{{ T "plugins.install.modal.progress.fetching" }}',
