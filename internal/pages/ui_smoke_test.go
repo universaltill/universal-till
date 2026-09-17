@@ -160,6 +160,7 @@ func TestOpenPagesTestDB_TemplateClonesAreIsolatedAndFullyMigrated(t *testing.T)
 }
 
 func TestIndexAndBasketRender(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#2357: /designer, /items, /catalog, /modifiers, /catalog/option-sets are now catalog_management-gated; this test is about rendering, not permissions.
 	chdirRoot(t)
 	db := openPagesTestDB(t)
 	defer db.Close()
