@@ -1502,23 +1502,35 @@ function initOfflineOverride(updateFn){
   function persistOrder() {
     var codes = orderedCodes();
     if (!codes.length) return Promise.resolve();
-    var body = new URLSearchParams();
-    codes.forEach(function (c) { body.append('codes', c); });
-    // A plain fetch, same as buttons_admin.html's persistOrder: this is
-    // one localhost call to the till's own Go backend, never a cloud
-    // round-trip, so it works fully offline. Not htmx, so the page-level
-    // htmx:responseError banner never sees it -- surfaced by hand below,
-    // with the server's own localized text (a 409 replica refusal says
-    // exactly why) rather than the generic fallback where one exists.
-    return fetch('/api/buttons/reorder', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString()
-    }).then(function (res) {
-      if (res.ok) { refreshPositions(); return; }
-      return res.text().then(function (text) {
-        showAlert((text || '').trim(), 'server');
-        refetchGrid(); // the DOM shows an order that never took -- reload it
+    // ut-docs#2312 (found during that card's own merge with this one):
+    // /api/buttons/reorder gates on catalog_management (checkOrElevate) --
+    // a plain fetch can't tell a real 200 success apart from a 200 carrying
+    // the elevation-prompt HTML (needsElevation), so it would have treated
+    // "manager approval needed" as success, called refreshPositions(), and
+    // left the reorder silently unpersisted with no way for a cashier to
+    // ever see the PIN prompt. window.utPostWithElevation (below) is the
+    // established raw-fetch counterpart of the htmx OOB-swap dialog flow
+    // every other checkOrElevate site gets for free -- buttons_admin.html's
+    // own persistOrder uses the identical pattern for the Designer's
+    // reorder, which hits this same route. A real success or a real
+    // failure both resolve below; a needs-PIN response opens the dialog
+    // itself and is handled internally, never reaching onDone until the
+    // dialog's own retry resolves it.
+    var fd = new FormData();
+    codes.forEach(function (c) { fd.append('codes', c); });
+    return new Promise(function (resolve) {
+      window.utPostWithElevation('/api/buttons/reorder', fd, function (res) {
+        if (res.ok) { refreshPositions(); resolve(); return; }
+        res.text().then(function (text) {
+          showAlert((text || '').trim(), 'server');
+          refetchGrid(); // the DOM shows an order that never took -- reload it
+        }).then(resolve, resolve);
+      }, function () {
+        // Dialog cancelled: nothing was persisted -- reload so the DOM
+        // matches the real, unsaved order rather than the dragged-to
+        // one it's still showing.
+        refetchGrid();
+        resolve();
       });
     }).catch(function () {
       showAlert('', 'network');
@@ -2004,14 +2016,22 @@ window.utTabBarFade = function (el) {
       t = (t.id && document.getElementById(t.id)) || d.elt;
     }
     if (!t || !t.classList || t === document.body || t === document.documentElement) return;
+    // ut-docs#2338: the rail-driven in-panel swaps (#items-panel,
+    // #admin-panel, #manual-panel -- same allowlist as the X-UT-Page-Title
+    // listener above) are master-detail navigation, not a live update --
+    // app.css's .ut-panel-fx (a slightly longer, still zero-latency,
+    // opacity-only ease) replaces the generic .ut-swap-fx for these
+    // targets specifically.
+    var isPanelNav = ['items-panel', 'admin-panel', 'manual-panel'].indexOf(t.id) !== -1;
+    var cls = isPanelNav ? 'ut-panel-fx' : 'ut-swap-fx';
     // Restart only when an ease is still running (a second swap inside
     // 150 ms) — the forced reflow is not free on the sale screen's basket.
-    if (t.classList.contains('ut-swap-fx')) { t.classList.remove('ut-swap-fx'); void t.offsetWidth; }
-    t.classList.add('ut-swap-fx');
+    if (t.classList.contains(cls)) { t.classList.remove(cls); void t.offsetWidth; }
+    t.classList.add(cls);
   });
   document.addEventListener('animationend', function (e) {
-    if (e.animationName === 'ut-swap-in' && e.target && e.target.classList) {
-      e.target.classList.remove('ut-swap-fx');
+    if ((e.animationName === 'ut-swap-in' || e.animationName === 'ut-panel-in') && e.target && e.target.classList) {
+      e.target.classList.remove('ut-swap-fx', 'ut-panel-fx');
     }
   });
 })();
@@ -2078,6 +2098,24 @@ window.utTabBarFade = function (el) {
     var b = document.getElementById('basket');
     return !!b && b.dataset.orderTypeChosen === 'true';
   }
+
+  // ut-docs#2371: `dismissedThisSale` tracks whether the CURRENT sale's
+  // load-time/sale-start prompt (maybePromptAtSaleStart below) was closed
+  // WITHOUT a choice (Cancel, Escape) -- while true, that particular nag
+  // is suppressed for the rest of this sale, but it never disables the
+  // per-item/per-Pay GATES above and below, which still fire on their own
+  // triggers regardless of this flag. Reset to false whenever a genuine
+  // sale boundary is crossed (a choice is made, /api/pos/reset or
+  // /api/pos/tender goes out, or the basket is observed non-empty/
+  // already-answered -- see maybePromptAtSaleStart and the
+  // htmx:beforeRequest listener below).
+  var dismissedThisSale = false;
+  // Sits alongside window.posOrderTypePromptResolve: true once the
+  // CURRENTLY open prompt's Dine-in/Takeaway button has actually run its
+  // resolve callback, checked by the close-event listener below to tell a
+  // real choice apart from Cancel/Escape/any other close with no choice.
+  var choiceMade = false;
+
   // Opens #order-type-prompt-modal and calls onChosen() once a real choice
   // is made (the modal's own Dine-in/Takeaway buttons set
   // window.posOrderTypePromptResolve before closing themselves, per
@@ -2086,15 +2124,130 @@ window.utTabBarFade = function (el) {
   // Pay) simply does not happen, same as the cashier never having tapped
   // it. No modal in the DOM (a page that doesn't carry the sale screen's
   // markup) is a same-tick passthrough, never a stuck gate.
+  //
+  // ut-docs#2371: showModal(), not show() -- this dialog needs no typing
+  // (see app.css's own comment on the same point), so the on-screen-
+  // keyboard reason #hold-modal/#pfand-modal use .show() for does not
+  // apply here, and a real top-layer modal is what the bug report asked
+  // for (centred, backdropped, everything else inert). Guarded: calling
+  // showModal() on an already-open dialog throws -- this can legitimately
+  // happen now that the prompt can also open unprompted at sale start
+  // (maybePromptAtSaleStart), so a caller racing that with its own gate
+  // re-arms the resolve (its action is the one to continue) and skips only
+  // the showModal() call.
   function showOrderTypePromptModal(onChosen) {
     var modal = document.getElementById('order-type-prompt-modal');
     if (!modal) { onChosen(); return; }
+    choiceMade = false;
+    // Arm the resolve BEFORE the already-open guard below (independent
+    // review, ut-docs#2371): the prompt now opens unprompted at sale start,
+    // and a wedge/camera scan arriving while it is open still reaches the
+    // item gate (app.js's window-level keydown buffer submits the scan form
+    // regardless of focus). That gate has already cancelled the scan's own
+    // request, so if this call bailed without re-arming, the scan would be
+    // silently dropped and the cashier's eventual choice would resume the
+    // sale-start no-op instead -- "scan first, look at the screen second"
+    // is the common sequence, so the LATEST intercepted action is the one a
+    // choice must continue. Only the showModal() call itself is skipped.
     window.posOrderTypePromptResolve = function () {
       window.posOrderTypePromptResolve = null;
+      choiceMade = true;
+      dismissedThisSale = false;
       onChosen();
     };
-    modal.show();
+    if (!modal.open) modal.showModal();
   }
+
+  // ut-docs#2371: a close WITHOUT a choice (Cancel's onclick, or the
+  // browser's own Escape handling now that this is a real showModal()
+  // dialog) behaves like Cancel for the rest of THIS sale -- suppress the
+  // sale-start nag, without touching the per-item/per-Pay gates. `close`
+  // does not bubble, so this has to be a capturing document-level
+  // listener rather than the usual delegation this file uses elsewhere.
+  // Piggybacks the SAME listener to also re-run maybePromptAtSaleStart on
+  // every dialog close in the app (trigger (3) below) -- ordering matters:
+  // the dismissed-flag update above must happen before that re-check, or
+  // a Cancel could see its own stale flag and immediately reopen itself;
+  // one listener, run top-to-bottom, is the simplest way to guarantee it.
+  document.addEventListener('close', function (evt) {
+    if (evt.target && evt.target.id === 'order-type-prompt-modal' && !choiceMade) {
+      dismissedThisSale = true;
+    }
+    maybePromptAtSaleStart();
+  }, true);
+
+  // ut-docs#2371: the "before_item" placement's OTHER failure mode -- the
+  // prompt never fired at the START of a sale, only lazily on the first
+  // add, so a cashier assembling a dine-in order behind the counter (no
+  // item added yet) never saw it at all until they scanned something.
+  // Fires on every plausible "a new, empty, unanswered basket is now
+  // showing" moment; each one is listed on its own registration below so
+  // it's obvious which real user action it corresponds to. Cheap by
+  // design -- every one of these can fire many times a shift for reasons
+  // that have nothing to do with this prompt (a settings save, an
+  // unrelated dialog closing), so the function itself does the real
+  // filtering and bails in one line the moment any condition doesn't
+  // hold.
+  function maybePromptAtSaleStart() {
+    // The sell screen ships a PLACEHOLDER basket (index.html: <div
+    // class="basket" hx-get="/ui/basket" hx-trigger="load">) that only
+    // becomes #basket, with its data-lines-count/data-order-type-chosen
+    // bridge, once that load swap lands. Until then there is nothing to
+    // read -- basketEmpty() would answer "empty" for a basket that hasn't
+    // arrived, and a prompt opened on that guess stays open even when the
+    // real basket then says the choice was already made (found by the
+    // Tester's driven run: answer, reload, prompt back). The load swap's
+    // own htmx:afterSettle re-runs this once the real basket is in.
+    var basket = document.getElementById('basket');
+    if (!basket || !('linesCount' in basket.dataset)) return;
+    // A non-empty or already-answered basket means a sale is genuinely in
+    // progress -- the NEXT time this observes an empty, unanswered basket
+    // it's a new sale, so the previous sale's dismissal no longer applies.
+    if (!basketEmpty() || orderTypeChosen()) { dismissedThisSale = false; return; }
+    if (promptMode() !== 'before_item' || dismissedThisSale) return;
+    var modal = document.getElementById('order-type-prompt-modal');
+    if (!modal || modal.open) return;
+    // Never stack this over another already-open dialog -- the payment
+    // overlay showing change due/a receipt, the hold dialog, the modifier
+    // or category picker, an admin PIN prompt... none of those should
+    // grow this prompt on top of them. The close-event trigger (above)
+    // is what catches the sale-start moment once whichever dialog this
+    // deferred behind actually closes.
+    if (document.querySelector('dialog[open]')) return;
+    showOrderTypePromptModal(function () {});
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', maybePromptAtSaleStart);
+  } else {
+    maybePromptAtSaleStart();
+  }
+  // Covers every #basket outerHTML swap (New Sale from any of its three
+  // buttons, a post-tender reset, New Customer) and a boosted #ut-page
+  // navigation onto the sell screen -- maybePromptAtSaleStart itself
+  // decides whether any of that actually left an empty, unanswered
+  // basket worth asking about.
+  document.addEventListener('htmx:afterSettle', function () { maybePromptAtSaleStart(); });
+  // /api/pos/reset and /api/pos/tender are sale boundaries the owner
+  // explicitly wants New Sale (and the next sale after a tender) to re-ask on, even if
+  // this same sale's prompt was dismissed earlier -- reset the flag here,
+  // on beforeRequest, not on afterRequest: with this app's global
+  // defaultSettleDelay:0 (base.html), the swap+settle for these two
+  // requests' own #basket outerHTML response -- and therefore the
+  // htmx:afterSettle-driven maybePromptAtSaleStart re-check above, and
+  // (for the New Sale buttons that live inside #payment-overlay) that
+  // button's own hx-on::after-request closing the overlay and firing the
+  // close-event trigger above -- all run to completion BEFORE
+  // htmx:afterRequest fires (confirmed against web/public/vendor/
+  // htmx.min.js's b.onload: it calls the response handler, which settles
+  // synchronously at settleDelay 0, before ever triggering
+  // "htmx:afterRequest"). Resetting on afterRequest would run AFTER all
+  // of that had already re-checked the still-stale flag and skipped
+  // re-prompting.
+  document.body.addEventListener('htmx:beforeRequest', function (evt) {
+    var d = evt.detail || {};
+    var p = (d.pathInfo && d.pathInfo.requestPath) || (d.requestConfig && d.requestConfig.path) || '';
+    if (p === '/api/pos/reset' || p === '/api/pos/tender') dismissedThisSale = false;
+  });
 
   // "before_item": intercept the very first item landing in an empty
   // basket. Matched by REQUEST PATH, not by the triggering element, so
@@ -2102,13 +2255,46 @@ window.utTabBarFade = function (el) {
   // scan-row form, every catalog tile button, the modifier picker's
   // "Add to basket" submit, and the suggestions strip all POST to one of
   // these same two endpoints (web/ui/pages/index.html, buttons.html,
-  // modifier_picker.html, suggestions.html).
+  // modifier_picker.html, suggestions.html) -- PLUS (ut-docs#2371) a
+  // modifier/variant tile's OWN hx-get that opens the picker in the first
+  // place (buttons.html's "product-tile" define, ~line 658; the same
+  // clone inside the Categories-tab picker's #category-items-modal body,
+  // and any other surface, are covered for free since this listener is
+  // delegated on document.body). Before ut-docs#2371 the prompt only ever
+  // fired on the picker's own "Add to basket" submit (scan-with-modifiers
+  // below), by which point the picker was already open -- and since it
+  // opened with .show(), the prompt opened UNDERNEATH it, unreachable.
+  // Gating the picker's OWN open means a modifier/variant item now asks
+  // BEFORE the picker ever appears, same as a plain tile. scan-with-
+  // modifiers stays wired below purely as a fallback for any path that
+  // still reaches it with the gate not yet resolved -- now that the
+  // prompt is itself a real top-layer modal, it stacks ABOVE #modifier-
+  // modal even if that happens, so it can no longer lock the picker shut
+  // the way ut-docs#2371's bug report described.
   document.body.addEventListener('htmx:confirm', function (evt) {
     var path = evt.detail.path || '';
     var isItemAdd = path === '/api/pos/scan' || path === '/api/pos/scan-with-modifiers';
-    if (!isItemAdd || promptMode() !== 'before_item' || !basketEmpty() || orderTypeChosen()) return;
+    var isModifierOpen = path.indexOf('/ui/pos/modifiers') === 0;
+    if ((!isItemAdd && !isModifierOpen) || promptMode() !== 'before_item' || !basketEmpty() || orderTypeChosen()) return;
     evt.preventDefault();
     var elt = evt.detail.elt;
+    if (isModifierOpen) {
+      // The path already carries ?item=&code= (buttons.html's hx-get) --
+      // htmx.values(elt, 'get') is deliberately NOT passed here, so
+      // nothing gets double-appended onto the query string. Re-run the
+      // exact GET the tile itself would have issued, then open the
+      // picker exactly the way its own hx-on::after-request does.
+      showOrderTypePromptModal(function () {
+        htmx.ajax('get', path, { target: '#modifier-modal', swap: 'innerHTML' }).then(function () {
+          // htmx 1.9 resolves this promise even when a 4xx swapped nothing
+          // -- don't open an empty picker on it (the tile's own after-request
+          // has the same edge; this path just closes it for free).
+          var m = document.getElementById('modifier-modal');
+          if (m && !m.open && m.innerHTML.trim()) m.showModal();
+        });
+      });
+      return;
+    }
     // Snapshot NOW, not inside the callback below: this same native
     // 'submit' event ALSO reaches this file's own document-level
     // 'submit' listener (ut-docs#1177, registered earlier, further up

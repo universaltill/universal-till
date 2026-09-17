@@ -258,6 +258,297 @@ func TestCloudCreateItem_BarcodeAlreadyTakenFails(t *testing.T) {
 	}
 }
 
+// TestCloudCreateItem_RefusedOnReplica: items is an admin-synced table
+// (primary-wins pull, sync_admin_repo.go's adminTables) — same reasoning
+// as the local admin item-create handler's own requirePrimary gate
+// (catalog/handlers.go). A directive landing on a replica till must be
+// refused the same way, or the created row silently vanishes on the next
+// admin pull (ut-docs#2353).
+func TestCloudCreateItem_RefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	_, err := cloudCreateItem(ctx, dp, "Replica Widget", 500, "")
+	if err == nil {
+		t.Fatalf("expected cloudCreateItem to refuse on a replica till")
+	}
+
+	repo := data.NewCatalogRepo(dp.Db)
+	_, exists, err := repo.FindActiveItemByName(ctx, "Replica Widget")
+	if err != nil {
+		t.Fatalf("FindActiveItemByName: %v", err)
+	}
+	if exists {
+		t.Fatalf("item must not be created on a replica till")
+	}
+}
+
+// TestCloudCreateItem_WritesAuditRow: the local admin item-create path has
+// no audit call of its own to mirror (verified: catalog/handlers.go's
+// POST /api/catalog/item never calls InsertAudit), but a cloud-originated
+// mutation still needs a "the merchant changed this from the cloud portal"
+// trail distinct from an operator's own actions — same "system"-actor
+// pattern as cloudAdjustStock/sync_admin.go's admin_pulled (ut-docs#2353).
+func TestCloudCreateItem_WritesAuditRow(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudCreateItem(ctx, dp, "Audited Widget", 500, ""); err != nil {
+		t.Fatalf("cloudCreateItem: %v", err)
+	}
+
+	repo := data.NewCatalogRepo(dp.Db)
+	id, exists, err := repo.FindActiveItemByName(ctx, "Audited Widget")
+	if err != nil || !exists {
+		t.Fatalf("expected item to exist: exists=%v err=%v", exists, err)
+	}
+
+	var actorID, action string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT actor_id, action FROM audit_log WHERE entity_type = 'item' AND entity_id = ? AND action = 'cloud_item_created'`,
+		id,
+	).Scan(&actorID, &action); err != nil {
+		t.Fatalf("expected an audit row for the cloud-originated create: %v", err)
+	}
+	if actorID != "system" {
+		t.Fatalf("expected actor_id 'system', got %q", actorID)
+	}
+}
+
+// TestCloudCreateItem_IdempotentRetryWritesNoSecondAuditRow: a retry of an
+// already-created item (the at-least-once directive replay this hook's own
+// idempotency handles) must not add a second audit row for a no-op.
+func TestCloudCreateItem_IdempotentRetryWritesNoSecondAuditRow(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudCreateItem(ctx, dp, "Retry Widget", 500, ""); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	if _, err := cloudCreateItem(ctx, dp, "Retry Widget", 500, ""); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+
+	repo := data.NewCatalogRepo(dp.Db)
+	id, exists, err := repo.FindActiveItemByName(ctx, "Retry Widget")
+	if err != nil || !exists {
+		t.Fatalf("expected item to exist: exists=%v err=%v", exists, err)
+	}
+
+	var count int
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM audit_log WHERE entity_type = 'item' AND entity_id = ? AND action = 'cloud_item_created'`,
+		id,
+	).Scan(&count); err != nil {
+		t.Fatalf("count audit rows: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly one audit row across the create + retry, got %d", count)
+	}
+}
+
+// --- cloudSetPrice ---
+
+func TestCloudSetPrice_RefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	if _, err := cloudSetPrice(ctx, dp, "itm1", 999); err == nil {
+		t.Fatalf("expected cloudSetPrice to refuse on a replica till")
+	}
+
+	var price int64
+	if err := dp.Db.QueryRowContext(ctx, `SELECT base_price FROM items WHERE id = 'itm1'`).Scan(&price); err != nil {
+		t.Fatalf("read base_price: %v", err)
+	}
+	if price == 999 {
+		t.Fatalf("price must not change on a replica till")
+	}
+}
+
+func TestCloudSetPrice_WritesAuditRow(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudSetPrice(ctx, dp, "itm1", 777); err != nil {
+		t.Fatalf("cloudSetPrice: %v", err)
+	}
+
+	var actorID string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT actor_id FROM audit_log WHERE entity_type = 'item' AND entity_id = 'itm1' AND action = 'cloud_price_set'`,
+	).Scan(&actorID); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if actorID != "system" {
+		t.Fatalf("expected actor_id 'system', got %q", actorID)
+	}
+}
+
+// --- cloudRenameItem ---
+
+func TestCloudRenameItem_RefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	if _, err := cloudRenameItem(ctx, dp, "itm1", "Replica Name"); err == nil {
+		t.Fatalf("expected cloudRenameItem to refuse on a replica till")
+	}
+
+	var name string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT name FROM items WHERE id = 'itm1'`).Scan(&name); err != nil {
+		t.Fatalf("read name: %v", err)
+	}
+	if name == "Replica Name" {
+		t.Fatalf("name must not change on a replica till")
+	}
+}
+
+func TestCloudRenameItem_WritesAuditRow(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudRenameItem(ctx, dp, "itm1", "Renamed Apple"); err != nil {
+		t.Fatalf("cloudRenameItem: %v", err)
+	}
+
+	var actorID string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT actor_id FROM audit_log WHERE entity_type = 'item' AND entity_id = 'itm1' AND action = 'cloud_item_renamed'`,
+	).Scan(&actorID); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if actorID != "system" {
+		t.Fatalf("expected actor_id 'system', got %q", actorID)
+	}
+}
+
+// --- cloudAddBarcode ---
+
+func TestCloudAddBarcode_RefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	if _, err := cloudAddBarcode(ctx, dp, "itm1", "9990001"); err == nil {
+		t.Fatalf("expected cloudAddBarcode to refuse on a replica till")
+	}
+
+	repo := data.NewCatalogRepo(dp.Db)
+	if taken, _ := repo.BarcodeExists(ctx, "9990001"); taken {
+		t.Fatalf("barcode must not be attached on a replica till")
+	}
+}
+
+func TestCloudAddBarcode_WritesAuditRowForItem(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudAddBarcode(ctx, dp, "itm1", "9990002"); err != nil {
+		t.Fatalf("cloudAddBarcode: %v", err)
+	}
+
+	var entityType, actorID string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT entity_type, actor_id FROM audit_log WHERE entity_id = 'itm1' AND action = 'cloud_barcode_added'`,
+	).Scan(&entityType, &actorID); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if entityType != "item" || actorID != "system" {
+		t.Fatalf("unexpected audit row: entity_type=%q actor_id=%q", entityType, actorID)
+	}
+}
+
+func TestCloudAddBarcode_WritesAuditRowForVariant(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudAddBarcode(ctx, dp, "var1", "9990003"); err != nil {
+		t.Fatalf("cloudAddBarcode: %v", err)
+	}
+
+	var entityType string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT entity_type FROM audit_log WHERE entity_id = 'var1' AND action = 'cloud_barcode_added'`,
+	).Scan(&entityType); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if entityType != "item_variant" {
+		t.Fatalf("expected entity_type 'item_variant', got %q", entityType)
+	}
+}
+
+// --- cloudDeactivateItem ---
+
+func TestCloudDeactivateItem_RefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	if _, err := cloudDeactivateItem(ctx, dp, "itm1"); err == nil {
+		t.Fatalf("expected cloudDeactivateItem to refuse on a replica till")
+	}
+
+	var active int
+	if err := dp.Db.QueryRowContext(ctx, `SELECT is_active FROM items WHERE id = 'itm1'`).Scan(&active); err != nil {
+		t.Fatalf("read is_active: %v", err)
+	}
+	if active == 0 {
+		t.Fatalf("item must not be deactivated on a replica till")
+	}
+}
+
+func TestCloudDeactivateItem_WritesAuditRowForItem(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudDeactivateItem(ctx, dp, "itm1"); err != nil {
+		t.Fatalf("cloudDeactivateItem: %v", err)
+	}
+
+	var entityType, actorID string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT entity_type, actor_id FROM audit_log WHERE entity_id = 'itm1' AND action = 'cloud_item_deactivated'`,
+	).Scan(&entityType, &actorID); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if entityType != "item" || actorID != "system" {
+		t.Fatalf("unexpected audit row: entity_type=%q actor_id=%q", entityType, actorID)
+	}
+}
+
+func TestCloudDeactivateItem_WritesAuditRowForVariant(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudDeactivateItem(ctx, dp, "var1"); err != nil {
+		t.Fatalf("cloudDeactivateItem: %v", err)
+	}
+
+	var entityType string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT entity_type FROM audit_log WHERE entity_id = 'var1' AND action = 'cloud_variant_deactivated'`,
+	).Scan(&entityType); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if entityType != "item_variant" {
+		t.Fatalf("expected entity_type 'item_variant', got %q", entityType)
+	}
+}
+
 // --- cloudRemovePlugin ---
 
 func TestCloudRemovePlugin_RejectsPathTraversalID(t *testing.T) {
@@ -886,6 +1177,97 @@ func TestCloudUpsertCategory_UnknownIDAndBlankName(t *testing.T) {
 	}
 }
 
+func TestCloudUpsertCategory_CreateRefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	if _, err := cloudUpsertCategory(ctx, dp, "", "Replica Category", "#0f172a"); err == nil {
+		t.Fatalf("expected cloudUpsertCategory to refuse creating on a replica till")
+	}
+	if _, exists := findCategoryByName(t, dp, "Replica Category"); exists {
+		t.Fatalf("category must not be created on a replica till")
+	}
+}
+
+func TestCloudUpsertCategory_UpdateRefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	// Create while still primary, then simulate the till becoming a replica.
+	if _, err := cloudUpsertCategory(ctx, dp, "", "Drinks", "#0f172a"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	row, exists := findCategoryByName(t, dp, "Drinks")
+	if !exists {
+		t.Fatalf("expected category to exist")
+	}
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	if _, err := cloudUpsertCategory(ctx, dp, row.ID, "Renamed on replica", "#4338ca"); err == nil {
+		t.Fatalf("expected cloudUpsertCategory to refuse updating on a replica till")
+	}
+	if got, _ := findCategoryByName(t, dp, "Renamed on replica"); got.ID != "" {
+		t.Fatalf("category must not be renamed on a replica till")
+	}
+}
+
+func TestCloudUpsertCategory_CreateWritesAuditRow(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudUpsertCategory(ctx, dp, "", "Audited Category", "#0f172a"); err != nil {
+		t.Fatalf("cloudUpsertCategory: %v", err)
+	}
+	row, exists := findCategoryByName(t, dp, "Audited Category")
+	if !exists {
+		t.Fatalf("expected category to exist")
+	}
+
+	var actorID string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT actor_id FROM audit_log WHERE entity_type = 'category' AND entity_id = ? AND action = 'cloud_category_created'`,
+		row.ID,
+	).Scan(&actorID); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if actorID != "system" {
+		t.Fatalf("expected actor_id 'system', got %q", actorID)
+	}
+}
+
+func TestCloudUpsertCategory_UpdateWritesAuditRow(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudUpsertCategory(ctx, dp, "", "Drinks", "#0f172a"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	row, exists := findCategoryByName(t, dp, "Drinks")
+	if !exists {
+		t.Fatalf("expected category to exist")
+	}
+
+	if _, err := cloudUpsertCategory(ctx, dp, row.ID, "Hot drinks", "#4338ca"); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+
+	var actorID string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT actor_id FROM audit_log WHERE entity_type = 'category' AND entity_id = ? AND action = 'cloud_category_updated'`,
+		row.ID,
+	).Scan(&actorID); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if actorID != "system" {
+		t.Fatalf("expected actor_id 'system', got %q", actorID)
+	}
+}
+
 // The hook set StartCloudSync wires carries UpsertCategory, and it is the
 // palette-checked hook (not a bare repo call).
 func TestBuildCloudHooks_WiresUpsertCategory(t *testing.T) {
@@ -914,5 +1296,258 @@ func TestBuildCloudHooks_WiresUpsertCategory(t *testing.T) {
 	}
 	if _, ok := findCategoryByName(t, dp, "Wired 2"); !ok {
 		t.Fatalf("wired update did not rename")
+	}
+}
+
+// --- set_quick_button_layout ---
+
+// seedQuickButtons inserts three shortcut_buttons rows, all pointing at
+// seedForPages' itm1 (their only FK requirement), in barcode order b1,b2,b3
+// (sort_order 0,1,2) — the starting layout each test below reorders away
+// from.
+func seedQuickButtons(t *testing.T, dp *common.Deps) {
+	t.Helper()
+	for _, s := range []string{
+		`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('b1','Alpha','itm1',0)`,
+		`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('b2','Beta','itm1',1)`,
+		`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('b3','Gamma','itm1',2)`,
+	} {
+		if _, err := dp.Db.Exec(s); err != nil {
+			t.Fatalf("seed shortcut_buttons: %v", err)
+		}
+	}
+}
+
+// quickButtonOrder returns the button barcodes in persisted sort order.
+func quickButtonOrder(t *testing.T, dp *common.Deps) []string {
+	t.Helper()
+	rows, err := dp.Db.Query(`SELECT barcode FROM shortcut_buttons ORDER BY sort_order`)
+	if err != nil {
+		t.Fatalf("query shortcut_buttons: %v", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var b string
+		if err := rows.Scan(&b); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		out = append(out, b)
+	}
+	return out
+}
+
+// On a primary (or standalone) till, cloudSetQuickButtonLayout applies the
+// new order — the same UpdateOrder call the Designer's own reorder makes —
+// and records one audit_log row so the change is traceable back to a cloud
+// directive rather than a local operator action.
+func TestCloudSetQuickButtonLayout_AppliesOrderAndAudits(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+
+	msg, err := cloudSetQuickButtonLayout(ctx, dp, []string{"b3", "b1", "b2"})
+	if err != nil {
+		t.Fatalf("cloudSetQuickButtonLayout: %v", err)
+	}
+	if !strings.Contains(msg, "3") {
+		t.Fatalf("expected message to mention the button count, got %q", msg)
+	}
+	got := quickButtonOrder(t, dp)
+	want := []string{"b3", "b1", "b2"}
+	if len(got) != len(want) {
+		t.Fatalf("order = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order = %v, want %v", got, want)
+		}
+	}
+
+	var actorID, entityType, action string
+	row := dp.Db.QueryRow(`SELECT actor_id, entity_type, action FROM audit_log ORDER BY created_at DESC, rowid DESC LIMIT 1`)
+	if err := row.Scan(&actorID, &entityType, &action); err != nil {
+		t.Fatalf("query audit_log: %v", err)
+	}
+	if actorID != "system" {
+		t.Fatalf("audit actor_id = %q, want system", actorID)
+	}
+	if action == "" || entityType == "" {
+		t.Fatalf("audit row incomplete: entity_type=%q action=%q", entityType, action)
+	}
+}
+
+// A replica till follows shortcut_buttons from the primary via the
+// admin-table pull (sync_admin_repo.go) — a write here would just be
+// reverted on the next pull with no indication to the cloud operator that
+// nothing actually stuck (same class as ut-docs#1697's LAN-route gate).
+// The directive is refused before any DB write, matching requirePrimary's
+// own refusal shape for the LAN reorder route.
+func TestCloudSetQuickButtonLayout_RefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed primary url: %v", err)
+	}
+
+	if _, err := cloudSetQuickButtonLayout(ctx, dp, []string{"b3", "b1", "b2"}); err == nil {
+		t.Fatalf("expected refusal on a replica till")
+	}
+	got := quickButtonOrder(t, dp)
+	want := []string{"b1", "b2", "b3"} // unchanged
+	if len(got) != len(want) {
+		t.Fatalf("replica write leaked through: order = %v, want unchanged %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("replica write leaked through: order = %v, want unchanged %v", got, want)
+		}
+	}
+}
+
+// An empty barcode list is refused directly by the hook too (not just by
+// cloudsync.apply's own dispatch-level check) -- cloudSetQuickButtonLayout
+// is called directly by buildCloudHooks' wiring and by tests, so it must not
+// rely solely on the caller having already checked.
+func TestCloudSetQuickButtonLayout_EmptyListRefused(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+
+	if _, err := cloudSetQuickButtonLayout(ctx, dp, nil); err == nil {
+		t.Fatalf("expected refusal for an empty barcode list")
+	}
+	got := quickButtonOrder(t, dp)
+	want := []string{"b1", "b2", "b3"}
+	if len(got) != len(want) {
+		t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+		}
+	}
+}
+
+// A partial list (missing an existing barcode) must be refused, not silently
+// applied — buttons_api.go's LAN reorder route documents its own payload as
+// "the FULL global list," and UpdateOrder only touches the barcodes it's
+// given: applying a partial list leaves the omitted row(s) on a stale
+// sort_order that can collide with a listed row's new one (independent
+// review's own probe reproduced a real duplicate sort_order this way,
+// ut-docs#2321 review).
+func TestCloudSetQuickButtonLayout_MissingBarcodeRefused(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+
+	if _, err := cloudSetQuickButtonLayout(ctx, dp, []string{"b3", "b1"}); err == nil {
+		t.Fatalf("expected refusal for a partial list missing b2")
+	}
+	got := quickButtonOrder(t, dp)
+	want := []string{"b1", "b2", "b3"}
+	if len(got) != len(want) {
+		t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+		}
+	}
+}
+
+// A barcode the till doesn't recognize is refused outright — the till is the
+// only thing that can validate a cloud directive's payload before applying
+// it, so an unknown barcode must not be a silent, unexplained no-op.
+func TestCloudSetQuickButtonLayout_UnknownBarcodeRefused(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+
+	if _, err := cloudSetQuickButtonLayout(ctx, dp, []string{"b3", "b1", "does-not-exist"}); err == nil {
+		t.Fatalf("expected refusal for an unrecognized barcode")
+	}
+	got := quickButtonOrder(t, dp)
+	want := []string{"b1", "b2", "b3"}
+	if len(got) != len(want) {
+		t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+		}
+	}
+}
+
+// A duplicate barcode in the payload is refused — "the new order" is
+// ambiguous once a barcode appears twice.
+func TestCloudSetQuickButtonLayout_DuplicateBarcodeRefused(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+
+	if _, err := cloudSetQuickButtonLayout(ctx, dp, []string{"b1", "b1", "b2"}); err == nil {
+		t.Fatalf("expected refusal for a duplicate barcode")
+	}
+	got := quickButtonOrder(t, dp)
+	want := []string{"b1", "b2", "b3"}
+	if len(got) != len(want) {
+		t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+		}
+	}
+}
+
+// The hook set StartCloudSync wires carries SetQuickButtonLayout, and the
+// DeviceExtra report includes the applied layout (barcode + label, in sort
+// order) so the cloud's layout panel can pre-fill from real state.
+func TestBuildCloudHooks_WiresQuickButtonLayout(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+	hooks := buildCloudHooks(dp, nil)
+
+	if hooks.SetQuickButtonLayout == nil {
+		t.Fatalf("SetQuickButtonLayout hook not wired")
+	}
+	if _, err := hooks.SetQuickButtonLayout(ctx, []string{"b2", "b3", "b1"}); err != nil {
+		t.Fatalf("wired SetQuickButtonLayout: %v", err)
+	}
+	got := quickButtonOrder(t, dp)
+	want := []string{"b2", "b3", "b1"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("wired order = %v, want %v", got, want)
+		}
+	}
+
+	extra := hooks.DeviceExtra(ctx)
+	qb, ok := extra["quick_buttons"].([]map[string]any)
+	if !ok {
+		t.Fatalf("quick_buttons missing or wrong type in DeviceExtra: %#v", extra["quick_buttons"])
+	}
+	if len(qb) != 3 {
+		t.Fatalf("quick_buttons length = %d, want 3", len(qb))
+	}
+	wantOrder := []string{"b2", "b3", "b1"}
+	for i, code := range wantOrder {
+		if qb[i]["barcode"] != code {
+			t.Fatalf("quick_buttons[%d] = %+v, want barcode %q", i, qb[i], code)
+		}
+		// sort_order must mirror this entry's actual position — the cloud
+		// side decodes it into QuickButtonReport.SortOrder independently of
+		// the report's own array order (ut-docs#2321 review).
+		if so, ok := qb[i]["sort_order"].(int); !ok || so != i {
+			t.Fatalf("quick_buttons[%d][\"sort_order\"] = %#v, want %d", i, qb[i]["sort_order"], i)
+		}
+	}
+	for _, k := range []string{"theme", "themes", "problems", "till_settings"} {
+		if _, present := extra[k]; !present {
+			t.Fatalf("existing DeviceExtra field %q lost", k)
+		}
 	}
 }

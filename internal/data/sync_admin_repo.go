@@ -451,10 +451,30 @@ var nonAdminTables = map[string]string{
 	"issue_reports_sent": "dedup record of bug reports already sent FROM this till",
 	"audit_log":          "this till's own local action log (including per-till-scoped settings changes — see PerTillSettingPrefixes); a shop-wide combined audit view is a separate concern, not LAN admin sync's job",
 
-	// Genuinely open classification questions — excluded (not synced) rather
-	// than guessed into adminTables, each split into its own follow-up card
-	// per this var's own top comment.
-	"price_history": "NOT a pure append-only audit trail (AppendPriceHistoryItem/Variant UPDATE the prior row's ends_at, and item deletion DELETEs rows) and NOT inert to checkout — ResolveCurrentPrice consults an open price_history row BEFORE items' synced price, so it can override it. Currently latent (nothing in production writes this table yet), but a satellite that ever does would diverge on price silently. Needs an Architect pass before either classification is safe; flagged in ut-docs#1671",
+	// Resolved classification (ADR-0099, ut-docs#2348, closing the question
+	// ut-docs#1671 deferred): correctly excluded. NOT a pure append-only
+	// audit trail (AppendPriceHistoryItem/Variant UPDATE the prior row's
+	// ends_at, and item deletion DELETEs rows), NOT inert to checkout
+	// (ResolveCurrentPrice consults an open price_history row BEFORE items'
+	// synced price, so it can override it), and — the reason it doesn't
+	// simply join adminTables — an ever-growing ledger with no natural
+	// ceiling, unlike every current-state table in that list. Resolved by
+	// NOT syncing the table at all: invalidateStalePriceHistoryOnSync (the
+	// post-apply step at the end of ApplyAdmin) closes every locally-open
+	// price_history row for a synced item/variant on the next admin bundle
+	// that actually changes (ApplyAdmin only runs when the primary's admin
+	// fingerprint moves — sync_admin.go's `!Unchanged` check — not
+	// literally every poll; a primary-side price edit always moves it,
+	// since items/item_variants are themselves admin tables), so a
+	// satellite can never keep charging a stale override once the primary
+	// has moved the underlying price. Guarded by
+	// scripts/ci/guard-price-history-sync.sh (every SQL write to this table
+	// must sit in an explicitly allowlisted function). Still open, NOT
+	// closed by this: the cloud SetPrice directive path is not
+	// primary-gated today (ut-docs#2353), so a satellite can write its own
+	// row directly and the invalidation only cleans that up on the next
+	// admin bundle that changes — an unbounded window, not "next poll".
+	"price_history": "ever-growing price-change ledger, never synced (ADR-0099); a satellite's stale open override is closed by invalidateStalePriceHistoryOnSync on every ApplyAdmin instead, so checkout falls through to the synced items/item_variants price",
 
 	// Resolved classification (ut-docs#1668): correctly excluded, same
 	// concurrency reasoning ut-docs#1554 gave role_permissions — a periodic
@@ -847,8 +867,67 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 	if err := backfillCodelessSyncedVariants(ctx, tx); err != nil {
 		return fmt.Errorf("backfill codeless synced variants: %w", err)
 	}
+	if err := invalidateStalePriceHistoryOnSync(ctx, tx); err != nil {
+		return fmt.Errorf("invalidate stale price_history: %w", err)
+	}
 
 	return tx.Commit()
+}
+
+// invalidateStalePriceHistoryOnSync is ADR-0099 Decision 2 (ut-docs#2348,
+// resolving ut-docs#1671): price_history stays out of adminTables — it is
+// an ever-growing ledger of every price change a shop ever made, and
+// dumping it whole on every poll (the only mechanism DumpAdmin/ApplyAdmin
+// have) has no natural ceiling, unlike every current-state table in that
+// list. A satellite doesn't need the history anyway; it only needs to
+// never keep trusting a stale open override once the primary has moved
+// the underlying price — which is exactly what happens otherwise, because
+// POSRepo.ResolveCurrentPrice / lookupPriceHistory prefer an open
+// price_history row (ends_at IS NULL) over the freshly-synced
+// items.base_price / item_variants.price, and nothing ever revisits that
+// row. So instead of syncing the table itself, every admin-bundle apply
+// closes any locally-open price_history row for an item/variant this
+// bundle just synced. DumpAdmin sends the FULL items/item_variants tables
+// (not incremental) whenever it sends them at all, so for a complete
+// bundle "every id now in items/item_variants" IS the bundle's contents —
+// there is no narrower per-id targeting to preserve. (A bundle from an
+// older primary that omits one of these tables entirely just means Phase
+// 1/2 skip it above; this step still closes every open row against
+// whatever items/item_variants already hold locally, which is the safe
+// direction — it can only ever remove a stale override, never introduce
+// one.)
+//
+// Deliberately closes ANY open row, not only a currently-active one
+// (starts_at <= now) — a future-dated open row would otherwise activate
+// later with no sync guaranteed to run at that moment, reopening the exact
+// divergence this exists to close (an earlier draft of the ADR scoped it
+// to active rows only and was corrected on review). A row that already
+// closed (ends_at in the past) is inert to every reader and is left alone.
+// CURRENT_TIMESTAMP here is the satellite's own clock, consistent with how
+// starts_at/ends_at are already compared everywhere else on this table.
+//
+// Same precedent as backfillCodelessSyncedVariants just above: runs
+// unconditionally at the end of every ApplyAdmin, same transaction,
+// set-based (two statements, no per-row loop). It does NOT close the
+// cloud-directive write path — a satellite can still receive an ungated
+// SetPrice directive (internal/pages/cloudsync_wire.go, ut-docs#2353) and
+// write its own row directly; this only cleans that up on the next
+// admin bundle that actually changes (sync_admin.go's `!Unchanged`
+// check gates whether ApplyAdmin runs at all) — an unbounded window on a
+// steady-state shop whose admin state never moves again, not literally
+// "the next poll".
+func invalidateStalePriceHistoryOnSync(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, `
+UPDATE price_history SET ends_at = CURRENT_TIMESTAMP
+ WHERE ends_at IS NULL AND item_id IN (SELECT id FROM items)`); err != nil {
+		return fmt.Errorf("invalidate stale item price_history: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE price_history SET ends_at = CURRENT_TIMESTAMP
+ WHERE ends_at IS NULL AND variant_id IN (SELECT id FROM item_variants)`); err != nil {
+		return fmt.Errorf("invalidate stale variant price_history: %w", err)
+	}
+	return nil
 }
 
 // backfillCodelessSyncedVariants is ut-docs#2230's defense against the

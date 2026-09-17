@@ -31,6 +31,7 @@ var helpHintHrefAttr = regexp.MustCompile(`\bhref="([^"]+)"`)
 // helpHref. A "?" that always lands on the contents page looks like it works,
 // which is exactly why this needs a test rather than a glance.
 func TestHelpHintResolvesPerPage(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#2357: /designer, /items, /catalog, /modifiers, /catalog/option-sets are now catalog_management-gated; this test is about rendering, not permissions.
 	chdirRoot(t)
 	db := openPagesTestDB(t)
 	defer db.Close()

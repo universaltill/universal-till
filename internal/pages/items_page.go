@@ -25,6 +25,15 @@ import (
 // of its own.
 func registerItemsPage(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/items", func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#2357: the nav tile is already VisibleIf: "catalog_management"
+		// (uislot.CoreAdmin), but a cashier typing the URL directly still got
+		// the full shell (and, via embedItemsSection below, the default
+		// section's catalog data) before this gate — matching
+		// tax_codes_page.go/locations_page.go's own GET-handler gate pattern.
+		if !canPerform(d, r, "catalog_management") {
+			httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
+			return
+		}
 		// RequestLocale, not ResolveLocale: Render resolves (and sets the
 		// ?lang= cookie) itself below; resolving twice would emit the
 		// cookie twice (same reasoning as menu_page.go's registerMenu).

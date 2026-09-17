@@ -159,6 +159,90 @@ func remoteTillSettingsReport(ctx context.Context, d *common.Deps) map[string]st
 	return out
 }
 
+// cloudSetQuickButtonLayout is the set_quick_button_layout hook: reorders
+// the quick-sale (shortcut) buttons from the cloud's layout panel — the
+// same ShortcutsRepo.UpdateOrder call the Designer's own move-up/move-down
+// reorder makes locally via POST /api/buttons/reorder. Gated to the primary
+// till (requirePrimaryDirective) for the same reason that LAN route is
+// (ut-docs#1697): shortcut_buttons syncs shop-wide as a primary-wins admin
+// table, so a write applied on a replica would vanish on the very next
+// admin pull.
+//
+// buttons_api.go's own reorder route documents its payload as "the FULL
+// global list" — UpdateOrder sets sort_order = index only for the barcodes
+// it's given, so a PARTIAL list leaves the omitted rows on their old
+// sort_order values, which can collide with a listed row's new one
+// (verified: an independent review's probe reproduced a real duplicate
+// sort_order from a partial payload, ut-docs#2321 review). A cloud
+// directive's payload isn't validated against the till by anything but
+// this function, so — unlike the LAN route, which trusts its own page to
+// always post the full list — this rejects a payload that doesn't cover
+// EXACTLY the till's current button set (missing or unknown barcodes
+// both refused, named in the error) rather than silently applying a
+// partial reorder.
+func cloudSetQuickButtonLayout(ctx context.Context, d *common.Deps, barcodes []string) (string, error) {
+	if len(barcodes) == 0 {
+		return "", fmt.Errorf("missing barcodes")
+	}
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	repo := data.NewShortcutsRepo(d.Db)
+	current, err := repo.LoadButtons(ctx)
+	if err != nil {
+		return "", err
+	}
+	currentSet := make(map[string]bool, len(current))
+	for _, b := range current {
+		currentSet[b.Barcode] = true
+	}
+	given := make(map[string]bool, len(barcodes))
+	for _, bc := range barcodes {
+		if given[bc] {
+			return "", fmt.Errorf("duplicate barcode %q in the new layout", bc)
+		}
+		given[bc] = true
+		if !currentSet[bc] {
+			return "", fmt.Errorf("barcode %q is not one of this till's quick buttons", bc)
+		}
+	}
+	for bc := range currentSet {
+		if !given[bc] {
+			return "", fmt.Errorf("the new layout is missing barcode %q — it must list every current quick button", bc)
+		}
+	}
+	if err := repo.UpdateOrder(ctx, barcodes); err != nil {
+		return "", err
+	}
+	auditCloudDirective(ctx, d, "quick_buttons", "-", "quick_button_layout_set", map[string]any{"barcodes": barcodes})
+	return fmt.Sprintf("layout applied to %d buttons", len(barcodes)), nil
+}
+
+// remoteQuickButtonsReport is the read side for DeviceExtra: the currently
+// applied quick-sale button layout (barcode + label, in the same sort order
+// LoadButtons itself orders by), so the cloud's layout panel shows applied
+// state, not just what was queued — same "report what's actually there"
+// pattern as remoteTillSettingsReport above. A read error reports an empty
+// list rather than failing the whole heartbeat.
+func remoteQuickButtonsReport(ctx context.Context, d *common.Deps) []map[string]any {
+	buttons, err := data.NewShortcutsRepo(d.Db).LoadButtons(ctx)
+	if err != nil {
+		logging.L().Warnf("cloudsync: quick button layout report failed: %v", err)
+		return []map[string]any{}
+	}
+	out := make([]map[string]any, 0, len(buttons))
+	for i, b := range buttons {
+		// sort_order mirrors this button's position in the (already
+		// sort_order-ordered) list LoadButtons returns — the cloud side
+		// decodes it into QuickButtonReport.SortOrder so a single entry is
+		// self-describing without its slice context (claims.go's own doc
+		// comment on that field), even though the panel today only reads
+		// the report's array order, not this field, to render the list.
+		out = append(out, map[string]any{"barcode": b.Barcode, "label": b.Label, "sort_order": i})
+	}
+	return out
+}
+
 // StartCloudSync wires the ADR-0018 directive hooks to the till's real
 // action paths and starts the cloud sync loop. Every hook is the same move
 // an operator makes locally — remote installs still go through the
@@ -212,16 +296,10 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		// update a local price change makes; the next snapshot push (hash
 		// gate) reflects it back to the cloud automatically.
 		SetPrice: func(ctx context.Context, itemID string, priceMinor int64) (string, error) {
-			if err := data.NewCatalogRepo(d.Db).SetItemPrice(ctx, itemID, priceMinor); err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("price set to %d (minor units)", priceMinor), nil
+			return cloudSetPrice(ctx, d, itemID, priceMinor)
 		},
 		RenameItem: func(ctx context.Context, itemID, name string) (string, error) {
-			if err := data.NewCatalogRepo(d.Db).SetItemName(ctx, itemID, name); err != nil {
-				return "", err
-			}
-			return "renamed to " + name, nil
+			return cloudRenameItem(ctx, d, itemID, name)
 		},
 		// Create from the cloud. Idempotent on retry (same-name active item →
 		// success without a duplicate); a taken barcode fails cleanly.
@@ -231,36 +309,13 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		// Attach a (primary) barcode to an item or variant. AddBarcode owns
 		// all the safety: availability, existence, active-only.
 		AddBarcode: func(ctx context.Context, id, barcode string) (string, error) {
-			repo := data.NewCatalogRepo(d.Db)
-			in := catalogtypes.BarcodeInput{Barcode: barcode, IsPrimary: true}
-			if exists, err := repo.ItemExists(ctx, id); err == nil && exists {
-				in.ItemID = id
-			} else {
-				in.VariantID = id
-			}
-			if err := repo.AddBarcode(ctx, in); err != nil {
-				return "", err
-			}
-			return "barcode " + barcode + " attached", nil
+			return cloudAddBarcode(ctx, d, id, barcode)
 		},
 		// Retire from the cloud: same soft-deactivate a manager does locally
 		// (variants of the item retire with it; a variant id retires just the
 		// variant). It drops from the sale screen and the next snapshot.
 		DeactivateItem: func(ctx context.Context, id string) (string, error) {
-			repo := data.NewCatalogRepo(d.Db)
-			if exists, err := repo.ItemExists(ctx, id); err == nil && exists {
-				if err := repo.DeactivateItem(ctx, id); err != nil {
-					return "", err
-				}
-				return "item deactivated", nil
-			}
-			if _, ok, _ := repo.GetVariantLabel(ctx, id); !ok {
-				return "", fmt.Errorf("item not found")
-			}
-			if err := repo.DeactivateVariant(ctx, id); err != nil {
-				return "", err
-			}
-			return "variant deactivated", nil
+			return cloudDeactivateItem(ctx, d, id)
 		},
 		// Remote stock adjustment: the same movement record + connector event
 		// a manual adjustment on the inventory page makes.
@@ -292,6 +347,12 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 			}
 			return msg, err
 		},
+		// set_quick_button_layout: the cloud's quick-sale button layout
+		// panel — same UpdateOrder call the Designer's own reorder makes,
+		// gated to the primary till. See cloudSetQuickButtonLayout.
+		SetQuickButtonLayout: func(ctx context.Context, barcodes []string) (string, error) {
+			return cloudSetQuickButtonLayout(ctx, d, barcodes)
+		},
 		// The cloud's Design picker offers exactly what this till could pick
 		// locally (built-in + plugin-contributed themes); applying one comes
 		// back as a plain `set_setting theme` directive. cloudThemeOptions
@@ -310,6 +371,11 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 				// remote-configurable setting, for the portal's
 				// forms.
 				"till_settings": remoteTillSettingsReport(ctx, d),
+				// The applied quick-sale button layout (barcode + label, in
+				// sort order), for the cloud's layout panel to pre-fill from
+				// real state rather than only what was queued. See
+				// remoteQuickButtonsReport.
+				"quick_buttons": remoteQuickButtonsReport(ctx, d),
 			}
 		},
 	}
@@ -604,6 +670,117 @@ func collectProblems(ctx context.Context, d *common.Deps) []map[string]any {
 	return out
 }
 
+// requirePrimaryDirective refuses a directive that would write to a table
+// synced shop-wide via the primary-wins admin pull, matching the local
+// admin path's requirePrimary gate (ut-docs#2353): items/item_variants/
+// item_barcodes/variant_barcodes (catalog) and shortcut_buttons (quick-sale
+// button layout, ut-docs#2321) are all admin-synced tables (primary-wins
+// pull, sync_admin_repo.go's adminTables), so a write accepted here would
+// silently vanish on the next admin pull. Directive hooks have no
+// http.ResponseWriter to answer with an HTTP status, so this returns a
+// plain error surfaced in the directive's result column instead — same
+// shape as this file's other refusals (e.g. cloudCreateItem's barcode
+// conflict).
+func requirePrimaryDirective(ctx context.Context, d *common.Deps) error {
+	if primary := d.SyncPrimaryURL(ctx); primary != "" {
+		return fmt.Errorf("this data is primary-wins synced; make this change on the shop's primary till (%s)", primary)
+	}
+	return nil
+}
+
+// auditCloudDirective records a cloud-originated catalog mutation under the
+// "system" actor (same FK-safety reasoning as cloudAdjustStock's own
+// ActorID: "system", ut-docs#1676) so the audit trail can distinguish "an
+// operator changed this at the till" from "the merchant changed this from
+// the cloud portal" (ut-docs#2353). The insert's own error is logged, not
+// discarded: for a mutation with no other audit trail on either the local
+// or cloud path (e.g. item creation), a silently-dropped row would
+// misattribute a cloud-originated change as an operator's own action —
+// the opposite of this helper's purpose.
+func auditCloudDirective(ctx context.Context, d *common.Deps, entityType, entityID, action string, payload any) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := data.NewPOSRepo(d.Db).InsertAudit(ctx, nil, "system", entityType, entityID, action, payload, now, ""); err != nil {
+		log.Printf("[cloudsync] audit %s %s %s: %v", action, entityType, entityID, err)
+	}
+}
+
+// cloudSetPrice is the set_price hook: same single-column update a local
+// price change makes, primary-gated and audited like every other
+// catalog-mutating directive (ut-docs#2353).
+func cloudSetPrice(ctx context.Context, d *common.Deps, itemID string, priceMinor int64) (string, error) {
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	if err := data.NewCatalogRepo(d.Db).SetItemPrice(ctx, itemID, priceMinor); err != nil {
+		return "", err
+	}
+	auditCloudDirective(ctx, d, "item", itemID, "cloud_price_set", map[string]any{"price_minor": priceMinor})
+	return fmt.Sprintf("price set to %d (minor units)", priceMinor), nil
+}
+
+// cloudRenameItem is the rename_item hook, primary-gated and audited like
+// every other catalog-mutating directive (ut-docs#2353).
+func cloudRenameItem(ctx context.Context, d *common.Deps, itemID, name string) (string, error) {
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	if err := data.NewCatalogRepo(d.Db).SetItemName(ctx, itemID, name); err != nil {
+		return "", err
+	}
+	auditCloudDirective(ctx, d, "item", itemID, "cloud_item_renamed", map[string]any{"name": name})
+	return "renamed to " + name, nil
+}
+
+// cloudAddBarcode is the add_barcode hook: attaches a (primary) barcode to
+// an item or variant. AddBarcode owns all the safety (availability,
+// existence, active-only); this wrapper adds the primary gate and audit row
+// every other catalog-mutating directive now has (ut-docs#2353).
+func cloudAddBarcode(ctx context.Context, d *common.Deps, id, barcode string) (string, error) {
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	repo := data.NewCatalogRepo(d.Db)
+	in := catalogtypes.BarcodeInput{Barcode: barcode, IsPrimary: true}
+	entityType := "item"
+	if exists, err := repo.ItemExists(ctx, id); err == nil && exists {
+		in.ItemID = id
+	} else {
+		in.VariantID = id
+		entityType = "item_variant"
+	}
+	if err := repo.AddBarcode(ctx, in); err != nil {
+		return "", err
+	}
+	auditCloudDirective(ctx, d, entityType, id, "cloud_barcode_added", map[string]any{"barcode": barcode})
+	return "barcode " + barcode + " attached", nil
+}
+
+// cloudDeactivateItem is the deactivate_item hook: same soft-deactivate a
+// manager does locally (variants of the item retire with it; a variant id
+// retires just the variant), primary-gated and audited like every other
+// catalog-mutating directive (ut-docs#2353).
+func cloudDeactivateItem(ctx context.Context, d *common.Deps, id string) (string, error) {
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	repo := data.NewCatalogRepo(d.Db)
+	if exists, err := repo.ItemExists(ctx, id); err == nil && exists {
+		if err := repo.DeactivateItem(ctx, id); err != nil {
+			return "", err
+		}
+		auditCloudDirective(ctx, d, "item", id, "cloud_item_deactivated", nil)
+		return "item deactivated", nil
+	}
+	if _, ok, _ := repo.GetVariantLabel(ctx, id); !ok {
+		return "", fmt.Errorf("item not found")
+	}
+	if err := repo.DeactivateVariant(ctx, id); err != nil {
+		return "", err
+	}
+	auditCloudDirective(ctx, d, "item_variant", id, "cloud_variant_deactivated", nil)
+	return "variant deactivated", nil
+}
+
 // cloudAdjustStock mirrors the inventory page's manual adjustment for a
 // directive: same stock-movement record, same connector event. The cloud has
 // no location picker, so the movement lands where the item already tracks
@@ -671,6 +848,15 @@ func cloudAdjustStock(ctx context.Context, d *common.Deps, itemID string, delta 
 // groups/stations (ADR-0095 Decision 2, not yet shipped), so an id it sent
 // today could only be a guess. Sort order, active flag and parent are
 // untouched, exactly as UpdateCategory promises.
+//
+// categories is an admin-synced table, same as items — gated and audited
+// the same way every other catalog-mutating directive now is
+// (requirePrimaryDirective/auditCloudDirective, ut-docs#2353), matching
+// the local admin category dialog's own requirePrimary gate + audit()
+// call (categories_page.go). The gate runs after the idempotency
+// short-circuit on create, same reasoning as cloudCreateItem: a replica
+// replay against a category that already exists (the normal case, pulled
+// down from the primary) should report success, not a spurious refusal.
 func cloudUpsertCategory(ctx context.Context, d *common.Deps, id, name, color string) (string, error) {
 	name = strings.TrimSpace(name)
 	color = strings.TrimSpace(color)
@@ -693,14 +879,23 @@ func cloudUpsertCategory(ctx context.Context, d *common.Deps, id, name, color st
 				return "category " + c.Name + " already exists", nil
 			}
 		}
-		if _, err := repo.CreateCategoryWithColor(ctx, name, color); err != nil {
+		if err := requirePrimaryDirective(ctx, d); err != nil {
 			return "", err
 		}
+		newID, err := repo.CreateCategoryWithColor(ctx, name, color)
+		if err != nil {
+			return "", err
+		}
+		auditCloudDirective(ctx, d, "category", newID, "cloud_category_created", map[string]any{"name": name, "color": color})
 		return "created category " + name, nil
+	}
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
 	}
 	if err := repo.UpdateCategory(ctx, id, name, color); err != nil {
 		return "", err
 	}
+	auditCloudDirective(ctx, d, "category", id, "cloud_category_updated", map[string]any{"name": name, "color": color})
 	return "updated category " + name, nil
 }
 
@@ -708,10 +903,27 @@ func cloudUpsertCategory(ctx context.Context, d *common.Deps, id, name, color st
 // at-least-once, so a retry must not duplicate: an existing active item with
 // the same name counts as success. A barcode already attached elsewhere
 // fails the directive (visible in the result column) rather than stealing it.
+//
+// items is an admin-synced table (primary-wins pull, sync_admin_repo.go's
+// adminTables), same as the local admin item-create handler's own
+// requirePrimary gate (catalog/handlers.go) — a directive applied on a
+// replica till would silently vanish on the next admin pull, so it's
+// refused up front instead, same reasoning (ut-docs#2353). The write is
+// also audited under the "system" actor, the same pattern cloudAdjustStock
+// and sync_admin.go's admin_pulled already use to distinguish a
+// cloud-originated mutation from an operator's own action at the till.
 func cloudCreateItem(ctx context.Context, d *common.Deps, name string, priceMinor int64, barcode string) (string, error) {
 	repo := data.NewCatalogRepo(d.Db)
+	// Idempotency check first, gate second: on a replica, the item most
+	// directives replay against has usually already arrived via the normal
+	// admin pull, so an at-least-once retry that finds the desired state
+	// already true should report success, not a spurious replica refusal
+	// (ut-docs#2353 review). Only a *real* write attempt needs the gate.
 	if _, exists, err := repo.FindActiveItemByName(ctx, name); err == nil && exists {
 		return "item already exists", nil
+	}
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
 	}
 	if barcode != "" {
 		if taken, err := repo.BarcodeExists(ctx, barcode); err == nil && taken {
@@ -724,6 +936,9 @@ func cloudCreateItem(ctx context.Context, d *common.Deps, name string, priceMino
 	if err != nil {
 		return "", err
 	}
+	auditCloudDirective(ctx, d, "item", id, "cloud_item_created", map[string]any{
+		"name": name, "price_minor": priceMinor, "barcode": barcode,
+	})
 	if barcode != "" {
 		if err := repo.AddBarcode(ctx, catalogtypes.BarcodeInput{
 			ItemID: id, Barcode: barcode, IsPrimary: true,

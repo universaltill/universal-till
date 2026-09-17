@@ -150,6 +150,17 @@ func init() {
 		"stock_location_management": func(v *menuVisibility) bool {
 			return canPerform(v.d, v.r, "stock_location_management")
 		},
+		// ut-docs#2312: /designer and /items both lead to Designer/catalog
+		// mutation routes that now gate on catalog_management
+		// (checkOrElevate in buttons_api.go, requireCatalogManagement in
+		// catalog/handlers.go) -- same "hide the tile nobody granted"
+		// shape as stock_location_management above, not
+		// checkOrElevate-wired here either (this predicate controls tile
+		// VISIBILITY, not a mutating+audit-writing action -- see
+		// "settings"'s own doc comment on that distinction).
+		"catalog_management": func(v *menuVisibility) bool {
+			return canPerform(v.d, v.r, "catalog_management")
+		},
 		// §146a Abs. 4 AO fiscal register (ut-docs#665): the nav TILE is
 		// Germany-only -- no other market has this obligation, so
 		// surfacing it elsewhere would just be clutter. Checked as an

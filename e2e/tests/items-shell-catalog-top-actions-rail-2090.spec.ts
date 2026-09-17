@@ -47,7 +47,9 @@ test.describe('/items shell: navigating to Modifiers/Option sets keeps the rail 
     await expect(page).toHaveURL(/\/modifiers$/);
     await expect(page.locator('#items-rail')).toBeVisible();
     await expect(page.locator('.items-row.is-current')).toHaveAttribute('href', '/modifiers');
-    await expect(page.locator('#items-panel h1')).toHaveText('Customization options');
+    // ut-docs#2211: was "Customization options" — renamed so this page's
+    // own heading matches the rail label it's reached from ("Modifiers").
+    await expect(page.locator('#items-panel h1')).toHaveText('Modifiers');
 
     // The back-link inside Modifiers returns to Catalog, in-panel, rail
     // still present — not bare /catalog (which has none).

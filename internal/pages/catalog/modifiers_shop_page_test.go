@@ -91,6 +91,32 @@ func TestModifiersPage_ItemNameLinksBackToCatalogItem(t *testing.T) {
 	}
 }
 
+// ut-docs#2211: the rail entry (uislot.CoreItems, "items.modifiers.name")
+// and the page you actually land on used to say two different things —
+// "Modifiers" in the rail, "Customization options" on the page itself.
+// Pins the page's own <h1> against drifting away from the rail label again.
+func TestModifiersPage_HeadingMatchesRailLabel(t *testing.T) {
+	chdirToRepoRoot(t)
+	db := setupCatalogPageDB(t)
+	defer db.Close()
+
+	mux := http.NewServeMux()
+	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default", Currency: "GBP"}, Menu: []common.MenuItem{}})
+
+	req := httptest.NewRequest(http.MethodGet, "/modifiers", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "<h1>Modifiers</h1>") {
+		t.Errorf("expected the page heading to say \"Modifiers\" (matching the rail label), got: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Customization options") {
+		t.Errorf("the old \"Customization options\" wording must not regress, got: %s", rec.Body.String())
+	}
+}
+
 func TestModifiersPage_EmptyShopShowsEmptyState(t *testing.T) {
 	chdirToRepoRoot(t)
 	db := setupCatalogPageDB(t)
@@ -105,7 +131,10 @@ func TestModifiersPage_EmptyShopShowsEmptyState(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "No customization groups") {
+	// ut-docs#2211: renamed from "No customization groups" so the empty
+	// state matches the feature's actual name everywhere else (the rail
+	// label, the page heading).
+	if !strings.Contains(rec.Body.String(), "No Modifiers") {
 		t.Errorf("expected an empty-state message, got: %s", rec.Body.String())
 	}
 }
