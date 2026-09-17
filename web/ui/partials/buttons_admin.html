@@ -13,7 +13,7 @@
                 aria-label="{{ T "designer.move_down" }}">▼</button>
         <form class="remove"
               hx-post="/api/buttons/remove"
-              hx-target="#buttons-grid-admin" hx-swap="outerHTML">
+              hx-target="#buttons-grid-wrap" hx-swap="innerHTML">
           <input type="hidden" name="code" value="{{ .Code }}">
           <button type="submit" class="btn danger">✕</button>
         </form>
@@ -72,22 +72,32 @@
     pending = pending.then(function () {
       var fd = new FormData();
       codes.forEach(function (c) { fd.append('codes', c); });
-      return fetch('/api/buttons/reorder', { method: 'POST', body: fd }).then(function (res) {
-        // If the save failed, reload so the grid shows the real order instead
-        // of a reorder that only happened in the DOM. This is a plain
-        // fetch(), not an htmx request, so the page-level htmx:responseError
-        // listener below never sees it -- and location.reload() would throw
-        // away the response text before anything could show it. Stash it in
-        // sessionStorage (ut-docs#1697; same try/catch pattern as
-        // pairing_notice.html's dismiss fingerprint) so the freshly-loaded
-        // page can surface it in #buttons-add-error, same element the add
-        // flow's own errors use.
-        if (!res.ok) {
-          return res.text().then(function (text) {
-            try { sessionStorage.setItem('buttonsReorderError', text); } catch (e) {}
-            location.reload();
-          });
-        }
+      // ut-docs#2312: /api/buttons/reorder now gates on catalog_management
+      // (checkOrElevate) -- window.utPostWithElevation (app.js) is the
+      // raw-fetch counterpart of the htmx OOB-swap dialog flow every OTHER
+      // checkOrElevate site gets for free, for exactly this kind of
+      // non-htmx caller (its own doc comment names the two pre-existing
+      // sites this pattern was built for). A real success or a real
+      // failure both resolve onDone below; a first-time/needs-PIN response
+      // opens the dialog itself and is handled internally, never reaching
+      // onDone at all.
+      return new Promise(function (resolve) {
+        window.utPostWithElevation('/api/buttons/reorder', fd, function (res) {
+          // If the save failed, reload so the grid shows the real order
+          // instead of a reorder that only happened in the DOM. Stash the
+          // body in sessionStorage (ut-docs#1697; same try/catch pattern as
+          // pairing_notice.html's dismiss fingerprint) so the freshly-
+          // loaded page can surface it in #buttons-add-error, same element
+          // the add flow's own errors use.
+          if (!res.ok) {
+            res.text().then(function (text) {
+              try { sessionStorage.setItem('buttonsReorderError', text); } catch (e) {}
+              location.reload();
+            }).then(resolve, resolve);
+            return;
+          }
+          resolve();
+        }, resolve);
       });
     }).catch(function () {
       // A rejected fetch (till drops off the shop LAN mid-reorder) used to
@@ -153,7 +163,20 @@
   </div>
   <div id="buttons-add-error" class="muted" aria-live="polite"></div>
 
-  {{ template "buttons_admin_grid" . }}
+  {{/* ut-docs#2312: a stable wrapper id, never itself swapped away — Add/
+       Remove used to target #buttons-grid-admin (the grid partial's own
+       self-wrapping div) with hx-swap="outerHTML", which is exactly what
+       checkOrElevate's elevation-prompt hint (elevation.go) cannot safely
+       land on: its FIRST response (no PIN yet) is a tiny hint span, and an
+       outerHTML swap would replace the grid div — id and all — with that
+       span, leaving the dialog's own retry form (hx-target="#buttons-grid-
+       admin") nothing to find. Targeting this wrapper with hx-swap=
+       "innerHTML" instead means the id always survives, so the retry's
+       real content (a fresh buttons_admin_grid render) always has
+       somewhere to land, elevated or not. */}}
+  <div id="buttons-grid-wrap">
+    {{ template "buttons_admin_grid" . }}
+  </div>
 </div>
 
 <script>
@@ -251,8 +274,8 @@ document.body.addEventListener('htmx:afterRequest', function(evt) {
     <button class="btn inline result"
             type="button"
             hx-post="/api/buttons/add"
-            hx-target="#buttons-grid-admin"
-            hx-swap="outerHTML"
+            hx-target="#buttons-grid-wrap"
+            hx-swap="innerHTML"
             hx-vals='{{ .AddVals }}'
             hx-on="htmx:afterRequest: if(event.detail.successful){document.getElementById('search-results').style.display='none'; var e=document.getElementById('buttons-add-error'); if(e) e.innerHTML='';}">
       {{ if .Image }}<img class="thumb" src="{{ .Image }}" alt="{{ .Name }}" />{{ end }}

@@ -133,6 +133,43 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		return true
 	}
 
+	// requireCatalogManagement gates every mutating route below on the
+	// "catalog_management" role_permissions action (ut-docs#2312): before
+	// this, none of items/variants/modifier-groups/option-sets/barcodes
+	// carried ANY permission check — reachable and mutable by every
+	// signed-in operator, cashiers included. Same shape and same
+	// UT_AUTH=off / fail-closed-on-no-session/DB-error behaviour as
+	// internal/pages.canPerform, and the same denial key/status
+	// tax_codes_page.go's requireManager ("tax_code_management") and
+	// locations_page.go's requireManager ("stock_location_management")
+	// already use for their own dedicated "management" actions — but
+	// written out locally rather than calling pages.canPerform directly:
+	// package pages already imports THIS package (catalog.Register, via
+	// internal/pages/init.go) to mount these routes, so pages -> catalog
+	// -> pages would be an import cycle. Checked BEFORE requirePrimary
+	// (permission is more fundamental than till topology — a request that
+	// fails both should hear "you can't do this" before "and this till
+	// can't do it right now"), and as the very first line in the three
+	// item/variant-image and icon handlers below that have no
+	// requirePrimary call to anchor before (item_images is deliberately
+	// excluded from the sync bundle — see their own doc comments).
+	requireCatalogManagement := func(w http.ResponseWriter, r *http.Request) bool {
+		if auth.Disabled(os.Getenv("UT_AUTH")) {
+			return true
+		}
+		u, ok := auth.FromContext(r.Context())
+		if !ok {
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			return false
+		}
+		can, err := d.AuthSvc.Can(r.Context(), u, "catalog_management")
+		if err != nil || !can {
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			return false
+		}
+		return true
+	}
+
 	writeJSON := func(w http.ResponseWriter, status int, data any, errMsg string) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
@@ -533,6 +570,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// Cost price (what the shop pays) — feeds the margin report. Accepts a
 	// decimal in major units; stored as minor units (money boundary rule).
 	mux.HandleFunc("POST /api/catalog/item-cost", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
@@ -572,6 +612,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// per-item warn/reorder-suggestion thresholds (universaltill/ut-docs#85).
 	// Plain integer, no currency conversion (unlike cost price above).
 	mux.HandleFunc("POST /api/catalog/item-lead-time", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
@@ -607,6 +650,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// Low Stock list (GetLowStockItems, universaltill/ut-docs#2065). Plain
 	// integer, same validation shape as lead time above.
 	mux.HandleFunc("POST /api/catalog/item-reorder-level", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
@@ -820,6 +866,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// arrives, re-renders that item's panel instead so the new set shows up
 	// in its checkbox row immediately.
 	mux.HandleFunc("POST /api/catalog/option-set", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
@@ -842,6 +891,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 
 	// Append a value to an option set (sort_order = max + 1).
 	mux.HandleFunc("POST /api/catalog/option-set-value", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
@@ -869,6 +921,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// disables a third box client-side, but that is a convenience, not the
 	// guard.
 	mux.HandleFunc("POST /api/catalog/item/option-sets", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
@@ -899,6 +954,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// panel plus a "N variant(s) created" line; the item's table row rides
 	// along OOB since its variant summary just changed.
 	mux.HandleFunc("POST /api/catalog/item/generate-variants", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
@@ -925,6 +983,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/catalog/item", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !requireCatalogManagement(w, r) {
 			return
 		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
@@ -990,6 +1051,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
@@ -1029,6 +1093,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
@@ -1049,6 +1116,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/catalog/variant", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !requireCatalogManagement(w, r) {
 			return
 		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
@@ -1124,6 +1194,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
 			return
 		}
@@ -1168,6 +1241,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/catalog/modifier-option", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !requireCatalogManagement(w, r) {
 			return
 		}
 		if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
@@ -1232,6 +1308,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/catalog/modifier-group/attach", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !requireCatalogManagement(w, r) {
 			return
 		}
 		if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
@@ -1300,6 +1379,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
 			return
 		}
@@ -1339,6 +1421,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 				return
 			}
+			if !requireCatalogManagement(w, r) {
+				return
+			}
 			if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
 				return
 			}
@@ -1373,6 +1458,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/catalog/item-station-routes", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !requireCatalogManagement(w, r) {
 			return
 		}
 		if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
@@ -1418,6 +1506,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
@@ -1456,6 +1547,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// the next admin pull — unlike items/item_variants/item_barcodes/
 	// variant_barcodes below, which are.
 	mux.HandleFunc("POST /api/catalog/item/image", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if err := r.ParseMultipartForm(10 << 20); err != nil {
 			common.LocalizedError(w, r, http.StatusBadRequest, "common.error.invalid_upload")
 			return
@@ -1585,6 +1679,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// item_images, which sync_admin_repo.go's adminTables explicitly
 	// excludes (files/icon choices don't travel over the sync bundle).
 	mux.HandleFunc("POST /api/catalog/item/icon", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		_ = r.ParseForm()
 		itemID := strings.TrimSpace(r.Form.Get("item_id"))
 		// Review finding F1 (ut-docs#1844): this handler now also removes
@@ -1632,6 +1729,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// item_variants itself, so there is no synced row for a replica write
 	// to lose on the next admin pull.
 	mux.HandleFunc("POST /api/catalog/variant/image", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if err := r.ParseMultipartForm(10 << 20); err != nil {
 			common.LocalizedError(w, r, http.StatusBadRequest, "common.error.invalid_upload")
 			return
@@ -1694,6 +1794,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/catalog/barcode", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !requireCatalogManagement(w, r) {
 			return
 		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
@@ -1764,6 +1867,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 
 	// Detach a barcode (mis-scans and reassignments are routine corrections).
 	mux.HandleFunc("POST /api/catalog/barcode/delete", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
@@ -1821,6 +1927,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/catalog/barcode-backfill", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
