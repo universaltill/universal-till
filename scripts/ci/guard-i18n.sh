@@ -613,7 +613,7 @@ if dup_hits:
             print(f"  {path}: {k}")
 
 # 10. Hardcoded page <title> literals (ut-docs#2297): "title" is the
-#     template-data key every internal/pages/*.go handler sets for
+#     template-data key every internal/pages/**/*.go handler sets for
 #     web/ui/layouts/*.html's `<title>{{ .title }}</title>` -- a raw English
 #     literal there is invisible to checks 1-2 (template-only) and check 3
 #     (only catches a literal written straight to the response body, not one
@@ -622,9 +622,14 @@ if dup_hits:
 #     `fmt.Sprintf(httpx.T(...), ...)` for a title with a dynamic suffix,
 #     e.g. journal_page.go's receipt number) -- a bare quoted string
 #     starting with an uppercase letter is the regression this catches.
+#     RECURSIVE (ut-docs#2331): the original glob was
+#     `glob.glob("internal/pages/*.go")`, non-recursive, so it never
+#     reached a handler package one directory deeper -- exactly how two
+#     literals in internal/pages/catalog/handlers.go survived this sweep
+#     undetected.
 title_hits = []
 title_re = re.compile(r'^\s*"title":\s*"[A-Z]')
-for f in sorted(glob.glob("internal/pages/*.go")):
+for f in sorted(glob.glob("internal/pages/**/*.go", recursive=True)):
     if f.endswith("_test.go"):
         continue
     for lineno, line in enumerate(open(f), start=1):
