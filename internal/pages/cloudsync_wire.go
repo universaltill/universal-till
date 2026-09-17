@@ -14,6 +14,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
+
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/cloudsync"
 	"github.com/universaltill/universal-till/internal/data"
@@ -334,6 +336,12 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		// makes, same palette check. See cloudUpsertCategory.
 		UpsertCategory: func(ctx context.Context, id, name, color string) (string, error) {
 			return cloudUpsertCategory(ctx, d, id, name, color)
+		},
+		// upsert_modifier_group (ut-docs#2322, ADR-0095 Decision 1): the
+		// cloud panel's per-item modifier-group creator — CREATE-ONLY, same
+		// scope cut as UpsertCategory above. See cloudUpsertModifierGroup.
+		UpsertModifierGroup: func(ctx context.Context, itemID, name string, required bool, minSelect, maxSelect int, options []cloudsync.ModifierGroupOption) (string, error) {
+			return cloudUpsertModifierGroup(ctx, d, itemID, name, required, minSelect, maxSelect, options)
 		},
 		// diagnostic_mode_revoke (ADR-0092 §1/§4, ut-docs#2169): Universal
 		// Till ended this till's diagnostic session — clear the local flag
@@ -897,6 +905,107 @@ func cloudUpsertCategory(ctx context.Context, d *common.Deps, id, name, color st
 	}
 	auditCloudDirective(ctx, d, "category", id, "cloud_category_updated", map[string]any{"name": name, "color": color})
 	return "updated category " + name, nil
+}
+
+// cloudUpsertModifierGroup is the upsert_modifier_group hook (ut-docs#2322
+// "modifier groups editor" slice of ut-docs#2289, ADR-0095 Decision 1): the
+// cloud panel's per-item modifier-group creator — CREATE-ONLY, the same
+// scope cut cloudUpsertCategory shipped with (no id in the payload at all;
+// the read-side StoreSnapshot extension, ADR-0095 Decision 2, hasn't
+// shipped, so the portal has no way to discover an existing group's id to
+// edit by, or to offer an "attach an existing group" picker — see
+// cloudUpsertCategory's own doc comment for the full reasoning, which
+// applies identically here). item_id must name an item that exists on
+// THIS till — unlike a category id, item ids ARE already known/surfaced to
+// the cloud (every catalog snapshot row carries its own id), so attaching a
+// brand-new group to one existing item is safe, the same way cloudCreateItem
+// accepts an inline barcode.
+//
+// item_modifier_groups (and its link/option tables) is an admin-synced
+// table (sync_admin_repo.go's adminTables), same as items/categories, so
+// this is gated and audited the same way every other catalog-mutating
+// directive is (requirePrimaryDirective/auditCloudDirective, ut-docs#2353).
+//
+// Directives are at-least-once, so a retried CREATE must not duplicate: an
+// existing group already linked to this item with the same name
+// (case-insensitive, matching cloudUpsertCategory's own dedupe) counts as
+// success and is left untouched — the retry is a no-op, not a silent edit
+// of a group the merchant may have changed locally since. The idempotency
+// scan and the item-existence check both run BEFORE the primary gate, same
+// reasoning as cloudCreateItem/cloudUpsertCategory: a replica replaying an
+// already-applied create should report success, not a spurious refusal,
+// and a read-only existence check is safe on a replica too.
+//
+// min_select/max_select and each option's price_delta_minor are validated
+// independently of the cloud's own check (the cloud already enforces this
+// too, but this till does not trust that — "validate all external input"),
+// mirroring the till's own CHECK constraints
+// (min_select >= 0 AND max_select >= min_select; price_delta_minor >= 0,
+// additive-only per data.ModifierRepo.CreateOption's own rule). Options are
+// created in the given order, their sort_order following that order —
+// zero options is valid, a group may exist with none yet, same as
+// CreateGroup's own rule.
+func cloudUpsertModifierGroup(ctx context.Context, d *common.Deps, itemID, name string, required bool, minSelect, maxSelect int, options []cloudsync.ModifierGroupOption) (string, error) {
+	itemID = strings.TrimSpace(itemID)
+	name = strings.TrimSpace(name)
+	if itemID == "" {
+		return "", fmt.Errorf("item_id required")
+	}
+	if name == "" {
+		return "", fmt.Errorf("name required")
+	}
+	if minSelect < 0 || maxSelect < 0 || minSelect > maxSelect {
+		return "", fmt.Errorf("min_select must be >= 0 and <= max_select")
+	}
+	for _, opt := range options {
+		if strings.TrimSpace(opt.Name) == "" {
+			return "", fmt.Errorf("option name required")
+		}
+		if opt.PriceDeltaMinor < 0 {
+			return "", fmt.Errorf("option %q: price_delta_minor must be >= 0 (additive-only)", opt.Name)
+		}
+	}
+
+	repo := data.NewCatalogRepo(d.Db)
+	if exists, err := repo.ItemExists(ctx, itemID); err != nil {
+		return "", err
+	} else if !exists {
+		return "", fmt.Errorf("item not found")
+	}
+
+	modRepo := data.NewModifierRepo(d.Db)
+	existing, err := modRepo.ListAllGroupsForItem(ctx, itemID)
+	if err != nil {
+		return "", err
+	}
+	for _, g := range existing {
+		if strings.EqualFold(g.Name, name) {
+			return "modifier group " + g.Name + " already exists on this item", nil
+		}
+	}
+
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+
+	sortOrder, err := modRepo.NextGroupSortOrderForItem(ctx, itemID)
+	if err != nil {
+		return "", err
+	}
+	groupID := uuid.NewString()
+	if _, err := modRepo.CreateGroup(ctx, groupID, itemID, name, required, minSelect, maxSelect, sortOrder); err != nil {
+		return "", err
+	}
+	for i, opt := range options {
+		if _, err := modRepo.CreateOption(ctx, uuid.NewString(), groupID, strings.TrimSpace(opt.Name), opt.PriceDeltaMinor, i); err != nil {
+			return "", err
+		}
+	}
+	auditCloudDirective(ctx, d, "modifier_group", groupID, "cloud_modifier_group_created", map[string]any{
+		"item_id": itemID, "name": name, "required": required,
+		"min_select": minSelect, "max_select": maxSelect, "option_count": len(options),
+	})
+	return fmt.Sprintf("created modifier group %s (%d option(s))", name, len(options)), nil
 }
 
 // cloudCreateItem creates a catalog item from a directive. Directives are
