@@ -299,7 +299,7 @@ func TestCatalogModifiersPanel_MutationsRefusedOnReplica(t *testing.T) {
 	mux := http.NewServeMux()
 	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}, Settings: st})
 
-	wantMsg := "manage customization options on the primary till"
+	wantMsg := "manage Modifiers on the primary till" // ut-docs#2211 rename
 
 	groupForm := "panelItem=itm1&itemId=itm1&name=Extras&isActive=1&minSelect=0&maxSelect=2"
 	req := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group", strings.NewReader(groupForm))
