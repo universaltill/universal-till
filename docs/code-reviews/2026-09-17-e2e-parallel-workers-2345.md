@@ -70,8 +70,9 @@ deferred/documented, two accepted as-is.**
 | F4 | Deferred, documented | `internal/server`'s `UT_LISTEN_ADDR` is a *preference*: a busy port silently falls back to base+1..+20, which could land one worker on a sibling worker's own port. Not reachable on a clean CI runner (each worker's port is genuinely free); a real risk only when several agent worktrees share a host and ports are a global resource. | Closed rather than left deferred: `worker-till.ts` now watches the child's stderr for the server's own `"was busy"` log line and fails the boot immediately if seen, instead of silently drifting onto a neighboring port. |
 | F5 | Should-fix (docs) | `e2e/README.md`'s new text claimed the 4 static-server projects "have too few files to ever be split across workers" — false, and contradicted by the very fix (F-in-code above) that exists because `auth` (5 files) *was* split. | Rewritten to state the real mechanism (the per-project `workers: 1` cap actively prevents the split) plus two small pre-existing staleness fixes noticed while there ("both projects" → "all 5"; "`--project=auth` # just login.spec.ts" → "...and its siblings"). |
 | F6 | Accepted, noted | CI cache `restore-keys` will accumulate an old Playwright browser version alongside a new one across a version bump (~150MB growth), rather than evicting it. | Left as-is — a conscious, minor trade-off (still a real cache hit on an unrelated lockfile change), not a defect. |
+| F7 | Should-fix, found post-review | The orchestrator's own final re-verification run (after applying F1-F5, before merge) hit a genuinely new flake: `tender-panel-reachable.spec.ts`'s held-sales-chip test sampled `.held-chip.count()` once right after the hold modal closed. `#held-sales` is NOT part of the `/api/pos/hold` response's own `#basket` swap — it refreshes itself via a *separate* `hx-get="/ui/held" hx-trigger="held-changed from:body"` round trip (`internal/pages/hold_api.go`) that nothing in the test had waited on. Same class of bug as F1/the other 4 spec fixes (asserting before an async op the test never awaited completes), just in a 6th file the Opus pass didn't happen to hit in its own 2 runs. | Changed the one-shot `.count()` + `expect(...).toBe(...)` to a polling `expect(locator).toHaveCount(...)`, which waits out the second round trip instead of sampling once. Re-run 10/10 green; a further full-suite run confirms no regression. |
 
-No second review round: none of F1-F6 is money/tax/data-loss/security —
+No second review round: none of F1-F7 is money/tax/data-loss/security —
 the fixes above were applied directly and re-verified against the
 specific area each touched, per the process's "earn a second round"
 threshold.
@@ -92,8 +93,13 @@ threshold.
   (`settings.html`'s real `reload()` call, `categories_page.go`'s real
   `HX-Redirect`, `index.html`'s real `hx-trigger` values), not just the
   dev's own claim.
-- **Two full `CI=1` (4-worker) runs after the F1-F5 fixes**: both green,
-  see Test plan below for exact counts.
+- **Full `CI=1` (4-worker) runs, several rounds**: 2 clean runs during the
+  Opus review itself (571-572/572 passing; one run's single flake was the
+  #423/#548 wedge-scanner race, independently reproduced and fixed as F1);
+  1 more after applying F1-F3/F5 (571/572, 1 flaky — the held-sales-chip
+  race that became F7 above); 1 more after fixing F7 — see this PR's own
+  CI run and/or the orchestrator's cycle summary for that result, since
+  this record is being committed while it's still in flight.
 - No leaked ports/processes/temp dirs after any run, including the one
   run that contained a real failure + worker restart.
 - `go build ./...`, `go vet ./...`, `gofmt -l .` clean. No non-`e2e`
