@@ -7,6 +7,13 @@
 # hatch works for a deliberate exception (e.g. the brand name), and proves
 # the established httpx.T(...)-based pattern does NOT false-positive.
 #
+# Also proves the check is RECURSIVE (ut-docs#2331): check 10's original
+# glob, `glob.glob("internal/pages/*.go")`, is non-recursive and never
+# reached a handler package one directory deeper, e.g.
+# internal/pages/catalog/handlers.go — exactly how two hardcoded
+# `"title"` literals there ("Catalog", "Option sets") survived
+# ut-docs#2297's own sweep undetected.
+#
 # Separate file from guard-i18n_toast_test.sh (Go-fixture sibling) because
 # this check's own fixture set/cleanup is unrelated to ToastMessage.
 set -euo pipefail
@@ -16,6 +23,7 @@ cd "${ROOT_DIR}"
 
 GUARD="scripts/ci/guard-i18n.sh"
 FIXTURE_DIR="internal/pages"
+FIXTURE_SUBDIR="internal/pages/zzguardtestsub"
 FAIL_COUNT=0
 
 fixtures=()
@@ -26,9 +34,18 @@ cleanup() {
       [[ -n "${f}" && -f "${f}" ]] && rm -f "${f}"
     done
   fi
+  [[ -d "${FIXTURE_SUBDIR}" ]] && rmdir "${FIXTURE_SUBDIR}" 2>/dev/null
   exit "${status}"
 }
 trap cleanup EXIT
+
+plant_nested() {
+  local name="$1" content="$2"
+  mkdir -p "${FIXTURE_SUBDIR}"
+  local path="${FIXTURE_SUBDIR}/zz_guard_test_${name}.go"
+  fixtures+=("${path}")
+  printf '%s\n' "${content}" >"${path}"
+}
 
 plant() {
   local name="$1" content="$2"
@@ -64,6 +81,13 @@ expect_pass() {
 clear_fixture() {
   local name="$1"
   rm -f "${FIXTURE_DIR}/zz_guard_test_${name}.go"
+  fixtures=()
+}
+
+clear_fixture_nested() {
+  local name="$1"
+  rm -f "${FIXTURE_SUBDIR}/zz_guard_test_${name}.go"
+  rmdir "${FIXTURE_SUBDIR}" 2>/dev/null || true
   fixtures=()
 }
 
@@ -124,6 +148,20 @@ func zzGuardTestTitleSprintfT(locale, suffix string) map[string]any {
 }'
 expect_pass "a dynamic title built from httpx.T(...) via fmt.Sprintf"
 clear_fixture "TitleSprintfT"
+
+# The recursive-glob regression (ut-docs#2331): the exact same hardcoded
+# literal, planted one directory deeper than internal/pages/*.go, must
+# still be rejected -- a non-recursive glob would silently miss this.
+plant_nested "TitleLiteralNested" 'package zzguardtestsub
+
+func zzGuardTestTitleLiteralNested() map[string]any {
+	return map[string]any{
+		"title": "Widgets",
+		"theme": "dark",
+	}
+}'
+expect_fail "a hardcoded page <title> literal one directory below internal/pages"
+clear_fixture_nested "TitleLiteralNested"
 
 # Sanity: the guard must still pass clean on the real, unmodified tree.
 expect_pass "the real, unmodified repository tree"

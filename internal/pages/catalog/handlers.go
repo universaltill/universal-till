@@ -764,8 +764,13 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		// destinations' back-links use this to decide between an in-panel
 		// htmx swap (only meaningful when #items-panel actually exists,
 		// i.e. inside the shell) and a plain navigation.
+		// ut-docs#2331: was a hardcoded English literal — ut-docs#2297/PR#1189's
+		// sweep and its own check 10 both used a non-recursive
+		// internal/pages/*.go glob, so this handler (one directory deeper,
+		// internal/pages/catalog/) was never reached. Reuses nav.catalog,
+		// the /items rail's own label key for this same destination.
 		data := map[string]any{
-			"title":                 "Catalog",
+			"title":                 httpx.T(httpx.RequestLocale(r), "nav.catalog"),
 			"menuItems":             d.MenuSnapshot(),
 			"theme":                 d.CurrentState().Theme,
 			"Rows":                  buildCatalogRows(items, barcodes, variants, thumbnails, currentPrices),
@@ -861,8 +866,11 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "catalog.error.server", err)
 			return
 		}
+		// ut-docs#2331: same hardcoded-literal gap as /catalog above, same
+		// fix. Reuses items.option_sets.name, the /items rail's own label
+		// key for this destination.
 		optionSetsData := map[string]any{
-			"title":        "Option sets",
+			"title":        httpx.T(httpx.RequestLocale(r), "items.option_sets.name"),
 			"menuItems":    d.MenuSnapshot(),
 			"theme":        d.CurrentState().Theme,
 			"Sets":         sets,
