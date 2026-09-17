@@ -212,16 +212,10 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		// update a local price change makes; the next snapshot push (hash
 		// gate) reflects it back to the cloud automatically.
 		SetPrice: func(ctx context.Context, itemID string, priceMinor int64) (string, error) {
-			if err := data.NewCatalogRepo(d.Db).SetItemPrice(ctx, itemID, priceMinor); err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("price set to %d (minor units)", priceMinor), nil
+			return cloudSetPrice(ctx, d, itemID, priceMinor)
 		},
 		RenameItem: func(ctx context.Context, itemID, name string) (string, error) {
-			if err := data.NewCatalogRepo(d.Db).SetItemName(ctx, itemID, name); err != nil {
-				return "", err
-			}
-			return "renamed to " + name, nil
+			return cloudRenameItem(ctx, d, itemID, name)
 		},
 		// Create from the cloud. Idempotent on retry (same-name active item →
 		// success without a duplicate); a taken barcode fails cleanly.
@@ -231,36 +225,13 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		// Attach a (primary) barcode to an item or variant. AddBarcode owns
 		// all the safety: availability, existence, active-only.
 		AddBarcode: func(ctx context.Context, id, barcode string) (string, error) {
-			repo := data.NewCatalogRepo(d.Db)
-			in := catalogtypes.BarcodeInput{Barcode: barcode, IsPrimary: true}
-			if exists, err := repo.ItemExists(ctx, id); err == nil && exists {
-				in.ItemID = id
-			} else {
-				in.VariantID = id
-			}
-			if err := repo.AddBarcode(ctx, in); err != nil {
-				return "", err
-			}
-			return "barcode " + barcode + " attached", nil
+			return cloudAddBarcode(ctx, d, id, barcode)
 		},
 		// Retire from the cloud: same soft-deactivate a manager does locally
 		// (variants of the item retire with it; a variant id retires just the
 		// variant). It drops from the sale screen and the next snapshot.
 		DeactivateItem: func(ctx context.Context, id string) (string, error) {
-			repo := data.NewCatalogRepo(d.Db)
-			if exists, err := repo.ItemExists(ctx, id); err == nil && exists {
-				if err := repo.DeactivateItem(ctx, id); err != nil {
-					return "", err
-				}
-				return "item deactivated", nil
-			}
-			if _, ok, _ := repo.GetVariantLabel(ctx, id); !ok {
-				return "", fmt.Errorf("item not found")
-			}
-			if err := repo.DeactivateVariant(ctx, id); err != nil {
-				return "", err
-			}
-			return "variant deactivated", nil
+			return cloudDeactivateItem(ctx, d, id)
 		},
 		// Remote stock adjustment: the same movement record + connector event
 		// a manual adjustment on the inventory page makes.
@@ -598,6 +569,115 @@ func collectProblems(ctx context.Context, d *common.Deps) []map[string]any {
 	return out
 }
 
+// requirePrimaryDirective refuses a catalog-mutating directive on a replica
+// till, matching the local admin path's requirePrimary gate (ut-docs#2353):
+// items/item_variants/item_barcodes/variant_barcodes are all admin-synced
+// tables (primary-wins pull, sync_admin_repo.go's adminTables), so a write
+// accepted here would silently vanish on the next admin pull. Directive
+// hooks have no http.ResponseWriter to answer with an HTTP status, so this
+// returns a plain error surfaced in the directive's result column instead —
+// same shape as this file's other refusals (e.g. cloudCreateItem's barcode
+// conflict).
+func requirePrimaryDirective(ctx context.Context, d *common.Deps) error {
+	if primary := d.SyncPrimaryURL(ctx); primary != "" {
+		return fmt.Errorf("catalog is primary-wins synced; make this change on the shop's primary till (%s)", primary)
+	}
+	return nil
+}
+
+// auditCloudDirective records a cloud-originated catalog mutation under the
+// "system" actor (same FK-safety reasoning as cloudAdjustStock's own
+// ActorID: "system", ut-docs#1676) so the audit trail can distinguish "an
+// operator changed this at the till" from "the merchant changed this from
+// the cloud portal" (ut-docs#2353). The insert's own error is logged, not
+// discarded: for a mutation with no other audit trail on either the local
+// or cloud path (e.g. item creation), a silently-dropped row would
+// misattribute a cloud-originated change as an operator's own action —
+// the opposite of this helper's purpose.
+func auditCloudDirective(ctx context.Context, d *common.Deps, entityType, entityID, action string, payload any) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := data.NewPOSRepo(d.Db).InsertAudit(ctx, nil, "system", entityType, entityID, action, payload, now, ""); err != nil {
+		log.Printf("[cloudsync] audit %s %s %s: %v", action, entityType, entityID, err)
+	}
+}
+
+// cloudSetPrice is the set_price hook: same single-column update a local
+// price change makes, primary-gated and audited like every other
+// catalog-mutating directive (ut-docs#2353).
+func cloudSetPrice(ctx context.Context, d *common.Deps, itemID string, priceMinor int64) (string, error) {
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	if err := data.NewCatalogRepo(d.Db).SetItemPrice(ctx, itemID, priceMinor); err != nil {
+		return "", err
+	}
+	auditCloudDirective(ctx, d, "item", itemID, "cloud_price_set", map[string]any{"price_minor": priceMinor})
+	return fmt.Sprintf("price set to %d (minor units)", priceMinor), nil
+}
+
+// cloudRenameItem is the rename_item hook, primary-gated and audited like
+// every other catalog-mutating directive (ut-docs#2353).
+func cloudRenameItem(ctx context.Context, d *common.Deps, itemID, name string) (string, error) {
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	if err := data.NewCatalogRepo(d.Db).SetItemName(ctx, itemID, name); err != nil {
+		return "", err
+	}
+	auditCloudDirective(ctx, d, "item", itemID, "cloud_item_renamed", map[string]any{"name": name})
+	return "renamed to " + name, nil
+}
+
+// cloudAddBarcode is the add_barcode hook: attaches a (primary) barcode to
+// an item or variant. AddBarcode owns all the safety (availability,
+// existence, active-only); this wrapper adds the primary gate and audit row
+// every other catalog-mutating directive now has (ut-docs#2353).
+func cloudAddBarcode(ctx context.Context, d *common.Deps, id, barcode string) (string, error) {
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	repo := data.NewCatalogRepo(d.Db)
+	in := catalogtypes.BarcodeInput{Barcode: barcode, IsPrimary: true}
+	entityType := "item"
+	if exists, err := repo.ItemExists(ctx, id); err == nil && exists {
+		in.ItemID = id
+	} else {
+		in.VariantID = id
+		entityType = "item_variant"
+	}
+	if err := repo.AddBarcode(ctx, in); err != nil {
+		return "", err
+	}
+	auditCloudDirective(ctx, d, entityType, id, "cloud_barcode_added", map[string]any{"barcode": barcode})
+	return "barcode " + barcode + " attached", nil
+}
+
+// cloudDeactivateItem is the deactivate_item hook: same soft-deactivate a
+// manager does locally (variants of the item retire with it; a variant id
+// retires just the variant), primary-gated and audited like every other
+// catalog-mutating directive (ut-docs#2353).
+func cloudDeactivateItem(ctx context.Context, d *common.Deps, id string) (string, error) {
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	repo := data.NewCatalogRepo(d.Db)
+	if exists, err := repo.ItemExists(ctx, id); err == nil && exists {
+		if err := repo.DeactivateItem(ctx, id); err != nil {
+			return "", err
+		}
+		auditCloudDirective(ctx, d, "item", id, "cloud_item_deactivated", nil)
+		return "item deactivated", nil
+	}
+	if _, ok, _ := repo.GetVariantLabel(ctx, id); !ok {
+		return "", fmt.Errorf("item not found")
+	}
+	if err := repo.DeactivateVariant(ctx, id); err != nil {
+		return "", err
+	}
+	auditCloudDirective(ctx, d, "item_variant", id, "cloud_variant_deactivated", nil)
+	return "variant deactivated", nil
+}
+
 // cloudAdjustStock mirrors the inventory page's manual adjustment for a
 // directive: same stock-movement record, same connector event. The cloud has
 // no location picker, so the movement lands where the item already tracks
@@ -648,10 +728,27 @@ func cloudAdjustStock(ctx context.Context, d *common.Deps, itemID string, delta 
 // at-least-once, so a retry must not duplicate: an existing active item with
 // the same name counts as success. A barcode already attached elsewhere
 // fails the directive (visible in the result column) rather than stealing it.
+//
+// items is an admin-synced table (primary-wins pull, sync_admin_repo.go's
+// adminTables), same as the local admin item-create handler's own
+// requirePrimary gate (catalog/handlers.go) — a directive applied on a
+// replica till would silently vanish on the next admin pull, so it's
+// refused up front instead, same reasoning (ut-docs#2353). The write is
+// also audited under the "system" actor, the same pattern cloudAdjustStock
+// and sync_admin.go's admin_pulled already use to distinguish a
+// cloud-originated mutation from an operator's own action at the till.
 func cloudCreateItem(ctx context.Context, d *common.Deps, name string, priceMinor int64, barcode string) (string, error) {
 	repo := data.NewCatalogRepo(d.Db)
+	// Idempotency check first, gate second: on a replica, the item most
+	// directives replay against has usually already arrived via the normal
+	// admin pull, so an at-least-once retry that finds the desired state
+	// already true should report success, not a spurious replica refusal
+	// (ut-docs#2353 review). Only a *real* write attempt needs the gate.
 	if _, exists, err := repo.FindActiveItemByName(ctx, name); err == nil && exists {
 		return "item already exists", nil
+	}
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
 	}
 	if barcode != "" {
 		if taken, err := repo.BarcodeExists(ctx, barcode); err == nil && taken {
@@ -664,6 +761,9 @@ func cloudCreateItem(ctx context.Context, d *common.Deps, name string, priceMino
 	if err != nil {
 		return "", err
 	}
+	auditCloudDirective(ctx, d, "item", id, "cloud_item_created", map[string]any{
+		"name": name, "price_minor": priceMinor, "barcode": barcode,
+	})
 	if barcode != "" {
 		if err := repo.AddBarcode(ctx, catalogtypes.BarcodeInput{
 			ItemID: id, Barcode: barcode, IsPrimary: true,
