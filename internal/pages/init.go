@@ -459,6 +459,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerDesigner(mux, dp)
 	registerSettings(mux, dp)
 	registerThemes(mux, dp)
+	registerThemeSync(mux, dp) // ut-docs#2343: base.html's every-30s theme-sync poll
 	registerPluginIcons(mux)
 	registerPluginsPage(mux, dp)
 	registerPluginAPI(mux, dp)
