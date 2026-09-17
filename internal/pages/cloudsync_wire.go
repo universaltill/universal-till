@@ -159,35 +159,6 @@ func remoteTillSettingsReport(ctx context.Context, d *common.Deps) map[string]st
 	return out
 }
 
-// requirePrimaryDirective refuses a cloud directive that would write a
-// table synced shop-wide via the primary-wins admin pull (adminTables,
-// sync_admin_repo.go) — shortcut_buttons is one of them (ut-docs#1697):
-// applying the write on a replica would just get silently reverted on the
-// very next admin pull, with no indication to the cloud operator that
-// nothing actually stuck. Same rule buttons_api.go's own requirePrimary
-// closure enforces for the LAN designer routes; a directive has no HTTP
-// response to redirect or refuse with a status code, so this returns a
-// plain error that lands in the directive's result column instead.
-func requirePrimaryDirective(ctx context.Context, d *common.Deps) error {
-	if d.SyncPrimaryURL(ctx) != "" {
-		return fmt.Errorf("this till follows a primary till — quick-sale button layout is managed from the primary till")
-	}
-	return nil
-}
-
-// auditCloudDirective writes one audit_log row for a cloud-directive-driven
-// write, mirroring auditDiagnostics's shape (diagnostics_settings.go) for
-// the same "system" actor — a directive has no HTTP session/user to
-// attribute the change to, and "system" is the established id for exactly
-// this situation (see sync_orders.go's auditActorID, and
-// DiagnosticModeRevoke's own use of auditDiagnostics below).
-func auditCloudDirective(ctx context.Context, d *common.Deps, entityType, entityID, action string, payload map[string]any) {
-	now := time.Now().UTC().Format(time.RFC3339)
-	if err := data.NewPOSRepo(d.Db).InsertAudit(ctx, nil, "system", entityType, entityID, action, payload, now, ""); err != nil {
-		logging.L().Errorf("cloudsync: audit %s: %v", action, err)
-	}
-}
-
 // cloudSetQuickButtonLayout is the set_quick_button_layout hook: reorders
 // the quick-sale (shortcut) buttons from the cloud's layout panel — the
 // same ShortcutsRepo.UpdateOrder call the Designer's own move-up/move-down
