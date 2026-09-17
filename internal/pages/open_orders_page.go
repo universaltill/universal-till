@@ -144,6 +144,7 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 	// instead of lost).
 	mux.HandleFunc("POST /open-orders/resume", func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
+		locale := httpx.ResolveLocale(w, r)
 		_ = r.ParseForm()
 		id := strings.TrimSpace(r.Form.Get("id"))
 		// ut-docs#2347: bare "/" (and "/?msg=...") re-applies whatever
@@ -152,7 +153,7 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 		// ut-docs#2146 shape saleScreenReturnURL was built to fix for this
 		// page's own "Back to sale" link, just not yet applied here.
 		mode, _, _ := d.Settings.Get(ctx, "display.mode")
-		switch resumeHeldSale(ctx, d, repo, posRepo, id) {
+		switch resumeHeldSale(ctx, d, repo, posRepo, id, locale) {
 		case resumeNotFound:
 			http.Redirect(w, r, "/open-orders?err=hold.error.not_found", http.StatusSeeOther)
 		case resumeFailed:
