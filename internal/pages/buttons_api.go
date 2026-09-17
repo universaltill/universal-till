@@ -1,7 +1,6 @@
 package pages
 
 import (
-	"errors"
 	"fmt"
 	"html"
 	"net/http"
@@ -82,7 +81,11 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	// Reorder from the Designer (move-up/move-down buttons, ut-docs#1221 --
-	// formerly drag&drop): codes arrive in display order.
+	// formerly drag&drop) AND from the sell screen's own jiggle edit mode
+	// (ut-docs#2339, app.js's utTileJiggle -- which replaced the
+	// ut-docs#2285 long-press sheet and its POST /api/buttons/move route):
+	// codes arrive in display order, the FULL global list, exactly once per
+	// edit session (on Done), never per drag step.
 	mux.HandleFunc("POST /api/buttons/reorder", func(w http.ResponseWriter, r *http.Request) {
 		if !requirePrimary(w, r) {
 			return
@@ -125,75 +128,14 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		if elev.Outcome == elevated {
 			auditButtonsElevated(r, elev.ApproverID, elev.ActorID, "-", "buttons_reorder", map[string]any{"codes": codes})
 		}
-		// ut-docs#2285: the Designer's own drag&drop/move-up/move-down
-		// reorder changes the sale screen's button set too, same as
-		// /api/buttons/move|remove|add below -- see buttons.html's root
-		// comment on buttons-changed.
+		// ut-docs#2285: the Designer's own move-up/move-down reorder changes
+		// the sale screen's button set too, same as /api/buttons/remove|add
+		// below -- see buttons.html's root comment on buttons-changed. (The
+		// sell screen's jiggle-mode Done, ut-docs#2339, posts here as well;
+		// its own DOM already shows the new order, so that refetch is a
+		// harmless re-render from the now-persisted truth.)
 		w.Header().Set("HX-Trigger", "buttons-changed")
 		w.WriteHeader(http.StatusNoContent)
-	})
-
-	// The sell-screen tile's long-press/right-click sheet (ut-docs#2285):
-	// GET renders it for one tile; POST /api/buttons/move relocates that
-	// tile next to its nearest same-category neighbour (ui.ButtonStore.Move)
-	// and re-renders the SAME sheet so it stays open with the now-current
-	// edge buttons disabled. Both share renderTileSheet below so the
-	// code->button lookup (and the 404-vs-500 distinction) is written once.
-	mux.HandleFunc("GET /ui/pos/tile-sheet", func(w http.ResponseWriter, r *http.Request) {
-		code := strings.TrimSpace(r.URL.Query().Get("code"))
-		renderer, err := tileSheetRenderer(w, r)
-		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
-			return
-		}
-		renderTileSheet(w, r, d, renderer, code)
-	})
-
-	mux.HandleFunc("POST /api/buttons/move", func(w http.ResponseWriter, r *http.Request) {
-		if !requirePrimary(w, r) {
-			return
-		}
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		code := strings.TrimSpace(r.Form.Get("code"))
-		dir, err := strconv.Atoi(strings.TrimSpace(r.Form.Get("dir")))
-		if err != nil || (dir != 1 && dir != -1) {
-			common.LocalizedError(w, r, http.StatusBadRequest, buttonsErrorKey)
-			return
-		}
-		// ut-docs#2312: the tile sheet renders Move/Remove/Edit for a
-		// non-granted operator disabled-looking-but-clickable (see
-		// renderTileSheet's Locked field below) precisely so a tap here
-		// lands on this real elevation prompt rather than a dead button --
-		// "show, don't hide" (#2285's UX decision) means discoverability,
-		// not a silent no-op.
-		elev := checkOrElevate(d, r, "catalog_management", r.Form.Get("override_pin"))
-		if elev.Outcome == needsElevation {
-			renderElevationPrompt(w, r, "/api/buttons/move", "#tile-sheet",
-				fmt.Sprintf(httpx.T(httpx.ResolveLocale(w, r), "elevation.summary.buttons_move"), code),
-				[]elevationHiddenField{{Name: "code", Value: code}, {Name: "dir", Value: strconv.Itoa(dir)}}, elev)
-			return
-		}
-		if _, err := d.BtnStore.Move(r.Context(), code, dir); err != nil {
-			if errors.Is(err, ui.ErrButtonNotFound) {
-				common.LocalizedError(w, r, http.StatusNotFound, buttonsErrorKey)
-				return
-			}
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
-			return
-		}
-		if elev.Outcome == elevated {
-			auditButtonsElevated(r, elev.ApproverID, elev.ActorID, code, "buttons_move", map[string]any{"dir": dir})
-		}
-		w.Header().Set("HX-Trigger", "buttons-changed")
-		renderer, err := tileSheetRenderer(w, r)
-		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
-			return
-		}
-		renderTileSheet(w, r, d, renderer, code)
 	})
 
 	// Admin add/remove
@@ -251,22 +193,21 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		//
 		// This route is reached from TWO different surfaces with different
 		// hx-target/hx-swap of their own -- the Designer's grid
-		// (buttons_admin.html, "#buttons-grid-wrap"/innerHTML) and the
-		// sell-screen tile sheet (tile_sheet.html, hx-swap="none" plus
-		// data-closes-sheet, ut-docs#2285). "#buttons-grid-wrap" is used as
-		// the elevation retry target unconditionally either way: on the
-		// Designer it's exactly the original target; from the tile sheet
-		// that id doesn't exist in the DOM at all, so the retry's own
+		// (buttons_admin.html, "#buttons-grid-wrap"/innerHTML) and the sell
+		// screen's jiggle-mode remove badge (buttons.html's
+		// .tile-badge-remove, hx-swap="none", ut-docs#2339). "#buttons-grid-wrap"
+		// is used as the elevation retry target unconditionally either way:
+		// on the Designer it's exactly the original target; from the jiggle
+		// badge that id doesn't exist in the DOM at all, so the retry's own
 		// response there is silently unswapped by htmx (same as any
 		// unmatched hx-target) -- but the SALE SCREEN grid still updates
 		// correctly regardless, because HX-Trigger: buttons-changed
 		// (ButtonsHTTP.Remove's own header, unconditional on success) fires
 		// independently of target resolution and is what buttons.html's
-		// root actually listens for. The one accepted gap: the tile sheet
-		// itself doesn't auto-close after an ELEVATED remove approval (the
-		// dialog's retry form lives outside #tile-sheet, so app.js's
-		// data-closes-sheet listener never sees it) -- a tap on the sheet's
-		// own Close button clears it, same as any other stale panel.
+		// root actually listens for, AND the elevation dialog itself renders
+		// regardless of hx-swap="none" -- it's OOB-swapped into the shared
+		// #elevation-modal placeholder (elevation_prompt.html), a swap htmx
+		// processes independently of the triggering element's own hx-swap.
 		_ = r.ParseForm()
 		code := r.Form.Get("code")
 		elev := checkOrElevate(d, r, "catalog_management", r.Form.Get("override_pin"))
@@ -331,43 +272,4 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		_ = renderer.Render(w, "buttons_search_results", map[string]any{"Results": results})
 	})
-}
-
-// tileSheetRenderer builds the "tile_sheet" partial's renderer, same
-// (layout, page, partial) construction pattern every other route in this
-// file uses — ui.NewRenderer's own per-tuple cache (see its doc comment)
-// means this is cheap to call once per request rather than threading a
-// renderer through registerButtonsAPI's closures.
-func tileSheetRenderer(w http.ResponseWriter, r *http.Request) (*ui.Renderer, error) {
-	funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-	return ui.NewRenderer(
-		filepath.Join("web", "ui", "layouts", "base.html"),
-		filepath.Join("web", "ui", "pages", "index.html"),
-		filepath.Join("web", "ui", "partials", "tile_sheet.html"),
-		funcs,
-	)
-}
-
-// renderTileSheet resolves code against the CURRENT button list and
-// writes the "tile_sheet" fragment — shared by GET /ui/pos/tile-sheet and
-// POST /api/buttons/move's own re-render, so the code->button lookup (and
-// its 404 handling) is written exactly once. isReplica (ui.TileSheetView's
-// own field) is resolved here, not inside internal/ui, since only this
-// package has access to common.Deps.SyncPrimaryURL.
-func renderTileSheet(w http.ResponseWriter, r *http.Request, d *common.Deps, renderer *ui.Renderer, code string) {
-	isReplica := d.SyncPrimaryURL(r.Context()) != ""
-	// ut-docs#2312: "show, don't hide" (#2285) -- a non-granted operator
-	// still sees Move/Remove/Edit, just locked (TileSheetView.Locked's own
-	// doc comment), rather than the sheet quietly omitting them.
-	locked := !canPerform(d, r, "catalog_management")
-	view, ok, err := d.BtnStore.BuildTileSheetView(code, isReplica, locked)
-	if err != nil {
-		common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
-		return
-	}
-	if !ok {
-		common.LocalizedError(w, r, http.StatusNotFound, buttonsErrorKey)
-		return
-	}
-	_ = renderer.Render(w, "tile_sheet", view)
 }

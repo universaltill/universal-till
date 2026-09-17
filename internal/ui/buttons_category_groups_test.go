@@ -212,3 +212,47 @@ func TestResolveCategoryColor_ExplicitOverridesAutoAndIsStable(t *testing.T) {
 		t.Fatalf("expected auto-color to be a valid hex color, got %q", auto1)
 	}
 }
+
+// TestBuildCategoryGroups_PosIsGlobalSortIndex (ut-docs#2339): every tile
+// the sale screen renders carries its index in the GLOBAL sort_order list
+// (ButtonVM.Pos), not its index within its category group. The grid groups
+// tiles by category, so the DOM order is not the global order once
+// categories interleave (A(cat1) B(cat2) C(cat1) renders as [A C] [B]);
+// the jiggle-mode reorder (app.js's utTileJiggle) uses Pos to rebuild the
+// full global list it POSTs to /api/buttons/reorder, re-filling only the
+// slots the reordered group already occupied, so a drag within one category
+// never disturbs where other categories' buttons sit — the same
+// "nearest same-category neighbour" semantics the ut-docs#2285 sheet's
+// server-side Move had, now computed client-side from these indices.
+func TestBuildCategoryGroups_PosIsGlobalSortIndex(t *testing.T) {
+	cats := []data.CategoryNode{
+		{ID: "cat1", Name: "One"},
+		{ID: "cat2", Name: "Two"},
+	}
+	buttons := []Button{
+		{Label: "A", Code: "A", ItemID: "iA", CategoryID: "cat1"},
+		{Label: "B", Code: "B", ItemID: "iB", CategoryID: "cat2"},
+		{Label: "C", Code: "C", ItemID: "iC", CategoryID: "cat1"},
+		{Label: "U", Code: "U", ItemID: "iU"}, // uncategorized bucket
+	}
+	groups := BuildCategoryGroups(buttons, cats)
+	got := map[string]int{}
+	var walk func(g *CategoryGroup)
+	walk = func(g *CategoryGroup) {
+		for _, b := range g.Buttons {
+			got[b.Code] = b.Pos
+		}
+		for _, c := range g.Children {
+			walk(c)
+		}
+	}
+	for _, g := range groups {
+		walk(g)
+	}
+	want := map[string]int{"A": 0, "B": 1, "C": 2, "U": 3}
+	for code, pos := range want {
+		if got[code] != pos {
+			t.Fatalf("Pos[%s] = %d, want %d (global sort index, not the in-group index); all: %v", code, got[code], pos, got)
+		}
+	}
+}

@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/auth"
@@ -62,9 +61,12 @@ func isElevationPrompt(rec *httptest.ResponseRecorder) bool {
 }
 
 // ut-docs#2312 AC: "A cashier-role session gets 403/elevation prompt on
-// every route above; manager passes." Covers the four checkOrElevate-gated
+// every route above; manager passes." Covers the checkOrElevate-gated
 // routes ut-docs#2312's card names explicitly: POST /api/buttons/{add,
-// remove,reorder} and POST /api/buttons/move.
+// remove,reorder}. POST /api/buttons/move (the ut-docs#2285 long-press
+// sheet's own route) no longer exists -- ut-docs#2339's jiggle-mode edit
+// mode replaced that whole UI with drag/keyboard reorder over the shared
+// /api/buttons/reorder route, already covered by the "reorder" sub-test.
 func TestButtonsAPI_CatalogManagementGate_RealSessionGatesByRole(t *testing.T) {
 	cashier := auth.User{ID: "c1", Role: "cashier"}
 
@@ -141,74 +143,4 @@ func TestButtonsAPI_CatalogManagementGate_RealSessionGatesByRole(t *testing.T) {
 		}
 	})
 
-	t.Run("move", func(t *testing.T) {
-		mux, d := newMux(t)
-		rec := postForm(mux, "/api/buttons/move", url.Values{"code": {"BTN"}, "dir": {"1"}}, &cashier)
-		if !isElevationPrompt(rec) {
-			t.Fatalf("cashier move: want elevation prompt, got %d: %s", rec.Code, rec.Body.String())
-		}
-		var order int
-		if err := d.Db.QueryRow(`SELECT sort_order FROM shortcut_buttons WHERE barcode='BTN'`).Scan(&order); err != nil || order != 0 {
-			t.Fatalf("cashier move: sort_order must not change, got %d err=%v", order, err)
-		}
-		for _, role := range []string{"manager", "admin", "super_admin"} {
-			mux, d := newMux(t)
-			mgr := auth.User{ID: "u-" + role, Role: role}
-			rec := postForm(mux, "/api/buttons/move", url.Values{"code": {"BTN"}, "dir": {"1"}}, &mgr)
-			if isElevationPrompt(rec) {
-				t.Fatalf("%s move: got elevation prompt, want past the gate: %d %s", role, rec.Code, rec.Body.String())
-			}
-			var order int
-			if err := d.Db.QueryRow(`SELECT sort_order FROM shortcut_buttons WHERE barcode='BTN'`).Scan(&order); err != nil || order != 1 {
-				t.Fatalf("%s move: sort_order must change, got %d err=%v", role, order, err)
-			}
-		}
-	})
-}
-
-// ut-docs#2312: GET /ui/pos/tile-sheet renders Move/Remove/Edit LOCKED
-// (a lock icon + muted styling, never the real `disabled` attribute --
-// #2285's "show, don't hide") for a cashier, and fully live for a manager.
-// A cashier's tap must still reach the server (proven above: it lands on
-// the real elevation prompt), so Move/Remove are never `disabled` here --
-// only Edit's IsReplica branch uses that attribute, and that's unrelated to
-// this gate.
-func TestTileSheet_LockedForCashierGrantedForManager(t *testing.T) {
-	mux, d := newButtonsMuxRealSession(t)
-	seedOneButton(t, d)
-
-	get := func(u auth.User) *httptest.ResponseRecorder {
-		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/pos/tile-sheet?code=BTN", nil), u)
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
-		return rec
-	}
-
-	cashierBody := get(auth.User{ID: "c1", Role: "cashier"}).Body.String()
-	if !strings.Contains(cashierBody, "tile-sheet-lock") {
-		t.Fatalf("cashier tile sheet: expected a lock icon, got: %s", cashierBody)
-	}
-	// Move-LATER must stay CLICKABLE (no real `disabled`) for a locked
-	// cashier: BTN is at position 0 (of 2, same uncategorized bucket), so
-	// it HAS a later same-category neighbour -- only IsReplica or a real
-	// edge may ever add `disabled` here, and neither applies. A tap must
-	// still reach the server and land on the real elevation prompt
-	// (proven by TestButtonsAPI_CatalogManagementGate_RealSessionGatesByRole
-	// above), which a real `disabled` attribute would silently prevent.
-	moveLaterStart := strings.Index(cashierBody, `data-testid="tile-sheet-move-later"`)
-	if moveLaterStart < 0 {
-		t.Fatalf("cashier tile sheet: missing move-later button: %s", cashierBody)
-	}
-	moveLaterTag := cashierBody[moveLaterStart:]
-	if end := strings.Index(moveLaterTag, ">"); end >= 0 {
-		moveLaterTag = moveLaterTag[:end]
-	}
-	if strings.Contains(moveLaterTag, "disabled") {
-		t.Fatalf("cashier tile sheet: move-later must stay clickable (locked, not disabled) so a tap reaches the elevation prompt, got tag: %s", moveLaterTag)
-	}
-
-	managerBody := get(auth.User{ID: "m1", Role: "manager"}).Body.String()
-	if strings.Contains(managerBody, "tile-sheet-lock") {
-		t.Fatalf("manager tile sheet: expected no lock icon, got: %s", managerBody)
-	}
 }

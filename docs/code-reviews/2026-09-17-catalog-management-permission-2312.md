@@ -171,6 +171,72 @@ acceptance criterion's "403/elevation prompt" wording is satisfied by the
   unlike the Dev's own sandbox) — 124/124 screenshots regenerated and
   `guard-docs-shots.sh` green.
 
+## Addendum: merge-conflict integration with ut-docs#2339 (jiggle mode)
+
+Between this PR's review passing and its merge, `universal-till#1217`
+(ut-docs#2339 — the sell-screen quick-button grid's iOS-springboard-style
+"jiggle mode" edit) merged to `main`, fully replacing the `#2285` long-press
+sheet (`tile_sheet.html`, `GET /ui/pos/tile-sheet`, `POST /api/buttons/move`)
+this PR had gated. `git merge origin/main` conflicted for real, not just on
+the generated `manifest.json` — resolved here, not deferred:
+
+- **Dropped as dead code**: the tile-sheet route pair, `tileSheetRenderer`/
+  `renderTileSheet`, `internal/ui`'s `Move`/`ErrButtonNotFound`/
+  `findButtonIndex`/`sameCategoryNeighborIndex`/`TileSheetView`/
+  `BuildTileSheetView`, `TestTileSheet_LockedForCashierGrantedForManager`,
+  the `.tile-sheet*`/`.locked` CSS, and the `tile-sheet-locked-cashier-2312`
+  e2e spec — all built against UI `#2339` deleted outright. Verified nothing
+  else in the tree still referenced any of it before removing.
+- **Kept and carried forward**: the `catalog_management` permission action,
+  the `checkOrElevate` gates on `/api/buttons/{add,remove,reorder}` (all
+  three survive under jiggle mode — `reorder` now also serves the grid's
+  drag/keyboard reorder, `remove` now also serves the jiggle badge), the
+  `requireCatalogManagement` gate on all 25 catalog routes, `VisibleIf` on
+  `/designer`/`/items`, and the reorder audit-logging call.
+- **A real, independently-found bug, not just a rename**: jiggle mode's own
+  `persistOrder()` (`app.js`, `#2339`'s own code) posted to
+  `/api/buttons/reorder` via a plain `fetch()` with no elevation awareness.
+  Once this PR's gate landed on that route, a cashier's drag-reorder would
+  get a `200` carrying the elevation-prompt HTML — `res.ok` is true, so the
+  original code called `refreshPositions()` and treated it as a success:
+  the reorder was silently **not persisted**, and no PIN prompt was ever
+  shown. Fixed by routing through `window.utPostWithElevation`, mirroring
+  `buttons_admin.html`'s own (Designer-side) `persistOrder`, which already
+  uses that exact pattern against this same route. Verified for real:
+  `sell-tile-jiggle-mode-locked-cashier-2312.spec.ts` (new, replacing the
+  retired tile-sheet spec) drives a cashier through both a keyboard reorder
+  and a remove-badge tap, confirms the real elevation modal appears (not a
+  silent no-op), and completes the PIN-approval round trip. Also re-ran
+  `sell-tile-jiggle-mode-2339.spec.ts` (that card's own e2e, as
+  admin/manager) unmodified except for the wire-format fix below — still
+  green, confirming the elevation-aware rewrite didn't change behavior for
+  a granted operator.
+- `persistOrder()`'s first draft posted `codes` as one comma-joined value;
+  `sell-tile-jiggle-mode-2339.spec.ts` asserts the posted body via
+  `URLSearchParams(...).getAll('codes')`, which expects one value per code.
+  Switched to `FormData` (matching `buttons_admin.html` exactly) rather than
+  changing that test's assertion — the multi-value wire format was already
+  the established convention on both existing callers of this route.
+- `web/help/en/till-designer.md`'s "Good to know" bullet describing the
+  sale-screen entry point updated to describe jiggle mode (drag/badges) in
+  place of the retired sheet's hold-to-open/lock-icon description, with the
+  manager-PIN clause carried forward since it's still accurate.
+- Full local gate (`go test ./...`, `golangci-lint`, all CI guards including
+  a real `make docs-shots` regen after each source change) re-run clean
+  after every step above, not just at the end — `internal/ui/buttons.go`,
+  `internal/pages/buttons_api.go`, and `internal/pages/
+  buttons_api_catalog_management_gate_test.go` each compiled and passed
+  before moving to the next conflict.
+- **Deliberately not done**: adding a preemptive "locked" visual (a lock
+  icon on the jiggle-mode badges, mirroring the retired sheet's own
+  affordance) for a non-granted cashier before they tap. The badges are
+  already shown to everyone (jiggle mode has no client-side permission
+  check at all — a pure class toggle), so "show, don't hide" already holds;
+  the gap this would close is discoverability only (a cashier finds out via
+  the PIN prompt on tap, not before), not security. Scoped out as
+  UX polish beyond this merge's job — noted here rather than silently
+  dropped.
+
 ## Safe to merge
 
 Yes, on the code itself — every finding above is fixed or accepted with

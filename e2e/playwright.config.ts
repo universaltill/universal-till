@@ -57,7 +57,7 @@ const launchOptions = existsSync(PREINSTALLED_CHROMIUM) ? { executablePath: PREI
 // (cashier) operator on top of the wizard-created admin, which the default
 // (auth-off) project has no session model for at all.
 const AUTH_ONLY_SPECS =
-  /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423|session-expiry-redirect-2144|session-expiry-redirect-admin-2157|tile-sheet-locked-cashier-2312)\.spec\.ts$/;
+  /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423|session-expiry-redirect-2144|session-expiry-redirect-admin-2157|sell-tile-jiggle-mode-locked-cashier-2312)\.spec\.ts$/;
 
 // ut-docs#1559: the ai.identify overlay's own err.name branching coverage
 // needs the dedicated ai-identify project/server below — see the comment

@@ -160,6 +160,7 @@
   "bluetoothdevices.scan_help": "Put the device in pairing mode, then scan. A scan takes about ten seconds and only lists what it finds — nothing is paired until you tap Pair.",
   "bluetoothdevices.scanning": "Scanning… this takes about ten seconds.",
   "bluetoothdevices.title": "Bluetooth devices",
+  "buttons.edit_mode.title": "Editing quick buttons — drag a tile to reorder",
   "catalog.active": "Active",
   "catalog.add_item_btn": "Add item",
   "catalog.attach_barcode": "Attach Barcode",
