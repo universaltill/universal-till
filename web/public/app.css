@@ -2197,14 +2197,19 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
    same reasoning .payment-overlay's own z-index comment above gives. */
 #hold-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 550; }
 #hold-label-input { width: 100%; margin-block: .5rem .75rem; }
-/* ut-docs#2282: same non-modal .show() treatment as #hold-modal/#pfand-modal
-   above and for the identical reason (the custom on-screen keyboard must
-   stay reachable, even though this dialog itself needs no typing -- the
-   whole sale screen stays consistent on the point). 500, not #hold-modal's
-   550 bump: this dialog is only ever opened BEFORE #payment-overlay (the
-   "at Pay" placement gates opening the overlay until a choice is made), so
-   the two never coexist and there is nothing here to clear. */
-#order-type-prompt-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
+/* ut-docs#2371: unlike #hold-modal/#pfand-modal above, this dialog needs
+   NO TYPING at all -- there's no text field anywhere in it, so the
+   custom-on-screen-keyboard-must-stay-reachable reason those two use
+   .show() for does not apply here. It stays a real, native top-layer
+   modal: showModal() (app.js), centred by the UA's own `dialog:modal`
+   styles, with no position/inset overrides of any kind -- and
+   deliberately no left/right literals either (RTL). It inherits
+   .modifier-modal::backdrop (rgba(15, 23, 42, .45), declared above) for
+   free, same as #modifier-modal itself. Before this it opened non-modally
+   at a fixed 8vh offset like its .show() siblings, which (ut-docs#2371's
+   bug report) left the rest of the sale screen tappable underneath it and
+   let #modifier-modal's own showModal() paint OVER it whenever both
+   opened together. */
 /* Keep the payout dialog out of the native top layer: the custom on-screen
    keyboard is appended to <body> and must remain clickable while it is open. */
 #pfand-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
