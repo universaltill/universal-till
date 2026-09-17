@@ -117,7 +117,7 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 		// backoffice/self_order need opposite treatment here.
 		mode, _, _ := d.Settings.Get(r.Context(), "display.mode")
 		httpx.Render("ui/pages/open_orders.html", map[string]any{
-			"title":         "Open orders",
+			"title":         httpx.T(httpx.RequestLocale(r), "page.title.open_orders"),
 			"theme":         d.CurrentState().Theme,
 			"menuItems":     d.MenuSnapshot(),
 			"orders":        rows,

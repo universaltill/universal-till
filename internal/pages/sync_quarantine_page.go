@@ -134,7 +134,7 @@ func registerSyncQuarantinePage(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		httpx.Render("ui/pages/sync_quarantine.html", map[string]any{
-			"title":     "Quarantined sync entries",
+			"title":     httpx.T(httpx.RequestLocale(r), "page.title.quarantined_sync_entries"),
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
 			"Entries":   rows,

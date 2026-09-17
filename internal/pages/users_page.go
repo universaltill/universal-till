@@ -136,7 +136,7 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			rows = append(rows, row{UserRow: u, HasPIN: u.PinHash != "", CanEdit: canManage(actor, u)})
 		}
 		httpx.Render("ui/pages/users.html", map[string]any{
-			"title":     "Users",
+			"title":     httpx.T(httpx.RequestLocale(r), "page.title.users"),
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
 			"users":     rows,

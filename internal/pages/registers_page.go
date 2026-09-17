@@ -149,7 +149,7 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 			views = append(views, v)
 		}
 		registersData := map[string]any{
-			"title":          "Registers",
+			"title":          httpx.T(httpx.RequestLocale(r), "page.title.registers"),
 			"theme":          d.CurrentState().Theme,
 			"menuItems":      d.MenuSnapshot(),
 			"registers":      views,

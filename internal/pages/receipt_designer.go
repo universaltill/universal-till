@@ -98,7 +98,7 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 			logoV = logoStat.ModTime().Unix()
 		}
 		httpx.Render("ui/pages/receipt_designer.html", map[string]any{
-			"title":     "Receipt designer",
+			"title":     httpx.T(httpx.RequestLocale(r), "page.title.receipt_designer"),
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
 			"D":         rd,

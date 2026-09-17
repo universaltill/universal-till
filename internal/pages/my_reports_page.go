@@ -232,7 +232,7 @@ func registerMyReportsPage(mux *http.ServeMux, d *common.Deps) {
 		sort.SliceStable(rows, byCapturedDesc(rows))
 
 		httpx.Render("ui/pages/my_reports.html", map[string]any{
-			"title":            "My reports",
+			"title":            httpx.T(httpx.RequestLocale(r), "page.title.my_reports"),
 			"theme":            d.CurrentState().Theme,
 			"menuItems":        d.MenuSnapshot(),
 			"Rows":             rows,

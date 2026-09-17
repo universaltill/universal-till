@@ -209,7 +209,7 @@ func registerTaxCodes(mux *http.ServeMux, d *common.Deps) {
 		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		taxCodesData := map[string]any{
-			"title":     "Tax codes",
+			"title":     httpx.T(httpx.RequestLocale(r), "page.title.tax_codes"),
 			"menuItems": d.MenuSnapshot(),
 			"theme":     d.CurrentState().Theme,
 			"TaxCodes":  buildTaxCodeRows(views),

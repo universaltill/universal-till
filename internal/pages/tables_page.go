@@ -158,7 +158,7 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		httpx.Render("ui/pages/tables.html", map[string]any{
-			"title":       "Tables",
+			"title":       httpx.T(httpx.RequestLocale(r), "page.title.tables"),
 			"theme":       d.CurrentState().Theme,
 			"menuItems":   d.MenuSnapshot(),
 			"tables":      rows,

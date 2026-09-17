@@ -258,7 +258,7 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			return
 		}
 		httpx.Render("ui/pages/pin.html", map[string]any{
-			"title":     "Change PIN",
+			"title":     httpx.T(httpx.RequestLocale(r), "page.title.change_pin"),
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
 			"errKey":    httpx.QueryErrKey(r),

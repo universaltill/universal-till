@@ -332,7 +332,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			views = append(views, sv)
 		}
 		httpx.Render("ui/pages/plugin_settings.html", map[string]any{
-			"title":     "Plugin settings",
+			"title":     httpx.T(httpx.RequestLocale(r), "page.title.plugin_settings"),
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
 			"PluginID":  pluginID,

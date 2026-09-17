@@ -228,7 +228,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		httpx.Render("ui/pages/reports.html", map[string]any{
-			"title":         "Reports",
+			"title":         httpx.T(httpx.RequestLocale(r), "page.title.reports"),
 			"theme":         d.CurrentState().Theme,
 			"menuItems":     d.MenuSnapshot(),
 			"CanAsk":        aiService(r.Context(), d).CanAsk() && canPerform(d, r, "reports"),

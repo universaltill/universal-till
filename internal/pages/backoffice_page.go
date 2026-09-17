@@ -60,7 +60,7 @@ func registerBackofficePage(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		httpx.Render("ui/pages/backoffice.html", map[string]any{
-			"title":      "Back office",
+			"title":      httpx.T(httpx.RequestLocale(r), "page.title.back_office"),
 			"theme":      d.CurrentState().Theme,
 			"menuItems":  d.MenuSnapshot(),
 			"TodayTotal": todayTotal,
