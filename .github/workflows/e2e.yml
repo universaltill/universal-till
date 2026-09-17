@@ -19,6 +19,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # ut-docs#2345: cache the Playwright browser download between runs.
+      # `npx playwright install` below no-ops the ~150MB Chromium fetch on
+      # a hit (its `--with-deps` apt step is idempotent and cheap either
+      # way), so the command itself stays unchanged.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('e2e/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
       - name: Install deps
         working-directory: e2e
         run: |

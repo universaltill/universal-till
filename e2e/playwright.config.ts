@@ -52,8 +52,12 @@ const launchOptions = existsSync(PREINSTALLED_CHROMIUM) ? { executablePath: PREI
 // (verified: `playwright test --project=auth --list`), so it always finds
 // the wizard-created admin operator already in place and never races
 // login.spec.ts's own "brand-new till" first assertion.
+// tile-sheet-locked-cashier-2312.spec.ts (ut-docs#2312) needs the same real
+// PIN-login session as the others here: it creates and logs in as a SECOND
+// (cashier) operator on top of the wizard-created admin, which the default
+// (auth-off) project has no session model for at all.
 const AUTH_ONLY_SPECS =
-  /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423|session-expiry-redirect-2144|session-expiry-redirect-admin-2157)\.spec\.ts$/;
+  /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423|session-expiry-redirect-2144|session-expiry-redirect-admin-2157|sell-tile-jiggle-mode-locked-cashier-2312)\.spec\.ts$/;
 
 // ut-docs#1559: the ai.identify overlay's own err.name branching coverage
 // needs the dedicated ai-identify project/server below — see the comment
@@ -76,27 +80,50 @@ const LAYOUT_ONLY_SPECS = /layout-plugin-menu-1904\.spec\.ts$/;
 // its own server + project, same reasoning as the layout project above.
 const DIAGNOSTICS_ONLY_SPECS = /diagnostic-mode-indicator-2169\.spec\.ts$/;
 
-export default defineConfig({
+// ut-docs#2345: the `default` project's till is NOT in the `webServer`
+// list below. Its ~134 spec files run in parallel, and `internal/pos.Engine`
+// is a server-side singleton, so one shared server would let workers race
+// each other's basket/settings state — instead every worker boots its OWN
+// server (tests/worker-till.ts, via the `workerServerURL` fixture in
+// tests/fixtures.ts) on port 9091 + parallelIndex, with its own throwaway
+// data dir, torn down when the worker ends. `e2eWorkerServer: true` in the
+// project's `use:` is what switches that on. The other four projects keep
+// a single static server each (they have 1-2 spec files, nothing to
+// parallelise) and are deliberately untouched by this.
+type WorkerOptions = { e2eWorkerServer: boolean };
+
+// ut-docs#2345: per-project worker cap for every project that still drives
+// ONE static server. Found live on the first 4-worker run: the `auth`
+// project has FIVE spec files, and with the global cap alone Playwright
+// spread them over several workers against the same 8092 till — a
+// nav-rail spec completed the first-boot wizard while login.spec.ts was
+// still expecting a never-set-up install (`/setup` answered 303 → /login),
+// which is exactly the cross-file ordering the file-sort comment above
+// AUTH_ONLY_SPECS relies on. `workers: 1` on the project keeps those files
+// sequential in one worker, as the whole suite used to be. The three
+// single-file projects can't be split today, but carrying the same cap
+// means adding a second file to one of them stays safe by construction.
+const STATIC_SERVER_WORKERS = 1;
+
+export default defineConfig<{}, WorkerOptions>({
   testDir: './tests',
   timeout: 30_000,
   retries: process.env.CI ? 1 : 0,
-  // One worker: specs within a project share ONE till server, and some
-  // flip server-side settings (OSK mode) — parallel workers would race
-  // each other's state. Kept global (not per-project) so the two
-  // projects' servers are never driven concurrently either.
-  workers: 1,
+  // Builds the till binary once per run for the per-worker servers.
+  globalSetup: require.resolve('./global-setup'),
+  // Parallel since ut-docs#2345: each `default`-project worker drives its
+  // own till (see the comment above), so cross-worker state races are
+  // gone; within a worker, files still run sequentially against that one
+  // server, exactly as the whole suite did at `workers: 1`. The other four
+  // projects still have ONE static server each, so each of them carries
+  // its own per-project `workers: 1` below — see STATIC_SERVER_WORKERS.
+  workers: process.env.CI ? 4 : 2,
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   // ut-docs#2223: the suite runs as a reduced-motion user -- see the `page`
   // fixture in tests/fixtures.ts for why, and why it is NOT a
   // `use: { reducedMotion }` here (Playwright 1.61 silently drops that
   // option from `use`/`test.use`; `page.emulateMedia` works).
   webServer: [
-    {
-      command: 'bash ./run-till.sh',
-      url: 'http://127.0.0.1:8091/healthz',
-      timeout: 120_000,
-      reuseExistingServer: !process.env.CI,
-    },
     {
       command: 'bash ./run-till-auth.sh',
       url: 'http://127.0.0.1:8092/healthz',
@@ -127,7 +154,10 @@ export default defineConfig({
       name: 'default',
       testIgnore: [AUTH_ONLY_SPECS, AI_IDENTIFY_ONLY_SPECS, LAYOUT_ONLY_SPECS, DIAGNOSTICS_ONLY_SPECS],
       use: {
-        baseURL: 'http://127.0.0.1:8091',
+        // No static baseURL: the `workerServerURL` fixture supplies this
+        // worker's own server (9091 + parallelIndex) — see the note above
+        // the `workers` setting.
+        e2eWorkerServer: true,
         trace: 'retain-on-failure',
         screenshot: 'only-on-failure',
         launchOptions,
@@ -136,6 +166,7 @@ export default defineConfig({
     {
       name: 'auth',
       testMatch: AUTH_ONLY_SPECS,
+      workers: STATIC_SERVER_WORKERS,
       use: {
         baseURL: 'http://127.0.0.1:8092',
         trace: 'retain-on-failure',
@@ -146,6 +177,7 @@ export default defineConfig({
     {
       name: 'ai-identify',
       testMatch: AI_IDENTIFY_ONLY_SPECS,
+      workers: STATIC_SERVER_WORKERS,
       use: {
         baseURL: 'http://127.0.0.1:8093',
         trace: 'retain-on-failure',
@@ -156,6 +188,7 @@ export default defineConfig({
     {
       name: 'layout',
       testMatch: LAYOUT_ONLY_SPECS,
+      workers: STATIC_SERVER_WORKERS,
       use: {
         baseURL: 'http://127.0.0.1:8094',
         trace: 'retain-on-failure',
@@ -166,6 +199,7 @@ export default defineConfig({
     {
       name: 'diagnostics',
       testMatch: DIAGNOSTICS_ONLY_SPECS,
+      workers: STATIC_SERVER_WORKERS,
       use: {
         baseURL: 'http://127.0.0.1:8095',
         trace: 'retain-on-failure',

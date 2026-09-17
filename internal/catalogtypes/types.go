@@ -50,7 +50,18 @@ type ItemColor struct {
 // .BuiltinIcons/catimport.BuiltinIcons already does for the built-in icon
 // grid) and ValidItemColor checks a submitted value against. Defined once,
 // here, so the picker UI and the server-side allowlist can never drift
-// apart. Deliberately NOT a free color picker: a raw, unvalidated value
+// apart WITHIN this repo.
+//
+// CROSS-REPO MIRROR (ut-docs#2323): ut-cloud's
+// internal/claims.CategoryColors is a hand-kept copy of this exact list
+// (same eight hex values, same order) — the merchant portal's
+// upsert_category form offers those swatches and refuses anything else
+// before queueing, so a palette change HERE that isn't mirrored THERE
+// makes the portal offer a colour this till will reject (or withhold one
+// it would accept). Change both together. Nothing enforces this
+// mechanically yet; see that variable's own doc comment.
+//
+// Deliberately NOT a free color picker: a raw, unvalidated value
 // would flow straight into a CSS custom property downstream
 // (product-tile's --tile-color, catalog_row.html's data-color) — this
 // fixed set is a real security control (no delimiter/parenthesis/

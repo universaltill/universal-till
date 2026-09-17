@@ -137,7 +137,7 @@ func resolvePluginThemeCSS(ctx context.Context, d *common.Deps, key string) stri
 // at. Plugin themes can restyle the POS and reposition the screen panels via
 // the pos-container grid areas.
 func registerThemes(mux *http.ServeMux, d *common.Deps) {
-	mux.HandleFunc("GET /themes/{file}", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /themes/{file}", assetCacheControl(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		file := r.PathValue("file")
 		key := strings.TrimSuffix(file, ".css")
 		// Theme keys are single path segments; reject anything path-like.
@@ -157,12 +157,18 @@ func registerThemes(mux *http.ServeMux, d *common.Deps) {
 		if path := resolvePluginThemeCSS(r.Context(), d, key); path != "" {
 			if _, err := os.Stat(path); err == nil {
 				w.Header().Set("Content-Type", "text/css; charset=utf-8")
+				// A plugin theme's CSS changes on a plugin update with no
+				// process restart and no new `?v=` (base.html versions the
+				// link by the built-in file's mtime, else boot time), so it
+				// must keep revalidating — only built-in themes are
+				// immutable (ADR-0098).
+				w.Header().Set("Cache-Control", "no-cache")
 				http.ServeFile(w, r, path)
 				return
 			}
 		}
 		http.NotFound(w, r)
-	})
+	})))
 }
 
 // registerThemeSync wires GET /ui/theme-sync (ut-docs#2343). base.html polls

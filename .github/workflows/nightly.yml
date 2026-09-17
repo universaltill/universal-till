@@ -271,9 +271,7 @@ jobs:
           # today's version/date/commit, so a previous run's differently-
           # named assets wouldn't be overwritten by --clobber above — prune
           # anything on the release that isn't one of today's uploads.
-          mapfile -t KEEP < <(ls dist)
-          for name in $(gh release view nightly --json assets --jq '.assets[].name'); do
-            keep=0
-            for k in "${KEEP[@]}"; do [ "$name" = "$k" ] && keep=1 && break; done
-            [ "$keep" = 0 ] && gh release delete-asset nightly "$name" --yes
-          done
+          # ut-docs#2360: extracted to its own script (with its own test)
+          # after a set -e + trailing && guard made this step fail whenever
+          # the LAST asset iterated was one to keep.
+          bash scripts/ci/prune-nightly-assets.sh

@@ -245,6 +245,12 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		FiscalTSEReady: func(ctx context.Context) (string, error) {
 			return applyFiscalTSEReady(ctx, d)
 		},
+		// upsert_category (ut-docs#2323, ADR-0095 Decision 1): the cloud
+		// panel's categories editor — same two repo calls categories_page.go
+		// makes, same palette check. See cloudUpsertCategory.
+		UpsertCategory: func(ctx context.Context, id, name, color string) (string, error) {
+			return cloudUpsertCategory(ctx, d, id, name, color)
+		},
 		// diagnostic_mode_revoke (ADR-0092 §1/§4, ut-docs#2169): Universal
 		// Till ended this till's diagnostic session — clear the local flag
 		// and drain that session's whole pending queue in one step. Same
@@ -722,6 +728,78 @@ func cloudAdjustStock(ctx context.Context, d *common.Deps, itemID string, delta 
 		Reason: stockMovementReason("adjust"), Location: locationID,
 	})
 	return fmt.Sprintf("stock adjusted by %+g", delta), nil
+}
+
+// cloudUpsertCategory is the upsert_category hook (ut-docs#2323, ADR-0095
+// Decision 1): an empty id creates a category, a present one updates its
+// name and colour — the same CreateCategoryWithColor / UpdateCategory calls
+// categories_page.go's two POST handlers make, behind the same validation
+// its parseCategoryForm applies (name required; colour must be one of
+// catalogtypes.ItemColors()' fixed swatches or blank — a real allowlist, the
+// value lands in a CSS custom property on the sale screen, see ItemColors'
+// own doc comment). A refused colour writes nothing.
+//
+// Directives are at-least-once, so a retried CREATE must not duplicate: an
+// existing category with the same name (case-insensitive, like the import
+// path's EnsureCategory) counts as success and is left untouched — the
+// retry is a no-op, not a silent recolour of a row the merchant may have
+// edited locally since. A retried UPDATE is naturally idempotent.
+//
+// Modifier-group and kitchen-station links are deliberately NOT written
+// here (the local dialog's saveCategoryLinks half): the portal can't offer
+// a safe picker for them until the read-side snapshot carries the shop's
+// groups/stations (ADR-0095 Decision 2, not yet shipped), so an id it sent
+// today could only be a guess. Sort order, active flag and parent are
+// untouched, exactly as UpdateCategory promises.
+//
+// categories is an admin-synced table, same as items — gated and audited
+// the same way every other catalog-mutating directive now is
+// (requirePrimaryDirective/auditCloudDirective, ut-docs#2353), matching
+// the local admin category dialog's own requirePrimary gate + audit()
+// call (categories_page.go). The gate runs after the idempotency
+// short-circuit on create, same reasoning as cloudCreateItem: a replica
+// replay against a category that already exists (the normal case, pulled
+// down from the primary) should report success, not a spurious refusal.
+func cloudUpsertCategory(ctx context.Context, d *common.Deps, id, name, color string) (string, error) {
+	name = strings.TrimSpace(name)
+	color = strings.TrimSpace(color)
+	if !catalogtypes.ValidItemColor(color) {
+		return "", fmt.Errorf("colour %q is not one of the category palette colours", color)
+	}
+	repo := data.NewCatalogRepo(d.Db)
+	if id == "" {
+		if name == "" {
+			// UpdateCategory/CreateCategoryWithColor refuse this too; checked
+			// here so the dedupe scan below never runs for a blank name.
+			return "", data.ErrCategoryNameRequired
+		}
+		existing, err := repo.ListCategoriesForAdmin(ctx)
+		if err != nil {
+			return "", err
+		}
+		for _, c := range existing {
+			if c.IsActive && strings.EqualFold(c.Name, name) {
+				return "category " + c.Name + " already exists", nil
+			}
+		}
+		if err := requirePrimaryDirective(ctx, d); err != nil {
+			return "", err
+		}
+		newID, err := repo.CreateCategoryWithColor(ctx, name, color)
+		if err != nil {
+			return "", err
+		}
+		auditCloudDirective(ctx, d, "category", newID, "cloud_category_created", map[string]any{"name": name, "color": color})
+		return "created category " + name, nil
+	}
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	if err := repo.UpdateCategory(ctx, id, name, color); err != nil {
+		return "", err
+	}
+	auditCloudDirective(ctx, d, "category", id, "cloud_category_updated", map[string]any{"name": name, "color": color})
+	return "updated category " + name, nil
 }
 
 // cloudCreateItem creates a catalog item from a directive. Directives are

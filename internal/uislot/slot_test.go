@@ -451,6 +451,23 @@ func TestCoreItems_IsWellFormed(t *testing.T) {
 	}
 }
 
+// ut-docs#2211: Modifiers must stay a top-level Items-rail entry, reachable
+// in one action from /items — not nested inside another screen. This pins
+// the AC directly rather than relying on TestCoreItems_IsWellFormed's
+// generic structural checks, which say nothing about which keys exist.
+func TestCoreItems_ModifiersIsTopLevel(t *testing.T) {
+	entry, ok := CoreItemsEntry("/modifiers")
+	if !ok {
+		t.Fatal("Modifiers must be a declared top-level Items-slot entry (ut-docs#2211)")
+	}
+	if entry.LabelKey != "items.modifiers.name" {
+		t.Errorf("Modifiers entry has label key %q, want %q", entry.LabelKey, "items.modifiers.name")
+	}
+	if entry.Href != "/modifiers" {
+		t.Errorf("Modifiers entry has href %q, want %q", entry.Href, "/modifiers")
+	}
+}
+
 // A layout plugin amending the Items slot follows the same schema and
 // refusal shapes ParseMenuAmendments already has for order/label_key — this
 // pins that the generalization (parseSlotAmendments) didn't silently break

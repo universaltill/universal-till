@@ -10,6 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	// Aliased: this file already imports the stdlib "html" for escaping.
+	xhtml "golang.org/x/net/html"
+
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/catalog"
@@ -24,6 +27,14 @@ import (
 // FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE).
 func newButtonsMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Helper()
+	// ut-docs#2312: the mutating routes registerButtonsAPI wires now gate on
+	// catalog_management. Every pre-existing test built on this helper
+	// predates that gate and isn't itself exercising auth/role behaviour, so
+	// it bypasses the gate the same way every other already-gated page's
+	// test suite does for its own auth-agnostic tests (e.g.
+	// tax_codes_page_test.go) -- the dedicated real-session gate tests below
+	// override this back to "on" via their own t.Setenv.
+	t.Setenv("UT_AUTH", "off")
 	chdirRoot(t)
 	initPagesI18n(t)
 	db := openPagesTestDB(t)
@@ -42,6 +53,10 @@ func newButtonsMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 // handlers could actually produce can never sneak into a test's setup.
 func newButtonsAndCatalogMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Helper()
+	// ut-docs#2312: see newButtonsMux's identical comment above -- this
+	// helper also wires catalog.Register, whose mutating routes now gate on
+	// catalog_management too.
+	t.Setenv("UT_AUTH", "off")
 	chdirRoot(t)
 	initPagesI18n(t)
 	db := openPagesTestDB(t)
@@ -670,9 +685,9 @@ func TestButtonsPartial_RootCarriesRefreshTrigger(t *testing.T) {
 		t.Fatalf(`swapped-in root must re-declare hx-get="/ui/buttons" so it can refetch itself, got: %.500s`, body)
 	}
 	// ut-docs#2285: the root also listens for buttons-changed now (emitted
-	// by /api/buttons/move|remove|add and the Designer's own reorder route)
-	// so a tile moved/removed/added via the sell-screen long-press sheet
-	// (or the Designer, in another tab) refreshes the very same way a
+	// by /api/buttons/reorder|remove|add) so a tile reordered/removed/added
+	// via the sell screen's own jiggle edit mode (ut-docs#2339; or the
+	// Designer, in another tab) refreshes the very same way a
 	// modifier-group change already does — same self-refreshing root, one
 	// more event name in the same hx-trigger attribute.
 	if !strings.Contains(body, `hx-trigger="modifiers-changed from:body, buttons-changed from:body"`) {
@@ -737,4 +752,140 @@ func TestModifierGroupDetach_LastLinkRefusalDoesNotFireTrigger(t *testing.T) {
 	if got := rec.Header().Get("HX-Trigger"); got != "" {
 		t.Fatalf("a refused detach must not fire a refresh trigger, got HX-Trigger %q", got)
 	}
+}
+
+// TestButtonsPartial_JiggleModeMarkup (ut-docs#2339): the sell-screen grid
+// carries everything app.js's utTileJiggle needs, server-rendered, so
+// entering the iOS-style jiggle edit mode is a pure class toggle with zero
+// network calls until Done: every tile has its global sort index
+// (data-pos — see ui.TestBuildCategoryGroups_PosIsGlobalSortIndex for why
+// the DOM order alone isn't enough), sits inside a .tile-cell wrapper that
+// also holds its two corner badges (edit = plain link into the catalog,
+// remove = the same hx-post/hx-confirm the ut-docs#2285 sheet's Remove
+// used), and the grid has a Done control. Revert buttons.html's
+// product-tile/jiggle-bar markup to reproduce (red).
+func TestButtonsPartial_JiggleModeMarkup(t *testing.T) {
+	mux, d := newButtonsMux(t)
+	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES ('J1','First','itm1',0),('J2','Second','itm1',1)`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/buttons", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/ui/buttons = %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-code="J1" data-item-id="itm1" data-pos="0"`,
+		`data-code="J2" data-item-id="itm1" data-pos="1"`,
+		`class="tile-cell"`,
+		`class="tile-badge tile-badge-edit"`,
+		`href="/catalog?item=itm1&return=/"`,
+		`class="tile-badge tile-badge-remove"`,
+		`hx-post="/api/buttons/remove"`,
+		`hx-confirm="Remove “First” from the quick buttons? The item stays in the catalog."`,
+		`data-testid="jiggle-done"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("/ui/buttons missing %q: %.1500s", want, body)
+		}
+	}
+	// The edit badge is a real link, the remove badge a real <button>: both
+	// are keyboard-reachable siblings of the tile inside .tile-cell, never
+	// nested INSIDE the tile's own <button>. A nested interactive element is
+	// invalid HTML the parser actively RESTRUCTURES (it closes the outer
+	// button at the nested start tag), so the nesting wouldn't show up as a
+	// broken render — it would silently detach the badge from its tile.
+	//
+	// Asserted against a real parse, deliberately. This check first shipped
+	// as a pair of strings.Contains calls, and independent review (2026-09-17)
+	// found it could never fire: it looked for `<button class="btn-tile`,
+	// while product-tile renders that class on the NEXT line, so the guard
+	// short-circuited to false and nesting the badges inside the tile button
+	// still passed green. golang.org/x/net/html runs the same WHATWG
+	// tree-construction algorithm a browser's parser does — the same reason
+	// elevation_test.go reaches for it rather than string matching.
+	doc, err := xhtml.Parse(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("parse /ui/buttons: %v", err)
+	}
+	tiles := nodesWithClass(doc, "btn-tile")
+	if len(tiles) != 2 {
+		t.Fatalf("want 2 .btn-tile nodes in the parsed tree, got %d", len(tiles))
+	}
+	for _, tile := range tiles {
+		// findAllTag counts the node it's given, and the tile IS a <button> —
+		// so walk its CHILDREN and count what's strictly inside it.
+		for c := tile.FirstChild; c != nil; c = c.NextSibling {
+			for _, tag := range []string{"a", "button"} {
+				if nested := findAllTag(c, tag); len(nested) > 0 {
+					t.Fatalf("a .btn-tile must contain no nested <%s> (invalid HTML the parser restructures), got %d: %.600s", tag, len(nested), body)
+				}
+			}
+		}
+	}
+	badges := append(nodesWithClass(doc, "tile-badge-edit"), nodesWithClass(doc, "tile-badge-remove")...)
+	if len(badges) != 4 {
+		t.Fatalf("want 4 badges (2 tiles x edit+remove), got %d", len(badges))
+	}
+	for _, b := range badges {
+		if isDescendantOfClass(b, "btn-tile") {
+			t.Fatalf("badge %q is nested inside the tile's own button; it must be a sibling inside .tile-cell", b.Data)
+		}
+		if b.Parent == nil || !hasClass(b.Parent, "tile-badges") ||
+			b.Parent.Parent == nil || !hasClass(b.Parent.Parent, "tile-cell") {
+			t.Fatalf("badge %q must sit in .tile-cell > .tile-badges", b.Data)
+		}
+	}
+	// The ut-docs#2285 sheet is gone: nothing on the sale screen should
+	// still reference its route.
+	if strings.Contains(body, "/ui/pos/tile-sheet") || strings.Contains(body, "/api/buttons/move") {
+		t.Fatalf("buttons fragment still references the retired tile sheet: %.800s", body)
+	}
+}
+
+// hasClass reports whether n carries the given class token (ut-docs#2339).
+// Token-wise, not substring: "tile-badge" must not match "tile-badges".
+func hasClass(n *xhtml.Node, class string) bool {
+	if n == nil || n.Type != xhtml.ElementNode {
+		return false
+	}
+	for _, a := range n.Attr {
+		if a.Key != "class" {
+			continue
+		}
+		for _, f := range strings.Fields(a.Val) {
+			if f == class {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// nodesWithClass returns every element at or below n carrying the class.
+func nodesWithClass(n *xhtml.Node, class string) []*xhtml.Node {
+	var out []*xhtml.Node
+	var walk func(*xhtml.Node)
+	walk = func(n *xhtml.Node) {
+		if hasClass(n, class) {
+			out = append(out, n)
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(n)
+	return out
+}
+
+// isDescendantOfClass reports whether n has an ancestor carrying the class
+// (n itself doesn't count) — the sibling-not-child claim the badges make.
+func isDescendantOfClass(n *xhtml.Node, class string) bool {
+	for p := n.Parent; p != nil; p = p.Parent {
+		if hasClass(p, class) {
+			return true
+		}
+	}
+	return false
 }
