@@ -91,6 +91,27 @@ func TestPermissionSettingsPage_GET_TaxCodeManagementHasTranslatedLabel(t *testi
 	}
 }
 
+// ut-docs#2312: catalog_management's own analogue of the regression test
+// above — same failure class (a new seeded action with no matching
+// web/locales/*.json key), same fix shape.
+func TestPermissionSettingsPage_GET_CatalogManagementHasTranslatedLabel(t *testing.T) {
+	mux, _ := newPermissionSettingsTestDeps(t)
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/users/permissions", nil), auth.User{ID: "sa-1", Role: "super_admin"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Catalog &amp; quick buttons") && !strings.Contains(body, "Catalog & quick buttons") {
+		t.Fatalf("expected the translated \"Catalog & quick buttons\" label for the catalog_management action, got: %s", body)
+	}
+	if strings.Contains(body, ">catalog_management<") {
+		t.Fatalf("raw action key leaked into the response instead of a translated label: %s", body)
+	}
+}
+
 // The rendered grid must actually reflect grant state — a version of this
 // page that dropped Granted/Locked handling entirely, or rendered every
 // cell the same way, would still pass a test that only checks for the

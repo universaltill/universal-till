@@ -15,6 +15,11 @@ import (
 // must parse it (plain ParseForm ignores multipart, which silently dropped
 // every reorder).
 func TestReorderAcceptsMultipartFormData(t *testing.T) {
+	// ut-docs#2312: /api/buttons/reorder now gates on catalog_management —
+	// this test predates that gate and isn't exercising auth, so bypass it
+	// the same way every other pre-existing, auth-agnostic test in this
+	// package does (t.Setenv("UT_AUTH", "off")).
+	t.Setenv("UT_AUTH", "off")
 	db := openPagesTestDB(t)
 	defer db.Close()
 	// shortcut_buttons comes from the real migrations openPagesTestDB now

@@ -8,6 +8,21 @@
      the sheet stays open with a freshly-edge-disabled Move button after a
      move rather than closing and reopening.
 
+     ut-docs#2312: .Locked (a non-granted operator, catalog_management) is
+     deliberately NOT the same treatment as .IsReplica below -- a replica
+     genuinely cannot perform the write at all, so its buttons carry a real
+     `disabled`; Locked only means "you'll be asked for a manager PIN",
+     which the operator must still be able to TRIGGER (#2285's own "show,
+     don't hide" decision: discoverable, not a dead button). Move/Remove
+     stay real, clickable hx-post controls when Locked — the tap reaches
+     POST /api/buttons/move|remove, which itself calls checkOrElevate and
+     answers with the real elevation prompt (elevation.go) rather than
+     performing the mutation outright. Only the `.locked` CSS class (a
+     lock icon + muted styling, app.css) and the tooltip change; Edit
+     (a plain navigation, never a mutation) stays a live link either way —
+     the catalog page it opens is view-safe, and its own mutating routes
+     (/api/catalog/item/update et al.) carry the identical gate.
+
      #tile-sheet itself (index.html) is opened with .show(), NEVER
      showModal() — see index.html's own ut-docs#1385 comment on
      #modifier-modal for why: showModal()'s inert-outside/top-layer
@@ -32,21 +47,25 @@
            pair: "Move earlier"/"Move later" reads correctly here too,
            even though this sheet lays the two buttons out horizontally
            where buttons_admin.html's own reorder pair is vertical). -->
-      <button type="button" class="btn secondary tile-sheet-move" data-testid="tile-sheet-move-earlier"
+      <button type="button" class="btn secondary tile-sheet-move{{ if .Locked }} locked{{ end }}" data-testid="tile-sheet-move-earlier"
               hx-post="/api/buttons/move" hx-vals='{{ jsonVals "code" .Code "dir" -1 }}'
               hx-target="#tile-sheet" hx-swap="innerHTML"
-              aria-label="{{ T "designer.move_up" }}" title="{{ T "designer.move_up" }}"
+              aria-label="{{ if .Locked }}{{ T "designer.move_up" }} — {{ T "tile_sheet.locked" }}{{ else }}{{ T "designer.move_up" }}{{ end }}"
+              title="{{ if .Locked }}{{ T "tile_sheet.locked" }}{{ else }}{{ T "designer.move_up" }}{{ end }}"
               {{ if or (not .HasPrev) .IsReplica }}disabled{{ end }}>
         <span class="btn-ico" aria-hidden="true">{{ icon "chevron-left" }}</span>
         <span class="btn-label">{{ T "designer.move_up" }}</span>
+        {{ if .Locked }}<span class="btn-ico tile-sheet-lock" aria-hidden="true">{{ icon "lock" }}</span>{{ end }}
       </button>
-      <button type="button" class="btn secondary tile-sheet-move" data-testid="tile-sheet-move-later"
+      <button type="button" class="btn secondary tile-sheet-move{{ if .Locked }} locked{{ end }}" data-testid="tile-sheet-move-later"
               hx-post="/api/buttons/move" hx-vals='{{ jsonVals "code" .Code "dir" 1 }}'
               hx-target="#tile-sheet" hx-swap="innerHTML"
-              aria-label="{{ T "designer.move_down" }}" title="{{ T "designer.move_down" }}"
+              aria-label="{{ if .Locked }}{{ T "designer.move_down" }} — {{ T "tile_sheet.locked" }}{{ else }}{{ T "designer.move_down" }}{{ end }}"
+              title="{{ if .Locked }}{{ T "tile_sheet.locked" }}{{ else }}{{ T "designer.move_down" }}{{ end }}"
               {{ if or (not .HasNext) .IsReplica }}disabled{{ end }}>
         <span class="btn-label">{{ T "designer.move_down" }}</span>
         <span class="btn-ico" aria-hidden="true">{{ icon "chevron-right" }}</span>
+        {{ if .Locked }}<span class="btn-ico tile-sheet-lock" aria-hidden="true">{{ icon "lock" }}</span>{{ end }}
       </button>
     </div>
     <!-- ut-docs#2285: hx-swap="none" -- this button's own response body
@@ -62,14 +81,22 @@
          client-side string replacement -- the label is already known at
          render time, unlike catalog.html's item-form delete button whose
          name can change without a fresh render. -->
-    <button type="button" class="btn danger tile-sheet-remove" data-testid="tile-sheet-remove"
+    <button type="button" class="btn danger tile-sheet-remove{{ if .Locked }} locked{{ end }}" data-testid="tile-sheet-remove"
             hx-post="/api/buttons/remove" hx-vals='{{ jsonVals "code" .Code }}'
-            hx-confirm="{{ printf (T "tile_sheet.remove_confirm") .Label }}"
+            {{/* ut-docs#2312: no hx-confirm when Locked -- a non-granted
+                 operator's tap must reach the server and land on the real
+                 elevation prompt, not a client-side confirm() dialog that
+                 would only ever precede the SAME eventual 403/elevation
+                 either way. The confirm still guards the real, granted
+                 delete path unchanged. */}}
+            {{ if not .Locked }}hx-confirm="{{ printf (T "tile_sheet.remove_confirm") .Label }}"{{ end }}
             hx-swap="none" data-closes-sheet
-            aria-label="{{ T "tile_sheet.remove" }}" title="{{ T "tile_sheet.remove" }}"
+            aria-label="{{ if .Locked }}{{ T "tile_sheet.remove" }} — {{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.remove" }}{{ end }}"
+            title="{{ if .Locked }}{{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.remove" }}{{ end }}"
             {{ if .IsReplica }}disabled{{ end }}>
       <span class="btn-ico" aria-hidden="true">{{ icon "trash-2" }}</span>
       <span class="btn-label">{{ T "tile_sheet.remove" }}</span>
+      {{ if .Locked }}<span class="btn-ico tile-sheet-lock" aria-hidden="true">{{ icon "lock" }}</span>{{ end }}
     </button>
     {{/* Edit in catalog: a plain navigation, never htmx -- return=/ sends
          catalog.html back to the sale screen (the only page this sheet
@@ -89,10 +116,18 @@
       <span class="btn-label">{{ T "tile_sheet.edit" }}</span>
     </button>
     {{ else }}
-    <a class="btn primary" data-testid="tile-sheet-edit" href="/catalog?item={{ .ItemID }}&return=/"
-       aria-label="{{ T "tile_sheet.edit" }}" title="{{ T "tile_sheet.edit" }}">
+    {{/* ut-docs#2312: Locked stays a LIVE link, unlike Move/Remove above --
+         it's a plain navigation to /catalog (view access isn't what
+         catalog_management gates), only the lock badge/tooltip changes.
+         Any actual edit made there still hits /api/catalog/item/update's
+         own requireCatalogManagement gate (catalog/handlers.go), which
+         answers 403 -- a cashier can look, never silently save. */}}
+    <a class="btn primary tile-sheet-edit{{ if .Locked }} locked{{ end }}" data-testid="tile-sheet-edit" href="/catalog?item={{ .ItemID }}&return=/"
+       aria-label="{{ if .Locked }}{{ T "tile_sheet.edit" }} — {{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.edit" }}{{ end }}"
+       title="{{ if .Locked }}{{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.edit" }}{{ end }}">
       <span class="btn-ico" aria-hidden="true">{{ icon "pencil" }}</span>
       <span class="btn-label">{{ T "tile_sheet.edit" }}</span>
+      {{ if .Locked }}<span class="btn-ico tile-sheet-lock" aria-hidden="true">{{ icon "lock" }}</span>{{ end }}
     </a>
     {{ end }}
   </div>

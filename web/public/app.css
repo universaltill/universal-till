@@ -2054,6 +2054,17 @@ html[dir="rtl"] .tile-sheet-move .btn-ico svg { transform: scaleX(-1); }
 .tile-sheet-move-row { display: flex; gap: .5rem; }
 .tile-sheet-move-row .btn { flex: 1; }
 .tile-sheet-hint { margin-block-start: -.25rem; }
+/* ut-docs#2312: Locked tiles stay real, clickable controls (a tap must
+   still reach checkOrElevate's own elevation prompt -- "show, don't hide",
+   #2285) -- only a muted/dashed look plus a small lock badge distinguish
+   them from a normal, granted action. Never combined with the real
+   `disabled` attribute (that's IsReplica's own, separate state). */
+.tile-sheet-move.locked, .tile-sheet-remove.locked, .tile-sheet-edit.locked {
+  opacity: .7;
+  border-style: dashed;
+}
+.tile-sheet-lock { margin-inline-start: auto; }
+.tile-sheet-lock svg { width: 1em; height: 1em; }
 /* ut-docs#2095: #tax-codes-modal/#import-modal are .item-form-modal, not
    .modifier-modal (independent review, F1/F2 -- both dialogs hold real
    text inputs, so they need the same OSK-reachable .show()/no-top-layer

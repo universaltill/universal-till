@@ -10,7 +10,7 @@ keywords: [items, prices, barcode, variants, modifiers, import, export]
 
 # Catalog, variants & barcodes
 
-Your products: names, prices, departments, item variants (size, flavour…) and any number of barcodes per item or per variant.
+Your products: names, prices, departments, item variants (size, flavour…) and any number of barcodes per item or per variant. Managers and admins only: a cashier doesn't see Items in the menu at all, and creating, editing, deactivating or reorganising anything here — an item, a variant, a modifier group, an option set or a barcode — needs that same access, whichever screen the change is made from.
 
 Open **Items** from the menu to get here — on a tablet-width screen or wider it opens as a two-pane screen: a compact list of sections (Catalog, Categories, Inventory, Modifiers, Option sets) down the left, and the selected section's own screen on the right, so switching between them never leaves the page. Catalog is selected by default. On a phone-width screen the two panes stack, and tapping a section opens its own full screen instead, the same as before. Each section is still its own page with its own address — /catalog, /categories, /inventory, /modifiers and /catalog/option-sets all work exactly as before if you go to one directly or bookmark it.
 

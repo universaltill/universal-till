@@ -548,12 +548,25 @@ func (s *ButtonStore) Move(ctx context.Context, code string, dir int) (moved boo
 // so the sheet can never offer (or grey out) a direction Move would
 // actually disagree with.
 type TileSheetView struct {
-	Label     string
-	Code      string
-	ItemID    string
-	HasPrev   bool
-	HasNext   bool
+	Label   string
+	Code    string
+	ItemID  string
+	HasPrev bool
+	HasNext bool
+	// IsReplica disables Move/Remove/Edit outright (a real HTML `disabled`)
+	// -- a replica genuinely cannot perform the write at all locally, so
+	// there is nothing an elevation prompt could recover.
 	IsReplica bool
+	// Locked is ut-docs#2312's "show, don't hide" gate (#2285's own UX
+	// decision): true when the viewer lacks catalog_management. UNLIKE
+	// IsReplica, Move/Remove/Edit stay real, clickable controls -- just
+	// visually locked (a lock icon/tooltip, tile_sheet.html) -- so a tap
+	// still reaches the server and lands on checkOrElevate's real
+	// elevation prompt instead of a dead disabled button. Never true
+	// alongside IsReplica in a way that matters: the template disables
+	// outright whenever EITHER is set, Locked only adds the lock
+	// affordance on top when IsReplica is false.
+	Locked bool
 }
 
 // BuildTileSheetView resolves code against a freshly-loaded button list.
@@ -566,7 +579,7 @@ type TileSheetView struct {
 // access to common.Deps (internal/pages/common already imports internal/ui,
 // so the reverse import would be a cycle), and isReplica has nothing to do
 // with the button data itself.
-func (s *ButtonStore) BuildTileSheetView(code string, isReplica bool) (view TileSheetView, ok bool, err error) {
+func (s *ButtonStore) BuildTileSheetView(code string, isReplica, locked bool) (view TileSheetView, ok bool, err error) {
 	btns, err := s.Load()
 	if err != nil {
 		return TileSheetView{}, false, err
@@ -583,6 +596,7 @@ func (s *ButtonStore) BuildTileSheetView(code string, isReplica bool) (view Tile
 		HasPrev:   sameCategoryNeighborIndex(btns, idx, -1) != -1,
 		HasNext:   sameCategoryNeighborIndex(btns, idx, 1) != -1,
 		IsReplica: isReplica,
+		Locked:    locked,
 	}, true, nil
 }
 

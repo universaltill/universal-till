@@ -2,12 +2,15 @@ package pages
 
 import (
 	"errors"
+	"fmt"
 	"html"
 	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/ui"
@@ -24,6 +27,24 @@ import (
 const buttonsErrorKey = "designer.error.server"
 
 func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
+	posRepo := data.NewPOSRepo(d.Db)
+
+	// auditButtonsElevated records a manager-PIN-approved shortcut-button
+	// mutation with dual attribution (ut-docs#2312, mechanism ut-docs#557)
+	// -- actorID is the APPROVER who actually performed it, blockedActorID
+	// the originally-denied session operator (elev.ActorID), same shape as
+	// users_page.go's own auditElevated. Scoped to the two routes below
+	// (reorder/move) that call d.BtnStore directly inline; Add/Remove
+	// delegate to ui.ButtonsHTTP, which writes its own response with no
+	// success/failure signal back to this closure to audit against --
+	// auditing those two is deferred (see registerButtonsAPI's own routes
+	// below for the note) rather than restructuring ButtonsHTTP's return
+	// shape for this card.
+	auditButtonsElevated := func(r *http.Request, actorID, blockedActorID, targetID, action string, payload map[string]any) {
+		now := time.Now().UTC().Format(time.RFC3339)
+		_ = posRepo.InsertAuditElevated(r.Context(), nil, actorID, blockedActorID, "shortcut_button", targetID, action, payload, now, "")
+	}
+
 	// requirePrimary gates the reorder/add/remove routes below on this till
 	// being the primary (same defect class as ut-docs#1689/#1667/#1590/
 	// #1546): shortcut_buttons is synced shop-wide as an admin table
@@ -84,9 +105,25 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		for i := range codes {
 			codes[i] = strings.TrimSpace(codes[i])
 		}
+		// ut-docs#2312: the Designer's reorder is a plain fetch(), not an
+		// htmx request (see designer.html's persistOrder/utPostWithElevation
+		// wiring) -- hxTarget is passed through to renderElevationPrompt for
+		// contract-consistency with every other checkOrElevate call site,
+		// but is never actually rendered/used by a non-htmx caller (that JS
+		// helper only ever extracts #elevation-modal from the body).
+		elev := checkOrElevate(d, r, "catalog_management", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/buttons/reorder", "#buttons-add-error",
+				httpx.T(httpx.ResolveLocale(w, r), "elevation.summary.buttons_reorder"),
+				[]elevationHiddenField{{Name: "codes", Value: strings.Join(codes, ",")}}, elev)
+			return
+		}
 		if err := d.BtnStore.UpdateOrder(r.Context(), codes); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
 			return
+		}
+		if elev.Outcome == elevated {
+			auditButtonsElevated(r, elev.ApproverID, elev.ActorID, "-", "buttons_reorder", map[string]any{"codes": codes})
 		}
 		// ut-docs#2285: the Designer's own drag&drop/move-up/move-down
 		// reorder changes the sale screen's button set too, same as
@@ -126,6 +163,19 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			common.LocalizedError(w, r, http.StatusBadRequest, buttonsErrorKey)
 			return
 		}
+		// ut-docs#2312: the tile sheet renders Move/Remove/Edit for a
+		// non-granted operator disabled-looking-but-clickable (see
+		// renderTileSheet's Locked field below) precisely so a tap here
+		// lands on this real elevation prompt rather than a dead button --
+		// "show, don't hide" (#2285's UX decision) means discoverability,
+		// not a silent no-op.
+		elev := checkOrElevate(d, r, "catalog_management", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/buttons/move", "#tile-sheet",
+				fmt.Sprintf(httpx.T(httpx.ResolveLocale(w, r), "elevation.summary.buttons_move"), code),
+				[]elevationHiddenField{{Name: "code", Value: code}, {Name: "dir", Value: strconv.Itoa(dir)}}, elev)
+			return
+		}
 		if _, err := d.BtnStore.Move(r.Context(), code, dir); err != nil {
 			if errors.Is(err, ui.ErrButtonNotFound) {
 				common.LocalizedError(w, r, http.StatusNotFound, buttonsErrorKey)
@@ -133,6 +183,9 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
 			return
+		}
+		if elev.Outcome == elevated {
+			auditButtonsElevated(r, elev.ApproverID, elev.ActorID, code, "buttons_move", map[string]any{"dir": dir})
 		}
 		w.Header().Set("HX-Trigger", "buttons-changed")
 		renderer, err := tileSheetRenderer(w, r)
@@ -148,6 +201,31 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		if !requirePrimary(w, r) {
 			return
 		}
+		// ut-docs#2312: parsed here (ahead of ui.ButtonsHTTP.Add's own,
+		// idempotent ParseForm call below) so the elevation check has
+		// label/code/itemId/imageUrl to mirror as hidden fields on the
+		// dialog's retry -- checkOrElevate itself never touches the body.
+		_ = r.ParseForm()
+		label := r.Form.Get("label")
+		code := r.Form.Get("code")
+		itemID := r.Form.Get("itemId")
+		imageURL := r.Form.Get("imageUrl")
+		elev := checkOrElevate(d, r, "catalog_management", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/buttons/add", "#buttons-grid-wrap",
+				fmt.Sprintf(httpx.T(httpx.ResolveLocale(w, r), "elevation.summary.buttons_add"), label),
+				[]elevationHiddenField{
+					{Name: "label", Value: label},
+					{Name: "code", Value: code},
+					{Name: "itemId", Value: itemID},
+					{Name: "imageUrl", Value: imageURL},
+				}, elev)
+			return
+		}
+		// ut-docs#2312: dual-attribution audit for the elevated case is
+		// deferred here -- see registerButtonsAPI's own auditButtonsElevated
+		// doc comment (ButtonsHTTP.Add writes its own response with no
+		// success/failure signal back to this closure).
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		renderer, err := ui.NewRenderer(
 			filepath.Join("web", "ui", "layouts", "base.html"),
@@ -167,6 +245,41 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		if !requirePrimary(w, r) {
 			return
 		}
+		// ut-docs#2312: parsed here (ahead of ui.ButtonsHTTP.Remove's own,
+		// idempotent ParseForm call below) so the elevation check has the
+		// code to mirror as a hidden field on the dialog's retry.
+		//
+		// This route is reached from TWO different surfaces with different
+		// hx-target/hx-swap of their own -- the Designer's grid
+		// (buttons_admin.html, "#buttons-grid-wrap"/innerHTML) and the
+		// sell-screen tile sheet (tile_sheet.html, hx-swap="none" plus
+		// data-closes-sheet, ut-docs#2285). "#buttons-grid-wrap" is used as
+		// the elevation retry target unconditionally either way: on the
+		// Designer it's exactly the original target; from the tile sheet
+		// that id doesn't exist in the DOM at all, so the retry's own
+		// response there is silently unswapped by htmx (same as any
+		// unmatched hx-target) -- but the SALE SCREEN grid still updates
+		// correctly regardless, because HX-Trigger: buttons-changed
+		// (ButtonsHTTP.Remove's own header, unconditional on success) fires
+		// independently of target resolution and is what buttons.html's
+		// root actually listens for. The one accepted gap: the tile sheet
+		// itself doesn't auto-close after an ELEVATED remove approval (the
+		// dialog's retry form lives outside #tile-sheet, so app.js's
+		// data-closes-sheet listener never sees it) -- a tap on the sheet's
+		// own Close button clears it, same as any other stale panel.
+		_ = r.ParseForm()
+		code := r.Form.Get("code")
+		elev := checkOrElevate(d, r, "catalog_management", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/buttons/remove", "#buttons-grid-wrap",
+				fmt.Sprintf(httpx.T(httpx.ResolveLocale(w, r), "elevation.summary.buttons_remove"), code),
+				[]elevationHiddenField{{Name: "code", Value: code}}, elev)
+			return
+		}
+		// ut-docs#2312: dual-attribution audit for the elevated case is
+		// deferred here -- see registerButtonsAPI's own auditButtonsElevated
+		// doc comment (ButtonsHTTP.Remove writes its own response with no
+		// success/failure signal back to this closure).
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		renderer, err := ui.NewRenderer(
 			filepath.Join("web", "ui", "layouts", "base.html"),
@@ -243,7 +356,11 @@ func tileSheetRenderer(w http.ResponseWriter, r *http.Request) (*ui.Renderer, er
 // package has access to common.Deps.SyncPrimaryURL.
 func renderTileSheet(w http.ResponseWriter, r *http.Request, d *common.Deps, renderer *ui.Renderer, code string) {
 	isReplica := d.SyncPrimaryURL(r.Context()) != ""
-	view, ok, err := d.BtnStore.BuildTileSheetView(code, isReplica)
+	// ut-docs#2312: "show, don't hide" (#2285) -- a non-granted operator
+	// still sees Move/Remove/Edit, just locked (TileSheetView.Locked's own
+	// doc comment), rather than the sheet quietly omitting them.
+	locked := !canPerform(d, r, "catalog_management")
+	view, ok, err := d.BtnStore.BuildTileSheetView(code, isReplica, locked)
 	if err != nil {
 		common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
 		return

@@ -147,6 +147,11 @@ func TestItemsPage_FirstVisitWithLangQueryRendersPanelInThatLocaleToo(t *testing
 }
 
 func TestMenuPage_TopLevelTileIsItemsNotCatalogOrInventory(t *testing.T) {
+	// ut-docs#2312: /items now carries VisibleIf "catalog_management" --
+	// this test is about which route the tile points at, not permissions,
+	// so bypass the gate the same way every other auth-agnostic test in
+	// this package does rather than hiding the /items tile it asserts on.
+	t.Setenv("UT_AUTH", "off")
 	mux, _ := newMenuPageTestDeps(t, baseMenu)
 	req := httptest.NewRequest(http.MethodGet, "/menu", nil)
 	rec := httptest.NewRecorder()
