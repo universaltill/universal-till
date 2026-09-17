@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/pages/catalog"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
@@ -21,6 +22,7 @@ import (
 )
 
 func TestItemsPage_RendersFiveSectionsWithNameAndSubtitle(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#2357: /designer, /items, /catalog, /modifiers, /catalog/option-sets are now catalog_management-gated; this test is about rendering, not permissions.
 	mux, dp := newMenuPageTestDeps(t, baseMenu)
 	registerItemsPage(mux, dp)
 
@@ -56,6 +58,7 @@ func TestItemsPage_RendersFiveSectionsWithNameAndSubtitle(t *testing.T) {
 }
 
 func TestItemsPage_LibraryAndInventoryAndOptionSetsAndModifiersAreLiveLinks(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#2357: /designer, /items, /catalog, /modifiers, /catalog/option-sets are now catalog_management-gated; this test is about rendering, not permissions.
 	mux, dp := newMenuPageTestDeps(t, baseMenu)
 	registerItemsPage(mux, dp)
 
@@ -100,6 +103,7 @@ func TestItemsPage_LibraryAndInventoryAndOptionSetsAndModifiersAreLiveLinks(t *t
 // itemsSection/registerItemsPage for whenever the next section lands
 // ahead of its own screen, it's just untested by name until that happens.
 func TestItemsPage_NoSectionIsDisabled(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#2357: without this, the 403 error page also lacks aria-disabled/"Coming soon", so this test silently passed for the wrong reason (independent review finding).
 	mux, dp := newMenuPageTestDeps(t, baseMenu)
 	registerItemsPage(mux, dp)
 
@@ -123,6 +127,7 @@ func TestItemsPage_NoSectionIsDisabled(t *testing.T) {
 // rendered in the default locale (English) instead of inheriting fa from
 // the outer request's already-resolved locale.
 func TestItemsPage_FirstVisitWithLangQueryRendersPanelInThatLocaleToo(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#2357: /designer, /items, /catalog, /modifiers, /catalog/option-sets are now catalog_management-gated; this test is about rendering, not permissions.
 	mux, dp := newMenuPageTestDeps(t, baseMenu)
 	catalog.Register(mux, dp)
 	registerItemsPage(mux, dp)
@@ -182,6 +187,7 @@ func TestMenuPage_TopLevelTileIsItemsNotCatalogOrInventory(t *testing.T) {
 // ut-docs#1950 AC #1/#4: the rail must be a narrow column of compact,
 // single-line rows (.items-row), not the old large card tiles (.card).
 func TestItemsPage_RailRowsAreCompactNotCardTiles(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#2357: /designer, /items, /catalog, /modifiers, /catalog/option-sets are now catalog_management-gated; this test is about rendering, not permissions.
 	mux, dp := newMenuPageTestDeps(t, baseMenu)
 	registerItemsPage(mux, dp)
 
@@ -209,6 +215,7 @@ func TestItemsPage_RailRowsAreCompactNotCardTiles(t *testing.T) {
 // ut-docs#1950 AC #3: a bare /items load must not leave the right panel
 // empty — the first section (Library/Catalog) renders inline.
 func TestItemsPage_DefaultLoadEmbedsFirstSectionInPanel(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#2357: /designer, /items, /catalog, /modifiers, /catalog/option-sets are now catalog_management-gated; this test is about rendering, not permissions.
 	mux, dp := newMenuPageTestDeps(t, baseMenu)
 	catalog.Register(mux, dp)
 	registerItemsPage(mux, dp)
@@ -256,6 +263,7 @@ func TestItemsPage_DefaultLoadEmbedsFirstSectionInPanel(t *testing.T) {
 // of 1 and 5. The embed sub-request signals this with itemsnav.EmbedHeader;
 // itemsnav.WriteRailOOB skips the OOB copy when it is set.
 func TestItemsPage_DefaultLoadRendersExactlyOneRail(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#2357: /designer, /items, /catalog, /modifiers, /catalog/option-sets are now catalog_management-gated; this test is about rendering, not permissions.
 	mux, dp := newMenuPageTestDeps(t, baseMenu)
 	catalog.Register(mux, dp)
 	registerItemsPage(mux, dp)
@@ -288,6 +296,7 @@ func TestItemsPage_DefaultLoadRendersExactlyOneRail(t *testing.T) {
 // A REAL htmx panel swap (no embed header) must still get the out-of-band
 // rail — the fix above must not disable the mechanism it exists for.
 func TestItemsSection_RealHTMXSwapStillGetsOOBRail(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#2357: /designer, /items, /catalog, /modifiers, /catalog/option-sets are now catalog_management-gated; this test is about rendering, not permissions.
 	mux, dp := newMenuPageTestDeps(t, baseMenu)
 	catalog.Register(mux, dp)
 	registerItemsPage(mux, dp)
@@ -366,6 +375,7 @@ func installShippedSalonLayout(t *testing.T, dp *common.Deps) {
 }
 
 func TestItemsPage_SalonLayoutRelabelsAndReordersLibraryRow(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#2357: /designer, /items, /catalog, /modifiers, /catalog/option-sets are now catalog_management-gated; this test is about rendering, not permissions.
 	isolatePluginDir(t)
 	mux, dp := newMenuPageTestDeps(t, baseMenu)
 	catalog.Register(mux, dp)
@@ -423,5 +433,47 @@ func TestNavRail_SalonLayoutReordersOrdersAheadOfInventory(t *testing.T) {
 	}
 	if !strings.Contains(rail, `href="/orders" class="nav-toggle nav-rail-only" data-testid="nav-orders"`) {
 		t.Fatalf("the moved Orders anchor must keep its classes and testid, got: %s", rail)
+	}
+}
+
+// TestItemsPage_Permissions (ut-docs#2357): /items' nav tile is already
+// VisibleIf: "catalog_management" (uislot.CoreAdmin, same as /designer),
+// but nothing stopped a cashier who typed the URL directly before this
+// card -- and, via embedItemsSection, the default section's catalog data
+// too. newMenuPageTestDeps' own DB (openPagesTestDB) is a full migrated
+// template clone (ui_smoke_test.go's realDBTemplate), so it already carries
+// the real role_permissions seed -- only AuthSvc itself needs wiring here,
+// same as every other permission test in this package does on top of its
+// own shared fixture.
+func TestItemsPage_Permissions(t *testing.T) {
+	mux, dp := newMenuPageTestDeps(t, baseMenu)
+	dp.AuthSvc = auth.NewService(dp.Db)
+	registerItemsPage(mux, dp)
+	catalog.Register(mux, dp)
+	t.Setenv("UT_AUTH", "on")
+
+	cashier := auth.User{ID: "c1", Role: "cashier"}
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/items", nil), cashier)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cashier GET /items = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/items", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("no-session GET /items = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+
+	for _, role := range []string{"manager", "admin", "super_admin"} {
+		mgr := auth.User{ID: "u-" + role, Role: role}
+		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/items", nil), mgr)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code == http.StatusForbidden {
+			t.Fatalf("%s GET /items = 403, want past the catalog_management gate: %s", role, rec.Body.String())
+		}
 	}
 }

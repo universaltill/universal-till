@@ -140,3 +140,66 @@ func TestCatalogHandlers_CatalogManagementGate_NoSessionDenied(t *testing.T) {
 		t.Fatalf("no-session POST /api/catalog/item = %d, want 403: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// ut-docs#2357: the three full-page GET routes in this file (/catalog,
+// /modifiers, /catalog/option-sets) carried no server-side gate at all
+// before this card -- only their nav tiles were hidden via VisibleIf. Same
+// contract and same real migrated-schema/real-session rig as
+// TestCatalogHandlers_CatalogManagementGate_RealSessionGatesByRole above,
+// just for requireCatalogManagementPage instead of requireCatalogManagement
+// (the httpx.RenderError-vs-LocalizedError split handlers.go documents on
+// that helper).
+func TestCatalogHandlers_CatalogManagementGate_PageRoutes(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, _ := newCatalogMuxRealSession(t)
+
+	pageRoutes := []string{"/catalog", "/modifiers", "/catalog/option-sets"}
+
+	get := func(path string, u auth.User) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req = auth.WithUser(req, u)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	cashier := auth.User{ID: "c1", Role: "cashier"}
+	for _, path := range pageRoutes {
+		rec := get(path, cashier)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("cashier GET %s = %d, want 403: %s", path, rec.Code, rec.Body.String())
+		}
+		// Same rail-must-survive-a-403 rule locations_page_test.go's
+		// TestLocationsPagePermissions pins for its own page gate
+		// (ut-docs#1458): a page route's 403 renders the full themed error
+		// page, never a bare, rail-less body.
+		if body := rec.Body.String(); !strings.Contains(body, `class="nav"`) {
+			t.Errorf("cashier's 403 on GET %s has no nav rail:\n%s", path, body)
+		}
+	}
+
+	for _, role := range []string{"manager", "admin", "super_admin"} {
+		mgr := auth.User{ID: "u-" + role, Role: role}
+		for _, path := range pageRoutes {
+			if rec := get(path, mgr); rec.Code == http.StatusForbidden {
+				t.Errorf("%s GET %s = 403, want past the catalog_management gate: %s", role, path, rec.Body.String())
+			}
+		}
+	}
+}
+
+// No session at all must be refused on the page routes too, matching
+// TestCatalogHandlers_CatalogManagementGate_NoSessionDenied's API-route
+// contract.
+func TestCatalogHandlers_CatalogManagementGate_PageRoutesNoSessionDenied(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, _ := newCatalogMuxRealSession(t)
+	for _, path := range []string{"/catalog", "/modifiers", "/catalog/option-sets"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("no-session GET %s = %d, want 403: %s", path, rec.Code, rec.Body.String())
+		}
+	}
+}

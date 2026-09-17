@@ -1643,3 +1643,118 @@ func TestAdminApplyCountrySettings_ClampsArchiveMinDaysToGlobalFloor(t *testing.
 		t.Fatalf("below-floor archive_min_days applied as-is instead of clamped: got %d, want %d (ADR-0040 floor)", days, GlobalArchiveMinDays)
 	}
 }
+
+// ADR-0099 Decision 2 (ut-docs#2348, resolving ut-docs#1671): price_history
+// stays OUT of adminTables, so a satellite that already holds an open
+// price_history row (ends_at IS NULL) for an item/variant keeps charging
+// that row's price forever — ResolveCurrentPrice prefers an open row over
+// the freshly-synced items.base_price / item_variants.price, and nothing
+// ever revisited the row. Every ApplyAdmin must now close every locally-
+// open row for a synced item/variant so the lookup falls through to the
+// synced price. Covers, per the ADR's Consequences: a currently-active
+// stale row, a FUTURE-dated one (which an earlier ADR draft scoped out and
+// which would otherwise activate later with no sync guaranteed to run at
+// that moment), both the item and the variant statement separately, and
+// that an already-closed row is left exactly as it was.
+func TestAdminApply_InvalidatesStaleOpenPriceHistory(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	// Primary: the item/variant at their NEW prices.
+	mustExec(t, primary, `INSERT INTO items (id, sku, name, base_price) VALUES ('itm1', 'COLA', 'Cola Can', 150)`)
+	mustExec(t, primary, `INSERT INTO item_variants (id, item_id, sku, name, price) VALUES ('var1', 'itm1', 'COLA-L', 'Large', 550)`)
+
+	// Satellite: the same rows at their OLD prices, plus the stale open
+	// price_history overrides that ADR-0099 exists to neutralise.
+	mustExec(t, replica, `INSERT INTO items (id, sku, name, base_price) VALUES ('itm1', 'COLA', 'Cola Can', 120)`)
+	mustExec(t, replica, `INSERT INTO item_variants (id, item_id, sku, name, price) VALUES ('var1', 'itm1', 'COLA-L', 'Large', 500)`)
+	const closedEndsAt = "2020-01-01 00:00:00"
+	for _, row := range []struct {
+		id, col, ref string
+		price        int64
+		startsAt     string
+		endsAt       any
+	}{
+		{"ph-item-active", "item_id", "itm1", 120, "datetime('now', '-1 hour')", nil},
+		{"ph-item-future", "item_id", "itm1", 130, "datetime('now', '+1 hour')", nil},
+		{"ph-var-active", "variant_id", "var1", 500, "datetime('now', '-1 hour')", nil},
+		{"ph-var-future", "variant_id", "var1", 510, "datetime('now', '+1 hour')", nil},
+		{"ph-item-closed", "item_id", "itm1", 100, "datetime('now', '-3 hours')", closedEndsAt},
+	} {
+		mustExec(t, replica,
+			`INSERT INTO price_history (id, `+row.col+`, price, starts_at, ends_at) VALUES (?, ?, ?, `+row.startsAt+`, ?)`,
+			row.id, row.ref, row.price, row.endsAt)
+	}
+
+	pos := NewPOSRepo(replica.DB)
+	resolve := func(itemID, variantID string) int64 {
+		t.Helper()
+		p, err := pos.ResolveCurrentPrice(ctx, itemID, variantID)
+		if err != nil {
+			t.Fatalf("resolve price item=%q variant=%q: %v", itemID, variantID, err)
+		}
+		return p
+	}
+	// Precondition — proves the setup really is the divergence the ADR
+	// describes: before the sync, the stale open rows win over base_price.
+	if got := resolve("itm1", ""); got != 120 {
+		t.Fatalf("precondition: stale open item row should win before sync, got %d", got)
+	}
+	if got := resolve("", "var1"); got != 500 {
+		t.Fatalf("precondition: stale open variant row should win before sync, got %d", got)
+	}
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if _, ok := bundle.Tables["price_history"]; ok {
+		t.Fatal("price_history must NOT travel in the admin bundle (ADR-0099 Decision 1)")
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	// The user-visible property: checkout now resolves the synced price.
+	if got := resolve("itm1", ""); got != 150 {
+		t.Errorf("item: satellite still resolves stale price_history override after sync: got %d, want synced base_price 150", got)
+	}
+	if got := resolve("", "var1"); got != 550 {
+		t.Errorf("variant: satellite still resolves stale price_history override after sync: got %d, want synced price 550", got)
+	}
+
+	// Every previously-open row — active AND future-dated, item AND variant
+	// — is now closed.
+	for _, id := range []string{"ph-item-active", "ph-item-future", "ph-var-active", "ph-var-future"} {
+		var endsAt sql.NullString
+		if err := replica.QueryRow(`SELECT ends_at FROM price_history WHERE id = ?`, id).Scan(&endsAt); err != nil {
+			t.Fatalf("read %s: %v", id, err)
+		}
+		if !endsAt.Valid {
+			t.Errorf("%s: still open (ends_at IS NULL) after sync", id)
+		}
+	}
+
+	// The future-dated rows must stay dead once their starts_at arrives —
+	// simulate that moment passing and check the lookup still falls
+	// through to the synced price (this is the case the ADR's first draft
+	// got wrong by closing only currently-active rows).
+	mustExec(t, replica, `UPDATE price_history SET starts_at = datetime('now', '-1 minute') WHERE id IN ('ph-item-future', 'ph-var-future')`)
+	if got := resolve("itm1", ""); got != 150 {
+		t.Errorf("item: future-dated stale row came back to life once its starts_at arrived: got %d, want 150", got)
+	}
+	if got := resolve("", "var1"); got != 550 {
+		t.Errorf("variant: future-dated stale row came back to life once its starts_at arrived: got %d, want 550", got)
+	}
+
+	// An already-closed row is inert and must be left exactly as it was —
+	// proves the step closes open rows only, not every row unconditionally.
+	var got string
+	if err := replica.QueryRow(`SELECT ends_at FROM price_history WHERE id = 'ph-item-closed'`).Scan(&got); err != nil {
+		t.Fatalf("read closed row: %v", err)
+	}
+	if got != closedEndsAt {
+		t.Errorf("already-closed row was touched: ends_at %q, want untouched %q", got, closedEndsAt)
+	}
+}
