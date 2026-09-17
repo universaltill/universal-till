@@ -46,6 +46,18 @@
   --success-tint: rgba(22, 163, 74, .12);
   --danger-tint: rgba(220, 38, 38, .1);
   --warning-tint: rgba(217, 119, 6, .12);
+  /* ut-docs#2207: same split as the tint BACKGROUNDS above, one step later
+     — the notice/tag/block BORDER colours (.pos-notice.success/.error,
+     .notice-block-warn/-success) were still a literal rgba() at .35 alpha,
+     so Monochrome's tint fix left a colourless wash with a colored outline.
+     Defaults are exactly the literal values every call site used before
+     this token existed, so the four themes that never override these
+     render pixel-identical to before; monochrome.css overrides all three
+     to a neutral grayscale border instead, same alpha, same reasoning as
+     its tint override just above. */
+  --success-tint-border: rgba(22, 163, 74, .35);
+  --danger-tint-border: rgba(220, 38, 38, .35);
+  --warning-tint-border: rgba(217, 119, 6, .35);
   --radius: 10px;
   --radius-lg: 14px;
   --shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 1px 3px rgba(15, 23, 42, .08);
@@ -2678,9 +2690,9 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
 .pos-notice.info { background: rgba(37, 99, 235, .1); color: var(--accent);
   border-color: rgba(37, 99, 235, .3); }
 .pos-notice.success { background: var(--success-tint); color: var(--success);
-  border-color: rgba(22, 163, 74, .35); }
+  border-color: var(--success-tint-border); }
 .pos-notice.error { background: var(--danger-tint); color: var(--danger);
-  border-color: rgba(220, 38, 38, .35); }
+  border-color: var(--danger-tint-border); }
 .notice-dismiss { flex: 0 0 auto; background: transparent; border: none;
   color: inherit; font: inherit; font-size: 1rem; cursor: pointer;
   padding: .15rem .4rem; border-radius: 6px; min-height: 0; line-height: 1; }
@@ -3274,13 +3286,13 @@ tr.row-warn td { background: var(--warning-tint); }
    catalogue-import currency-confirmation prompt) rendered with just
    `class="row-warn"` got NO background/border at all, reading as plain body
    text. Same amber palette as the row variant, block-shaped instead. */
-.notice-block-warn { background: var(--warning-tint); border: 1px solid rgba(217, 119, 6, .35);
+.notice-block-warn { background: var(--warning-tint); border: 1px solid var(--warning-tint-border);
   border-radius: var(--radius); padding: .7rem .9rem; margin-block-end: .6rem; }
 /* Block-level success notice (ut-docs#1171): same shape as .notice-block-warn
    above, --success palette instead of --warning — the catalogue import's
    post-commit summary needs to read as unmistakably "done", distinct at a
    glance from the (amber) preview/warning state, not just a plain <p>. */
-.notice-block-success { background: var(--success-tint); border: 1px solid rgba(22, 163, 74, .35);
+.notice-block-success { background: var(--success-tint); border: 1px solid var(--success-tint-border);
   border-radius: var(--radius); padding: .7rem .9rem; margin-block-end: .6rem; }
 
 /* ---------- Kiosk mode (dedicated till: UT_KIOSK=1) ----------
