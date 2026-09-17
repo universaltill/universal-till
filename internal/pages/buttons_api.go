@@ -1,7 +1,6 @@
 package pages
 
 import (
-	"errors"
 	"html"
 	"net/http"
 	"path/filepath"
@@ -61,7 +60,11 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	// Reorder from the Designer (move-up/move-down buttons, ut-docs#1221 --
-	// formerly drag&drop): codes arrive in display order.
+	// formerly drag&drop) AND from the sell screen's own jiggle edit mode
+	// (ut-docs#2339, app.js's utTileJiggle -- which replaced the
+	// ut-docs#2285 long-press sheet and its POST /api/buttons/move route):
+	// codes arrive in display order, the FULL global list, exactly once per
+	// edit session (on Done), never per drag step.
 	mux.HandleFunc("POST /api/buttons/reorder", func(w http.ResponseWriter, r *http.Request) {
 		if !requirePrimary(w, r) {
 			return
@@ -88,59 +91,14 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
 			return
 		}
-		// ut-docs#2285: the Designer's own drag&drop/move-up/move-down
-		// reorder changes the sale screen's button set too, same as
-		// /api/buttons/move|remove|add below -- see buttons.html's root
-		// comment on buttons-changed.
+		// ut-docs#2285: the Designer's own move-up/move-down reorder changes
+		// the sale screen's button set too, same as /api/buttons/remove|add
+		// below -- see buttons.html's root comment on buttons-changed. (The
+		// sell screen's jiggle-mode Done, ut-docs#2339, posts here as well;
+		// its own DOM already shows the new order, so that refetch is a
+		// harmless re-render from the now-persisted truth.)
 		w.Header().Set("HX-Trigger", "buttons-changed")
 		w.WriteHeader(http.StatusNoContent)
-	})
-
-	// The sell-screen tile's long-press/right-click sheet (ut-docs#2285):
-	// GET renders it for one tile; POST /api/buttons/move relocates that
-	// tile next to its nearest same-category neighbour (ui.ButtonStore.Move)
-	// and re-renders the SAME sheet so it stays open with the now-current
-	// edge buttons disabled. Both share renderTileSheet below so the
-	// code->button lookup (and the 404-vs-500 distinction) is written once.
-	mux.HandleFunc("GET /ui/pos/tile-sheet", func(w http.ResponseWriter, r *http.Request) {
-		code := strings.TrimSpace(r.URL.Query().Get("code"))
-		renderer, err := tileSheetRenderer(w, r)
-		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
-			return
-		}
-		renderTileSheet(w, r, d, renderer, code)
-	})
-
-	mux.HandleFunc("POST /api/buttons/move", func(w http.ResponseWriter, r *http.Request) {
-		if !requirePrimary(w, r) {
-			return
-		}
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		code := strings.TrimSpace(r.Form.Get("code"))
-		dir, err := strconv.Atoi(strings.TrimSpace(r.Form.Get("dir")))
-		if err != nil || (dir != 1 && dir != -1) {
-			common.LocalizedError(w, r, http.StatusBadRequest, buttonsErrorKey)
-			return
-		}
-		if _, err := d.BtnStore.Move(r.Context(), code, dir); err != nil {
-			if errors.Is(err, ui.ErrButtonNotFound) {
-				common.LocalizedError(w, r, http.StatusNotFound, buttonsErrorKey)
-				return
-			}
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
-			return
-		}
-		w.Header().Set("HX-Trigger", "buttons-changed")
-		renderer, err := tileSheetRenderer(w, r)
-		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
-			return
-		}
-		renderTileSheet(w, r, d, renderer, code)
 	})
 
 	// Admin add/remove
@@ -218,39 +176,4 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		_ = renderer.Render(w, "buttons_search_results", map[string]any{"Results": results})
 	})
-}
-
-// tileSheetRenderer builds the "tile_sheet" partial's renderer, same
-// (layout, page, partial) construction pattern every other route in this
-// file uses — ui.NewRenderer's own per-tuple cache (see its doc comment)
-// means this is cheap to call once per request rather than threading a
-// renderer through registerButtonsAPI's closures.
-func tileSheetRenderer(w http.ResponseWriter, r *http.Request) (*ui.Renderer, error) {
-	funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-	return ui.NewRenderer(
-		filepath.Join("web", "ui", "layouts", "base.html"),
-		filepath.Join("web", "ui", "pages", "index.html"),
-		filepath.Join("web", "ui", "partials", "tile_sheet.html"),
-		funcs,
-	)
-}
-
-// renderTileSheet resolves code against the CURRENT button list and
-// writes the "tile_sheet" fragment — shared by GET /ui/pos/tile-sheet and
-// POST /api/buttons/move's own re-render, so the code->button lookup (and
-// its 404 handling) is written exactly once. isReplica (ui.TileSheetView's
-// own field) is resolved here, not inside internal/ui, since only this
-// package has access to common.Deps.SyncPrimaryURL.
-func renderTileSheet(w http.ResponseWriter, r *http.Request, d *common.Deps, renderer *ui.Renderer, code string) {
-	isReplica := d.SyncPrimaryURL(r.Context()) != ""
-	view, ok, err := d.BtnStore.BuildTileSheetView(code, isReplica)
-	if err != nil {
-		common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
-		return
-	}
-	if !ok {
-		common.LocalizedError(w, r, http.StatusNotFound, buttonsErrorKey)
-		return
-	}
-	_ = renderer.Render(w, "tile_sheet", view)
 }

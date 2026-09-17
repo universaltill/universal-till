@@ -51,15 +51,13 @@
        with modifier groups; closed by its own Cancel/submit handlers. -->
   <dialog id="modifier-modal" class="modifier-modal"></dialog>
 
-  <!-- ut-docs#2285: a long-press (~500ms hold, cancelled by >10px movement)
-       or a right-click/contextmenu on a sell-screen tile (app.js's
-       utTileLongPress) opens this with Move earlier/later, Remove from the
-       quick buttons and Edit-in-catalog actions for that one tile — see
-       web/ui/partials/tile_sheet.html for the fragment it's populated
-       with. Opened with .show(), NEVER showModal() — same ut-docs#1385
-       reasoning as #modifier-modal just above: the left nav rail
-       (status/lock/exit-to-OS) must stay reachable while this is open. -->
-  <dialog id="tile-sheet" class="modifier-modal tile-sheet" aria-label="{{ T "tile_sheet.aria" }}"></dialog>
+  <!-- ut-docs#2339: the ut-docs#2285 per-tile long-press sheet
+       (<dialog id="tile-sheet">) that used to sit here is gone -- a
+       long-press/right-click on a tile now puts the WHOLE grid into an
+       iOS-style jiggle edit mode in place (app.js's utTileJiggle, the
+       .tile-cell badges + .jiggle-bar in web/ui/partials/buttons.html).
+       Nothing overlays the screen, so the nav rail's status/lock/exit stay
+       reachable throughout, same as before. -->
 
   <!-- Name-this-tab step for Hold Sale (ut-docs#46): optional free-text
        label so multiple concurrent held sales read like "Tab 1" instead
