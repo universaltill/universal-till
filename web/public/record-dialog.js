@@ -76,6 +76,18 @@
   var snapshots = typeof WeakMap === 'function' ? new WeakMap() : null;
   // The element that opened each dialog, so close() can hand focus back.
   var openers = typeof WeakMap === 'function' ? new WeakMap() : null;
+  // ut-docs#2338: NOT mere belt-and-braces on top of app.css's
+  // reduced-motion wildcard (independent review correction) -- that
+  // wildcard zeroes animation-duration, but with fill-mode: both a
+  // 0-duration run still computes the END keyframe's `transform: scale(1)`
+  // as this element's style. Per the CSS Transforms spec any transform
+  // value OTHER than the literal `none` establishes a new containing
+  // block for `position: fixed` descendants, even the identity `scale(1)`
+  // -- so relying on the CSS alone risks the dialog quietly becoming its
+  // own fixed-descendants' containing block for as long as the class is
+  // present. Never adding the class at all for a reduced-motion user is
+  // what actually avoids that, not just a redundant second guard.
+  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
 
   function serialize(form) {
     // What the server would receive, as one comparable string.
@@ -261,7 +273,14 @@
       dialog.dispatchEvent(new CustomEvent('record-dialog:open', { bubbles: true, detail: { row: row || null, mode: mode } }));
     }
     if (openers && !dialog.open) openers.set(dialog, opener || document.activeElement);
-    if (!dialog.open) dialog.show();
+    // ut-docs#2338: fade+scale in on open (app.css's .ut-dialog-fx) --
+    // zero added latency, .show() already runs synchronously right here;
+    // never applied to close() below, since delaying the native .close()
+    // for an exit animation would add latency to Cancel/Save.
+    if (!dialog.open) {
+      if (!(reduceMotion && reduceMotion.matches)) dialog.classList.add('ut-dialog-fx');
+      dialog.show();
+    }
     if (form && snapshots) snapshots.set(dialog, serialize(form));
     // Focus on open is fine (it follows a deliberate tap); nothing here ever
     // focuses on page load. First ENABLED field, not the first focusable —
@@ -541,4 +560,28 @@
     init();
   }
   document.addEventListener('htmx:afterSwap', function () { bind(document); bindStatusRow(document); reapplyFilters(); });
+
+  // ut-docs#2338: strip the one-shot open ease once it has played (mirrors
+  // app.js's identical .ut-swap-fx cleanup). A reduced-motion user never
+  // gets the class added in the first place (open() above), so this never
+  // fires for them at all.
+  //
+  // No restart guard needed for a dialog opened again before this fires
+  // (independent review, ut-docs#2338): close() sets `dialog.open` false,
+  // and app.css's `.record-dialog:not([open]) { display: none }` then
+  // CANCELS whatever animation was still running -- `animationcancel`,
+  // not `animationend` -- so this listener never even sees a
+  // rapid-close-then-reopen case. The class is simply still present when
+  // the dialog is next `.show()`n; per the CSS Animations spec a
+  // `display: none` interruption resets the animation, so it restarts
+  // cleanly from `from` and that run's own `animationend` cleans up here
+  // as normal. (NOT because open() is only reachable when `!dialog.open`
+  // -- that was this card's own first, incorrect justification for
+  // skipping a restart guard; the display:none/animationcancel mechanism
+  // above is the real reason.)
+  document.addEventListener('animationend', function (e) {
+    if (e.animationName === 'ut-dialog-in' && e.target && e.target.classList) {
+      e.target.classList.remove('ut-dialog-fx');
+    }
+  });
 })();

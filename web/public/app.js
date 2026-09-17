@@ -2004,14 +2004,22 @@ window.utTabBarFade = function (el) {
       t = (t.id && document.getElementById(t.id)) || d.elt;
     }
     if (!t || !t.classList || t === document.body || t === document.documentElement) return;
+    // ut-docs#2338: the rail-driven in-panel swaps (#items-panel,
+    // #admin-panel, #manual-panel -- same allowlist as the X-UT-Page-Title
+    // listener above) are master-detail navigation, not a live update --
+    // app.css's .ut-panel-fx (a slightly longer, still zero-latency,
+    // opacity-only ease) replaces the generic .ut-swap-fx for these
+    // targets specifically.
+    var isPanelNav = ['items-panel', 'admin-panel', 'manual-panel'].indexOf(t.id) !== -1;
+    var cls = isPanelNav ? 'ut-panel-fx' : 'ut-swap-fx';
     // Restart only when an ease is still running (a second swap inside
     // 150 ms) — the forced reflow is not free on the sale screen's basket.
-    if (t.classList.contains('ut-swap-fx')) { t.classList.remove('ut-swap-fx'); void t.offsetWidth; }
-    t.classList.add('ut-swap-fx');
+    if (t.classList.contains(cls)) { t.classList.remove(cls); void t.offsetWidth; }
+    t.classList.add(cls);
   });
   document.addEventListener('animationend', function (e) {
-    if (e.animationName === 'ut-swap-in' && e.target && e.target.classList) {
-      e.target.classList.remove('ut-swap-fx');
+    if ((e.animationName === 'ut-swap-in' || e.animationName === 'ut-panel-in') && e.target && e.target.classList) {
+      e.target.classList.remove('ut-swap-fx', 'ut-panel-fx');
     }
   });
 })();
