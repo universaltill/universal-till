@@ -188,6 +188,66 @@ func TestCatalogHandlers_CatalogManagementGate_PageRoutes(t *testing.T) {
 	}
 }
 
+// ut-docs#2374: six GET /api/catalog/* fragment endpoints carried no gate
+// at all -- #2357 only gated the three full-PAGE GET routes above, and this
+// package's mutating routes were already gated (ut-docs#2312), but these
+// six read-only fragments were missed entirely. Same disclosure class as
+// both prior cards, same real migrated-schema/real-session rig, just GET
+// with requireCatalogManagement's plain common.LocalizedError response
+// (these are HTMX/API fragments, not full pages, so no
+// requireCatalogManagementPage/httpx.RenderError here).
+func TestCatalogHandlers_CatalogManagementGate_GETFragmentRoutes(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, _ := newCatalogMuxRealSession(t)
+
+	fragmentRoutes := []string{
+		"/api/catalog/lookup?barcode=5449000000996",
+		"/api/catalog/modifier-groups-panel?item_id=itm1",
+		"/api/catalog/variant-options?item_id=itm1",
+		"/api/catalog/item-variants?item_id=itm1",
+		"/api/catalog/item/icon-state?item_id=itm1",
+		"/api/catalog/barcode-backfill",
+	}
+
+	get := func(path string, u auth.User) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req = auth.WithUser(req, u)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	cashier := auth.User{ID: "c1", Role: "cashier"}
+	for _, path := range fragmentRoutes {
+		rec := get(path, cashier)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("cashier GET %s = %d, want 403: %s", path, rec.Code, rec.Body.String())
+		}
+	}
+
+	for _, role := range []string{"manager", "admin", "super_admin"} {
+		mgr := auth.User{ID: "u-" + role, Role: role}
+		for _, path := range fragmentRoutes {
+			if rec := get(path, mgr); rec.Code == http.StatusForbidden {
+				t.Errorf("%s GET %s = 403, want past the catalog_management gate: %s", role, path, rec.Body.String())
+			}
+		}
+	}
+}
+
+// No session at all must be refused on the GET fragment routes too, same
+// contract as the mutating routes' TestCatalogHandlers_CatalogManagementGate_NoSessionDenied.
+func TestCatalogHandlers_CatalogManagementGate_GETFragmentRoutesNoSessionDenied(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, _ := newCatalogMuxRealSession(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/catalog/item-variants?item_id=itm1", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("no-session GET /api/catalog/item-variants = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+}
+
 // No session at all must be refused on the page routes too, matching
 // TestCatalogHandlers_CatalogManagementGate_NoSessionDenied's API-route
 // contract.
