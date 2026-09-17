@@ -204,6 +204,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// Barcode → open product databases; pre-fills the new-item form
 	// (G15 increment 1). Back-office convenience only, fails soft offline.
 	mux.HandleFunc("GET /api/catalog/lookup", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		barcode := strings.TrimSpace(r.URL.Query().Get("barcode"))
 		if !productlookup.ValidBarcode(barcode) {
 			writeJSON(w, http.StatusBadRequest, nil, "barcode must be 6-14 digits")
@@ -562,12 +565,18 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// its container/shape is its own (#modifier-groups-modal-list, not
 	// #catalog-variants).
 	mux.HandleFunc("GET /api/catalog/modifier-groups-panel", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		itemID := strings.TrimSpace(r.URL.Query().Get("item_id"))
 		renderItemModifierGroupsPanel(w, r, itemID, "")
 	})
 
 	// Variant options as JSON — the labels form's variant picker.
 	mux.HandleFunc("GET /api/catalog/variant-options", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		itemID := strings.TrimSpace(r.URL.Query().Get("item_id"))
 		variants, err := repo.VariantsForItem(r.Context(), itemID)
 		if err != nil {
@@ -705,6 +714,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 
 	// The per-item editor: all of one item's variants and barcodes, editable.
 	mux.HandleFunc("GET /api/catalog/item-variants", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		renderVariantsPanel(w, r, strings.TrimSpace(r.URL.Query().Get("item_id")), false)
 	})
 
@@ -1667,6 +1679,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// this item's actual name/category — so a still-imageless item shows a
 	// sensible preselected tile instead of nothing.
 	mux.HandleFunc("GET /api/catalog/item/icon-state", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		itemID := strings.TrimSpace(r.URL.Query().Get("item_id"))
 		if itemID == "" {
 			writeJSON(w, http.StatusBadRequest, nil, "item_id required")
@@ -1946,6 +1961,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// which stays load-bearing for the real write path (see AddBarcode
 	// below and BarcodeOwner's own doc comment).
 	mux.HandleFunc("GET /api/catalog/barcode-backfill", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		locale := httpx.ResolveLocale(w, r)
 		funcs := httpx.FuncsFor(locale)
 		T := funcs["T"].(func(string) string)
