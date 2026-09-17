@@ -1502,23 +1502,35 @@ function initOfflineOverride(updateFn){
   function persistOrder() {
     var codes = orderedCodes();
     if (!codes.length) return Promise.resolve();
-    var body = new URLSearchParams();
-    codes.forEach(function (c) { body.append('codes', c); });
-    // A plain fetch, same as buttons_admin.html's persistOrder: this is
-    // one localhost call to the till's own Go backend, never a cloud
-    // round-trip, so it works fully offline. Not htmx, so the page-level
-    // htmx:responseError banner never sees it -- surfaced by hand below,
-    // with the server's own localized text (a 409 replica refusal says
-    // exactly why) rather than the generic fallback where one exists.
-    return fetch('/api/buttons/reorder', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString()
-    }).then(function (res) {
-      if (res.ok) { refreshPositions(); return; }
-      return res.text().then(function (text) {
-        showAlert((text || '').trim(), 'server');
-        refetchGrid(); // the DOM shows an order that never took -- reload it
+    // ut-docs#2312 (found during that card's own merge with this one):
+    // /api/buttons/reorder gates on catalog_management (checkOrElevate) --
+    // a plain fetch can't tell a real 200 success apart from a 200 carrying
+    // the elevation-prompt HTML (needsElevation), so it would have treated
+    // "manager approval needed" as success, called refreshPositions(), and
+    // left the reorder silently unpersisted with no way for a cashier to
+    // ever see the PIN prompt. window.utPostWithElevation (below) is the
+    // established raw-fetch counterpart of the htmx OOB-swap dialog flow
+    // every other checkOrElevate site gets for free -- buttons_admin.html's
+    // own persistOrder uses the identical pattern for the Designer's
+    // reorder, which hits this same route. A real success or a real
+    // failure both resolve below; a needs-PIN response opens the dialog
+    // itself and is handled internally, never reaching onDone until the
+    // dialog's own retry resolves it.
+    var fd = new FormData();
+    codes.forEach(function (c) { fd.append('codes', c); });
+    return new Promise(function (resolve) {
+      window.utPostWithElevation('/api/buttons/reorder', fd, function (res) {
+        if (res.ok) { refreshPositions(); resolve(); return; }
+        res.text().then(function (text) {
+          showAlert((text || '').trim(), 'server');
+          refetchGrid(); // the DOM shows an order that never took -- reload it
+        }).then(resolve, resolve);
+      }, function () {
+        // Dialog cancelled: nothing was persisted -- reload so the DOM
+        // matches the real, unsaved order rather than the dragged-to
+        // one it's still showing.
+        refetchGrid();
+        resolve();
       });
     }).catch(function () {
       showAlert('', 'network');

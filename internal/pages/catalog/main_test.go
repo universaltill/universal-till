@@ -32,5 +32,17 @@ func TestMain(m *testing.M) {
 		panic("TestMain: load locales: " + err.Error())
 	}
 	httpx.InitI18n(i18n, "en")
+	// ut-docs#2312: every mutating handler in this package now gates on the
+	// catalog_management permission (requireCatalogManagement, handlers.go)
+	// -- a check that short-circuits to allowed under the SAME UT_AUTH=off
+	// escape hatch internal/pages.canPerform already honours. Setting it
+	// once here, for the whole package's test binary, means the ~28
+	// existing test files in this package -- none of which set up an
+	// AuthSvc/session, since none of these routes carried a permission
+	// check before this card -- keep passing unchanged; a test that wants
+	// to exercise the real gate (cashier denied / manager allowed) opts
+	// back in with its own t.Setenv("UT_AUTH", "on"), which os/exec-style
+	// t.Setenv restores back to "off" once that one test ends.
+	_ = os.Setenv("UT_AUTH", "off")
 	os.Exit(m.Run())
 }
