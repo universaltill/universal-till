@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -681,5 +682,237 @@ func TestBuildCloudHooks_WiresTillSettings(t *testing.T) {
 	}
 	if v, _, _ := dp.Settings.Get(ctx, keyReceiptFooter); v != "Thanks" {
 		t.Fatalf("stored footer = %q", v)
+	}
+}
+
+// --- upsert_category (ut-docs#2323, ADR-0095 Decision 1) ---
+
+// findCategoryByName returns the admin row for an exact-name category, or
+// ok=false. Test-only lookup over the same repo read the categories admin
+// page uses.
+func findCategoryByName(t *testing.T, dp *common.Deps, name string) (data.CategoryAdminRow, bool) {
+	t.Helper()
+	rows, err := data.NewCatalogRepo(dp.Db).ListCategoriesForAdmin(t.Context())
+	if err != nil {
+		t.Fatalf("list categories: %v", err)
+	}
+	for _, r := range rows {
+		if r.Name == name {
+			return r, true
+		}
+	}
+	return data.CategoryAdminRow{}, false
+}
+
+func countCategories(t *testing.T, dp *common.Deps) int {
+	t.Helper()
+	rows, err := data.NewCatalogRepo(dp.Db).ListCategoriesForAdmin(t.Context())
+	if err != nil {
+		t.Fatalf("list categories: %v", err)
+	}
+	return len(rows)
+}
+
+// Empty id creates through CreateCategoryWithColor (active, colour stored);
+// a present id updates name AND colour through UpdateCategory — the same two
+// repo calls categories_page.go's POST handlers make.
+func TestCloudUpsertCategory_CreateThenUpdate(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	before := countCategories(t, dp)
+
+	msg, err := cloudUpsertCategory(ctx, dp, "", "Drinks", "#0f172a")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if msg != "created category Drinks" {
+		t.Fatalf("create msg = %q", msg)
+	}
+	row, ok := findCategoryByName(t, dp, "Drinks")
+	if !ok {
+		t.Fatalf("Drinks not created")
+	}
+	if row.Color != "#0f172a" || !row.IsActive || row.ParentID != "" {
+		t.Fatalf("created row = %+v", row)
+	}
+	if got := countCategories(t, dp); got != before+1 {
+		t.Fatalf("category count = %d, want %d", got, before+1)
+	}
+
+	msg, err = cloudUpsertCategory(ctx, dp, row.ID, "Hot drinks", "#4338ca")
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if msg != "updated category Hot drinks" {
+		t.Fatalf("update msg = %q", msg)
+	}
+	if _, still := findCategoryByName(t, dp, "Drinks"); still {
+		t.Fatalf("old name still present after rename")
+	}
+	updated, ok := findCategoryByName(t, dp, "Hot drinks")
+	if !ok || updated.ID != row.ID {
+		t.Fatalf("renamed row = %+v (ok=%v), want same id %s", updated, ok, row.ID)
+	}
+	if updated.Color != "#4338ca" || updated.SortOrder != row.SortOrder || !updated.IsActive {
+		t.Fatalf("updated row = %+v (sort order and active flag must be untouched)", updated)
+	}
+
+	// An empty colour on update clears it ("No colour"), exactly like the
+	// picker's blank tile — not "leave as is".
+	if _, err := cloudUpsertCategory(ctx, dp, row.ID, "Hot drinks", ""); err != nil {
+		t.Fatalf("clear colour: %v", err)
+	}
+	cleared, _ := findCategoryByName(t, dp, "Hot drinks")
+	if cleared.Color != "" {
+		t.Fatalf("colour after clear = %q, want empty", cleared.Color)
+	}
+	if got := countCategories(t, dp); got != before+1 {
+		t.Fatalf("updates must not add rows: count = %d, want %d", got, before+1)
+	}
+}
+
+// Colour is checked against the SAME fixed palette the local dialog checks
+// (catalogtypes.ValidItemColor — a real allowlist, the value lands in a CSS
+// custom property). A refused colour writes nothing, on create or update.
+func TestCloudUpsertCategory_RefusesOffPaletteColourWithoutWriting(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if _, err := cloudUpsertCategory(ctx, dp, "", "Bakery", "#0f766e"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	seeded, _ := findCategoryByName(t, dp, "Bakery")
+	before := countCategories(t, dp)
+
+	for _, bad := range []string{"#ff0000", "red", "#0f172a;--x:1", "0f172a"} {
+		if _, err := cloudUpsertCategory(ctx, dp, "", "Evil", bad); err == nil {
+			t.Fatalf("create with colour %q: want refusal", bad)
+		}
+		if _, err := cloudUpsertCategory(ctx, dp, seeded.ID, "Bakery renamed", bad); err == nil {
+			t.Fatalf("update with colour %q: want refusal", bad)
+		}
+	}
+	if _, created := findCategoryByName(t, dp, "Evil"); created {
+		t.Fatalf("refused create must not write a row")
+	}
+	if got := countCategories(t, dp); got != before {
+		t.Fatalf("category count changed on refusal: %d -> %d", before, got)
+	}
+	after, _ := findCategoryByName(t, dp, "Bakery")
+	if after.ID != seeded.ID || after.Color != "#0f766e" {
+		t.Fatalf("refused update must not touch the row: %+v", after)
+	}
+}
+
+// Every palette colour, and blank, is accepted on create.
+func TestCloudUpsertCategory_AcceptsEveryPaletteColour(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	for i, c := range catalogtypes.ItemColors() {
+		name := "Palette " + c.Key
+		if _, err := cloudUpsertCategory(ctx, dp, "", name, c.Hex); err != nil {
+			t.Fatalf("colour %d %q: %v", i, c.Hex, err)
+		}
+		row, ok := findCategoryByName(t, dp, name)
+		if !ok || row.Color != c.Hex {
+			t.Fatalf("colour %q stored as %+v", c.Hex, row)
+		}
+	}
+	if _, err := cloudUpsertCategory(ctx, dp, "", "No colour", ""); err != nil {
+		t.Fatalf("blank colour: %v", err)
+	}
+}
+
+// Directives are at-least-once: a retried CREATE (same name, still no id)
+// must not produce a duplicate category — same "already exists counts as
+// success" rule cloudCreateItem applies. Name match is case-insensitive,
+// like the import path's EnsureCategory. A retried UPDATE is naturally
+// idempotent (same row, same values).
+func TestCloudUpsertCategory_CreateRetryDoesNotDuplicate(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if _, err := cloudUpsertCategory(ctx, dp, "", "Drinks", "#0f172a"); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	before := countCategories(t, dp)
+	first, _ := findCategoryByName(t, dp, "Drinks")
+
+	for _, name := range []string{"Drinks", "drinks", " DRINKS "} {
+		msg, err := cloudUpsertCategory(ctx, dp, "", name, "#4338ca")
+		if err != nil {
+			t.Fatalf("retry %q: %v", name, err)
+		}
+		if !strings.Contains(msg, "already exists") {
+			t.Fatalf("retry %q msg = %q, want an 'already exists' note", name, msg)
+		}
+	}
+	if got := countCategories(t, dp); got != before {
+		t.Fatalf("retry duplicated: %d -> %d categories", before, got)
+	}
+	// The retry is a no-op, not a silent recolour of the existing row.
+	same, _ := findCategoryByName(t, dp, "Drinks")
+	if same.ID != first.ID || same.Color != "#0f172a" {
+		t.Fatalf("existing row changed by retried create: %+v", same)
+	}
+
+	// Update retry: same call twice, one row, same values.
+	for i := 0; i < 2; i++ {
+		if _, err := cloudUpsertCategory(ctx, dp, first.ID, "Drinks", "#0f766e"); err != nil {
+			t.Fatalf("update retry %d: %v", i, err)
+		}
+	}
+	if got := countCategories(t, dp); got != before {
+		t.Fatalf("update retry duplicated: %d -> %d", before, got)
+	}
+}
+
+// Unknown id and blank name surface the repo's own errors as the directive
+// result (visible in the cloud's result column), writing nothing.
+func TestCloudUpsertCategory_UnknownIDAndBlankName(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	before := countCategories(t, dp)
+
+	if _, err := cloudUpsertCategory(ctx, dp, "no-such-category", "Ghost", "#0f172a"); !errors.Is(err, data.ErrCategoryNotFound) {
+		t.Fatalf("unknown id: err = %v, want ErrCategoryNotFound", err)
+	}
+	if _, err := cloudUpsertCategory(ctx, dp, "", "   ", "#0f172a"); !errors.Is(err, data.ErrCategoryNameRequired) {
+		t.Fatalf("blank name on create: err = %v, want ErrCategoryNameRequired", err)
+	}
+	if got := countCategories(t, dp); got != before {
+		t.Fatalf("failed calls wrote rows: %d -> %d", before, got)
+	}
+	if _, ghost := findCategoryByName(t, dp, "Ghost"); ghost {
+		t.Fatalf("unknown-id update must not fall back to creating")
+	}
+}
+
+// The hook set StartCloudSync wires carries UpsertCategory, and it is the
+// palette-checked hook (not a bare repo call).
+func TestBuildCloudHooks_WiresUpsertCategory(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	hooks := buildCloudHooks(dp, nil)
+	if hooks.UpsertCategory == nil {
+		t.Fatalf("UpsertCategory hook not wired")
+	}
+	if _, err := hooks.UpsertCategory(ctx, "", "Wired", "#123456"); err == nil {
+		t.Fatalf("wired UpsertCategory must enforce the colour palette")
+	}
+	msg, err := hooks.UpsertCategory(ctx, "", "Wired", "#be185d")
+	if err != nil {
+		t.Fatalf("wired UpsertCategory create: %v", err)
+	}
+	if msg != "created category Wired" {
+		t.Fatalf("msg = %q", msg)
+	}
+	row, ok := findCategoryByName(t, dp, "Wired")
+	if !ok || row.Color != "#be185d" {
+		t.Fatalf("wired create stored %+v (ok=%v)", row, ok)
+	}
+	if _, err := hooks.UpsertCategory(ctx, row.ID, "Wired 2", ""); err != nil {
+		t.Fatalf("wired UpsertCategory update: %v", err)
+	}
+	if _, ok := findCategoryByName(t, dp, "Wired 2"); !ok {
+		t.Fatalf("wired update did not rename")
 	}
 }
