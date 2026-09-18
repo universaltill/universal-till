@@ -52,6 +52,57 @@
   {{ end }}
 </div>
 
+<div class="card" style="max-width:32rem; margin-top:1rem">
+  <h2>{{ T "plugins.settings.permissions.title" }}</h2>
+  {{ if .Permissions }}
+  <p class="muted">{{ T "plugins.settings.permissions.help" }}</p>
+  <table>
+    <tbody>
+      {{ range .Permissions }}
+      <tr>
+        <td style="font-family:monospace">{{ .Name }}</td>
+        <td>
+          <span class="tag" {{ if .Granted }}style="background:rgba(22,163,74,.12); color:var(--success)"{{ end }}>{{ if .Granted }}{{ T "plugins.settings.permissions.granted" }}{{ else }}{{ T "plugins.settings.permissions.not_granted" }}{{ end }}</span>
+        </td>
+        <td>
+          {{ if .Granted }}
+          <button type="button" class="btn secondary" data-perm-action="revoke" data-perm-name="{{ .Name }}">{{ T "plugins.settings.permissions.action.revoke" }}</button>
+          {{ else }}
+          <button type="button" class="btn secondary" data-perm-action="grant" data-perm-name="{{ .Name }}">{{ T "plugins.settings.permissions.action.grant" }}</button>
+          {{ end }}
+        </td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+  <span id="perm-msg" aria-live="polite"></span>
+  {{ else }}
+  <p class="muted">{{ T "plugins.settings.permissions.none" }}</p>
+  {{ end }}
+</div>
+
+<script>
+(function () {
+  var permMsg = document.getElementById('perm-msg');
+  if (!permMsg) return;
+  document.querySelectorAll('[data-perm-action]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var action = btn.getAttribute('data-perm-action');
+      var name = btn.getAttribute('data-perm-name');
+      permMsg.textContent = '⏳ …';
+      var body = new URLSearchParams({ plugin_id: "{{ .PluginID }}", permission: name });
+      fetch('/api/plugins/permissions/' + action, { method: 'POST', body: body }).then(function (res) {
+        if (res.status === 401) { window.location.href = '/login'; return; }
+        return res.text().then(function (t) {
+          if (res.ok) { window.location.reload(); return; }
+          permMsg.textContent = '✗ ' + t;
+        });
+      }).catch(function (e) { permMsg.textContent = '✗ ' + e; });
+    });
+  });
+})();
+</script>
+
 <script>
 // htmx doesn't swap 4xx responses, so a validation error (e.g. an invalid
 // takeaway rate, served 400 with a localized body) would otherwise surface

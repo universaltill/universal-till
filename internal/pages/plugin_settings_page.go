@@ -296,6 +296,16 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 		Notice     string // i18n key of a disclosure shown above the input (settingNoticeKey); "" = none
 	}
 
+	// permissionView is the read half of the permission-management surface
+	// (ut-docs#2240): the write half (POST /api/plugins/permissions/grant
+	// and /revoke, internal/pages/plugin_api.go) already existed and is
+	// already gated + audited; this page just gives an operator somewhere
+	// to see and act on it, alongside a plugin's other settings.
+	type permissionView struct {
+		Name    string
+		Granted bool
+	}
+
 	mux.HandleFunc("GET /plugins/{id}/settings", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "plugin_management") {
 			http.Redirect(w, r, "/plugins", http.StatusSeeOther)
@@ -331,12 +341,26 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			}
 			views = append(views, sv)
 		}
+		// Display only, same standing as the settings list above — a manifest
+		// read failure here degrades to an empty permissions section rather
+		// than failing the whole page; the write side (plugin_api.go's
+		// grant/revoke handlers) does its own gating independently.
+		perms, err := plugins.ListPluginPermissions(r.Context(), d.Db, pluginID)
+		if err != nil {
+			logging.L().Warnf("plugin settings: could not list permissions for %s (%v) — rendering with none", pluginID, err)
+			perms = nil
+		}
+		permViews := make([]permissionView, 0, len(perms))
+		for _, p := range perms {
+			permViews = append(permViews, permissionView{Name: p.Name, Granted: p.Granted})
+		}
 		httpx.Render("ui/pages/plugin_settings.html", map[string]any{
-			"title":     httpx.T(httpx.RequestLocale(r), "page.title.plugin_settings"),
-			"theme":     d.CurrentState().Theme,
-			"menuItems": d.MenuSnapshot(),
-			"PluginID":  pluginID,
-			"Settings":  views,
+			"title":       httpx.T(httpx.RequestLocale(r), "page.title.plugin_settings"),
+			"theme":       d.CurrentState().Theme,
+			"menuItems":   d.MenuSnapshot(),
+			"PluginID":    pluginID,
+			"Settings":    views,
+			"Permissions": permViews,
 		})(w, r)
 	})
 
