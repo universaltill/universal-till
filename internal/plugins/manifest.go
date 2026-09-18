@@ -171,15 +171,21 @@ func ParseManifest(r io.Reader) (*Manifest, error) {
 
 // ComputeSHA256 calculates the SHA256 checksum of a file.
 //
-// No production caller: every shipped path that needs a bundle hash
-// computes it inline while streaming the bytes it already has in hand
+// No production caller: the two shipped paths that produce a bundle hash
+// compute it inline while streaming the bytes they already have in hand
 // (DownloadManager.Download hashes as it writes the .part file, Exporter
-// hashes the tar.gz as it writes it), rather than re-reading a finished
-// file. Kept as a declared test helper (ut-docs#1566): it is the
-// independent "hash the file on disk" oracle those streaming hashes are
+// hashes the tar.gz as it writes it), and the one shipped path that DOES
+// re-hash a finished file on disk — ManifestVerifier.VerifyArtifact
+// (manifest_verifier.go), wired into installBundleFile by ut-docs#2241 to
+// re-check a staged bundle right before extraction — carries its own
+// inline copy of this same open/io.Copy/sha256/hex loop rather than
+// calling this. Kept as a declared test helper (ut-docs#1566): it is the
+// independent "hash the file on disk" oracle the streaming hashes are
 // checked against (exporter_test.go, and internal/pages'
 // plugins_store_api_test.go across the package boundary), plus its own
 // TestComputeSHA256* cases, which ut-docs' pos-acceptance-matrix.md cites.
+// Folding VerifyArtifact's duplicate loop onto this function is a
+// consolidation question, not a mechanical cleanup, so it is not done here.
 func ComputeSHA256(filePath string) (string, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
