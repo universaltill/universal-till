@@ -71,9 +71,9 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   `data-reset-btn`/`export-run-btn` handlers. `guard-i18n.sh` flags a
   hardcoded prose literal here too (ut-docs#205); a reviewed pre-existing
   exception (not yet migrated) gets a same-line `// i18n:ignore` comment,
-  same escape hatch the Go-side check already uses. Known gap: the guard
-  only scans `web/ui/**/*.html` — shipped JS under `web/public/` isn't
-  covered yet.
+  same escape hatch the Go-side check already uses. The guard also scans
+  shipped JS under `web/public/**/*.js` (excluding `web/public/vendor/`),
+  since ut-docs#453 closed the gap where that tree wasn't covered.
 - **RTL:** the document `dir` is derived from the locale (`httpx.IsRTL`);
   style with **logical** CSS properties (`margin-inline-start`, `text-align:
   start/end`, `padding-inline-*`) — never `left`/`right` — so RTL locales

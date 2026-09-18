@@ -1252,6 +1252,13 @@
   // fetch() blind-replaced #catalog-table's outerHTML with a response that
   // is no longer a table.
   var imageForm = document.getElementById('image-form');
+  var imageT = {
+    uploadErrorPrefix: "{{ T "catalog.image_upload_error_prefix" }}",
+    pickItemFirst: "{{ T "catalog.image_pick_item_first" }}",
+    chooseImage: "{{ T "catalog.image_choose_image" }}",
+    uploading: "{{ T "catalog.image_uploading" }}",
+    uploaded: "{{ T "catalog.image_uploaded" }}"
+  };
   // ut-docs#1326: the "take a photo" input is a separate, unnamed file
   // input (capture="environment") — its picked file is copied into the
   // canonical #image-file (the one with name="image") via DataTransfer so
@@ -1391,16 +1398,16 @@
   imageForm.addEventListener('htmx:responseError', function (ev) {
     ev.stopPropagation();
     var imsg = document.getElementById('image-msg');
-    imsg.textContent = '✗ ' + ((ev.detail.xhr.responseText || '').trim()); // i18n:ignore — pre-existing prefix convention, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
+    imsg.textContent = imageT.uploadErrorPrefix + ((ev.detail.xhr.responseText || '').trim());
   });
   imageForm.addEventListener('submit', function (ev) {
     ev.preventDefault();
     var id = document.getElementById('image-item-id').value;
     var f = document.getElementById('image-file').files[0];
     var imsg = document.getElementById('image-msg');
-    if (!id) { imsg.textContent = '✗ pick an item first (click a row)'; return; } // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
-    if (!f) { imsg.textContent = '✗ choose an image'; return; } // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
-    imsg.textContent = '⏳ uploading…';
+    if (!id) { imsg.textContent = imageT.pickItemFirst; return; }
+    if (!f) { imsg.textContent = imageT.chooseImage; return; }
+    imsg.textContent = imageT.uploading;
     // Same resolve-on-any-response caveat as the item form above
     // (ut-docs#917): the promise also resolves on a 4xx/5xx, so a flag set
     // by the (earlier-firing) responseError listener guards the success
@@ -1412,7 +1419,7 @@
       .then(function () {
         imageForm.removeEventListener('htmx:responseError', markFailed);
         if (failed) return;
-        imsg.textContent = '✓ image updated'; // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
+        imsg.textContent = imageT.uploaded;
         // ut-docs#1844: an upload also changes what the built-in icon
         // grid should show (is_custom becomes true, any previously-pressed
         // built-in tile is no longer current) — without this the grid
@@ -1425,7 +1432,7 @@
         // Network-level failure only (the promise resolves on HTTP error
         // statuses — see above); parity with the old fetch().catch path.
         imageForm.removeEventListener('htmx:responseError', markFailed);
-        imsg.textContent = '✗ ' + NOTICE_MSG.itemFormErrorGeneric;
+        imsg.textContent = imageT.uploadErrorPrefix + NOTICE_MSG.itemFormErrorGeneric;
       });
   });
 

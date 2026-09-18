@@ -13,12 +13,14 @@
 #      breaks (invalid JSON, or a value escaping the attribute) for any
 #      quoted/apostrophe-containing value (ut-docs#19).
 #   5. No hardcoded prose literal assigned to .textContent/.innerHTML inside
-#      an inline <script> block in web/ui/**/*.html — invisible to checks
-#      1-2 (template-only) and check 3 (Go-response-only) alike (ut-docs#205).
-#      Known gap, not yet covered: shipped JS under web/public/ (outside this
-#      check's web/ui/ glob) can carry the same class of hardcoded string —
-#      see ut-docs#205's own follow-up card before assuming this check is
-#      exhaustive.
+#      an inline <script> block in web/ui/**/*.html, or anywhere in shipped
+#      JS under web/public/**/*.js (excluding web/public/vendor/, third-party
+#      code we don't own) — invisible to checks 1-2 (template-only) and
+#      check 3 (Go-response-only) alike (ut-docs#205). The web/public/ half
+#      of this glob closed ut-docs#453's follow-up gap: this check used to
+#      scan only web/ui/**/*.html, and a live instance of the same bug class
+#      shipped in web/public/app.js until it was migrated to source its
+#      strings from server-rendered data-* attributes instead.
 #   6. No hardcoded prose literal assigned straight to pos.Basket.ToastMessage
 #      (the sale screen's single notification field, ut-docs#213) — invisible
 #      to check 3, which only scans literals passed directly to
@@ -233,8 +235,12 @@ if hxvals_hits:
 jsassign_re = re.compile(r'''\.(?:textContent|innerHTML)\s*=\s*(['"])((?:(?!\1)[^\\]|\\.)*)\1''')
 rendernotice_re = re.compile(r'''renderNotice\([^,]+,\s*['"][a-z]+['"]\s*,\s*(['"])((?:(?!\1)[^\\]|\\.)*)\1''')
 tag_re = re.compile(r'<[^>]*>')
+jsassign_files = sorted(glob.glob("web/ui/**/*.html", recursive=True)) + sorted(
+    f for f in glob.glob("web/public/**/*.js", recursive=True)
+    if not f.startswith("web/public/vendor/")
+)
 jsassign_hits = []
-for f in sorted(glob.glob("web/ui/**/*.html", recursive=True)):
+for f in jsassign_files:
     for i, line in enumerate(open(f, encoding="utf-8").read().splitlines(), 1):
         if "i18n:ignore" in line:
             continue
