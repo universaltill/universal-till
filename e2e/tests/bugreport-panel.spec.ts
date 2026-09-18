@@ -403,3 +403,37 @@ test('a dragged panel is pulled back on-screen when the viewport shrinks', async
   expect(after.y).toBeGreaterThanOrEqual(-1);
   assertClean();
 });
+
+// ut-docs#2364: below 480px the rail becomes a top-bar fallback that wraps
+// to 3 rows at 360px (~12rem), but .bugreport-panel's <=480px resting
+// position was a hardcoded 4.6rem left over from a 2-row bar — the panel's
+// own head bar (title, Discard, ✕) opened hidden underneath it, reachable
+// only by scrolling the panel itself. Bounding boxes, not eyeballs: the
+// head bar's box must sit fully below the top bar's box, at both a short
+// (640) and taller (740) phone height, so this isn't a one-height fluke.
+for (const [w, h] of [[360, 640], [360, 740]] as const) {
+  test(`the panel's head bar clears the phone-width top bar at ${w}x${h}`, async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.setViewportSize({ width: w, height: h });
+    await page.goto('/');
+    await expect(page.locator('#basket')).toBeVisible();
+
+    const nav = (await page.locator('.nav').boundingBox())!;
+    await page.getByTestId('bugreport-toggle').click();
+    const panel = page.getByTestId('bugreport-panel');
+    await expect(panel).toBeVisible();
+    const head = (await page.locator('.bugreport-head').boundingBox())!;
+
+    // The head bar's top edge must be at or below the top bar's bottom
+    // edge — no vertical overlap between the two boxes.
+    expect(head.y).toBeGreaterThanOrEqual(nav.y + nav.height - 1);
+    // ...and the two testid controls inside it (Discard, ✕) must actually
+    // be clickable, not just present in a box that happens to clear the
+    // bar — a real interaction, not a coordinate check alone.
+    await expect(page.getByTestId('bugreport-discard')).toBeInViewport();
+    await expect(page.getByTestId('bugreport-close')).toBeInViewport();
+    await page.getByTestId('bugreport-close').click();
+    await expect(panel).toBeHidden();
+    assertClean();
+  });
+}

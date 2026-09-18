@@ -681,6 +681,25 @@ type AckDownloadRequest struct {
 }
 
 // AckDownload acknowledges a completed or failed download.
+//
+// No production caller (ut-docs#1566) — and unlike this file's other
+// unreachable methods, nothing else replaces it: this is an UNWIRED step of
+// a live flow, not a superseded one. Both till-side download paths
+// (MarketplaceInstaller.Install and
+// MarketplaceInstaller.DownloadToStore, internal/plugins/
+// installer_marketplace.go / installer_store.go) issue a token via
+// IssueDownloadToken, download and checksum-verify the bundle, and then
+// never report the outcome back. The server side is real and served:
+// ut-cloud's grpc-gateway exposes POST /v1/download/ack, and its
+// downloadsvc.Service.AckDownload consumes the single-use token and records
+// download-completion/checksum-mismatch metrics — ut-cloud's own comment
+// there names marketplace.Client.AckDownload as "currently unwired". The
+// till's installs work without it (a token just expires instead of being
+// consumed), so this is a marketplace-side accounting gap rather than a
+// till-side bug. Wiring it is a behaviour change outside the dead-code
+// burn-down's scope; left in place with its tests (TestAckDownload,
+// TestAckDownloadServerError) so the client half is ready when that
+// decision is made.
 func (c *Client) AckDownload(ctx context.Context, req *AckDownloadRequest) error {
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -720,6 +739,19 @@ type GetRevocationsResponse struct {
 }
 
 // GetRevocations fetches plugin revocations since a given version.
+//
+// No production caller (ut-docs#1566): superseded by
+// plugins.RevocationChecker.SyncRevocations (internal/plugins/
+// revocation.go), which is the live mechanism — internal/server's
+// BackgroundJobs runs it on a 30-minute ticker whenever a marketplace
+// endpoint is configured, and it fetches GET /v1/revocations over its own
+// http.Client and disables each revoked plugin directly. That
+// implementation never adopted this client method (or its since_version
+// cursor — it re-reads the full feed every tick), so this remains only a
+// typed accessor over the same endpoint, exercised by TestGetRevocations
+// and TestGetRevocationsServerError. Left in place rather than deleted
+// because the two implementations of the same feed are a consolidation
+// question, not a mechanical cleanup.
 func (c *Client) GetRevocations(ctx context.Context, req *GetRevocationsRequest) (*GetRevocationsResponse, error) {
 	reqURL, err := url.JoinPath(c.endpoint(), "/v1/revocations")
 	if err != nil {
@@ -791,6 +823,20 @@ type ReportPluginStatusRequest struct {
 }
 
 // ReportPluginStatus sends plugin installation state to the marketplace.
+//
+// No production caller (ut-docs#1566): superseded by
+// plugins.TelemetryClient.ReportNow (internal/plugins/telemetry_client.go),
+// the live mechanism — internal/server's BackgroundJobs calls it on a
+// 5-minute ticker, it gates on the marketplace.telemetry_opt_in setting
+// (the toggle on the Settings page), and it POSTs to /v1/telemetry/report,
+// the route ut-cloud's grpc-gateway actually serves (see the 2026-07-24
+// telemetry-client-wiring review record). This method predates that
+// wiring: it POSTs to /v1/telemetry/status, a path the marketplace has
+// never served, and gates on config.MarketplaceConfig.TelemetryOptIn (the
+// UT_MARKETPLACE_TELEMETRY_OPT_IN env var), which no live code path reads.
+// Exercised only by TestClient_ReportPluginStatus_OptOut and the three
+// TestReportPluginStatus* tests; a deletion candidate together with them
+// once the config field's fate is decided.
 func (c *Client) ReportPluginStatus(ctx context.Context, req *ReportPluginStatusRequest) error {
 	if !c.cfg.TelemetryOptIn {
 		// Silently skip telemetry if not opted in

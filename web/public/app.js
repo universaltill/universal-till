@@ -37,6 +37,33 @@ window.utCurrency = (function(){
   };
 })();
 
+// ut-docs#2364: below 480px .nav reverts from the fixed-height rail to a
+// horizontal top bar that WRAPS (app.css), so its real height varies with
+// content/locale -- currently 3 rows at 360px -- and nothing CSS-only can
+// track that. Same pattern as public/osk.js's updateReservedHeight(): measure
+// the real element and publish it as a CSS custom property so anything that
+// needs to sit below the bar (currently just .bugreport-panel) reads the
+// true value instead of a guessed rem. Guarded to the <=480px matchMedia
+// only -- above that breakpoint .nav is a full fixed-height rail and
+// measuring it would publish a meaningless value nothing then uses (the var
+// is only referenced inside app.css's own <=480px block).
+(function(){
+  var nav = document.querySelector('.nav');
+  if (!nav) return;
+  var mq = window.matchMedia('(max-width: 480px)');
+  var last = 0;
+  function updateTopbarHeight(){
+    if (!mq.matches) return;
+    var h = nav.getBoundingClientRect().height;
+    if (h > 0 && h !== last) {
+      document.documentElement.style.setProperty('--topbar-h', h + 'px');
+      last = h;
+    }
+  }
+  updateTopbarHeight();
+  window.addEventListener('resize', updateTopbarHeight);
+})();
+
 (function(){
   var buf = "";
   var last = 0;
