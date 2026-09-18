@@ -42,17 +42,18 @@ type heldSaleProxyPrimary struct {
 	lastUpsert  atomic.Value // syncHeldSaleRow
 	lastDelete  atomic.Value // string id
 	lastUpdated atomic.Value // string, the updated_at this fake primary answered with
+	lastCreated atomic.Value // string, the created_at this fake primary answered with
 	applied     bool
 	listRows    []syncHeldSaleRow
 }
 
 // newHeldSaleProxyPrimary's fake upsert handler mimics the real primary's
-// own stamping (ut-docs#2271, sync_held_sales.go): a blank incoming
-// updated_at is stamped with THIS fake primary's clock, never the caller's,
-// and the applied value is always the one handed back on the wire -- so a
-// test asserting the replica's local mirror matches "the primary's value"
-// can read it from lastUpdated rather than from whatever (if anything) it
-// sent.
+// own stamping (ut-docs#2271/#2394, sync_held_sales.go): a blank incoming
+// updated_at/created_at is stamped with THIS fake primary's clock, never
+// the caller's, and the applied value is always the one handed back on the
+// wire -- so a test asserting the replica's local mirror matches "the
+// primary's value" can read it from lastUpdated/lastCreated rather than
+// from whatever (if anything) it sent.
 func newHeldSaleProxyPrimary(t *testing.T, applied bool, listRows ...syncHeldSaleRow) *heldSaleProxyPrimary {
 	t.Helper()
 	p := &heldSaleProxyPrimary{applied: applied, listRows: listRows}
@@ -70,7 +71,12 @@ func newHeldSaleProxyPrimary(t *testing.T, applied bool, listRows ...syncHeldSal
 				updatedAt = time.Now().UTC().Format(heldSaleTimeLayout)
 			}
 			p.lastUpdated.Store(updatedAt)
-			fmt.Fprintf(w, `{"data":{"applied":%v,"updated_at":%q},"error":null}`, p.applied, updatedAt)
+			createdAt := row.CreatedAt
+			if createdAt == "" {
+				createdAt = time.Now().UTC().Format(heldSaleTimeLayout)
+			}
+			p.lastCreated.Store(createdAt)
+			fmt.Fprintf(w, `{"data":{"applied":%v,"updated_at":%q,"created_at":%q},"error":null}`, p.applied, updatedAt, createdAt)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/sync/held-sales/delete":
 			p.deleteCalls.Add(1)
 			var in syncHeldSaleDeleteRequest
@@ -181,6 +187,53 @@ func TestHeldSaleWriteThrough_ReplicaUpsertsOnPrimaryAndMirrorsLocally(t *testin
 	}
 }
 
+// TestHeldSaleWriteThrough_FirstParkCreatedAtIsByteIdenticalOnBothSides is
+// ut-docs#2394, closing the ut-docs#2389 flake at its source: a first park
+// (h.CreatedAt blank, exactly what hold_api.go's parkCurrentBasket sends)
+// used to let the primary's insert and the replica's local mirror each take
+// their OWN independent datetime('now') read, which could differ by a
+// second or two under real scheduling jitter between the two writes. The
+// fix mirrors the primary's own stamped created_at back onto the local row
+// instead of re-deriving it -- so the two must now be BYTE-IDENTICAL, not
+// merely close.
+//
+// The fake primary here deliberately answers with a fixed, clearly-not-
+// "now" created_at ("2020-01-01 00:00:00") rather than a real clock
+// stamp: a real clock read on both sides would very likely land in the
+// same wall-clock SECOND in a fast in-process test with no real network
+// hop, making the assertion pass by timing coincidence even with the
+// actual fix disabled (verified while writing this test -- reverting the
+// production mirroring code still passed a same-clock version of this
+// test). An artificial value only a caller that actually reads and mirrors
+// the wire field can ever produce locally proves the mechanism, not the clock.
+func TestHeldSaleWriteThrough_FirstParkCreatedAtIsByteIdenticalOnBothSides(t *testing.T) {
+	_, dp := newPOSTestDeps(t)
+	repo := data.NewHeldSalesRepo(dp.Db)
+	const primaryStamped = "2020-01-01 00:00:00"
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"data":{"applied":true,"updated_at":%q,"created_at":%q},"error":null}`, primaryStamped, primaryStamped)
+	}))
+	defer primary.Close()
+	setReplicaSettings(t, dp.Settings, primary.URL, "b-123")
+
+	// A genuine first park: CreatedAt blank, same as every real caller.
+	firstPark := proxyTestHeldSale
+	firstPark.CreatedAt = ""
+	outcome, err := heldSaleWriteThrough(context.Background(), dp, repo, firstPark)
+	if err != nil || outcome != heldSaleSyncedPrimary {
+		t.Fatalf("expected the primary to take the write: outcome=%v err=%v", outcome, err)
+	}
+
+	got, ok := heldSaleRowOnLocal(t, dp, "h1")
+	if !ok {
+		t.Fatal("a primary-applied write must be mirrored into the local row")
+	}
+	if got.CreatedAt != primaryStamped {
+		t.Fatalf("the local mirror's created_at must be BYTE-IDENTICAL to the primary's reported value, not re-derived from this till's own clock (ut-docs#2389's flake was exactly a 1-2s divergence between two independent clock reads): local=%q primary=%q", got.CreatedAt, primaryStamped)
+	}
+}
+
 // The predicate refusal (ADR-0093): the primary answers applied=false --
 // a NEWER write for this id already landed there. Reported back distinctly
 // (so a caller can tell it from an outage), and the write still proceeds
@@ -276,7 +329,7 @@ func TestHeldSaleWriteThrough_ReplicaFallsBackWhenPrimaryAnswersMalformedBody(t 
 	}))
 	defer bad.Close()
 	setReplicaSettings(t, dp.Settings, bad.URL, "b-123")
-	if ok, _, _ := upsertHeldSaleOnPrimary(context.Background(), dp, heldSaleProxyClient, proxyTestHeldSale); ok {
+	if ok, _, _, _ := upsertHeldSaleOnPrimary(context.Background(), dp, heldSaleProxyClient, proxyTestHeldSale); ok {
 		t.Fatal("a 200 with a null data object must report ok=false")
 	}
 }
@@ -286,14 +339,16 @@ func TestHeldSaleWriteThrough_ReplicaFallsBackWhenPrimaryAnswersMalformedBody(t 
 // REPLICA on this version talking to a primary still on the PRE-#2271
 // build. That older primary applies the write and answers
 // `{"applied":true}` with NO updated_at field at all, which decodes to "".
+// The same fake old primary also predates ut-docs#2394, so it omits
+// created_at too -- this test pins both guards at once.
 //
 // The write itself is already correct against such a primary -- its
-// UpsertIfNewer COALESCEs a blank updated_at to its OWN datetime('now'),
-// so the guard is measured against the primary's clock either way, which
-// is the entire point of the fix. What must not happen is the replica
-// treating that missing field as an authoritative "" and mirroring a
-// blank/garbage timestamp locally: the local row must still land, still be
-// marked primary_synced, and still carry a usable updated_at.
+// UpsertIfNewer COALESCEs a blank updated_at/created_at to its OWN
+// datetime('now'), so the guard is measured against the primary's clock
+// either way, which is the entire point of the fix. What must not happen is
+// the replica treating a missing field as an authoritative "" and mirroring
+// a blank/garbage timestamp locally: the local row must still land, still
+// be marked primary_synced, and still carry a usable updated_at/created_at.
 func TestHeldSaleWriteThrough_PreFixPrimaryOmittingUpdatedAtStillMirrors(t *testing.T) {
 	_, dp := newPOSTestDeps(t)
 	repo := data.NewHeldSalesRepo(dp.Db)
@@ -330,6 +385,12 @@ func TestHeldSaleWriteThrough_PreFixPrimaryOmittingUpdatedAtStillMirrors(t *test
 	}
 	if _, err := time.Parse(heldSaleTimeLayout, got.UpdatedAt); err != nil {
 		t.Fatalf("the mirrored updated_at %q must still be a usable %s timestamp: %v", got.UpdatedAt, heldSaleTimeLayout, err)
+	}
+	if strings.TrimSpace(got.CreatedAt) == "" {
+		t.Fatalf("a primary that omits created_at must not leave the local mirror with a blank one, got %+v", got)
+	}
+	if _, err := time.Parse(heldSaleTimeLayout, got.CreatedAt); err != nil {
+		t.Fatalf("the mirrored created_at %q must still be a usable %s timestamp: %v", got.CreatedAt, heldSaleTimeLayout, err)
 	}
 
 	// And the case that actually distinguishes "report nothing" from

@@ -102,9 +102,19 @@ func heldSaleFromSyncRow(row syncHeldSaleRow) data.HeldSale {
 // one, or the primary's own clock, when it left it blank -- so the caller
 // can mirror the row locally under the exact value the primary holds
 // rather than re-deriving one from its own, possibly skewed, clock.
+// CreatedAt (ut-docs#2394) is the same fix applied to the FIRST-park clock
+// read: on a genuine first park the caller sends it blank, and this is the
+// primary's own clock stamp for it, so the caller's local mirror lands the
+// exact same value instead of an independent, possibly-skewed clock read
+// of its own landing a second or two apart (ut-docs#2389's flake). On an
+// update the value is simply echoed back unchanged -- created_at is never
+// touched by the update branch (ut-docs#1918), so it carries no new
+// information there, same as it carries none for a re-park's own
+// caller-supplied HeldOrigin.CreatedAt.
 type syncHeldSaleUpsertResult struct {
 	Applied   bool   `json:"applied"`
 	UpdatedAt string `json:"updated_at"`
+	CreatedAt string `json:"created_at"`
 }
 
 // syncHeldSaleDeleteRequest is POST .../delete's body.
@@ -155,6 +165,17 @@ func registerSyncHeldSales(mux *http.ServeMux, d *common.Deps) {
 		if in.UpdatedAt == "" {
 			in.UpdatedAt = time.Now().UTC().Format(heldSaleTimeLayout)
 		}
+		// ut-docs#2394: same fix as #2271 above, for created_at -- a blank
+		// incoming value (a genuine first park) is stamped with THIS
+		// primary's own clock before the insert, rather than left for the
+		// replica's own, independent clock read on its local mirror to
+		// (mis)match by up to a second or two. A non-blank value (a
+		// re-park's own HeldOrigin.CreatedAt) is honoured as-is, same as
+		// UpdatedAt above.
+		in.CreatedAt = strings.TrimSpace(in.CreatedAt)
+		if in.CreatedAt == "" {
+			in.CreatedAt = time.Now().UTC().Format(heldSaleTimeLayout)
+		}
 		applied, err := repo.UpsertIfNewer(r.Context(), heldSaleFromSyncRow(in))
 		if err != nil {
 			logging.L().Errorf("sync held sale upsert %s from %s: %v", in.ID, till.Name, err)
@@ -164,7 +185,7 @@ func registerSyncHeldSales(mux *http.ServeMux, d *common.Deps) {
 		if !applied {
 			logging.L().Debugf("sync held sale upsert %s from %s: refused, a newer write already holds the row (ADR-0093)", in.ID, till.Name)
 		}
-		writeSyncOrdersJSON(w, http.StatusOK, syncHeldSaleUpsertResult{Applied: applied, UpdatedAt: in.UpdatedAt}, nil)
+		writeSyncOrdersJSON(w, http.StatusOK, syncHeldSaleUpsertResult{Applied: applied, UpdatedAt: in.UpdatedAt, CreatedAt: in.CreatedAt}, nil)
 	})
 
 	// Delete by id. Idempotent -- a delete with nothing to delete is still
