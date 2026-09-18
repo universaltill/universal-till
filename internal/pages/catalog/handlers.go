@@ -58,6 +58,14 @@ type modifierAdminItem struct {
 	// list leaves it nil.
 	InheritedGroups []data.ModifierGroup
 	Target          string
+	// AttachOnly restricts modifier_group_admin.html to attach/detach only —
+	// no inline group/option create/edit/delete (ut-docs#2330, product-owner
+	// request 2026-09-16: the item-editor's own surface should be a
+	// multi-select of EXISTING groups, never a place to author new ones).
+	// Set true only for the item-scoped dialog (renderItemModifierGroupsPanel
+	// below); the shop-wide /modifiers page leaves it false (its zero value)
+	// since that page's whole job is full CRUD.
+	AttachOnly bool
 	// Notice is an already-translated, already-formatted message to show
 	// inline above this fragment (ut-docs#2046, independent-review finding)
 	// — e.g. the detach-guard's refusal. Plain http.Error/LocalizedError
@@ -380,6 +388,38 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		filepath.Join("web", "ui", "partials", "modifier_group_admin.html"),
 	)
 
+	// modifierItemPickerJSON (ut-docs#2330, e2e-caught regression): before
+	// AttachOnly, the item-editor's own nested dialog was the ONLY place a
+	// shop's very first modifier group — for ANY item, not just an
+	// already-modifier-bearing one — ever got created (its "add new group"
+	// form rendered unconditionally, regardless of whether ModifierGroups
+	// was empty). Removing that form from the item-editor without giving
+	// /modifiers an equivalent broke group creation entirely for any item
+	// that isn't already in ListAllShopModifierGroups' result — caught by
+	// osk-decimal-sale-catalog-fields-1284.spec.ts's own two OSK-typing
+	// tests, which create a fresh probe item and its first-ever group.
+	// This is the same id/name/sku picker shape as inventory_page.go's own
+	// pickerItem/ItemsJSON (stock item picker) — reused here rather than a
+	// new type, same JSON shape the modifiers.html script below expects.
+	modifierItemPickerJSON := func(ctx context.Context) template.JS {
+		type pickerItem struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+			SKU  string `json:"sku"`
+		}
+		items, err := repo.ListItems(ctx) // active items only — ListItems' own contract
+		if err != nil {
+			log.Printf("[catalog] modifiers item picker: %v", err)
+			return template.JS("[]")
+		}
+		picker := make([]pickerItem, 0, len(items))
+		for _, it := range items {
+			picker = append(picker, pickerItem{ID: it.ID, Name: it.Name, SKU: it.SKU})
+		}
+		pickerJSON, _ := json.Marshal(picker)
+		return template.JS(pickerJSON)
+	}
+
 	// groupModifierAdminByItem folds a flat, ItemName/ItemID-carrying
 	// modifier-group slice (ListAllShopModifierGroups' own shape) into one
 	// entry per item, preserving the query's own item ordering — the shape
@@ -448,8 +488,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		httpx.RenderWith(modifierGroupAdminFiles, funcs)("modifiers_list", map[string]any{
-			"Groups": groupModifierAdminByItem(groups, "modifiers-list"),
-			"Notice": notice,
+			"Groups":    groupModifierAdminByItem(groups, "modifiers-list"),
+			"Notice":    notice,
+			"ItemsJSON": modifierItemPickerJSON(r.Context()),
 		})(w, r)
 	}
 
@@ -500,6 +541,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			InheritedGroups:  visibleInherited,
 			Target:           "modifier-groups-modal-list",
 			Notice:           notice,
+			AttachOnly:       true,
 		})(w, r)
 	}
 
@@ -853,6 +895,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"theme":        d.CurrentState().Theme,
 			"Groups":       groupModifierAdminByItem(groups, "modifiers-list"),
 			"InItemsShell": httpx.IsFragmentSwap(w, r),
+			"ItemsJSON":    modifierItemPickerJSON(r.Context()),
 		}
 		// ut-docs#1950: same /items rail embedding as /catalog above.
 		if httpx.IsFragmentSwap(w, r) {
@@ -1368,9 +1411,40 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		}
 		_ = r.ParseForm()
 		itemID := strings.TrimSpace(r.Form.Get("itemId"))
-		groupID := strings.TrimSpace(r.Form.Get("groupId"))
-		if itemID == "" || groupID == "" {
+		// ut-docs#2330: the item-editor's attach-only surface is a multi-
+		// select — one submission can carry several groupId values (a
+		// checkbox list, all under the same field name). A single-group
+		// submission (the /modifiers page's own picker, and every existing
+		// caller/test) is just the one-element case of the same slice, so
+		// this stays fully backward compatible with r.Form.Get's old
+		// single-value behavior.
+		var groupIDs []string
+		seen := map[string]bool{}
+		for _, raw := range r.Form["groupId"] {
+			id := strings.TrimSpace(raw)
+			if id == "" || seen[id] {
+				continue
+			}
+			seen[id] = true
+			groupIDs = append(groupIDs, id)
+		}
+		if itemID == "" {
 			http.Error(w, "itemId and groupId required", http.StatusBadRequest)
+			return
+		}
+		if len(groupIDs) == 0 {
+			// ut-docs#2330, independent-review finding: the item-editor's
+			// checkbox list has no client-side `required` (a `<select
+			// required>` can enforce that on ONE field; there is no
+			// equivalent single-attribute guard for "at least one of these
+			// checkboxes"), so submitting with nothing ticked is a real,
+			// reachable UI state — not just a malformed request. A plain
+			// http.Error answers text/plain, which app.js's htmx:beforeSwap
+			// never force-swaps in (same reasoning as every other refusal in
+			// this file), so answering that way here would be a completely
+			// silent no-op on tapping "Attach existing group". Route through
+			// the same Notice-carrying re-render as every other refusal.
+			renderModifierMutationResult(w, r, itemID, http.StatusBadRequest, httpx.T(httpx.RequestLocale(r), "catalog.error.invalid_request"))
 			return
 		}
 		attachable, err := modRepo.ListAttachableModifierGroups(r.Context(), itemID)
@@ -1378,31 +1452,49 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "modifiers.error.server", "catalog", err)
 			return
 		}
-		valid := false
+		attachableIDs := make(map[string]bool, len(attachable))
 		for _, g := range attachable {
-			if g.ID == groupID {
-				valid = true
-				break
+			attachableIDs[g.ID] = true
+		}
+		var valid []string
+		for _, id := range groupIDs {
+			if attachableIDs[id] {
+				valid = append(valid, id)
 			}
 		}
-		if !valid {
+		if len(valid) == 0 {
 			renderModifierMutationResult(w, r, itemID, http.StatusConflict, httpx.T(httpx.RequestLocale(r), "catalog.error.invalid_request"))
 			return
 		}
-		// Appended after itemID's own existing groups (independent-review
-		// finding — see NextGroupSortOrderForItem's own doc comment on why
-		// this must be MAX(sort_order)+1 per item, not a plain count of
-		// either side of the relationship).
-		sortOrder, err := modRepo.NextGroupSortOrderForItem(r.Context(), itemID)
-		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "modifiers.error.server", "catalog", err)
-			return
+		// ut-docs#2330, independent-review finding: a multi-select submission
+		// can be PARTLY stale (e.g. someone else deactivated one of several
+		// checked groups from another tab) without being entirely invalid —
+		// attach the ones that are still good rather than refusing the whole
+		// request, but say so, rather than a silent 200 that only attached
+		// some of what was checked.
+		partial := len(valid) != len(groupIDs)
+		for _, groupID := range valid {
+			// Appended after itemID's own existing groups (independent-review
+			// finding — see NextGroupSortOrderForItem's own doc comment on
+			// why this must be MAX(sort_order)+1 per item, not a plain count
+			// of either side of the relationship). Recomputed per group so
+			// each of a multi-select's attachments gets its own increasing
+			// sort_order rather than all colliding on the same value.
+			sortOrder, err := modRepo.NextGroupSortOrderForItem(r.Context(), itemID)
+			if err != nil {
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "modifiers.error.server", "catalog", err)
+				return
+			}
+			if err := modRepo.LinkGroupToItem(r.Context(), itemID, groupID, sortOrder); err != nil {
+				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
+				return
+			}
 		}
-		if err := modRepo.LinkGroupToItem(r.Context(), itemID, groupID, sortOrder); err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
-			return
+		notice := ""
+		if partial {
+			notice = httpx.T(httpx.RequestLocale(r), "catalog.error.invalid_request")
 		}
-		renderModifierMutationResult(w, r, itemID, http.StatusOK, "")
+		renderModifierMutationResult(w, r, itemID, http.StatusOK, notice)
 	})
 
 	// Detach a modifier group from ONE item, distinct from DeleteGroup

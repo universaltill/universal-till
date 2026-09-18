@@ -1017,7 +1017,7 @@
   "menulayout.title": "Hidden menu tiles",
   "modifiers.add_to_cart": "Add to cart",
   "modifiers.cancel": "Cancel",
-  "modifiers.empty": "No Modifiers yet. Create one from an item's Catalog entry.",
+  "modifiers.empty": "No Modifiers yet — create your first group below.",
   "modifiers.empty_cta": "Open Catalog",
   "modifiers.error.server": "Something went wrong loading Modifiers. Please try again.",
   "modifiers.none_available": "No Modifiers available for this item.",
