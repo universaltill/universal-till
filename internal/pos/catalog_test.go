@@ -89,7 +89,10 @@ func TestUpdateItemAndVariant(t *testing.T) {
 	cat := "cat1"
 	brand := "brand1"
 	tax := "tax1"
-	err := UpdateItem(ctx, db, ItemInput{
+	// Through the live item-update path (UpdateItemReturningWasActive, the
+	// catalog form's only writer) — the plain UpdateItem wrapper this test
+	// used to call was removed as dead by the ut-docs#1566 burn-down.
+	_, err := UpdateItemReturningWasActive(ctx, db, ItemInput{
 		ID:          "itm1",
 		SKU:         "SKU-NEW",
 		Name:        "Apple Updated",

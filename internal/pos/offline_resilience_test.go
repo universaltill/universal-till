@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/data"
 	_ "modernc.org/sqlite"
 )
 
@@ -133,7 +134,7 @@ func TestInventoryLookup_MissingData(t *testing.T) {
 	// DO NOT insert inventory record - simulates missing data
 
 	// Attempt to aggregate inventory for an item with no inventory record
-	qty, err := AggregateInventory(ctx, db, "item-missing", "", "loc-missing")
+	qty, err := data.NewPOSRepo(db).AggregateInventory(ctx, nil, "item-missing", "", "loc-missing")
 
 	// Should return 0 quantity without error (graceful handling)
 	if err != nil {
@@ -155,7 +156,7 @@ func TestInventoryLookup_MissingData(t *testing.T) {
 	}
 
 	// Querying orphaned inventory should not crash
-	qty, err = AggregateInventory(ctx, db, "item-nonexistent", "", "loc-missing")
+	qty, err = data.NewPOSRepo(db).AggregateInventory(ctx, nil, "item-nonexistent", "", "loc-missing")
 	if err != nil {
 		t.Logf("AggregateInventory for orphaned record returned error (expected): %v", err)
 	} else {

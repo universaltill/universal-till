@@ -1,5 +1,13 @@
 package pos
 
+// These tests exercise POSRepo.SearchActiveItems / LookupActiveVariant
+// directly. They used to go through this package's CatalogSearcher
+// pass-through (catalog_search.go), which had no production caller — the
+// live callers (internal/pages/kitchen_stations_page.go, ai_api.go) call the
+// repo directly — and was removed by the ut-docs#1566 dead-code burn-down.
+// The tests stayed because the ut-docs#1176 NULL-SKU regression below is
+// about the repo query itself, not the removed wrapper.
+
 import (
 	"context"
 	"database/sql"
@@ -37,8 +45,7 @@ func TestSearchActiveItems_FiltersInactive(t *testing.T) {
 	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('i1','SKU2','Inactive',200,0)`)
 	_, _ = db.Exec(`INSERT INTO item_barcodes(barcode,item_id,is_primary) VALUES('111','a1',1)`) // ensure barcode search works
 
-	repo := data.NewPOSRepo(db)
-	cs := NewCatalogSearcher(repo)
+	cs := data.NewPOSRepo(db)
 	results, err := cs.SearchActiveItems(ctx, "SKU", 0, 10)
 	if err != nil {
 		t.Fatalf("SearchActiveItems error: %v", err)
@@ -63,8 +70,7 @@ func TestSearchActiveItems_NullSKUDoesNotError(t *testing.T) {
 	ctx := context.Background()
 	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('noSku1', NULL, 'No SKU Item', 150, 1)`)
 
-	repo := data.NewPOSRepo(db)
-	cs := NewCatalogSearcher(repo)
+	cs := data.NewPOSRepo(db)
 	results, err := cs.SearchActiveItems(ctx, "No SKU", 0, 10)
 	if err != nil {
 		t.Fatalf("SearchActiveItems must tolerate a NULL sku column, got: %v", err)
@@ -84,7 +90,7 @@ func TestLookupActiveVariant(t *testing.T) {
 	_, _ = db.Exec(`INSERT INTO item_variants(id,item_id,sku,name,price,is_active) VALUES('v1','i1','VSKU','Var',500,1)`)
 	_, _ = db.Exec(`INSERT INTO item_variants(id,item_id,sku,name,price,is_active) VALUES('v2','i1','VSK2','InactiveVar',500,0)`)
 
-	cs := NewCatalogSearcher(data.NewPOSRepo(db))
+	cs := data.NewPOSRepo(db)
 	v, err := cs.LookupActiveVariant(ctx, "v1")
 	if err != nil || v.ID != "v1" {
 		t.Fatalf("expected variant v1, got %v err=%v", v, err)
