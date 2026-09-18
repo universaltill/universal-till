@@ -1020,6 +1020,17 @@ func cloudUpdateItemDetails(ctx context.Context, d *common.Deps, itemID string, 
 	return "details updated: " + strings.Join(changed, ", "), nil
 }
 
+// maxModifierSelect bounds min_select/max_select (ut-docs#2376): the
+// item_modifier_groups CHECK constraint only requires
+// min_select >= 0 AND max_select >= min_select, no upper bound, so an
+// absurd value (e.g. 999999999) would otherwise be accepted and render a
+// nonsensical "choose between 0 and 999999999" picker on the sale screen
+// (pos_modifiers_api.go's selection-count check). Not money/tax-relevant —
+// mirrored in catalog/handlers.go's local admin creator (same value,
+// separate package) and ut-cloud's internal/claims.maxModifierGroupSelect
+// (separate repo).
+const maxModifierSelect = 50
+
 // cloudUpsertModifierGroup is the upsert_modifier_group hook (ut-docs#2322
 // "modifier groups editor" slice of ut-docs#2289, ADR-0095 Decision 1): the
 // cloud panel's per-item modifier-group creator — CREATE-ONLY, the same
@@ -1075,6 +1086,9 @@ func cloudUpsertModifierGroup(ctx context.Context, d *common.Deps, itemID, name 
 	}
 	if minSelect < 0 || maxSelect < 0 {
 		return "", fmt.Errorf("min_select and max_select must be >= 0")
+	}
+	if minSelect > maxModifierSelect || maxSelect > maxModifierSelect {
+		return "", fmt.Errorf("min_select and max_select must be <= %d", maxModifierSelect)
 	}
 	// The same two normalisations the LOCAL admin creator applies
 	// (catalog/handlers.go's POST /api/catalog/modifier-group): a group that

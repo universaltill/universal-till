@@ -2013,6 +2013,8 @@ func TestCloudUpsertModifierGroup_InvalidMinMaxFails(t *testing.T) {
 		{"negative min", -1, 1},
 		{"negative max", 0, -1},
 		{"min greater than max", 3, 1},
+		{"max above cap", 0, maxModifierSelect + 1},
+		{"min above cap", maxModifierSelect + 1, maxModifierSelect + 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := cloudUpsertModifierGroup(ctx, dp, "itm1", "Bad Range", false, tc.minSelect, tc.maxSelect, nil); err == nil {
@@ -2028,6 +2030,34 @@ func TestCloudUpsertModifierGroup_InvalidMinMaxFails(t *testing.T) {
 		if g.Name == "Bad Range" {
 			t.Fatalf("no group must be created for a refused min/max")
 		}
+	}
+}
+
+// The cap is inclusive — exactly maxModifierSelect must still be accepted,
+// not just values below it (ut-docs#2376).
+func TestCloudUpsertModifierGroup_AcceptsSelectAtCap(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudUpsertModifierGroup(ctx, dp, "itm1", "At Cap", false, 0, maxModifierSelect, nil); err != nil {
+		t.Fatalf("expected max_select=%d to be accepted, got: %v", maxModifierSelect, err)
+	}
+
+	groups, err := data.NewModifierRepo(dp.Db).ListAllModifierGroupsWithAssignments(ctx)
+	if err != nil {
+		t.Fatalf("ListAllModifierGroupsWithAssignments: %v", err)
+	}
+	var found bool
+	for _, g := range groups {
+		if g.Name == "At Cap" {
+			found = true
+			if g.MaxSelect != maxModifierSelect {
+				t.Fatalf("want max_select=%d, got %d", maxModifierSelect, g.MaxSelect)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("group 'At Cap' was not created")
 	}
 }
 

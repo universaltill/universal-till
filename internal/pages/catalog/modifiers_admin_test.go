@@ -132,6 +132,75 @@ func TestCatalogModifiersPanel_RequiredGroupForcesMinSelectAtLeastOne(t *testing
 	}
 }
 
+// min_select/max_select have no natural ceiling in the DB CHECK constraint
+// (min_select >= 0 AND max_select >= min_select), so an absurd value
+// (e.g. 999999999) would otherwise be accepted and render a nonsensical
+// "choose between 0 and 999999999" picker on the sale screen — ut-docs#2376.
+func TestCatalogModifiersPanel_RejectsSelectAboveCap(t *testing.T) {
+	chdirToRepoRoot(t)
+	db := setupCatalogPageDB(t)
+	defer db.Close()
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "COFFEE", Name: "Flat White", BasePrice: 320, IsActive: true})
+
+	mux := http.NewServeMux()
+	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}})
+
+	for _, tc := range []struct {
+		name string
+		form string
+	}{
+		{"max_select above cap", "panelItem=itm1&itemId=itm1&name=TooMany&isActive=1&minSelect=0&maxSelect=51"},
+		{"min_select above cap", "panelItem=itm1&itemId=itm1&name=TooMany&isActive=1&required=1&minSelect=51&maxSelect=51"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group", strings.NewReader(tc.form))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("want 400, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM item_modifier_groups WHERE name = 'TooMany'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("no group must be created for a refused min/max, found %d", count)
+	}
+}
+
+// The cap is inclusive — exactly maxModifierSelect must still be accepted,
+// not just values below it.
+func TestCatalogModifiersPanel_AcceptsSelectAtCap(t *testing.T) {
+	chdirToRepoRoot(t)
+	db := setupCatalogPageDB(t)
+	defer db.Close()
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "COFFEE", Name: "Flat White", BasePrice: 320, IsActive: true})
+
+	mux := http.NewServeMux()
+	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}})
+
+	form := "panelItem=itm1&itemId=itm1&name=AtCap&isActive=1&minSelect=0&maxSelect=50"
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var maxSelect int
+	if err := db.QueryRow(`SELECT max_select FROM item_modifier_groups WHERE name = 'AtCap'`).Scan(&maxSelect); err != nil {
+		t.Fatal(err)
+	}
+	if maxSelect != 50 {
+		t.Fatalf("want max_select=50, got %d", maxSelect)
+	}
+}
+
 // Creating and editing an option: price is entered in major units (the
 // shop's display currency) and stored as minor units.
 func TestCatalogModifiersPanel_CreateAndUpdateOption(t *testing.T) {
