@@ -178,6 +178,14 @@ func TestReportPluginStatusServerError(t *testing.T) {
 }
 
 func TestGetRevocations(t *testing.T) {
+	// ut-cloud's real wire format: camelCase pluginId/latestVersion, and
+	// latestVersion as a JSON STRING (protojson encodes an int64 proto
+	// field that way) — written by hand rather than round-tripped through
+	// this package's own struct, same pattern as revocation_test.go's
+	// revocationFeedServer. Round-tripping through the struct is exactly
+	// what let ut-docs#2386's wire-format bug ship undetected: it can only
+	// ever confirm the struct decodes itself, never that it decodes
+	// ut-cloud's actual response shape.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/revocations" {
 			t.Errorf("unexpected path %s", r.URL.Path)
@@ -185,12 +193,10 @@ func TestGetRevocations(t *testing.T) {
 		if got := r.URL.Query().Get("since_version"); got != "42" {
 			t.Errorf("since_version = %q; want 42", got)
 		}
-		json.NewEncoder(w).Encode(GetRevocationsResponse{
-			Revocations: []Revocation{
-				{PluginID: "bad-plugin", Version: "1.0.0", Action: "disable", Reason: "vuln"},
-			},
-			LatestVersion: 43,
-		})
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"revocations":[` +
+			`{"pluginId":"bad-plugin","version":"1.0.0","action":"disable","reason":"vuln"}` +
+			`],"latestVersion":"43"}`))
 	}))
 	defer server.Close()
 
@@ -198,7 +204,8 @@ func TestGetRevocations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetRevocations: %v", err)
 	}
-	if resp.LatestVersion != 43 || len(resp.Revocations) != 1 || resp.Revocations[0].Action != "disable" {
+	if resp.LatestVersion != "43" || len(resp.Revocations) != 1 ||
+		resp.Revocations[0].PluginID != "bad-plugin" || resp.Revocations[0].Action != "disable" {
 		t.Fatalf("GetRevocations = %+v", resp)
 	}
 }
