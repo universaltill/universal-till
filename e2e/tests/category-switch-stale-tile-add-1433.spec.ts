@@ -94,7 +94,15 @@ async function runRepro(page: Page, tag: string, barcodePrefix: string, delayMs:
   await page.goto('/');
   await page.getByRole('tab', { name: ITEM_A.category }).click();
 
-  const tileA = page.locator(`.btn-tile[data-name="${ITEM_A.name}"]`);
+  // ut-docs#2294: All is the default tab now, and its own dedicated
+  // #buttons-grid-all grid renders a SECOND copy of this same quick-button
+  // tile (every active catalog item, not just shortcuts) -- both exist in
+  // the DOM at once (Alpine's x-show never removes a hidden panel), so a
+  // plain by-name locator is ambiguous the moment a category tab has been
+  // selected. Scope to `.products-tab-panel`, which only the real
+  // category-panel copy (never the All grid or a search result) lives
+  // inside, to keep testing the specific tile this repro is actually about.
+  const tileA = page.locator(`.products-tab-panel .btn-tile[data-name="${ITEM_A.name}"]`);
   await expect(tileA).toBeVisible();
   const boxA = await tileA.boundingBox();
   expect(boxA, 'category A tile must have a real layout box').toBeTruthy();
@@ -108,7 +116,7 @@ async function runRepro(page: Page, tag: string, barcodePrefix: string, delayMs:
   // settled by the time this fires.
   await page.getByRole('tab', { name: ITEM_B.category }).click();
 
-  const tileB = page.locator(`.btn-tile[data-name="${ITEM_B.name}"]`);
+  const tileB = page.locator(`.products-tab-panel .btn-tile[data-name="${ITEM_B.name}"]`);
   await expect(tileB).toBeVisible();
   const boxB = await tileB.boundingBox();
   expect(boxB, 'category B tile must have a real layout box').toBeTruthy();

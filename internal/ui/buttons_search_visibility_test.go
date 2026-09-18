@@ -111,7 +111,12 @@ func TestButtonsHTTPList_SingleCategoryNoTabsAlsoCarriesNoMatchesMessage(t *test
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
 	}
-	h := &ButtonsHTTP{Store: *store, View: renderer}
+	// ut-docs#2294: HideAllTab so this still exercises the no-tab-bar
+	// branch it's named for — with All ON (the default), a single
+	// quick-button category now ALSO gets a tab bar (All + that one
+	// category); see buttons_http_test.go's
+	// TestButtonsHTTPList_NoTabBarWithOneCategory for that same reasoning.
+	h := &ButtonsHTTP{Store: *store, View: renderer, HideAllTab: true}
 
 	// Exactly ONE real category and nothing uncategorized -> $flat is
 	// false (a real category ID exists) and $hasTabs is false (only one
@@ -163,7 +168,12 @@ func TestButtonsHTTPList_FlatCatalogAlsoCarriesNoMatchesMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
 	}
-	h := &ButtonsHTTP{Store: *store, View: renderer}
+	// ut-docs#2294: HideAllTab so this still exercises the $flat branch it's
+	// named for — with All ON (the default), a fully-flat catalog now ALSO
+	// gets a tab bar (All + the synthetic Uncategorized bucket); see
+	// buttons_http_test.go's TestButtonsHTTPList_FlatWhenNoCategoriesConfigured
+	// for that same reasoning.
+	h := &ButtonsHTTP{Store: *store, View: renderer, HideAllTab: true}
 
 	// No categories inserted at all -> BuildCategoryGroups's only group is
 	// the synthetic uncategorized bucket (ID == "") -> $flat is true.

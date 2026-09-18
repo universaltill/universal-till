@@ -87,6 +87,9 @@ func TestLoadState_DefaultsWhenStoreEmpty(t *testing.T) {
 	if st.LaunchOnStartup {
 		t.Errorf("LaunchOnStartup = true, want default false")
 	}
+	if !st.ShowAllTabOnSellScreen {
+		t.Errorf("ShowAllTabOnSellScreen = false, want default true (ut-docs#2294 — an existing shop keeps the All tab it already has)")
+	}
 }
 
 func TestLoadState_OverridesFromStore(t *testing.T) {
@@ -107,6 +110,7 @@ func TestLoadState_OverridesFromStore(t *testing.T) {
 		KeyKioskIdleReset:              "120",
 		KeyWindowMode:                  "kiosk",
 		KeyLaunchOnStartup:             "true",
+		KeyShowAllTabOnSellScreen:      "false",
 	} {
 		if err := store.Set(ctx, k, v); err != nil {
 			t.Fatalf("seed %s: %v", k, err)
@@ -156,6 +160,9 @@ func TestLoadState_OverridesFromStore(t *testing.T) {
 	}
 	if !st.LaunchOnStartup {
 		t.Errorf("LaunchOnStartup = false, want true")
+	}
+	if st.ShowAllTabOnSellScreen {
+		t.Errorf("ShowAllTabOnSellScreen = true, want false (stored override)")
 	}
 }
 
@@ -458,6 +465,7 @@ func TestSaveState_RoundTripsThroughLoadState(t *testing.T) {
 		KioskPaymentMode:       "counter",
 		WindowMode:             "fullscreen",
 		LaunchOnStartup:        true,
+		ShowAllTabOnSellScreen: true,
 	}
 
 	if err := SaveState(ctx, store, want); err != nil {

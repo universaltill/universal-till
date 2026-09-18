@@ -41,6 +41,19 @@ type ShortcutSearchResult struct {
 	Barcode string
 	SKU     string
 	Image   string
+	// Color (ut-docs#2294) is the item's own tile swatch (catalogtypes.
+	// ItemColors), "" for none — needed so the sell screen's live search
+	// results render as the identical tile a quick-button/All-tab one does
+	// (product-tile falls back to it only when Image is empty). The
+	// Designer's own add-shortcut search (this method's original caller)
+	// simply ignores it.
+	Color string
+	// BasePrice (ut-docs#2294) is the item's configured base price (minor
+	// units) — same "fallback, not authoritative" caveat as
+	// ButtonStore.Load's own b.Price: ButtonStore.SearchSellable
+	// price_history-enriches it the same batched way Load already does for
+	// quick buttons.
+	BasePrice int64
 }
 
 // ShortcutLine represents a priced line derived from a barcode/lookup for shortcuts.
@@ -7582,7 +7595,9 @@ SELECT i.id,
          LIMIT 1
        ), '') AS barcode,
        COALESCE(i.sku, ''),
-       COALESCE(img.path, '')
+       COALESCE(img.path, ''),
+       COALESCE(i.color, ''),
+       i.base_price
 FROM items i
 LEFT JOIN item_images img ON img.item_id = i.id AND img.role = 'thumbnail'
 WHERE i.is_active = 1 AND (
@@ -7600,7 +7615,7 @@ LIMIT ? OFFSET ?
 	var res []ShortcutSearchResult
 	for rows.Next() {
 		var rres ShortcutSearchResult
-		if err := rows.Scan(&rres.ItemID, &rres.Name, &rres.Barcode, &rres.SKU, &rres.Image); err != nil {
+		if err := rows.Scan(&rres.ItemID, &rres.Name, &rres.Barcode, &rres.SKU, &rres.Image, &rres.Color, &rres.BasePrice); err != nil {
 			return nil, err
 		}
 		res = append(res, rres)
@@ -7693,12 +7708,32 @@ func (r *POSRepo) ResolveShortcutLineDecoded(ctx context.Context, code string) (
 	if line, dec, ok := r.ResolveScanLine(ctx, code, r.enabledBarcodeSymbologies(ctx)); ok {
 		return line, dec, true
 	}
-	// shortcut barcode
+	// shortcut barcode. Checked BEFORE the itemIDCodePrefix tier below
+	// (ut-docs#2294 review, BL-1): a codeless quick button (ut-docs#1459)
+	// writes this same itemIDCodePrefix literal as its own
+	// shortcut_buttons.barcode primary key, carrying the operator's chosen
+	// button Label -- so a real shortcut_buttons row for that exact code
+	// DOES legitimately exist and must win here, or the button's label
+	// silently vanishes from the basket line/receipt in favour of the raw
+	// catalog name.
 	if row, ok := r.resolveShortcut(ctx, code); ok {
 		price := r.resolvePrice(ctx, row.ItemID, row.VariantID, row.Price)
 		if row.Label.Valid && row.Label.String != "" {
 			row.ItemName = row.Label.String
 		}
+		return r.toShortcutLine(code, price, row), barcode.Decoded{}, true
+	}
+	// ut-docs#2294: an itemIDCodePrefix-prefixed code with no matching
+	// shortcut_buttons row (the case above) resolves straight against the
+	// items table by id -- see itemIDCodePrefix's own doc comment for why
+	// this tier exists (the sell-screen All tab needs to add a catalog
+	// item that has neither a shortcut_buttons row nor a barcode/SKU).
+	if strings.HasPrefix(code, itemIDCodePrefix) {
+		row, ok := r.resolveItemByID(ctx, strings.TrimPrefix(code, itemIDCodePrefix))
+		if !ok {
+			return ShortcutLine{}, barcode.Decoded{}, false
+		}
+		price := r.resolveRowPrice(ctx, row)
 		return r.toShortcutLine(code, price, row), barcode.Decoded{}, true
 	}
 
@@ -7874,6 +7909,39 @@ func (r *POSRepo) resolveScanBarcodeTiers(ctx context.Context, lookupKey, rawCod
 		return shortcutPriceRow{}, false, false
 	}
 	return res, tier <= 2, true
+}
+
+// itemIDCodePrefix mirrors internal/ui's synthesizedButtonCodePrefix
+// ("item:") — ButtonStore.Add synthesizes this code for a catalog item with
+// neither a barcode nor a SKU (ut-docs#1459) so it can still be stored as a
+// shortcut_buttons row's primary key. ut-docs#2294's sell-screen All tab
+// needs the same escape hatch for an item that has NO shortcut_buttons row
+// at all (every active catalog item is a tile there, quick button or not),
+// so ResolveShortcutLineDecoded resolves this prefix straight against the
+// items table by id via resolveItemByID, never through shortcut_buttons.
+// internal/data cannot import internal/ui (internal/ui already imports
+// internal/data, so that would cycle), so the literal is duplicated here —
+// keep both in sync if it ever changes.
+const itemIDCodePrefix = "item:"
+
+// resolveItemByID looks up one active item directly by id (ut-docs#2294) —
+// see itemIDCodePrefix's doc comment for why this exists alongside the
+// barcode/shortcut/SKU/name tiers above.
+func (r *POSRepo) resolveItemByID(ctx context.Context, itemID string) (shortcutPriceRow, bool) {
+	row := r.db.QueryRowContext(ctx, `
+SELECT i.id, i.sku, i.name, i.base_price, i.is_weighed,
+       (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
+       COALESCE(t.rate_basis_points, 0), i.tax_code_id
+FROM items i
+LEFT JOIN tax_codes t ON t.id = i.tax_code_id
+WHERE i.is_active = 1 AND i.id = ?
+LIMIT 1
+`, itemID)
+	var res shortcutPriceRow
+	if err := row.Scan(&res.ItemID, &res.SKU, &res.ItemName, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
+		return shortcutPriceRow{}, false
+	}
+	return res, true
 }
 
 func (r *POSRepo) resolveShortcut(ctx context.Context, code string) (shortcutPriceRow, bool) {

@@ -30,6 +30,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/recovery"
 )
 
 // The native window toolkits (Cocoa on macOS, GTK via webview_go elsewhere)
@@ -190,6 +192,20 @@ func main() {
 
 // tillAlreadyRunning reports whether a Universal Till server answers on addr
 // (its /healthz — not just any process squatting on the port).
+//
+// "Running" here is deliberately NOT the same thing as "healthy"
+// (ut-docs#2397, mirroring mobile.waitUntilReady's ut-docs#1437 fix): a
+// healthy till answers /healthz 200, but it can also be sitting in recovery
+// mode (ADR-0075) on a startup failure an operator can plausibly fix —
+// migrations, a corrupt DB file, disk full — and internal/recovery's
+// healthHandler deliberately keeps answering 503 for the entire time
+// recovery mode is serving. Before this fix, a relaunch while an existing
+// unitill-pos was in recovery mode didn't attach to it — it spawned a
+// second unitill-pos against the same locked data dir, which hit
+// db.ErrDataDirLocked and hard-exited. A response now also counts as
+// "running" when it's a 503 carrying recovery.HeaderMode:
+// recovery.ModeRecovery; any other response (a bare 503, connection
+// refused, etc.) still means "not running".
 func tillAlreadyRunning(addr string) bool {
 	client := &http.Client{Timeout: 1500 * time.Millisecond}
 	resp, err := client.Get("http://" + addr + "/healthz")
@@ -197,7 +213,11 @@ func tillAlreadyRunning(addr string) bool {
 		return false
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	if resp.StatusCode == http.StatusOK {
+		return true
+	}
+	return resp.StatusCode == http.StatusServiceUnavailable &&
+		resp.Header.Get(recovery.HeaderMode) == recovery.ModeRecovery
 }
 
 // freePort returns `preferred` when that port is free (so the till lives at a

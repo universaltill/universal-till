@@ -283,6 +283,13 @@ type RuntimeState struct {
 	// zero value), which is exactly "I'm not touching this field."
 	WindowModeChanged      bool
 	LaunchOnStartupChanged bool
+	// ShowAllTabOnSellScreen (ut-docs#2294) — settings.sale.show_all_tab —
+	// whether the sell screen's All tab (every active catalog item,
+	// distinct from the quick-button-only per-category tabs) renders at
+	// all. Default true (LoadState) so an existing shop keeps the tab it
+	// already has; off restores the pre-ut-docs#2212 behavior (no All tab,
+	// first category tab default-selected).
+	ShowAllTabOnSellScreen bool
 }
 
 // CurrentState returns a consistent copy of the runtime state for rendering.

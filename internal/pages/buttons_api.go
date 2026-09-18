@@ -82,8 +82,33 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		// real elevation prompt, instead of only discovering it needs a
 		// PIN after acting.
 		granted := canPerform(d, r, "catalog_management")
-		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore, View: renderer, Granted: granted}
+		btnHTTP := &ui.ButtonsHTTP{
+			Store:      *d.BtnStore,
+			View:       renderer,
+			HideAllTab: !d.CurrentState().ShowAllTabOnSellScreen,
+			Granted:    granted,
+		}
 		btnHTTP.List(w, r)
+	})
+
+	// Sell-screen live search (ut-docs#2294): every active catalog item
+	// matching q, rendered as the same tile component a quick-button/All-tab
+	// tile already uses -- distinct from /api/buttons/search above, which
+	// is the Designer's own "add as a shortcut" search.
+	mux.HandleFunc("/ui/buttons/search", func(w http.ResponseWriter, r *http.Request) {
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		renderer, err := ui.NewRenderer(
+			filepath.Join("web", "ui", "layouts", "base.html"),
+			filepath.Join("web", "ui", "pages", "index.html"),
+			filepath.Join("web", "ui", "partials", "buttons.html"),
+			funcs,
+		)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
+			return
+		}
+		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore, View: renderer}
+		btnHTTP.Search(w, r)
 	})
 
 	// Reorder from the Designer (move-up/move-down buttons, ut-docs#1221 --

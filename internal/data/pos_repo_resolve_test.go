@@ -434,6 +434,97 @@ func TestResolveShortcutLine_InactiveVariantNotResolvable(t *testing.T) {
 	}
 }
 
+// TestResolveShortcutLine_ItemIDCodePrefixResolvesCodelessItem (ut-docs#2294):
+// the sell screen's All tab lists EVERY active catalog item, quick button
+// or not — including one with neither a barcode nor a SKU, which the
+// pre-existing barcode/shortcut/SKU/name tiers have nothing to match it
+// on. ButtonStore.LoadAllActive/SearchSellable fall back to the same
+// "item:<id>" synthesized-code scheme ButtonStore.Add already uses for a
+// codeless quick button (ut-docs#1459); this is what makes that code
+// resolvable when NO shortcut_buttons row exists for it at all (unlike
+// ut-docs#1459's own case, where a shortcut_buttons row IS the thing that
+// makes it resolve).
+func TestResolveShortcutLine_ItemIDCodePrefixResolvesCodelessItem(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	repo := data.NewPOSRepo(db)
+	ctx := context.Background()
+
+	// No SKU, no barcode, no shortcut_buttons row — exactly the item the
+	// pre-existing tiers can never reach.
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "loose-1", SKU: "", Name: "Loose Doughnut", BasePrice: 150, IsActive: true})
+
+	line, ok := repo.ResolveShortcutLine(ctx, "item:loose-1")
+	if !ok {
+		t.Fatal("expected the item:<id> synthesized code to resolve")
+	}
+	if line.ItemID != "loose-1" || line.Name != "Loose Doughnut" || line.Price != 150 {
+		t.Fatalf("unexpected resolved line: %+v", line)
+	}
+	// The synthesized code must never leak onto the line as a fake SKU —
+	// same treatment ButtonStore.Add's own version of this prefix already
+	// gets in internal/ui's PriceResolverAdapter.resolve.
+	if line.SKU != "item:loose-1" {
+		// ResolveShortcutLine/ResolveShortcutLineDecoded themselves don't
+		// blank it (that's the UI-layer adapter's job — see
+		// internal/ui/buttons.go's PriceResolverAdapter.resolve); this pins
+		// the raw repo-layer contract precisely so a future change to
+		// either side is caught wherever it actually breaks.
+		t.Fatalf("SKU = %q, want the raw synthesized code (blanking happens one layer up)", line.SKU)
+	}
+}
+
+// TestResolveShortcutLine_ItemIDCodePrefixLosesToRealShortcutRow (ut-docs#2294
+// review, BL-1): ut-docs#1459's codeless quick button writes this exact
+// "item:<id>" literal as its OWN shortcut_buttons.barcode — so when a real
+// shortcut_buttons row exists for the code, it is not a synthesized fallback
+// at all, and must win over the item:<id> tier below it, carrying the
+// operator's chosen button label. The first version of this tier checked
+// itemIDCodePrefix BEFORE resolveShortcut and returned immediately either
+// way, so a shop with a labelled codeless quick button silently lost that
+// label off the basket line and receipt the moment ut-docs#2294 shipped —
+// caught in review, not by either pre-existing test above, since neither
+// seeds a shortcut_buttons row for the id under test.
+func TestResolveShortcutLine_ItemIDCodePrefixLosesToRealShortcutRow(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	repo := data.NewPOSRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "loose-2", SKU: "", Name: "Catalog Name", BasePrice: 150, IsActive: true})
+	if _, err := db.Exec(`INSERT INTO shortcut_buttons(barcode, item_id, label) VALUES('item:loose-2','loose-2','Operator Label')`); err != nil {
+		t.Fatal(err)
+	}
+
+	line, ok := repo.ResolveShortcutLine(ctx, "item:loose-2")
+	if !ok {
+		t.Fatal("expected the item:<id> code to resolve")
+	}
+	if line.Name != "Operator Label" {
+		t.Fatalf("expected the real shortcut_buttons row's label to win over the raw catalog name, got %q", line.Name)
+	}
+	if line.ItemID != "loose-2" || line.Price != 150 {
+		t.Fatalf("unexpected resolved line: %+v", line)
+	}
+}
+
+// TestResolveShortcutLine_ItemIDCodePrefixMisses covers the two ways this
+// new tier must fail closed: an id that doesn't exist, and an id that
+// exists but is inactive (ut-docs#2281 context — a deactivated item must
+// never be addable, same as every other resolution tier already enforces).
+func TestResolveShortcutLine_ItemIDCodePrefixMisses(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	repo := data.NewPOSRepo(db)
+	ctx := context.Background()
+
+	if _, ok := repo.ResolveShortcutLine(ctx, "item:does-not-exist"); ok {
+		t.Fatal("expected no match for an unknown item id")
+	}
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "retired-1", SKU: "", Name: "Retired Item", BasePrice: 100, IsActive: false})
+	if _, ok := repo.ResolveShortcutLine(ctx, "item:retired-1"); ok {
+		t.Fatal("expected an inactive item not to resolve via the item:<id> code")
+	}
+}
+
 func TestResolveCurrentPrice_ValidationAndNotFound(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
 	repo := data.NewPOSRepo(db)
