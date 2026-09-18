@@ -2574,34 +2574,15 @@ ORDER BY pe.plugin_id, pe.key
 	return res, rows.Err()
 }
 
-// HasActivePrinterPermission reports whether any active plugin holds the
-// devices:printer grant, ignoring install_state. No production caller
-// today — the one live call site (internal/pages/pos_api.go) uses the
-// narrower HasActivePrinterCapability, which additionally requires
-// install_state='installed' so a mid-upgrade plugin doesn't appear
-// printer-capable. This broader, install-state-agnostic variant is not a
-// stale duplicate left behind by that narrowing, though: it has its own
-// differential test (TestHasActivePrinterPermissionAndCapability) that
-// exists specifically to lock down the two methods' distinct semantics, so
-// something intended this one for a different, not-yet-built decision point
-// (e.g. showing printer-setup UI during an upgrade rather than gating an
-// actual print job) — see the filed follow-up (found while burning down
-// ut-docs#1566's `internal/data` baseline entries).
-func (r *PluginRepo) HasActivePrinterPermission(ctx context.Context) (bool, error) {
-	var count int
-	err := r.db.QueryRowContext(ctx, `
-SELECT COUNT(*)
-FROM plugin_permissions pp
-JOIN plugins p ON p.id = pp.plugin_id
-WHERE pp.permission = 'devices:printer' AND pp.granted = 1 AND p.is_active = 1
-`).Scan(&count)
-	if err != nil {
-		return false, pluginObs.wrap("has_active_printer", err)
-	}
-	return count > 0, nil
-}
-
 // HasActivePrinterCapability checks if an active plugin is permitted to use printers.
+//
+// ut-docs#2226: this used to have a broader, install-state-agnostic sibling,
+// HasActivePrinterPermission, kept alive only by its own differential test.
+// A repo-wide search (pages, plugin-detail/setup-wizard UI, planned work)
+// found no call site — past, present or planned — that wants the grant
+// visible while a plugin is mid-upgrade rather than gated on
+// install_state='installed'; it was deleted along with the differential
+// test, which now asserts only this method's own install_state gate.
 func (r *PluginRepo) HasActivePrinterCapability(ctx context.Context) (bool, error) {
 	var count int
 	err := r.db.QueryRowContext(ctx, `

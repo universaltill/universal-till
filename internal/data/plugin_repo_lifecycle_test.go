@@ -151,12 +151,12 @@ func TestUpdatePluginVersionAndSetPluginActive(t *testing.T) {
 	}
 }
 
-func TestHasActivePrinterPermissionAndCapability(t *testing.T) {
+func TestHasActivePrinterCapability(t *testing.T) {
 	d, repo := newPluginLifecycleTestDB(t)
 	ctx := context.Background()
 
-	if has, err := repo.HasActivePrinterPermission(ctx); err != nil || has {
-		t.Fatalf("expected no printer permission yet, got has=%v err=%v", has, err)
+	if has, err := repo.HasActivePrinterCapability(ctx); err != nil || has {
+		t.Fatalf("expected no printer capability yet, got has=%v err=%v", has, err)
 	}
 
 	seedCatalogEntry(t, d, "com.example.printer", "1.0.0")
@@ -167,22 +167,15 @@ func TestHasActivePrinterPermissionAndCapability(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if has, err := repo.HasActivePrinterPermission(ctx); err != nil || !has {
-		t.Fatalf("expected a granted printer permission on an active plugin, got has=%v err=%v", has, err)
-	}
 	if has, err := repo.HasActivePrinterCapability(ctx); err != nil || !has {
 		t.Fatalf("expected printer capability (also requires install_state='installed'), got has=%v err=%v", has, err)
 	}
 
-	// The install_state gate is what actually distinguishes Capability from
-	// Permission — prove it: is_active stays 1, but install_state moves off
-	// 'installed' (mid-upgrade). Permission must still see the grant;
-	// Capability must not.
+	// The install_state gate: is_active stays 1, but install_state moves off
+	// 'installed' (mid-upgrade) — Capability must not see the grant while
+	// mid-upgrade, so a mid-upgrade plugin never appears printer-capable.
 	if err := repo.SetPluginState(ctx, "com.example.printer", "1.0.0", "installing", true); err != nil {
 		t.Fatal(err)
-	}
-	if has, err := repo.HasActivePrinterPermission(ctx); err != nil || !has {
-		t.Fatalf("expected Permission to ignore install_state and still see the grant, got has=%v err=%v", has, err)
 	}
 	if has, err := repo.HasActivePrinterCapability(ctx); err != nil || has {
 		t.Fatalf("expected Capability to require install_state='installed', got has=%v err=%v", has, err)
@@ -191,13 +184,10 @@ func TestHasActivePrinterPermissionAndCapability(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Deactivating the plugin must revoke the EFFECTIVE permission (both
-	// methods) even though the plugin_permissions row itself is untouched.
+	// Deactivating the plugin must revoke the EFFECTIVE capability even
+	// though the plugin_permissions row itself is untouched.
 	if err := repo.SetPluginActive(ctx, nil, "com.example.printer", false); err != nil {
 		t.Fatal(err)
-	}
-	if has, err := repo.HasActivePrinterPermission(ctx); err != nil || has {
-		t.Fatalf("expected no printer permission once the plugin is inactive, got has=%v err=%v", has, err)
 	}
 	if has, err := repo.HasActivePrinterCapability(ctx); err != nil || has {
 		t.Fatalf("expected no printer capability once the plugin is inactive, got has=%v err=%v", has, err)
