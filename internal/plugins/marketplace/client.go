@@ -716,17 +716,26 @@ type GetRevocationsRequest struct {
 }
 
 // Revocation represents a plugin revocation action.
+//
+// Tags match ut-cloud's real wire format (camelCase), not this till's own
+// snake_case API convention — same correction ut-docs#2380 made to
+// plugins.RevocationEntry, the live equivalent of this struct.
 type Revocation struct {
-	PluginID string `json:"plugin_id"`
-	Version  string `json:"version"`
-	Action   string `json:"action"` // disable | delete
+	PluginID string `json:"pluginId"`
+	Version  string `json:"version,omitempty"` // Empty means all versions
+	Action   string `json:"action"`            // disable | delete
 	Reason   string `json:"reason"`
 }
 
 // GetRevocationsResponse contains revocation feed.
+//
+// LatestVersion is a string, not a number: ut-cloud's protojson encoder
+// serializes it as a JSON string (e.g. "43"), so int64 here would fail
+// json.Unmarshal outright on the first real response, not just decode it
+// as empty (ut-docs#2386).
 type GetRevocationsResponse struct {
 	Revocations   []Revocation `json:"revocations"`
-	LatestVersion int64        `json:"latest_version"`
+	LatestVersion string       `json:"latestVersion,omitempty"`
 }
 
 // GetRevocations fetches plugin revocations since a given version.

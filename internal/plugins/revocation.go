@@ -41,11 +41,13 @@ type RevocationEntry struct {
 }
 
 // RevocationFeed contains the list of revoked plugins from ut-cloud.
-// LatestVersion mirrors GetRevocationsResponse.latest_version — an int64
+// LatestVersion mirrors GetRevocationsResponse.LatestVersion — an int64
 // on the proto side, which protojson encodes as a JSON STRING, not a
-// number; kept as a string rather than mis-decoding it. Nothing here
-// reads it today (it pairs with the also-dead since_version cursor on
-// marketplace.Client.GetRevocations, ut-docs#2380's own noted follow-up).
+// number; kept as a string rather than mis-decoding it (marketplace.Client's
+// own copy of this field had the same int64 mismatch until ut-docs#2386
+// fixed it to match). Nothing here reads it today (it pairs with the
+// also-dead since_version cursor on marketplace.Client.GetRevocations,
+// ut-docs#2380's own noted follow-up).
 type RevocationFeed struct {
 	Revocations   []RevocationEntry `json:"revocations"`
 	LatestVersion string            `json:"latestVersion,omitempty"`
