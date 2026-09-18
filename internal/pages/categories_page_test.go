@@ -886,8 +886,8 @@ func TestCategoriesPage_CreateAndEditWithColorGroupsAndStations(t *testing.T) {
 	ctx := t.Context()
 	modRepo := data.NewModifierRepo(d.Db)
 	posRepo := data.NewPOSRepo(d.Db)
-	// A shop-wide group (anchored to seedForPages' itm1) and one station.
-	if _, err := modRepo.CreateGroup(ctx, "g-milk", "itm1", "Milk", false, 0, 1, 0); err != nil {
+	// A shop-wide group and one station.
+	if _, err := modRepo.CreateGroup(ctx, "g-milk", "Milk", false, 0, 1, 0); err != nil {
 		t.Fatal(err)
 	}
 	grill, err := posRepo.CreateKitchenStation(ctx, "Grill", data.KitchenDestinationPrinter, "192.0.2.1:9100")
@@ -1018,7 +1018,7 @@ func TestCategoriesPage_SaveKeepsLinkToDeactivatedGroup(t *testing.T) {
 	ctx := t.Context()
 	modRepo := data.NewModifierRepo(d.Db)
 
-	if _, err := modRepo.CreateGroup(ctx, "g-syrup", "itm1", "Syrups", false, 0, 1, 0); err != nil {
+	if _, err := modRepo.CreateGroup(ctx, "g-syrup", "Syrups", false, 0, 1, 0); err != nil {
 		t.Fatal(err)
 	}
 	if rec := postForm(mux, "/api/categories", url.Values{

@@ -1317,9 +1317,9 @@ func seedArchivedSaleLine(t *testing.T, d *db.DB, batchID, itemID, variantID str
 
 // ADR-0090 §2 (ut-docs#2013): the per-item demo delete is one of the hard
 // DELETE FROM items paths — a modifier group anchored to the demo item but
-// shared (linked) with a surviving item must be re-anchored to that item
-// inside the same transaction, not cascade-deleted out from under it.
-func TestRemoveDemoItemReanchorsSharedModifierGroup(t *testing.T) {
+// shared (linked) with a surviving item must survive the demo item's
+// deletion untouched (ADR-0101: an item delete never reaches a group row).
+func TestRemoveDemoItemLeavesSharedModifierGroupIntact(t *testing.T) {
 	d := openDemoSeedTestDB(t)
 	ctx := context.Background()
 	repo := NewDemoSeedRepo(d.DB)
@@ -1331,10 +1331,13 @@ func TestRemoveDemoItemReanchorsSharedModifierGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 	mod := NewModifierRepo(d.DB)
-	if _, err := mod.CreateGroup(ctx, "g-milk", "itm001", "Milk", true, 1, 1, 0); err != nil {
+	if _, err := mod.CreateGroup(ctx, "g-milk", "Milk", true, 1, 1, 0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := mod.CreateOption(ctx, "o-oat", "g-milk", "Oat", 40, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := mod.LinkGroupToItem(ctx, "itm001", "g-milk", 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := mod.LinkGroupToItem(ctx, "own-1", "g-milk", 3); err != nil {
@@ -1348,12 +1351,11 @@ func TestRemoveDemoItemReanchorsSharedModifierGroup(t *testing.T) {
 	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm001'`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("itm001 survived RemoveDemoItem (n=%d err=%v)", n, err)
 	}
-	var anchor string
-	if err := d.DB.QueryRow(`SELECT item_id FROM item_modifier_groups WHERE id = 'g-milk'`).Scan(&anchor); err != nil {
-		t.Fatalf("shared group cascade-deleted with the demo item: %v", err)
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM item_modifier_groups WHERE id = 'g-milk'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("shared group cascade-deleted with the demo item (n=%d err=%v)", n, err)
 	}
-	if anchor != "own-1" {
-		t.Fatalf("anchor = %q, want own-1", anchor)
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM item_modifier_group_links WHERE group_id = 'g-milk'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("only the demo item's own link may go: links=%d err=%v, want 1", n, err)
 	}
 	groups, err := mod.ListGroupsForItem(ctx, "own-1")
 	if err != nil {
@@ -1370,7 +1372,7 @@ func TestRemoveDemoItemReanchorsSharedModifierGroup(t *testing.T) {
 // Both variants are exercised: relaxed (till has never traded for real) and
 // strict (a real sale exists elsewhere, the pristine demo item is still
 // removable).
-func TestRemoveDemoCatalogueReanchorsSharedModifierGroup(t *testing.T) {
+func TestRemoveDemoCatalogueLeavesModifierGroupsIntact(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		realSale bool
@@ -1388,17 +1390,24 @@ func TestRemoveDemoCatalogueReanchorsSharedModifierGroup(t *testing.T) {
 				t.Fatal(err)
 			}
 			mod := NewModifierRepo(d.DB)
-			if _, err := mod.CreateGroup(ctx, "g-milk", "itm001", "Milk", true, 1, 1, 0); err != nil {
+			if _, err := mod.CreateGroup(ctx, "g-milk", "Milk", true, 1, 1, 0); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := mod.CreateOption(ctx, "o-oat", "g-milk", "Oat", 40, 1); err != nil {
 				t.Fatal(err)
 			}
+			if err := mod.LinkGroupToItem(ctx, "itm001", "g-milk", 0); err != nil {
+				t.Fatal(err)
+			}
 			if err := mod.LinkGroupToItem(ctx, "own-1", "g-milk", 3); err != nil {
 				t.Fatal(err)
 			}
-			// A demo-only group on another demo item must still cascade away.
-			if _, err := mod.CreateGroup(ctx, "g-demo-only", "itm002", "Demo Only", false, 0, 1, 0); err != nil {
+			// A group used only by a demo item is NOT deleted with it any
+			// more (ADR-0101): it stays, unassigned.
+			if _, err := mod.CreateGroup(ctx, "g-demo-only", "Demo Only", false, 0, 1, 0); err != nil {
+				t.Fatal(err)
+			}
+			if err := mod.LinkGroupToItem(ctx, "itm002", "g-demo-only", 0); err != nil {
 				t.Fatal(err)
 			}
 
@@ -1409,15 +1418,14 @@ func TestRemoveDemoCatalogueReanchorsSharedModifierGroup(t *testing.T) {
 			if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm001'`).Scan(&n); err != nil || n != 0 {
 				t.Fatalf("itm001 survived RemoveDemoCatalogue (n=%d err=%v)", n, err)
 			}
-			var anchor string
-			if err := d.DB.QueryRow(`SELECT item_id FROM item_modifier_groups WHERE id = 'g-milk'`).Scan(&anchor); err != nil {
-				t.Fatalf("shared group cascade-deleted with the demo item: %v", err)
+			if err := d.DB.QueryRow(`SELECT COUNT(*) FROM item_modifier_groups WHERE id = 'g-milk'`).Scan(&n); err != nil || n != 1 {
+				t.Fatalf("shared group cascade-deleted with the demo item (n=%d err=%v)", n, err)
 			}
-			if anchor != "own-1" {
-				t.Fatalf("anchor = %q, want own-1", anchor)
+			if err := d.DB.QueryRow(`SELECT COUNT(*) FROM item_modifier_groups WHERE id = 'g-demo-only'`).Scan(&n); err != nil || n != 1 {
+				t.Fatalf("a group whose only item was demo data must survive, unassigned (n=%d err=%v)", n, err)
 			}
-			if err := d.DB.QueryRow(`SELECT COUNT(*) FROM item_modifier_groups WHERE id = 'g-demo-only'`).Scan(&n); err != nil || n != 0 {
-				t.Fatalf("demo-only group must cascade away (n=%d err=%v)", n, err)
+			if err := d.DB.QueryRow(`SELECT COUNT(*) FROM item_modifier_group_links WHERE group_id = 'g-demo-only'`).Scan(&n); err != nil || n != 0 {
+				t.Fatalf("the demo item's link to g-demo-only must cascade away (n=%d err=%v)", n, err)
 			}
 			groups, err := mod.ListGroupsForItem(ctx, "own-1")
 			if err != nil {

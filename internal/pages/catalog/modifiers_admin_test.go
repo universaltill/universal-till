@@ -29,7 +29,7 @@ func TestCatalogModifiersPanel_OptionPrice_RespectsZeroDecimalCurrency(t *testin
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	mux.ServeHTTP(httptest.NewRecorder(), req)
 	var groupID string
-	if err := db.QueryRow(`SELECT id FROM item_modifier_groups WHERE item_id = 'itm1'`).Scan(&groupID); err != nil {
+	if err := db.QueryRow(`SELECT group_id FROM item_modifier_group_links WHERE item_id = 'itm1'`).Scan(&groupID); err != nil {
 		t.Fatalf("read group id: %v", err)
 	}
 
@@ -94,7 +94,7 @@ func TestCatalogModifiersPanel_CreateGroup(t *testing.T) {
 
 	var name string
 	var minSelect, maxSelect int
-	if err := db.QueryRow(`SELECT name, min_select, max_select FROM item_modifier_groups WHERE item_id = 'itm1'`).Scan(&name, &minSelect, &maxSelect); err != nil {
+	if err := db.QueryRow(`SELECT g.name, g.min_select, g.max_select FROM item_modifier_groups g JOIN item_modifier_group_links l ON l.group_id = g.id WHERE l.item_id = 'itm1'`).Scan(&name, &minSelect, &maxSelect); err != nil {
 		t.Fatalf("read group: %v", err)
 	}
 	if name != "Extras" || minSelect != 0 || maxSelect != 2 {
@@ -124,7 +124,7 @@ func TestCatalogModifiersPanel_RequiredGroupForcesMinSelectAtLeastOne(t *testing
 	}
 
 	var required, minSelect int
-	if err := db.QueryRow(`SELECT required, min_select FROM item_modifier_groups WHERE item_id = 'itm1'`).Scan(&required, &minSelect); err != nil {
+	if err := db.QueryRow(`SELECT g.required, g.min_select FROM item_modifier_groups g JOIN item_modifier_group_links l ON l.group_id = g.id WHERE l.item_id = 'itm1'`).Scan(&required, &minSelect); err != nil {
 		t.Fatalf("read group: %v", err)
 	}
 	if required != 1 || minSelect < 1 {
@@ -149,7 +149,7 @@ func TestCatalogModifiersPanel_CreateAndUpdateOption(t *testing.T) {
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	var groupID string
-	if err := db.QueryRow(`SELECT id FROM item_modifier_groups WHERE item_id = 'itm1'`).Scan(&groupID); err != nil {
+	if err := db.QueryRow(`SELECT group_id FROM item_modifier_group_links WHERE item_id = 'itm1'`).Scan(&groupID); err != nil {
 		t.Fatalf("read group id: %v", err)
 	}
 
@@ -313,7 +313,7 @@ func TestCatalogModifiersPanel_MutationsRefusedOnReplica(t *testing.T) {
 		t.Fatalf("create group on replica: body missing the localized replica_use_primary message, got %q", rec.Body.String())
 	}
 	var count int
-	if err := db.QueryRow(`SELECT count(*) FROM item_modifier_groups WHERE item_id = 'itm1'`).Scan(&count); err != nil {
+	if err := db.QueryRow(`SELECT count(*) FROM item_modifier_group_links WHERE item_id = 'itm1'`).Scan(&count); err != nil {
 		t.Fatalf("count groups: %v", err)
 	}
 	if count != 0 {
@@ -487,19 +487,21 @@ func TestModifierGroupDetach_RemovesOnlyThisItemsLink(t *testing.T) {
 	}
 }
 
-// Detaching a group's LAST remaining link is refused (ut-docs#2046
-// architecture decision): UnlinkGroupFromItem would happily orphan it, but
-// an orphaned group is invisible everywhere in the admin UI (both
-// ListShopModifierGroups-family queries only ever surface a group THROUGH a
-// link), so it would become permanently unreachable rather than merely
-// unattached — the merchant's own path for "gone from sale" is the
-// Active checkbox, which stays reachable.
-func TestModifierGroupDetach_RefusesToOrphanTheGroup(t *testing.T) {
+// Detaching a group's LAST remaining link is allowed since ADR-0101
+// (ut-docs#2399): the group becomes unassigned — its row and options
+// survive, it stays listed on /modifiers (which reads the group table, not
+// the links), and it is simply not offered at checkout. The ut-docs#2046
+// refusal existed only because the old per-item listing could not show an
+// orphan.
+func TestModifierGroupDetach_LastLinkLeavesGroupUnassigned(t *testing.T) {
 	chdirToRepoRoot(t)
 	db := setupCatalogPageDB(t)
 	defer db.Close()
 	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm-a", SKU: "SKU-A", Name: "Flat White", BasePrice: 320, IsActive: true})
 	testsupport.SeedModifierGroup(t, db, "g-milk", "itm-a", "Milk", false, 0, 1, 0, true)
+	if _, err := db.Exec(`INSERT INTO item_modifier_options (id, group_id, name, price_delta_minor, sort_order, is_active) VALUES ('o-oat','g-milk','Oat',40,1,1)`); err != nil {
+		t.Fatal(err)
+	}
 
 	mux := http.NewServeMux()
 	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}})
@@ -510,27 +512,33 @@ func TestModifierGroupDetach_RefusesToOrphanTheGroup(t *testing.T) {
 	req.Header.Set("Hx-Target", "modifier-groups-modal-list")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("want 409, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	// Independent-review finding: a plain http.Error/LocalizedError body is
-	// text/plain, which app.js's htmx:beforeSwap never force-swaps into the
-	// DOM — outside the sale screen there is no #pos-alert fallback either,
-	// so the refusal would be a completely silent no-op. The fix answers
-	// through the SAME html fragment the button's own hx-target/hx-swap
-	// already expects, carrying a visible, translated notice.
-	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
-		t.Fatalf("refusal must be text/html so htmx actually swaps it in, got Content-Type %q", ct)
+	if strings.Contains(rec.Body.String(), "only item using this group") {
+		t.Fatal("the last-link refusal notice must be gone (ADR-0101)")
 	}
-	if !strings.Contains(rec.Body.String(), `id="modifier-groups-modal-list"`) {
-		t.Fatal("refusal must still be the item-scoped fragment (so it lands in the button's own hx-target)")
+	// Milk is now unlinked but still active, so it legitimately reappears
+	// in itm-a's attach picker.
+	if !strings.Contains(rec.Body.String(), `<input type="checkbox" name="groupId" value="g-milk">`) {
+		t.Fatal("expected the just-detached group to reappear as a checkbox in itm-a's attach picker")
 	}
-	if !strings.Contains(rec.Body.String(), `role="alert"`) || !strings.Contains(rec.Body.String(), "only item using this group") {
-		t.Fatalf("refusal must render a visible, translated notice explaining why, got: %s", rec.Body.String())
+	var linkCount, groupCount, optionCount int
+	if err := db.QueryRow(`SELECT count(*) FROM item_modifier_group_links WHERE group_id = 'g-milk'`).Scan(&linkCount); err != nil || linkCount != 0 {
+		t.Fatalf("the last link must be gone: count=%d err=%v", linkCount, err)
 	}
-	var linkCount int
-	if err := db.QueryRow(`SELECT count(*) FROM item_modifier_group_links WHERE group_id = 'g-milk'`).Scan(&linkCount); err != nil || linkCount != 1 {
-		t.Fatalf("the last link must survive a refused detach: count=%d err=%v", linkCount, err)
+	if err := db.QueryRow(`SELECT count(*) FROM item_modifier_groups WHERE id = 'g-milk'`).Scan(&groupCount); err != nil || groupCount != 1 {
+		t.Fatalf("detach must never delete the group row: count=%d err=%v", groupCount, err)
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM item_modifier_options WHERE group_id = 'g-milk'`).Scan(&optionCount); err != nil || optionCount != 1 {
+		t.Fatalf("detach must never delete the group's options: count=%d err=%v", optionCount, err)
+	}
+
+	// And /modifiers still lists it — as unassigned.
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/modifiers", nil))
+	if rec2.Code != http.StatusOK || !strings.Contains(rec2.Body.String(), `data-group-id="g-milk"`) {
+		t.Fatalf("/modifiers must still list an unassigned group: %d %s", rec2.Code, rec2.Body.String())
 	}
 }
 

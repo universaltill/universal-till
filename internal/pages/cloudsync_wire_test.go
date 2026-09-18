@@ -1935,6 +1935,51 @@ func TestCloudUpsertModifierGroup_ZeroOptionsIsValid(t *testing.T) {
 	t.Fatalf("expected a Bare Group group to exist, got %+v", groups)
 }
 
+// ADR-0101 (ut-docs#2399): a blank item_id creates a SHOP-WIDE group with
+// no assignment at all — listed on /modifiers, linked to nothing, and a
+// retry of the same standalone create is a no-op (shop-wide name dedupe).
+func TestCloudUpsertModifierGroup_NoItemCreatesStandaloneGroup(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	msg, err := cloudUpsertModifierGroup(ctx, dp, "", "Sauces", false, 0, 2, []cloudsync.ModifierGroupOption{{Name: "Ketchup", PriceDeltaMinor: 0}})
+	if err != nil {
+		t.Fatalf("cloudUpsertModifierGroup without item_id: %v", err)
+	}
+	if !strings.Contains(msg, "Sauces") {
+		t.Fatalf("unexpected message: %q", msg)
+	}
+	groups, err := data.NewModifierRepo(dp.Db).ListAllModifierGroupsWithAssignments(ctx)
+	if err != nil {
+		t.Fatalf("ListAllModifierGroupsWithAssignments: %v", err)
+	}
+	var found *data.ModifierGroupAdmin
+	for i := range groups {
+		if groups[i].Name == "Sauces" {
+			found = &groups[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("standalone group not created, groups = %+v", groups)
+	}
+	if len(found.Items) != 0 || len(found.Categories) != 0 {
+		t.Fatalf("a standalone create must link nothing, got items=%+v categories=%+v", found.Items, found.Categories)
+	}
+	if len(found.Options) != 1 || found.Options[0].Name != "Ketchup" {
+		t.Fatalf("options = %+v", found.Options)
+	}
+
+	// Retry: no duplicate, reported as already existing.
+	msg, err = cloudUpsertModifierGroup(ctx, dp, "", "sauces", false, 0, 2, nil)
+	if err != nil || !strings.Contains(msg, "already exists") {
+		t.Fatalf("retry: msg=%q err=%v", msg, err)
+	}
+	var n int
+	if err := dp.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM item_modifier_groups WHERE name = 'Sauces'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("standalone group count = %d err=%v, want 1", n, err)
+	}
+}
+
 func TestCloudUpsertModifierGroup_UnknownItemFails(t *testing.T) {
 	dp := newCloudSyncTestDeps(t)
 	ctx := t.Context()
@@ -1942,9 +1987,9 @@ func TestCloudUpsertModifierGroup_UnknownItemFails(t *testing.T) {
 	if _, err := cloudUpsertModifierGroup(ctx, dp, "no-such-item", "Extras", false, 0, 1, nil); err == nil {
 		t.Fatalf("expected an error for an unknown item_id")
 	}
-	groups, err := data.NewModifierRepo(dp.Db).ListShopModifierGroups(ctx)
+	groups, err := data.NewModifierRepo(dp.Db).ListAllModifierGroupsWithAssignments(ctx)
 	if err != nil {
-		t.Fatalf("ListShopModifierGroups: %v", err)
+		t.Fatalf("ListAllModifierGroupsWithAssignments: %v", err)
 	}
 	for _, g := range groups {
 		if g.Name == "Extras" {
@@ -1975,9 +2020,9 @@ func TestCloudUpsertModifierGroup_InvalidMinMaxFails(t *testing.T) {
 			}
 		})
 	}
-	groups, err := data.NewModifierRepo(dp.Db).ListShopModifierGroups(ctx)
+	groups, err := data.NewModifierRepo(dp.Db).ListAllModifierGroupsWithAssignments(ctx)
 	if err != nil {
-		t.Fatalf("ListShopModifierGroups: %v", err)
+		t.Fatalf("ListAllModifierGroupsWithAssignments: %v", err)
 	}
 	for _, g := range groups {
 		if g.Name == "Bad Range" {
@@ -1998,9 +2043,9 @@ func TestCloudUpsertModifierGroup_NegativeOptionPriceFails(t *testing.T) {
 	}); err == nil {
 		t.Fatalf("expected an error for a negative price_delta_minor")
 	}
-	groups, err := data.NewModifierRepo(dp.Db).ListShopModifierGroups(ctx)
+	groups, err := data.NewModifierRepo(dp.Db).ListAllModifierGroupsWithAssignments(ctx)
 	if err != nil {
-		t.Fatalf("ListShopModifierGroups: %v", err)
+		t.Fatalf("ListAllModifierGroupsWithAssignments: %v", err)
 	}
 	for _, g := range groups {
 		if g.Name == "Bad Option" {
@@ -2024,9 +2069,9 @@ func TestCloudUpsertModifierGroup_RefusedOnReplica(t *testing.T) {
 	if _, err := cloudUpsertModifierGroup(ctx, dp, "itm1", "Replica Group", false, 0, 1, nil); err == nil {
 		t.Fatalf("expected cloudUpsertModifierGroup to refuse on a replica till")
 	}
-	groups, err := data.NewModifierRepo(dp.Db).ListShopModifierGroups(ctx)
+	groups, err := data.NewModifierRepo(dp.Db).ListAllModifierGroupsWithAssignments(ctx)
 	if err != nil {
-		t.Fatalf("ListShopModifierGroups: %v", err)
+		t.Fatalf("ListAllModifierGroupsWithAssignments: %v", err)
 	}
 	for _, g := range groups {
 		if g.Name == "Replica Group" {
@@ -2316,9 +2361,9 @@ func TestCloudUpsertModifierGroup_BlankOptionNameFails(t *testing.T) {
 	}); err == nil {
 		t.Fatalf("expected an error for a blank option name")
 	}
-	groups, err := data.NewModifierRepo(dp.Db).ListShopModifierGroups(ctx)
+	groups, err := data.NewModifierRepo(dp.Db).ListAllModifierGroupsWithAssignments(ctx)
 	if err != nil {
-		t.Fatalf("ListShopModifierGroups: %v", err)
+		t.Fatalf("ListAllModifierGroupsWithAssignments: %v", err)
 	}
 	for _, g := range groups {
 		if g.Name == "Blank Option" {

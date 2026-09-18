@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -35,16 +34,15 @@ import (
 )
 
 // modifierAdminItem is the template data shape modifier_group_admin.html
-// (ut-docs#1957) expects for one item's worth of modifier-group CRUD: its
-// groups (active or not — ListAllGroupsForItem's shape, so a deactivated
-// one stays visible for reactivation) plus Target, the container id
-// (without a leading #) every one of the rendered forms' hx-target/hx-swap
-// points back at. The same struct backs both call shapes: a single
-// instance for the item-scoped nested dialog, and a slice (one per item)
-// for the shop-wide /modifiers page — see groupModifierAdminByItem.
+// (ut-docs#1957) expects for one item's worth of modifier-group assignment:
+// its groups (active or not — ListAllGroupsForItem's shape) plus Target,
+// the container id (without a leading #) every one of the rendered forms'
+// hx-target/hx-swap points back at. Since ADR-0101 (ut-docs#2399) this
+// backs ONLY the item-scoped nested dialog (attach-only); the shop-wide
+// /modifiers page renders data.ModifierGroupAdmin rows of its own (see
+// renderModifiersList) and no longer groups anything per item.
 type modifierAdminItem struct {
 	ItemID         string
-	ItemName       string
 	ModifierGroups []data.ModifierGroup
 	// AttachableGroups is this item's "attach an existing group" picker
 	// options (ut-docs#2046): every other active shop group not already
@@ -58,14 +56,6 @@ type modifierAdminItem struct {
 	// list leaves it nil.
 	InheritedGroups []data.ModifierGroup
 	Target          string
-	// AttachOnly restricts modifier_group_admin.html to attach/detach only —
-	// no inline group/option create/edit/delete (ut-docs#2330, product-owner
-	// request 2026-09-16: the item-editor's own surface should be a
-	// multi-select of EXISTING groups, never a place to author new ones).
-	// Set true only for the item-scoped dialog (renderItemModifierGroupsPanel
-	// below); the shop-wide /modifiers page leaves it false (its zero value)
-	// since that page's whole job is full CRUD.
-	AttachOnly bool
 	// Notice is an already-translated, already-formatted message to show
 	// inline above this fragment (ut-docs#2046, independent-review finding)
 	// — e.g. the detach-guard's refusal. Plain http.Error/LocalizedError
@@ -78,29 +68,26 @@ type modifierAdminItem struct {
 	Notice string
 }
 
-// distinctActiveModifierGroups collapses ListAllShopModifierGroups' one-
-// row-per-link shape into one entry per DISTINCT active group id (first
-// occurrence wins — group-level fields are identical across every row for
-// the same id; only ItemID/ItemName/SortOrder/Options vary per link),
-// sorted by name. Backs the shop-wide "attach an existing group" picker
-// (ut-docs#2046) computed once for the whole page instead of once per item
-// — see groupModifierAdminByItem's own comment on why a per-item query here
-// would be an N+1 across /modifiers' entire catalog.
-func distinctActiveModifierGroups(groups []data.ModifierGroup) []data.ModifierGroup {
-	seen := map[string]bool{}
-	var result []data.ModifierGroup
-	for _, g := range groups {
-		if !g.IsActive || seen[g.ID] {
-			continue
-		}
-		seen[g.ID] = true
-		result = append(result, data.ModifierGroup{
-			ID: g.ID, Name: g.Name, Required: g.Required,
-			MinSelect: g.MinSelect, MaxSelect: g.MaxSelect, IsActive: true,
-		})
-	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
-	return result
+// modifierCard is one group's card on /modifiers (ADR-0101 §3,
+// ut-docs#2399): the shop-wide admin read (group + every option + linked
+// categories/items) plus CategoryOptions — EVERY shop category with a
+// Linked flag, the checkbox row the template renders. Built once per page
+// in modifiersPageData from the four-query repo read, so the template
+// never has to test membership itself (Go templates have no "in").
+type modifierCard struct {
+	data.ModifierGroupAdmin
+	CategoryOptions []modifierCategoryOption
+}
+
+// modifierCategoryOption is one checkbox in a card's "Assigned to →
+// Categories" row. IsActive is the category's own flag: a retired category
+// that still links the group stays visible (greyed) so the merchant can
+// see and clear the link rather than have it silently disappear.
+type modifierCategoryOption struct {
+	ID       string
+	Name     string
+	IsActive bool
+	Linked   bool
 }
 
 // newLookupClient is a test seam: production resolves barcodes against the
@@ -395,12 +382,15 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// form rendered unconditionally, regardless of whether ModifierGroups
 	// was empty). Removing that form from the item-editor without giving
 	// /modifiers an equivalent broke group creation entirely for any item
-	// that isn't already in ListAllShopModifierGroups' result — caught by
+	// not already listed there — caught by
 	// osk-decimal-sale-catalog-fields-1284.spec.ts's own two OSK-typing
 	// tests, which create a fresh probe item and its first-ever group.
-	// This is the same id/name/sku picker shape as inventory_page.go's own
-	// pickerItem/ItemsJSON (stock item picker) — reused here rather than a
-	// new type, same JSON shape the modifiers.html script below expects.
+	// Since ADR-0101 (ut-docs#2399) the create form needs no item at all;
+	// this picker now feeds each group card's own "Add item" search
+	// (posting to /attach). This is the same id/name/sku picker shape as
+	// inventory_page.go's own pickerItem/ItemsJSON (stock item picker) —
+	// reused here rather than a new type, same JSON shape the
+	// modifiers.html script expects.
 	modifierItemPickerJSON := func(ctx context.Context) template.JS {
 		type pickerItem struct {
 			ID   string `json:"id"`
@@ -420,55 +410,52 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		return template.JS(pickerJSON)
 	}
 
-	// groupModifierAdminByItem folds a flat, ItemName/ItemID-carrying
-	// modifier-group slice (ListAllShopModifierGroups' own shape) into one
-	// entry per item, preserving the query's own item ordering — the shape
-	// modifier_group_admin.html's per-item instantiation and this file's
-	// own modifiers_list wrapper both expect. target is stamped onto every
-	// entry: the single container id every one of that item's forms will
-	// hx-target/hx-swap back at after a mutation.
-	groupModifierAdminByItem := func(groups []data.ModifierGroup, target string) []modifierAdminItem {
-		// Attachable groups for the whole page are computed HERE, once, from
-		// the flat shop-wide slice already in hand — not via a per-item
-		// ListAttachableModifierGroups query (independent review, ut-docs#2046):
-		// that shape is an N+1 across every modifier-bearing item on
-		// /modifiers, unlike the item-scoped dialog below (renderItemModifier
-		// GroupsPanel), which has no shop-wide slice to reuse and so pays one
-		// query for its one item, same as ItemIDsWithModifiers' own
-		// batch-not-N+1 precedent one file over.
-		distinct := distinctActiveModifierGroups(groups)
-		var result []modifierAdminItem
-		idx := map[string]int{}
-		linkedIDs := map[string]map[string]bool{}
+	// modifiersPageData is the /modifiers screen's own data (ADR-0101 §3,
+	// ut-docs#2399): every group in the shop exactly once, active or not,
+	// assigned or not, each with its options and its category/item
+	// assignments (ListAllModifierGroupsWithAssignments — four queries for
+	// the whole page, never one per group), plus every category so each
+	// card can render its "Assigned to" checkbox row (ListCategories —
+	// inactive ones included, so a link to a retired category stays
+	// visible and removable rather than silently disappearing), plus the
+	// item picker JSON the per-card "Add item" search resolves against.
+	modifiersPageData := func(ctx context.Context) (map[string]any, error) {
+		groups, err := modRepo.ListAllModifierGroupsWithAssignments(ctx)
+		if err != nil {
+			return nil, err
+		}
+		categories, err := repo.ListCategories(ctx)
+		if err != nil {
+			return nil, err
+		}
+		cards := make([]modifierCard, 0, len(groups))
 		for _, g := range groups {
-			i, ok := idx[g.ItemID]
-			if !ok {
-				i = len(result)
-				idx[g.ItemID] = i
-				result = append(result, modifierAdminItem{ItemID: g.ItemID, ItemName: g.ItemName, Target: target})
-				linkedIDs[g.ItemID] = map[string]bool{}
+			linked := make(map[string]bool, len(g.Categories))
+			for _, c := range g.Categories {
+				linked[c.ID] = true
 			}
-			result[i].ModifierGroups = append(result[i].ModifierGroups, g)
-			linkedIDs[g.ItemID][g.ID] = true
-		}
-		for i := range result {
-			linked := linkedIDs[result[i].ItemID]
-			for _, dg := range distinct {
-				if !linked[dg.ID] {
-					result[i].AttachableGroups = append(result[i].AttachableGroups, dg)
-				}
+			card := modifierCard{ModifierGroupAdmin: g}
+			// Every category, in the categories page's own order, so the
+			// checkbox row reads the same on every card; a linked-but-
+			// since-deleted category can't occur (the link row cascades
+			// with the category), so no orphan handling is needed here.
+			for _, c := range categories {
+				card.CategoryOptions = append(card.CategoryOptions, modifierCategoryOption{
+					ID: c.ID, Name: c.Name, IsActive: c.IsActive, Linked: linked[c.ID],
+				})
 			}
+			cards = append(cards, card)
 		}
-		return result
+		return map[string]any{
+			"Groups":    cards,
+			"ItemsJSON": modifierItemPickerJSON(ctx),
+		}, nil
 	}
 
 	// renderModifiersList answers with the /modifiers page's own shop-wide
-	// re-render target (#modifiers-list, outerHTML swap) — every modifier
-	// group across the shop, grouped per item, active or not (ut-docs#1957:
-	// unlike the read-only ListShopModifierGroups the old browse screen
-	// used, this admin page must still show a deactivated group so it can
-	// be reactivated). Used both for the page's own initial load and for a
-	// mutation whose originating form targets #modifiers-list (see
+	// re-render target (#modifiers-list, outerHTML swap) — one card per
+	// group. Used both for the page's own initial load and for a mutation
+	// whose originating form targets #modifiers-list (see
 	// renderModifierMutationResult below).
 	//
 	// ut-docs#2090 review finding: deliberately NO "InItemsShell" key here.
@@ -482,16 +469,13 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// no hx- attributes) — don't "fix" that by adding the key here.
 	renderModifiersList := func(w http.ResponseWriter, r *http.Request, notice string) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-		groups, err := modRepo.ListAllShopModifierGroups(r.Context())
+		pageData, err := modifiersPageData(r.Context())
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "modifiers.error.server", "catalog", err)
 			return
 		}
-		httpx.RenderWith(modifierGroupAdminFiles, funcs)("modifiers_list", map[string]any{
-			"Groups":    groupModifierAdminByItem(groups, "modifiers-list"),
-			"Notice":    notice,
-			"ItemsJSON": modifierItemPickerJSON(r.Context()),
-		})(w, r)
+		pageData["Notice"] = notice
+		httpx.RenderWith(modifierGroupAdminFiles, funcs)("modifiers_list", pageData)(w, r)
 	}
 
 	// renderItemModifierGroupsPanel answers with the nested "Manage
@@ -541,7 +525,6 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			InheritedGroups:  visibleInherited,
 			Target:           "modifier-groups-modal-list",
 			Notice:           notice,
-			AttachOnly:       true,
 		})(w, r)
 	}
 
@@ -558,8 +541,8 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// to the original #catalog-variants re-render, unchanged.
 	//
 	// status/notice (ut-docs#2046, independent-review finding): a refused
-	// mutation (e.g. the detach-guard's last-link refusal) must still
-	// surface to the operator. A plain http.Error/LocalizedError body is
+	// mutation (e.g. a stale attach picker's 409) must still surface to
+	// the operator. A plain http.Error/LocalizedError body is
 	// text/plain, which app.js's htmx:beforeSwap never force-swaps (see its
 	// own ut-docs#916 comment) — outside the sale screen there is no
 	// #pos-alert fallback either, so that refusal would be a silent no-op.
@@ -580,8 +563,8 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			// (including the Active toggle), attached, or detached here,
 			// however live the underlying DB read already is. Every
 			// successful mutation through this shared dispatch fires it;
-			// a refused one (status != OK, e.g. the detach-guard's
-			// last-link refusal) changed nothing and must not. Same shape
+			// a refused one (status != OK, e.g. a stale attach picker's
+			// 409) changed nothing and must not. Same shape
 			// as hold_api.go's "held-changed" / inventory_api.go's
 			// "stock-updated" — buttons.html's swapped-in root listens for
 			// it via hx-trigger="modifiers-changed from:body".
@@ -872,31 +855,28 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// (ut-docs#1899); ut-docs#1957 made it the full CRUD home for modifier
 	// groups, moved out of the per-item admin panel (catalog_variants.html)
 	// after a product-owner review found the old placement confusing ("I
-	// saw the customization groups under the variants"). ListAllShopModifier
-	// Groups (unlike the old ListShopModifierGroups) includes a deactivated
-	// group/option too, so a manager can reactivate one from here — the
-	// same reason the per-item panel always used ListAllGroupsForItem.
+	// saw the customization groups under the variants"); ADR-0101
+	// (ut-docs#2399) made it the home of the group itself: one card per
+	// group, created here with no item, assigned to categories and items
+	// from the card. A deactivated group/option is still shown so a
+	// manager can reactivate it.
 	mux.HandleFunc("/modifiers", func(w http.ResponseWriter, r *http.Request) {
 		if !requireCatalogManagementPage(w, r) {
 			return
 		}
-		groups, err := modRepo.ListAllShopModifierGroups(r.Context())
+		modifiersData, err := modifiersPageData(r.Context())
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "modifiers.error.server", err)
 			return
 		}
-		modifiersData := map[string]any{
-			// ut-docs#2211: was a hardcoded English literal — missed by
-			// ut-docs#2297/PR#1189's `internal/pages/*.go` sweep because
-			// this handler lives one directory deeper, in
-			// internal/pages/catalog/. Same page-title bug, same fix.
-			"title":        httpx.T(httpx.RequestLocale(r), "modifiers.title"),
-			"menuItems":    d.MenuSnapshot(),
-			"theme":        d.CurrentState().Theme,
-			"Groups":       groupModifierAdminByItem(groups, "modifiers-list"),
-			"InItemsShell": httpx.IsFragmentSwap(w, r),
-			"ItemsJSON":    modifierItemPickerJSON(r.Context()),
-		}
+		// ut-docs#2211: was a hardcoded English literal — missed by
+		// ut-docs#2297/PR#1189's `internal/pages/*.go` sweep because
+		// this handler lives one directory deeper, in
+		// internal/pages/catalog/. Same page-title bug, same fix.
+		modifiersData["title"] = httpx.T(httpx.RequestLocale(r), "modifiers.title")
+		modifiersData["menuItems"] = d.MenuSnapshot()
+		modifiersData["theme"] = d.CurrentState().Theme
+		modifiersData["InItemsShell"] = httpx.IsFragmentSwap(w, r)
 		// ut-docs#1950: same /items rail embedding as /catalog above.
 		if httpx.IsFragmentSwap(w, r) {
 			httpx.RenderContentFragment("ui/pages/modifiers.html", modifiersData)(w, r)
@@ -1279,9 +1259,19 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	// Create or update a modifier group (ADR-0020) — id present = update,
-	// absent = create. Same soft-deactivate convention as items/variants
-	// (isActive toggle, no hard delete) so historical sale_line_modifiers
-	// snapshots are never orphaned by a group disappearing from under them.
+	// absent = create. Deactivating (isActive toggle) is the reversible
+	// way to take a group off sale; the hard delete is its own route
+	// (/api/catalog/modifier-group/delete below) behind a confirm.
+	//
+	// ADR-0101 (ut-docs#2399): itemId is OPTIONAL on create. /modifiers'
+	// own create form sends none — the group is shop-wide and gets its
+	// assignments afterwards from its card. A caller that does send one
+	// (nothing in web/ui does today; the item editor is attach-only since
+	// ut-docs#2330) gets the group created AND linked to that item, in
+	// that order — two repo calls, not one transaction: a link failure
+	// after a successful create leaves a valid, unassigned group behind
+	// (a state /modifiers shows and the merchant can finish by hand),
+	// never a half-written row.
 	mux.HandleFunc("/api/catalog/modifier-group", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1296,8 +1286,8 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		itemID := strings.TrimSpace(r.Form.Get("itemId"))
 		name := strings.TrimSpace(r.Form.Get("name"))
-		if itemID == "" || name == "" {
-			http.Error(w, "itemId and name required", http.StatusBadRequest)
+		if name == "" {
+			http.Error(w, "name required", http.StatusBadRequest)
 			return
 		}
 		minSelect, _ := strconv.Atoi(strings.TrimSpace(r.Form.Get("minSelect")))
@@ -1315,9 +1305,21 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		modRepo := data.NewModifierRepo(d.Db)
 		groupID := strings.TrimSpace(r.Form.Get("id"))
 		if groupID == "" {
-			if _, err := modRepo.CreateGroup(r.Context(), uuid.NewString(), itemID, name, required, minSelect, maxSelect, sortOrder); err != nil {
+			newID := uuid.NewString()
+			if _, err := modRepo.CreateGroup(r.Context(), newID, name, required, minSelect, maxSelect, sortOrder); err != nil {
 				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
 				return
+			}
+			if itemID != "" {
+				linkSort, err := modRepo.NextGroupSortOrderForItem(r.Context(), itemID)
+				if err != nil {
+					common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "modifiers.error.server", "catalog", err)
+					return
+				}
+				if err := modRepo.LinkGroupToItem(r.Context(), itemID, newID, linkSort); err != nil {
+					common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
+					return
+				}
 			}
 		} else {
 			if err := modRepo.UpdateGroup(r.Context(), groupID, name, required, minSelect, maxSelect, sortOrder, active); err != nil {
@@ -1344,10 +1346,13 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		}
 		_ = r.ParseForm()
 		groupID := strings.TrimSpace(r.Form.Get("groupId"))
+		// itemId is only the re-render hint for the legacy #catalog-variants
+		// fallback in renderModifierMutationResult; /modifiers' own option
+		// forms (ADR-0101) carry none, since a group has no item.
 		itemID := strings.TrimSpace(r.Form.Get("itemId"))
 		name := strings.TrimSpace(r.Form.Get("name"))
-		if groupID == "" || itemID == "" || name == "" {
-			http.Error(w, "groupId, itemId and name required", http.StatusBadRequest)
+		if groupID == "" || name == "" {
+			http.Error(w, "groupId and name required", http.StatusBadRequest)
 			return
 		}
 		priceDeltaMinor := int64(0)
@@ -1429,7 +1434,16 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			groupIDs = append(groupIDs, id)
 		}
 		if itemID == "" {
-			http.Error(w, "itemId and groupId required", http.StatusBadRequest)
+			// ut-docs#2399, independent-review finding: on /modifiers every
+			// group card now carries an "Add item" picker whose value that
+			// matters is a HIDDEN itemId resolved from a free-text search —
+			// `required` on a hidden input is ignored by constraint
+			// validation, so a typo that resolves to nothing reaches this
+			// handler. A text/plain http.Error here is never swapped in by
+			// app.js's htmx:beforeSwap (same reasoning as the groupIDs
+			// branch just below), i.e. tapping "Add item" would do nothing
+			// visible. Route through the Notice-carrying re-render instead.
+			renderModifierMutationResult(w, r, "", http.StatusBadRequest, httpx.T(httpx.RequestLocale(r), "modifiers.pick_item"))
 			return
 		}
 		if len(groupIDs) == 0 {
@@ -1497,25 +1511,14 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		renderModifierMutationResult(w, r, itemID, http.StatusOK, notice)
 	})
 
-	// Detach a modifier group from ONE item, distinct from DeleteGroup
-	// (unwired to any handler, per its own doc comment) which would remove
-	// it from every item using it. Refuses to detach a group's LAST
-	// remaining link (ut-docs#2046 architecture decision, recorded on the
-	// issue): UnlinkGroupFromItem itself would happily leave the group
-	// orphaned — its own doc comment used to say that "stays manageable via
-	// /modifiers", but that page (and the item panel) only ever reach a
-	// group THROUGH a link row, so a zero-link group would actually become
-	// permanently unreachable in the UI, not merely unattached from this
-	// item. A merchant who wants a group gone from sale entirely already has
-	// the "Active" checkbox on the group's own edit form for that.
-	//
-	// The count-then-delete is one atomic conditional statement inside
-	// UnlinkGroupFromItemUnlessLastLink, not a separate GroupLinkCount call
-	// followed by UnlinkGroupFromItem (independent-review finding): two
-	// concurrent detaches against a 2-link group's own two different items
-	// could otherwise both read links==2, both pass the check, and both
-	// delete — leaving zero links, exactly the orphan this guard exists to
-	// prevent.
+	// Detach a modifier group from ONE item — the item's link row only,
+	// never the group (that is /delete below). Since ADR-0101
+	// (ut-docs#2399) this is unconditional, including the group's last
+	// item link: a group with no assignment is a valid state, listed and
+	// editable on /modifiers (which reads the group table itself, not the
+	// links) and simply not offered at checkout. The ut-docs#2046 last-link
+	// refusal existed only because the old per-item /modifiers listing
+	// could not show an orphan, and went with that listing.
 	mux.HandleFunc("/api/catalog/modifier-group/detach", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1534,16 +1537,93 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "itemId and groupId required", http.StatusBadRequest)
 			return
 		}
-		unlinked, err := modRepo.UnlinkGroupFromItemUnlessLastLink(r.Context(), itemID, groupID)
-		if err != nil {
+		if err := modRepo.UnlinkGroupFromItem(r.Context(), itemID, groupID); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "modifiers.error.server", "catalog", err)
 			return
 		}
-		if !unlinked {
-			renderModifierMutationResult(w, r, itemID, http.StatusConflict, httpx.T(httpx.RequestLocale(r), "catalog.modifiers.detach_last_error"))
+		renderModifierMutationResult(w, r, itemID, http.StatusOK, "")
+	})
+
+	// Assign / unassign a modifier group to a CATEGORY from the group's
+	// own card on /modifiers (ADR-0101 §3, ut-docs#2399) — one link row at
+	// a time, the same category_modifier_group_links rows the category
+	// editor's multi-select Save (SetCategoryModifierGroups, ut-docs#2284)
+	// manages wholesale from the other side. Gated and answered exactly
+	// like the item-side attach/detach above: requireCatalogManagement,
+	// requirePrimary (the link tables are admin-synced), and
+	// renderModifierMutationResult so the card re-renders and an open sale
+	// screen refetches its tile gate (HX-Trigger: modifiers-changed).
+	// A groupId/categoryId that does not exist fails the link row's FK and
+	// comes back as a 400, not a 500 — a stale card must not look like an
+	// outage.
+	categoryLinkToggle := func(action string, apply func(context.Context, string, string) error) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			if !requireCatalogManagement(w, r) {
+				return
+			}
+			if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
+				return
+			}
+			_ = r.ParseForm()
+			groupID := strings.TrimSpace(r.Form.Get("groupId"))
+			categoryID := strings.TrimSpace(r.Form.Get("categoryId"))
+			if groupID == "" || categoryID == "" {
+				http.Error(w, "groupId and categoryId required", http.StatusBadRequest)
+				return
+			}
+			if err := apply(r.Context(), categoryID, groupID); err != nil {
+				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog "+action, err)
+				return
+			}
+			renderModifierMutationResult(w, r, "", http.StatusOK, "")
+		}
+	}
+	mux.HandleFunc("/api/catalog/modifier-group/attach-category", categoryLinkToggle("attach-category", func(ctx context.Context, categoryID, groupID string) error {
+		// Appended after the category's existing groups (same
+		// MAX(sort_order)+1 rule as the item-side attach — see
+		// NextGroupSortOrderForItem's own doc comment on why not a count).
+		sortOrder, err := modRepo.NextGroupSortOrderForCategory(ctx, categoryID)
+		if err != nil {
+			return err
+		}
+		return modRepo.LinkGroupToCategory(ctx, categoryID, groupID, sortOrder)
+	}))
+	mux.HandleFunc("/api/catalog/modifier-group/detach-category", categoryLinkToggle("detach-category", modRepo.UnlinkGroupFromCategory))
+
+	// Delete a modifier group EVERYWHERE (ADR-0101 Decision 2, ut-docs#2399)
+	// — the group row, and by cascade its options, every item link, every
+	// category link and every opt-out. The card's button carries an
+	// hx-confirm (modifiers.delete_confirm) that says exactly that, and
+	// that past sales keep the modifiers they recorded
+	// (sale_line_modifiers snapshots names/prices and has no FK onto the
+	// group). Deactivating stays the reversible alternative. Same gates
+	// and same re-render dispatch as every other group mutation.
+	mux.HandleFunc("/api/catalog/modifier-group/delete", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		renderModifierMutationResult(w, r, itemID, http.StatusOK, "")
+		if !requireCatalogManagement(w, r) {
+			return
+		}
+		if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
+			return
+		}
+		_ = r.ParseForm()
+		groupID := strings.TrimSpace(r.Form.Get("groupId"))
+		if groupID == "" {
+			http.Error(w, "groupId required", http.StatusBadRequest)
+			return
+		}
+		if err := modRepo.DeleteGroup(r.Context(), groupID); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "modifiers.error.server", "catalog delete-group", err)
+			return
+		}
+		renderModifierMutationResult(w, r, "", http.StatusOK, "")
 	})
 
 	// Opt an item OUT of / back IN to a category-inherited modifier group
@@ -1551,9 +1631,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// route above: an opt-out is a presence row in
 	// item_modifier_group_opt_outs that only ever suppresses the CATEGORY
 	// attachment — a group the item is ALSO directly linked to keeps that
-	// link and stays offered (see OptOutItemFromGroup's own doc comment and
-	// UnlinkGroupFromItemUnlessLastLink for why the two must never be
-	// conflated: an unlink can orphan a group, an opt-out never can).
+	// link and stays offered (see OptOutItemFromGroup's own doc comment for
+	// why the two must never be conflated: an unlink removes a direct
+	// assignment, an opt-out only declines an inherited one).
 	// Answered through renderModifierMutationResult like every other group
 	// mutation, so the item-scoped dialog re-renders and the sale screen's
 	// tile gate refetches (HX-Trigger: modifiers-changed).

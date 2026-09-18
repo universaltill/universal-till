@@ -25,49 +25,44 @@
 {{ template "modifiers_list" . }}
 {{ end }}
 
-<!-- ut-docs#1957: /modifiers became the full CRUD home for modifier groups
-     — this used to be a plain read-only browse list (ut-docs#1899); the
-     create/edit forms that used to be embedded in catalog_variants.html's
-     own detail panel now render here instead, reusing modifier_group_admin
-     (a partial shared with the "Manage customization groups" nested dialog
-     opened from an item's own edit panel — see catalog.html/
-     catalog_variants.html) once per item. #modifiers-list is this page's
-     own htmx re-render target: handlers.go's renderModifierMutationResult
+<!-- ADR-0101 (ut-docs#2399): /modifiers is the home of the modifier group
+     ITSELF. A group is a shop-wide entity — created here with a name and
+     its rules, no item — and assigned to categories and items by selection
+     from its own card. Before this (ut-docs#1957/#1899) the page listed
+     groups UNDER each item (one instance of modifier_group_admin per item,
+     a group shared by three items rendered three times) and the create
+     form demanded an item, which is exactly the "a modifier can only be
+     created attached to a catalog item" the product owner reported.
+
+     Server passes .Groups as []modifierCard (handlers.go): each a
+     data.ModifierGroupAdmin — the group, EVERY option (active or not, so a
+     deactivated one can be reactivated), its linked Categories and Items —
+     plus CategoryOptions, every shop category with a Linked flag for the
+     checkbox row. .ItemsJSON feeds the shared <datalist> every card's
+     "Add item" search resolves against. #modifiers-list is this page's own
+     htmx re-render target: handlers.go's renderModifierMutationResult
      picks this template back whenever a mutation's Hx-Request originated
-     from a form whose hx-target is #modifiers-list (see
-     modifier_group_admin.html's own doc comment for the full dispatch
-     story). Server passes .Groups as a []struct{ItemID,ItemName,
-     ModifierGroups,Target} slice, already grouped per item and already
-     carrying every group (active or not — unlike the old read-only browse
-     query, this admin page must still show a deactivated group so it can
-     be reactivated). -->
+     from a form whose hx-target is #modifiers-list.
+
+     The full-CRUD group/option forms used to live in
+     partials/modifier_group_admin.html (shared with the item editor's
+     nested dialog); that partial is attach-only now (ut-docs#2330) and
+     the CRUD markup lives here, its only remaining user. -->
 {{ define "modifiers_list" }}
 <div id="modifiers-list">
   {{/* ut-docs#2046, independent-review finding: a refused mutation (e.g.
-       the detach-guard's last-link refusal) answers through this SAME
-       fragment with .Notice set, rather than a plain http.Error body —
-       app.js's htmx:beforeSwap never force-swaps a non-text/html error
-       response, and there is no #pos-alert fallback outside the sale
-       screen, so that would otherwise be a silent no-op. See
-       handlers.go's renderModifierMutationResult. */}}
+       a stale attach's 409) answers through this SAME fragment with
+       .Notice set, rather than a plain http.Error body — app.js's
+       htmx:beforeSwap never force-swaps a non-text/html error response,
+       and there is no #pos-alert fallback outside the sale screen, so
+       that would otherwise be a silent no-op. See handlers.go's
+       renderModifierMutationResult. */}}
   {{ if .Notice }}<p class="field-error-msg" role="alert">{{ .Notice }}</p>{{ end }}
-  {{/* ut-docs#2330, e2e-caught regression: before AttachOnly, the
-       item-editor's own nested dialog was the ONLY place a shop's very
-       first modifier group (for any item not already in .Groups below)
-       ever got created — its "add new group" form rendered
-       unconditionally there, regardless of whether the item had any
-       groups yet. Removing that form from the item-editor without giving
-       /modifiers an equivalent broke group creation entirely for any item
-       that doesn't already own a group shop-wide. This card, standing
-       alone, an item-picker feeding the SAME create-group form
-       modifier_group_admin.html's own "add new group" branch posts to —
-       so an item with zero groups anywhere can still get its first one,
-       from the one screen that now owns all group/option authoring. */}}
+  {{/* Create: name + rules only. No item picker (ADR-0101 Decision 2) —
+       the group gets its assignments from its card below once it exists. */}}
   <div class="card modifiers-new-group-card">
     <div class="muted catalog-detail-label">{{ T "catalog.modifiers.add_group" }}</div>
     <form hx-post="/api/catalog/modifier-group" hx-target="#modifiers-list" hx-swap="outerHTML" class="modifier-admin-group-row modifier-admin-group-new">
-      <input type="text" list="modifiers-items-list" class="modifiers-new-item-search" placeholder="{{ T "inventory.item_placeholder" }}" required>
-      <input type="hidden" name="itemId" class="modifiers-new-item-id" required>
       <input type="hidden" name="isActive" value="1">
       <input type="text" name="name" required placeholder="{{ T "catalog.modifiers.add_group" }} — {{ T "catalog.modifiers.group_example" }}">
       <label><input type="checkbox" name="required" value="1"> {{ T "catalog.modifiers.required" }}</label>
@@ -76,34 +71,6 @@
       <button class="btn" type="submit">{{ T "catalog.modifiers.add_group" }}</button>
     </form>
   </div>
-  <datalist id="modifiers-items-list"></datalist>
-  <script id="modifiers-items" type="application/json">{{ .ItemsJSON }}</script>
-  <script>
-    (function () {
-      // Same id/name/sku picker mechanics as inventory.html's own
-      // stock-item-search (ut-docs#2011) -- a <datalist>-backed free-text
-      // search resolved back to a hidden itemId by exact label match, not
-      // a shared module, matching that page's own local-inline convention.
-      var items = JSON.parse((document.getElementById('modifiers-items') || {}).textContent || '[]');
-      var byLabel = {};
-      var dl = document.getElementById('modifiers-items-list');
-      items.forEach(function (it) {
-        var label = it.name + (it.sku ? ' (' + it.sku + ')' : '');
-        byLabel[label.toLowerCase()] = it.id;
-        var opt = document.createElement('option');
-        opt.value = label;
-        dl.appendChild(opt);
-      });
-      var search = document.querySelector('.modifiers-new-item-search');
-      var hidden = document.querySelector('.modifiers-new-item-id');
-      if (!search || !hidden) return;
-      function resolve() {
-        hidden.value = byLabel[(search.value || '').toLowerCase()] || '';
-      }
-      search.addEventListener('input', resolve);
-      search.addEventListener('change', resolve);
-    })();
-  </script>
   {{ if not .Groups }}
   <div class="card">
     <p class="muted">{{ T "modifiers.empty" }}</p>
@@ -121,23 +88,200 @@
     <a class="btn secondary" href="/items"{{ if .InItemsShell }} hx-get="/catalog" hx-target="#items-panel" hx-push-url="true"{{ end }}>{{ T "modifiers.empty_cta" }}</a>
   </div>
   {{ else }}
-  <!-- ut-docs#1899, independent-review finding: this is a plain browse list
-       with no detail column, unlike .catalog-layout's other users (list +
-       360px editor panel) — using that class here left a permanently empty
-       360px column at kiosk width. A simple stack instead. -->
-  <div style="display:flex; flex-direction:column; gap:.75rem; max-width:44rem">
+  <!-- ut-docs#1899, independent-review finding: a plain stack, not
+       .catalog-layout (list + 360px editor column) — that left a
+       permanently empty column at kiosk width. -->
+  <div class="modifiers-cards">
     {{ range .Groups }}
-    <div class="card">
-      <!-- ut-docs#1914: link the item name back to /catalog with its detail
-           panel pre-opened (openCatalogRow's ?item= deep link) instead of
-           leaving it as text the merchant has to go find by hand. Plain
-           accent-coloured <a>, matching orders_list.html's own inline-link
-           convention. -->
-      <h3 style="margin:.2rem 0"><a href="/catalog?item={{ .ItemID }}">{{ .ItemName }}</a></h3>
-      {{ template "modifier_group_admin" . }}
+    {{ $group := . }}
+    <div class="card modifier-card{{ if not .IsActive }} vg-inactive{{ end }}" data-group-id="{{ .ID }}">
+      <form hx-post="/api/catalog/modifier-group" hx-target="#modifiers-list" hx-swap="outerHTML" class="modifier-admin-group-row">
+        <input type="hidden" name="id" value="{{ .ID }}">
+        <input type="text" name="name" value="{{ .Name }}" required placeholder="{{ T "catalog.modifiers.group_name" }}">
+        <label><input type="checkbox" name="required" value="1" {{ if .Required }}checked{{ end }}> {{ T "catalog.modifiers.required" }}</label>
+        <label>{{ T "catalog.modifiers.min" }} <input type="number" name="minSelect" value="{{ .MinSelect }}" min="0" style="max-inline-size:4rem"></label>
+        <label>{{ T "catalog.modifiers.max" }} <input type="number" name="maxSelect" value="{{ .MaxSelect }}" min="1" style="max-inline-size:4rem"></label>
+        <!-- Checkbox semantics: an unchecked box submits nothing, so this
+             pairs it with a hidden isActive=0 (same convention as the
+             variant form in catalog_variants.html) — without it, unchecking
+             "Active" and saving would silently do nothing. -->
+        <input type="hidden" name="isActive" value="0">
+        <label><input type="checkbox" name="isActive" value="1" {{ if .IsActive }}checked{{ end }}> {{ T "catalog.active" }}</label>
+        <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
+      </form>
+
+      <div class="modifier-admin-options">
+        {{ range .Options }}
+        <form hx-post="/api/catalog/modifier-option" hx-target="#modifiers-list" hx-swap="outerHTML" class="modifier-admin-option-row{{ if not .IsActive }} vg-inactive{{ end }}">
+          <input type="hidden" name="groupId" value="{{ $group.ID }}">
+          <input type="hidden" name="id" value="{{ .ID }}">
+          <input type="text" name="name" value="{{ .Name }}" required placeholder="{{ T "catalog.modifiers.option_name" }}">
+          <!-- ut-docs#1284: type="number" corrupts a decimal typed via the
+               kiosk OSK (see index.html's split-tender amount field). The
+               /api/catalog/modifier-option handler already parses this raw
+               string server-side, so no JS change is needed. -->
+          <input type="text" inputmode="decimal" name="priceDeltaMajor" class="modifier-price-major" data-minor="{{ .PriceDeltaMinor }}" {{ moneypattern currency.Decimals false }} title="{{ T "catalog.modifiers.price_delta" }}">
+          <input type="hidden" name="isActive" value="0">
+          <label><input type="checkbox" name="isActive" value="1" {{ if .IsActive }}checked{{ end }}> {{ T "catalog.active" }}</label>
+          <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
+        </form>
+        {{ end }}
+        <form hx-post="/api/catalog/modifier-option" hx-target="#modifiers-list" hx-swap="outerHTML" class="modifier-admin-option-row">
+          <input type="hidden" name="groupId" value="{{ $group.ID }}">
+          <input type="hidden" name="isActive" value="1">
+          <input type="text" name="name" required placeholder="{{ T "catalog.modifiers.option_name" }} — {{ T "catalog.modifiers.option_example" }}">
+          <input type="text" inputmode="decimal" name="priceDeltaMajor" {{ moneypattern currency.Decimals false }} placeholder="0.00">
+          <button class="btn" type="submit">{{ T "catalog.modifiers.add_option" }}</button>
+        </form>
+      </div>
+
+      {{/* Assigned to (ADR-0101 §3): every category as a checkbox (checked
+           = a category_modifier_group_links row; toggling posts
+           attach-category / detach-category, one link at a time), then the
+           directly linked items as chips each with a Remove control
+           (detach), then the same <datalist> item search the old create
+           form used, now ADDING a link (attach) rather than creating a
+           group. A group with nothing in either list gets one muted line:
+           it is a valid state, and it is simply not offered at checkout
+           until assigned. */}}
+      <div class="modifier-assign">
+        <div class="muted catalog-detail-label">{{ T "modifiers.assigned_to" }}</div>
+        {{ if and (not .Categories) (not .Items) }}<p class="muted modifier-unassigned">{{ T "modifiers.unassigned" }}</p>{{ end }}
+        <fieldset class="modifier-assign-fieldset">
+          <legend class="muted">{{ T "modifiers.assigned_categories" }}</legend>
+          {{ if not .CategoryOptions }}<p class="muted">{{ T "modifiers.no_categories" }}</p>{{ end }}
+          <div class="modifier-assign-row">
+            {{ range .CategoryOptions }}
+            <label class="tag modifier-assign-cat{{ if not .IsActive }} vg-inactive{{ end }}">
+              <input type="checkbox" name="categoryId" value="{{ .ID }}"{{ if .Linked }} checked{{ end }}
+                     hx-post="{{ if .Linked }}/api/catalog/modifier-group/detach-category{{ else }}/api/catalog/modifier-group/attach-category{{ end }}"
+                     hx-trigger="change"
+                     hx-vals='{{ jsonVals "groupId" $group.ID "categoryId" .ID }}'
+                     hx-target="#modifiers-list" hx-swap="outerHTML"> {{ .Name }}
+            </label>
+            {{ end }}
+          </div>
+        </fieldset>
+        <fieldset class="modifier-assign-fieldset">
+          <legend class="muted">{{ T "modifiers.assigned_items" }}</legend>
+          <div class="modifier-assign-row">
+            {{ range .Items }}
+            {{/* ut-docs#1914: the item name links back to /catalog with its
+                 detail panel pre-opened (openCatalogRow's ?item= deep link). */}}
+            <span class="tag modifier-assign-item{{ if not .IsActive }} vg-inactive{{ end }}" data-item-id="{{ .ID }}">
+              <a href="/catalog?item={{ .ID }}">{{ .Name }}</a>
+              <button type="button" class="modifier-chip-remove"
+                      hx-post="/api/catalog/modifier-group/detach"
+                      hx-vals='{{ jsonVals "itemId" .ID "groupId" $group.ID }}'
+                      hx-confirm="{{ T "catalog.modifiers.detach_confirm" }}"
+                      hx-target="#modifiers-list" hx-swap="outerHTML"
+                      aria-label="{{ T "modifiers.remove_item" }}" title="{{ T "modifiers.remove_item" }}">×</button>
+            </span>
+            {{ end }}
+          </div>
+          {{/* The attach handler only accepts an ACTIVE group (its stale-
+               picker guard, ut-docs#2046), same rule the item editor's own
+               picker applies — so an inactive group offers no "Add item"
+               row; reactivate it first. */}}
+          {{ if .IsActive }}
+          <form hx-post="/api/catalog/modifier-group/attach" hx-target="#modifiers-list" hx-swap="outerHTML" class="modifier-assign-add-item">
+            <input type="hidden" name="groupId" value="{{ .ID }}">
+            <input type="text" list="modifiers-items-list" class="modifiers-item-search" placeholder="{{ T "inventory.item_placeholder" }}" data-pick-msg="{{ T "modifiers.pick_item" }}" required>
+            <input type="hidden" name="itemId" class="modifiers-item-id" required>
+            <button class="btn secondary" type="submit">{{ T "modifiers.add_item" }}</button>
+          </form>
+          {{ end }}
+        </fieldset>
+      </div>
+      <!-- Delete EVERYWHERE (ADR-0101 Decision 2): the group row and, by
+           cascade, its options, item links, category links and opt-outs.
+           The confirm says so, and that past sales keep the modifiers
+           they recorded. Deactivating (the Active box) stays the
+           reversible alternative. A standalone hx-post button, not a
+           second <form>, matching the barcode-remove convention
+           (catalog_variants.html) rather than nesting two POST targets
+           in one <form>. Sits in its own footer row at the END of the
+           card (Tester, ut-docs#2399): inside the header <form> it wrapped
+           onto a second line at 1024x600 and sat orphaned under the Save
+           button — a destructive action at the card's foot, away from the
+           per-row Save buttons, is also harder to hit by accident. -->
+      <div class="modifier-card-footer">
+        <button type="button" class="btn secondary modifier-delete-btn"
+                hx-post="/api/catalog/modifier-group/delete"
+                hx-vals='{{ jsonVals "groupId" .ID }}'
+                hx-confirm="{{ T "modifiers.delete_confirm" }}"
+                hx-target="#modifiers-list" hx-swap="outerHTML">{{ T "modifiers.delete" }}</button>
+      </div>
     </div>
     {{ end }}
   </div>
   {{ end }}
+  <datalist id="modifiers-items-list"></datalist>
+  <script id="modifiers-items" type="application/json">{{ .ItemsJSON }}</script>
+  <script>
+    (function () {
+      // Same id/name/sku picker mechanics as inventory.html's own
+      // stock-item-search (ut-docs#2011) -- a <datalist>-backed free-text
+      // search resolved back to a hidden itemId by exact label match, not
+      // a shared module, matching that page's own local-inline convention.
+      // One shared <datalist>, one search input PER GROUP CARD (each card's
+      // "Add item" row, ut-docs#2399), each resolved into its own form's
+      // hidden itemId. This block sits at the END of #modifiers-list on
+      // purpose: it runs as the fragment is parsed, so every card above
+      // it already exists — placed before the cards it found none of the
+      // search inputs or price fields (caught on the first real render).
+      var root = document.currentScript.closest('#modifiers-list');
+      if (!root) return;
+      var items = JSON.parse((root.querySelector('#modifiers-items') || {}).textContent || '[]');
+      var byLabel = {};
+      var dl = root.querySelector('#modifiers-items-list');
+      items.forEach(function (it) {
+        var label = it.name + (it.sku ? ' (' + it.sku + ')' : '');
+        byLabel[label.toLowerCase()] = it.id;
+        var opt = document.createElement('option');
+        opt.value = label;
+        dl.appendChild(opt);
+      });
+      root.querySelectorAll('.modifiers-item-search').forEach(function (search) {
+        var form = search.closest('form');
+        var hidden = form && form.querySelector('.modifiers-item-id');
+        if (!hidden) return;
+        function resolve() {
+          hidden.value = byLabel[(search.value || '').toLowerCase()] || '';
+          // ut-docs#2399 review (M1): `required` on the hidden itemId is
+          // ignored by constraint validation, so a typo that matches no
+          // item would submit an empty itemId. Block it client-side with
+          // the browser's own validity bubble (localized via data-pick-msg
+          // — same mechanic as inventory.html's picker); the handler's
+          // Notice re-render is the server-side backstop.
+          search.setCustomValidity(hidden.value ? '' : (search.dataset.pickMsg || ''));
+        }
+        search.addEventListener('input', resolve);
+        search.addEventListener('change', resolve);
+      });
+      // Minor -> major price display for every option row (the same
+      // conversion modifier_group_admin.html's own script did per item).
+      // window.utCurrency comes from app.js, which base.html loads with
+      // `defer` — on a FULL page load this inline script runs first, so
+      // wait for DOMContentLoaded in that case (an htmx re-render of the
+      // fragment runs long after app.js, and converts immediately).
+      function showMajorPrices() {
+        root.querySelectorAll('.modifier-price-major').forEach(function (el) {
+          var minor = parseInt(el.dataset.minor || '0', 10);
+          if (minor > 0 && window.utCurrency) {
+            el.value = window.utCurrency.toMajor(minor);
+          }
+        });
+      }
+      // readyState guard (ADR-0098): on a boosted arrival the document is
+      // already 'complete' and DOMContentLoaded never fires again, so run
+      // straight away whenever the document has finished parsing.
+      if (window.utCurrency || document.readyState !== 'loading') {
+        showMajorPrices();
+      } else {
+        document.addEventListener('DOMContentLoaded', showMajorPrices);
+      }
+    })();
+  </script>
 </div>
 {{ end }}

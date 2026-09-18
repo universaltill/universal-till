@@ -485,7 +485,7 @@ func TestButtonsUIFragment_ReflectsModifierGroupAttachedAfterButtonExisted(t *te
 	// state even though it bypasses the HTTP handler -- unlike the old
 	// detach test this replaces, no UI-unreachable state is asserted
 	// against here.
-	if _, err := d.Db.Exec(`INSERT INTO item_modifier_groups(id,item_id,name,required,min_select,max_select,sort_order,is_active) VALUES ('g1','itm-plain','Toppings',0,0,3,0,1)`); err != nil {
+	if _, err := d.Db.Exec(`INSERT INTO item_modifier_groups (id, name,required,min_select,max_select,sort_order,is_active) VALUES ('g1','Toppings',0,0,3,0,1)`); err != nil {
 		t.Fatalf("seed modifier group: %v", err)
 	}
 	if _, err := d.Db.Exec(`INSERT INTO item_modifier_group_links(item_id,group_id,sort_order) VALUES ('itm-plain','g1',0)`); err != nil {
@@ -524,7 +524,7 @@ func TestButtonsUIFragment_HasVariantsAloneKeepsPickerAcrossModifierGroupChanges
 	assertTileOpensModifiers(t, rec.Body.String(), "itm1", "BTN1")
 
 	// Attach a modifier group too -- both gates now true.
-	if _, err := d.Db.Exec(`INSERT INTO item_modifier_groups(id,item_id,name,required,min_select,max_select,sort_order,is_active) VALUES ('g1','itm1','Toppings',0,0,3,0,1)`); err != nil {
+	if _, err := d.Db.Exec(`INSERT INTO item_modifier_groups (id, name,required,min_select,max_select,sort_order,is_active) VALUES ('g1','Toppings',0,0,3,0,1)`); err != nil {
 		t.Fatalf("seed modifier group: %v", err)
 	}
 	if _, err := d.Db.Exec(`INSERT INTO item_modifier_group_links(item_id,group_id,sort_order) VALUES ('itm1','g1',0)`); err != nil {
@@ -576,9 +576,12 @@ func TestButtonsUIFragment_ReflectsModifierGroupAttachedViaRealAttachHandler(t *
 		t.Fatalf("seed decoy item: %v", err)
 	}
 	modRepo := data.NewModifierRepo(d.Db)
-	groupID, err := modRepo.CreateGroup(t.Context(), "g-toppings", "itm-decoy", "Toppings", false, 0, 3, 0)
+	groupID, err := modRepo.CreateGroup(t.Context(), "g-toppings", "Toppings", false, 0, 3, 0)
 	if err != nil {
 		t.Fatalf("create existing group: %v", err)
+	}
+	if err := modRepo.LinkGroupToItem(t.Context(), "itm-decoy", groupID, 0); err != nil {
+		t.Fatalf("link existing group to decoy: %v", err)
 	}
 
 	rec := httptest.NewRecorder()
@@ -609,10 +612,7 @@ func TestButtonsUIFragment_ReflectsModifierGroupAttachedViaRealAttachHandler(t *
 // own comment on /api/catalog/modifier-group) -- a merchant "removes" its
 // effect by unchecking the group's Active checkbox, which round-trips
 // through the SAME create-or-update handler as an isActive=0 update. This
-// drives that real toggle both ways and checks the tile after each flip,
-// rather than asserting a raw multi-link DELETE the real detach handler
-// (UnlinkGroupFromItemUnlessLastLink) can never produce for a
-// single-linked group.
+// drives that real toggle both ways and checks the tile after each flip.
 func TestButtonsUIFragment_ReflectsModifierGroupActiveToggleViaRealHandler(t *testing.T) {
 	mux, d := newButtonsAndCatalogMux(t)
 	seedPlainItem(t, d.Db, "itm-plain")
@@ -621,9 +621,12 @@ func TestButtonsUIFragment_ReflectsModifierGroupActiveToggleViaRealHandler(t *te
 		t.Fatalf("seed button: %v", err)
 	}
 	modRepo := data.NewModifierRepo(d.Db)
-	groupID, err := modRepo.CreateGroup(t.Context(), "g-toppings", "itm-plain", "Toppings", false, 0, 3, 0)
+	groupID, err := modRepo.CreateGroup(t.Context(), "g-toppings", "Toppings", false, 0, 3, 0)
 	if err != nil {
 		t.Fatalf("create group: %v", err)
+	}
+	if err := modRepo.LinkGroupToItem(t.Context(), "itm-plain", groupID, 0); err != nil {
+		t.Fatalf("link group: %v", err)
 	}
 
 	rec := httptest.NewRecorder()
@@ -709,12 +712,10 @@ func TestButtonsPartial_RootCarriesRefreshTrigger(t *testing.T) {
 func TestModifierGroupAttach_FiresModifiersChangedTrigger(t *testing.T) {
 	mux, d := newButtonsAndCatalogMux(t)
 	modRepo := data.NewModifierRepo(d.Db)
-	groupID, err := modRepo.CreateGroup(t.Context(), "g-toppings", "itm1", "Toppings", false, 0, 3, 0)
+	// Shop-wide, unassigned (ADR-0101) — attachable to itm1 as-is.
+	groupID, err := modRepo.CreateGroup(t.Context(), "g-toppings", "Toppings", false, 0, 3, 0)
 	if err != nil {
 		t.Fatalf("create group: %v", err)
-	}
-	if err := modRepo.UnlinkGroupFromItem(t.Context(), "itm1", groupID); err != nil {
-		t.Fatalf("unlink so it's attachable again: %v", err)
 	}
 
 	attachForm := url.Values{"itemId": {"itm1"}, "groupId": {groupID}}
@@ -731,14 +732,47 @@ func TestModifierGroupAttach_FiresModifiersChangedTrigger(t *testing.T) {
 }
 
 // A refused mutation changed nothing and must not tell any open sale screen
-// to refetch — the detach-guard's last-link refusal is the one call site
-// that answers through renderModifierMutationResult with a non-OK status.
-func TestModifierGroupDetach_LastLinkRefusalDoesNotFireTrigger(t *testing.T) {
+// to refetch — a stale attach picker's 409 (attaching an INACTIVE group) is
+// the refusal path that answers through renderModifierMutationResult with
+// a non-OK status. (The detach-guard's last-link refusal used to be the
+// example here; ADR-0101 removed that guard — detaching a last link now
+// succeeds and fires the trigger like every other successful mutation.)
+func TestModifierGroupAttach_StalePickerRefusalDoesNotFireTrigger(t *testing.T) {
 	mux, d := newButtonsAndCatalogMux(t)
 	modRepo := data.NewModifierRepo(d.Db)
-	groupID, err := modRepo.CreateGroup(t.Context(), "g-toppings", "itm1", "Toppings", false, 0, 3, 0)
+	groupID, err := modRepo.CreateGroup(t.Context(), "g-toppings", "Toppings", false, 0, 3, 0)
 	if err != nil {
 		t.Fatalf("create group: %v", err)
+	}
+	if err := modRepo.UpdateGroup(t.Context(), groupID, "Toppings", false, 0, 3, 0, false); err != nil {
+		t.Fatalf("deactivate group: %v", err)
+	}
+
+	attachForm := url.Values{"itemId": {"itm1"}, "groupId": {groupID}}
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group/attach", strings.NewReader(attachForm.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("attaching an inactive group: want 409 (refused), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("HX-Trigger"); got != "" {
+		t.Fatalf("a refused attach must not fire a refresh trigger, got HX-Trigger %q", got)
+	}
+}
+
+// Detaching a group's LAST item link is allowed since ADR-0101 (the group
+// becomes unassigned, not deleted) and, being a real change to what the
+// tile gate resolves, fires the refresh trigger.
+func TestModifierGroupDetach_LastLinkSucceedsAndFiresTrigger(t *testing.T) {
+	mux, d := newButtonsAndCatalogMux(t)
+	modRepo := data.NewModifierRepo(d.Db)
+	groupID, err := modRepo.CreateGroup(t.Context(), "g-toppings", "Toppings", false, 0, 3, 0)
+	if err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	if err := modRepo.LinkGroupToItem(t.Context(), "itm1", groupID, 0); err != nil {
+		t.Fatalf("link group: %v", err)
 	}
 
 	detachForm := url.Values{"itemId": {"itm1"}, "groupId": {groupID}}
@@ -746,11 +780,18 @@ func TestModifierGroupDetach_LastLinkRefusalDoesNotFireTrigger(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("detaching a group's last link: want 409 (refused), got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("detaching a group's last link: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if got := rec.Header().Get("HX-Trigger"); got != "" {
-		t.Fatalf("a refused detach must not fire a refresh trigger, got HX-Trigger %q", got)
+	if got := rec.Header().Get("HX-Trigger"); got != "modifiers-changed" {
+		t.Fatalf("detach response HX-Trigger = %q, want %q", got, "modifiers-changed")
+	}
+	var groups, links int
+	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM item_modifier_groups WHERE id = ?`, groupID).Scan(&groups); err != nil || groups != 1 {
+		t.Fatalf("the group row must survive losing its last link: n=%d err=%v", groups, err)
+	}
+	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM item_modifier_group_links WHERE group_id = ?`, groupID).Scan(&links); err != nil || links != 0 {
+		t.Fatalf("the link must be gone: n=%d err=%v", links, err)
 	}
 }
 

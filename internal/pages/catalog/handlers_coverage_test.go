@@ -448,8 +448,10 @@ func TestModifierGroup_Validation(t *testing.T) {
 	if rec := postForm(t, mux, "/api/catalog/modifier-group", "itemId=itm1"); rec.Code != http.StatusBadRequest {
 		t.Errorf("missing name: want 400, got %d", rec.Code)
 	}
-	if rec := postForm(t, mux, "/api/catalog/modifier-group", "name=Extras"); rec.Code != http.StatusBadRequest {
-		t.Errorf("missing itemId: want 400, got %d", rec.Code)
+	// itemId is optional since ADR-0101 (ut-docs#2399): a create without
+	// one is a shop-wide, unassigned group — a 200, not a 400.
+	if rec := postForm(t, mux, "/api/catalog/modifier-group", "name=Extras&isActive=1"); rec.Code != http.StatusOK {
+		t.Errorf("missing itemId: want 200 (standalone group), got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	// A missing/garbage maxSelect falls back to 1, never 0 — a max_select of
@@ -475,7 +477,9 @@ func TestModifierOption_Validation(t *testing.T) {
 	for _, tc := range []struct{ name, form string }{
 		{"missing name", "groupId=g1&itemId=itm1"},
 		{"missing groupId", "itemId=itm1&name=Shot"},
-		{"missing itemId", "groupId=g1&name=Shot"},
+		// "missing itemId" is no longer a validation failure: /modifiers'
+		// option forms carry no itemId since ADR-0101 (ut-docs#2399) —
+		// see TestModifierOptionCreate_NeedsNoItemID.
 		{"non-numeric priceDeltaMajor", "groupId=g1&itemId=itm1&name=Shot&priceDeltaMajor=abc"},
 		{"negative priceDeltaMajor", "groupId=g1&itemId=itm1&name=Shot&priceDeltaMajor=-0.50"},
 	} {
