@@ -80,6 +80,15 @@ func TestServe_HealthzStaysUnhealthyWhileInRecoveryMode(t *testing.T) {
 	if resp.StatusCode == http.StatusOK {
 		t.Fatal("/healthz reported healthy while recovery mode is serving — every shell's lock/exit-gating logic depends on this staying unhealthy")
 	}
+	// ut-docs#1437: mobile.Start's waitUntilReady needs a way to tell "the
+	// server is genuinely down" apart from "recovery mode is up and an
+	// operator can act on it" without treating recovery mode as healthy —
+	// this header is that signal. /healthz itself must stay 503 either way
+	// (asserted above) so every shell's healthy-vs-unhealthy logic is
+	// unchanged.
+	if got := resp.Header.Get(HeaderMode); got != ModeRecovery {
+		t.Fatalf("%s header = %q, want %q", HeaderMode, got, ModeRecovery)
+	}
 
 	cancel()
 	select {
