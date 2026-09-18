@@ -38,7 +38,7 @@ make build
 
 echo ""
 echo "Starting Universal Till POS on ${UT_LISTEN_ADDR:-:8080}..."
-echo "Marketplace endpoint: ${UT_MARKETPLACE_ENDPOINT_URL:-http://127.0.0.1:8081}"
+echo "Marketplace endpoint: ${UT_MARKETPLACE_ENDPOINT_URL:-http://127.0.0.1:8081/api}"
 echo "Marketplace client ID: ${UT_MARKETPLACE_CLIENT_ID:-(not set)}"
 echo "Marketplace locale: ${UT_MARKETPLACE_LOCALE:-en-US}"
 echo ""

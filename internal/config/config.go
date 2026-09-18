@@ -116,7 +116,7 @@ func Init() (*Config, error) {
 		Theme:    getenv("UT_THEME", "monarch"),
 		DevMode:  devMode,
 		Marketplace: MarketplaceConfig{
-			EndpointURL:           getenv("UT_MARKETPLACE_ENDPOINT_URL", "http://127.0.0.1:8081"),
+			EndpointURL:           getenv("UT_MARKETPLACE_ENDPOINT_URL", "http://127.0.0.1:8081/api"),
 			StoreID:               getenv("UT_MARKETPLACE_STORE_ID", getenv("UT_STORE_NAME", "My Store")),
 			DeviceID:              getenv("UT_MARKETPLACE_DEVICE_ID", ""),
 			PublicKey:             getenv("UT_MARKETPLACE_PUBLIC_KEY", ""),

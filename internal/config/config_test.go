@@ -71,7 +71,7 @@ func TestInitDefaults(t *testing.T) {
 		t.Error("DevMode must default to false")
 	}
 	m := cfg.Marketplace
-	if m.EndpointURL != "http://127.0.0.1:8081" {
+	if m.EndpointURL != "http://127.0.0.1:8081/api" {
 		t.Errorf("EndpointURL = %q", m.EndpointURL)
 	}
 	if m.StoreID != "My Store" {

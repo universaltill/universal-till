@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Test marketplace integration with real marketplace at localhost:8081
+# Test marketplace integration with real marketplace at localhost:8081 (behind /api)
 
 set -e
 
@@ -8,7 +8,7 @@ echo ""
 
 # 1. Test authentication endpoint
 echo "1. Testing JWT authentication..."
-AUTH_RESPONSE=$(curl -s -k -X POST https://127.0.0.1:8081/v1/auth/merchant-token \
+AUTH_RESPONSE=$(curl -s -k -X POST https://127.0.0.1:8081/api/v1/auth/merchant-token \
   -H "Content-Type: application/json" \
   -d '{
     "merchant_id": "pos-client",
@@ -29,7 +29,7 @@ echo ""
 
 # 2. Test catalog endpoint
 echo "2. Testing catalog fetch..."
-CATALOG_RESPONSE=$(curl -s -k -X GET "https://127.0.0.1:8081/v1/catalog/plugins?arch=amd64&page=1&page_size=10" \
+CATALOG_RESPONSE=$(curl -s -k -X GET "https://127.0.0.1:8081/api/v1/catalog/plugins?arch=amd64&page=1&page_size=10" \
   -H "Authorization: Bearer $TOKEN")
 
 echo "Catalog response preview:"
