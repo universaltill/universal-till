@@ -2202,10 +2202,15 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
    .tile-badge-dot (given position: relative just above for exactly this),
    not the outer 44px .tile-badge hit box, so it sits at the visible dot's
    own corner regardless of the hit box's own padding. Sized and colored
-   like a status dot, not a third badge -- .tile-badge-remove's `color:
-   var(--danger)` above only targets the FIRST `.tile-badge-dot` (the
-   trash icon), so this second `.tile-badge-dot.tile-badge-lock` sibling
-   needs its own icon color rather than inheriting that red. */
+   like a status dot, not a third badge -- this lock span ALSO carries the
+   base `.tile-badge-dot` class (buttons.html), so `.tile-badge-remove
+   .tile-badge-dot { color: var(--danger) }` above does set `color` on it
+   too, by descendant-selector match, not just on the trash icon's own
+   dot. It still renders in var(--warning) below because color is only
+   ever INHERITED onto a child that has no matching rule of its own --
+   `.tile-badge-lock svg` is a rule that directly targets the svg
+   element, and a direct match always wins over a value merely inherited
+   from an ancestor, regardless of the ancestor rule's own specificity. */
 .tile-badge-lock {
   position: absolute; inset-block-end: -3px; inset-inline-end: -3px;
   inline-size: 14px; block-size: 14px; box-shadow: 0 1px 3px rgba(15, 23, 42, .3);
