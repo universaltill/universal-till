@@ -343,11 +343,13 @@ func (eb *EventBus) subscribe(ctx context.Context, pluginID string, eventTypes [
 // dispatch modes. No production caller: the WASM runtime (the only shipped
 // plugin runtime, ADR-0001) always subscribes through SubscribeWithHandler
 // (WasmRuntime.Sync), since every hook it registers may also be published
-// Blocking. Kept as a declared test helper (ut-docs#1566): 25 call sites
-// across ten `_test.go` files in this package exercise the channel
-// dispatch path, permission gating, ut-docs#791 payload redaction and the
-// channel-full throttle through it, and it is a one-line wrapper over the
-// same subscribe() the live path uses, so it can't drift from it.
+// Blocking. Kept as a declared test helper (ut-docs#1566): 26 call sites
+// across ten `_test.go` files in this package (the 26th is ut-docs#2242's
+// TestEventBus_Unsubscribe_MultiEventTypeSharedChannel) exercise the
+// channel dispatch path, permission gating, ut-docs#791 payload redaction,
+// the channel-full throttle and the shared-channel Unsubscribe contract
+// through it, and it is a one-line wrapper over the same subscribe() the
+// live path uses, so it can't drift from it.
 func (eb *EventBus) Subscribe(ctx context.Context, pluginID string, eventTypes []string) (<-chan Event, error) {
 	return eb.subscribe(ctx, pluginID, eventTypes, nil)
 }
