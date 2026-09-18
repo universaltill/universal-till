@@ -629,3 +629,241 @@ func TestCountrySettings_ViewWrapperPresentOnStandaloneAndFragment(t *testing.T)
 		t.Errorf("fragment missing id=\"country-settings-view\": %s", rec.Body.String())
 	}
 }
+
+// ut-docs#2187: /country-settings adopts the record_dialog/list_header
+// pattern (ut-docs#2010), replacing the always-editable inline-rows-plus-
+// side-create-panel layout. Mirrors categories_page_test.go's
+// TestCategoriesPage_RendersRecordDialogWithFieldsSlot (the slot-contract
+// reference test every adopting page copies, list-and-dialog-pattern.md's
+// own instruction) — pins the list header, the row's data-record-*/
+// data-field-* wiring, and that the dialog's two slots actually render
+// their fields rather than executing to an empty body (a page that forgets
+// a slot fails at EXECUTE time, not parse time).
+func TestCountrySettingsPage_RendersRecordDialogWithFieldsSlot(t *testing.T) {
+	mux, _, d := newCountrySettingsTestMux(t)
+	d.SetState(common.RuntimeState{Country: "DE"})
+	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/country-settings", nil), mgr)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /country-settings: %d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	// The list header: a search box wired to the rows, and an icon-only New
+	// button wired to the dialog, each with an accessible name.
+	if !strings.Contains(body, `class="list-header"`) {
+		t.Errorf("page has no .list-header")
+	}
+	if !strings.Contains(body, `data-list-filter="#country-settings-table .country-row"`) {
+		t.Errorf("search box is not wired to the country rows")
+	}
+	if !strings.Contains(body, `data-record-dialog-open="country-dialog"`) {
+		t.Errorf("New button is not wired to the dialog")
+	}
+
+	// A row: NOT a per-code data-record-action (code is a form field, not a
+	// URL path segment — the single POST /api/country-settings endpoint
+	// handles create-or-update keyed by the submitted code) — see
+	// registerCountrySettings's own doc comment.
+	if !strings.Contains(body, `data-record-action="/api/country-settings"`) {
+		t.Errorf("DE row missing the shared (not per-code) data-record-action: %s", body)
+	}
+	if strings.Contains(body, `data-record-action="/api/country-settings/DE"`) {
+		t.Errorf("row must not carry a per-code data-record-action: %s", body)
+	}
+	if !strings.Contains(body, `data-record-destructive-action="/api/country-settings/DE/delete"`) {
+		t.Errorf("DE row missing its destructive action: %s", body)
+	}
+	if !strings.Contains(body, `data-field-is_builtin="1"`) {
+		t.Errorf("DE (builtin) row missing data-field-is_builtin=\"1\": %s", body)
+	}
+
+	// The dialog itself, and the slot contract: the body holds the form
+	// with every field this screen's own fields owe it.
+	dlgStart := strings.Index(body, `<dialog id="country-dialog"`)
+	if dlgStart < 0 {
+		t.Fatalf("page has no #country-dialog:\n%s", body)
+	}
+	dlgEnd := strings.Index(body[dlgStart:], `</dialog>`)
+	if dlgEnd < 0 {
+		t.Fatalf("dialog is not closed")
+	}
+	dlg := body[dlgStart : dlgStart+dlgEnd]
+	bodyStart := strings.Index(dlg, `class="record-dialog-body"`)
+	if bodyStart < 0 {
+		t.Fatalf("dialog has no .record-dialog-body:\n%s", dlg)
+	}
+	dlgBody := dlg[bodyStart:]
+	for _, field := range []string{`name="code"`, `name="currency"`, `name="currency_symbol"`, `name="tax_rate_pct"`, `name="tax_inclusive"`, `name="archive_min_days"`} {
+		if !strings.Contains(dlgBody, field) {
+			t.Errorf("record_dialog_fields slot did not actually render — missing %s:\n%s", field, dlgBody)
+		}
+	}
+
+	// The destructive slot: both branches (reset for builtin, delete for
+	// custom), each icon-only with an accessible name, each gated on
+	// data-field-is_builtin via data-record-when.
+	if !strings.Contains(dlg, `data-record-when="is_builtin=1"`) || !strings.Contains(dlg, `data-record-when="is_builtin=0"`) {
+		t.Errorf("record_dialog_destructive slot did not render both is_builtin branches:\n%s", dlg)
+	}
+	if !strings.Contains(dlg, `aria-label="Restore defaults"`) {
+		t.Errorf("destructive slot missing the builtin \"Restore defaults\" control:\n%s", dlg)
+	}
+	if !strings.Contains(dlg, `aria-label="Delete"`) {
+		t.Errorf("destructive slot missing the custom \"Delete\" control:\n%s", dlg)
+	}
+}
+
+// ut-docs#2187's htmx success shape, ported to Country settings: a
+// SUCCESSFUL htmx-boosted mutation answers with HX-Redirect (a real browser
+// navigation), never a bare 303 — mirrors
+// TestLocationsPage_HtmxSuccessAnswersWithHXRedirectNotBareRedirect.
+func TestCountrySettingsPage_HtmxSuccessAnswersWithHXRedirectNotBareRedirect(t *testing.T) {
+	mux, _, _ := newCountrySettingsTestMux(t)
+	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
+
+	rec := postFormHtmx(mux, "/api/country-settings", url.Values{
+		"code":             {"ZZ"},
+		"currency":         {"GBP"},
+		"currency_symbol":  {"£"},
+		"tax_rate_pct":     {"20"},
+		"archive_min_days": {strconv.FormatInt(data.GlobalArchiveMinDays, 10)},
+	}, &mgr)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("htmx create success: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("HX-Redirect"); got != "/country-settings" {
+		t.Fatalf("HX-Redirect = %q, want /country-settings", got)
+	}
+	if rec.Header().Get("Location") != "" {
+		t.Errorf("a bare Location alongside HX-Redirect would be followed by the boosted form's own fetch/XHR layer and land the wrong content in the dialog's message target — must not be set")
+	}
+}
+
+// A refused htmx-boosted mutation (empty code) must render the in-dialog
+// message fragment, never a redirect — mirrors
+// TestLocationsPage_RefusalRendersInDialogMessageForHtmxRequest.
+func TestCountrySettingsPage_RefusalRendersInDialogMessageForHtmxRequest(t *testing.T) {
+	mux, _, _ := newCountrySettingsTestMux(t)
+	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
+
+	rec := postFormHtmx(mux, "/api/country-settings", url.Values{
+		"code":             {"   "},
+		"tax_rate_pct":     {"20"},
+		"archive_min_days": {strconv.FormatInt(data.GlobalArchiveMinDays, 10)},
+	}, &mgr)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("htmx empty-code create: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Location") != "" {
+		t.Errorf("htmx refusal must not redirect — a redirect is exactly what closed the dialog before this card")
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want text/html (app.js's htmx:beforeSwap only force-swaps a non-2xx text/html body)", ct)
+	}
+	body := rec.Body.String()
+	// hx-swap="innerHTML" into "#country-dialog-msg" — the aria-live region
+	// ITSELF, which must never be re-rendered. So the body carries ONLY the
+	// message text, no id/wrapper/form/dialog markup.
+	if strings.Contains(body, "id=") || strings.Contains(body, "<form") || strings.Contains(body, "<dialog") {
+		t.Errorf("response must be ONLY the message text — no wrapper, form or dialog markup: %s", body)
+	}
+}
+
+// The ADR-0040 retention-floor refusal (this card's own AC, per the task
+// brief) must surface the same in-dialog way as any other refusal, not as a
+// closed dialog with a lost edit.
+func TestCountrySettingsPage_HtmxFloorRefusalRendersInDialogMessage(t *testing.T) {
+	mux, repo, _ := newCountrySettingsTestMux(t)
+	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
+	ctx := t.Context()
+
+	rec := postFormHtmx(mux, "/api/country-settings", url.Values{
+		"code":             {"DE"},
+		"currency":         {"EUR"},
+		"tax_rate_pct":     {"7"},
+		"archive_min_days": {strconv.FormatInt(data.GlobalArchiveMinDays-1, 10)},
+	}, &mgr)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("htmx below-floor save: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Location") != "" {
+		t.Errorf("htmx floor refusal must not redirect")
+	}
+	if body := rec.Body.String(); strings.Contains(body, "<form") || strings.Contains(body, "<dialog") {
+		t.Errorf("floor refusal response must be message-only: %s", body)
+	}
+	de, _, err := repo.Get(ctx, "DE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if de.ArchiveMinDays != data.GlobalArchiveMinDays {
+		t.Errorf("refused htmx save changed DE's retention to %d, want it left at the seeded floor %d", de.ArchiveMinDays, data.GlobalArchiveMinDays)
+	}
+}
+
+// The "all=1" carry-through (ut-docs#1024/TestCountrySettingsPageSave_FromAllView_RedirectsBackToAllView's
+// non-htmx pin) must also hold for the htmx-boosted dialog path: a save made
+// from the all-countries view lands back on that same view via HX-Redirect.
+func TestCountrySettingsPage_HtmxSaveFromAllView_HXRedirectsToAllView(t *testing.T) {
+	mux, _, _ := newCountrySettingsTestMux(t)
+	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
+
+	rec := postFormHtmx(mux, "/api/country-settings?all=1", url.Values{
+		"code":             {"FR"},
+		"currency":         {"EUR"},
+		"tax_rate_pct":     {"20"},
+		"archive_min_days": {strconv.FormatInt(data.GlobalArchiveMinDays, 10)},
+	}, &mgr)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("htmx save from all view: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("HX-Redirect"); got != "/country-settings?all=1" {
+		t.Errorf("HX-Redirect = %q, want /country-settings?all=1 (must carry the view through)", got)
+	}
+}
+
+// ut-docs#1027's DefaultLocale/NameKey preservation regression
+// (TestCountrySettingsPageSavePreservesDefaultLocale's non-htmx pin), ported
+// to the htmx-boosted dialog path — the SAME handler now answers both, but
+// this proves the preserve-what-the-dialog-form-doesn't-carry contract holds
+// on the branch the real dialog actually exercises.
+func TestCountrySettingsPage_HtmxSavePreservesNameKeyAndDefaultLocale(t *testing.T) {
+	mux, repo, _ := newCountrySettingsTestMux(t)
+	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
+	ctx := t.Context()
+
+	before, _, err := repo.Get(ctx, "DE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.NameKey == "" || before.DefaultLocale != "de-DE" {
+		t.Fatalf("seeded DE = {NameKey:%q DefaultLocale:%q}, want a non-empty NameKey and de-DE", before.NameKey, before.DefaultLocale)
+	}
+
+	rec := postFormHtmx(mux, "/api/country-settings", url.Values{
+		"code":             {"DE"},
+		"currency":         {"EUR"},
+		"currency_symbol":  {"€"},
+		"tax_rate_pct":     {"9"},
+		"tax_inclusive":    {"1"},
+		"archive_min_days": {strconv.FormatInt(data.GlobalArchiveMinDays, 10)},
+	}, &mgr)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("htmx save: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	after, _, err := repo.Get(ctx, "DE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.NameKey != before.NameKey {
+		t.Errorf("DE.NameKey after a dialog save = %q, want unchanged %q — the dialog carries no name-key field", after.NameKey, before.NameKey)
+	}
+	if after.DefaultLocale != "de-DE" {
+		t.Errorf("DE.DefaultLocale after a dialog save = %q, want unchanged de-DE — the dialog carries no locale field", after.DefaultLocale)
+	}
+}

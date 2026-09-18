@@ -286,7 +286,27 @@
     // focuses on page load. First ENABLED field, not the first focusable —
     // that would be the trash/close button in the head.
     var f = form && firstField(form);
-    if (f) f.focus();
+    if (f) {
+      f.focus();
+    } else {
+      // ut-docs#2186 (UX review finding 1, WCAG 2.4.3): a fields form with
+      // EVERY field disabled — fiscal-register's read-only view dialog is
+      // the first screen to do this — left firstField() returning nothing
+      // and focus simply staying wherever it was before open() ran (the
+      // row/opener BEHIND the now-open dialog). The page-local script that
+      // disables the fields runs inside the record-dialog:open dispatch
+      // above, synchronously before this point, so by the time firstField()
+      // runs here every field genuinely is disabled — this isn't a race,
+      // it's the documented, already-used extension point doing exactly
+      // its job. Fall back to the dialog's own Close button: always
+      // present, never disabled, a safe generic landing spot regardless of
+      // which slot(s) a page happens to leave enabled. Every existing
+      // screen still has at least one enabled field today, so f is
+      // truthy for them and this branch is simply unreached —
+      // backward-compatible by construction, not by a version check.
+      var fallback = dialog.querySelector('.record-dialog-close');
+      if (fallback) fallback.focus();
+    }
   }
 
   function close(dialog) {

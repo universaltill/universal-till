@@ -4646,6 +4646,45 @@ body.login-screen {
    since #1027 (15.5rem under-reserved, which is the bug #1998 fixed). */
 body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-height, 17rem)); }
 
+/* ut-docs#2186 (UX review finding 2, refined per review B-comment nit): a
+   page script disables every field in a fields form for a row-tap open in
+   a genuinely read-only view (today: only fiscal-register -- no update
+   endpoint exists, so nothing there is really an active input any more).
+   The browser/theme's default `:disabled` styling is a dim, low-contrast
+   grey, right for "this control isn't available right now", wrong for "this
+   is the TSE serial/certification ID the operator is here to READ for their
+   ELSTER filing" -- compliance data, not a control they're not meant to
+   notice. Full-contrast text, no input chrome, tokens/rem only.
+   `.record-dialog--readonly-fields` (toggled by the page script, not an
+   id-selector on one dialog) so this stays a reusable "read-only field
+   contrast" rule for whichever screen's own script opts in next, keeping
+   the theme/plugin seam this pattern's own reference doc calls for --
+   nothing here applies unless a page's own script adds the class, so no
+   other record_dialog screen is affected today. */
+.record-dialog--readonly-fields .record-dialog-body input:disabled,
+.record-dialog--readonly-fields .record-dialog-body select:disabled {
+  opacity: 1;
+  color: var(--text);
+  -webkit-text-fill-color: var(--text);
+  background: var(--surface-2);
+  border-color: var(--border);
+  cursor: default;
+}
+
+/* ut-docs#2186 (review finding B6): the list header's search only ever
+   toggles each .entry-row's own `hidden` -- right for a flat table, but
+   this screen groups rows under a per-location heading + its own inline
+   address form, neither of which is a row. Filtering every row inside a
+   group out used to leave that group's heading/address-form/table-header
+   chrome stranded on screen above the shared "no results" line -- several
+   screens' worth of empty chrome at the 360px floor. `:has()` reacts to the
+   SAME `hidden` attribute record-dialog.js already sets, live, with no
+   extra JS: a group collapses the instant its last visible row is filtered
+   out and reappears the instant one matches again. */
+.fiscal-register-group:not(:has(.entry-row:not([hidden]))) {
+  display: none;
+}
+
 /* ==========================================================================
    ut-docs#2119 — category filter chip row, shared by /catalog and
    /inventory (web/ui/partials/category_filter.html, web/public/

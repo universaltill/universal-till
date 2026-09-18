@@ -17,10 +17,10 @@ Bu sayfa, o ülke varsayılanlarının bulunduğu yerdir. **İlk kurulum sihirba
 ## Nasıl kullanılır
 
 1. Menüden **Ülke ayarları**'nı açın (yalnızca yönetici). Varsayılan olarak yalnızca kendi dükkânınızın ülkesini, para birimi, vergi oranı ve arşiv saklama alt sınırıyla görürsünüz.
-2. Satırdaki değerleri düzenleyip **Kaydet**'e basın.
-3. Kasanın tanıdığı tüm ülkeleri görmek için — örneğin farklı bir ülkede çalışacak bir kasa için değerleri önceden ayarlamak istiyorsanız — **Tüm ülkeleri göster**'e tıklayın. **Yalnızca kendi ülkemi göster**, sizi yalnızca kendi ülkenize geri götürür. Tablo yerinde değişir — aynı sayfada kalırsınız ve Yönetim ekranında yanındaki menü ağacı yerinde durur.
-4. Listede olmayan bir yeri eklemek için **Ülke ekle** bölümünü kendi seçeceğiniz kısa bir kodla (yalnızca harf/rakam, en fazla 8 karakter), para birimi ve vergi oranıyla doldurun — bu form her iki görünümde de kullanılabilir.
-5. **Varsayılanlara dön**, yerleşik bir ülkeyi geldiği değerlere geri getirir. Kendi eklediğiniz bir ülke **Sil** ile tamamen kaldırılır.
+2. Bir ülke eklemek için arama kutusunun yanındaki **+** düğmesine dokunun, ya da düzenlemek için mevcut bir satıra (veya kalem düğmesine) dokunun. Kod, para birimi, simge, vergi oranı ve arşiv saklama alt sınırını içeren tam ekran bir iletişim kutusu açılır; gereken alanları doldurup **Kaydet**'e dokunun. Bir ülke eklerken kod serbest metindir (yalnızca harf/rakam, en fazla 8 karakter) — mevcut bir satırı düzenlerken kod kilitlenir, çünkü değişikliklerinizin hangi satıra kaydedileceğini belirleyen odur.
+3. Kasanın tanıdığı tüm ülkeleri görmek için — örneğin farklı bir ülkede çalışacak bir kasa için değerleri önceden ayarlamak istiyorsanız — tablonun üstünde **Tüm ülkeleri göster**'e dokunun. **Yalnızca kendi ülkemi göster**, sizi yalnızca kendi ülkenize geri götürür. Tablo yerinde değişir — aynı sayfada kalırsınız ve Yönetim ekranında yanındaki menü ağacı yerinde durur.
+4. İletişim kutusunu kaydedilmemiş değişikliklerle kapatmak önce sizden onay ister, böylece Kapat'a yanlışlıkla dokunmak yazdıklarınızı asla kaybetmez.
+5. Açık bir ülke iletişim kutusunda, Kapat'ın yanındaki düğme yerleşik bir ülke için **Varsayılanlara dön**'dür (geldiği değerlere geri getirir) veya kendi eklediğiniz bir ülke için **Sil**'dir (tamamen kaldırır) — her ikisi de önce sizden onay ister.
 
 ## Bilmekte fayda var
 

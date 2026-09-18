@@ -17,10 +17,10 @@ Hier liegen diese länderspezifischen Standardwerte. **Der Erstinbetriebnahme-As
 ## Verwendung
 
 1. Öffnen Sie **Ländereinstellungen** über das Menü (nur Manager). Standardmäßig sehen Sie nur das Land Ihres eigenen Geschäfts mit Währung, Steuersatz und Mindestarchivaufbewahrung.
-2. Bearbeiten Sie die Werte in der Zeile und drücken Sie **Speichern**.
-3. Um jedes Land zu sehen, das die Kasse kennt — nützlich, wenn Sie Werte für eine Kasse einrichten, die in einem anderen Land laufen wird —, drücken Sie **Alle Länder anzeigen**. **Nur mein Land anzeigen** bringt Sie zurück zu nur Ihrem eigenen. Die Tabelle wird an Ort und Stelle ausgetauscht — Sie bleiben auf derselben Seite, und im Verwaltungsbildschirm bleibt der Menübaum daneben stehen.
-4. Um einen Ort hinzuzufügen, der nicht aufgeführt ist, füllen Sie **Land hinzufügen** mit einem eigenen kurzen Code (nur Buchstaben und Zahlen, bis zu 8 Zeichen), seiner Währung und seinem Steuersatz aus — dieses Formular ist in beiden Ansichten verfügbar.
-5. **Standardwerte wiederherstellen** setzt ein eingebautes Land auf die Werte zurück, mit denen es ausgeliefert wurde. Ein selbst hinzugefügtes Land wird über **Löschen** vollständig entfernt.
+2. Tippen Sie auf die Schaltfläche **+** neben dem Suchfeld, um ein Land hinzuzufügen, oder tippen Sie auf eine vorhandene Zeile (oder deren Stift-Schaltfläche), um sie zu bearbeiten. Ein Vollbild-Dialog öffnet sich mit Code, Währung, Symbol, Steuersatz und Mindestarchivaufbewahrung; füllen Sie aus, was Sie brauchen, und tippen Sie auf **Speichern**. Der Code ist beim Hinzufügen eines Landes frei eingebbar (nur Buchstaben und Zahlen, bis zu 8 Zeichen) — sobald Sie eine vorhandene Zeile bearbeiten, ist der Code gesperrt, da er festlegt, für welche Zeile Ihre Änderungen gespeichert werden.
+3. Um jedes Land zu sehen, das die Kasse kennt — nützlich, wenn Sie Werte für eine Kasse einrichten, die in einem anderen Land laufen wird —, tippen Sie oberhalb der Tabelle auf **Alle Länder anzeigen**. **Nur mein Land anzeigen** bringt Sie zurück zu nur Ihrem eigenen. Die Tabelle wird an Ort und Stelle ausgetauscht — Sie bleiben auf derselben Seite, und im Verwaltungsbildschirm bleibt der Menübaum daneben stehen.
+4. Wenn Sie den Dialog mit ungespeicherten Änderungen schließen, werden Sie zuerst gefragt, sodass ein versehentliches Tippen auf Schließen nie verwirft, was Sie eingegeben haben.
+5. Im geöffneten Dialog eines Landes ist die Schaltfläche neben Schließen bei einem eingebauten Land **Standardwerte wiederherstellen** (setzt es auf die Werte zurück, mit denen es ausgeliefert wurde) oder bei einem selbst hinzugefügten Land **Löschen** (entfernt es vollständig) — beide fragen zuerst nach einer Bestätigung.
 
 ## Gut zu wissen
 

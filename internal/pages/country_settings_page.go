@@ -40,6 +40,66 @@ type countryRow struct {
 	AtFloor    bool
 }
 
+// countrySettingsRedirectTarget carries the "all=1" view state through a
+// mutation's response target (ut-docs#1024 review finding, preserved as-is
+// by ut-docs#2187's record_dialog/list_header conversion): every row's
+// data-record-action and the dialog's create action carry "?all=1" when
+// rendered from the all-countries view (see the template), so a
+// save/delete/add made there lands back on the SAME view instead of
+// silently dropping into the filtered default — where an edited row the
+// operator doesn't see reads as "nothing happened," and an added custom
+// country is invisible until someone thinks to check "show all" on their
+// own. Split out of registerCountrySettings (where it used to be a closure
+// named redirectTarget) so redirectCountrySettings/
+// renderCountrySettingsDialogError below — themselves top-level, mirroring
+// locations_page.go's redirectLocations/renderLocationsDialogError — can
+// reach it without a closure.
+func countrySettingsRedirectTarget(r *http.Request, path string) string {
+	if r.URL.Query().Get("all") != "1" {
+		return path
+	}
+	if strings.Contains(path, "?") {
+		return path + "&all=1"
+	}
+	return path + "?all=1"
+}
+
+// redirectCountrySettings answers a country-settings mutation's SUCCESS with
+// a navigation back to GET /country-settings, carrying the "all=1" scope
+// through via countrySettingsRedirectTarget. Mirrors locations_page.go's
+// redirectLocations (ut-docs#2124) exactly for the htmx/non-htmx branching —
+// see that function's own doc comment for the full HX-Redirect reasoning.
+func redirectCountrySettings(w http.ResponseWriter, r *http.Request, path string) {
+	target := countrySettingsRedirectTarget(r, path)
+	if isHtmxDialogRequest(r) {
+		w.Header().Set("HX-Redirect", target)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+// renderCountrySettingsDialogError answers a REFUSED country-settings
+// mutation. Mirrors locations_page.go's renderLocationsDialogError
+// (ut-docs#2124/#2020) exactly: an htmx-boosted dialog request gets a
+// non-2xx in-dialog message fragment (record_dialog_msg.html) targeting the
+// dialog's own aria-live region; a non-htmx caller (should not exist once
+// the template is converted, but a route must still answer *something* sane
+// to a direct POST) gets the pre-conversion redirect-with-query-string
+// shape, unchanged byte for byte — including the "all=1" carry-through,
+// which is why this goes through redirectCountrySettings rather than a bare
+// http.Redirect.
+func renderCountrySettingsDialogError(w http.ResponseWriter, r *http.Request, errKey string) {
+	if !isHtmxDialogRequest(r) {
+		redirectCountrySettings(w, r, "/country-settings?err="+errKey)
+		return
+	}
+	msg := httpx.T(httpx.RequestLocale(r), errKey)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusBadRequest)
+	httpx.RenderPartial("ui/partials/record_dialog_msg.html", map[string]any{"msg": msg})(w, r)
+}
+
 // registerCountrySettings wires the per-country settings admin page
 // (universaltill/ut-docs#635 → #659): CRUD over country_settings — the
 // per-jurisdiction defaults (currency, tax, archive retention) a shop's
@@ -77,25 +137,6 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 	audit := func(r *http.Request, actorID, targetID, action string) {
 		now := time.Now().UTC().Format(time.RFC3339)
 		_ = posRepo.InsertAudit(r.Context(), nil, actorID, "country_setting", targetID, action, nil, now, "")
-	}
-
-	// redirectTarget carries the "all=1" view state through a POST's
-	// redirect back to the GET page (ut-docs#1024 review finding): every
-	// form on the page posts back with "?all=1" appended to its action
-	// when rendered from the all-countries view (see the template), so a
-	// save/delete/add made there lands back on the SAME view instead of
-	// silently dropping into the filtered default — where an edited row
-	// the operator doesn't see reads as "nothing happened," and an added
-	// custom country is invisible until someone thinks to check "show
-	// all" on their own.
-	redirectTarget := func(r *http.Request, path string) string {
-		if r.URL.Query().Get("all") != "1" {
-			return path
-		}
-		if strings.Contains(path, "?") {
-			return path + "&all=1"
-		}
-		return path + "?all=1"
 	}
 
 	renderPage := func(w http.ResponseWriter, r *http.Request, errKey string) {
@@ -185,7 +226,11 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 
 	// Create or update. One handler for both: the code is the primary key, so
 	// an "add" of an existing code is an edit, which is what an operator
-	// re-submitting the same country means anyway.
+	// re-submitting the same country means anyway. ut-docs#2187: this stays
+	// the SINGLE dialog-save endpoint for both create and edit — unlike
+	// Locations/Registers, code (the primary key) is a FORM FIELD, not a URL
+	// path segment, so there is no per-code "/api/country-settings/{code}"
+	// counterpart to add.
 	mux.HandleFunc("POST /api/country-settings", func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := requireManager(w, r)
 		if !ok {
@@ -195,18 +240,18 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 
 		code := strings.TrimSpace(r.PostFormValue("code"))
 		if code == "" {
-			http.Redirect(w, r, redirectTarget(r, "/country-settings?err=countrysettings.error.code_required"), http.StatusSeeOther)
+			renderCountrySettingsDialogError(w, r, "countrysettings.error.code_required")
 			return
 		}
 
 		taxBP, err := parsePercentAsBP(r.PostFormValue("tax_rate_pct"))
 		if err != nil {
-			http.Redirect(w, r, redirectTarget(r, "/country-settings?err=countrysettings.error.tax_invalid"), http.StatusSeeOther)
+			renderCountrySettingsDialogError(w, r, "countrysettings.error.tax_invalid")
 			return
 		}
 		archiveDays, err := strconv.ParseInt(strings.TrimSpace(r.PostFormValue("archive_min_days")), 10, 64)
 		if err != nil {
-			http.Redirect(w, r, redirectTarget(r, "/country-settings?err=countrysettings.error.retention_invalid"), http.StatusSeeOther)
+			renderCountrySettingsDialogError(w, r, "countrysettings.error.retention_invalid")
 			return
 		}
 
@@ -238,11 +283,11 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 			if archiveDays < data.GlobalArchiveMinDays {
 				key = "countrysettings.error.below_floor"
 			}
-			http.Redirect(w, r, redirectTarget(r, "/country-settings?err="+key), http.StatusSeeOther)
+			renderCountrySettingsDialogError(w, r, key)
 			return
 		}
 		audit(r, actor.ID, cs.Code, "country_setting_save")
-		http.Redirect(w, r, redirectTarget(r, "/country-settings"), http.StatusSeeOther)
+		redirectCountrySettings(w, r, "/country-settings")
 	})
 
 	mux.HandleFunc("POST /api/country-settings/{code}/delete", func(w http.ResponseWriter, r *http.Request) {
@@ -252,11 +297,11 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		code := r.PathValue("code")
 		if err := countryRepo.Delete(r.Context(), code); err != nil {
-			http.Redirect(w, r, redirectTarget(r, "/country-settings?err=countrysettings.error.delete"), http.StatusSeeOther)
+			renderCountrySettingsDialogError(w, r, "countrysettings.error.delete")
 			return
 		}
 		audit(r, actor.ID, code, "country_setting_delete")
-		http.Redirect(w, r, redirectTarget(r, "/country-settings"), http.StatusSeeOther)
+		redirectCountrySettings(w, r, "/country-settings")
 	})
 }
 
