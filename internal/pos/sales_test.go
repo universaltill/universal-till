@@ -20,6 +20,16 @@ import (
 func setupSaleDB(t *testing.T) *sql.DB {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), fmt.Sprintf("pos_%d.db", time.Now().UnixNano()))
+	return setupSaleDBAtPath(t, path)
+}
+
+// setupSaleDBAtPath is setupSaleDB with the path exposed to the caller —
+// ut-docs#2250's INSERT-count regression guard needs the on-disk path to
+// open a SECOND, counting connection to the same file once seeding is done
+// (see sales_batch_insertcount_test.go), which setupSaleDB's own
+// internally-generated path made impossible to reuse.
+func setupSaleDBAtPath(t *testing.T, path string) *sql.DB {
+	t.Helper()
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
