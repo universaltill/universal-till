@@ -1,3 +1,18 @@
+{{/* ut-docs#2186: adopts the ut-docs#2010 list/edit dialog standard
+     (ut-docs/reference/list-and-dialog-pattern.md), copying locations.html/
+     categories.html's shape with ONE structural difference: fiscal-register
+     entries have no update endpoint (only create + one-directional
+     decommission — see fiscal_register_page.go), so a row tap opens the
+     SAME shared dialog in a read-only "view" mode, not a real edit form.
+     This page is also not a flat list — it's grouped by location, each
+     group keeping its own heading and its own untouched inline
+     address-edit form (out of scope, stays outside the dialog) — only the
+     "New entry" side card is replaced by the shared list_header + dialog;
+     the grouping itself is unchanged. Every group's rows share the
+     .entry-row class so the ONE list_header's search filters across all of
+     them at once. See the record-dialog:open script at the end of this
+     file for the view/create mode toggle (categories.html's colour-tile
+     listener is the shape this copies, not a new mechanism). */}}
 {{ define "content" }}
 <div class="page-head">
   <h1>{{ T "fiscalregister.title" }} {{ helpLink "fiscal-register" }}</h1>
@@ -7,13 +22,27 @@
 
 {{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
 
-<div class="users-layout">
-  <div class="card users-list">
-    {{ if not .groups }}<p class="empty">{{ T "fiscalregister.empty" }}</p>{{ end }}
+{{ template "list_header" (dict
+     "searchID"       "fiscalregister-search"
+     "searchLabelKey" "fiscalregister.search_placeholder"
+     "filterTarget"   "#fiscal-register-groups .entry-row"
+     "emptyTarget"    "#fiscal-register-no-results"
+     "newID"          "fiscalregister-new"
+     "newLabelKey"    "fiscalregister.new"
+     "dialogID"       "fiscal-register-dialog") }}
+
+<div class="card list-card">
+  {{ if not .groups }}
+  <p class="muted">{{ T "fiscalregister.empty" }}</p>
+  {{ else }}
+  <div id="fiscal-register-groups">
     {{ range .groups }}
     <div class="fiscal-register-group">
       {{ if .HasLocation }}
       <h3>{{ .LocationName }}{{ if or .LocationStreet .LocationPostcode .LocationCity }} — {{ .LocationStreet }} {{ .LocationPostcode }} {{ .LocationCity }}{{ end }}</h3>
+      {{/* Untouched, unconverted, outside the dialog — BA/Architect
+           non-goal: this form edits stock_locations, not a fiscal-register
+           entry, and isn't part of "the pattern" either. */}}
       <form method="post" action="/api/fiscal-register/locations/{{ .LocationID }}/address" class="users-inline">
         <label>{{ T "fiscalregister.address.street" }} <input type="text" name="street" value="{{ .LocationStreet }}" /></label>
         <label>{{ T "fiscalregister.address.postcode" }} <input type="text" name="postcode" value="{{ .LocationPostcode }}" /></label>
@@ -24,6 +53,7 @@
       <h3>{{ T "fiscalregister.no_location" }}</h3>
       {{ end }}
 
+      <div class="list-scroll">
       <table class="table">
         <thead>
           <tr>
@@ -43,7 +73,35 @@
         </thead>
         <tbody>
           {{ range .Entries }}
-          <tr>
+          {{/* data-record-action is deliberately an UNREGISTERED path
+               (registerFiscalRegisterDE never routes .../view) — a stray
+               submit 404s inertly instead of silently mutating the wrong
+               thing; there is no update endpoint to point it at for real
+               (see the Architect's design on ut-docs#2186). The Save
+               button this dialog carries is hidden/disabled in view mode
+               by the page script below, so this action is never actually
+               submitted in normal use — this is defense-in-depth, and
+               also satisfies record-dialog.js's own refusal to open a row
+               with no data-record-action at all.
+               data-field-decommissioned_on backs the destructive slot's
+               data-record-when="decommissioned_on=" below: empty (unset)
+               is exactly the "not yet decommissioned" state, one-directional,
+               no Activate counterpart. */}}
+          <tr class="entry-row" data-id="{{ .ID }}"
+              data-record-open="fiscal-register-dialog"
+              data-record-action="/api/fiscal-register/{{ .ID }}/view"
+              data-record-destructive-action="/api/fiscal-register/{{ .ID }}/decommission"
+              data-field-register_id="{{ .RegisterID }}"
+              data-field-register_name="{{ .RegisterName }}"
+              data-field-eas_type="{{ .EasType }}"
+              data-field-eas_software="{{ .EasSoftware }}"
+              data-field-eas_serial="{{ .EasSerial }}"
+              data-field-tse_serial="{{ .TSESerial }}"
+              data-field-tse_certification_id="{{ .TSECertificationID }}"
+              data-field-tse_type="{{ .TSEType }}"
+              data-field-acquired_on="{{ .AcquiredOn }}"
+              data-field-commissioned_on="{{ if .CommissionedOn }}{{ .CommissionedOn }}{{ end }}"
+              data-field-decommissioned_on="{{ if .DecommissionedOn }}{{ .DecommissionedOn }}{{ end }}">
             <td>{{ .RegisterName }}</td>
             <td>{{ .EasType }}</td>
             <td>{{ .EasSoftware }}</td>
@@ -67,41 +125,178 @@
               </div>
               {{ end }}
             </td>
-            <td class="users-actions">
-              {{ if not .DecommissionedOn }}
-              <form method="post" action="/api/fiscal-register/{{ .ID }}/decommission" class="users-inline">
-                <button type="submit" class="btn secondary" aria-label="{{ T "fiscalregister.decommission.confirm_label" }}">{{ T "fiscalregister.decommission" }}</button>
-              </form>
-              {{ end }}
+            <td class="list-actions">
+              {{/* "eye"/View, not "pencil"/Edit (ut-docs#2186 review finding
+                   B2) — this control opens a READ-ONLY dialog (no update
+                   endpoint exists for these fields), and the generic
+                   Edit glyph/label told an operator or screen-reader user
+                   they could change something they can't. data-record-edit
+                   stays: record-dialog.js keys off the attribute, not the
+                   label/icon riding on it. */}}
+              <button type="button" class="btn secondary btn-icon" data-record-edit
+                      aria-label="{{ T "common.view" }}" title="{{ T "common.view" }}">
+                <span class="btn-ico" aria-hidden="true">{{ icon "eye" }}</span>
+              </button>
             </td>
           </tr>
           {{ end }}
         </tbody>
       </table>
+      </div>
     </div>
     {{ end }}
+    <p id="fiscal-register-no-results" class="muted" hidden>{{ T "common.no_results" }}</p>
   </div>
-
-  <div class="card users-form">
-    <h3>{{ T "fiscalregister.new.title" }}</h3>
-    <form method="post" action="/api/fiscal-register" autocomplete="off">
-      <label>{{ T "fiscalregister.col.register" }}
-        <select name="register_id" required>
-          {{ range .registers }}
-          <option value="{{ .ID }}">{{ .Name }}</option>
-          {{ end }}
-        </select>
-      </label>
-      <label>{{ T "fiscalregister.col.eas_type" }} <input type="text" name="eas_type" value="Tablet-/App-Kassen-Systeme" required /></label>
-      <label>{{ T "fiscalregister.col.eas_software" }} <input type="text" name="eas_software" required /></label>
-      <label>{{ T "fiscalregister.col.eas_serial" }} <input type="text" name="eas_serial" required /></label>
-      <label>{{ T "fiscalregister.col.tse_serial" }} <input type="text" name="tse_serial" required /></label>
-      <label>{{ T "fiscalregister.col.tse_cert_id" }} <input type="text" name="tse_certification_id" required /></label>
-      <label>{{ T "fiscalregister.col.tse_type" }} <input type="text" name="tse_type" required /></label>
-      <label>{{ T "fiscalregister.col.acquired" }} <input type="date" name="acquired_on" required /></label>
-      <label>{{ T "fiscalregister.col.commissioned" }} <input type="date" name="commissioned_on" /></label>
-      <button type="submit" class="btn primary" style="width:100%">{{ T "fiscalregister.new.submit" }}</button>
-    </form>
-  </div>
+  {{ end }}
 </div>
+
+{{/* "root" . hands the page's own data (the register picker) to the fields
+     slot — see list-and-dialog-pattern.md's "slot contract": inside a
+     {{ define }} `$` is the dict, not the page, so `.root.registers` is the
+     slot's only route to it. */}}
+{{ template "record_dialog" (dict
+     "id"             "fiscal-register-dialog"
+     "formID"         "fiscal-register-form"
+     "createTitleKey" "fiscalregister.new.title"
+     "editTitleKey"   "fiscalregister.view.title"
+     "createAction"   "/api/fiscal-register"
+     "root"           .) }}
+
+<script>
+(function () {
+  'use strict';
+  // ut-docs#2186: fiscal-register entries have no update endpoint (create +
+  // one-directional decommission only, see fiscal_register_page.go) -- a
+  // row tap opens the SAME shared dialog markup, but genuinely read-only:
+  // there is nothing to save. record-dialog.js's generic open() can't
+  // express "this whole form is inert this time" on its own, so this page
+  // finishes the job on its own documented extension point,
+  // record-dialog:open (categories.html's colour-tile/checkbox script is
+  // the existing precedent this copies the SHAPE of, not a new mechanism).
+  //
+  // .disabled, not .readonly, on every field: a disabled control can't
+  // implicit-submit on Enter and isn't a Tab stop (record-dialog.js's own
+  // FOCUSABLE selector already excludes :disabled) -- the actual guarantee
+  // this view needs, not merely a cosmetic one. The destructive
+  // (Decommission) form is a SEPARATE form and is never touched here — it
+  // stays the one genuinely live action a view-mode dialog has.
+  var dialog = document.getElementById('fiscal-register-dialog');
+  if (!dialog) return;
+  var form = document.getElementById('fiscal-register-form');
+  var save = dialog.querySelector('.record-dialog-save');
+  var note = document.getElementById('fiscal-register-view-note');
+  var registerSelect = form && form.elements.namedItem('register_id');
+  // ut-docs#2186 review finding B3: the picker is populated from ACTIVE
+  // registers only (posRepo.ListRegisters), same as the create form always
+  // was -- but a view-mode row can reference one that's since been
+  // deactivated on /registers (the normal retire-a-till sequence: decommission
+  // the fiscal entry, then deactivate the register). setField() assigns the
+  // <select> a value with no matching <option>, which silently leaves it at
+  // selectedIndex -1 (blank) -- exactly the entry a §146a Abs. 4 AO lookup is
+  // about, showing "Till: (blank)". Fixed by adding a synthetic option (this
+  // dialog is disabled in view mode, so it's never submitted) sourced from
+  // the row's own data-field-register_name -- removed again before the next
+  // open so it never leaks into the CREATE picker's real option list.
+  var syntheticRegisterOption = null;
+
+  dialog.addEventListener('record-dialog:open', function (ev) {
+    // detail.mode is 'edit' for a row (view mode here) and 'create' for
+    // the New button -- the dialog DOM persists across opens, so a
+    // previous view-mode state must be explicitly reversed on the next
+    // create, same "never assume clean" caution record-dialog.js's own
+    // setField/defaultAction already apply elsewhere.
+    var viewMode = !!(ev.detail && ev.detail.mode === 'edit');
+    var row = ev.detail && ev.detail.row;
+
+    if (syntheticRegisterOption) {
+      syntheticRegisterOption.remove();
+      syntheticRegisterOption = null;
+    }
+    if (viewMode && registerSelect && row && registerSelect.selectedIndex === -1) {
+      syntheticRegisterOption = document.createElement('option');
+      syntheticRegisterOption.value = row.getAttribute('data-field-register_id') || '';
+      syntheticRegisterOption.textContent = row.getAttribute('data-field-register_name') || '';
+      registerSelect.appendChild(syntheticRegisterOption);
+      registerSelect.value = syntheticRegisterOption.value;
+    }
+
+    if (form) {
+      Array.prototype.forEach.call(form.elements, function (el) {
+        el.disabled = viewMode;
+      });
+    }
+    if (save) {
+      save.hidden = viewMode;
+      save.disabled = viewMode;
+    }
+    if (note) note.hidden = !viewMode;
+    // Drives the app.css contrast override below -- a class, not scoped to
+    // this dialog's id, so the same "keep disabled view-mode text readable"
+    // rule stays reusable by any future read-only adopter of this pattern
+    // rather than being wired to #fiscal-register-dialog specifically.
+    dialog.classList.toggle('record-dialog--readonly-fields', viewMode);
+  });
+})();
+</script>
+{{ end }}
+
+{{/* The two slots record_dialog.html owes to this page — see that
+     partial's header for the contract. */}}
+{{ define "record_dialog_fields" }}
+<form id="fiscal-register-form" method="post" action="/api/fiscal-register" autocomplete="off"
+      hx-boost="true" hx-target="#fiscal-register-dialog-msg" hx-swap="innerHTML">
+  <label>{{ T "fiscalregister.col.register" }}
+    <select name="register_id" required>
+      {{ range .root.registers }}
+      <option value="{{ .ID }}">{{ .Name }}</option>
+      {{ end }}
+    </select>
+  </label>
+  <label>{{ T "fiscalregister.col.eas_type" }} <input type="text" name="eas_type" value="Tablet-/App-Kassen-Systeme" required /></label>
+  <label>{{ T "fiscalregister.col.eas_software" }} <input type="text" name="eas_software" required /></label>
+  <label>{{ T "fiscalregister.col.eas_serial" }} <input type="text" name="eas_serial" required /></label>
+  <label>{{ T "fiscalregister.col.tse_serial" }} <input type="text" name="tse_serial" required /></label>
+  <label>{{ T "fiscalregister.col.tse_cert_id" }} <input type="text" name="tse_certification_id" required /></label>
+  <label>{{ T "fiscalregister.col.tse_type" }} <input type="text" name="tse_type" required /></label>
+  <label>{{ T "fiscalregister.col.acquired" }} <input type="date" name="acquired_on" required /></label>
+  <label>{{ T "fiscalregister.col.commissioned" }} <input type="date" name="commissioned_on" /></label>
+  {{/* UX review requirement (ut-docs#2186, #3): explains the missing Save
+       inside the FIELDS slot itself — not the shared [data-record-dialog-msg]
+       aria-live region, which is reserved for refusal/network-error text
+       and is emptied on every open(). Toggled by the same page script that
+       disables the fields above. */}}
+  <p class="muted" id="fiscal-register-view-note" hidden>{{ T "fiscalregister.view.note" }}</p>
+</form>
+{{ end }}
+
+{{/* Decommission is the one live action a view-mode dialog has: a separate
+     form from the fields above, one-directional (no "Activate" counterpart
+     — unlike locations.html's active/inactive pair, decommissioning a
+     till/TSE can never be undone from here), shown only while the opened
+     row is NOT yet decommissioned (data-field-decommissioned_on is empty).
+
+     hx-confirm, not the record-dialog.js-implemented data-record-confirm
+     ut-docs#2010 shipped — see categories.html's own destructive slot
+     comment for why: htmx's own confirm handling runs INSIDE the same call
+     that issues the request, so cancelling it truly aborts before any
+     request is sent, unlike a document-level listener racing hx-boost's own
+     submit handler.
+
+     The icon-only button's aria-label/title use the EXISTING plain
+     fiscalregister.decommission key (matches locations.html's
+     locations.deactivate/locations.deactivate_confirm pairing) — the
+     confirm question itself is the NEW fiscalregister.decommission_confirm
+     key; the older, misleadingly-named fiscalregister.decommission.
+     confirm_label (previously wired as an aria-label, never a confirm
+     question) is left in the locale files, unreferenced, per the UX
+     review's finding 4. */}}
+{{ define "record_dialog_destructive" }}
+<form method="post" data-record-destructive-form data-record-when="decommissioned_on="
+      hx-confirm="{{ T "fiscalregister.decommission_confirm" }}"
+      hx-boost="true" hx-target="#fiscal-register-dialog-msg" hx-swap="innerHTML">
+  <button type="submit" class="btn secondary btn-icon btn-icon-danger"
+          aria-label="{{ T "fiscalregister.decommission" }}" title="{{ T "fiscalregister.decommission" }}">
+    <span class="btn-ico" aria-hidden="true">{{ icon "trash-2" }}</span>
+  </button>
+</form>
 {{ end }}
