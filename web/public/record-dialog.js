@@ -169,9 +169,16 @@
     });
   }
 
+  // ut-docs#2404: also excludes [readonly] (input/textarea only -- select
+  // has no readonly semantics) -- a field an edit-mode page has locked via
+  // its own record-dialog:open listener (e.g. country_settings.html's
+  // #country-code) is exactly as unfit for the initial auto-focus as a
+  // disabled one: osk.js correctly refuses to open the on-screen keyboard
+  // for a readonly field, so landing focus there leaves a kiosk operator
+  // with no keyboard until they tap a second field by hand.
   function firstField(form) {
     return form.querySelector(
-      'input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled])'
+      'input:not([type="hidden"]):not([disabled]):not([readonly]), select:not([disabled]), textarea:not([disabled]):not([readonly])'
     );
   }
 
