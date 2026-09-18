@@ -1478,7 +1478,18 @@ function initOfflineOverride(updateFn){
       // Done itself is about to be display:none'd; keep keyboard focus on
       // the screen rather than letting it fall to <body>.
       if (b.contains(document.activeElement) && g) {
-        var first = g.querySelector('.btn-tile[data-code]');
+        // #buttons-grid-all renders first inside #buttons-grid (ut-docs#2294),
+        // so an unscoped query here can resolve to one of its hidden tiles
+        // instead of a real, visible tile in the active category panel --
+        // exclude it the same way tileFor/badgeFor already do. That alone
+        // isn't enough, though: every OTHER category's panel is also
+        // present-but-hidden (x-show, only the active tab's panel actually
+        // renders), so its own tiles come first in DOM order whenever they
+        // precede the active panel -- require real visibility too, the same
+        // getClientRects() check visibleCells() already uses above.
+        var candidates = Array.prototype.slice.call(g.querySelectorAll('.btn-tile[data-code]'))
+          .filter(function (t) { return !inAllGrid(t) && t.getClientRects().length > 0; });
+        var first = candidates[0];
         if (first) first.focus();
       }
       b.hidden = true;
