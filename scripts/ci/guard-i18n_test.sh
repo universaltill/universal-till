@@ -65,6 +65,35 @@ clear_fixture() {
   fixtures=()
 }
 
+JS_FIXTURE_DIR="web/public"
+VENDOR_FIXTURE_DIR="web/public/vendor"
+
+plant_js() {
+  local name="$1" content="$2"
+  local path="${JS_FIXTURE_DIR}/zz_guard_test_${name}.js"
+  fixtures+=("${path}")
+  printf '%s\n' "${content}" >"${path}"
+}
+
+plant_vendor_js() {
+  local name="$1" content="$2"
+  local path="${VENDOR_FIXTURE_DIR}/zz_guard_test_${name}.js"
+  fixtures+=("${path}")
+  printf '%s\n' "${content}" >"${path}"
+}
+
+clear_js_fixture() {
+  local name="$1"
+  rm -f "${JS_FIXTURE_DIR}/zz_guard_test_${name}.js"
+  fixtures=()
+}
+
+clear_vendor_fixture() {
+  local name="$1"
+  rm -f "${VENDOR_FIXTURE_DIR}/zz_guard_test_${name}.js"
+  fixtures=()
+}
+
 # A hardcoded prose string assigned to .textContent inside a <script> block
 # must be rejected — the exact bug class ut-docs#205 found (settings.html's
 # pre-existing "pick a from/to date").
@@ -109,6 +138,28 @@ msg.textContent = "saving…";
 </script>'
 expect_pass "a single-word status literal (accepted heuristic gap)"
 clear_fixture "SingleWordStatus"
+
+# Check 5's glob now also covers shipped JS under web/public/ (ut-docs#453
+# follow-up to #205 — the original card's own header comment flagged this
+# as a known gap: real prose in web/public/app.js was invisible to check 5
+# because it only ever globbed web/ui/**/*.html). A hardcoded prose literal
+# assigned to .textContent/.innerHTML in a plain .js file under web/public/
+# must now be caught the same way it would be inside a <script> block.
+plant_js "TextContentProse" 'msg.textContent = "pick a from/to date";'
+expect_fail "hardcoded prose .textContent literal in web/public/*.js"
+clear_js_fixture "TextContentProse"
+
+# Same web/public/*.js literal, marked i18n:ignore -- the escape hatch must
+# work identically outside web/ui/ too.
+plant_js "TextContentProseIgnored" 'msg.textContent = "pick a from/to date"; // i18n:ignore'
+expect_pass "an i18n:ignore-marked literal in web/public/*.js"
+clear_js_fixture "TextContentProseIgnored"
+
+# web/public/vendor/ (third-party, unmodified libraries) must stay excluded
+# -- the same reason internal/**/*.go checks never scan a vendor directory.
+plant_vendor_js "TextContentProse" 'msg.textContent = "pick a from/to date";'
+expect_pass "a prose literal inside web/public/vendor/ (excluded)"
+clear_vendor_fixture "TextContentProse"
 
 # Sanity: the guard must still pass clean on the real, unmodified tree
 # (proves this test file itself, and the fixtures' cleanup, leave no

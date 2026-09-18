@@ -251,6 +251,36 @@ func TestGetVariantLabel(t *testing.T) {
 	}
 }
 
+// TestGetVariantLabel_PrefersBarcodeOverSKU is ut-docs#2229: GetVariantLabel
+// doc-comments its Code as "primary variant barcode, else the variant SKU"
+// (VariantLabel's own doc, and the fallback at catalog_repo.go ~line 723),
+// but until this test nothing proved the ELSE — every existing GetVariantLabel
+// test variant has no barcode at all, so a variant carrying BOTH a barcode
+// and a SKU only ever exercised the SKU arm. This is the one place that can
+// actually catch the fallback being inverted (picking SKU even when a
+// barcode exists): if it were, l.Code below would read "S1-L" instead of the
+// barcode.
+func TestGetVariantLabel_PrefersBarcodeOverSKU(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Latte", BasePrice: 300, IsActive: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v1", ItemID: "i1", SKU: "S1-L", Name: "Large", Price: 350, IsActive: true})
+	if _, err := db.Exec(`INSERT INTO variant_barcodes(barcode, variant_id, is_primary) VALUES('5012345678900','v1',1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	l, ok, err := repo.GetVariantLabel(ctx, "v1")
+	if err != nil || !ok {
+		t.Fatalf("expected label, got ok=%v err=%v", ok, err)
+	}
+	if l.Code != "5012345678900" {
+		t.Fatalf("expected the variant's barcode to win over its SKU, got %q", l.Code)
+	}
+}
+
 func TestGetVariantLabel_StripsRetireMangledSKU(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
 	defer db.Close()
