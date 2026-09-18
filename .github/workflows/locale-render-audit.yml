@@ -12,7 +12,7 @@ name: locale-render-audit
 # control — same class of cross-repo dependency lang-pack-drift.yml already
 # solves for, and this workflow deliberately mirrors that file's shape:
 # its own separate workflow (never a step in ci.yml's build job), paths:-
-# scoped PR trigger, clones the pack repo's own main directly
+# scoped PR trigger, checks the pack repo's own main out directly
 # (persist-credentials: false, contents: read only — least privilege, since
 # it runs against a repo we don't push-control).
 #
@@ -26,11 +26,16 @@ name: locale-render-audit
 # the German *translation value* comes from the external pack. So this
 # workflow is meant to fail for real on a genuine finding, on both PR and
 # push — do not "fix" it to force-green on PRs the way lang-pack-drift.yml
-# does; that would defeat the point of the card. Only the pack repo being
-# unreachable/failing to clone is a soft, non-blocking condition (handled
-# below and inside scripts/ci/audit-locale-render.sh's own
-# UT_LOCALE_AUDIT_STRICT branch), because that failure mode has nothing to
-# do with this repo's own code.
+# does; that would defeat the point of the card.
+#
+# Note (reviewer, 2026-09-18) that this job is therefore hard-failing end to
+# end, including on the pack checkout: UT_LOCALE_AUDIT_STRICT=1 below turns
+# audit-locale-render.sh's dev-machine-friendly "pack not on disk, skip"
+# path into an error, and the checkout step itself has no
+# continue-on-error. So a transiently unreachable pack repo reds this job
+# too. That is deliberate here (a silent skip is what ut-docs#2152 got
+# burned by), but it is NOT the "soft, non-blocking" handling an earlier
+# draft of this comment described — there is none.
 #
 # push: branches: [main] for the same reason lang-pack-drift.yml gives:
 # universal-till gets pushed to constantly, so this trigger can never go
@@ -42,6 +47,9 @@ on:
       - 'e2e/tests-i18n-audit/**'
       - 'e2e/playwright.locale-audit.config.ts'
       - 'internal/pages/init.go'
+      # The overlay loader init.go's hook calls — a change here changes what
+      # the audit actually renders against (reviewer, 2026-09-18).
+      - 'internal/pages/i18n_test_overlay.go'
       - 'web/locales/en.json'
       - '.github/workflows/locale-render-audit.yml'
   push:
@@ -68,13 +76,20 @@ jobs:
 
       # Least-privilege, same shape as lang-pack-drift.yml's own pack
       # fetch: contents: read only, no push-capable credential persisted —
-      # this clones a repo we don't push-control.
-      - name: Checkout ut-plugin-language-de (sibling clone)
+      # this checks out a repo we don't push-control.
+      #
+      # Checked out INSIDE the workspace (and handed to the script via
+      # UT_DE_PACK_DIR below), not as a real sibling: actions/checkout
+      # rejects any `path:` that resolves outside $GITHUB_WORKSPACE, so
+      # `path: ../ut-plugin-language-de` fails the step outright. Same
+      # in-workspace-checkout + env-var convention ci.yml's taxonomy guards
+      # already use for their own ut-docs checkout (DOCS_DIR).
+      - name: Checkout ut-plugin-language-de
         uses: actions/checkout@v4
         with:
           repository: universaltill/ut-plugin-language-de
           ref: main
-          path: ../ut-plugin-language-de
+          path: ut-plugin-language-de
           persist-credentials: false
 
       - uses: actions/setup-go@v5
@@ -102,9 +117,12 @@ jobs:
 
       - name: German (de) render audit
         env:
-          # The dedicated CI workflow always clones the pack first (the step
-          # above), so a missing pack at this point is a real precondition
-          # failure, not a dev-machine-friendly skip — see
+          # Where the step above put the pack: workspace-relative, resolved
+          # against the repo root by the script.
+          UT_DE_PACK_DIR: ut-plugin-language-de
+          # The dedicated CI workflow always checks the pack out first (the
+          # step above), so a missing pack at this point is a real
+          # precondition failure, not a dev-machine-friendly skip — see
           # scripts/ci/audit-locale-render.sh's own UT_LOCALE_AUDIT_STRICT
           # branch.
           UT_LOCALE_AUDIT_STRICT: "1"

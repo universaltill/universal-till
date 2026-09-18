@@ -233,6 +233,28 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   actually determinize). Never add it to branch protection's required
   checks, same reason as `lang-pack-drift`/`adr-taxonomy-guard` above (most
   PRs get no check run at all for it).
+- **A change to `internal/pages/init.go`'s i18n wiring, `internal/pages/
+  i18n_test_overlay.go`, or the `e2e/tests-i18n-audit/**` harness also
+  gates on `.github/workflows/locale-render-audit.yml`** (ut-docs#2300) —
+  a separate workflow, same `lang-pack-drift.yml`-shaped reasoning as the
+  three above (needs a second repo, `ut-plugin-language-de`, checked out
+  alongside this one). Renders every admin/help-topic page route in
+  German via the real e2e harness and fails on any rendered line that
+  exactly matches a `web/locales/en.json` value and isn't on
+  `e2e/tests-i18n-audit/allowlist.json`'s reviewed exceptions — catching
+  both a pack that fell behind on a key and a hardcoded English literal
+  with no i18n key at all (the class of bug ut-docs#2297 fixed).
+  **Unlike `lang-pack-drift.yml`, this one is NOT forced green on PRs** —
+  a genuine finding here is this repo's own bug (both the offending
+  code and `en.json` live here; only the German translation *value*
+  comes from the external pack), so it fails for real on both `pull_request`
+  and `push: main`. Only the pack repo being unreachable/failing to check
+  out is treated as a real precondition failure too (`UT_LOCALE_AUDIT_STRICT=1`,
+  `scripts/ci/audit-locale-render.sh`) — deliberately not a soft skip,
+  since a silently-skipped audit is worse than a red one. Never add it to
+  branch protection's required checks, same reason as the other three
+  separate workflows above (most PRs touching neither surface get no
+  check run at all for it).
 - Feature branch; code review recorded in `docs/code-reviews/<date>-<topic>.md`;
   then merge to `main`. No secrets in logs or committed files.
 
