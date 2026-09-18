@@ -2554,5 +2554,9 @@
   "modifiers.delete": "Grubu sil",
   "modifiers.delete_confirm": "Bu Modifikasyon grubu her yerden silinsin mi? Tüm kategorilerden ve ürünlerden kaldırılacak. Geçmiş satışlar kaydettikleri Modifikasyonları korur.",
   "modifiers.no_categories": "Henüz kategori yok.",
-  "modifiers.pick_item": "Listeden bir ürün seçin."
+  "modifiers.pick_item": "Listeden bir ürün seçin.",
+  "modifiers.filter_unassigned": "Yalnızca atanmamışları göster",
+  "modifiers.unassigned_count": "%d atanmamış grup",
+  "modifiers.delete_unassigned": "Atanmamış tüm grupları sil",
+  "modifiers.delete_unassigned_confirm": "Atanmamış %d Modifikasyon grubunun tümü her yerden silinsin mi? Geçmiş satışlar kaydettikleri Modifikasyonları korur."
 }

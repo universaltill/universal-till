@@ -2554,5 +2554,9 @@
   "modifiers.delete": "Delete group",
   "modifiers.delete_confirm": "Delete this modifier group everywhere? It will be removed from every category and item. Past sales keep the modifiers they recorded.",
   "modifiers.no_categories": "No categories yet.",
-  "modifiers.pick_item": "Pick an item from the list."
+  "modifiers.pick_item": "Pick an item from the list.",
+  "modifiers.filter_unassigned": "Show only unassigned",
+  "modifiers.unassigned_count": "%d unassigned group(s)",
+  "modifiers.delete_unassigned": "Delete all unassigned groups",
+  "modifiers.delete_unassigned_confirm": "Delete all %d unassigned modifier group(s) everywhere? Past sales keep the modifiers they recorded."
 }

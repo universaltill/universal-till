@@ -988,6 +988,33 @@ func (r *ModifierRepo) DeleteGroup(ctx context.Context, id string) error {
 	return nil
 }
 
+// DeleteUnassignedGroups deletes every modifier group that has NEITHER a
+// category link nor an item link (ut-docs#2406, follow-up from the
+// ADR-0101/#2399 review's finding L5) — the same "unassigned" definition
+// modifiersPageData's UnassignedCount and modifiers.html's own
+// .modifier-unassigned hint already use, so a group this touches can never
+// be one still offered anywhere. A group with either kind of assignment is
+// left completely alone. Same cascade as DeleteGroup (options, and any
+// stray opt-out row — there are no links to cascade for an unassigned group
+// by definition) and the same past-sales guarantee: sale_line_modifiers
+// carries no FK onto this table. Returns how many groups were deleted, so
+// the caller can report the count back to the operator; zero is a valid,
+// non-error result when nothing is unassigned.
+func (r *ModifierRepo) DeleteUnassignedGroups(ctx context.Context) (int, error) {
+	res, err := r.db.ExecContext(ctx, `
+DELETE FROM item_modifier_groups
+WHERE id NOT IN (SELECT group_id FROM item_modifier_group_links)
+  AND id NOT IN (SELECT group_id FROM category_modifier_group_links)`)
+	if err != nil {
+		return 0, fmt.Errorf("delete unassigned modifier groups: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("delete unassigned modifier groups: %w", err)
+	}
+	return int(n), nil
+}
+
 // CreateOption adds a selectable option to a modifier group.
 func (r *ModifierRepo) CreateOption(ctx context.Context, id, groupID, name string, priceDeltaMinor int64, sortOrder int) (string, error) {
 	if groupID == "" {
