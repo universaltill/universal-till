@@ -196,7 +196,7 @@ func TestOKCPlugin_RefusesTenderWhenDeviceCannotPrint(t *testing.T) {
 	t.Run("scaffold driver", func(t *testing.T) {
 		s := startOKCSim(t, sim.Options{})
 		seedOKCSettings(t, repo, pluginID, s.Port())
-		if err := repo.UpsertPluginSettingScoped(context.Background(), pluginID, "okc.driver", `"gmp3"`, "global", false); err != nil {
+		if err := repo.UpsertPluginSettingScoped(context.Background(), pluginID, "okc.driver", `"hugin-pclink"`, "global", false); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := runOKCEvent(t, w, repo, db, pluginID, "payment.okc.authorize", authorizePayload(3000, 3000)); err == nil {
