@@ -80,9 +80,23 @@ fixed in app code, not papered over in a test:
    every code-gathering helper, so the mode simply never arms from an
    All-grid tile, and never picks up an All-grid tile's code even when
    entered legitimately from a real category panel elsewhere in the same
-   `#buttons-grid` subtree. Regression-tested by
-   `sell-tile-jiggle-mode-2339.spec.ts`/`…-locked-cashier-2312.spec.ts`,
-   both passing end to end against the real app.
+   `#buttons-grid` subtree.
+
+   **Coverage correction (independent review, 2026-09-18):** the original
+   version of this record claimed `sell-tile-jiggle-mode-2339.spec.ts` and
+   `…-locked-cashier-2312.spec.ts` regression-tested this fix — reverting
+   just the `inAllGrid()` guard showed that claim was only half true:
+   `-2312.spec.ts` still passes unchanged with the guard fully reverted (it
+   never long-presses an All-grid tile at all), and `-2339.spec.ts`'s own
+   existing tests deliberately switch OFF the default All tab before
+   long-pressing anything (see their own comments), so the actual
+   entry-point guard (a long-press starting FROM an All-grid tile) had zero
+   coverage. Added a new, dedicated case —
+   `-2339.spec.ts`'s "a long-press on the default All tab never arms
+   jiggle mode (ut-docs#2402)" — that stays on the default All tab and
+   long-presses the All-grid copy directly; verified by the same
+   revert→run→restore method (fails with the guard reverted: `#buttons-grid`
+   gains `.jiggle-mode`; passes restored).
 2. **`web/ui/partials/buttons.html` — the search input's missing
    `hx-swap` inherited `outerHTML` from the page root.** `.products` (this
    file's own root) sets `hx-swap="outerHTML"` for its own
@@ -98,13 +112,39 @@ fixed in app code, not papered over in a test:
    browser, since the day it shipped (no Chromium in that dev session).
    Fixed with an explicit `hx-swap="innerHTML"` on the input itself.
 
+## Independent review (Opus, isolated worktree)
+
+Verdict: **safe to merge, no blocking findings.** Ran the full suite and
+Go gate independently, revert→run→restore-verified both app-code bugs
+above for real (confirmed both fail without their fix and pass with it),
+and confirmed the `catalog-price-history-edit-2314.spec.ts`/
+`sale-screen-category-tabs-search-418.spec.ts` fixes preserve real
+underlying behavior rather than just asserting whatever the new code
+happens to do. Non-blocking findings, addressed as noted:
+
+- **Coverage gap in the app.js jiggle-mode fix** (see the correction above)
+  — fixed by adding the missing test.
+- `web/public/app.js`'s `exit()` focus fallback
+  (`g.querySelector('.btn-tile[data-code]')`) can resolve to a hidden
+  All-grid tile and silently drop keyboard focus to `<body>` on Done —
+  **pre-existing since `211ec98`, not introduced by this diff**; filed as
+  ut-docs#2417 rather than fixed here (out of this pass's scope).
+- Dead/unreachable Alpine branches left over from #2294
+  (`panelVisible()`'s `q` branch, an unreachable `<p class="empty">` inside
+  `#buttons-grid`) — cosmetic, not fixed here; filed as ut-docs#2418.
+- No help-topic/screenshot drift found; the flat-search-results
+  category-labelling question is confirmed genuinely unresolved by
+  ut-docs#2294's own acceptance criteria (no labelling requirement stated),
+  correctly left to product rather than guessed at here.
+
 ## Verification
 
-- Each of the 9 originally-failing files, plus the full suite, run for
+- Each of the 9 originally-failing files, plus the full suite (twice —
+  once by this pass, once independently by review), run for
   real against `/opt/pw-browsers` Chromium via this repo's own
-  `e2e/scripts/resolve-chromium.sh` + `npx playwright test`: **607 passed,
+  `e2e/scripts/resolve-chromium.sh` + `npx playwright test`: **608 passed,
   0 failed** (`default`/`auth`/`ai-identify`/`layout`/`diagnostics`
-  projects all green).
+  projects all green) after the coverage-gap test was added; 607 before it.
 - `gofmt -l .` clean; `go build ./...`, `go vet ./...`, `go test ./...`
   all green (no `.go` files touched by this pass).
 - Relevant `scripts/ci/` guards re-run directly: `guard-i18n.sh`,

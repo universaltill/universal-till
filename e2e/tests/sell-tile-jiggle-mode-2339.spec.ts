@@ -431,4 +431,43 @@ test.describe('Sell-screen jiggle edit mode (ut-docs#2339)', () => {
       await cleanupItems(page, [ITEM_A, ITEM_B]);
     }
   });
+
+  // ut-docs#2402 independent-review finding: the other two tests in this
+  // file switch OFF the default All tab before long-pressing (see their own
+  // comments) specifically so they never exercise a long-press on the
+  // All-grid copy of a tile — app.js's inAllGrid() guard (ut-docs#2294
+  // fallout) had no coverage at all before this test. Every seeded item is
+  // also active-catalog, so it renders a second time in #buttons-grid-all
+  // (the default-visible tab), with the SAME data-code here since seedItems
+  // gives the shortcut the item's own barcode.
+  test('a long-press on the default All tab never arms jiggle mode (ut-docs#2402)', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    const { A: ITEM_A } = fixture('3');
+    await seedItems(page, [ITEM_A]);
+    try {
+      await page.goto('/');
+      // Deliberately do NOT switch tabs -- All is default-selected, and
+      // this test is specifically about the All-grid copy of the tile.
+      const allTile = page.locator(`#buttons-grid-all .btn-tile[data-code="${ITEM_A.barcode}"]`);
+      await expect(allTile).toBeVisible();
+      // The All grid lists every active catalog item (demo-seeded ones
+      // included), so this fixture's own tile can render below the fold --
+      // longPress() drives raw page.mouse coordinates (unlike .click(),
+      // which auto-scrolls), so it needs the tile actually in the viewport.
+      await allTile.scrollIntoViewIfNeeded();
+
+      await longPress(allTile);
+      await page.waitForTimeout(300);
+      await expect(grid(page)).not.toHaveClass(/jiggle-mode/);
+      // Badges exist in the DOM for every tile at all times (hidden via
+      // .jiggle-mode, same as the rest of this file's "at rest" checks) --
+      // this one's the tile actually long-pressed, so it's the one whose
+      // badge would have shown if the guard were missing.
+      await expect(allTile.locator('xpath=..').locator('[data-testid="tile-badge-edit"]')).toBeHidden();
+
+      assertClean();
+    } finally {
+      await cleanupItems(page, [ITEM_A]);
+    }
+  });
 });
