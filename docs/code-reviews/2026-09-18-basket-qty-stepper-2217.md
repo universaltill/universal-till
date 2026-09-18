@@ -4,23 +4,26 @@
 - **Ticket:** ut-docs#2217 — dedicated +/- stepper buttons as the real 44px
   touch-target fix for the basket's per-line qty control (the approach
   ut-docs#1340 decided on, after rejecting resizing `.qty-input` itself).
-- **Branch:** `feat/2217-basket-qty-steppers` (one commit, `d0af3bd`, on top of
-  `main` at `f7da277`).
+- **Branch:** `feat/2217-basket-qty-steppers`
+- **Reviewed commit:** `892842f` (rebased onto `main` `f7da277`).
 - **Reviewer:** independent pass, different-model subagent working only from the
   diff — never saw the implementation reasoning.
-- **Verdict: BLOCKER FOUND — DO NOT MERGE.** The change re-breaks
-  ut-docs#1314's basket item-name legibility at **both** supported till
-  viewports. The repo's own existing regression spec for exactly this
-  (`e2e/tests/basket-item-name-width-1314.spec.ts`) fails 4/4 on this branch
-  and passes 4/4 with one line reverted. A second, independent blocker: the
-  CI-blocking `guard-docs-shots.sh` is red on this branch.
+- **Verdict: SAFE TO MERGE**, after the one blocker found here was fixed in
+  this branch (regenerated manual screenshots, commit `0274621`).
 
-The Go/handler half of this change is well-built and I found no correctness bug
-in it. The blocker is entirely in the CSS column budget.
+> **Note on scope — two versions were reviewed.** This review began against an
+> earlier commit of the same branch, `d0af3bd`, which used a **flanking**
+> stepper layout (buttons either side of `.qty-input`, qty column widened
+> `4.3rem → 8.4rem`). I found that version **re-broke ut-docs#1314** and
+> recorded it as a blocker. The branch was then amended to `892842f`, which
+> replaces flanking with a **stacked** row and reverts the column to `4.3rem`.
+> The findings below are against `892842f`; the superseded finding is kept at
+> the end for the record, because it is the reason the current design is
+> shaped the way it is.
 
 ---
 
-## What shipped
+## What shipped (`892842f`)
 
 - `internal/pages/pos_api.go:1067-1092` — `/api/pos/line` now accepts an
   optional relative `delta` form param alongside the existing absolute `qty`.
@@ -30,68 +33,24 @@ in it. The blocker is entirely in the CSS column budget.
 - `internal/pages/pos_api_test.go:216-325` — four new tests
   (`DeltaIncrementsAndDecrementsQty`, `DeltaClampsAtZeroAndVoids`,
   `DeltaPreservesDiscount`, `InvalidDeltaRejected`).
-- `web/ui/partials/basket.html:143-199` — `.qty-input` wrapped in a new
-  `.qty-stepper` flex row (opens at `:160`) with a `−` button before and `+`
-  after, each `hx-post="/api/pos/line"` + `hx-include="closest tr"`.
-- `web/public/app.css` — new `.qty-stepper`/`.qty-step-btn` rules (2506-2507);
-  basket qty column `4.3rem` → `8.4rem` (2661); phone-tier (`≤480px`) overrides
-  hiding the buttons and reverting the column to `4.3rem` (2803-2804).
+- `web/ui/partials/basket.html:166-214` — a new `.qty-stepper` row (`:197`) **below**
+  `.qty-input`, holding the `−` and `+` buttons side by side; each
+  `hx-post="/api/pos/line"` with a `delta` and `hx-include="closest tr"`.
+- `web/public/app.css:2525-2526` — `.qty-stepper { display: flex; width: 3.4rem;
+  gap: .2rem }` and `.qty-step-btn { flex: 1; min-height: 2.6rem; … }`. The
+  stepper is exactly as wide as `.qty-input`/`.disc-input` already were, so
+  **the qty column's reserved width is unchanged at `4.3rem`** (app.css:2678).
+  Buttons are hidden at the `≤480px` phone tier (app.css:2811).
 - `web/locales/{en,ar,fa,tr}.json` — `basket.qty.decrease` / `basket.qty.increase`.
 - `web/help/en/sell.md:19` — step 3 reworded to mention the new buttons.
+- `web/help/img/{en,ar,fa,tr}/sell.png` + `manifest.json` — regenerated during
+  this review (see Blocker 1).
 
 ---
 
 ## Findings
 
-### BLOCKER 1 — item-name legibility regression at both till viewports
-`web/public/app.css:2661`
-
-Widening the qty column `4.3rem → 8.4rem` takes **4.1rem straight out of the
-ITEM column**. ITEM is the one column with no declared width, so under
-`table-layout: fixed` it absorbs 100% of the change (the diff's own comment at
-2618-2632 correctly identifies this mechanism — it just under-estimates how
-much headroom was left).
-
-`.line-item`'s `max-width: 10.4rem` (app.css:2072) is a **ceiling, not a
-floor**, so nothing stops the collapse.
-
-Measured, not eyeballed — `e2e/tests/basket-item-name-width-1314.spec.ts`,
-the spec that exists specifically to prevent this:
-
-| viewport | result | `.line-name` rendered width | clamp overflow |
-|---|---|---|---|
-| 1024x600 (kiosk floor) | **FAIL** | **38px** | scrollHeight 90 vs clientHeight 36 |
-| 1280x800 (default till) | **FAIL** | **40.0px** | scrollHeight 94 vs clientHeight 38 |
-
-All 4 tests in that file fail. `"Cheddar Cheese 400g"` needs ~5 lines in a
-2-line clamp; the visible result is `Coca -C…` / `Peps i C…` — roughly four
-characters per line, mid-word, ellipsised.
-
-**Causation proven**, not inferred: I reverted only `8.4rem` → `4.3rem` on
-line 2661, changing nothing else, and the same 4 tests went green
-(27.5s run). Restored afterwards.
-
-This is the exact failure mode the commit message and the CSS comment say
-the design avoided. The reasoning there is sound for the *square*-button
-version it rejected (5.9rem stolen); it just doesn't follow that the
-1.8rem-wide version's 4.1rem is affordable. It isn't — at any supported
-viewport. The dev's own live verification measured **button** bounding boxes
-(≥44.19px tall, which I confirm is correct) but not the item column those
-buttons were taking width from, and this existing spec was not run.
-
-Note the shape of the evidence: the phone tier (≤480px) was already scoped
-out for precisely this reason. With 1024x600 and 1280x800 now also shown not
-to fit, the stepper-flanking-the-input layout does not fit **any** supported
-viewport's basket budget. That makes this a design question, not a CSS tweak.
-
-**Not fixed here — deliberately.** Every candidate (drop `.qty-input` for
-non-weighed lines; stack the steppers on their own row against #1340's
-77-79px height budget; shrink the input; widen the basket panel) is a real
-product/UX trade-off of the kind that already took four documented attempts
-in this column's history. Guessing one in review is how #1314/#1338 got
-re-broken in the first place. Back to Architect/UX.
-
-### BLOCKER 2 — `guard-docs-shots.sh` is red (CI-blocking)
+### BLOCKER 1 — `guard-docs-shots.sh` was red (CI-blocking) — **FIXED in this branch**
 `web/help/img/**`, `web/help/en/sell.md:19`
 
 ```
@@ -99,22 +58,19 @@ guard-docs-shots: the app surface (web/ui/**, web/public/**, or internal/pages/*
   changed since the manual's screenshots were last taken.
 guard-docs-shots: topic markdown changed since its screenshot was taken (locale/topic):
   - en/sell
-guard-docs-shots: run `make docs-shots` and commit the result
 ```
 
-This guard runs in `ci.yml`'s `build` job, so the branch goes red on push
-regardless of Blocker 1. The sell screen genuinely changed pixels (visible new
-buttons), so this needs a real `make docs-shots`, not the
-`update-docs-shots-surface-hash.sh` escape hatch.
+This guard runs in `ci.yml`'s `build` job, so the branch would have gone red on
+push. The sell screen genuinely gained a visible control, so this needed a real
+`make docs-shots`, not the `update-docs-shots-surface-hash.sh` escape hatch.
+CLAUDE.md's "the user manual ships with the feature, not after it" applies.
 
-I ran `make docs-shots` myself to confirm it is reproducible here: it passed
-(124 shots, 2.4m) and produced exactly `web/help/img/{en,ar,fa,tr}/sell.png`
-plus `manifest.json` — confirming sell is the only surface whose pixels moved.
-**I reverted that regeneration rather than committing it**, because the
-screenshots it produces are pictures of Blocker 1 (that regeneration is in
-fact how I first saw the regression). Regenerate after the layout is fixed.
+**Fixed here** (commit `0274621`): ran `make docs-shots`, which passed (124
+shots) and touched exactly the four `sell.png` locales plus `manifest.json` —
+confirming sell is the only surface whose pixels moved. Guard now green
+(surface `4d756a017baf`). Committed unmodified.
 
-### SHOULD-FIX 3 — non-finite `delta` corrupts the basket totals
+### SHOULD-FIX 2 — non-finite `delta` corrupts the basket totals
 `internal/pages/pos_api.go:1075`
 
 `strconv.ParseFloat` accepts `"NaN"`, `"Inf"`, `"-Inf"`, and the clamp
@@ -126,34 +82,37 @@ fact how I first saw the regression). Regenerate after the layout is fixed.
 | `Inf` | **200** | line kept, `Qty=+Inf`, lineTotal/subtotal/**total = 0.00** |
 | `1e400` | 400 | correctly rejected (range error) |
 
-So a basket visibly holding items reports a `Total: £0.00`. The absolute
-`qty` path is partly protected by accident — `f >= 0` is false for NaN — but
+So a basket visibly holding items reports `Total: £0.00`. The absolute `qty`
+path is partly protected by accident — `f >= 0` is false for NaN — but
 `qty=Inf` has the same hole and is **pre-existing**, so only the NaN case is
 new here.
 
-Severity held at should-fix, not blocker: `/api/pos/line` is
-**authenticated** (`internal/auth/middleware.go:189` exempts only
-`/self-order` and `/api/self-order/*`), and the shipped buttons only ever
-send the literals `-1`/`1`, so this is not reachable from the UI.
+Not a blocker: `/api/pos/line` is **authenticated**
+(`internal/auth/middleware.go:189` exempts only `/self-order` and
+`/api/self-order/*`), and the shipped buttons only ever send the literals
+`-1`/`1`, so it is not reachable from the UI.
 
-**Not fixed here**, on purpose: the delta block is a deliberate
-field-for-field mirror of `/api/self-order/line`
-(`internal/pages/self_order_shop.go:308-322`), which has the identical gap
-and, unlike this one, **is anonymous-LAN-reachable**. Hardening only the POS
-side would silently break the symmetry both files' comments lean on, while
-leaving the more exposed twin unguarded. Worth its own card covering both,
-adding `math.IsNaN(delta) || math.IsInf(delta, 0)` to the existing 400 branch
-in each. CLAUDE.md's "validate all external input" applies.
+**Deliberately not fixed here.** The delta block is a field-for-field mirror of
+`/api/self-order/line` (`internal/pages/self_order_shop.go:308-322`), which has
+the identical gap and, unlike this one, **is anonymous-LAN-reachable**.
+Hardening only the POS side would break the symmetry both files' comments lean
+on while leaving the more exposed twin unguarded. Worth its own card covering
+both, adding `math.IsNaN(delta) || math.IsInf(delta, 0)` to the existing 400
+branch in each. CLAUDE.md's "validate all external input" applies.
 
-### SHOULD-FIX 4 — manual describes buttons a phone user cannot see
+### SHOULD-FIX 3 — manual describes buttons a phone user cannot see
 `web/help/en/sell.md:19`
 
 The new prose is unconditional: *"Adjust a line's quantity with the **−**/**+**
 buttons beside it"*. At `≤480px` those buttons are `display: none`
-(app.css:2803). On a phone the manual now describes a control that isn't
-there. Needs a width caveat, or the phone-tier follow-up landing first.
+(app.css:2811). On a phone the manual describes a control that isn't there.
+Needs a width caveat, or the phone-tier follow-up landing first.
 
-### NON-BLOCKING 5 — new tests index `Lines[0]` unguarded, so a regression panics
+Minor wording nit in the same sentence: the buttons are now *below* the qty
+box, not "beside it" / "between them" — the prose still describes the
+superseded flanking layout.
+
+### NON-BLOCKING 4 — new tests index `Lines[0]` unguarded, so a regression panics
 `internal/pages/pos_api_test.go:233`, `:241`, `:284`, `:301`
 
 `dp.Engine.Basket().Lines[0]` with no length check. When the handler
@@ -162,24 +121,24 @@ test dies with `panic: runtime error: index out of range [0] with length 0`,
 which **aborts the whole package test binary**. In my revert run this masked
 the other three new tests entirely — only one failure was reported.
 
-Inconsistent within the same diff: `DeltaClampsAtZeroAndVoids`
-(`:260`) does check `len(...)` first. A `t.Fatalf` guard before each index
-would make a real regression readable. (The pre-existing
-`TestLineHandler_QtyChangeDoesNotClearDiscount` has the same habit, so this
-is a house pattern, not a new sin — hence non-blocking.)
+Inconsistent within the same diff: `DeltaClampsAtZeroAndVoids` (`:260`) does
+check `len(...)` first. A `t.Fatalf` guard before each index would make a real
+regression readable. (The pre-existing
+`TestLineHandler_QtyChangeDoesNotClearDiscount` has the same habit, so this is
+a house pattern, not a new sin — hence non-blocking.)
 
-### NON-BLOCKING 6 — `delta` silently ignored on the `code`-addressed branch
+### NON-BLOCKING 5 — `delta` silently ignored on the `code`-addressed branch
 `internal/pages/pos_api.go:1074`
 
 The guard is `v != "" && key != ""`. A POST carrying `delta` + `code` (no
-`key`) falls through to the absolute-`qty` branch and silently applies
-whatever `qty` happened to be included, rather than 400-ing. The comment
-promises "an invalid delta is a real 400 … not a silent no-op"; this is the
-one path where that isn't true. Unreachable from the template (the buttons
-always send `key` via `hx-vals`), and arguably intentional
-("key-addressed only"), but the comment overstates the guarantee.
+`key`) falls through to the absolute-`qty` branch and silently applies whatever
+`qty` happened to be included, rather than 400-ing. The comment promises "an
+invalid delta is a real 400 … not a silent no-op"; this is the one path where
+that isn't true. Unreachable from the template (the buttons always send `key`
+via `hx-vals`), and arguably intentional ("key-addressed only"), but the
+comment overstates the guarantee.
 
-### NON-BLOCKING 7 — `lang-pack-drift` follow-up owed
+### NON-BLOCKING 6 — `lang-pack-drift` follow-up owed
 `web/locales/en.json:113-114`
 
 Two new keys need follow-up PRs in `ut-plugin-language-{de,es}`. Advisory-only
@@ -189,14 +148,14 @@ on the PR, **blocking on push to `main`** — worth doing before merge.
 
 ## What I verified personally
 
-Everything below I ran in my own worktree, not read.
+Everything below I ran in my own worktree against `892842f`, not read.
 
 | Check | Result |
 |---|---|
 | `go build ./...` | clean |
 | `go vet ./internal/pages/...` | clean |
 | `gofmt -l .` | no output |
-| `go test ./internal/pages/... ./internal/ui/...` | **all ok** (pages 214.9s) |
+| `go test ./internal/pages/... ./internal/ui/...` | **all ok** |
 | `golangci-lint run ./internal/pages/...` | **0 issues** |
 | `guard-i18n.sh` | green — 1731 keys resolve, all locales match `en.json` |
 | `guard-data-access.sh` | green — no SQL outside `internal/data`/`internal/db` |
@@ -205,54 +164,80 @@ Everything below I ran in my own worktree, not read.
 | `guard-help-drift.sh` | green (exit 0; `sell` drift unchanged in size — the edit is prose inside an existing numbered step, so no structural counts moved) |
 | `guard-compliance-claims.sh` | green — 343 files |
 | `guard-htmx-loaded.sh` | green |
-| **`guard-docs-shots.sh`** | **RED — Blocker 2** |
-| **`e2e/tests/basket-item-name-width-1314.spec.ts`** | **4/4 FAIL — Blocker 1** |
+| `guard-docs-shots.sh` | red → **green after the fix committed here** |
+
+### E2E — the layout specs that matter for this change
+
+This change trades horizontal space for **vertical** space, so the row-height
+ACs are the ones at risk. All run serially, `--workers=1`:
+
+| Spec | Result |
+|---|---|
+| `basket-item-name-width-1314.spec.ts` (1024x600 + 1280x800) | **4/4 pass** |
+| `sale-screen-213.spec.ts` — incl. `>=4 basket lines visible without scrolling at 1280x800` | **8/8 pass** |
+| `sale-screen-213.spec.ts` — kiosk `body.kiosk` 1024x600 row-count floor (ut-docs#1339) | pass |
+| `basket-item-name-phone-tier-1338.spec.ts` | **7/7 pass** |
+
+So the height cost is real but stays inside the existing budget: the ≥4-lines
+AC and the kiosk floor both still hold.
+
+**One caveat I could not fully clear.** `basket-no-horizontal-scroll-391.spec.ts`
+and `ui-scale-basket.spec.ts` were **flaky in my sandbox** — the failing subset
+shuffled between runs, failures were `element(s) not found` / `ECONNREFUSED
+127.0.0.1:909x` (worker-server startup, which then breaks `afterEach`'s
+`/api/pos/reset` and contaminates later tests) rather than geometry assertions,
+and `ui_scale 2` passed while `ui_scale 1` failed — backwards for a real layout
+regression. A control run on **`main`** (`f7da277`, change absent) also failed
+one of them, so there is a pre-existing/environmental component. I do **not**
+attribute these to this change, but CI should be the arbiter.
 
 ### Revert-then-restore TDD verification (`TestLineHandler_DeltaPreservesDiscount`)
 
-Done personally, as required. I reverted **only** the `delta` block in
-`pos_api.go` back to the pre-diff `if v := r.Form.Get("qty"); v != ""` and
-re-ran:
+Done personally. I reverted **only** the `delta` block in `pos_api.go` back to
+the pre-diff `if v := r.Form.Get("qty"); v != ""` and re-ran:
 
 - `TestLineHandler_DeltaPreservesDiscount` — **FAILED** at `pos_api_test.go:301`
 - `TestLineHandler_DeltaIncrementsAndDecrementsQty` — **FAILED** at `:233`
 
 The failure is causally correct, not incidental: with the block gone the
 `delta` param is ignored, no `qty` is posted, `qty` defaults to `0.0`,
-`UpdateLineByKey` voids the line, and `Lines` is empty. It surfaces as a
-panic rather than an assertion (Finding 5), but it is the right cause.
+`UpdateLineByKey` voids the line, and `Lines` is empty. It surfaces as a panic
+rather than an assertion (Finding 4), but it is the right cause.
 
-Restored from my backup, re-ran, and **all 7 `TestLineHandler_*` pass**
-including the 4 new ones. Confirmed `git status` clean afterwards.
-**These are real tests, not false-passes.**
+Restored, re-ran, and **all 7 `TestLineHandler_*` pass** including the 4 new
+ones. **These are real tests, not false-passes.**
 
 ### Design-claim spot-checks (each asserted in the diff, each confirmed)
 
-- **`hx-include="closest tr"` on both buttons** — yes, `basket.html:164` (`−`)
-  and `:195` (`+`). Load-bearing exactly as claimed: `/api/pos/line` parses `discount`
-  from the form on *every* request and defaults it to `0`
+- **`hx-include="closest tr"` on both buttons** — yes, `basket.html:201` (`−`)
+  and `:209` (`+`). Load-bearing exactly as claimed: `/api/pos/line` parses
+  `discount` from the form on *every* request and defaults it to `0`
   (`pos_api.go:1094-1099`), then passes it straight to
   `UpdateLineByKey(key, qty, money.FromMinor(discount))`. Remove the
-  `hx-include` and a step posts no `discount`, so any line discount is
-  silently wiped. Correctly identified and correctly tested.
+  `hx-include` and a step posts no `discount`, so any line discount is silently
+  wiped. Correctly identified and correctly tested.
 - **`.btn-touch` height-only precedent** — accurate. `app.css:579` is
-  `min-height: 46px` with no `min-width`. The claim checks out.
+  `min-height: 46px` with no `min-width`. The claim checks out, and the stacked
+  layout leans on it harder than the flanking one did: at `flex: 1` inside a
+  `3.4rem` row with a `.2rem` gap each button is only ~1.6rem (~27px) wide.
 - **44px target** — `2.6rem` against `html { font-size: calc(var(--ui-scale,1)
   * var(--fluid-fs)) }` with `--fluid-fs: clamp(17px, …, 20px)` (app.css:105)
   ⇒ ≥44.2px at the floor, larger at any `ui_scale > 1`. Correct.
-- **Stepper row arithmetic** — `2×1.8 + 3.4 + 2×0.2 = 7.4rem`. The
-  `+ .35rem*2` cell padding is right: `.basket td`'s effective padding is
-  `.4rem .35rem` from app.css:2705, a later top-level rule that overrides
-  line 2659's `.55rem .6rem` at equal specificity (not the `.6rem` a reader
-  might assume). `7.4 + .7 + .3 headroom = 8.4rem` is **internally
-  consistent**. The column just cannot afford 8.4rem — Blocker 1 is about the
-  budget, not the arithmetic.
-- **Phone-tier scoping** — correct. Both overrides sit at brace depth 1
-  inside `@media (max-width: 480px)` (opens app.css:2770), and being later in
-  the cascade at equal specificity they beat the 8.4rem rule. Not silently
-  broken.
+- **"Zero column-width change from pre-#2217"** — confirmed:
+  `app.css:2678` is `width: 4.3rem`, identical to `main`.
+- **Phone-tier scoping** — correct; `.qty-step-btn { display: none }` sits
+  inside `@media (max-width: 480px)`, and `1338`'s own spec passes.
 - **Weighed items get the same ±1** — confirmed, `/api/self-order/line` has no
   `IsWeighed` check either (`self_order_shop.go:308-322`). Precedent accurate.
+
+### Visual check
+
+Looked at the regenerated `web/help/img/en/sell.png` (1024x600, the product's
+reference kiosk viewport) rather than trusting the specs alone: item names
+render in full (`Coca-Cola Can 330ml`, `Pepsi Can 330ml`), the `−`/`+` row sits
+cleanly between the qty and discount boxes, and nothing overlaps PRICE/TOTAL.
+Row height roughly doubles (~57px → ~118px), which is the deliberate trade and
+is what the ≥4-lines AC above bounds.
 
 ### Standing checks
 
@@ -267,10 +252,10 @@ including the 4 new ones. Confirmed `git status` clean afterwards.
 - **`paths.Data(...)` bug class** — N/A, confirmed: no filesystem paths at all.
 - **Secrets / real client names** — none. Test data is the existing
   `ABC` / `5000000000104` catalog fixtures.
-- **RTL** — clean. The new rules use only `display/align-items/gap/min-width/
-  min-height/padding/font-size/line-height/border-radius/width`; no physical
-  `left`/`right` anywhere (matches only in comment prose). The stepper mirrors
-  correctly by virtue of being a plain flex row.
+- **RTL** — clean. The new rules use only `display/flex/gap/width/min-height/
+  padding/font-size/line-height/border-radius`; no physical `left`/`right`
+  anywhere (matches only in comment prose). The stepper mirrors correctly by
+  virtue of being a plain flex row.
 - **i18n** — both keys present in all four `web/locales/*.json` with real
   translations (not English placeholders); `aria-label`s go through `T`. The
   bare `−`/`+` glyphs are symbols, consistent with the existing `✕` remove
@@ -278,19 +263,42 @@ including the 4 new ones. Confirmed `git status` clean afterwards.
 
 ---
 
+## Superseded finding (against `d0af3bd`, kept for the record)
+
+The earlier flanking-stepper version widened the qty column `4.3rem → 8.4rem`
+(`app.css:2661`). Because ITEM is the only column with no declared width, under
+`table-layout: fixed` it absorbed the entire 4.1rem — and `.line-item`'s
+`max-width: 10.4rem` is a **ceiling, not a floor**, so nothing stopped the
+collapse. `basket-item-name-width-1314.spec.ts` failed **4/4**:
+
+| viewport | `.line-name` rendered width | clamp overflow |
+|---|---|---|
+| 1024x600 | **38px** | scrollHeight 90 vs clientHeight 36 |
+| 1280x800 | **40.0px** | scrollHeight 94 vs clientHeight 38 |
+
+`"Cheddar Cheese 400g"` needed ~5 lines in a 2-line clamp; the screenshot
+showed `Coca -C…` / `Peps i C…`. Causation was proven by reverting only that
+one line — the same 4 tests went green.
+
+The current `892842f` design (stacked row, column unchanged) resolves this
+completely, and its CSS/template comments now cite that spec directly as the
+reason for the shape. Worth preserving the lesson: the arithmetic in the
+flanking version's comments was internally correct; what was missing was that
+the ITEM column had no slack left to fund it.
+
+---
+
 ## Verdict
 
-**BLOCKER FOUND — do not merge.**
+**SAFE TO MERGE.**
 
-Two independent blockers: a user-visible regression that makes basket item
-names unreadable on the primary checkout screen at every supported till
-viewport (Blocker 1), and a red CI-blocking guard (Blocker 2).
+One blocker was found and fixed in-branch (stale manual screenshots, a
+CI-blocking guard). The handler logic, its tests, i18n, RTL handling and
+touch-target arithmetic are all sound, and the vertical cost of the stacked
+stepper is bounded by the existing ut-docs#213 / #1339 row-count ACs, both
+re-run and passing.
 
-Blocker 1 needs a design decision, not a patch, so I have deliberately left
-the code untouched and my worktree diff is the dev's commit plus this record.
-The handler, its tests, the i18n, the RTL handling and the touch-target
-arithmetic are all sound and should survive whatever layout lands — the
-rework is confined to how the stepper earns its width.
-
-Recommended follow-ups once the layout is resolved: Finding 3 (non-finite
-`delta`, covering both twins) and Finding 4 (phone-tier manual caveat).
+Recommended follow-ups, neither blocking: Finding 2 (non-finite `delta`,
+covering both the POS and self-order twins — the self-order one is the more
+exposed of the two) and Finding 3 (phone-tier manual caveat + "beside it"
+wording now that the buttons sit below).
