@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole } from './helpers';
+import { watchConsole, setOskMode } from './helpers';
 
 // ut-docs#2187: /country-settings adopts the ut-docs#2010 list/edit dialog
 // standard, mirroring locations-record-dialog-2124.spec.ts's shape (the
@@ -32,6 +32,16 @@ function newCode(): string {
 }
 
 test.describe('country settings list + record dialog (ut-docs#2187)', () => {
+  // ut-docs#2404's own test below forces osk=on (the default project has no
+  // coarse pointer, so the OSK's own 'auto' mode never activates it) — the
+  // OSK mode is a server-side setting shared by every spec on this server,
+  // so it must be restored regardless of which test ran or whether it
+  // failed (helpers.ts's own setOskMode doc comment), same unconditional
+  // afterEach shape osk-central-guard.spec.ts uses.
+  test.afterEach(async ({ page }) => {
+    await setOskMode(page, 'auto');
+  });
+
   test('New opens the dialog with no country prefilled, and create works', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.goto('/country-settings?all=1');
@@ -50,6 +60,10 @@ test.describe('country settings list + record dialog (ut-docs#2187)', () => {
     await expect(page.locator(CODE)).toHaveValue('');
     await expect(page.locator(CODE)).not.toHaveAttribute('readonly', '');
     await expect(page.locator(CURRENCY)).toHaveValue('');
+    // ut-docs#2404 (Tester independent check): create mode's code field is
+    // NOT readonly, so firstField()'s new :not([readonly]) exclusion must
+    // not skip it here — auto-focus still lands on Code, same as before.
+    await expect(page.locator(CODE)).toBeFocused();
 
     const code = newCode();
     await page.locator(CODE).fill(code);
@@ -67,6 +81,10 @@ test.describe('country settings list + record dialog (ut-docs#2187)', () => {
 
   test('row tap opens edit prefilled, the code field is locked, and rename-adjacent fields save', async ({ page }) => {
     const assertClean = watchConsole(page);
+    // ut-docs#2404: this project has no coarse pointer, so the OSK's own
+    // 'auto' mode never activates it — force it on so the OSK-visibility
+    // assertion below actually exercises the real kiosk-touchscreen path.
+    await setOskMode(page, 'on');
     await page.goto('/country-settings?all=1');
     await page.locator('#country-settings-new').click();
     const dlg = page.locator(DIALOG);
@@ -88,6 +106,18 @@ test.describe('country settings list + record dialog (ut-docs#2187)', () => {
     // save applies to, so it must not be editable once opened for edit.
     await expect(page.locator(CODE)).toHaveAttribute('readonly', '');
     await expect(page.locator(CURRENCY)).toHaveValue('EUR');
+    // ut-docs#2404: record-dialog.js's auto-focus-on-open must skip the
+    // now-readonly code field and land on the first genuinely editable
+    // field instead. osk.js never pops the keyboard from programmatic
+    // focus itself (ut-docs#155 — only a real click/tap does), so the
+    // observable bug isn't "no keyboard on open", it's a dead first tap:
+    // an operator naturally taps whichever field LOOKS focused/ready, and
+    // before this fix that's the readonly code field, which osk.js
+    // correctly (but unhelpfully) refuses. Simulate that real tap on the
+    // auto-focused field and confirm it now actually opens the keyboard.
+    await expect(page.locator(CURRENCY)).toBeFocused();
+    await page.locator(CURRENCY).click();
+    await expect(page.locator('#osk')).toBeVisible();
     // A custom (never-builtin) country's destructive control is "Delete",
     // not "Restore defaults".
     await expect(page.locator(`${DIALOG} form[data-record-when="is_builtin=0"] button[type="submit"]`)).toBeVisible();
