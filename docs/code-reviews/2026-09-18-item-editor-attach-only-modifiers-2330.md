@@ -8,7 +8,64 @@
   of the diff (never saw the implementation reasoning), per this card's
   `complexity:medium` routing (Dev at Sonnet, Review at Opus).
 - **Verdict: SAFE TO MERGE** after fixing 6 of the review's 8 findings
-  (2 nits accepted as-is, reasoned below).
+  (2 nits accepted as-is, reasoned below) — **and after fixing a severe
+  regression CI itself caught** (see "What CI caught" below): removing
+  the item-editor's create-group form with no replacement anywhere broke
+  creating a shop's very first modifier group entirely, for any item.
+
+## What CI caught (post-review, pre-merge)
+
+The PR's own `playwright` check failed on push: two pre-existing tests in
+`osk-decimal-sale-catalog-fields-1284.spec.ts` timed out waiting for
+`.modifier-admin-group-new input[name="name"]` inside the item-editor's
+now-attach-only dialog. Investigating showed this was not a test-only
+problem — it was real product breakage this card introduced and neither
+the independent review nor this session's own earlier verification
+caught, because both exercised the item-scoped dialog and `/modifiers`
+in isolation, never the specific case of an item with **zero** modifier
+groups anywhere in the shop:
+
+- The item-editor's nested dialog was, before this card, the **only**
+  place a completely new modifier group ever got created — its "add new
+  group" form rendered unconditionally (`ModifierGroups` could be empty),
+  for any item, groups-elsewhere-in-the-shop or not.
+- `/modifiers` (`renderModifiersList`/`modifiers_list`) only ever lists
+  items that **already** appear in `ListAllShopModifierGroups`' result —
+  confirmed by reading `modifiers.html`'s own template and its prior
+  empty-state copy, `"No Modifiers yet. Create one from an item's Catalog
+  entry."`, which was explicitly pointing at the very form this card
+  removed.
+- So after `AttachOnly`, a shop's first-ever group — or any additional
+  item's first group, if that exact group didn't already exist somewhere
+  to attach — had **no creation path anywhere in the product**. This
+  fails the card's own acceptance criterion ("`/modifiers` remains the
+  only place to create... groups") at the literal level: `/modifiers`
+  could create an *additional* group for an item that already had one,
+  but never a first one for anything else.
+
+**Fix:** `/modifiers` gained a real, always-visible "create a new group"
+form with an item picker (any active catalog item, not just ones already
+in `.Groups`) — same id/name/sku `<datalist>` + hidden-field-resolve
+mechanics as `inventory.html`'s own stock-item picker (ut-docs#2011),
+reusing the *existing* `/api/catalog/modifier-group` endpoint unchanged.
+`handlers.go` gained `modifierItemPickerJSON` (mirrors
+`inventory_page.go`'s `pickerItem`/`ItemsJSON`), wired into both the
+page's own GET and the `#modifiers-list` mutation re-render. The
+misleading empty-state copy was corrected in all four core locales
+(no new keys — same `inventory.item_placeholder`/`catalog.modifiers.*`
+strings already in use elsewhere on this page). The two e2e tests that
+caught this were updated to create their probe group via `/modifiers`'
+new picker instead of the item-editor dialog, matching the actual new
+workflow, and re-verified passing along with the full `osk-decimal-*`
+suite (8/8) and every other e2e file touching this area (26/26 across 5
+files). Full gate (build/vet/test/lint/all guards) re-run clean after
+this fix; docs-shots regenerated again (`/modifiers`'s own screenshot
+came out byte-identical — it isn't one of the 31 routed manual topics,
+only the surface hash needed refreshing).
+
+This is exactly the kind of gap a review of a diff in isolation can miss
+and a real end-to-end test catches — worth recording plainly rather than
+folding quietly into the fixes list above.
 
 ## The change
 
@@ -135,7 +192,12 @@ stays exclusively on `/modifiers`.
   empty-state copy fix (finding 2) makes the state honest rather than
   misleading, but doesn't add a way out of it. Filed as a follow-up
   Backlog card (ut-docs#2379) rather than widening this card's scope with
-  a kiosk-navigation redesign.
+  a kiosk-navigation redesign. **Narrowed by the "What CI caught" fix
+  below**, filed after this list was first written: `/modifiers` itself
+  can now create a group for ANY item regardless of whether it already
+  has one, so #2379 is down to a pure discoverability gap (the operator
+  has to already know to go to `/modifiers`), not the "nowhere in the
+  product can do this at all" severity it was when filed.
 
 ## Verification run (this session, not just the subagent's)
 

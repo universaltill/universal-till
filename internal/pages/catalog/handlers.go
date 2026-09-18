@@ -388,6 +388,38 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		filepath.Join("web", "ui", "partials", "modifier_group_admin.html"),
 	)
 
+	// modifierItemPickerJSON (ut-docs#2330, e2e-caught regression): before
+	// AttachOnly, the item-editor's own nested dialog was the ONLY place a
+	// shop's very first modifier group — for ANY item, not just an
+	// already-modifier-bearing one — ever got created (its "add new group"
+	// form rendered unconditionally, regardless of whether ModifierGroups
+	// was empty). Removing that form from the item-editor without giving
+	// /modifiers an equivalent broke group creation entirely for any item
+	// that isn't already in ListAllShopModifierGroups' result — caught by
+	// osk-decimal-sale-catalog-fields-1284.spec.ts's own two OSK-typing
+	// tests, which create a fresh probe item and its first-ever group.
+	// This is the same id/name/sku picker shape as inventory_page.go's own
+	// pickerItem/ItemsJSON (stock item picker) — reused here rather than a
+	// new type, same JSON shape the modifiers.html script below expects.
+	modifierItemPickerJSON := func(ctx context.Context) template.JS {
+		type pickerItem struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+			SKU  string `json:"sku"`
+		}
+		items, err := repo.ListItems(ctx) // active items only — ListItems' own contract
+		if err != nil {
+			log.Printf("[catalog] modifiers item picker: %v", err)
+			return template.JS("[]")
+		}
+		picker := make([]pickerItem, 0, len(items))
+		for _, it := range items {
+			picker = append(picker, pickerItem{ID: it.ID, Name: it.Name, SKU: it.SKU})
+		}
+		pickerJSON, _ := json.Marshal(picker)
+		return template.JS(pickerJSON)
+	}
+
 	// groupModifierAdminByItem folds a flat, ItemName/ItemID-carrying
 	// modifier-group slice (ListAllShopModifierGroups' own shape) into one
 	// entry per item, preserving the query's own item ordering — the shape
@@ -456,8 +488,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		httpx.RenderWith(modifierGroupAdminFiles, funcs)("modifiers_list", map[string]any{
-			"Groups": groupModifierAdminByItem(groups, "modifiers-list"),
-			"Notice": notice,
+			"Groups":    groupModifierAdminByItem(groups, "modifiers-list"),
+			"Notice":    notice,
+			"ItemsJSON": modifierItemPickerJSON(r.Context()),
 		})(w, r)
 	}
 
@@ -862,6 +895,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"theme":        d.CurrentState().Theme,
 			"Groups":       groupModifierAdminByItem(groups, "modifiers-list"),
 			"InItemsShell": httpx.IsFragmentSwap(w, r),
+			"ItemsJSON":    modifierItemPickerJSON(r.Context()),
 		}
 		// ut-docs#1950: same /items rail embedding as /catalog above.
 		if httpx.IsFragmentSwap(w, r) {

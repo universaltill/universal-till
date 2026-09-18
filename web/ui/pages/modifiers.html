@@ -51,6 +51,59 @@
        screen, so that would otherwise be a silent no-op. See
        handlers.go's renderModifierMutationResult. */}}
   {{ if .Notice }}<p class="field-error-msg" role="alert">{{ .Notice }}</p>{{ end }}
+  {{/* ut-docs#2330, e2e-caught regression: before AttachOnly, the
+       item-editor's own nested dialog was the ONLY place a shop's very
+       first modifier group (for any item not already in .Groups below)
+       ever got created — its "add new group" form rendered
+       unconditionally there, regardless of whether the item had any
+       groups yet. Removing that form from the item-editor without giving
+       /modifiers an equivalent broke group creation entirely for any item
+       that doesn't already own a group shop-wide. This card, standing
+       alone, an item-picker feeding the SAME create-group form
+       modifier_group_admin.html's own "add new group" branch posts to —
+       so an item with zero groups anywhere can still get its first one,
+       from the one screen that now owns all group/option authoring. */}}
+  <div class="card modifiers-new-group-card">
+    <div class="muted catalog-detail-label">{{ T "catalog.modifiers.add_group" }}</div>
+    <form hx-post="/api/catalog/modifier-group" hx-target="#modifiers-list" hx-swap="outerHTML" class="modifier-admin-group-row modifier-admin-group-new">
+      <input type="text" list="modifiers-items-list" class="modifiers-new-item-search" placeholder="{{ T "inventory.item_placeholder" }}" required>
+      <input type="hidden" name="itemId" class="modifiers-new-item-id" required>
+      <input type="hidden" name="isActive" value="1">
+      <input type="text" name="name" required placeholder="{{ T "catalog.modifiers.add_group" }} — {{ T "catalog.modifiers.group_example" }}">
+      <label><input type="checkbox" name="required" value="1"> {{ T "catalog.modifiers.required" }}</label>
+      <label>{{ T "catalog.modifiers.min" }} <input type="number" name="minSelect" value="0" min="0" style="max-inline-size:4rem"></label>
+      <label>{{ T "catalog.modifiers.max" }} <input type="number" name="maxSelect" value="1" min="1" style="max-inline-size:4rem"></label>
+      <button class="btn" type="submit">{{ T "catalog.modifiers.add_group" }}</button>
+    </form>
+  </div>
+  <datalist id="modifiers-items-list"></datalist>
+  <script id="modifiers-items" type="application/json">{{ .ItemsJSON }}</script>
+  <script>
+    (function () {
+      // Same id/name/sku picker mechanics as inventory.html's own
+      // stock-item-search (ut-docs#2011) -- a <datalist>-backed free-text
+      // search resolved back to a hidden itemId by exact label match, not
+      // a shared module, matching that page's own local-inline convention.
+      var items = JSON.parse((document.getElementById('modifiers-items') || {}).textContent || '[]');
+      var byLabel = {};
+      var dl = document.getElementById('modifiers-items-list');
+      items.forEach(function (it) {
+        var label = it.name + (it.sku ? ' (' + it.sku + ')' : '');
+        byLabel[label.toLowerCase()] = it.id;
+        var opt = document.createElement('option');
+        opt.value = label;
+        dl.appendChild(opt);
+      });
+      var search = document.querySelector('.modifiers-new-item-search');
+      var hidden = document.querySelector('.modifiers-new-item-id');
+      if (!search || !hidden) return;
+      function resolve() {
+        hidden.value = byLabel[(search.value || '').toLowerCase()] || '';
+      }
+      search.addEventListener('input', resolve);
+      search.addEventListener('change', resolve);
+    })();
+  </script>
   {{ if not .Groups }}
   <div class="card">
     <p class="muted">{{ T "modifiers.empty" }}</p>

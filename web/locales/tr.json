@@ -1017,7 +1017,7 @@
   "menulayout.title": "Gizlenen menü karoları",
   "modifiers.add_to_cart": "Sepete ekle",
   "modifiers.cancel": "İptal",
-  "modifiers.empty": "Henüz Modifikasyon yok. Bir ürünün Katalog sayfasından bir tane oluşturun.",
+  "modifiers.empty": "Henüz Modifikasyon yok — ilk grubunuzu aşağıda oluşturun.",
   "modifiers.empty_cta": "Kataloğu aç",
   "modifiers.error.server": "Modifikasyonlar yüklenirken bir hata oluştu. Lütfen tekrar deneyin.",
   "modifiers.none_available": "Bu ürün için Modifikasyon yok.",

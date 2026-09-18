@@ -277,24 +277,25 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
     const assertClean = watchConsole(page);
     await setOskMode(page, 'on');
     await page.goto('/catalog');
-    await createProbeItemAndOpenVariants(page, 'OSK Existing Option Probe ' + Date.now());
+    const itemName = 'OSK Existing Option Probe ' + Date.now();
+    await createProbeItemAndOpenVariants(page, itemName);
+    await closeItemForm(page);
 
-    // ut-docs#1957: modifier-group/option CRUD moved out of this panel into
-    // the nested #modifier-groups-modal dialog, opened via its own button
-    // (lazy-loaded by GET /api/catalog/modifier-groups-panel) -- open it
-    // before looking for the "add group" form the old inline panel used to
-    // render directly.
-    await Promise.all([
-      page.waitForResponse((r) => r.url().includes('/api/catalog/modifier-groups-panel')),
-      page.locator('#manage-modifiers-btn').click(),
-    ]);
-    await expect(page.locator('#modifier-groups-modal')).toBeVisible();
+    // ut-docs#2330: group/option CRUD moved OFF the item-editor's own
+    // nested dialog entirely (that dialog is attach/detach-only now) --
+    // /modifiers is the only place left to create one, via its own
+    // item-picker + "add group" form (handlers.go's modifierItemPickerJSON).
+    await page.goto('/modifiers');
+    await page.locator('.modifiers-new-item-search').fill(itemName);
+    // The picker resolves the hidden itemId on 'input'/'change' -- give it
+    // a beat before relying on the hidden field for the form's own submit.
+    await expect(page.locator('.modifiers-new-item-id')).not.toHaveValue('');
 
     const groupName = 'Milk';
-    await page.locator('.modifier-admin-group-new input[name="name"]').fill(groupName);
+    await page.locator('.modifiers-new-group-card input[name="name"]').fill(groupName);
     await Promise.all([
       page.waitForResponse((r) => r.url().includes('/api/catalog/modifier-group')),
-      page.locator('.modifier-admin-group-new button[type=submit]').click(),
+      page.locator('.modifiers-new-group-card button[type=submit]').click(),
     ]);
     // `hasText` matches rendered text nodes, not an <input>'s value -- the
     // group's own name lives in a server-rendered value="" attribute, so
@@ -326,7 +327,8 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
     const assertClean = watchConsole(page);
     await setOskMode(page, 'on');
     await page.goto('/catalog');
-    await createProbeItemAndOpenVariants(page, 'OSK New-Row Probe ' + Date.now());
+    const itemName = 'OSK New-Row Probe ' + Date.now();
+    await createProbeItemAndOpenVariants(page, itemName);
 
     const variantPrice = page.locator('input[form="vf-new"].variant-price-major');
     await variantPrice.click();
@@ -339,20 +341,19 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
     await expect(page.locator('#osk.osk-open')).toBeVisible();
     await typeViaOsk(page, '1.65');
     await expect(variantCost).toHaveValue('1.65');
+    await closeItemForm(page);
 
-    // ut-docs#1957: same relocation as the sibling test above -- open the
-    // nested modifier-groups dialog before looking for its "add group" form.
-    await Promise.all([
-      page.waitForResponse((r) => r.url().includes('/api/catalog/modifier-groups-panel')),
-      page.locator('#manage-modifiers-btn').click(),
-    ]);
-    await expect(page.locator('#modifier-groups-modal')).toBeVisible();
+    // ut-docs#2330: same relocation as the sibling test above -- group/
+    // option CRUD is /modifiers-only now, via its own item-picker.
+    await page.goto('/modifiers');
+    await page.locator('.modifiers-new-item-search').fill(itemName);
+    await expect(page.locator('.modifiers-new-item-id')).not.toHaveValue('');
 
     const groupName = 'OSK New-Row Modifier ' + Date.now();
-    await page.locator('.modifier-admin-group-new input[name="name"]').fill(groupName);
+    await page.locator('.modifiers-new-group-card input[name="name"]').fill(groupName);
     await Promise.all([
       page.waitForResponse((r) => r.url().includes('/api/catalog/modifier-group')),
-      page.locator('.modifier-admin-group-new button[type=submit]').click(),
+      page.locator('.modifiers-new-group-card button[type=submit]').click(),
     ]);
     const group = page.locator('.modifier-admin-group').filter({ has: page.locator(`input[name="name"][value="${groupName}"]`) });
     await expect(group).toBeVisible();

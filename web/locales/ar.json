@@ -1017,7 +1017,7 @@
   "menulayout.title": "أزرار القائمة المخفية",
   "modifiers.add_to_cart": "إضافة إلى السلة",
   "modifiers.cancel": "إلغاء",
-  "modifiers.empty": "لا توجد إضافات بعد. أنشئ واحدة من صفحة أحد الأصناف في الكتالوج.",
+  "modifiers.empty": "لا توجد إضافات بعد — أنشئ أول مجموعة أدناه.",
   "modifiers.empty_cta": "فتح الكتالوج",
   "modifiers.error.server": "حدث خطأ أثناء تحميل الإضافات. حاول مرة أخرى.",
   "modifiers.none_available": "لا توجد إضافات لهذا الصنف.",
