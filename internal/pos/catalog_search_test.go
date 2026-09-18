@@ -2,11 +2,23 @@ package pos
 
 // These tests exercise POSRepo.SearchActiveItems / LookupActiveVariant
 // directly. They used to go through this package's CatalogSearcher
-// pass-through (catalog_search.go), which had no production caller — the
-// live callers (internal/pages/kitchen_stations_page.go, ai_api.go) call the
-// repo directly — and was removed by the ut-docs#1566 dead-code burn-down.
-// The tests stayed because the ut-docs#1176 NULL-SKU regression below is
-// about the repo query itself, not the removed wrapper.
+// pass-through (catalog_search.go), which had no production caller and was
+// removed by the ut-docs#1566 dead-code burn-down. The two repo methods
+// differ in how live they are, and the distinction matters for anyone
+// tempted to delete these tests next: SearchActiveItems has real production
+// callers that already go straight to the repo
+// (internal/pages/kitchen_stations_page.go, ai_api.go), whereas
+// POSRepo.LookupActiveVariant has no production caller at all today — a
+// pre-existing state this repo already recorded in
+// docs/code-reviews/2026-08-28-no-sku-uuid-leak.md, not something this
+// burn-down introduced — so these tests plus
+// internal/data/pos_repo_search_test.go are its only exercise. The tests
+// stayed either way because the ut-docs#1176 NULL-SKU regression below is
+// about the repo query itself, not the removed wrapper. Nothing is lost by
+// dropping the wrapper's own empty-variantID guard, either:
+// POSRepo.LookupActiveVariant carries the identical strings.TrimSpace check
+// (internal/data/pos_repo.go), asserted by that package's
+// TestPOSRepo_LookupActiveVariant_ValidatesInput.
 
 import (
 	"context"
