@@ -1,11 +1,16 @@
 package pos
 
+// These tests exercise POSRepo.AppendPriceHistoryItem / Variant directly —
+// see pricing_test.go's header for why the pricing.go delegation layer they
+// used to go through was removed (ut-docs#1566).
+
 import (
 	"context"
 	"database/sql"
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/data"
 	_ "modernc.org/sqlite"
 )
 
@@ -35,8 +40,8 @@ func TestAppendPriceHistoryItem_AppendsAndEndsPrevious(t *testing.T) {
 	now := time.Now().UTC()
 	// existing open price. ut-docs#2314: starts_at is stored as
 	// time.RFC3339 text everywhere real code writes it (see
-	// AppendPriceHistoryItem/Variant, both here and in
-	// internal/data/pos_repo.go) — this fixture must match that, not a raw
+	// POSRepo.AppendPriceHistoryItem/Variant in internal/data/pos_repo.go)
+	// — this fixture must match that, not a raw
 	// time.Time binding, because the closing UPDATE's WHERE clause now
 	// compares via SQLite's datetime(), which can't parse Go's default
 	// time.Time string format (modernc.org/sqlite's driver serializes an
@@ -45,8 +50,8 @@ func TestAppendPriceHistoryItem_AppendsAndEndsPrevious(t *testing.T) {
 	// be recognized as closeable).
 	_, _ = db.Exec(`INSERT INTO price_history(id,item_id,price,starts_at) VALUES('p1','itm1',100,?)`, now.Add(-time.Hour).Format(time.RFC3339))
 
-	repo := &testPricingRepo{db: db}
-	if err := AppendPriceHistoryItem(ctx, repo, "itm1", 200, now); err != nil {
+	repo := data.NewPOSRepo(db)
+	if err := repo.AppendPriceHistoryItem(ctx, "itm1", 200, now); err != nil {
 		t.Fatalf("AppendPriceHistoryItem error: %v", err)
 	}
 
@@ -76,8 +81,8 @@ func TestAppendPriceHistoryVariant_AppendsAndEndsPrevious(t *testing.T) {
 	// Same RFC3339 fixture fix as TestAppendPriceHistoryItem_AppendsAndEndsPrevious above.
 	_, _ = db.Exec(`INSERT INTO price_history(id,variant_id,price,starts_at) VALUES('pv1','var1',500,?)`, now.Add(-time.Hour).Format(time.RFC3339))
 
-	repo := &testPricingRepo{db: db}
-	if err := AppendPriceHistoryVariant(ctx, repo, "var1", 750, now); err != nil {
+	repo := data.NewPOSRepo(db)
+	if err := repo.AppendPriceHistoryVariant(ctx, "var1", 750, now); err != nil {
 		t.Fatalf("AppendPriceHistoryVariant error: %v", err)
 	}
 	var price int64
@@ -99,16 +104,16 @@ func TestAppendPriceHistoryItem_MultipleAppends(t *testing.T) {
 
 	now := time.Now().UTC()
 	// first price
-	repo := &testPricingRepo{db: db}
-	if err := AppendPriceHistoryItem(ctx, repo, "itm1", 100, now.Add(-2*time.Hour)); err != nil {
+	repo := data.NewPOSRepo(db)
+	if err := repo.AppendPriceHistoryItem(ctx, "itm1", 100, now.Add(-2*time.Hour)); err != nil {
 		t.Fatalf("AppendPriceHistoryItem first error: %v", err)
 	}
 	// second price
-	if err := AppendPriceHistoryItem(ctx, repo, "itm1", 200, now.Add(-time.Hour)); err != nil {
+	if err := repo.AppendPriceHistoryItem(ctx, "itm1", 200, now.Add(-time.Hour)); err != nil {
 		t.Fatalf("AppendPriceHistoryItem second error: %v", err)
 	}
 	// third price
-	if err := AppendPriceHistoryItem(ctx, repo, "itm1", 300, now); err != nil {
+	if err := repo.AppendPriceHistoryItem(ctx, "itm1", 300, now); err != nil {
 		t.Fatalf("AppendPriceHistoryItem third error: %v", err)
 	}
 

@@ -13,6 +13,10 @@ import (
 // silently dropped, never an error and never a visible regression. cancelled
 // is terminal and reachable from any state except collected/cancelled.
 
+// TestOrderStatusRank pins the orderStatusRank table itself (the ladder
+// ValidOrderStatus and OrderStatusAllowed both key off). It used to go
+// through an exported OrderStatusRank accessor that nothing but this test
+// ever called; that accessor was removed by the ut-docs#1566 burn-down.
 func TestOrderStatusRank(t *testing.T) {
 	cases := []struct {
 		status string
@@ -27,8 +31,8 @@ func TestOrderStatusRank(t *testing.T) {
 		{"bogus", 0},
 	}
 	for _, c := range cases {
-		if got := OrderStatusRank(c.status); got != c.want {
-			t.Errorf("OrderStatusRank(%q) = %d, want %d", c.status, got, c.want)
+		if got := orderStatusRank[c.status]; got != c.want {
+			t.Errorf("orderStatusRank[%q] = %d, want %d", c.status, got, c.want)
 		}
 	}
 }

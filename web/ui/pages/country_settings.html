@@ -143,7 +143,8 @@
           data-field-tax_rate_pct="{{ .TaxRatePct }}"
           data-field-tax_inclusive="{{ if .TaxInclusive }}1{{ else }}0{{ end }}"
           data-field-archive_min_days="{{ .ArchiveMinDays }}"
-          data-field-is_builtin="{{ if .IsBuiltin }}1{{ else }}0{{ end }}">
+          data-field-is_builtin="{{ if .IsBuiltin }}1{{ else }}0{{ end }}"
+          data-field-original_code="{{ .Code }}">
         <td>
           {{ if .NameKey }}{{ T .NameKey }}{{ else }}{{ .Code }}{{ end }}
           <span class="muted" dir="ltr">{{ .Code }}</span>
@@ -265,6 +266,17 @@
   <label>{{ T "countrysettings.col.country" }}
     <input type="text" id="country-code" name="code" maxlength="8" required dir="ltr" />
   </label>
+  {{/* ut-docs#2405: the client-side readonly lock above (record-dialog:open
+       listener) is the only thing stopping an edit from retyping `code` —
+       if it's ever bypassed, a differing code silently upserts a NEW row
+       rather than updating the one being edited (POST /api/country-settings
+       has no other way to tell "this is an edit of X" from "this is a
+       create of Y"). This hidden field carries the row's real code through
+       record-dialog.js's generic data-field-* prefill (data-field-original_code
+       above) so the handler can reject a mismatch server-side too. Its
+       template default (empty) is what create mode restores on every open —
+       see record-dialog.js's rememberHiddenDefaults/resetHiddenDefaults. */}}
+  <input type="hidden" name="original_code" value="" />
   <label>{{ T "countrysettings.col.currency" }}
     <input type="text" name="currency" maxlength="8" dir="ltr" />
   </label>

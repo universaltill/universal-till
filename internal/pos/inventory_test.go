@@ -1,10 +1,18 @@
 package pos
 
+// The AggregateInventory / CheckNegativeInventory calls below go to POSRepo
+// directly. This package's same-named wrappers in inventory.go had no
+// production caller (unlike their siblings RecordStockMovement /
+// RecordNegativeInventoryOverride / GetLowStockItems, which
+// internal/pages/inventory_api.go and cloudsync_wire.go do call) and were
+// removed by the ut-docs#1566 dead-code burn-down.
+
 import (
 	"context"
 	"database/sql"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/data"
 	_ "modernc.org/sqlite"
 )
 
@@ -18,7 +26,7 @@ func TestAggregateInventory_ItemID(t *testing.T) {
 	execSQL(t, db, `INSERT INTO locations (id, name, type, created_at) VALUES ('loc1', 'Main Store', 'store', datetime('now'))`)
 	execSQL(t, db, `INSERT INTO inventory (id, item_id, location_id, quantity, updated_at) VALUES ('inv1', 'item1', 'loc1', 100, datetime('now'))`)
 
-	qty, err := AggregateInventory(ctx, db, "loc1", "item1", "")
+	qty, err := data.NewPOSRepo(db).AggregateInventory(ctx, nil, "loc1", "item1", "")
 	if err != nil {
 		t.Fatalf("AggregateInventory failed: %v", err)
 	}
@@ -34,7 +42,7 @@ func TestAggregateInventory_NoRecord(t *testing.T) {
 
 	execSQL(t, db, `INSERT INTO locations (id, name, type, created_at) VALUES ('loc1', 'Main Store', 'store', datetime('now'))`)
 
-	qty, err := AggregateInventory(ctx, db, "loc1", "nonexistent", "")
+	qty, err := data.NewPOSRepo(db).AggregateInventory(ctx, nil, "loc1", "nonexistent", "")
 	if err != nil {
 		t.Fatalf("AggregateInventory failed: %v", err)
 	}
@@ -48,7 +56,7 @@ func TestAggregateInventory_BothItemAndVariantError(t *testing.T) {
 	db := testDB(t)
 	defer db.Close()
 
-	_, err := AggregateInventory(ctx, db, "loc1", "item1", "variant1")
+	_, err := data.NewPOSRepo(db).AggregateInventory(ctx, nil, "loc1", "item1", "variant1")
 	if err == nil {
 		t.Fatal("expected error for both itemID and variantID")
 	}
@@ -94,7 +102,7 @@ func TestRecordStockMovement_Receive(t *testing.T) {
 	}
 
 	// Verify inventory aggregate
-	invQty, err := AggregateInventory(ctx, db, "loc1", "item1", "")
+	invQty, err := data.NewPOSRepo(db).AggregateInventory(ctx, nil, "loc1", "item1", "")
 	if err != nil {
 		t.Fatalf("AggregateInventory failed: %v", err)
 	}
@@ -136,7 +144,7 @@ func TestRecordStockMovement_Adjust(t *testing.T) {
 		t.Fatalf("RecordStockMovement failed: %v", err)
 	}
 
-	invQty, err := AggregateInventory(ctx, db, "loc1", "item1", "")
+	invQty, err := data.NewPOSRepo(db).AggregateInventory(ctx, nil, "loc1", "item1", "")
 	if err != nil {
 		t.Fatalf("AggregateInventory failed: %v", err)
 	}
@@ -160,7 +168,7 @@ func TestCheckNegativeInventory_Sufficient(t *testing.T) {
 	}
 	defer tx.Rollback()
 
-	err = CheckNegativeInventory(ctx, tx, "loc1", "item1", "", 50)
+	err = data.NewPOSRepo(db).CheckNegativeInventory(ctx, tx, "loc1", "item1", "", 50)
 	if err != nil {
 		t.Errorf("expected no error, got %v", err)
 	}
@@ -181,7 +189,7 @@ func TestCheckNegativeInventory_Insufficient(t *testing.T) {
 	}
 	defer tx.Rollback()
 
-	err = CheckNegativeInventory(ctx, tx, "loc1", "item1", "", 50)
+	err = data.NewPOSRepo(db).CheckNegativeInventory(ctx, tx, "loc1", "item1", "", 50)
 	if err == nil {
 		t.Fatal("expected error for insufficient stock")
 	}
@@ -278,7 +286,7 @@ func TestCheckNegativeInventory_ZeroRequest(t *testing.T) {
 	defer tx.Rollback()
 
 	// Zero quantity should not error
-	err = CheckNegativeInventory(ctx, tx, "loc1", "item1", "", 0)
+	err = data.NewPOSRepo(db).CheckNegativeInventory(ctx, tx, "loc1", "item1", "", 0)
 	if err != nil {
 		t.Errorf("expected no error for zero request, got %v", err)
 	}
@@ -300,7 +308,7 @@ func TestCheckNegativeInventory_NegativeRequest(t *testing.T) {
 	defer tx.Rollback()
 
 	// Negative quantity should not error (no validation needed)
-	err = CheckNegativeInventory(ctx, tx, "loc1", "item1", "", -5)
+	err = data.NewPOSRepo(db).CheckNegativeInventory(ctx, tx, "loc1", "item1", "", -5)
 	if err != nil {
 		t.Errorf("expected no error for negative request, got %v", err)
 	}

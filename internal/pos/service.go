@@ -500,6 +500,19 @@ func (s *Service) ResolveBase(code string) (BasketLine, bool) {
 	return s.resolver.Resolve(code)
 }
 
+// ScanQty is the quantity-taking sibling of Scan without the `found` result.
+// Every production caller needs that result — the sell-screen scan/qty
+// handlers in internal/pages/pos_api.go and the kiosk's
+// internal/pages/self_order_shop.go all call ScanQtyWithResult, so they
+// can tell a merged/added line from an unknown code — which leaves ScanQty
+// reachable only from _test.go files (30 call sites across 10 test files
+// at the time of writing: 8 in this package, plus internal/pages'
+// pos_api_test and stock_ownership_test — all using it as the shortest way
+// to seed a basket). `deadcode -test=false` therefore reports it as
+// unreachable and it carries an entry in scripts/ci/deadcode-baseline.txt:
+// the "test-only-reachable" shape that guard's own header documents, NOT
+// dead code. Kept deliberately (ut-docs#1566) rather than churning those
+// call sites onto the three-result form.
 func (s *Service) ScanQty(code string, qty float64) (*Basket, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1061,6 +1074,21 @@ func (s *Service) recomputeTotals() {
 	s.commitTotalsLocked(snap, computeTotals(snap))
 }
 
+// Tender is NOT the product's tender path. The real one is completeTender in
+// internal/pages/pos_api.go (behind POST /api/pos/tender): it persists the
+// sale through pos.CompleteSale, runs the fiscal/receipt/voucher hooks, and
+// only then clears the basket via Reset() (resetLocked, which also clears
+// the discount, customer, scan cache and tender-attempt id this method
+// leaves behind). This method is the demo-era stub that preceded it — it
+// records nothing and just wipes the in-memory basket — and it has no
+// production caller: its only callers are one call site each in three
+// _test.go files in this package (order_type_chosen_test, hold_test,
+// concurrency_test), which use it as a "sale completed, basket cleared"
+// shorthand. `deadcode -test=false` therefore reports it as unreachable and
+// it carries an entry in scripts/ci/deadcode-baseline.txt (the "test-only-
+// reachable" shape that guard's own header documents). Kept as-is by the
+// ut-docs#1566 burn-down rather than swapping those tests onto Reset() in a
+// cleanup slice; do not add a production caller — go through the handler.
 func (s *Service) Tender(amount money.Money, method string) (map[string]any, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

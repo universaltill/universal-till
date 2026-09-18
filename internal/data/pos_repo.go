@@ -2452,6 +2452,15 @@ type EODReport struct {
 	// same single-day-only gate and same best-effort convention as
 	// ArticleGroups/Articles/Operators above.
 	OrderTypes []OrderTypeSales `json:"order_types,omitempty"`
+	// FiscalDevice (ut-docs#2410) is the Turkish YN ÖKC device's evidence
+	// for this window, reconciled against the till's own "okc"-method
+	// tenders — nil for every non-TR shop (this field never changes
+	// content_json's shape for any other market's archived report). Same
+	// layering convention as TaxBands/MethodTaxBands above: NOT filled by
+	// EndOfDay/EndOfDayInstant themselves (this package cannot check the
+	// shop's country/plugin state) — filled by internal/pages'
+	// attachEODFiscalDevice.
+	FiscalDevice *FiscalDeviceWindow `json:"fiscal_device,omitempty"`
 	// Voucher liability flows (ut-docs#1008): count + amount (minor units) of
 	// vouchers issued and redeemed in the window, from voucher_transactions.
 	// Reported DISTINCTLY from article revenue: an issue is a 0% liability

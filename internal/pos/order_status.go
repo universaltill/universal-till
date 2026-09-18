@@ -25,20 +25,15 @@ const (
 var OrderStatuses = []string{OrderStatusNew, OrderStatusPreparing, OrderStatusReady, OrderStatusCollected, OrderStatusCancelled}
 
 // orderStatusRank is the forward ladder new(1) < preparing(2) < ready(3) <
-// collected(4). "" and cancelled rank 0: neither sits on the ladder — the
-// cancel rule is handled explicitly in OrderStatusAllowed, never by rank
-// comparison.
+// collected(4). "" and cancelled rank 0 (a missing key): neither sits on
+// the ladder — the cancel rule is handled explicitly in OrderStatusAllowed,
+// never by rank comparison. Consumed only by ValidOrderStatus and
+// OrderStatusAllowed below; TestOrderStatusRank pins the table itself.
 var orderStatusRank = map[string]int{
 	OrderStatusNew:       1,
 	OrderStatusPreparing: 2,
 	OrderStatusReady:     3,
 	OrderStatusCollected: 4,
-}
-
-// OrderStatusRank returns a status's position on the forward ladder
-// (0 for "", cancelled, or anything unknown).
-func OrderStatusRank(status string) int {
-	return orderStatusRank[status]
 }
 
 // ValidOrderStatus reports whether s is one of the five defined statuses.
@@ -174,7 +169,12 @@ func (b *OrderStatusBroadcaster) Publish(ev OrderStatusChanged) {
 
 // SubscriberCount reports how many live subscriptions exist. Diagnostic —
 // the SSE handler tests use it to prove unsubscribe-on-disconnect actually
-// runs (ADR-0079); nothing on the hot path should branch on it.
+// runs (ADR-0079); nothing on the hot path should branch on it. Being
+// test-only by design (internal/pages/order_status_stream_test.go and this
+// package's order_status_test.go are its only callers), `deadcode
+// -test=false` reports it as unreachable and it carries an entry in
+// scripts/ci/deadcode-baseline.txt — the "test-only-reachable" shape that
+// guard's own header documents, not dead code (ut-docs#1566).
 func (b *OrderStatusBroadcaster) SubscriberCount() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()

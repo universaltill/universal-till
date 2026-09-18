@@ -244,6 +244,19 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
+		// ut-docs#2405: code is the primary key and this is the single save
+		// endpoint for both create and edit, so nothing here otherwise
+		// distinguishes "editing X" from "creating Y" — the dialog's code
+		// field is locked read-only in edit mode, but that's a client-side
+		// guard only. original_code (hidden, set from the row's own code by
+		// record-dialog.js's generic prefill, blank on create) is what lets
+		// the server refuse a bypassed edit from silently upserting a new
+		// row instead of erroring.
+		if originalCode := strings.TrimSpace(r.PostFormValue("original_code")); originalCode != "" && originalCode != code {
+			renderCountrySettingsDialogError(w, r, "countrysettings.error.code_changed")
+			return
+		}
+
 		taxBP, err := parsePercentAsBP(r.PostFormValue("tax_rate_pct"))
 		if err != nil {
 			renderCountrySettingsDialogError(w, r, "countrysettings.error.tax_invalid")
