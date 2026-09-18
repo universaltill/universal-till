@@ -484,6 +484,111 @@ func TestModifierRepo_CreateGroup_NeedsNoItem(t *testing.T) {
 	}
 }
 
+// CreateGroupWithOptions (ut-docs#2375) writes the group, its item link and
+// every option in one call — the atomic replacement for the
+// CreateGroup+LinkGroupToItem+CreateOption(s) sequence cloudUpsertModifierGroup
+// used to run as separate, non-transactional statements.
+func TestModifierRepo_CreateGroupWithOptions_WritesGroupLinkAndOptionsTogether(t *testing.T) {
+	d := openModifierTestDB(t)
+	ctx := context.Background()
+	if _, err := d.DB.ExecContext(ctx, `INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm1','SKU1','Flat White',320,1)`); err != nil {
+		t.Fatal(err)
+	}
+	repo := data.NewModifierRepo(d.DB)
+
+	gid, err := repo.CreateGroupWithOptions(ctx, "g1", "itm1", "Extras", false, 0, 2, 7, []data.ModifierOption{
+		{Name: "Cheese", PriceDeltaMinor: 150, SortOrder: 0},
+		{Name: "Bacon", PriceDeltaMinor: 200, SortOrder: 1},
+	})
+	if err != nil {
+		t.Fatalf("CreateGroupWithOptions: %v", err)
+	}
+	if gid != "g1" {
+		t.Fatalf("returned id = %q, want g1", gid)
+	}
+
+	groups, err := repo.ListGroupsForItem(ctx, "itm1")
+	if err != nil {
+		t.Fatalf("ListGroupsForItem: %v", err)
+	}
+	if len(groups) != 1 || groups[0].SortOrder != 7 {
+		t.Fatalf("expected the group linked at sort_order 7, got %+v", groups)
+	}
+	if len(groups[0].Options) != 2 || groups[0].Options[0].Name != "Cheese" || groups[0].Options[1].Name != "Bacon" {
+		t.Fatalf("expected both options in order, got %+v", groups[0].Options)
+	}
+}
+
+// itemID == "" must create a shop-wide group with no link row at all
+// (ADR-0101, ut-docs#2399) — the same "no item" shape CreateGroup itself
+// supports.
+func TestModifierRepo_CreateGroupWithOptions_NoItemCreatesStandaloneGroup(t *testing.T) {
+	d := openModifierTestDB(t)
+	ctx := context.Background()
+	repo := data.NewModifierRepo(d.DB)
+
+	gid, err := repo.CreateGroupWithOptions(ctx, "g-sauces", "", "Sauces", true, 1, 2, 0, []data.ModifierOption{
+		{Name: "Ketchup", PriceDeltaMinor: 0, SortOrder: 0},
+	})
+	if err != nil {
+		t.Fatalf("CreateGroupWithOptions with no item: %v", err)
+	}
+
+	var links int
+	if err := d.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM item_modifier_group_links WHERE group_id = ?`, gid).Scan(&links); err != nil {
+		t.Fatal(err)
+	}
+	if links != 0 {
+		t.Fatalf("a standalone group must have no link row, got %d", links)
+	}
+	all, err := repo.ListAllModifierGroupsWithAssignments(ctx)
+	if err != nil || len(all) != 1 || len(all[0].Options) != 1 {
+		t.Fatalf("expected one standalone group with its option, got %+v err=%v", all, err)
+	}
+}
+
+// The load-bearing property (ut-docs#2375's whole ask): a failure partway
+// through the option inserts must leave NOTHING behind — no group, no link,
+// no options — because it's all one transaction now, not a compensating
+// DeleteGroup after the fact.
+func TestModifierRepo_CreateGroupWithOptions_FailureRollsBackEverything(t *testing.T) {
+	d := openModifierTestDB(t)
+	ctx := context.Background()
+	if _, err := d.DB.ExecContext(ctx, `INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm1','SKU1','Flat White',320,1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.ExecContext(ctx, `
+CREATE TRIGGER trg_test_boom_repo BEFORE INSERT ON item_modifier_options
+WHEN NEW.name = 'BOOM'
+BEGIN
+    SELECT RAISE(ABORT, 'boom');
+END;`); err != nil {
+		t.Fatalf("install failure trigger: %v", err)
+	}
+	repo := data.NewModifierRepo(d.DB)
+
+	if _, err := repo.CreateGroupWithOptions(ctx, "g1", "itm1", "Extras", false, 0, 2, 0, []data.ModifierOption{
+		{Name: "Cheese", PriceDeltaMinor: 150, SortOrder: 0},
+		{Name: "BOOM", PriceDeltaMinor: 200, SortOrder: 1},
+	}); err == nil {
+		t.Fatal("expected the failing option insert to surface as an error")
+	}
+
+	var groups, links, options int
+	if err := d.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM item_modifier_groups WHERE id = 'g1'`).Scan(&groups); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM item_modifier_group_links WHERE group_id = 'g1'`).Scan(&links); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM item_modifier_options WHERE group_id = 'g1'`).Scan(&options); err != nil {
+		t.Fatal(err)
+	}
+	if groups != 0 || links != 0 || options != 0 {
+		t.Fatalf("failure must roll back everything, got groups=%d links=%d options=%d", groups, links, options)
+	}
+}
+
 // The /modifiers read: each group exactly once regardless of how many
 // items/categories use it, active or not, with every option (active or
 // not), its category list and its item list (each in link order, items
