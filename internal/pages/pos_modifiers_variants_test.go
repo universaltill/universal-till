@@ -10,8 +10,10 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
+	"github.com/universaltill/universal-till/internal/ui"
 )
 
 // ut-docs#2209: tapping a variant-bearing item tile (small/regular/large)
@@ -431,5 +433,172 @@ func TestItemIDsWithVariants_ExcludesCodelessOnlyItem(t *testing.T) {
 	}
 	if got["itm-ghost"] {
 		t.Error("itm-ghost's only variant is codeless — its tile must NOT open a picker it cannot fill (ut-docs#2209 review, blocker 2)")
+	}
+}
+
+// setupVariantModifiersRealResolverTestDeps is setupVariantModifiersTestDeps
+// wired to the REAL resolver chain (ui.PriceResolverAdapter over a real
+// migrated SQLite catalog, mirroring pos_scan_barcode_test.go's
+// setupScanBarcodeDeps) instead of stubResolver. ut-docs#2229: every
+// existing variant-picker POST test in this file uses stubResolver, which
+// is hand-fed the exact code -> BasketLine mapping the test needs, so the
+// cross-item guard's re-assertion in resolveAndValidateModifiers
+// (pos_modifiers_api.go, `variantBase.VariantID != variantID`) — whose
+// whole point is to catch a RESOLVER bug — has never actually run against
+// the real four-tier chain a stub cannot reproduce by construction.
+//
+// v-reg carries a REAL barcode (a valid EAN13). ut-docs#2229's review
+// checked this directly: the existing fixture's short 'C-R'-style codes DO
+// already match an enabled symbology under the registry's default-enabled
+// set (CODE128 is a deliberate permissive catch-all, internal/barcode/
+// barcode.go — every one of C-S/C-R/C-L/T-1 matches it), so there is no
+// fixture defect to fix here (an earlier draft of this comment claimed
+// otherwise — that claim was wrong, corrected after review). The real
+// reason for a fresh EAN13 instead of reusing those codes is determinism
+// (this fixture explicitly pins the ONE enabled symbology, so the
+// barcode-tier match never depends on the registry's default-enabled set
+// or match order) and avoiding this file's existing fixture's unrelated
+// noise (a second item, a codeless variant, a modifier group — none of
+// which this test needs). v-decaf has a SKU and NO barcode row at all —
+// the common shape (CreateVariant auto-generates SKUs, barcodes are
+// usually absent) — so it proves GetVariantLabel's barcode-else-SKU
+// fallback actually reaches the SKU arm through this handler end to end,
+// not just in isolation.
+func setupVariantModifiersRealResolverTestDeps(t *testing.T) (*common.Deps, *db.DB, string) {
+	t.Helper()
+	chdirRoot(t)
+	d := &db.DB{DB: openPagesTestDB(t)}
+	t.Cleanup(func() { _ = d.Close() })
+
+	regBarcode := ean13pg(t, "500123456789")
+	execAll(t, d, []string{
+		`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-coffee', 'COFFEE', 'Flat White', 999, 1)`,
+
+		`INSERT INTO item_variants (id, item_id, sku, name, price, is_active) VALUES ('v-reg',   'itm-coffee', 'COFFEE-R', 'Regular', 310, 1)`,
+		`INSERT INTO item_variants (id, item_id, sku, name, price, is_active) VALUES ('v-decaf', 'itm-coffee', 'COFFEE-D', 'Decaf', 320, 1)`,
+
+		`INSERT INTO variant_barcodes (barcode, variant_id, is_primary) VALUES ('` + regBarcode + `', 'v-reg', 1)`,
+		// v-decaf deliberately gets NO variant_barcodes row.
+	})
+
+	if err := data.NewSettingsRepo(d.DB).SetEnabledBarcodeSymbologies(t.Context(), []string{"EAN13"}); err != nil {
+		t.Fatal(err)
+	}
+
+	resolver := ui.PriceResolverAdapter{Store: ui.NewButtonStore(d.DB)}
+	dp := &common.Deps{
+		State:       common.RuntimeState{Currency: "GBP", TaxRatePct: 20},
+		Engine:      pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver),
+		KioskEngine: pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver),
+		Db:          d.DB,
+	}
+	return dp, d, regBarcode
+}
+
+// TestScanWithModifiers_RealResolver is ut-docs#2229 acceptance criteria
+// 1/2: posts through the real picker handler with the real resolver chain
+// wired in, for both shapes the card calls out — a variant resolved by its
+// own real barcode (v-reg) and a variant with no barcode at all, resolved
+// by its SKU (v-decaf). This is the first variant-picker POST test that
+// ever exercises POSRepo.ResolveShortcutLineDecoded's actual barcode and
+// variant-SKU tiers — every other test in this file resolves through
+// stubResolver.
+//
+// Asserting line.SKU (not just VariantID/PriceCents, ut-docs#2229 review
+// finding F2) is what actually makes the barcode case prove the BARCODE
+// tier won rather than merely landing on the right variant some other way
+// — VariantID/PriceCents alone are identical whichever tier resolved it,
+// so a test that only checked those would still pass if the barcode tier
+// were silently broken and SKU-fallback (which also independently
+// resolves "COFFEE-R" -> v-reg, see the SKU-only case below) quietly
+// covered for it.
+func TestScanWithModifiers_RealResolver(t *testing.T) {
+	cases := []struct {
+		name       string
+		variantID  string
+		useBarcode bool // wantSKU is the setup's generated barcode, not a literal
+		wantSKU    string
+		wantPrice  money.Money
+	}{
+		{name: "barcode-resolved variant", variantID: "v-reg", useBarcode: true, wantPrice: 310},
+		{name: "SKU-only variant, no barcode row", variantID: "v-decaf", wantSKU: "COFFEE-D", wantPrice: 320},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dp, _, regBarcode := setupVariantModifiersRealResolverTestDeps(t)
+			wantSKU := tc.wantSKU
+			if tc.useBarcode {
+				wantSKU = regBarcode
+			}
+			mux := http.NewServeMux()
+			registerPOSModifiersAPI(mux, dp)
+
+			form := url.Values{"code": {"COFFEE"}, "itemId": {"itm-coffee"}, "variantId": {tc.variantID}}
+			req := httptest.NewRequest(http.MethodPost, "/api/pos/scan-with-modifiers", strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+			b := dp.Engine.Basket()
+			if len(b.Lines) != 1 {
+				t.Fatalf("want 1 basket line, got %d", len(b.Lines))
+			}
+			line := b.Lines[0]
+			if line.VariantID != tc.variantID {
+				t.Fatalf("want VariantID %q, got %q", tc.variantID, line.VariantID)
+			}
+			if line.SKU != wantSKU {
+				t.Fatalf("want the resolved code %q (proves which tier won), got %q", wantSKU, line.SKU)
+			}
+			if line.PriceCents != tc.wantPrice {
+				t.Fatalf("want the variant's own price %d, got %d", tc.wantPrice, line.PriceCents)
+			}
+		})
+	}
+}
+
+// TestScanWithModifiers_RealResolver_CrossItemGuardFires is ut-docs#2229's
+// actual headline claim, not just its supporting acceptance criteria: the
+// cross-item guard in resolveAndValidateModifiers
+// (pos_modifiers_api.go:124, `variantBase.VariantID != variantID`) exists
+// to catch a RESOLVER bug, and until this test nothing had ever made it
+// fire against the REAL resolver — TestScanWithModifiers_RejectsCrossItemVariant
+// above proves the guard fires against a stub, which can't have a resolver
+// bug by construction (review finding F3).
+//
+// This reproduces a real way the real chain can hand back the wrong row:
+// resolveSKU (internal/data/pos_repo.go) checks items.sku BEFORE falling
+// back to item_variants.sku, so a variant whose own SKU happens to collide
+// with a DIFFERENT item's SKU resolves to that other item instead of the
+// variant — v-collide (on itm-coffee) shares its SKU with the unrelated
+// itm-water. Submitting variantId=v-collide must not silently add a line
+// priced/labeled as itm-water; the guard must reject it as a server error
+// (no safe user-facing outcome exists once the resolver itself disagrees
+// with the catalog about which row a variant id names).
+func TestScanWithModifiers_RealResolver_CrossItemGuardFires(t *testing.T) {
+	dp, d, _ := setupVariantModifiersRealResolverTestDeps(t)
+	execAll(t, d, []string{
+		`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-water', 'WATER', 'Water', 150, 1)`,
+		// No barcode row: GetVariantLabel falls back to this variant's own
+		// SKU, "WATER" -- which collides with itm-water's ITEM sku above.
+		`INSERT INTO item_variants (id, item_id, sku, name, price, is_active) VALUES ('v-collide', 'itm-coffee', 'WATER', 'Collider', 400, 1)`,
+	})
+	mux := http.NewServeMux()
+	registerPOSModifiersAPI(mux, dp)
+
+	form := url.Values{"code": {"COFFEE"}, "itemId": {"itm-coffee"}, "variantId": {"v-collide"}}
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/scan-with-modifiers", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500 when the real resolver hands back a different row than the picked variant, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(dp.Engine.Basket().Lines) != 0 {
+		t.Fatal("a resolver/variant mismatch must never add a line — that would silently sell itm-water priced/labeled as the picked variant")
 	}
 }
