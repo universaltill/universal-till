@@ -1117,6 +1117,145 @@ func TestAdminDumpApplyRoundTrip_ItemModifiers(t *testing.T) {
 	}
 }
 
+// ut-docs#2236: item_modifier_group_links, category_modifier_group_links and
+// item_modifier_group_opt_outs (ADR-0090/ADR-0094) were all added to
+// adminTables (migrations 025/031) but, unlike item_modifier_groups/options
+// above, never had their own DumpAdmin/ApplyAdmin round-trip test — filed
+// after an independent reviewer on #2210 flagged "a multi-till satellite
+// reading a stale synced-down copy of these links" as an unconfirmed
+// hypothesis. This test proves both directions for all three tables (add
+// AND remove) and, critically, that a replica seeded ONLY via ApplyAdmin —
+// never written to directly, since mutation is primary-only
+// (catalog/handlers.go's requirePrimary) — resolves ModifierRepo.
+// ResolveGroupsForItem() identically to the primary at every step, i.e. the
+// resolver reads the synced tables themselves rather than some stale cache.
+// No gap found: this is a regression test for an already-correct mechanism.
+func TestAdminDumpApplyRoundTrip_ModifierGroupLinks(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	primaryModifiers := NewModifierRepo(primary.DB)
+	replicaModifiers := NewModifierRepo(replica.DB)
+
+	seed := func(d *db.DB) {
+		mustExec(t, d, `INSERT INTO categories (id, name) VALUES ('cat1', 'Drinks')`)
+		mustExec(t, d, `INSERT INTO items (id, name, base_price, category_id) VALUES ('itm1', 'Flat White', 320, 'cat1')`)
+		mustExec(t, d, `INSERT INTO items (id, name, base_price) VALUES ('itm-anchor', 'Anchor', 100)`)
+	}
+	seed(primary)
+	seed(replica) // items/categories sync via their own adminTables entries, exercised elsewhere — seeded directly here to keep this test scoped to the three link tables.
+
+	// grp1: directly linked to itm1 (CreateGroup auto-links item_modifier_group_links).
+	if _, err := primaryModifiers.CreateGroup(ctx, "grp1", "itm1", "Extras", false, 0, 2, 0); err != nil {
+		t.Fatalf("CreateGroup grp1: %v", err)
+	}
+	// grp2: anchored elsewhere, offered to itm1 only via its CATEGORY (cat1) — and then opted out.
+	if _, err := primaryModifiers.CreateGroup(ctx, "grp2", "itm-anchor", "Sizes", false, 0, 1, 0); err != nil {
+		t.Fatalf("CreateGroup grp2: %v", err)
+	}
+	if err := primaryModifiers.LinkGroupToCategory(ctx, "cat1", "grp2", 0); err != nil {
+		t.Fatalf("LinkGroupToCategory: %v", err)
+	}
+	if err := primaryModifiers.OptOutItemFromGroup(ctx, "itm1", "grp2"); err != nil {
+		t.Fatalf("OptOutItemFromGroup: %v", err)
+	}
+
+	assertResolvedIDs := func(t *testing.T, repo *ModifierRepo, want ...string) {
+		t.Helper()
+		groups, err := repo.ResolveGroupsForItem(ctx, "itm1")
+		if err != nil {
+			t.Fatalf("ResolveGroupsForItem: %v", err)
+		}
+		got := make([]string, len(groups))
+		for i, g := range groups {
+			got[i] = g.ID
+		}
+		if len(got) != len(want) {
+			t.Fatalf("ResolveGroupsForItem(itm1) = %v, want %v", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("ResolveGroupsForItem(itm1) = %v, want %v", got, want)
+			}
+		}
+	}
+
+	// Sanity: the primary itself resolves grp1 only (grp2 is opted out).
+	assertResolvedIDs(t, primaryModifiers, "grp1")
+
+	// --- Round 1: ADD direction for all three link tables ---
+	bundle1, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump 1: %v", err)
+	}
+	for _, tbl := range []string{"item_modifier_group_links", "category_modifier_group_links", "item_modifier_group_opt_outs"} {
+		if _, ok := bundle1.Tables[tbl]; !ok {
+			t.Fatalf("%s must appear in the admin dump — it is in adminTables", tbl)
+		}
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle1)); err != nil {
+		t.Fatalf("apply 1: %v", err)
+	}
+
+	var n int
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM item_modifier_group_links WHERE item_id='itm1' AND group_id='grp1'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("item_modifier_group_links(itm1,grp1) did not reach the satellite: n=%d err=%v", n, err)
+	}
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM category_modifier_group_links WHERE category_id='cat1' AND group_id='grp2'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("category_modifier_group_links(cat1,grp2) did not reach the satellite: n=%d err=%v", n, err)
+	}
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM item_modifier_group_opt_outs WHERE item_id='itm1' AND group_id='grp2'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("item_modifier_group_opt_outs(itm1,grp2) did not reach the satellite: n=%d err=%v", n, err)
+	}
+	// The replica never wrote these tables itself — this proves the resolver
+	// reads the synced copy correctly, not a stale/cached view.
+	assertResolvedIDs(t, replicaModifiers, "grp1")
+
+	// --- Round 2: remove the DIRECT item link, and opt back IN (removes the
+	// opt-out row) — grp2 should now surface via inheritance on both sides. ---
+	if err := primaryModifiers.UnlinkGroupFromItem(ctx, "itm1", "grp1"); err != nil {
+		t.Fatalf("UnlinkGroupFromItem: %v", err)
+	}
+	if err := primaryModifiers.OptInItemToGroup(ctx, "itm1", "grp2"); err != nil {
+		t.Fatalf("OptInItemToGroup: %v", err)
+	}
+	assertResolvedIDs(t, primaryModifiers, "grp2")
+
+	bundle2, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump 2: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+		t.Fatalf("apply 2: %v", err)
+	}
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM item_modifier_group_links WHERE item_id='itm1' AND group_id='grp1'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("a direct item-group link removed on the primary is still on the satellite (n=%d, err=%v)", n, err)
+	}
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM item_modifier_group_opt_outs WHERE item_id='itm1' AND group_id='grp2'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("an opt-out reversed on the primary still shows opted-out on the satellite (n=%d, err=%v)", n, err)
+	}
+	assertResolvedIDs(t, replicaModifiers, "grp2")
+
+	// --- Round 3: remove the CATEGORY link — itm1 must lose grp2 entirely. ---
+	if err := primaryModifiers.UnlinkGroupFromCategory(ctx, "cat1", "grp2"); err != nil {
+		t.Fatalf("UnlinkGroupFromCategory: %v", err)
+	}
+	assertResolvedIDs(t, primaryModifiers)
+
+	bundle3, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump 3: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle3)); err != nil {
+		t.Fatalf("apply 3: %v", err)
+	}
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM category_modifier_group_links WHERE category_id='cat1' AND group_id='grp2'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("a category-group link removed on the primary is still on the satellite (n=%d, err=%v)", n, err)
+	}
+	assertResolvedIDs(t, replicaModifiers)
+}
+
 // Mirrors TestAdminApply_TableRetiredInPlaceWhenFKBlockedBySatelliteSaleHistory:
 // a register the primary removed, but that the satellite has already opened
 // a shift against, can't be hard-deleted (shifts.register_id FK) — it must
