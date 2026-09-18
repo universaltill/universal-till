@@ -94,6 +94,11 @@ Verdict: **safe to merge** — no blocking findings. Triage:
   Mac — `cmd/unitill-desktop` build tags, unrelated).
 - Playwright: `modifiers-shop-wide-2399`, `catalog-modifier-summary-
   reachable-1989`, `catalog-item-editor-attach-only-2330` — 4 passed.
+  **CI then caught what the local subset missed:** the two OSK-decimal
+  tests in `osk-decimal-sale-catalog-fields-1284.spec.ts` still drove the
+  old mandatory item picker on `/modifiers`; rewritten to create the group
+  standalone and attach the probe item from the card (commit `ff7b6a42`),
+  then every spec touching `/modifiers` (8 files, 37 tests) re-run green.
 - **Driven run** on a throwaway till (`:8098`, demo catalogue, manager):
   created "Sauces test" with **no item** from the real form → card
   appeared with the unassigned hint → ticked the *Cleaning* category
