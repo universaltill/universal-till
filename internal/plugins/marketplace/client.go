@@ -685,7 +685,7 @@ type AckDownloadRequest struct {
 // No production caller (ut-docs#1566) — and unlike this file's other
 // unreachable methods, nothing else replaces it: this is an UNWIRED step of
 // a live flow, not a superseded one. Both till-side download paths
-// (MarketplaceInstaller.InstallFromMarketplace and
+// (MarketplaceInstaller.Install and
 // MarketplaceInstaller.DownloadToStore, internal/plugins/
 // installer_marketplace.go / installer_store.go) issue a token via
 // IssueDownloadToken, download and checksum-verify the bundle, and then
