@@ -86,6 +86,44 @@ func fiscalRegisterPluginActive(ctx context.Context, d *common.Deps) bool {
 	return active
 }
 
+// redirectFiscalRegister answers a fiscal-register mutation's SUCCESS with a
+// navigation back to GET /fiscal-register. Mirrors locations_page.go's
+// redirectLocations exactly (ut-docs#2186 adopting ut-docs#2010's pattern):
+// the dialog's forms are hx-boosted, so a bare 303 would be followed by the
+// boosted form's own fetch/XHR layer and land the whole /fiscal-register
+// page's HTML wherever the form's hx-target points — HX-Redirect instead
+// forces a real browser navigation, bypassing swap logic entirely. A
+// non-htmx caller (a bookmarked/curl'd request, or a template regression)
+// gets the plain redirect, matching every pre-#2186 Go-level test in this
+// file. isHtmxDialogRequest is package-level (defined once in
+// categories_page.go) — not redefined here.
+func redirectFiscalRegister(w http.ResponseWriter, r *http.Request, target string) {
+	if isHtmxDialogRequest(r) {
+		w.Header().Set("HX-Redirect", target)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+// renderFiscalRegisterDialogError answers a REFUSED fiscal-register
+// mutation. Mirrors locations_page.go's renderLocationsDialogError exactly —
+// no %d placeholder interpolation needed, no fiscalregister.error.* key
+// takes one. See that function's own doc comment for the full reasoning
+// (why a non-2xx text/html body, why innerHTML-only into the dialog's own
+// aria-live message region, why the non-htmx fallback preserves the
+// pre-#2186 redirect-with-query-string shape byte for byte).
+func renderFiscalRegisterDialogError(w http.ResponseWriter, r *http.Request, errKey string) {
+	if !isHtmxDialogRequest(r) {
+		redirectFiscalRegister(w, r, "/fiscal-register?err="+errKey)
+		return
+	}
+	msg := httpx.T(httpx.RequestLocale(r), errKey)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusBadRequest)
+	httpx.RenderPartial("ui/partials/record_dialog_msg.html", map[string]any{"msg": msg})(w, r)
+}
+
 // withinLastMonth reports whether date (fiscalRegisterDEDateLayout) falls
 // within the last 31 days up to and including now -- shared by both the
 // acquired-on and decommissioned-on due-soon checks so the two stay
@@ -136,9 +174,17 @@ func registerFiscalRegisterDE(mux *http.ServeMux, d *common.Deps) {
 	// fully-synced admin table — a write accepted on a satellite would
 	// silently vanish (or be overwritten) on the very next admin pull.
 	// Same pattern as registers_page.go's own requirePrimary gate.
+	// Routed through renderFiscalRegisterDialogError, same as
+	// registers_page.go/locations_page.go's own requirePrimary (ut-docs#2186)
+	// — this closure is shared by all three mutation handlers below,
+	// including the untouched address-edit one, but its plain, non-boosted
+	// form never carries HX-Request, so isHtmxDialogRequest is false there
+	// and its response is byte-identical to before: the same
+	// redirect-with-query-string shape TestFiscalRegisterPage_
+	// MutationsRefusedOnReplica already pins for all three routes.
 	requirePrimary := func(w http.ResponseWriter, r *http.Request) bool {
 		if d.SyncPrimaryURL(r.Context()) != "" {
-			http.Redirect(w, r, "/fiscal-register?err=fiscalregister.error.replica_use_primary", http.StatusSeeOther)
+			renderFiscalRegisterDialogError(w, r, "fiscalregister.error.replica_use_primary")
 			return false
 		}
 		return true
@@ -265,17 +311,17 @@ func registerFiscalRegisterDE(mux *http.ServeMux, d *common.Deps) {
 
 		if registerID == "" || easSoftware == "" || easSerial == "" || tseSerial == "" ||
 			tseCertificationID == "" || tseType == "" || acquiredOn == "" {
-			http.Redirect(w, r, "/fiscal-register?err=fiscalregister.error.required", http.StatusSeeOther)
+			renderFiscalRegisterDialogError(w, r, "fiscalregister.error.required")
 			return
 		}
 		if _, err := time.Parse(fiscalRegisterDEDateLayout, acquiredOn); err != nil {
-			http.Redirect(w, r, "/fiscal-register?err=fiscalregister.error.invalid_date", http.StatusSeeOther)
+			renderFiscalRegisterDialogError(w, r, "fiscalregister.error.invalid_date")
 			return
 		}
 		var commissionedOn *string
 		if commissionedOnRaw != "" {
 			if _, err := time.Parse(fiscalRegisterDEDateLayout, commissionedOnRaw); err != nil {
-				http.Redirect(w, r, "/fiscal-register?err=fiscalregister.error.invalid_date", http.StatusSeeOther)
+				renderFiscalRegisterDialogError(w, r, "fiscalregister.error.invalid_date")
 				return
 			}
 			commissionedOn = &commissionedOnRaw
@@ -284,11 +330,11 @@ func registerFiscalRegisterDE(mux *http.ServeMux, d *common.Deps) {
 		id, err := fiscalStore.Create(r.Context(), registerID, easType, easSoftware, easSerial,
 			tseSerial, tseCertificationID, tseType, acquiredOn, commissionedOn)
 		if err != nil {
-			http.Redirect(w, r, "/fiscal-register?err=fiscalregister.error.create", http.StatusSeeOther)
+			renderFiscalRegisterDialogError(w, r, "fiscalregister.error.create")
 			return
 		}
 		audit(r, actor.ID, id, "fiscal_register_de_create")
-		http.Redirect(w, r, "/fiscal-register", http.StatusSeeOther)
+		redirectFiscalRegister(w, r, "/fiscal-register")
 	})
 
 	mux.HandleFunc("POST /api/fiscal-register/{id}/decommission", func(w http.ResponseWriter, r *http.Request) {
@@ -304,11 +350,11 @@ func registerFiscalRegisterDE(mux *http.ServeMux, d *common.Deps) {
 		// backdated entry (per the Architect's design).
 		today := time.Now().UTC().Format(fiscalRegisterDEDateLayout)
 		if err := fiscalStore.Decommission(r.Context(), id, today); err != nil {
-			http.Redirect(w, r, "/fiscal-register?err=fiscalregister.error.decommission", http.StatusSeeOther)
+			renderFiscalRegisterDialogError(w, r, "fiscalregister.error.decommission")
 			return
 		}
 		audit(r, actor.ID, id, "fiscal_register_de_decommission")
-		http.Redirect(w, r, "/fiscal-register", http.StatusSeeOther)
+		redirectFiscalRegister(w, r, "/fiscal-register")
 	})
 
 	mux.HandleFunc("POST /api/fiscal-register/locations/{id}/address", func(w http.ResponseWriter, r *http.Request) {
