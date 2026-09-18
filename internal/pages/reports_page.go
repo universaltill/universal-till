@@ -441,6 +441,12 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 				// same-gate, same-nil-when-absent breakdown as the three
 				// above.
 				OrderTypes []data.OrderTypeSales
+				// FiscalDevice (ut-docs#2410) is the same archived-report,
+				// same-gate, same-nil-when-absent breakdown as the
+				// ArticleGroups/OrderTypes fields above — nil (no section
+				// rendered) for every non-TR shop or a report archived
+				// before this card.
+				FiscalDevice *data.FiscalDeviceWindow
 			}
 			var eodRows []eodRow
 			// ut-docs#794 review finding (residual on the blocker-1 fix):
@@ -476,6 +482,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 							row.Articles = rep.Articles
 							row.Operators = rep.Operators
 							row.OrderTypes = rep.OrderTypes
+							row.FiscalDevice = rep.FiscalDevice
 							if rep.Day == "" {
 								row.From, row.To = rep.From, rep.To
 							}

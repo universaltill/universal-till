@@ -158,6 +158,23 @@ article/operator breakdowns above it, a row only appears when that mode had
 at least one sale — an all-dine-in day shows just the Dine in row, not an
 empty Takeaway line.
 
+## Fiscal device (ÖKC) status for Türkiye
+
+Shops on the Turkish market with the fiscal-device plugin active get an
+extra **Fiscal device (ÖKC)** block, on the printed day-end report and on
+screen in the archived-report list, covering the same window as the rest
+of that close: the certified cash register's own maker, serial and Z
+report number(s) for the period, its receipt counts by kind (mali fiş, iade fişi,
+bilgi fişi, and any other kind it printed), and the till's own count of
+tenders taken on the device. A period where the device Z-closed partway
+through shows more than one Z number, with a note that the day closed
+mid-period. The block ends with a plain match/mismatch line — text and an
+icon, never colour alone — so a discrepancy between what the device
+recorded and what the till recorded for it is visible without cross-
+checking the device's own printed Z report by hand. Every other market's
+day-end report is unaffected: this block only ever appears for a Turkish
+till with that plugin turned on.
+
 ## Payment method and VAT rate together on the day-end (Z) report
 
 The printed day-end report includes a **BY METHOD & VAT RATE** table: the

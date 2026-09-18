@@ -58,7 +58,7 @@
         {{ if $canRunEOD }}<td>{{ .Sales }}</td><td>{{ money .Net }}</td><td>{{ money .Tips }}</td>{{ end }}
         <td><button class="btn secondary" hx-post="/api/reports/eod/print/{{ .Period }}" hx-target="#eod-msg" hx-swap="innerHTML">🖨</button></td>
       </tr>
-      {{ if or .ArticleGroups .Articles .Operators .OrderTypes }}
+      {{ if or .ArticleGroups .Articles .Operators .OrderTypes .FiscalDevice }}
       <!-- ut-docs#1010: per-article-group/per-article/per-operator
            breakdowns for THIS archived report, same single-day-only
            breakdowns as the printed Z-report's BY ARTICLE GROUP/BY
@@ -119,6 +119,45 @@
               {{ end }}
             </tbody>
           </table>
+          {{ end }}
+          {{ if .FiscalDevice }}
+          <!-- ut-docs#2410: Türkiye's YN ÖKC device evidence for this
+               window, reconciled against the till's own "okc"-method
+               tenders — same single-day/range-agnostic gate as the
+               printed Z-report's own FISCAL DEVICE (OKC) footer section
+               (buildEODDoc). Match/mismatch is text + icon, never colour
+               alone (same convention as the HasVariance flag above). -->
+          <strong>{{ T "reports.eod.fiscal_device.title" }}</strong>
+          {{ if .FiscalDevice.Empty }}
+          <p class="tag stock-low"><span aria-hidden="true">⚠</span> {{ T "reports.eod.fiscal_device.none" }}</p>
+          {{ else }}
+          <table class="table" style="margin:.3rem 0 .8rem">
+            <tbody>
+              <tr><td>{{ T "reports.eod.fiscal_device.serial" }}</td><td style="text-align:end">{{ .FiscalDevice.Serial }}</td></tr>
+              {{ if .FiscalDevice.Maker }}
+              <tr><td>{{ T "reports.eod.fiscal_device.maker" }}</td><td style="text-align:end">{{ .FiscalDevice.Maker }}</td></tr>
+              {{ end }}
+              <tr><td>{{ T "reports.eod.fiscal_device.z_no" }}</td><td style="text-align:end">{{ range $i, $z := .FiscalDevice.ZNos }}{{ if $i }}, {{ end }}{{ $z }}{{ end }}</td></tr>
+              <tr><td>{{ T "reports.eod.fiscal_device.mali_fis" }}</td><td style="text-align:end">{{ .FiscalDevice.MaliFis }}</td></tr>
+              <tr><td>{{ T "reports.eod.fiscal_device.iade_fisi" }}</td><td style="text-align:end">{{ .FiscalDevice.IadeFisi }}</td></tr>
+              {{ if .FiscalDevice.BilgiFisi }}
+              <tr><td>{{ T "reports.eod.fiscal_device.bilgi_fisi" }}</td><td style="text-align:end">{{ .FiscalDevice.BilgiFisi }}</td></tr>
+              {{ end }}
+              {{ if .FiscalDevice.Other }}
+              <tr><td>{{ T "reports.eod.fiscal_device.other" }}</td><td style="text-align:end">{{ .FiscalDevice.Other }}</td></tr>
+              {{ end }}
+              <tr><td>{{ T "reports.eod.fiscal_device.till_tenders" }}</td><td style="text-align:end">{{ .FiscalDevice.TillOKCTenders }}</td></tr>
+            </tbody>
+          </table>
+          {{ if gt (len .FiscalDevice.ZNos) 1 }}
+          <p class="muted">{{ T "reports.eod.fiscal_device.z_multiple" }}</p>
+          {{ end }}
+          {{ if eq .FiscalDevice.Total .FiscalDevice.TillOKCTenders }}
+          <p><span aria-hidden="true">✓</span> {{ T "reports.eod.fiscal_device.match" }}</p>
+          {{ else }}
+          <p><span class="tag stock-low"><span aria-hidden="true">⚠</span> {{ printf (T "reports.eod.fiscal_device.mismatch") .FiscalDevice.Total .FiscalDevice.TillOKCTenders }}</span></p>
+          {{ end }}
+          {{ end }}
           {{ end }}
         </td>
       </tr>
