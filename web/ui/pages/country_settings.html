@@ -86,102 +86,99 @@
 {{ if not .showAll }}<p class="muted">{{ T "countrysettings.showing_mine" }}</p>{{ end }}
 {{ end }}
 
-<div class="users-layout">
-  <div class="card users-list">
-    {{/* ut-docs#1173: .users-list .table now carries its own overflow-x:auto
-         (app.css) so this page's own wrapper div is redundant -- a nested
-         scroller, harmless but confusing to debug later. */}}
-    <table class="table">
-      <thead>
-        <tr>
-          <th>{{ T "countrysettings.col.country" }}</th>
-          <th>{{ T "countrysettings.col.currency" }}</th>
-          <th>{{ T "countrysettings.col.symbol" }}</th>
-          <th>{{ T "countrysettings.col.tax" }}</th>
-          <th>{{ T "countrysettings.col.retention" }}</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {{ range .countries }}
-        {{/* One row IS the edit form — the values are only shown as inputs, so
-             a read-only column never disagrees with the field beside it. */}}
-        <tr>
-          <td>
-            {{ if .NameKey }}{{ T .NameKey }}{{ else }}{{ .Code }}{{ end }}
-            <span class="muted" dir="ltr">{{ .Code }}</span>
-            {{ if not .IsBuiltin }}<br /><span class="muted">{{ T "countrysettings.custom" }}</span>{{ end }}
-          </td>
-          <td>
-            <input form="cs-{{ .Code }}" type="text" name="currency" value="{{ .Currency }}" dir="ltr" size="4" maxlength="8" />
-          </td>
-          <td>
-            <input form="cs-{{ .Code }}" type="text" name="currency_symbol" value="{{ .CurrencySymbol }}" dir="ltr" size="2" maxlength="4" />
-          </td>
-          <td>
-            <!-- ut-docs#1275: type="number" silently resets .value to "" on
-                 a momentarily-invalid decimal string while osk.js types it
-                 in (same root cause as ut-docs#1249/#1272) --
-                 text+inputmode="decimal" avoids that; non-negativity is
-                 already enforced server-side (parsePercentAsBP).
-                 size="5" was always here but inert under type="number"
-                 (size only applies to text-like inputs) -- now live, it
-                 narrows the column enough to wrap the checkbox label below
-                 onto multiple lines. size="7" (review finding S2) isn't a
-                 full fix (still 2 lines, not the original 1) but avoids
-                 the worst 3-line wrap while keeping the column narrower
-                 than before -- which is itself a net improvement: it's what
-                 stops the Archive Retention column being clipped off the
-                 card's edge. A single-line label needs size>=12, which
-                 re-widens the column enough to reintroduce that clipping;
-                 picking between those two is a UX call, not a mechanical
-                 fix, so this keeps the improvement and accepts the
-                 remaining 2-line wrap rather than trading one regression
-                 for the other. -->
-            <input form="cs-{{ .Code }}" type="text" inputmode="decimal" name="tax_rate_pct" value="{{ .TaxRatePct }}" pattern="[0-9]+(\.[0-9]{1,2})?" dir="ltr" size="7" />
-            <label>
-              <input form="cs-{{ .Code }}" type="checkbox" name="tax_inclusive" value="1" {{ if .TaxInclusive }}checked{{ end }} />
-              {{ T "countrysettings.tax.inclusive" }}
-            </label>
-          </td>
-          <td>
-            <input form="cs-{{ .Code }}" type="number" name="archive_min_days" value="{{ .ArchiveMinDays }}" min="{{ $.floorDays }}" step="1" dir="ltr" size="6" />
-          </td>
-          <td class="users-actions">
-            <form id="cs-{{ .Code }}" method="post" action="/api/country-settings{{ if $.showAll }}?all=1{{ end }}">
-              <input type="hidden" name="code" value="{{ .Code }}" />
-              <button type="submit" class="btn secondary">{{ T "countrysettings.save" }}</button>
-            </form>
-            <form method="post" action="/api/country-settings/{{ .Code }}/delete{{ if $.showAll }}?all=1{{ end }}">
-              <button type="submit" class="btn secondary">
-                {{ if .IsBuiltin }}{{ T "countrysettings.reset" }}{{ else }}{{ T "countrysettings.delete" }}{{ end }}
-              </button>
-            </form>
-          </td>
-        </tr>
-        {{ end }}
-      </tbody>
-    </table>
-  </div>
+{{/* ut-docs#2187: adopts the ut-docs#2010 list/edit dialog standard
+     (ut-docs/reference/list-and-dialog-pattern.md), mirroring
+     locations.html's shape (ut-docs#2124) with two structural differences
+     the code being a form field rather than a URL path segment forces:
+       - data-record-action is the SAME "/api/country-settings" endpoint on
+         every row (not a per-row "/api/country-settings/{code}"), since the
+         save handler is keyed by the `code` FORM FIELD, not a path segment
+         -- see country_settings_page.go's registerCountrySettings doc
+         comment.
+       - the destructive slot below is a THREE-way branch, not Locations'
+         plain deactivate/activate pair: a BUILTIN country's row shows
+         "Restore defaults" (restores country_settings_repo.go's Delete
+         semantics — it never removes the row), a CUSTOM (operator-added)
+         one shows "Delete" (genuinely removed). data-field-is_builtin on
+         each row drives which data-record-when form is shown, same
+         mechanism Locations uses for active=1/active=0.
+     Both row and dialog actions carry "?all=1" when rendered from the
+     all-countries view, preserving ut-docs#1024's redirect-carry-through
+     (countrySettingsRedirectTarget in the Go handler) exactly as the
+     pre-#2187 per-row <form action> did. */}}
+{{ template "list_header" (dict
+     "searchID"       "country-settings-search"
+     "searchLabelKey" "countrysettings.search_placeholder"
+     "filterTarget"   "#country-settings-table .country-row"
+     "emptyTarget"    "#country-settings-no-results"
+     "newID"          "country-settings-new"
+     "newLabelKey"    "countrysettings.new.submit"
+     "dialogID"       "country-dialog") }}
 
-  <div class="card users-form">
-    <h3>{{ T "countrysettings.new.title" }}</h3>
-    <form method="post" action="/api/country-settings{{ if .showAll }}?all=1{{ end }}" autocomplete="off">
-      <label>{{ T "countrysettings.col.country" }} <input type="text" name="code" maxlength="8" required dir="ltr" /></label>
-      <label>{{ T "countrysettings.col.currency" }} <input type="text" name="currency" maxlength="8" dir="ltr" /></label>
-      <label>{{ T "countrysettings.col.symbol" }} <input type="text" name="currency_symbol" maxlength="4" dir="ltr" /></label>
-      <label>{{ T "countrysettings.col.tax" }} <input type="text" inputmode="decimal" name="tax_rate_pct" pattern="[0-9]+(\.[0-9]{1,2})?" value="0" dir="ltr" /></label>
-      <label class="users-inline">
-        <input type="checkbox" name="tax_inclusive" value="1" checked />
-        {{ T "countrysettings.tax.inclusive" }}
-      </label>
-      <label>{{ T "countrysettings.col.retention" }} <input type="number" name="archive_min_days" min="{{ .floorDays }}" step="1" value="{{ .floorDays }}" dir="ltr" /></label>
-      <p class="muted">{{ T "countrysettings.retention_help" }}</p>
-      <button type="submit" class="btn primary" style="width:100%">{{ T "countrysettings.new.submit" }}</button>
-    </form>
-    <p class="muted">{{ T "countrysettings.delete_help" }}</p>
+<div class="card list-card">
+  {{ if not .countries }}
+  <p class="muted">{{ T "countrysettings.empty" }}</p>
+  {{ else }}
+  <div class="list-scroll">
+  <table class="table" id="country-settings-table">
+    <thead>
+      <tr>
+        <th>{{ T "countrysettings.col.country" }}</th>
+        <th>{{ T "countrysettings.col.currency" }}</th>
+        <th>{{ T "countrysettings.col.symbol" }}</th>
+        <th>{{ T "countrysettings.col.tax" }}</th>
+        <th>{{ T "countrysettings.col.retention" }}</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .countries }}
+      <tr class="country-row" data-id="{{ .Code }}"
+          data-record-open="country-dialog"
+          data-record-action="/api/country-settings{{ if $.showAll }}?all=1{{ end }}"
+          data-record-destructive-action="/api/country-settings/{{ .Code }}/delete{{ if $.showAll }}?all=1{{ end }}"
+          data-field-code="{{ .Code }}"
+          data-field-currency="{{ .Currency }}"
+          data-field-currency_symbol="{{ .CurrencySymbol }}"
+          data-field-tax_rate_pct="{{ .TaxRatePct }}"
+          data-field-tax_inclusive="{{ if .TaxInclusive }}1{{ else }}0{{ end }}"
+          data-field-archive_min_days="{{ .ArchiveMinDays }}"
+          data-field-is_builtin="{{ if .IsBuiltin }}1{{ else }}0{{ end }}">
+        <td>
+          {{ if .NameKey }}{{ T .NameKey }}{{ else }}{{ .Code }}{{ end }}
+          <span class="muted" dir="ltr">{{ .Code }}</span>
+          {{ if not .IsBuiltin }}<br /><span class="muted">{{ T "countrysettings.custom" }}</span>{{ end }}
+        </td>
+        <td dir="ltr">{{ .Currency }}</td>
+        <td dir="ltr">{{ .CurrencySymbol }}</td>
+        <td dir="ltr">{{ .TaxRatePct }}%{{ if .TaxInclusive }} <span class="muted">({{ T "countrysettings.tax.inclusive" }})</span>{{ end }}</td>
+        <td dir="ltr">{{ .ArchiveMinDays }}</td>
+        <td class="list-actions">
+          <button type="button" class="btn secondary btn-icon" data-record-edit
+                  aria-label="{{ T "common.edit" }}" title="{{ T "common.edit" }}">
+            <span class="btn-ico" aria-hidden="true">{{ icon "pencil" }}</span>
+          </button>
+        </td>
+      </tr>
+      {{ end }}
+      <tr id="country-settings-no-results" class="list-empty-row" hidden>
+        <td colspan="6">{{ T "common.no_results" }}</td>
+      </tr>
+    </tbody>
+  </table>
   </div>
+  {{ end }}
 </div>
+
+{{ $createAction := "/api/country-settings" }}
+{{ if .showAll }}{{ $createAction = "/api/country-settings?all=1" }}{{ end }}
+{{ template "record_dialog" (dict
+     "id"             "country-dialog"
+     "formID"         "country-form"
+     "createTitleKey" "countrysettings.new.title"
+     "editTitleKey"   "countrysettings.edit.title"
+     "createAction"   $createAction
+     "root"           .) }}
 
 </div>
 <script>
@@ -218,5 +215,116 @@
     var label = pressed.textContent.trim();
     if (status.textContent !== label) status.textContent = label;
   });
+
+  // ut-docs#2187: `code` is the primary key (the save endpoint is keyed by
+  // the FORM FIELD, not a URL path segment — see country_settings_page.go's
+  // own comment on why /api/country-settings has no per-code counterpart),
+  // so it must stay editable on CREATE (the operator is choosing it) but be
+  // locked on EDIT (typing a different code there would upsert a NEW row
+  // instead of updating the one the dialog opened for — record-dialog.js's
+  // generic data-field-* prefill has no concept of "read-only in edit mode
+  // only", so this page finishes that part of its own prefill here, the
+  // same documented extension point categories.html's colour-tile/checkbox
+  // sync uses (record-dialog:open, fired after the generic prefill, before
+  // the discard-guard snapshot — so a freshly-opened edit never reads as
+  // dirty just because this listener touched the field's readonly state).
+  //
+  // Listened on document.body, not the dialog element directly: the scope
+  // chips above swap #country-settings-view with hx-swap="outerHTML", which
+  // is the ANCESTOR of #country-dialog — that replaces the dialog node
+  // itself, and record-dialog:open bubbles, so only a listener on a node
+  // that survives the swap (document.body, same as this file's own
+  // htmx:afterSwap listener above) keeps hearing it afterwards.
+  document.body.addEventListener('record-dialog:open', function (ev) {
+    if (!ev.target || ev.target.id !== 'country-dialog') return;
+    var codeInput = document.getElementById('country-code');
+    if (!codeInput) return;
+    if (ev.detail && ev.detail.mode === 'edit') {
+      codeInput.setAttribute('readonly', '');
+    } else {
+      codeInput.removeAttribute('readonly');
+    }
+  });
 </script>
+{{ end }}
+
+{{/* The two slots record_dialog.html owes to this page — see that partial's
+     header for the contract, and categories.html's own slots for the fuller
+     annotated version this copies. hx-boost + hx-target="#country-dialog-msg"
+     + hx-swap="innerHTML": a refusal (renderCountrySettingsDialogError)
+     renders in-dialog rather than closing it and losing whatever the
+     operator typed — see record_dialog.html's own header comment / this
+     pattern's "Where errors surface" section for the full reasoning. */}}
+{{ define "record_dialog_fields" }}
+<form id="country-form" method="post" action="/api/country-settings" autocomplete="off"
+      hx-boost="true" hx-target="#country-dialog-msg" hx-swap="innerHTML">
+  {{/* code is read-only once editing an existing row (locked by the page's
+       own record-dialog:open listener above, since record-dialog.js's
+       generic data-field-* prefill has no per-field "readonly in edit mode"
+       concept) -- free-text, required, on CREATE. */}}
+  <label>{{ T "countrysettings.col.country" }}
+    <input type="text" id="country-code" name="code" maxlength="8" required dir="ltr" />
+  </label>
+  <label>{{ T "countrysettings.col.currency" }}
+    <input type="text" name="currency" maxlength="8" dir="ltr" />
+  </label>
+  <label>{{ T "countrysettings.col.symbol" }}
+    <input type="text" name="currency_symbol" maxlength="4" dir="ltr" />
+  </label>
+  {{/* ut-docs#1275: type="text" inputmode="decimal" + a numeric pattern,
+       NOT type="number" -- a number input silently resets .value to "" on
+       a momentarily-invalid decimal string while osk.js types it in
+       (e2e/tests/osk-decimal-admin-fields-1275.spec.ts pins this field by
+       name). Non-negativity is enforced server-side (parsePercentAsBP). */}}
+  {{/* Sensible CREATE defaults (mirroring the pre-#2187 "Add a country"
+       card exactly): a plain HTML `value` attribute, unlike a hidden
+       input's, IS what record-dialog.js's own form.reset() restores on
+       every create-mode open, so no JS is needed to keep these coming back
+       after an edit -- setField() then overwrites all three with the row's
+       real values in edit mode. */}}
+  <label>{{ T "countrysettings.col.tax" }}
+    <input type="text" inputmode="decimal" name="tax_rate_pct" pattern="[0-9]+(\.[0-9]{1,2})?" value="0" dir="ltr" />
+  </label>
+  <label>
+    <input type="checkbox" name="tax_inclusive" value="1" checked />
+    {{ T "countrysettings.tax.inclusive" }}
+  </label>
+  <label>{{ T "countrysettings.col.retention" }}
+    <input type="number" name="archive_min_days" min="{{ .root.floorDays }}" step="1" value="{{ .root.floorDays }}" dir="ltr" />
+  </label>
+  <p class="muted">{{ T "countrysettings.retention_help" }}</p>
+  <p class="muted">{{ T "countrysettings.delete_help" }}</p>
+</form>
+{{ end }}
+
+{{/* ut-docs#2187: unlike Locations' plain deactivate/activate pair, this is
+     a THREE-way branch on data-field-is_builtin — a BUILTIN country's row
+     shows "Restore defaults" (country_settings_repo.go's Delete never
+     removes a builtin row, it restores builtinCountryDefaults), a CUSTOM
+     (operator-added) one shows "Delete" (genuinely removed). Both post to
+     the SAME data-record-destructive-action (set per row by
+     record-dialog.js's open()) -- POST /api/country-settings/{code}/delete
+     -- the row's own is_builtin decides server-side which behaviour that
+     endpoint performs (countryRepo.Delete), so the two forms here differ
+     only in which is shown and what it says, never in where it posts.
+     hx-confirm, not data-record-confirm -- see locations.html's own comment
+     for why htmx's native attribute is the only one that can actually abort
+     a boosted submit. */}}
+{{ define "record_dialog_destructive" }}
+<form method="post" data-record-destructive-form data-record-when="is_builtin=1"
+      hx-confirm="{{ T "countrysettings.reset_confirm" }}"
+      hx-boost="true" hx-target="#country-dialog-msg" hx-swap="innerHTML">
+  <button type="submit" class="btn secondary btn-icon"
+          aria-label="{{ T "countrysettings.reset" }}" title="{{ T "countrysettings.reset" }}">
+    <span class="btn-ico" aria-hidden="true">{{ icon "rotate-ccw" }}</span>
+  </button>
+</form>
+<form method="post" data-record-destructive-form data-record-when="is_builtin=0"
+      hx-confirm="{{ T "countrysettings.delete_confirm" }}"
+      hx-boost="true" hx-target="#country-dialog-msg" hx-swap="innerHTML">
+  <button type="submit" class="btn secondary btn-icon btn-icon-danger"
+          aria-label="{{ T "countrysettings.delete" }}" title="{{ T "countrysettings.delete" }}">
+    <span class="btn-ico" aria-hidden="true">{{ icon "trash-2" }}</span>
+  </button>
+</form>
 {{ end }}

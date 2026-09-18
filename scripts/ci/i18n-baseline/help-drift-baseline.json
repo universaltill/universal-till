@@ -27,16 +27,16 @@
         "numbered_steps": 5,
         "sub_bullets": 0,
         "top_bullets": 6,
-        "bold_leadins": 3
+        "bold_leadins": 2
       },
       "english": {
         "headings": 3,
         "numbered_steps": 5,
         "sub_bullets": 0,
         "top_bullets": 7,
-        "bold_leadins": 3
+        "bold_leadins": 2
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2187: the record_dialog/list_header conversion reworded \"How to use it\"'s step 5 in both English and this locale so it no longer leads with a bold phrase — bold_leadins shifted from 3 to 2 on both sides in lockstep, no new gap; the tracked top_bullets gap (this locale is missing English's final bullet) is unchanged, just re-recorded at its real current value."
     },
     {
       "locale": "ar",
@@ -262,9 +262,9 @@
         "numbered_steps": 5,
         "sub_bullets": 0,
         "top_bullets": 7,
-        "bold_leadins": 3
+        "bold_leadins": 2
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2187: the record_dialog/list_header conversion reworded English \"How to use it\"'s step 5 so it no longer leads with a bold phrase, dropping English's own bold_leadins from 3 to 2 — this locale's bold_leadins (already 2, using mid-sentence bold in its own Good-to-know bullets, not a leading one) is unchanged, so that part of the gap closed outright; the tracked numbered_steps gap (this locale's own-numeral ۱./۲. list isn't matched by the guard's Latin-numeral regex) and top_bullets gap are unchanged, just re-recorded against English's real current values."
     },
     {
       "locale": "fa",
@@ -597,16 +597,16 @@
         "numbered_steps": 5,
         "sub_bullets": 0,
         "top_bullets": 6,
-        "bold_leadins": 3
+        "bold_leadins": 2
       },
       "english": {
         "headings": 3,
         "numbered_steps": 5,
         "sub_bullets": 0,
         "top_bullets": 7,
-        "bold_leadins": 3
+        "bold_leadins": 2
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2187: the record_dialog/list_header conversion reworded \"How to use it\"'s step 5 in both English and this locale so it no longer leads with a bold phrase — bold_leadins shifted from 3 to 2 on both sides in lockstep, no new gap; the tracked top_bullets gap (this locale is missing English's final bullet) is unchanged, just re-recorded at its real current value."
     },
     {
       "locale": "tr",

@@ -103,9 +103,15 @@ test.describe('admin-screen decimal fields survive typing via the on-screen keyb
       text: '5.25',
     },
     {
-      name: 'country_settings.html tax_rate_pct (new-country form)',
+      // ut-docs#2187: /country-settings adopted the record_dialog pattern
+      // (.users-form is gone) — tax_rate_pct now lives in #country-form,
+      // inside the create/edit dialog, opened by the list header's + button.
+      name: 'country_settings.html tax_rate_pct (add-country dialog)',
       goto: '/country-settings',
-      selector: '.users-form input[name="tax_rate_pct"]',
+      before: async (page) => {
+        await page.locator('#country-settings-new').click();
+      },
+      selector: '#country-form input[name="tax_rate_pct"]',
       text: '8.25',
     },
   ];
