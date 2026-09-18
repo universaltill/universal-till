@@ -179,7 +179,13 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
   // .toBeVisible()` retry loop with no waitForResponse was the one
   // observed flake source in this file, unlike every scan elsewhere in
   // this suite which already waits on its own request).
-  async function createProbeItemAndOpenVariants(page: import('@playwright/test').Page, name: string) {
+  // Returns the new item's id (ut-docs#2330: two callers below need it to
+  // seed a modifier group via the API now that neither the item-editor's
+  // own dialog nor /modifiers can create one from a standing start — see
+  // their own comments) -- read from the row's data-id BEFORE it disappears
+  // under the reopened dialog, rather than assuming it is still queryable
+  // once .catalog-row is (maybe) covered.
+  async function createProbeItemAndOpenVariants(page: import('@playwright/test').Page, name: string): Promise<string> {
     await openNewItemForm(page);
     await page.locator('#item-name').fill(name);
     await page.locator('#item-price').fill('1.00');
@@ -195,11 +201,13 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
     // save-success auto-close timer) rather than waiting on that timer.
     await closeItemForm(page);
     const row = page.locator('.catalog-row', { hasText: name });
+    const itemId = await row.getAttribute('data-id');
     await row.click();
     // …and the variants panel is the reopened dialog's Variants tab, not a
     // page-level section any more — so the dialog STAYS open here.
     await page.locator('#item-form-tab-variants').click();
     await expect(page.locator('#catalog-variants')).toBeVisible();
+    return itemId!;
   }
 
   // The field ut-docs#1284's own issue body actually names at this line
@@ -273,40 +281,59 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
   // (`:has(input[name="id"])` is what distinguishes an existing option
   // form from the group's still-present "add option" form, which has no
   // hidden id field).
-  test('catalog_variants.html EXISTING modifier-option price-delta survives OSK typing', async ({ page }) => {
+  test('modifiers.html EXISTING modifier-option price-delta survives OSK typing', async ({ page }) => {
     const assertClean = watchConsole(page);
     await setOskMode(page, 'on');
+
+    // ut-docs#2330: the item-editor's own "Manage Modifiers" dialog is now
+    // attach/detach-only -- no group/option create/edit reachable from
+    // there any more (that stays exclusively on /modifiers, the shop-wide
+    // full-CRUD home for modifier groups since ut-docs#1957). /modifiers
+    // itself only lists items that ALREADY own a group (it folds
+    // ListAllShopModifierGroups' flat, shop-wide slice by item -- see
+    // handlers.go's groupModifierAdminByItem), so it can't bootstrap a
+    // shop's very first group either -- there is no "add a new group" form
+    // anywhere until at least one exists. Seed the group + a real option
+    // through the same API the UI forms themselves post to (the pattern
+    // catalog-item-editor-attach-only-2330.spec.ts's own createItem/group
+    // seeding already established), so this item's card appears on
+    // /modifiers with full CRUD. This test's actual subject -- the
+    // priceDeltaMajor OSK-decimal bug -- lives entirely in the real
+    // rendered <input> the OSK types into below; seeding the scaffolding
+    // that gets us there doesn't touch it.
+    const itemName = 'OSK Existing Option Probe ' + Date.now();
+    const createResp = await page.request.post('/api/catalog/item', { form: { name: itemName, price: '100' } });
+    expect(createResp.ok(), 'create item').toBe(true);
     await page.goto('/catalog');
-    await createProbeItemAndOpenVariants(page, 'OSK Existing Option Probe ' + Date.now());
+    const itemId = await page.locator(`.catalog-row[data-name="${itemName}"]`).getAttribute('data-id');
+    expect(itemId, 'item must have a data-id').not.toBeNull();
 
-    // ut-docs#1957: modifier-group/option CRUD moved out of this panel into
-    // the nested #modifier-groups-modal dialog, opened via its own button
-    // (lazy-loaded by GET /api/catalog/modifier-groups-panel) -- open it
-    // before looking for the "add group" form the old inline panel used to
-    // render directly.
-    await Promise.all([
-      page.waitForResponse((r) => r.url().includes('/api/catalog/modifier-groups-panel')),
-      page.locator('#manage-modifiers-btn').click(),
-    ]);
-    await expect(page.locator('#modifier-groups-modal')).toBeVisible();
+    const groupName = 'Milk ' + Date.now();
+    const groupResp = await page.request.post('/api/catalog/modifier-group', {
+      form: { itemId: itemId!, name: groupName, minSelect: '0', maxSelect: '1' },
+    });
+    expect(groupResp.ok(), 'create modifier group').toBe(true);
 
-    const groupName = 'Milk';
-    await page.locator('.modifier-admin-group-new input[name="name"]').fill(groupName);
-    await Promise.all([
-      page.waitForResponse((r) => r.url().includes('/api/catalog/modifier-group')),
-      page.locator('.modifier-admin-group-new button[type=submit]').click(),
-    ]);
-    // `hasText` matches rendered text nodes, not an <input>'s value -- the
-    // group's own name lives in a server-rendered value="" attribute, so
-    // locate by that instead of filtering on visible text.
+    // The group-create POST doesn't hand back the new group's id (it
+    // answers with an HTML fragment, not JSON) -- read it back from the
+    // modifier-groups-panel fragment instead, same read-back trick
+    // sell-screen-categories-tab-2283.spec.ts's seedModifier uses.
+    const panelResp = await page.request.get(`/api/catalog/modifier-groups-panel?item_id=${itemId}`);
+    const panelHtml = await panelResp.text();
+    const nameIdx = panelHtml.indexOf(`>${groupName}<`);
+    expect(nameIdx, 'panel must contain the new group').toBeGreaterThan(-1);
+    const idMatches = [...panelHtml.slice(0, nameIdx).matchAll(/data-group-id="([^"]*)"/g)];
+    expect(idMatches.length).toBeGreaterThan(0);
+    const groupId = idMatches[idMatches.length - 1][1];
+
+    const optionResp = await page.request.post('/api/catalog/modifier-option', {
+      form: { groupId, itemId: itemId!, name: 'Oat milk' },
+    });
+    expect(optionResp.ok(), 'create modifier option').toBe(true);
+
+    await page.goto('/modifiers');
     const group = page.locator('.modifier-admin-group').filter({ has: page.locator(`input[name="name"][value="${groupName}"]`) });
     await expect(group).toBeVisible();
-
-    await group.locator('form.modifier-admin-option-row:not(:has(input[name="id"])) input[name="name"]').fill('Oat milk');
-    await Promise.all([
-      page.waitForResponse((r) => r.url().includes('/api/catalog/modifier-option')),
-      group.locator('form.modifier-admin-option-row:not(:has(input[name="id"])) button[type=submit]').click(),
-    ]);
     const existingOption = group.locator('form.modifier-admin-option-row:has(input[name="id"])');
     await expect(existingOption).toBeVisible();
 
@@ -326,7 +353,7 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
     const assertClean = watchConsole(page);
     await setOskMode(page, 'on');
     await page.goto('/catalog');
-    await createProbeItemAndOpenVariants(page, 'OSK New-Row Probe ' + Date.now());
+    const itemId = await createProbeItemAndOpenVariants(page, 'OSK New-Row Probe ' + Date.now());
 
     const variantPrice = page.locator('input[form="vf-new"].variant-price-major');
     await variantPrice.click();
@@ -340,20 +367,21 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
     await typeViaOsk(page, '1.65');
     await expect(variantCost).toHaveValue('1.65');
 
-    // ut-docs#1957: same relocation as the sibling test above -- open the
-    // nested modifier-groups dialog before looking for its "add group" form.
-    await Promise.all([
-      page.waitForResponse((r) => r.url().includes('/api/catalog/modifier-groups-panel')),
-      page.locator('#manage-modifiers-btn').click(),
-    ]);
-    await expect(page.locator('#modifier-groups-modal')).toBeVisible();
-
+    // ut-docs#2330: the item-editor's own "Manage Modifiers" dialog lost its
+    // "add group"/"add option" forms (attach/detach-only now), and
+    // /modifiers can't bootstrap this item's first group either -- it only
+    // lists items that already own one (see the sibling test above's own
+    // note). Seed the group itself via the same API the UI form posts to,
+    // leaving it with zero options, so /modifiers renders this item's card
+    // with its "add option" row still a real, un-submitted <form> --
+    // that row's own priceDeltaMajor field is this test's actual subject.
     const groupName = 'OSK New-Row Modifier ' + Date.now();
-    await page.locator('.modifier-admin-group-new input[name="name"]').fill(groupName);
-    await Promise.all([
-      page.waitForResponse((r) => r.url().includes('/api/catalog/modifier-group')),
-      page.locator('.modifier-admin-group-new button[type=submit]').click(),
-    ]);
+    const groupResp = await page.request.post('/api/catalog/modifier-group', {
+      form: { itemId, name: groupName, minSelect: '0', maxSelect: '1' },
+    });
+    expect(groupResp.ok(), 'create modifier group').toBe(true);
+
+    await page.goto('/modifiers');
     const group = page.locator('.modifier-admin-group').filter({ has: page.locator(`input[name="name"][value="${groupName}"]`) });
     await expect(group).toBeVisible();
 
