@@ -333,6 +333,53 @@ func TestLineHandler_InvalidDeltaRejected(t *testing.T) {
 	}
 }
 
+// TestLineHandler_NonFiniteDeltaRejected is a regression test for
+// ut-docs#2383: strconv.ParseFloat happily parses "NaN"/"Inf"/"-Inf" with
+// no error, so the invalid-delta 400 branch let them straight through —
+// the resulting Qty=NaN/±Inf made the basket's lineTotal/subtotal/total
+// render as £0.00 despite the basket visibly holding items.
+func TestLineHandler_NonFiniteDeltaRejected(t *testing.T) {
+	for _, delta := range []string{"NaN", "Inf", "+Inf", "-Inf"} {
+		t.Run(delta, func(t *testing.T) {
+			mux, dp := newPOSTestDeps(t)
+			if _, err := dp.Engine.Scan("ABC"); err != nil {
+				t.Fatalf("seed scan: %v", err)
+			}
+			key := dp.Engine.Basket().Lines[0].LineKey
+
+			rec := posPostForm(mux, "/api/pos/line", "key="+key+"&delta="+delta)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("delta=%s: expected 400, got %d: %s", delta, rec.Code, rec.Body.String())
+			}
+			if got := dp.Engine.Basket().Lines[0].Qty; got != 1 {
+				t.Fatalf("delta=%s: qty must be left unchanged at 1, got %v", delta, got)
+			}
+		})
+	}
+}
+
+// TestLineHandler_AbsoluteQtyRejectsPositiveInfinity closes the sibling gap
+// ut-docs#2383 flagged as a non-goal but "can be closed in the same fix":
+// the absolute-qty branch's `f >= 0` check rejects NaN by luck (NaN >= 0 is
+// false) but not +Inf (+Inf >= 0 is true), so qty=Inf slipped through
+// silently. Unlike the delta path this endpoint doesn't 400 on an invalid
+// qty — it silently treats it as unset (qty stays 0, voiding the line) —
+// so the fix must preserve that existing convention, not start a new one.
+func TestLineHandler_AbsoluteQtyRejectsPositiveInfinity(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	rec := posPostForm(mux, "/api/pos/line", "code=ABC&qty=Inf")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("qty=Inf: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(dp.Engine.Basket().Lines) != 0 {
+		t.Fatalf("qty=Inf must be treated as invalid (line voided), got %+v", dp.Engine.Basket().Lines)
+	}
+}
+
 func TestLineHandler_RequiresKeyOrCode(t *testing.T) {
 	mux, _ := newPOSTestDeps(t)
 	rec := posPostForm(mux, "/api/pos/line", "qty=1")
