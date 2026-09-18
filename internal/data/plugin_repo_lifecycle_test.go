@@ -151,35 +151,6 @@ func TestUpdatePluginVersionAndSetPluginActive(t *testing.T) {
 	}
 }
 
-func TestSetPluginStateAndListRevokedPlugins(t *testing.T) {
-	d, repo := newPluginLifecycleTestDB(t)
-	ctx := context.Background()
-
-	seedCatalogEntry(t, d, "com.example.faq", "1.0.0")
-	if err := repo.InstallPlugin(ctx, nil, "com.example.faq"); err != nil {
-		t.Fatal(err)
-	}
-
-	revoked, err := repo.ListRevokedPlugins(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(revoked) != 0 {
-		t.Fatalf("expected no revoked plugins yet, got %+v", revoked)
-	}
-
-	if err := repo.SetPluginState(ctx, "com.example.faq", "1.0.0", "revoked", false); err != nil {
-		t.Fatal(err)
-	}
-	revoked, err = repo.ListRevokedPlugins(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(revoked) != 1 || revoked[0].ID != "com.example.faq" || revoked[0].IsActive {
-		t.Fatalf("expected the plugin revoked and inactive, got %+v", revoked)
-	}
-}
-
 func TestHasActivePrinterPermissionAndCapability(t *testing.T) {
 	d, repo := newPluginLifecycleTestDB(t)
 	ctx := context.Background()

@@ -642,43 +642,6 @@ WHERE id = ? AND version = ?
 	return nil
 }
 
-// ListRevokedPlugins returns plugins marked as revoked. No production
-// caller — but revocation ENFORCEMENT is live, not dead: `internal/server`
-// runs RevocationChecker.SyncRevocations on a 30-minute ticker whenever a
-// marketplace endpoint is configured, and that path disables a revoked
-// plugin directly via PluginRepo.GetPlugin/SetPluginState, never through
-// this method. What's actually unreachable is only the separate read-back
-// accessor, RevocationChecker.GetRevokedPlugins (itself unreachable), which
-// exists to list currently-revoked plugins (e.g. for a future admin
-// display) and is this method's only in-tree caller (found while burning
-// down ut-docs#1566's `internal/data` baseline entries). Left in place
-// rather than deleted here: removing it also means removing
-// GetRevokedPlugins, which lives in `internal/plugins`, out of this PR's
-// package scope — a candidate for that package's own deadcode slice, not a
-// security concern (the enforcement path doesn't depend on it).
-func (r *PluginRepo) ListRevokedPlugins(ctx context.Context) ([]PluginInfoRow, error) {
-	rows, err := r.db.QueryContext(ctx, `
-SELECT id, COALESCE(version, ''), COALESCE(entrypoint, ''), COALESCE(runtime, ''), install_state, is_active
-FROM plugins
-WHERE install_state = 'revoked'
-`)
-	if err != nil {
-		return nil, pluginObs.wrap("list_revoked", err)
-	}
-	defer rows.Close()
-	var res []PluginInfoRow
-	for rows.Next() {
-		var row PluginInfoRow
-		var active int
-		if err := rows.Scan(&row.ID, &row.Version, &row.Entrypoint, &row.Runtime, &row.InstallState, &active); err != nil {
-			return nil, pluginObs.wrap("list_revoked", err)
-		}
-		row.IsActive = active == 1
-		res = append(res, row)
-	}
-	return res, rows.Err()
-}
-
 // ListAutoStartPlugins returns active installed plugins for auto-start.
 func (r *PluginRepo) ListAutoStartPlugins(ctx context.Context) ([]AutoStartRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
