@@ -375,6 +375,62 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", name, money(t.Revenue)))
 		}
 	}
+	// Fiscal device (ÖKC) Z-status/reconciliation (ut-docs#2410) — TR shops
+	// only; nil for every other market (see attachEODFiscalDevice's own
+	// doc comment), so this section is entirely absent from every other
+	// till's printed Z-report, byte-for-byte, same as before this card.
+	if fd := rep.FiscalDevice; fd != nil {
+		doc.Footer = append(doc.Footer, "", "FISCAL DEVICE (OKC)")
+		// Empty (ut-docs#2410 review finding): no device receipts AND no
+		// till tenders on the device in this window is not the same thing
+		// as "device and till agree" — Total==TillOKCTenders==0 would
+		// otherwise print a false MATCH for a window where the fiscal-
+		// device plugin might simply not have run at all. One explicit
+		// line instead of a table + verdict, and nothing else for the
+		// section.
+		if fd.Empty() {
+			doc.Footer = append(doc.Footer, "NO DEVICE ACTIVITY")
+		} else {
+			// footerRow, not "%-20s %s" (review precedent: BY ARTICLE
+			// GROUP/BY ARTICLE/BY OPERATOR above) — a device serial or the
+			// multi-Z hint text is free-ish text that can exceed a fixed
+			// 20-char pad's remaining budget under print.Width=42;
+			// footerRow clips the LABEL instead, so the value (what
+			// matters to reconcile against) always survives.
+			doc.Footer = append(doc.Footer, footerRow("Serial", fd.Serial))
+			if fd.Maker != "" {
+				doc.Footer = append(doc.Footer, footerRow("Maker", fd.Maker))
+			}
+			zNo := ""
+			for i, z := range fd.ZNos {
+				if i > 0 {
+					zNo += ", "
+				}
+				zNo += fmt.Sprintf("%d", z)
+			}
+			if len(fd.ZNos) > 1 {
+				zNo += " (closed mid-period)"
+			}
+			doc.Footer = append(doc.Footer, footerRow("Z no.", zNo))
+			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %d", "Mali fis", fd.MaliFis))
+			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %d", "Iade fisi", fd.IadeFisi))
+			// Bilgi fisi / Other (ut-docs#2410): omitted entirely when
+			// zero, same "no line beats a permanent zero line" convention
+			// as GUTSCHEINE/STORNOS/TIPS above.
+			if fd.BilgiFisi > 0 {
+				doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %d", "Bilgi fisi", fd.BilgiFisi))
+			}
+			if fd.Other > 0 {
+				doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %d", "Other", fd.Other))
+			}
+			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %d", "Till OKC tenders", fd.TillOKCTenders))
+			if fd.Total == fd.TillOKCTenders {
+				doc.Footer = append(doc.Footer, "MATCH")
+			} else {
+				doc.Footer = append(doc.Footer, fmt.Sprintf("MISMATCH (device %d vs till %d)", fd.Total, fd.TillOKCTenders))
+			}
+		}
+	}
 	// Article-group/article/operator breakdowns (ut-docs#1010) — same
 	// footer-section precedent as BY DEPARTMENT/BY TILL above: one heading
 	// line + one row per entry, printed with Gross (matching BY DEPARTMENT's
@@ -618,6 +674,11 @@ func generateEOD(ctx context.Context, d *common.Deps, actor, blockedActorID, ann
 	}
 	rep.TaxBands = computeEODTaxBandsFromSales(salesForBands)
 	rep.MethodTaxBands = computeEODMethodTaxBandsFromSales(salesForBands)
+	// Turkish YN ÖKC device Z-status/reconciliation (ut-docs#2410) — same
+	// [from, to) window, best-effort (see attachEODFiscalDevice's own doc
+	// comment): a non-TR shop, or TR without the plugin active, leaves
+	// rep.FiscalDevice nil.
+	attachEODFiscalDevice(ctx, d, repo, &rep, from, to)
 	// Display-only period (ADR-0066 Decision 6): the shop's LOCAL offset,
 	// never UTC — a UTC-stamped close on a till at a large positive offset
 	// would display a calendar date shifted from the shop's own, the exact
@@ -1080,6 +1141,16 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "eod.err.range_failed", "eod_range_bands", err)
 			return
 		}
+		// Turkish YN ÖKC device Z-status/reconciliation (ut-docs#2410),
+		// same best-effort convention as generateEOD's single-day flow.
+		// fromDate/toDate above were parsed for the maxExportRange check
+		// and sit at UTC midnight; EndOfDayRange itself buckets on the
+		// shop's LOCAL calendar day (sales.local_date, ut-docs#869), so the
+		// instant window handed to the device query must be the same local
+		// days — localDayWindow re-anchors both to local midnight and makes
+		// the upper bound exclusive so the whole `to` day is included.
+		fromInstant, toInstant := localDayWindow(fromDate, toDate)
+		attachEODFiscalDevice(r.Context(), d, repo, &rep, fromInstant, toInstant)
 		raw, err := json.Marshal(rep)
 		if err != nil {
 			// Not provably unreachable, so it is handled rather than ignored:
