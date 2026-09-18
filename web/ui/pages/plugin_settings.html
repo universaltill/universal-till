@@ -57,12 +57,19 @@
   {{ if .Permissions }}
   <p class="muted">{{ T "plugins.settings.permissions.help" }}</p>
   <table>
+    <thead>
+      <tr>
+        <th>{{ T "plugins.settings.permissions.header.name" }}</th>
+        <th>{{ T "plugins.settings.permissions.header.status" }}</th>
+        <th>{{ T "plugins.settings.permissions.header.action" }}</th>
+      </tr>
+    </thead>
     <tbody>
       {{ range .Permissions }}
       <tr>
         <td style="font-family:monospace">{{ .Name }}</td>
         <td>
-          <span class="tag" {{ if .Granted }}style="background:rgba(22,163,74,.12); color:var(--success)"{{ end }}>{{ if .Granted }}{{ T "plugins.settings.permissions.granted" }}{{ else }}{{ T "plugins.settings.permissions.not_granted" }}{{ end }}</span>
+          <span class="tag"{{ if .Granted }} style="background:rgba(22,163,74,.12); color:var(--success)"{{ end }}>{{ if .Granted }}{{ T "plugins.settings.permissions.granted" }}{{ else }}{{ T "plugins.settings.permissions.not_granted" }}{{ end }}</span>
         </td>
         <td>
           {{ if .Granted }}
