@@ -41,6 +41,40 @@ func TestBuildCategoryGroups_NestsByParentID(t *testing.T) {
 	}
 }
 
+// TestStampLocked_RecursesIntoNestedCategoriesAndUncategorized (ut-docs#2361
+// review): stampLocked's own tree walk was only ever exercised, in this
+// repo, against seedOneButton's flat two-uncategorized-button fixture
+// (internal/pages/buttons_api_catalog_management_gate_test.go) — its
+// recursion into g.Children (a nested category, mirroring
+// TestBuildCategoryGroups_NestsByParentID's own fixture above) had no test
+// of its own, so a future BuildCategoryGroups change reshaping that
+// recursion could silently stop locking a nested-category button with
+// nothing here to catch it.
+func TestStampLocked_RecursesIntoNestedCategoriesAndUncategorized(t *testing.T) {
+	cats := []data.CategoryNode{
+		{ID: "drinks", Name: "Drinks", SortOrder: 0},
+		{ID: "hot-drinks", Name: "Hot Drinks", ParentID: "drinks", SortOrder: 0},
+	}
+	buttons := []Button{
+		{Label: "Latte", Code: "L1", ItemID: "i1", CategoryID: "hot-drinks"},
+		{Label: "Loose", Code: "L2", ItemID: "i2"}, // no CategoryID -> uncategorized bucket
+	}
+
+	for _, granted := range []bool{true, false} {
+		groups := BuildCategoryGroups(buttons, cats)
+		stampLocked(groups, granted)
+
+		nested := groups[0].Children[0].Buttons[0]
+		if nested.Locked != !granted {
+			t.Fatalf("granted=%v: nested-category button Locked=%v, want %v", granted, nested.Locked, !granted)
+		}
+		uncategorized := groups[1].Buttons[0]
+		if uncategorized.Locked != !granted {
+			t.Fatalf("granted=%v: uncategorized button Locked=%v, want %v", granted, uncategorized.Locked, !granted)
+		}
+	}
+}
+
 // TestBuildCategoryGroups_PrunesEmptyBranches: a category (and its empty
 // subtree) with no buttons anywhere underneath must not appear at all —
 // otherwise every category ever imported would show as an empty header on
