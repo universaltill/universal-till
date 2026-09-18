@@ -35,10 +35,7 @@ import (
 func setupSelfOrderShopDeps(t *testing.T) (*common.Deps, *db.DB) {
 	t.Helper()
 	chdirRoot(t)
-	d, err := db.Open(filepath.Join(t.TempDir(), "shop.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	d := &db.DB{DB: openPagesTestDB(t)}
 	t.Cleanup(func() { _ = d.Close() })
 
 	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
@@ -506,6 +503,69 @@ func TestSelfOrderShop_LineEndpointIgnoresDiscountParam(t *testing.T) {
 	b := dp.KioskEngine.Basket()
 	if b.Lines[0].LineTotal != b.Lines[0].PriceCents {
 		t.Fatalf("a smuggled discount param must have no effect: line total %v != price %v", b.Lines[0].LineTotal, b.Lines[0].PriceCents)
+	}
+}
+
+// TestSelfOrderShop_NonFiniteDeltaRejected is a regression test for
+// ut-docs#2383: strconv.ParseFloat accepts "NaN"/"Inf"/"-Inf" with no
+// error, so the invalid-delta 400 branch let them through. This endpoint
+// is auth-exempt (reachable by any anonymous LAN client, ADR-0020),
+// making it the more exposed of the two twins the bug report named.
+func TestSelfOrderShop_NonFiniteDeltaRejected(t *testing.T) {
+	for _, delta := range []string{"NaN", "Inf", "+Inf", "-Inf"} {
+		t.Run(delta, func(t *testing.T) {
+			dp, d := setupSelfOrderShopDeps(t)
+			seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+
+			mux := http.NewServeMux()
+			registerSelfOrderShop(mux, dp)
+
+			post := func(path, body string) *httptest.ResponseRecorder {
+				req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				rec := httptest.NewRecorder()
+				mux.ServeHTTP(rec, req)
+				return rec
+			}
+
+			post("/api/self-order/scan", "code=5000001")
+			key := dp.KioskEngine.Basket().Lines[0].LineKey
+
+			rec := post("/api/self-order/line", "key="+key+"&delta="+delta)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("delta=%s: expected 400, got %d: %s", delta, rec.Code, rec.Body.String())
+			}
+			if got := dp.KioskEngine.Basket().Lines[0].Qty; got != 1 {
+				t.Fatalf("delta=%s: qty must be left unchanged at 1, got %v", delta, got)
+			}
+		})
+	}
+}
+
+// TestSelfOrderShop_AbsoluteQtyRejectsPositiveInfinity mirrors the cashier
+// twin's own regression test — the absolute-qty branch's `f >= 0` check
+// rejects NaN by luck but not +Inf, so qty=Inf slipped through silently.
+func TestSelfOrderShop_AbsoluteQtyRejectsPositiveInfinity(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+
+	scanReq := httptest.NewRequest(http.MethodPost, "/api/self-order/scan", strings.NewReader("code=5000001"))
+	scanReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(httptest.NewRecorder(), scanReq)
+	key := dp.KioskEngine.Basket().Lines[0].LineKey
+
+	req := httptest.NewRequest(http.MethodPost, "/api/self-order/line", strings.NewReader("key="+key+"&qty=Inf"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("qty=Inf: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(dp.KioskEngine.Basket().Lines) != 0 {
+		t.Fatalf("qty=Inf must be treated as invalid (line voided), got %+v", dp.KioskEngine.Basket().Lines)
 	}
 }
 

@@ -103,6 +103,41 @@ type Hooks struct {
 	// attachment are deliberately out of scope here (need the read-side
 	// StoreSnapshot extension ADR-0095 Decision 2 hasn't shipped yet).
 	UpsertCategory func(ctx context.Context, id, name, color string) (string, error)
+	// UpdateItemDetails handles the "update_item_details" directive
+	// (ut-docs#2324, ADR-0095 Decision 1) — a partial update of an existing
+	// item's sku/description/unit/colour/is_weighed/stock_untracked, through
+	// the same read-modify-write the local admin item editor's
+	// catalogtypes.ItemInput round-trip makes. Each *string/*bool pointer is
+	// nil when its field is ABSENT from the directive's payload, meaning
+	// "leave this field untouched" — not "clear it" or "set false". Only
+	// item_id is required; every other field is optional. Category/brand/
+	// tax-code assignment is deliberately out of scope here (needs the
+	// read-side lookup sync ADR-0095 Decision 2 hasn't shipped yet,
+	// ut-docs#2354).
+	UpdateItemDetails func(ctx context.Context, itemID string, sku, description, unit, color *string, isWeighed, stockUntracked *bool) (string, error)
+	// SetQuickButtonLayout handles the "set_quick_button_layout" directive
+	// (ut-docs#2321, order-only slice of ADR-0095's Decision 1 — per-item
+	// colour/tab reassignment from the cloud panel is explicit deferred
+	// scope, tracked as a follow-up card, not implemented here): reorders
+	// the shop's quick-sale (shortcut) buttons from the cloud's layout
+	// panel — barcodes arrive as the FULL ordered list, display order
+	// first, the same UpdateOrder call the till's own Designer
+	// move-up/move-down reorder makes locally. Unlike the LAN route (which
+	// trusts its own page to always post the full list), the hook rejects
+	// a payload that doesn't cover exactly the till's current button set —
+	// a missing or unrecognized barcode is refused, not a silent no-op.
+	SetQuickButtonLayout func(ctx context.Context, barcodes []string) (string, error)
+	// UpsertModifierGroup handles the "upsert_modifier_group" directive
+	// (ut-docs#2322 "modifier groups editor" slice of ut-docs#2289, ADR-0095
+	// Decision 1) — creates a NEW modifier group (with zero or more options)
+	// on an existing till item, through the same repo calls a local admin
+	// creator would use. CREATE-ONLY, deliberately: there is no group id in
+	// this directive's payload at all, the same scope cut UpsertCategory
+	// above shipped with — the cloud panel has no way to discover an
+	// existing group's id to edit by, or to offer an "attach an existing
+	// group" picker, until the read-side StoreSnapshot extension (ADR-0095
+	// Decision 2) ships. See pages.cloudUpsertModifierGroup.
+	UpsertModifierGroup func(ctx context.Context, itemID, name string, required bool, minSelect, maxSelect int, options []ModifierGroupOption) (string, error)
 	// DeviceExtra contributes extra fields to the device report (e.g. the
 	// current theme + the themes this till can switch to, so the cloud can
 	// render a real design picker instead of a raw key/value form). Keys must
@@ -114,6 +149,16 @@ type directive struct {
 	ID      string         `json:"id"`
 	Type    string         `json:"type"`
 	Payload map[string]any `json:"payload"`
+}
+
+// ModifierGroupOption is one option inside an upsert_modifier_group
+// directive's "options" payload field, decoded by modifierGroupOptions
+// below. PriceDeltaMinor is already the raw int64 minor-units integer
+// convention (internal/money's DB-boundary shape) — money never rides as a
+// float here.
+type ModifierGroupOption struct {
+	Name            string
+	PriceDeltaMinor int64
 }
 
 // Tick runs one full sync round: heartbeat up, directives down, apply,
@@ -209,6 +254,34 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return n, err == nil
 		}
 		return 0, false
+	}
+	// strs decodes a JSON-array-encoded STRING payload field into an ordered
+	// []string, trimming whitespace and dropping blank entries. The array
+	// rides inside one string field, not as a raw JSON array value — the
+	// cloud side's generic queueDirective field check requires
+	// payload[field].(string) (see claims.DirectiveTypes' own doc comment
+	// on "set_quick_button_layout"), the same "JSON array inside a string
+	// field" shape apply_design/set_setting already use on the portal side.
+	// A payload field that isn't a string, or doesn't decode as a JSON
+	// array (missing, wrong type, malformed) returns nil rather than
+	// guessing — the dispatch below then reports "missing barcodes" instead
+	// of silently reinterpreting the payload.
+	strs := func(k string) []string {
+		raw, ok := d.Payload[k].(string)
+		if !ok {
+			return nil
+		}
+		var arr []string
+		if err := json.Unmarshal([]byte(raw), &arr); err != nil {
+			return nil
+		}
+		out := make([]string, 0, len(arr))
+		for _, s := range arr {
+			if s = strings.TrimSpace(s); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
 	}
 	fnum := func(k string) (float64, bool) {
 		switch v := d.Payload[k].(type) {
@@ -354,6 +427,76 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", "missing name"
 		}
 		msg, err = hooks.UpsertCategory(ctx, str("id"), name, str("color"))
+	case "update_item_details":
+		if hooks.UpdateItemDetails == nil {
+			return "failed", "update_item_details is not supported on this till"
+		}
+		id := str("item_id")
+		if id == "" {
+			return "failed", "missing item_id"
+		}
+		// Presence-aware readers: str/num/fnum/strs above all return the
+		// zero value when the key is absent, which can't distinguish
+		// "absent" (leave untouched) from "present but empty/false" — the
+		// whole point of this directive's partial-update contract. strp/
+		// boolp instead return nil exactly when the key is missing from
+		// the payload.
+		strp := func(k string) *string {
+			v, ok := d.Payload[k]
+			if !ok {
+				return nil
+			}
+			s, _ := v.(string)
+			s = strings.TrimSpace(s)
+			return &s
+		}
+		boolp := func(k string) *bool {
+			v, ok := d.Payload[k]
+			if !ok {
+				return nil
+			}
+			switch t := v.(type) {
+			case bool:
+				return &t
+			case string:
+				b, err := strconv.ParseBool(strings.TrimSpace(t))
+				if err != nil {
+					return nil
+				}
+				return &b
+			}
+			return nil
+		}
+		msg, err = hooks.UpdateItemDetails(ctx, id, strp("sku"), strp("description"), strp("unit"), strp("color"), boolp("is_weighed"), boolp("stock_untracked"))
+	case "set_quick_button_layout":
+		if hooks.SetQuickButtonLayout == nil {
+			return "failed", "set_quick_button_layout is not supported on this till"
+		}
+		barcodes := strs("barcodes")
+		if len(barcodes) == 0 {
+			return "failed", "missing barcodes"
+		}
+		msg, err = hooks.SetQuickButtonLayout(ctx, barcodes)
+	case "upsert_modifier_group":
+		if hooks.UpsertModifierGroup == nil {
+			return "failed", "upsert_modifier_group is not supported on this till"
+		}
+		id := str("item_id")
+		name := str("name")
+		if id == "" || name == "" {
+			return "failed", "missing item_id or name"
+		}
+		required, _ := d.Payload["required"].(bool)
+		minSelect, minOK := num("min_select")
+		maxSelect, maxOK := num("max_select")
+		if !minOK || !maxOK {
+			return "failed", "missing or invalid min_select/max_select"
+		}
+		options, oerr := modifierGroupOptions(d.Payload["options"])
+		if oerr != nil {
+			return "failed", oerr.Error()
+		}
+		msg, err = hooks.UpsertModifierGroup(ctx, id, name, required, int(minSelect), int(maxSelect), options)
 	default:
 		return "failed", "unknown directive type " + d.Type
 	}
@@ -364,6 +507,39 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 		msg = "done"
 	}
 	return "applied", msg
+}
+
+// modifierGroupOptions decodes the upsert_modifier_group directive's
+// "options" payload field — a JSON-encoded array of {name,
+// price_delta_minor} objects riding inside one string field, the same
+// "JSON array inside a string field" shape "barcodes" uses (see strs'
+// own doc comment above), just decoded into structs rather than strings.
+// A missing or blank field decodes as no options at all (nil, nil) rather
+// than an error — a group may be created with zero options, mirroring
+// data.ModifierRepo.CreateGroup's own rule (see UpsertModifierGroup's own
+// doc comment) — but a NON-blank field that fails to decode is a real
+// error, surfaced as the directive's failure message. Names are trimmed;
+// the cloud side already validated and trimmed them before queuing, but
+// this till does not trust that — same "validate all external input" rule
+// every other hook here follows.
+func modifierGroupOptions(raw any) ([]ModifierGroupOption, error) {
+	s, _ := raw.(string)
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	var decoded []struct {
+		Name            string `json:"name"`
+		PriceDeltaMinor int64  `json:"price_delta_minor"`
+	}
+	if err := json.Unmarshal([]byte(s), &decoded); err != nil {
+		return nil, fmt.Errorf("invalid options: %w", err)
+	}
+	out := make([]ModifierGroupOption, 0, len(decoded))
+	for _, o := range decoded {
+		out = append(out, ModifierGroupOption{Name: strings.TrimSpace(o.Name), PriceDeltaMinor: o.PriceDeltaMinor})
+	}
+	return out, nil
 }
 
 // pushSync reports this device's state and returns the store's pending

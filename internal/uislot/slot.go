@@ -219,7 +219,13 @@ func IsProtectedMenuKey(key string) bool {
 // each gate's exact shape (ut-docs#866, #903, #1084, #1208, #1750, #665)
 // is recorded on those predicates, not here.
 var CoreMenu = []Entry{
-	{Key: "/designer", Href: "/designer", LabelKey: "nav.designer", Icon: "palette", Order: 100, InNav: true},
+	// ut-docs#2312: VisibleIf "catalog_management" -- before this card
+	// neither the tile carried a gate nor did any of the routes it leads
+	// to (/api/buttons/*, /ui/pos/tile-sheet), so a cashier could reorder
+	// or remove quick buttons freely. The routes are now server-side
+	// gated too (buttons_api.go/checkOrElevate); this hides the entry
+	// point for an operator who'd only hit an elevation prompt anyway.
+	{Key: "/designer", Href: "/designer", LabelKey: "nav.designer", Icon: "palette", Order: 100, InNav: true, VisibleIf: "catalog_management"},
 	{Key: "/shifts", Href: "/shifts", LabelKey: "nav.shifts", Icon: "clock", Order: 200, InNav: true},
 	{Key: "/journal", Href: "/journal", LabelKey: "nav.journal", Icon: "book-open", Order: 300, InNav: true},
 	{Key: "/orders", Href: "/orders", LabelKey: "nav.orders", Icon: "bell", Order: 400, InNav: true},
@@ -227,7 +233,11 @@ var CoreMenu = []Entry{
 	{Key: "/settings", Href: "/settings", LabelKey: "nav.settings", Icon: "settings", Order: 600, InNav: true},
 	{Key: "/plugins", Href: "/plugins", LabelKey: "nav.plugins", Icon: "puzzle", Order: 700, InNav: true},
 	// ut-docs#1897: the "Items" tile that replaced the flat "Catalog" one.
-	{Key: "/items", Href: "/items", LabelKey: "nav.items", Icon: "tag", Order: 800, InNav: true},
+	// ut-docs#2312: VisibleIf "catalog_management" -- see /designer's
+	// identical comment above; /items is the rail entry point to the same
+	// item/variant/modifier-group/option-set/barcode CRUD this card gates
+	// server-side in internal/pages/catalog/handlers.go.
+	{Key: "/items", Href: "/items", LabelKey: "nav.items", Icon: "tag", Order: 800, InNav: true, VisibleIf: "catalog_management"},
 
 	// ut-docs#1918: parked baskets -- a cashier surface (the sale screen's
 	// held strip as a full list), so it sits ungated, not in baseMenu (which

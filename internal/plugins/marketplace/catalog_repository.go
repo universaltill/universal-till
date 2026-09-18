@@ -328,7 +328,22 @@ func (cr *CatalogRepository) refreshInBackground(locale, deviceArch string) {
 	}()
 }
 
-// Filter returns plugins matching the given criteria
+// Filter returns plugins matching the given criteria.
+//
+// No production caller (ut-docs#1566). Every production consumer of the
+// snapshot ranges snapshot.Plugins itself and filters inline —
+// internal/pages/plugins_store_page.go (the store browse, deliberately
+// unfiltered), internal/plugins/catalog_match.go (IndexCatalog, keyed by
+// listing and by developer+name), and the three setup-wizard lookups
+// (internal/pages/setup_base_plugins.go, setup_tax_catalog.go,
+// setup_language_catalog.go), which each need CanonicalType AND a locale
+// match over AvailableLocales — a criterion this (type, developer,
+// trustTier) signature can't express, which is why none of them adopted
+// it. Kept as the assertion helper for TestCatalogRepository_Filter and
+// TestCatalogRepository_FetchPagesThroughFullCatalog (the latter uses it
+// to prove a listing beyond page 1 landed in the snapshot); a candidate
+// for deletion together with those two tests if it never grows a
+// production caller.
 func (cr *CatalogRepository) Filter(pluginType, developer, trustTier string) ([]PluginSummary, error) {
 	snapshot, _, err := cr.Get()
 	if err != nil {

@@ -131,6 +131,18 @@ func RenderKitchenTicket(t KitchenTicket) []byte {
 // RenderKitchenTicketText lays a kitchen ticket out as plain text — the same
 // content as RenderKitchenTicket for on-screen preview (no ESC/POS control
 // bytes), mirroring RenderText for receipts.
+//
+// Test-only-reachable today, kept deliberately (ut-docs#1566 — on
+// scripts/ci/deadcode-baseline.txt, not a deletion candidate): unlike
+// RenderText, which the receipt designer's live preview calls
+// (internal/pages/receipt_designer.go), no page renders a kitchen-ticket
+// preview yet, so nothing in production calls this. Its callers are
+// kitchen_test.go's byte-path/text-path parity tests, which pin that the
+// text path drops exactly the lines the byte path drops (ut-docs#261
+// review), centres by rune count not byte length (ut-docs#376) and
+// carries the per-line Mode marker (ut-docs#1181). Whether to wire a
+// kitchen-ticket preview or drop this together with those tests is a
+// product call, deliberately not made here.
 func RenderKitchenTicketText(t KitchenTicket) string {
 	var b strings.Builder
 	center := func(s string) {

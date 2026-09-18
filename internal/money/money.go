@@ -113,12 +113,3 @@ func (m *Money) Scan(src any) error {
 	}
 	return nil
 }
-
-// Sum adds any number of amounts.
-func Sum(amounts ...Money) Money {
-	var total Money
-	for _, a := range amounts {
-		total += a
-	}
-	return total
-}

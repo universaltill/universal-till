@@ -58,6 +58,14 @@ type modifierAdminItem struct {
 	// list leaves it nil.
 	InheritedGroups []data.ModifierGroup
 	Target          string
+	// AttachOnly restricts modifier_group_admin.html to attach/detach only —
+	// no inline group/option create/edit/delete (ut-docs#2330, product-owner
+	// request 2026-09-16: the item-editor's own surface should be a
+	// multi-select of EXISTING groups, never a place to author new ones).
+	// Set true only for the item-scoped dialog (renderItemModifierGroupsPanel
+	// below); the shop-wide /modifiers page leaves it false (its zero value)
+	// since that page's whole job is full CRUD.
+	AttachOnly bool
 	// Notice is an already-translated, already-formatted message to show
 	// inline above this fragment (ut-docs#2046, independent-review finding)
 	// — e.g. the detach-guard's refusal. Plain http.Error/LocalizedError
@@ -133,6 +141,64 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		return true
 	}
 
+	// requireCatalogManagement gates every mutating route below on the
+	// "catalog_management" role_permissions action (ut-docs#2312): before
+	// this, none of items/variants/modifier-groups/option-sets/barcodes
+	// carried ANY permission check — reachable and mutable by every
+	// signed-in operator, cashiers included. Same shape and same
+	// UT_AUTH=off / fail-closed-on-no-session/DB-error behaviour as
+	// internal/pages.canPerform, and the same denial key/status
+	// tax_codes_page.go's requireManager ("tax_code_management") and
+	// locations_page.go's requireManager ("stock_location_management")
+	// already use for their own dedicated "management" actions — but
+	// written out locally rather than calling pages.canPerform directly:
+	// package pages already imports THIS package (catalog.Register, via
+	// internal/pages/init.go) to mount these routes, so pages -> catalog
+	// -> pages would be an import cycle. Checked BEFORE requirePrimary
+	// (permission is more fundamental than till topology — a request that
+	// fails both should hear "you can't do this" before "and this till
+	// can't do it right now"), and as the very first line in the three
+	// item/variant-image and icon handlers below that have no
+	// requirePrimary call to anchor before (item_images is deliberately
+	// excluded from the sync bundle — see their own doc comments).
+	// catalogManagementAllowed is the bare boolean check both gate variants
+	// below share, so a full-page GET handler and an HTMX/API mutation
+	// handler read the identical auth decision from one place.
+	catalogManagementAllowed := func(r *http.Request) bool {
+		if auth.Disabled(os.Getenv("UT_AUTH")) {
+			return true
+		}
+		u, ok := auth.FromContext(r.Context())
+		if !ok {
+			return false
+		}
+		can, err := d.AuthSvc.Can(r.Context(), u, "catalog_management")
+		return err == nil && can
+	}
+
+	requireCatalogManagement := func(w http.ResponseWriter, r *http.Request) bool {
+		if catalogManagementAllowed(r) {
+			return true
+		}
+		common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+		return false
+	}
+
+	// requireCatalogManagementPage is requireCatalogManagement's counterpart
+	// for the three full-page GET routes below (/catalog, /modifiers,
+	// /catalog/option-sets, ut-docs#2357): a page route must render the
+	// shell's own themed 403 via httpx.RenderError, same as
+	// tax_codes_page.go/locations_page.go gate their own GET handler —
+	// LocalizedError's bare http.Error body is for the HTMX/API mutation
+	// routes above, not a full document load.
+	requireCatalogManagementPage := func(w http.ResponseWriter, r *http.Request) bool {
+		if catalogManagementAllowed(r) {
+			return true
+		}
+		httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
+		return false
+	}
+
 	writeJSON := func(w http.ResponseWriter, status int, data any, errMsg string) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
@@ -146,6 +212,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// Barcode → open product databases; pre-fills the new-item form
 	// (G15 increment 1). Back-office convenience only, fails soft offline.
 	mux.HandleFunc("GET /api/catalog/lookup", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		barcode := strings.TrimSpace(r.URL.Query().Get("barcode"))
 		if !productlookup.ValidBarcode(barcode) {
 			writeJSON(w, http.StatusBadRequest, nil, "barcode must be 6-14 digits")
@@ -319,6 +388,38 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		filepath.Join("web", "ui", "partials", "modifier_group_admin.html"),
 	)
 
+	// modifierItemPickerJSON (ut-docs#2330, e2e-caught regression): before
+	// AttachOnly, the item-editor's own nested dialog was the ONLY place a
+	// shop's very first modifier group — for ANY item, not just an
+	// already-modifier-bearing one — ever got created (its "add new group"
+	// form rendered unconditionally, regardless of whether ModifierGroups
+	// was empty). Removing that form from the item-editor without giving
+	// /modifiers an equivalent broke group creation entirely for any item
+	// that isn't already in ListAllShopModifierGroups' result — caught by
+	// osk-decimal-sale-catalog-fields-1284.spec.ts's own two OSK-typing
+	// tests, which create a fresh probe item and its first-ever group.
+	// This is the same id/name/sku picker shape as inventory_page.go's own
+	// pickerItem/ItemsJSON (stock item picker) — reused here rather than a
+	// new type, same JSON shape the modifiers.html script below expects.
+	modifierItemPickerJSON := func(ctx context.Context) template.JS {
+		type pickerItem struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+			SKU  string `json:"sku"`
+		}
+		items, err := repo.ListItems(ctx) // active items only — ListItems' own contract
+		if err != nil {
+			log.Printf("[catalog] modifiers item picker: %v", err)
+			return template.JS("[]")
+		}
+		picker := make([]pickerItem, 0, len(items))
+		for _, it := range items {
+			picker = append(picker, pickerItem{ID: it.ID, Name: it.Name, SKU: it.SKU})
+		}
+		pickerJSON, _ := json.Marshal(picker)
+		return template.JS(pickerJSON)
+	}
+
 	// groupModifierAdminByItem folds a flat, ItemName/ItemID-carrying
 	// modifier-group slice (ListAllShopModifierGroups' own shape) into one
 	// entry per item, preserving the query's own item ordering — the shape
@@ -387,8 +488,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		httpx.RenderWith(modifierGroupAdminFiles, funcs)("modifiers_list", map[string]any{
-			"Groups": groupModifierAdminByItem(groups, "modifiers-list"),
-			"Notice": notice,
+			"Groups":    groupModifierAdminByItem(groups, "modifiers-list"),
+			"Notice":    notice,
+			"ItemsJSON": modifierItemPickerJSON(r.Context()),
 		})(w, r)
 	}
 
@@ -439,6 +541,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			InheritedGroups:  visibleInherited,
 			Target:           "modifier-groups-modal-list",
 			Notice:           notice,
+			AttachOnly:       true,
 		})(w, r)
 	}
 
@@ -504,12 +607,18 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// its container/shape is its own (#modifier-groups-modal-list, not
 	// #catalog-variants).
 	mux.HandleFunc("GET /api/catalog/modifier-groups-panel", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		itemID := strings.TrimSpace(r.URL.Query().Get("item_id"))
 		renderItemModifierGroupsPanel(w, r, itemID, "")
 	})
 
 	// Variant options as JSON — the labels form's variant picker.
 	mux.HandleFunc("GET /api/catalog/variant-options", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		itemID := strings.TrimSpace(r.URL.Query().Get("item_id"))
 		variants, err := repo.VariantsForItem(r.Context(), itemID)
 		if err != nil {
@@ -533,6 +642,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// Cost price (what the shop pays) — feeds the margin report. Accepts a
 	// decimal in major units; stored as minor units (money boundary rule).
 	mux.HandleFunc("POST /api/catalog/item-cost", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
@@ -572,6 +684,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// per-item warn/reorder-suggestion thresholds (universaltill/ut-docs#85).
 	// Plain integer, no currency conversion (unlike cost price above).
 	mux.HandleFunc("POST /api/catalog/item-lead-time", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
@@ -607,6 +722,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// Low Stock list (GetLowStockItems, universaltill/ut-docs#2065). Plain
 	// integer, same validation shape as lead time above.
 	mux.HandleFunc("POST /api/catalog/item-reorder-level", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
@@ -638,10 +756,16 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 
 	// The per-item editor: all of one item's variants and barcodes, editable.
 	mux.HandleFunc("GET /api/catalog/item-variants", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		renderVariantsPanel(w, r, strings.TrimSpace(r.URL.Query().Get("item_id")), false)
 	})
 
 	mux.HandleFunc("/catalog", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagementPage(w, r) {
+			return
+		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		items, err := repo.ListItems(r.Context())
 		if err != nil {
@@ -678,17 +802,32 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		barcodes, _ := repo.ItemBarcodes(r.Context())
 		variants, _ := repo.ItemVariants(r.Context())
 		thumbnails, _ := repo.ItemThumbnails(r.Context())
+		// ut-docs#2314: the catalog list/edit form must show each item's
+		// CURRENT EFFECTIVE price (price_history-resolved), not raw
+		// base_price, same resolution ItemVariantsForSale/the sale-screen
+		// tiles already use (ut-docs#2258) — see buildCatalogRows' own doc
+		// comment for what this overrides and why.
+		itemIDs := make([]string, len(items))
+		for i, itm := range items {
+			itemIDs[i] = itm.ID
+		}
+		currentPrices, _ := repo.ItemCurrentPrices(r.Context(), itemIDs)
 		// ut-docs#2090: whether this render is an /items-shell fragment
 		// swap (true) or a bare/standalone page (false) — catalog.html's
 		// own Modifiers/Option-sets top-action buttons and their
 		// destinations' back-links use this to decide between an in-panel
 		// htmx swap (only meaningful when #items-panel actually exists,
 		// i.e. inside the shell) and a plain navigation.
+		// ut-docs#2331: was a hardcoded English literal — ut-docs#2297/PR#1189's
+		// sweep and its own check 10 both used a non-recursive
+		// internal/pages/*.go glob, so this handler (one directory deeper,
+		// internal/pages/catalog/) was never reached. Reuses nav.catalog,
+		// the /items rail's own label key for this same destination.
 		data := map[string]any{
-			"title":                 "Catalog",
+			"title":                 httpx.T(httpx.RequestLocale(r), "nav.catalog"),
 			"menuItems":             d.MenuSnapshot(),
 			"theme":                 d.CurrentState().Theme,
-			"Rows":                  buildCatalogRows(items, barcodes, variants, thumbnails),
+			"Rows":                  buildCatalogRows(items, barcodes, variants, thumbnails, currentPrices),
 			"Categories":            cats,
 			"CategoryFilterOptions": categoryFilterOptions,
 			"CategoryNodesJSON":     categoryFilterNodesJSON(categoryFilterOptions),
@@ -738,17 +877,25 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// group/option too, so a manager can reactivate one from here — the
 	// same reason the per-item panel always used ListAllGroupsForItem.
 	mux.HandleFunc("/modifiers", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagementPage(w, r) {
+			return
+		}
 		groups, err := modRepo.ListAllShopModifierGroups(r.Context())
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "modifiers.error.server", err)
 			return
 		}
 		modifiersData := map[string]any{
-			"title":        "Customization options",
+			// ut-docs#2211: was a hardcoded English literal — missed by
+			// ut-docs#2297/PR#1189's `internal/pages/*.go` sweep because
+			// this handler lives one directory deeper, in
+			// internal/pages/catalog/. Same page-title bug, same fix.
+			"title":        httpx.T(httpx.RequestLocale(r), "modifiers.title"),
 			"menuItems":    d.MenuSnapshot(),
 			"theme":        d.CurrentState().Theme,
 			"Groups":       groupModifierAdminByItem(groups, "modifiers-list"),
 			"InItemsShell": httpx.IsFragmentSwap(w, r),
+			"ItemsJSON":    modifierItemPickerJSON(r.Context()),
 		}
 		// ut-docs#1950: same /items rail embedding as /catalog above.
 		if httpx.IsFragmentSwap(w, r) {
@@ -766,13 +913,19 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// separate from checkout-time modifiers (/modifiers, ADR-0020), which
 	// change nothing here.
 	mux.HandleFunc("GET /catalog/option-sets", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagementPage(w, r) {
+			return
+		}
 		sets, err := data.NewOptionSetRepo(d.Db).ListOptionSets(r.Context())
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "catalog.error.server", err)
 			return
 		}
+		// ut-docs#2331: same hardcoded-literal gap as /catalog above, same
+		// fix. Reuses items.option_sets.name, the /items rail's own label
+		// key for this destination.
 		optionSetsData := map[string]any{
-			"title":        "Option sets",
+			"title":        httpx.T(httpx.RequestLocale(r), "items.option_sets.name"),
 			"menuItems":    d.MenuSnapshot(),
 			"theme":        d.CurrentState().Theme,
 			"Sets":         sets,
@@ -806,6 +959,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// arrives, re-renders that item's panel instead so the new set shows up
 	// in its checkbox row immediately.
 	mux.HandleFunc("POST /api/catalog/option-set", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
@@ -828,6 +984,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 
 	// Append a value to an option set (sort_order = max + 1).
 	mux.HandleFunc("POST /api/catalog/option-set-value", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
@@ -855,6 +1014,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// disables a third box client-side, but that is a convenience, not the
 	// guard.
 	mux.HandleFunc("POST /api/catalog/item/option-sets", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
@@ -885,6 +1047,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// panel plus a "N variant(s) created" line; the item's table row rides
 	// along OOB since its variant summary just changed.
 	mux.HandleFunc("POST /api/catalog/item/generate-variants", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
@@ -911,6 +1076,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/catalog/item", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !requireCatalogManagement(w, r) {
 			return
 		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
@@ -976,6 +1144,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
@@ -1015,6 +1186,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
@@ -1035,6 +1209,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/catalog/variant", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !requireCatalogManagement(w, r) {
 			return
 		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
@@ -1110,6 +1287,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
 			return
 		}
@@ -1154,6 +1334,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/catalog/modifier-option", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !requireCatalogManagement(w, r) {
 			return
 		}
 		if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
@@ -1220,14 +1403,48 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
 			return
 		}
 		_ = r.ParseForm()
 		itemID := strings.TrimSpace(r.Form.Get("itemId"))
-		groupID := strings.TrimSpace(r.Form.Get("groupId"))
-		if itemID == "" || groupID == "" {
+		// ut-docs#2330: the item-editor's attach-only surface is a multi-
+		// select — one submission can carry several groupId values (a
+		// checkbox list, all under the same field name). A single-group
+		// submission (the /modifiers page's own picker, and every existing
+		// caller/test) is just the one-element case of the same slice, so
+		// this stays fully backward compatible with r.Form.Get's old
+		// single-value behavior.
+		var groupIDs []string
+		seen := map[string]bool{}
+		for _, raw := range r.Form["groupId"] {
+			id := strings.TrimSpace(raw)
+			if id == "" || seen[id] {
+				continue
+			}
+			seen[id] = true
+			groupIDs = append(groupIDs, id)
+		}
+		if itemID == "" {
 			http.Error(w, "itemId and groupId required", http.StatusBadRequest)
+			return
+		}
+		if len(groupIDs) == 0 {
+			// ut-docs#2330, independent-review finding: the item-editor's
+			// checkbox list has no client-side `required` (a `<select
+			// required>` can enforce that on ONE field; there is no
+			// equivalent single-attribute guard for "at least one of these
+			// checkboxes"), so submitting with nothing ticked is a real,
+			// reachable UI state — not just a malformed request. A plain
+			// http.Error answers text/plain, which app.js's htmx:beforeSwap
+			// never force-swaps in (same reasoning as every other refusal in
+			// this file), so answering that way here would be a completely
+			// silent no-op on tapping "Attach existing group". Route through
+			// the same Notice-carrying re-render as every other refusal.
+			renderModifierMutationResult(w, r, itemID, http.StatusBadRequest, httpx.T(httpx.RequestLocale(r), "catalog.error.invalid_request"))
 			return
 		}
 		attachable, err := modRepo.ListAttachableModifierGroups(r.Context(), itemID)
@@ -1235,31 +1452,49 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "modifiers.error.server", "catalog", err)
 			return
 		}
-		valid := false
+		attachableIDs := make(map[string]bool, len(attachable))
 		for _, g := range attachable {
-			if g.ID == groupID {
-				valid = true
-				break
+			attachableIDs[g.ID] = true
+		}
+		var valid []string
+		for _, id := range groupIDs {
+			if attachableIDs[id] {
+				valid = append(valid, id)
 			}
 		}
-		if !valid {
+		if len(valid) == 0 {
 			renderModifierMutationResult(w, r, itemID, http.StatusConflict, httpx.T(httpx.RequestLocale(r), "catalog.error.invalid_request"))
 			return
 		}
-		// Appended after itemID's own existing groups (independent-review
-		// finding — see NextGroupSortOrderForItem's own doc comment on why
-		// this must be MAX(sort_order)+1 per item, not a plain count of
-		// either side of the relationship).
-		sortOrder, err := modRepo.NextGroupSortOrderForItem(r.Context(), itemID)
-		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "modifiers.error.server", "catalog", err)
-			return
+		// ut-docs#2330, independent-review finding: a multi-select submission
+		// can be PARTLY stale (e.g. someone else deactivated one of several
+		// checked groups from another tab) without being entirely invalid —
+		// attach the ones that are still good rather than refusing the whole
+		// request, but say so, rather than a silent 200 that only attached
+		// some of what was checked.
+		partial := len(valid) != len(groupIDs)
+		for _, groupID := range valid {
+			// Appended after itemID's own existing groups (independent-review
+			// finding — see NextGroupSortOrderForItem's own doc comment on
+			// why this must be MAX(sort_order)+1 per item, not a plain count
+			// of either side of the relationship). Recomputed per group so
+			// each of a multi-select's attachments gets its own increasing
+			// sort_order rather than all colliding on the same value.
+			sortOrder, err := modRepo.NextGroupSortOrderForItem(r.Context(), itemID)
+			if err != nil {
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "modifiers.error.server", "catalog", err)
+				return
+			}
+			if err := modRepo.LinkGroupToItem(r.Context(), itemID, groupID, sortOrder); err != nil {
+				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
+				return
+			}
 		}
-		if err := modRepo.LinkGroupToItem(r.Context(), itemID, groupID, sortOrder); err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
-			return
+		notice := ""
+		if partial {
+			notice = httpx.T(httpx.RequestLocale(r), "catalog.error.invalid_request")
 		}
-		renderModifierMutationResult(w, r, itemID, http.StatusOK, "")
+		renderModifierMutationResult(w, r, itemID, http.StatusOK, notice)
 	})
 
 	// Detach a modifier group from ONE item, distinct from DeleteGroup
@@ -1284,6 +1519,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/catalog/modifier-group/detach", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !requireCatalogManagement(w, r) {
 			return
 		}
 		if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
@@ -1325,6 +1563,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 				return
 			}
+			if !requireCatalogManagement(w, r) {
+				return
+			}
 			if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
 				return
 			}
@@ -1359,6 +1600,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/catalog/item-station-routes", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !requireCatalogManagement(w, r) {
 			return
 		}
 		if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
@@ -1404,6 +1648,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
@@ -1442,6 +1689,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// the next admin pull — unlike items/item_variants/item_barcodes/
 	// variant_barcodes below, which are.
 	mux.HandleFunc("POST /api/catalog/item/image", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if err := r.ParseMultipartForm(10 << 20); err != nil {
 			common.LocalizedError(w, r, http.StatusBadRequest, "common.error.invalid_upload")
 			return
@@ -1521,6 +1771,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// this item's actual name/category — so a still-imageless item shows a
 	// sensible preselected tile instead of nothing.
 	mux.HandleFunc("GET /api/catalog/item/icon-state", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		itemID := strings.TrimSpace(r.URL.Query().Get("item_id"))
 		if itemID == "" {
 			writeJSON(w, http.StatusBadRequest, nil, "item_id required")
@@ -1571,6 +1824,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// item_images, which sync_admin_repo.go's adminTables explicitly
 	// excludes (files/icon choices don't travel over the sync bundle).
 	mux.HandleFunc("POST /api/catalog/item/icon", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		_ = r.ParseForm()
 		itemID := strings.TrimSpace(r.Form.Get("item_id"))
 		// Review finding F1 (ut-docs#1844): this handler now also removes
@@ -1618,6 +1874,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// item_variants itself, so there is no synced row for a replica write
 	// to lose on the next admin pull.
 	mux.HandleFunc("POST /api/catalog/variant/image", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if err := r.ParseMultipartForm(10 << 20); err != nil {
 			common.LocalizedError(w, r, http.StatusBadRequest, "common.error.invalid_upload")
 			return
@@ -1680,6 +1939,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/catalog/barcode", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !requireCatalogManagement(w, r) {
 			return
 		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
@@ -1750,6 +2012,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 
 	// Detach a barcode (mis-scans and reassignments are routine corrections).
 	mux.HandleFunc("POST /api/catalog/barcode/delete", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
@@ -1788,6 +2053,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// which stays load-bearing for the real write path (see AddBarcode
 	// below and BarcodeOwner's own doc comment).
 	mux.HandleFunc("GET /api/catalog/barcode-backfill", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		locale := httpx.ResolveLocale(w, r)
 		funcs := httpx.FuncsFor(locale)
 		T := funcs["T"].(func(string) string)
@@ -1807,6 +2075,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/catalog/barcode-backfill", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}

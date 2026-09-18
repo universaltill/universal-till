@@ -14,7 +14,6 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
-	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -661,18 +660,15 @@ func TestResetArchivesPurge_CountryConfiguredWindow(t *testing.T) {
 // REAL FK to be enforced to mean anything.
 func newRealDBDataAPIDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Helper()
-	dbo, err := db.Open(filepath.Join(t.TempDir(), "reset-archive-real.db"))
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	dbo := openPagesTestDB(t)
 	t.Cleanup(func() { dbo.Close() })
-	seedDataAPIManager(t, dbo.DB)
+	seedDataAPIManager(t, dbo)
 	dp := &common.Deps{
-		Db:       dbo.DB,
-		Settings: settings.NewStore(dbo.DB),
+		Db:       dbo,
+		Settings: settings.NewStore(dbo),
 		Cfg:      &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}},
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
-		AuthSvc:  auth.NewService(dbo.DB),
+		AuthSvc:  auth.NewService(dbo),
 	}
 	mux := http.NewServeMux()
 	registerDataAPI(mux, dp)

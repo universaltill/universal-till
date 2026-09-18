@@ -3,12 +3,11 @@ package pages
 import (
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
-	appdb "github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -21,30 +20,34 @@ import (
 func newDesignerTestDeps(t *testing.T) *common.Deps {
 	t.Helper()
 	chdirRoot(t)
-	d, err := appdb.Open(filepath.Join(t.TempDir(), "designer.db"))
-	if err != nil {
-		t.Fatalf("open migrated db: %v", err)
-	}
+	d := openPagesTestDB(t)
 	t.Cleanup(func() { d.Close() })
 
 	cfg := &config.Config{Theme: "monarch", Locales: config.Locales{Currency: "GBP", Locale: "en", TaxRate: 20}}
-	pm, err := plugins.Init(t.Context(), cfg, d.DB)
+	pm, err := plugins.Init(t.Context(), cfg, d)
 	if err != nil {
 		t.Fatalf("init plugins: %v", err)
 	}
-	state := common.LoadState(t.Context(), settings.NewStore(d.DB), cfg)
+	state := common.LoadState(t.Context(), settings.NewStore(d), cfg)
 	return &common.Deps{
 		Cfg:      cfg,
-		Db:       d.DB,
+		Db:       d,
 		State:    state,
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
-		BtnStore: ui.NewButtonStore(d.DB),
+		BtnStore: ui.NewButtonStore(d),
 		Pm:       pm,
-		Settings: settings.NewStore(d.DB),
+		Settings: settings.NewStore(d),
+		// A real auth.Service over this func's own real migrated DB
+		// (openPagesTestDB, not seedForPages' hand-rolled schema) so
+		// TestDesigner_PagePermissions below can exercise the real
+		// role_permissions seed (ut-docs#2357) -- every other test in this
+		// file sets UT_AUTH=off and never reaches it.
+		AuthSvc: auth.NewService(d),
 	}
 }
 
 func TestDesigner_RendersPage(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#2357: /designer, /items, /catalog, /modifiers, /catalog/option-sets are now catalog_management-gated; this test is about rendering, not permissions.
 	dp := newDesignerTestDeps(t)
 	mux := http.NewServeMux()
 	registerDesigner(mux, dp)
@@ -63,6 +66,7 @@ func TestDesigner_RendersPage(t *testing.T) {
 }
 
 func TestDesigner_RendersSeededButtons(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#2357: /designer, /items, /catalog, /modifiers, /catalog/option-sets are now catalog_management-gated; this test is about rendering, not permissions.
 	dp := newDesignerTestDeps(t)
 
 	// The migrated schema seeds sample shortcut buttons; add a deterministic one
@@ -96,6 +100,7 @@ func TestDesigner_RendersSeededButtons(t *testing.T) {
 // touch tills while working fine on a desktop keyboard. Guard: the trigger
 // must include "input", the event OSK actually dispatches.
 func TestDesigner_SearchBoxTriggerFiresOnSyntheticInputEvent(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#2357: /designer, /items, /catalog, /modifiers, /catalog/option-sets are now catalog_management-gated; this test is about rendering, not permissions.
 	dp := newDesignerTestDeps(t)
 	mux := http.NewServeMux()
 	registerDesigner(mux, dp)
@@ -129,6 +134,7 @@ func TestDesigner_SearchBoxTriggerFiresOnSyntheticInputEvent(t *testing.T) {
 // its own manual page. Anchored on data-testid="help-hint" the same way
 // TestHelpHintResolvesPerPage is, independent of markup/attribute order.
 func TestDesigner_HelpHintResolvesToOwnTopic(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#2357: /designer, /items, /catalog, /modifiers, /catalog/option-sets are now catalog_management-gated; this test is about rendering, not permissions.
 	dp := newDesignerTestDeps(t)
 	mux := http.NewServeMux()
 	registerDesigner(mux, dp)
@@ -161,6 +167,7 @@ func TestDesigner_HelpHintResolvesToOwnTopic(t *testing.T) {
 // never reaches responseError and carries no response body, so it needs the
 // locale copy rendered into the page rather than read off the xhr.
 func TestDesigner_RendersAddErrorSurface(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#2357: /designer, /items, /catalog, /modifiers, /catalog/option-sets are now catalog_management-gated; this test is about rendering, not permissions.
 	dp := newDesignerTestDeps(t)
 	mux := http.NewServeMux()
 	registerDesigner(mux, dp)
@@ -185,5 +192,46 @@ func TestDesigner_RendersAddErrorSurface(t *testing.T) {
 	// the rendered locale string, not a hardcoded literal or an empty one.
 	if want := httpx.T("en", buttonsErrorKey); !strings.Contains(body, want) {
 		t.Fatalf("designer page does not render the localized %s copy %q for the transport-failure message", buttonsErrorKey, want)
+	}
+}
+
+// TestDesigner_PagePermissions (ut-docs#2357): /designer's nav tile is
+// already VisibleIf: "catalog_management" (uislot.CoreAdmin), but nothing
+// stopped a cashier who typed the URL directly before this card. Same
+// contract and rig shape as locations_page_test.go's
+// TestLocationsPagePermissions (cashier 403 + rail intact) and
+// catalog/catalog_management_gate_test.go's role sweep.
+func TestDesigner_PagePermissions(t *testing.T) {
+	dp := newDesignerTestDeps(t)
+	t.Setenv("UT_AUTH", "on")
+	mux := http.NewServeMux()
+	registerDesigner(mux, dp)
+
+	cashier := auth.User{ID: "c1", Role: "cashier"}
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/designer", nil), cashier)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cashier GET /designer = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `class="nav"`) {
+		t.Fatalf("cashier's 403 on GET /designer has no nav rail:\n%s", body)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/designer", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("no-session GET /designer = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+
+	for _, role := range []string{"manager", "admin", "super_admin"} {
+		mgr := auth.User{ID: "u-" + role, Role: role}
+		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/designer", nil), mgr)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code == http.StatusForbidden {
+			t.Fatalf("%s GET /designer = 403, want past the catalog_management gate: %s", role, rec.Body.String())
+		}
 	}
 }

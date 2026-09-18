@@ -66,6 +66,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/app"
 	"github.com/universaltill/universal-till/internal/bluetooth"
+	"github.com/universaltill/universal-till/internal/recovery"
 )
 
 // instance is one running server lifecycle. Start/Stop/IsRunning agree on
@@ -91,7 +92,10 @@ var (
 // storage path it has — Android's Context.getFilesDir(), iOS's
 // NSSearchPathForDirectoriesInDomains(.applicationSupportDirectory), or
 // similar) and returns "127.0.0.1:<port>" once the server is confirmed
-// accepting connections — ready for a WebView to load.
+// accepting connections — ready for a WebView to load. That address may be
+// serving the boot-failure recovery screen rather than the till itself
+// (ut-docs#1437): a shell must load it either way and must not read a
+// returned address as "healthy" — see waitUntilReady for the distinction.
 //
 // The returned address is what the in-process WebView loads, NOT what the
 // server binds: the bind is "0.0.0.0:<port>" — every interface, so the till
@@ -334,9 +338,10 @@ type BluetoothBridge interface {
 // ErrUnsupportedPlatform it returns while no bridge is registered
 // (ut-docs#1643). Passing nil un-registers, restoring that default.
 //
-// The Kotlin implementation, its BLUETOOTH_SCAN/BLUETOOTH_CONNECT
-// permission flow and on-device verification are the separate follow-up
-// ut-docs#1731 — nothing calls this with a real implementation yet.
+// The Kotlin implementation now calls this with a real implementation
+// (TillService.kt:115, Mobile.setBluetoothBridge(BluetoothBridgeImpl(...)));
+// its BLUETOOTH_SCAN/BLUETOOTH_CONNECT permission flow and on-device
+// verification were the separate follow-up ut-docs#1731.
 func SetBluetoothBridge(b BluetoothBridge) {
 	bluetooth.SetAndroidBridge(b)
 }
@@ -363,12 +368,33 @@ func freePort() (string, error) {
 	return port, err
 }
 
-// waitUntilReady polls addr's /healthz until it answers 200, timeout
-// elapses, or app.Run itself already exited (a fast, fatal startup
-// failure — e.g. a bad config — shouldn't make the caller wait out the
-// full timeout to find out). Start polls the loopback address even though
-// the server binds 0.0.0.0 (ut-docs#1256): a wildcard bind answers on
-// loopback, and 0.0.0.0 is not a portable DIAL target.
+// waitUntilReady polls addr's /healthz until a listener the operator can
+// act on is up, timeout elapses, or app.Run itself already exited (a fast,
+// fatal startup failure — e.g. a bad config — shouldn't make the caller
+// wait out the full timeout to find out).
+//
+// "Ready" here is deliberately NOT the same thing as "healthy" (ut-docs#1437):
+// a healthy till answers /healthz 200, but internal/app.Run can also boot
+// straight into recovery mode (ADR-0075) on a startup failure an operator
+// can plausibly fix — migrations, a corrupt DB file, disk full — and
+// internal/recovery's healthHandler deliberately keeps answering 503 for
+// the entire time recovery mode is serving, so every shell's
+// healthy-vs-unhealthy lock/exit-gating logic (ut-docs#1437, #1438) stays
+// unchanged. Before this fix, waitUntilReady only accepted a 200, so a real
+// boot-failure recovery mode on Android timed out after the full 30s
+// ("mobile: server did not become ready within 30s") and the WebView never
+// navigated — the operator saw a white page instead of the recovery
+// screen's reference code, Retry and safe-mode buttons (seen on a real
+// tablet, ut-docs#1437). A response is now also treated as ready when it's
+// a 503 carrying recovery.HeaderMode: recovery.ModeRecovery — recovery
+// mode's own signal that a listener is up and actionable, distinct from
+// /healthz's unchanged health signal. Any other response (a bare 503,
+// connection refused, etc.) keeps polling until the timeout, same as
+// today.
+//
+// Start polls the loopback address even though the server binds 0.0.0.0
+// (ut-docs#1256): a wildcard bind answers on loopback, and 0.0.0.0 is not a
+// portable DIAL target.
 func waitUntilReady(addr string, timeout time.Duration, inst *instance) error {
 	client := &http.Client{Timeout: 500 * time.Millisecond}
 	deadline := time.Now().Add(timeout)
@@ -382,8 +408,10 @@ func waitUntilReady(addr string, timeout time.Duration, inst *instance) error {
 		default:
 		}
 		if resp, err := client.Get("http://" + addr + "/healthz"); err == nil {
+			ready := resp.StatusCode == http.StatusOK ||
+				(resp.StatusCode == http.StatusServiceUnavailable && resp.Header.Get(recovery.HeaderMode) == recovery.ModeRecovery)
 			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
+			if ready {
 				return nil
 			}
 		}

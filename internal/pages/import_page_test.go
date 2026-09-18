@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -17,7 +16,6 @@ import (
 	"github.com/universaltill/universal-till/internal/catimport"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
-	appdb "github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -66,19 +64,16 @@ func newImportTestDeps(t *testing.T) *common.Deps {
 func newImportTestDepsWithCurrencyState(t *testing.T, confirmed bool) *common.Deps {
 	t.Helper()
 	chdirRoot(t)
-	d, err := appdb.Open(filepath.Join(t.TempDir(), "import.db"))
-	if err != nil {
-		t.Fatalf("open migrated db: %v", err)
-	}
+	d := openPagesTestDB(t)
 	t.Cleanup(func() { d.Close() })
 
 	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", Locale: "en", TaxRate: 20}}
-	pm, err := plugins.Init(t.Context(), cfg, d.DB)
+	pm, err := plugins.Init(t.Context(), cfg, d)
 	if err != nil {
 		t.Fatalf("init plugins: %v", err)
 	}
-	state := common.LoadState(t.Context(), settings.NewStore(d.DB), cfg)
-	store := settings.NewStore(d.DB)
+	state := common.LoadState(t.Context(), settings.NewStore(d), cfg)
+	store := settings.NewStore(d)
 	if confirmed {
 		if err := store.Set(t.Context(), common.KeyCurrencyConfirmed, "true"); err != nil {
 			t.Fatalf("seed currency confirmed: %v", err)
@@ -86,7 +81,7 @@ func newImportTestDepsWithCurrencyState(t *testing.T, confirmed bool) *common.De
 	}
 	return &common.Deps{
 		Cfg:      cfg,
-		Db:       d.DB,
+		Db:       d,
 		State:    state,
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
 		Pm:       pm,

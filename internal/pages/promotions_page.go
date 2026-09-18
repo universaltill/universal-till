@@ -59,7 +59,7 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 			views = append(views, newPromotionView(p))
 		}
 		httpx.Render("ui/pages/promotions.html", map[string]any{
-			"title":      "Promotions",
+			"title":      httpx.T(httpx.RequestLocale(r), "page.title.promotions"),
 			"theme":      d.CurrentState().Theme,
 			"menuItems":  d.MenuSnapshot(),
 			"promotions": views,

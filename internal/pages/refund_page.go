@@ -579,7 +579,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			fiscalOverrideUntil = g.OverrideUntil.Local().Format("2006-01-02 15:04")
 		}
 		httpx.Render("ui/pages/refund.html", map[string]any{
-			"title":                "Refund",
+			"title":                httpx.T(httpx.RequestLocale(r), "page.title.refund"),
 			"theme":                d.CurrentState().Theme,
 			"menuItems":            d.MenuSnapshot(),
 			"Sale":                 detail,

@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -27,10 +26,7 @@ import (
 func newSyncOrdersTestDeps(t *testing.T) (*http.ServeMux, *common.Deps, *db.DB) {
 	t.Helper()
 	chdirRoot(t)
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "sync_orders.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := &db.DB{DB: openPagesTestDB(t)}
 	t.Cleanup(func() { dbase.Close() })
 
 	dp := &common.Deps{Db: dbase.DB, OrderStatus: pos.NewOrderStatusBroadcaster()}

@@ -172,8 +172,8 @@ func TestDemoCustomersPromosIDsMatchSeedData(t *testing.T) {
 // of dead_seed_test.go's rewind tests by mistake (the file's replay tests
 // were correctly deleted; this one wasn't a replay test). The baseline
 // (001_init.sql) is currently correct — it just doesn't carry the dead
-// key — but since ADR-0074 makes 001 freely editable pre-revenue, nothing
-// else guards against the key being re-added by a future edit.
+// key — and while 001 is now frozen (ADR-0100), nothing else guards
+// against the key being re-added by a future appended migration.
 func TestBaselineSeedsNoDeadTaxInclusiveKey(t *testing.T) {
 	d, err := Open(filepath.Join(t.TempDir(), "dead-seed.db"))
 	if err != nil {

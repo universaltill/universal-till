@@ -198,7 +198,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			thisTillID, _, _ = d.Settings.Get(r.Context(), "sync.till_id")
 		}
 		httpx.Render("ui/pages/tills.html", map[string]any{
-			"title":           "Tills",
+			"title":           httpx.T(httpx.RequestLocale(r), "page.title.tills"),
 			"theme":           d.CurrentState().Theme,
 			"menuItems":       d.MenuSnapshot(),
 			"Tills":           list,

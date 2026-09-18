@@ -29,7 +29,20 @@ test.describe('persistent app shell (ut-docs#2224)', () => {
     const fetched = await page.evaluate(() =>
       performance.getEntriesByType('resource').map((e) => new URL(e.name).pathname)
     );
-    expect(fetched.filter((p) => p.startsWith('/public/') || p.startsWith('/themes/')), 'no asset may be re-fetched on navigation').toEqual([]);
+    // ut-docs#2363: Chromium refetches the <link rel="icon"> target itself
+    // on every history.pushState() navigation (a browser-internal favicon
+    // probe, resourceTiming initiatorType "other") — verified this is not
+    // triggered by any app JS (nothing touches the <link> or <head>) and is
+    // not a caching gap: forcing `Cache-Control: public, max-age=31536000,
+    // immutable` on the response still doesn't stop it, so it bypasses the
+    // renderer's HTTP cache entirely. Excluded here as a known, accepted
+    // exception to the guarantee below rather than something fixable
+    // app-side; every other asset must still never re-fetch.
+    const FAVICON_PATH = '/public/assets/logo/ut-logo.ico';
+    expect(
+      fetched.filter((p) => (p.startsWith('/public/') || p.startsWith('/themes/')) && p !== FAVICON_PATH),
+      'no asset may be re-fetched on navigation (except the browser\'s own favicon probe, ut-docs#2363)'
+    ).toEqual([]);
     // `#pairing-notice-mount` and the rail chips are hx-preserve'd, so the
     // navigation is the page itself plus (at most) the input heartbeat and
     // ut-docs#2343's theme-sync poll (deliberately not preserved: its OOB
@@ -143,20 +156,18 @@ test.describe('persistent app shell (ut-docs#2224)', () => {
     expect(err.headers()['hx-retarget']).toBe('#ut-page');
     const theirs = /name="ut-shell" content="([^"]*)"/.exec(await err.text())?.[1];
     const mine = await page.evaluate(() => document.querySelector('meta[name="ut-shell"]')!.getAttribute('content'));
+    // ut-docs#2362: RenderError now carries the shop's current theme (like
+    // every other page), so its shell signature always matches — this is no
+    // longer conditional on whether the shop happens to run the default
+    // theme (the only case that used to make the two signatures agree).
+    expect(theirs, 'RenderError\'s shell signature must match every other page\'s (ut-docs#2362)').toBe(mine);
 
     await page.locator('#probe-html-404').click();
     await expect(page).toHaveURL(/no-such-station/);
-    if (theirs === mine) {
-      // Same shell: the error swaps in place — never htmx's default
-      // body-innerHTML swap on error (which would destroy the on-screen
-      // keyboard and duplicate the bug-report panel).
-      expect(await bootAt(page)).toBe(boot);
-    } else {
-      // RenderError renders without the shop theme, so on a themed till the
-      // error page is a different shell and loads as a full document.
-      await page.waitForLoadState('load');
-      expect(await page.evaluate(() => (window as any).UT?.shellBootAt ?? 0)).not.toBe(boot);
-    }
+    // Same shell: the error swaps in place — never htmx's default
+    // body-innerHTML swap on error (which would destroy the on-screen
+    // keyboard and duplicate the bug-report panel).
+    expect(await bootAt(page)).toBe(boot);
     await expect(page.locator('#ut-page .nav')).toBeVisible();
     expect(await page.locator('#bugreport-panel').count()).toBe(1);
     assertClean();

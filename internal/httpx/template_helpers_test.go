@@ -432,9 +432,9 @@ func TestBaseLayoutPSUChipAbsentWhenHealthy(t *testing.T) {
 // background scheduler's published count to the pixel a merchant sees, and
 // nothing else covers it.
 func TestBaseLayoutPluginUpdateChipRendersWhenPending(t *testing.T) {
-	before := plugins.CurrentPendingUpdates().Count
-	t.Cleanup(func() { plugins.SetPendingUpdates(before) })
-	plugins.SetPendingUpdates(3)
+	before := plugins.CurrentPendingUpdates()
+	t.Cleanup(func() { plugins.SetPendingUpdates(before.Count, before.LanguagePending) })
+	plugins.SetPendingUpdates(3, false)
 
 	InitI18n(realI18n(t), "en")
 	r, err := NewRenderer(
@@ -469,15 +469,86 @@ func TestBaseLayoutPluginUpdateChipRendersWhenPending(t *testing.T) {
 	if !strings.Contains(chip, "(3)") {
 		t.Fatalf("expected the pending count in the chip, got %q", chip)
 	}
+	if strings.Contains(body, "sb-language-pack-update") {
+		t.Fatalf("expected no language-pack chip when LanguagePending is false, got %.800s", body)
+	}
+}
+
+// The language-pack-specific chip (ut-docs#2299) is a SEPARATE element from
+// the generic plugin-update chip above — both can render together (a
+// joined till's pending language pack plus some other pending plugin type),
+// so this proves the language-pack chip's own presence/wording/link rather
+// than assuming it piggybacks on the generic chip's assertions.
+func TestBaseLayoutLanguagePackUpdateChipRendersWhenLanguagePending(t *testing.T) {
+	before := plugins.CurrentPendingUpdates()
+	t.Cleanup(func() { plugins.SetPendingUpdates(before.Count, before.LanguagePending) })
+	plugins.SetPendingUpdates(1, true)
+
+	InitI18n(realI18n(t), "en")
+	r, err := NewRenderer(
+		filepath.Join("web", "ui", "layouts", "base.html"),
+		filepath.Join("web", "ui", "pages", "pin.html"),
+		FuncsFor("en"),
+	)
+	if err != nil {
+		t.Fatalf("NewRenderer: %v", err)
+	}
+	w := httptest.NewRecorder()
+	data := map[string]any{"title": "Change PIN", "theme": "", "menuItems": nil, "errKey": ""}
+	if err := r.Render(w, "base", data); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	body := w.Body.String()
+	idx := strings.Index(body, `class="sb-item sb-language-pack-update"`)
+	if idx == -1 {
+		t.Fatalf("expected the status-bar language-pack-update chip to render, got %.800s", body)
+	}
+	end := strings.Index(body[idx:], "</a>")
+	if end == -1 {
+		t.Fatalf("expected the language-pack chip to be a link (<a>...</a>), got %.500s", body[idx:])
+	}
+	chip := body[idx : idx+end]
+	if !strings.Contains(chip, `href="/plugins"`) {
+		t.Fatalf("expected the language-pack chip to link to /plugins, got %q", chip)
+	}
+	if !strings.Contains(chip, "Language pack update available") {
+		t.Fatalf("expected the translated status.language_pack_update_available label, got %q", chip)
+	}
+}
+
+// Negative control: LanguagePending false must never render the chip, even
+// with other updates pending (Count > 0) — the two states are independent.
+func TestBaseLayoutLanguagePackUpdateChipAbsentWhenNotLanguagePending(t *testing.T) {
+	before := plugins.CurrentPendingUpdates()
+	t.Cleanup(func() { plugins.SetPendingUpdates(before.Count, before.LanguagePending) })
+	plugins.SetPendingUpdates(2, false)
+
+	InitI18n(realI18n(t), "en")
+	r, err := NewRenderer(
+		filepath.Join("web", "ui", "layouts", "base.html"),
+		filepath.Join("web", "ui", "pages", "pin.html"),
+		FuncsFor("en"),
+	)
+	if err != nil {
+		t.Fatalf("NewRenderer: %v", err)
+	}
+	w := httptest.NewRecorder()
+	data := map[string]any{"title": "Change PIN", "theme": "", "menuItems": nil, "errKey": ""}
+	if err := r.Render(w, "base", data); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if body := w.Body.String(); strings.Contains(body, "sb-language-pack-update") {
+		t.Fatalf("expected no language-pack chip when LanguagePending is false, got %.800s", body)
+	}
 }
 
 // The negative control: no chip at all at zero — including on a freshly
 // booted till whose scheduler has not ticked yet, which reads the same
 // zero value.
 func TestBaseLayoutPluginUpdateChipAbsentWhenNonePending(t *testing.T) {
-	before := plugins.CurrentPendingUpdates().Count
-	t.Cleanup(func() { plugins.SetPendingUpdates(before) })
-	plugins.SetPendingUpdates(0)
+	before := plugins.CurrentPendingUpdates()
+	t.Cleanup(func() { plugins.SetPendingUpdates(before.Count, before.LanguagePending) })
+	plugins.SetPendingUpdates(0, false)
 
 	InitI18n(realI18n(t), "en")
 	r, err := NewRenderer(

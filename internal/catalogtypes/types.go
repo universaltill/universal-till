@@ -58,8 +58,11 @@ type ItemColor struct {
 // upsert_category form offers those swatches and refuses anything else
 // before queueing, so a palette change HERE that isn't mirrored THERE
 // makes the portal offer a colour this till will reject (or withhold one
-// it would accept). Change both together. Nothing enforces this
-// mechanically yet; see that variable's own doc comment.
+// it would accept). Change both together — ut-cloud's
+// internal/palettecontract.TestCategoryColorsMirrorsPOSItemColors, run by
+// its manifest-contract-guard CI job against this repo's main, fails if
+// the two ever diverge (ut-docs#2352); see that variable's own doc
+// comment.
 //
 // Deliberately NOT a free color picker: a raw, unvalidated value
 // would flow straight into a CSS custom property downstream

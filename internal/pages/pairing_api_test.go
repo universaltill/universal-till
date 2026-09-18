@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +13,6 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
-	appdb "github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -472,18 +470,14 @@ func TestDenyPairRequest_RemovesRowAndSubsequentPollFails(t *testing.T) {
 // fail if that fixture ever falls out of sync with the real migration.
 func TestPairingFlow_AgainstRealMigratedSchema(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	dbPath := filepath.Join(t.TempDir(), "unitill-pos.db")
-	d, err := appdb.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open real migrated db: %v", err)
-	}
+	d := openPagesTestDB(t)
 	t.Cleanup(func() { d.Close() })
 
 	dp := &common.Deps{
 		Cfg: &config.Config{Marketplace: config.MarketplaceConfig{EndpointURL: "http://localhost:8081"}},
-		Db:  d.DB,
+		Db:  d,
 	}
-	svc := auth.NewService(d.DB)
+	svc := auth.NewService(d)
 	tokens := &enrolTokens{tokens: map[string]time.Time{}}
 	mux := http.NewServeMux()
 	registerPairingAPI(mux, dp, svc, tokens)

@@ -61,6 +61,7 @@ func TestPosAlert_ExactlyOnceOnAdminPage(t *testing.T) {
 }
 
 func TestPosAlert_ExactlyOnceOnItemsPage(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#2357: /designer, /items, /catalog, /modifiers, /catalog/option-sets are now catalog_management-gated; this test is about rendering, not permissions.
 	mux, dp := newMenuPageTestDeps(t, baseMenu)
 	registerItemsPage(mux, dp)
 

@@ -145,13 +145,41 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// ut-docs#2135: republish the persisted locale generation, so per-browser
 	// ut_lang overrides retired before this restart stay retired.
 	loadLocaleGeneration(ctx, setStore)
-	pm.SetLocalizer(i18n) // language-pack plugins merge into the translator
+	// UT_TEST_I18N_OVERLAY_DIR (test/e2e harness only -- never a production
+	// plugin-install path, never signature-verified, never documented to a
+	// shop owner): loads every *.json file in the named directory as I18n
+	// overlays keyed by filename stem (e.g. de.json -> locale "de"), so an
+	// e2e run can exercise a language-pack's translations without a full
+	// Ed25519 WASM plugin install. See scripts/ci/audit-locale-render.sh.
+	//
+	// Wired as a wrapper AROUND the translator the plugin manager publishes
+	// to, not as a one-shot SetOverlays call after SetLocalizer: the manager
+	// re-publishes its overlays from scratch on every Reload (ReloadPlugins),
+	// which atomically replaces them -- a one-shot call is silently dropped
+	// the first time anything reloads plugins, including the boot-time
+	// builtin-layout reconciliation further down this function and the setup
+	// wizard's own shop-type step. See testI18nOverlayLocalizer.
+	localizer := plugins.Localizer(i18n) // language-pack plugins merge into the translator
+	if dir := os.Getenv("UT_TEST_I18N_OVERLAY_DIR"); dir != "" {
+		testLocalizer, err := newTestI18nOverlayLocalizer(i18n, dir)
+		if err != nil {
+			log.Fatalf("UT_TEST_I18N_OVERLAY_DIR: %v", err)
+		}
+		localizer = testLocalizer
+	}
+	pm.SetLocalizer(localizer)
 	// Shop translation overrides (manager edits) win over base + plugin
 	// strings; loaded once here, refreshed by the /translations editor.
 	if overrides, err := data.NewTranslationRepo(db).ListOverrides(ctx); err == nil {
 		i18n.SetShopOverrides(overrides)
 	}
 	httpx.InitCurrency(state.Currency)
+	// ut-docs#2362: same "RenderError has no *common.Deps to read fresh
+	// from" reasoning as InitCurrency above — publish the boot-time theme
+	// so the very first error page a themed till renders already carries
+	// the right stylesheet/shell signature, not just after the first
+	// settings write that happens to touch theme.
+	httpx.InitTheme(state.Theme)
 	// Dedicated till: larger touch targets, no text selection (UT_KIOSK=1).
 	httpx.InitKiosk(os.Getenv("UT_KIOSK") == "1")
 	// Interface scale: the saved setting wins; UT_UI_SCALE env is the
@@ -610,6 +638,11 @@ func newRederiveSettings(dp *common.Deps, authDisabled bool, i18n *config.I18n) 
 			*s = st
 		})
 		httpx.InitCurrency(applied.Currency)
+		// ut-docs#2362: same reasoning as InitCurrency above — a cloud
+		// set_setting theme directive (ADR-0018) or the replica-drift loop
+		// must republish RenderError's cached theme too, or a themed till
+		// keeps showing its error pages unthemed until the next restart.
+		httpx.InitTheme(applied.Theme)
 		// In-place tax swap: replacing the engine (as the settings
 		// handlers do) would empty the basket of a sale in progress.
 		// Both engines: the kiosk's separate instance (ut-docs#449) must

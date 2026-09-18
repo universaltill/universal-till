@@ -3,15 +3,14 @@ package pages
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
 	"github.com/universaltill/universal-till/internal/catalogtypes"
+	"github.com/universaltill/universal-till/internal/cloudsync"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
-	appdb "github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -258,6 +257,297 @@ func TestCloudCreateItem_BarcodeAlreadyTakenFails(t *testing.T) {
 	}
 }
 
+// TestCloudCreateItem_RefusedOnReplica: items is an admin-synced table
+// (primary-wins pull, sync_admin_repo.go's adminTables) — same reasoning
+// as the local admin item-create handler's own requirePrimary gate
+// (catalog/handlers.go). A directive landing on a replica till must be
+// refused the same way, or the created row silently vanishes on the next
+// admin pull (ut-docs#2353).
+func TestCloudCreateItem_RefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	_, err := cloudCreateItem(ctx, dp, "Replica Widget", 500, "")
+	if err == nil {
+		t.Fatalf("expected cloudCreateItem to refuse on a replica till")
+	}
+
+	repo := data.NewCatalogRepo(dp.Db)
+	_, exists, err := repo.FindActiveItemByName(ctx, "Replica Widget")
+	if err != nil {
+		t.Fatalf("FindActiveItemByName: %v", err)
+	}
+	if exists {
+		t.Fatalf("item must not be created on a replica till")
+	}
+}
+
+// TestCloudCreateItem_WritesAuditRow: the local admin item-create path has
+// no audit call of its own to mirror (verified: catalog/handlers.go's
+// POST /api/catalog/item never calls InsertAudit), but a cloud-originated
+// mutation still needs a "the merchant changed this from the cloud portal"
+// trail distinct from an operator's own actions — same "system"-actor
+// pattern as cloudAdjustStock/sync_admin.go's admin_pulled (ut-docs#2353).
+func TestCloudCreateItem_WritesAuditRow(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudCreateItem(ctx, dp, "Audited Widget", 500, ""); err != nil {
+		t.Fatalf("cloudCreateItem: %v", err)
+	}
+
+	repo := data.NewCatalogRepo(dp.Db)
+	id, exists, err := repo.FindActiveItemByName(ctx, "Audited Widget")
+	if err != nil || !exists {
+		t.Fatalf("expected item to exist: exists=%v err=%v", exists, err)
+	}
+
+	var actorID, action string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT actor_id, action FROM audit_log WHERE entity_type = 'item' AND entity_id = ? AND action = 'cloud_item_created'`,
+		id,
+	).Scan(&actorID, &action); err != nil {
+		t.Fatalf("expected an audit row for the cloud-originated create: %v", err)
+	}
+	if actorID != "system" {
+		t.Fatalf("expected actor_id 'system', got %q", actorID)
+	}
+}
+
+// TestCloudCreateItem_IdempotentRetryWritesNoSecondAuditRow: a retry of an
+// already-created item (the at-least-once directive replay this hook's own
+// idempotency handles) must not add a second audit row for a no-op.
+func TestCloudCreateItem_IdempotentRetryWritesNoSecondAuditRow(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudCreateItem(ctx, dp, "Retry Widget", 500, ""); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	if _, err := cloudCreateItem(ctx, dp, "Retry Widget", 500, ""); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+
+	repo := data.NewCatalogRepo(dp.Db)
+	id, exists, err := repo.FindActiveItemByName(ctx, "Retry Widget")
+	if err != nil || !exists {
+		t.Fatalf("expected item to exist: exists=%v err=%v", exists, err)
+	}
+
+	var count int
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM audit_log WHERE entity_type = 'item' AND entity_id = ? AND action = 'cloud_item_created'`,
+		id,
+	).Scan(&count); err != nil {
+		t.Fatalf("count audit rows: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly one audit row across the create + retry, got %d", count)
+	}
+}
+
+// --- cloudSetPrice ---
+
+func TestCloudSetPrice_RefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	if _, err := cloudSetPrice(ctx, dp, "itm1", 999); err == nil {
+		t.Fatalf("expected cloudSetPrice to refuse on a replica till")
+	}
+
+	var price int64
+	if err := dp.Db.QueryRowContext(ctx, `SELECT base_price FROM items WHERE id = 'itm1'`).Scan(&price); err != nil {
+		t.Fatalf("read base_price: %v", err)
+	}
+	if price == 999 {
+		t.Fatalf("price must not change on a replica till")
+	}
+}
+
+func TestCloudSetPrice_WritesAuditRow(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudSetPrice(ctx, dp, "itm1", 777); err != nil {
+		t.Fatalf("cloudSetPrice: %v", err)
+	}
+
+	var actorID string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT actor_id FROM audit_log WHERE entity_type = 'item' AND entity_id = 'itm1' AND action = 'cloud_price_set'`,
+	).Scan(&actorID); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if actorID != "system" {
+		t.Fatalf("expected actor_id 'system', got %q", actorID)
+	}
+}
+
+// --- cloudRenameItem ---
+
+func TestCloudRenameItem_RefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	if _, err := cloudRenameItem(ctx, dp, "itm1", "Replica Name"); err == nil {
+		t.Fatalf("expected cloudRenameItem to refuse on a replica till")
+	}
+
+	var name string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT name FROM items WHERE id = 'itm1'`).Scan(&name); err != nil {
+		t.Fatalf("read name: %v", err)
+	}
+	if name == "Replica Name" {
+		t.Fatalf("name must not change on a replica till")
+	}
+}
+
+func TestCloudRenameItem_WritesAuditRow(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudRenameItem(ctx, dp, "itm1", "Renamed Apple"); err != nil {
+		t.Fatalf("cloudRenameItem: %v", err)
+	}
+
+	var actorID string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT actor_id FROM audit_log WHERE entity_type = 'item' AND entity_id = 'itm1' AND action = 'cloud_item_renamed'`,
+	).Scan(&actorID); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if actorID != "system" {
+		t.Fatalf("expected actor_id 'system', got %q", actorID)
+	}
+}
+
+// --- cloudAddBarcode ---
+
+func TestCloudAddBarcode_RefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	if _, err := cloudAddBarcode(ctx, dp, "itm1", "9990001"); err == nil {
+		t.Fatalf("expected cloudAddBarcode to refuse on a replica till")
+	}
+
+	repo := data.NewCatalogRepo(dp.Db)
+	if taken, _ := repo.BarcodeExists(ctx, "9990001"); taken {
+		t.Fatalf("barcode must not be attached on a replica till")
+	}
+}
+
+func TestCloudAddBarcode_WritesAuditRowForItem(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudAddBarcode(ctx, dp, "itm1", "9990002"); err != nil {
+		t.Fatalf("cloudAddBarcode: %v", err)
+	}
+
+	var entityType, actorID string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT entity_type, actor_id FROM audit_log WHERE entity_id = 'itm1' AND action = 'cloud_barcode_added'`,
+	).Scan(&entityType, &actorID); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if entityType != "item" || actorID != "system" {
+		t.Fatalf("unexpected audit row: entity_type=%q actor_id=%q", entityType, actorID)
+	}
+}
+
+func TestCloudAddBarcode_WritesAuditRowForVariant(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudAddBarcode(ctx, dp, "var1", "9990003"); err != nil {
+		t.Fatalf("cloudAddBarcode: %v", err)
+	}
+
+	var entityType string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT entity_type FROM audit_log WHERE entity_id = 'var1' AND action = 'cloud_barcode_added'`,
+	).Scan(&entityType); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if entityType != "item_variant" {
+		t.Fatalf("expected entity_type 'item_variant', got %q", entityType)
+	}
+}
+
+// --- cloudDeactivateItem ---
+
+func TestCloudDeactivateItem_RefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	if _, err := cloudDeactivateItem(ctx, dp, "itm1"); err == nil {
+		t.Fatalf("expected cloudDeactivateItem to refuse on a replica till")
+	}
+
+	var active int
+	if err := dp.Db.QueryRowContext(ctx, `SELECT is_active FROM items WHERE id = 'itm1'`).Scan(&active); err != nil {
+		t.Fatalf("read is_active: %v", err)
+	}
+	if active == 0 {
+		t.Fatalf("item must not be deactivated on a replica till")
+	}
+}
+
+func TestCloudDeactivateItem_WritesAuditRowForItem(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudDeactivateItem(ctx, dp, "itm1"); err != nil {
+		t.Fatalf("cloudDeactivateItem: %v", err)
+	}
+
+	var entityType, actorID string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT entity_type, actor_id FROM audit_log WHERE entity_id = 'itm1' AND action = 'cloud_item_deactivated'`,
+	).Scan(&entityType, &actorID); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if entityType != "item" || actorID != "system" {
+		t.Fatalf("unexpected audit row: entity_type=%q actor_id=%q", entityType, actorID)
+	}
+}
+
+func TestCloudDeactivateItem_WritesAuditRowForVariant(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudDeactivateItem(ctx, dp, "var1"); err != nil {
+		t.Fatalf("cloudDeactivateItem: %v", err)
+	}
+
+	var entityType string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT entity_type FROM audit_log WHERE entity_id = 'var1' AND action = 'cloud_variant_deactivated'`,
+	).Scan(&entityType); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if entityType != "item_variant" {
+		t.Fatalf("expected entity_type 'item_variant', got %q", entityType)
+	}
+}
+
 // --- cloudRemovePlugin ---
 
 func TestCloudRemovePlugin_RejectsPathTraversalID(t *testing.T) {
@@ -398,18 +688,15 @@ func TestCollectProblems_TruncationIsUTF8Safe(t *testing.T) {
 // regression for the "cloud" actor id bug (ut-docs#1676): audit_log.actor_id
 // has a genuine FOREIGN KEY to users(id) in internal/db/migrations/001_init.sql,
 // and "cloud" was never a seeded user, so this call always violated it in a
-// real deployment. This test opens a real migrated database directly
-// (appdb.Open) rather than going through openPagesTestDB/seedForPages, so it
-// stays a true regression test regardless of that package's own test-fixture
-// schema (which historically carried no such FK at all, and is why this bug
-// went uncaught for as long as it did).
+// real deployment. This test opens a real migrated database (openPagesTestDB,
+// ut-docs#2219's cloned-template version of the same internal/db.Open
+// migration chain) rather than this package's simplified seedForPages
+// fixture, so it stays a true regression test regardless of that fixture's
+// own schema (which historically carried no such FK at all, and is why this
+// bug went uncaught for as long as it did).
 func TestCloudAdjustStock_AuditActorSatisfiesRealForeignKey(t *testing.T) {
-	migrated, err := appdb.Open(filepath.Join(t.TempDir(), "cloudadjust.db"))
-	if err != nil {
-		t.Fatalf("open+migrate: %v", err)
-	}
-	t.Cleanup(func() { migrated.Close() })
-	db := migrated.DB
+	db := openPagesTestDB(t)
+	t.Cleanup(func() { db.Close() })
 
 	if _, err := db.Exec(`INSERT INTO items (id, name, base_price, is_active) VALUES ('itm1', 'Widget', 500, 1)`); err != nil {
 		t.Fatalf("seed item: %v", err)
@@ -886,6 +1173,97 @@ func TestCloudUpsertCategory_UnknownIDAndBlankName(t *testing.T) {
 	}
 }
 
+func TestCloudUpsertCategory_CreateRefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	if _, err := cloudUpsertCategory(ctx, dp, "", "Replica Category", "#0f172a"); err == nil {
+		t.Fatalf("expected cloudUpsertCategory to refuse creating on a replica till")
+	}
+	if _, exists := findCategoryByName(t, dp, "Replica Category"); exists {
+		t.Fatalf("category must not be created on a replica till")
+	}
+}
+
+func TestCloudUpsertCategory_UpdateRefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	// Create while still primary, then simulate the till becoming a replica.
+	if _, err := cloudUpsertCategory(ctx, dp, "", "Drinks", "#0f172a"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	row, exists := findCategoryByName(t, dp, "Drinks")
+	if !exists {
+		t.Fatalf("expected category to exist")
+	}
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	if _, err := cloudUpsertCategory(ctx, dp, row.ID, "Renamed on replica", "#4338ca"); err == nil {
+		t.Fatalf("expected cloudUpsertCategory to refuse updating on a replica till")
+	}
+	if got, _ := findCategoryByName(t, dp, "Renamed on replica"); got.ID != "" {
+		t.Fatalf("category must not be renamed on a replica till")
+	}
+}
+
+func TestCloudUpsertCategory_CreateWritesAuditRow(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudUpsertCategory(ctx, dp, "", "Audited Category", "#0f172a"); err != nil {
+		t.Fatalf("cloudUpsertCategory: %v", err)
+	}
+	row, exists := findCategoryByName(t, dp, "Audited Category")
+	if !exists {
+		t.Fatalf("expected category to exist")
+	}
+
+	var actorID string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT actor_id FROM audit_log WHERE entity_type = 'category' AND entity_id = ? AND action = 'cloud_category_created'`,
+		row.ID,
+	).Scan(&actorID); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if actorID != "system" {
+		t.Fatalf("expected actor_id 'system', got %q", actorID)
+	}
+}
+
+func TestCloudUpsertCategory_UpdateWritesAuditRow(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudUpsertCategory(ctx, dp, "", "Drinks", "#0f172a"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	row, exists := findCategoryByName(t, dp, "Drinks")
+	if !exists {
+		t.Fatalf("expected category to exist")
+	}
+
+	if _, err := cloudUpsertCategory(ctx, dp, row.ID, "Hot drinks", "#4338ca"); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+
+	var actorID string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT actor_id FROM audit_log WHERE entity_type = 'category' AND entity_id = ? AND action = 'cloud_category_updated'`,
+		row.ID,
+	).Scan(&actorID); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if actorID != "system" {
+		t.Fatalf("expected actor_id 'system', got %q", actorID)
+	}
+}
+
 // The hook set StartCloudSync wires carries UpsertCategory, and it is the
 // palette-checked hook (not a bare repo call).
 func TestBuildCloudHooks_WiresUpsertCategory(t *testing.T) {
@@ -914,5 +1292,1037 @@ func TestBuildCloudHooks_WiresUpsertCategory(t *testing.T) {
 	}
 	if _, ok := findCategoryByName(t, dp, "Wired 2"); !ok {
 		t.Fatalf("wired update did not rename")
+	}
+}
+
+// --- set_quick_button_layout ---
+
+// seedQuickButtons inserts three shortcut_buttons rows, all pointing at
+// seedForPages' itm1 (their only FK requirement), in barcode order b1,b2,b3
+// (sort_order 0,1,2) — the starting layout each test below reorders away
+// from.
+func seedQuickButtons(t *testing.T, dp *common.Deps) {
+	t.Helper()
+	for _, s := range []string{
+		`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('b1','Alpha','itm1',0)`,
+		`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('b2','Beta','itm1',1)`,
+		`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('b3','Gamma','itm1',2)`,
+	} {
+		if _, err := dp.Db.Exec(s); err != nil {
+			t.Fatalf("seed shortcut_buttons: %v", err)
+		}
+	}
+}
+
+// quickButtonOrder returns the button barcodes in persisted sort order.
+func quickButtonOrder(t *testing.T, dp *common.Deps) []string {
+	t.Helper()
+	rows, err := dp.Db.Query(`SELECT barcode FROM shortcut_buttons ORDER BY sort_order`)
+	if err != nil {
+		t.Fatalf("query shortcut_buttons: %v", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var b string
+		if err := rows.Scan(&b); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		out = append(out, b)
+	}
+	return out
+}
+
+// On a primary (or standalone) till, cloudSetQuickButtonLayout applies the
+// new order — the same UpdateOrder call the Designer's own reorder makes —
+// and records one audit_log row so the change is traceable back to a cloud
+// directive rather than a local operator action.
+func TestCloudSetQuickButtonLayout_AppliesOrderAndAudits(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+
+	msg, err := cloudSetQuickButtonLayout(ctx, dp, []string{"b3", "b1", "b2"})
+	if err != nil {
+		t.Fatalf("cloudSetQuickButtonLayout: %v", err)
+	}
+	if !strings.Contains(msg, "3") {
+		t.Fatalf("expected message to mention the button count, got %q", msg)
+	}
+	got := quickButtonOrder(t, dp)
+	want := []string{"b3", "b1", "b2"}
+	if len(got) != len(want) {
+		t.Fatalf("order = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order = %v, want %v", got, want)
+		}
+	}
+
+	var actorID, entityType, action string
+	row := dp.Db.QueryRow(`SELECT actor_id, entity_type, action FROM audit_log ORDER BY created_at DESC, rowid DESC LIMIT 1`)
+	if err := row.Scan(&actorID, &entityType, &action); err != nil {
+		t.Fatalf("query audit_log: %v", err)
+	}
+	if actorID != "system" {
+		t.Fatalf("audit actor_id = %q, want system", actorID)
+	}
+	if action == "" || entityType == "" {
+		t.Fatalf("audit row incomplete: entity_type=%q action=%q", entityType, action)
+	}
+}
+
+// A replica till follows shortcut_buttons from the primary via the
+// admin-table pull (sync_admin_repo.go) — a write here would just be
+// reverted on the next pull with no indication to the cloud operator that
+// nothing actually stuck (same class as ut-docs#1697's LAN-route gate).
+// The directive is refused before any DB write, matching requirePrimary's
+// own refusal shape for the LAN reorder route.
+func TestCloudSetQuickButtonLayout_RefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed primary url: %v", err)
+	}
+
+	if _, err := cloudSetQuickButtonLayout(ctx, dp, []string{"b3", "b1", "b2"}); err == nil {
+		t.Fatalf("expected refusal on a replica till")
+	}
+	got := quickButtonOrder(t, dp)
+	want := []string{"b1", "b2", "b3"} // unchanged
+	if len(got) != len(want) {
+		t.Fatalf("replica write leaked through: order = %v, want unchanged %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("replica write leaked through: order = %v, want unchanged %v", got, want)
+		}
+	}
+}
+
+// An empty barcode list is refused directly by the hook too (not just by
+// cloudsync.apply's own dispatch-level check) -- cloudSetQuickButtonLayout
+// is called directly by buildCloudHooks' wiring and by tests, so it must not
+// rely solely on the caller having already checked.
+func TestCloudSetQuickButtonLayout_EmptyListRefused(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+
+	if _, err := cloudSetQuickButtonLayout(ctx, dp, nil); err == nil {
+		t.Fatalf("expected refusal for an empty barcode list")
+	}
+	got := quickButtonOrder(t, dp)
+	want := []string{"b1", "b2", "b3"}
+	if len(got) != len(want) {
+		t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+		}
+	}
+}
+
+// A partial list (missing an existing barcode) must be refused, not silently
+// applied — buttons_api.go's LAN reorder route documents its own payload as
+// "the FULL global list," and UpdateOrder only touches the barcodes it's
+// given: applying a partial list leaves the omitted row(s) on a stale
+// sort_order that can collide with a listed row's new one (independent
+// review's own probe reproduced a real duplicate sort_order this way,
+// ut-docs#2321 review).
+func TestCloudSetQuickButtonLayout_MissingBarcodeRefused(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+
+	if _, err := cloudSetQuickButtonLayout(ctx, dp, []string{"b3", "b1"}); err == nil {
+		t.Fatalf("expected refusal for a partial list missing b2")
+	}
+	got := quickButtonOrder(t, dp)
+	want := []string{"b1", "b2", "b3"}
+	if len(got) != len(want) {
+		t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+		}
+	}
+}
+
+// A barcode the till doesn't recognize is refused outright — the till is the
+// only thing that can validate a cloud directive's payload before applying
+// it, so an unknown barcode must not be a silent, unexplained no-op.
+func TestCloudSetQuickButtonLayout_UnknownBarcodeRefused(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+
+	if _, err := cloudSetQuickButtonLayout(ctx, dp, []string{"b3", "b1", "does-not-exist"}); err == nil {
+		t.Fatalf("expected refusal for an unrecognized barcode")
+	}
+	got := quickButtonOrder(t, dp)
+	want := []string{"b1", "b2", "b3"}
+	if len(got) != len(want) {
+		t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+		}
+	}
+}
+
+// A duplicate barcode in the payload is refused — "the new order" is
+// ambiguous once a barcode appears twice.
+func TestCloudSetQuickButtonLayout_DuplicateBarcodeRefused(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+
+	if _, err := cloudSetQuickButtonLayout(ctx, dp, []string{"b1", "b1", "b2"}); err == nil {
+		t.Fatalf("expected refusal for a duplicate barcode")
+	}
+	got := quickButtonOrder(t, dp)
+	want := []string{"b1", "b2", "b3"}
+	if len(got) != len(want) {
+		t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order changed on refusal: %v, want unchanged %v", got, want)
+		}
+	}
+}
+
+// The hook set StartCloudSync wires carries SetQuickButtonLayout, and the
+// DeviceExtra report includes the applied layout (barcode + label, in sort
+// order) so the cloud's layout panel can pre-fill from real state.
+func TestBuildCloudHooks_WiresQuickButtonLayout(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+	hooks := buildCloudHooks(dp, nil)
+
+	if hooks.SetQuickButtonLayout == nil {
+		t.Fatalf("SetQuickButtonLayout hook not wired")
+	}
+	if _, err := hooks.SetQuickButtonLayout(ctx, []string{"b2", "b3", "b1"}); err != nil {
+		t.Fatalf("wired SetQuickButtonLayout: %v", err)
+	}
+	got := quickButtonOrder(t, dp)
+	want := []string{"b2", "b3", "b1"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("wired order = %v, want %v", got, want)
+		}
+	}
+
+	extra := hooks.DeviceExtra(ctx)
+	qb, ok := extra["quick_buttons"].([]map[string]any)
+	if !ok {
+		t.Fatalf("quick_buttons missing or wrong type in DeviceExtra: %#v", extra["quick_buttons"])
+	}
+	if len(qb) != 3 {
+		t.Fatalf("quick_buttons length = %d, want 3", len(qb))
+	}
+	wantOrder := []string{"b2", "b3", "b1"}
+	for i, code := range wantOrder {
+		if qb[i]["barcode"] != code {
+			t.Fatalf("quick_buttons[%d] = %+v, want barcode %q", i, qb[i], code)
+		}
+		// sort_order must mirror this entry's actual position — the cloud
+		// side decodes it into QuickButtonReport.SortOrder independently of
+		// the report's own array order (ut-docs#2321 review).
+		if so, ok := qb[i]["sort_order"].(int); !ok || so != i {
+			t.Fatalf("quick_buttons[%d][\"sort_order\"] = %#v, want %d", i, qb[i]["sort_order"], i)
+		}
+	}
+	for _, k := range []string{"theme", "themes", "problems", "till_settings"} {
+		if _, present := extra[k]; !present {
+			t.Fatalf("existing DeviceExtra field %q lost", k)
+		}
+	}
+}
+
+// --- cloudUpdateItemDetails ---
+
+// seedFullDetailItem creates one category and one brand row (satisfying the
+// FK columns, PRAGMA foreign_keys is ON for every till DB) and a catalog
+// item with every partial-update-eligible field AND every out-of-scope
+// field (category/brand/tax code) set to a real, non-default value, so a
+// test can prove a single-field update leaves everything else — including
+// name/price/category/brand/tax-code — exactly as it was.
+func seedFullDetailItem(t *testing.T, dp *common.Deps) catalogtypes.ItemInput {
+	t.Helper()
+	ctx := t.Context()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO categories(id, name, color) VALUES ('cat-full', 'Full Cat', '#4338ca')`); err != nil {
+		t.Fatalf("seed category: %v", err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO brands(id, name) VALUES ('brand-full', 'Full Brand')`); err != nil {
+		t.Fatalf("seed brand: %v", err)
+	}
+	catID, brandID, taxID := "cat-full", "brand-full", "tax_std"
+	in := catalogtypes.ItemInput{
+		SKU:            "ORIG-SKU",
+		Name:           "Original Name",
+		BasePrice:      1234,
+		Unit:           "kg",
+		CategoryID:     &catID,
+		BrandID:        &brandID,
+		TaxCodeID:      &taxID,
+		IsWeighed:      true,
+		Description:    "Original description",
+		IsActive:       true,
+		StockUntracked: true,
+		Color:          "#0f766e",
+	}
+	id, err := data.NewCatalogRepo(dp.Db).CreateItem(ctx, in)
+	if err != nil {
+		t.Fatalf("seed item: %v", err)
+	}
+	in.ID = id
+	return in
+}
+
+func assertItemUnchangedExcept(t *testing.T, dp *common.Deps, before catalogtypes.ItemInput, changed map[string]bool) {
+	t.Helper()
+	after, ok, err := data.NewCatalogRepo(dp.Db).GetItem(t.Context(), before.ID)
+	if err != nil || !ok {
+		t.Fatalf("re-read item: ok=%v err=%v", ok, err)
+	}
+	check := func(field string, want bool, eq bool) {
+		if changed[field] {
+			return
+		}
+		if !eq {
+			t.Fatalf("field %q changed but was not expected to: before=%+v after=%+v", field, before, after)
+		}
+	}
+	check("sku", false, after.SKU == before.SKU)
+	check("name", false, after.Name == before.Name)
+	check("base_price", false, after.BasePrice == before.BasePrice)
+	check("unit", false, after.Unit == before.Unit)
+	check("description", false, after.Description == before.Description)
+	check("color", false, after.Color == before.Color)
+	check("is_weighed", false, after.IsWeighed == before.IsWeighed)
+	check("stock_untracked", false, after.StockUntracked == before.StockUntracked)
+	check("is_active", false, after.IsActive == before.IsActive)
+	beforeCat, afterCat := "", ""
+	if before.CategoryID != nil {
+		beforeCat = *before.CategoryID
+	}
+	if after.CategoryID != nil {
+		afterCat = *after.CategoryID
+	}
+	check("category_id", false, afterCat == beforeCat)
+	beforeBrand, afterBrand := "", ""
+	if before.BrandID != nil {
+		beforeBrand = *before.BrandID
+	}
+	if after.BrandID != nil {
+		afterBrand = *after.BrandID
+	}
+	check("brand_id", false, afterBrand == beforeBrand)
+	beforeTax, afterTax := "", ""
+	if before.TaxCodeID != nil {
+		beforeTax = *before.TaxCodeID
+	}
+	if after.TaxCodeID != nil {
+		afterTax = *after.TaxCodeID
+	}
+	check("tax_code_id", false, afterTax == beforeTax)
+}
+
+func strp(s string) *string { return &s }
+func boolp(b bool) *bool    { return &b }
+
+// TestCloudUpdateItemDetails_SkuOnlyLeavesEverythingElseUnchanged is the
+// crux test for this directive's whole reason to exist: a payload that
+// names only `sku` must be a TRUE partial update, not a full-item
+// overwrite. The seeded item has non-default values in every other
+// updatable field, plus the three fields this card explicitly does NOT
+// touch (category/brand/tax code, ADR-0095 Decision 2 / ut-docs#2354) — all
+// of those must survive the read-modify-write untouched too.
+func TestCloudUpdateItemDetails_SkuOnlyLeavesEverythingElseUnchanged(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	before := seedFullDetailItem(t, dp)
+
+	msg, err := cloudUpdateItemDetails(ctx, dp, before.ID, strp("NEW-SKU"), nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("cloudUpdateItemDetails: %v", err)
+	}
+	if msg != "details updated: sku" {
+		t.Fatalf("msg = %q, want %q", msg, "details updated: sku")
+	}
+
+	after, ok, err := data.NewCatalogRepo(dp.Db).GetItem(ctx, before.ID)
+	if err != nil || !ok {
+		t.Fatalf("re-read item: ok=%v err=%v", ok, err)
+	}
+	if after.SKU != "NEW-SKU" {
+		t.Fatalf("sku = %q, want NEW-SKU", after.SKU)
+	}
+	assertItemUnchangedExcept(t, dp, before, map[string]bool{"sku": true})
+}
+
+// A multi-field payload updates exactly those fields and nothing else.
+func TestCloudUpdateItemDetails_MultipleFieldsUpdateOnlyThose(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	before := seedFullDetailItem(t, dp)
+
+	msg, err := cloudUpdateItemDetails(ctx, dp, before.ID, nil, strp("New description"), nil, strp("#be185d"), boolp(false), nil)
+	if err != nil {
+		t.Fatalf("cloudUpdateItemDetails: %v", err)
+	}
+	if msg != "details updated: description, color, is_weighed" {
+		t.Fatalf("msg = %q", msg)
+	}
+
+	after, ok, err := data.NewCatalogRepo(dp.Db).GetItem(ctx, before.ID)
+	if err != nil || !ok {
+		t.Fatalf("re-read item: ok=%v err=%v", ok, err)
+	}
+	if after.Description != "New description" || after.Color != "#be185d" || after.IsWeighed {
+		t.Fatalf("after = %+v", after)
+	}
+	assertItemUnchangedExcept(t, dp, before, map[string]bool{"description": true, "color": true, "is_weighed": true})
+}
+
+// An off-palette colour is refused, and — matching cloudUpsertCategory's
+// validate-before-write order — writes nothing at all, not even the other
+// fields that rode along in the same payload.
+func TestCloudUpdateItemDetails_InvalidColorRejectedWritesNothing(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	before := seedFullDetailItem(t, dp)
+
+	_, err := cloudUpdateItemDetails(ctx, dp, before.ID, strp("SHOULD-NOT-STICK"), nil, nil, strp("#ff0000"), nil, nil)
+	if err == nil {
+		t.Fatalf("expected an error for an off-palette colour")
+	}
+
+	after, ok, err := data.NewCatalogRepo(dp.Db).GetItem(ctx, before.ID)
+	if err != nil || !ok {
+		t.Fatalf("re-read item: ok=%v err=%v", ok, err)
+	}
+	if after.SKU != before.SKU || after.Color != before.Color {
+		t.Fatalf("refused call must write nothing: before=%+v after=%+v", before, after)
+	}
+}
+
+func TestCloudUpdateItemDetails_UnknownItemIDFailsCleanly(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudUpdateItemDetails(ctx, dp, "no-such-item", strp("X"), nil, nil, nil, nil, nil); err == nil {
+		t.Fatalf("expected an error for an unknown item_id")
+	}
+}
+
+func TestCloudUpdateItemDetails_NoFieldsIsANoOp(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	before := seedFullDetailItem(t, dp)
+
+	msg, err := cloudUpdateItemDetails(ctx, dp, before.ID, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("cloudUpdateItemDetails with no fields: %v", err)
+	}
+	if msg != "no changes" {
+		t.Fatalf("msg = %q, want %q", msg, "no changes")
+	}
+	assertItemUnchangedExcept(t, dp, before, nil)
+}
+
+// The genuine concurrent-write regression test for ut-docs#2324 review
+// finding S1 (UpdateItemPartial's own BEGIN IMMEDIATE transaction must
+// serialize against a concurrent single-column writer) lives at
+// internal/data.TestUpdateItemPartialConcurrentRace — a sequential
+// same-goroutine test at this layer cannot actually interleave a write
+// between cloudUpdateItemDetails's read and write, so it would pass
+// identically whether or not the transaction existed (verified directly:
+// reverting UpdateItemPartial to a non-transactional GetItem+UpdateItem
+// still passed a sequential version of this test). The data-package test
+// uses real goroutines against a file-backed database to force the race.
+
+// TestCloudUpdateItemDetails_BlankSkuAndUnitAreNoOps is the regression test
+// for ut-docs#2324 review finding S3: updateItemExec's own SQL makes a
+// blank sku a true no-op but silently DEFAULTS a blank unit to "each" —
+// neither is a meaningful "clear this field" request, so a directive
+// carrying only blank sku/unit values must report "no changes" and write
+// nothing, never falsely claim (or audit) a change that didn't happen.
+func TestCloudUpdateItemDetails_BlankSkuAndUnitAreNoOps(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	before := seedFullDetailItem(t, dp)
+
+	msg, err := cloudUpdateItemDetails(ctx, dp, before.ID, strp("  "), nil, strp(""), nil, nil, nil)
+	if err != nil {
+		t.Fatalf("cloudUpdateItemDetails: %v", err)
+	}
+	if msg != "no changes" {
+		t.Fatalf("msg = %q, want %q (blank sku/unit must not count as a change)", msg, "no changes")
+	}
+	assertItemUnchangedExcept(t, dp, before, nil)
+
+	var count int
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM audit_log WHERE entity_type = 'item' AND entity_id = ? AND action = 'cloud_item_details_updated'`,
+		before.ID,
+	).Scan(&count); err != nil {
+		t.Fatalf("query audit_log: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("blank sku/unit must not write an audit row, found %d", count)
+	}
+}
+
+// items is an admin-synced table (primary-wins pull) — same
+// requirePrimaryDirective gate every other catalog-mutating directive has
+// (ut-docs#2353).
+func TestCloudUpdateItemDetails_RefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	before := seedFullDetailItem(t, dp)
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	if _, err := cloudUpdateItemDetails(ctx, dp, before.ID, strp("SHOULD-NOT-STICK"), nil, nil, nil, nil, nil); err == nil {
+		t.Fatalf("expected cloudUpdateItemDetails to refuse on a replica till")
+	}
+
+	after, ok, err := data.NewCatalogRepo(dp.Db).GetItem(ctx, before.ID)
+	if err != nil || !ok {
+		t.Fatalf("re-read item: ok=%v err=%v", ok, err)
+	}
+	if after.SKU != before.SKU {
+		t.Fatalf("sku must not change on a replica till, got %q", after.SKU)
+	}
+}
+
+func TestCloudUpdateItemDetails_WritesAuditRowWithOnlyProvidedFields(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	before := seedFullDetailItem(t, dp)
+
+	if _, err := cloudUpdateItemDetails(ctx, dp, before.ID, strp("NEW-SKU"), nil, nil, strp("#be185d"), nil, nil); err != nil {
+		t.Fatalf("cloudUpdateItemDetails: %v", err)
+	}
+
+	var actorID, payloadJSON string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT actor_id, data_json FROM audit_log WHERE entity_type = 'item' AND entity_id = ? AND action = 'cloud_item_details_updated'`,
+		before.ID,
+	).Scan(&actorID, &payloadJSON); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if actorID != "system" {
+		t.Fatalf("expected actor_id 'system', got %q", actorID)
+	}
+	if !strings.Contains(payloadJSON, `"sku"`) || !strings.Contains(payloadJSON, `"color"`) {
+		t.Fatalf("payload missing provided fields: %s", payloadJSON)
+	}
+	for _, absent := range []string{`"description"`, `"unit"`, `"is_weighed"`, `"stock_untracked"`} {
+		if strings.Contains(payloadJSON, absent) {
+			t.Fatalf("payload must omit absent fields, found %s: %s", absent, payloadJSON)
+		}
+	}
+}
+
+func TestBuildCloudHooks_WiresUpdateItemDetails(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	before := seedFullDetailItem(t, dp)
+	hooks := buildCloudHooks(dp, nil)
+	if hooks.UpdateItemDetails == nil {
+		t.Fatalf("UpdateItemDetails hook not wired")
+	}
+	if _, err := hooks.UpdateItemDetails(ctx, before.ID, nil, nil, nil, strp("#ff0000"), nil, nil); err == nil {
+		t.Fatalf("wired UpdateItemDetails must enforce the colour palette")
+	}
+	msg, err := hooks.UpdateItemDetails(ctx, before.ID, strp("WIRED-SKU"), nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("wired UpdateItemDetails: %v", err)
+	}
+	if msg != "details updated: sku" {
+		t.Fatalf("msg = %q", msg)
+	}
+	after, ok, err := data.NewCatalogRepo(dp.Db).GetItem(ctx, before.ID)
+	if err != nil || !ok || after.SKU != "WIRED-SKU" {
+		t.Fatalf("wired update did not stick: ok=%v err=%v after=%+v", ok, err, after)
+	}
+}
+
+// --- cloudUpsertModifierGroup ---
+
+// TestCloudUpsertModifierGroup_CreatesGroupWithOptions: CREATE-ONLY (no id
+// in the payload at all — ut-docs#2322, ADR-0095 Decision 1, the same scope
+// cut cloudUpsertCategory shipped with), so this is the only shape: attach
+// a NEW group, with its options, to an existing item — the same
+// NextGroupSortOrderForItem -> CreateGroup -> CreateOption sequence a local
+// admin creator would use.
+func TestCloudUpsertModifierGroup_CreatesGroupWithOptions(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	msg, err := cloudUpsertModifierGroup(ctx, dp, "itm1", "Extras", true, 1, 2, []cloudsync.ModifierGroupOption{
+		{Name: "Cheese", PriceDeltaMinor: 150},
+		{Name: "Bacon", PriceDeltaMinor: 200},
+	})
+	if err != nil {
+		t.Fatalf("cloudUpsertModifierGroup: %v", err)
+	}
+	if !strings.Contains(msg, "Extras") {
+		t.Fatalf("unexpected message: %q", msg)
+	}
+
+	groups, err := data.NewModifierRepo(dp.Db).ListAllGroupsForItem(ctx, "itm1")
+	if err != nil {
+		t.Fatalf("ListAllGroupsForItem: %v", err)
+	}
+	var group *data.ModifierGroup
+	for i := range groups {
+		if groups[i].Name == "Extras" {
+			group = &groups[i]
+		}
+	}
+	if group == nil {
+		t.Fatalf("expected an Extras group to exist, got %+v", groups)
+	}
+	if !group.Required || group.MinSelect != 1 || group.MaxSelect != 2 {
+		t.Fatalf("created group = %+v", group)
+	}
+	if len(group.Options) != 2 {
+		t.Fatalf("expected 2 options, got %+v", group.Options)
+	}
+	byName := map[string]int64{}
+	for _, o := range group.Options {
+		byName[o.Name] = o.PriceDeltaMinor
+	}
+	if byName["Cheese"] != 150 || byName["Bacon"] != 200 {
+		t.Fatalf("option prices = %+v", byName)
+	}
+}
+
+// A group may be created with zero options, exactly like the till's own
+// data.ModifierRepo.CreateGroup — this must not be treated as an error.
+func TestCloudUpsertModifierGroup_ZeroOptionsIsValid(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudUpsertModifierGroup(ctx, dp, "itm1", "Bare Group", false, 0, 1, nil); err != nil {
+		t.Fatalf("cloudUpsertModifierGroup: %v", err)
+	}
+	groups, err := data.NewModifierRepo(dp.Db).ListAllGroupsForItem(ctx, "itm1")
+	if err != nil {
+		t.Fatalf("ListAllGroupsForItem: %v", err)
+	}
+	for _, g := range groups {
+		if g.Name == "Bare Group" {
+			if len(g.Options) != 0 {
+				t.Fatalf("expected no options, got %+v", g.Options)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected a Bare Group group to exist, got %+v", groups)
+}
+
+func TestCloudUpsertModifierGroup_UnknownItemFails(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudUpsertModifierGroup(ctx, dp, "no-such-item", "Extras", false, 0, 1, nil); err == nil {
+		t.Fatalf("expected an error for an unknown item_id")
+	}
+	groups, err := data.NewModifierRepo(dp.Db).ListShopModifierGroups(ctx)
+	if err != nil {
+		t.Fatalf("ListShopModifierGroups: %v", err)
+	}
+	for _, g := range groups {
+		if g.Name == "Extras" {
+			t.Fatalf("no group must be created for an unknown item")
+		}
+	}
+}
+
+// The till validates min_select/max_select independently of the cloud
+// (ut-docs#2322; "validate all external input" — same posture
+// cloudUpsertCategory's own colour check takes).
+func TestCloudUpsertModifierGroup_InvalidMinMaxFails(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	for _, tc := range []struct {
+		name      string
+		minSelect int
+		maxSelect int
+	}{
+		{"negative min", -1, 1},
+		{"negative max", 0, -1},
+		{"min greater than max", 3, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := cloudUpsertModifierGroup(ctx, dp, "itm1", "Bad Range", false, tc.minSelect, tc.maxSelect, nil); err == nil {
+				t.Fatalf("expected an error for min=%d max=%d", tc.minSelect, tc.maxSelect)
+			}
+		})
+	}
+	groups, err := data.NewModifierRepo(dp.Db).ListShopModifierGroups(ctx)
+	if err != nil {
+		t.Fatalf("ListShopModifierGroups: %v", err)
+	}
+	for _, g := range groups {
+		if g.Name == "Bad Range" {
+			t.Fatalf("no group must be created for a refused min/max")
+		}
+	}
+}
+
+// A negative option price is refused independently of the cloud's own
+// check, matching data.ModifierRepo.CreateOption's own "additive-only"
+// rule — and nothing partial is left behind.
+func TestCloudUpsertModifierGroup_NegativeOptionPriceFails(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudUpsertModifierGroup(ctx, dp, "itm1", "Bad Option", false, 0, 1, []cloudsync.ModifierGroupOption{
+		{Name: "Discount", PriceDeltaMinor: -50},
+	}); err == nil {
+		t.Fatalf("expected an error for a negative price_delta_minor")
+	}
+	groups, err := data.NewModifierRepo(dp.Db).ListShopModifierGroups(ctx)
+	if err != nil {
+		t.Fatalf("ListShopModifierGroups: %v", err)
+	}
+	for _, g := range groups {
+		if g.Name == "Bad Option" {
+			t.Fatalf("no group must be created when an option is refused")
+		}
+	}
+}
+
+// TestCloudUpsertModifierGroup_RefusedOnReplica: item_modifier_groups is an
+// admin-synced table (sync_admin_repo.go's adminTables), same reasoning as
+// every other catalog-mutating directive (ut-docs#2353) — a directive
+// landing on a replica till must be refused, or the created row silently
+// vanishes on the next admin pull.
+func TestCloudUpsertModifierGroup_RefusedOnReplica(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+
+	if _, err := cloudUpsertModifierGroup(ctx, dp, "itm1", "Replica Group", false, 0, 1, nil); err == nil {
+		t.Fatalf("expected cloudUpsertModifierGroup to refuse on a replica till")
+	}
+	groups, err := data.NewModifierRepo(dp.Db).ListShopModifierGroups(ctx)
+	if err != nil {
+		t.Fatalf("ListShopModifierGroups: %v", err)
+	}
+	for _, g := range groups {
+		if g.Name == "Replica Group" {
+			t.Fatalf("group must not be created on a replica till")
+		}
+	}
+}
+
+func TestCloudUpsertModifierGroup_WritesAuditRow(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudUpsertModifierGroup(ctx, dp, "itm1", "Audited Group", false, 0, 1, nil); err != nil {
+		t.Fatalf("cloudUpsertModifierGroup: %v", err)
+	}
+	groups, err := data.NewModifierRepo(dp.Db).ListAllGroupsForItem(ctx, "itm1")
+	if err != nil {
+		t.Fatalf("ListAllGroupsForItem: %v", err)
+	}
+	var groupID string
+	for _, g := range groups {
+		if g.Name == "Audited Group" {
+			groupID = g.ID
+		}
+	}
+	if groupID == "" {
+		t.Fatalf("expected Audited Group to exist")
+	}
+
+	var actorID string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT actor_id FROM audit_log WHERE entity_type = 'modifier_group' AND entity_id = ? AND action = 'cloud_modifier_group_created'`,
+		groupID,
+	).Scan(&actorID); err != nil {
+		t.Fatalf("expected an audit row: %v", err)
+	}
+	if actorID != "system" {
+		t.Fatalf("expected actor_id 'system', got %q", actorID)
+	}
+}
+
+// Directives are at-least-once: a retried create (same item, same name)
+// must not produce a duplicate group — same "already exists counts as
+// success" rule cloudCreateItem/cloudUpsertCategory apply. Name match is
+// case-insensitive, matching cloudUpsertCategory's own dedupe.
+func TestCloudUpsertModifierGroup_CreateRetryDoesNotDuplicate(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudUpsertModifierGroup(ctx, dp, "itm1", "Extras", false, 0, 1, []cloudsync.ModifierGroupOption{{Name: "Cheese", PriceDeltaMinor: 100}}); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	for _, name := range []string{"Extras", "extras", " EXTRAS "} {
+		msg, err := cloudUpsertModifierGroup(ctx, dp, "itm1", name, true, 5, 6, []cloudsync.ModifierGroupOption{{Name: "Bacon", PriceDeltaMinor: 999}})
+		if err != nil {
+			t.Fatalf("retry %q: %v", name, err)
+		}
+		if !strings.Contains(msg, "already exists") {
+			t.Fatalf("retry %q msg = %q, want an 'already exists' note", name, msg)
+		}
+	}
+
+	groups, err := data.NewModifierRepo(dp.Db).ListAllGroupsForItem(ctx, "itm1")
+	if err != nil {
+		t.Fatalf("ListAllGroupsForItem: %v", err)
+	}
+	n := 0
+	var found *data.ModifierGroup
+	for i := range groups {
+		if strings.EqualFold(groups[i].Name, "Extras") {
+			n++
+			found = &groups[i]
+		}
+	}
+	if n != 1 {
+		t.Fatalf("retry duplicated: %d groups named Extras, want 1", n)
+	}
+	// The retry is a no-op, not a silent edit of the existing row's rules.
+	if found.Required || found.MinSelect != 0 || found.MaxSelect != 1 {
+		t.Fatalf("existing group changed by retried create: %+v", found)
+	}
+	if len(found.Options) != 1 || found.Options[0].Name != "Cheese" {
+		t.Fatalf("existing group's options changed by retried create: %+v", found.Options)
+	}
+}
+
+// The hook set StartCloudSync wires carries UpsertModifierGroup, and it is
+// the validating hook (not a bare repo call).
+func TestBuildCloudHooks_WiresUpsertModifierGroup(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	hooks := buildCloudHooks(dp, nil)
+	if hooks.UpsertModifierGroup == nil {
+		t.Fatalf("UpsertModifierGroup hook not wired")
+	}
+	if _, err := hooks.UpsertModifierGroup(ctx, "itm1", "Wired Group", false, 0, 1, nil); err != nil {
+		t.Fatalf("wired UpsertModifierGroup: %v", err)
+	}
+	groups, err := data.NewModifierRepo(dp.Db).ListAllGroupsForItem(ctx, "itm1")
+	if err != nil {
+		t.Fatalf("ListAllGroupsForItem: %v", err)
+	}
+	for _, g := range groups {
+		if g.Name == "Wired Group" {
+			return
+		}
+	}
+	t.Fatalf("wired UpsertModifierGroup did not create the group, groups = %+v", groups)
+}
+
+// 2026-09-17 review (ut-docs#2322): the dedupe scan reads
+// ListAllGroupsForItem, which deliberately INCLUDES deactivated groups. It
+// must still only treat an ACTIVE same-named group as "already applied" —
+// exactly like cloudUpsertCategory's own `c.IsActive &&` filter. Otherwise
+// a group the merchant retired at the till would block every future
+// cloud-side create of that name forever, while the portal was told the
+// directive applied.
+func TestCloudUpsertModifierGroup_DeactivatedGroupDoesNotBlockCreate(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	modRepo := data.NewModifierRepo(dp.Db)
+
+	if _, err := cloudUpsertModifierGroup(ctx, dp, "itm1", "Extras", false, 0, 1, nil); err != nil {
+		t.Fatalf("first create: %v", err)
+	}
+	groups, err := modRepo.ListAllGroupsForItem(ctx, "itm1")
+	if err != nil {
+		t.Fatalf("ListAllGroupsForItem: %v", err)
+	}
+	var oldID string
+	for _, g := range groups {
+		if g.Name == "Extras" {
+			oldID = g.ID
+		}
+	}
+	if oldID == "" {
+		t.Fatalf("expected the first Extras group to exist")
+	}
+	// Retire it at the till, the way the local admin editor does.
+	if err := modRepo.UpdateGroup(ctx, oldID, "Extras", false, 0, 1, 0, false); err != nil {
+		t.Fatalf("deactivate: %v", err)
+	}
+
+	msg, err := cloudUpsertModifierGroup(ctx, dp, "itm1", "Extras", false, 0, 1,
+		[]cloudsync.ModifierGroupOption{{Name: "Cheese", PriceDeltaMinor: 150}})
+	if err != nil {
+		t.Fatalf("create after deactivation: %v", err)
+	}
+	if strings.Contains(msg, "already exists") {
+		t.Fatalf("a deactivated group must not count as already applied, msg = %q", msg)
+	}
+	groups, err = modRepo.ListAllGroupsForItem(ctx, "itm1")
+	if err != nil {
+		t.Fatalf("ListAllGroupsForItem: %v", err)
+	}
+	active := 0
+	for _, g := range groups {
+		if g.Name == "Extras" && g.IsActive {
+			active++
+			if len(g.Options) != 1 || g.Options[0].Name != "Cheese" {
+				t.Fatalf("new group's options = %+v", g.Options)
+			}
+		}
+	}
+	if active != 1 {
+		t.Fatalf("expected exactly one ACTIVE Extras group, got %d (all: %+v)", active, groups)
+	}
+}
+
+// 2026-09-17 review (ut-docs#2322): CreateGroup is transactional in itself,
+// but the per-option CreateOption calls after it are separate statements. A
+// real DB error partway through must NOT leave a half-created group behind
+// — the name dedupe would then report the next at-least-once retry as
+// "already exists", cementing the missing options forever. The trigger here
+// stands in for that DB error (SQLITE_BUSY, disk I/O) deterministically.
+func TestCloudUpsertModifierGroup_OptionFailureRollsBackTheGroup(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `
+CREATE TRIGGER trg_test_boom BEFORE INSERT ON item_modifier_options
+WHEN NEW.name = 'BOOM'
+BEGIN
+    SELECT RAISE(ABORT, 'boom');
+END;`); err != nil {
+		t.Fatalf("install failure trigger: %v", err)
+	}
+
+	_, err := cloudUpsertModifierGroup(ctx, dp, "itm1", "Extras", false, 0, 2, []cloudsync.ModifierGroupOption{
+		{Name: "Cheese", PriceDeltaMinor: 150},
+		{Name: "BOOM", PriceDeltaMinor: 200},
+	})
+	if err == nil {
+		t.Fatalf("expected the failing option insert to surface as an error")
+	}
+
+	var groups, options int
+	if err := dp.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM item_modifier_groups WHERE name = 'Extras'`).Scan(&groups); err != nil {
+		t.Fatalf("count groups: %v", err)
+	}
+	if groups != 0 {
+		t.Fatalf("half-created group left behind: %d rows", groups)
+	}
+	if err := dp.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM item_modifier_options WHERE name = 'Cheese'`).Scan(&options); err != nil {
+		t.Fatalf("count options: %v", err)
+	}
+	if options != 0 {
+		t.Fatalf("orphaned option rows left behind: %d", options)
+	}
+	var links int
+	if err := dp.Db.QueryRowContext(ctx, `SELECT COUNT(*) FROM item_modifier_group_links WHERE item_id = 'itm1'`).Scan(&links); err != nil {
+		t.Fatalf("count links: %v", err)
+	}
+	if links != 0 {
+		t.Fatalf("orphaned link rows left behind: %d", links)
+	}
+
+	// And the retry (once the fault clears) creates the group cleanly
+	// rather than being waved through by the name dedupe.
+	if _, err := dp.Db.ExecContext(ctx, `DROP TRIGGER trg_test_boom`); err != nil {
+		t.Fatalf("drop failure trigger: %v", err)
+	}
+	if _, err := cloudUpsertModifierGroup(ctx, dp, "itm1", "Extras", false, 0, 2, []cloudsync.ModifierGroupOption{
+		{Name: "Cheese", PriceDeltaMinor: 150},
+		{Name: "BOOM", PriceDeltaMinor: 200},
+	}); err != nil {
+		t.Fatalf("retry after the fault cleared: %v", err)
+	}
+	all, err := data.NewModifierRepo(dp.Db).ListAllGroupsForItem(ctx, "itm1")
+	if err != nil {
+		t.Fatalf("ListAllGroupsForItem: %v", err)
+	}
+	for _, g := range all {
+		if g.Name == "Extras" {
+			if len(g.Options) != 2 {
+				t.Fatalf("retry left an incomplete group: %+v", g.Options)
+			}
+			return
+		}
+	}
+	t.Fatalf("retry did not create the group, groups = %+v", all)
+}
+
+// 2026-09-17 review (ut-docs#2322): a cloud-created group must land inside
+// the same envelope the LOCAL admin creator enforces
+// (catalog/handlers.go's POST /api/catalog/modifier-group): max_select at
+// least 1, and a "required" group asking for at least one pick. The
+// sale-time validator (pos_modifiers_api.go) checks only MinSelect/
+// MaxSelect and never Required, so required+min_select=0 would show the
+// picker's "*" while still letting the pick be skipped server-side.
+func TestCloudUpsertModifierGroup_NormalisesRequiredAndMaxSelect(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudUpsertModifierGroup(ctx, dp, "itm1", "Size", true, 0, 1, nil); err != nil {
+		t.Fatalf("required group: %v", err)
+	}
+	if _, err := cloudUpsertModifierGroup(ctx, dp, "itm1", "Sauce", false, 0, 0, nil); err != nil {
+		t.Fatalf("zero max_select group: %v", err)
+	}
+	groups, err := data.NewModifierRepo(dp.Db).ListAllGroupsForItem(ctx, "itm1")
+	if err != nil {
+		t.Fatalf("ListAllGroupsForItem: %v", err)
+	}
+	byName := map[string]data.ModifierGroup{}
+	for _, g := range groups {
+		byName[g.Name] = g
+	}
+	if g := byName["Size"]; g.MinSelect != 1 || g.MaxSelect != 1 || !g.Required {
+		t.Fatalf("a required group must ask for at least one pick, got %+v", g)
+	}
+	if g := byName["Sauce"]; g.MinSelect != 0 || g.MaxSelect != 1 {
+		t.Fatalf("max_select must be clamped to at least 1, got %+v", g)
+	}
+}
+
+// The till re-validates option names itself rather than trusting the cloud's
+// own check (the cloudsync decoder only TRIMS a name, it does not reject a
+// blank one) — and nothing is written when it refuses.
+func TestCloudUpsertModifierGroup_BlankOptionNameFails(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := cloudUpsertModifierGroup(ctx, dp, "itm1", "Blank Option", false, 0, 1, []cloudsync.ModifierGroupOption{
+		{Name: "Cheese", PriceDeltaMinor: 100},
+		{Name: "   ", PriceDeltaMinor: 0},
+	}); err == nil {
+		t.Fatalf("expected an error for a blank option name")
+	}
+	groups, err := data.NewModifierRepo(dp.Db).ListShopModifierGroups(ctx)
+	if err != nil {
+		t.Fatalf("ListShopModifierGroups: %v", err)
+	}
+	for _, g := range groups {
+		if g.Name == "Blank Option" {
+			t.Fatalf("no group must be created when an option is refused")
+		}
 	}
 }

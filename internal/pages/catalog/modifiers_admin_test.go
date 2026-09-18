@@ -299,7 +299,7 @@ func TestCatalogModifiersPanel_MutationsRefusedOnReplica(t *testing.T) {
 	mux := http.NewServeMux()
 	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}, Settings: st})
 
-	wantMsg := "manage customization options on the primary till"
+	wantMsg := "manage Modifiers on the primary till" // ut-docs#2211 rename
 
 	groupForm := "panelItem=itm1&itemId=itm1&name=Extras&isActive=1&minSelect=0&maxSelect=2"
 	req := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group", strings.NewReader(groupForm))
@@ -462,15 +462,15 @@ func TestModifierGroupDetach_RemovesOnlyThisItemsLink(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	// Milk is no longer one of itm-b's OWN linked/editable groups (those
-	// render as an <input value="...">) — but it legitimately reappears as
-	// an attach-picker <option>, since it's now unlinked from itm-b and
+	// Milk is no longer one of itm-b's OWN linked groups (those render as a
+	// read-only <span> name, ut-docs#2330) — but it legitimately reappears
+	// as an attach-picker checkbox, since it's now unlinked from itm-b and
 	// still active elsewhere (itm-a).
-	if strings.Contains(rec.Body.String(), `value="Milk"`) {
+	if strings.Contains(rec.Body.String(), `class="modifier-admin-group-name">Milk<`) {
 		t.Fatal("itm-b's fragment must no longer show the detached group as one of its own linked groups")
 	}
-	if !strings.Contains(rec.Body.String(), ">Milk<") {
-		t.Fatal("expected the just-detached group to reappear in itm-b's attach picker")
+	if !strings.Contains(rec.Body.String(), `<input type="checkbox" name="groupId" value="g-milk">`) {
+		t.Fatal("expected the just-detached group to reappear as a checkbox in itm-b's attach picker")
 	}
 
 	var linkCount int

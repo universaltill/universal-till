@@ -192,7 +192,7 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			payTotal = b.Total
 		}
 		data := map[string]any{
-			"title":      "Universal Till",
+			"title":      "Universal Till", // i18n:ignore -- brand name, stays Latin in every locale (ut-docs#2297)
 			"saleScreen": true,
 			// ut-docs#2193: one-shot success banner for a redirect that just
 			// carried a notice (currently only /open-orders' own resume
@@ -255,4 +255,22 @@ func saleScreenReturnURL(mode string) string {
 	default:
 		return "/"
 	}
+}
+
+// saleScreenReturnURLWithMsg composes saleScreenReturnURL(mode) with an
+// optional one-shot banner key (httpx.QueryMsgKey's own "?msg=" convention,
+// ut-docs#2148) -- a caller carrying a message (e.g. open_orders_page.go's
+// auto-park notice, ut-docs#2347) must not lose it just because backoffice
+// mode's own target already carries "?stay=1", which a bare "?msg=" append
+// would silently clobber.
+func saleScreenReturnURLWithMsg(mode, msgKey string) string {
+	target := saleScreenReturnURL(mode)
+	if msgKey == "" {
+		return target
+	}
+	sep := "?"
+	if strings.Contains(target, "?") {
+		sep = "&"
+	}
+	return target + sep + "msg=" + msgKey
 }

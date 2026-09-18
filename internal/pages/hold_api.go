@@ -95,7 +95,7 @@ const (
 // does -- a second, slightly different parking code path is exactly how the
 // #1381 dine-in/takeaway fix or the #1918 stable-identity upsert would end
 // up covered on one path and not the other.
-func parkCurrentBasket(ctx context.Context, d *common.Deps, repo *data.HeldSalesRepo, typedLabel string) error {
+func parkCurrentBasket(ctx context.Context, d *common.Deps, repo *data.HeldSalesRepo, typedLabel, locale string, autoPark bool) error {
 	snap := d.Engine.Snapshot()
 	payload, err := json.Marshal(snap)
 	if err != nil {
@@ -146,7 +146,19 @@ func parkCurrentBasket(ctx context.Context, d *common.Deps, repo *data.HeldSales
 			label = strings.TrimSpace(snap.CustomerName)
 		}
 		if label == "" {
-			label = time.Now().Format("15:04")
+			if autoPark {
+				// ut-docs#2194: an auto-park (resumeHeldSale switching
+				// baskets, ut-docs#1919) can fire more than once inside the
+				// same clock-minute -- unlike a manual Hold, there's no
+				// typing delay separating two such events -- so this path
+				// gets seconds resolution and an explicit, translated
+				// prefix, keeping two such rows from ever sharing the
+				// sale-screen strip's label. A genuine manual Hold below
+				// keeps the plain "15:04" it always had.
+				label = fmt.Sprintf(httpx.T(locale, "hold.label.auto_parked"), time.Now().Format("15:04:05"))
+			} else {
+				label = time.Now().Format("15:04")
+			}
 		}
 		held.ID = fmt.Sprintf("hold-%d", time.Now().UnixNano())
 		held.Label = label
@@ -188,7 +200,7 @@ func parkCurrentBasket(ctx context.Context, d *common.Deps, repo *data.HeldSales
 // shares it rather than duplicating it -- it carries the ut-docs#820 table
 // re-resolution and the ut-docs#1390 claim handling, and those must never
 // exist in two places that can drift apart.
-func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRepo, posRepo *data.POSRepo, id string) resumeOutcome {
+func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRepo, posRepo *data.POSRepo, id, locale string) resumeOutcome {
 	if id == "" {
 		return resumeNotFound
 	}
@@ -225,7 +237,7 @@ func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 		// must never discard whatever the cashier already had rung up,
 		// and this reuses the existing, well-tested Hold path rather
 		// than adding a second concurrent-basket concept to the engine.
-		if err := parkCurrentBasket(ctx, d, repo, ""); err != nil {
+		if err := parkCurrentBasket(ctx, d, repo, "", locale, true); err != nil {
 			return resumeFailed
 		}
 		parkedPrior = true
@@ -463,7 +475,7 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		// accepted for a live basket's claim, not a new one. A healthy
 		// till's routine ~30s admin-sync poll keeps last_seen_at fresh
 		// throughout an ordinary hold, however long the table sits parked.
-		if err := parkCurrentBasket(ctx, d, repo, typed); err != nil {
+		if err := parkCurrentBasket(ctx, d, repo, typed, locale, false); err != nil {
 			renderBasket(w, r, httpx.T(locale, "hold.error.failed"), "error")
 			return
 		}
@@ -477,7 +489,7 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		locale := httpx.ResolveLocale(w, r)
 		_ = r.ParseForm()
 		id := strings.TrimSpace(r.Form.Get("id"))
-		switch resumeHeldSale(ctx, d, repo, posRepo, id) {
+		switch resumeHeldSale(ctx, d, repo, posRepo, id, locale) {
 		case resumeNotFound:
 			renderBasket(w, r, httpx.T(locale, "hold.error.not_found"), "error")
 		case resumeFailed:

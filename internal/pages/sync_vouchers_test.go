@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -29,10 +28,7 @@ import (
 
 func newSyncVouchersTestDeps(t *testing.T) (*http.ServeMux, *common.Deps, *db.DB) {
 	t.Helper()
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "sync_vouchers.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := &db.DB{DB: openPagesTestDB(t)}
 	t.Cleanup(func() { dbase.Close() })
 
 	dp := &common.Deps{Db: dbase.DB}

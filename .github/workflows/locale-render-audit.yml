@@ -1,0 +1,136 @@
+name: locale-render-audit
+
+# German (de) render audit (ut-docs#2300): renders every admin/help-topic
+# page route in German via the real e2e Playwright harness, against a till
+# with the ut-plugin-language-de pack loaded through the test-only
+# UT_TEST_I18N_OVERLAY_DIR escape hatch (internal/pages/init.go), and fails
+# on visible English text outside e2e/tests-i18n-audit/allowlist.json.
+# Today this replaces a manual crawl.
+#
+# `de` is NOT a core-shipped locale (web/locales/ only has en/ar/fa/tr); it
+# lives in the external ut-plugin-language-de repo, outside this repo's
+# control — same class of cross-repo dependency lang-pack-drift.yml already
+# solves for, and this workflow deliberately mirrors that file's shape:
+# its own separate workflow (never a step in ci.yml's build job), paths:-
+# scoped PR trigger, checks the pack repo's own main out directly
+# (persist-credentials: false, contents: read only — least privilege, since
+# it runs against a repo we don't push-control).
+#
+# IMPORTANT DIFFERENCE from lang-pack-drift.yml's own advisory-only PR
+# design: that workflow forces exit 0 on PRs because pack DRIFT (a
+# translation the pack hasn't caught up on yet) is not necessarily this
+# repo's fault. That reasoning does NOT apply here. A genuine finding from
+# this workflow — a rendered page showing English text that also exists as
+# a real web/locales/en.json value — is 100% a universal-till-side bug: both
+# the offending Go/template code and en.json itself live in THIS repo; only
+# the German *translation value* comes from the external pack. So this
+# workflow is meant to fail for real on a genuine finding, on both PR and
+# push — do not "fix" it to force-green on PRs the way lang-pack-drift.yml
+# does; that would defeat the point of the card.
+#
+# Note (reviewer, 2026-09-18) that this job is therefore hard-failing end to
+# end, including on the pack checkout: UT_LOCALE_AUDIT_STRICT=1 below turns
+# audit-locale-render.sh's dev-machine-friendly "pack not on disk, skip"
+# path into an error, and the checkout step itself has no
+# continue-on-error. So a transiently unreachable pack repo reds this job
+# too. That is deliberate here (a silent skip is what ut-docs#2152 got
+# burned by), but it is NOT the "soft, non-blocking" handling an earlier
+# draft of this comment described — there is none.
+#
+# push: branches: [main] for the same reason lang-pack-drift.yml gives:
+# universal-till gets pushed to constantly, so this trigger can never go
+# 60-day-stale the way a lone `schedule:` cron in a quiet repo can.
+on:
+  pull_request:
+    paths:
+      - 'scripts/ci/audit-locale-render.sh'
+      - 'e2e/tests-i18n-audit/**'
+      - 'e2e/playwright.locale-audit.config.ts'
+      - 'internal/pages/init.go'
+      # The overlay loader init.go's hook calls — a change here changes what
+      # the audit actually renders against (reviewer, 2026-09-18).
+      - 'internal/pages/i18n_test_overlay.go'
+      - 'web/locales/en.json'
+      - '.github/workflows/locale-render-audit.yml'
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+# WARNING: never add this job as a required status check in branch
+# protection in THIS PR — that is a separate, human-owned settings decision.
+# Same reasoning as lang-pack-drift.yml/adr-taxonomy-guard: `paths:` above
+# means most PRs get NO check run at all for this job, which a required-
+# status-check gate reads as "waiting forever", making those PRs
+# permanently unmergeable.
+permissions:
+  contents: read
+
+jobs:
+  locale-render-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Least-privilege, same shape as lang-pack-drift.yml's own pack
+      # fetch: contents: read only, no push-capable credential persisted —
+      # this checks out a repo we don't push-control.
+      #
+      # Checked out INSIDE the workspace (and handed to the script via
+      # UT_DE_PACK_DIR below), not as a real sibling: actions/checkout
+      # rejects any `path:` that resolves outside $GITHUB_WORKSPACE, so
+      # `path: ../ut-plugin-language-de` fails the step outright. Same
+      # in-workspace-checkout + env-var convention ci.yml's taxonomy guards
+      # already use for their own ut-docs checkout (DOCS_DIR).
+      - name: Checkout ut-plugin-language-de
+        uses: actions/checkout@v4
+        with:
+          repository: universaltill/ut-plugin-language-de
+          ref: main
+          path: ut-plugin-language-de
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Cache the Playwright browser download between runs, same pattern as
+      # e2e.yml.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('e2e/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+      - name: Install deps
+        working-directory: e2e
+        run: |
+          npm ci
+          # Runner images don't ship a pre-installed Chromium the way this
+          # repo's own sandbox does (no /opt/pw-browsers) — the real install
+          # step, copied verbatim from e2e.yml.
+          npx playwright install --with-deps chromium
+
+      - name: German (de) render audit
+        env:
+          # Where the step above put the pack: workspace-relative, resolved
+          # against the repo root by the script.
+          UT_DE_PACK_DIR: ut-plugin-language-de
+          # The dedicated CI workflow always checks the pack out first (the
+          # step above), so a missing pack at this point is a real
+          # precondition failure, not a dev-machine-friendly skip — see
+          # scripts/ci/audit-locale-render.sh's own UT_LOCALE_AUDIT_STRICT
+          # branch.
+          UT_LOCALE_AUDIT_STRICT: "1"
+        run: bash scripts/ci/audit-locale-render.sh
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: locale-render-audit-playwright-report
+          path: e2e/playwright-report/
+          retention-days: 7

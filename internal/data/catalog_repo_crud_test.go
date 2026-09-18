@@ -2,9 +2,11 @@ package data_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
@@ -161,6 +163,28 @@ func TestGetItemLabel(t *testing.T) {
 	}
 }
 
+func TestGetItemLabel_StripsRetireMangledSKU(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	// items.sku is a mangle-eligible unique column (sync_admin_repo.go's
+	// adminTables), so an FK-blocked retire-in-place mangles it to
+	// "<sku>~<id>" exactly like item_variants.sku — same gap, same
+	// POST /api/print/labels caller, one function up in this file
+	// (found reviewing ut-docs#2355's GetVariantLabel fix).
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "SKU1~i1", Name: "Latte", BasePrice: 320, IsActive: false})
+
+	l, ok, err := repo.GetItemLabel(ctx, "i1")
+	if err != nil || !ok {
+		t.Fatalf("expected label, got ok=%v err=%v", ok, err)
+	}
+	if l.Code != "SKU1" {
+		t.Fatalf("expected retire-mangle stripped from sku, got %q", l.Code)
+	}
+}
+
 func TestItemExists(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
 	defer db.Close()
@@ -224,6 +248,29 @@ func TestGetVariantLabel(t *testing.T) {
 
 	if _, ok, err := repo.GetVariantLabel(ctx, "missing"); err != nil || ok {
 		t.Fatalf("expected ok=false for a missing variant, got ok=%v err=%v", ok, err)
+	}
+}
+
+func TestGetVariantLabel_StripsRetireMangledSKU(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Latte", BasePrice: 300, IsActive: true})
+	// A retired-in-place variant carries deleteMissing's FK-blocked retire
+	// mangle on its sku ("<sku>~<id>") — same premise as
+	// TestVariantsForItem_StripsRetireMangledSKU above, but read through
+	// GetVariantLabel (ut-docs#2355), which POST /api/print/labels calls
+	// directly with a client-supplied variant_id and no active-state filter.
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v1", ItemID: "i1", SKU: "S1-S~v1", Name: "Small", Price: 250, IsActive: false})
+
+	l, ok, err := repo.GetVariantLabel(ctx, "v1")
+	if err != nil || !ok {
+		t.Fatalf("expected label, got ok=%v err=%v", ok, err)
+	}
+	if l.Code != "S1-S" {
+		t.Fatalf("expected retire-mangle stripped from sku, got %q", l.Code)
 	}
 }
 
@@ -583,6 +630,81 @@ func TestSetItemPrice_FallsBackFromItemToVariant(t *testing.T) {
 	}
 	if err := repo.SetItemPrice(ctx, "does-not-exist", 100); err == nil {
 		t.Fatal("expected an error when neither an item nor a variant matches")
+	}
+}
+
+// TestSetItemPrice_UpdatesPriceHistory is ut-docs#2314's cloud-directive
+// counterpart to the catalog-form edit tests in
+// catalog_repo_price_history_edit_2314_test.go: the cloud's SetItemPrice
+// remote-price directive (ADR-0018) must ALSO end the currently active
+// price_history row and start a new one — for both the item branch and the
+// variant fallback branch — and must NOT touch price_history at all when
+// the price didn't actually change.
+func TestSetItemPrice_UpdatesPriceHistory(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	posRepo := data.NewPOSRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Item", BasePrice: 100, IsActive: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v1", ItemID: "i1", SKU: "S1-V", Name: "Variant", Price: 150, IsActive: true})
+
+	past := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	if _, err := db.Exec(`INSERT INTO price_history(id, item_id, price, starts_at) VALUES('ph-item','i1',180,?)`, past); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO price_history(id, variant_id, price, starts_at) VALUES('ph-var','v1',275,?)`, past); err != nil {
+		t.Fatal(err)
+	}
+
+	// Item branch: 199 differs from the active row's 180, so the old row
+	// must close and a new one must open.
+	if err := repo.SetItemPrice(ctx, "i1", 199); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := posRepo.ResolveCurrentPrice(ctx, "i1", ""); err != nil || got != 199 {
+		t.Fatalf("expected resolved item price 199, got %d err=%v", got, err)
+	}
+	var itemEnds sql.NullString
+	if err := db.QueryRow(`SELECT ends_at FROM price_history WHERE id = 'ph-item'`).Scan(&itemEnds); err != nil {
+		t.Fatal(err)
+	}
+	if !itemEnds.Valid {
+		t.Fatal("expected the old item price_history row to be closed (ends_at set)")
+	}
+
+	// Variant fallback branch (the id is a variant's, not an item's): 299
+	// differs from the active row's 275, same close-and-append.
+	if err := repo.SetItemPrice(ctx, "v1", 299); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := posRepo.ResolveCurrentPrice(ctx, "", "v1"); err != nil || got != 299 {
+		t.Fatalf("expected resolved variant price 299, got %d err=%v", got, err)
+	}
+	var varEnds sql.NullString
+	if err := db.QueryRow(`SELECT ends_at FROM price_history WHERE id = 'ph-var'`).Scan(&varEnds); err != nil {
+		t.Fatal(err)
+	}
+	if !varEnds.Valid {
+		t.Fatal("expected the old variant price_history row to be closed (ends_at set)")
+	}
+
+	// No-op directive (resubmits the currently resolved price) must not
+	// create a spurious new price_history row.
+	var before int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM price_history`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetItemPrice(ctx, "i1", 199); err != nil {
+		t.Fatal(err)
+	}
+	var after int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM price_history`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("expected no new price_history row when SetItemPrice resubmits the unchanged current price, before=%d after=%d", before, after)
 	}
 }
 

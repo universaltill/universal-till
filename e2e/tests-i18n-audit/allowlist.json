@@ -1,0 +1,46 @@
+[
+  {
+    "text": "GitHub",
+    "reason": "brand name, never translated — same entry audit-nav-i18n-parity.sh's own ALLOWLIST already documents for nav.github"
+  },
+  {
+    "text": "Plugins",
+    "reason": "established tech loanword in de POS UIs — same entry audit-nav-i18n-parity.sh's own ALLOWLIST already documents for nav.plugins"
+  },
+  {
+    "text": "Plugin",
+    "reason": "singular form of the same established tech loanword as \"Plugins\" above (fiscaldevice.plugin.title) — de.json's own value, not a fallback"
+  },
+  {
+    "text": "Universal Till",
+    "reason": "the product name (app.name, plugins.trust.official) — product names are never translated, in any locale"
+  },
+  {
+    "text": "Online",
+    "reason": "established loanword in German tech UIs (status.online) — identical to English in de.json's own value, not a fallback"
+  },
+  {
+    "text": "Screenshot (optional)",
+    "reason": "\"Screenshot\" and \"optional\" are both established German loanwords/cognates (issuereport.screenshot_label) — de.json's own value, not a fallback"
+  },
+  {
+    "text": "Name",
+    "reason": "\"Name\" is a native German word, spelled identically (catalog.col.name and 7 sibling *.col.name/col_name keys) — de.json's own value, not a fallback"
+  },
+  {
+    "text": "Code",
+    "reason": "established loanword in German tech/retail UIs (designer.code, promotions.col.code, and siblings) — de.json's own value, not a fallback"
+  },
+  {
+    "text": "Symbol",
+    "reason": "\"Symbol\" is spelled identically in German (countrysettings.col.symbol) — de.json's own value, not a fallback"
+  },
+  {
+    "text": "Logo",
+    "reason": "established loanword in German, spelled identically (designer.receipt.logo_title) — de.json's own value, not a fallback"
+  },
+  {
+    "text": "Backups",
+    "reason": "established loanword in German tech UIs (settings.backup.title) — de.json's own value, not a fallback"
+  }
+]

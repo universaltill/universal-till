@@ -218,6 +218,17 @@ body.tracking-screen { -webkit-user-select: text; user-select: text; }
    a 360px screen, and that width class already has its own settled,
    independently-tested layout not worth re-litigating here. */
 :root { --rail-width: 4.5rem; }
+/* ut-docs#2364: the <=480px top-bar fallback (see the big media block
+   below) wraps to a variable number of rows depending on content/locale
+   -- currently 3 at 360px -- so anything anchored below it needs the
+   REAL rendered height, not a guessed rem value (a guessed 4.6rem, tuned
+   for an old 2-row bar, is exactly what caused this bug). Same pattern as
+   public/osk.js's --osk-reserved-height: a small IIFE in app.js measures
+   .nav's real getBoundingClientRect().height and overwrites this via
+   documentElement.style.setProperty. This fallback is a safe pre-JS
+   guess (roughly the measured 3-row height) so there's no flash of
+   overlap before that first measurement lands. */
+:root { --topbar-h: 12rem; }
 .nav {
   background: var(--brand); color: #fff;
   padding: .6rem .5rem;
@@ -338,6 +349,44 @@ html[data-nav-dir="pop"]::view-transition-old(root) { animation-name: ut-page-ou
    content that's already there. */
 .ut-swap-fx { animation: ut-swap-in 150ms ease-out both; }
 @keyframes ut-swap-in { from { opacity: .55; } to { opacity: 1; } }
+
+/* ut-docs#2338: the rail-driven in-panel swaps (#items-panel, #admin-panel,
+   #manual-panel -- master-detail navigation, not a live update) get a
+   slightly longer version of the generic .ut-swap-fx ease above, on the
+   SAME safe opacity-only shape -- deliberately never a directional
+   transform. A first cut of this rule used `transform: translateX(...)`
+   for a page-slide-like feel and was caught in independent review before
+   merge (ut-docs#2338's own review record): the swapped panel sits inside
+   `<main>`, which hosts `.record-dialog`/`.item-form-modal`
+   (`position: fixed` descendants, ut-docs#2010) -- ANY non-`none`
+   `transform` on an ancestor makes it their containing block, the exact
+   hazard ADR-0097 rule 2 already names for `view-transition-name` and
+   already broke once for real. Swapping the mechanism (CSS transform
+   instead of the View Transition API) doesn't avoid that hazard, it just
+   hides from the one guard (TestAppCSSNamesOnlyTheFixedRailAndStatusbar)
+   written to catch the View-Transition-API shape of it. Starting from
+   opacity 0 was ALSO a separate violation on its own -- ADR-0097 rule 5
+   requires the swap ease be "readable from frame one, never a flash to
+   blank", which is exactly what .ut-swap-fx's own .55-start already
+   gets right. So: opacity-only, same .55 start, just a touch longer
+   (180ms vs .ut-swap-fx's 150ms) as the one intentional difference.
+   app.js's htmx:afterSettle listener applies this class instead of
+   .ut-swap-fx for these three targets specifically. */
+.ut-panel-fx { animation: ut-panel-in 180ms ease-out both; }
+@keyframes ut-panel-in { from { opacity: .55; } to { opacity: 1; } }
+
+/* ut-docs#2010 / ut-docs#2338: a record-dialog.js standard dialog fades and
+   scales in on open -- zero added latency, dialog.show() already ran
+   synchronously beforehand (record-dialog.js), this only eases the very
+   next frames. Deliberately NOT applied to close(): delaying the native
+   .close() to let an exit animation finish would add latency to
+   Cancel/Save, which ADR-0097's rule 1 forbids on a cashier-facing
+   surface. Uniform scale, so RTL needs nothing extra. */
+.ut-dialog-fx { animation: ut-dialog-in 150ms ease-out both; }
+@keyframes ut-dialog-in {
+  from { opacity: 0; transform: scale(.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
 
 /* Reduced motion: ONE block, kills everything -- the new view-transition
    rules above AND every pre-existing `transition:`/`animation:` rule
@@ -782,6 +831,35 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
 .modifier-admin-options { margin-block-start: .35rem; }
 .modifier-admin-group-new { border: 1px dashed var(--border); border-radius: var(--radius);
                              padding: .6rem .75rem; }
+/* ut-docs#2330: item-editor attach-only multi-select — a checkbox list, not
+   a native <select multiple> (touch browsers handle multi-select poorly).
+   .modifier-admin-options-list reuses .modifier-inherited-options' own
+   flex-basis so the two read-only rows (own groups here, inherited groups
+   further down this file) size their comma-separated option text the same
+   way. .modifier-attach-option gets the full stack's own column layout so
+   each checkbox row is a full-width tap target, not just the checkbox
+   itself — same 44px floor as .held-chip/.modifier-option elsewhere in this
+   file, kiosk included (this row is plain flex, not an <input>/<select>, so
+   body.kiosk's own min-height rules for those two elements don't reach it). */
+/* Independent-review finding: this rule was missing entirely, so the name
+   span fell back to flex's own 0 1 auto default next to
+   .modifier-admin-options-list's 2 1 12rem sibling above — shrinking to
+   content, losing weight, and not lining up with .modifier-inherited-name
+   directly below it in the DOM despite the doc comment above claiming
+   parity. Same values as that class. */
+.modifier-admin-group-name { flex: 1 1 10rem; min-inline-size: 8rem; font-weight: 600; }
+.modifier-admin-options-list { flex: 2 1 12rem; font-size: .85rem; }
+.modifier-admin-attach-multi { flex-direction: column; align-items: stretch; }
+/* Reset the browser's own default fieldset/legend chrome (border, inset
+   padding) — this is a layout grouping for screen readers, not a visual
+   frame; `.catalog-detail-label`'s own rule already gives the legend its
+   text styling. */
+.modifier-attach-fieldset { border: 0; margin: 0; padding: 0; min-inline-size: 0; }
+.modifier-attach-fieldset legend { padding: 0; }
+.modifier-attach-option { display: flex; flex-direction: row; align-items: center; gap: .5rem;
+                           min-height: 44px; padding-inline: .25rem; }
+.modifier-attach-option input[type="checkbox"] { inline-size: 1.25rem; block-size: 1.25rem;
+                                                  flex: none; }
 /* ---------- Option sets (ut-docs#1900) ---------- */
 /* The item panel's apply/generate block, above the variant grid. Flex-wrap
    so the checkbox row folds cleanly at 360px; logical properties only. */
@@ -981,6 +1059,19 @@ label.field-checks { display: flex; flex-direction: row; align-items: center; ga
 .modifier-groups-head { flex: none; display: flex; flex-direction: column; gap: .4rem;
                         padding: .6rem 1.5rem 0; border-block-end: 1px solid var(--border);
                         background: var(--surface); }
+/* ut-docs#2330: the dialog's OWN body never had a scroll container before
+   this card (pre-existing gap — `#modifier-groups-modal-list` had no rule
+   at all, unlike `.catalog-form-body`'s documented head/body layering just
+   above). It only got away with that while the attach control was a
+   collapsed <select> and the CRUD forms were the only content; the new
+   always-expanded checkbox list can make this dialog considerably taller on
+   a shop with several modifier groups, which would silently overflow the
+   dialog's own 86vh cap (`.modifier-groups-modal`) with no way to reach the
+   Attach button below the fold. Same flex/overflow shape as
+   .catalog-form-body, own selector since #modifier-groups-modal-list is an
+   id (the hx-swap target), not that class. */
+#modifier-groups-modal-list { flex: 1 1 auto; min-block-size: 0; overflow-y: auto;
+                               overflow-x: hidden; padding: 0 1.5rem 1rem; }
 /* One row at 1024×600 (the kiosk floor), wrapping into two at phone width:
    the title+delete group and the action group each keep their own
    children on one line; only the two GROUPS wrap relative to each other. */
@@ -2197,14 +2288,19 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
    same reasoning .payment-overlay's own z-index comment above gives. */
 #hold-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 550; }
 #hold-label-input { width: 100%; margin-block: .5rem .75rem; }
-/* ut-docs#2282: same non-modal .show() treatment as #hold-modal/#pfand-modal
-   above and for the identical reason (the custom on-screen keyboard must
-   stay reachable, even though this dialog itself needs no typing -- the
-   whole sale screen stays consistent on the point). 500, not #hold-modal's
-   550 bump: this dialog is only ever opened BEFORE #payment-overlay (the
-   "at Pay" placement gates opening the overlay until a choice is made), so
-   the two never coexist and there is nothing here to clear. */
-#order-type-prompt-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
+/* ut-docs#2371: unlike #hold-modal/#pfand-modal above, this dialog needs
+   NO TYPING at all -- there's no text field anywhere in it, so the
+   custom-on-screen-keyboard-must-stay-reachable reason those two use
+   .show() for does not apply here. It stays a real, native top-layer
+   modal: showModal() (app.js), centred by the UA's own `dialog:modal`
+   styles, with no position/inset overrides of any kind -- and
+   deliberately no left/right literals either (RTL). It inherits
+   .modifier-modal::backdrop (rgba(15, 23, 42, .45), declared above) for
+   free, same as #modifier-modal itself. Before this it opened non-modally
+   at a fixed 8vh offset like its .show() siblings, which (ut-docs#2371's
+   bug report) left the rest of the sale screen tappable underneath it and
+   let #modifier-modal's own showModal() paint OVER it whenever both
+   opened together. */
 /* Keep the payout dialog out of the native top layer: the custom on-screen
    keyboard is appended to <body> and must remain clickable while it is open. */
 #pfand-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
@@ -2323,7 +2419,17 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
    row layout, which is deliberately NOT in this card.
    align-items: flex-end = inline-end in a column
    flex, so the pair hugs the cell's end edge in LTR and RTL alike. */
-.line-inputs { display: flex; flex-direction: column; align-items: flex-end; gap: .25rem; }
+/* ut-docs#2217: .25rem -> .15rem. Three stacked children now (qty-input,
+   the +/- stepper row, disc-input), not two -- an unchanged .25rem gap
+   would apply TWICE, adding .25rem (~4.5px) more height than before this
+   card ever asked for. Trimmed to .15rem, which was enough (with no other
+   change) to clear sale-screen-213.spec.ts's ">=4 rows visible" AC again
+   after the stepper row's own real height pushed row height right to that
+   AC's edge -- measured live: 4 rows needed <=508.91px of the panel's
+   543.59px box, and at .25rem this design summed to 511.5px, 2.59px over
+   (row 4's bottom edge past the box by exactly that amount); .15rem
+   brings it to a genuinely passing margin, not a razor-thin one. */
+.line-inputs { display: flex; flex-direction: column; align-items: flex-end; gap: .15rem; }
 /* line-height 1.2 (matching .line-name's own) + .25rem vertical padding:
    with the ut-docs#1314 stacked pair, the INPUTS are what set row height
    (they outgrow the 2-line-clamped item text), and the inherited 1.45
@@ -2398,6 +2504,37 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
 .qty-input { width: 3.4rem; padding: .25rem .3rem; font-size: .85rem; line-height: 1.2; }
 .disc-input { width: 3.4rem; padding: .25rem .3rem; font-size: .8rem; line-height: 1.2; }
 .btn-x { padding: .3rem .4rem; font-size: .8rem; min-height: 0; }
+/* ut-docs#2217: the +/- stepper is its OWN row, the same 3.4rem width as
+   .qty-input/.disc-input above and below it — NOT flanking .qty-input
+   horizontally. Three width attempts were tried in that flanking shape
+   (square 2.6rem buttons; 1.8rem buttons; 1.4rem buttons + a shrunk
+   qty-input) and every one of them, even the narrowest, still grew the
+   qty column's reserved rem budget past 4.3rem and re-clipped a real
+   19-26 char product name below what basket-item-name-width-1314.spec.ts
+   requires — measured directly: at a mere 5.6rem column (barely over
+   4.3rem), .line-name's available width was still only 90px, and the
+   test needs ~113px (extrapolated from measured scrollHeight-vs-width
+   pairs at three column widths). The ITEM column has essentially NO
+   horizontal slack left for this table to give, full stop — not "not
+   quite enough", genuinely none, confirmed by the FULL e2e suite (the
+   three specs an earlier pass ran directly don't cover this file at
+   all). But the qty/disc column was ALREADY the taller of the two
+   siblings sharing this row (measured: .line-inputs 78.9px vs .line-item
+   63.6px) before this card touched anything — so it has real, unused
+   vertical room a horizontal-only design never spent. A row of two
+   buttons AT the existing 3.4rem width, splitting it via flex:1, uses
+   that vertical room instead and costs the qty column's reserved WIDTH
+   nothing — table-layout:fixed's column width stays exactly 4.3rem,
+   unchanged from before this card, verified by re-running
+   basket-item-name-width-1314/1338, basket-no-horizontal-scroll-391 and
+   sale-screen-213 all green. Height (2.6rem, 44.2px at --fluid-fs's
+   measured floor of 17px) clears 44px at every supported viewport; each
+   button's own width (flex:1 of 3.4rem minus one gap, ~1.65rem/~29px)
+   clears WCAG 2.5.8's real 24px floor with room to spare, and this
+   codebase already treats its touch-target floor as height-only
+   elsewhere anyway (.btn-touch sets only min-height, no min-width). */
+.qty-stepper { display: flex; width: 3.4rem; gap: .2rem; }
+.qty-step-btn { flex: 1; min-height: 2.6rem; padding: 0; font-size: 1.1rem; line-height: 1; border-radius: 6px; }
 
 .order-type-row { display: flex; align-items: center; gap: .5rem; margin-bottom: .6rem; }
 /* 2026-08-31 (product owner, live on the tablet, ut-docs#1379): a compact
@@ -2507,11 +2644,21 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
       everywhere else: regressed ut-docs#213's own ">=4 basket lines
       visible without scrolling at 1280x800" (narrower item column ->
       more names hit their 2-line clamp -> taller rows -> fewer fit).
-   The fix that actually holds: reserve qty+discount (4.3rem since
-   ut-docs#1314 stacked the two inputs vertically — one 3.4rem input wide
-   + .35rem*2 cell padding + .2rem headroom; was 8rem for the
-   side-by-side pair: two 3.4rem inputs + .25rem gap + cell padding),
-   price (4rem) and total
+   The fix that actually holds: reserve qty+discount (still 4.3rem, even
+   after ut-docs#2217 added a +/- stepper row into the same column — see
+   .qty-stepper's own comment for why the qty/disc column's reserved WIDTH
+   didn't need to change at all: three earlier attempts that flanked
+   .qty-input with buttons horizontally each needed a wider column, and
+   each one, even the narrowest, re-clipped a real product name below
+   what basket-item-name-width-1314.spec.ts requires — this table's ITEM
+   column turned out to have no horizontal slack left to give, full stop.
+   The shipped design instead stacks the stepper as a same-width third row
+   below .qty-input, spending vertical room this column already had
+   unused rather than new horizontal room it didn't have. Original
+   ut-docs#1314 sizing unchanged: one 3.4rem-wide qty-input + .35rem*2 cell
+   padding + .2rem headroom = 4.3rem; was 8rem for the pre-#1314
+   side-by-side qty/discount pair: two 3.4rem inputs + .25rem gap + cell
+   padding), price (4rem) and total
    (4rem) as explicit REM sized to their real content — including the
    PRICE/TOTAL header labels themselves, which need more room than the
    data amounts do — and remove
@@ -2657,6 +2804,22 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
                          ".    qty   price total remove";
     border-bottom: 1px solid var(--border);
   }
+  /* ut-docs#2217: the +/- stepper pair is deliberately NOT shown at this
+     tier. Unlike an earlier (abandoned) design, the shipped stepper costs
+     the qty column's reserved WIDTH nothing at any width — see
+     .qty-stepper's own comment above — so there's no column-budget
+     collision here any more (the >480px path also reserves 4.3rem now,
+     matching this tier's own grid-template-columns "qty" track exactly,
+     with no override needed). What's still a genuine fit problem at THIS
+     tier specifically is HEIGHT: qty/disc/stepper share a single packed
+     grid row here with price/total/remove (unlike the >480px table, where
+     item gets its own row so a taller qty/disc column doesn't touch it),
+     and this tier's own column-budget history above (+132px overflow at
+     scale 1.5, +294px at scale 2, even before this card) says that packed
+     row has no headroom to spare either. .qty-input stays the only qty
+     control here, exactly as it already was; filed as its own follow-up
+     rather than solved by guesswork under this card. */
+  .qty-step-btn { display: none; }
   /* tbody, not a bare :last-child: `display: block` on thead makes its
      single header row a :last-child too, so the un-scoped rule silently
      removed the header/body separator entirely (measured: thead tr
@@ -3878,6 +4041,16 @@ body.login-screen {
   margin-inline-start: .5rem;
 }
 .statusbar a.sb-plugin-update:hover { background: #22c55e; }
+/* Language-pack-specific update chip (ut-docs#2299) — same green pill as
+   sb-plugin-update above; a separate class only so it can render alongside
+   it (a joined till can have both a pending language pack AND some other
+   pending plugin type at once) and be targeted/tested independently. */
+.statusbar .sb-language-pack-update {
+  color: #052e16; background: #4ade80; text-decoration: none;
+  padding: .05rem .5rem; border-radius: 999px; font-weight: 700;
+  margin-inline-start: .5rem;
+}
+.statusbar a.sb-language-pack-update:hover { background: #22c55e; }
 /* ut-docs#413: confirmed live at 360px — `.statusbar`'s row (conn chip +
    the optional enrol/update pills + the version, none of it wrapping)
    needs more width than a phone viewport has. Wrapping the bar itself
@@ -3900,7 +4073,12 @@ body.login-screen {
   .statusbar .sb-update,
   .statusbar .sb-enrol,
   .statusbar .sb-power,
-  .statusbar .sb-plugin-update {
+  .statusbar .sb-plugin-update,
+  /* ut-docs#2299: sb-language-pack-update's own text ("Language pack
+     update available") is longer than sb-plugin-update's, and its
+     ar/fa/tr translations are comparable in length — same overflow risk
+     this block already exists to cap, so it gets the same treatment. */
+  .statusbar .sb-language-pack-update {
     overflow: hidden; text-overflow: ellipsis; max-inline-size: 70vw;
   }
 }
@@ -4177,8 +4355,12 @@ body.login-screen {
 .bugreport-panel.open { display: block; }
 @media (max-width: 480px) {
   /* Restores the pre-rail clearance for the top-bar fallback, which still
-     occupies real vertical space at this width (see .nav's own comment). */
-  .bugreport-panel { inset-block-start: 4.6rem; }
+     occupies real vertical space at this width (see .nav's own comment).
+     ut-docs#2364: was a hardcoded 4.6rem (tuned for an old 2-row bar) --
+     the bar now wraps to 3 rows at this width and the panel's head bar
+     opened hidden underneath it. --topbar-h (declared above, kept live by
+     app.js) tracks the bar's REAL height instead of guessing it. */
+  .bugreport-panel { inset-block-start: calc(var(--topbar-h) + .5rem); }
 }
 /* ut-docs#395: draggable so the operator can shift the panel off whatever
    it's covering. touch-action: none stops the kiosk touchscreen's own
@@ -4187,7 +4369,11 @@ body.login-screen {
    selection behaviour — it's a tap target, not part of the drag surface. */
 .bugreport-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem;
   cursor: move; touch-action: none; user-select: none; }
-.bugreport-head h2 { margin: 0; font-size: 1rem; }
+.bugreport-head h2 { margin: 0; font-size: 1rem; flex: 1 1 auto; }
+/* ut-docs#2342: Discard sits in the head next to ✕ — small, secondary, and
+   it must not steal the drag handle's width from the title on the 26rem
+   panel ("Verwerfen"/"Descartar" are the long ones). */
+.bugreport-head .bugreport-discard { flex: 0 0 auto; padding-block: .25rem; padding-inline: .6rem; font-size: .85rem; min-block-size: 2.1rem; }
 .bugreport-close { background: none; border: 0; cursor: pointer; font-size: 1.1rem;
   color: var(--muted, #64748b); padding: .25rem .5rem; border-radius: .4rem;
   touch-action: auto; user-select: auto; }

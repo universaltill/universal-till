@@ -638,7 +638,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// all, not merely be visually hidden).
 		showDataCard := isManager || sampleCount > 0 || len(pendingBasePluginRows) > 0 || restorePromptDeferred
 		data := map[string]any{
-			"title":       "Settings",
+			"title":       httpx.T(httpx.RequestLocale(r), "page.title.settings"),
 			"theme":       st.Theme,
 			"themes":      availableThemes(r.Context(), d),
 			"settings":    st,
@@ -2409,6 +2409,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 			d.SetState(st)
+			// ut-docs#2362: live-republish, same shape as httpx.InitCurrency
+			// after the currency card's own d.SetState below — without it
+			// RenderError keeps rendering the PREVIOUS theme (or none) on
+			// this till until its next restart.
+			httpx.InitTheme(st.Theme)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -2850,6 +2855,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			if err := d.Settings.Set(r.Context(), common.KeyCurrencyConfirmed, "true"); err != nil {
 				logging.L().Errorf("settings: mark currency confirmed: %v", err)
 			}
+		case common.KeyTheme:
+			// ut-docs#2362, same class of gap as ut-docs#2121's display.mode
+			// case below: this generic key/value door set s.Theme above but
+			// never republished it to httpx, so RenderError kept the PREVIOUS
+			// theme (or none) until restart when a theme was changed through
+			// this table instead of the dedicated /api/settings/theme handler.
+			httpx.InitTheme(st.Theme)
 		case common.KeyLocale:
 			// Live-apply here too (ut-docs#861 review F2) — same
 			// unconditional-on-current-value shape as InitCurrency above;

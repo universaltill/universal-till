@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -148,7 +149,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 		httpx.RenderPartial("ui/pages/self_order_shop.html", map[string]any{
-			"title":         "Order here",
+			"title":         httpx.T(httpx.RequestLocale(r), "page.title.order_here"),
 			"Categories":    cats,
 			"idleResetSecs": d.CurrentState().KioskIdleResetSeconds,
 			"idleResetURL":  idleResetURL,
@@ -307,7 +308,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		qty := 0.0
 		if v := strings.TrimSpace(r.Form.Get("delta")); v != "" {
 			delta, err := strconv.ParseFloat(v, 64)
-			if err != nil {
+			if err != nil || math.IsNaN(delta) || math.IsInf(delta, 0) {
 				http.Error(w, "invalid delta", http.StatusBadRequest)
 				return
 			}
@@ -321,7 +322,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 				qty = 0
 			}
 		} else if v := r.Form.Get("qty"); v != "" {
-			if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 {
+			if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 && !math.IsInf(f, 0) {
 				qty = f
 			}
 		}

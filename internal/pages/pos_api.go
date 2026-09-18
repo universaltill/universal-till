@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -1065,8 +1066,36 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		qty := 0.0
-		if v := r.Form.Get("qty"); v != "" {
-			if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 {
+		// ut-docs#2217: the basket's +/- stepper buttons post a relative
+		// delta (key-addressed only, same as /api/self-order/line already
+		// does — self_order_shop.go) rather than an absolute qty, so the
+		// template needs no client-side arithmetic. delta wins over qty
+		// when both are somehow present, but only on the key-addressed
+		// path — a code-only request with a stray delta param falls
+		// through to the absolute-qty branch below unchanged, same as
+		// before this card; the shipped buttons always send key. An
+		// unparseable OR non-finite delta (NaN/±Inf — ut-docs#2383:
+		// strconv.ParseFloat accepts those literal strings with no error,
+		// and NaN/Inf then rendered the whole basket total as £0.00) is a
+		// real 400, mirroring the self-order twin (not reachable from the
+		// UI: this endpoint is authenticated, unlike /api/self-order/line).
+		if v := strings.TrimSpace(r.Form.Get("delta")); v != "" && key != "" {
+			delta, err := strconv.ParseFloat(v, 64)
+			if err != nil || math.IsNaN(delta) || math.IsInf(delta, 0) {
+				http.Error(w, "invalid delta", http.StatusBadRequest)
+				return
+			}
+			for _, l := range d.Engine.Basket().Lines {
+				if l.LineKey == key {
+					qty = l.Qty + delta
+					break
+				}
+			}
+			if qty < 0 {
+				qty = 0
+			}
+		} else if v := r.Form.Get("qty"); v != "" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 && !math.IsInf(f, 0) {
 				qty = f
 			}
 		}

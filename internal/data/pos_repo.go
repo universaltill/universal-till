@@ -7806,13 +7806,18 @@ func (r *POSRepo) ResolveCurrentPrice(ctx context.Context, itemID, variantID str
 }
 
 func (r *POSRepo) lookupPriceHistory(ctx context.Context, column, id string) (int64, bool, error) {
+	// rowid DESC is a tiebreak (ut-docs#2259): two rows can tie on
+	// datetime(starts_at) (mixed raw formats normalize to the same
+	// instant), and every other price-resolution query in this repo
+	// shares this exact shape and must agree with this one on which row
+	// wins in that case — see catalog_repo.go's own copies.
 	query := fmt.Sprintf(`
 SELECT price
 FROM price_history
 WHERE %s = ?
   AND datetime(starts_at) <= CURRENT_TIMESTAMP
   AND (ends_at IS NULL OR datetime(ends_at) > CURRENT_TIMESTAMP)
-ORDER BY datetime(starts_at) DESC
+ORDER BY datetime(starts_at) DESC, rowid DESC
 LIMIT 1
 `, column)
 	var price int64
@@ -8061,7 +8066,16 @@ func (r *POSRepo) toShortcutLine(code string, price int64, row shortcutPriceRow)
 	return line
 }
 
-// AppendPriceHistoryItem ends the current open price (if any) and appends a new price_history row for an item.
+// AppendPriceHistoryItem ends the current open price (if any) and appends a
+// new price_history row for an item.
+//
+// "current" is the operative word (ut-docs#2314): the closing UPDATE below
+// carries `AND datetime(starts_at) <= datetime(?)` (the same startsAt this
+// call is appending at) so it only ever closes a row that is already active
+// or in the past. Without that clause a still-open FUTURE-dated row
+// (starts_at > now — a deliberately scheduled promotion/price change that
+// hasn't started yet) would be closed too, which is wrong: editing today's
+// price must never disturb a scheduled one.
 func (r *POSRepo) AppendPriceHistoryItem(ctx context.Context, itemID string, price int64, startsAt time.Time) error {
 	if itemID == "" {
 		return errors.New("itemID required")
@@ -8071,10 +8085,11 @@ func (r *POSRepo) AppendPriceHistoryItem(ctx context.Context, itemID string, pri
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE price_history SET ends_at = ? WHERE item_id = ? AND ends_at IS NULL`, startsAt.Format(time.RFC3339), itemID); err != nil {
+	ts := startsAt.Format(time.RFC3339)
+	if _, err := tx.ExecContext(ctx, `UPDATE price_history SET ends_at = ? WHERE item_id = ? AND ends_at IS NULL AND datetime(starts_at) <= datetime(?)`, ts, itemID, ts); err != nil {
 		return fmt.Errorf("close previous price: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO price_history(id, item_id, price, starts_at) VALUES(?,?,?,?)`, uuid.New().String(), itemID, price, startsAt.Format(time.RFC3339)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO price_history(id, item_id, price, starts_at) VALUES(?,?,?,?)`, uuid.New().String(), itemID, price, ts); err != nil {
 		return fmt.Errorf("insert price_history: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -8083,7 +8098,9 @@ func (r *POSRepo) AppendPriceHistoryItem(ctx context.Context, itemID string, pri
 	return nil
 }
 
-// AppendPriceHistoryVariant ends the current open price (if any) and appends a new price_history row for a variant.
+// AppendPriceHistoryVariant ends the current open price (if any) and appends
+// a new price_history row for a variant. Same starts_at-bounded close as
+// AppendPriceHistoryItem above (ut-docs#2314) — see its doc comment.
 func (r *POSRepo) AppendPriceHistoryVariant(ctx context.Context, variantID string, price int64, startsAt time.Time) error {
 	if variantID == "" {
 		return errors.New("variantID required")
@@ -8093,10 +8110,11 @@ func (r *POSRepo) AppendPriceHistoryVariant(ctx context.Context, variantID strin
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE price_history SET ends_at = ? WHERE variant_id = ? AND ends_at IS NULL`, startsAt.Format(time.RFC3339), variantID); err != nil {
+	ts := startsAt.Format(time.RFC3339)
+	if _, err := tx.ExecContext(ctx, `UPDATE price_history SET ends_at = ? WHERE variant_id = ? AND ends_at IS NULL AND datetime(starts_at) <= datetime(?)`, ts, variantID, ts); err != nil {
 		return fmt.Errorf("close previous price: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO price_history(id, variant_id, price, starts_at) VALUES(?,?,?,?)`, uuid.New().String(), variantID, price, startsAt.Format(time.RFC3339)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO price_history(id, variant_id, price, starts_at) VALUES(?,?,?,?)`, uuid.New().String(), variantID, price, ts); err != nil {
 		return fmt.Errorf("insert price_history: %w", err)
 	}
 	if err := tx.Commit(); err != nil {

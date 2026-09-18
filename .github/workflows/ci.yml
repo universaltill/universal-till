@@ -111,6 +111,8 @@ jobs:
         run: bash scripts/ci/guard-i18n_verbcheck_test.sh
       - name: i18n coverage guard duplicate-key regression test
         run: bash scripts/ci/guard-i18n_dupkey_test.sh
+      - name: i18n coverage guard page-title regression test
+        run: bash scripts/ci/guard-i18n_title_test.sh
       - name: Compliance-claims wording guard
         run: bash scripts/ci/guard-compliance-claims.sh
       - name: Compliance-claims wording guard regression test
@@ -202,6 +204,16 @@ jobs:
         # above. Without this, a regression in the retry/backoff logic
         # would go undetected until the next real apt-repo outage.
         run: bash scripts/ci/retry-with-backoff_test.sh
+      - name: Nightly asset-prune script regression test
+        # scripts/ci/prune-nightly-assets.sh itself is invoked by
+        # nightly.yml's own publish step, not this job — but its test is
+        # fully hermetic (list_assets/delete_asset are redefined to fake
+        # in-memory stand-ins, no gh/network call at all) so nothing stops
+        # it running here, same reasoning as the two tests just above.
+        # ut-docs#2360: without this, the exact `set -e` + trailing `&&`
+        # regression that made every nightly report false failure after a
+        # successful publish could resurface unnoticed.
+        run: bash scripts/ci/prune-nightly-assets_test.sh
       - name: Makefile version-stamp guard
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache

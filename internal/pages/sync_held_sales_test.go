@@ -4,13 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
-	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -24,13 +22,10 @@ import (
 func newSyncHeldSalesTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Helper()
 	chdirRoot(t)
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "sync_held_sales.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := openPagesTestDB(t)
 	t.Cleanup(func() { dbase.Close() })
 
-	dp := &common.Deps{Db: dbase.DB}
+	dp := &common.Deps{Db: dbase}
 	mux := http.NewServeMux()
 	registerSyncHeldSales(mux, dp)
 	return mux, dp
@@ -305,5 +300,58 @@ func TestSyncHeldSales_BlankUpdatedAtIsStampedByPrimaryClock(t *testing.T) {
 	rec = postSyncHeldSaleJSON(mux, "upsert", upsertBody(t, explicit), "bearer-t2")
 	if res3 := decodeSyncHeldSaleUpsert(t, rec); !res3.Applied || res3.UpdatedAt != "2026-09-15 10:00:00" {
 		t.Fatalf("a caller-supplied updated_at must be honoured as-is, got %+v", res3)
+	}
+}
+
+// TestSyncHeldSales_BlankCreatedAtIsStampedByPrimaryClock is ut-docs#2394,
+// the same fix as TestSyncHeldSales_BlankUpdatedAtIsStampedByPrimaryClock
+// above applied to created_at: a genuine first park sends created_at blank
+// (heldSaleWriteThrough never stamps it), and the primary must stamp it
+// with its OWN clock and hand the stamped value back on the wire, so a
+// replica's local mirror lands the exact same value instead of an
+// independent clock read of its own (this is what produced ut-docs#2389's
+// observed 1-second flake).
+func TestSyncHeldSales_BlankCreatedAtIsStampedByPrimaryClock(t *testing.T) {
+	mux, dp := newSyncHeldSalesTestDeps(t)
+	seedSyncOrdersTill(t, dp, "Till 2", "bearer-t2")
+
+	before := time.Now().UTC()
+	row := syncHeldSaleRow{ID: "h1", Label: "Table 4", Payload: `{"lines":[]}`, LineCount: 1, TotalMinor: 100}
+	// CreatedAt deliberately left blank -- exactly what heldSaleWriteThrough
+	// sends on a genuine first park.
+	rec := postSyncHeldSaleJSON(mux, "upsert", upsertBody(t, row), "bearer-t2")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("upsert: status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	res := decodeSyncHeldSaleUpsert(t, rec)
+	if !res.Applied {
+		t.Fatalf("a fresh upsert with a blank created_at must still apply, got %+v", res)
+	}
+	if res.CreatedAt == "" {
+		t.Fatal("the primary must report the value it actually stamped, so a replica can mirror it exactly")
+	}
+	stamped, err := time.Parse(heldSaleTimeLayout, res.CreatedAt)
+	if err != nil {
+		t.Fatalf("stamped created_at %q must parse as %s: %v", res.CreatedAt, heldSaleTimeLayout, err)
+	}
+	if stamped.Before(before.Add(-2 * time.Second)) {
+		t.Fatalf("the stamped created_at %v must be close to this process's own clock (test ran at %v) -- it must come from the PRIMARY, never an unrelated/caller clock", stamped, before)
+	}
+
+	got, ok, err := data.NewHeldSalesRepo(dp.Db).Get(t.Context(), "h1")
+	if err != nil || !ok {
+		t.Fatalf("Get h1: ok=%v err=%v", ok, err)
+	}
+	if got.CreatedAt != res.CreatedAt {
+		t.Fatalf("the stored row must hold exactly the stamped/reported value, got %q want %q", got.CreatedAt, res.CreatedAt)
+	}
+
+	// A caller-supplied (non-blank) created_at -- a re-park's own
+	// HeldOrigin.CreatedAt -- is still honoured exactly as before -- this
+	// fix only changes what happens when it is left blank.
+	explicit := syncHeldSaleRow{ID: "h2", Label: "Table 5", Payload: `{"v":"explicit"}`, LineCount: 1, TotalMinor: 300, CreatedAt: "2026-09-15 09:00:00"}
+	rec = postSyncHeldSaleJSON(mux, "upsert", upsertBody(t, explicit), "bearer-t2")
+	if res2 := decodeSyncHeldSaleUpsert(t, rec); !res2.Applied || res2.CreatedAt != "2026-09-15 09:00:00" {
+		t.Fatalf("a caller-supplied created_at must be honoured as-is, got %+v", res2)
 	}
 }

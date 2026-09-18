@@ -184,7 +184,7 @@ func registerMenuLayoutSettings(mux *http.ServeMux, d *common.Deps) {
 			errKey = ""
 		}
 		httpx.Render("ui/pages/menu_layout.html", map[string]any{
-			"title":   "Hidden menu tiles",
+			"title":   httpx.T(httpx.RequestLocale(r), "page.title.hidden_menu_tiles"),
 			"theme":   d.CurrentState().Theme,
 			"rows":    hiddenMenuRows(r, d),
 			"amended": amendedMenuRows(d),

@@ -287,7 +287,7 @@ func registerAdmin(mux *http.ServeMux, d *common.Deps) {
 		groups := adminGroupsFor(visible)
 		current := firstFragmentCapableHref(groups)
 		data := map[string]any{
-			"title":       "Administration",
+			"title":       httpx.T(httpx.RequestLocale(r), "page.title.admin"),
 			"theme":       d.CurrentState().Theme,
 			"menuItems":   d.MenuSnapshot(),
 			"Groups":      groups,

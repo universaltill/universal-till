@@ -236,10 +236,7 @@ func TestSelfOrderShop_GetCheckout_ModeSelectsCorrectPartial(t *testing.T) {
 // data.SaleDetail to build from).
 func TestPrintCounterOrderTicketAsync_MatchesDirectKitchenTicketRender(t *testing.T) {
 	chdirRoot(t)
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "counter-ticket.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := &db.DB{DB: openPagesTestDB(t)}
 	defer dbase.Close()
 
 	dp := &common.Deps{Db: dbase.DB, Settings: settings.NewStore(dbase.DB)}
@@ -305,10 +302,7 @@ func TestPrintCounterOrderTicketAsync_QtyFollowsShopLocaleNotRequestLocale(t *te
 	httpx.SetDefaultLocale("tr")
 	t.Cleanup(func() { httpx.SetDefaultLocale("en") })
 
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "counter-ticket-locale.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := &db.DB{DB: openPagesTestDB(t)}
 	defer dbase.Close()
 
 	dp := &common.Deps{Db: dbase.DB, Settings: settings.NewStore(dbase.DB)}
@@ -351,10 +345,7 @@ func TestPrintCounterOrderTicketAsync_QtyFollowsShopLocaleNotRequestLocale(t *te
 // free" from the schema (no FK, no money columns).
 func TestGenerateEOD_CounterOrderContributesNothing(t *testing.T) {
 	chdirRoot(t)
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "counter-eod.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := &db.DB{DB: openPagesTestDB(t)}
 	defer dbase.Close()
 
 	dp := &common.Deps{Db: dbase.DB, Settings: settings.NewStore(dbase.DB)}

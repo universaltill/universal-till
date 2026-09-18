@@ -6,8 +6,12 @@
 -- a test run once before the old files were deleted; its recorded output is
 -- in the ut-docs#1425 review record.
 --
--- This file may be edited freely until the first paying shop goes live on
--- it (ADR-0074 Decision 1); it is append-only from that point on.
+-- This file is FROZEN (ADR-0100, superseding ADR-0074 Decision 1): every
+-- installed till recorded its statement checksum at first boot and refuses
+-- to start if it changes. ut-docs#2312 edited it and v0.19.0–v0.19.2 could
+-- not boot on any existing till (ut-docs#2395). Schema and seed changes go
+-- in a new NNN_*.sql; internal/db/shipped_migrations_test.go fails CI on a
+-- statement-level edit here. Comment-only edits (like this one) are fine.
 --
 -- Conventions: schema_migrations (the applied-migration ledger) is created
 -- and populated by internal/db/db.go, never by a migration file. Every

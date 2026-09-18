@@ -1117,6 +1117,145 @@ func TestAdminDumpApplyRoundTrip_ItemModifiers(t *testing.T) {
 	}
 }
 
+// ut-docs#2236: item_modifier_group_links, category_modifier_group_links and
+// item_modifier_group_opt_outs (ADR-0090/ADR-0094) were all added to
+// adminTables (migrations 025/031) but, unlike item_modifier_groups/options
+// above, never had their own DumpAdmin/ApplyAdmin round-trip test — filed
+// after an independent reviewer on #2210 flagged "a multi-till satellite
+// reading a stale synced-down copy of these links" as an unconfirmed
+// hypothesis. This test proves both directions for all three tables (add
+// AND remove) and, critically, that a replica seeded ONLY via ApplyAdmin —
+// never written to directly, since mutation is primary-only
+// (catalog/handlers.go's requirePrimary) — resolves ModifierRepo.
+// ResolveGroupsForItem() identically to the primary at every step, i.e. the
+// resolver reads the synced tables themselves rather than some stale cache.
+// No gap found: this is a regression test for an already-correct mechanism.
+func TestAdminDumpApplyRoundTrip_ModifierGroupLinks(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	primaryModifiers := NewModifierRepo(primary.DB)
+	replicaModifiers := NewModifierRepo(replica.DB)
+
+	seed := func(d *db.DB) {
+		mustExec(t, d, `INSERT INTO categories (id, name) VALUES ('cat1', 'Drinks')`)
+		mustExec(t, d, `INSERT INTO items (id, name, base_price, category_id) VALUES ('itm1', 'Flat White', 320, 'cat1')`)
+		mustExec(t, d, `INSERT INTO items (id, name, base_price) VALUES ('itm-anchor', 'Anchor', 100)`)
+	}
+	seed(primary)
+	seed(replica) // items/categories sync via their own adminTables entries, exercised elsewhere — seeded directly here to keep this test scoped to the three link tables.
+
+	// grp1: directly linked to itm1 (CreateGroup auto-links item_modifier_group_links).
+	if _, err := primaryModifiers.CreateGroup(ctx, "grp1", "itm1", "Extras", false, 0, 2, 0); err != nil {
+		t.Fatalf("CreateGroup grp1: %v", err)
+	}
+	// grp2: anchored elsewhere, offered to itm1 only via its CATEGORY (cat1) — and then opted out.
+	if _, err := primaryModifiers.CreateGroup(ctx, "grp2", "itm-anchor", "Sizes", false, 0, 1, 0); err != nil {
+		t.Fatalf("CreateGroup grp2: %v", err)
+	}
+	if err := primaryModifiers.LinkGroupToCategory(ctx, "cat1", "grp2", 0); err != nil {
+		t.Fatalf("LinkGroupToCategory: %v", err)
+	}
+	if err := primaryModifiers.OptOutItemFromGroup(ctx, "itm1", "grp2"); err != nil {
+		t.Fatalf("OptOutItemFromGroup: %v", err)
+	}
+
+	assertResolvedIDs := func(t *testing.T, repo *ModifierRepo, want ...string) {
+		t.Helper()
+		groups, err := repo.ResolveGroupsForItem(ctx, "itm1")
+		if err != nil {
+			t.Fatalf("ResolveGroupsForItem: %v", err)
+		}
+		got := make([]string, len(groups))
+		for i, g := range groups {
+			got[i] = g.ID
+		}
+		if len(got) != len(want) {
+			t.Fatalf("ResolveGroupsForItem(itm1) = %v, want %v", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("ResolveGroupsForItem(itm1) = %v, want %v", got, want)
+			}
+		}
+	}
+
+	// Sanity: the primary itself resolves grp1 only (grp2 is opted out).
+	assertResolvedIDs(t, primaryModifiers, "grp1")
+
+	// --- Round 1: ADD direction for all three link tables ---
+	bundle1, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump 1: %v", err)
+	}
+	for _, tbl := range []string{"item_modifier_group_links", "category_modifier_group_links", "item_modifier_group_opt_outs"} {
+		if _, ok := bundle1.Tables[tbl]; !ok {
+			t.Fatalf("%s must appear in the admin dump — it is in adminTables", tbl)
+		}
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle1)); err != nil {
+		t.Fatalf("apply 1: %v", err)
+	}
+
+	var n int
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM item_modifier_group_links WHERE item_id='itm1' AND group_id='grp1'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("item_modifier_group_links(itm1,grp1) did not reach the satellite: n=%d err=%v", n, err)
+	}
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM category_modifier_group_links WHERE category_id='cat1' AND group_id='grp2'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("category_modifier_group_links(cat1,grp2) did not reach the satellite: n=%d err=%v", n, err)
+	}
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM item_modifier_group_opt_outs WHERE item_id='itm1' AND group_id='grp2'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("item_modifier_group_opt_outs(itm1,grp2) did not reach the satellite: n=%d err=%v", n, err)
+	}
+	// The replica never wrote these tables itself — this proves the resolver
+	// reads the synced copy correctly, not a stale/cached view.
+	assertResolvedIDs(t, replicaModifiers, "grp1")
+
+	// --- Round 2: remove the DIRECT item link, and opt back IN (removes the
+	// opt-out row) — grp2 should now surface via inheritance on both sides. ---
+	if err := primaryModifiers.UnlinkGroupFromItem(ctx, "itm1", "grp1"); err != nil {
+		t.Fatalf("UnlinkGroupFromItem: %v", err)
+	}
+	if err := primaryModifiers.OptInItemToGroup(ctx, "itm1", "grp2"); err != nil {
+		t.Fatalf("OptInItemToGroup: %v", err)
+	}
+	assertResolvedIDs(t, primaryModifiers, "grp2")
+
+	bundle2, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump 2: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+		t.Fatalf("apply 2: %v", err)
+	}
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM item_modifier_group_links WHERE item_id='itm1' AND group_id='grp1'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("a direct item-group link removed on the primary is still on the satellite (n=%d, err=%v)", n, err)
+	}
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM item_modifier_group_opt_outs WHERE item_id='itm1' AND group_id='grp2'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("an opt-out reversed on the primary still shows opted-out on the satellite (n=%d, err=%v)", n, err)
+	}
+	assertResolvedIDs(t, replicaModifiers, "grp2")
+
+	// --- Round 3: remove the CATEGORY link — itm1 must lose grp2 entirely. ---
+	if err := primaryModifiers.UnlinkGroupFromCategory(ctx, "cat1", "grp2"); err != nil {
+		t.Fatalf("UnlinkGroupFromCategory: %v", err)
+	}
+	assertResolvedIDs(t, primaryModifiers)
+
+	bundle3, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump 3: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle3)); err != nil {
+		t.Fatalf("apply 3: %v", err)
+	}
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM category_modifier_group_links WHERE category_id='cat1' AND group_id='grp2'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("a category-group link removed on the primary is still on the satellite (n=%d, err=%v)", n, err)
+	}
+	assertResolvedIDs(t, replicaModifiers)
+}
+
 // Mirrors TestAdminApply_TableRetiredInPlaceWhenFKBlockedBySatelliteSaleHistory:
 // a register the primary removed, but that the satellite has already opened
 // a shift against, can't be hard-deleted (shifts.register_id FK) — it must
@@ -1641,5 +1780,120 @@ func TestAdminApplyCountrySettings_ClampsArchiveMinDaysToGlobalFloor(t *testing.
 	}
 	if days != GlobalArchiveMinDays {
 		t.Fatalf("below-floor archive_min_days applied as-is instead of clamped: got %d, want %d (ADR-0040 floor)", days, GlobalArchiveMinDays)
+	}
+}
+
+// ADR-0099 Decision 2 (ut-docs#2348, resolving ut-docs#1671): price_history
+// stays OUT of adminTables, so a satellite that already holds an open
+// price_history row (ends_at IS NULL) for an item/variant keeps charging
+// that row's price forever — ResolveCurrentPrice prefers an open row over
+// the freshly-synced items.base_price / item_variants.price, and nothing
+// ever revisited the row. Every ApplyAdmin must now close every locally-
+// open row for a synced item/variant so the lookup falls through to the
+// synced price. Covers, per the ADR's Consequences: a currently-active
+// stale row, a FUTURE-dated one (which an earlier ADR draft scoped out and
+// which would otherwise activate later with no sync guaranteed to run at
+// that moment), both the item and the variant statement separately, and
+// that an already-closed row is left exactly as it was.
+func TestAdminApply_InvalidatesStaleOpenPriceHistory(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	// Primary: the item/variant at their NEW prices.
+	mustExec(t, primary, `INSERT INTO items (id, sku, name, base_price) VALUES ('itm1', 'COLA', 'Cola Can', 150)`)
+	mustExec(t, primary, `INSERT INTO item_variants (id, item_id, sku, name, price) VALUES ('var1', 'itm1', 'COLA-L', 'Large', 550)`)
+
+	// Satellite: the same rows at their OLD prices, plus the stale open
+	// price_history overrides that ADR-0099 exists to neutralise.
+	mustExec(t, replica, `INSERT INTO items (id, sku, name, base_price) VALUES ('itm1', 'COLA', 'Cola Can', 120)`)
+	mustExec(t, replica, `INSERT INTO item_variants (id, item_id, sku, name, price) VALUES ('var1', 'itm1', 'COLA-L', 'Large', 500)`)
+	const closedEndsAt = "2020-01-01 00:00:00"
+	for _, row := range []struct {
+		id, col, ref string
+		price        int64
+		startsAt     string
+		endsAt       any
+	}{
+		{"ph-item-active", "item_id", "itm1", 120, "datetime('now', '-1 hour')", nil},
+		{"ph-item-future", "item_id", "itm1", 130, "datetime('now', '+1 hour')", nil},
+		{"ph-var-active", "variant_id", "var1", 500, "datetime('now', '-1 hour')", nil},
+		{"ph-var-future", "variant_id", "var1", 510, "datetime('now', '+1 hour')", nil},
+		{"ph-item-closed", "item_id", "itm1", 100, "datetime('now', '-3 hours')", closedEndsAt},
+	} {
+		mustExec(t, replica,
+			`INSERT INTO price_history (id, `+row.col+`, price, starts_at, ends_at) VALUES (?, ?, ?, `+row.startsAt+`, ?)`,
+			row.id, row.ref, row.price, row.endsAt)
+	}
+
+	pos := NewPOSRepo(replica.DB)
+	resolve := func(itemID, variantID string) int64 {
+		t.Helper()
+		p, err := pos.ResolveCurrentPrice(ctx, itemID, variantID)
+		if err != nil {
+			t.Fatalf("resolve price item=%q variant=%q: %v", itemID, variantID, err)
+		}
+		return p
+	}
+	// Precondition — proves the setup really is the divergence the ADR
+	// describes: before the sync, the stale open rows win over base_price.
+	if got := resolve("itm1", ""); got != 120 {
+		t.Fatalf("precondition: stale open item row should win before sync, got %d", got)
+	}
+	if got := resolve("", "var1"); got != 500 {
+		t.Fatalf("precondition: stale open variant row should win before sync, got %d", got)
+	}
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if _, ok := bundle.Tables["price_history"]; ok {
+		t.Fatal("price_history must NOT travel in the admin bundle (ADR-0099 Decision 1)")
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	// The user-visible property: checkout now resolves the synced price.
+	if got := resolve("itm1", ""); got != 150 {
+		t.Errorf("item: satellite still resolves stale price_history override after sync: got %d, want synced base_price 150", got)
+	}
+	if got := resolve("", "var1"); got != 550 {
+		t.Errorf("variant: satellite still resolves stale price_history override after sync: got %d, want synced price 550", got)
+	}
+
+	// Every previously-open row — active AND future-dated, item AND variant
+	// — is now closed.
+	for _, id := range []string{"ph-item-active", "ph-item-future", "ph-var-active", "ph-var-future"} {
+		var endsAt sql.NullString
+		if err := replica.QueryRow(`SELECT ends_at FROM price_history WHERE id = ?`, id).Scan(&endsAt); err != nil {
+			t.Fatalf("read %s: %v", id, err)
+		}
+		if !endsAt.Valid {
+			t.Errorf("%s: still open (ends_at IS NULL) after sync", id)
+		}
+	}
+
+	// The future-dated rows must stay dead once their starts_at arrives —
+	// simulate that moment passing and check the lookup still falls
+	// through to the synced price (this is the case the ADR's first draft
+	// got wrong by closing only currently-active rows).
+	mustExec(t, replica, `UPDATE price_history SET starts_at = datetime('now', '-1 minute') WHERE id IN ('ph-item-future', 'ph-var-future')`)
+	if got := resolve("itm1", ""); got != 150 {
+		t.Errorf("item: future-dated stale row came back to life once its starts_at arrived: got %d, want 150", got)
+	}
+	if got := resolve("", "var1"); got != 550 {
+		t.Errorf("variant: future-dated stale row came back to life once its starts_at arrived: got %d, want 550", got)
+	}
+
+	// An already-closed row is inert and must be left exactly as it was —
+	// proves the step closes open rows only, not every row unconditionally.
+	var got string
+	if err := replica.QueryRow(`SELECT ends_at FROM price_history WHERE id = 'ph-item-closed'`).Scan(&got); err != nil {
+		t.Fatalf("read closed row: %v", err)
+	}
+	if got != closedEndsAt {
+		t.Errorf("already-closed row was touched: ends_at %q, want untouched %q", got, closedEndsAt)
 	}
 }

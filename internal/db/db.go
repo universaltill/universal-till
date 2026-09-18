@@ -184,6 +184,25 @@ var ErrDatabasePredatesReset = errors.New("database predates the schema reset �
 // live schema, so it must be safe to execute twice.
 var idempotentRerunVersions = map[int]bool{}
 
+// acceptedPriorChecksums maps a migration version to ledger checksums that
+// a tagged release recorded for it before the file was restored to what
+// earlier releases had shipped (ADR-0100 Decision 3). A ledger row carrying
+// one of these is not drift: the install ran a known, released variant of
+// the file, and boot re-stamps the row to the current checksum WITHOUT
+// re-running any SQL — a later, idempotent migration is what makes both
+// variants converge on the same schema and seed rows.
+//
+// This is a record of accidents, not a mechanism for planned edits: an
+// entry is only ever added for a checksum that a tagged release has
+// already written into real ledgers, and never as a substitute for
+// appending a new migration. Every file under migrations/ is frozen the
+// moment it merges (shipped_migrations_test.go enforces it in CI).
+var acceptedPriorChecksums = map[int]map[string]string{
+	1: {
+		"13898ca67f47c37411eb3b76a8265c1bc30a465e631fe006fcc806b0bc794d42": "v0.19.0–v0.19.2 applied a 001_init.sql that already carried ut-docs#2312's catalog_management rows (ut-docs#2395); 033_catalog_management_permission.sql makes both variants converge",
+	},
+}
+
 // migrationChecksum is the value recorded beside each applied migration's
 // version and name, and compared against the on-disk file on every boot.
 // Computed over the comment-stripped text with trailing whitespace and
@@ -315,6 +334,13 @@ func (db *DB) verifyAppliedMigrations(migs []migration, current int) error {
 		if name == m.Name && checksum == want {
 			continue
 		}
+		if reason, ok := acceptedPriorChecksums[m.Version][checksum]; ok && name == m.Name {
+			logging.L().Warnf("migration %d: ledger checksum %s is a released prior variant of %q — %s; re-stamping the ledger row to the current checksum %s without re-running it (ADR-0100)", m.Version, checksum, m.Name, reason, want)
+			if _, err := db.Exec(`UPDATE schema_migrations SET checksum = ? WHERE version = ?`, want, m.Version); err != nil {
+				return fmt.Errorf("re-stamp ledger row for migration %d: %w", m.Version, err)
+			}
+			continue
+		}
 		if !idempotentRerunVersions[m.Version] {
 			return fmt.Errorf("migration %d: recorded as %q (checksum %s) but on-disk file is %q (checksum %s) — a migration file was renamed or edited after being applied; delete the data directory and start again (ADR-0074)", m.Version, name, checksum, m.Name, want)
 		}
@@ -387,36 +413,6 @@ func (db *DB) reapplyMigration(m migration) error {
 	}
 
 	return nil
-}
-
-// BaselineStatementsFor returns every statement of the embedded 001_init.sql
-// baseline whose target is table — its CREATE TABLE, its CREATE INDEXes and
-// its seed INSERTs — split by the same splitter the migration runner uses.
-// It exists for fixtures in other packages that hand-roll a partial schema
-// but need one table exactly as production has it (internal/pages'
-// seedCountrySettingsTable, which used to execute the real 041/073 files for
-// that reason): reading the real baseline can't drift, because it IS the
-// schema. Test-support only; nothing at runtime calls it.
-func BaselineStatementsFor(table string) ([]string, error) {
-	migs, err := loadMigrations()
-	if err != nil {
-		return nil, err
-	}
-	if len(migs) == 0 || migs[0].Version != 1 {
-		return nil, fmt.Errorf("baseline migration 001 not found")
-	}
-	q := regexp.QuoteMeta(table)
-	target := regexp.MustCompile(`(?is)^\s*(?:CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?|CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?\S+\s+ON\s+|INSERT\s+(?:OR\s+\w+\s+)?INTO\s+)["` + "`" + `]?` + q + `["` + "`" + `]?\b`)
-	var out []string
-	for _, st := range splitStatements(stripLineComments(migs[0].SQL)) {
-		if target.MatchString(st.masked) {
-			out = append(out, strings.TrimSpace(st.text))
-		}
-	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("baseline has no statement targeting table %q", table)
-	}
-	return out, nil
 }
 
 // addColumnStmt recognises one `ALTER TABLE [schema.]<t> ADD [COLUMN] <c> …`

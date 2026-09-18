@@ -40,6 +40,16 @@ func Current() Status {
 }
 
 // CheckNow performs one synchronous check and returns the freshest status.
+//
+// Test-only-reachable, kept deliberately (ut-docs#1566 — on
+// scripts/ci/deadcode-baseline.txt, not a deletion candidate): it mirrors
+// internal/updates.CheckNow, whose production caller is the on-demand
+// "check now" action in internal/pages/update_api.go, but there is no
+// equivalent operator action for the PSU check — production only reads
+// Current() (httpx's psuunderpowered template helper behind the status
+// chip), fed by Start's background ticker. This package's tests drive
+// every detection path through it: vcgencmd flag parsing, the negotiated
+// current node, the latch, and the non-Pi no-op.
 func CheckNow(ctx context.Context) Status {
 	checkOnce(ctx)
 	return Current()

@@ -90,7 +90,7 @@ func registerVoucherImport(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		httpx.Render("ui/pages/voucher_import.html", map[string]any{
-			"title":     "Import voucher balances",
+			"title":     httpx.T(httpx.RequestLocale(r), "page.title.import_voucher_balances"),
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
 		})(w, r)

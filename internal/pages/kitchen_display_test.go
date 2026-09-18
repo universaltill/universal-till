@@ -9,7 +9,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -33,10 +32,7 @@ type kitchenDisplayFixture struct {
 func newKitchenDisplayFixture(t *testing.T) *kitchenDisplayFixture {
 	t.Helper()
 	chdirRoot(t)
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "kitchen-display.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := &db.DB{DB: openPagesTestDB(t)}
 	t.Cleanup(func() { dbase.Close() })
 	mustExec := func(q string, args ...any) {
 		t.Helper()

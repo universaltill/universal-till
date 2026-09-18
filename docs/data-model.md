@@ -6,8 +6,11 @@ and subsequent migrations.
 - DB engine: SQLite
 - Migrations: `internal/db/migrations/*.sql` — `001_init.sql` is a single
   squashed baseline (ADR-0074, 2026-09): a dump of the schema plus every seed
-  row the previous 78-file ledger produced. It may be edited freely until the
-  first paying shop goes live on it; append-only from then on.
+  row the previous 78-file ledger produced. Every migration file, `001_init.sql`
+  included, is frozen the moment it merges to `main` (ADR-0100, which withdrew
+  ADR-0074's "editable until the first paying shop" allowance after ut-docs#2395):
+  schema and seed changes are always a new, higher-numbered file, and
+  `internal/db/shipped_migrations_test.go` pins every file's checksum in CI.
 - Ledger: `schema_migrations(version, applied_at, name, checksum)` is created
   by `internal/db/db.go`, never by a migration file. On every boot the runner
   compares each applied version's recorded `name`/`checksum` with the on-disk

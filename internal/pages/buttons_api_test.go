@@ -27,6 +27,14 @@ import (
 // FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE).
 func newButtonsMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Helper()
+	// ut-docs#2312: the mutating routes registerButtonsAPI wires now gate on
+	// catalog_management. Every pre-existing test built on this helper
+	// predates that gate and isn't itself exercising auth/role behaviour, so
+	// it bypasses the gate the same way every other already-gated page's
+	// test suite does for its own auth-agnostic tests (e.g.
+	// tax_codes_page_test.go) -- the dedicated real-session gate tests below
+	// override this back to "on" via their own t.Setenv.
+	t.Setenv("UT_AUTH", "off")
 	chdirRoot(t)
 	initPagesI18n(t)
 	db := openPagesTestDB(t)
@@ -45,6 +53,10 @@ func newButtonsMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 // handlers could actually produce can never sneak into a test's setup.
 func newButtonsAndCatalogMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Helper()
+	// ut-docs#2312: see newButtonsMux's identical comment above -- this
+	// helper also wires catalog.Register, whose mutating routes now gate on
+	// catalog_management too.
+	t.Setenv("UT_AUTH", "off")
 	chdirRoot(t)
 	initPagesI18n(t)
 	db := openPagesTestDB(t)

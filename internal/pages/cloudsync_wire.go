@@ -14,6 +14,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
+
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/cloudsync"
 	"github.com/universaltill/universal-till/internal/data"
@@ -159,6 +161,90 @@ func remoteTillSettingsReport(ctx context.Context, d *common.Deps) map[string]st
 	return out
 }
 
+// cloudSetQuickButtonLayout is the set_quick_button_layout hook: reorders
+// the quick-sale (shortcut) buttons from the cloud's layout panel — the
+// same ShortcutsRepo.UpdateOrder call the Designer's own move-up/move-down
+// reorder makes locally via POST /api/buttons/reorder. Gated to the primary
+// till (requirePrimaryDirective) for the same reason that LAN route is
+// (ut-docs#1697): shortcut_buttons syncs shop-wide as a primary-wins admin
+// table, so a write applied on a replica would vanish on the very next
+// admin pull.
+//
+// buttons_api.go's own reorder route documents its payload as "the FULL
+// global list" — UpdateOrder sets sort_order = index only for the barcodes
+// it's given, so a PARTIAL list leaves the omitted rows on their old
+// sort_order values, which can collide with a listed row's new one
+// (verified: an independent review's probe reproduced a real duplicate
+// sort_order from a partial payload, ut-docs#2321 review). A cloud
+// directive's payload isn't validated against the till by anything but
+// this function, so — unlike the LAN route, which trusts its own page to
+// always post the full list — this rejects a payload that doesn't cover
+// EXACTLY the till's current button set (missing or unknown barcodes
+// both refused, named in the error) rather than silently applying a
+// partial reorder.
+func cloudSetQuickButtonLayout(ctx context.Context, d *common.Deps, barcodes []string) (string, error) {
+	if len(barcodes) == 0 {
+		return "", fmt.Errorf("missing barcodes")
+	}
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	repo := data.NewShortcutsRepo(d.Db)
+	current, err := repo.LoadButtons(ctx)
+	if err != nil {
+		return "", err
+	}
+	currentSet := make(map[string]bool, len(current))
+	for _, b := range current {
+		currentSet[b.Barcode] = true
+	}
+	given := make(map[string]bool, len(barcodes))
+	for _, bc := range barcodes {
+		if given[bc] {
+			return "", fmt.Errorf("duplicate barcode %q in the new layout", bc)
+		}
+		given[bc] = true
+		if !currentSet[bc] {
+			return "", fmt.Errorf("barcode %q is not one of this till's quick buttons", bc)
+		}
+	}
+	for bc := range currentSet {
+		if !given[bc] {
+			return "", fmt.Errorf("the new layout is missing barcode %q — it must list every current quick button", bc)
+		}
+	}
+	if err := repo.UpdateOrder(ctx, barcodes); err != nil {
+		return "", err
+	}
+	auditCloudDirective(ctx, d, "quick_buttons", "-", "quick_button_layout_set", map[string]any{"barcodes": barcodes})
+	return fmt.Sprintf("layout applied to %d buttons", len(barcodes)), nil
+}
+
+// remoteQuickButtonsReport is the read side for DeviceExtra: the currently
+// applied quick-sale button layout (barcode + label, in the same sort order
+// LoadButtons itself orders by), so the cloud's layout panel shows applied
+// state, not just what was queued — same "report what's actually there"
+// pattern as remoteTillSettingsReport above. A read error reports an empty
+// list rather than failing the whole heartbeat.
+func remoteQuickButtonsReport(ctx context.Context, d *common.Deps) []map[string]any {
+	buttons, err := data.NewShortcutsRepo(d.Db).LoadButtons(ctx)
+	if err != nil {
+		logging.L().Warnf("cloudsync: quick button layout report failed: %v", err)
+		return []map[string]any{}
+	}
+	out := make([]map[string]any, 0, len(buttons))
+	for i, b := range buttons {
+		// sort_order mirrors this button's position in the (already
+		// sort_order-ordered) list LoadButtons returns — the cloud side
+		// decodes it into QuickButtonReport.SortOrder so a single entry is
+		// self-describing without its slice context (claims.go's own doc
+		// comment on that field), even though the panel today only reads
+		// the report's array order, not this field, to render the list.
+		out = append(out, map[string]any{"barcode": b.Barcode, "label": b.Label, "sort_order": i})
+	}
+	return out
+}
+
 // StartCloudSync wires the ADR-0018 directive hooks to the till's real
 // action paths and starts the cloud sync loop. Every hook is the same move
 // an operator makes locally — remote installs still go through the
@@ -212,16 +298,10 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		// update a local price change makes; the next snapshot push (hash
 		// gate) reflects it back to the cloud automatically.
 		SetPrice: func(ctx context.Context, itemID string, priceMinor int64) (string, error) {
-			if err := data.NewCatalogRepo(d.Db).SetItemPrice(ctx, itemID, priceMinor); err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("price set to %d (minor units)", priceMinor), nil
+			return cloudSetPrice(ctx, d, itemID, priceMinor)
 		},
 		RenameItem: func(ctx context.Context, itemID, name string) (string, error) {
-			if err := data.NewCatalogRepo(d.Db).SetItemName(ctx, itemID, name); err != nil {
-				return "", err
-			}
-			return "renamed to " + name, nil
+			return cloudRenameItem(ctx, d, itemID, name)
 		},
 		// Create from the cloud. Idempotent on retry (same-name active item →
 		// success without a duplicate); a taken barcode fails cleanly.
@@ -231,36 +311,13 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		// Attach a (primary) barcode to an item or variant. AddBarcode owns
 		// all the safety: availability, existence, active-only.
 		AddBarcode: func(ctx context.Context, id, barcode string) (string, error) {
-			repo := data.NewCatalogRepo(d.Db)
-			in := catalogtypes.BarcodeInput{Barcode: barcode, IsPrimary: true}
-			if exists, err := repo.ItemExists(ctx, id); err == nil && exists {
-				in.ItemID = id
-			} else {
-				in.VariantID = id
-			}
-			if err := repo.AddBarcode(ctx, in); err != nil {
-				return "", err
-			}
-			return "barcode " + barcode + " attached", nil
+			return cloudAddBarcode(ctx, d, id, barcode)
 		},
 		// Retire from the cloud: same soft-deactivate a manager does locally
 		// (variants of the item retire with it; a variant id retires just the
 		// variant). It drops from the sale screen and the next snapshot.
 		DeactivateItem: func(ctx context.Context, id string) (string, error) {
-			repo := data.NewCatalogRepo(d.Db)
-			if exists, err := repo.ItemExists(ctx, id); err == nil && exists {
-				if err := repo.DeactivateItem(ctx, id); err != nil {
-					return "", err
-				}
-				return "item deactivated", nil
-			}
-			if _, ok, _ := repo.GetVariantLabel(ctx, id); !ok {
-				return "", fmt.Errorf("item not found")
-			}
-			if err := repo.DeactivateVariant(ctx, id); err != nil {
-				return "", err
-			}
-			return "variant deactivated", nil
+			return cloudDeactivateItem(ctx, d, id)
 		},
 		// Remote stock adjustment: the same movement record + connector event
 		// a manual adjustment on the inventory page makes.
@@ -280,6 +337,20 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		UpsertCategory: func(ctx context.Context, id, name, color string) (string, error) {
 			return cloudUpsertCategory(ctx, d, id, name, color)
 		},
+		// update_item_details (ut-docs#2324, ADR-0095 Decision 1): the cloud
+		// panel's item "More…" disclosure form — a partial update of sku/
+		// description/unit/colour/is_weighed/stock_untracked. See
+		// cloudUpdateItemDetails for the nil-means-untouched contract and
+		// why category/brand/tax-code are excluded.
+		UpdateItemDetails: func(ctx context.Context, itemID string, sku, description, unit, color *string, isWeighed, stockUntracked *bool) (string, error) {
+			return cloudUpdateItemDetails(ctx, d, itemID, sku, description, unit, color, isWeighed, stockUntracked)
+		},
+		// upsert_modifier_group (ut-docs#2322, ADR-0095 Decision 1): the
+		// cloud panel's per-item modifier-group creator — CREATE-ONLY, same
+		// scope cut as UpsertCategory above. See cloudUpsertModifierGroup.
+		UpsertModifierGroup: func(ctx context.Context, itemID, name string, required bool, minSelect, maxSelect int, options []cloudsync.ModifierGroupOption) (string, error) {
+			return cloudUpsertModifierGroup(ctx, d, itemID, name, required, minSelect, maxSelect, options)
+		},
 		// diagnostic_mode_revoke (ADR-0092 §1/§4, ut-docs#2169): Universal
 		// Till ended this till's diagnostic session — clear the local flag
 		// and drain that session's whole pending queue in one step. Same
@@ -291,6 +362,12 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 				auditDiagnostics(ctx, d, "system", "diagnostics_revoked", map[string]any{"session_id": sessionID})
 			}
 			return msg, err
+		},
+		// set_quick_button_layout: the cloud's quick-sale button layout
+		// panel — same UpdateOrder call the Designer's own reorder makes,
+		// gated to the primary till. See cloudSetQuickButtonLayout.
+		SetQuickButtonLayout: func(ctx context.Context, barcodes []string) (string, error) {
+			return cloudSetQuickButtonLayout(ctx, d, barcodes)
 		},
 		// The cloud's Design picker offers exactly what this till could pick
 		// locally (built-in + plugin-contributed themes); applying one comes
@@ -310,6 +387,11 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 				// remote-configurable setting, for the portal's
 				// forms.
 				"till_settings": remoteTillSettingsReport(ctx, d),
+				// The applied quick-sale button layout (barcode + label, in
+				// sort order), for the cloud's layout panel to pre-fill from
+				// real state rather than only what was queued. See
+				// remoteQuickButtonsReport.
+				"quick_buttons": remoteQuickButtonsReport(ctx, d),
 			}
 		},
 	}
@@ -604,6 +686,117 @@ func collectProblems(ctx context.Context, d *common.Deps) []map[string]any {
 	return out
 }
 
+// requirePrimaryDirective refuses a directive that would write to a table
+// synced shop-wide via the primary-wins admin pull, matching the local
+// admin path's requirePrimary gate (ut-docs#2353): items/item_variants/
+// item_barcodes/variant_barcodes (catalog) and shortcut_buttons (quick-sale
+// button layout, ut-docs#2321) are all admin-synced tables (primary-wins
+// pull, sync_admin_repo.go's adminTables), so a write accepted here would
+// silently vanish on the next admin pull. Directive hooks have no
+// http.ResponseWriter to answer with an HTTP status, so this returns a
+// plain error surfaced in the directive's result column instead — same
+// shape as this file's other refusals (e.g. cloudCreateItem's barcode
+// conflict).
+func requirePrimaryDirective(ctx context.Context, d *common.Deps) error {
+	if primary := d.SyncPrimaryURL(ctx); primary != "" {
+		return fmt.Errorf("this data is primary-wins synced; make this change on the shop's primary till (%s)", primary)
+	}
+	return nil
+}
+
+// auditCloudDirective records a cloud-originated catalog mutation under the
+// "system" actor (same FK-safety reasoning as cloudAdjustStock's own
+// ActorID: "system", ut-docs#1676) so the audit trail can distinguish "an
+// operator changed this at the till" from "the merchant changed this from
+// the cloud portal" (ut-docs#2353). The insert's own error is logged, not
+// discarded: for a mutation with no other audit trail on either the local
+// or cloud path (e.g. item creation), a silently-dropped row would
+// misattribute a cloud-originated change as an operator's own action —
+// the opposite of this helper's purpose.
+func auditCloudDirective(ctx context.Context, d *common.Deps, entityType, entityID, action string, payload any) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := data.NewPOSRepo(d.Db).InsertAudit(ctx, nil, "system", entityType, entityID, action, payload, now, ""); err != nil {
+		log.Printf("[cloudsync] audit %s %s %s: %v", action, entityType, entityID, err)
+	}
+}
+
+// cloudSetPrice is the set_price hook: same single-column update a local
+// price change makes, primary-gated and audited like every other
+// catalog-mutating directive (ut-docs#2353).
+func cloudSetPrice(ctx context.Context, d *common.Deps, itemID string, priceMinor int64) (string, error) {
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	if err := data.NewCatalogRepo(d.Db).SetItemPrice(ctx, itemID, priceMinor); err != nil {
+		return "", err
+	}
+	auditCloudDirective(ctx, d, "item", itemID, "cloud_price_set", map[string]any{"price_minor": priceMinor})
+	return fmt.Sprintf("price set to %d (minor units)", priceMinor), nil
+}
+
+// cloudRenameItem is the rename_item hook, primary-gated and audited like
+// every other catalog-mutating directive (ut-docs#2353).
+func cloudRenameItem(ctx context.Context, d *common.Deps, itemID, name string) (string, error) {
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	if err := data.NewCatalogRepo(d.Db).SetItemName(ctx, itemID, name); err != nil {
+		return "", err
+	}
+	auditCloudDirective(ctx, d, "item", itemID, "cloud_item_renamed", map[string]any{"name": name})
+	return "renamed to " + name, nil
+}
+
+// cloudAddBarcode is the add_barcode hook: attaches a (primary) barcode to
+// an item or variant. AddBarcode owns all the safety (availability,
+// existence, active-only); this wrapper adds the primary gate and audit row
+// every other catalog-mutating directive now has (ut-docs#2353).
+func cloudAddBarcode(ctx context.Context, d *common.Deps, id, barcode string) (string, error) {
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	repo := data.NewCatalogRepo(d.Db)
+	in := catalogtypes.BarcodeInput{Barcode: barcode, IsPrimary: true}
+	entityType := "item"
+	if exists, err := repo.ItemExists(ctx, id); err == nil && exists {
+		in.ItemID = id
+	} else {
+		in.VariantID = id
+		entityType = "item_variant"
+	}
+	if err := repo.AddBarcode(ctx, in); err != nil {
+		return "", err
+	}
+	auditCloudDirective(ctx, d, entityType, id, "cloud_barcode_added", map[string]any{"barcode": barcode})
+	return "barcode " + barcode + " attached", nil
+}
+
+// cloudDeactivateItem is the deactivate_item hook: same soft-deactivate a
+// manager does locally (variants of the item retire with it; a variant id
+// retires just the variant), primary-gated and audited like every other
+// catalog-mutating directive (ut-docs#2353).
+func cloudDeactivateItem(ctx context.Context, d *common.Deps, id string) (string, error) {
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	repo := data.NewCatalogRepo(d.Db)
+	if exists, err := repo.ItemExists(ctx, id); err == nil && exists {
+		if err := repo.DeactivateItem(ctx, id); err != nil {
+			return "", err
+		}
+		auditCloudDirective(ctx, d, "item", id, "cloud_item_deactivated", nil)
+		return "item deactivated", nil
+	}
+	if _, ok, _ := repo.GetVariantLabel(ctx, id); !ok {
+		return "", fmt.Errorf("item not found")
+	}
+	if err := repo.DeactivateVariant(ctx, id); err != nil {
+		return "", err
+	}
+	auditCloudDirective(ctx, d, "item_variant", id, "cloud_variant_deactivated", nil)
+	return "variant deactivated", nil
+}
+
 // cloudAdjustStock mirrors the inventory page's manual adjustment for a
 // directive: same stock-movement record, same connector event. The cloud has
 // no location picker, so the movement lands where the item already tracks
@@ -671,6 +864,15 @@ func cloudAdjustStock(ctx context.Context, d *common.Deps, itemID string, delta 
 // groups/stations (ADR-0095 Decision 2, not yet shipped), so an id it sent
 // today could only be a guess. Sort order, active flag and parent are
 // untouched, exactly as UpdateCategory promises.
+//
+// categories is an admin-synced table, same as items — gated and audited
+// the same way every other catalog-mutating directive now is
+// (requirePrimaryDirective/auditCloudDirective, ut-docs#2353), matching
+// the local admin category dialog's own requirePrimary gate + audit()
+// call (categories_page.go). The gate runs after the idempotency
+// short-circuit on create, same reasoning as cloudCreateItem: a replica
+// replay against a category that already exists (the normal case, pulled
+// down from the primary) should report success, not a spurious refusal.
 func cloudUpsertCategory(ctx context.Context, d *common.Deps, id, name, color string) (string, error) {
 	name = strings.TrimSpace(name)
 	color = strings.TrimSpace(color)
@@ -693,25 +895,299 @@ func cloudUpsertCategory(ctx context.Context, d *common.Deps, id, name, color st
 				return "category " + c.Name + " already exists", nil
 			}
 		}
-		if _, err := repo.CreateCategoryWithColor(ctx, name, color); err != nil {
+		if err := requirePrimaryDirective(ctx, d); err != nil {
 			return "", err
 		}
+		newID, err := repo.CreateCategoryWithColor(ctx, name, color)
+		if err != nil {
+			return "", err
+		}
+		auditCloudDirective(ctx, d, "category", newID, "cloud_category_created", map[string]any{"name": name, "color": color})
 		return "created category " + name, nil
+	}
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
 	}
 	if err := repo.UpdateCategory(ctx, id, name, color); err != nil {
 		return "", err
 	}
+	auditCloudDirective(ctx, d, "category", id, "cloud_category_updated", map[string]any{"name": name, "color": color})
 	return "updated category " + name, nil
+}
+
+// cloudUpdateItemDetails is the update_item_details hook (ut-docs#2324,
+// ADR-0095 Decision 1): a PARTIAL update of sku/description/unit/colour/
+// is_weighed/stock_untracked — read-modify-write via
+// CatalogRepo.UpdateItemPartial (a single BEGIN IMMEDIATE transaction,
+// ut-docs#2324 review finding S1) rather than two separate GetItem/
+// UpdateItem calls, so a genuinely concurrent local edit to any OTHER
+// column (price, name, active state, category/brand/tax) can't be silently
+// reverted by a stale read here — same race UpdateItemReturningWasActive's
+// own doc comment describes for the local admin editor's own update path.
+// sku/description/unit/color are nil when absent from the directive's
+// payload; is_weighed/stock_untracked are nil the same way — nil means
+// "leave untouched", never "unset" or "false".
+//
+// A blank sku or unit is normalized to "absent" here (ut-docs#2324 review
+// finding S3): updateItemExec's own SQL makes a blank sku a true no-op
+// (COALESCE(NULLIF(?,”), sku)) but silently DEFAULTS a blank unit to
+// "each" — neither is a meaningful "clear this field" the way blank IS for
+// colour (see below), so reporting/auditing either as a real change would
+// be false attribution. This normalization runs before the "any fields
+// left?" check, so a request carrying only a blank sku/unit correctly
+// reports "no changes" rather than a change that didn't actually happen.
+//
+// Colour is different: "" is a real, valid "no colour" state (same as
+// cloudUpsertCategory), so a present-but-empty colour DOES proceed as a
+// real, audited change — validated against the SAME fixed palette
+// cloudUpsertCategory checks (catalogtypes.ValidItemColor) before anything
+// else runs, so a refused colour never reaches the primary gate or the
+// write.
+//
+// CategoryID/BrandID/TaxCodeID are deliberately never touched here, even
+// though they're part of catalogtypes.ItemInput: the merchant portal has no
+// safe way to offer that picker yet (needs the read-side lookup sync ADR-
+// 0095 Decision 2 hasn't shipped, ut-docs#2354) — UpdateItemPartial only
+// ever applies the six optional overrides above onto whatever it reads
+// inside its own transaction.
+//
+// items is an admin-synced table (primary-wins pull, sync_admin_repo.go's
+// adminTables), so this is gated and audited the same way every other
+// catalog-mutating directive is (requirePrimaryDirective/
+// auditCloudDirective, ut-docs#2353) — a write accepted here on a replica
+// would silently vanish on the next admin pull. The gate runs after colour
+// validation (a malformed request should report that specific problem) but
+// before the existence check, which now happens inside UpdateItemPartial's
+// own transaction — a replica correctly refuses regardless of whether the
+// item exists.
+func cloudUpdateItemDetails(ctx context.Context, d *common.Deps, itemID string, sku, description, unit, color *string, isWeighed, stockUntracked *bool) (string, error) {
+	if sku != nil && strings.TrimSpace(*sku) == "" {
+		sku = nil
+	}
+	if unit != nil && strings.TrimSpace(*unit) == "" {
+		unit = nil
+	}
+	if color != nil {
+		c := strings.TrimSpace(*color)
+		if !catalogtypes.ValidItemColor(c) {
+			return "", fmt.Errorf("colour %q is not one of the item palette colours", c)
+		}
+		color = &c
+	}
+
+	var changed []string
+	auditPayload := map[string]any{}
+	if sku != nil {
+		changed = append(changed, "sku")
+		auditPayload["sku"] = *sku
+	}
+	if description != nil {
+		changed = append(changed, "description")
+		auditPayload["description"] = *description
+	}
+	if unit != nil {
+		changed = append(changed, "unit")
+		auditPayload["unit"] = *unit
+	}
+	if color != nil {
+		changed = append(changed, "color")
+		auditPayload["color"] = *color
+	}
+	if isWeighed != nil {
+		changed = append(changed, "is_weighed")
+		auditPayload["is_weighed"] = *isWeighed
+	}
+	if stockUntracked != nil {
+		changed = append(changed, "stock_untracked")
+		auditPayload["stock_untracked"] = *stockUntracked
+	}
+
+	if len(changed) == 0 {
+		return "no changes", nil
+	}
+
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	ok, err := data.NewCatalogRepo(d.Db).UpdateItemPartial(ctx, itemID, sku, description, unit, color, isWeighed, stockUntracked)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("item not found")
+	}
+	auditCloudDirective(ctx, d, "item", itemID, "cloud_item_details_updated", auditPayload)
+	return "details updated: " + strings.Join(changed, ", "), nil
+}
+
+// cloudUpsertModifierGroup is the upsert_modifier_group hook (ut-docs#2322
+// "modifier groups editor" slice of ut-docs#2289, ADR-0095 Decision 1): the
+// cloud panel's per-item modifier-group creator — CREATE-ONLY, the same
+// scope cut cloudUpsertCategory shipped with (no id in the payload at all;
+// the read-side StoreSnapshot extension, ADR-0095 Decision 2, hasn't
+// shipped, so the portal has no way to discover an existing group's id to
+// edit by, or to offer an "attach an existing group" picker — see
+// cloudUpsertCategory's own doc comment for the full reasoning, which
+// applies identically here). item_id must name an item that exists on
+// THIS till — unlike a category id, item ids ARE already known/surfaced to
+// the cloud (every catalog snapshot row carries its own id), so attaching a
+// brand-new group to one existing item is safe, the same way cloudCreateItem
+// accepts an inline barcode.
+//
+// item_modifier_groups (and its link/option tables) is an admin-synced
+// table (sync_admin_repo.go's adminTables), same as items/categories, so
+// this is gated and audited the same way every other catalog-mutating
+// directive is (requirePrimaryDirective/auditCloudDirective, ut-docs#2353).
+//
+// Directives are at-least-once, so a retried CREATE must not duplicate: an
+// existing ACTIVE group already linked to this item with the same name
+// (case-insensitive, matching cloudUpsertCategory's own active-only dedupe)
+// counts as success and is left untouched — the retry is a no-op, not a silent edit
+// of a group the merchant may have changed locally since. The idempotency
+// scan and the item-existence check both run BEFORE the primary gate, same
+// reasoning as cloudCreateItem/cloudUpsertCategory: a replica replaying an
+// already-applied create should report success, not a spurious refusal,
+// and a read-only existence check is safe on a replica too.
+//
+// min_select/max_select and each option's price_delta_minor are validated
+// independently of the cloud's own check (the cloud already enforces this
+// too, but this till does not trust that — "validate all external input"),
+// mirroring the till's own CHECK constraints
+// (min_select >= 0 AND max_select >= min_select; price_delta_minor >= 0,
+// additive-only per data.ModifierRepo.CreateOption's own rule), plus the
+// local admin creator's own two normalisations (max_select is clamped to at
+// least 1; a "required" group's min_select is raised to at least 1) so a
+// cloud-created group is always within the same envelope a locally created
+// one is. Options are created in the given order, their sort_order
+// following that order — zero options is valid, a group may exist with none
+// yet, same as CreateGroup's own rule; if an option insert fails partway,
+// the whole group is rolled back rather than left half-created.
+func cloudUpsertModifierGroup(ctx context.Context, d *common.Deps, itemID, name string, required bool, minSelect, maxSelect int, options []cloudsync.ModifierGroupOption) (string, error) {
+	itemID = strings.TrimSpace(itemID)
+	name = strings.TrimSpace(name)
+	if itemID == "" {
+		return "", fmt.Errorf("item_id required")
+	}
+	if name == "" {
+		return "", fmt.Errorf("name required")
+	}
+	if minSelect < 0 || maxSelect < 0 {
+		return "", fmt.Errorf("min_select and max_select must be >= 0")
+	}
+	// The same two normalisations the LOCAL admin creator applies
+	// (catalog/handlers.go's POST /api/catalog/modifier-group): a group that
+	// can never be picked from is meaningless, and a "required" group that
+	// asks for zero picks is a contradiction the sale-time validator cannot
+	// enforce — pos_modifiers_api.go checks only MinSelect/MaxSelect, never
+	// Required, so required+min_select=0 would render the picker's "*" and
+	// still let a pick be skipped server-side. Mirrored here so a
+	// cloud-created group can never land in a state the till's own admin UI
+	// would refuse to produce (2026-09-17 review, ut-docs#2322).
+	if maxSelect < 1 {
+		maxSelect = 1
+	}
+	if required && minSelect < 1 {
+		minSelect = 1
+	}
+	if minSelect > maxSelect {
+		return "", fmt.Errorf("min_select must be <= max_select")
+	}
+	for _, opt := range options {
+		if strings.TrimSpace(opt.Name) == "" {
+			return "", fmt.Errorf("option name required")
+		}
+		if opt.PriceDeltaMinor < 0 {
+			return "", fmt.Errorf("option %q: price_delta_minor must be >= 0 (additive-only)", opt.Name)
+		}
+	}
+
+	repo := data.NewCatalogRepo(d.Db)
+	if exists, err := repo.ItemExists(ctx, itemID); err != nil {
+		return "", err
+	} else if !exists {
+		return "", fmt.Errorf("item not found")
+	}
+
+	modRepo := data.NewModifierRepo(d.Db)
+	existing, err := modRepo.ListAllGroupsForItem(ctx, itemID)
+	if err != nil {
+		return "", err
+	}
+	for _, g := range existing {
+		// ACTIVE groups only, exactly like cloudUpsertCategory's own dedupe
+		// (`c.IsActive && strings.EqualFold(...)`): ListAllGroupsForItem
+		// deliberately includes deactivated groups, and treating one of
+		// those as "already exists" would refuse a genuinely new create
+		// forever while reporting success to the portal — the merchant's
+		// request silently dropped (2026-09-17 review, ut-docs#2322).
+		if g.IsActive && strings.EqualFold(g.Name, name) {
+			return "modifier group " + g.Name + " already exists on this item", nil
+		}
+	}
+
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+
+	sortOrder, err := modRepo.NextGroupSortOrderForItem(ctx, itemID)
+	if err != nil {
+		return "", err
+	}
+	groupID := uuid.NewString()
+	if _, err := modRepo.CreateGroup(ctx, groupID, itemID, name, required, minSelect, maxSelect, sortOrder); err != nil {
+		return "", err
+	}
+	for i, opt := range options {
+		if _, err := modRepo.CreateOption(ctx, uuid.NewString(), groupID, strings.TrimSpace(opt.Name), opt.PriceDeltaMinor, i); err != nil {
+			// CreateGroup wraps its own group+link inserts in one
+			// transaction, but these option inserts are separate
+			// statements, so a real DB error (SQLITE_BUSY, disk I/O) on
+			// option N would leave a HALF-created group behind. That is
+			// worse than a plain partial write here: directives are
+			// at-least-once, and the name dedupe above would then report
+			// the retry as "already exists", cementing the missing options
+			// forever while telling the merchant it worked. Undo the whole
+			// create instead — DeleteGroup cascades the link row and any
+			// options already inserted (foreign_keys is ON, db.go) — so the
+			// retry recreates it cleanly (2026-09-17 review, ut-docs#2322).
+			if derr := modRepo.DeleteGroup(ctx, groupID); derr != nil {
+				log.Printf("[cloudsync] roll back half-created modifier group %s: %v", groupID, derr)
+			}
+			return "", err
+		}
+	}
+	auditCloudDirective(ctx, d, "modifier_group", groupID, "cloud_modifier_group_created", map[string]any{
+		"item_id": itemID, "name": name, "required": required,
+		"min_select": minSelect, "max_select": maxSelect, "option_count": len(options),
+	})
+	return fmt.Sprintf("created modifier group %s (%d option(s))", name, len(options)), nil
 }
 
 // cloudCreateItem creates a catalog item from a directive. Directives are
 // at-least-once, so a retry must not duplicate: an existing active item with
 // the same name counts as success. A barcode already attached elsewhere
 // fails the directive (visible in the result column) rather than stealing it.
+//
+// items is an admin-synced table (primary-wins pull, sync_admin_repo.go's
+// adminTables), same as the local admin item-create handler's own
+// requirePrimary gate (catalog/handlers.go) — a directive applied on a
+// replica till would silently vanish on the next admin pull, so it's
+// refused up front instead, same reasoning (ut-docs#2353). The write is
+// also audited under the "system" actor, the same pattern cloudAdjustStock
+// and sync_admin.go's admin_pulled already use to distinguish a
+// cloud-originated mutation from an operator's own action at the till.
 func cloudCreateItem(ctx context.Context, d *common.Deps, name string, priceMinor int64, barcode string) (string, error) {
 	repo := data.NewCatalogRepo(d.Db)
+	// Idempotency check first, gate second: on a replica, the item most
+	// directives replay against has usually already arrived via the normal
+	// admin pull, so an at-least-once retry that finds the desired state
+	// already true should report success, not a spurious replica refusal
+	// (ut-docs#2353 review). Only a *real* write attempt needs the gate.
 	if _, exists, err := repo.FindActiveItemByName(ctx, name); err == nil && exists {
 		return "item already exists", nil
+	}
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
 	}
 	if barcode != "" {
 		if taken, err := repo.BarcodeExists(ctx, barcode); err == nil && taken {
@@ -724,6 +1200,9 @@ func cloudCreateItem(ctx context.Context, d *common.Deps, name string, priceMino
 	if err != nil {
 		return "", err
 	}
+	auditCloudDirective(ctx, d, "item", id, "cloud_item_created", map[string]any{
+		"name": name, "price_minor": priceMinor, "barcode": barcode,
+	})
 	if barcode != "" {
 		if err := repo.AddBarcode(ctx, catalogtypes.BarcodeInput{
 			ItemID: id, Barcode: barcode, IsPrimary: true,

@@ -1,13 +1,19 @@
 package mobile
 
 import (
+	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/bluetooth"
+	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/recovery"
 )
 
 // mobileTestEnv points the till at an isolated temp data dir and disables
@@ -384,5 +390,126 @@ func TestStart_ReplacesStaleTMPDIR(t *testing.T) {
 	}
 	if got, want := os.Getenv("TMPDIR"), filepath.Join(dataDir, "tmp"); got != want {
 		t.Fatalf("TMPDIR = %q, want the fresh export %q", got, want)
+	}
+}
+
+// ut-docs#1437: waitUntilReady's job is not "is the till healthy" — it's
+// "is a listener up that the operator can act on", and recovery mode
+// (internal/recovery.Serve) answers /healthz 503 by design for the entire
+// time it's serving (ut-docs#1437/#1438's healthy-vs-unhealthy contract).
+// Before this fix, waitUntilReady only accepted a 200 — a real boot-failure
+// recovery mode on Android timed out after 30s ("mobile: server did not
+// become ready within 30s") and the WebView never navigated, leaving the
+// operator looking at a white page instead of the recovery screen with its
+// reference code, Retry and safe-mode buttons.
+func TestWaitUntilReady_RecoveryModeWithHeaderIsReady(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set(recovery.HeaderMode, recovery.ModeRecovery)
+		http.Error(w, "recovery mode", http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	inst := &instance{done: make(chan struct{})}
+	if err := waitUntilReady(strings.TrimPrefix(srv.URL, "http://"), 2*time.Second, inst); err != nil {
+		t.Fatalf("waitUntilReady against a 503 recovery-mode response with %s: %s: %v", recovery.HeaderMode, recovery.ModeRecovery, err)
+	}
+}
+
+// A bare 503 (no recovery-mode header — e.g. some other unhealthy state, or
+// a future handler that doesn't set it) must NOT be treated as ready: it
+// keeps polling until the timeout, same as before this change.
+func TestWaitUntilReady_BareUnhealthy503KeepsPollingUntilTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "unhealthy", http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	inst := &instance{done: make(chan struct{})}
+	err := waitUntilReady(strings.TrimPrefix(srv.URL, "http://"), 700*time.Millisecond, inst)
+	if err == nil {
+		t.Fatal("expected waitUntilReady to time out against a bare 503 with no recovery-mode header")
+	}
+	if !strings.Contains(err.Error(), "did not become ready") {
+		t.Fatalf("error = %q, want it to mention %q", err.Error(), "did not become ready")
+	}
+}
+
+// The existing, unchanged case: a healthy 200 is ready regardless of any
+// header.
+func TestWaitUntilReady_Healthy200IsReady(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	inst := &instance{done: make(chan struct{})}
+	if err := waitUntilReady(strings.TrimPrefix(srv.URL, "http://"), 2*time.Second, inst); err != nil {
+		t.Fatalf("waitUntilReady against a healthy 200: %v", err)
+	}
+}
+
+// End-to-end: internal/app.Run's real boot-failure recovery mode, driven
+// through mobile.Start, must return a usable address instead of timing out
+// — this is the actual ut-docs#1437 regression, not just the unit-level
+// waitUntilReady behavior above. Corrupts the version-1 migration ledger
+// checksum (same shape as internal/db/migration_drift_test.go's own drift
+// test) so db.Open fails at boot with a real, reproducible drift error —
+// internal/app's boot loop classifies that as recoverable (internal/recovery.Classify)
+// and enters recovery mode instead of exiting.
+func TestStart_BootFailureServesRecoveryModeInsteadOfTimingOut(t *testing.T) {
+	dataDir := mobileTestEnv(t)
+	dbPath := filepath.Join(dataDir, "unitill-pos.db")
+
+	// A real, fully-migrated database first — db.Open records the ledger
+	// this test then corrupts.
+	seed, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("seed Open: %v", err)
+	}
+	if _, err := seed.Exec(`UPDATE schema_migrations SET checksum = ? WHERE version = 1`, strings.Repeat("0", 64)); err != nil {
+		t.Fatalf("corrupt the version-1 ledger checksum: %v", err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatalf("close seed: %v", err)
+	}
+
+	addr, err := Start(dataDir)
+	if err != nil {
+		t.Fatalf("Start: %v (recovery mode should make this succeed, not time out or error)", err)
+	}
+	if addr == "" {
+		t.Fatal("expected a non-empty address even though boot failed into recovery mode")
+	}
+
+	resp, err := http.Get("http://" + addr + "/healthz")
+	if err != nil {
+		t.Fatalf("GET /healthz: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("/healthz status = %d, want %d (recovery mode)\nbody: %s", resp.StatusCode, http.StatusServiceUnavailable, body)
+	}
+	if got := resp.Header.Get(recovery.HeaderMode); got != recovery.ModeRecovery {
+		t.Fatalf("/healthz %s header = %q, want %q", recovery.HeaderMode, got, recovery.ModeRecovery)
+	}
+
+	pageResp, err := http.Get("http://" + addr + "/")
+	if err != nil {
+		t.Fatalf("GET /: %v", err)
+	}
+	pageBody, _ := io.ReadAll(pageResp.Body)
+	pageResp.Body.Close()
+	page := string(pageBody)
+	// id="retry-btn" is the recovery page's own stable, non-i18n-translated
+	// anchor (internal/recovery/templates/recovery.html) — asserting on it
+	// proves the recovery SCREEN rendered, not just some other 200/503 page.
+	if !strings.Contains(page, `id="retry-btn"`) {
+		t.Fatalf("GET / did not render the recovery page (missing retry-btn)\nbody: %s", page)
+	}
+
+	Stop()
+	if IsRunning() {
+		t.Fatal("expected IsRunning() to be false after Stop")
 	}
 }

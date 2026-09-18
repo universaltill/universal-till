@@ -15,7 +15,6 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
-	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -23,13 +22,8 @@ import (
 
 func TestInventoryPage_RendersCategoryFilterChipRowAndRowCategoryID(t *testing.T) {
 	chdirRoot(t)
-	f := filepath.Join(t.TempDir(), "inv-cat-2119.db")
-	database, err := db.Open(f)
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	defer database.Close()
-	d := database.DB
+	d := openPagesTestDB(t)
+	defer d.Close()
 
 	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
 	if err != nil {
@@ -83,13 +77,8 @@ func TestInventoryPage_RendersCategoryFilterChipRowAndRowCategoryID(t *testing.T
 // /inventory, same as /catalog.
 func TestInventoryPage_DeactivatedParentPromotesActiveChildToItsOwnChip(t *testing.T) {
 	chdirRoot(t)
-	f := filepath.Join(t.TempDir(), "inv-cat-2140.db")
-	database, err := db.Open(f)
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	defer database.Close()
-	d := database.DB
+	d := openPagesTestDB(t)
+	defer d.Close()
 
 	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
 	if err != nil {

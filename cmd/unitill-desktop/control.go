@@ -266,10 +266,17 @@ func (cs *controlServer) handleApplyMode(w http.ResponseWriter, r *http.Request)
 }
 
 // LastInputAt returns the timestamp of the most recent POST
-// /input-heartbeat (ut-docs#1329), and whether one has ever been received
-// — the accessor GET /diagnostics' last_input_age_seconds is built on top
-// of, and a future auto-recovery card (explicitly out of THIS card's
-// scope) would read directly.
+// /input-heartbeat (ut-docs#1329), and whether one has ever been received.
+//
+// Test-only-reachable, kept deliberately (ut-docs#1566 — on
+// scripts/ci/deadcode-baseline.txt, not a deletion candidate): its callers
+// are control_test.go's TestControlServer_InputHeartbeat_* tests, which
+// use it to assert that a heartbeat POST did (or, unauthenticated, did
+// not) land. Production does NOT go through it — handleDiagnostics reads
+// lastInputAt/haveInput directly under the same lock to build
+// last_input_age_seconds, so this accessor is not on that path. It is the
+// read a future auto-recovery card (explicitly out of ut-docs#1329's
+// scope) would make; until one exists it stays the declared test seam.
 func (cs *controlServer) LastInputAt() (time.Time, bool) {
 	cs.mu.RLock()
 	defer cs.mu.RUnlock()

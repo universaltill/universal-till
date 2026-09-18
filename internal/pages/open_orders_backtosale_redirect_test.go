@@ -166,3 +166,26 @@ func TestSaleScreenReturnURL(t *testing.T) {
 		}
 	}
 }
+
+// TestSaleScreenReturnURLWithMsg (ut-docs#2347): the msg must survive
+// whichever target saleScreenReturnURL picked, including backoffice mode's
+// own "?stay=1" -- a bare "?msg=" append there would silently clobber it
+// rather than combine ("&msg=").
+func TestSaleScreenReturnURLWithMsg(t *testing.T) {
+	cases := []struct {
+		mode, msgKey, want string
+	}{
+		{"", "", "/"},
+		{"", "hold.toast.parked_and_resumed", "/?msg=hold.toast.parked_and_resumed"},
+		{"register", "hold.toast.parked_and_resumed", "/?msg=hold.toast.parked_and_resumed"},
+		{"backoffice", "", "/?stay=1"},
+		{"backoffice", "hold.toast.parked_and_resumed", "/?stay=1&msg=hold.toast.parked_and_resumed"},
+		{"self_order", "", "/self-order"},
+		{"self_order", "hold.toast.parked_and_resumed", "/self-order?msg=hold.toast.parked_and_resumed"},
+	}
+	for _, c := range cases {
+		if got := saleScreenReturnURLWithMsg(c.mode, c.msgKey); got != c.want {
+			t.Errorf("saleScreenReturnURLWithMsg(%q, %q) = %q, want %q", c.mode, c.msgKey, got, c.want)
+		}
+	}
+}

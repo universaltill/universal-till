@@ -11,7 +11,6 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
-	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -33,22 +32,19 @@ import (
 // bearer-authed sync surface a replica's write-through/proxy calls hit.
 func newHoldCrossTillPrimary(t *testing.T, tillBearer string) (*httptest.Server, *data.POSRepo) {
 	t.Helper()
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "primary.db"))
-	if err != nil {
-		t.Fatalf("open primary db: %v", err)
-	}
+	dbase := openPagesTestDB(t)
 	t.Cleanup(func() { dbase.Close() })
-	dp := &common.Deps{Db: dbase.DB}
+	dp := &common.Deps{Db: dbase}
 	mux := http.NewServeMux()
 	registerSyncTables(mux, dp)
 	registerSyncTablesClaim(mux, dp)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
-	if _, err := data.NewTillsRepo(dbase.DB).InsertTill(context.Background(), "Replica", hashBearer(tillBearer)); err != nil {
+	if _, err := data.NewTillsRepo(dbase).InsertTill(context.Background(), "Replica", hashBearer(tillBearer)); err != nil {
 		t.Fatalf("seed till: %v", err)
 	}
-	return srv, data.NewPOSRepo(dbase.DB)
+	return srv, data.NewPOSRepo(dbase)
 }
 
 // newHoldCrossTillReplica boots a real replica till: registerHoldAPI on its
@@ -62,10 +58,7 @@ func newHoldCrossTillReplica(t *testing.T, primaryURL, bearer string) (*http.Ser
 	}
 	httpx.InitI18n(i18n, "en")
 
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "replica.db"))
-	if err != nil {
-		t.Fatalf("open replica db: %v", err)
-	}
+	dbase := openPagesTestDB(t)
 	t.Cleanup(func() { dbase.Close() })
 
 	resolver := stubResolver{
@@ -74,10 +67,10 @@ func newHoldCrossTillReplica(t *testing.T, primaryURL, bearer string) (*http.Ser
 	engine := pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver)
 
 	dp := &common.Deps{
-		Db:       dbase.DB,
+		Db:       dbase,
 		Engine:   engine,
 		State:    common.RuntimeState{Currency: "GBP", TaxRatePct: 20},
-		Settings: settings.NewStore(dbase.DB),
+		Settings: settings.NewStore(dbase),
 	}
 	setReplicaSettings(t, dp.Settings, primaryURL, bearer)
 	mux := http.NewServeMux()
