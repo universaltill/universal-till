@@ -3,13 +3,11 @@ package pages
 import (
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
-	appdb "github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -22,32 +20,29 @@ import (
 func newDesignerTestDeps(t *testing.T) *common.Deps {
 	t.Helper()
 	chdirRoot(t)
-	d, err := appdb.Open(filepath.Join(t.TempDir(), "designer.db"))
-	if err != nil {
-		t.Fatalf("open migrated db: %v", err)
-	}
+	d := openPagesTestDB(t)
 	t.Cleanup(func() { d.Close() })
 
 	cfg := &config.Config{Theme: "monarch", Locales: config.Locales{Currency: "GBP", Locale: "en", TaxRate: 20}}
-	pm, err := plugins.Init(t.Context(), cfg, d.DB)
+	pm, err := plugins.Init(t.Context(), cfg, d)
 	if err != nil {
 		t.Fatalf("init plugins: %v", err)
 	}
-	state := common.LoadState(t.Context(), settings.NewStore(d.DB), cfg)
+	state := common.LoadState(t.Context(), settings.NewStore(d), cfg)
 	return &common.Deps{
 		Cfg:      cfg,
-		Db:       d.DB,
+		Db:       d,
 		State:    state,
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
-		BtnStore: ui.NewButtonStore(d.DB),
+		BtnStore: ui.NewButtonStore(d),
 		Pm:       pm,
-		Settings: settings.NewStore(d.DB),
+		Settings: settings.NewStore(d),
 		// A real auth.Service over this func's own real migrated DB
-		// (appdb.Open, not seedForPages' hand-rolled schema) so
+		// (openPagesTestDB, not seedForPages' hand-rolled schema) so
 		// TestDesigner_PagePermissions below can exercise the real
 		// role_permissions seed (ut-docs#2357) -- every other test in this
 		// file sets UT_AUTH=off and never reaches it.
-		AuthSvc: auth.NewService(d.DB),
+		AuthSvc: auth.NewService(d),
 	}
 }
 

@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -12,7 +13,6 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
-	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -20,37 +20,34 @@ import (
 // Customer order tracking via QR (ut-docs#527): /o/{token} is an anonymous,
 // token-gated, STATUS-ONLY read surface — these tests pin exactly that shape.
 
-func setupOrderTrackingDeps(t *testing.T) (*common.Deps, *db.DB) {
+func setupOrderTrackingDeps(t *testing.T) (*common.Deps, *sql.DB) {
 	t.Helper()
 	chdirRoot(t)
-	d, err := db.Open(filepath.Join(t.TempDir(), "tracking.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	d := openPagesTestDB(t)
 	t.Cleanup(func() { _ = d.Close() })
 	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
 	if err != nil {
 		t.Fatalf("i18n: %v", err)
 	}
 	httpx.InitI18n(i18n, "en")
-	return &common.Deps{Cfg: &config.Config{}, Db: d.DB}, d
+	return &common.Deps{Cfg: &config.Config{}, Db: d}, d
 }
 
-func seedTrackedSale(t *testing.T, d *db.DB, saleID, receiptNo string) string {
+func seedTrackedSale(t *testing.T, d *sql.DB, saleID, receiptNo string) string {
 	t.Helper()
-	if _, err := d.DB.Exec(`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at) VALUES (?,?,'completed','sale','GBP',370,0,0,370,datetime('now'))`, saleID, receiptNo); err != nil {
+	if _, err := d.Exec(`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at) VALUES (?,?,'completed','sale','GBP',370,0,0,370,datetime('now'))`, saleID, receiptNo); err != nil {
 		t.Fatalf("seed sale: %v", err)
 	}
-	tok, err := data.NewPOSRepo(d.DB).EnsureOrderTrackingToken(context.Background(), receiptNo)
+	tok, err := data.NewPOSRepo(d).EnsureOrderTrackingToken(context.Background(), receiptNo)
 	if err != nil {
 		t.Fatalf("EnsureOrderTrackingToken: %v", err)
 	}
 	return tok
 }
 
-func setTrackedStatus(t *testing.T, d *db.DB, receiptNo, status string, at time.Time) {
+func setTrackedStatus(t *testing.T, d *sql.DB, receiptNo, status string, at time.Time) {
 	t.Helper()
-	applied, _, err := data.NewPOSRepo(d.DB).ApplyOrderStatus(context.Background(), receiptNo, status, "u-test",
+	applied, _, err := data.NewPOSRepo(d).ApplyOrderStatus(context.Background(), receiptNo, status, "u-test",
 		at.UTC().Format(time.RFC3339), func(string) bool { return true })
 	if err != nil || !applied {
 		t.Fatalf("ApplyOrderStatus(%s): applied=%v err=%v", status, applied, err)
@@ -206,7 +203,7 @@ func TestOrderTracking_ReachableWithoutSession(t *testing.T) {
 	mux := http.NewServeMux()
 	registerOrderTracking(mux, dp)
 	registerOrderStatus(mux, dp)
-	h := auth.Middleware(mux, auth.NewService(d.DB))
+	h := auth.Middleware(mux, auth.NewService(d))
 
 	if rec := trackingGet(t, h, "/o/"+tok); rec.Code != http.StatusOK {
 		t.Fatalf("anonymous GET /o/{token}: want 200, got %d", rec.Code)

@@ -8,14 +8,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
-	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -459,18 +457,15 @@ func TestMergeHeldSales_PrimaryWinsPerIDAndLocalOnlyRowsSurvive(t *testing.T) {
 // till A is visible from till B while both can reach the primary" -- and
 // resuming it on B deletes it there again.
 func TestHoldOnReplica_ParkLandsOnPrimaryAndResumeDeletesThere(t *testing.T) {
-	primaryDB, err := db.Open(filepath.Join(t.TempDir(), "primary.db"))
-	if err != nil {
-		t.Fatalf("open primary db: %v", err)
-	}
+	primaryDB := openPagesTestDB(t)
 	t.Cleanup(func() { primaryDB.Close() })
-	primaryDp := &common.Deps{Db: primaryDB.DB}
+	primaryDp := &common.Deps{Db: primaryDB}
 	primaryMux := http.NewServeMux()
 	registerSyncHeldSales(primaryMux, primaryDp)
 	primary := httptest.NewServer(primaryMux)
 	t.Cleanup(primary.Close)
 	seedSyncOrdersTill(t, primaryDp, "Replica", "b-123")
-	primaryRepo := data.NewHeldSalesRepo(primaryDB.DB)
+	primaryRepo := data.NewHeldSalesRepo(primaryDB)
 
 	mux, dp := newHoldCrossTillReplica(t, primary.URL, "b-123")
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
@@ -530,12 +525,9 @@ type heldSaleCrossTill struct {
 
 func newHeldSaleCrossTill(t *testing.T) heldSaleCrossTill {
 	t.Helper()
-	primaryDB, err := db.Open(filepath.Join(t.TempDir(), "primary.db"))
-	if err != nil {
-		t.Fatalf("open primary db: %v", err)
-	}
+	primaryDB := openPagesTestDB(t)
 	t.Cleanup(func() { primaryDB.Close() })
-	primaryDp := &common.Deps{Db: primaryDB.DB}
+	primaryDp := &common.Deps{Db: primaryDB}
 	primaryMux := http.NewServeMux()
 	registerSyncTables(primaryMux, primaryDp)
 	registerSyncTablesClaim(primaryMux, primaryDp)
@@ -549,8 +541,8 @@ func newHeldSaleCrossTill(t *testing.T) heldSaleCrossTill {
 	registerOpenOrders(mux, dp)
 	return heldSaleCrossTill{
 		primaryURL:  primary.URL,
-		primaryHeld: data.NewHeldSalesRepo(primaryDB.DB),
-		primaryPOS:  data.NewPOSRepo(primaryDB.DB),
+		primaryHeld: data.NewHeldSalesRepo(primaryDB),
+		primaryPOS:  data.NewPOSRepo(primaryDB),
 		mux:         mux,
 		dp:          dp,
 	}

@@ -3,7 +3,6 @@ package pages
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -25,10 +24,7 @@ import (
 
 func etbOpenDB(t *testing.T, name string) *db.DB {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), name))
-	if err != nil {
-		t.Fatal(err)
-	}
+	d := &db.DB{DB: openPagesTestDB(t)}
 	t.Cleanup(func() { _ = d.Close() })
 	return d
 }

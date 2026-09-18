@@ -2,31 +2,27 @@ package pages
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
-	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/settings"
 )
 
-func setupKioskCounterOrdersDeps(t *testing.T) (*common.Deps, *db.DB) {
+func setupKioskCounterOrdersDeps(t *testing.T) (*common.Deps, *sql.DB) {
 	t.Helper()
 	chdirRoot(t)
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "counter-orders-page.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := openPagesTestDB(t)
 	t.Cleanup(func() { _ = dbase.Close() })
 	dp := &common.Deps{
-		Db:       dbase.DB,
-		Settings: settings.NewStore(dbase.DB),
+		Db:       dbase,
+		Settings: settings.NewStore(dbase),
 		Menu:     []common.MenuItem{},
 	}
 	return dp, dbase
@@ -36,7 +32,7 @@ func setupKioskCounterOrdersDeps(t *testing.T) (*common.Deps, *db.DB) {
 // list the instant it's marked collected — HTTP-level, list + collect flow.
 func TestKioskCounterOrdersPage_ListAndMarkCollected(t *testing.T) {
 	dp, dbase := setupKioskCounterOrdersDeps(t)
-	repo := data.NewKioskCounterOrdersRepo(dbase.DB)
+	repo := data.NewKioskCounterOrdersRepo(dbase)
 	created, err := repo.Create(context.Background(), data.KioskCounterOrder{
 		OrderType: "takeaway",
 		Lines: []data.KioskCounterOrderLine{
@@ -86,7 +82,7 @@ func TestKioskCounterOrdersPage_ListAndMarkCollected(t *testing.T) {
 	}
 
 	var status string
-	if err := dbase.DB.QueryRow(`SELECT status FROM kiosk_counter_orders WHERE id = ?`, created.ID).Scan(&status); err != nil {
+	if err := dbase.QueryRow(`SELECT status FROM kiosk_counter_orders WHERE id = ?`, created.ID).Scan(&status); err != nil {
 		t.Fatal(err)
 	}
 	if status != data.KioskCounterOrderStatusCollected {
@@ -142,7 +138,7 @@ func TestKioskCounterOrdersPage_ItemsFollowViewerLocaleDigitShape(t *testing.T) 
 // actually renders "09/11/2026 03:05" tells them nothing at a glance.
 func TestKioskCounterOrdersPage_ColumnShowsElapsedAgeNotAbsoluteTimestamp(t *testing.T) {
 	dp, dbase := setupKioskCounterOrdersDeps(t)
-	repo := data.NewKioskCounterOrdersRepo(dbase.DB)
+	repo := data.NewKioskCounterOrdersRepo(dbase)
 	created, err := repo.Create(context.Background(), data.KioskCounterOrder{
 		OrderType: "takeaway",
 		Lines:     []data.KioskCounterOrderLine{{Name: "Flat White", Qty: 1}},
@@ -153,7 +149,7 @@ func TestKioskCounterOrdersPage_ColumnShowsElapsedAgeNotAbsoluteTimestamp(t *tes
 	// Backdate created_at 42 minutes so elapsed-minutes has something
 	// unambiguous to assert on.
 	past := time.Now().UTC().Add(-42 * time.Minute).Format(time.RFC3339)
-	if _, err := dbase.DB.Exec(`UPDATE kiosk_counter_orders SET created_at = ? WHERE id = ?`, past, created.ID); err != nil {
+	if _, err := dbase.Exec(`UPDATE kiosk_counter_orders SET created_at = ? WHERE id = ?`, past, created.ID); err != nil {
 		t.Fatalf("backdate created_at: %v", err)
 	}
 

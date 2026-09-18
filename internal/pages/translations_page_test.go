@@ -11,7 +11,6 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
-	appdb "github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -23,17 +22,14 @@ import (
 func newTranslationsTestDeps(t *testing.T) (*http.ServeMux, *common.Deps, *config.I18n) {
 	t.Helper()
 	chdirRoot(t)
-	d, err := appdb.Open(filepath.Join(t.TempDir(), "translations.db"))
-	if err != nil {
-		t.Fatalf("open migrated db: %v", err)
-	}
+	d := openPagesTestDB(t)
 	t.Cleanup(func() { d.Close() })
 
 	cfg := &config.Config{
 		Theme:   "default",
 		Locales: config.Locales{Currency: "GBP", Locale: "en", TaxRate: 20},
 	}
-	pm, err := plugins.Init(t.Context(), cfg, d.DB)
+	pm, err := plugins.Init(t.Context(), cfg, d)
 	if err != nil {
 		t.Fatalf("init plugins: %v", err)
 	}
@@ -41,22 +37,22 @@ func newTranslationsTestDeps(t *testing.T) (*http.ServeMux, *common.Deps, *confi
 	if err != nil {
 		t.Fatalf("load i18n: %v", err)
 	}
-	state := common.LoadState(t.Context(), settings.NewStore(d.DB), cfg)
+	state := common.LoadState(t.Context(), settings.NewStore(d), cfg)
 	// audit_log.actor_id has a real FK to users(id) in the migrated schema;
 	// seed the manager withManager() attaches so InsertAudit doesn't fail
 	// its FK check (silently, since callers do `_ = posRepo.InsertAudit(...)`).
-	if _, err := d.DB.ExecContext(t.Context(), `
+	if _, err := d.ExecContext(t.Context(), `
 INSERT INTO users(id, username, display_name, role, is_active) VALUES('mgr-1', 'manager', 'Manager', 'manager', 1)`); err != nil {
 		t.Fatalf("seed manager user: %v", err)
 	}
 	dp := &common.Deps{
 		Cfg:      cfg,
-		Db:       d.DB,
+		Db:       d,
 		State:    state,
 		Menu:     []common.MenuItem{{Href: "/settings", Label: "Settings"}},
 		Pm:       pm,
-		Settings: settings.NewStore(d.DB),
-		AuthSvc:  auth.NewService(d.DB),
+		Settings: settings.NewStore(d),
+		AuthSvc:  auth.NewService(d),
 	}
 	mux := http.NewServeMux()
 	registerTranslations(mux, dp, i18n)

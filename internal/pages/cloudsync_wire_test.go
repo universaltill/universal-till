@@ -3,7 +3,6 @@ package pages
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -12,7 +11,6 @@ import (
 	"github.com/universaltill/universal-till/internal/cloudsync"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
-	appdb "github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -690,18 +688,15 @@ func TestCollectProblems_TruncationIsUTF8Safe(t *testing.T) {
 // regression for the "cloud" actor id bug (ut-docs#1676): audit_log.actor_id
 // has a genuine FOREIGN KEY to users(id) in internal/db/migrations/001_init.sql,
 // and "cloud" was never a seeded user, so this call always violated it in a
-// real deployment. This test opens a real migrated database directly
-// (appdb.Open) rather than going through openPagesTestDB/seedForPages, so it
-// stays a true regression test regardless of that package's own test-fixture
-// schema (which historically carried no such FK at all, and is why this bug
-// went uncaught for as long as it did).
+// real deployment. This test opens a real migrated database (openPagesTestDB,
+// ut-docs#2219's cloned-template version of the same internal/db.Open
+// migration chain) rather than this package's simplified seedForPages
+// fixture, so it stays a true regression test regardless of that fixture's
+// own schema (which historically carried no such FK at all, and is why this
+// bug went uncaught for as long as it did).
 func TestCloudAdjustStock_AuditActorSatisfiesRealForeignKey(t *testing.T) {
-	migrated, err := appdb.Open(filepath.Join(t.TempDir(), "cloudadjust.db"))
-	if err != nil {
-		t.Fatalf("open+migrate: %v", err)
-	}
-	t.Cleanup(func() { migrated.Close() })
-	db := migrated.DB
+	db := openPagesTestDB(t)
+	t.Cleanup(func() { db.Close() })
 
 	if _, err := db.Exec(`INSERT INTO items (id, name, base_price, is_active) VALUES ('itm1', 'Widget', 500, 1)`); err != nil {
 		t.Fatalf("seed item: %v", err)

@@ -11,13 +11,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
-	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -38,18 +36,15 @@ func stubBrowsePrinters(t *testing.T, candidates []discovery.PrinterCandidate, e
 func newKitchenStationsTestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Helper()
 	chdirRoot(t)
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "kitchen-stations-page.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := openPagesTestDB(t)
 	t.Cleanup(func() { dbase.Close() })
-	if _, err := dbase.DB.Exec(`INSERT INTO categories (id, name) VALUES ('cat-food','Food')`); err != nil {
+	if _, err := dbase.Exec(`INSERT INTO categories (id, name) VALUES ('cat-food','Food')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dbase.DB.Exec(`INSERT INTO items (id, sku, name, base_price, category_id, is_active) VALUES ('itm-pie','PIE','Pork Pie',450,'cat-food',1)`); err != nil {
+	if _, err := dbase.Exec(`INSERT INTO items (id, sku, name, base_price, category_id, is_active) VALUES ('itm-pie','PIE','Pork Pie',450,'cat-food',1)`); err != nil {
 		t.Fatal(err)
 	}
-	d := &common.Deps{Db: dbase.DB, Settings: settings.NewStore(dbase.DB), Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(dbase.DB)}
+	d := &common.Deps{Db: dbase, Settings: settings.NewStore(dbase), Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(dbase)}
 	mux := http.NewServeMux()
 	registerKitchenStations(mux, d)
 	return mux, d

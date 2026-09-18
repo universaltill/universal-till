@@ -1,58 +1,54 @@
 package pages
 
 import (
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data"
-	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
-func setupModifiersTestDeps(t *testing.T) (*common.Deps, *db.DB) {
+func setupModifiersTestDeps(t *testing.T) (*common.Deps, *sql.DB) {
 	t.Helper()
 	chdirRoot(t)
-	d, err := db.Open(filepath.Join(t.TempDir(), "mods.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	d := openPagesTestDB(t)
 	t.Cleanup(func() { _ = d.Close() })
 
-	if _, err := d.DB.Exec(`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-coffee', 'COFFEE', 'Flat White', 320, 1)`); err != nil {
+	if _, err := d.Exec(`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-coffee', 'COFFEE', 'Flat White', 320, 1)`); err != nil {
 		t.Fatal(err)
 	}
 	// Group rows plus their item_modifier_group_links rows (ADR-0090 /
 	// migration 025): membership is read through the link table.
-	if _, err := d.DB.Exec(`
+	if _, err := d.Exec(`
 		INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order)
 		VALUES ('g-extras', 'itm-coffee', 'Extras', 0, 0, 2, 1)
 	`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.DB.Exec(`INSERT INTO item_modifier_group_links (item_id, group_id, sort_order) VALUES ('itm-coffee', 'g-extras', 1)`); err != nil {
+	if _, err := d.Exec(`INSERT INTO item_modifier_group_links (item_id, group_id, sort_order) VALUES ('itm-coffee', 'g-extras', 1)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.DB.Exec(`
+	if _, err := d.Exec(`
 		INSERT INTO item_modifier_options (id, group_id, name, price_delta_minor, sort_order)
 		VALUES ('o-shot', 'g-extras', 'Extra shot', 50, 1), ('o-oat', 'g-extras', 'Oat milk', 40, 2)
 	`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.DB.Exec(`
+	if _, err := d.Exec(`
 		INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order)
 		VALUES ('g-size', 'itm-coffee', 'Size', 1, 1, 1, 2)
 	`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.DB.Exec(`INSERT INTO item_modifier_group_links (item_id, group_id, sort_order) VALUES ('itm-coffee', 'g-size', 2)`); err != nil {
+	if _, err := d.Exec(`INSERT INTO item_modifier_group_links (item_id, group_id, sort_order) VALUES ('itm-coffee', 'g-size', 2)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.DB.Exec(`
+	if _, err := d.Exec(`
 		INSERT INTO item_modifier_options (id, group_id, name, price_delta_minor, sort_order)
 		VALUES ('o-reg', 'g-size', 'Regular', 0, 1), ('o-lrg', 'g-size', 'Large', 100, 2)
 	`); err != nil {
@@ -65,7 +61,7 @@ func setupModifiersTestDeps(t *testing.T) (*common.Deps, *db.DB) {
 	dp := &common.Deps{
 		State:  common.RuntimeState{Currency: "GBP", TaxRatePct: 20},
 		Engine: pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver),
-		Db:     d.DB,
+		Db:     d,
 	}
 	return dp, d
 }
@@ -118,16 +114,16 @@ func TestGetModifiers_ReflectsGroupAddedAfterFirstFetch(t *testing.T) {
 		t.Fatalf("Toppings should not exist yet: %s", rec.Body.String())
 	}
 
-	if _, err := d.DB.Exec(`
+	if _, err := d.Exec(`
 		INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order, is_active)
 		VALUES ('g-toppings', 'itm-coffee', 'Toppings', 0, 0, 3, 3, 1)
 	`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.DB.Exec(`INSERT INTO item_modifier_group_links (item_id, group_id, sort_order) VALUES ('itm-coffee', 'g-toppings', 3)`); err != nil {
+	if _, err := d.Exec(`INSERT INTO item_modifier_group_links (item_id, group_id, sort_order) VALUES ('itm-coffee', 'g-toppings', 3)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.DB.Exec(`
+	if _, err := d.Exec(`
 		INSERT INTO item_modifier_options (id, group_id, name, price_delta_minor, sort_order)
 		VALUES ('o-cinnamon', 'g-toppings', 'Cinnamon', 20, 1)
 	`); err != nil {
@@ -167,7 +163,7 @@ func TestGetModifiers_UnknownItemIs404(t *testing.T) {
 // modifier catalog.
 func TestScanWithModifiers_RejectsMismatchedCodeAndItemID(t *testing.T) {
 	dp, d := setupModifiersTestDeps(t)
-	if _, err := d.DB.Exec(`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-other', 'OTHER', 'Something Else', 100, 1)`); err != nil {
+	if _, err := d.Exec(`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-other', 'OTHER', 'Something Else', 100, 1)`); err != nil {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
@@ -345,7 +341,7 @@ func TestGetModifiers_PromptsForCategoryInheritedGroupsMinusOptOuts(t *testing.T
 		`INSERT INTO item_modifier_options (id, group_id, name, price_delta_minor, sort_order) VALUES ('o-oatmilk', 'g-milk', 'Oat', 30, 1)`,
 		`INSERT INTO category_modifier_group_links (category_id, group_id, sort_order) VALUES ('cat-hot', 'g-milk', 0)`,
 	} {
-		if _, err := d.DB.Exec(q); err != nil {
+		if _, err := d.Exec(q); err != nil {
 			t.Fatalf("%s: %v", q, err)
 		}
 	}
@@ -373,7 +369,7 @@ func TestGetModifiers_PromptsForCategoryInheritedGroupsMinusOptOuts(t *testing.T
 	}
 
 	// The item opts out of Milk: the picker drops it, keeps its own groups.
-	if err := data.NewModifierRepo(d.DB).OptOutItemFromGroup(t.Context(), "itm-coffee", "g-milk"); err != nil {
+	if err := data.NewModifierRepo(d).OptOutItemFromGroup(t.Context(), "itm-coffee", "g-milk"); err != nil {
 		t.Fatal(err)
 	}
 	body = fetch()
@@ -388,7 +384,7 @@ func TestGetModifiers_PromptsForCategoryInheritedGroupsMinusOptOuts(t *testing.T
 
 	// Opting back in restores it on the very next fetch — read-time
 	// resolution, no snapshot anywhere to go stale.
-	if err := data.NewModifierRepo(d.DB).OptInItemToGroup(t.Context(), "itm-coffee", "g-milk"); err != nil {
+	if err := data.NewModifierRepo(d).OptInItemToGroup(t.Context(), "itm-coffee", "g-milk"); err != nil {
 		t.Fatal(err)
 	}
 	if body = fetch(); !strings.Contains(body, `name="mod_g-milk"`) {

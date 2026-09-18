@@ -4,12 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
-	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/settings"
 )
@@ -19,15 +17,12 @@ import (
 // repo's { data, error } envelope with snake_case fields.
 func newVoucherTestMux(t *testing.T) (*http.ServeMux, *data.POSRepo) {
 	t.Helper()
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "voucher-api.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := openPagesTestDB(t)
 	t.Cleanup(func() { _ = dbase.Close() })
-	d := &common.Deps{Db: dbase.DB, Settings: settings.NewStore(dbase.DB)}
+	d := &common.Deps{Db: dbase, Settings: settings.NewStore(dbase)}
 	mux := http.NewServeMux()
 	registerVoucherAPI(mux, d)
-	return mux, data.NewPOSRepo(dbase.DB)
+	return mux, data.NewPOSRepo(dbase)
 }
 
 func TestVoucherAPI_BalanceQuery(t *testing.T) {

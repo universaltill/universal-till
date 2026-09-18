@@ -4,13 +4,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
-	appdb "github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -31,21 +29,18 @@ func newSetupRestoreImportDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Helper()
 	chdirRoot(t)
 	initAuthTestI18n(t)
-	d, err := appdb.Open(filepath.Join(t.TempDir(), "setup-restore-import.db"))
-	if err != nil {
-		t.Fatalf("open migrated db: %v", err)
-	}
+	d := openPagesTestDB(t)
 	t.Cleanup(func() { d.Close() })
 	cfg := &config.Config{Theme: "default"}
-	pm, err := plugins.Init(t.Context(), cfg, d.DB)
+	pm, err := plugins.Init(t.Context(), cfg, d)
 	if err != nil {
 		t.Fatalf("init plugins: %v", err)
 	}
-	store := settings.NewStore(d.DB)
-	svc := auth.NewService(d.DB)
+	store := settings.NewStore(d)
+	svc := auth.NewService(d)
 	dp := &common.Deps{
 		Cfg:      cfg,
-		Db:       d.DB,
+		Db:       d,
 		Settings: store,
 		AuthSvc:  svc,
 		Engine:   pos.NewServiceWithResolver(pos.Config{}, stubResolver{}),

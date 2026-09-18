@@ -2,53 +2,45 @@ package pages
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
-	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
 )
 
 // newSyncSalesRealMigrationDeps builds *common.Deps against a REAL migrated
-// schema (internal/db.Open, not this package's hand-rolled openPagesTestDB/
-// seedForPages fixture) -- same duplicated-helper-per-package convention
-// internal/cloudsync's own openMigratedDB already uses (see that file's
-// comment), chosen deliberately here rather than reusing/editing
-// openPagesTestDB so this regression test doesn't collide with ut-docs#1676's
-// in-flight core swap of that shared fixture. payments.method_id's real FK
-// to payment_methods(id) (internal/db/migrations/001_init.sql) is exactly
-// what ut-docs#1681's bug needs enforced to be reproducible at all -- the
-// old hand-rolled fixture carried no such FK, which is why this gap was
+// schema (openPagesTestDB, ut-docs#2219's cloned-template version of the
+// same internal/db.Open migration chain), not this package's older
+// hand-rolled seedForPages fixture. payments.method_id's real FK to
+// payment_methods(id) (internal/db/migrations/001_init.sql) is exactly what
+// ut-docs#1681's bug needs enforced to be reproducible at all -- the old
+// hand-rolled fixture carried no such FK, which is why this gap was
 // invisible before.
 func newSyncSalesRealMigrationDeps(t *testing.T) *common.Deps {
 	t.Helper()
 	chdirRoot(t)
-	d, err := db.Open(filepath.Join(t.TempDir(), "sync_sales_fk.db"))
-	if err != nil {
-		t.Fatalf("open migrated db: %v", err)
-	}
+	d := openPagesTestDB(t)
 	t.Cleanup(func() { d.Close() })
 
 	cfg := &config.Config{
 		Theme:   "default",
 		Locales: config.Locales{Currency: "GBP", TaxRate: 20},
 	}
-	pm, err := plugins.Init(t.Context(), cfg, d.DB)
+	pm, err := plugins.Init(t.Context(), cfg, d)
 	if err != nil {
 		t.Fatalf("init plugins: %v", err)
 	}
-	state := common.LoadState(t.Context(), settings.NewStore(d.DB), cfg)
+	state := common.LoadState(t.Context(), settings.NewStore(d), cfg)
 	dp := &common.Deps{
 		Cfg:      cfg,
-		Db:       d.DB,
+		Db:       d,
 		State:    state,
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
 		Pm:       pm,
-		Settings: settings.NewStore(d.DB),
+		Settings: settings.NewStore(d),
 	}
 	t.Cleanup(dp.WaitForAsyncWork)
 	return dp

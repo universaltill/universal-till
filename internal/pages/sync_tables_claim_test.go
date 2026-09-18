@@ -2,17 +2,16 @@ package pages
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
-	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -23,16 +22,13 @@ import (
 // table. Same shape as sync_tables_test.go / sync_orders_test.go: syncTill
 // auth, JSON envelope, snake_case.
 
-func newSyncTablesClaimTestDeps(t *testing.T) (*http.ServeMux, *common.Deps, *db.DB) {
+func newSyncTablesClaimTestDeps(t *testing.T) (*http.ServeMux, *common.Deps, *sql.DB) {
 	t.Helper()
 	chdirRoot(t)
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "sync_tables_claim.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := openPagesTestDB(t)
 	t.Cleanup(func() { dbase.Close() })
 
-	dp := &common.Deps{Db: dbase.DB}
+	dp := &common.Deps{Db: dbase}
 	mux := http.NewServeMux()
 	registerSyncTablesClaim(mux, dp)
 	return mux, dp, dbase
@@ -119,7 +115,7 @@ func TestSyncTablesClaim_ClaimThenRefuseOtherTillThenRelease(t *testing.T) {
 	seedSyncOrdersTill(t, dp, "Till 2", "bearer-t2")
 	seedSyncOrdersTill(t, dp, "Till 3", "bearer-t3")
 
-	repo := data.NewPOSRepo(dbase.DB)
+	repo := data.NewPOSRepo(dbase)
 	id, err := repo.CreateTable(context.Background(), "T1", "", 4, "rect", 100, 100)
 	if err != nil {
 		t.Fatalf("CreateTable: %v", err)
@@ -133,11 +129,11 @@ func TestSyncTablesClaim_ClaimThenRefuseOtherTillThenRelease(t *testing.T) {
 		t.Fatalf("claim: want claimed=true error=null, got %+v", resp)
 	}
 	var owner string
-	if err := dbase.DB.QueryRow(`SELECT c.till_id FROM table_claims c WHERE c.table_id = ?`, id).Scan(&owner); err != nil {
+	if err := dbase.QueryRow(`SELECT c.till_id FROM table_claims c WHERE c.table_id = ?`, id).Scan(&owner); err != nil {
 		t.Fatalf("read claim: %v", err)
 	}
 	var till2 string
-	if err := dbase.DB.QueryRow(`SELECT id FROM tills WHERE name = 'Till 2'`).Scan(&till2); err != nil {
+	if err := dbase.QueryRow(`SELECT id FROM tills WHERE name = 'Till 2'`).Scan(&till2); err != nil {
 		t.Fatal(err)
 	}
 	if owner != till2 {
@@ -195,7 +191,7 @@ func TestSyncTablesClaim_StaleTillClaimIsTakenOver(t *testing.T) {
 	seedSyncOrdersTill(t, dp, "Till 2", "bearer-t2")
 	seedSyncOrdersTill(t, dp, "Till 3", "bearer-t3")
 
-	repo := data.NewPOSRepo(dbase.DB)
+	repo := data.NewPOSRepo(dbase)
 	id, err := repo.CreateTable(context.Background(), "T1", "", 4, "rect", 100, 100)
 	if err != nil {
 		t.Fatalf("CreateTable: %v", err)
@@ -209,7 +205,7 @@ func TestSyncTablesClaim_StaleTillClaimIsTakenOver(t *testing.T) {
 	}
 	// Till 2 goes silent: its last_seen_at ages past the TTL.
 	stale := time.Now().UTC().Add(-(tillClaimTTL + time.Minute)).Format(time.RFC3339)
-	if _, err := dbase.DB.Exec(`UPDATE tills SET last_seen_at = ? WHERE name = 'Till 2'`, stale); err != nil {
+	if _, err := dbase.Exec(`UPDATE tills SET last_seen_at = ? WHERE name = 'Till 2'`, stale); err != nil {
 		t.Fatal(err)
 	}
 	rec := postSyncTableClaim(mux, "claim", id, "bearer-t3")
@@ -220,10 +216,10 @@ func TestSyncTablesClaim_StaleTillClaimIsTakenOver(t *testing.T) {
 		t.Fatalf("a stale till's claim must be taken over, got %+v", resp)
 	}
 	var owner, till3 string
-	if err := dbase.DB.QueryRow(`SELECT till_id FROM table_claims WHERE table_id = ?`, id).Scan(&owner); err != nil {
+	if err := dbase.QueryRow(`SELECT till_id FROM table_claims WHERE table_id = ?`, id).Scan(&owner); err != nil {
 		t.Fatal(err)
 	}
-	if err := dbase.DB.QueryRow(`SELECT id FROM tills WHERE name = 'Till 3'`).Scan(&till3); err != nil {
+	if err := dbase.QueryRow(`SELECT id FROM tills WHERE name = 'Till 3'`).Scan(&till3); err != nil {
 		t.Fatal(err)
 	}
 	if owner != till3 {
@@ -258,7 +254,7 @@ func TestSyncTablesClaim_ReleaseAllDropsEveryTableTheCallingTillHolds(t *testing
 	seedSyncOrdersTill(t, dp, "Till 2", "bearer-t2")
 	seedSyncOrdersTill(t, dp, "Till 3", "bearer-t3")
 
-	repo := data.NewPOSRepo(dbase.DB)
+	repo := data.NewPOSRepo(dbase)
 	t1, err := repo.CreateTable(context.Background(), "T1", "", 4, "rect", 100, 100)
 	if err != nil {
 		t.Fatalf("CreateTable T1: %v", err)
@@ -320,7 +316,7 @@ func TestSyncTablesClaim_ReleaseAllKeepsHeldOrdersTable(t *testing.T) {
 	mux, dp, dbase := newSyncTablesClaimTestDeps(t)
 	seedSyncOrdersTill(t, dp, "Till 2", "bearer-t2")
 
-	repo := data.NewPOSRepo(dbase.DB)
+	repo := data.NewPOSRepo(dbase)
 	held, err := repo.CreateTable(context.Background(), "T1", "", 4, "rect", 100, 100)
 	if err != nil {
 		t.Fatalf("CreateTable T1: %v", err)
@@ -356,7 +352,7 @@ func TestSyncTablesClaim_PrimaryOwnLocalClaimBlocksReplicaAndIsNeverExpired(t *t
 	mux, dp, dbase := newSyncTablesClaimTestDeps(t)
 	seedSyncOrdersTill(t, dp, "Till 2", "bearer-t2")
 
-	repo := data.NewPOSRepo(dbase.DB)
+	repo := data.NewPOSRepo(dbase)
 	id, err := repo.CreateTable(context.Background(), "T1", "", 4, "rect", 100, 100)
 	if err != nil {
 		t.Fatalf("CreateTable: %v", err)
@@ -368,7 +364,7 @@ func TestSyncTablesClaim_PrimaryOwnLocalClaimBlocksReplicaAndIsNeverExpired(t *t
 		t.Fatal("a replica must be refused a table the primary's own basket holds")
 	}
 	var owner string
-	if err := dbase.DB.QueryRow(`SELECT till_id FROM table_claims WHERE table_id = ?`, id).Scan(&owner); err != nil || owner != "" {
+	if err := dbase.QueryRow(`SELECT till_id FROM table_claims WHERE table_id = ?`, id).Scan(&owner); err != nil || owner != "" {
 		t.Fatalf("the primary's own '' claim must survive, got %q (err %v)", owner, err)
 	}
 }
@@ -391,7 +387,7 @@ func TestSyncTablesClaim_OwnOrphanedClaimIsRetakenAfterRestart(t *testing.T) {
 	seedSyncOrdersTill(t, dp, "Till 2", "bearer-t2")
 	seedSyncOrdersTill(t, dp, "Till 3", "bearer-t3")
 
-	repo := data.NewPOSRepo(dbase.DB)
+	repo := data.NewPOSRepo(dbase)
 	id, err := repo.CreateTable(context.Background(), "T1", "", 4, "rect", 100, 100)
 	if err != nil {
 		t.Fatalf("CreateTable: %v", err)
@@ -412,10 +408,10 @@ func TestSyncTablesClaim_OwnOrphanedClaimIsRetakenAfterRestart(t *testing.T) {
 	}
 
 	var owner, till2 string
-	if err := dbase.DB.QueryRow(`SELECT till_id FROM table_claims WHERE table_id = ?`, id).Scan(&owner); err != nil {
+	if err := dbase.QueryRow(`SELECT till_id FROM table_claims WHERE table_id = ?`, id).Scan(&owner); err != nil {
 		t.Fatalf("read claim: %v", err)
 	}
-	if err := dbase.DB.QueryRow(`SELECT id FROM tills WHERE name = 'Till 2'`).Scan(&till2); err != nil {
+	if err := dbase.QueryRow(`SELECT id FROM tills WHERE name = 'Till 2'`).Scan(&till2); err != nil {
 		t.Fatal(err)
 	}
 	if owner != till2 {
