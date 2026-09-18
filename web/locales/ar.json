@@ -637,6 +637,7 @@
   "hold.error.empty": "لا شيء لتعليقه — السلة فارغة",
   "hold.error.failed": "تعذّر تعليق البيع",
   "hold.error.not_found": "البيع المعلّق غير موجود",
+  "hold.label.auto_parked": "عُلّق تلقائيًا %s",
   "hold.modal.confirm_action": "تعليق البيع (تأكيد)",
   "hold.modal.placeholder": "مثلاً: طاولة 4، سارة",
   "hold.modal.title": "سمِّ هذا الطلب (اختياري)",

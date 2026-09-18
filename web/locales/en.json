@@ -637,6 +637,7 @@
   "hold.error.empty": "Nothing to hold — the basket is empty",
   "hold.error.failed": "Could not hold the sale",
   "hold.error.not_found": "Held sale not found",
+  "hold.label.auto_parked": "Auto-held %s",
   "hold.modal.confirm_action": "Hold Sale (confirm)",
   "hold.modal.placeholder": "e.g. Table 4, Sarah",
   "hold.modal.title": "Name this tab (optional)",

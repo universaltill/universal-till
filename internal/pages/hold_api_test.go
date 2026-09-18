@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -1109,6 +1110,65 @@ func TestHoldHandler_FirstParkMintsFreshIDAndLabel(t *testing.T) {
 	}
 	if !dp.Engine.HeldOrigin().IsZero() {
 		t.Fatalf("parking must leave the (now empty) basket with no origin, got %+v", dp.Engine.HeldOrigin())
+	}
+}
+
+var (
+	plainClockLabel = regexp.MustCompile(`^\d{2}:\d{2}$`)
+	autoParkedLabel = regexp.MustCompile(`^Auto-held \d{2}:\d{2}:\d{2}$`)
+)
+
+// TestHoldHandler_BlankManualHoldKeepsPlainClockLabel (ut-docs#2194): a
+// genuine manual Hold left with no customer name and no typed label (the
+// modal's own name field is optional) must keep today's plain "15:04"
+// fallback exactly, with no "Auto-held" i18n prefix -- that only applies to
+// the auto-park path below, which the plain typedLabel=="" check on its own
+// cannot distinguish from this one.
+func TestHoldHandler_BlankManualHoldKeepsPlainClockLabel(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	if rec := holdTestPost(mux, "/api/pos/hold", ""); rec.Code != http.StatusOK {
+		t.Fatalf("hold: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	row := holdTestOnlyRow(t, dp)
+	if !plainClockLabel.MatchString(row.Label) {
+		t.Fatalf("blank manual hold label = %q, want a plain HH:MM clock label matching %q", row.Label, plainClockLabel.String())
+	}
+}
+
+// TestResumeHandler_AutoParkUsesSecondsResolutionLabel (ut-docs#2194): the
+// busy-basket auto-park (ut-docs#1919) can fire more than once inside the
+// same clock-minute -- unlike a manual Hold, there's no typing delay to
+// separate two such events -- so its no-name fallback label (the auto-park
+// call never has a typed label to begin with) must carry seconds resolution
+// and an explicit, i18n-sourced "Auto-held" prefix, distinct from a plain
+// manual Hold's "15:04" fallback above.
+func TestResumeHandler_AutoParkUsesSecondsResolutionLabel(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	if rec := holdTestPost(mux, "/api/pos/hold", ""); rec.Code != http.StatusOK {
+		t.Fatalf("hold: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var targetID string
+	if err := dp.Db.QueryRow(`SELECT id FROM held_sales`).Scan(&targetID); err != nil {
+		t.Fatalf("expected a held_sales row: %v", err)
+	}
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("start a new live sale: %v", err)
+	}
+	if rec := holdTestPost(mux, "/api/pos/resume", "id="+targetID); rec.Code != http.StatusOK {
+		t.Fatalf("resume: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var autoParkedLabelValue string
+	if err := dp.Db.QueryRow(`SELECT label FROM held_sales WHERE id != ?`, targetID).Scan(&autoParkedLabelValue); err != nil {
+		t.Fatalf("expected the auto-parked row: %v", err)
+	}
+	if !autoParkedLabel.MatchString(autoParkedLabelValue) {
+		t.Fatalf("auto-parked label = %q, want it to match %q", autoParkedLabelValue, autoParkedLabel.String())
 	}
 }
 
