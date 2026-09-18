@@ -814,6 +814,32 @@ var displayMode atomic.Value // string
 // live-updated at the same call sites InitSelfOrderMode already is.
 func InitDisplayMode(mode string) { displayMode.Store(mode) }
 
+// currentTheme backs RenderError's ".theme" template data (ut-docs#2362) —
+// same reasoning as displayMode above: RenderError has no *common.Deps in
+// scope, so it can't read d.CurrentState().Theme fresh the way every other
+// page render does, and without a theme at all the error page renders no
+// theme stylesheet AND (via the shellsig template func) a different
+// ADR-0098 shell signature than the rest of the shop's themed pages —
+// which makes a boosted navigation onto an error page (correctly) fall
+// back to a full, unthemed document load instead of swapping in place.
+var currentTheme atomic.Value // string
+
+// InitTheme publishes the shop's current theme for RenderError. Published
+// at boot (pages.Init) and live-updated at every site that changes
+// store.theme (the dedicated Settings theme card, the generic settings
+// key/value table, and the shared settings re-derive both a cloud
+// set_setting directive and the replica-drift loop run through) — same set
+// of call sites InitCurrency already covers for store.currency.
+func InitTheme(theme string) { currentTheme.Store(theme) }
+
+// currentThemeVal reads the value InitTheme publishes, defaulting to "" (no
+// theme configured yet, e.g. a test that never called InitTheme) the same
+// way every atomic.Value-backed getter in this file does.
+func currentThemeVal() string {
+	v, _ := currentTheme.Load().(string)
+	return v
+}
+
 // saleScreenReturnURLFor mirrors internal/pages/index_page.go's
 // saleScreenReturnURL exactly (same two ADR-driven exceptions: ADR-0018
 // backoffice is a landing preference an explicit action opts out of,
