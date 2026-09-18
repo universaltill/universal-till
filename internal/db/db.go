@@ -405,6 +405,16 @@ func (db *DB) applyMigration(m migration) error {
 		return err
 	}
 
+	// ut-docs#2247: runs inside this same transaction so a failure rolls
+	// back the backfill's own UPDATE along with the ledger insert below —
+	// see verifyMigration028BackfillTx's doc comment for why post-commit
+	// was the wrong place for this.
+	if m.Version == backfillCodelessVariantSkusMigrationVersion {
+		if err := postApplyMigration028Check(tx); err != nil {
+			return err
+		}
+	}
+
 	if _, err := tx.Exec(`INSERT INTO schema_migrations (version, name, checksum) VALUES (?, ?, ?)`, m.Version, m.Name, migrationChecksum(m.SQL)); err != nil {
 		return fmt.Errorf("record migration %d: %w", m.Version, err)
 	}
@@ -428,6 +438,15 @@ func (db *DB) reapplyMigration(m migration) error {
 
 	if err := execMigrationStatements(tx, m); err != nil {
 		return err
+	}
+
+	// Same post-condition guard as applyMigration above, for the (currently
+	// unused for 028 — it's not in idempotentRerunVersions) case where 028
+	// is ever allowlisted for re-apply in place.
+	if m.Version == backfillCodelessVariantSkusMigrationVersion {
+		if err := postApplyMigration028Check(tx); err != nil {
+			return err
+		}
 	}
 
 	if _, err := tx.Exec(`UPDATE schema_migrations SET name = ?, checksum = ? WHERE version = ?`, m.Name, migrationChecksum(m.SQL), m.Version); err != nil {

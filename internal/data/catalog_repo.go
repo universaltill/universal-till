@@ -300,7 +300,13 @@ type VariantView struct {
 	// the sale-screen variant picker can tell a genuinely codeless variant
 	// (no barcode AND no SKU — can never be resolved at sale time) from one
 	// that only lacks a barcode, mirroring GetVariantLabel's own
-	// barcode-else-SKU "resolvable code" fallback.
+	// barcode-else-SKU "resolvable code" fallback. Always already trimmed
+	// (ut-docs#2247) — a whitespace-only sku reads as "" here, same as a
+	// NULL one, so sellableVariants (the only consumer of this struct)
+	// sees the codeless signal without re-trimming. The catalog-admin
+	// codeless badge (web/ui/partials/catalog_variants.html) does NOT read
+	// this struct — it renders from VariantEditView (VariantsForItem,
+	// below), which carries its own matching TRIM.
 	SKU string
 }
 
@@ -490,7 +496,7 @@ func (r *CatalogRepo) HasOtherActiveItems(ctx context.Context, itemID string) (b
 // (see VariantView.SKU's doc comment).
 func (r *CatalogRepo) ItemVariantsFor(ctx context.Context, itemID string) ([]VariantView, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT v.id, v.name, v.price, COALESCE(v.sku, ''),
+SELECT v.id, v.name, v.price, TRIM(COALESCE(v.sku, '')),
        COALESCE((SELECT b.barcode FROM variant_barcodes b WHERE b.variant_id = v.id
                  ORDER BY b.is_primary DESC, b.barcode LIMIT 1), '')
 FROM item_variants v
@@ -536,7 +542,7 @@ SELECT v.id, v.name,
           ORDER BY datetime(ph.starts_at) DESC, ph.rowid DESC LIMIT 1),
          v.price
        ),
-       COALESCE(v.sku, ''),
+       TRIM(COALESCE(v.sku, '')),
        COALESCE((SELECT b.barcode FROM variant_barcodes b WHERE b.variant_id = v.id
                  ORDER BY b.is_primary DESC, b.barcode LIMIT 1), '')
 FROM item_variants v
@@ -579,6 +585,11 @@ ORDER BY v.name`, itemID)
 // installs: item_variants.sku is nullable, CreateVariant has only
 // auto-generated SKUs since ut-docs#1900, and no migration backfills the
 // older rows.
+//
+// TRIM(COALESCE(v.sku, ”)) — ut-docs#2247: a whitespace-only sku is not a
+// resolvable code (nothing you can scan or type matches it), so it counts
+// as codeless here exactly as migration 028/backfillCodelessSyncedVariants
+// already treat it, not "has a code" as a bare COALESCE used to read it.
 func (r *CatalogRepo) ItemIDsWithVariants(ctx context.Context, itemIDs []string) (map[string]bool, error) {
 	result := map[string]bool{}
 	if len(itemIDs) == 0 {
@@ -589,7 +600,7 @@ func (r *CatalogRepo) ItemIDsWithVariants(ctx context.Context, itemIDs []string)
 SELECT DISTINCT v.item_id
 FROM item_variants v
 WHERE v.is_active = 1
-  AND (COALESCE(v.sku, '') <> ''
+  AND (TRIM(COALESCE(v.sku, '')) <> ''
        OR EXISTS (SELECT 1 FROM variant_barcodes b WHERE b.variant_id = v.id))
   AND v.item_id IN (` + placeholders + `)`
 	rows, err := r.db.QueryContext(ctx, query, args...)
@@ -700,7 +711,7 @@ func (r *CatalogRepo) GetVariantLabel(ctx context.Context, variantID string) (Va
 	var l VariantLabel
 	var itemName, vName, sku string
 	err := r.db.QueryRowContext(ctx, `
-SELECT i.name, v.name, COALESCE(v.sku, ''),
+SELECT i.name, v.name, TRIM(COALESCE(v.sku, '')),
        COALESCE(
          (SELECT ph.price FROM price_history ph
           WHERE ph.variant_id = v.id
@@ -741,7 +752,7 @@ WHERE v.id = ?`, variantID).Scan(&itemName, &vName, &sku, &l.PriceMinor, &l.Code
 // own contract above returns retired variants too, for reactivation.
 func (r *CatalogRepo) VariantsForItem(ctx context.Context, itemID string) ([]VariantEditView, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT v.id, v.name, COALESCE(v.sku, ''),
+SELECT v.id, v.name, TRIM(COALESCE(v.sku, '')),
        COALESCE(
          (SELECT ph.price FROM price_history ph
           WHERE ph.variant_id = v.id
@@ -890,6 +901,15 @@ func (r *CatalogRepo) BarcodeOwner(ctx context.Context, barcode string) (targetT
 
 // DeleteBarcode detaches a barcode wherever it is attached (item or variant).
 // Fixing a mis-scanned or reassigned code is a normal back-office task.
+//
+// ut-docs#2247: removing a variant's last barcode can turn it codeless the
+// moment this runs, if that variant also has no SKU — migration 028 only
+// backfills at migration time, so this is a live post-upgrade path that can
+// still produce a codeless variant. The catalog-admin badge
+// (catalog.variant_codeless_hint) already covers this case (it's keyed off
+// the variant's current state, not a one-time migration flag), so no
+// further guard is needed here — this comment exists only so the badge's
+// scope isn't mistaken for stale/pre-migration-only coverage.
 //
 // Same exact-first-then-canonical strategy as BarcodeExists (ut-docs#948
 // F6), and for the same reason: deleting by the code exactly as given must
