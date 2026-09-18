@@ -445,10 +445,28 @@
              drives #buttons-grid's own visibility below (hidden while a
              query is active) and closeSearch()'s restore-the-tab behavior;
              it just no longer drives any client-side tile filtering
-             itself. */}}
+             itself.
+
+             hx-swap="innerHTML" is NOT the default-and-therefore-omittable
+             it looks like -- htmx attribute inheritance walks UP the DOM
+             for any hx-* attribute an element doesn't set itself, and this
+             file's own root (.products, top of this file) sets
+             hx-swap="outerHTML" for ITS OWN self-refresh trigger
+             (modifiers-changed/buttons-changed). Without an explicit
+             override here, this input's search request inherited that
+             outerHTML swap and replaced #search-results ITSELF (id,
+             x-show="q" binding and all) with the response's bare
+             <div class="grid">, on the very first keystroke -- confirmed
+             live: id="search-results" was gone from the DOM afterwards,
+             so it could never hide again on an empty query, and EVERY
+             later keystroke's hx-get had no #search-results left to
+             target at all (htmx logs htmx:targetError and no-ops). Found
+             running this feature's own e2e coverage for real for the
+             first time (ut-docs#2294's dev session had no Chromium) --
+             see sale-screen-category-tabs-search-418.spec.ts. */}}
         <input type="search" id="products-search" name="q" x-model="q" x-ref="search"
                x-show="searching" x-cloak
-               hx-get="/ui/buttons/search" hx-target="#search-results" hx-trigger="input changed delay:300ms" hx-params="*"
+               hx-get="/ui/buttons/search" hx-target="#search-results" hx-swap="innerHTML" hx-trigger="input changed delay:300ms" hx-params="*"
                placeholder="{{ T "products.search_ph" }}" aria-label="{{ T "products.search_ph" }}"
                autocomplete="off" @keydown.escape="closeSearch()">
         <button type="button" x-show="!searching" x-ref="searchBtn"

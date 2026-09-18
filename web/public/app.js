@@ -1430,8 +1430,29 @@ function initOfflineOverride(updateFn){
 
   function grid() { return document.getElementById('buttons-grid'); }
   function bar() { return document.querySelector('.products-finder .jiggle-bar'); }
-  function tileFor(el) { return el && el.closest ? el.closest('#buttons-grid .btn-tile[data-code]') : null; }
-  function badgeFor(el) { return el && el.closest ? el.closest('#buttons-grid .tile-badge') : null; }
+  // ut-docs#2294 fallout: #buttons-grid-all (the All tab's own dedicated
+  // grid, every active catalog item -- not just quick buttons) renders
+  // INSIDE #buttons-grid, so a plain '#buttons-grid .btn-tile[data-code]'
+  // match also catches every All-tab tile. All is the DEFAULT tab
+  // (settings.sale.show_all_tab, on by default), so without this exclusion
+  // a long-press/right-click on the very first screen an operator sees
+  // would wobble/badge the WHOLE catalogue and let a drag "reorder" items
+  // that were never quick buttons -- sort_order has no meaning for the
+  // All grid's fixed alphabetical listing. inAllGrid() gates every entry
+  // point (tileFor/badgeFor) so the mode simply never arms from there, and
+  // the code-gathering helpers below (orderedCodes/refreshPositions) skip
+  // any tile under #buttons-grid-all even when jiggle mode was entered
+  // legitimately from a real category panel elsewhere in the same
+  // #buttons-grid subtree (x-show hides it, it never leaves the DOM).
+  function inAllGrid(el) { return !!(el && el.closest && el.closest('#buttons-grid-all')); }
+  function tileFor(el) {
+    var t = el && el.closest ? el.closest('#buttons-grid .btn-tile[data-code]') : null;
+    return (t && !inAllGrid(t)) ? t : null;
+  }
+  function badgeFor(el) {
+    var b = el && el.closest ? el.closest('#buttons-grid .tile-badge') : null;
+    return (b && !inAllGrid(b)) ? b : null;
+  }
   function isRTL(el) { return getComputedStyle(el).direction === 'rtl'; }
   function visibleCells(gridEl) {
     return Array.prototype.filter.call(gridEl.children, function (c) {
@@ -1467,7 +1488,8 @@ function initOfflineOverride(updateFn){
 
   // ---- order + persistence ----
   function orderedCodes() {
-    var tiles = Array.prototype.slice.call(document.querySelectorAll('#buttons-grid .btn-tile[data-code]'));
+    var tiles = Array.prototype.slice.call(document.querySelectorAll('#buttons-grid .btn-tile[data-code]'))
+      .filter(function (t) { return !inAllGrid(t); });
     var n = tiles.length;
     var result = new Array(n), ok = true;
     var byGrid = [];
@@ -1503,6 +1525,7 @@ function initOfflineOverride(updateFn){
   function refreshPositions() {
     var seen = [];
     Array.prototype.forEach.call(document.querySelectorAll('#buttons-grid .btn-tile[data-code]'), function (t) {
+      if (inAllGrid(t)) return;
       var g = t.closest('.grid');
       if (seen.indexOf(g) !== -1) return;
       seen.push(g);
@@ -1775,7 +1798,7 @@ function initOfflineOverride(updateFn){
   // and must never eat a badge's own click.
   document.addEventListener('click', function (e) {
     var edit = e.target.closest ? e.target.closest('#buttons-grid .tile-badge-edit') : null;
-    if (!edit || !active || !dirty) return;
+    if (!edit || inAllGrid(edit) || !active || !dirty) return;
     var href = edit.getAttribute('href');
     if (!href) return;
     e.preventDefault();

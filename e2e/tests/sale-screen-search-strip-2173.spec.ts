@@ -155,11 +155,15 @@ test.describe('sale-screen category strip: search expand/collapse (ut-docs#2173)
     // Whichever tab is active (ut-docs#2212: All by default — see
     // sale-screen-category-tabs-search-418.spec.ts), search spans every
     // category (ut-docs#2181), so which tab is active doesn't matter here.
+    // ut-docs#2294: search is now a real server round trip into its own
+    // #search-results grid, alongside (not instead of) the tab/All-grid
+    // copies Alpine leaves hidden in the DOM -- ":visible" pins each
+    // assertion to the one instance actually on screen.
     await page.locator('.products-strip-search').click();
     await page.locator('#products-search').fill('Butter');
 
-    await expect(page.locator('.btn-tile', { hasText: 'Butter 250g' })).toBeVisible();
-    await expect(page.locator('.btn-tile', { hasText: 'Cheddar Cheese' })).toBeHidden();
+    await expect(page.locator('.btn-tile:visible', { hasText: 'Butter 250g' })).toBeVisible();
+    await expect(page.locator('.btn-tile:visible', { hasText: 'Cheddar Cheese' })).toBeHidden();
 
     assertClean();
   });
@@ -173,7 +177,7 @@ test.describe('sale-screen category strip: search expand/collapse (ut-docs#2173)
 
     await page.locator('.products-strip-search').click();
     await page.locator('#products-search').fill('Butter');
-    await expect(page.locator('.btn-tile', { hasText: 'Butter 250g' })).toBeVisible();
+    await expect(page.locator('.btn-tile:visible', { hasText: 'Butter 250g' })).toBeVisible();
 
     await page.locator('.products-strip-back').click();
 
@@ -188,7 +192,7 @@ test.describe('sale-screen category strip: search expand/collapse (ut-docs#2173)
     // Same category, still selected — closeSearch() only resets the search
     // state, never the active tab.
     await expect(page.locator(`#${activeTabId}`)).toHaveAttribute('aria-selected', 'true');
-    await expect(page.locator('.btn-tile', { hasText: 'Cheddar Cheese' })).toBeVisible();
+    await expect(page.locator('.btn-tile:visible', { hasText: 'Cheddar Cheese' })).toBeVisible();
 
     // ut-docs#2173 review finding F2: closing search hides the element that
     // had focus, so closeSearch() must hand focus back rather than drop it.
