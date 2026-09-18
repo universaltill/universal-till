@@ -125,6 +125,17 @@ var (
 // this yet) means newDBusClientFor keeps returning ErrUnsupportedPlatform
 // for Android, exactly as before ADR-0080; passing nil again un-registers
 // a previously set bridge.
+//
+// Listed on scripts/ci/deadcode-baseline.txt (ut-docs#1566) as a known
+// false positive of the whole-program guard, NOT as dead code: its one
+// production caller, mobile.SetBluetoothBridge, lives in the gomobile-bind
+// library package `mobile`, which is not — and cannot be, having no main —
+// one of guard-deadcode-baseline.sh's three roots (`.`,
+// ./cmd/unitill-desktop, ./cmd/unitill-uninstall), so that analysis never
+// sees the call. The Kotlin shell reaches it through that binding at app
+// start (TillService.kt's Mobile.setBluetoothBridge(BluetoothBridgeImpl(…)),
+// ut-docs#1751); deleting this would take the Android Bluetooth backend
+// with it.
 func SetAndroidBridge(b AndroidBridge) {
 	androidBridgeMu.Lock()
 	defer androidBridgeMu.Unlock()

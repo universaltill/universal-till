@@ -84,11 +84,22 @@ func NewSigningDeviceCredentialStore() *SigningDeviceCredentialStore {
 
 // NewSigningDeviceCredentialStoreAt returns a store rooted at an explicit
 // path — the test seam (same convention as issuereport.PendingDir).
+// Test-only-reachable by design, kept deliberately (ut-docs#1566 — on
+// scripts/ci/deadcode-baseline.txt, not a deletion candidate): production
+// only ever constructs the store through NewSigningDeviceCredentialStore,
+// at the stable paths.Data location; this package's own tests use this to
+// point a store at a t.TempDir() file instead.
 func NewSigningDeviceCredentialStoreAt(path string) *SigningDeviceCredentialStore {
 	return &SigningDeviceCredentialStore{path: path}
 }
 
-// Path returns where the credential lives on disk.
+// Path returns where the credential lives on disk. Test-only-reachable,
+// kept deliberately (ut-docs#1566 — on scripts/ci/deadcode-baseline.txt,
+// not a deletion candidate): production never needs the path back out of
+// the store (Save/Load/Exists all work on s.path internally), so its
+// callers are the custody tests — this package's (under <data>/fiscal/,
+// never under the plugins tree, never inside a support-bundle dir) and
+// internal/pages' setup_tse_test.go (file mode; the zero-length-file case).
 func (s *SigningDeviceCredentialStore) Path() string { return s.path }
 
 // Exists reports whether a credential is stored locally.

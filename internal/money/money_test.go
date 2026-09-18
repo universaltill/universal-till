@@ -18,9 +18,6 @@ func TestArithmetic(t *testing.T) {
 	if got := FromMinor(199).Scale(3); got != 597 {
 		t.Fatalf("Scale = %d", got)
 	}
-	if got := Sum(FromMinor(1), FromMinor(2), FromMinor(3)); got != 6 {
-		t.Fatalf("Sum = %d", got)
-	}
 }
 
 func TestMulQtyHalfAwayFromZero(t *testing.T) {

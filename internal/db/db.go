@@ -389,36 +389,6 @@ func (db *DB) reapplyMigration(m migration) error {
 	return nil
 }
 
-// BaselineStatementsFor returns every statement of the embedded 001_init.sql
-// baseline whose target is table — its CREATE TABLE, its CREATE INDEXes and
-// its seed INSERTs — split by the same splitter the migration runner uses.
-// It exists for fixtures in other packages that hand-roll a partial schema
-// but need one table exactly as production has it (internal/pages'
-// seedCountrySettingsTable, which used to execute the real 041/073 files for
-// that reason): reading the real baseline can't drift, because it IS the
-// schema. Test-support only; nothing at runtime calls it.
-func BaselineStatementsFor(table string) ([]string, error) {
-	migs, err := loadMigrations()
-	if err != nil {
-		return nil, err
-	}
-	if len(migs) == 0 || migs[0].Version != 1 {
-		return nil, fmt.Errorf("baseline migration 001 not found")
-	}
-	q := regexp.QuoteMeta(table)
-	target := regexp.MustCompile(`(?is)^\s*(?:CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?|CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?\S+\s+ON\s+|INSERT\s+(?:OR\s+\w+\s+)?INTO\s+)["` + "`" + `]?` + q + `["` + "`" + `]?\b`)
-	var out []string
-	for _, st := range splitStatements(stripLineComments(migs[0].SQL)) {
-		if target.MatchString(st.masked) {
-			out = append(out, strings.TrimSpace(st.text))
-		}
-	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("baseline has no statement targeting table %q", table)
-	}
-	return out, nil
-}
-
 // addColumnStmt recognises one `ALTER TABLE [schema.]<t> ADD [COLUMN] <c> …`
 // statement. It is matched against a literal-masked statement (see
 // splitStatements), so text inside a quoted string can never match.

@@ -334,9 +334,10 @@ type BluetoothBridge interface {
 // ErrUnsupportedPlatform it returns while no bridge is registered
 // (ut-docs#1643). Passing nil un-registers, restoring that default.
 //
-// The Kotlin implementation, its BLUETOOTH_SCAN/BLUETOOTH_CONNECT
-// permission flow and on-device verification are the separate follow-up
-// ut-docs#1731 — nothing calls this with a real implementation yet.
+// The Kotlin implementation now calls this with a real implementation
+// (TillService.kt:115, Mobile.setBluetoothBridge(BluetoothBridgeImpl(...)));
+// its BLUETOOTH_SCAN/BLUETOOTH_CONNECT permission flow and on-device
+// verification were the separate follow-up ut-docs#1731.
 func SetBluetoothBridge(b BluetoothBridge) {
 	bluetooth.SetAndroidBridge(b)
 }

@@ -81,7 +81,15 @@ func NewKeyStoreAt(path string, fetch func(ctx context.Context) ([]byte, error))
 	return &KeyStore{path: path, fetch: fetch, now: time.Now}
 }
 
-// Path returns where the key lives on disk.
+// Path returns where the key lives on disk. Test-only-reachable, kept
+// deliberately (ut-docs#1566 — on scripts/ci/deadcode-baseline.txt, not a
+// deletion candidate): production never needs the path back out of the
+// store (Load/readFile/persist work on ks.path internally, and
+// ClearLocalKeyFile recomputes the canonical path itself because it runs
+// before any KeyStore exists), so its callers are the custody tests —
+// this package's (canonical location) and internal/db's (the key file
+// lives outside the backup snapshot dir, under the data dir, and is gone
+// after a replica join).
 func (ks *KeyStore) Path() string { return ks.path }
 
 // ClearLocalKeyFile removes the on-disk key at the canonical production
@@ -118,7 +126,15 @@ func ClearLocalKeyFile() error {
 	return nil
 }
 
-// Exists reports whether a key file is stored locally.
+// Exists reports whether a key file is stored locally. Test-only-reachable,
+// kept deliberately (ut-docs#1566 — on scripts/ci/deadcode-baseline.txt,
+// not a deletion candidate): unlike its fiscal twin
+// (SigningDeviceCredentialStore.Exists, which that store's legacy-rename
+// self-heal calls in production), nothing in production asks this — Load
+// goes through readFile, which must tell absent from malformed, and a
+// stat-only answer cannot. Its callers are the tests asserting presence or
+// absence around generate, fetch, ClearLocalKeyFile and replica join (this
+// package, internal/db, internal/pages).
 func (ks *KeyStore) Exists() bool {
 	fi, err := os.Stat(ks.path)
 	return err == nil && !fi.IsDir()

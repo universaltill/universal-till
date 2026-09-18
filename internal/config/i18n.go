@@ -32,6 +32,12 @@ type I18n struct {
 // from — a missing/misplaced directory here used to be a hard
 // log.Fatalf-on-startup crash, which is unacceptable for someone else's
 // shop with no one around to debug it.
+//
+// Test-only-reachable by design, kept deliberately (ut-docs#1566 — on
+// scripts/ci/deadcode-baseline.txt, not a deletion candidate): some eighty
+// page/handler tests across internal/pages (and its sub-packages),
+// internal/httpx and this package construct their translator with it
+// against the on-disk web/locales checkout.
 func NewI18n(localesDir string, fallback string) (*I18n, error) {
 	return NewI18nFS(os.DirFS(localesDir), fallback)
 }
