@@ -268,6 +268,143 @@ func TestCountrySettingsPageSaveAndFloorRefusal(t *testing.T) {
 	}
 }
 
+// TestCountrySettingsPageSave_OriginalCodeMismatchRejected is the regression
+// test for ut-docs#2405: the dialog's `code` field is locked read-only in
+// edit mode, but that guard is client-side only. If it's ever bypassed, a
+// save whose `original_code` (the row's real code) differs from the
+// submitted `code` must be refused rather than silently upserting a NEW row
+// — POST /api/country-settings has no other way to tell "editing DE" from
+// "creating FR" apart, since code is both the primary key and a plain form
+// field.
+func TestCountrySettingsPageSave_OriginalCodeMismatchRejected(t *testing.T) {
+	mux, repo, _ := newCountrySettingsTestMux(t)
+	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
+	ctx := t.Context()
+
+	before, ok, err := repo.Get(ctx, "DE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("seeded DE row missing")
+	}
+
+	// Attempt to save an edit of DE (original_code) under a different,
+	// unseeded code (ZZ) — the shape a bypassed readonly field produces.
+	rec := postForm(mux, "/api/country-settings", url.Values{
+		"code":             {"ZZ"},
+		"original_code":    {"DE"},
+		"currency":         {"GBP"},
+		"tax_rate_pct":     {"20"},
+		"archive_min_days": {strconv.FormatInt(data.GlobalArchiveMinDays, 10)},
+	}, &mgr)
+	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "code_changed") {
+		t.Errorf("redirect = %q, want the code_changed error", loc)
+	}
+
+	// DE (the row actually being edited) must be byte-for-byte untouched,
+	// and no new ZZ row created from the bypassed code.
+	after, ok, err := repo.Get(ctx, "DE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("DE row disappeared after a refused original_code mismatch")
+	}
+	if after != before {
+		t.Errorf("DE was mutated by a save that should have been refused: before=%+v after=%+v", before, after)
+	}
+	if _, ok, err := repo.Get(ctx, "ZZ"); err != nil {
+		t.Fatal(err)
+	} else if ok {
+		t.Error("a refused original_code mismatch created a new ZZ row instead of being rejected")
+	}
+}
+
+// TestCountrySettingsPageSave_OriginalCodeMatchingCodeSucceeds proves the
+// new guard doesn't block the normal edit path: original_code equal to the
+// submitted code (the real dialog's prefilled state on every legitimate
+// edit) must save exactly as before.
+func TestCountrySettingsPageSave_OriginalCodeMatchingCodeSucceeds(t *testing.T) {
+	mux, repo, _ := newCountrySettingsTestMux(t)
+	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
+	ctx := t.Context()
+
+	rec := postForm(mux, "/api/country-settings", url.Values{
+		"code":             {"DE"},
+		"original_code":    {"DE"},
+		"currency":         {"EUR"},
+		"tax_rate_pct":     {"7"},
+		"archive_min_days": {strconv.FormatInt(data.GlobalArchiveMinDays, 10)},
+	}, &mgr)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("edit with matching original_code = %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	de, _, err := repo.Get(ctx, "DE")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if de.TaxRateBP != 700 {
+		t.Errorf("tax rate = %d bp, want 700", de.TaxRateBP)
+	}
+}
+
+// TestCountrySettingsPageCreate_BlankOriginalCodeSucceeds proves the new
+// guard doesn't block create: the hidden field's template default is blank
+// (record-dialog.js's create-mode reset never fills it from a row), and a
+// blank original_code must never be treated as a mismatch.
+func TestCountrySettingsPageCreate_BlankOriginalCodeSucceeds(t *testing.T) {
+	mux, repo, _ := newCountrySettingsTestMux(t)
+	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
+	ctx := t.Context()
+
+	rec := postForm(mux, "/api/country-settings", url.Values{
+		"code":             {"ZZ"},
+		"original_code":    {""},
+		"currency":         {"GBP"},
+		"tax_rate_pct":     {"20"},
+		"archive_min_days": {strconv.FormatInt(data.GlobalArchiveMinDays, 10)},
+	}, &mgr)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("create with blank original_code = %d, want 303: %s", rec.Code, rec.Body.String())
+	}
+	if _, ok, err := repo.Get(ctx, "ZZ"); err != nil {
+		t.Fatal(err)
+	} else if !ok {
+		t.Error("create with blank original_code did not create the row")
+	}
+}
+
+// The htmx-boosted dialog path must surface the same refusal in-dialog, same
+// shape as every other refusal on this page (below_floor, empty code).
+func TestCountrySettingsPage_HtmxOriginalCodeMismatchRendersInDialogMessage(t *testing.T) {
+	mux, repo, _ := newCountrySettingsTestMux(t)
+	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
+	ctx := t.Context()
+
+	rec := postFormHtmx(mux, "/api/country-settings", url.Values{
+		"code":             {"ZZ"},
+		"original_code":    {"DE"},
+		"currency":         {"GBP"},
+		"tax_rate_pct":     {"20"},
+		"archive_min_days": {strconv.FormatInt(data.GlobalArchiveMinDays, 10)},
+	}, &mgr)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("htmx original_code mismatch: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Location") != "" {
+		t.Errorf("htmx refusal must not redirect")
+	}
+	if body := rec.Body.String(); strings.Contains(body, "<form") || strings.Contains(body, "<dialog") {
+		t.Errorf("refusal response must be message-only: %s", body)
+	}
+	if _, ok, err := repo.Get(ctx, "ZZ"); err != nil {
+		t.Fatal(err)
+	} else if ok {
+		t.Error("a refused htmx original_code mismatch created a new ZZ row instead of being rejected")
+	}
+}
+
 // TestCountrySettingsPageSavePreservesDefaultLocale is the regression test
 // for ut-docs#1027: this form has no default_locale field (it's not
 // operator-editable here), so a save must preserve DE's seeded "de-DE"

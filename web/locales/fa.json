@@ -400,6 +400,7 @@
   "countrysettings.edit.title": "ویرایش کشور",
   "countrysettings.empty": "هنوز کشوری وجود ندارد — برای افزودن، + را بزنید.",
   "countrysettings.error.below_floor": "مدت نگهداری بایگانی را نمی‌توان کمتر از حداقل تنظیم کرد. تنها می‌توان آن را افزایش داد.",
+  "countrysettings.error.code_changed": "کد کشور را هنگام ویرایش نمی‌توان تغییر داد. این کادر را ببندید و در عوض یک کشور جدید اضافه کنید.",
   "countrysettings.error.code_required": "یک کد کشور وارد کنید.",
   "countrysettings.error.delete": "حذف این کشور ممکن نشد.",
   "countrysettings.error.retention_invalid": "مدت نگهداری را به صورت عدد صحیح روز وارد کنید.",
