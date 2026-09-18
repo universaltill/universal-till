@@ -393,7 +393,7 @@ func TestSelfOrderShop_ScanNeverTriggersRefundRedirect(t *testing.T) {
 func TestSelfOrderShop_ModifierFlow(t *testing.T) {
 	dp, d := setupSelfOrderShopDeps(t)
 	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
-	if _, err := d.DB.Exec(`INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order) VALUES ('g1','itm-coffee','Extras',0,0,2,1)`); err != nil {
+	if _, err := d.DB.Exec(`INSERT INTO item_modifier_groups (id, name, required, min_select, max_select, sort_order) VALUES ('g1','Extras',0,0,2,1)`); err != nil {
 		t.Fatal(err)
 	}
 	// ADR-0090 / migration 025: membership is read through the link table.

@@ -39,17 +39,29 @@ func seedCategoryFixture(t *testing.T, d *db.DB) {
 	}
 }
 
-// createAnchoredGroup creates a group anchored (ADR-0090) to itm-anchor with
-// one option, so an option-loading assertion has something to find.
+// createAnchoredGroup creates a shop-wide group (no item — ADR-0101; the
+// name is historical, from when a group had to be anchored to itm-anchor)
+// with one option, so an option-loading assertion has something to find.
 func createAnchoredGroup(t *testing.T, repo *data.ModifierRepo, id, name string, sortOrder int) {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := repo.CreateGroup(ctx, id, "itm-anchor", name, false, 0, 1, sortOrder); err != nil {
+	if _, err := repo.CreateGroup(ctx, id, name, false, 0, 1, sortOrder); err != nil {
 		t.Fatalf("CreateGroup %s: %v", id, err)
 	}
 	if _, err := repo.CreateOption(ctx, "opt-"+id, id, "Option of "+name, 10, 1); err != nil {
 		t.Fatalf("CreateOption for %s: %v", id, err)
 	}
+}
+
+// itemLinkCount counts a group's direct item links (the old GroupLinkCount
+// repo method went with the last-link refusal it served, ADR-0101).
+func itemLinkCount(t *testing.T, d *db.DB, groupID string) int {
+	t.Helper()
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM item_modifier_group_links WHERE group_id = ?`, groupID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
 
 func groupIDs(groups []data.ModifierGroup) []string {
@@ -106,9 +118,6 @@ func TestModifierRepo_ResolveGroupsForItem_InheritsCategoryGroup(t *testing.T) {
 	if len(got[0].Options) != 1 || got[0].Options[0].ID != "opt-gA" {
 		t.Fatalf("inherited group must carry its options, got %+v", got[0].Options)
 	}
-	if got[0].ItemID != "" {
-		t.Fatalf("a category-inherited group is not item-scoped identity; ItemID = %q, want \"\"", got[0].ItemID)
-	}
 }
 
 // 2. Union: the item's own direct group comes first, then the inherited one.
@@ -133,7 +142,7 @@ func TestModifierRepo_ResolveGroupsForItem_UnionOwnFirstThenInherited(t *testing
 		t.Fatal(err)
 	}
 	assertGroupIDs(t, got, "gB", "gA")
-	if got[0].ItemID != "itm1" || got[0].SortOrder != 5 {
+	if got[0].SortOrder != 5 {
 		t.Fatalf("own group must keep its own link's ItemID/SortOrder, got %+v", got[0])
 	}
 	for _, g := range got {
@@ -232,7 +241,7 @@ func TestModifierRepo_ResolveGroupsForItem_NoCategoryEqualsDirectOnly(t *testing
 	}
 	assertGroupIDs(t, resolved, "gB")
 	assertGroupIDs(t, direct, "gB")
-	if resolved[0].ItemID != direct[0].ItemID || resolved[0].SortOrder != direct[0].SortOrder || len(resolved[0].Options) != len(direct[0].Options) {
+	if resolved[0].SortOrder != direct[0].SortOrder || len(resolved[0].Options) != len(direct[0].Options) {
 		t.Fatalf("ResolveGroupsForItem for an item without a category must equal ListGroupsForItem: %+v vs %+v", resolved[0], direct[0])
 	}
 
@@ -270,7 +279,7 @@ func TestModifierRepo_ResolveGroupsForItem_DedupKeepsOwnCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertGroupIDs(t, got, "gA", "gC")
-	if got[0].ItemID != "itm1" || got[0].SortOrder != 7 {
+	if got[0].SortOrder != 7 {
 		t.Fatalf("deduped group must be the item's OWN copy (ItemID itm1, SortOrder 7), got %+v", got[0])
 	}
 	if len(got[0].Options) != 1 || len(got[1].Options) != 1 {
@@ -361,9 +370,6 @@ func TestModifierRepo_ListInheritedGroupsForItem_OptedOutFlags(t *testing.T) {
 		if len(g.Options) != 1 {
 			t.Fatalf("inherited listing must load options: %+v", g)
 		}
-		if g.ItemID != "" {
-			t.Fatalf("inherited listing is not item-scoped identity; ItemID = %q", g.ItemID)
-		}
 	}
 	// OptedOut is populated ONLY by ListInheritedGroupsForItem — the sale-
 	// time resolver drops an opted-out group entirely rather than flagging
@@ -419,9 +425,6 @@ func TestModifierRepo_CategoryLinks_RoundTrip(t *testing.T) {
 	if got[0].SortOrder != 1 || got[1].SortOrder != 2 {
 		t.Fatalf("SortOrder must come from the category link row: %+v", got)
 	}
-	if got[0].ItemID != "" {
-		t.Fatalf("category listing must leave ItemID empty, got %q", got[0].ItemID)
-	}
 
 	// Re-link with a new sort_order: ON CONFLICT DO UPDATE, not a PK error.
 	if err := repo.LinkGroupToCategory(ctx, "cat1", "gA", 0); err != nil {
@@ -444,8 +447,12 @@ func TestModifierRepo_CategoryLinks_RoundTrip(t *testing.T) {
 
 	// Unlinking a category never touches the group row or its item links
 	// (ADR-0094 Decision 1: a category is never a group's sole owner).
-	if n, err := repo.GroupLinkCount(ctx, "gA"); err != nil || n != 1 {
-		t.Fatalf("gA item-link count after category unlink = %d, %v; want 1", n, err)
+	if n := itemLinkCount(t, d, "gA"); n != 0 {
+		t.Fatalf("gA item-link count after category unlink = %d; want 0 (unchanged — a category unlink never touches item links)", n)
+	}
+	var survives int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM item_modifier_groups WHERE id = 'gA'`).Scan(&survives); err != nil || survives != 1 {
+		t.Fatalf("gA row must survive a category unlink: n=%d err=%v", survives, err)
 	}
 
 	// Input validation mirrors the item-link primitives.
@@ -496,8 +503,12 @@ func TestModifierRepo_CategoryDelete_CascadesLinksOnly(t *testing.T) {
 	if links != 0 {
 		t.Fatalf("category links must cascade away with the category, got %d", links)
 	}
-	if n, err := repo.GroupLinkCount(ctx, "gA"); err != nil || n != 1 {
-		t.Fatalf("group must survive its category's deletion: item-link count = %d, %v", n, err)
+	var survives int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM item_modifier_groups WHERE id = 'gA'`).Scan(&survives); err != nil || survives != 1 {
+		t.Fatalf("group must survive its category's deletion: n=%d err=%v", survives, err)
+	}
+	if n := itemLinkCount(t, d, "gA"); n != 0 {
+		t.Fatalf("item-link count after category delete = %d, want 0 (unchanged)", n)
 	}
 	// The opt-out row is keyed by (item, group), not by category, so it is
 	// deliberately left alone here — it becomes relevant again the moment
@@ -601,7 +612,7 @@ func TestModifierRepo_ResolveGroupsForItem_DirectLinkSurvivesOptOutOfSameGroup(t
 		t.Fatal(err)
 	}
 	assertGroupIDs(t, got, "gA")
-	if got[0].ItemID != "itm1" || got[0].SortOrder != 3 {
+	if got[0].SortOrder != 3 {
 		t.Fatalf("opted-out-but-directly-linked group must still be the item's OWN copy, got %+v", got[0])
 	}
 

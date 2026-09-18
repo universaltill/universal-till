@@ -63,18 +63,10 @@ DELETE FROM price_history
     OR variant_id IN (SELECT v.id FROM item_variants v
                       WHERE v.item_id IN (SELECT id FROM demo_seed_removable));
 
--- ADR-0090 §2 (ut-docs#2013): re-anchor a modifier group shared with a
--- surviving item before the delete below can cascade it away — identical
--- to remove_demo.sql's own step (see its comment there; keep in sync).
-UPDATE item_modifier_groups
-   SET item_id = (SELECT l.item_id FROM item_modifier_group_links l
-                   WHERE l.group_id = item_modifier_groups.id
-                     AND l.item_id NOT IN (SELECT id FROM demo_seed_removable)
-                   LIMIT 1)
- WHERE item_id IN (SELECT id FROM demo_seed_removable)
-   AND EXISTS (SELECT 1 FROM item_modifier_group_links l
-                WHERE l.group_id = item_modifier_groups.id
-                  AND l.item_id NOT IN (SELECT id FROM demo_seed_removable));
+-- Modifier groups are shop-wide (ADR-0101, migration 034): the item delete
+-- below cascades only the demo items' own item_modifier_group_links and
+-- item_modifier_group_opt_outs rows. A group a demo item used is never
+-- deleted with it — it stays, unassigned if that was its only item.
 
 -- The item delete cascades to item_barcodes, item_images, item_variants
 -- (-> variant_barcodes), shortcut_buttons, related_items, item_modifiers

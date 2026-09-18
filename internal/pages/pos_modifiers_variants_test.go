@@ -55,7 +55,7 @@ func setupVariantModifiersTestDeps(t *testing.T) (*common.Deps, *db.DB) {
 
 		// itm-coffee also has an (optional) modifier group, to prove
 		// variant + modifier selections fold together correctly.
-		`INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order) VALUES ('g-extras', 'itm-coffee', 'Extras', 0, 0, 2, 1)`,
+		`INSERT INTO item_modifier_groups (id, name, required, min_select, max_select, sort_order) VALUES ('g-extras', 'Extras', 0, 0, 2, 1)`,
 		`INSERT INTO item_modifier_group_links (item_id, group_id, sort_order) VALUES ('itm-coffee', 'g-extras', 1)`,
 		`INSERT INTO item_modifier_options (id, group_id, name, price_delta_minor, sort_order) VALUES ('o-shot', 'g-extras', 'Extra shot', 50, 1)`,
 	})

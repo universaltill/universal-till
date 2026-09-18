@@ -32,40 +32,36 @@ var fiscalSigningKeyRenames = map[string]string{
 // fiscalSigningRenameMigrationVersion is the ledger version 009 lands under.
 const fiscalSigningRenameMigrationVersion = 9
 
-// openAtPreMigrationSchema opens a fresh DB (every migration applied), then
-// rewinds the ledger to just before migration version so the next Open on
-// the same file runs it through the REAL migration runner — the same path
-// an upgraded till takes — rather than a hand-executed copy of its SQL. It
-// is only a faithful stand-in for a settings-row migration (009, 011): the
-// schema itself is unchanged by those, so dropping the ledger row is an
-// exact stand-in for a pre-migration database.
+// openAtPreMigrationSchema builds a database at exactly version-1 through
+// the REAL migration runner (openRaw + migrateUpTo, the seam db.go exposes
+// for this), so the next Open on the same file runs version — and every
+// migration after it — the same way an upgraded till does, against the
+// schema that till actually has.
 //
-// It rewinds EVERY version at or above version, not just version itself.
-// Deleting only that row leaves any later migration recorded, so the runner
-// sees a missing version sitting below a higher applied watermark and
-// correctly refuses to boot ("a migration file was renumbered under an
-// already-applied version") — which made 009's test fail the moment a 010
-// existed, for a reason that had nothing to do with the rename it covers.
-// Re-running the later migrations is safe: this helper's contract is that
-// they are re-appliable, which is why they use IF NOT EXISTS or, for the
-// settings-row rewrites, guarded idempotent statements.
+// History (kept because it explains the shape of every caller): this used
+// to open a FULLY migrated database and merely rewind the ledger to before
+// version, relying on every later migration being re-appliable against an
+// already-migrated file (IF NOT EXISTS, guarded settings rewrites). That
+// was a faithful stand-in while every later migration was additive. It
+// stopped being possible with 034 (ADR-0101, ut-docs#2399): 025's frozen
+// backfill statement reads item_modifier_groups.item_id, the column 034
+// removes, so 025 cannot be replayed against a post-034 file at all — and a
+// frozen file (ADR-0100) cannot be edited to make it so. Building the
+// pre-version schema for real is both the honest test and the only one
+// that still works. It still rewinds/builds to version-1 rather than
+// deleting one ledger row: verifyAppliedMigrations reads the watermark as
+// MAX(version) and correctly refuses a missing version below it ("a
+// migration file was renumbered under an already-applied version").
+//
+// A migration's OWN replay (re-running it against a file that already ran
+// it — the renumbered-pre-merge-build case, ut-docs#1412) is now each
+// rebuild/backfill migration's own test's job: see 025's and 034's tests,
+// which rewind exactly the one ledger row and re-apply.
 func openAtPreMigrationSchema(t *testing.T, version int, file string) (*DB, string) {
 	t.Helper()
+	loadMigrationVersion(t, version) // fails loudly if version was renumbered off disk
 	path := filepath.Join(t.TempDir(), file)
-	d, err := Open(path)
-	if err != nil {
-		t.Fatalf("Open (fresh): %v", err)
-	}
-	var applied int
-	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, version).Scan(&applied); err != nil {
-		t.Fatalf("read ledger: %v", err)
-	}
-	if applied != 1 {
-		t.Fatalf("migration %d not recorded as applied on a fresh DB — has it been renumbered?", version)
-	}
-	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= ?`, version); err != nil {
-		t.Fatalf("rewind ledger: %v", err)
-	}
+	d := openMigratedTo(t, path, version-1)
 	return d, path
 }
 

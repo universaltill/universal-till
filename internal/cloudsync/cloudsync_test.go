@@ -749,20 +749,35 @@ func TestApplyUpsertModifierGroup(t *testing.T) {
 		},
 	}
 
-	// Missing item_id or name: refused before the hook runs.
+	// Missing name: refused before the hook runs. (item_id is OPTIONAL
+	// since ADR-0101 — a blank one is a shop-wide group, checked below.)
 	for _, payload := range []map[string]any{
-		{"name": "Extras", "min_select": float64(0), "max_select": float64(1)},
 		{"item_id": "itm1", "name": "   ", "min_select": float64(0), "max_select": float64(1)},
 		{"item_id": "itm1", "min_select": float64(0), "max_select": float64(1)},
+		{"min_select": float64(0), "max_select": float64(1)},
 	} {
 		status, msg = apply(context.Background(), directive{Type: "upsert_modifier_group", Payload: payload}, hooks)
-		if status != "failed" || msg != "missing item_id or name" {
+		if status != "failed" || msg != "missing name" {
 			t.Fatalf("payload %v: status=%q msg=%q", payload, status, msg)
 		}
 	}
 	if calls != 0 {
-		t.Fatalf("hook must not run for a missing item_id/name, ran %d times", calls)
+		t.Fatalf("hook must not run for a missing name, ran %d times", calls)
 	}
+
+	// No item_id at all: passes through to the hook with a blank itemID
+	// (ADR-0101, ut-docs#2399) — the hook decides what a standalone create
+	// means, the dispatch does not refuse it.
+	status, msg = apply(context.Background(), directive{Type: "upsert_modifier_group", Payload: map[string]any{
+		"name": "Sauces", "min_select": float64(0), "max_select": float64(1),
+	}}, hooks)
+	if status != "applied" || msg != "created modifier group Sauces" {
+		t.Fatalf("no item_id: status=%q msg=%q", status, msg)
+	}
+	if gotItemID != "" || gotName != "Sauces" || calls != 1 {
+		t.Fatalf("no item_id: hook got item_id=%q name=%q calls=%d", gotItemID, gotName, calls)
+	}
+	calls = 0
 
 	// Missing/invalid min_select or max_select: refused before the hook runs.
 	for _, payload := range []map[string]any{

@@ -10,20 +10,21 @@ import (
 	"github.com/google/uuid"
 )
 
-// ModifierGroup is a customization choice attached to one or more catalog
-// items (e.g. "Extras", "Bread") — ADR-0020 / spec 011, shareable across
-// items since ADR-0090 (ut-docs#2013) via item_modifier_group_links. Options
-// are loaded alongside it.
+// ModifierGroup is a SHOP-WIDE customization choice (e.g. "Extras",
+// "Bread") — ADR-0020 / spec 011, shareable across items since ADR-0090
+// (ut-docs#2013) via item_modifier_group_links, offered to whole categories
+// since ADR-0094 via category_modifier_group_links, and since ADR-0101
+// (ut-docs#2399) owned by nobody but the shop: the group row carries no
+// item at all (migration 034 dropped the item_id anchor), and a group with
+// zero assignments is a valid, persistent state. Options are loaded
+// alongside it.
 //
-// ItemID and SortOrder come from the LINK row, not the group row: ItemID is
-// the item this listing is for (a shared group appears once per linked item
-// in the shop-wide queries, each with that item's own ItemName), and
-// SortOrder is that item's own position for the group. The group row's own
-// item_id column is only the legacy ADR-0090 §2 "anchor" and is never
-// exposed here.
+// SortOrder is the LINK row's, not the group row's, on every per-item /
+// per-category read: the item's (or category's) own position for the
+// group. The group row's own sort_order column is a legacy no read path
+// consults (see UpdateGroup).
 type ModifierGroup struct {
 	ID        string
-	ItemID    string
 	Name      string
 	Required  bool
 	MinSelect int
@@ -31,10 +32,6 @@ type ModifierGroup struct {
 	SortOrder int
 	IsActive  bool
 	Options   []ModifierOption
-	// ItemName is only populated by ListShopModifierGroups (ut-docs#1899) —
-	// every other query already scopes to one caller-known item, so it
-	// would just be redundant there. Left "" by every other query.
-	ItemName string
 	// OptedOut is only populated by ListInheritedGroupsForItem (ADR-0094,
 	// ut-docs#1915) — true when the item has declined this category-
 	// inherited group via item_modifier_group_opt_outs, for #2284's
@@ -84,7 +81,7 @@ func (r *ModifierRepo) ListAllGroupsForItem(ctx context.Context, itemID string) 
 // the group row carries the shared rule set.
 func (r *ModifierRepo) listGroupsForItem(ctx context.Context, itemID string, includeInactive bool) ([]ModifierGroup, error) {
 	groupQuery := `
-SELECT g.id, l.item_id, g.name, g.required, g.min_select, g.max_select, l.sort_order, g.is_active
+SELECT g.id, g.name, g.required, g.min_select, g.max_select, l.sort_order, g.is_active
 FROM item_modifier_groups g
 JOIN item_modifier_group_links l ON l.group_id = g.id
 WHERE l.item_id = ?`
@@ -103,7 +100,7 @@ WHERE l.item_id = ?`
 	for groupRows.Next() {
 		var g ModifierGroup
 		var required, active int
-		if err := groupRows.Scan(&g.ID, &g.ItemID, &g.Name, &required, &g.MinSelect, &g.MaxSelect, &g.SortOrder, &active); err != nil {
+		if err := groupRows.Scan(&g.ID, &g.Name, &required, &g.MinSelect, &g.MaxSelect, &g.SortOrder, &active); err != nil {
 			return nil, fmt.Errorf("scan modifier group: %w", err)
 		}
 		g.Required = required == 1
@@ -127,10 +124,10 @@ WHERE l.item_id = ?`
 // by every query here whose result holds each group id AT MOST ONCE
 // (listGroupsForItem, listGroupsForCategory, the ADR-0094 inherited/resolver
 // paths) — a pointer per id is safe there because each of those reads
-// through a link table whose PRIMARY KEY includes group_id. It is NOT used
-// by listShopModifierGroups, where the same group recurs once per linked
-// item and needs its own fan-out. Callers guard the empty slice themselves
-// (SQLite rejects "IN ()").
+// through a link table whose PRIMARY KEY includes group_id. (The shop-wide
+// admin read, ListAllModifierGroupsWithAssignments, keys by the group
+// table's own PRIMARY KEY and loads every option itself.) Callers guard
+// the empty slice themselves (SQLite rejects "IN ()").
 //
 // Options belong to a group, not to an item or category: scope by the group
 // ids already fetched rather than joining through a link table a second
@@ -189,8 +186,8 @@ WHERE o.group_id IN (` + placeholders + `)`
 // appended after them in the category link's own sort_order/name order —
 // two ordered runs, never one merged sort. A group both directly linked and
 // category-linked appears once, as the item's OWN copy (its own link's
-// ItemID/SortOrder — the more specific attachment wins for display
-// position, ADR-0094 §3). An item with no category, or no surviving
+// SortOrder — the more specific attachment wins for display position,
+// ADR-0094 §3). An item with no category, or no surviving
 // inherited group, resolves to exactly what ListGroupsForItem returns.
 //
 // This is a read-time join, deliberately not a per-item snapshot or cache
@@ -242,9 +239,8 @@ func (r *ModifierRepo) ResolveGroupsForItem(ctx context.Context, itemID string) 
 // opted-out group to be able to opt back IN, which is exactly why this is a
 // separate method from ResolveGroupsForItem (which drops opted-out groups).
 // An item with no category (items.category_id IS NULL), or one that doesn't
-// exist, inherits nothing: nil, nil. ItemID is left "" — an inherited group
-// is category-attached, not item-scoped identity, and SortOrder is the
-// CATEGORY link's own position.
+// exist, inherits nothing: nil, nil. SortOrder is the CATEGORY link's own
+// position — an inherited group is category-attached, not item-scoped.
 func (r *ModifierRepo) ListInheritedGroupsForItem(ctx context.Context, itemID string) ([]ModifierGroup, error) {
 	if itemID == "" {
 		return nil, errors.New("item_id required")
@@ -309,8 +305,7 @@ ORDER BY l.sort_order, g.name`, itemID)
 // sort_order/name order — ADR-0094 (ut-docs#1915). This is the category-side
 // twin of ListGroupsForItem for #2284's category editor; sale-time
 // resolution goes through ResolveGroupsForItem, which applies the item's
-// opt-outs on top of this set. ItemID is left "" on every result — a
-// category link is not item-scoped identity.
+// opt-outs on top of this set.
 func (r *ModifierRepo) ListGroupsForCategory(ctx context.Context, categoryID string) ([]ModifierGroup, error) {
 	return r.listGroupsForCategory(ctx, categoryID, false)
 }
@@ -383,135 +378,146 @@ func inPlaceholders(ids []string) (string, []any) {
 	return strings.Join(placeholders, ","), args
 }
 
-// ListShopModifierGroups returns every ACTIVE modifier group belonging to an
-// ACTIVE item in the shop, across every item, with active options nested —
-// the query behind the /modifiers browse screen (ut-docs#1899). Every
-// existing query here is scoped to one item because every existing caller
-// already knows which item it's editing (the catalog admin panel) or
-// selling (the sale-time picker); this is the first caller that needs to
-// see the whole shop at once, so it also carries the item's name (ItemName)
-// since nothing else identifies which item a row belongs to once groups
-// from many items are mixed together. The i.is_active filter matters here
-// specifically (independent review, ut-docs#1899): DeactivateItem never
-// touches item_modifier_groups.is_active, and ListItems already filters
-// deactivated items off /catalog — the only place a group can be edited or
-// deactivated — so without this filter a deactivated item's groups would
-// render on this screen forever, labelled with a name the merchant can no
-// longer find or act on. Same convention as the repo's other item-joining
-// browse queries (ListItems, ItemsWithoutBarcode, ListActiveVariants).
-// Ordered by item name, then item id (a tie-break so two items sharing a
-// name don't interleave their groups), then group sort_order/name, matching
-// the per-item queries' own group ordering.
-func (r *ModifierRepo) ListShopModifierGroups(ctx context.Context) ([]ModifierGroup, error) {
-	return r.listShopModifierGroups(ctx, false)
+// AssignedCategory is one category a modifier group is linked to, as the
+// shop-wide admin read reports it (ADR-0101 §3).
+type AssignedCategory struct {
+	ID   string
+	Name string
 }
 
-// ListAllShopModifierGroups is the admin equivalent of ListShopModifierGroups
-// — it returns EVERY modifier group and option shop-wide, active or not
-// (ut-docs#1957): once /modifiers became the full CRUD home for modifier
-// groups (moved out of the per-item catalog panel), the admin page needs to
-// show a deactivated group/option too so a manager can reactivate it, same
-// reason ListAllGroupsForItem exists beside the per-item ListGroupsForItem.
-// The read-only browse behavior of ListShopModifierGroups above is
-// unchanged — this is a separate method, not a widened filter on that one.
-func (r *ModifierRepo) ListAllShopModifierGroups(ctx context.Context) ([]ModifierGroup, error) {
-	return r.listShopModifierGroups(ctx, true)
+// AssignedItem is one item a modifier group is DIRECTLY linked to (an
+// item_modifier_group_links row — never a category inheritance), as the
+// shop-wide admin read reports it. IsActive is the ITEM's flag: /modifiers
+// still lists a link to a deactivated item so the merchant can see and
+// remove it, rather than silently hiding a row that ResolveGroupsForItem
+// will never reach.
+type AssignedItem struct {
+	ID       string
+	Name     string
+	IsActive bool
 }
 
-// listShopModifierGroups is shared by both exported shop-wide queries above.
-// i.is_active is ALWAYS required (independent review, ut-docs#1899): once an
-// item is deactivated, ListItems already hides it from /catalog — the only
-// place its groups could be reached or edited — so without this a
-// deactivated item's groups would linger on a shop-wide screen forever,
-// labelled with a name the merchant can no longer find or act on. That
-// holds for the admin variant too, since a deactivated item's detail panel
-// is unreachable there just the same. includeInactive only ever widens the
-// GROUP/OPTION is_active filter, never the item one.
-//
-// Since ADR-0090 a group linked to N active items comes back as N rows (one
-// per link, each with that item's ItemID/ItemName and per-link SortOrder),
-// so the item filter and the ordering both go through the link row.
-func (r *ModifierRepo) listShopModifierGroups(ctx context.Context, includeInactive bool) ([]ModifierGroup, error) {
-	groupQuery := `
-SELECT g.id, l.item_id, i.name, g.name, g.required, g.min_select, g.max_select, l.sort_order, g.is_active
+// ModifierGroupAdmin is one modifier group as the shop-wide /modifiers
+// screen needs it (ADR-0101 §3): the group with EVERY option (active or
+// not, so a deactivated one can be reactivated), plus where it is
+// currently assigned. Both assignment lists are in the link rows' own
+// sort_order/name order. A group with neither is the "not assigned yet"
+// state the screen calls out.
+type ModifierGroupAdmin struct {
+	ModifierGroup
+	Categories []AssignedCategory
+	Items      []AssignedItem
+}
+
+// ListAllModifierGroupsWithAssignments returns every modifier group in the
+// shop ONCE — active or not, assigned or not — ordered by name then id,
+// each with all of its options and its category/item assignments — the
+// read behind the /modifiers screen (ADR-0101 §3, ut-docs#2399). It
+// replaces the per-link fan-out of the old ListShopModifierGroups /
+// ListAllShopModifierGroups (a group linked to three items came back as
+// three rows, and a group linked to nothing never came back at all, which
+// is exactly the "a modifier can only exist attached to an item" premise
+// ADR-0101 withdraws). Four queries in total — groups, options, category
+// links JOIN categories, item links JOIN items — joined in Go by group id,
+// never one query per group.
+func (r *ModifierRepo) ListAllModifierGroupsWithAssignments(ctx context.Context) ([]ModifierGroupAdmin, error) {
+	groupRows, err := r.db.QueryContext(ctx, `
+SELECT g.id, g.name, g.required, g.min_select, g.max_select, g.sort_order, g.is_active
 FROM item_modifier_groups g
-JOIN item_modifier_group_links l ON l.group_id = g.id
-JOIN items i ON i.id = l.item_id
-WHERE i.is_active = 1`
-	if !includeInactive {
-		groupQuery += ` AND g.is_active = 1`
-	}
-	groupQuery += ` ORDER BY i.name, l.item_id, l.sort_order, g.name`
-
-	groupRows, err := r.db.QueryContext(ctx, groupQuery)
+ORDER BY g.name, g.id`)
 	if err != nil {
-		return nil, fmt.Errorf("list shop modifier groups: %w", err)
+		return nil, fmt.Errorf("list modifier groups with assignments: %w", err)
 	}
 	defer groupRows.Close()
-
-	var groups []ModifierGroup
+	var groups []ModifierGroupAdmin
+	byID := map[string]int{}
 	for groupRows.Next() {
-		var g ModifierGroup
+		var g ModifierGroupAdmin
 		var required, active int
-		if err := groupRows.Scan(&g.ID, &g.ItemID, &g.ItemName, &g.Name, &required, &g.MinSelect, &g.MaxSelect, &g.SortOrder, &active); err != nil {
-			return nil, fmt.Errorf("scan shop modifier group: %w", err)
+		if err := groupRows.Scan(&g.ID, &g.Name, &required, &g.MinSelect, &g.MaxSelect, &g.SortOrder, &active); err != nil {
+			return nil, fmt.Errorf("scan modifier group: %w", err)
 		}
 		g.Required = required == 1
 		g.IsActive = active == 1
+		byID[g.ID] = len(groups)
 		groups = append(groups, g)
 	}
 	if err := groupRows.Err(); err != nil {
-		return nil, fmt.Errorf("list shop modifier groups: %w", err)
+		return nil, fmt.Errorf("list modifier groups with assignments: %w", err)
 	}
 	if len(groups) == 0 {
 		return nil, nil
 	}
-	// One group id can now map to SEVERAL rows (one per linked item). A
-	// map[string]*ModifierGroup keyed by group id — the pre-ADR-0090 shape —
-	// would silently keep only the last row per id and attach the options
-	// to that one item's copy, leaving every other item's copy of the same
-	// group with an empty option list. Index every row index per group id
-	// and fan each option out to all of them. Pinned by
-	// TestModifierRepo_ListShopModifierGroups_SharedGroupCarriesFullOptionsUnderEveryItem.
-	byGroupID := map[string][]int{}
-	for i := range groups {
-		byGroupID[groups[i].ID] = append(byGroupID[groups[i].ID], i)
-	}
 
-	// Options for every group that has at least one link to an active item
-	// (the same set the group query above returned).
-	optQuery := `
+	optRows, err := r.db.QueryContext(ctx, `
 SELECT o.id, o.group_id, o.name, o.price_delta_minor, o.sort_order, o.is_active
 FROM item_modifier_options o
-JOIN item_modifier_groups g ON g.id = o.group_id
-WHERE EXISTS (
-    SELECT 1 FROM item_modifier_group_links l
-    JOIN items i ON i.id = l.item_id
-    WHERE l.group_id = g.id AND i.is_active = 1
-)`
-	if !includeInactive {
-		optQuery += ` AND g.is_active = 1 AND o.is_active = 1`
-	}
-	optQuery += ` ORDER BY o.sort_order, o.name`
-
-	optRows, err := r.db.QueryContext(ctx, optQuery)
+ORDER BY o.sort_order, o.name`)
 	if err != nil {
-		return nil, fmt.Errorf("list shop modifier options: %w", err)
+		return nil, fmt.Errorf("list modifier options: %w", err)
 	}
 	defer optRows.Close()
 	for optRows.Next() {
 		var o ModifierOption
 		var active int
 		if err := optRows.Scan(&o.ID, &o.GroupID, &o.Name, &o.PriceDeltaMinor, &o.SortOrder, &active); err != nil {
-			return nil, fmt.Errorf("scan shop modifier option: %w", err)
+			return nil, fmt.Errorf("scan modifier option: %w", err)
 		}
 		o.IsActive = active == 1
-		for _, idx := range byGroupID[o.GroupID] {
-			groups[idx].Options = append(groups[idx].Options, o)
+		if i, ok := byID[o.GroupID]; ok {
+			groups[i].Options = append(groups[i].Options, o)
 		}
 	}
 	if err := optRows.Err(); err != nil {
-		return nil, fmt.Errorf("list shop modifier options: %w", err)
+		return nil, fmt.Errorf("list modifier options: %w", err)
+	}
+
+	catRows, err := r.db.QueryContext(ctx, `
+SELECT l.group_id, c.id, c.name
+FROM category_modifier_group_links l
+JOIN categories c ON c.id = l.category_id
+ORDER BY l.sort_order, c.name`)
+	if err != nil {
+		return nil, fmt.Errorf("list modifier group category links: %w", err)
+	}
+	defer catRows.Close()
+	for catRows.Next() {
+		var groupID string
+		var c AssignedCategory
+		if err := catRows.Scan(&groupID, &c.ID, &c.Name); err != nil {
+			return nil, fmt.Errorf("scan modifier group category link: %w", err)
+		}
+		if i, ok := byID[groupID]; ok {
+			groups[i].Categories = append(groups[i].Categories, c)
+		}
+	}
+	if err := catRows.Err(); err != nil {
+		return nil, fmt.Errorf("list modifier group category links: %w", err)
+	}
+
+	itemRows, err := r.db.QueryContext(ctx, `
+SELECT l.group_id, i.id, i.name, i.is_active
+FROM item_modifier_group_links l
+JOIN items i ON i.id = l.item_id
+ORDER BY l.sort_order, i.name`)
+	if err != nil {
+		return nil, fmt.Errorf("list modifier group item links: %w", err)
+	}
+	defer itemRows.Close()
+	for itemRows.Next() {
+		var groupID string
+		var it AssignedItem
+		var active int
+		if err := itemRows.Scan(&groupID, &it.ID, &it.Name, &active); err != nil {
+			return nil, fmt.Errorf("scan modifier group item link: %w", err)
+		}
+		it.IsActive = active == 1
+		if i, ok := byID[groupID]; ok {
+			groups[i].Items = append(groups[i].Items, it)
+		}
+	}
+	if err := itemRows.Err(); err != nil {
+		return nil, fmt.Errorf("list modifier group item links: %w", err)
 	}
 	return groups, nil
 }
@@ -566,17 +572,17 @@ WHERE g.is_active = 1 AND i.id IN (` + placeholders + `)
 	return result, rows.Err()
 }
 
-// CreateGroup adds a modifier group to an item. Returns the new group id.
-//
-// Writes the group row AND its first item_modifier_group_links row in one
-// transaction (ADR-0090). item_modifier_groups.item_id is still populated
-// with itemID: it is NOT NULL and remains the legacy "anchor" (the item the
-// group was first created against) — see ReanchorGroupsBeforeItemDelete for
-// how it is kept from dangling. The link row is what every read path
-// consults for membership.
-func (r *ModifierRepo) CreateGroup(ctx context.Context, id string, itemID, name string, required bool, minSelect, maxSelect, sortOrder int) (string, error) {
-	if itemID == "" {
-		return "", errors.New("item_id required")
+// CreateGroup adds a SHOP-WIDE modifier group — a name and its rule set,
+// no item (ADR-0101 Decision 2, ut-docs#2399). Returns the new group id.
+// It is offered at checkout only once something links it: a caller that
+// has an item or category in hand follows this with LinkGroupToItem /
+// LinkGroupToCategory (two calls, deliberately — see cloudUpsertModifierGroup
+// and the /api/catalog/modifier-group create branch), and a group with no
+// link at all is a valid, persistent state that /modifiers lists and
+// ResolveGroupsForItem simply never reaches.
+func (r *ModifierRepo) CreateGroup(ctx context.Context, id, name string, required bool, minSelect, maxSelect, sortOrder int) (string, error) {
+	if id == "" {
+		return "", errors.New("id required")
 	}
 	if name == "" {
 		return "", errors.New("name required")
@@ -585,25 +591,11 @@ func (r *ModifierRepo) CreateGroup(ctx context.Context, id string, itemID, name 
 	if required {
 		req = 1
 	}
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return "", fmt.Errorf("begin create modifier group: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `
-INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-`, id, itemID, name, req, minSelect, maxSelect, sortOrder); err != nil {
+	if _, err := r.db.ExecContext(ctx, `
+INSERT INTO item_modifier_groups (id, name, required, min_select, max_select, sort_order)
+VALUES (?, ?, ?, ?, ?, ?)
+`, id, name, req, minSelect, maxSelect, sortOrder); err != nil {
 		return "", fmt.Errorf("insert modifier group: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `
-INSERT INTO item_modifier_group_links (item_id, group_id, sort_order)
-VALUES (?, ?, ?)
-`, itemID, id, sortOrder); err != nil {
-		return "", fmt.Errorf("insert modifier group link: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return "", fmt.Errorf("commit create modifier group: %w", err)
 	}
 	return id, nil
 }
@@ -634,18 +626,17 @@ ON CONFLICT(item_id, group_id) DO UPDATE SET sort_order = excluded.sort_order
 	return nil
 }
 
-// UnlinkGroupFromItem detaches a modifier group from one item
-// unconditionally, including its last remaining link — it never deletes the
-// group ROW itself (DeleteGroup, unwired to any handler, is the separate,
-// explicit full-delete action), but an orphaned (zero-link) group IS
-// unreachable everywhere in the UI: every list query (ListShopModifierGroups/
-// ListAllShopModifierGroups, and so /modifiers and the item-scoped panel)
-// only ever surfaces a group THROUGH a link row. POST
-// /api/catalog/modifier-group/detach (ut-docs#2046) never calls this
-// directly for that reason — see UnlinkGroupFromItemUnlessLastLink below,
-// which is the handler's actual guard against reaching that state. This
-// method remains the direct, unconditional primitive (used by internal
-// data-repair paths and its own regression test), not itself a UI action.
+// UnlinkGroupFromItem detaches a modifier group from one item — including
+// its last remaining link. It never deletes the group ROW itself
+// (DeleteGroup is the separate, explicit "remove everywhere" action): a
+// group with no link left is simply unassigned, still listed and editable
+// on /modifiers (ListAllModifierGroupsWithAssignments reads the group
+// table directly, not through a link), and not offered at checkout until
+// it is assigned again. This is POST /api/catalog/modifier-group/detach's
+// write since ADR-0101 (ut-docs#2399); the earlier last-link refusal
+// (UnlinkGroupFromItemUnlessLastLink, ut-docs#2046) existed only because
+// the old per-item /modifiers listing could not show an orphan, and went
+// with that listing.
 func (r *ModifierRepo) UnlinkGroupFromItem(ctx context.Context, itemID, groupID string) error {
 	if itemID == "" {
 		return errors.New("item_id required")
@@ -660,42 +651,6 @@ func (r *ModifierRepo) UnlinkGroupFromItem(ctx context.Context, itemID, groupID 
 	return nil
 }
 
-// UnlinkGroupFromItemUnlessLastLink detaches a modifier group from one item
-// UNLESS this is the group's only remaining link, in which case it does
-// nothing and returns false — the handler-level guard behind POST
-// /api/catalog/modifier-group/detach (ut-docs#2046) that keeps a group from
-// ever losing its last link through the UI (see UnlinkGroupFromItem's own
-// doc comment on why a zero-link group is a real problem, not a cosmetic
-// one). One atomic conditional DELETE, not a separate GroupLinkCount call
-// followed by UnlinkGroupFromItem (independent review): a count-then-delete
-// has a TOCTOU race — two concurrent detaches against the same group's two
-// different items could both observe count==2, both pass, and both delete,
-// orphaning the group anyway. The subquery here is evaluated as part of the
-// same statement SQLite executes under its writer lock, so a second
-// concurrent call against the same group_id is serialized behind the
-// first's effect rather than racing it.
-func (r *ModifierRepo) UnlinkGroupFromItemUnlessLastLink(ctx context.Context, itemID, groupID string) (bool, error) {
-	if itemID == "" {
-		return false, errors.New("item_id required")
-	}
-	if groupID == "" {
-		return false, errors.New("group_id required")
-	}
-	res, err := r.db.ExecContext(ctx, `
-DELETE FROM item_modifier_group_links
-WHERE item_id = ? AND group_id = ?
-  AND (SELECT COUNT(*) FROM item_modifier_group_links WHERE group_id = ?) > 1
-`, itemID, groupID, groupID)
-	if err != nil {
-		return false, fmt.Errorf("unlink modifier group from item unless last link: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("unlink modifier group from item unless last link: %w", err)
-	}
-	return n > 0, nil
-}
-
 // LinkGroupToCategory attaches an existing modifier group to a category, so
 // every item in that category inherits it at sale time (ResolveGroupsForItem)
 // unless the item opts out — ADR-0094 (ut-docs#1915), the category-side
@@ -703,9 +658,8 @@ WHERE item_id = ? AND group_id = ?
 // ON CONFLICT DO UPDATE shape: re-linking an already-linked group just
 // updates its per-category sort order, so a resubmit settles safely. A
 // category never becomes a group's owner through this (ADR-0094 Decision
-// 1): the group's item anchor and its item_modifier_group_links rows are
-// untouched, and UnlinkGroupFromItemUnlessLastLink's "at least one ITEM
-// link" invariant still counts item links only.
+// 1, and since ADR-0101 nothing does): the group's item_modifier_group_links
+// rows are untouched.
 func (r *ModifierRepo) LinkGroupToCategory(ctx context.Context, categoryID, groupID string, sortOrder int) error {
 	if categoryID == "" {
 		return errors.New("category_id required")
@@ -725,11 +679,9 @@ ON CONFLICT(category_id, group_id) DO UPDATE SET sort_order = excluded.sort_orde
 }
 
 // UnlinkGroupFromCategory detaches a modifier group from one category —
-// ADR-0094 (ut-docs#1915). A plain unconditional DELETE, deliberately
-// without UnlinkGroupFromItemUnlessLastLink's "last link" guard: a category
-// is never a group's sole owner (ADR-0094 Decision 1 — the group keeps its
-// item anchor and item links regardless), so removing a category link can
-// never orphan the group or make it unreachable in the UI. Existing opt-out
+// ADR-0094 (ut-docs#1915). A plain unconditional DELETE: a category is
+// never a group's owner (ADR-0094 Decision 1), so removing a category link
+// only ever changes what that category's items inherit. Existing opt-out
 // rows for (item, group) are left alone: they are keyed by item and group,
 // not by category, and simply become dormant until the group is inherited
 // again.
@@ -862,10 +814,9 @@ ORDER BY g.name`)
 // OptedOut. INSERT OR IGNORE, so opting out twice is a no-op rather than a
 // PK violation. This only ever suppresses a CATEGORY-inherited group: a
 // group the item is DIRECTLY linked to via item_modifier_group_links is
-// unaffected by an opt-out row — detaching that is
-// UnlinkGroupFromItemUnlessLastLink's job, keeping the two mechanisms
-// non-overlapping (direct links are added/removed; inheritance is
-// accepted/opted-out). No FK or existence check beyond the row's own
+// unaffected by an opt-out row — detaching that is UnlinkGroupFromItem's
+// job, keeping the two mechanisms non-overlapping (direct links are
+// added/removed; inheritance is accepted/opted-out). No FK or existence check beyond the row's own
 // foreign keys: an opt-out for a group the category doesn't (yet) link is
 // simply dormant, not an error.
 func (r *ModifierRepo) OptOutItemFromGroup(ctx context.Context, itemID, groupID string) error {
@@ -964,100 +915,34 @@ SELECT COALESCE(MAX(sort_order) + 1, 0) FROM item_modifier_group_links WHERE ite
 	return next, nil
 }
 
-// GroupLinkCount reports how many items a modifier group is currently linked
-// to. Used to block detaching a group's last remaining link (ut-docs#2046):
-// UnlinkGroupFromItem never deletes the group row itself, but a zero-link
-// group is invisible everywhere in the UI — ListShopModifierGroups/
-// ListAllShopModifierGroups (and so /modifiers and the item-scoped panel)
-// only ever return a group THROUGH one of its links, and no hard-delete UI
-// is wired up either — so losing its last link would make it permanently
-// unreachable rather than merely "unattached from this item."
-func (r *ModifierRepo) GroupLinkCount(ctx context.Context, groupID string) (int, error) {
-	if groupID == "" {
-		return 0, errors.New("group_id required")
+// NextGroupSortOrderForCategory is NextGroupSortOrderForItem's category-side
+// twin (ADR-0101 §3, ut-docs#2399): the sort_order a category's NEXT
+// linked group should get so /modifiers' per-card "assign to category"
+// checkbox appends after the category's existing groups instead of
+// colliding with one — MAX(sort_order)+1 over the category's own link
+// rows, for the same sparse-after-unlink reason as the item variant.
+func (r *ModifierRepo) NextGroupSortOrderForCategory(ctx context.Context, categoryID string) (int, error) {
+	if categoryID == "" {
+		return 0, errors.New("category_id required")
 	}
-	var n int
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM item_modifier_group_links WHERE group_id = ?`, groupID).Scan(&n); err != nil {
-		return 0, fmt.Errorf("count modifier group links: %w", err)
-	}
-	return n, nil
-}
-
-// ReanchorGroupsBeforeItemDelete re-points item_modifier_groups.item_id
-// (ADR-0090's legacy "anchor" column) off itemID, onto another item still
-// linked to the same group via item_modifier_group_links, before itemID is
-// hard-deleted — so the anchor column's own ON DELETE CASCADE does not
-// destroy a group still shared with a surviving item. A group with no
-// surviving link is left anchored to itemID and correctly cascades away
-// with it: it is genuinely orphaned, not shared, so today's behaviour (no
-// data loss for a real single-item group) is unchanged. Call this inside
-// the SAME transaction as the item delete, immediately before it — it only
-// ever touches tx, never the receiver's own connection.
-func (r *ModifierRepo) ReanchorGroupsBeforeItemDelete(ctx context.Context, tx *sql.Tx, itemID string) error {
-	_, err := tx.ExecContext(ctx, `
-UPDATE item_modifier_groups
-SET item_id = (
-    SELECT l.item_id FROM item_modifier_group_links l
-    WHERE l.group_id = item_modifier_groups.id AND l.item_id != ?
-    LIMIT 1
-)
-WHERE item_id = ?
-  AND EXISTS (
-    SELECT 1 FROM item_modifier_group_links l
-    WHERE l.group_id = item_modifier_groups.id AND l.item_id != ?
-  )
-`, itemID, itemID, itemID)
+	var next int
+	err := r.db.QueryRowContext(ctx, `
+SELECT COALESCE(MAX(sort_order) + 1, 0) FROM category_modifier_group_links WHERE category_id = ?
+`, categoryID).Scan(&next)
 	if err != nil {
-		return fmt.Errorf("reanchor modifier groups before item delete: %w", err)
+		return 0, fmt.Errorf("next group sort order for category: %w", err)
 	}
-	return nil
-}
-
-// ReanchorGroupsBeforeBulkItemDelete is the batch form for a caller that
-// deletes items matching a WHERE predicate rather than one known id (e.g.
-// POSRepo.CleanupObsoleteItems' obsoleteItemsPredicate). itemIDSubquery must be
-// a complete, parameter-free "SELECT id FROM items WHERE ..." SQL string
-// selecting exactly the item ids about to be deleted — pass the SAME
-// subquery text the caller's own DELETE FROM items uses (see pos_repo.go's
-// own itemSet for the identical string-composition pattern), so the two can
-// never silently drift apart. No caller-supplied user input reaches this
-// string in this codebase — it is always a compile-time constant predicate,
-// same as itemSet. Same same-transaction contract as
-// ReanchorGroupsBeforeItemDelete.
-func (r *ModifierRepo) ReanchorGroupsBeforeBulkItemDelete(ctx context.Context, tx *sql.Tx, itemIDSubquery string) error {
-	_, err := tx.ExecContext(ctx, `
-UPDATE item_modifier_groups
-SET item_id = (
-    SELECT l.item_id FROM item_modifier_group_links l
-    WHERE l.group_id = item_modifier_groups.id
-      AND l.item_id NOT IN (`+itemIDSubquery+`)
-    LIMIT 1
-)
-WHERE item_id IN (`+itemIDSubquery+`)
-  AND EXISTS (
-    SELECT 1 FROM item_modifier_group_links l
-    WHERE l.group_id = item_modifier_groups.id
-      AND l.item_id NOT IN (`+itemIDSubquery+`)
-  )
-`)
-	if err != nil {
-		return fmt.Errorf("reanchor modifier groups before bulk item delete: %w", err)
-	}
-	return nil
+	return next, nil
 }
 
 // UpdateGroup edits an existing modifier group's fields.
 //
-// sortOrder here writes ONLY item_modifier_groups.sort_order — the legacy
-// ADR-0090 §2 anchor column, which no read path consults any more
-// (listGroupsForItem/listShopModifierGroups both read the LINK row's own
-// sort_order). No template in web/ui submits a sortOrder field to this
-// call today, so this is currently a harmless no-op in practice, not a
-// live bug — but the deferred "attach an existing group" UI card (ADR-0090
-// §5) will want PER-ITEM ordering, which is what LinkGroupToItem's
-// ON CONFLICT DO UPDATE SET sort_order already provides. Whoever builds
-// that UI should route ordering changes through LinkGroupToItem, not
-// through this parameter.
+// sortOrder here writes ONLY item_modifier_groups.sort_order — a legacy
+// column no per-item/per-category read path consults (they read the LINK
+// row's own sort_order). No template in web/ui submits a sortOrder field
+// to this call today, so this is a harmless no-op in practice. Per-item
+// ordering is LinkGroupToItem's ON CONFLICT DO UPDATE SET sort_order;
+// per-category ordering is LinkGroupToCategory's.
 func (r *ModifierRepo) UpdateGroup(ctx context.Context, id, name string, required bool, minSelect, maxSelect, sortOrder int, isActive bool) error {
 	if id == "" {
 		return errors.New("id required")
@@ -1083,13 +968,15 @@ WHERE id = ?
 	return nil
 }
 
-// DeleteGroup removes a group and its options (ON DELETE CASCADE) — and,
-// since ADR-0090, every item_modifier_group_links row for it too, i.e.
-// EVERY item currently using it, not just one. Neither this nor DeleteOption
-// is wired to any handler today (sync_admin_repo.go's own comment already
-// notes this) — whoever wires one up next needs UnlinkGroupFromItem as the
-// separate, narrower "detach from just this item" action, and should
-// reserve this one for "remove this group everywhere, deliberately."
+// DeleteGroup removes a group EVERYWHERE, deliberately: its options, every
+// item_modifier_group_links row (every item using it), every
+// category_modifier_group_links row and every opt-out all cascade away
+// (migration 034's FKs). Wired to POST /api/catalog/modifier-group/delete
+// since ADR-0101 (ut-docs#2399) behind a confirm; UnlinkGroupFromItem /
+// UnlinkGroupFromCategory are the narrower "just this one" actions, and
+// deactivating (UpdateGroup isActive=false) the reversible one. Past sales
+// keep their sale_line_modifiers snapshots — that table carries no FK onto
+// this one.
 func (r *ModifierRepo) DeleteGroup(ctx context.Context, id string) error {
 	if id == "" {
 		return errors.New("id required")

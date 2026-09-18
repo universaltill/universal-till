@@ -42,8 +42,12 @@ func NewCatalogTestDB(t *testing.T) *sql.DB {
 		`CREATE TABLE categories (id TEXT PRIMARY KEY, name TEXT NOT NULL, parent_id TEXT, sort_order INTEGER NOT NULL DEFAULT 0, color TEXT, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE brands (id TEXT PRIMARY KEY, name TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE tax_codes (id TEXT PRIMARY KEY, name TEXT NOT NULL, rate_basis_points INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1, takeaway_rate_basis_points INTEGER);`,
-		`CREATE TABLE item_modifier_groups (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, name TEXT NOT NULL, required INTEGER NOT NULL DEFAULT 0, min_select INTEGER NOT NULL DEFAULT 0, max_select INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1);`,
-		`CREATE TABLE item_modifier_options (id TEXT PRIMARY KEY, group_id TEXT NOT NULL, name TEXT NOT NULL, price_delta_minor INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1);`,
+		`CREATE TABLE item_modifier_groups (id TEXT PRIMARY KEY, name TEXT NOT NULL, required INTEGER NOT NULL DEFAULT 0, min_select INTEGER NOT NULL DEFAULT 0, max_select INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1);`,
+		// ut-docs#2399: the group_id FK (with its ON DELETE CASCADE, 001_init.sql /
+		// migration 034) was missing from this fixture — a hard group delete
+		// left its options behind here while the real schema cascades them.
+		// Same fixture-drift class as ut-docs#2209 above.
+		`CREATE TABLE item_modifier_options (id TEXT PRIMARY KEY, group_id TEXT NOT NULL, name TEXT NOT NULL, price_delta_minor INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1, FOREIGN KEY (group_id) REFERENCES item_modifier_groups (id) ON DELETE CASCADE);`,
 		// Mirrors migration 025 (ADR-0090, ut-docs#2013): which items use a
 		// modifier group — ModifierRepo reads membership through this table,
 		// so a fixture that inserts a group row directly must add its link
@@ -103,11 +107,11 @@ func SeedItem(t *testing.T, db *sql.DB, seed ItemSeed) {
 	}
 }
 
-// SeedModifierGroup inserts a modifier group row the way a pre-ADR-0090
-// fixture used to (directly into item_modifier_groups) PLUS the
-// item_modifier_group_links row migration 025 backfills for it — the shape
-// every ModifierRepo read path now expects (membership is read through the
-// link table, sort_order off the link row).
+// SeedModifierGroup inserts a shop-wide modifier group row (no item — the
+// anchor column went with migration 034, ADR-0101) PLUS the
+// item_modifier_group_links row linking it to itemID — the shape every
+// ModifierRepo read path expects (membership is read through the link
+// table, sort_order off the link row).
 func SeedModifierGroup(t *testing.T, db *sql.DB, id, itemID, name string, required bool, minSelect, maxSelect, sortOrder int, active bool) {
 	t.Helper()
 	req, act := 0, 0
@@ -117,8 +121,8 @@ func SeedModifierGroup(t *testing.T, db *sql.DB, id, itemID, name string, requir
 	if active {
 		act = 1
 	}
-	if _, err := db.Exec(`INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order, is_active) VALUES (?,?,?,?,?,?,?,?)`,
-		id, itemID, name, req, minSelect, maxSelect, sortOrder, act); err != nil {
+	if _, err := db.Exec(`INSERT INTO item_modifier_groups (id, name, required, min_select, max_select, sort_order, is_active) VALUES (?,?,?,?,?,?,?)`,
+		id, name, req, minSelect, maxSelect, sortOrder, act); err != nil {
 		t.Fatalf("seed modifier group: %v", err)
 	}
 	if _, err := db.Exec(`INSERT INTO item_modifier_group_links (item_id, group_id, sort_order) VALUES (?,?,?)`, itemID, id, sortOrder); err != nil {

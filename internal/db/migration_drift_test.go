@@ -277,10 +277,13 @@ func restampWarnings() []logging.Problem {
 // 001_init.sql must record EXACTLY the checksum those tills already hold.
 func TestOpenUpgradesV018TillViaMigration033(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pop-a.db")
-	d, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Build the v0.18.0 shape for real (ut-docs#2399 review, L4): migrate
+	// through 032 only, so 033 has genuinely never run — its rows do not
+	// exist and nothing after it (034's rebuild) has touched the schema
+	// either. This used to Open() a fully-migrated file and rewind the
+	// ledger, which once 034 existed made this test replay 034 against an
+	// already-rebuilt schema rather than exercise the real upgrade.
+	d := openMigratedTo(t, path, 32)
 	var checksum string
 	if err := d.QueryRow(`SELECT checksum FROM schema_migrations WHERE version = 1`).Scan(&checksum); err != nil {
 		t.Fatal(err)
@@ -288,9 +291,8 @@ func TestOpenUpgradesV018TillViaMigration033(t *testing.T) {
 	if checksum != v0180BaselineChecksum {
 		t.Fatalf("restored 001_init.sql records checksum %s, want the v0.18.0 value %s that every upgrading till's ledger holds (ut-docs#2395)", checksum, v0180BaselineChecksum)
 	}
-	// Rewind to the v0.18.0 shape: 033 never ran, its rows do not exist.
+	// Belt and braces: 033's rows must be absent on this shape.
 	for _, q := range []string{
-		`DELETE FROM schema_migrations WHERE version = 33`,
 		`DELETE FROM role_permissions WHERE action = 'catalog_management'`,
 		`DELETE FROM permission_actions WHERE action = 'catalog_management'`,
 	} {
@@ -306,7 +308,7 @@ func TestOpenUpgradesV018TillViaMigration033(t *testing.T) {
 	}
 
 	logging.ResetRecent()
-	d, err = Open(path)
+	d, err := Open(path)
 	if err != nil {
 		t.Fatalf("a v0.18.0 till must boot on the fixed tree without a drift error: %v", err)
 	}
@@ -332,15 +334,20 @@ func TestOpenUpgradesV018TillViaMigration033(t *testing.T) {
 // The next boot must then be silent — the checksum matches.
 func TestOpenAcceptsV019BaselineChecksumAndRestamps(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "pop-b.db")
-	d, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Rewind to the v0.19.x shape (watermark 31 on v0.19.0, 32 on v0.19.1+;
-	// either way below 33): 033 never ran, but its rows already
-	// exist (from the edited 001), and the ledger holds the edited checksum.
+	// Build the v0.19.x shape for real (ut-docs#2399 review, L4): migrate
+	// through 032 only (watermark 31 on v0.19.0, 32 on v0.19.1+; either
+	// way below 33), so 033 and everything after it — 034's rebuild
+	// included — has genuinely never run. What v0.19.x's edited 001 DID
+	// leave behind is 033's rows (inserted below) and the edited checksum
+	// in the ledger. This used to Open() a fully-migrated file and rewind
+	// the ledger with `>= 33`, which made the test replay 034 against an
+	// already-rebuilt schema instead of exercising the real upgrade.
+	d := openMigratedTo(t, path, 32)
 	for _, q := range []string{
-		`DELETE FROM schema_migrations WHERE version = 33`,
+		// The rows v0.19.x's edited 001 seeded (the same statements 033
+		// later became), present on that shape without any 033 ledger row.
+		`INSERT OR IGNORE INTO permission_actions (action) VALUES ('catalog_management')`,
+		`INSERT OR IGNORE INTO role_permissions (role, action, granted) VALUES ('admin', 'catalog_management', 1), ('manager', 'catalog_management', 1), ('super_admin', 'catalog_management', 1)`,
 		`UPDATE schema_migrations SET checksum = '` + v0192BaselineChecksum + `' WHERE version = 1`,
 	} {
 		if _, err := d.Exec(q); err != nil {
@@ -355,7 +362,7 @@ func TestOpenAcceptsV019BaselineChecksumAndRestamps(t *testing.T) {
 	}
 
 	logging.ResetRecent()
-	d, err = Open(path)
+	d, err := Open(path)
 	if err != nil {
 		t.Fatalf("a v0.19.0–v0.19.2 install must boot on the fixed tree: %v", err)
 	}

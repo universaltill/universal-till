@@ -39,10 +39,13 @@ func loadMigrationVersion(t *testing.T, version int) migration {
 // (openAtPreMigrationSchema's contract for every later migration) without
 // error and without duplicating the backfilled rows.
 func TestMigration025_BackfillsOneLinkPerExistingGroup(t *testing.T) {
-	d, err := Open(filepath.Join(t.TempDir(), "links.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	// A database genuinely at 024 (ut-docs#2399): built through the real
+	// runner, so item_modifier_groups still carries the item_id anchor 025
+	// reads — the shape this test used to fake by dropping 025's table off
+	// a fully migrated file, which stopped being possible once 034 removed
+	// that column (see openAtPreMigrationSchema's own comment).
+	path := filepath.Join(t.TempDir(), "links.db")
+	d := openMigratedTo(t, path, modifierGroupLinksMigrationVersion-1)
 	defer d.Close()
 	exec := func(q string, args ...any) {
 		t.Helper()
@@ -59,13 +62,8 @@ func TestMigration025_BackfillsOneLinkPerExistingGroup(t *testing.T) {
 		return n
 	}
 
-	// Simulate a till that has never seen 025: drop what it created (the
-	// table takes its index and its sync triggers with it) and rewind its
-	// ledger row, exactly as openAtPreMigrationSchema does for 009/011.
-	exec(`DROP TABLE item_modifier_group_links`)
-	exec(`DELETE FROM schema_migrations WHERE version = ?`, modifierGroupLinksMigrationVersion)
 	if n := count(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'item_modifier_group_links'`); n != 0 {
-		t.Fatalf("pre-025 simulation still has the link table (%d)", n)
+		t.Fatalf("pre-025 database already has the link table (%d)", n)
 	}
 
 	// A real shop's data, written the OLD way: a group belongs to exactly
@@ -153,6 +151,25 @@ func TestMigration025_BackfillsOneLinkPerExistingGroup(t *testing.T) {
 	}
 	if n := count(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'item_modifier_group_links'`); n != 3 {
 		t.Fatalf("triggers after replay = %d, want 3", n)
+	}
+
+	// (d) the rest of the upgrade (026..034, ut-docs#2399): the backfilled
+	// links survive 034's rebuild of this very table, and the anchor column
+	// 025 read from is gone afterwards.
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+	upgraded, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open (026..034 on top of 025): %v", err)
+	}
+	defer upgraded.Close()
+	var links int
+	if err := upgraded.DB.QueryRow(`SELECT COUNT(*) FROM item_modifier_group_links`).Scan(&links); err != nil || links != 3 {
+		t.Fatalf("link count after the full upgrade = %d err=%v, want 3", links, err)
+	}
+	if n := columnCount(t, upgraded, "item_modifier_groups", "item_id"); n != 0 {
+		t.Fatalf("item_modifier_groups.item_id count after 034 = %d, want 0", n)
 	}
 }
 

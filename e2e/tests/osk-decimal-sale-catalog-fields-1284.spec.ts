@@ -292,20 +292,13 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
     // ut-docs#2330: the item-editor's own "Manage Modifiers" dialog is now
     // attach/detach-only -- no group/option create/edit reachable from
     // there any more (that stays exclusively on /modifiers, the shop-wide
-    // full-CRUD home for modifier groups since ut-docs#1957). /modifiers
-    // itself used to only list items that ALREADY own a group, which broke
-    // creating a shop's very first group entirely -- fixed in this same
-    // card by giving /modifiers its own item-picker + "add group" form
-    // (handlers.go's modifierItemPickerJSON), driven for real here rather
-    // than bypassed via a direct API seed, so this test also covers that
-    // fix's own real UI path, not just the OSK-decimal bug below it.
+    // full-CRUD home for modifier groups since ut-docs#1957).
+    // ut-docs#2399 / ADR-0101: a group is created with NO item at all, then
+    // assigned from its own card -- so the probe item is attached through
+    // the card's "Add item" picker afterwards, driving the real assignment
+    // path rather than a direct API seed.
     await page.goto('/modifiers');
-    await page.locator('.modifiers-new-item-search').fill(itemName);
-    // The picker resolves the hidden itemId on 'input'/'change' -- give it
-    // a beat before relying on the hidden field for the form's own submit.
-    await expect(page.locator('.modifiers-new-item-id')).not.toHaveValue('');
-
-    const groupName = 'Milk';
+    const groupName = 'Milk ' + Date.now();
     await page.locator('.modifiers-new-group-card input[name="name"]').fill(groupName);
     await Promise.all([
       page.waitForResponse((r) => r.url().includes('/api/catalog/modifier-group')),
@@ -314,8 +307,18 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
     // `hasText` matches rendered text nodes, not an <input>'s value -- the
     // group's own name lives in a server-rendered value="" attribute, so
     // locate by that instead of filtering on visible text.
-    const group = page.locator('.modifier-admin-group').filter({ has: page.locator(`input[name="name"][value="${groupName}"]`) });
-    await expect(group).toBeVisible();
+    const cardFor = () => page.locator('.modifier-card').filter({ has: page.locator(`input[name="name"][value="${groupName}"]`) });
+    await expect(cardFor()).toBeVisible();
+    await cardFor().locator('.modifiers-item-search').fill(itemName);
+    // The picker resolves the hidden itemId on 'input'/'change' -- give it
+    // a beat before relying on the hidden field for the form's own submit.
+    await expect(cardFor().locator('.modifiers-item-id')).not.toHaveValue('');
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/api/catalog/modifier-group/attach')),
+      cardFor().locator('.modifier-assign-add-item button[type=submit]').click(),
+    ]);
+    const group = cardFor();
+    await expect(group.locator('.modifier-assign-item', { hasText: itemName })).toBeVisible();
 
     await group.locator('form.modifier-admin-option-row:not(:has(input[name="id"])) input[name="name"]').fill('Oat milk');
     await Promise.all([
@@ -358,20 +361,17 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
     await closeItemForm(page);
 
     // ut-docs#2330: same relocation as the sibling test above -- group/
-    // option CRUD is /modifiers-only now, via its own item-picker (the
-    // fix, landed in this same card, for /modifiers not being able to
-    // bootstrap an item's first-ever group).
+    // option CRUD is /modifiers-only now. ut-docs#2399 / ADR-0101: the
+    // group needs no item to exist, so the OSK check on its new-option row
+    // runs on a standalone group.
     await page.goto('/modifiers');
-    await page.locator('.modifiers-new-item-search').fill(itemName);
-    await expect(page.locator('.modifiers-new-item-id')).not.toHaveValue('');
-
     const groupName = 'OSK New-Row Modifier ' + Date.now();
     await page.locator('.modifiers-new-group-card input[name="name"]').fill(groupName);
     await Promise.all([
       page.waitForResponse((r) => r.url().includes('/api/catalog/modifier-group')),
       page.locator('.modifiers-new-group-card button[type=submit]').click(),
     ]);
-    const group = page.locator('.modifier-admin-group').filter({ has: page.locator(`input[name="name"][value="${groupName}"]`) });
+    const group = page.locator('.modifier-card').filter({ has: page.locator(`input[name="name"][value="${groupName}"]`) });
     await expect(group).toBeVisible();
 
     const priceDelta = group.locator('input[name="priceDeltaMajor"]');
