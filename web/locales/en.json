@@ -110,6 +110,8 @@
   "basket.order_type.mixed": "Mixed",
   "basket.order_type.prompt_title": "Dine in or takeaway?",
   "basket.order_type.takeaway": "Takeaway",
+  "basket.qty.decrease": "Decrease quantity",
+  "basket.qty.increase": "Increase quantity",
   "basket.remove": "Remove",
   "basket.subtotal": "Subtotal",
   "basket.table.label": "Table",

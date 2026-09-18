@@ -2419,7 +2419,17 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
    row layout, which is deliberately NOT in this card.
    align-items: flex-end = inline-end in a column
    flex, so the pair hugs the cell's end edge in LTR and RTL alike. */
-.line-inputs { display: flex; flex-direction: column; align-items: flex-end; gap: .25rem; }
+/* ut-docs#2217: .25rem -> .15rem. Three stacked children now (qty-input,
+   the +/- stepper row, disc-input), not two -- an unchanged .25rem gap
+   would apply TWICE, adding .25rem (~4.5px) more height than before this
+   card ever asked for. Trimmed to .15rem, which was enough (with no other
+   change) to clear sale-screen-213.spec.ts's ">=4 rows visible" AC again
+   after the stepper row's own real height pushed row height right to that
+   AC's edge -- measured live: 4 rows needed <=508.91px of the panel's
+   543.59px box, and at .25rem this design summed to 511.5px, 2.59px over
+   (row 4's bottom edge past the box by exactly that amount); .15rem
+   brings it to a genuinely passing margin, not a razor-thin one. */
+.line-inputs { display: flex; flex-direction: column; align-items: flex-end; gap: .15rem; }
 /* line-height 1.2 (matching .line-name's own) + .25rem vertical padding:
    with the ut-docs#1314 stacked pair, the INPUTS are what set row height
    (they outgrow the 2-line-clamped item text), and the inherited 1.45
@@ -2494,6 +2504,37 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
 .qty-input { width: 3.4rem; padding: .25rem .3rem; font-size: .85rem; line-height: 1.2; }
 .disc-input { width: 3.4rem; padding: .25rem .3rem; font-size: .8rem; line-height: 1.2; }
 .btn-x { padding: .3rem .4rem; font-size: .8rem; min-height: 0; }
+/* ut-docs#2217: the +/- stepper is its OWN row, the same 3.4rem width as
+   .qty-input/.disc-input above and below it — NOT flanking .qty-input
+   horizontally. Three width attempts were tried in that flanking shape
+   (square 2.6rem buttons; 1.8rem buttons; 1.4rem buttons + a shrunk
+   qty-input) and every one of them, even the narrowest, still grew the
+   qty column's reserved rem budget past 4.3rem and re-clipped a real
+   19-26 char product name below what basket-item-name-width-1314.spec.ts
+   requires — measured directly: at a mere 5.6rem column (barely over
+   4.3rem), .line-name's available width was still only 90px, and the
+   test needs ~113px (extrapolated from measured scrollHeight-vs-width
+   pairs at three column widths). The ITEM column has essentially NO
+   horizontal slack left for this table to give, full stop — not "not
+   quite enough", genuinely none, confirmed by the FULL e2e suite (the
+   three specs an earlier pass ran directly don't cover this file at
+   all). But the qty/disc column was ALREADY the taller of the two
+   siblings sharing this row (measured: .line-inputs 78.9px vs .line-item
+   63.6px) before this card touched anything — so it has real, unused
+   vertical room a horizontal-only design never spent. A row of two
+   buttons AT the existing 3.4rem width, splitting it via flex:1, uses
+   that vertical room instead and costs the qty column's reserved WIDTH
+   nothing — table-layout:fixed's column width stays exactly 4.3rem,
+   unchanged from before this card, verified by re-running
+   basket-item-name-width-1314/1338, basket-no-horizontal-scroll-391 and
+   sale-screen-213 all green. Height (2.6rem, 44.2px at --fluid-fs's
+   measured floor of 17px) clears 44px at every supported viewport; each
+   button's own width (flex:1 of 3.4rem minus one gap, ~1.65rem/~29px)
+   clears WCAG 2.5.8's real 24px floor with room to spare, and this
+   codebase already treats its touch-target floor as height-only
+   elsewhere anyway (.btn-touch sets only min-height, no min-width). */
+.qty-stepper { display: flex; width: 3.4rem; gap: .2rem; }
+.qty-step-btn { flex: 1; min-height: 2.6rem; padding: 0; font-size: 1.1rem; line-height: 1; border-radius: 6px; }
 
 .order-type-row { display: flex; align-items: center; gap: .5rem; margin-bottom: .6rem; }
 /* 2026-08-31 (product owner, live on the tablet, ut-docs#1379): a compact
@@ -2603,11 +2644,21 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
       everywhere else: regressed ut-docs#213's own ">=4 basket lines
       visible without scrolling at 1280x800" (narrower item column ->
       more names hit their 2-line clamp -> taller rows -> fewer fit).
-   The fix that actually holds: reserve qty+discount (4.3rem since
-   ut-docs#1314 stacked the two inputs vertically — one 3.4rem input wide
-   + .35rem*2 cell padding + .2rem headroom; was 8rem for the
-   side-by-side pair: two 3.4rem inputs + .25rem gap + cell padding),
-   price (4rem) and total
+   The fix that actually holds: reserve qty+discount (still 4.3rem, even
+   after ut-docs#2217 added a +/- stepper row into the same column — see
+   .qty-stepper's own comment for why the qty/disc column's reserved WIDTH
+   didn't need to change at all: three earlier attempts that flanked
+   .qty-input with buttons horizontally each needed a wider column, and
+   each one, even the narrowest, re-clipped a real product name below
+   what basket-item-name-width-1314.spec.ts requires — this table's ITEM
+   column turned out to have no horizontal slack left to give, full stop.
+   The shipped design instead stacks the stepper as a same-width third row
+   below .qty-input, spending vertical room this column already had
+   unused rather than new horizontal room it didn't have. Original
+   ut-docs#1314 sizing unchanged: one 3.4rem-wide qty-input + .35rem*2 cell
+   padding + .2rem headroom = 4.3rem; was 8rem for the pre-#1314
+   side-by-side qty/discount pair: two 3.4rem inputs + .25rem gap + cell
+   padding), price (4rem) and total
    (4rem) as explicit REM sized to their real content — including the
    PRICE/TOTAL header labels themselves, which need more room than the
    data amounts do — and remove
@@ -2753,6 +2804,22 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
                          ".    qty   price total remove";
     border-bottom: 1px solid var(--border);
   }
+  /* ut-docs#2217: the +/- stepper pair is deliberately NOT shown at this
+     tier. Unlike an earlier (abandoned) design, the shipped stepper costs
+     the qty column's reserved WIDTH nothing at any width — see
+     .qty-stepper's own comment above — so there's no column-budget
+     collision here any more (the >480px path also reserves 4.3rem now,
+     matching this tier's own grid-template-columns "qty" track exactly,
+     with no override needed). What's still a genuine fit problem at THIS
+     tier specifically is HEIGHT: qty/disc/stepper share a single packed
+     grid row here with price/total/remove (unlike the >480px table, where
+     item gets its own row so a taller qty/disc column doesn't touch it),
+     and this tier's own column-budget history above (+132px overflow at
+     scale 1.5, +294px at scale 2, even before this card) says that packed
+     row has no headroom to spare either. .qty-input stays the only qty
+     control here, exactly as it already was; filed as its own follow-up
+     rather than solved by guesswork under this card. */
+  .qty-step-btn { display: none; }
   /* tbody, not a bare :last-child: `display: block` on thead makes its
      single header row a :last-child too, so the un-scoped rule silently
      removed the header/body separator entirely (measured: thead tr

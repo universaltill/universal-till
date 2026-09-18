@@ -213,6 +213,126 @@ func TestLineHandler_QtyChangeDoesNotClearDiscount(t *testing.T) {
 	}
 }
 
+// TestLineHandler_DeltaIncrementsAndDecrementsQty is a TDD test for
+// ut-docs#2217's +/- stepper buttons: they post a relative `delta` (never
+// an absolute qty) so the template needs no client-side arithmetic,
+// mirroring the existing /api/self-order/line precedent
+// (self_order_shop.go). Delta only applies on the key-addressed branch —
+// the buttons always render with the line's own LineKey.
+func TestLineHandler_DeltaIncrementsAndDecrementsQty(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	key := dp.Engine.Basket().Lines[0].LineKey
+
+	rec := posPostForm(mux, "/api/pos/line", "key="+key+"&delta=1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delta+1: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if lines := dp.Engine.Basket().Lines; len(lines) != 1 {
+		t.Fatalf("want 1 line after +1, got %+v", lines)
+	} else if lines[0].Qty != 2 {
+		t.Fatalf("want qty 2 after +1 from the initial scan's qty 1, got %v", lines[0].Qty)
+	}
+
+	rec = posPostForm(mux, "/api/pos/line", "key="+key+"&delta=-1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delta-1: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if lines := dp.Engine.Basket().Lines; len(lines) != 1 {
+		t.Fatalf("want 1 line after -1, got %+v", lines)
+	} else if lines[0].Qty != 1 {
+		t.Fatalf("want qty 1 after -1, got %v", lines[0].Qty)
+	}
+}
+
+// TestLineHandler_DeltaClampsAtZeroAndVoids proves the − stepper reuses the
+// handler's existing qty-zero-voids-the-line behavior rather than a new
+// special case, and that delta never drives qty negative.
+func TestLineHandler_DeltaClampsAtZeroAndVoids(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	key := dp.Engine.Basket().Lines[0].LineKey
+
+	rec := posPostForm(mux, "/api/pos/line", "key="+key+"&delta=-1")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delta-1 at qty 1: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if len(dp.Engine.Basket().Lines) != 0 {
+		t.Fatalf("expected the line voided (qty 0), got %+v", dp.Engine.Basket().Lines)
+	}
+}
+
+// TestLineHandler_DeltaPreservesDiscount is a regression test for the same
+// class of bug TestLineHandler_QtyChangeDoesNotClearDiscount already guards
+// on the code/absolute-qty path (ut-docs#971): unlike
+// /api/self-order/line (no discount field at all), /api/pos/line always
+// parses a `discount` form value, defaulting to 0 when absent. The
+// stepper buttons must carry hx-include="closest tr" so a click also
+// resubmits the row's current discount box value — otherwise a qty step
+// would silently zero out an existing discount.
+func TestLineHandler_DeltaPreservesDiscount(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	key := dp.Engine.Basket().Lines[0].LineKey
+
+	rec := posPostForm(mux, "/api/pos/line", "key="+key+"&qty=3&discount=20")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("initial set: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if lines := dp.Engine.Basket().Lines; len(lines) != 1 {
+		t.Fatalf("want 1 line after initial set, got %+v", lines)
+	} else if got := lines[0].LineDiscount.Minor(); got != 20 {
+		t.Fatalf("expected line discount 20 after initial set, got %v", got)
+	}
+
+	m := discInputValueRE.FindStringSubmatch(rec.Body.String())
+	if m == nil {
+		t.Fatalf("could not find disc-input value in rendered basket:\n%s", rec.Body.String())
+	}
+	redisplayed := m[1]
+
+	// Simulate hx-include="closest tr" on the + button: the delta POST
+	// carries the discount box's currently redisplayed value, exactly as a
+	// real browser click would.
+	rec = posPostForm(mux, "/api/pos/line", "key="+key+"&delta=1&discount="+redisplayed)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delta+1: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	lines := dp.Engine.Basket().Lines
+	if len(lines) != 1 {
+		t.Fatalf("want 1 line after +1, got %+v", lines)
+	}
+	line := lines[0]
+	if line.Qty != 4 {
+		t.Fatalf("expected qty 4, got %v", line.Qty)
+	}
+	if line.LineDiscount.Minor() != 20 {
+		t.Fatalf("expected line discount to survive the +1 step at 20, got %v (redisplayed value was %q)", line.LineDiscount.Minor(), redisplayed)
+	}
+}
+
+// TestLineHandler_InvalidDeltaRejected mirrors the self-order twin's own
+// invalid-delta handling (self_order_shop.go) — a malformed delta is a
+// 400, not a silently-ignored no-op.
+func TestLineHandler_InvalidDeltaRejected(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	key := dp.Engine.Basket().Lines[0].LineKey
+
+	rec := posPostForm(mux, "/api/pos/line", "key="+key+"&delta=notanumber")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestLineHandler_RequiresKeyOrCode(t *testing.T) {
 	mux, _ := newPOSTestDeps(t)
 	rec := posPostForm(mux, "/api/pos/line", "qty=1")

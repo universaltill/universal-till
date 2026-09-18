@@ -110,6 +110,8 @@
   "basket.order_type.mixed": "مخلوط",
   "basket.order_type.prompt_title": "صرف در محل یا بیرون‌بر؟",
   "basket.order_type.takeaway": "بیرون‌بر",
+  "basket.qty.decrease": "کاهش تعداد",
+  "basket.qty.increase": "افزایش تعداد",
   "basket.remove": "حذف",
   "basket.subtotal": "جمع جزء",
   "basket.table.label": "میز",

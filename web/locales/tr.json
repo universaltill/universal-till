@@ -110,6 +110,8 @@
   "basket.order_type.mixed": "Karışık",
   "basket.order_type.prompt_title": "Burada mı, paket mi?",
   "basket.order_type.takeaway": "Paket",
+  "basket.qty.decrease": "Miktarı azalt",
+  "basket.qty.increase": "Miktarı artır",
   "basket.remove": "Kaldır",
   "basket.subtotal": "Ara toplam",
   "basket.table.label": "Masa",
