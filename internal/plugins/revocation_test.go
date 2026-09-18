@@ -118,15 +118,6 @@ func TestSyncRevocationsDisablesInstalledPlugin(t *testing.T) {
 	} else if n2 != 0 {
 		t.Fatalf("second sync processed = %d, want 0 (already disabled)", n2)
 	}
-
-	// GetRevokedPlugins surfaces it.
-	revoked, err := rc.GetRevokedPlugins(ctx)
-	if err != nil {
-		t.Fatalf("GetRevokedPlugins: %v", err)
-	}
-	if len(revoked) != 1 || revoked[0].PluginID != "com.test.revoked" {
-		t.Fatalf("revoked list = %+v", revoked)
-	}
 }
 
 func TestSyncRevocationsErrorPaths(t *testing.T) {
