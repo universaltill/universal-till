@@ -88,6 +88,7 @@ func TestCatalogHandlers_CatalogManagementGate_RealSessionGatesByRole(t *testing
 		"/api/catalog/modifier-group/detach",
 		"/api/catalog/modifier-group/opt-out",
 		"/api/catalog/modifier-group/opt-in",
+		"/api/catalog/modifier-group/delete-unassigned",
 		"/api/catalog/item-station-routes",
 		"/api/catalog/variant/deactivate",
 		"/api/catalog/item/image",

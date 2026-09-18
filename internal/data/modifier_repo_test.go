@@ -653,6 +653,161 @@ func TestModifierRepo_DeleteGroup_CascadesEveryAssignment(t *testing.T) {
 	}
 }
 
+// DeleteUnassignedGroups (ut-docs#2406, follow-up from the ADR-0101/#2399
+// review's finding L5): a shop that cleans up many single-use-group items
+// accumulates unassigned cards on /modifiers with only the per-group Delete
+// to clear them one at a time. Removes every group with neither a category
+// link nor an item link, cascading exactly like DeleteGroup (there are no
+// links to cascade for an unassigned group by definition, but options and
+// any stray opt-out must still go); a group with EITHER kind of assignment
+// is left completely untouched, options and all.
+func TestModifierRepo_DeleteUnassignedGroups(t *testing.T) {
+	d := openModifierTestDB(t)
+	ctx := context.Background()
+	repo := data.NewModifierRepo(d.DB)
+	for _, q := range []string{
+		`INSERT INTO categories (id, name) VALUES ('cat1', 'Drinks')`,
+		`INSERT INTO items (id, sku, name, base_price, is_active, category_id) VALUES ('itm1','SKU1','Flat White',320,1,'cat1'), ('itm2','SKU2','Latte',350,1,'cat1')`,
+	} {
+		if _, err := d.DB.ExecContext(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	// g1: unassigned, with an option — the one that must go.
+	if _, err := repo.CreateGroup(ctx, "g1", "Orphan", false, 0, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateOption(ctx, "o1", "g1", "Extra", 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	// g2: linked to an item — must survive.
+	if _, err := repo.CreateGroup(ctx, "g2", "Milk", false, 0, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.LinkGroupToItem(ctx, "itm1", "g2", 0); err != nil {
+		t.Fatal(err)
+	}
+	// g3: linked to a category only — must survive.
+	if _, err := repo.CreateGroup(ctx, "g3", "Sauces", false, 0, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.LinkGroupToCategory(ctx, "cat1", "g3", 0); err != nil {
+		t.Fatal(err)
+	}
+	// g4: a second unassigned group, so the count returned is exercised.
+	if _, err := repo.CreateGroup(ctx, "g4", "Also orphan", false, 0, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := repo.DeleteUnassignedGroups(ctx)
+	if err != nil {
+		t.Fatalf("DeleteUnassignedGroups: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("deleted count = %d, want 2", n)
+	}
+
+	var remaining []string
+	rows, err := d.DB.QueryContext(ctx, `SELECT id FROM item_modifier_groups ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		remaining = append(remaining, id)
+	}
+	if len(remaining) != 2 || remaining[0] != "g2" || remaining[1] != "g3" {
+		t.Fatalf("remaining groups = %v, want [g2 g3]", remaining)
+	}
+	var optCount int
+	if err := d.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM item_modifier_options WHERE group_id = 'g1'`).Scan(&optCount); err != nil || optCount != 0 {
+		t.Fatalf("g1's option count = %d err=%v, want 0 (cascade-deleted)", optCount, err)
+	}
+
+	// Nothing left to delete: a second call is a no-op, not an error.
+	n2, err := repo.DeleteUnassignedGroups(ctx)
+	if err != nil {
+		t.Fatalf("DeleteUnassignedGroups (second call): %v", err)
+	}
+	if n2 != 0 {
+		t.Fatalf("second call deleted = %d, want 0", n2)
+	}
+}
+
+// An INACTIVE item or category still counts as an assignment (ut-docs#2406,
+// independent review): a link row is a link row, whether or not its item /
+// category is currently on sale — the same convention
+// ListAllModifierGroupsWithAssignments' own link queries follow (they JOIN
+// items/categories without filtering on is_active, so /modifiers renders
+// the link as a greyed chip/checkbox rather than hiding it), and therefore
+// the same one the page's UnassignedCount and this delete must follow.
+// Without this, "clean up the catalog, then delete all unassigned groups"
+// would silently take out the groups of every deactivated item — which is
+// exactly the recoverable state ADR-0101 Decision 2 preserves.
+func TestModifierRepo_DeleteUnassignedGroups_InactiveLinksStillCountAsAssigned(t *testing.T) {
+	d := openModifierTestDB(t)
+	ctx := context.Background()
+	repo := data.NewModifierRepo(d.DB)
+	for _, q := range []string{
+		`INSERT INTO categories (id, name, is_active) VALUES ('cat1', 'Retired', 0)`,
+		`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm1','SKU1','Retired Item',320,0)`,
+	} {
+		if _, err := d.DB.ExecContext(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	if _, err := repo.CreateGroup(ctx, "gItem", "Only inactive item", false, 0, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.LinkGroupToItem(ctx, "itm1", "gItem", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateGroup(ctx, "gCat", "Only inactive category", false, 0, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.LinkGroupToCategory(ctx, "cat1", "gCat", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateGroup(ctx, "gOrphan", "Truly unassigned", false, 0, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	// The page's own read must agree with the delete's definition, or the
+	// count in the confirm and the rows that go would disagree.
+	admin, err := repo.ListAllModifierGroupsWithAssignments(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pageUnassigned := 0
+	for _, g := range admin {
+		if len(g.Categories) == 0 && len(g.Items) == 0 {
+			pageUnassigned++
+		}
+	}
+	if pageUnassigned != 1 {
+		t.Fatalf("page-read unassigned count = %d, want 1 (inactive links are still assignments)", pageUnassigned)
+	}
+
+	n, err := repo.DeleteUnassignedGroups(ctx)
+	if err != nil {
+		t.Fatalf("DeleteUnassignedGroups: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("deleted count = %d, want 1 (only the truly unassigned group)", n)
+	}
+	var remaining int
+	if err := d.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM item_modifier_groups WHERE id IN ('gItem','gCat')`).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 2 {
+		t.Fatalf("groups linked only to an inactive item/category remaining = %d, want 2", remaining)
+	}
+}
+
 // Deleting an ITEM never touches a group row any more (ADR-0101 Decision
 // 2): a group whose only item goes away simply becomes unassigned.
 func TestModifierRepo_ItemDelete_LeavesGroupUnassigned(t *testing.T) {

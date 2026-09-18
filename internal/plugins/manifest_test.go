@@ -514,6 +514,62 @@ func TestPersistManifest_Update(t *testing.T) {
 	}
 }
 
+// TestPersistManifest_PrunesDroppedPermission pins ut-docs#2419: a manifest
+// update that stops declaring a permission must remove that permission's
+// row (and whatever grant it held), not just leave it to accumulate
+// forever. Before this fix, PersistManifest only ever inserted permission
+// rows (ON CONFLICT DO NOTHING) and nothing ever deleted one, so a plugin
+// could keep exercising a capability its current manifest no longer even
+// declares.
+func TestPersistManifest_PrunesDroppedPermission(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	repo := data.NewPluginRepo(db)
+
+	manifest := &Manifest{
+		ID:          "com.test.prune",
+		Name:        "Prune Test",
+		Version:     "1.0.0",
+		Entrypoint:  "./test",
+		Runtime:     "go",
+		Permissions: []string{"sales:read", "devices:printer"},
+	}
+	if err := PersistManifest(ctx, db, manifest, InstallOptions{}); err != nil {
+		t.Fatalf("first PersistManifest failed: %v", err)
+	}
+
+	// Operator grants the permission that the next manifest version will drop.
+	if err := repo.SetPermission(ctx, manifest.ID, "devices:printer", true); err != nil {
+		t.Fatalf("SetPermission: %v", err)
+	}
+	granted, exists, err := repo.CheckPermission(ctx, manifest.ID, "devices:printer")
+	if err != nil || !exists || !granted {
+		t.Fatalf("precondition: devices:printer should be granted, got granted=%v exists=%v err=%v", granted, exists, err)
+	}
+
+	// Manifest update drops devices:printer.
+	manifest.Version = "2.0.0"
+	manifest.Permissions = []string{"sales:read"}
+	if err := PersistManifest(ctx, db, manifest, InstallOptions{}); err != nil {
+		t.Fatalf("second PersistManifest failed: %v", err)
+	}
+
+	granted, exists, err = repo.CheckPermission(ctx, manifest.ID, "devices:printer")
+	if err != nil {
+		t.Fatalf("CheckPermission: %v", err)
+	}
+	if exists {
+		t.Fatalf("devices:printer row should be pruned once the manifest stops declaring it, got exists=%v granted=%v", exists, granted)
+	}
+
+	// The still-declared permission survives untouched.
+	granted, exists, err = repo.CheckPermission(ctx, manifest.ID, "sales:read")
+	if err != nil || !exists {
+		t.Fatalf("sales:read should still exist: granted=%v exists=%v err=%v", granted, exists, err)
+	}
+}
+
 // setupTestDB creates an in-memory SQLite database with plugin tables
 func setupTestDB(t *testing.T) *sql.DB {
 	db, err := sql.Open("sqlite", ":memory:")

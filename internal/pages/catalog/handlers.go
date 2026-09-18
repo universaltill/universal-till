@@ -429,6 +429,11 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return nil, err
 		}
 		cards := make([]modifierCard, 0, len(groups))
+		// unassigned counts a group toward ut-docs#2406's bulk-delete
+		// action using the SAME test modifiers.html already renders per
+		// card (.modifier-unassigned's "neither Categories nor Items") —
+		// never a second, independently-derived definition of unassigned.
+		unassigned := 0
 		for _, g := range groups {
 			linked := make(map[string]bool, len(g.Categories))
 			for _, c := range g.Categories {
@@ -444,11 +449,15 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 					ID: c.ID, Name: c.Name, IsActive: c.IsActive, Linked: linked[c.ID],
 				})
 			}
+			if len(g.Categories) == 0 && len(g.Items) == 0 {
+				unassigned++
+			}
 			cards = append(cards, card)
 		}
 		return map[string]any{
-			"Groups":    cards,
-			"ItemsJSON": modifierItemPickerJSON(ctx),
+			"Groups":          cards,
+			"ItemsJSON":       modifierItemPickerJSON(ctx),
+			"UnassignedCount": unassigned,
 		}, nil
 	}
 
@@ -1621,6 +1630,36 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		}
 		if err := modRepo.DeleteGroup(r.Context(), groupID); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "modifiers.error.server", "catalog delete-group", err)
+			return
+		}
+		renderModifierMutationResult(w, r, "", http.StatusOK, "")
+	})
+
+	// Delete every UNASSIGNED modifier group in one action (ut-docs#2406,
+	// follow-up from the ADR-0101/#2399 review's finding L5): a shop that
+	// cleans up hundreds of obsolete items, each with its own single-use
+	// group, ends up with hundreds of orphaned cards on /modifiers and only
+	// the per-card Delete above to clear them one at a time. "Unassigned"
+	// is the exact same definition modifiersPageData's UnassignedCount and
+	// this page's own .modifier-unassigned hint already use — no category
+	// link, no item link — so this can never delete a group still offered
+	// anywhere. The confirm text (modifiers.html) already names the count
+	// server-rendered from that same UnassignedCount, so there is nothing
+	// left to re-derive or double-check here. Same gates and same cascade/
+	// past-sales guarantee as the single-group delete above.
+	mux.HandleFunc("/api/catalog/modifier-group/delete-unassigned", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !requireCatalogManagement(w, r) {
+			return
+		}
+		if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
+			return
+		}
+		if _, err := modRepo.DeleteUnassignedGroups(r.Context()); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "modifiers.error.server", "catalog delete-unassigned", err)
 			return
 		}
 		renderModifierMutationResult(w, r, "", http.StatusOK, "")

@@ -876,6 +876,19 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
    column width, so the page reads as a single list rather than a
    full-width form above a narrower stack. */
 .modifiers-new-group-card { max-inline-size: 44rem; }
+/* ut-docs#2406 (independent review): the unassigned-cleanup toolbar had no
+   rules of its own, so it rendered as a full-width block card above the
+   44rem stack — the very "full-width form above a narrower stack" the
+   comment above fixed for the create card — and its three inline children
+   collapsed to a single space between them, reading as one run-on
+   sentence ("Show only unassigned 2 unassigned group(s)") at the 1024x600
+   kiosk floor. Flex + gap + the shared column width; logical properties
+   only, so RTL needs no extra CSS. The filter label gets the same 2.75rem
+   touch target every other tap target on this page has under body.kiosk. */
+.modifiers-unassigned-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; max-inline-size: 44rem; }
+.modifiers-unassigned-toolbar .btn { margin-inline-start: auto; }
+.modifiers-filter-unassigned { display: inline-flex; align-items: center; gap: .4rem; }
+body.kiosk .modifiers-filter-unassigned { min-block-size: 2.75rem; }
 .modifier-card-footer { display: flex; justify-content: flex-end; margin-block-start: .6rem; padding-block-start: .6rem; border-block-start: 1px solid var(--border); }
 .modifier-card.vg-inactive { opacity: .7; }
 .modifier-card.vg-inactive .modifier-assign { opacity: .85; }
