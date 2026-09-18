@@ -156,20 +156,18 @@ test.describe('persistent app shell (ut-docs#2224)', () => {
     expect(err.headers()['hx-retarget']).toBe('#ut-page');
     const theirs = /name="ut-shell" content="([^"]*)"/.exec(await err.text())?.[1];
     const mine = await page.evaluate(() => document.querySelector('meta[name="ut-shell"]')!.getAttribute('content'));
+    // ut-docs#2362: RenderError now carries the shop's current theme (like
+    // every other page), so its shell signature always matches — this is no
+    // longer conditional on whether the shop happens to run the default
+    // theme (the only case that used to make the two signatures agree).
+    expect(theirs, 'RenderError\'s shell signature must match every other page\'s (ut-docs#2362)').toBe(mine);
 
     await page.locator('#probe-html-404').click();
     await expect(page).toHaveURL(/no-such-station/);
-    if (theirs === mine) {
-      // Same shell: the error swaps in place — never htmx's default
-      // body-innerHTML swap on error (which would destroy the on-screen
-      // keyboard and duplicate the bug-report panel).
-      expect(await bootAt(page)).toBe(boot);
-    } else {
-      // RenderError renders without the shop theme, so on a themed till the
-      // error page is a different shell and loads as a full document.
-      await page.waitForLoadState('load');
-      expect(await page.evaluate(() => (window as any).UT?.shellBootAt ?? 0)).not.toBe(boot);
-    }
+    // Same shell: the error swaps in place — never htmx's default
+    // body-innerHTML swap on error (which would destroy the on-screen
+    // keyboard and duplicate the bug-report panel).
+    expect(await bootAt(page)).toBe(boot);
     await expect(page.locator('#ut-page .nav')).toBeVisible();
     expect(await page.locator('#bugreport-panel').count()).toBe(1);
     assertClean();
