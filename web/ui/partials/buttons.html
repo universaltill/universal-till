@@ -681,14 +681,40 @@
     {{ if .Price }}<span class="tile-price">{{ money .Price }}</span>{{ end }}
   </button>
   {{ end }}
+    {{/* ut-docs#2361: a non-granted (cashier) session sees a lock dot on
+         each badge BEFORE tapping it -- the server-side catalog_management
+         gate (ut-docs#2312) already exists and is unaffected; this is
+         purely the discoverability affordance the retired ut-docs#2285
+         tile_sheet.html sheet had ("show, don't hide") that the pure-CSS
+         jiggle-mode toggle (ut-docs#2339) never carried forward. Mirrors
+         that sheet's own .Locked convention (class, aria-label suffix,
+         tile_sheet.locked key, no hx-confirm when locked) rather than
+         inventing a second one. Both badges stay fully clickable either
+         way -- a granted manager+ session renders with .Locked false,
+         which skips every branch below back to the pre-#2361 markup. */}}
     <span class="tile-badges" role="group" aria-label="{{ T "tile_sheet.aria" }}">
-      <a class="tile-badge tile-badge-edit" data-testid="tile-badge-edit" href="/catalog?item={{ .ItemID }}&return=/"
-         aria-label="{{ T "tile_sheet.edit" }}" title="{{ T "tile_sheet.edit" }}"><span class="tile-badge-dot" aria-hidden="true">{{ icon "pencil" }}</span></a>
-      <button type="button" class="tile-badge tile-badge-remove" data-testid="tile-badge-remove"
+      <a class="tile-badge tile-badge-edit{{ if .Locked }} locked{{ end }}" data-testid="tile-badge-edit" href="/catalog?item={{ .ItemID }}&return=/"
+         aria-label="{{ if .Locked }}{{ T "tile_sheet.edit" }} — {{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.edit" }}{{ end }}"
+         title="{{ if .Locked }}{{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.edit" }}{{ end }}">
+        <span class="tile-badge-dot" aria-hidden="true">{{ icon "pencil" }}</span>
+        {{ if .Locked }}<span class="tile-badge-dot tile-badge-lock" data-testid="tile-badge-lock-edit" aria-hidden="true">{{ icon "lock" }}</span>{{ end }}
+      </a>
+      <button type="button" class="tile-badge tile-badge-remove{{ if .Locked }} locked{{ end }}" data-testid="tile-badge-remove"
               hx-post="/api/buttons/remove" hx-vals='{{ jsonVals "code" .Code }}'
-              hx-confirm="{{ printf (T "tile_sheet.remove_confirm") .Label }}"
+              {{/* ut-docs#2361, same reasoning as tile_sheet.html's own
+                   remove button: no hx-confirm when Locked -- a
+                   non-granted operator's tap must reach the server and
+                   land on the real elevation prompt, not a client-side
+                   confirm() dialog that would only ever precede the SAME
+                   eventual elevation either way. The confirm still guards
+                   the real, granted delete path unchanged. */}}
+              {{ if not .Locked }}hx-confirm="{{ printf (T "tile_sheet.remove_confirm") .Label }}"{{ end }}
               hx-swap="none"
-              aria-label="{{ T "tile_sheet.remove" }}" title="{{ T "tile_sheet.remove" }}"><span class="tile-badge-dot" aria-hidden="true">{{ icon "trash-2" }}</span></button>
+              aria-label="{{ if .Locked }}{{ T "tile_sheet.remove" }} — {{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.remove" }}{{ end }}"
+              title="{{ if .Locked }}{{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.remove" }}{{ end }}">
+        <span class="tile-badge-dot" aria-hidden="true">{{ icon "trash-2" }}</span>
+        {{ if .Locked }}<span class="tile-badge-dot tile-badge-lock" data-testid="tile-badge-lock-remove" aria-hidden="true">{{ icon "lock" }}</span>{{ end }}
+      </button>
     </span>
   </div>
 {{ end }}
