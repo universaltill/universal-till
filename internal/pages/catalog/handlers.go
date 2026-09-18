@@ -1267,6 +1267,17 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		writeRowOOB(w, r, itemID, false)
 	})
 
+	// maxModifierSelect bounds min_select/max_select (ut-docs#2376): the
+	// item_modifier_groups CHECK constraint only requires
+	// min_select >= 0 AND max_select >= min_select, no upper bound, so an
+	// absurd value (e.g. 999999999) would otherwise be accepted and render
+	// a nonsensical "choose between 0 and 999999999" picker on the sale
+	// screen (pos_modifiers_api.go's selection-count check). Not
+	// money/tax-relevant — mirrored in cloudsync_wire.go's
+	// cloudUpsertModifierGroup (same value, separate package) and
+	// ut-cloud's internal/claims.maxModifierGroupSelect (separate repo).
+	const maxModifierSelect = 50
+
 	// Create or update a modifier group (ADR-0020) — id present = update,
 	// absent = create. Deactivating (isActive toggle) is the reversible
 	// way to take a group off sale; the hard delete is its own route
@@ -1308,6 +1319,11 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		required := r.Form.Get("required") == "1"
 		if required && minSelect < 1 {
 			minSelect = 1 // a required group must ask for at least one pick
+		}
+		if minSelect > maxModifierSelect || maxSelect > maxModifierSelect {
+			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog",
+				fmt.Errorf("min_select/max_select must be <= %d", maxModifierSelect))
+			return
 		}
 		active := formCheckboxActive(r)
 
