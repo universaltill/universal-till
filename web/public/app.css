@@ -2235,6 +2235,7 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
 .tile-badge-edit { inset-inline-start: -8px; }
 .tile-badge-remove { inset-inline-end: -8px; }
 .tile-badge-dot {
+  position: relative;
   display: flex; align-items: center; justify-content: center;
   inline-size: 22px; block-size: 22px; border-radius: 50%;
   background: var(--surface); border: 1px solid var(--border);
@@ -2243,6 +2244,27 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
 .tile-badge-dot svg { inline-size: 13px; block-size: 13px; display: block; }
 .tile-badge-remove .tile-badge-dot { color: var(--danger); }
 .tile-badge:focus-visible .tile-badge-dot { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* ut-docs#2361: the jiggle-mode lock affordance -- a small notification-dot
+   overlay at the badge-dot's outer corner for a non-granted (cashier)
+   session, visible BEFORE they tap into the real catalog_management
+   elevation prompt (ut-docs#2312). Positioned relative to the PARENT
+   .tile-badge-dot (given position: relative just above for exactly this),
+   not the outer 44px .tile-badge hit box, so it sits at the visible dot's
+   own corner regardless of the hit box's own padding. Sized and colored
+   like a status dot, not a third badge -- this lock span ALSO carries the
+   base `.tile-badge-dot` class (buttons.html), so `.tile-badge-remove
+   .tile-badge-dot { color: var(--danger) }` above does set `color` on it
+   too, by descendant-selector match, not just on the trash icon's own
+   dot. It still renders in var(--warning) below because color is only
+   ever INHERITED onto a child that has no matching rule of its own --
+   `.tile-badge-lock svg` is a rule that directly targets the svg
+   element, and a direct match always wins over a value merely inherited
+   from an ancestor, regardless of the ancestor rule's own specificity. */
+.tile-badge-lock {
+  position: absolute; inset-block-end: -3px; inset-inline-end: -3px;
+  inline-size: 14px; block-size: 14px; box-shadow: 0 1px 3px rgba(15, 23, 42, .3);
+}
+.tile-badge-lock svg { inline-size: 8px; block-size: 8px; color: var(--warning); }
 /* The wobble: rotate-only (compositor, no layout), ~1.2deg either way,
    alternating, infinite while the mode is on. The per-nth-child delay/
    duration nudges are what make it read as the organic iOS shake rather
