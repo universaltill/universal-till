@@ -1,11 +1,23 @@
 package pos
 
+// These tests exercise POSRepo.ResolveCurrentPrice directly against a
+// minimal price_history schema. They used to go through this package's
+// pricing.go — a PricingRepo interface plus ResolveCurrentPrice /
+// AppendPriceHistory* delegating wrappers and a test-only testPricingRepo
+// that itself just called data.NewPOSRepo — none of which had a production
+// caller (the live reader is POSRepo.ResolveCurrentPrice, called directly
+// from internal/pages/ai_api.go and from POSRepo itself; the live writers
+// are the ut-docs#2314 execer twins in internal/data/catalog_repo.go). The
+// whole layer was removed by the ut-docs#1566 dead-code burn-down; the
+// tests were kept and pointed at the repo they were always exercising.
+
 import (
 	"context"
 	"database/sql"
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/data"
 	_ "modernc.org/sqlite"
 )
 
@@ -36,8 +48,8 @@ func TestResolveCurrentPrice_ItemHistoryPreferred(t *testing.T) {
 	_, _ = db.Exec(`INSERT INTO items(id, base_price, is_active) VALUES('itm1', 1000, 1)`)
 	_, _ = db.Exec(`INSERT INTO price_history(id, item_id, price, starts_at) VALUES('ph1','itm1',1500,datetime('now','-1 day'))`)
 
-	repo := &testPricingRepo{db: db}
-	price, err := ResolveCurrentPrice(ctx, repo, "itm1", "")
+	repo := data.NewPOSRepo(db)
+	price, err := repo.ResolveCurrentPrice(ctx, "itm1", "")
 	if err != nil {
 		t.Fatalf("ResolveCurrentPrice error: %v", err)
 	}
@@ -52,8 +64,8 @@ func TestResolveCurrentPrice_FallbackToBase(t *testing.T) {
 	defer db.Close()
 	_, _ = db.Exec(`INSERT INTO items(id, base_price, is_active) VALUES('itm1', 999, 1)`)
 
-	repo := &testPricingRepo{db: db}
-	price, err := ResolveCurrentPrice(ctx, repo, "itm1", "")
+	repo := data.NewPOSRepo(db)
+	price, err := repo.ResolveCurrentPrice(ctx, "itm1", "")
 	if err != nil {
 		t.Fatalf("ResolveCurrentPrice error: %v", err)
 	}
@@ -70,8 +82,8 @@ func TestResolveCurrentPrice_FuturePriceNotActive(t *testing.T) {
 	future := time.Now().Add(time.Hour)
 	_, _ = db.Exec(`INSERT INTO price_history(id, item_id, price, starts_at) VALUES('phf','itm1',2000,?)`, future)
 
-	repo := &testPricingRepo{db: db}
-	price, err := ResolveCurrentPrice(ctx, repo, "itm1", "")
+	repo := data.NewPOSRepo(db)
+	price, err := repo.ResolveCurrentPrice(ctx, "itm1", "")
 	if err != nil {
 		t.Fatalf("ResolveCurrentPrice error: %v", err)
 	}
@@ -87,8 +99,8 @@ func TestResolveCurrentPrice_VariantHistoryPreferred(t *testing.T) {
 	_, _ = db.Exec(`INSERT INTO item_variants(id, item_id, price, is_active) VALUES('var1','itm1', 500, 1)`)
 	_, _ = db.Exec(`INSERT INTO price_history(id, variant_id, price, starts_at) VALUES('phv1','var1',800,datetime('now','-1 hour'))`)
 
-	repo := &testPricingRepo{db: db}
-	price, err := ResolveCurrentPrice(ctx, repo, "", "var1")
+	repo := data.NewPOSRepo(db)
+	price, err := repo.ResolveCurrentPrice(ctx, "", "var1")
 	if err != nil {
 		t.Fatalf("ResolveCurrentPrice error: %v", err)
 	}
@@ -102,8 +114,8 @@ func TestResolveCurrentPrice_InactiveErrors(t *testing.T) {
 	db := setupPriceDB(t)
 	defer db.Close()
 	_, _ = db.Exec(`INSERT INTO items(id, base_price, is_active) VALUES('itm1', 100, 0)`)
-	repo := &testPricingRepo{db: db}
-	if _, err := ResolveCurrentPrice(ctx, repo, "itm1", ""); err == nil {
+	repo := data.NewPOSRepo(db)
+	if _, err := repo.ResolveCurrentPrice(ctx, "itm1", ""); err == nil {
 		t.Fatalf("expected error for inactive item")
 	}
 }
@@ -112,11 +124,11 @@ func TestResolveCurrentPrice_InvalidArgs(t *testing.T) {
 	ctx := context.Background()
 	db := setupPriceDB(t)
 	defer db.Close()
-	repo := &testPricingRepo{db: db}
-	if _, err := ResolveCurrentPrice(ctx, repo, "", ""); err == nil {
+	repo := data.NewPOSRepo(db)
+	if _, err := repo.ResolveCurrentPrice(ctx, "", ""); err == nil {
 		t.Fatalf("expected error when neither item nor variant provided")
 	}
-	if _, err := ResolveCurrentPrice(ctx, repo, "itm1", "var1"); err == nil {
+	if _, err := repo.ResolveCurrentPrice(ctx, "itm1", "var1"); err == nil {
 		t.Fatalf("expected error when both item and variant provided")
 	}
 }
@@ -126,25 +138,8 @@ func TestResolveCurrentPrice_InactiveVariantErrors(t *testing.T) {
 	db := setupPriceDB(t)
 	defer db.Close()
 	_, _ = db.Exec(`INSERT INTO item_variants(id, item_id, price, is_active) VALUES('var1','itm1', 500, 0)`)
-	repo := &testPricingRepo{db: db}
-	if _, err := ResolveCurrentPrice(ctx, repo, "", "var1"); err == nil {
+	repo := data.NewPOSRepo(db)
+	if _, err := repo.ResolveCurrentPrice(ctx, "", "var1"); err == nil {
 		t.Fatalf("expected error for inactive variant")
 	}
-}
-
-// testPricingRepo provides minimal PricingRepo for tests without import cycles.
-type testPricingRepo struct {
-	db *sql.DB
-}
-
-func (r *testPricingRepo) ResolveCurrentPrice(ctx context.Context, itemID, variantID string) (int64, error) {
-	return resolveCurrentPriceSQL(ctx, r.db, itemID, variantID)
-}
-
-func (r *testPricingRepo) AppendPriceHistoryItem(ctx context.Context, itemID string, price int64, startsAt time.Time) error {
-	return appendPriceHistoryItemSQL(ctx, r.db, itemID, price, startsAt)
-}
-
-func (r *testPricingRepo) AppendPriceHistoryVariant(ctx context.Context, variantID string, price int64, startsAt time.Time) error {
-	return appendPriceHistoryVariantSQL(ctx, r.db, variantID, price, startsAt)
 }
