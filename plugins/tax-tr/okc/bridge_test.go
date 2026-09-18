@@ -308,6 +308,44 @@ func TestNewDriver(t *testing.T) {
 	}
 }
 
+// TestNewDriver_GMP3Retired proves a till whose settings still say "gmp3"
+// (GMP-3 v5.0 §3.3 forbids a from-spec driver — ADR-0102 Decision 4) fails
+// closed the same way any other unrecognized okc.driver value does, with a
+// message naming the drivers that do exist, rather than silently resolving
+// to a scaffold that always errors on Sale/Refund.
+func TestNewDriver_GMP3Retired(t *testing.T) {
+	_, err := okc.NewDriver(netTransport{}, okc.Config{Driver: "gmp3"})
+	if !errors.Is(err, okc.ErrUnknownDriver) {
+		t.Fatalf("gmp3 driver err = %v, want ErrUnknownDriver", err)
+	}
+	for _, known := range []string{"bridge", "hugin-pclink", "pavo-rest", "token-x"} {
+		if !strings.Contains(err.Error(), known) {
+			t.Fatalf("unknown driver err = %q, want it to name %q as a known driver", err.Error(), known)
+		}
+	}
+}
+
+// TestDriverNames_NoGMP3 pins DriverNames' exact membership: no "gmp3" (the
+// scaffold ADR-0102 retired), and the four remaining drivers all present.
+func TestDriverNames_NoGMP3(t *testing.T) {
+	want := map[string]bool{"bridge": true, "hugin-pclink": true, "pavo-rest": true, "token-x": true}
+	got := map[string]bool{}
+	for _, n := range okc.DriverNames {
+		got[n] = true
+	}
+	if got["gmp3"] {
+		t.Fatalf("DriverNames = %v, must not contain %q", okc.DriverNames, "gmp3")
+	}
+	for n := range want {
+		if !got[n] {
+			t.Fatalf("DriverNames = %v, missing %q", okc.DriverNames, n)
+		}
+	}
+	if len(okc.DriverNames) != len(want) {
+		t.Fatalf("DriverNames = %v, want exactly %v", okc.DriverNames, want)
+	}
+}
+
 func TestConfigNormalize(t *testing.T) {
 	c := okc.Config{}.Normalize()
 	if c.Driver != "bridge" || c.Host != "127.0.0.1" || c.Port != 4711 || c.ConnectTimeoutMs != 3000 || c.ReadTimeoutMs != 25000 {

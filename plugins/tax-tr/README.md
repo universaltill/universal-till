@@ -75,7 +75,6 @@ checking the field type their bridge is actually sending (ut-docs#1782).
 | Driver | Status | Talks to |
 |---|---|---|
 | `bridge` | **complete, tested** | The Universal Till ÖKC bridge protocol v0 (JSON lines over TCP, one request per connection) — the simulator `scripts/okc-sim`, or a small LAN bridge process wrapping a maker SDK |
-| `gmp3` | scaffold, fails closed | GİB's GMP-3 v5.0 wired mode; needs the protocol PDF (ynokc.gib.gov.tr) and the maker's per-device activation |
 | `hugin-pclink` | scaffold, fails closed | Hugin PC Link HTTPS API (developer.hugin.com.tr) |
 | `pavo-rest` | scaffold, fails closed | Pavo sales-application REST (API key from the Pavo portal) |
 | `token-x` | scaffold, fails closed | TokenX Connect cloud API for Beko devices (developer.tokeninc.com); would use `http_request` + `net:` |
@@ -85,6 +84,23 @@ pretending, so a shop can never take an unsigned sale by misconfiguration.
 Filling one in needs the maker's integrator documentation and a test device
 on the LAN (playbook steps 3–4, ut-docs#1280); the `okc` package and its
 tests show the exact shape to implement.
+
+### Why there is no direct GMP-3 driver
+
+GİB's GMP-3 v5.0 §3.3 requires PC-hosted sales software to link the ÖKC
+maker's own compiled GMP-3 communication library, and requires
+browser-served software (this plugin's case) to reach that library only
+through a separate middleware process running on the same PC — so a
+from-spec `gmp3` driver inside this WASM plugin can never be built
+(ADR-0102 Decision 4, ut-docs#2409). A maker whose only interface is that
+library is reached through a small bridge process on the machine wired to
+the device, speaking the `bridge` driver's protocol
+(`ut-docs/reference/okc-bridge-protocol.md`). Whether a maker's own
+REST/cloud API (the `hugin-pclink`, `pavo-rest`, `token-x` scaffolds
+above) counts as "the maker's library" under §3.3 is a per-maker question
+answered at integrator registration — ADR-0102 leaves it open on purpose,
+along with whether a tablet-hosted till may sit one wired hop away from
+the bridge (§5.3).
 
 ## Settings
 
