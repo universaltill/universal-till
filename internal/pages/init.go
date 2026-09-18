@@ -145,7 +145,29 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// ut-docs#2135: republish the persisted locale generation, so per-browser
 	// ut_lang overrides retired before this restart stay retired.
 	loadLocaleGeneration(ctx, setStore)
-	pm.SetLocalizer(i18n) // language-pack plugins merge into the translator
+	// UT_TEST_I18N_OVERLAY_DIR (test/e2e harness only -- never a production
+	// plugin-install path, never signature-verified, never documented to a
+	// shop owner): loads every *.json file in the named directory as I18n
+	// overlays keyed by filename stem (e.g. de.json -> locale "de"), so an
+	// e2e run can exercise a language-pack's translations without a full
+	// Ed25519 WASM plugin install. See scripts/ci/audit-locale-render.sh.
+	//
+	// Wired as a wrapper AROUND the translator the plugin manager publishes
+	// to, not as a one-shot SetOverlays call after SetLocalizer: the manager
+	// re-publishes its overlays from scratch on every Reload (ReloadPlugins),
+	// which atomically replaces them -- a one-shot call is silently dropped
+	// the first time anything reloads plugins, including the boot-time
+	// builtin-layout reconciliation further down this function and the setup
+	// wizard's own shop-type step. See testI18nOverlayLocalizer.
+	localizer := plugins.Localizer(i18n) // language-pack plugins merge into the translator
+	if dir := os.Getenv("UT_TEST_I18N_OVERLAY_DIR"); dir != "" {
+		testLocalizer, err := newTestI18nOverlayLocalizer(i18n, dir)
+		if err != nil {
+			log.Fatalf("UT_TEST_I18N_OVERLAY_DIR: %v", err)
+		}
+		localizer = testLocalizer
+	}
+	pm.SetLocalizer(localizer)
 	// Shop translation overrides (manager edits) win over base + plugin
 	// strings; loaded once here, refreshed by the /translations editor.
 	if overrides, err := data.NewTranslationRepo(db).ListOverrides(ctx); err == nil {
