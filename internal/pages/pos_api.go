@@ -1065,7 +1065,28 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		qty := 0.0
-		if v := r.Form.Get("qty"); v != "" {
+		// ut-docs#2217: the basket's +/- stepper buttons post a relative
+		// delta (key-addressed only, same as /api/self-order/line already
+		// does — self_order_shop.go) rather than an absolute qty, so the
+		// template needs no client-side arithmetic. delta wins over qty
+		// when both are somehow present; an invalid delta is a real 400,
+		// mirroring the self-order twin, not a silent no-op.
+		if v := strings.TrimSpace(r.Form.Get("delta")); v != "" && key != "" {
+			delta, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				http.Error(w, "invalid delta", http.StatusBadRequest)
+				return
+			}
+			for _, l := range d.Engine.Basket().Lines {
+				if l.LineKey == key {
+					qty = l.Qty + delta
+					break
+				}
+			}
+			if qty < 0 {
+				qty = 0
+			}
+		} else if v := r.Form.Get("qty"); v != "" {
 			if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 {
 				qty = f
 			}

@@ -163,6 +163,55 @@
                          hx-target="#basket"
                          hx-swap="outerHTML"
                          hx-sync="#basket:replace" />
+                  <!-- ut-docs#2217: dedicated +/- stepper buttons, each its
+                       own non-overlapping 44px-class touch target, as the
+                       real fix for .qty-input's own sub-44px hit area
+                       (ut-docs#1340's decision, see the .qty-input/.disc-input
+                       comment below). A SIDE-BY-SIDE row under .qty-input,
+                       not flanking it — deliberately, not a style
+                       preference: an earlier flanking-buttons attempt
+                       widened the qty column's reserved rem budget, and
+                       basket-item-name-width-1314.spec.ts proved this
+                       table's ITEM column has essentially NO horizontal
+                       slack left to give (any measurable width increase
+                       here re-clips a real 19-26 char product name — see
+                       .qty-stepper's own CSS comment for the measured
+                       numbers). This row costs vertical space instead,
+                       which this column actually has spare (the qty/disc
+                       stack was already the row's own height driver before
+                       this card, not the item name/thumb block) and stays
+                       exactly as wide as .qty-input/.disc-input already
+                       are — zero column-width change from pre-#2217.
+                       Post a relative `delta`, never an absolute qty —
+                       mirrors /api/self-order/line's existing precedent
+                       (self_order_shop.go), so no client-side arithmetic is
+                       needed. Applies to every line, weighed included —
+                       same as the self-order twin, always ±1, no special-
+                       casing; .qty-input above stays the precise/decimal-
+                       entry path for a weighed line's exact weight.
+                       hx-include="closest tr" is load-bearing here, unlike
+                       self-order's twin: /api/pos/line always parses a
+                       `discount` field and defaults it to 0 when absent, so
+                       without this a step would silently zero an existing
+                       discount (TestLineHandler_DeltaPreservesDiscount). -->
+                  <div class="qty-stepper">
+                    <button type="button" class="btn secondary qty-step-btn"
+                            hx-post="/api/pos/line"
+                            hx-vals='{{ jsonVals "key" .LineKey "delta" "-1" }}'
+                            hx-include="closest tr"
+                            hx-target="#basket"
+                            hx-swap="outerHTML"
+                            hx-sync="#basket:replace"
+                            aria-label="{{ T "basket.qty.decrease" }}">−</button>
+                    <button type="button" class="btn secondary qty-step-btn"
+                            hx-post="/api/pos/line"
+                            hx-vals='{{ jsonVals "key" .LineKey "delta" "1" }}'
+                            hx-include="closest tr"
+                            hx-target="#basket"
+                            hx-swap="outerHTML"
+                            hx-sync="#basket:replace"
+                            aria-label="{{ T "basket.qty.increase" }}">+</button>
+                  </div>
                   <input class="disc-input" type="number" name="discount" value="{{ .LineDiscount.Minor }}" min="0" step="1"
                          title="{{ T "basket.discount_hint" }}" placeholder="{{ T "basket.discount_short" }}"
                          hx-post="/api/pos/line"

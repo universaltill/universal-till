@@ -110,6 +110,8 @@
   "basket.order_type.mixed": "مختلط",
   "basket.order_type.prompt_title": "تناول في المكان أم تيك أواي؟",
   "basket.order_type.takeaway": "تيك أواي",
+  "basket.qty.decrease": "إنقاص الكمية",
+  "basket.qty.increase": "زيادة الكمية",
   "basket.remove": "إزالة",
   "basket.subtotal": "المجموع الفرعي",
   "basket.table.label": "الطاولة",
