@@ -8,7 +8,6 @@ package print
 
 import (
 	"bytes"
-	"fmt"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -430,14 +429,6 @@ func codepageSelectCmd(charset string) []byte {
 	default:
 		return nil
 	}
-}
-
-// Validate reports a friendly error for an obviously broken document.
-func (d Doc) Validate() error {
-	if strings.TrimSpace(d.StoreName) == "" {
-		return fmt.Errorf("store name required")
-	}
-	return nil
 }
 
 // RenderText lays the document out exactly like Render but as plain text —

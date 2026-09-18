@@ -10,7 +10,6 @@ internal/data/plugin_repo.go: unreachable func: PluginRepo.InstallPlugin
 internal/data/plugin_repo.go: unreachable func: PluginRepo.ListRevokedPlugins
 internal/data/plugin_repo.go: unreachable func: PluginRepo.UpsertPluginSetting
 internal/data/related_items_repo.go: unreachable func: RelatedItemsRepo.LastRebuilt
-internal/db/db.go: unreachable func: BaselineStatementsFor
 internal/diagnostics/events.go: unreachable func: EnumValues
 internal/discovery/sweep.go: unreachable func: SweepPrinters
 internal/fiscal/tse_credential_store.go: unreachable func: NewSigningDeviceCredentialStoreAt
@@ -24,7 +23,6 @@ internal/manual/manual.go: unreachable func: Library.IDs
 internal/manual/manual.go: unreachable func: Library.Locales
 internal/manual/manual.go: unreachable func: Library.MissingTranslations
 internal/manual/manual.go: unreachable func: Library.RouteCovered
-internal/money/money.go: unreachable func: Sum
 internal/pages/common/deps.go: unreachable func: Deps.WaitForAsyncWork
 internal/pages/eod_method_tax_bands.go: unreachable func: attachEODMethodTaxBands
 internal/pages/eod_method_tax_bands.go: unreachable func: computeEODMethodTaxBands
@@ -39,7 +37,6 @@ internal/plugins/ipc.go: unreachable func: EventBus.Subscribe
 internal/plugins/ipc.go: unreachable func: EventBus.Unsubscribe
 internal/plugins/manifest.go: unreachable func: ComputeSHA256
 internal/plugins/marketplace/catalog_repository.go: unreachable func: CatalogRepository.Filter
-internal/plugins/marketplace/client.go: unreachable func: Client.AckDownload
 internal/plugins/marketplace/client.go: unreachable func: Client.GetRevocations
 internal/plugins/marketplace/client.go: unreachable func: Client.ReportPluginStatus
 internal/plugins/permissions.go: unreachable func: ListPluginPermissions
@@ -65,7 +62,6 @@ internal/pos/service.go: unreachable func: Service.SetLineOrderType
 internal/pos/service.go: unreachable func: Service.Tender
 internal/pos/tax.go: unreachable func: BasisPointsTaxEngine.Compute
 internal/pos/tax.go: unreachable func: PercentTaxEngine.Compute
-internal/print/escpos.go: unreachable func: Doc.Validate
 internal/print/kitchen.go: unreachable func: RenderKitchenTicketText
 internal/secrets/keystore.go: unreachable func: KeyStore.Exists
 internal/secrets/keystore.go: unreachable func: KeyStore.Path

@@ -52,6 +52,17 @@ var localSubnetHosts = realLocalSubnetHosts
 //
 // Scope is deliberately narrow, per this ecosystem's security-first rule:
 // the till's own IPv4 /24 and no wider, port 9100 and no other.
+//
+// Test-only-reachable today, kept deliberately (ut-docs#1566 — on
+// scripts/ci/deadcode-baseline.txt, not a deletion candidate): production
+// (DiscoverPrinters, printers.go) does not call this composed form. It
+// calls the two phases directly — sweepListeners(ctx, nil) concurrently
+// with the mDNS browse, then probeListeners only once the browse has
+// produced the skip/trusted sets — precisely because phase 1 writes
+// nothing and so may start before the exclusion list exists. This
+// sequential wrapper is the seam this package's TestSweepPrinters_* tests
+// drive the sweep through in isolation from mDNS (skip honoured, port
+// scope, address order, cold-ARP retry); both phases it composes ARE live.
 func SweepPrinters(ctx context.Context, skip map[string]bool) ([]PrinterCandidate, error) {
 	listeners, err := sweepListeners(ctx, skip)
 	if err != nil {
@@ -78,13 +89,14 @@ func SweepPrinters(ctx context.Context, skip map[string]bool) ([]PrinterCandidat
 // finished, every host it dialled (including the miss) has an ARP entry, so
 // a retry no longer races the whole subnet for THAT host.
 //
-// This is not a cheap, narrow retry in the common case, and callers of
-// SweepPrinters must budget for that (see discoverPrintersTimeout in
-// internal/pages): on a typical shop LAN almost every one of the ~253
-// addresses has no device at all, and an address with no host behind it
-// times out the same way whether or not its ARP entry was ever going to
-// resolve — so `missed` is usually close to the whole subnet, and this is
-// a second near-full sweep, not a handful of retries.
+// This is not a cheap, narrow retry in the common case, and callers must
+// budget for that (DiscoverPrinters' budget is discoverPrintersTimeout in
+// internal/pages' kitchen_stations_page.go): on a typical shop LAN almost
+// every one of the ~253 addresses has no device at all, and an address
+// with no host behind it times out the same way whether or not its ARP
+// entry was ever going to resolve — so `missed` is usually close to the
+// whole subnet, and this is a second near-full sweep, not a handful of
+// retries.
 func sweepListeners(ctx context.Context, skip map[string]bool) ([]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
