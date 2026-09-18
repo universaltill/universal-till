@@ -218,6 +218,17 @@ body.tracking-screen { -webkit-user-select: text; user-select: text; }
    a 360px screen, and that width class already has its own settled,
    independently-tested layout not worth re-litigating here. */
 :root { --rail-width: 4.5rem; }
+/* ut-docs#2364: the <=480px top-bar fallback (see the big media block
+   below) wraps to a variable number of rows depending on content/locale
+   -- currently 3 at 360px -- so anything anchored below it needs the
+   REAL rendered height, not a guessed rem value (a guessed 4.6rem, tuned
+   for an old 2-row bar, is exactly what caused this bug). Same pattern as
+   public/osk.js's --osk-reserved-height: a small IIFE in app.js measures
+   .nav's real getBoundingClientRect().height and overwrites this via
+   documentElement.style.setProperty. This fallback is a safe pre-JS
+   guess (roughly the measured 3-row height) so there's no flash of
+   overlap before that first measurement lands. */
+:root { --topbar-h: 12rem; }
 .nav {
   background: var(--brand); color: #fff;
   padding: .6rem .5rem;
@@ -4277,8 +4288,12 @@ body.login-screen {
 .bugreport-panel.open { display: block; }
 @media (max-width: 480px) {
   /* Restores the pre-rail clearance for the top-bar fallback, which still
-     occupies real vertical space at this width (see .nav's own comment). */
-  .bugreport-panel { inset-block-start: 4.6rem; }
+     occupies real vertical space at this width (see .nav's own comment).
+     ut-docs#2364: was a hardcoded 4.6rem (tuned for an old 2-row bar) --
+     the bar now wraps to 3 rows at this width and the panel's head bar
+     opened hidden underneath it. --topbar-h (declared above, kept live by
+     app.js) tracks the bar's REAL height instead of guessing it. */
+  .bugreport-panel { inset-block-start: calc(var(--topbar-h) + .5rem); }
 }
 /* ut-docs#395: draggable so the operator can shift the panel off whatever
    it's covering. touch-action: none stops the kiosk touchscreen's own
