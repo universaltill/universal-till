@@ -6,8 +6,12 @@
 -- a test run once before the old files were deleted; its recorded output is
 -- in the ut-docs#1425 review record.
 --
--- This file may be edited freely until the first paying shop goes live on
--- it (ADR-0074 Decision 1); it is append-only from that point on.
+-- This file is FROZEN (ADR-0100, superseding ADR-0074 Decision 1): every
+-- installed till recorded its statement checksum at first boot and refuses
+-- to start if it changes. ut-docs#2312 edited it and v0.19.0–v0.19.2 could
+-- not boot on any existing till (ut-docs#2395). Schema and seed changes go
+-- in a new NNN_*.sql; internal/db/shipped_migrations_test.go fails CI on a
+-- statement-level edit here. Comment-only edits (like this one) are fine.
 --
 -- Conventions: schema_migrations (the applied-migration ledger) is created
 -- and populated by internal/db/db.go, never by a migration file. Every
@@ -1152,7 +1156,7 @@ INSERT INTO "roles" ("role") VALUES
     ('admin'),
     ('super_admin');
 
--- permission_actions (20 rows)
+-- permission_actions (19 rows)
 INSERT INTO "permission_actions" ("action") VALUES
     ('refund'),
     ('eod_report'),
@@ -1172,10 +1176,9 @@ INSERT INTO "permission_actions" ("action") VALUES
     ('permission_management'),
     ('tax_code_management'),
     ('stock_location_management'),
-    ('worker_allocation'),
-    ('catalog_management');
+    ('worker_allocation');
 
--- role_permissions (57 rows)
+-- role_permissions (54 rows)
 INSERT INTO "role_permissions" ("role", "action", "granted") VALUES
     ('admin', 'refund', 1),
     ('admin', 'eod_report', 1),
@@ -1230,20 +1233,7 @@ INSERT INTO "role_permissions" ("role", "action", "granted") VALUES
     ('super_admin', 'stock_location_management', 1),
     ('admin', 'worker_allocation', 1),
     ('manager', 'worker_allocation', 1),
-    ('super_admin', 'worker_allocation', 1),
-    -- ut-docs#2312: catalog_management gates the Designer (/designer,
-    -- /api/buttons/*), the sell-screen tile long-press sheet
-    -- (/ui/pos/tile-sheet), and every mutating /api/catalog/* route (item/
-    -- variant/modifier-group/option-set/barcode CRUD) -- none of which
-    -- carried ANY permission check before this card, so a cashier could
-    -- reorder/remove quick buttons and edit/deactivate catalog items.
-    -- Seeded identically to tax_code_management (#903-era pattern) and
-    -- stock_location_management (#903): manager/admin/super_admin granted,
-    -- cashier not -- an existing till's manager/admin keeps working with no
-    -- behaviour change; only a cashier session is newly denied.
-    ('admin', 'catalog_management', 1),
-    ('manager', 'catalog_management', 1),
-    ('super_admin', 'catalog_management', 1);
+    ('super_admin', 'worker_allocation', 1);
 
 -- country_settings (14 rows)
 INSERT INTO "country_settings" ("code", "name_key", "currency", "currency_symbol", "tax_rate_bp", "tax_inclusive", "archive_min_days", "is_builtin", "updated_at", "default_locale") VALUES

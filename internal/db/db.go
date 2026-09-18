@@ -184,6 +184,25 @@ var ErrDatabasePredatesReset = errors.New("database predates the schema reset �
 // live schema, so it must be safe to execute twice.
 var idempotentRerunVersions = map[int]bool{}
 
+// acceptedPriorChecksums maps a migration version to ledger checksums that
+// a tagged release recorded for it before the file was restored to what
+// earlier releases had shipped (ADR-0100 Decision 3). A ledger row carrying
+// one of these is not drift: the install ran a known, released variant of
+// the file, and boot re-stamps the row to the current checksum WITHOUT
+// re-running any SQL — a later, idempotent migration is what makes both
+// variants converge on the same schema and seed rows.
+//
+// This is a record of accidents, not a mechanism for planned edits: an
+// entry is only ever added for a checksum that a tagged release has
+// already written into real ledgers, and never as a substitute for
+// appending a new migration. Every file under migrations/ is frozen the
+// moment it merges (shipped_migrations_test.go enforces it in CI).
+var acceptedPriorChecksums = map[int]map[string]string{
+	1: {
+		"13898ca67f47c37411eb3b76a8265c1bc30a465e631fe006fcc806b0bc794d42": "v0.19.0–v0.19.2 applied a 001_init.sql that already carried ut-docs#2312's catalog_management rows (ut-docs#2395); 033_catalog_management_permission.sql makes both variants converge",
+	},
+}
+
 // migrationChecksum is the value recorded beside each applied migration's
 // version and name, and compared against the on-disk file on every boot.
 // Computed over the comment-stripped text with trailing whitespace and
@@ -313,6 +332,13 @@ func (db *DB) verifyAppliedMigrations(migs []migration, current int) error {
 		}
 		want := migrationChecksum(m.SQL)
 		if name == m.Name && checksum == want {
+			continue
+		}
+		if reason, ok := acceptedPriorChecksums[m.Version][checksum]; ok && name == m.Name {
+			logging.L().Warnf("migration %d: ledger checksum %s is a released prior variant of %q — %s; re-stamping the ledger row to the current checksum %s without re-running it (ADR-0100)", m.Version, checksum, m.Name, reason, want)
+			if _, err := db.Exec(`UPDATE schema_migrations SET checksum = ? WHERE version = ?`, want, m.Version); err != nil {
+				return fmt.Errorf("re-stamp ledger row for migration %d: %w", m.Version, err)
+			}
 			continue
 		}
 		if !idempotentRerunVersions[m.Version] {

@@ -14,10 +14,13 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
 - Threading `*sql.DB` / `*sql.Tx` through the domain layer is fine; writing the
   query outside the data layer is not. Add a `PluginRepo`/`POSRepo`/etc. method
   instead.
-- Migrations under `internal/db/migrations/` are **append-only** after the
-  first paying shop goes live on this schema (`001_init.sql` may still be
-  edited freely before that, across as many pre-revenue releases as needed —
-  ADR-0074; superseded "append-only after the first release").
+- Migrations under `internal/db/migrations/` are **append-only, always**:
+  every file is frozen the moment it merges to `main` (ADR-0100, superseding
+  ADR-0074 Decision 1); a statement-level edit fails
+  `TestShippedMigrationsUnchanged` in CI and would brick every installed till
+  at boot. Comment-only edits are fine. Add a new `NNN_*.sql` instead — and
+  pin its checksum in `internal/db/shipped_migrations_test.go` (the test's
+  failure message prints the value).
 
 ## Offline-first (non-negotiable)
 - **Checkout must never be blocked by the network.** A full sale completes offline.
