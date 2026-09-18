@@ -89,7 +89,7 @@ func TestItemModifierGroupsPanel_InheritedGroupsWithOptOutToggle(t *testing.T) {
 	// Own groups render as read-only rows (ut-docs#2330: the item-scoped
 	// panel is attach/detach-only, no inline rename form) — plain text, not
 	// an editable name input.
-	for _, want := range []string{`>Extras<`, `>Syrup<`} {
+	for _, want := range []string{`class="modifier-admin-group-name">Extras<`, `class="modifier-admin-group-name">Syrup<`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("panel lost the item's own group %s:\n%s", want, body)
 		}

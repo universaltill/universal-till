@@ -1394,8 +1394,23 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			seen[id] = true
 			groupIDs = append(groupIDs, id)
 		}
-		if itemID == "" || len(groupIDs) == 0 {
+		if itemID == "" {
 			http.Error(w, "itemId and groupId required", http.StatusBadRequest)
+			return
+		}
+		if len(groupIDs) == 0 {
+			// ut-docs#2330, independent-review finding: the item-editor's
+			// checkbox list has no client-side `required` (a `<select
+			// required>` can enforce that on ONE field; there is no
+			// equivalent single-attribute guard for "at least one of these
+			// checkboxes"), so submitting with nothing ticked is a real,
+			// reachable UI state — not just a malformed request. A plain
+			// http.Error answers text/plain, which app.js's htmx:beforeSwap
+			// never force-swaps in (same reasoning as every other refusal in
+			// this file), so answering that way here would be a completely
+			// silent no-op on tapping "Attach existing group". Route through
+			// the same Notice-carrying re-render as every other refusal.
+			renderModifierMutationResult(w, r, itemID, http.StatusBadRequest, httpx.T(httpx.RequestLocale(r), "catalog.error.invalid_request"))
 			return
 		}
 		attachable, err := modRepo.ListAttachableModifierGroups(r.Context(), itemID)
@@ -1417,6 +1432,13 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			renderModifierMutationResult(w, r, itemID, http.StatusConflict, httpx.T(httpx.RequestLocale(r), "catalog.error.invalid_request"))
 			return
 		}
+		// ut-docs#2330, independent-review finding: a multi-select submission
+		// can be PARTLY stale (e.g. someone else deactivated one of several
+		// checked groups from another tab) without being entirely invalid —
+		// attach the ones that are still good rather than refusing the whole
+		// request, but say so, rather than a silent 200 that only attached
+		// some of what was checked.
+		partial := len(valid) != len(groupIDs)
 		for _, groupID := range valid {
 			// Appended after itemID's own existing groups (independent-review
 			// finding — see NextGroupSortOrderForItem's own doc comment on
@@ -1434,7 +1456,11 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 		}
-		renderModifierMutationResult(w, r, itemID, http.StatusOK, "")
+		notice := ""
+		if partial {
+			notice = httpx.T(httpx.RequestLocale(r), "catalog.error.invalid_request")
+		}
+		renderModifierMutationResult(w, r, itemID, http.StatusOK, notice)
 	})
 
 	// Detach a modifier group from ONE item, distinct from DeleteGroup

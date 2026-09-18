@@ -830,8 +830,21 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
    itself — same 44px floor as .held-chip/.modifier-option elsewhere in this
    file, kiosk included (this row is plain flex, not an <input>/<select>, so
    body.kiosk's own min-height rules for those two elements don't reach it). */
+/* Independent-review finding: this rule was missing entirely, so the name
+   span fell back to flex's own 0 1 auto default next to
+   .modifier-admin-options-list's 2 1 12rem sibling above — shrinking to
+   content, losing weight, and not lining up with .modifier-inherited-name
+   directly below it in the DOM despite the doc comment above claiming
+   parity. Same values as that class. */
+.modifier-admin-group-name { flex: 1 1 10rem; min-inline-size: 8rem; font-weight: 600; }
 .modifier-admin-options-list { flex: 2 1 12rem; font-size: .85rem; }
 .modifier-admin-attach-multi { flex-direction: column; align-items: stretch; }
+/* Reset the browser's own default fieldset/legend chrome (border, inset
+   padding) — this is a layout grouping for screen readers, not a visual
+   frame; `.catalog-detail-label`'s own rule already gives the legend its
+   text styling. */
+.modifier-attach-fieldset { border: 0; margin: 0; padding: 0; min-inline-size: 0; }
+.modifier-attach-fieldset legend { padding: 0; }
 .modifier-attach-option { display: flex; flex-direction: row; align-items: center; gap: .5rem;
                            min-height: 44px; padding-inline: .25rem; }
 .modifier-attach-option input[type="checkbox"] { inline-size: 1.25rem; block-size: 1.25rem;

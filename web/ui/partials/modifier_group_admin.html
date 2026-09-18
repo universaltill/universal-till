@@ -20,7 +20,13 @@
 {{ define "modifier_group_admin" }}
 <div class="catalog-detail-modifiers">
   <div class="muted catalog-detail-label">{{ T "catalog.modifiers.title" }}</div>
-  {{ if not .ModifierGroups }}<p class="muted">{{ T "catalog.modifiers.none" }}</p>{{ end }}
+  {{/* ut-docs#2330, independent-review finding: "add a group below" (the
+       full-CRUD copy) is actively wrong here in attach-only mode — there is
+       no add-group form below it any more. catalog.modifiers.summary_none
+       ("No Modifiers yet.") is the same neutral wording catalog_variants.html's
+       own summary block already uses for this same empty state, and needs
+       no new locale key. */}}
+  {{ if not .ModifierGroups }}<p class="muted">{{ if .AttachOnly }}{{ T "catalog.modifiers.summary_none" }}{{ else }}{{ T "catalog.modifiers.none" }}{{ end }}</p>{{ end }}
 
   {{ range .ModifierGroups }}
   {{ $group := . }}
@@ -34,7 +40,14 @@
          group listings this dialog now shows. */}}
     <div class="modifier-admin-group-row">
       <span class="modifier-admin-group-name">{{ .Name }}</span>
-      <span class="muted modifier-admin-options-list">{{ range $i, $o := .Options }}{{ if $i }}, {{ end }}{{ $o.Name }}{{ end }}</span>
+      {{/* ut-docs#2330, independent-review finding: ListAllGroupsForItem
+           deliberately includes INACTIVE options too (so the full-CRUD
+           branch below can still reactivate one) — but this read-only list
+           has no Active checkbox to show that state, so a deactivated
+           option must not appear here indistinguishable from a sellable
+           one. Filter to active-only, same as InheritedGroups' own options
+           summary a little further down this file. */}}
+      <span class="muted modifier-admin-options-list">{{ $first := true }}{{ range .Options }}{{ if .IsActive }}{{ if not $first }}, {{ end }}{{ $first = false }}{{ .Name }}{{ end }}{{ end }}</span>
       <button type="button" class="btn secondary"
               hx-post="/api/catalog/modifier-group/detach"
               hx-vals='{{ jsonVals "itemId" $.ItemID "groupId" .ID "panelItem" $.ItemID }}'
@@ -135,10 +148,16 @@
   <form hx-post="/api/catalog/modifier-group/attach" hx-target="#{{ .Target }}" hx-swap="outerHTML" class="modifier-admin-group-row modifier-admin-group-attach modifier-admin-attach-multi">
     <input type="hidden" name="panelItem" value="{{ .ItemID }}">
     <input type="hidden" name="itemId" value="{{ .ItemID }}">
-    <div class="muted catalog-detail-label">{{ T "catalog.modifiers.attach_placeholder" }}</div>
-    {{ range .AttachableGroups }}
-    <label class="modifier-attach-option"><input type="checkbox" name="groupId" value="{{ .ID }}"> {{ .Name }}</label>
-    {{ end }}
+    {{/* ut-docs#2330, independent-review finding: a bare label div above a
+         run of checkboxes gives a screen reader no shared context per
+         checkbox — <fieldset>/<legend> is the plain-HTML fix, no ARIA
+         needed. */}}
+    <fieldset class="modifier-attach-fieldset">
+      <legend class="muted catalog-detail-label">{{ T "catalog.modifiers.attach_placeholder" }}</legend>
+      {{ range .AttachableGroups }}
+      <label class="modifier-attach-option"><input type="checkbox" name="groupId" value="{{ .ID }}"> {{ .Name }}</label>
+      {{ end }}
+    </fieldset>
     <button class="btn secondary" type="submit">{{ T "catalog.modifiers.attach" }}</button>
   </form>
   {{ else }}
