@@ -230,16 +230,20 @@ func TestLineHandler_DeltaIncrementsAndDecrementsQty(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("delta+1: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if got := dp.Engine.Basket().Lines[0].Qty; got != 2 {
-		t.Fatalf("want qty 2 after +1 from the initial scan's qty 1, got %v", got)
+	if lines := dp.Engine.Basket().Lines; len(lines) != 1 {
+		t.Fatalf("want 1 line after +1, got %+v", lines)
+	} else if lines[0].Qty != 2 {
+		t.Fatalf("want qty 2 after +1 from the initial scan's qty 1, got %v", lines[0].Qty)
 	}
 
 	rec = posPostForm(mux, "/api/pos/line", "key="+key+"&delta=-1")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("delta-1: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if got := dp.Engine.Basket().Lines[0].Qty; got != 1 {
-		t.Fatalf("want qty 1 after -1, got %v", got)
+	if lines := dp.Engine.Basket().Lines; len(lines) != 1 {
+		t.Fatalf("want 1 line after -1, got %+v", lines)
+	} else if lines[0].Qty != 1 {
+		t.Fatalf("want qty 1 after -1, got %v", lines[0].Qty)
 	}
 }
 
@@ -281,7 +285,9 @@ func TestLineHandler_DeltaPreservesDiscount(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("initial set: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if got := dp.Engine.Basket().Lines[0].LineDiscount.Minor(); got != 20 {
+	if lines := dp.Engine.Basket().Lines; len(lines) != 1 {
+		t.Fatalf("want 1 line after initial set, got %+v", lines)
+	} else if got := lines[0].LineDiscount.Minor(); got != 20 {
 		t.Fatalf("expected line discount 20 after initial set, got %v", got)
 	}
 
@@ -298,7 +304,11 @@ func TestLineHandler_DeltaPreservesDiscount(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("delta+1: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	line := dp.Engine.Basket().Lines[0]
+	lines := dp.Engine.Basket().Lines
+	if len(lines) != 1 {
+		t.Fatalf("want 1 line after +1, got %+v", lines)
+	}
+	line := lines[0]
 	if line.Qty != 4 {
 		t.Fatalf("expected qty 4, got %v", line.Qty)
 	}
