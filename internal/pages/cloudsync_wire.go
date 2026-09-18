@@ -1155,33 +1155,17 @@ func cloudUpsertModifierGroup(ctx context.Context, d *common.Deps, itemID, name 
 		sortOrder = next
 	}
 	groupID := uuid.NewString()
-	if _, err := modRepo.CreateGroup(ctx, groupID, name, required, minSelect, maxSelect, sortOrder); err != nil {
-		return "", err
-	}
-	// rollBack undoes the whole create on any later failure: directives
-	// are at-least-once, and the name dedupe above would otherwise report
-	// the retry as "already exists", cementing a half-created group (no
-	// link, or missing options) forever while telling the merchant it
-	// worked. DeleteGroup cascades the link row and any options already
-	// inserted (foreign_keys is ON, db.go), so the retry recreates it
-	// cleanly (2026-09-17 review, ut-docs#2322; widened to the link step
-	// by ADR-0101, since CreateGroup no longer writes the link itself).
-	rollBack := func() {
-		if derr := modRepo.DeleteGroup(ctx, groupID); derr != nil {
-			log.Printf("[cloudsync] roll back half-created modifier group %s: %v", groupID, derr)
-		}
-	}
-	if itemID != "" {
-		if err := modRepo.LinkGroupToItem(ctx, itemID, groupID, sortOrder); err != nil {
-			rollBack()
-			return "", err
-		}
-	}
+	modOptions := make([]data.ModifierOption, len(options))
 	for i, opt := range options {
-		if _, err := modRepo.CreateOption(ctx, uuid.NewString(), groupID, strings.TrimSpace(opt.Name), opt.PriceDeltaMinor, i); err != nil {
-			rollBack()
-			return "", err
-		}
+		modOptions[i] = data.ModifierOption{Name: strings.TrimSpace(opt.Name), PriceDeltaMinor: opt.PriceDeltaMinor, SortOrder: i}
+	}
+	// Group insert, item link and every option insert happen inside ONE
+	// transaction (ModifierRepo.CreateGroupWithOptions, ut-docs#2375): a
+	// mid-way failure leaves nothing behind, so directives' at-least-once
+	// retry hits the name dedupe above cleanly instead of finding (and
+	// needing to compensate for) a half-created group.
+	if _, err := modRepo.CreateGroupWithOptions(ctx, groupID, itemID, name, required, minSelect, maxSelect, sortOrder, modOptions); err != nil {
+		return "", err
 	}
 	auditCloudDirective(ctx, d, "modifier_group", groupID, "cloud_modifier_group_created", map[string]any{
 		"item_id": itemID, "name": name, "required": required,

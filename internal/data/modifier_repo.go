@@ -600,6 +600,75 @@ VALUES (?, ?, ?, ?, ?, ?)
 	return id, nil
 }
 
+// CreateGroupWithOptions creates a modifier group, links it to itemID (when
+// non-empty, at sortOrder), and inserts every option — all inside ONE
+// transaction, so a real infra failure partway through (SQLITE_BUSY under a
+// concurrent sale write, disk I/O — not a validation failure, since callers
+// pre-validate options) leaves nothing behind instead of a half-created
+// group (ut-docs#2375, follow-up from the ut-docs#2322 review's
+// compensating-delete workaround, which this replaces in
+// cloudUpsertModifierGroup). Each option's ID is generated here when left
+// blank. Returns the new group id.
+func (r *ModifierRepo) CreateGroupWithOptions(ctx context.Context, groupID, itemID, name string, required bool, minSelect, maxSelect, sortOrder int, options []ModifierOption) (string, error) {
+	if groupID == "" {
+		return "", errors.New("id required")
+	}
+	if name == "" {
+		return "", errors.New("name required")
+	}
+	req := 0
+	if required {
+		req = 1
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("create group with options: begin: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op after Commit
+
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO item_modifier_groups (id, name, required, min_select, max_select, sort_order)
+VALUES (?, ?, ?, ?, ?, ?)
+`, groupID, name, req, minSelect, maxSelect, sortOrder); err != nil {
+		return "", fmt.Errorf("create group with options: insert group: %w", err)
+	}
+
+	if itemID != "" {
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO item_modifier_group_links (item_id, group_id, sort_order)
+VALUES (?, ?, ?)
+ON CONFLICT(item_id, group_id) DO UPDATE SET sort_order = excluded.sort_order
+`, itemID, groupID, sortOrder); err != nil {
+			return "", fmt.Errorf("create group with options: link item: %w", err)
+		}
+	}
+
+	for _, opt := range options {
+		if opt.Name == "" {
+			return "", errors.New("option name required")
+		}
+		if opt.PriceDeltaMinor < 0 {
+			return "", errors.New("price_delta_minor must be >= 0 (additive-only in v1)")
+		}
+		optID := opt.ID
+		if optID == "" {
+			optID = uuid.NewString()
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO item_modifier_options (id, group_id, name, price_delta_minor, sort_order)
+VALUES (?, ?, ?, ?, ?)
+`, optID, groupID, opt.Name, opt.PriceDeltaMinor, opt.SortOrder); err != nil {
+			return "", fmt.Errorf("create group with options: insert option: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", fmt.Errorf("create group with options: commit: %w", err)
+	}
+	return groupID, nil
+}
+
 // LinkGroupToItem attaches an existing modifier group to (another) item, or
 // updates the group's per-item sort order if the link already exists
 // (ON CONFLICT DO UPDATE) — ADR-0090's many-to-many write path, wired up by
