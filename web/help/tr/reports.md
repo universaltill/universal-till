@@ -105,6 +105,24 @@ duymadan kendi ürünlerine göre iki satıra doğru şekilde bölünür. Yukar�
 bir satış olduğunda görünür — tamamen burada geçen bir gün yalnızca Dine
 in satırını gösterir, boş bir Takeaway satırı göstermez.
 
+## Türkiye için mali cihaz (ÖKC) durumu
+
+Mali cihaz eklentisi aktif olan Türkiye pazarındaki mağazalarda, hem
+basılı gün sonu raporunda hem de arşivlenmiş rapor listesinde ekranda,
+o kapanışın kapsadığı aynı dönem için ek bir **Mali cihaz (ÖKC)** bloğu
+görünür: yeni nesil ödeme kaydedici cihazın o dönem için kendi üreticisi,
+seri numarası ve Z rapor numarası (numaraları), fiş türüne göre sayıları
+(mali fiş, iade fişi, bilgi fişi ve bastığı başka bir tür varsa) ve
+kasanın kendi kayıtlarına göre cihaz üzerinden alınan tahsilat sayısı.
+Cihazın dönem ortasında Z kapanışı yaptığı bir dönemde birden fazla Z
+numarası görünür ve günün dönem ortasında kapandığına dair bir not
+eklenir. Blok, sadece renkle değil metin ve bir simgeyle gösterilen
+sade bir eşleşme/uyuşmazlık satırıyla biter — böylece cihazın kaydettiği
+ile kasanın onun için kaydettiği arasındaki bir tutarsızlık, cihazın
+kendi basılı Z raporunu elle karşılaştırmaya gerek kalmadan görülebilir.
+Diğer tüm pazarların gün sonu raporu bundan etkilenmez: bu blok yalnızca
+bu eklentisi açık olan bir Türkiye kasasında görünür.
+
 ## Gün sonu (Z) raporunda ödeme yöntemi ve KDV oranı bir arada
 
 Yazdırılan gün sonu raporunda **BY METHOD & VAT RATE** tablosu bulunur:

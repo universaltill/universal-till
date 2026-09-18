@@ -463,6 +463,93 @@ func TestReportsPage_EODRowTipsTotalZeroWhenNoTips(t *testing.T) {
 	}
 }
 
+// ut-docs#2410: an archived "eod" report carrying fiscal_device (Türkiye's
+// YN ÖKC evidence) renders the heading + counts on the Reports tab, gated
+// the same CanRunEOD way as ArticleGroups/OrderTypes above.
+//
+// Asymmetric, distinctive counts (review finding: a report using the same
+// small number for two fields can't catch them being swapped) — MaliFis 7,
+// IadeFisi 2, TillOKCTenders 9, Total 10 (mismatch vs the 9 till tenders,
+// so the mismatch sentence is exercised too).
+func TestReportsPage_EODRowShowsFiscalDeviceWhenPresent(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO report_archive(id,kind,period,content_json) VALUES('r1','eod','2026-01-01',
+'{"day":"2026-01-01","sales_count":3,"net":500,"fiscal_device":{"serial":"AV0001234","maker":"beko","z_nos":[7],"mali_fis":7,"iade_fisi":2,"bilgi_fisi":0,"other":0,"total":10,"till_okc_tenders":9}}')`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := getReportsTab(t, mux, "eod", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"AV0001234",
+		`<td style="text-align:end">7</td>`,
+		`<td style="text-align:end">2</td>`,
+		`<td style="text-align:end">9</td>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected fiscal device block rendered (%q), got: %s", want, body)
+		}
+	}
+	if !strings.Contains(body, "device recorded 10 receipts, the till recorded 9 tenders on it") {
+		t.Fatalf("expected the mismatch sentence with both numbers in order (device 10, till 9), got: %s", body)
+	}
+}
+
+// Complements the positive case: an archived report with no fiscal_device
+// (every non-TR shop, or one archived before this card) renders no fiscal
+// device heading at all.
+func TestReportsPage_EODRowOmitsFiscalDeviceWhenAbsent(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO report_archive(id,kind,period,content_json) VALUES('r1','eod','2026-01-01','{"day":"2026-01-01","sales_count":3,"net":500}')`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := getReportsTab(t, mux, "eod", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "AV0001234") {
+		t.Fatalf("expected no fiscal device serial rendered when absent, got: %s", body)
+	}
+}
+
+// ut-docs#2410 review finding: a FiscalDeviceWindow with no device receipts
+// AND no till tenders (e.g. the plugin never ran in this window) must
+// render the explicit "no activity" text, not a false MATCH — the "none"
+// text is present and the "match" text is absent.
+func TestReportsPage_EODRowShowsFiscalDeviceEmptyState(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO report_archive(id,kind,period,content_json) VALUES('r1','eod','2026-01-01',
+'{"day":"2026-01-01","sales_count":0,"net":0,"fiscal_device":{"serial":"","maker":"","z_nos":null,"mali_fis":0,"iade_fisi":0,"bilgi_fisi":0,"other":0,"total":0,"till_okc_tenders":0}}')`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := getReportsTab(t, mux, "eod", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "No device receipts and no till tenders") {
+		t.Fatalf("expected the empty-state text rendered, got: %s", body)
+	}
+	if strings.Contains(body, "Device receipts match the till's tenders") {
+		t.Fatalf("expected no MATCH text for an empty window, got: %s", body)
+	}
+}
+
 func TestReportsPage_ManagerOnlySectionsGatedByRole(t *testing.T) {
 	// Set explicitly (not just left ambient/unset) so this test can't
 	// silently pass or fail depending on the developer's shell environment.

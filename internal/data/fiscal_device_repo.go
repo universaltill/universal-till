@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -124,4 +125,129 @@ SELECT COUNT(*) FROM fiscal_device_receipts WHERE created_at >= ?
 		return 0, fmt.Errorf("count fiscal_device_receipts: %w", err)
 	}
 	return n, nil
+}
+
+// FiscalDeviceWindow is the ÖKC evidence recorded in one EOD window.
+type FiscalDeviceWindow struct {
+	Serial string `json:"serial"` // from the latest receipt in window
+	Maker  string `json:"maker"`
+	// ZNos is every distinct z_no seen in the window, ascending — more
+	// than one entry means the device Z-closed mid-window (e.g. the shop
+	// ran the till's own EOD later than the device's own daily close).
+	ZNos      []int64 `json:"z_nos"`
+	MaliFis   int     `json:"mali_fis"`
+	IadeFisi  int     `json:"iade_fisi"`
+	BilgiFisi int     `json:"bilgi_fisi"`
+	// Other counts any receipt_kind value besides the three above (free
+	// text from the plugin — see FiscalDeviceReceipt.ReceiptKind).
+	Other int `json:"other"`
+	Total int `json:"total"`
+	// TillOKCTenders is the till's OWN count of payments tendered on the
+	// "okc" method for sales in the same window (completed sales and
+	// returns alike — the same status='completed' scope
+	// dateRangeSummaryInstant's Methods breakdown uses, so the two figures
+	// are directly comparable) — what the accountant reconciles the
+	// device's own receipt count against.
+	//
+	// The two counts are NOT always directly comparable even when they
+	// disagree, so a mismatch is a prompt to look, never a verdict by
+	// itself:
+	//
+	//  (a) A zero-total RETURN writes no payments row at all —
+	//      refundPayments returns nil when refundTotal is zero
+	//      (ut-docs#1561) — but payment.okc.refund is still dispatched and
+	//      is fail-closed (ut-docs#1788): it records a device receipt
+	//      (iade fişi) even though there was nothing to tender. That is a
+	//      permanent, structural +1 on the device side that has nothing to
+	//      do with a bookkeeping mistake.
+	//  (b) A sale tendered on "okc" and later moved off
+	//      status='completed' (voided or refunded via UpdateSaleStatus)
+	//      drops out of this count on the till side, but its
+	//      fiscal_device_receipts row is never retracted — the device
+	//      already printed it. That is the till's own later bookkeeping
+	//      changing the picture, not the device disagreeing with anything.
+	TillOKCTenders int `json:"till_okc_tenders"`
+}
+
+// Empty reports whether this window has no evidence at all — no device
+// receipts AND no till tenders on the device. This is deliberately NOT the
+// same thing as Total == TillOKCTenders (which would be true, and print as
+// a false "MATCH", for a window where the fiscal-device plugin simply never
+// ran): callers use Empty to render an explicit "no activity" state instead
+// of a reconciliation verdict for a period with nothing to reconcile.
+func (w FiscalDeviceWindow) Empty() bool {
+	return w.Total == 0 && w.TillOKCTenders == 0 && len(w.ZNos) == 0
+}
+
+// FiscalDeviceWindow reports the ÖKC device's evidence for [from, to) —
+// windowed on fiscal_device_receipts.created_at via instantWindow, the
+// same half-open close-to-close semantics EndOfDayInstant uses — alongside
+// the till's own count of "okc"-method tenders in the SAME window, read
+// from payments/sales so the two are for one, identical period.
+//
+// methodID is taken as a parameter, not a package constant, because
+// internal/data cannot import internal/fiscal (fiscal.MethodKeyOKC lives
+// there); callers in internal/pages pass fiscal.MethodKeyOKC.
+func (r *POSRepo) FiscalDeviceWindow(ctx context.Context, methodID string, from, to time.Time) (FiscalDeviceWindow, error) {
+	var win FiscalDeviceWindow
+
+	fwin, fargs := instantWindow("created_at", from, to)
+	rows, err := r.db.QueryContext(ctx, `
+SELECT serial, maker, receipt_kind, z_no
+FROM fiscal_device_receipts
+WHERE `+fwin+`
+ORDER BY datetime(created_at) ASC, rowid ASC
+`, fargs...)
+	if err != nil {
+		return win, fmt.Errorf("select fiscal_device_receipts window: %w", err)
+	}
+	defer rows.Close()
+
+	zSeen := map[int64]bool{}
+	for rows.Next() {
+		var serial, maker, kind string
+		var zNo int64
+		if err := rows.Scan(&serial, &maker, &kind, &zNo); err != nil {
+			return win, fmt.Errorf("scan fiscal_device_receipts window: %w", err)
+		}
+		// Overwritten every row, in ascending created_at order, so what
+		// survives the loop is the LATEST receipt's serial/maker.
+		win.Serial = serial
+		win.Maker = maker
+		if !zSeen[zNo] {
+			zSeen[zNo] = true
+			win.ZNos = append(win.ZNos, zNo)
+		}
+		switch kind {
+		case "mali_fis":
+			win.MaliFis++
+		case "iade_fisi":
+			win.IadeFisi++
+		case "bilgi_fisi":
+			win.BilgiFisi++
+		default:
+			win.Other++
+		}
+		win.Total++
+	}
+	if err := rows.Err(); err != nil {
+		return win, fmt.Errorf("scan fiscal_device_receipts window: %w", err)
+	}
+	sort.Slice(win.ZNos, func(i, j int) bool { return win.ZNos[i] < win.ZNos[j] })
+
+	// Till's own tender count on the device method, same window, same
+	// status='completed' scope as dateRangeSummaryInstant's Methods
+	// breakdown (sale_type distinguishes a sale from a return; both carry
+	// status='completed') so this is directly comparable to win.Total.
+	twin, targs := instantWindow("s.created_at", from, to)
+	args := append([]any{methodID}, targs...)
+	err = r.db.QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM payments p
+JOIN sales s ON s.id = p.sale_id
+WHERE p.method_id = ? AND s.status = 'completed' AND `+twin, args...).Scan(&win.TillOKCTenders)
+	if err != nil {
+		return win, fmt.Errorf("count till okc tenders: %w", err)
+	}
+	return win, nil
 }
