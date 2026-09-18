@@ -274,6 +274,32 @@ func TestGetVariantLabel_StripsRetireMangledSKU(t *testing.T) {
 	}
 }
 
+// TestGetVariantLabel_TreatsWhitespaceOnlySKUAsCodeless is ut-docs#2247's
+// convergence fix for the shelf-label print path: GetVariantLabel's
+// barcode-else-SKU "resolvable code" fallback used to hand a
+// whitespace-only sku straight through untrimmed, printing a blank-looking
+// code on a physical label — a real variant of the same money-defect shape
+// the other three converged call sites exist to prevent, just surfaced on
+// paper instead of the sale screen. No barcode and a whitespace-only sku
+// must produce an EMPTY Code, not the raw whitespace.
+func TestGetVariantLabel_TreatsWhitespaceOnlySKUAsCodeless(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Latte", BasePrice: 300, IsActive: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v1", ItemID: "i1", SKU: "  ", Name: "Whitespace", Price: 250, IsActive: true})
+
+	l, ok, err := repo.GetVariantLabel(ctx, "v1")
+	if err != nil || !ok {
+		t.Fatalf("expected label, got ok=%v err=%v", ok, err)
+	}
+	if l.Code != "" {
+		t.Fatalf("Code = %q, want empty (whitespace-only sku with no barcode must read as codeless, not a printable code)", l.Code)
+	}
+}
+
 func TestVariantsForItem_IncludesInactiveWithBarcodes(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
 	defer db.Close()
@@ -327,6 +353,37 @@ func TestVariantsForItem_StripsRetireMangledSKU(t *testing.T) {
 	}
 	if out[0].SKU != "S1-S" {
 		t.Fatalf("expected retire-mangle stripped from sku, got %q", out[0].SKU)
+	}
+}
+
+// TestVariantsForItem_TreatsWhitespaceOnlySKUAsCodeless is ut-docs#2247's
+// convergence fix, for the query that actually drives the catalog-admin
+// "won't sell" badge (web/ui/partials/catalog_variants.html renders from
+// VariantEditView, this method's return type — not VariantView, which
+// ItemVariantsFor/ItemVariantsForSale/ItemIDsWithVariants populate). A
+// whitespace-only sku must read as "" here too, same as the other three
+// converged call sites, or the badge stays silent on exactly the variant
+// that just stopped being offered at the till (ItemIDsWithVariants now
+// excludes it, so the sale tile falls through to the parent base price —
+// the original ut-docs#2209 money defect — with no admin-facing warning).
+func TestVariantsForItem_TreatsWhitespaceOnlySKUAsCodeless(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Latte", BasePrice: 300, IsActive: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v1", ItemID: "i1", SKU: "  ", Name: "Whitespace", Price: 250, IsActive: true})
+
+	out, err := repo.VariantsForItem(ctx, "i1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("expected 1 variant, got %d: %+v", len(out), out)
+	}
+	if out[0].SKU != "" {
+		t.Fatalf("SKU = %q, want trimmed to empty (whitespace-only sku must read as codeless, same as the other converged call sites)", out[0].SKU)
 	}
 }
 

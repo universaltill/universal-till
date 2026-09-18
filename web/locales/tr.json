@@ -324,7 +324,7 @@
   "catalog.tax_code.none": "— yok —",
   "catalog.upload_image": "Görsel yükle",
   "catalog.variant_codeless": "Satılmayacak — bir koda ihtiyacı var",
-  "catalog.variant_codeless_hint": "Bu varyantın ne barkodu ne de SKU'su var, bu yüzden satışta taranamaz veya seçilemez. Düzeltmek için bir barkod veya SKU ekleyin.",
+  "catalog.variant_codeless_hint": "Bu varyantın ne barkodu ne de SKU'su var, bu yüzden satışta taranamaz veya seçilemez. (Bu uyarı yalnızca etkin varyantlar için görünür.) Düzeltmek için bir barkod veya SKU ekleyin.",
   "catalog.variant_image": "Varyant görseli",
   "catalog.variants": "Varyantlar",
   "catalog.variants.add": "Varyant ekle",

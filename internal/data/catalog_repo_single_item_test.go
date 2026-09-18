@@ -166,6 +166,38 @@ func TestItemVariantsFor(t *testing.T) {
 	}
 }
 
+// TestItemVariantsFor_TreatsWhitespaceOnlySKUAsCodeless is ut-docs#2247's
+// convergence fix: migration 028 and backfillCodelessSyncedVariants
+// (sync_admin_repo.go) already treat a whitespace-only sku as codeless
+// (TRIM(sku) = ”), matching CreateVariant's own write-side
+// strings.TrimSpace(in.SKU) == "" check — but ItemVariantsFor used to hand
+// a whitespace value straight through via COALESCE(v.sku, ”) with no
+// trim, so sellableVariants (downstream of this method's VariantView.SKU)
+// disagreed with the backfill paths about whether such a variant is
+// resolvable at sale time. A variant whose sku is whitespace-only and has
+// no barcode must come back with SKU == "", the same "codeless" signal a
+// genuinely NULL/blank sku already produces.
+func TestItemVariantsFor_TreatsWhitespaceOnlySKUAsCodeless(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i-ws", SKU: "S-WS", Name: "Whitespace Item", BasePrice: 150, IsActive: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v-ws", ItemID: "i-ws", SKU: "   ", Name: "Whitespace Variant", Price: 150, IsActive: true})
+
+	got, err := repo.ItemVariantsFor(ctx, "i-ws")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 variant, got %d: %+v", len(got), got)
+	}
+	if got[0].SKU != "" {
+		t.Fatalf("SKU = %q, want trimmed to empty (whitespace-only sku must read as codeless)", got[0].SKU)
+	}
+}
+
 // TestItemVariantsForSale_UsesActivePriceHistoryRow is ut-docs#2228: the
 // sale-screen/kiosk picker must show the variant's CURRENT price, not its
 // configured item_variants.price, whenever an active price_history row
@@ -236,6 +268,34 @@ func TestItemVariantsForSale_UsesActivePriceHistoryRow(t *testing.T) {
 
 	if got, err := repo.ItemVariantsForSale(ctx, "missing"); err != nil || len(got) != 0 {
 		t.Fatalf("expected no variants for an unknown item, got %v err=%v", got, err)
+	}
+}
+
+// TestItemVariantsForSale_TreatsWhitespaceOnlySKUAsCodeless mirrors
+// TestItemVariantsFor_TreatsWhitespaceOnlySKUAsCodeless for the sale-screen
+// query (ut-docs#2247) — the sale/kiosk picker must agree with the admin
+// grid on what counts as codeless.
+func TestItemVariantsForSale_TreatsWhitespaceOnlySKUAsCodeless(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i-ws2", SKU: "S-WS2", Name: "Whitespace Item 2", BasePrice: 150, IsActive: true})
+	// SQLite's single-argument TRIM() strips plain spaces only (matching
+	// migration 028's own `TRIM(v.sku)`, the canonical definition this is
+	// converging on) — not tabs/newlines, so the fixture uses spaces.
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v-ws2", ItemID: "i-ws2", SKU: "  ", Name: "Whitespace Variant 2", Price: 150, IsActive: true})
+
+	got, err := repo.ItemVariantsForSale(ctx, "i-ws2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 variant, got %d: %+v", len(got), got)
+	}
+	if got[0].SKU != "" {
+		t.Fatalf("SKU = %q, want trimmed to empty (whitespace-only sku must read as codeless)", got[0].SKU)
 	}
 }
 

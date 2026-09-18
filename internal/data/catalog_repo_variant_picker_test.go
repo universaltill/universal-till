@@ -78,3 +78,31 @@ func TestCatalogRepo_ItemIDsWithVariants_NoActiveVariantAtAllIsAbsent(t *testing
 		t.Fatal("an item whose only variant is retired must not be flagged")
 	}
 }
+
+// TestCatalogRepo_ItemIDsWithVariants_WhitespaceOnlySKUIsNotResolvable is
+// ut-docs#2247's convergence fix: this method used to treat a
+// whitespace-only sku as a resolvable code (COALESCE(v.sku,”) <> ”),
+// disagreeing with migration 028/backfillCodelessSyncedVariants' own
+// TRIM-based "codeless" definition. An item whose only active variant has
+// a whitespace-only sku and no barcode must NOT be flagged as having a
+// sellable variant — same as one whose sku is genuinely NULL/blank.
+func TestCatalogRepo_ItemIDsWithVariants_WhitespaceOnlySKUIsNotResolvable(t *testing.T) {
+	dbo, err := db.Open(filepath.Join(t.TempDir(), "variants-whitespace.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbo.Close()
+	ctx := context.Background()
+	repo := NewCatalogRepo(dbo.DB)
+
+	mustExec(t, dbo, `INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-ws','SKU-WS','Ghost Pepper',300,1)`)
+	mustExec(t, dbo, `INSERT INTO item_variants (id, item_id, sku, name, price, is_active) VALUES ('v-ws','itm-ws','   ','Whitespace',250,1)`)
+
+	got, err := repo.ItemIDsWithVariants(ctx, []string{"itm-ws"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["itm-ws"] {
+		t.Fatal("an item whose only active variant has a whitespace-only sku and no barcode must not be flagged as sellable")
+	}
+}

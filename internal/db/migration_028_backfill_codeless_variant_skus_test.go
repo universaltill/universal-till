@@ -5,11 +5,6 @@ import (
 	"testing"
 )
 
-// backfillCodelessVariantSkusMigrationVersion is
-// 028_backfill_codeless_variant_skus.sql (ut-docs#2230). If the file is
-// ever renumbered, this constant moves with it.
-const backfillCodelessVariantSkusMigrationVersion = 28
-
 // generatedSKUPattern matches generatedVariantSKU()'s own convention
 // ("VAR-" + 8 uppercase hex chars) exactly — the migration must produce
 // codes indistinguishable from ones CreateVariant would have generated.
