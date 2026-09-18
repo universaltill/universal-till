@@ -226,6 +226,16 @@ var railIcons = map[string]string{
 	// "chevron-down" already in this set.
 	"chevron-left":  `<path d="m15 18-6-6 6-6"/>`,
 	"chevron-right": `<path d="m9 18 6-6-6-6"/>`,
+	// Restore defaults (ut-docs#2187) — /country-settings' record-dialog
+	// destructive slot, the builtin-country branch of
+	// countrysettings.reset ("Restore defaults"). "trash-2" (never-erase,
+	// #1956) reads wrong here: restoring a builtin country to its shipped
+	// values is not a delete (that country's row never goes away, and the
+	// delete branch shown for a CUSTOM country already owns "trash-2" for
+	// the genuine "this row can be removed" case). A counter-clockwise
+	// arrow is Lucide's own "undo/restore to a previous state" convention.
+	// Lucide's "rotate-ccw" path, unmodified.
+	"rotate-ccw": `<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>`,
 }
 
 // iconSVGOpen is the one shared wrapper every rail icon renders inside.
