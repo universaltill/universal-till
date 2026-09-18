@@ -26,10 +26,7 @@ import (
 // them from the persisted sale.
 func TestBuildKitchenTicket_IncludesLineModifiers(t *testing.T) {
 	chdirRoot(t)
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "kitchen.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := &db.DB{DB: openPagesTestDB(t)}
 	defer dbase.Close()
 
 	mustExec := func(q string, args ...any) {
@@ -63,10 +60,7 @@ func TestBuildKitchenTicket_IncludesLineModifiers(t *testing.T) {
 // via detail.OrderType above.
 func TestBuildKitchenTicket_IncludesTable(t *testing.T) {
 	chdirRoot(t)
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "kitchen-table.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := &db.DB{DB: openPagesTestDB(t)}
 	defer dbase.Close()
 
 	mustExec := func(q string, args ...any) {
@@ -97,10 +91,7 @@ func TestBuildKitchenTicket_IncludesTable(t *testing.T) {
 // stale/placeholder value.
 func TestBuildKitchenTicket_NoTableAssignedLeavesTableBlank(t *testing.T) {
 	chdirRoot(t)
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "kitchen-no-table.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := &db.DB{DB: openPagesTestDB(t)}
 	defer dbase.Close()
 
 	mustExec := func(q string, args ...any) {
@@ -135,10 +126,7 @@ func TestBuildKitchenTicket_NoTableAssignedLeavesTableBlank(t *testing.T) {
 // render time to TAKEAWAY.
 func TestBuildKitchenTicket_IncludesOrderType(t *testing.T) {
 	chdirRoot(t)
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "kitchen-order-type.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := &db.DB{DB: openPagesTestDB(t)}
 	defer dbase.Close()
 
 	mustExec := func(q string, args ...any) {
@@ -174,10 +162,7 @@ func TestBuildKitchenTicket_IncludesOrderType(t *testing.T) {
 // this test still passed, those two did not).
 func TestBuildKitchenTicket_DineInOrderTypeStaysBlank(t *testing.T) {
 	chdirRoot(t)
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "kitchen-dinein.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := &db.DB{DB: openPagesTestDB(t)}
 	defer dbase.Close()
 
 	mustExec := func(q string, args ...any) {
@@ -217,10 +202,7 @@ func TestBuildKitchenTicket_OrderTypeAndLabelsFollowShopLocale(t *testing.T) {
 	httpx.InitI18n(i18n, "tr")
 	defer httpx.InitI18n(i18n, "en") // restore the default other tests assume
 
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "kitchen-locale.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := &db.DB{DB: openPagesTestDB(t)}
 	defer dbase.Close()
 
 	mustExec := func(q string, args ...any) {
@@ -265,10 +247,7 @@ func TestBuildKitchenTicket_AsciiCharsetFallsBackToEnglishForNonLatinLocale(t *t
 	httpx.InitI18n(i18n, "ar")
 	defer httpx.InitI18n(i18n, "en") // restore the default other tests assume
 
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "kitchen-ascii.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := &db.DB{DB: openPagesTestDB(t)}
 	defer dbase.Close()
 
 	mustExec := func(q string, args ...any) {
@@ -316,10 +295,7 @@ func TestBuildKitchenTicket_CP858CharsetFallsBackToEnglishForNonLatinLocale(t *t
 	httpx.InitI18n(i18n, "ar")
 	defer httpx.InitI18n(i18n, "en") // restore the default other tests assume
 
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "kitchen-cp858.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := &db.DB{DB: openPagesTestDB(t)}
 	defer dbase.Close()
 
 	mustExec := func(q string, args ...any) {
@@ -368,10 +344,7 @@ func TestBuildKitchenTicket_NewCharsetsFallBackToEnglishForNonLatinLocale(t *tes
 			httpx.InitI18n(i18n, "ar")
 			defer httpx.InitI18n(i18n, "en") // restore the default other tests assume
 
-			dbase, err := db.Open(filepath.Join(t.TempDir(), "kitchen-"+charset+".db"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			dbase := &db.DB{DB: openPagesTestDB(t)}
 			defer dbase.Close()
 
 			mustExec := func(q string, args ...any) {
@@ -411,15 +384,13 @@ func TestBuildKitchenTicket_NewCharsetsFallBackToEnglishForNonLatinLocale(t *tes
 // (item override beats category, unrouted lines fall back to the legacy
 // default kitchen printer) and sends one ticket per target, independently.
 
-// kitchenRoutingDeps opens a migrated DB with a settings store and seeds a
-// small catalog: Food (burger, bread) and Drinks (cola), plus a combo item.
+// kitchenRoutingDeps opens a migrated DB (a per-test clone of the once-built
+// template, openPagesTestDB) with a settings store and seeds a small
+// catalog: Food (burger, bread) and Drinks (cola), plus a combo item.
 func kitchenRoutingDeps(t *testing.T) (*common.Deps, *db.DB) {
 	t.Helper()
 	chdirRoot(t)
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "kitchen-routing.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := &db.DB{DB: openPagesTestDB(t)}
 	t.Cleanup(func() { dbase.Close() })
 	mustExec := func(q string, args ...any) {
 		t.Helper()

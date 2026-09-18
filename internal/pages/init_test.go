@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -35,10 +34,7 @@ func TestInit_IdleAndKioskDefaultsSurviveTwoConsecutiveBoots(t *testing.T) {
 	chdirRoot(t)
 	paths.Init(t.TempDir())
 
-	d, err := db.Open(filepath.Join(t.TempDir(), "boot_twice.db"))
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	d := &db.DB{DB: openPagesTestDB(t)}
 	defer d.Close()
 
 	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
@@ -93,10 +89,7 @@ func TestInit_ClearsStaleTableClaimLeftByUncleanShutdown(t *testing.T) {
 	chdirRoot(t)
 	paths.Init(t.TempDir())
 
-	d, err := db.Open(filepath.Join(t.TempDir(), "crash_restart.db"))
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	d := &db.DB{DB: openPagesTestDB(t)}
 	defer d.Close()
 
 	posRepo := data.NewPOSRepo(d.DB)
@@ -146,10 +139,7 @@ func TestInit_ReclaimsHeldOrdersTableClaimOnBoot(t *testing.T) {
 	chdirRoot(t)
 	paths.Init(t.TempDir())
 
-	d, err := db.Open(filepath.Join(t.TempDir(), "held_order_restart.db"))
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	d := &db.DB{DB: openPagesTestDB(t)}
 	defer d.Close()
 
 	posRepo := data.NewPOSRepo(d.DB)
@@ -227,10 +217,7 @@ func TestInit_ReleasesOrphanedLiveClaimOnPrimaryAtBootEvenWhenTillStaysOnline(t 
 		t.Fatalf("CreateTable on primary: %v", err)
 	}
 
-	d, err := db.Open(filepath.Join(t.TempDir(), "orphan_claim_restart.db"))
-	if err != nil {
-		t.Fatalf("open replica db: %v", err)
-	}
+	d := &db.DB{DB: openPagesTestDB(t)}
 	defer d.Close()
 
 	// Point this till at the primary BEFORE Init ever runs -- exactly like a
@@ -308,10 +295,7 @@ func TestInit_HeldOrderClaimSurvivesReleaseAllEvenWhenBootReclaimFails(t *testin
 	chdirRoot(t)
 	paths.Init(t.TempDir())
 
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "primary.db"))
-	if err != nil {
-		t.Fatalf("open primary db: %v", err)
-	}
+	dbase := &db.DB{DB: openPagesTestDB(t)}
 	defer dbase.Close()
 	primaryDp := &common.Deps{Db: dbase.DB}
 	realMux := http.NewServeMux()
@@ -347,10 +331,7 @@ func TestInit_HeldOrderClaimSurvivesReleaseAllEvenWhenBootReclaimFails(t *testin
 		t.Fatalf("seed pre-crash primary claim: claimed=%v err=%v", claimed, err)
 	}
 
-	d, err := db.Open(filepath.Join(t.TempDir(), "replica.db"))
-	if err != nil {
-		t.Fatalf("open replica db: %v", err)
-	}
+	d := &db.DB{DB: openPagesTestDB(t)}
 	defer d.Close()
 	store := settings.NewStore(d.DB)
 	setReplicaSettings(t, store, primary.URL, "b-123")
@@ -395,10 +376,7 @@ func TestInit_ReconcilesBuiltinLayoutForPreExistingShopType(t *testing.T) {
 	chdirRoot(t)
 	paths.Init(t.TempDir())
 
-	d, err := db.Open(filepath.Join(t.TempDir(), "preexisting_shop_type.db"))
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	d := &db.DB{DB: openPagesTestDB(t)}
 	defer d.Close()
 
 	store := settings.NewStore(d.DB)
@@ -473,10 +451,7 @@ func TestInit_SteadyStateRebootPopulatesSettingsAmendmentsWithoutReload(t *testi
 	chdirRoot(t)
 	paths.Init(t.TempDir())
 
-	d, err := db.Open(filepath.Join(t.TempDir(), "steady_state_reboot.db"))
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	d := &db.DB{DB: openPagesTestDB(t)}
 	defer d.Close()
 
 	store := settings.NewStore(d.DB)
@@ -550,10 +525,7 @@ func TestInit_LeavesNonServiceShopTypeAlone(t *testing.T) {
 	chdirRoot(t)
 	paths.Init(t.TempDir())
 
-	d, err := db.Open(filepath.Join(t.TempDir(), "non_service_shop_type.db"))
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	d := &db.DB{DB: openPagesTestDB(t)}
 	defer d.Close()
 
 	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
