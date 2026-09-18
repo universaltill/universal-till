@@ -133,9 +133,10 @@ These are ours. **Status 2026-09-03:** E2 and E3 are built and tested
 and both receipt renderers); E4 exists as a working plugin with the bridge
 driver complete and every maker driver as a fail-closed scaffold. What
 remains needs Step 3–4 above (a maker's integrator pack and a device on a
-LAN) plus the ADR in E1.
+LAN); the ADR in E1 is ADR-0102 (2026-09-18), which also settled that
+the plugin never speaks GMP-3 itself — see E4.
 
-### E1 — Write the ADR for the Turkish device seam (ut-docs, document-first) — *open*
+### E1 — Write the ADR for the Turkish device seam (ut-docs, document-first) — *done: ADR-0102 (2026-09-18)*
 Germany's `fiscal.sign.ask` fires *after* payment and lets the sale
 proceed unsigned if the signer is down (ADR-0044). Turkey is different:
 the device *takes the payment and prints the receipt*, so it must be
@@ -175,13 +176,23 @@ the real `.wasm` through the till's WASM host.
 - Still open: showing the device's Z status inside end-of-day (today the
   page shows the last Z number the device reported).
 
-### E4 — `ut-plugin-tax-tr` against the first maker — *plugin built, maker drivers pending*
+### E4 — `ut-plugin-tax-tr` against the first maker — *plugin built, one bridge per maker pending*
 `plugins/tax-tr` (WASM, `tcp:*`): sale, refund and settle legs, settings
 for driver/host/port/timeouts, the **bridge** driver complete and tested
-end to end through the till's runtime. `gmp3`, `hugin-pclink`,
-`pavo-rest` and `token-x` are scaffolds that refuse every tender with a
-clear log line until filled in from the maker's integrator pack against a
-test device (Steps 3–4). Moves to its own repo when first published.
+end to end through the till's runtime. **There is no from-spec GMP-3
+driver and there will not be one**: GİB's GMP-3 v5.0 §3.3 requires
+PC-hosted sales software to use the maker's own compiled GMP-3 library
+and, for browser-served software like this till, a separate middleware on
+the PC that links it (ADR-0102 Decision 4). So each maker is a small
+bridge process on the machine wired to the device, speaking the ÖKC
+bridge protocol v0 (`ut-docs/reference/okc-bridge-protocol.md`). Where a
+maker offers its own REST/cloud API (Hugin PC Link, Pavo REST, TokenX
+Connect) the matching direct-driver scaffold may fill in instead — but
+whether such an API counts as "the maker's library" under §3.3 is a
+question to ask that maker at Step 3, not assumed. Every scaffold stays
+fail-closed until filled in from the maker's integrator pack against a
+test device (Steps 3–4). One card per maker under ut-docs#1280. Moves to
+its own repo when first published.
 
 ### E5 — Second maker, then Android-on-device
 Add the pilot region's second most common maker. If a maker admits
