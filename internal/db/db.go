@@ -49,6 +49,26 @@ func escapeSQLiteURIPath(path string) string {
 }
 
 func Open(path string) (*DB, error) {
+	db, err := openRaw(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := db.migrate(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("run migrations: %w", err)
+	}
+	return db, nil
+}
+
+// openRaw does everything Open does EXCEPT run the migrations: the data
+// directory, the DSN pragmas, the belt-and-braces foreign_keys ON and the
+// ping. Split out (ut-docs#2399) so an internal/db test can build a
+// database at an EARLIER schema version through the real runner
+// (migrateUpTo) and then prove the next migration upgrades it — the only
+// way to test a rebuild migration against the pre-rebuild shape a real
+// installed till actually carries, rather than against a fresh, already-
+// migrated file. Production code calls Open, never this.
+func openRaw(path string) (*DB, error) {
 	// A fresh install extracts to a folder with no data/ directory, so the
 	// default ./data/unitill-pos.db path can't be opened (SQLite CANTOPEN,
 	// reported as "out of memory (14)"). Create the parent directory first.
@@ -121,14 +141,8 @@ func Open(path string) (*DB, error) {
 	if err := sqlDB.Ping(); err != nil {
 		return nil, fmt.Errorf("ping sqlite: %w", err)
 	}
-	db := &DB{DB: sqlDB}
-
-	if err := db.migrate(); err != nil {
-		return nil, fmt.Errorf("run migrations: %w", err)
-	}
-
 	closeOnError = false
-	return db, nil
+	return &DB{DB: sqlDB}, nil
 }
 
 // OpenReadOnly opens an existing SQLite database WITHOUT running migrate() —
@@ -222,6 +236,15 @@ func migrationChecksum(sqlText string) string {
 }
 
 func (db *DB) migrate() error {
+	return db.migrateUpTo(0)
+}
+
+// migrateUpTo is migrate with a ceiling: every on-disk migration whose
+// version is above the ledger watermark AND at most maxVersion is applied;
+// 0 means no ceiling (what Open always passes). The ceiling exists for the
+// internal/db upgrade tests described on openRaw — a real till never runs
+// with one.
+func (db *DB) migrateUpTo(maxVersion int) error {
 	// ensure schema_migrations table exists. name + checksum (ut-docs#1425,
 	// ADR-0074 Decision 3) let verifyAppliedMigrations catch a file renamed
 	// or edited under an already-applied version number. No ALTER TABLE
@@ -268,6 +291,9 @@ func (db *DB) migrate() error {
 	for _, m := range migs {
 		if m.Version <= current {
 			continue
+		}
+		if maxVersion > 0 && m.Version > maxVersion {
+			break
 		}
 		if err := db.applyMigration(m); err != nil {
 			return err

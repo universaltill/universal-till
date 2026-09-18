@@ -1221,36 +1221,41 @@ func TestCountObsoleteItems_NotCappedLikeList(t *testing.T) {
 	}
 }
 
-// ADR-0090 §2 (ut-docs#2013): item_modifier_groups.item_id is a legacy
-// "anchor" with its own ON DELETE CASCADE. A group anchored to an obsolete
-// item but still linked (item_modifier_group_links) to a live item must be
-// re-pointed at that live item inside CleanupObsoleteItems' transaction,
-// immediately before the items DELETE — or the anchor's cascade would
-// destroy a group (and its options, and the live item's link to it) that
-// the live item still uses. A group with no surviving link is genuinely
-// orphaned and still cascades away with its item, exactly as before.
-func TestCleanupObsoleteItems_ReanchorsSharedModifierGroupToSurvivingItem(t *testing.T) {
+// ADR-0101 (ut-docs#2399): modifier groups are shop-wide, so a hard item
+// delete in CleanupObsoleteItems never reaches a group row — it only ever
+// cascades the obsolete items' OWN link/opt-out rows. A group shared with a
+// surviving item keeps that item's link untouched; a group whose only item
+// was obsolete simply becomes unassigned (still listed on /modifiers, its
+// options intact) rather than being deleted with the item, as the
+// ADR-0090-era anchor cascade used to do.
+func TestCleanupObsoleteItems_LeavesModifierGroupsUnassignedNeverDeleted(t *testing.T) {
 	d, x, _ := resetTestDB(t, "cleanup-shared-group.db")
 	ctx := context.Background()
 	x(`INSERT INTO items (id, name, base_price, is_active) VALUES ('obs','Old Test Product',100,0)`)
 	x(`INSERT INTO items (id, name, base_price, is_active) VALUES ('live','Current Product',100,1)`)
 
 	mod := data.NewModifierRepo(d.DB)
-	// Shared: created on (anchored to) the obsolete item, also used by live.
-	if _, err := mod.CreateGroup(ctx, "g-milk", "obs", "Milk", true, 1, 1, 0); err != nil {
+	// Shared: linked to both the obsolete and the live item.
+	if _, err := mod.CreateGroup(ctx, "g-milk", "Milk", true, 1, 1, 0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := mod.CreateOption(ctx, "o-oat", "g-milk", "Oat", 40, 1); err != nil {
 		t.Fatal(err)
 	}
+	if err := mod.LinkGroupToItem(ctx, "obs", "g-milk", 0); err != nil {
+		t.Fatal(err)
+	}
 	if err := mod.LinkGroupToItem(ctx, "live", "g-milk", 4); err != nil {
 		t.Fatal(err)
 	}
-	// Genuinely single-item: must still cascade away with obs.
-	if _, err := mod.CreateGroup(ctx, "g-only-obs", "obs", "Only Obs", false, 0, 1, 0); err != nil {
+	// Linked only to the obsolete item: survives, unassigned.
+	if _, err := mod.CreateGroup(ctx, "g-only-obs", "Only Obs", false, 0, 1, 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mod.CreateOption(ctx, "o-only", "g-only-obs", "Gone", 0, 1); err != nil {
+	if err := mod.LinkGroupToItem(ctx, "obs", "g-only-obs", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mod.CreateOption(ctx, "o-only", "g-only-obs", "Kept", 0, 1); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1259,13 +1264,6 @@ func TestCleanupObsoleteItems_ReanchorsSharedModifierGroupToSurvivingItem(t *tes
 		t.Fatalf("cleanup: n=%d err=%v", n, err)
 	}
 
-	var anchor string
-	if err := d.DB.QueryRow(`SELECT item_id FROM item_modifier_groups WHERE id = 'g-milk'`).Scan(&anchor); err != nil {
-		t.Fatalf("shared group was destroyed by the obsolete item's cascade: %v", err)
-	}
-	if anchor != "live" {
-		t.Fatalf("shared group anchor = %q, want live", anchor)
-	}
 	var sort int
 	if err := d.DB.QueryRow(`SELECT sort_order FROM item_modifier_group_links WHERE item_id = 'live' AND group_id = 'g-milk'`).Scan(&sort); err != nil || sort != 4 {
 		t.Fatalf("live item's link must be untouched: sort=%d err=%v", sort, err)
@@ -1274,11 +1272,14 @@ func TestCleanupObsoleteItems_ReanchorsSharedModifierGroupToSurvivingItem(t *tes
 	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM item_modifier_group_links WHERE item_id = 'obs'`).Scan(&c); err != nil || c != 0 {
 		t.Fatalf("obsolete item's own links must cascade away: c=%d err=%v", c, err)
 	}
-	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM item_modifier_groups WHERE id = 'g-only-obs'`).Scan(&c); err != nil || c != 0 {
-		t.Fatalf("unshared group must still cascade away with its item: c=%d err=%v", c, err)
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM item_modifier_groups WHERE id = 'g-only-obs'`).Scan(&c); err != nil || c != 1 {
+		t.Fatalf("a group whose only item was removed must SURVIVE, unassigned (ADR-0101): c=%d err=%v", c, err)
 	}
-	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM item_modifier_options WHERE group_id = 'g-only-obs'`).Scan(&c); err != nil || c != 0 {
-		t.Fatalf("unshared group's options must cascade away: c=%d err=%v", c, err)
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM item_modifier_options WHERE group_id = 'g-only-obs'`).Scan(&c); err != nil || c != 1 {
+		t.Fatalf("the surviving group keeps its options: c=%d err=%v", c, err)
+	}
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM item_modifier_group_links WHERE group_id = 'g-only-obs'`).Scan(&c); err != nil || c != 0 {
+		t.Fatalf("the surviving group has no link left: c=%d err=%v", c, err)
 	}
 
 	groups, err := mod.ListGroupsForItem(ctx, "live")

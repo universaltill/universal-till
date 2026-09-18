@@ -1028,11 +1028,15 @@ func cloudUpdateItemDetails(ctx context.Context, d *common.Deps, itemID string, 
 // shipped, so the portal has no way to discover an existing group's id to
 // edit by, or to offer an "attach an existing group" picker — see
 // cloudUpsertCategory's own doc comment for the full reasoning, which
-// applies identically here). item_id must name an item that exists on
-// THIS till — unlike a category id, item ids ARE already known/surfaced to
-// the cloud (every catalog snapshot row carries its own id), so attaching a
-// brand-new group to one existing item is safe, the same way cloudCreateItem
-// accepts an inline barcode.
+// applies identically here). item_id is OPTIONAL since ADR-0101
+// (ut-docs#2399): blank creates a SHOP-WIDE group with no assignment (the
+// merchant assigns it to categories/items from /modifiers, or a later
+// directive links it); present, it must name an item that exists on THIS
+// till — unlike a category id, item ids ARE already known/surfaced to the
+// cloud (every catalog snapshot row carries its own id) — and the new
+// group is created and then linked to it, two repo calls in that order (a
+// link failure after a successful create leaves a valid unassigned group,
+// never a half-written row).
 //
 // item_modifier_groups (and its link/option tables) is an admin-synced
 // table (sync_admin_repo.go's adminTables), same as items/categories, so
@@ -1040,9 +1044,10 @@ func cloudUpdateItemDetails(ctx context.Context, d *common.Deps, itemID string, 
 // directive is (requirePrimaryDirective/auditCloudDirective, ut-docs#2353).
 //
 // Directives are at-least-once, so a retried CREATE must not duplicate: an
-// existing ACTIVE group already linked to this item with the same name
-// (case-insensitive, matching cloudUpsertCategory's own active-only dedupe)
-// counts as success and is left untouched — the retry is a no-op, not a silent edit
+// existing ACTIVE group with the same name (case-insensitive, matching
+// cloudUpsertCategory's own active-only dedupe) — already linked to this
+// item when one is given, anywhere in the shop when none is — counts as
+// success and is left untouched — the retry is a no-op, not a silent edit
 // of a group the merchant may have changed locally since. The idempotency
 // scan and the item-existence check both run BEFORE the primary gate, same
 // reasoning as cloudCreateItem/cloudUpsertCategory: a replica replaying an
@@ -1065,9 +1070,6 @@ func cloudUpdateItemDetails(ctx context.Context, d *common.Deps, itemID string, 
 func cloudUpsertModifierGroup(ctx context.Context, d *common.Deps, itemID, name string, required bool, minSelect, maxSelect int, options []cloudsync.ModifierGroupOption) (string, error) {
 	itemID = strings.TrimSpace(itemID)
 	name = strings.TrimSpace(name)
-	if itemID == "" {
-		return "", fmt.Errorf("item_id required")
-	}
 	if name == "" {
 		return "", fmt.Errorf("name required")
 	}
@@ -1101,27 +1103,42 @@ func cloudUpsertModifierGroup(ctx context.Context, d *common.Deps, itemID, name 
 		}
 	}
 
-	repo := data.NewCatalogRepo(d.Db)
-	if exists, err := repo.ItemExists(ctx, itemID); err != nil {
-		return "", err
-	} else if !exists {
-		return "", fmt.Errorf("item not found")
-	}
-
 	modRepo := data.NewModifierRepo(d.Db)
-	existing, err := modRepo.ListAllGroupsForItem(ctx, itemID)
-	if err != nil {
-		return "", err
-	}
-	for _, g := range existing {
-		// ACTIVE groups only, exactly like cloudUpsertCategory's own dedupe
-		// (`c.IsActive && strings.EqualFold(...)`): ListAllGroupsForItem
-		// deliberately includes deactivated groups, and treating one of
-		// those as "already exists" would refuse a genuinely new create
-		// forever while reporting success to the portal — the merchant's
-		// request silently dropped (2026-09-17 review, ut-docs#2322).
-		if g.IsActive && strings.EqualFold(g.Name, name) {
-			return "modifier group " + g.Name + " already exists on this item", nil
+	if itemID != "" {
+		repo := data.NewCatalogRepo(d.Db)
+		if exists, err := repo.ItemExists(ctx, itemID); err != nil {
+			return "", err
+		} else if !exists {
+			return "", fmt.Errorf("item not found")
+		}
+		existing, err := modRepo.ListAllGroupsForItem(ctx, itemID)
+		if err != nil {
+			return "", err
+		}
+		for _, g := range existing {
+			// ACTIVE groups only, exactly like cloudUpsertCategory's own
+			// dedupe (`c.IsActive && strings.EqualFold(...)`):
+			// ListAllGroupsForItem deliberately includes deactivated
+			// groups, and treating one of those as "already exists" would
+			// refuse a genuinely new create forever while reporting success
+			// to the portal — the merchant's request silently dropped
+			// (2026-09-17 review, ut-docs#2322).
+			if g.IsActive && strings.EqualFold(g.Name, name) {
+				return "modifier group " + g.Name + " already exists on this item", nil
+			}
+		}
+	} else {
+		// No item: a shop-wide group (ADR-0101). Dedupe against every
+		// ACTIVE group in the shop — ListActiveModifierGroups is exactly
+		// that set, so a retried standalone create is a no-op too.
+		existing, err := modRepo.ListActiveModifierGroups(ctx)
+		if err != nil {
+			return "", err
+		}
+		for _, g := range existing {
+			if strings.EqualFold(g.Name, name) {
+				return "modifier group " + g.Name + " already exists", nil
+			}
 		}
 	}
 
@@ -1129,30 +1146,40 @@ func cloudUpsertModifierGroup(ctx context.Context, d *common.Deps, itemID, name 
 		return "", err
 	}
 
-	sortOrder, err := modRepo.NextGroupSortOrderForItem(ctx, itemID)
-	if err != nil {
-		return "", err
+	sortOrder := 0
+	if itemID != "" {
+		next, err := modRepo.NextGroupSortOrderForItem(ctx, itemID)
+		if err != nil {
+			return "", err
+		}
+		sortOrder = next
 	}
 	groupID := uuid.NewString()
-	if _, err := modRepo.CreateGroup(ctx, groupID, itemID, name, required, minSelect, maxSelect, sortOrder); err != nil {
+	if _, err := modRepo.CreateGroup(ctx, groupID, name, required, minSelect, maxSelect, sortOrder); err != nil {
 		return "", err
+	}
+	// rollBack undoes the whole create on any later failure: directives
+	// are at-least-once, and the name dedupe above would otherwise report
+	// the retry as "already exists", cementing a half-created group (no
+	// link, or missing options) forever while telling the merchant it
+	// worked. DeleteGroup cascades the link row and any options already
+	// inserted (foreign_keys is ON, db.go), so the retry recreates it
+	// cleanly (2026-09-17 review, ut-docs#2322; widened to the link step
+	// by ADR-0101, since CreateGroup no longer writes the link itself).
+	rollBack := func() {
+		if derr := modRepo.DeleteGroup(ctx, groupID); derr != nil {
+			log.Printf("[cloudsync] roll back half-created modifier group %s: %v", groupID, derr)
+		}
+	}
+	if itemID != "" {
+		if err := modRepo.LinkGroupToItem(ctx, itemID, groupID, sortOrder); err != nil {
+			rollBack()
+			return "", err
+		}
 	}
 	for i, opt := range options {
 		if _, err := modRepo.CreateOption(ctx, uuid.NewString(), groupID, strings.TrimSpace(opt.Name), opt.PriceDeltaMinor, i); err != nil {
-			// CreateGroup wraps its own group+link inserts in one
-			// transaction, but these option inserts are separate
-			// statements, so a real DB error (SQLITE_BUSY, disk I/O) on
-			// option N would leave a HALF-created group behind. That is
-			// worse than a plain partial write here: directives are
-			// at-least-once, and the name dedupe above would then report
-			// the retry as "already exists", cementing the missing options
-			// forever while telling the merchant it worked. Undo the whole
-			// create instead — DeleteGroup cascades the link row and any
-			// options already inserted (foreign_keys is ON, db.go) — so the
-			// retry recreates it cleanly (2026-09-17 review, ut-docs#2322).
-			if derr := modRepo.DeleteGroup(ctx, groupID); derr != nil {
-				log.Printf("[cloudsync] roll back half-created modifier group %s: %v", groupID, derr)
-			}
+			rollBack()
 			return "", err
 		}
 	}

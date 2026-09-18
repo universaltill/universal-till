@@ -104,8 +104,10 @@ func TestMigration031_CreatesBothTablesAndIsReplaySafe(t *testing.T) {
 	// group row survives a category delete untouched.
 	exec(`INSERT INTO categories (id, name) VALUES ('cat1', 'Drinks')`)
 	exec(`INSERT INTO items (id, sku, name, base_price, category_id) VALUES ('itm-a','A','Flat White',320,'cat1')`)
-	exec(`INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order, is_active)
-	      VALUES ('g1','itm-a','Milk',0,0,1,0,1), ('g2','itm-a','Extras',0,0,2,1,1)`)
+	// No item_id: 034 (ADR-0101) removed the anchor column, and this test
+	// runs against the fully migrated schema (ut-docs#2399).
+	exec(`INSERT INTO item_modifier_groups (id, name, required, min_select, max_select, sort_order, is_active)
+	      VALUES ('g1','Milk',0,0,1,0,1), ('g2','Extras',0,0,2,1,1)`)
 	exec(`INSERT INTO category_modifier_group_links (category_id, group_id, sort_order) VALUES ('cat1','g1',0), ('cat1','g2',1)`)
 	exec(`INSERT INTO item_modifier_group_opt_outs (item_id, group_id) VALUES ('itm-a','g1'), ('itm-a','g2')`)
 	if _, err := d.DB.Exec(`INSERT INTO category_modifier_group_links (category_id, group_id, sort_order) VALUES ('cat1','g1',9)`); err == nil {

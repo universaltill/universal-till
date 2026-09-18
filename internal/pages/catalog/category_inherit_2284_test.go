@@ -57,7 +57,7 @@ func postPanel(t *testing.T, mux *http.ServeMux, path, form, hxTarget string) *h
 // toggle — while the item's OWN directly-linked groups keep rendering
 // exactly as before (regression: the per-item link path is unchanged).
 // Opting out of an inherited group never touches a direct link to the same
-// group (UnlinkGroupFromItemUnlessLastLink's job, not this one).
+// group (UnlinkGroupFromItem's job, not this one).
 func TestItemModifierGroupsPanel_InheritedGroupsWithOptOutToggle(t *testing.T) {
 	mux, dbase := setupInheritDeps(t)
 	ctx := context.Background()
@@ -65,7 +65,7 @@ func TestItemModifierGroupsPanel_InheritedGroupsWithOptOutToggle(t *testing.T) {
 	// gMilk: category-inherited only. gOwn: the item's own direct group.
 	// gBoth: directly linked AND category-linked.
 	for _, g := range []struct{ id, name string }{{"gMilk", "Milk"}, {"gOwn", "Extras"}, {"gBoth", "Syrup"}} {
-		if _, err := modRepo.CreateGroup(ctx, g.id, "itm-anchor", g.name, false, 0, 1, 0); err != nil {
+		if _, err := modRepo.CreateGroup(ctx, g.id, g.name, false, 0, 1, 0); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -147,13 +147,14 @@ func TestItemModifierGroupsPanel_InheritedGroupsWithOptOutToggle(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("opt-out gBoth: %d", rec.Code)
 	}
-	if n, _ := modRepo.GroupLinkCount(ctx, "gBoth"); n != 2 {
-		t.Fatalf("opt-out must never unlink a direct link; gBoth link count = %d, want 2", n)
+	var n int
+	if err := dbase.DB.QueryRow(`SELECT COUNT(*) FROM item_modifier_group_links WHERE group_id = 'gBoth' AND item_id = 'itm1'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("opt-out must never unlink a direct link; gBoth/itm1 link count = %d err=%v, want 1", n, err)
 	}
 	resolved, _ = modRepo.ResolveGroupsForItem(ctx, "itm1")
 	found := false
 	for _, g := range resolved {
-		if g.ID == "gBoth" && g.ItemID == "itm1" {
+		if g.ID == "gBoth" {
 			found = true
 		}
 	}
@@ -188,7 +189,7 @@ func TestCatalogVariantsPanel_SummaryNamesInheritedGroups(t *testing.T) {
 	mux, dbase := setupInheritDeps(t)
 	ctx := context.Background()
 	modRepo := data.NewModifierRepo(dbase.DB)
-	if _, err := modRepo.CreateGroup(ctx, "gMilk", "itm-anchor", "Milk", false, 0, 1, 0); err != nil {
+	if _, err := modRepo.CreateGroup(ctx, "gMilk", "Milk", false, 0, 1, 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := modRepo.SetCategoryModifierGroups(ctx, "cat1", []string{"gMilk"}); err != nil {

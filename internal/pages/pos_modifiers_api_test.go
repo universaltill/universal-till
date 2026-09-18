@@ -25,8 +25,7 @@ func setupModifiersTestDeps(t *testing.T) (*common.Deps, *sql.DB) {
 	// Group rows plus their item_modifier_group_links rows (ADR-0090 /
 	// migration 025): membership is read through the link table.
 	if _, err := d.Exec(`
-		INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order)
-		VALUES ('g-extras', 'itm-coffee', 'Extras', 0, 0, 2, 1)
+		INSERT INTO item_modifier_groups (id, name, required, min_select, max_select, sort_order) VALUES ('g-extras', 'Extras', 0, 0, 2, 1)
 	`); err != nil {
 		t.Fatal(err)
 	}
@@ -40,8 +39,7 @@ func setupModifiersTestDeps(t *testing.T) (*common.Deps, *sql.DB) {
 		t.Fatal(err)
 	}
 	if _, err := d.Exec(`
-		INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order)
-		VALUES ('g-size', 'itm-coffee', 'Size', 1, 1, 1, 2)
+		INSERT INTO item_modifier_groups (id, name, required, min_select, max_select, sort_order) VALUES ('g-size', 'Size', 1, 1, 1, 2)
 	`); err != nil {
 		t.Fatal(err)
 	}
@@ -115,8 +113,7 @@ func TestGetModifiers_ReflectsGroupAddedAfterFirstFetch(t *testing.T) {
 	}
 
 	if _, err := d.Exec(`
-		INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order, is_active)
-		VALUES ('g-toppings', 'itm-coffee', 'Toppings', 0, 0, 3, 3, 1)
+		INSERT INTO item_modifier_groups (id, name, required, min_select, max_select, sort_order, is_active) VALUES ('g-toppings', 'Toppings', 0, 0, 3, 3, 1)
 	`); err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +333,7 @@ func TestGetModifiers_PromptsForCategoryInheritedGroupsMinusOptOuts(t *testing.T
 		`INSERT INTO categories (id, name) VALUES ('cat-hot', 'Hot drinks')`,
 		`UPDATE items SET category_id = 'cat-hot' WHERE id = 'itm-coffee'`,
 		`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-anchor', 'ANCHOR', 'Anchor', 100, 1)`,
-		`INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order) VALUES ('g-milk', 'itm-anchor', 'Milk', 0, 0, 1, 0)`,
+		`INSERT INTO item_modifier_groups (id, name, required, min_select, max_select, sort_order) VALUES ('g-milk', 'Milk', 0, 0, 1, 0)`,
 		`INSERT INTO item_modifier_group_links (item_id, group_id, sort_order) VALUES ('itm-anchor', 'g-milk', 0)`,
 		`INSERT INTO item_modifier_options (id, group_id, name, price_delta_minor, sort_order) VALUES ('o-oatmilk', 'g-milk', 'Oat', 30, 1)`,
 		`INSERT INTO category_modifier_group_links (category_id, group_id, sort_order) VALUES ('cat-hot', 'g-milk', 0)`,

@@ -130,8 +130,10 @@ type Hooks struct {
 	// UpsertModifierGroup handles the "upsert_modifier_group" directive
 	// (ut-docs#2322 "modifier groups editor" slice of ut-docs#2289, ADR-0095
 	// Decision 1) — creates a NEW modifier group (with zero or more options)
-	// on an existing till item, through the same repo calls a local admin
-	// creator would use. CREATE-ONLY, deliberately: there is no group id in
+	// through the same repo calls a local admin creator would use. itemID
+	// is optional since ADR-0101 (ut-docs#2399): blank creates a shop-wide
+	// group with no assignment; present, the group is also linked to that
+	// existing till item. CREATE-ONLY, deliberately: there is no group id in
 	// this directive's payload at all, the same scope cut UpsertCategory
 	// above shipped with — the cloud panel has no way to discover an
 	// existing group's id to edit by, or to offer an "attach an existing
@@ -481,10 +483,13 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 		if hooks.UpsertModifierGroup == nil {
 			return "failed", "upsert_modifier_group is not supported on this till"
 		}
+		// item_id is optional (ADR-0101, ut-docs#2399): blank means a
+		// shop-wide group with no assignment; the hook validates a
+		// non-blank one against the till's own items.
 		id := str("item_id")
 		name := str("name")
-		if id == "" || name == "" {
-			return "failed", "missing item_id or name"
+		if name == "" {
+			return "failed", "missing name"
 		}
 		required, _ := d.Payload["required"].(bool)
 		minSelect, minOK := num("min_select")
