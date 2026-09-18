@@ -430,6 +430,52 @@ ON CONFLICT(plugin_id, permission) DO NOTHING
 	return nil
 }
 
+// PrunePluginPermissions removes permission rows for a plugin that its
+// current manifest no longer declares. Pairs with InsertPluginPermissions,
+// which is insert-only (ON CONFLICT DO NOTHING) to protect an existing
+// grant across a re-apply — this is the delete half neither that function
+// nor PersistManifest previously performed, so a permission dropped from a
+// manifest update used to survive in the DB with its grant intact
+// (ut-docs#2419).
+func (r *PluginRepo) PrunePluginPermissions(ctx context.Context, tx *sql.Tx, pluginID string, declared []string) error {
+	exec := r.executor(tx)
+	declaredSet := make(map[string]struct{}, len(declared))
+	for _, perm := range declared {
+		if perm == "" {
+			continue
+		}
+		declaredSet[perm] = struct{}{}
+	}
+	rows, err := exec.QueryContext(ctx, `
+SELECT id, permission FROM plugin_permissions WHERE plugin_id = ?`, pluginID)
+	if err != nil {
+		return pluginObs.wrap("prune_permissions", err)
+	}
+	type existing struct{ id, permission string }
+	var have []existing
+	for rows.Next() {
+		var e existing
+		if err := rows.Scan(&e.id, &e.permission); err != nil {
+			rows.Close()
+			return pluginObs.wrap("prune_permissions", err)
+		}
+		have = append(have, e)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return pluginObs.wrap("prune_permissions", err)
+	}
+	for _, e := range have {
+		if _, ok := declaredSet[e.permission]; ok {
+			continue
+		}
+		if _, err := exec.ExecContext(ctx, `DELETE FROM plugin_permissions WHERE id = ?`, e.id); err != nil {
+			return pluginObs.wrap("prune_permissions", err)
+		}
+	}
+	return nil
+}
+
 // SetPluginActive flags a plugin as active/inactive.
 func (r *PluginRepo) SetPluginActive(ctx context.Context, tx *sql.Tx, pluginID string, active bool) error {
 	val := 0
