@@ -82,6 +82,21 @@ type ButtonVM struct {
 	// outcome the retired ut-docs#2285 sheet's server-side Move produced,
 	// computed client-side from these indices instead.
 	Pos int `json:"pos"`
+	// Locked (ut-docs#2361) mirrors tile_sheet.html's own .Locked field
+	// (the retired ut-docs#2285 sheet, ut-docs#2312's review) -- true when
+	// THIS SESSION does NOT hold catalog_management, the same permission
+	// /api/buttons/{add,remove,reorder} and /catalog itself gate on. It's
+	// a per-REQUEST value, identical across every tile in one render (the
+	// permission isn't per-item), stamped on by List via stampLocked
+	// rather than threaded through Button/toButtonVM -- there is no
+	// per-button source for it to come from. product-tile (buttons.html)
+	// uses it to show the same lock affordance tile_sheet.html already
+	// established on the jiggle-mode edit/remove badges, before a cashier
+	// attempts the action and hits the real server-side gate's elevation
+	// prompt -- the discoverability affordance the retired sheet had and
+	// the pure-CSS-toggle jiggle mode (ut-docs#2339) never carried
+	// forward. Visual only: the badges stay fully clickable either way.
+	Locked bool `json:"-"`
 }
 
 func ToVM(b []Button) []ButtonVM {
@@ -256,6 +271,23 @@ func setAncestorNames(g *CategoryGroup, ancestor string) {
 	for _, c := range g.Children {
 		c.AncestorName = ancestor
 		setAncestorNames(c, ancestor)
+	}
+}
+
+// stampLocked (ut-docs#2361) sets ButtonVM.Locked on every button in the
+// tree BuildCategoryGroups returned, categorized and uncategorized alike —
+// a separate pass rather than a BuildCategoryGroups parameter, so the
+// existing call sites (and their tests) building a tree with no notion of
+// "granted" at all keep compiling unchanged. Takes granted (matching the
+// canPerform-shaped bool the caller actually has) and inverts it once here,
+// so every other caller stamps the same tile_sheet.html-style Locked.
+func stampLocked(groups []*CategoryGroup, granted bool) {
+	locked := !granted
+	for _, g := range groups {
+		for i := range g.Buttons {
+			g.Buttons[i].Locked = locked
+		}
+		stampLocked(g.Children, granted)
 	}
 }
 
@@ -728,6 +760,16 @@ type ButtonsHTTP struct {
 	// straight-named ShowAllTab field would have silently flipped every
 	// one of those to "off" instead.
 	HideAllTab bool
+	// Granted (ut-docs#2361) is this request's catalog_management
+	// permission check result, resolved by the caller (registerButtonsAPI,
+	// which has the *common.Deps and *http.Request canPerform needs —
+	// internal/ui cannot call internal/pages.canPerform itself without an
+	// import cycle). Zero value is false, i.e. "not granted": every
+	// existing test that constructs a ButtonsHTTP without setting this
+	// field renders as if for a non-granted cashier, which is the safe
+	// default and matches none of those tests' assertions touching the
+	// jiggle-mode lock affordance either way.
+	Granted bool
 }
 
 func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
@@ -760,8 +802,10 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 		// tab stays off this render, not that the whole sale screen fails.
 		logging.L().Warnf("buttons list: load categories-tab setting: %v", err)
 	}
+	groups := BuildCategoryGroups(btns, cats)
+	stampLocked(groups, h.Granted)
 	_ = h.View.Render(w, "buttons", map[string]any{
-		"Groups":               BuildCategoryGroups(btns, cats),
+		"Groups":               groups,
 		"AllButtons":           ToVM(allBtns),
 		"ShowAllTab":           !h.HideAllTab,
 		"CategoriesTabEnabled": categoriesTabEnabled,

@@ -74,7 +74,20 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
 			return
 		}
-		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore, View: renderer, HideAllTab: !d.CurrentState().ShowAllTabOnSellScreen}
+		// ut-docs#2361: the jiggle-mode edit/remove badges need to know
+		// up front whether THIS session already holds catalog_management
+		// — the same permission /api/buttons/{add,remove,reorder} and
+		// /catalog itself gate on (ut-docs#2312) — so buttons.html can
+		// show a lock affordance before a cashier drags/taps into the
+		// real elevation prompt, instead of only discovering it needs a
+		// PIN after acting.
+		granted := canPerform(d, r, "catalog_management")
+		btnHTTP := &ui.ButtonsHTTP{
+			Store:      *d.BtnStore,
+			View:       renderer,
+			HideAllTab: !d.CurrentState().ShowAllTabOnSellScreen,
+			Granted:    granted,
+		}
 		btnHTTP.List(w, r)
 	})
 
