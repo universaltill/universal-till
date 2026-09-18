@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -51,13 +52,24 @@ func oversizedPNG(t *testing.T) []byte {
 	if err := png.Encode(&buf, img); err != nil {
 		t.Fatalf("encode oversized test png: %v", err)
 	}
-	// A uniform 42M-pixel image compresses to ~50KB in practice (Go's PNG
-	// encoder isn't maximally aggressive) — still ~800x smaller than the
-	// 42MB it decodes to, and comfortably under the handler's 10MB upload
-	// cap, so this remains the real attack shape: a modest file, a decode
-	// far larger than its size implies.
-	if buf.Len() > 200_000 {
-		t.Fatalf("test fixture should compress small relative to its decoded size — got %d bytes", buf.Len())
+	// A uniform 42M-pixel image compresses to a small fraction of its
+	// decoded size (PNG's DEFLATE handles a uniform image extremely well),
+	// comfortably under the handler's 10MB upload cap — the real attack
+	// shape: a modest file, a decode far larger than its size implies.
+	// Assert on the CAP and the compression RATIO, not a hardcoded
+	// absolute byte count: PNG encoder output isn't guaranteed stable
+	// across Go versions (ut-docs#2302 — this fixture compressed to
+	// ~50KB on Go 1.25 but 280281 bytes on Go 1.27, both still a huge
+	// ratio, tripping a brittle "<= 200_000 bytes" check that was really
+	// only trying to confirm the fixture stays modest).
+	const maxUploadBytes = 10 << 20     // matches handlers.go's ParseMultipartForm cap
+	const minCompressionRatio = 20      // decoded bytes per encoded byte
+	decodedBytes := int64(w) * int64(h) // 1 byte/pixel, image.Gray
+	if buf.Len() >= maxUploadBytes/2 {
+		t.Fatalf("test fixture (built with %s) must stay comfortably under the handler's %d-byte upload cap so the pixel-DIMENSION guard, not the upload-size cap, is what rejects it — got %d bytes", runtime.Version(), maxUploadBytes, buf.Len())
+	}
+	if ratio := decodedBytes / int64(buf.Len()); ratio < minCompressionRatio {
+		t.Fatalf("test fixture (built with %s) should compress at least %dx smaller than its decoded size to stay a meaningful pixel-bomb case — got %dx (%d encoded vs %d decoded bytes)", runtime.Version(), minCompressionRatio, ratio, buf.Len(), decodedBytes)
 	}
 	return buf.Bytes()
 }
