@@ -93,20 +93,14 @@ func RevokePermission(ctx context.Context, db *sql.DB, pluginID, permission stri
 
 // ListPluginPermissions returns all permissions for a plugin with grant status.
 //
-// No production caller (ut-docs#1566). It is the read half of a
-// permission-management surface whose write half IS live: the
-// POST /api/plugins/permissions/grant and /revoke routes (internal/pages/
-// plugin_api.go → GrantPermission/RevokePermission) exist, but no page
-// lists an installed plugin's declared permissions with their grant state
-// for an operator to act on — the two places that render permissions today
-// (the store listing card and the manual-import preview) show a manifest's
-// requested set, not the local grant status. The two production readers of
-// PluginRepo.ListPermissions (wasm_hostfns.go, wasm_tcp.go) want the raw
-// rows for net:/tcp: matching, not this Name/Granted view. Whether that
-// surface should exist is a product/UX call, so this is left in place with
-// its test (TestListPluginPermissions, cited by ut-docs'
-// pos-acceptance-matrix.md) rather than deleted or wired blind. Tracked as
-// ut-docs#2240.
+// Caller: the plugin settings page's Permissions section
+// (internal/pages/plugin_settings_page.go GET /plugins/{id}/settings,
+// ut-docs#2240) — the read half of a permission-management surface whose
+// write half (POST /api/plugins/permissions/grant and /revoke,
+// internal/pages/plugin_api.go → GrantPermission/RevokePermission) already
+// existed. The two production readers of PluginRepo.ListPermissions
+// (wasm_hostfns.go, wasm_tcp.go) want the raw rows for net:/tcp: matching,
+// not this Name/Granted view.
 func ListPluginPermissions(ctx context.Context, db *sql.DB, pluginID string) ([]Permission, error) {
 	repo := data.NewPluginRepo(db)
 	rows, err := repo.ListPermissions(ctx, pluginID)

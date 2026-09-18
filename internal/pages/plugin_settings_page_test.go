@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"html"
 	"net/http"
@@ -1082,5 +1083,114 @@ func TestPluginSettingsPage_GET_AIPluginAPIKeyShowsHostedProviderNotice(t *testi
 	}
 	if strings.Contains(rec.Body.String(), notice) {
 		t.Fatal("the hosted-provider notice must only render for the AI plugin's api_key, not every plugin's secret field")
+	}
+}
+
+// seedPluginPermissions installs a plugin manifest declaring the given
+// permissions (all starting ungranted), mirroring how a real install
+// populates plugin_permissions — ListPluginPermissions reads that table,
+// not the manifest directly, so a test must go through the same install
+// path (internal/plugins.PersistManifest) rather than inserting rows by
+// hand. Any name listed in granted is then explicitly granted.
+func seedPluginPermissions(t *testing.T, db *sql.DB, pluginID string, permissions []string, granted ...string) {
+	t.Helper()
+	m := &plugins.Manifest{
+		ID:          pluginID,
+		Name:        pluginID,
+		Version:     "1.0.0",
+		Entrypoint:  "./test",
+		Permissions: permissions,
+	}
+	if err := plugins.PersistManifest(context.Background(), db, m, plugins.InstallOptions{}); err != nil {
+		t.Fatalf("persist manifest for %s: %v", pluginID, err)
+	}
+	for _, p := range granted {
+		if err := plugins.GrantPermission(context.Background(), db, pluginID, p); err != nil {
+			t.Fatalf("grant %s/%s: %v", pluginID, p, err)
+		}
+	}
+}
+
+func TestPluginSettingsPage_GET_RendersPermissionsWithGrantStatus(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	seedPluginPermissions(t, dp.Db, "p-perm", []string{"sales:read", "sales:write"}, "sales:read")
+
+	req := httptest.NewRequest(http.MethodGet, "/plugins/p-perm/settings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /plugins/p-perm/settings: code %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "sales:read") || !strings.Contains(body, "sales:write") {
+		t.Fatalf("expected both declared permissions rendered, got:\n%s", body)
+	}
+	revokeAt := strings.Index(body, `data-perm-name="sales:read"`)
+	grantAt := strings.Index(body, `data-perm-name="sales:write"`)
+	if revokeAt < 0 || grantAt < 0 {
+		t.Fatalf("expected an action button per permission, got:\n%s", body)
+	}
+	// sales:read is granted -> Revoke button; sales:write is not -> Grant button.
+	if !strings.Contains(body[max(0, revokeAt-200):revokeAt+50], `data-perm-action="revoke"`) {
+		t.Fatalf("expected sales:read (granted) to render a revoke action, got:\n%s", body)
+	}
+	if !strings.Contains(body[max(0, grantAt-200):grantAt+50], `data-perm-action="grant"`) {
+		t.Fatalf("expected sales:write (not granted) to render a grant action, got:\n%s", body)
+	}
+}
+
+func TestPluginSettingsPage_GET_NoPermissionsShowsEmptyState(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newPluginSettingsTestDeps(t)
+
+	// p1 has no manifest with declared permissions in this test DB.
+	req := httptest.NewRequest(http.MethodGet, "/plugins/p1/settings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /plugins/p1/settings: code %d body %s", rec.Code, rec.Body.String())
+	}
+	want := httpx.T("en", "plugins.settings.permissions.none")
+	if !strings.Contains(rec.Body.String(), want) {
+		t.Fatalf("expected the no-permissions empty state %q, got:\n%s", want, rec.Body.String())
+	}
+}
+
+// The grant/revoke endpoints themselves (internal/pages/plugin_api.go) are
+// pre-existing and already covered at the internal/plugins level
+// (TestCheckPermission_Granted et al.) — this proves the new UI's own
+// wiring: a grant via the real handler is reflected on the page's very
+// next GET, end to end through plugins.ListPluginPermissions.
+func TestPluginSettingsAPI_GrantThenPageShowsGrantedStatus(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	pluginMux, dp := newPluginSettingsTestDeps(t)
+	seedPluginPermissions(t, dp.Db, "p-perm2", []string{"events:receive"})
+
+	apiMux := http.NewServeMux()
+	registerPluginAPI(apiMux, dp)
+
+	postReq := httptest.NewRequest(http.MethodPost, "/api/plugins/permissions/grant",
+		strings.NewReader("plugin_id=p-perm2&permission=events%3Areceive"))
+	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	postRec := httptest.NewRecorder()
+	apiMux.ServeHTTP(postRec, postReq)
+	if postRec.Code != http.StatusOK {
+		t.Fatalf("POST grant: code %d body %s", postRec.Code, postRec.Body.String())
+	}
+
+	getReq := httptest.NewRequest(http.MethodGet, "/plugins/p-perm2/settings", nil)
+	getRec := httptest.NewRecorder()
+	pluginMux.ServeHTTP(getRec, getReq)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("GET after grant: code %d body %s", getRec.Code, getRec.Body.String())
+	}
+	body := getRec.Body.String()
+	at := strings.Index(body, `data-perm-name="events:receive"`)
+	if at < 0 {
+		t.Fatalf("expected events:receive to render, got:\n%s", body)
+	}
+	if !strings.Contains(body[max(0, at-200):at+50], `data-perm-action="revoke"`) {
+		t.Fatalf("expected events:receive to show as granted (revoke action) after the grant, got:\n%s", body)
 	}
 }
