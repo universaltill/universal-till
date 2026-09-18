@@ -3703,6 +3703,22 @@ body.login-screen {
    into each other with no visual break. */
 .fiscal-register-group { margin-block-end: 1.5rem; }
 .fiscal-register-group:last-child { margin-block-end: 0; }
+/* ut-docs#2420: the per-location address-edit form (.users-inline, three
+   unstyled text inputs + a submit button) has no intrinsic ability to
+   shrink -- its three ~7.5rem inputs plus labels plus button sum to
+   ~523px, and inline-flex boxes don't wrap by default, so at the 360px
+   floor it overflows the whole document by ~184px once its group also
+   renders a table (an empty group with no rows never reaches this,
+   nothing else on the page changes). Scoped to THIS page's group rather
+   than the shared .users-inline class itself: a bare `flex-wrap: wrap` on
+   .users-inline was already tried and reverted (see the comment on
+   `.users-inline input.rename-input` above, ut-docs#898) because it makes
+   the unrelated /users role-select + "Change role" row wrap even at full
+   desktop width -- that page never carries .fiscal-register-group, so
+   this selector can't touch it. */
+@media (max-width: 480px) {
+  .fiscal-register-group .users-inline { flex-wrap: wrap; }
+}
 
 /* Camera identify overlay (opened on demand from the scan row) */
 .ai-identify-overlay {
