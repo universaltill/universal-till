@@ -883,9 +883,15 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 		return fmt.Errorf("insert plugin hook: %w", err)
 	}
 
-	// 5. Insert permissions (initially not granted)
+	// 5. Insert permissions (initially not granted), then prune any the
+	// current manifest no longer declares (ut-docs#2419) — mirrors how
+	// ReconcilePluginSettings above reconciles settings to the latest
+	// manifest rather than just accumulating.
 	if err := repo.InsertPluginPermissions(ctx, tx, m.ID, m.Permissions); err != nil {
 		return fmt.Errorf("insert plugin permission: %w", err)
+	}
+	if err := repo.PrunePluginPermissions(ctx, tx, m.ID, m.Permissions); err != nil {
+		return fmt.Errorf("prune plugin permission: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
