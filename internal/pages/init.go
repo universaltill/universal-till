@@ -152,6 +152,12 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		i18n.SetShopOverrides(overrides)
 	}
 	httpx.InitCurrency(state.Currency)
+	// ut-docs#2362: same "RenderError has no *common.Deps to read fresh
+	// from" reasoning as InitCurrency above — publish the boot-time theme
+	// so the very first error page a themed till renders already carries
+	// the right stylesheet/shell signature, not just after the first
+	// settings write that happens to touch theme.
+	httpx.InitTheme(state.Theme)
 	// Dedicated till: larger touch targets, no text selection (UT_KIOSK=1).
 	httpx.InitKiosk(os.Getenv("UT_KIOSK") == "1")
 	// Interface scale: the saved setting wins; UT_UI_SCALE env is the
@@ -610,6 +616,11 @@ func newRederiveSettings(dp *common.Deps, authDisabled bool, i18n *config.I18n) 
 			*s = st
 		})
 		httpx.InitCurrency(applied.Currency)
+		// ut-docs#2362: same reasoning as InitCurrency above — a cloud
+		// set_setting theme directive (ADR-0018) or the replica-drift loop
+		// must republish RenderError's cached theme too, or a themed till
+		// keeps showing its error pages unthemed until the next restart.
+		httpx.InitTheme(applied.Theme)
 		// In-place tax swap: replacing the engine (as the settings
 		// handlers do) would empty the basket of a sale in progress.
 		// Both engines: the kiosk's separate instance (ut-docs#449) must

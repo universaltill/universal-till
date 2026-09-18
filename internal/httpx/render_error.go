@@ -71,6 +71,10 @@ func RenderError(w http.ResponseWriter, r *http.Request, status int, msgKey stri
 	data := map[string]any{
 		"title":   "Error",
 		"Message": T(locale, msgKey),
+		// ut-docs#2362: without this the error page carries no theme
+		// stylesheet and, via the shellsig template func, a shell
+		// signature that never matches a themed till's other pages.
+		"theme": currentThemeVal(),
 	}
 	if rerr := t.ExecuteTemplate(w, "base", data); rerr != nil {
 		// Status/headers are already written — nothing more to send the

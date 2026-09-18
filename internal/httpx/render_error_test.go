@@ -135,3 +135,60 @@ func TestRenderErrorBackToSaleURL_DefaultModeIsUnchanged(t *testing.T) {
 		t.Fatalf("expected Back to sale to keep its plain / link when no mode is set, got: %s", body)
 	}
 }
+
+// ut-docs#2362: RenderError's data map never carried ".theme", so a themed
+// till's error page rendered with no theme stylesheet AND — via the
+// shellsig template func base.html's <meta name="ut-shell"> uses — a
+// different ADR-0098 shell signature than every other page on that till,
+// which makes a boosted navigation onto an error page (correctly, but
+// wrongly here) fall back to a full, unthemed document load instead of
+// swapping in place. RenderError has no *common.Deps in scope, so it reads
+// the same process-wide cached value InitTheme publishes, mirroring the
+// InitDisplayMode/backtosaleurl pattern just above.
+func TestRenderErrorCarriesCurrentTheme(t *testing.T) {
+	i18n := realI18n(t)
+	chdirTemp(t)
+	InitI18n(i18n, "en")
+	InitTheme("dark")
+	t.Cleanup(func() { InitTheme("") })
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/tables", nil)
+	RenderError(w, r, http.StatusInternalServerError, "common.error.server", errors.New("boom"))
+
+	body := w.Body.String()
+	if !strings.Contains(body, `data-theme="dark"`) {
+		t.Fatalf("expected the error page to carry the shop's current theme, got: %s", body)
+	}
+	if !strings.Contains(body, `href="/themes/dark.css`) {
+		t.Fatalf("expected the error page to link the theme's stylesheet, got: %s", body)
+	}
+	wantSig := ShellSignature("en", "dark")
+	if !strings.Contains(body, `content="`+wantSig+`"`) {
+		t.Fatalf("expected <meta name=\"ut-shell\"> to match ShellSignature(\"en\", \"dark\") = %q — a themed till's other pages compute this same signature, and a mismatch is what forces a boosted navigation onto an error page to fall back to a full document load; got: %s", wantSig, body)
+	}
+}
+
+// A shop that has never configured a theme (the common case, including this
+// product's own default install) must render exactly as it did before this
+// fix — no regression on the untouched-theme path this bug was masked by.
+func TestRenderErrorDefaultThemeIsUnchanged(t *testing.T) {
+	i18n := realI18n(t)
+	chdirTemp(t)
+	InitI18n(i18n, "en")
+	InitTheme("")
+	t.Cleanup(func() { InitTheme("") })
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/tables", nil)
+	RenderError(w, r, http.StatusInternalServerError, "common.error.server", errors.New("boom"))
+
+	body := w.Body.String()
+	if !strings.Contains(body, `data-theme=""`) {
+		t.Fatalf("expected no theme configured to render an empty data-theme, got: %s", body)
+	}
+	wantSig := ShellSignature("en", "")
+	if !strings.Contains(body, `content="`+wantSig+`"`) {
+		t.Fatalf("expected <meta name=\"ut-shell\"> to match ShellSignature(\"en\", \"\") = %q, got: %s", wantSig, body)
+	}
+}
