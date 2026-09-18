@@ -128,15 +128,16 @@ func postHeldSaleOnPrimary(ctx context.Context, d *common.Deps, client *http.Cli
 // updatedAt is the value the primary actually stamped/stored (ut-docs#2271:
 // the primary is the one clock that decides this, not the caller), so a
 // caller mirroring the row locally carries the exact value the primary
-// holds rather than re-deriving its own.
-func upsertHeldSaleOnPrimary(ctx context.Context, d *common.Deps, client *http.Client, h data.HeldSale) (ok, applied bool, updatedAt string) {
+// holds rather than re-deriving its own. createdAt (ut-docs#2394) is the
+// same idea for the first-park clock read.
+func upsertHeldSaleOnPrimary(ctx context.Context, d *common.Deps, client *http.Client, h data.HeldSale) (ok, applied bool, updatedAt, createdAt string) {
 	var out struct {
 		Data *syncHeldSaleUpsertResult `json:"data"`
 	}
 	if !postHeldSaleOnPrimary(ctx, d, client, "upsert", heldSaleToSyncRow(h), &out) || out.Data == nil {
-		return false, false, ""
+		return false, false, "", ""
 	}
-	return true, out.Data.Applied, out.Data.UpdatedAt
+	return true, out.Data.Applied, out.Data.UpdatedAt, out.Data.CreatedAt
 }
 
 // deleteHeldSaleOnPrimary tries POST /api/sync/held-sales/delete on the
@@ -215,8 +216,17 @@ func fetchHeldSalesFromPrimary(ctx context.Context, d *common.Deps, client *http
 // on the wire, read below via upsertHeldSaleOnPrimary's updatedAt. The
 // local-only fallback (repo.Upsert) is unaffected either way: it always
 // stamps its own now() regardless of h.UpdatedAt, same as before.
+//
+// h.CreatedAt gets the identical treatment for the FIRST-park case
+// (ut-docs#2394, closing ut-docs#2389's observed flake): on a first park
+// it too is left blank by every real caller, and the primary's own clock
+// stamps it and hands the value back via upsertHeldSaleOnPrimary's
+// createdAt, read below, so the local mirror lands the exact same value
+// instead of a second, independent clock read of its own. A re-park's own
+// caller-supplied HeldOrigin.CreatedAt is unaffected (non-blank in, echoed
+// back unchanged, ut-docs#1918).
 func heldSaleWriteThrough(ctx context.Context, d *common.Deps, repo *data.HeldSalesRepo, h data.HeldSale) (heldSaleSyncOutcome, error) {
-	ok, applied, primaryUpdatedAt := upsertHeldSaleOnPrimary(ctx, d, heldSaleProxyClient, h)
+	ok, applied, primaryUpdatedAt, primaryCreatedAt := upsertHeldSaleOnPrimary(ctx, d, heldSaleProxyClient, h)
 	switch {
 	case !ok:
 		return heldSaleSyncedLocalOnly, repo.Upsert(ctx, h)
@@ -248,6 +258,19 @@ func heldSaleWriteThrough(ctx context.Context, d *common.Deps, repo *data.HeldSa
 	// (UpsertIfNewer COALESCEs a blank to local now).
 	if primaryUpdatedAt != "" {
 		h.UpdatedAt = primaryUpdatedAt
+	}
+	// ut-docs#2394: same mixed-version guard as updated_at just above,
+	// applied to created_at -- mirror exactly what the primary reports it
+	// holds for this row (its own clock's stamp on a genuine first park,
+	// since hold_api.go never sets h.CreatedAt itself) rather than let
+	// this till's local insert re-derive its own, independent clock read
+	// a second or two apart from the primary's. Guarded on non-blank for
+	// the identical pre-fix-primary rollout window: an older primary's
+	// answer decodes this field to "", and h.CreatedAt (already correct
+	// for a re-park's HeldOrigin.CreatedAt, or safely left to the local
+	// Upsert's own now() for a first park) must not be blanked by that.
+	if primaryCreatedAt != "" {
+		h.CreatedAt = primaryCreatedAt
 	}
 	mirrorHeldSaleFromPrimary(ctx, repo, h)
 	return heldSaleSyncedPrimary, nil
