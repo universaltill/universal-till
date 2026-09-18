@@ -1230,6 +1230,10 @@
   var q = document.getElementById('cust-q');
   var out = document.getElementById('cust-results');
   var msg = document.getElementById('cust-msg');
+  var custT = {
+    noMatches: "{{ T "settings.data.customer_search_no_match" }}",
+    eraseBtn: "{{ T "settings.data.customer_erase_btn" }}"
+  };
   function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
   function search() {
     msg.textContent = '…'; // not renderNotice — persists past the 2.5s auto-expire (ut-docs#918 review finding 2)
@@ -1252,11 +1256,11 @@
         if (j.error) { renderNotice(msg, 'error', j.error); return; }
         msg.textContent = '';
         var list = (j.data && j.data.customers) || [];
-        if (!list.length) { out.innerHTML = '<p class="muted">No matches.</p>'; return; } // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
+        if (!list.length) { out.innerHTML = '<p class="muted">' + esc(custT.noMatches) + '</p>'; return; }
         out.innerHTML = list.map(function (c) {
           return '<div style="display:flex;gap:.5rem;align-items:center;margin:.2rem 0">'
             + '<span>' + esc(c.Name) + (c.Phone ? ' · ' + esc(c.Phone) : '') + (c.Email ? ' · ' + esc(c.Email) : '') + '</span>'
-            + '<button class="btn secondary" data-erase="' + esc(c.ID) + '">Erase</button></div>';
+            + '<button class="btn secondary" data-erase="' + esc(c.ID) + '">' + esc(custT.eraseBtn) + '</button></div>';
         }).join('');
       }).catch(function (e) { renderNotice(msg, 'error', e); });
   }
