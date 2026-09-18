@@ -1051,7 +1051,7 @@ func TestAdminDumpApplyRoundTrip_ItemModifiers(t *testing.T) {
 	replica := openMigratedDB(t, "replica.db")
 
 	mustExec(t, primary, `INSERT INTO items (id, name, base_price) VALUES ('itm1', 'Flat White', 320)`)
-	mustExec(t, primary, `INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order, is_active) VALUES ('grp1', 'itm1', 'Extras', 0, 0, 2, 0, 1)`)
+	mustExec(t, primary, `INSERT INTO item_modifier_groups (id, name, required, min_select, max_select, sort_order, is_active) VALUES ('grp1', 'Extras', 0, 0, 2, 0, 1)`)
 	mustExec(t, primary, `INSERT INTO item_modifier_options (id, group_id, name, price_delta_minor, sort_order, is_active) VALUES ('opt1', 'grp1', 'Extra shot', 50, 0, 1)`)
 
 	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
@@ -1146,12 +1146,15 @@ func TestAdminDumpApplyRoundTrip_ModifierGroupLinks(t *testing.T) {
 	seed(primary)
 	seed(replica) // items/categories sync via their own adminTables entries, exercised elsewhere — seeded directly here to keep this test scoped to the three link tables.
 
-	// grp1: directly linked to itm1 (CreateGroup auto-links item_modifier_group_links).
-	if _, err := primaryModifiers.CreateGroup(ctx, "grp1", "itm1", "Extras", false, 0, 2, 0); err != nil {
+	// grp1: directly linked to itm1.
+	if _, err := primaryModifiers.CreateGroup(ctx, "grp1", "Extras", false, 0, 2, 0); err != nil {
 		t.Fatalf("CreateGroup grp1: %v", err)
 	}
-	// grp2: anchored elsewhere, offered to itm1 only via its CATEGORY (cat1) — and then opted out.
-	if _, err := primaryModifiers.CreateGroup(ctx, "grp2", "itm-anchor", "Sizes", false, 0, 1, 0); err != nil {
+	if err := primaryModifiers.LinkGroupToItem(ctx, "itm1", "grp1", 0); err != nil {
+		t.Fatalf("LinkGroupToItem grp1: %v", err)
+	}
+	// grp2: shop-wide, offered to itm1 only via its CATEGORY (cat1) — and then opted out.
+	if _, err := primaryModifiers.CreateGroup(ctx, "grp2", "Sizes", false, 0, 1, 0); err != nil {
 		t.Fatalf("CreateGroup grp2: %v", err)
 	}
 	if err := primaryModifiers.LinkGroupToCategory(ctx, "cat1", "grp2", 0); err != nil {
@@ -1508,7 +1511,7 @@ func TestAdminApply_ItemModifierGroupHardDeletedPreExistingLogsWarning(t *testin
 	// Simulates a modifier group created directly on a satellite before
 	// ut-docs#1667 gated /api/catalog/modifier-group to primary-only.
 	mustExec(t, replica, `INSERT INTO items (id, name, base_price) VALUES ('itm1', 'Flat White', 320)`)
-	mustExec(t, replica, `INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order, is_active) VALUES ('grp-orphan', 'itm1', 'Satellite Local', 0, 0, 1, 0, 1)`)
+	mustExec(t, replica, `INSERT INTO item_modifier_groups (id, name, required, min_select, max_select, sort_order, is_active) VALUES ('grp-orphan', 'Satellite Local', 0, 0, 1, 0, 1)`)
 
 	logging.ResetRecent()
 	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {

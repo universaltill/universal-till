@@ -860,6 +860,55 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
                            min-height: 44px; padding-inline: .25rem; }
 .modifier-attach-option input[type="checkbox"] { inline-size: 1.25rem; block-size: 1.25rem;
                                                   flex: none; }
+/* ---------- /modifiers: one card per shop-wide group (ADR-0101, ut-docs#2399) ---------- */
+/* The page is a plain stack of cards (ut-docs#1899's review: no empty
+   editor column at kiosk width); each card is the group's CRUD form, its
+   option rows, and an "Assigned to" block of category checkboxes + item
+   chips. Logical properties only (RTL). Touch targets: every control a
+   finger lands on — the category checkbox labels, the item chips' remove
+   button, the "Add item" row — is 2.75rem tall under body.kiosk (the
+   documented 1024x600 floor), same bar .modifier-attach-option sets just
+   above; outside kiosk they follow the surrounding form's own rhythm. Chips
+   wrap, so a group assigned to twenty items stacks instead of overflowing
+   at 360px. */
+.modifiers-cards { display: flex; flex-direction: column; gap: .75rem; max-inline-size: 44rem; }
+/* ut-docs#2399 (Tester): the create card and the group cards share one
+   column width, so the page reads as a single list rather than a
+   full-width form above a narrower stack. */
+.modifiers-new-group-card { max-inline-size: 44rem; }
+.modifier-card-footer { display: flex; justify-content: flex-end; margin-block-start: .6rem; padding-block-start: .6rem; border-block-start: 1px solid var(--border); }
+.modifier-card.vg-inactive { opacity: .7; }
+.modifier-card.vg-inactive .modifier-assign { opacity: .85; }
+.modifier-delete-btn { margin-inline-start: auto; }
+.modifier-assign { margin-block-start: .75rem; padding-block-start: .6rem; border-block-start: 1px solid var(--border); }
+.modifier-assign-fieldset { border: 0; margin: 0 0 .5rem; padding: 0; min-inline-size: 0; }
+.modifier-assign-fieldset legend { padding: 0; font-size: .8rem; margin-block-end: .25rem; }
+.modifier-assign-row { display: flex; flex-wrap: wrap; gap: .4rem .5rem; align-items: center; }
+/* A category checkbox rendered as a pill — the whole label is the tap
+   target, not just the 1.25rem box inside it. */
+.modifier-assign-cat { display: inline-flex; flex-direction: row; align-items: center; gap: .4rem;
+                       padding-block: .3rem; padding-inline: .6rem; cursor: pointer;
+                       font-size: .85rem; font-weight: 500; color: var(--text); }
+.modifier-assign-cat input[type="checkbox"] { inline-size: 1.15rem; block-size: 1.15rem; flex: none; margin: 0; }
+.modifier-assign-cat:has(input:checked) { background: var(--success-tint); border-color: var(--accent); }
+.modifier-assign-cat.vg-inactive { opacity: .55; }
+/* An assigned item: its name (a deep link into the catalog) plus a compact
+   remove control on the trailing edge. */
+.modifier-assign-item { display: inline-flex; flex-direction: row; align-items: center; gap: .35rem;
+                        padding-block: .25rem; padding-inline: .6rem .3rem; font-size: .85rem; font-weight: 500; }
+.modifier-assign-item a { color: inherit; }
+.modifier-assign-item.vg-inactive { opacity: .55; }
+.modifier-chip-remove { border: 0; background: transparent; color: var(--muted); font-size: 1.1rem; line-height: 1;
+                        inline-size: 1.75rem; block-size: 1.75rem; border-radius: 999px; cursor: pointer;
+                        display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+.modifier-chip-remove:hover, .modifier-chip-remove:focus-visible { background: var(--surface-2); color: var(--text); }
+.modifier-assign-add-item { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-block-start: .5rem; }
+.modifier-assign-add-item .modifiers-item-search { flex: 1 1 12rem; min-inline-size: 8rem; }
+body.kiosk .modifier-assign-cat,
+body.kiosk .modifier-assign-item { min-block-size: 2.75rem; }
+body.kiosk .modifier-chip-remove { inline-size: 2.75rem; block-size: 2.75rem; }
+body.kiosk .modifier-assign-add-item .btn,
+body.kiosk .modifier-assign-add-item .modifiers-item-search { min-block-size: 2.75rem; }
 /* ---------- Option sets (ut-docs#1900) ---------- */
 /* The item panel's apply/generate block, above the variant grid. Flex-wrap
    so the checkbox row folds cleanly at 360px; logical properties only. */

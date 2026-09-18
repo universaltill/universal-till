@@ -6372,14 +6372,11 @@ func (r *POSRepo) CleanupObsoleteItems(ctx context.Context, actorID, blockedActo
 			return 0, fmt.Errorf("cleanup children: %w", err)
 		}
 	}
-	// ADR-0090 §2 (ut-docs#2013): a modifier group anchored to an obsolete
-	// item but still linked to a surviving item must be re-pointed at that
-	// item first, or item_modifier_groups.item_id's own cascade would take
-	// the shared group down with the obsolete one. Same transaction, same
-	// itemSet the DELETE below resolves — never a second connection.
-	if err := NewModifierRepo(r.db).ReanchorGroupsBeforeBulkItemDelete(ctx, tx, itemSet); err != nil {
-		return 0, err
-	}
+	// Modifier groups are shop-wide (ADR-0101, migration 034): the item
+	// delete below only cascades the obsolete items' OWN
+	// item_modifier_group_links / item_modifier_group_opt_outs rows away;
+	// no group row is ever reached by an item delete any more, so the
+	// ADR-0090-era re-anchoring step that used to sit here is gone.
 	res, err := tx.ExecContext(ctx, `DELETE FROM items WHERE `+obsoleteItemsPredicate(includeActive))
 	if err != nil {
 		return 0, fmt.Errorf("cleanup items: %w", err)

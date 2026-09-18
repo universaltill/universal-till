@@ -1,150 +1,77 @@
-{{/* ut-docs#1957: the modifier-group/option CRUD forms, extracted out of
-     catalog_variants.html's old embedded div.catalog-detail-modifiers so the
-     SAME markup can be reused from both /modifiers (the shop-wide CRUD home,
-     one instance of this partial per item, grouped) and the "Manage
-     customization groups" nested <dialog> opened from an item's own edit
-     panel (one instance, scoped to that single item) — see modifiers.html's
-     "modifiers_list" and this same directory's own "modifier_groups_item_
-     panel" wrapper templates for the two call sites.
+{{/* ut-docs#1957: the per-item modifier-group assignment surface, extracted
+     out of catalog_variants.html's old embedded div.catalog-detail-modifiers
+     for the "Manage customization groups" nested <dialog> opened from an
+     item's own edit panel (one instance, scoped to that single item) —
+     see this same file's "modifier_groups_item_panel" wrapper template
+     for the call site.
+
+     ATTACH-ONLY since ut-docs#2330 (product-owner request, 2026-09-16: the
+     item editor's own surface is a multi-select of EXISTING groups, never
+     a place to author new ones), and since ADR-0101 (ut-docs#2399) the
+     ONLY thing this partial renders: the full-CRUD group/option forms it
+     used to carry for /modifiers (one instance per item there) moved into
+     pages/modifiers.html, where a group is now one shop-wide card with no
+     item at all. Nothing here creates, renames or deletes a group.
 
      Expects: .ItemID, .ModifierGroups ([]data.ModifierGroup — every group
-     for this item, active or not, same ListAllGroupsForItem shape the old
-     embedded block always used, so a deactivated group/option stays visible
-     here for reactivation), and .Target — the container id (WITHOUT the
-     leading #) every form's hx-target/hx-swap points back at after a
-     mutation. The two real containers are #modifiers-list (the standalone
-     page) and #modifier-groups-modal-list (the nested dialog) — see
+     DIRECTLY linked to this item, active or not, ListAllGroupsForItem's
+     shape), .AttachableGroups (every other active shop group not yet
+     linked here, ListAttachableModifierGroups), and .Target — the
+     container id (WITHOUT the leading #) every form's hx-target/hx-swap
+     points back at after a mutation: #modifier-groups-modal-list — see
      handlers.go's renderModifierMutationResult, which reads the mutation
-     request's own Hx-Target header right back to decide which of the two
-     to re-render, so this partial and that dispatch can never drift apart. */}}
+     request's own Hx-Target header right back to decide which fragment to
+     re-render, so this partial and that dispatch can never drift apart. */}}
 {{ define "modifier_group_admin" }}
 <div class="catalog-detail-modifiers">
   <div class="muted catalog-detail-label">{{ T "catalog.modifiers.title" }}</div>
-  {{/* ut-docs#2330, independent-review finding: "add a group below" (the
-       full-CRUD copy) is actively wrong here in attach-only mode — there is
-       no add-group form below it any more. catalog.modifiers.summary_none
+  {{/* ut-docs#2330, independent-review finding: catalog.modifiers.summary_none
        ("No Modifiers yet.") is the same neutral wording catalog_variants.html's
-       own summary block already uses for this same empty state, and needs
-       no new locale key. */}}
-  {{ if not .ModifierGroups }}<p class="muted">{{ if .AttachOnly }}{{ T "catalog.modifiers.summary_none" }}{{ else }}{{ T "catalog.modifiers.none" }}{{ end }}</p>{{ end }}
+       own summary block already uses for this same empty state — "add a
+       group below" would be wrong here, there is no add-group form. */}}
+  {{ if not .ModifierGroups }}<p class="muted">{{ T "catalog.modifiers.summary_none" }}</p>{{ end }}
 
   {{ range .ModifierGroups }}
-  {{ $group := . }}
   <div class="modifier-admin-group{{ if not .IsActive }} vg-inactive{{ end }}" data-group-id="{{ .ID }}">
-    {{ if $.AttachOnly }}
-    {{/* ut-docs#2330: the item-editor's own surface is attach/detach only —
-         no rename/required/min-max/option editing reachable from here (that
-         stays exclusively on /modifiers, the .AttachOnly-false branch
-         below). Same visual shape as InheritedGroups' read-only rows further
-         down this same file, for consistency between the two read-only
-         group listings this dialog now shows. */}}
+    {{/* Same visual shape as InheritedGroups' read-only rows further down
+         this same file, for consistency between the two read-only group
+         listings this dialog shows. */}}
     <div class="modifier-admin-group-row">
       <span class="modifier-admin-group-name">{{ .Name }}</span>
       {{/* ut-docs#2330, independent-review finding: ListAllGroupsForItem
-           deliberately includes INACTIVE options too (so the full-CRUD
-           branch below can still reactivate one) — but this read-only list
-           has no Active checkbox to show that state, so a deactivated
+           deliberately includes INACTIVE options too — but this read-only
+           list has no Active checkbox to show that state, so a deactivated
            option must not appear here indistinguishable from a sellable
            one. Filter to active-only, same as InheritedGroups' own options
            summary a little further down this file. */}}
       <span class="muted modifier-admin-options-list">{{ $first := true }}{{ range .Options }}{{ if .IsActive }}{{ if not $first }}, {{ end }}{{ $first = false }}{{ .Name }}{{ end }}{{ end }}</span>
+      {{/* Detach from THIS item only — never deletes the group, and since
+           ADR-0101 is allowed even for the group's last item (the group
+           becomes unassigned, still listed on /modifiers). */}}
       <button type="button" class="btn secondary"
               hx-post="/api/catalog/modifier-group/detach"
               hx-vals='{{ jsonVals "itemId" $.ItemID "groupId" .ID "panelItem" $.ItemID }}'
               hx-confirm="{{ T "catalog.modifiers.detach_confirm" }}"
               hx-target="#{{ $.Target }}" hx-swap="outerHTML">{{ T "catalog.modifiers.detach" }}</button>
     </div>
-    {{ else }}
-    <form hx-post="/api/catalog/modifier-group" hx-target="#{{ $.Target }}" hx-swap="outerHTML" class="modifier-admin-group-row">
-      <input type="hidden" name="panelItem" value="{{ $.ItemID }}">
-      <input type="hidden" name="itemId" value="{{ $.ItemID }}">
-      <input type="hidden" name="id" value="{{ .ID }}">
-      <input type="text" name="name" value="{{ .Name }}" required placeholder="{{ T "catalog.modifiers.group_name" }}">
-      <label><input type="checkbox" name="required" value="1" {{ if .Required }}checked{{ end }}> {{ T "catalog.modifiers.required" }}</label>
-      <label>{{ T "catalog.modifiers.min" }} <input type="number" name="minSelect" value="{{ .MinSelect }}" min="0" style="max-inline-size:4rem"></label>
-      <label>{{ T "catalog.modifiers.max" }} <input type="number" name="maxSelect" value="{{ .MaxSelect }}" min="1" style="max-inline-size:4rem"></label>
-      <!-- Checkbox semantics: an unchecked box submits nothing, so this
-           pairs it with a hidden isActive=0 (same convention as the
-           variant form in catalog_variants.html) — without it, unchecking
-           "Active" and saving would silently do nothing. -->
-      <input type="hidden" name="isActive" value="0">
-      <label><input type="checkbox" name="isActive" value="1" {{ if .IsActive }}checked{{ end }}> {{ T "catalog.active" }}</label>
-      <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
-      <!-- ut-docs#2046: detach-from-this-item-only, distinct from the
-           Active checkbox above (deactivate = gone from sale everywhere but
-           still owned by this item) and from DeleteGroup (not wired to any
-           handler — removes a group from EVERY item, never offered here).
-           A standalone hx-post button, not a second <form>, matching the
-           barcode-remove convention (catalog_variants.html) rather than
-           nesting two different POST targets in one <form>. -->
-      <button type="button" class="btn secondary"
-              hx-post="/api/catalog/modifier-group/detach"
-              hx-vals='{{ jsonVals "itemId" $.ItemID "groupId" .ID "panelItem" $.ItemID }}'
-              hx-confirm="{{ T "catalog.modifiers.detach_confirm" }}"
-              hx-target="#{{ $.Target }}" hx-swap="outerHTML">{{ T "catalog.modifiers.detach" }}</button>
-    </form>
-
-    <div class="modifier-admin-options">
-      {{ range .Options }}
-      <form hx-post="/api/catalog/modifier-option" hx-target="#{{ $.Target }}" hx-swap="outerHTML" class="modifier-admin-option-row{{ if not .IsActive }} vg-inactive{{ end }}">
-        <input type="hidden" name="panelItem" value="{{ $.ItemID }}">
-        <input type="hidden" name="itemId" value="{{ $.ItemID }}">
-        <input type="hidden" name="groupId" value="{{ $group.ID }}">
-        <input type="hidden" name="id" value="{{ .ID }}">
-        <input type="text" name="name" value="{{ .Name }}" required placeholder="{{ T "catalog.modifiers.option_name" }}">
-        <!-- ut-docs#1284: type="number" corrupts a decimal typed via the
-             kiosk OSK (see index.html's split-tender amount field). The
-             /api/catalog/modifier-option handler already parses this raw
-             string server-side, so no JS change is needed. -->
-        <input type="text" inputmode="decimal" name="priceDeltaMajor" class="modifier-price-major" data-minor="{{ .PriceDeltaMinor }}" {{ moneypattern currency.Decimals false }} title="{{ T "catalog.modifiers.price_delta" }}">
-        <input type="hidden" name="isActive" value="0">
-        <label><input type="checkbox" name="isActive" value="1" {{ if .IsActive }}checked{{ end }}> {{ T "catalog.active" }}</label>
-        <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
-      </form>
-      {{ end }}
-      <form hx-post="/api/catalog/modifier-option" hx-target="#{{ $.Target }}" hx-swap="outerHTML" class="modifier-admin-option-row">
-        <input type="hidden" name="panelItem" value="{{ $.ItemID }}">
-        <input type="hidden" name="itemId" value="{{ $.ItemID }}">
-        <input type="hidden" name="groupId" value="{{ $group.ID }}">
-        <input type="hidden" name="isActive" value="1">
-        <input type="text" name="name" required placeholder="{{ T "catalog.modifiers.option_name" }} — {{ T "catalog.modifiers.option_example" }}">
-        <input type="text" inputmode="decimal" name="priceDeltaMajor" {{ moneypattern currency.Decimals false }} placeholder="0.00">
-        <button class="btn" type="submit">{{ T "catalog.modifiers.add_option" }}</button>
-      </form>
-    </div>
-    {{ end }}
   </div>
   {{ end }}
 
-  {{ if not .AttachOnly }}
-  <form hx-post="/api/catalog/modifier-group" hx-target="#{{ .Target }}" hx-swap="outerHTML" class="modifier-admin-group-row modifier-admin-group-new">
-    <input type="hidden" name="panelItem" value="{{ .ItemID }}">
-    <input type="hidden" name="itemId" value="{{ .ItemID }}">
-    <input type="hidden" name="isActive" value="1">
-    <input type="text" name="name" required placeholder="{{ T "catalog.modifiers.add_group" }} — {{ T "catalog.modifiers.group_example" }}">
-    <label><input type="checkbox" name="required" value="1"> {{ T "catalog.modifiers.required" }}</label>
-    <label>{{ T "catalog.modifiers.min" }} <input type="number" name="minSelect" value="0" min="0" style="max-inline-size:4rem"></label>
-    <label>{{ T "catalog.modifiers.max" }} <input type="number" name="maxSelect" value="1" min="1" style="max-inline-size:4rem"></label>
-    <button class="btn" type="submit">{{ T "catalog.modifiers.add_group" }}</button>
-  </form>
-  {{ end }}
-
   {{/* ut-docs#2046 / ADR-0090 §5: attach an existing shop-wide group to this
-       item instead of recreating it. Only rendered when there is something
-       left to attach (a shop with one group, already linked here, has
-       nothing to offer) — AttachableGroups is every OTHER active group not
-       already linked to .ItemID, computed server-side
-       (ModifierRepo.ListAttachableModifierGroups). */}}
+       item. Only rendered when there is something left to attach (a shop
+       with one group, already linked here, has nothing to offer) —
+       AttachableGroups is every OTHER active group not already linked to
+       .ItemID, computed server-side (ModifierRepo.ListAttachableModifierGroups),
+       which since ADR-0101 naturally includes groups assigned to nothing
+       yet. */}}
   {{ if .AttachableGroups }}
-  {{ if .AttachOnly }}
-  {{/* ut-docs#2330: the item-editor's attach control is a real multi-select
-       (product-owner request, 2026-09-16) — checkboxes rather than a native
-       <select multiple>, which touch browsers handle poorly (no reliable
-       tap-to-multi-select, tiny option rows) and would fail this product's
-       own touch-target/kiosk-floor bar (`ux` skill, 1024×600) on a
-       touchscreen till. One submit attaches every checked group in
-       a single request (handlers.go's attach handler accepts multiple
-       groupId values for exactly this). */}}
+  {{/* ut-docs#2330: a real multi-select (product-owner request, 2026-09-16)
+       — checkboxes rather than a native <select multiple>, which touch
+       browsers handle poorly (no reliable tap-to-multi-select, tiny option
+       rows) and would fail this product's own touch-target/kiosk-floor bar
+       (`ux` skill, 1024×600) on a touchscreen till. One submit attaches
+       every checked group in a single request (handlers.go's attach
+       handler accepts multiple groupId values for exactly this). */}}
   <form hx-post="/api/catalog/modifier-group/attach" hx-target="#{{ .Target }}" hx-swap="outerHTML" class="modifier-admin-group-row modifier-admin-group-attach modifier-admin-attach-multi">
     <input type="hidden" name="panelItem" value="{{ .ItemID }}">
     <input type="hidden" name="itemId" value="{{ .ItemID }}">
@@ -160,70 +87,36 @@
     </fieldset>
     <button class="btn secondary" type="submit">{{ T "catalog.modifiers.attach" }}</button>
   </form>
-  {{ else }}
-  <form hx-post="/api/catalog/modifier-group/attach" hx-target="#{{ .Target }}" hx-swap="outerHTML" class="modifier-admin-group-row modifier-admin-group-attach">
-    <input type="hidden" name="panelItem" value="{{ .ItemID }}">
-    <input type="hidden" name="itemId" value="{{ .ItemID }}">
-    <select name="groupId" required>
-      <option value="" disabled selected>{{ T "catalog.modifiers.attach_placeholder" }}</option>
-      {{ range .AttachableGroups }}
-      <option value="{{ .ID }}">{{ .Name }}</option>
-      {{ end }}
-    </select>
-    <button class="btn secondary" type="submit">{{ T "catalog.modifiers.attach" }}</button>
-  </form>
   {{ end }}
-  {{ end }}
-
-  <script>
-    (function () {
-      // Scoped to THIS invocation only via currentScript — this partial can
-      // render more than once on the same page (one per item on /modifiers),
-      // so a plain document-wide querySelectorAll would re-run the same
-      // conversion redundantly across every other instance's fields too.
-      var root = document.currentScript.closest('.catalog-detail-modifiers');
-      if (!root) return;
-      root.querySelectorAll('.modifier-price-major').forEach(function (el) {
-        var minor = parseInt(el.dataset.minor || '0', 10);
-        if (minor > 0 && window.utCurrency) {
-          el.value = window.utCurrency.toMajor(minor);
-        }
-      });
-    })();
-  </script>
 </div>
 {{ end }}
 
 {{/* Wraps a single item's modifier_group_admin in the nested "Manage
      customization groups" dialog's own re-render container
-     (#modifier-groups-modal-list) — the item-scoped counterpart of
-     modifiers.html's shop-wide "modifiers_list". Expects the same data
-     shape (.ItemID, .ModifierGroups) with .Target already set to
-     "modifier-groups-modal-list" by the caller (handlers.go's
+     (#modifier-groups-modal-list). Expects the same data shape (.ItemID,
+     .ModifierGroups, .AttachableGroups, .InheritedGroups) with .Target
+     already set to "modifier-groups-modal-list" by the caller (handlers.go's
      renderItemModifierGroupsPanel), so this template only owns the
      wrapping id, not the target value itself. */}}
 {{ define "modifier_groups_item_panel" }}
 <div id="modifier-groups-modal-list">
-  {{/* ut-docs#2046, independent-review finding: a refused mutation (e.g.
-       the detach-guard's last-link refusal) answers through this SAME
-       fragment with .Notice set — see modifiers_list's matching comment in
-       modifiers.html for why (app.js's htmx:beforeSwap never force-swaps a
+  {{/* ut-docs#2046, independent-review finding: a refused mutation (e.g. a
+       stale attach picker's 409) answers through this SAME fragment with
+       .Notice set — app.js's htmx:beforeSwap never force-swaps a
        non-text/html error response, and this dialog has no #pos-alert
-       fallback to fall through to). */}}
+       fallback to fall through to. */}}
   {{ if .Notice }}<p class="field-error-msg" role="alert">{{ .Notice }}</p>{{ end }}
   {{ template "modifier_group_admin" . }}
 
   {{/* ut-docs#2284 / ADR-0094 §5: the groups this item INHERITS from its
-       category — read-only here (a category link is edited on /categories,
-       and the group itself on /modifiers or via its own item), shown greyed
-       once the item has skipped it, with the one per-item control the ADR
-       gives: skip (opt out) / use again (opt in). Deliberately separate
-       from the "Remove from this item" button above — that one deletes a
-       DIRECT link and is guarded against orphaning the group; an opt-out is
-       a presence row that only ever suppresses the category attachment and
-       never touches a direct link (see handlers.go's optToggle). Only this
-       item-scoped wrapper renders it; the shop-wide /modifiers list does
-       not (InheritedGroups is nil there). */}}
+       category — read-only here (a category link is edited on /categories
+       or on the group's own /modifiers card, and the group itself on
+       /modifiers), shown greyed once the item has skipped it, with the one
+       per-item control the ADR gives: skip (opt out) / use again (opt in).
+       Deliberately separate from the "Remove from this item" button above
+       — that one deletes a DIRECT link; an opt-out is a presence row that
+       only ever suppresses the category attachment and never touches a
+       direct link (see handlers.go's optToggle). */}}
   <div class="catalog-detail-modifiers catalog-detail-inherited">
     <div class="muted catalog-detail-label">{{ T "catalog.modifiers.inherited_title" }}</div>
     <p class="muted catalog-inherited-help">{{ T "catalog.modifiers.inherited_help" }}</p>

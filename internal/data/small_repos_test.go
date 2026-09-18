@@ -556,8 +556,11 @@ func TestModifierRepo_DeleteOption(t *testing.T) {
 	if _, err := d.DB.ExecContext(ctx, `INSERT INTO items(id,sku,name,base_price,is_active,is_weighed,unit) VALUES('itm1','SKU1','Latte',300,1,0,'each')`); err != nil {
 		t.Fatal(err)
 	}
-	groupID, err := repo.CreateGroup(ctx, "grp1", "itm1", "Size", false, 0, 1, 0)
+	groupID, err := repo.CreateGroup(ctx, "grp1", "Size", false, 0, 1, 0)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.LinkGroupToItem(ctx, "itm1", groupID, 0); err != nil {
 		t.Fatal(err)
 	}
 	optID, err := repo.CreateOption(ctx, "opt1", groupID, "Large", 50, 0)

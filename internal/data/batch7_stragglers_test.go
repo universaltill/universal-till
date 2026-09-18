@@ -281,11 +281,17 @@ func TestModifierRepo_ItemIDsWithModifiers(t *testing.T) {
 	mustExec(t, dbo, `INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-mod','SKU-M','Coffee',300,1)`)
 	mustExec(t, dbo, `INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-retired','SKU-R','Old Coffee',300,1)`)
 	mustExec(t, dbo, `INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-plain','SKU-P','Water',100,1)`)
-	if _, err := repo.CreateGroup(ctx, "g-active", "itm-mod", "Extras", false, 0, 2, 0); err != nil {
+	if _, err := repo.CreateGroup(ctx, "g-active", "Extras", false, 0, 2, 0); err != nil {
 		t.Fatal(err)
 	}
-	gid, err := repo.CreateGroup(ctx, "g-retired", "itm-retired", "Extras", false, 0, 2, 0)
+	if err := repo.LinkGroupToItem(ctx, "itm-mod", "g-active", 0); err != nil {
+		t.Fatal(err)
+	}
+	gid, err := repo.CreateGroup(ctx, "g-retired", "Extras", false, 0, 2, 0)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.LinkGroupToItem(ctx, "itm-retired", gid, 0); err != nil {
 		t.Fatal(err)
 	}
 	mustExec(t, dbo, `UPDATE item_modifier_groups SET is_active = 0 WHERE id = ?`, gid)

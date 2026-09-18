@@ -188,18 +188,22 @@ var adminTables = []adminTable{
 	// ut-docs#1667: same shape as #1546 (tables/kitchen_stations) — catalog
 	// structure that reads shop-wide but was missing from this list
 	// entirely, found while classifying every table for #1586's schema-drift
-	// guard. item_modifier_groups FKs onto items(id), so it must apply after
-	// items; item_modifier_options FKs onto item_modifier_groups(id), so it
-	// must apply after that. Both have a real is_active column (the app's
+	// guard. item_modifier_groups is shop-wide and, since ADR-0101
+	// (ut-docs#2399, migration 034), no longer FKs onto items at all — it
+	// sits after items only because every link table below it does, and
+	// keeping the block together reads better; item_modifier_options FKs
+	// onto item_modifier_groups(id), so it must apply after that. Both
+	// have a real is_active column (the app's
 	// own CreateGroup/UpdateGroup and CreateOption/UpdateOption never hard-
 	// delete), so hasIsActive mirrors items/item_variants above. Mutation is
 	// now gated primary-only in catalog/handlers.go's requirePrimary (same
 	// #1590 pattern as registers/locations), which is what makes this safe
 	// to sync: without that gate, a satellite-created modifier would just
 	// vanish on the next admin pull instead of failing loudly up front.
-	// ModifierRepo.DeleteGroup/DeleteOption DO hard-delete, but neither is
-	// wired to any handler today (grepped) — whoever wires one up must gate
-	// it too, the same as CreateGroup/UpdateGroup/CreateOption/UpdateOption.
+	// ModifierRepo.DeleteGroup DOES hard-delete and IS wired, to POST
+	// /api/catalog/modifier-group/delete (ADR-0101 Decision 2), behind the
+	// same requirePrimary gate; DeleteOption is still unwired — whoever
+	// wires it up must gate it the same way.
 	{name: "item_modifier_groups", pk: []string{"id"}, hasIsActive: true},
 	// ADR-0090 / ut-docs#2013: which items use which modifier group, now
 	// that a group is shareable — catalog structure of exactly the same
