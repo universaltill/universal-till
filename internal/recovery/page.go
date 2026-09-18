@@ -92,12 +92,29 @@ func retryHandler(retry chan<- struct{}) http.HandlerFunc {
 	}
 }
 
+// HeaderMode and ModeRecovery let a caller distinguish "recovery mode is up
+// and an operator can act on it" from "nothing is listening at all" without
+// treating /healthz's 503 as healthy — ut-docs#1437: mobile.Start's
+// waitUntilReady polls /healthz to decide when the native shell's WebView
+// can navigate, and needs exactly this distinction. /healthz itself stays
+// 503 in recovery mode regardless (see healthHandler below) so every
+// shell's existing healthy-vs-unhealthy lock/exit-gating logic (ut-docs#1437,
+// #1438) is unchanged — this header is additive, not a replacement for the
+// status code. Exported so mobile imports these instead of duplicating the
+// literal strings (no import cycle: this package imports neither mobile nor
+// internal/app).
+const (
+	HeaderMode   = "X-UT-Mode"
+	ModeRecovery = "recovery"
+)
+
 func healthHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Recovery mode is, by definition, not healthy — every shell's
 		// "don't lock the kiosk / don't consider the till usable until
 		// healthy" logic (ut-docs#1437, #1438) keys off this staying
 		// non-200 for the entire time recovery mode is serving.
+		w.Header().Set(HeaderMode, ModeRecovery)
 		http.Error(w, "recovery mode", http.StatusServiceUnavailable)
 	}
 }
