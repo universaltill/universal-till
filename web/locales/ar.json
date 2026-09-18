@@ -2564,5 +2564,9 @@
   "modifiers.delete": "حذف المجموعة",
   "modifiers.delete_confirm": "هل تريد حذف مجموعة الإضافات هذه من كل مكان؟ ستُزال من كل الفئات والأصناف. تحتفظ المبيعات السابقة بالإضافات التي سُجّلت فيها.",
   "modifiers.no_categories": "لا توجد فئات بعد.",
-  "modifiers.pick_item": "اختر صنفًا من القائمة."
+  "modifiers.pick_item": "اختر صنفًا من القائمة.",
+  "modifiers.filter_unassigned": "إظهار غير المُسندة فقط",
+  "modifiers.unassigned_count": "%d مجموعة غير مُسندة",
+  "modifiers.delete_unassigned": "حذف كل المجموعات غير المُسندة",
+  "modifiers.delete_unassigned_confirm": "هل تريد حذف كل %d مجموعة إضافات غير مُسندة من كل مكان؟ تحتفظ المبيعات السابقة بالإضافات التي سُجّلت فيها."
 }

@@ -2564,5 +2564,9 @@
   "modifiers.delete": "حذف گروه",
   "modifiers.delete_confirm": "این گروه افزودنی همه‌جا حذف شود؟ از همهٔ دسته‌ها و کالاها برداشته می‌شود. فروش‌های گذشته افزودنی‌های ثبت‌شدهٔ خود را نگه می‌دارند.",
   "modifiers.no_categories": "هنوز دسته‌ای وجود ندارد.",
-  "modifiers.pick_item": "یک کالا را از فهرست انتخاب کنید."
+  "modifiers.pick_item": "یک کالا را از فهرست انتخاب کنید.",
+  "modifiers.filter_unassigned": "فقط موارد اختصاص‌نیافته",
+  "modifiers.unassigned_count": "%d گروه اختصاص‌نیافته",
+  "modifiers.delete_unassigned": "حذف همهٔ گروه‌های اختصاص‌نیافته",
+  "modifiers.delete_unassigned_confirm": "همهٔ %d گروه افزودنی اختصاص‌نیافته همه‌جا حذف شود؟ فروش‌های گذشته افزودنی‌های ثبت‌شدهٔ خود را نگه می‌دارند."
 }

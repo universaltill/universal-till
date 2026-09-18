@@ -58,6 +58,27 @@
        that would otherwise be a silent no-op. See handlers.go's
        renderModifierMutationResult. */}}
   {{ if .Notice }}<p class="field-error-msg" role="alert">{{ .Notice }}</p>{{ end }}
+  {{/* ut-docs#2406: shop-wide bulk cleanup for groups nobody assigned
+       anywhere any more (item clean-up since ADR-0101 never deletes the
+       group itself). Lives INSIDE #modifiers-list, not the page-level
+       "content" block above, so the count and the button disappear
+       together with the last orphan on the very same outerHTML swap that
+       deletes it — sitting outside this fragment would leave both stale
+       after a mutation. Hidden entirely at zero: there is nothing to
+       filter or bulk-delete, and a permanently-visible zero-count control
+       is clutter, not information. */}}
+  {{ if .UnassignedCount }}
+  <div class="card modifiers-unassigned-toolbar">
+    <label class="modifiers-filter-unassigned">
+      <input type="checkbox" id="modifiers-filter-unassigned"> {{ T "modifiers.filter_unassigned" }}
+    </label>
+    <span class="muted">{{ printf (T "modifiers.unassigned_count") .UnassignedCount }}</span>
+    <button type="button" class="btn secondary"
+            hx-post="/api/catalog/modifier-group/delete-unassigned"
+            hx-confirm="{{ printf (T "modifiers.delete_unassigned_confirm") .UnassignedCount }}"
+            hx-target="#modifiers-list" hx-swap="outerHTML">{{ T "modifiers.delete_unassigned" }}</button>
+  </div>
+  {{ end }}
   {{/* Create: name + rules only. No item picker (ADR-0101 Decision 2) —
        the group gets its assignments from its card below once it exists. */}}
   <div class="card modifiers-new-group-card">
@@ -94,7 +115,7 @@
   <div class="modifiers-cards">
     {{ range .Groups }}
     {{ $group := . }}
-    <div class="card modifier-card{{ if not .IsActive }} vg-inactive{{ end }}" data-group-id="{{ .ID }}">
+    <div class="card modifier-card{{ if not .IsActive }} vg-inactive{{ end }}{{ if and (not .Categories) (not .Items) }} modifier-card-unassigned{{ end }}" data-group-id="{{ .ID }}">
       <form hx-post="/api/catalog/modifier-group" hx-target="#modifiers-list" hx-swap="outerHTML" class="modifier-admin-group-row">
         <input type="hidden" name="id" value="{{ .ID }}">
         <input type="text" name="name" value="{{ .Name }}" required placeholder="{{ T "catalog.modifiers.group_name" }}">
@@ -280,6 +301,20 @@
         showMajorPrices();
       } else {
         document.addEventListener('DOMContentLoaded', showMajorPrices);
+      }
+      // ut-docs#2406: purely a display filter, no server round-trip — every
+      // card is already in the DOM. Reset (unchecked) on every fragment
+      // swap, same as every other in-fragment control here; not worth
+      // persisting across a mutation that just changed the very set of
+      // cards it filters.
+      var filterUnassigned = root.querySelector('#modifiers-filter-unassigned');
+      if (filterUnassigned) {
+        filterUnassigned.addEventListener('change', function () {
+          root.querySelectorAll('.modifier-card').forEach(function (card) {
+            var hide = filterUnassigned.checked && !card.classList.contains('modifier-card-unassigned');
+            card.style.display = hide ? 'none' : '';
+          });
+        });
       }
     })();
   </script>
