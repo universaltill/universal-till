@@ -70,14 +70,16 @@ async function seedModifierItem(page: Page): Promise<SeededModItem> {
 
   // Same read-back trick sell-screen-categories-tab-2283.spec.ts uses: the
   // group-create POST doesn't hand back the new group's id, so read the
-  // modifier-groups-panel fragment and pull it from the hidden id input
-  // right before this group's own name input.
+  // modifier-groups-panel fragment and pull it from the stable
+  // data-group-id attribute right before this group's own name text
+  // (ut-docs#2330: that panel is attach/detach-only now, no id/name inputs
+  // to scan for).
   const panelResp = await page.request.get(`/api/catalog/modifier-groups-panel?item_id=${itemId}`);
   expect(panelResp.ok(), 'fetch modifier-groups-panel').toBe(true);
   const html = await panelResp.text();
-  const nameIdx = html.indexOf(`value="${groupName}"`);
+  const nameIdx = html.indexOf(`>${groupName}<`);
   expect(nameIdx, 'modifier-groups-panel must contain the new group').toBeGreaterThan(-1);
-  const idMatches = [...html.slice(0, nameIdx).matchAll(/name="id" value="([^"]*)"/g)];
+  const idMatches = [...html.slice(0, nameIdx).matchAll(/data-group-id="([^"]*)"/g)];
   expect(idMatches.length, 'modifier-groups-panel must expose the new group id').toBeGreaterThan(0);
   const groupId = idMatches[idMatches.length - 1][1];
 

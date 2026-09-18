@@ -831,6 +831,35 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
 .modifier-admin-options { margin-block-start: .35rem; }
 .modifier-admin-group-new { border: 1px dashed var(--border); border-radius: var(--radius);
                              padding: .6rem .75rem; }
+/* ut-docs#2330: item-editor attach-only multi-select — a checkbox list, not
+   a native <select multiple> (touch browsers handle multi-select poorly).
+   .modifier-admin-options-list reuses .modifier-inherited-options' own
+   flex-basis so the two read-only rows (own groups here, inherited groups
+   further down this file) size their comma-separated option text the same
+   way. .modifier-attach-option gets the full stack's own column layout so
+   each checkbox row is a full-width tap target, not just the checkbox
+   itself — same 44px floor as .held-chip/.modifier-option elsewhere in this
+   file, kiosk included (this row is plain flex, not an <input>/<select>, so
+   body.kiosk's own min-height rules for those two elements don't reach it). */
+/* Independent-review finding: this rule was missing entirely, so the name
+   span fell back to flex's own 0 1 auto default next to
+   .modifier-admin-options-list's 2 1 12rem sibling above — shrinking to
+   content, losing weight, and not lining up with .modifier-inherited-name
+   directly below it in the DOM despite the doc comment above claiming
+   parity. Same values as that class. */
+.modifier-admin-group-name { flex: 1 1 10rem; min-inline-size: 8rem; font-weight: 600; }
+.modifier-admin-options-list { flex: 2 1 12rem; font-size: .85rem; }
+.modifier-admin-attach-multi { flex-direction: column; align-items: stretch; }
+/* Reset the browser's own default fieldset/legend chrome (border, inset
+   padding) — this is a layout grouping for screen readers, not a visual
+   frame; `.catalog-detail-label`'s own rule already gives the legend its
+   text styling. */
+.modifier-attach-fieldset { border: 0; margin: 0; padding: 0; min-inline-size: 0; }
+.modifier-attach-fieldset legend { padding: 0; }
+.modifier-attach-option { display: flex; flex-direction: row; align-items: center; gap: .5rem;
+                           min-height: 44px; padding-inline: .25rem; }
+.modifier-attach-option input[type="checkbox"] { inline-size: 1.25rem; block-size: 1.25rem;
+                                                  flex: none; }
 /* ---------- Option sets (ut-docs#1900) ---------- */
 /* The item panel's apply/generate block, above the variant grid. Flex-wrap
    so the checkbox row folds cleanly at 360px; logical properties only. */
@@ -1030,6 +1059,19 @@ label.field-checks { display: flex; flex-direction: row; align-items: center; ga
 .modifier-groups-head { flex: none; display: flex; flex-direction: column; gap: .4rem;
                         padding: .6rem 1.5rem 0; border-block-end: 1px solid var(--border);
                         background: var(--surface); }
+/* ut-docs#2330: the dialog's OWN body never had a scroll container before
+   this card (pre-existing gap — `#modifier-groups-modal-list` had no rule
+   at all, unlike `.catalog-form-body`'s documented head/body layering just
+   above). It only got away with that while the attach control was a
+   collapsed <select> and the CRUD forms were the only content; the new
+   always-expanded checkbox list can make this dialog considerably taller on
+   a shop with several modifier groups, which would silently overflow the
+   dialog's own 86vh cap (`.modifier-groups-modal`) with no way to reach the
+   Attach button below the fold. Same flex/overflow shape as
+   .catalog-form-body, own selector since #modifier-groups-modal-list is an
+   id (the hx-swap target), not that class. */
+#modifier-groups-modal-list { flex: 1 1 auto; min-block-size: 0; overflow-y: auto;
+                               overflow-x: hidden; padding: 0 1.5rem 1rem; }
 /* One row at 1024×600 (the kiosk floor), wrapping into two at phone width:
    the title+delete group and the action group each keep their own
    children on one line; only the two GROUPS wrap relative to each other. */

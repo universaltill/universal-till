@@ -87,15 +87,18 @@ async function seedModifier(page: Page, itemId: string, optionName: string): Pro
   // The group id isn't in that POST's own response (it answers with the
   // item's #catalog-variants fragment by default, no Hx-Target header —
   // see handlers.go's renderModifierMutationResult) — read it back from
-  // the modifier-groups-panel fragment instead, same shape
-  // modifier_group_admin.html renders it in: a hidden name="id" input
-  // right before the group's own name="name" input on the same form.
+  // the modifier-groups-panel fragment instead. ut-docs#2330: that panel is
+  // now attach/detach-only (no name="id"/name="name" inputs at all for the
+  // item's own groups), so read the stable data-group-id attribute
+  // modifier_group_admin.html's wrapping .modifier-admin-group div carries
+  // in BOTH render modes, keyed off the group's own name text rather than
+  // an input's value= (nameIdx's old role).
   const panelResp = await page.request.get(`/api/catalog/modifier-groups-panel?item_id=${itemId}`);
   expect(panelResp.ok(), 'fetch modifier groups panel').toBe(true);
   const html = await panelResp.text();
-  const nameIdx = html.indexOf(`value="${groupName}"`);
+  const nameIdx = html.indexOf(`>${groupName}<`);
   expect(nameIdx, 'modifier-groups-panel must contain the new group').toBeGreaterThan(-1);
-  const idMatches = [...html.slice(0, nameIdx).matchAll(/name="id" value="([^"]*)"/g)];
+  const idMatches = [...html.slice(0, nameIdx).matchAll(/data-group-id="([^"]*)"/g)];
   expect(idMatches.length, 'modifier-groups-panel must expose the new group id').toBeGreaterThan(0);
   const groupId = idMatches[idMatches.length - 1][1];
 

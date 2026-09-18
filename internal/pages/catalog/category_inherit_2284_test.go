@@ -86,8 +86,10 @@ func TestItemModifierGroupsPanel_InheritedGroupsWithOptOutToggle(t *testing.T) {
 		t.Fatalf("panel: %d %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	// Own groups render through the unchanged edit forms (name inputs).
-	for _, want := range []string{`value="Extras"`, `value="Syrup"`} {
+	// Own groups render as read-only rows (ut-docs#2330: the item-scoped
+	// panel is attach/detach-only, no inline rename form) — plain text, not
+	// an editable name input.
+	for _, want := range []string{`class="modifier-admin-group-name">Extras<`, `class="modifier-admin-group-name">Syrup<`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("panel lost the item's own group %s:\n%s", want, body)
 		}
