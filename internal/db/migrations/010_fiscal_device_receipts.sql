@@ -7,8 +7,9 @@
 -- per-till in internal/data/sync_admin_repo.go's nonAdminTables.
 --
 -- Deliberately a NUMBERED migration rather than an edit to 001_init.sql,
--- even though CLAUDE.md still permits editing the baseline freely
--- pre-revenue (ADR-0074). Permission is not the constraint here — the
+-- even though CLAUDE.md at the time still permitted editing the baseline
+-- freely pre-revenue (ADR-0074 Decision 1, since withdrawn by ADR-0100 after
+-- ut-docs#2395). Permission was never the constraint here — the
 -- MECHANISM is: internal/db compares each applied migration's checksum on
 -- every boot, and `idempotentRerunVersions` is empty, so a till that has
 -- already run 001 hits the hard "a migration file was renamed or edited

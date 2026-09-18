@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // withBaseline returns the real embedded migration set (just 001_init.sql,
@@ -241,5 +243,199 @@ func TestOpenFailsWhenAppliedBaselineDriftsOnDisk(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// v0180BaselineChecksum is what every till that installed v0.1.0…v0.18.0
+// recorded for version 1, and what the restored 001_init.sql yields again
+// (ut-docs#2395). v0192BaselineChecksum is the accidentally-shipped variant
+// that v0.19.0–v0.19.2 fresh installs recorded (001 edited by ut-docs#2312).
+// Both are literals on purpose — computing them from the file would make
+// the population tests below tautological.
+const (
+	v0180BaselineChecksum = "ee6f0a910e4259cea503aeddb845c169e82e0d34182ef637f191c9ae1ae71b21"
+	v0192BaselineChecksum = "13898ca67f47c37411eb3b76a8265c1bc30a465e631fe006fcc806b0bc794d42"
+)
+
+// restampWarnings returns the recent warn lines emitted by
+// verifyAppliedMigrations' acceptedPriorChecksums path for version 1.
+func restampWarnings() []logging.Problem {
+	var out []logging.Problem
+	for _, p := range logging.Recent() {
+		if strings.Contains(p.Msg, "migration 1:") && strings.Contains(p.Msg, "re-stamp") {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// TestOpenUpgradesV018TillViaMigration033 is population A of ut-docs#2395:
+// a till that applied 001 as shipped in v0.1.0…v0.18.0 (ledger checksum
+// v0180BaselineChecksum, no catalog_management rows, watermark 32) boots
+// on the fixed tree with no drift error and gets the permission from 033.
+// The first assertion is the one the whole hotfix hangs on: the restored
+// 001_init.sql must record EXACTLY the checksum those tills already hold.
+func TestOpenUpgradesV018TillViaMigration033(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pop-a.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checksum string
+	if err := d.QueryRow(`SELECT checksum FROM schema_migrations WHERE version = 1`).Scan(&checksum); err != nil {
+		t.Fatal(err)
+	}
+	if checksum != v0180BaselineChecksum {
+		t.Fatalf("restored 001_init.sql records checksum %s, want the v0.18.0 value %s that every upgrading till's ledger holds (ut-docs#2395)", checksum, v0180BaselineChecksum)
+	}
+	// Rewind to the v0.18.0 shape: 033 never ran, its rows do not exist.
+	for _, q := range []string{
+		`DELETE FROM schema_migrations WHERE version = 33`,
+		`DELETE FROM role_permissions WHERE action = 'catalog_management'`,
+		`DELETE FROM permission_actions WHERE action = 'catalog_management'`,
+	} {
+		if _, err := d.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	if actions, grants := catalogManagementCounts(t, d); actions != 0 || grants != 0 {
+		t.Fatalf("rewind left %d/%d catalog_management rows, want 0/0", actions, grants)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	logging.ResetRecent()
+	d, err = Open(path)
+	if err != nil {
+		t.Fatalf("a v0.18.0 till must boot on the fixed tree without a drift error: %v", err)
+	}
+	defer d.Close()
+	if actions, grants := catalogManagementCounts(t, d); actions != 1 || grants != 3 {
+		t.Fatalf("after upgrade: catalog_management rows = %d action / %d grants, want 1 / 3 (from 033)", actions, grants)
+	}
+	var n int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = 33`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("033 ledger row count = %d err=%v, want 1", n, err)
+	}
+	if w := restampWarnings(); len(w) != 0 {
+		t.Fatalf("population A must not go through the re-stamp path, got %v", w)
+	}
+}
+
+// TestOpenAcceptsV019BaselineChecksumAndRestamps is population B of
+// ut-docs#2395: a fresh v0.19.0–v0.19.2 install recorded the edited 001
+// (v0192BaselineChecksum) and already has the catalog_management rows;
+// its watermark is 32. On the fixed tree it must boot, warn once, get its
+// version-1 ledger row re-stamped to the restored file's checksum WITHOUT
+// re-running 001, apply 033 as a no-op, and end up with exactly 1/3 rows.
+// The next boot must then be silent — the checksum matches.
+func TestOpenAcceptsV019BaselineChecksumAndRestamps(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pop-b.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Rewind to the v0.19.x shape (watermark 31 on v0.19.0, 32 on v0.19.1+;
+	// either way below 33): 033 never ran, but its rows already
+	// exist (from the edited 001), and the ledger holds the edited checksum.
+	for _, q := range []string{
+		`DELETE FROM schema_migrations WHERE version = 33`,
+		`UPDATE schema_migrations SET checksum = '` + v0192BaselineChecksum + `' WHERE version = 1`,
+	} {
+		if _, err := d.Exec(q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	if actions, grants := catalogManagementCounts(t, d); actions != 1 || grants != 3 {
+		t.Fatalf("v0.19.2 shape must already carry the rows, got %d/%d", actions, grants)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	logging.ResetRecent()
+	d, err = Open(path)
+	if err != nil {
+		t.Fatalf("a v0.19.0–v0.19.2 install must boot on the fixed tree: %v", err)
+	}
+	var name, checksum string
+	if err := d.QueryRow(`SELECT name, checksum FROM schema_migrations WHERE version = 1`).Scan(&name, &checksum); err != nil {
+		t.Fatal(err)
+	}
+	if name != "001_init.sql" || checksum != v0180BaselineChecksum {
+		t.Fatalf("ledger row for version 1 after accepting boot = (%s, %s), want (001_init.sql, %s) — the row must be re-stamped to the restored file", name, checksum, v0180BaselineChecksum)
+	}
+	if actions, grants := catalogManagementCounts(t, d); actions != 1 || grants != 3 {
+		t.Fatalf("after accepting boot: catalog_management rows = %d/%d, want 1/3 (033 is a no-op here)", actions, grants)
+	}
+	var n int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = 33`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("033 ledger row count = %d err=%v, want 1", n, err)
+	}
+	w := restampWarnings()
+	if len(w) != 1 {
+		t.Fatalf("accepting boot must warn exactly once about re-stamping version 1, got %d: %v", len(w), w)
+	}
+	for _, want := range []string{"migration 1:", v0192BaselineChecksum, "ut-docs#2395", "re-stamp"} {
+		if !strings.Contains(w[0].Msg, want) {
+			t.Errorf("re-stamp warning %q missing %q", w[0].Msg, want)
+		}
+	}
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Second boot: nothing to accept, nothing to say.
+	logging.ResetRecent()
+	d, err = Open(path)
+	if err != nil {
+		t.Fatalf("second boot after re-stamp must be clean: %v", err)
+	}
+	defer d.Close()
+	if w := restampWarnings(); len(w) != 0 {
+		t.Fatalf("second boot must be silent, got %v", w)
+	}
+	if err := d.QueryRow(`SELECT checksum FROM schema_migrations WHERE version = 1`).Scan(&checksum); err != nil || checksum != v0180BaselineChecksum {
+		t.Fatalf("checksum after second boot = %s err=%v, want %s", checksum, err, v0180BaselineChecksum)
+	}
+}
+
+// TestOpenStillRejectsUnacceptedBaselineChecksum: acceptedPriorChecksums
+// is a record of ONE shipped accident, not a bypass. A version-1 ledger
+// checksum that is neither the current file's nor the listed v0.19.x
+// variant still fails boot with the existing drift error, and the ledger
+// row is left exactly as it was.
+func TestOpenStillRejectsUnacceptedBaselineChecksum(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "foreign.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A well-formed sha256 hex that no release ever wrote.
+	foreign := "0000000000000000000000000000000000000000000000000000000000002395"
+	if _, err := d.Exec(`UPDATE schema_migrations SET checksum = ? WHERE version = 1`, foreign); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Open(path)
+	if err == nil {
+		t.Fatal("a version-1 checksum outside acceptedPriorChecksums must still fail boot")
+	}
+	for _, want := range []string{"migration 1:", `"001_init.sql"`, foreign, "renamed or edited"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+	ro, err := OpenReadOnly(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ro.Close()
+	var checksum string
+	if err := ro.QueryRow(`SELECT checksum FROM schema_migrations WHERE version = 1`).Scan(&checksum); err != nil || checksum != foreign {
+		t.Fatalf("a rejected boot must not touch the ledger: checksum = %s err=%v, want %s", checksum, err, foreign)
 	}
 }
