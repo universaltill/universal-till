@@ -41,7 +41,10 @@ test.describe('scan while focus is in another sale-screen field (ut-docs#423)', 
     // query — a barcode matches no product NAME, so every tile would stay
     // hidden and the panel would look empty from the next scan onwards.
     await expect(search).toHaveValue('');
-    await expect(page.locator('.btn-tile', { hasText: 'Butter 250g' })).toBeVisible();
+    // ut-docs#2294: Butter 250g's tile exists twice now (its own category
+    // panel, hidden since All is the default tab, and the All tab's own
+    // dedicated grid) -- disambiguate to the one actually shown.
+    await expect(page.locator('.btn-tile:visible', { hasText: 'Butter 250g' })).toBeVisible();
 
     assertClean();
   });
@@ -85,8 +88,14 @@ test.describe('scan while focus is in another sale-screen field (ut-docs#423)', 
     const search = page.locator('#products-search');
     await search.click();
     await page.keyboard.type('Butter', { delay: 120 }); // human-speed, not scanner-speed
-    await expect(page.locator('.btn-tile', { hasText: 'Butter 250g' })).toBeVisible();
-    await expect(page.locator('.btn-tile', { hasText: 'Cheddar Cheese' })).toBeHidden();
+    // ut-docs#2294: search is now a real (debounced) server round trip into
+    // its own #search-results grid, which sits alongside -- not instead
+    // of -- the tab/All-grid tiles Alpine leaves in the DOM (hidden while
+    // q is set). Every tile name below now potentially matches more than
+    // one DOM node at once; ":visible" keeps this pinned to the one the
+    // operator actually sees.
+    await expect(page.locator('.btn-tile:visible', { hasText: 'Butter 250g' })).toBeVisible();
+    await expect(page.locator('.btn-tile:visible', { hasText: 'Cheddar Cheese' })).toBeHidden();
 
     assertClean();
   });

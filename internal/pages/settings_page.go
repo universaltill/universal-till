@@ -1405,6 +1405,42 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		settingsRespondSaved(w, r, elev)
 	})
 
+	// "Show an All tab on the sell screen" (ut-docs#2294). Same
+	// manager-gated, elevation-wired, persist-a-bool, SaveState-then-
+	// SetState shape as allow-negative-inventory just above — this one
+	// changes whether the sell screen's All tab (every active catalog
+	// item, not just quick buttons) renders at all, default on so an
+	// existing shop keeps the tab it already has (ut-docs#2212).
+	mux.HandleFunc("POST /api/settings/show-all-tab", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		_ = r.ParseForm()
+		b, err := strconv.ParseBool(strings.TrimSpace(r.Form.Get("enabled")))
+		if err != nil {
+			http.Error(w, "enabled must be a boolean", http.StatusBadRequest)
+			return
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			summaryKey := "elevation.summary.show_all_tab_off"
+			if b {
+				summaryKey = "elevation.summary.show_all_tab_on"
+			}
+			renderElevationPrompt(w, r, "/api/settings/show-all-tab", "#show-all-tab-msg",
+				httpx.T(locale, summaryKey),
+				[]elevationHiddenField{{Name: "enabled", Value: r.Form.Get("enabled")}}, elev)
+			return
+		}
+		st := d.CurrentState()
+		st.ShowAllTabOnSellScreen = b
+		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		d.SetState(st)
+		settingsAudit(r, posRepo, elev, "settings", common.KeyShowAllTabOnSellScreen, "show_all_tab_changed", map[string]any{"enabled": b})
+		settingsRespondSaved(w, r, elev)
+	})
+
 	// Barcode symbology checklist (ADR-0059 Decision §2, ut-docs#935): one
 	// checkbox per internal/barcode registry entry, persisted immediately
 	// via SettingsRepo.SetEnabledBarcodeSymbologies — same manager-gated,
@@ -2806,6 +2842,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				}
 			case common.KeyAllowNegativeInventory:
 				s.AllowNegativeInventory = truthy(value)
+			case common.KeyShowAllTabOnSellScreen:
+				s.ShowAllTabOnSellScreen = truthy(value)
 			}
 		})
 		switch key {

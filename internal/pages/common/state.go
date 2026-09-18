@@ -56,6 +56,13 @@ const (
 	// anything at all until this is turned on, because an item with no
 	// inventory row reads as quantity 0.
 	KeyAllowNegativeInventory = "pos.allow_negative_inventory"
+	// KeyShowAllTabOnSellScreen is "Show an All tab on the sell screen"
+	// (ut-docs#2294, settings.sale.show_all_tab): the sell screen's All
+	// tab lists every active catalog item (not just quick buttons) and is
+	// on by default so an existing shop keeps the tab ut-docs#2212 already
+	// gave it; turning it off restores the pre-#2212 behavior (no All tab,
+	// first category tab default-selected).
+	KeyShowAllTabOnSellScreen = "sale.show_all_tab"
 	// KeyShopType holds the ADR-0026 shop-type taxonomy value chosen in the
 	// setup wizard (cafe|retail|service|hospitality|market_stall|other) —
 	// ut-docs#539. Optional: empty/missing is fine.
@@ -314,6 +321,7 @@ func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) R
 		TaxRatePct:             cfg.Locales.TaxRate,
 		TaxInclusive:           cfg.Locales.TaxInclusive,
 		AllowNegativeInventory: false,
+		ShowAllTabOnSellScreen: true,
 	}
 
 	if v := get(KeyTaxInclusive, strconv.FormatBool(cfg.Locales.TaxInclusive)); v != "" {
@@ -344,6 +352,11 @@ func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) R
 	if v := get(KeyAllowNegativeInventory, strconv.FormatBool(st.AllowNegativeInventory)); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			st.AllowNegativeInventory = b
+		}
+	}
+	if v := get(KeyShowAllTabOnSellScreen, strconv.FormatBool(st.ShowAllTabOnSellScreen)); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			st.ShowAllTabOnSellScreen = b
 		}
 	}
 	st.IdleLockMinutes = DefaultIdleLockMinutes
@@ -511,6 +524,7 @@ func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) erro
 		KeyTaxRate:                strconv.Itoa(st.TaxRatePct),
 		KeyServiceChargeRate:      FormatServiceChargeRatePercent(st.ServiceChargeRateBasisPoints),
 		KeyAllowNegativeInventory: strconv.FormatBool(st.AllowNegativeInventory),
+		KeyShowAllTabOnSellScreen: strconv.FormatBool(st.ShowAllTabOnSellScreen),
 		KeyIdleLock:               strconv.Itoa(st.IdleLockMinutes),
 		KeyKioskIdleReset:         strconv.Itoa(st.KioskIdleResetSeconds),
 		KeyKioskPaymentMode:       ClampKioskPaymentMode(st.KioskPaymentMode),

@@ -128,7 +128,7 @@ async function dragPast(tile: Locator, over: Locator) {
 const grid = (page: Page) => page.locator('#buttons-grid');
 const codesInOrder = (page: Page, run: string) =>
   page
-    .locator(`#buttons-grid .btn-tile[data-code^="JIG2339BC-"][data-code$="-${run}"]`)
+    .locator(`.products-tab-panel .btn-tile[data-code^="JIG2339BC-"][data-code$="-${run}"]`)
     .evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.code));
 
 test.describe('Sell-screen jiggle edit mode (ut-docs#2339)', () => {
@@ -147,9 +147,16 @@ test.describe('Sell-screen jiggle edit mode (ut-docs#2339)', () => {
 
     try {
       await page.goto('/');
-      const tileA = page.locator(`#buttons-grid .btn-tile[data-code="${ITEM_A.barcode}"]`);
-      const tileB = page.locator(`#buttons-grid .btn-tile[data-code="${ITEM_B.barcode}"]`);
-      const tileC = page.locator(`#buttons-grid .btn-tile[data-code="${ITEM_C.barcode}"]`);
+      // ut-docs#2294: All (not this fixture's own category) is the default
+      // tab now, and its dedicated #buttons-grid-all grid renders a SECOND
+      // copy of every quick-button tile (every active catalog item, not
+      // just shortcuts) -- switch to the fixture's own category tab so its
+      // `.products-tab-panel` (the one actually reorderable -- see app.js's
+      // own inAllGrid()) is the visible one, not just DOM-present-but-hidden.
+      await page.getByRole('tab', { name: ITEM_A.category }).click();
+      const tileA = page.locator(`.products-tab-panel .btn-tile[data-code="${ITEM_A.barcode}"]`);
+      const tileB = page.locator(`.products-tab-panel .btn-tile[data-code="${ITEM_B.barcode}"]`);
+      const tileC = page.locator(`.products-tab-panel .btn-tile[data-code="${ITEM_C.barcode}"]`);
       await expect(tileA).toBeVisible();
       await expect(tileB).toBeVisible();
       await expect(tileC).toBeVisible();
@@ -262,16 +269,20 @@ test.describe('Sell-screen jiggle edit mode (ut-docs#2339)', () => {
       const ours = posted.filter((c) => c.startsWith('JIG2339BC-') && c.endsWith(`-${RUN1}`));
       expect(ours).toEqual([ITEM_B.barcode, ITEM_C.barcode, ITEM_A.barcode]);
       const onScreen = await page
-        .locator('#buttons-grid .btn-tile[data-code]')
+        .locator('.products-tab-panel .btn-tile[data-code]')
         .evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.code).sort());
       expect([...posted].sort()).toEqual(onScreen);
 
       await page.reload();
+      // A reload is a fresh document -- Alpine re-inits `tab` to its
+      // default (All, ut-docs#2294), so the fixture's own panel must be
+      // re-selected before the next longPress/focus needs it visible.
+      await page.getByRole('tab', { name: ITEM_A.category }).click();
       await expect.poll(() => codesInOrder(page, RUN1)).toEqual([ITEM_B.barcode, ITEM_C.barcode, ITEM_A.barcode]);
 
       // (4a) Keyboard parity: in the mode, ArrowLeft on a focused tile
       // moves it one place earlier; Done persists it. Restores [A, B, C].
-      const tileA2 = page.locator(`#buttons-grid .btn-tile[data-code="${ITEM_A.barcode}"]`);
+      const tileA2 = page.locator(`.products-tab-panel .btn-tile[data-code="${ITEM_A.barcode}"]`);
       await longPress(tileA2);
       await expect(grid(page)).toHaveClass(/jiggle-mode/);
       await tileA2.focus();
@@ -282,13 +293,14 @@ test.describe('Sell-screen jiggle edit mode (ut-docs#2339)', () => {
       await page.locator('[data-testid="jiggle-done"]').click();
       expect((await restore).status()).toBe(204);
       await page.reload();
+      await page.getByRole('tab', { name: ITEM_A.category }).click();
       await expect.poll(() => codesInOrder(page, RUN1)).toEqual([ITEM_A.barcode, ITEM_B.barcode, ITEM_C.barcode]);
 
       // (5) Edit badge → the catalog item dialog with return=/; closing it
       // comes back to the sale screen.
-      await longPress(page.locator(`#buttons-grid .btn-tile[data-code="${ITEM_A.barcode}"]`));
+      await longPress(page.locator(`.products-tab-panel .btn-tile[data-code="${ITEM_A.barcode}"]`));
       const editA = page
-        .locator(`#buttons-grid .btn-tile[data-code="${ITEM_A.barcode}"]`)
+        .locator(`.products-tab-panel .btn-tile[data-code="${ITEM_A.barcode}"]`)
         .locator('xpath=..')
         .locator('[data-testid="tile-badge-edit"]');
       await expect(editA).toBeVisible();
@@ -297,6 +309,7 @@ test.describe('Sell-screen jiggle edit mode (ut-docs#2339)', () => {
       await expect(page.locator('#item-form-modal')).toBeVisible();
       await page.locator('#item-form-close-btn').click();
       await expect(page).toHaveURL(/\/$/);
+      await page.getByRole('tab', { name: ITEM_A.category }).click();
 
       // (5a) The edit badge is a plain <a href>, so following it tears this
       // document down — an unsaved drag must be persisted FIRST, not
@@ -305,17 +318,17 @@ test.describe('Sell-screen jiggle edit mode (ut-docs#2339)', () => {
       // POSTs (the remove badge and a grid refetch were both already
       // handled; a navigation was the one gap). Reorder to [B, A, C], leave
       // via the pencil, and assert the order survives the round trip.
-      const tileB2 = page.locator(`#buttons-grid .btn-tile[data-code="${ITEM_B.barcode}"]`);
-      await longPress(page.locator(`#buttons-grid .btn-tile[data-code="${ITEM_A.barcode}"]`));
+      const tileB2 = page.locator(`.products-tab-panel .btn-tile[data-code="${ITEM_B.barcode}"]`);
+      await longPress(page.locator(`.products-tab-panel .btn-tile[data-code="${ITEM_A.barcode}"]`));
       await expect(grid(page)).toHaveClass(/jiggle-mode/);
       buttonCalls.length = 0;
-      await dragPast(page.locator(`#buttons-grid .btn-tile[data-code="${ITEM_A.barcode}"]`), tileB2);
+      await dragPast(page.locator(`.products-tab-panel .btn-tile[data-code="${ITEM_A.barcode}"]`), tileB2);
       await expect.poll(() => codesInOrder(page, RUN1)).toEqual([ITEM_B.barcode, ITEM_A.barcode, ITEM_C.barcode]);
       const navSave = page.waitForResponse(
         (r) => r.url().includes('/api/buttons/reorder') && r.request().method() === 'POST',
       );
       await page
-        .locator(`#buttons-grid .btn-tile[data-code="${ITEM_A.barcode}"]`)
+        .locator(`.products-tab-panel .btn-tile[data-code="${ITEM_A.barcode}"]`)
         .locator('xpath=..')
         .locator('[data-testid="tile-badge-edit"]')
         .click();
@@ -326,24 +339,26 @@ test.describe('Sell-screen jiggle edit mode (ut-docs#2339)', () => {
         'leaving via the edit badge persists with exactly one POST',
       ).toHaveLength(1);
       await page.goto('/');
+      await page.getByRole('tab', { name: ITEM_A.category }).click();
       await expect.poll(() => codesInOrder(page, RUN1)).toEqual([ITEM_B.barcode, ITEM_A.barcode, ITEM_C.barcode]);
       // Put [A, B, C] back so step (6)'s counts read as before.
-      await longPress(page.locator(`#buttons-grid .btn-tile[data-code="${ITEM_A.barcode}"]`));
-      await page.locator(`#buttons-grid .btn-tile[data-code="${ITEM_A.barcode}"]`).focus();
+      await longPress(page.locator(`.products-tab-panel .btn-tile[data-code="${ITEM_A.barcode}"]`));
+      await page.locator(`.products-tab-panel .btn-tile[data-code="${ITEM_A.barcode}"]`).focus();
       await page.keyboard.press('ArrowLeft');
       await expect.poll(() => codesInOrder(page, RUN1)).toEqual([ITEM_A.barcode, ITEM_B.barcode, ITEM_C.barcode]);
       const restore2 = page.waitForResponse((r) => r.url().includes('/api/buttons/reorder'));
       await page.locator('[data-testid="jiggle-done"]').click();
       expect((await restore2).status()).toBe(204);
       await page.reload();
+      await page.getByRole('tab', { name: ITEM_A.category }).click();
 
       // (6) Remove badge — LAST, and only on this spec's OWN fixture tile:
       // its hx-confirm asks first; accepting POSTs /api/buttons/remove; the
       // grid refreshes WITHOUT the tile and stays in edit mode (iOS keeps
       // jiggling after a delete); Done then has nothing to save.
       // Done first via a fresh entry so the count is taken at rest.
-      const beforeCount = await page.locator('#buttons-grid .btn-tile[data-code]').count();
-      const tileC2 = page.locator(`#buttons-grid .btn-tile[data-code="${ITEM_C.barcode}"]`);
+      const beforeCount = await page.locator('.products-tab-panel .btn-tile[data-code]').count();
+      const tileC2 = page.locator(`.products-tab-panel .btn-tile[data-code="${ITEM_C.barcode}"]`);
       const removedItemId = await tileC2.getAttribute('data-item-id');
       await longPress(tileC2);
       await expect(grid(page)).toHaveClass(/jiggle-mode/);
@@ -353,7 +368,7 @@ test.describe('Sell-screen jiggle edit mode (ut-docs#2339)', () => {
       await tileC2.locator('xpath=..').locator('[data-testid="tile-badge-remove"]').click();
       await removeResponse;
       expect(confirmText).toContain(ITEM_C.name);
-      await expect(page.locator('#buttons-grid .btn-tile[data-code]')).toHaveCount(beforeCount - 1);
+      await expect(page.locator('.products-tab-panel .btn-tile[data-code]')).toHaveCount(beforeCount - 1);
       await expect(grid(page)).toHaveClass(/jiggle-mode/);
       buttonCalls.length = 0;
       await page.locator('[data-testid="jiggle-done"]').click();
@@ -378,8 +393,12 @@ test.describe('Sell-screen jiggle edit mode (ut-docs#2339)', () => {
     await seedItems(page, [ITEM_A, ITEM_B]);
     try {
       await page.goto('/');
-      const tileA = page.locator(`#buttons-grid .btn-tile[data-code="${ITEM_A.barcode}"]`);
-      const tileB = page.locator(`#buttons-grid .btn-tile[data-code="${ITEM_B.barcode}"]`);
+      // See the first test's own comment: switch off the default All tab
+      // so this fixture's own category panel (the reorderable one) is what
+      // actually renders visible, not just present-but-hidden in the DOM.
+      await page.getByRole('tab', { name: ITEM_A.category }).click();
+      const tileA = page.locator(`.products-tab-panel .btn-tile[data-code="${ITEM_A.barcode}"]`);
+      const tileB = page.locator(`.products-tab-panel .btn-tile[data-code="${ITEM_B.barcode}"]`);
       await expect(tileA).toBeVisible();
 
       // Right-click (desktop, and Android's long-press-to-contextmenu).
@@ -410,6 +429,45 @@ test.describe('Sell-screen jiggle edit mode (ut-docs#2339)', () => {
       assertClean();
     } finally {
       await cleanupItems(page, [ITEM_A, ITEM_B]);
+    }
+  });
+
+  // ut-docs#2402 independent-review finding: the other two tests in this
+  // file switch OFF the default All tab before long-pressing (see their own
+  // comments) specifically so they never exercise a long-press on the
+  // All-grid copy of a tile — app.js's inAllGrid() guard (ut-docs#2294
+  // fallout) had no coverage at all before this test. Every seeded item is
+  // also active-catalog, so it renders a second time in #buttons-grid-all
+  // (the default-visible tab), with the SAME data-code here since seedItems
+  // gives the shortcut the item's own barcode.
+  test('a long-press on the default All tab never arms jiggle mode (ut-docs#2402)', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    const { A: ITEM_A } = fixture('3');
+    await seedItems(page, [ITEM_A]);
+    try {
+      await page.goto('/');
+      // Deliberately do NOT switch tabs -- All is default-selected, and
+      // this test is specifically about the All-grid copy of the tile.
+      const allTile = page.locator(`#buttons-grid-all .btn-tile[data-code="${ITEM_A.barcode}"]`);
+      await expect(allTile).toBeVisible();
+      // The All grid lists every active catalog item (demo-seeded ones
+      // included), so this fixture's own tile can render below the fold --
+      // longPress() drives raw page.mouse coordinates (unlike .click(),
+      // which auto-scrolls), so it needs the tile actually in the viewport.
+      await allTile.scrollIntoViewIfNeeded();
+
+      await longPress(allTile);
+      await page.waitForTimeout(300);
+      await expect(grid(page)).not.toHaveClass(/jiggle-mode/);
+      // Badges exist in the DOM for every tile at all times (hidden via
+      // .jiggle-mode, same as the rest of this file's "at rest" checks) --
+      // this one's the tile actually long-pressed, so it's the one whose
+      // badge would have shown if the guard were missing.
+      await expect(allTile.locator('xpath=..').locator('[data-testid="tile-badge-edit"]')).toBeHidden();
+
+      assertClean();
+    } finally {
+      await cleanupItems(page, [ITEM_A]);
     }
   });
 });

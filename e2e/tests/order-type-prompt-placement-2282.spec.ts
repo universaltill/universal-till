@@ -340,7 +340,11 @@ test.describe('ut-docs#2282 dine-in/takeaway prompt placement', () => {
     await page.getByTestId('order-type-prompt-cancel').click();
     await expect(page.locator('#order-type-prompt-modal')).not.toBeVisible();
 
-    const tile = page.locator('.btn-tile', { hasText: seeded.name });
+    // ut-docs#2294: All is the default tab, so this item's shortcut tile is
+    // visible via its own dedicated grid copy, not its (hidden) category
+    // panel copy -- both exist in the DOM at once, so disambiguate to the
+    // one actually on screen.
+    const tile = page.locator('.btn-tile:visible', { hasText: seeded.name });
     await expect(tile).toBeVisible();
     await tile.click();
 
