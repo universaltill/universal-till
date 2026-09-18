@@ -16,12 +16,57 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
 	appdb "github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
+
+// ackCapture is a concurrency-safe recorder for /v1/download/ack requests a
+// test server receives. Needed because ackDownload (ut-docs#2381 review) is
+// invoked via `go i.ackDownload(...)` — fire-and-forget from the caller's
+// point of view — so a test asserting on captured acks must wait for the
+// async call to actually land rather than reading a plain slice
+// immediately after Install/DownloadToStore returns.
+type ackCapture struct {
+	mu   sync.Mutex
+	reqs []marketplace.AckDownloadRequest
+}
+
+func (c *ackCapture) add(r marketplace.AckDownloadRequest) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reqs = append(c.reqs, r)
+}
+
+func (c *ackCapture) snapshot() []marketplace.AckDownloadRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]marketplace.AckDownloadRequest, len(c.reqs))
+	copy(out, c.reqs)
+	return out
+}
+
+// waitForCount polls (the ack lands over a real, if local, HTTP round trip
+// on a goroutine this test doesn't control) until at least n acks have been
+// captured, or fails the test after timeout.
+func (c *ackCapture) waitForCount(t *testing.T, n int, timeout time.Duration) []marketplace.AckDownloadRequest {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		snap := c.snapshot()
+		if len(snap) >= n {
+			return snap
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %d ack(s), got %d: %+v", n, len(snap), snap)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
 
 func TestMarketplaceInstallerInstallSuccess(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
@@ -84,6 +129,225 @@ func TestMarketplaceInstallerInstallSuccess(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("expected installed plugin, got count=%d", count)
+	}
+}
+
+// TestMarketplaceInstallerAcksSuccessfulDownload verifies ut-docs#2381's
+// wiring: a successful Install reports the download outcome back to the
+// marketplace via AckDownload, with the token/version the token endpoint
+// issued and Success=true.
+func TestMarketplaceInstallerAcksSuccessfulDownload(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate keypair: %v", err)
+	}
+	artifact, manifest, checksum := signedMarketplaceArtifact(t, privateKey)
+
+	acks := &ackCapture{}
+	server := marketplaceInstallTestServer(t, artifact, map[string]any{
+		"data": map[string]any{
+			"token":               "tok-ack-1",
+			"bundle_url":          "",
+			"release_id":          "release-1",
+			"version":             manifest.Version,
+			"checksum_sha256":     checksum,
+			"signature":           manifest.Signature,
+			"expires_at":          "2026-03-16T16:00:00Z",
+			"resumable_supported": true,
+		},
+		"error": nil,
+	}, acks)
+	defer server.Close()
+
+	db := openMarketplaceInstallerDB(t)
+	defer db.Close()
+
+	cfg := &config.Config{
+		Marketplace: config.MarketplaceConfig{
+			EndpointURL:       server.URL,
+			APIVersion:        "1.0.0",
+			ClientID:          "merchant-1",
+			ClientSecret:      "secret-1",
+			StoreID:           "store-1",
+			DeviceID:          "device-1",
+			PublicKey:         hex.EncodeToString(publicKey),
+			RequestTimeoutSec: 30,
+		},
+	}
+
+	installer := newTestMarketplaceInstaller(t, cfg, db)
+	if _, err := installer.Install(context.Background(), MarketplaceInstallRequest{
+		ListingID:  "listing-1",
+		Version:    manifest.Version,
+		TrustTier:  "verified",
+		MerchantID: "merchant-1",
+		StoreID:    "store-1",
+		DeviceID:   "device-1",
+		DeviceArch: "linux/amd64",
+	}); err != nil {
+		t.Fatalf("Install returned error: %v", err)
+	}
+
+	got := acks.waitForCount(t, 1, 2*time.Second)
+	ack := got[0]
+	if !ack.Success {
+		t.Fatalf("expected Success=true, got %+v", ack)
+	}
+	if ack.Token != "tok-ack-1" {
+		t.Fatalf("expected token %q, got %q", "tok-ack-1", ack.Token)
+	}
+	if ack.PluginID != "listing-1" {
+		t.Fatalf("expected plugin_id %q, got %q", "listing-1", ack.PluginID)
+	}
+	if ack.Version != manifest.Version {
+		t.Fatalf("expected version %q, got %q", manifest.Version, ack.Version)
+	}
+	if ack.FailureReason != "" {
+		t.Fatalf("expected empty failure_reason on success, got %q", ack.FailureReason)
+	}
+}
+
+// TestMarketplaceInstallerAcksFailedDownload verifies the failure half of
+// ut-docs#2381: a Download error (here, a checksum mismatch, the same
+// failure TestMarketplaceInstallerRejectsChecksumMismatch exercises) still
+// reports the outcome back, with Success=false and the download error's
+// message as FailureReason, before Install returns its own error.
+func TestMarketplaceInstallerAcksFailedDownload(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate keypair: %v", err)
+	}
+	artifact, manifest, _ := signedMarketplaceArtifact(t, privateKey)
+
+	acks := &ackCapture{}
+	server := marketplaceInstallTestServer(t, artifact, map[string]any{
+		"data": map[string]any{
+			"token":               "tok-ack-2",
+			"bundle_url":          "",
+			"release_id":          "release-1",
+			"version":             manifest.Version,
+			"checksum_sha256":     strings.Repeat("0", 64), // deliberately wrong
+			"signature":           manifest.Signature,
+			"expires_at":          "2026-03-16T16:00:00Z",
+			"resumable_supported": true,
+		},
+		"error": nil,
+	}, acks)
+	defer server.Close()
+
+	db := openMarketplaceInstallerDB(t)
+	defer db.Close()
+
+	cfg := &config.Config{
+		Marketplace: config.MarketplaceConfig{
+			EndpointURL:       server.URL,
+			APIVersion:        "1.0.0",
+			ClientID:          "merchant-1",
+			ClientSecret:      "secret-1",
+			StoreID:           "store-1",
+			DeviceID:          "device-1",
+			PublicKey:         hex.EncodeToString(publicKey),
+			RequestTimeoutSec: 30,
+		},
+	}
+
+	installer := newTestMarketplaceInstaller(t, cfg, db)
+	_, installErr := installer.Install(context.Background(), MarketplaceInstallRequest{
+		ListingID:  "listing-1",
+		Version:    manifest.Version,
+		TrustTier:  "verified",
+		MerchantID: "merchant-1",
+		StoreID:    "store-1",
+		DeviceID:   "device-1",
+		DeviceArch: "linux/amd64",
+	})
+	if installErr == nil {
+		t.Fatal("expected Install to return a checksum error")
+	}
+
+	got := acks.waitForCount(t, 1, 2*time.Second)
+	ack := got[0]
+	if ack.Success {
+		t.Fatalf("expected Success=false, got %+v", ack)
+	}
+	if ack.Token != "tok-ack-2" {
+		t.Fatalf("expected token %q, got %q", "tok-ack-2", ack.Token)
+	}
+	// The ack's failure_reason is a COARSE, safe-to-transmit reason, never
+	// Install's own raw error text (ut-docs#2381 review: the raw
+	// DownloadManager error stringifies the full pre-signed bundle URL,
+	// including its signature query parameters).
+	if ack.FailureReason != "checksum_mismatch" {
+		t.Fatalf("expected failure_reason %q, got %q (Install's own error was %q)", "checksum_mismatch", ack.FailureReason, installErr.Error())
+	}
+	if strings.Contains(ack.FailureReason, "http") || strings.Contains(ack.FailureReason, server.URL) {
+		t.Fatalf("failure_reason must never leak the download URL, got %q", ack.FailureReason)
+	}
+}
+
+// TestMarketplaceInstallerDoesNotAckBeforeDownloadAttempted verifies the
+// scope boundary from ut-docs#2381: a failure that happens BEFORE
+// DownloadManager.Download is even called (here, missing checksum/signature
+// metadata in the token response) must not trigger an AckDownload call —
+// there is no download attempt for the server to account for.
+func TestMarketplaceInstallerDoesNotAckBeforeDownloadAttempted(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate keypair: %v", err)
+	}
+	artifact, manifest, _ := signedMarketplaceArtifact(t, privateKey)
+
+	acks := &ackCapture{}
+	server := marketplaceInstallTestServer(t, artifact, map[string]any{
+		"data": map[string]any{
+			"token":      "tok-ack-3",
+			"bundle_url": "",
+			// checksum_sha256 deliberately omitted: fails the pre-Download
+			// "download metadata is incomplete" validation in Install.
+			"release_id":          "release-1",
+			"version":             manifest.Version,
+			"signature":           manifest.Signature,
+			"expires_at":          "2026-03-16T16:00:00Z",
+			"resumable_supported": true,
+		},
+		"error": nil,
+	}, acks)
+	defer server.Close()
+
+	db := openMarketplaceInstallerDB(t)
+	defer db.Close()
+
+	cfg := &config.Config{
+		Marketplace: config.MarketplaceConfig{
+			EndpointURL:       server.URL,
+			APIVersion:        "1.0.0",
+			ClientID:          "merchant-1",
+			ClientSecret:      "secret-1",
+			StoreID:           "store-1",
+			DeviceID:          "device-1",
+			PublicKey:         hex.EncodeToString(publicKey),
+			RequestTimeoutSec: 30,
+		},
+	}
+
+	installer := newTestMarketplaceInstaller(t, cfg, db)
+	if _, err := installer.Install(context.Background(), MarketplaceInstallRequest{
+		ListingID:  "listing-1",
+		Version:    manifest.Version,
+		TrustTier:  "verified",
+		MerchantID: "merchant-1",
+		StoreID:    "store-1",
+		DeviceID:   "device-1",
+		DeviceArch: "linux/amd64",
+	}); err == nil {
+		t.Fatal("expected Install to reject incomplete download metadata")
+	}
+
+	// No goroutine is ever spawned on this path (Install returns before
+	// reaching the `go i.ackDownload(...)` call site at all), so this is
+	// deterministic without a wait — unlike the success/failure tests above.
+	if got := acks.snapshot(); len(got) != 0 {
+		t.Fatalf("expected no AckDownload call before Download is attempted, got %d: %+v", len(got), got)
 	}
 }
 
@@ -394,8 +658,18 @@ func openMarketplaceInstallerDB(t *testing.T) *sql.DB {
 	return database.DB
 }
 
-func marketplaceInstallTestServer(t *testing.T, artifact []byte, response map[string]any) *httptest.Server {
+// marketplaceInstallTestServer serves the token-issue and bundle-download
+// endpoints every installer test needs, plus a no-op /v1/download/ack (204,
+// unconditionally — ut-docs#2381 wires every Install/DownloadToStore call to
+// hit this). Pass ackLog to additionally capture each decoded ack request,
+// in call order, for tests that assert on it; omit it (as every pre-existing
+// caller does) to just let the ack succeed silently.
+func marketplaceInstallTestServer(t *testing.T, artifact []byte, response map[string]any, ackLog ...*ackCapture) *httptest.Server {
 	t.Helper()
+	var log *ackCapture
+	if len(ackLog) > 0 {
+		log = ackLog[0]
+	}
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -410,6 +684,13 @@ func marketplaceInstallTestServer(t *testing.T, artifact []byte, response map[st
 		case r.Method == http.MethodGet && r.URL.Path == "/bundle.tar.gz":
 			w.Header().Set("Content-Type", "application/gzip")
 			_, _ = w.Write(artifact)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/download/ack":
+			if log != nil {
+				var req marketplace.AckDownloadRequest
+				_ = json.NewDecoder(r.Body).Decode(&req)
+				log.add(req)
+			}
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(w, r)
 		}

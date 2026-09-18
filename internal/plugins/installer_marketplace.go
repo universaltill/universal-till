@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -76,6 +77,57 @@ func (i *MarketplaceInstaller) emitState(ctx context.Context, req MarketplaceIns
 	i.reporter.Report(ctx, req.IntentID, state, errDetail)
 }
 
+// ackDownload best-effort reports a download's outcome back to the
+// marketplace (ut-docs#2381) so ut-cloud's per-download accounting/metrics
+// populate and the single-use token gets consumed instead of just expiring.
+// downloadErr is the error DownloadManager.Download itself returned (nil on
+// success). Callers invoke this via `go i.ackDownload(...)` — fire-and-
+// forget, never awaited: a hung/blackholed ack endpoint must not add
+// latency to an install/download call that would otherwise return in
+// milliseconds (independent review on ut-docs#2381 measured a synchronous
+// call here — even reusing the terminal-report defer's own precedented
+// context.Background()-with-timeout shape below — blocking
+// DownloadToStore's own HTTP handler for up to 15s despite that handler's
+// r.Context() already having been cancelled). Being async also means this
+// can never change the caller's own download/install result even in
+// principle — an ack failure is logged and swallowed, nothing more.
+func (i *MarketplaceInstaller) ackDownload(listingID, version, token string, downloadErr error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	req := &marketplace.AckDownloadRequest{
+		PluginID:      listingID,
+		Version:       version,
+		Token:         token,
+		Success:       downloadErr == nil,
+		FailureReason: ackFailureReason(downloadErr),
+	}
+	if err := i.client.AckDownload(ctx, req); err != nil {
+		logging.L().Warnf("[MarketplaceInstaller] ack download for %s: %v", listingID, err)
+	}
+}
+
+// ackFailureReason maps a download error to a coarse, safe-to-transmit
+// reason string for AckDownload's FailureReason — never the raw error
+// text. DownloadManager.Download wraps the underlying HTTP client error,
+// which stringifies the FULL request URL: the marketplace-issued
+// pre-signed bundle URL, complete with its signature/SAS query parameters
+// (independent review finding on ut-docs#2381) — that string must not
+// travel verbatim into an ack request body sent to a third party.
+func ackFailureReason(downloadErr error) string {
+	switch {
+	case downloadErr == nil:
+		return ""
+	case errors.Is(downloadErr, errChecksumMismatch):
+		return "checksum_mismatch"
+	case errors.Is(downloadErr, context.Canceled):
+		return "download_canceled"
+	case errors.Is(downloadErr, context.DeadlineExceeded):
+		return "download_timeout"
+	default:
+		return "download_failed"
+	}
+}
+
 func (i *MarketplaceInstaller) Install(ctx context.Context, req MarketplaceInstallRequest) (result *MarketplaceInstallResult, err error) {
 	if i == nil || i.client == nil || i.db == nil {
 		return nil, fmt.Errorf("marketplace installer not configured")
@@ -127,7 +179,7 @@ func (i *MarketplaceInstaller) Install(ctx context.Context, req MarketplaceInsta
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(tokenResp.BundleURL) == "" || strings.TrimSpace(tokenResp.ChecksumSHA256) == "" || strings.TrimSpace(tokenResp.Signature) == "" {
+	if strings.TrimSpace(tokenResp.BundleURL) == "" || strings.TrimSpace(tokenResp.ChecksumSHA256) == "" || strings.TrimSpace(tokenResp.Signature) == "" || strings.TrimSpace(tokenResp.Token) == "" {
 		return nil, fmt.Errorf("marketplace download metadata is incomplete")
 	}
 
@@ -143,6 +195,7 @@ func (i *MarketplaceInstaller) Install(ctx context.Context, req MarketplaceInsta
 		ExpectedChecksum: tokenResp.ChecksumSHA256,
 		MaxSizeBytes:     200 * 1024 * 1024,
 	})
+	go i.ackDownload(req.ListingID, tokenResp.Version, tokenResp.Token, err)
 	if err != nil {
 		_ = downloadMgr.CleanupPartFile(req.ListingID)
 		return nil, err
