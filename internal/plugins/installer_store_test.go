@@ -55,6 +55,7 @@ func TestStoreDownloadThenInstallLifecycle(t *testing.T) {
 	artifact := signedMarketplaceArtifactWithManifest(t, privateKey, manifest)
 	checksum := checksumSHA256Hex(t, artifact)
 
+	acks := &ackCapture{}
 	server := marketplaceInstallTestServer(t, artifact, map[string]any{
 		"data": map[string]any{
 			"token":               "tok-1",
@@ -67,7 +68,7 @@ func TestStoreDownloadThenInstallLifecycle(t *testing.T) {
 			"resumable_supported": true,
 		},
 		"error": nil,
-	})
+	}, acks)
 	defer server.Close()
 
 	db := openMarketplaceInstallerDB(t)
@@ -93,6 +94,8 @@ func TestStoreDownloadThenInstallLifecycle(t *testing.T) {
 	if _, err := os.Stat(sd.BundlePath); err != nil {
 		t.Fatalf("staged bundle missing: %v", err)
 	}
+	// DownloadToStore acks its own download outcome (ut-docs#2381).
+	acks.waitForCount(t, 1, 2*time.Second)
 	// Nothing installed yet.
 	assertPluginNotInstalled(t, db, manifest.ID)
 
@@ -133,6 +136,120 @@ func TestStoreDownloadThenInstallLifecycle(t *testing.T) {
 	if _, err := installer.GetStoreDownload("listing-1"); err == nil {
 		t.Fatalf("GetStoreDownload succeeded after consumption")
 	}
+	// InstallFromStore never calls Download (the bundle is already staged
+	// on disk), so it must never ack — still exactly the one ack from
+	// DownloadToStore above, not two.
+	if got := acks.snapshot(); len(got) != 1 {
+		t.Fatalf("expected InstallFromStore to add no AckDownload calls, got %d total: %+v", len(got), got)
+	}
+}
+
+// TestDownloadToStoreAcksDownloadOutcome verifies ut-docs#2381's wiring on
+// the store-download path: both a successful download (Success=true) and a
+// checksum-mismatch failure (Success=false, FailureReason set) report the
+// outcome back via AckDownload, mirroring installer_marketplace_test.go's
+// coverage of Install.
+func TestDownloadToStoreAcksDownloadOutcome(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate keypair: %v", err)
+	}
+	manifest := &Manifest{
+		ID:            "com.test.storeflow.ack",
+		Name:          "Store Flow Ack Plugin",
+		Version:       "2.0.0",
+		Entrypoint:    "./plugin-bin",
+		Executable:    "plugin-bin",
+		Runtime:       "go",
+		CanonicalType: "page",
+		DeviceArch:    "any",
+	}
+	artifact := signedMarketplaceArtifactWithManifest(t, privateKey, manifest)
+	checksum := checksumSHA256Hex(t, artifact)
+
+	t.Run("success", func(t *testing.T) {
+		acks := &ackCapture{}
+		server := marketplaceInstallTestServer(t, artifact, map[string]any{
+			"data": map[string]any{
+				"token":               "tok-store-ack-1",
+				"bundle_url":          "",
+				"release_id":          "release-1",
+				"version":             manifest.Version,
+				"checksum_sha256":     checksum,
+				"signature":           manifest.Signature,
+				"expires_at":          "2026-03-16T16:00:00Z",
+				"resumable_supported": true,
+			},
+			"error": nil,
+		}, acks)
+		defer server.Close()
+
+		db := openMarketplaceInstallerDB(t)
+		defer db.Close()
+		cfg := storeTestConfig(server.URL, hex.EncodeToString(publicKey))
+		installer := newTestMarketplaceInstaller(t, cfg, db)
+
+		if _, err := installer.DownloadToStore(context.Background(), MarketplaceInstallRequest{
+			ListingID:  "listing-ack-1",
+			Version:    manifest.Version,
+			MerchantID: "merchant-1",
+			StoreID:    "store-1",
+			DeviceID:   "device-1",
+			DeviceArch: "linux/amd64",
+		}); err != nil {
+			t.Fatalf("DownloadToStore: %v", err)
+		}
+
+		got := acks.waitForCount(t, 1, 2*time.Second)
+		if !got[0].Success || got[0].Token != "tok-store-ack-1" || got[0].PluginID != "listing-ack-1" {
+			t.Fatalf("unexpected ack: %+v", got[0])
+		}
+	})
+
+	t.Run("checksum mismatch", func(t *testing.T) {
+		acks := &ackCapture{}
+		server := marketplaceInstallTestServer(t, artifact, map[string]any{
+			"data": map[string]any{
+				"token":               "tok-store-ack-2",
+				"bundle_url":          "",
+				"release_id":          "release-1",
+				"version":             manifest.Version,
+				"checksum_sha256":     strings.Repeat("0", 64), // deliberately wrong
+				"signature":           manifest.Signature,
+				"expires_at":          "2026-03-16T16:00:00Z",
+				"resumable_supported": true,
+			},
+			"error": nil,
+		}, acks)
+		defer server.Close()
+
+		db := openMarketplaceInstallerDB(t)
+		defer db.Close()
+		cfg := storeTestConfig(server.URL, hex.EncodeToString(publicKey))
+		installer := newTestMarketplaceInstaller(t, cfg, db)
+
+		_, downloadErr := installer.DownloadToStore(context.Background(), MarketplaceInstallRequest{
+			ListingID:  "listing-ack-2",
+			Version:    manifest.Version,
+			MerchantID: "merchant-1",
+			StoreID:    "store-1",
+			DeviceID:   "device-1",
+			DeviceArch: "linux/amd64",
+		})
+		if downloadErr == nil {
+			t.Fatal("expected DownloadToStore to return a checksum error")
+		}
+
+		got := acks.waitForCount(t, 1, 2*time.Second)
+		if got[0].Success {
+			t.Fatalf("expected Success=false, got %+v", got[0])
+		}
+		// Coarse, safe-to-transmit reason — never the raw error text, which
+		// would embed the full pre-signed bundle URL (ut-docs#2381 review).
+		if got[0].FailureReason != "checksum_mismatch" {
+			t.Fatalf("expected failure_reason %q, got %q (DownloadToStore's own error was %q)", "checksum_mismatch", got[0].FailureReason, downloadErr.Error())
+		}
+	})
 }
 
 func TestDownloadToStoreValidation(t *testing.T) {

@@ -682,24 +682,15 @@ type AckDownloadRequest struct {
 
 // AckDownload acknowledges a completed or failed download.
 //
-// No production caller (ut-docs#1566) — and unlike this file's other
-// unreachable methods, nothing else replaces it: this is an UNWIRED step of
-// a live flow, not a superseded one. Both till-side download paths
-// (MarketplaceInstaller.Install and
+// Called by both till-side download paths (MarketplaceInstaller.Install and
 // MarketplaceInstaller.DownloadToStore, internal/plugins/
-// installer_marketplace.go / installer_store.go) issue a token via
-// IssueDownloadToken, download and checksum-verify the bundle, and then
-// never report the outcome back. The server side is real and served:
-// ut-cloud's grpc-gateway exposes POST /v1/download/ack, and its
-// downloadsvc.Service.AckDownload consumes the single-use token and records
-// download-completion/checksum-mismatch metrics — ut-cloud's own comment
-// there names marketplace.Client.AckDownload as "currently unwired". The
-// till's installs work without it (a token just expires instead of being
-// consumed), so this is a marketplace-side accounting gap rather than a
-// till-side bug. Wiring it is a behaviour change outside the dead-code
-// burn-down's scope; left in place with its tests (TestAckDownload,
-// TestAckDownloadServerError) so the client half is ready when that
-// decision is made.
+// installer_marketplace.go / installer_store.go, via the shared
+// ackDownload helper) right after DownloadManager.Download returns, success
+// or failure (ut-docs#2381) — best-effort, so an ack failure never affects
+// the install/download's own result. ut-cloud's grpc-gateway exposes POST
+// /v1/download/ack, and its downloadsvc.Service.AckDownload consumes the
+// single-use token and records download-completion/checksum-mismatch
+// metrics.
 func (c *Client) AckDownload(ctx context.Context, req *AckDownloadRequest) error {
 	body, err := json.Marshal(req)
 	if err != nil {

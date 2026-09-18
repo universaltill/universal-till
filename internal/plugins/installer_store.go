@@ -111,7 +111,7 @@ func (i *MarketplaceInstaller) DownloadToStore(ctx context.Context, req Marketpl
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(tokenResp.BundleURL) == "" || strings.TrimSpace(tokenResp.ChecksumSHA256) == "" || strings.TrimSpace(tokenResp.Signature) == "" {
+	if strings.TrimSpace(tokenResp.BundleURL) == "" || strings.TrimSpace(tokenResp.ChecksumSHA256) == "" || strings.TrimSpace(tokenResp.Signature) == "" || strings.TrimSpace(tokenResp.Token) == "" {
 		return nil, fmt.Errorf("marketplace download metadata is incomplete")
 	}
 	bundleURL, err := i.client.ResolveURL(tokenResp.BundleURL)
@@ -126,6 +126,7 @@ func (i *MarketplaceInstaller) DownloadToStore(ctx context.Context, req Marketpl
 		ExpectedChecksum: tokenResp.ChecksumSHA256,
 		MaxSizeBytes:     200 * 1024 * 1024,
 	})
+	go i.ackDownload(req.ListingID, tokenResp.Version, tokenResp.Token, err)
 	if err != nil {
 		_ = downloadMgr.CleanupPartFile(req.ListingID)
 		return nil, err
