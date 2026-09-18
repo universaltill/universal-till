@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -33,10 +32,7 @@ import (
 func TestHeldOrderClaimReaffirmTick_RecoversADeletedClaimWithinOneTick(t *testing.T) {
 	chdirRoot(t)
 
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "primary.db"))
-	if err != nil {
-		t.Fatalf("open primary db: %v", err)
-	}
+	dbase := &db.DB{DB: openPagesTestDB(t)}
 	defer dbase.Close()
 	primaryDp := &common.Deps{Db: dbase.DB}
 	mux := http.NewServeMux()
@@ -61,10 +57,7 @@ func TestHeldOrderClaimReaffirmTick_RecoversADeletedClaimWithinOneTick(t *testin
 		t.Fatalf("precondition: T1 must read free with no claim row, got free=%v err=%v", free, err)
 	}
 
-	d, err := db.Open(filepath.Join(t.TempDir(), "replica.db"))
-	if err != nil {
-		t.Fatalf("open replica db: %v", err)
-	}
+	d := &db.DB{DB: openPagesTestDB(t)}
 	defer d.Close()
 	store := settings.NewStore(d.DB)
 	setReplicaSettings(t, store, primary.URL, "b-123")
@@ -97,10 +90,7 @@ func TestHeldOrderClaimReaffirmTick_RecoversADeletedClaimWithinOneTick(t *testin
 func TestHeldOrderClaimReaffirmTick_CannotEvictALiveTillsLegitimateClaim(t *testing.T) {
 	chdirRoot(t)
 
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "primary.db"))
-	if err != nil {
-		t.Fatalf("open primary db: %v", err)
-	}
+	dbase := &db.DB{DB: openPagesTestDB(t)}
 	defer dbase.Close()
 	primaryDp := &common.Deps{Db: dbase.DB}
 	mux := http.NewServeMux()
@@ -133,10 +123,7 @@ func TestHeldOrderClaimReaffirmTick_CannotEvictALiveTillsLegitimateClaim(t *test
 		t.Fatalf("seed the other till's live claim: claimed=%v err=%v", claimed, err)
 	}
 
-	d, err := db.Open(filepath.Join(t.TempDir(), "replica.db"))
-	if err != nil {
-		t.Fatalf("open replica db: %v", err)
-	}
+	d := &db.DB{DB: openPagesTestDB(t)}
 	defer d.Close()
 	store := settings.NewStore(d.DB)
 	setReplicaSettings(t, store, primary.URL, "b-123")
@@ -173,10 +160,7 @@ func TestHeldOrderClaimReaffirmTick_NoHeldOrdersIsANoOp(t *testing.T) {
 	// sync.primary_url/sync.bearer and there would be nothing to call
 	// through to. Settings left nil entirely: a call into it would panic,
 	// which is exactly the regression this guards against.
-	d, err := db.Open(filepath.Join(t.TempDir(), "replica.db"))
-	if err != nil {
-		t.Fatalf("open replica db: %v", err)
-	}
+	d := &db.DB{DB: openPagesTestDB(t)}
 	defer d.Close()
 	dp := &common.Deps{Db: d.DB}
 	posRepo := data.NewPOSRepo(d.DB)

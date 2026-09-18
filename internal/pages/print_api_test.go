@@ -176,20 +176,16 @@ func TestPrinterConfigChecked_SurfacesSettingsReadError(t *testing.T) {
 // rather than depending on a rare filesystem race window.
 func TestAsyncPrintGoroutinesFinishBeforeWaitForAsyncWorkReturns(t *testing.T) {
 	for i := 0; i < 3; i++ {
-		dir, err := os.MkdirTemp("", "print-async-race-*")
-		if err != nil {
-			t.Fatalf("iteration %d: MkdirTemp: %v", i, err)
-		}
-		t.Cleanup(func() { _ = os.RemoveAll(dir) }) // backstop if a t.Fatal below skips the loop's own removal
-
-		d, err := db.Open(filepath.Join(dir, "shop.db"))
-		if err != nil {
-			t.Fatalf("iteration %d: Open: %v", i, err)
-		}
+		// A per-iteration clone of the once-migrated template
+		// (openPagesTestDB, ut-docs#2191) — the assertion below is on the
+		// goroutines' own effect (the audit rows), not on the filesystem
+		// symptom, so the DB's own directory no longer needs to be hand-managed
+		// here; the explicit Close at the end of each iteration stays.
+		d := openPagesTestDB(t)
 		dp := &common.Deps{
 			Cfg:      &config.Config{Theme: "default"},
-			Db:       d.DB,
-			Settings: settings.NewStore(d.DB),
+			Db:       d,
+			Settings: settings.NewStore(d),
 		}
 		if err := dp.Settings.SetMany(context.Background(), map[string]string{
 			keyPrinterMode:    "network",
@@ -219,9 +215,6 @@ func TestAsyncPrintGoroutinesFinishBeforeWaitForAsyncWorkReturns(t *testing.T) {
 
 		if err := d.Close(); err != nil {
 			t.Fatalf("iteration %d: Close: %v", i, err)
-		}
-		if err := os.RemoveAll(dir); err != nil {
-			t.Fatalf("iteration %d: RemoveAll immediately after Close: %v", i, err)
 		}
 	}
 }
@@ -257,10 +250,7 @@ func TestInit_ReturnedDepsIsTheSameInstanceAsyncPrintGoroutinesTrack(t *testing.
 	// *common.Deps with a stub resolver, but this test needs a genuine
 	// /api/pos/scan through the real Init-built mux to resolve, which means
 	// the schema has to be the real one.
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "wiring.db"))
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
+	dbase := &db.DB{DB: openPagesTestDB(t)}
 	t.Cleanup(func() { dbase.Close() })
 	// This item's own tax_code_id is unset, but pos.Service falls back to
 	// the config's default tax rate for any line with a zero TaxRateBP
@@ -374,10 +364,7 @@ func TestInit_ReturnedDepsIsTheSameInstanceAsyncPrintGoroutinesTrack(t *testing.
 // payment_methods).
 func newPrintFlagTestDeps(t *testing.T) *common.Deps {
 	t.Helper()
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "printflags.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := &db.DB{DB: openPagesTestDB(t)}
 	t.Cleanup(func() { dbase.Close() })
 	// The 'cash' payment_methods row is seeded by 001_init.sql already; only
 	// the item behind sale_lines.item_id needs adding.

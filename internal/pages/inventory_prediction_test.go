@@ -10,7 +10,6 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
-	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -22,13 +21,8 @@ import (
 func TestInventoryPredictsDaysLeft(t *testing.T) {
 	chdirRoot(t)
 	// Real migrations: the query spans sales + sale_lines + inventory.
-	f := filepath.Join(t.TempDir(), "inv.db")
-	database, err := db.Open(f)
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	defer database.Close()
-	d := database.DB
+	d := openPagesTestDB(t)
+	defer d.Close()
 
 	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
 	if err != nil {
@@ -118,13 +112,8 @@ func TestInventoryPredictsDaysLeft(t *testing.T) {
 // default → every variant misreported as running out.
 func TestInventoryVariantSellRateIsPerVariantNotItemCombined(t *testing.T) {
 	chdirRoot(t)
-	f := filepath.Join(t.TempDir(), "variant-inv.db")
-	database, err := db.Open(f)
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	defer database.Close()
-	d := database.DB
+	d := openPagesTestDB(t)
+	defer d.Close()
 
 	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
 	if err != nil {
@@ -194,13 +183,8 @@ func TestInventoryVariantSellRateIsPerVariantNotItemCombined(t *testing.T) {
 // time instead of the flat default.
 func TestInventoryLeadTimeAwareWarnAndReorder(t *testing.T) {
 	chdirRoot(t)
-	f := filepath.Join(t.TempDir(), "inv.db")
-	database, err := db.Open(f)
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	defer database.Close()
-	d := database.DB
+	d := openPagesTestDB(t)
+	defer d.Close()
 
 	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
 	if err != nil {
