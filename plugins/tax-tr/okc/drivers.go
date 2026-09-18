@@ -7,7 +7,20 @@ import "fmt"
 // are scaffolds that fail closed until their wire format is filled in
 // against the maker's integrator documentation and a test device
 // (docs/arch/turkey-launch-playbook.md steps 3–4, ut-docs#1280).
-var DriverNames = []string{"bridge", "gmp3", "hugin-pclink", "pavo-rest", "token-x"}
+//
+// There is deliberately no "gmp3" entry. GİB's GMP-3 v5.0 §3.3 requires
+// PC-hosted sales software to link the ÖKC maker's own compiled GMP-3
+// library, and requires browser-served software to reach it only through a
+// separate middleware process running on that PC — a from-spec GMP-3 driver
+// inside this WASM plugin can never be built (ADR-0102 Decision 4). A maker
+// whose only interface is that library is reached through a small bridge
+// process on the machine wired to the device, speaking the Universal Till
+// ÖKC bridge protocol v0 (`bridge.go`, simulator `okc/sim`; wire format in
+// `ut-docs/reference/okc-bridge-protocol.md`). Whether a maker's own
+// REST/cloud API (the hugin-pclink / pavo-rest / token-x scaffolds below)
+// counts as "the maker's library" under §3.3 is confirmed per maker at
+// integrator registration — the ADR leaves it open on purpose.
+var DriverNames = []string{"bridge", "hugin-pclink", "pavo-rest", "token-x"}
 
 // NewDriver picks the driver named in cfg.Driver, wrapped with
 // NewValidatingDriver so every driver it returns enforces the "no usable
@@ -19,8 +32,6 @@ func NewDriver(t Transport, cfg Config) (Driver, error) {
 	switch cfg.Driver {
 	case "bridge":
 		d = NewBridgeDriver(t, cfg)
-	case "gmp3":
-		d = &GMP3Driver{Transport: t, Config: cfg}
 	case "hugin-pclink":
 		d = &HuginPCLinkDriver{Transport: t, Config: cfg}
 	case "pavo-rest":
@@ -33,34 +44,11 @@ func NewDriver(t Transport, cfg Config) (Driver, error) {
 	return NewValidatingDriver(d), nil
 }
 
-// GMP3Driver will speak GİB's "ÖKC – Harici Donanım ve Yazılım Haberleşme
-// Protokolü GMP-3" (v5.0, 2 Aug 2018) wired mode ("kasa modu"): the till
-// and the device share a LAN, the till pushes the basket, the device takes
-// payment on its own EFT-POS and prints the mali fiş. The message framing,
-// field codes and the pairing/activation handshake are in the GMP-3 PDF on
-// ynokc.gib.gov.tr and in each maker's integrator pack — neither was
-// reachable from the session that wrote this file, so nothing here is
-// guessed: every call fails closed with ErrDriverNotImplemented until the
-// format is filled in against a real device.
-type GMP3Driver struct {
-	Transport Transport
-	Config    Config
-}
-
-func (d *GMP3Driver) Sale(SaleRequest) (Evidence, error) {
-	return Evidence{}, fmt.Errorf("%w: gmp3 (needs the GMP-3 v5.0 framing from ynokc.gib.gov.tr and the maker's activation for this device)", ErrDriverNotImplemented)
-}
-func (d *GMP3Driver) Refund(RefundRequest) (Evidence, error) {
-	return Evidence{}, fmt.Errorf("%w: gmp3", ErrDriverNotImplemented)
-}
-func (d *GMP3Driver) Status() (Status, error) {
-	return Status{}, fmt.Errorf("%w: gmp3", ErrDriverNotImplemented)
-}
-
 // HuginPCLinkDriver will speak Hugin PC Link — Hugin's HTTPS/REST
-// integration for external sales software (developer.hugin.com.tr). Same
-// status as GMP3Driver: endpoint paths and payloads come from Hugin's
-// developer portal after integrator registration.
+// integration for external sales software (developer.hugin.com.tr). A
+// scaffold like the other maker drivers below: it fails closed until
+// endpoint paths and payloads come from Hugin's developer portal after
+// integrator registration.
 type HuginPCLinkDriver struct {
 	Transport Transport
 	Config    Config
@@ -78,7 +66,9 @@ func (d *HuginPCLinkDriver) Status() (Status, error) {
 
 // PavoRESTDriver will speak Pavo's REST integration for sales applications
 // (API key issued in the Pavo portal, device set to "REST" under Satış
-// Uygulamaları). Same status as GMP3Driver.
+// Uygulamaları). A scaffold like the other maker drivers: it fails closed
+// until Pavo's sales-application REST documentation and a test API key
+// are in hand.
 type PavoRESTDriver struct {
 	Transport Transport
 	Config    Config
