@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -1073,14 +1074,14 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// path — a code-only request with a stray delta param falls
 		// through to the absolute-qty branch below unchanged, same as
 		// before this card; the shipped buttons always send key. An
-		// unparseable delta (key-addressed) is a real 400, mirroring the
-		// self-order twin, not a silent no-op — a non-finite one (NaN/Inf)
-		// parses successfully and is a known, pre-existing gap shared with
-		// that same twin, tracked separately (not reachable from the UI:
-		// this endpoint is authenticated, unlike /api/self-order/line).
+		// unparseable OR non-finite delta (NaN/±Inf — ut-docs#2383:
+		// strconv.ParseFloat accepts those literal strings with no error,
+		// and NaN/Inf then rendered the whole basket total as £0.00) is a
+		// real 400, mirroring the self-order twin (not reachable from the
+		// UI: this endpoint is authenticated, unlike /api/self-order/line).
 		if v := strings.TrimSpace(r.Form.Get("delta")); v != "" && key != "" {
 			delta, err := strconv.ParseFloat(v, 64)
-			if err != nil {
+			if err != nil || math.IsNaN(delta) || math.IsInf(delta, 0) {
 				http.Error(w, "invalid delta", http.StatusBadRequest)
 				return
 			}
@@ -1094,7 +1095,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				qty = 0
 			}
 		} else if v := r.Form.Get("qty"); v != "" {
-			if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 {
+			if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 && !math.IsInf(f, 0) {
 				qty = f
 			}
 		}
