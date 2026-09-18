@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -15,7 +14,6 @@ import (
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
-	appdb "github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -26,14 +24,11 @@ import (
 // shortcut_buttons, translation_overrides) don't exist in the simplified
 // seedForPages schema used elsewhere in this package, so these tests use a
 // REAL, fully migrated database (like internal/data/sync_admin_repo_test.go
-// does) rather than openPagesTestDB+seedForPages.
+// does) rather than seedForPages.
 func newMigratedSyncDeps(t *testing.T, name string) *common.Deps {
 	t.Helper()
 	chdirRoot(t)
-	d, err := appdb.Open(filepath.Join(t.TempDir(), name))
-	if err != nil {
-		t.Fatalf("open migrated db: %v", err)
-	}
+	d := openPagesTestDB(t)
 	t.Cleanup(func() { d.Close() })
 
 	cfg := &config.Config{
@@ -49,19 +44,19 @@ func newMigratedSyncDeps(t *testing.T, name string) *common.Deps {
 			EndpointURL: "http://localhost:8081",
 		},
 	}
-	pm, err := plugins.Init(t.Context(), cfg, d.DB)
+	pm, err := plugins.Init(t.Context(), cfg, d)
 	if err != nil {
 		t.Fatalf("init plugins: %v", err)
 	}
-	state := common.LoadState(t.Context(), settings.NewStore(d.DB), cfg)
+	state := common.LoadState(t.Context(), settings.NewStore(d), cfg)
 	return &common.Deps{
 		Cfg:      cfg,
-		Db:       d.DB,
+		Db:       d,
 		State:    state,
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
 		BaseMenu: []common.MenuItem{{Href: "/", Label: "Home"}},
 		Pm:       pm,
-		Settings: settings.NewStore(d.DB),
+		Settings: settings.NewStore(d),
 	}
 }
 

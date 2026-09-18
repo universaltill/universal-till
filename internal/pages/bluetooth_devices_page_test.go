@@ -16,14 +16,12 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/bluetooth"
-	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/settings"
 )
@@ -98,19 +96,16 @@ func stubBluetooth(t *testing.T, fake *fakeBluetoothClient, connectErr error) {
 func newBluetoothDevicesTestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Helper()
 	chdirRoot(t)
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "bluetooth-devices-page.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := openPagesTestDB(t)
 	t.Cleanup(func() { dbase.Close() })
 	// audit_log.actor_id is a foreign key into users: the manager the
 	// pair/forget tests act as has to exist for its audit row to land
 	// (InsertAudit's error is deliberately swallowed by the handler, so
 	// without this row the audit assertions would fail silently-by-design).
-	if _, err := dbase.DB.Exec(`INSERT INTO users(id, username, display_name, pin_hash, role) VALUES ('m1','manager1','Manager','x','manager')`); err != nil {
+	if _, err := dbase.Exec(`INSERT INTO users(id, username, display_name, pin_hash, role) VALUES ('m1','manager1','Manager','x','manager')`); err != nil {
 		t.Fatal(err)
 	}
-	d := &common.Deps{Db: dbase.DB, Settings: settings.NewStore(dbase.DB), Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(dbase.DB)}
+	d := &common.Deps{Db: dbase, Settings: settings.NewStore(dbase), Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(dbase)}
 	mux := http.NewServeMux()
 	registerBluetoothDevices(mux, d)
 	return mux, d

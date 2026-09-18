@@ -45,10 +45,7 @@ func ean13pg(t *testing.T, body string) string {
 func setupScanBarcodeDeps(t *testing.T) (*http.ServeMux, *common.Deps, *db.DB) {
 	t.Helper()
 	chdirRoot(t)
-	d, err := db.Open(filepath.Join(t.TempDir(), "scan.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	d := &db.DB{DB: openPagesTestDB(t)}
 	t.Cleanup(func() { _ = d.Close() })
 
 	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")

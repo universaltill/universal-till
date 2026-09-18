@@ -2,11 +2,9 @@ package pages
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data"
-	"github.com/universaltill/universal-till/internal/db"
 )
 
 func TestVATBreakdownGroupsByRecordedRate(t *testing.T) {
@@ -159,10 +157,7 @@ func TestVATBreakdownProratesSaleDiscount(t *testing.T) {
 // the till prefix — the legal core of the feature.
 func TestInvoiceNumberingPerSeries(t *testing.T) {
 	ctx := context.Background()
-	d, err := db.Open(filepath.Join(t.TempDir(), "inv.db"))
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
+	d := openPagesTestDB(t)
 	defer d.Close()
 	// invoices.sale_id has an FK — use seeded demo sales? None exist.
 	// Insert two minimal sales to hang invoices off.
@@ -172,7 +167,7 @@ func TestInvoiceNumberingPerSeries(t *testing.T) {
 			t.Fatalf("seed sale: %v", err)
 		}
 	}
-	repo := data.NewInvoiceRepo(d.DB)
+	repo := data.NewInvoiceRepo(d)
 	mk := func(series, saleID, kind string) data.InvoiceRow {
 		row, err := repo.Create(ctx, data.InvoiceInput{
 			Series: series, Kind: kind, SaleID: saleID, CustomerName: "ACME",

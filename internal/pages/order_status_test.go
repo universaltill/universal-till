@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -23,10 +22,7 @@ import (
 func newOrderStatusTestDeps(t *testing.T) (*http.ServeMux, *common.Deps, *db.DB) {
 	t.Helper()
 	chdirRoot(t)
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "orders.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := &db.DB{DB: openPagesTestDB(t)}
 	t.Cleanup(func() { dbase.Close() })
 
 	// Settings backs the replica check (SyncPrimaryURL): left empty, this

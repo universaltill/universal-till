@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -18,7 +17,6 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
-	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/settings"
 )
@@ -26,15 +24,12 @@ import (
 func newCountrySettingsTestMux(t *testing.T) (*http.ServeMux, *data.CountrySettingsRepo, *common.Deps) {
 	t.Helper()
 	chdirRoot(t)
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "country-settings-page.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := openPagesTestDB(t)
 	t.Cleanup(func() { dbase.Close() })
-	d := &common.Deps{Db: dbase.DB, Settings: settings.NewStore(dbase.DB), Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(dbase.DB)}
+	d := &common.Deps{Db: dbase, Settings: settings.NewStore(dbase), Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(dbase)}
 	mux := http.NewServeMux()
 	registerCountrySettings(mux, d)
-	return mux, data.NewCountrySettingsRepo(dbase.DB), d
+	return mux, data.NewCountrySettingsRepo(dbase), d
 }
 
 // ut-docs#902: GET /country-settings must be reachable under UT_AUTH=off

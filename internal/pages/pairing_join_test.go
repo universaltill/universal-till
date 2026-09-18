@@ -10,7 +10,6 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -636,16 +635,12 @@ func TestPairingSurface_FullAuthenticatedRoundTrip(t *testing.T) {
 	// for the join/snapshot tests, not the auth ones) has a NOT NULL
 	// pin_hash that doesn't match production's actual first-boot shape.
 	// Same pattern as TestPairingFlow_AgainstRealMigratedSchema.
-	dbPath := filepath.Join(t.TempDir(), "unitill-pos.db")
-	d, err := appdb.Open(dbPath)
-	if err != nil {
-		t.Fatalf("open real migrated db: %v", err)
-	}
+	d := openPagesTestDB(t)
 	t.Cleanup(func() { d.Close() })
 
 	primary := &common.Deps{
 		Cfg: &config.Config{Marketplace: config.MarketplaceConfig{EndpointURL: "http://localhost:8081"}},
-		Db:  d.DB,
+		Db:  d,
 	}
 	psvc := auth.NewService(primary.Db)
 	pmux := http.NewServeMux()

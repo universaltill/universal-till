@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
-	appdb "github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
@@ -39,12 +38,9 @@ import (
 // success branches rather than only the DB-error branch.
 func openRealSchemaPagesDB(t *testing.T) *sql.DB {
 	t.Helper()
-	database, err := appdb.Open(filepath.Join(t.TempDir(), "plugin_api_test.db"))
-	if err != nil {
-		t.Fatalf("open real-schema db: %v", err)
-	}
-	t.Cleanup(func() { database.DB.Close() })
-	return database.DB
+	database := openPagesTestDB(t)
+	t.Cleanup(func() { database.Close() })
+	return database
 }
 
 // isolatePluginsDir points paths.Plugins() at a throwaway directory so import /

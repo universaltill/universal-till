@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -27,10 +26,7 @@ import (
 func setupVariantModifiersTestDeps(t *testing.T) (*common.Deps, *db.DB) {
 	t.Helper()
 	chdirRoot(t)
-	d, err := db.Open(filepath.Join(t.TempDir(), "variant-mods.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	d := &db.DB{DB: openPagesTestDB(t)}
 	t.Cleanup(func() { _ = d.Close() })
 
 	// itm-coffee's OWN base price (999) is deliberately far from any of its

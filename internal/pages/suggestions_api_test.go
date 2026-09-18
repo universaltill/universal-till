@@ -3,12 +3,10 @@ package pages
 import (
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
-	appdb "github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -21,26 +19,23 @@ import (
 func newSuggestionsTestDeps(t *testing.T, engine *pos.Service) *common.Deps {
 	t.Helper()
 	chdirRoot(t)
-	d, err := appdb.Open(filepath.Join(t.TempDir(), "suggestions.db"))
-	if err != nil {
-		t.Fatalf("open migrated db: %v", err)
-	}
+	d := openPagesTestDB(t)
 	t.Cleanup(func() { d.Close() })
 
 	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", Locale: "en", TaxRate: 20}}
-	pm, err := plugins.Init(t.Context(), cfg, d.DB)
+	pm, err := plugins.Init(t.Context(), cfg, d)
 	if err != nil {
 		t.Fatalf("init plugins: %v", err)
 	}
-	state := common.LoadState(t.Context(), settings.NewStore(d.DB), cfg)
+	state := common.LoadState(t.Context(), settings.NewStore(d), cfg)
 	return &common.Deps{
 		Cfg:      cfg,
-		Db:       d.DB,
+		Db:       d,
 		State:    state,
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
 		Engine:   engine,
 		Pm:       pm,
-		Settings: settings.NewStore(d.DB),
+		Settings: settings.NewStore(d),
 	}
 }
 

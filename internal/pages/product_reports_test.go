@@ -2,12 +2,10 @@ package pages
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
-	"github.com/universaltill/universal-till/internal/db"
 )
 
 // pagesWinTo/pagesWinFrom give this package's report tests a simple rolling
@@ -26,13 +24,8 @@ func pagesWinFrom(days int) time.Time {
 // seller (not dead); an item with stock and no sales is dead stock (value =
 // qty × base_price); a sold-out never-seller doesn't appear in dead stock.
 func TestSlowItemsAndDeadStock(t *testing.T) {
-	f := filepath.Join(t.TempDir(), "rep.db")
-	database, err := db.Open(f)
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	defer database.Close()
-	d := database.DB
+	d := openPagesTestDB(t)
+	defer d.Close()
 
 	mustExec := func(q string, args ...any) {
 		t.Helper()

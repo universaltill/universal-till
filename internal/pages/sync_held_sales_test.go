@@ -4,13 +4,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
-	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -24,13 +22,10 @@ import (
 func newSyncHeldSalesTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Helper()
 	chdirRoot(t)
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "sync_held_sales.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := openPagesTestDB(t)
 	t.Cleanup(func() { dbase.Close() })
 
-	dp := &common.Deps{Db: dbase.DB}
+	dp := &common.Deps{Db: dbase}
 	mux := http.NewServeMux()
 	registerSyncHeldSales(mux, dp)
 	return mux, dp

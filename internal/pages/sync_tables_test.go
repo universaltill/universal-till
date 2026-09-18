@@ -2,14 +2,13 @@ package pages
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data"
-	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -18,16 +17,13 @@ import (
 // tiles and table picker render — bearer-authed via syncTill, JSON envelope,
 // same shape as sync_orders_test.go.
 
-func newSyncTablesTestDeps(t *testing.T) (*http.ServeMux, *common.Deps, *db.DB) {
+func newSyncTablesTestDeps(t *testing.T) (*http.ServeMux, *common.Deps, *sql.DB) {
 	t.Helper()
 	chdirRoot(t)
-	dbase, err := db.Open(filepath.Join(t.TempDir(), "sync_tables.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dbase := openPagesTestDB(t)
 	t.Cleanup(func() { dbase.Close() })
 
-	dp := &common.Deps{Db: dbase.DB}
+	dp := &common.Deps{Db: dbase}
 	mux := http.NewServeMux()
 	registerSyncTables(mux, dp)
 	return mux, dp, dbase
@@ -57,7 +53,7 @@ func TestSyncTablesGet_ReturnsOccupancy(t *testing.T) {
 	mux, dp, dbase := newSyncTablesTestDeps(t)
 	seedSyncOrdersTill(t, dp, "Till 2", "bearer-t2")
 
-	repo := data.NewPOSRepo(dbase.DB)
+	repo := data.NewPOSRepo(dbase)
 	ctx := context.Background()
 	free, err := repo.CreateTable(ctx, "T1", "Terrace", 4, "rect", 100, 100)
 	if err != nil {
