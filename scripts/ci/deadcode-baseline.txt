@@ -5,7 +5,6 @@ internal/data/plugin_repo.go: unreachable func: PluginRepo.CatalogPage
 internal/data/plugin_repo.go: unreachable func: PluginRepo.DeleteStorage
 internal/data/plugin_repo.go: unreachable func: PluginRepo.DeleteStorageKey
 internal/data/plugin_repo.go: unreachable func: PluginRepo.GetPluginVersionAt
-internal/data/plugin_repo.go: unreachable func: PluginRepo.HasActivePrinterPermission
 internal/data/plugin_repo.go: unreachable func: PluginRepo.InstallPlugin
 internal/data/plugin_repo.go: unreachable func: PluginRepo.ListRevokedPlugins
 internal/data/plugin_repo.go: unreachable func: PluginRepo.UpsertPluginSetting
