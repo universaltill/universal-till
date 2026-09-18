@@ -226,6 +226,16 @@ var railIcons = map[string]string{
 	// "chevron-down" already in this set.
 	"chevron-left":  `<path d="m15 18-6-6 6-6"/>`,
 	"chevron-right": `<path d="m9 18 6-6-6-6"/>`,
+	// View (ut-docs#2186) — the fiscal-register row's tap-to-open affordance,
+	// where "pencil"/Edit (this registry's existing per-row edit glyph) is
+	// actively wrong: the dialog it opens is read-only (no update endpoint
+	// exists for these fields), so labelling it "Edit" told a screen-reader
+	// user and a sighted operator alike that they could change something
+	// they can't. Distinct from "pencil" for exactly one reason: a row that
+	// opens a genuinely read-only dialog needs its own accessible name and
+	// glyph, growing this registry the same way "filter"/"landmark"/
+	// "scan-barcode" already did. Lucide's "eye" path, unmodified.
+	"eye": `<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/>`,
 }
 
 // iconSVGOpen is the one shared wrapper every rail icon renders inside.

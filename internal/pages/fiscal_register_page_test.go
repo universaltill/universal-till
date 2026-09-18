@@ -633,3 +633,146 @@ func TestFiscalRegisterPage_VaryHXRequestOnBothBranches(t *testing.T) {
 		t.Errorf("full-page branch: Vary header = %q, want %q", got, "HX-Request")
 	}
 }
+
+// ut-docs#2186: adopts the ut-docs#2010 list/edit dialog standard
+// (ut-docs/reference/list-and-dialog-pattern.md), mirroring
+// categories_page_test.go's TestCategoriesPage_RendersRecordDialogWithFieldsSlot
+// — the slot contract fails at TEMPLATE-EXECUTE time, not parse time, if a
+// page using record_dialog forgets to define record_dialog_fields/
+// record_dialog_destructive, so every adopting page pins its rendered
+// dialog body in a Go test. Fiscal-register entries have no update
+// endpoint (create + one-directional decommission only), so a row here
+// opens the SAME dialog markup in a read-only "view" mode rather than a
+// real edit form — this test only pins that the dialog/slots render at
+// all; the view-mode field-disabling itself is client-side (the page's
+// own <script>, record-dialog:open) and has no Go-level coverage.
+func TestFiscalRegisterPage_RendersRecordDialogWithFieldsSlot(t *testing.T) {
+	mux, d := newFiscalRegisterTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	// Registered against the seeded "Main" location (not
+	// createRegisterForFiscalTest's location-less till), same setup as
+	// TestFiscalRegisterPageAddressUpdate -- a group only gets its address
+	// form once it has a real location, and this test also asserts that
+	// form stays untouched.
+	var locID string
+	if err := d.Db.QueryRow(`SELECT id FROM stock_locations WHERE name = 'Main'`).Scan(&locID); err != nil {
+		t.Fatalf("lookup seeded location: %v", err)
+	}
+	regID := "reg-slot-main"
+	if _, err := d.Db.Exec(`INSERT INTO registers (id, name, location_id, is_active) VALUES (?, 'Front Till', ?, 1)`, regID, locID); err != nil {
+		t.Fatalf("seed register: %v", err)
+	}
+
+	form := url.Values{
+		"register_id":          {regID},
+		"eas_software":         {"AwesomePOS"},
+		"eas_serial":           {"eas-slot"},
+		"tse_serial":           {"tse-slot"},
+		"tse_certification_id": {"cert-slot"},
+		"tse_type":             {"cloud-tse"},
+		"acquired_on":          {"2026-01-15"},
+	}
+	if rec := postForm(mux, "/api/fiscal-register", form, &manager); rec.Code != http.StatusSeeOther {
+		t.Fatalf("seed entry: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/fiscal-register", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /fiscal-register: %d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	// The list header: a search box wired across every group's rows via the
+	// shared entry-row class, and an icon-only New button wired to the
+	// dialog, each with an accessible name.
+	if !strings.Contains(body, `class="list-header"`) {
+		t.Errorf("page has no .list-header")
+	}
+	if !strings.Contains(body, `data-list-filter="#fiscal-register-groups .entry-row"`) {
+		t.Errorf("search box is not wired to the fiscal-register entry rows")
+	}
+	if !strings.Contains(body, `data-record-dialog-open="fiscal-register-dialog"`) {
+		t.Errorf("New button is not wired to the dialog")
+	}
+
+	// The dialog itself, and the slot contract: the body holds the form with
+	// the fields the create form needs.
+	dlgStart := strings.Index(body, `<dialog id="fiscal-register-dialog"`)
+	if dlgStart < 0 {
+		t.Fatalf("page has no #fiscal-register-dialog:\n%s", body)
+	}
+	dlgEnd := strings.Index(body[dlgStart:], `</dialog>`)
+	if dlgEnd < 0 {
+		t.Fatalf("dialog is not closed")
+	}
+	dlg := body[dlgStart : dlgStart+dlgEnd]
+	bodyStart := strings.Index(dlg, `class="record-dialog-body"`)
+	if bodyStart < 0 {
+		t.Fatalf("dialog has no .record-dialog-body:\n%s", dlg)
+	}
+	dlgBody := dlg[bodyStart:]
+	if !strings.Contains(dlgBody, `id="fiscal-register-form"`) || !strings.Contains(dlgBody, `name="eas_serial"`) ||
+		!strings.Contains(dlgBody, `name="tse_certification_id"`) || !strings.Contains(dlgBody, `name="register_id"`) {
+		t.Errorf("record_dialog_fields slot did not render the entry fields inside the dialog body:\n%s", dlgBody)
+	}
+	if !strings.Contains(dlg, `data-record-dialog-destructive`) {
+		t.Errorf("record_dialog_destructive slot did not render inside the dialog head:\n%s", dlg)
+	}
+	// Save reaches the form via the HTML5 form="…" association, not by being
+	// inside it.
+	if !strings.Contains(dlg, `form="fiscal-register-form"`) {
+		t.Errorf("Save button is not associated with #fiscal-register-form")
+	}
+	for _, attr := range []string{`data-create-action="/api/fiscal-register"`, `data-discard-confirm="`, `data-title-create="`, `data-title-edit="`} {
+		if !strings.Contains(dlg, attr) {
+			t.Errorf("dialog is missing %s", attr)
+		}
+	}
+
+	// A row is tap-to-open (read-only view): it carries the prefill
+	// attributes and a deliberately unregistered data-record-action so a
+	// stray submit 404s instead of mutating the wrong thing, plus a real
+	// focusable control as the keyboard path.
+	if !strings.Contains(body, `data-record-open="fiscal-register-dialog"`) || !strings.Contains(body, `data-field-eas_serial="eas-slot"`) {
+		t.Errorf("fiscal-register row is not a tap-to-open row with prefill data")
+	}
+	if !strings.Contains(body, `data-record-action="`) || !strings.Contains(body, `/view"`) {
+		t.Errorf("fiscal-register row has no data-record-action pointing at the unregistered /view path")
+	}
+	if !strings.Contains(body, `data-record-edit`) {
+		t.Errorf("fiscal-register row has no explicit (keyboard-reachable) open control")
+	}
+	// ut-docs#2186 review finding B2: the row's control opens a READ-ONLY
+	// dialog (no update endpoint exists), so it must not carry the generic
+	// "Edit"/pencil label the pattern uses everywhere else -- that mismatch
+	// is exactly what a screen reader or a sighted operator would trust.
+	if strings.Contains(body, `aria-label="Edit"`) {
+		t.Errorf("fiscal-register row's open control is still labelled Edit, not View")
+	}
+	if !strings.Contains(body, `data-icon="eye"`) {
+		t.Errorf("fiscal-register row's open control does not use the eye/View icon")
+	}
+	// ut-docs#2186 review finding B3: data-field-register_name backs the
+	// view dialog's fallback for a register that's since been deactivated
+	// (ListRegisters only returns active ones, so the <select> alone can't
+	// always show the entry's actual till).
+	if !strings.Contains(body, `data-field-register_name="Front Till"`) {
+		t.Errorf("fiscal-register row is missing data-field-register_name")
+	}
+	if !strings.Contains(body, `data-record-destructive-action="/api/fiscal-register/`) || !strings.Contains(body, `/decommission"`) {
+		t.Errorf("fiscal-register row is not wired to the decommission endpoint")
+	}
+
+	// The old side-by-side create card is gone; the per-location address
+	// form stays exactly as-is, outside the dialog (BA/Architect non-goal).
+	for _, gone := range []string{`class="users-layout"`, `class="users-form"`} {
+		if strings.Contains(body, gone) {
+			t.Errorf("page still renders the old %q pattern", gone)
+		}
+	}
+	if !strings.Contains(body, `action="/api/fiscal-register/locations/`) || !strings.Contains(body, `class="users-inline"`) {
+		t.Errorf("per-location address form is missing or was converted (it must stay untouched, outside the dialog)")
+	}
+}
