@@ -400,6 +400,7 @@
   "countrysettings.edit.title": "تعديل الدولة",
   "countrysettings.empty": "لا توجد دول بعد — اضغط على + لإضافة واحدة.",
   "countrysettings.error.below_floor": "لا يمكن ضبط مدة حفظ الأرشيف دون الحد الأدنى. يمكن رفعها فقط.",
+  "countrysettings.error.code_changed": "لا يمكن تغيير رمز الدولة أثناء التعديل. أغلق هذا الحوار وأضف دولة جديدة بدلاً من ذلك.",
   "countrysettings.error.code_required": "أدخل رمز الدولة.",
   "countrysettings.error.delete": "تعذّر حذف هذه الدولة.",
   "countrysettings.error.retention_invalid": "أدخل مدة الحفظ بعدد أيام صحيح.",

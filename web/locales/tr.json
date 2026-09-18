@@ -400,6 +400,7 @@
   "countrysettings.edit.title": "Ülkeyi düzenle",
   "countrysettings.empty": "Henüz ülke yok — eklemek için + düğmesine dokunun.",
   "countrysettings.error.below_floor": "Arşiv saklama süresi alt sınırın altına ayarlanamaz. Yalnızca artırılabilir.",
+  "countrysettings.error.code_changed": "Düzenleme sırasında ülke kodu değiştirilemez. Bu pencereyi kapatıp bunun yerine yeni bir ülke ekleyin.",
   "countrysettings.error.code_required": "Bir ülke kodu girin.",
   "countrysettings.error.delete": "Bu ülke silinemedi.",
   "countrysettings.error.retention_invalid": "Saklama süresini tam gün sayısı olarak girin.",

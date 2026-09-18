@@ -400,6 +400,7 @@
   "countrysettings.edit.title": "Edit country",
   "countrysettings.empty": "No countries yet — tap + to add one.",
   "countrysettings.error.below_floor": "Archive retention cannot be set below the minimum. It can only be raised.",
+  "countrysettings.error.code_changed": "The country code cannot be changed while editing. Close this dialog and add a new country instead.",
   "countrysettings.error.code_required": "Enter a country code.",
   "countrysettings.error.delete": "Could not delete this country.",
   "countrysettings.error.retention_invalid": "Enter the retention period as a whole number of days.",
