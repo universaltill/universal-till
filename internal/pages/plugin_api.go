@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -195,6 +196,7 @@ func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/plugins/{id}/uninstall", handleUninstallPlugin(d))
 	mux.HandleFunc("POST /api/plugins/{id}/update", handleUpdatePlugin(d))
 	mux.HandleFunc("POST /api/plugins/{id}/rollback", handleRollbackPlugin(d))
+	mux.HandleFunc("GET /api/plugins/{id}/versions", handleListPluginVersions(d))
 	mux.HandleFunc("GET /api/plugins/check-updates", handleCheckUpdates(d))
 	mux.HandleFunc("POST /api/plugins/import-from-file", handleImportFromFile(d))
 	mux.HandleFunc("GET /api/plugins/{id}/export", handleExportPlugin(d))
@@ -836,6 +838,48 @@ func handleRollbackPlugin(d *common.Deps) http.HandlerFunc {
 			"data": map[string]interface{}{
 				"message": fmt.Sprintf("Plugin rolled back to version %s", req.Version),
 				"version": req.Version,
+			},
+			"error": nil,
+		})
+	}
+}
+
+// handleListPluginVersions lists the on-disk version snapshots
+// RollbackManager.GetVersionHistory knows about for a plugin, so the
+// management UI can offer a rollback target without the caller already
+// knowing an exact version string (ut-docs#2239 — Rollback itself has been
+// live since before this handler existed; this is the missing discovery
+// half of that flow). Most-recent-first, and never serializes the on-disk
+// snapshot path — that's a local filesystem detail, not client-facing data.
+func handleListPluginVersions(d *common.Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !canPerform(d, r, "plugin_management") {
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			return
+		}
+		pluginID := r.PathValue("id")
+		if pluginID == "" {
+			http.Error(w, "plugin ID is required", http.StatusBadRequest)
+			return
+		}
+
+		rollbackMgr := plugins.NewRollbackManager(d.Db, paths.Plugins())
+		versions, err := rollbackMgr.GetVersionHistory(r.Context(), pluginID)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("failed to list plugin versions: %v", err), http.StatusInternalServerError)
+			return
+		}
+		if versions == nil {
+			versions = []plugins.VersionInfo{}
+		}
+		sort.SliceStable(versions, func(i, j int) bool {
+			return versions[i].InstalledAt.After(versions[j].InstalledAt)
+		})
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": map[string]interface{}{
+				"versions": versions,
 			},
 			"error": nil,
 		})

@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -515,6 +516,124 @@ func TestHandleRollbackPlugin_UnknownVersion_500(t *testing.T) {
 	h(rec, req)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500 when the target version isn't stored on disk, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// --- handleListPluginVersions ----------------------------------------------
+
+func TestHandleListPluginVersions_MissingID_400(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	h := handleListPluginVersions(&common.Deps{})
+	req := httptest.NewRequest(http.MethodGet, "/api/plugins//versions", nil)
+	req.SetPathValue("id", "")
+	rec := httptest.NewRecorder()
+	h(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for empty id, got %d", rec.Code)
+	}
+}
+
+func TestHandleListPluginVersions_NoSnapshots_200Empty(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	isolatePluginsDir(t)
+	db := openRealSchemaPagesDB(t)
+	seedInstalledPlugin(t, db, "com.test.rb", "1.0.0")
+	deps := newPluginAPIDeps(t, db, nil)
+	h := handleListPluginVersions(deps)
+	req := httptest.NewRequest(http.MethodGet, "/api/plugins/com.test.rb/versions", nil)
+	req.SetPathValue("id", "com.test.rb")
+	rec := httptest.NewRecorder()
+	h(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Data struct {
+			Versions []map[string]interface{} `json:"versions"`
+		} `json:"data"`
+		Error interface{} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Error != nil {
+		t.Fatalf("expected no error, got %v", body.Error)
+	}
+	if body.Data.Versions == nil {
+		t.Fatalf("expected versions to be an empty array, got null: %s", rec.Body.String())
+	}
+	if len(body.Data.Versions) != 0 {
+		t.Fatalf("expected no snapshots, got %d", len(body.Data.Versions))
+	}
+}
+
+func TestHandleListPluginVersions_ReturnsSortedHistoryWithoutLeakingPath(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	isolatePluginsDir(t)
+	db := openRealSchemaPagesDB(t)
+	// The active (newer) version sorts alphabetically/name-wise BEFORE the
+	// older one, opposite of chronological order — this pins the sort to
+	// InstalledAt specifically. os.ReadDir returns entries name-ascending,
+	// so a test using "1.0.0"/"2.0.0" (where reverse-chronological and
+	// reverse-alphabetical happen to agree) would pass even against a
+	// sort-by-name-descending bug; this doesn't.
+	seedInstalledPlugin(t, db, "com.test.rb", "1.0.0")
+
+	base := paths.Plugins()
+	older := filepath.Join(base, "com.test.rb", "versions", "9.0.0")
+	newer := filepath.Join(base, "com.test.rb", "versions", "1.0.0")
+	if err := os.MkdirAll(older, 0o755); err != nil {
+		t.Fatalf("mkdir older: %v", err)
+	}
+	if err := os.MkdirAll(newer, 0o755); err != nil {
+		t.Fatalf("mkdir newer: %v", err)
+	}
+	oldTime := time.Now().Add(-time.Hour)
+	newTime := time.Now()
+	if err := os.Chtimes(older, oldTime, oldTime); err != nil {
+		t.Fatalf("chtimes older: %v", err)
+	}
+	if err := os.Chtimes(newer, newTime, newTime); err != nil {
+		t.Fatalf("chtimes newer: %v", err)
+	}
+
+	deps := newPluginAPIDeps(t, db, nil)
+	h := handleListPluginVersions(deps)
+	req := httptest.NewRequest(http.MethodGet, "/api/plugins/com.test.rb/versions", nil)
+	req.SetPathValue("id", "com.test.rb")
+	rec := httptest.NewRecorder()
+	h(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if strings.Contains(rec.Body.String(), older) || strings.Contains(rec.Body.String(), newer) {
+		t.Fatalf("response must never leak the on-disk snapshot path: %s", rec.Body.String())
+	}
+
+	var body struct {
+		Data struct {
+			Versions []struct {
+				Version     string `json:"version"`
+				InstalledAt string `json:"installed_at"`
+				IsActive    bool   `json:"is_active"`
+			} `json:"versions"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(body.Data.Versions) != 2 {
+		t.Fatalf("expected 2 versions, got %d: %s", len(body.Data.Versions), rec.Body.String())
+	}
+	if body.Data.Versions[0].Version != "1.0.0" {
+		t.Fatalf("expected most-recent-first order, got %+v", body.Data.Versions)
+	}
+	if !body.Data.Versions[0].IsActive {
+		t.Fatalf("expected the active install's version to be flagged active: %+v", body.Data.Versions[0])
+	}
+	if body.Data.Versions[1].IsActive {
+		t.Fatalf("expected the non-active version to not be flagged active: %+v", body.Data.Versions[1])
 	}
 }
 

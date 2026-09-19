@@ -227,3 +227,54 @@ func TestStoreVersion_CopiesFilesFromSourcePath(t *testing.T) {
 		t.Fatalf("source dir must survive the copy: %v", err)
 	}
 }
+
+// ut-docs#2239 review: rolling back must not silently destroy the ability to
+// roll forward again. Rollback only ever restores from a versions/ snapshot
+// (never from the live per-version install dir), so a version reachable ONLY
+// through its live dir — never itself rolled away from — would vanish the
+// moment Rollback switches away from it, unless Rollback snapshots it first.
+func TestRollback_PreservesRollForwardToTheVersionItLeaves(t *testing.T) {
+	db := managerTestDB(t)
+	base := t.TempDir()
+	rm := NewRollbackManager(db, base)
+	pluginID := "com.test.forward"
+
+	// 1.0.0 has a versions/ snapshot (rollback TARGET must have one).
+	writeVersionDir(t, base, pluginID, "1.0.0", true)
+
+	// 2.0.0 is the live, active install — a real per-version dir installed
+	// by the marketplace installer, but never itself snapshotted into
+	// versions/ (it was a straight fresh install, never rolled away from).
+	liveDir := filepath.Join(base, pluginID, "2.0.0")
+	if err := os.MkdirAll(liveDir, 0o755); err != nil {
+		t.Fatalf("mkdir live dir: %v", err)
+	}
+	manifest := `{"id":"` + pluginID + `","name":"FWD","version":"2.0.0","entrypoint":"./run","runtime":"none","canonical_type":"page","device_arch":"any","entries":[]}`
+	if err := os.WriteFile(filepath.Join(liveDir, "manifest.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("write live manifest: %v", err)
+	}
+	seedInstalledPlugin(t, db, pluginID, "FWD", "2.0.0", "none", true)
+	seedCatalogRow(t, db, pluginID, "FWD", "1.0.0", "")
+
+	ctx := context.Background()
+	if err := rm.Rollback(ctx, pluginID, "1.0.0", "tester"); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+
+	history, err := rm.GetVersionHistory(ctx, pluginID)
+	if err != nil {
+		t.Fatalf("GetVersionHistory: %v", err)
+	}
+	var found2 bool
+	for _, v := range history {
+		if v.Version == "2.0.0" {
+			found2 = true
+			if v.IsActive {
+				t.Fatalf("2.0.0 should no longer be active after rolling back to 1.0.0: %+v", v)
+			}
+		}
+	}
+	if !found2 {
+		t.Fatalf("expected 2.0.0 (the version just left) to remain reachable for a future roll-forward, got history: %+v", history)
+	}
+}

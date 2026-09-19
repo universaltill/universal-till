@@ -41,6 +41,7 @@ func TestPluginManagementEndpoints_RejectWithoutManagerAuth(t *testing.T) {
 		{"uninstall", http.MethodPost, "/api/plugins/some-plugin/uninstall"},
 		{"update", http.MethodPost, "/api/plugins/some-plugin/update"},
 		{"rollback", http.MethodPost, "/api/plugins/some-plugin/rollback"},
+		{"list versions", http.MethodGet, "/api/plugins/some-plugin/versions"},
 		{"import from file", http.MethodPost, "/api/plugins/import-from-file"},
 		{"export", http.MethodGet, "/api/plugins/some-plugin/export"},
 	}
@@ -89,6 +90,7 @@ func TestPluginManagementEndpoints_RealSessionGatesByRole(t *testing.T) {
 		{"uninstall", http.MethodPost, "/api/plugins/some-plugin/uninstall"},
 		{"update", http.MethodPost, "/api/plugins/some-plugin/update"},
 		{"rollback", http.MethodPost, "/api/plugins/some-plugin/rollback"},
+		{"list versions", http.MethodGet, "/api/plugins/some-plugin/versions"},
 		{"import from file", http.MethodPost, "/api/plugins/import-from-file"},
 		{"export", http.MethodGet, "/api/plugins/some-plugin/export"},
 	}

@@ -29,30 +29,27 @@ func NewRollbackManager(db *sql.DB, pluginBaseDir string) *RollbackManager {
 	}
 }
 
-// VersionInfo contains information about a plugin version
+// VersionInfo contains information about a plugin version. Path is
+// deliberately excluded from JSON (json:"-") — it's a local on-disk
+// snapshot location, never client-facing data (ut-docs#2239).
 type VersionInfo struct {
-	Version     string
-	InstalledAt time.Time
-	Path        string
-	IsActive    bool
+	Version     string    `json:"version"`
+	InstalledAt time.Time `json:"installed_at"`
+	Path        string    `json:"-"`
+	IsActive    bool      `json:"is_active"`
 }
 
 // GetVersionHistory retrieves version history for a plugin: every snapshot
 // under pluginBaseDir/pluginID/versions/ (the tree StoreVersion writes and
 // Rollback reads), flagged with which one is currently active.
 //
-// No production caller (ut-docs#1566). Rollback itself IS live —
-// POST /api/plugins/{id}/rollback (internal/pages/plugin_api.go) and the
-// multi-till sync's failed-upgrade recovery (cloudsync_wire.go) both call
-// RollbackManager.Rollback — but both require the caller to already know
-// the target version string: the sync path takes it from its own
-// install-status record, and the API has no companion endpoint or page
-// that lists the versions available to roll back to (nothing under web/ui
-// renders a rollback control at all). This is the unwired read half of
-// that operator-facing flow. Wiring it means a new route, a manual topic
-// and a UX decision, so it is left in place with its tests
-// (TestRollbackFullArc, TestGetVersionHistoryNoDirectory) rather than
-// deleted or wired blind. Tracked as ut-docs#2239.
+// Its only caller used to be the sync path's own install-status record
+// (ut-docs#1566) — Rollback itself was live via POST /api/plugins/{id}/rollback
+// but nothing under web/ui could discover a target version to roll back to.
+// GET /api/plugins/{id}/versions (internal/pages/plugin_api.go,
+// handleListPluginVersions) now wires this in as that discovery step, and
+// web/ui/pages/plugins.html's "Versions" control surfaces it to an operator
+// (ut-docs#2239).
 func (rm *RollbackManager) GetVersionHistory(ctx context.Context, pluginID string) ([]VersionInfo, error) {
 	// Check plugin directory
 	pluginDir := filepath.Join(rm.pluginBaseDir, pluginID, "versions")
@@ -117,6 +114,26 @@ func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion
 
 	if currentVersion == targetVersion {
 		return fmt.Errorf("plugin is already at version %s", targetVersion)
+	}
+
+	// Snapshot the version we're leaving, same as an update does (ut-docs#2239
+	// review) — without this, a rollback silently sheds the ability to roll
+	// forward again: the version being left was never necessarily stored
+	// (e.g. it was itself the very first install, never previously rolled
+	// away from), so if this call is skipped a shop that rolls back and then
+	// decides the earlier version was wrong too has nowhere to go back to.
+	// Only attempt it when the live per-version install directory actually
+	// exists — StoreVersion unconditionally clears any existing snapshot
+	// before copying, so calling it against a missing source would destroy
+	// an already-good prior snapshot instead of leaving it alone. Warn-only
+	// on failure either way, same as the update handler's own StoreVersion
+	// call — a snapshot failure must never block the rollback the operator
+	// is here to complete.
+	currentSourcePath := filepath.Join(rm.pluginBaseDir, pluginID, currentVersion)
+	if _, statErr := os.Stat(currentSourcePath); statErr == nil {
+		if err := rm.StoreVersion(pluginID, currentVersion, currentSourcePath); err != nil {
+			log.Warnf("[Rollback] Failed to store version %s for plugin %s before rolling back to %s: %v", currentVersion, pluginID, targetVersion, err)
+		}
 	}
 
 	// Load manifest from target version
