@@ -140,6 +140,34 @@ func (m *SessionBasketManager) TableOwner(tableID string) (string, *Service, boo
 	return "", nil, false
 }
 
+// TableOwnerActive is TableOwner narrowed to a session touched within
+// maxIdle of now — the busy guard's own recency window (ut-docs#2261 review
+// finding B1). TableOwner alone made an ABANDONED session hold its table
+// hostage for the full Sweep threshold (originally 2h, chosen only to bound
+// memory): a guest who adds one item then orders at the counter instead
+// left that table's QR unscannable by anyone else for up to two hours, with
+// no staff-facing way to clear it. A session untouched longer than maxIdle
+// no longer counts as "holding" the table for this check — a fresh scan is
+// let through — even though it stays in memory, keeps its basket, and can
+// still be resumed by its OWN cookie (selfOrderSession's normal lookup is
+// unaffected by this method) until Sweep actually evicts it. Same
+// (token, *Service, bool) shape and empty-tableID/nil-manager handling as
+// TableOwner.
+func (m *SessionBasketManager) TableOwnerActive(tableID string, maxIdle time.Duration, now time.Time) (string, *Service, bool) {
+	if m == nil || tableID == "" {
+		return "", nil, false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cutoff := now.Add(-maxIdle)
+	for token, sb := range m.sessions {
+		if sb.svc.TableID() == tableID && !sb.lastSeen.Before(cutoff) {
+			return token, sb.svc, true
+		}
+	}
+	return "", nil, false
+}
+
 // Sweep evicts every session whose last Create/Get is more than maxIdle
 // before now, and returns how many it removed. now is a parameter (the same
 // injectable-time shape as OrderTrackingVisible) so the background loop

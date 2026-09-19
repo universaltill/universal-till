@@ -3,12 +3,25 @@ package pages
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 )
+
+// selfOrderTableBusyMaxIdle is the busy guard's own recency window
+// (ut-docs#2261 review finding B1) — deliberately much shorter than
+// selfOrderSessionMaxIdle (self_order_session_sweep.go's 2h memory-bound
+// eviction). A session that has gone quiet this long no longer holds its
+// table for the busy check: a guest who scans, adds an item, then changes
+// their mind and orders at the counter instead used to leave that table's
+// QR unscannable by anyone else for the full 2h sweep window, with no
+// staff-facing way to clear it. The session itself is untouched — it stays
+// in memory and resumable by its own cookie — this only narrows who counts
+// as "holding" the table for a DIFFERENT phone's scan.
+const selfOrderTableBusyMaxIdle = 10 * time.Minute
 
 // selfOrderSessionCookie carries a table-bound guest's session token
 // (ADR-0103 Decision 2, ut-docs#2261) — the key into
@@ -127,7 +140,7 @@ func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 			bound := false
 			if requestedTable != "" && d.SelfOrderSessions != nil {
 				var busy bool
-				bound, busy = bindSelfOrderTableSession(w, r, d, requestedTable)
+				bound, busy = bindSelfOrderTableSession(w, r, d, requestedTable, time.Now())
 				if busy {
 					httpx.RenderPartial("ui/pages/self_order.html", map[string]any{
 						"title":    httpx.T(httpx.RequestLocale(r), "page.title.self_order"),
@@ -157,12 +170,16 @@ func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 //     (stale/reprinted/tampered QR) — nothing minted, no cookie; the caller
 //     falls through to the plain walk-up path, exactly today's "leaves the
 //     basket with no table, never errors the page out" behaviour.
-//   - busy=true: the table already has a live, NON-empty session owned by a
-//     different browser (two phones at one table). Nothing minted; the
-//     caller renders the existing "till busy" screen (ut-docs#815's own
-//     template and i18n keys, unchanged — only its trigger narrowed from
-//     any-other-table to this-same-table). An EMPTY session has nothing to
-//     lose, so it never blocks, same threshold the old guard used.
+//   - busy=true: the table already has a live, NON-empty, RECENTLY-ACTIVE
+//     session owned by a different browser (two phones at one table).
+//     Nothing minted; the caller renders the existing "till busy" screen
+//     (ut-docs#815's own template, copy revised by ut-docs#2261 review
+//     finding B2 for the narrowed trigger). An EMPTY session has nothing to
+//     lose, so it never blocks, same threshold the old guard used. A
+//     session idle past selfOrderTableBusyMaxIdle also never blocks — see
+//     TableOwnerActive's own doc comment (ut-docs#2261 review finding B1):
+//     an abandoned cart must not hold a table hostage for the full 2h
+//     memory-bound sweep window.
 //   - bound=true: this request now has a live session bound to the table —
 //     resumed (this browser already held one for that table: the idle-reset
 //     bounce, or a deliberate re-open — nothing reset, nothing re-minted,
@@ -180,7 +197,7 @@ func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 // overwritten, so that old session could never be reached again — leaving
 // it would only keep the old table "busy" for everyone else until the idle
 // sweep.
-func bindSelfOrderTableSession(w http.ResponseWriter, r *http.Request, d *common.Deps, tableID string) (bound, busy bool) {
+func bindSelfOrderTableSession(w http.ResponseWriter, r *http.Request, d *common.Deps, tableID string, now time.Time) (bound, busy bool) {
 	t, found, err := data.NewPOSRepo(d.Db).GetTable(r.Context(), tableID)
 	if err != nil || !found || !t.Enabled {
 		return false, false
@@ -189,7 +206,7 @@ func bindSelfOrderTableSession(w http.ResponseWriter, r *http.Request, d *common
 	if currentToken != "" && current.TableID() == t.ID {
 		return true, false // resume
 	}
-	if ownerToken, owner, ok := d.SelfOrderSessions.TableOwner(t.ID); ok && ownerToken != currentToken && len(owner.Lines()) > 0 {
+	if ownerToken, owner, ok := d.SelfOrderSessions.TableOwnerActive(t.ID, selfOrderTableBusyMaxIdle, now); ok && ownerToken != currentToken && len(owner.Lines()) > 0 {
 		return false, true
 	}
 	if currentToken != "" {

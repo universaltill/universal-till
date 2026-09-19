@@ -26,12 +26,15 @@
       <img class="selforder-logo" src="/public/assets/logo/unitill-logo.svg" alt="" />
       {{ if .shopName }}<p class="selforder-shop">{{ .shopName }}</p>{{ end }}
       {{ if .Busy }}
-      {{/* ut-docs#815 (review finding, blocker 3 mitigation): a different
-           table's guest tried to start while this till's one shared basket
-           already has another table's order in progress (see the handler's
-           own comment). Never silently wipe that order — say so, and let
-           the guest retry in a moment rather than pretend the till is
-           available. */}}
+      {{/* ADR-0103 Decision 4 (ut-docs#2261, narrowed from ut-docs#815's
+           original cross-table guard once per-table sessions made
+           different tables independent): this SAME table already has a
+           live, recently-active order from a DIFFERENT phone (two phones
+           scanning one table). Never silently join/wipe that order — say
+           so, and let this guest retry in a few minutes: the guard's own
+           recency window (selfOrderTableBusyMaxIdle) means an abandoned
+           order stops blocking well before the busy screen would ever be
+           a dead end. */}}
       <h1>{{ T "selforder.table_busy.title" }}</h1>
       <p class="selforder-hint">{{ T "selforder.table_busy.hint" }}</p>
       <button type="button" class="btn primary selforder-start" onclick="location.reload()">

@@ -116,6 +116,45 @@ func TestSessionBasketManager_TableOwnerFindsBoundSession(t *testing.T) {
 	}
 }
 
+// ut-docs#2261 review finding B1: TableOwnerActive is TableOwner narrowed
+// to a session touched within maxIdle of now, so the busy guard stops
+// treating an abandoned session as "holding" its table well before the
+// much longer Sweep threshold would ever evict it.
+func TestSessionBasketManager_TableOwnerActiveIgnoresStaleSessions(t *testing.T) {
+	m, now := newTestSessionManager(t)
+	tok, svc := m.Create()
+	svc.SetTable("t1", "T1")
+
+	if got, gotSvc, ok := m.TableOwnerActive("t1", 10*time.Minute, *now); !ok || got != tok || gotSvc != svc {
+		t.Fatalf("freshly created session: TableOwnerActive = (%q, %p, %v), want (%q, %p, true)", got, gotSvc, ok, tok, svc)
+	}
+
+	// 11 minutes later, with no intervening Get to refresh lastSeen, the
+	// same 10-minute window must no longer find it...
+	later := now.Add(11 * time.Minute)
+	if _, _, ok := m.TableOwnerActive("t1", 10*time.Minute, later); ok {
+		t.Fatal("a session idle past maxIdle must not be found by TableOwnerActive")
+	}
+	// ...while the plain, unfiltered TableOwner still does — the session
+	// itself was never evicted, only de-prioritized for the busy guard.
+	if _, _, ok := m.TableOwner("t1"); !ok {
+		t.Fatal("TableOwner (unfiltered) must still find the same session")
+	}
+	// And it is still reachable by its own token, same as any live session.
+	if _, ok := m.Get(tok); !ok {
+		t.Fatal("Get must still find the session by its own token")
+	}
+
+	// An empty tableID or a nil manager never match, same as TableOwner.
+	if _, _, ok := m.TableOwnerActive("", 10*time.Minute, *now); ok {
+		t.Fatal("TableOwnerActive(\"\", ...) must never match")
+	}
+	var nilM *SessionBasketManager
+	if _, _, ok := nilM.TableOwnerActive("t1", 10*time.Minute, *now); ok {
+		t.Fatal("nil manager TableOwnerActive must miss")
+	}
+}
+
 // Sweep evicts only sessions idle longer than maxIdle; a Get refreshes the
 // idle clock so an actively used session is never swept.
 func TestSessionBasketManager_SweepEvictsOnlyIdleSessions(t *testing.T) {
