@@ -34,7 +34,7 @@ import (
 // enumerating it field-by-field.
 func TestExportRequestPayloadSchema_PinnedFields(t *testing.T) {
 	assertJSONFields(t, "exportRequestPayload", reflect.TypeOf(exportRequestPayload{}), []string{
-		"from", "to", "entry_key", "sales", "stock", "items", "tax_codes", "eod_closes",
+		"from", "to", "entry_key", "sales", "stock", "items", "tax_codes", "eod_closes", "fiscal_register_de",
 	})
 }
 
@@ -84,6 +84,17 @@ func TestExportEODCloseExportSchema_PinnedFields(t *testing.T) {
 	// (see the file-level doc comment above).
 	assertJSONFields(t, "data.EODCloseExport", reflect.TypeOf(data.EODCloseExport{}), []string{
 		"z_number", "report",
+	})
+}
+
+func TestExportFiscalRegisterDESchema_PinnedFields(t *testing.T) {
+	assertJSONFields(t, "data.FiscalRegisterDE", reflect.TypeOf(data.FiscalRegisterDE{}), []string{
+		"id", "register_id", "register_name",
+		"location_id", "location_name", "location_street", "location_postcode", "location_city",
+		"eas_type", "eas_software", "eas_serial",
+		"tse_serial", "tse_certification_id", "tse_type",
+		"acquired_on", "commissioned_on", "decommissioned_on",
+		"created_at", "updated_at",
 	})
 }
 
