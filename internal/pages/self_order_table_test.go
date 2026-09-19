@@ -476,11 +476,18 @@ func TestSelfOrder_SameTableRescan_NeverBusy(t *testing.T) {
 	}
 }
 
-// An EMPTY table-bound session (guest scanned in but never added anything)
-// has nothing to lose — a second phone scanning the same table gets its own
-// session normally, not a "busy" screen (the narrowed guard is non-empty
-// sessions only, same threshold the old cross-table guard used).
-func TestSelfOrder_SameTableEmptySession_NotBusy(t *testing.T) {
+// ut-docs#2434 (ADR-0103 review finding N3, correction landed in the ADR
+// itself): an EMPTY table-bound session still HOLDS its table. The busy
+// guard used to require len(owner.Lines()) > 0, which let two phones
+// scanning the same table before either added an item both bind — two
+// independent, uncoordinated baskets for one physical table, and two
+// kiosk_counter_orders rows at checkout. Dropping the item-count exception
+// closes that: a second phone now sees busy the moment ANY other session
+// (empty or not) is bound to the table within selfOrderTableBusyMaxIdle —
+// exactly the same recency window as the non-empty case, so an abandoned
+// EMPTY session still frees the table after that window
+// (TestSelfOrder_StaleSessionNoLongerBlocksBusyGuard covers that half).
+func TestSelfOrder_SameTableEmptySession_ShowsBusy(t *testing.T) {
 	dp, _ := setupSelfOrderShopDeps(t)
 	tableA := createSelfOrderTable(t, dp, "T1", 100)
 
@@ -489,20 +496,32 @@ func TestSelfOrder_SameTableEmptySession_NotBusy(t *testing.T) {
 
 	first := newSelfOrderGuest(t, mux)
 	first.get("/self-order?table=" + tableA)
+	firstToken := first.sessionToken()
+	firstSvc := first.engine(dp)
 
 	second := newSelfOrderGuest(t, mux)
 	rec := second.get("/self-order?table=" + tableA)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /self-order?table=<tableA> from a second phone: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), "This table already has an order in progress") {
-		t.Fatalf("an empty table-bound session has nothing to lose — must not show busy, got: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "This table already has an order in progress") {
+		t.Fatalf("an empty table-bound session still holds the table — must show busy, got: %s", rec.Body.String())
 	}
-	if second.engine(dp) == nil || second.engine(dp).TableID() != tableA {
-		t.Fatal("the second phone must get its own live session bound to the table")
+	if second.sessionToken() != "" {
+		t.Fatal("a busy-blocked scan must not mint a session cookie")
 	}
-	if first.engine(dp) == nil || first.engine(dp) == second.engine(dp) {
-		t.Fatal("the first phone's session must survive, distinct from the second's")
+	if n := dp.SelfOrderSessions.Len(); n != 1 {
+		t.Fatalf("live sessions = %d, want 1 (only the first phone's, empty)", n)
+	}
+	if got := first.sessionToken(); got != firstToken {
+		t.Fatalf("first phone's token changed to %q", got)
+	}
+	if got := first.engine(dp); got != firstSvc {
+		t.Fatal("the first phone's session must be unaffected by the second phone's blocked scan")
+	}
+	// The first phone's own re-scan of their own table is still never busy.
+	if rec := first.get("/self-order?table=" + tableA); strings.Contains(rec.Body.String(), "This table already has an order in progress") {
+		t.Fatal("the owning guest must never be blocked from their own (empty) table")
 	}
 }
 

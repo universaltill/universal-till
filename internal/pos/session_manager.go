@@ -146,18 +146,22 @@ func (m *SessionBasketManager) TableOwner(tableID string) (string, *Service, boo
 }
 
 // TableOwnerActive is TableOwner narrowed to a session touched within
-// maxIdle of now — the busy guard's own recency window (ut-docs#2261 review
-// finding B1). TableOwner alone made an ABANDONED session hold its table
-// hostage for the full Sweep threshold (originally 2h, chosen only to bound
-// memory): a guest who adds one item then orders at the counter instead
-// left that table's QR unscannable by anyone else for up to two hours, with
-// no staff-facing way to clear it. A session untouched longer than maxIdle
-// no longer counts as "holding" the table for this check — a fresh scan is
-// let through — even though it stays in memory, keeps its basket, and can
-// still be resumed by its OWN cookie (selfOrderSession's normal lookup is
-// unaffected by this method) until Sweep actually evicts it. Same
-// (token, *Service, bool) shape and empty-tableID/nil-manager handling as
-// TableOwner.
+// maxIdle of now — the same recency window BindTable's busy check below
+// uses (ut-docs#2261 review finding B1). TableOwner alone made an
+// ABANDONED session hold its table hostage for the full Sweep threshold
+// (originally 2h, chosen only to bound memory): a guest who adds one item
+// then orders at the counter instead left that table's QR unscannable by
+// anyone else for up to two hours, with no staff-facing way to clear it. A
+// session untouched longer than maxIdle no longer counts as "holding" the
+// table for this check — a fresh scan is let through — even though it
+// stays in memory, keeps its basket, and can still be resumed by its OWN
+// cookie (selfOrderSession's normal lookup is unaffected by this method)
+// until Sweep actually evicts it. Same (token, *Service, bool) shape and
+// empty-tableID/nil-manager handling as TableOwner. Kept as a read-only
+// query for callers that just want to know who holds a table (tests,
+// diagnostics) — the page's own busy guard uses BindTable below instead,
+// since a separate check-then-act pair of calls is exactly the race
+// ut-docs#2434 closed.
 func (m *SessionBasketManager) TableOwnerActive(tableID string, maxIdle time.Duration, now time.Time) (string, *Service, bool) {
 	if m == nil || tableID == "" {
 		return "", nil, false
@@ -171,6 +175,60 @@ func (m *SessionBasketManager) TableOwnerActive(tableID string, maxIdle time.Dur
 		}
 	}
 	return "", nil, false
+}
+
+// BindTable atomically resolves one guest's scan of tableID (ut-docs#2434,
+// ADR-0103 review finding N3, corrected in the ADR itself): the busy check
+// and the bind (move an existing session onto tableID, or mint a fresh
+// one) run under one m.mu critical section, so no other goroutine's own
+// BindTable call can land between "is this table free" and "claim it" —
+// closing the exact check-then-act race that previously let two phones
+// scanning the same table, before either added an item, both bind.
+//
+// mover, if non-nil, is the CALLER'S OWN already-resolved live session
+// (ownToken is its token) to move onto tableID rather than replace — the
+// existing-cookie "guest scanned a different table" case. mover == nil
+// (ownToken == "") is the fresh-browser mint case. The caller is expected
+// to have already handled the "re-scanning your own current table"
+// resume case before calling this — BindTable only ever moves or mints.
+//
+// busy=true when a DIFFERENT live session (any token != ownToken) is
+// already bound to tableID and was touched within maxIdle of now — no
+// item-count exception: an EMPTY session holds its table exactly like a
+// non-empty one now, which is what actually closes the N3 race (the old
+// guard's len(owner.Lines())>0 requirement was the gap two staggered,
+// still-empty scans slipped through). A session idle past maxIdle still
+// never counts, the same recency window TableOwnerActive already
+// documents, so the B1 idle-recovery guarantee is unaffected by dropping
+// the item-count check: an abandoned EMPTY session frees its table after
+// maxIdle exactly as an abandoned non-empty one already did.
+func (m *SessionBasketManager) BindTable(tableID, tableLabel, ownToken string, mover *Service, maxIdle time.Duration, now time.Time) (token string, svc *Service, busy bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cutoff := now.Add(-maxIdle)
+	for tok, sb := range m.sessions {
+		if tok == ownToken {
+			continue
+		}
+		if sb.svc.TableID() == tableID && !sb.lastSeen.Before(cutoff) {
+			return "", nil, true
+		}
+	}
+	if mover != nil {
+		mover.SetTable(tableID, tableLabel)
+		if sb, ok := m.sessions[ownToken]; ok {
+			sb.lastSeen = m.clock()
+		}
+		return ownToken, mover, false
+	}
+	svc = m.factory()
+	token = newSessionToken()
+	for _, taken := m.sessions[token]; taken; _, taken = m.sessions[token] {
+		token = newSessionToken() // 2^128 space — practically unreachable, but never overwrite a live session
+	}
+	svc.SetTable(tableID, tableLabel)
+	m.sessions[token] = &sessionBasket{svc: svc, lastSeen: m.clock()}
+	return token, svc, false
 }
 
 // Sweep evicts every session whose last Create/Get is more than maxIdle

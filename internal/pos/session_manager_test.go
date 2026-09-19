@@ -344,3 +344,96 @@ func TestSessionBasketManager_ConcurrentSessionsDoNotInterfere(t *testing.T) {
 		t.Fatalf("Len() after concurrent Remove = %d, want 0", m.Len())
 	}
 }
+
+// ut-docs#2434 (ADR-0103 review finding N3): the busy-check and the bind
+// used to be two separate manager.mu critical sections
+// (TableOwnerActive, then Create+SetTable), so two goroutines could both
+// observe "not busy" before either bound — a real check-then-act race, not
+// just a threshold gap. BindTable collapses both into one critical
+// section; proven here under `go test -race` with many goroutines racing
+// to bind the identical table: exactly one must succeed, every other must
+// see busy and mint nothing.
+func TestSessionBasketManager_BindTable_ConcurrentSameTableBindsExactlyOnce(t *testing.T) {
+	m := NewSessionBasketManager(func() *Service {
+		return NewServiceWithResolver(Config{TaxRateBasisPoints: 2000}, nil)
+	})
+
+	const guests = 32
+	var wg sync.WaitGroup
+	var start sync.WaitGroup
+	start.Add(1)
+	var resMu sync.Mutex
+	bound, busy := 0, 0
+	var boundToken string
+	var boundSvc *Service
+	for g := 0; g < guests; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			start.Wait()
+			tok, svc, isBusy := m.BindTable("table-A", "T1", "", nil, time.Hour, time.Now())
+			resMu.Lock()
+			defer resMu.Unlock()
+			if isBusy {
+				busy++
+				if tok != "" || svc != nil {
+					t.Errorf("busy result must return no token/service, got (%q, %p)", tok, svc)
+				}
+				return
+			}
+			bound++
+			boundToken, boundSvc = tok, svc
+		}()
+	}
+	start.Done()
+	wg.Wait()
+
+	if bound != 1 {
+		t.Fatalf("bound = %d, want exactly 1 — a real concurrent race must never let two mints win", bound)
+	}
+	if busy != guests-1 {
+		t.Fatalf("busy = %d, want %d", busy, guests-1)
+	}
+	if n := m.Len(); n != 1 {
+		t.Fatalf("live sessions after the race = %d, want 1", n)
+	}
+	svc, ok := m.Get(boundToken)
+	if !ok || svc != boundSvc {
+		t.Fatal("the one winning bind's token must resolve back to its own service")
+	}
+	if got := svc.TableID(); got != "table-A" {
+		t.Fatalf("winning session's TableID() = %q, want %q", got, "table-A")
+	}
+}
+
+// The mover case (an existing session's own table changes) is atomic the
+// same way: a live session moving onto a table another live session
+// already holds must see busy and stay on its original table, never lose
+// its own binding or basket.
+func TestSessionBasketManager_BindTable_MoverBlockedByBusyTableKeepsOwnBinding(t *testing.T) {
+	m, now := newTestSessionManager(t)
+
+	_, incumbent := m.Create()
+	incumbent.SetTable("table-B", "T2")
+
+	moverToken, mover := m.Create()
+	mover.SetTable("table-A", "T1")
+	mover.AddLineWithModifiers(BasketLine{SKU: "x", ItemID: "x", Name: "line", PriceCents: 100}, 1, nil)
+
+	tok, svc, busy := m.BindTable("table-B", "T2", moverToken, mover, time.Hour, *now)
+	if !busy {
+		t.Fatal("moving onto a table another live session already holds must report busy")
+	}
+	if tok != "" || svc != nil {
+		t.Fatalf("busy result must return no token/service, got (%q, %p)", tok, svc)
+	}
+	if got := mover.TableID(); got != "table-A" {
+		t.Fatalf("mover's TableID() after a busy-blocked move = %q, want unchanged %q", got, "table-A")
+	}
+	if n := len(mover.Lines()); n != 1 {
+		t.Fatalf("mover's basket has %d lines after a busy-blocked move, want unchanged 1", n)
+	}
+	if got := incumbent.TableID(); got != "table-B" {
+		t.Fatalf("incumbent's TableID() = %q, want unchanged %q", got, "table-B")
+	}
+}

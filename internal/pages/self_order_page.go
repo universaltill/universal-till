@@ -170,16 +170,18 @@ func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 //     (stale/reprinted/tampered QR) — nothing minted, no cookie; the caller
 //     falls through to the plain walk-up path, exactly today's "leaves the
 //     basket with no table, never errors the page out" behaviour.
-//   - busy=true: the table already has a live, NON-empty, RECENTLY-ACTIVE
-//     session owned by a different browser (two phones at one table).
+//   - busy=true: the table already has a live, RECENTLY-ACTIVE session
+//     owned by a different browser (two phones at one table) — EMPTY or
+//     not (ut-docs#2434, ADR-0103 review finding N3, corrected in the ADR
+//     itself: an empty session still holds its table, closing the race two
+//     staggered scans before either added an item used to slip through).
 //     Nothing minted; the caller renders the existing "till busy" screen
 //     (ut-docs#815's own template, copy revised by ut-docs#2261 review
-//     finding B2 for the narrowed trigger). An EMPTY session has nothing to
-//     lose, so it never blocks, same threshold the old guard used. A
-//     session idle past selfOrderTableBusyMaxIdle also never blocks — see
-//     TableOwnerActive's own doc comment (ut-docs#2261 review finding B1):
-//     an abandoned cart must not hold a table hostage for the full 2h
-//     memory-bound sweep window.
+//     finding B2 for the narrowed trigger). A session idle past
+//     selfOrderTableBusyMaxIdle never blocks — see BindTable's own doc
+//     comment (ut-docs#2261 review finding B1): an abandoned cart, empty or
+//     not, must not hold a table hostage for the full 2h memory-bound
+//     sweep window.
 //   - bound=true: this request now has a live session bound to the table —
 //     resumed (this browser already held one for that table: the idle-reset
 //     bounce, or a deliberate re-open — nothing reset, nothing re-minted,
@@ -216,15 +218,17 @@ func bindSelfOrderTableSession(w http.ResponseWriter, r *http.Request, d *common
 	if currentToken != "" && current.TableID() == t.ID {
 		return true, false // resume
 	}
-	if ownerToken, owner, ok := d.SelfOrderSessions.TableOwnerActive(t.ID, selfOrderTableBusyMaxIdle, now); ok && ownerToken != currentToken && len(owner.Lines()) > 0 {
+	var mover *pos.Service
+	if currentToken != "" {
+		mover = current
+	}
+	token, svc, busy := d.SelfOrderSessions.BindTable(t.ID, t.Label, currentToken, mover, selfOrderTableBusyMaxIdle, now)
+	if busy {
 		return false, true
 	}
-	if currentToken != "" {
-		current.SetTable(t.ID, t.Label)
-		return true, false // moved, basket kept
+	if svc == mover {
+		return true, false // moved, basket kept, cookie unchanged
 	}
-	token, svc := d.SelfOrderSessions.Create()
-	svc.SetTable(t.ID, t.Label)
 	setSelfOrderSessionCookie(w, token, 0)
 	return true, false
 }
