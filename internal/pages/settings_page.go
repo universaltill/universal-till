@@ -647,8 +647,16 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"uiScale":     strconv.FormatFloat(scale, 'f', -1, 64),
 			"isManager":   isManager,
 			// ADR-0092 §7 / ut-docs#2169: the diagnostic-mode card's state
-			// (web/ui/partials/diagnostics_block.html).
-			"diagnostics": diagnosticsViewFor(r.Context(), d, locale),
+			// (web/ui/partials/diagnostics_block.html). Only computed for a
+			// manager: #settings-diagnostics (settings.html) is the ONLY
+			// consumer of this key and is wrapped in {{ if .isManager }}, so
+			// a cashier never renders it — but diagnosticsViewFor
+			// unconditionally called PendingSummary, which unmarshals every
+			// pending batch file on disk (up to ~40MB worst case, see
+			// queue.go's maxPendingBatches/maxBatchBytes) on every cashier
+			// GET /settings too. Gate it so a cashier gets the zero-value
+			// view instead (review finding on ut-docs#2169, ut-docs#2235).
+			"diagnostics": diagnosticsViewIfManager(r.Context(), d, locale, isManager),
 			// ut-docs#1537: will the Android install endpoint accept this
 			// caller's session on its own, or is it going to demand a PIN?
 			// Rendered up front so a cashier (or anyone on a self-order kiosk)
