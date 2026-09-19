@@ -23,7 +23,7 @@ func newTestSessionManager(t *testing.T) (*SessionBasketManager, *time.Time) {
 func TestSessionBasketManager_CreateGetRemoveRoundTrip(t *testing.T) {
 	m, _ := newTestSessionManager(t)
 
-	token, svc := m.Create()
+	token, svc, _ := m.Create()
 	if svc == nil {
 		t.Fatal("Create returned a nil Service")
 	}
@@ -56,11 +56,55 @@ func TestSessionBasketManager_CreateGetRemoveRoundTrip(t *testing.T) {
 	m.Remove(token) // idempotent: removing twice must not panic
 }
 
+// ut-docs#2432: Create refuses once the manager already holds
+// MaxLiveSelfOrderSessions live sessions — the cap that bounds the
+// unbounded-mint resource-exhaustion path found in the ut-docs#2261
+// review (finding N1). A caller must treat ok=false as "nothing was
+// created," and the manager must un-refuse the moment a session frees a
+// slot back under the cap.
+func TestSessionBasketManager_CreateRefusesAtCap(t *testing.T) {
+	m, _ := newTestSessionManager(t)
+	var last string
+	for i := 0; i < MaxLiveSelfOrderSessions; i++ {
+		tok, svc, ok := m.Create()
+		if !ok {
+			t.Fatalf("Create refused at %d live sessions, want it to succeed up to the cap of %d", i, MaxLiveSelfOrderSessions)
+		}
+		if svc == nil || tok == "" {
+			t.Fatalf("Create ok=true but returned zero-value token/Service at i=%d", i)
+		}
+		last = tok
+	}
+	if n := m.Len(); n != MaxLiveSelfOrderSessions {
+		t.Fatalf("Len() = %d, want %d after filling to the cap", n, MaxLiveSelfOrderSessions)
+	}
+
+	tok, svc, ok := m.Create()
+	if ok {
+		t.Fatal("Create at the cap must refuse (ok=false)")
+	}
+	if tok != "" || svc != nil {
+		t.Fatalf("a refused Create must return zero values, got token=%q svc=%p", tok, svc)
+	}
+	if n := m.Len(); n != MaxLiveSelfOrderSessions {
+		t.Fatalf("Len() = %d after a refused Create, want unchanged %d", n, MaxLiveSelfOrderSessions)
+	}
+
+	// Freeing exactly one slot lets exactly one more Create through.
+	m.Remove(last)
+	if _, _, ok := m.Create(); !ok {
+		t.Fatal("Create must succeed again once a session drops the count back under the cap")
+	}
+	if n := m.Len(); n != MaxLiveSelfOrderSessions {
+		t.Fatalf("Len() = %d after remove+create, want back at the cap %d", n, MaxLiveSelfOrderSessions)
+	}
+}
+
 func TestSessionBasketManager_TokensAreUnique(t *testing.T) {
 	m, _ := newTestSessionManager(t)
 	seen := map[string]bool{}
 	for i := 0; i < 200; i++ {
-		tok, _ := m.Create()
+		tok, _, _ := m.Create()
 		if seen[tok] {
 			t.Fatalf("duplicate token %q after %d creates", tok, i)
 		}
@@ -72,8 +116,8 @@ func TestSessionBasketManager_TokensAreUnique(t *testing.T) {
 // manager exists to provide (each Create is a fresh Service from the factory).
 func TestSessionBasketManager_SessionsAreIndependent(t *testing.T) {
 	m, _ := newTestSessionManager(t)
-	tokA, a := m.Create()
-	tokB, b := m.Create()
+	tokA, a, _ := m.Create()
+	tokB, b, _ := m.Create()
 	if a == b {
 		t.Fatal("two Creates returned the same Service")
 	}
@@ -95,8 +139,8 @@ func TestSessionBasketManager_SessionsAreIndependent(t *testing.T) {
 
 func TestSessionBasketManager_TableOwnerFindsBoundSession(t *testing.T) {
 	m, _ := newTestSessionManager(t)
-	tokA, a := m.Create()
-	_, b := m.Create()
+	tokA, a, _ := m.Create()
+	_, b, _ := m.Create()
 	a.SetTable("t1", "T1")
 	b.SetTable("t2", "T2")
 
@@ -122,7 +166,7 @@ func TestSessionBasketManager_TableOwnerFindsBoundSession(t *testing.T) {
 // much longer Sweep threshold would ever evict it.
 func TestSessionBasketManager_TableOwnerActiveIgnoresStaleSessions(t *testing.T) {
 	m, now := newTestSessionManager(t)
-	tok, svc := m.Create()
+	tok, svc, _ := m.Create()
 	svc.SetTable("t1", "T1")
 
 	if got, gotSvc, ok := m.TableOwnerActive("t1", 10*time.Minute, *now); !ok || got != tok || gotSvc != svc {
@@ -160,8 +204,8 @@ func TestSessionBasketManager_TableOwnerActiveIgnoresStaleSessions(t *testing.T)
 func TestSessionBasketManager_SweepEvictsOnlyIdleSessions(t *testing.T) {
 	m, now := newTestSessionManager(t)
 	t0 := *now
-	tokIdle, _ := m.Create()
-	tokActive, _ := m.Create()
+	tokIdle, _, _ := m.Create()
+	tokActive, _, _ := m.Create()
 	tokFresh := ""
 
 	// 90 minutes later the "active" guest touches their session, and a
@@ -170,7 +214,7 @@ func TestSessionBasketManager_SweepEvictsOnlyIdleSessions(t *testing.T) {
 	if _, ok := m.Get(tokActive); !ok {
 		t.Fatal("precondition: active session must exist")
 	}
-	tokFresh, _ = m.Create()
+	tokFresh, _, _ = m.Create()
 
 	// At t0+2h30 with a 2h threshold: idle (last seen t0) is out; active
 	// (last seen t0+1h30) and fresh (created t0+1h30) stay.
@@ -202,8 +246,8 @@ func TestSessionBasketManager_SweepEvictsOnlyIdleSessions(t *testing.T) {
 
 func TestSessionBasketManager_SetConfigReachesEveryLiveSession(t *testing.T) {
 	m, _ := newTestSessionManager(t)
-	_, a := m.Create()
-	_, b := m.Create()
+	_, a, _ := m.Create()
+	_, b, _ := m.Create()
 	a.AddLineWithModifiers(BasketLine{SKU: "A", Name: "Coffee", ItemID: "ia", PriceCents: 1000}, 1, nil)
 
 	cfg := Config{TaxRateBasisPoints: 1000, TaxInclusive: false}
@@ -222,8 +266,8 @@ func TestSessionBasketManager_HasItems(t *testing.T) {
 	if m.HasItems() {
 		t.Fatal("empty manager must report no items")
 	}
-	_, a := m.Create()
-	_, _ = m.Create()
+	_, a, _ := m.Create()
+	_, _, _ = m.Create()
 	if m.HasItems() {
 		t.Fatal("two empty sessions must report no items")
 	}
@@ -275,7 +319,7 @@ func TestSessionBasketManager_ConcurrentSessionsDoNotInterfere(t *testing.T) {
 		go func(g int) {
 			defer wg.Done()
 			start.Wait()
-			tok, svc := m.Create()
+			tok, svc, _ := m.Create()
 			tokens[g] = tok
 			svc.SetTable("table-"+string(rune('A'+g%26)), "T")
 			for i := 0; i < addsPerGuest; i++ {

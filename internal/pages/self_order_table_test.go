@@ -435,6 +435,119 @@ func TestSelfOrder_SameTableHeldByAnotherSession_ShowsBusy(t *testing.T) {
 	}
 }
 
+// ut-docs#2432 (ut-docs#2261 review finding N1): a cookieless request
+// looping GET /self-order?table=<empty, enabled table> minted a brand new
+// session every single hit — nothing blocked it, since the busy guard only
+// fires for a table with a NON-empty session. Past the per-source rate
+// limit, further mint attempts from the same source must see the existing
+// busy screen instead of growing SelfOrderSessions without bound.
+func TestSelfOrder_RepeatedCookielessScans_RateLimitedInsteadOfUnboundedMinting(t *testing.T) {
+	dp, _ := setupSelfOrderShopDeps(t)
+	tableA := createSelfOrderTable(t, dp, "T1", 100)
+
+	mux := http.NewServeMux()
+	registerSelfOrder(mux, dp)
+
+	const attempts = 30 // over the 20/min limiter cap
+	busySeen := 0
+	for i := 0; i < attempts; i++ {
+		// A fresh, cookieless request every time — the attack shape: no
+		// cookie jar, so the resume branch never applies and every hit that
+		// isn't refused would otherwise mint a new orphaned session.
+		req := httptest.NewRequest(http.MethodGet, "/self-order?table="+tableA, nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("attempt %d: want 200, got %d: %s", i, rec.Code, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "This table already has an order in progress") {
+			busySeen++
+		}
+	}
+	if busySeen == 0 {
+		t.Fatal("expected the rate limiter to start showing the busy screen well before 30 unbounded mints")
+	}
+	if n := dp.SelfOrderSessions.Len(); n >= attempts {
+		t.Fatalf("live sessions = %d after %d looped requests — the rate limiter did not bound minting", n, attempts)
+	}
+	if n := dp.SelfOrderSessions.Len(); n > 20 {
+		t.Fatalf("live sessions = %d, want at most the limiter's cap of 20", n)
+	}
+}
+
+// The rate limiter must only ever gate NEW-session minting — a guest
+// resuming their OWN session by cookie (the idle-reset bounce, a page
+// refresh) must never be refused, no matter how many times they do it from
+// the same source.
+func TestSelfOrder_CookieResume_NeverRateLimited(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	tableA := createSelfOrderTable(t, dp, "T1", 100)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+	seedStock(t, d, "itm-coffee", 10)
+
+	mux := http.NewServeMux()
+	registerSelfOrder(mux, dp)
+	registerSelfOrderShop(mux, dp)
+
+	g := newSelfOrderGuest(t, mux)
+	g.get("/self-order?table=" + tableA)
+	g.post("/api/self-order/scan", "code=5000001")
+	token := g.sessionToken()
+
+	const resumes = 30 // over the 20/min mint limiter — must not matter for a resume
+	for i := 0; i < resumes; i++ {
+		rec := g.get("/self-order?table=" + tableA)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("resume %d: want 200, got %d: %s", i, rec.Code, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "This table already has an order in progress") {
+			t.Fatalf("resume %d: a cookie-holding resume must never be rate-limited/busy", i)
+		}
+		if got := g.sessionToken(); got != token {
+			t.Fatalf("resume %d: token changed to %q (was %q) — a resume must never re-mint", i, got, token)
+		}
+	}
+	if n := dp.SelfOrderSessions.Len(); n != 1 {
+		t.Fatalf("live sessions = %d after %d resumes, want 1 (no duplicate minted)", n, resumes)
+	}
+}
+
+// ut-docs#2432: the session-count cap (pos.MaxLiveSelfOrderSessions) is the
+// backstop behind the per-source rate limiter — it must refuse a mint even
+// from a source that has never been seen before (so the limiter itself
+// can't be what's blocking it), and must do so cleanly: no panic, no 500,
+// the same busy screen as any other refused mint.
+func TestSelfOrder_SessionCapAlone_ShowsBusyNotPanic(t *testing.T) {
+	dp, _ := setupSelfOrderShopDeps(t)
+	tableA := createSelfOrderTable(t, dp, "T1", 100)
+
+	// Fill the manager directly to the cap — isolates the cap from the
+	// per-source rate limiter, which these calls never go through.
+	for i := 0; i < pos.MaxLiveSelfOrderSessions; i++ {
+		if _, _, ok := dp.SelfOrderSessions.Create(); !ok {
+			t.Fatalf("prefill Create refused at i=%d, want it to succeed up to the cap", i)
+		}
+	}
+
+	mux := http.NewServeMux()
+	registerSelfOrder(mux, dp)
+
+	// A single, first-ever request from this source against a table nothing
+	// has touched yet — the rate limiter has no history for it, so only the
+	// cap can be why this refuses.
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/self-order?table="+tableA, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("at the session cap: want 200 (busy screen, not an error), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "This table already has an order in progress") {
+		t.Fatalf("at the session cap: expected the busy screen, got: %s", rec.Body.String())
+	}
+	if n := dp.SelfOrderSessions.Len(); n != pos.MaxLiveSelfOrderSessions {
+		t.Fatalf("live sessions = %d, want unchanged at the cap %d (a refused mint must not grow the map)", n, pos.MaxLiveSelfOrderSessions)
+	}
+}
+
 // ut-docs#2261 review finding B1: without a short recency window on the
 // busy guard, ONE abandoned cart (scan, add an item, then order at the
 // counter instead / walk away) made that table's QR unscannable by anyone
@@ -465,8 +578,9 @@ func TestSelfOrder_StaleSessionNoLongerBlocksBusyGuard(t *testing.T) {
 	// Right now, a second phone scanning the same table is still busy —
 	// same guarantee TestSelfOrder_SameTableHeldByAnotherSession_ShowsBusy
 	// covers, re-asserted here as the "before" baseline for what follows.
+	limiter := newPairRateLimiter(time.Minute, 20)
 	reqNow := httptest.NewRequest(http.MethodGet, "/self-order?table="+tableA, nil)
-	if bound, busy := bindSelfOrderTableSession(httptest.NewRecorder(), reqNow, dp, tableA, time.Now()); bound || !busy {
+	if bound, busy := bindSelfOrderTableSession(httptest.NewRecorder(), reqNow, dp, tableA, time.Now(), limiter); bound || !busy {
 		t.Fatalf("right after the owner's scan: want busy (not bound), got bound=%v busy=%v", bound, busy)
 	}
 
@@ -474,7 +588,7 @@ func TestSelfOrder_StaleSessionNoLongerBlocksBusyGuard(t *testing.T) {
 	// owner, the SAME second phone's scan must no longer be blocked.
 	future := time.Now().Add(selfOrderTableBusyMaxIdle + time.Minute)
 	reqLater := httptest.NewRequest(http.MethodGet, "/self-order?table="+tableA, nil)
-	bound, busy := bindSelfOrderTableSession(httptest.NewRecorder(), reqLater, dp, tableA, future)
+	bound, busy := bindSelfOrderTableSession(httptest.NewRecorder(), reqLater, dp, tableA, future, limiter)
 	if busy {
 		t.Fatal("a session idle past selfOrderTableBusyMaxIdle must not block a new scan of its table")
 	}

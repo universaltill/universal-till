@@ -104,6 +104,21 @@ func releaseSelfOrderSession(w http.ResponseWriter, d *common.Deps, token string
 // /backoffice) — the mode only controls whether "/" redirects here for an
 // already-authenticated visitor.
 func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
+	// selfOrderSessionMintLimiter caps NEW-session minting per source IP
+	// (ut-docs#2432): GET /self-order?table=<id> mints a fresh session on
+	// every cookieless hit the busy guard doesn't block, and this route is
+	// auth-exempt/LAN-reachable-by-anyone, so nothing bounded that before —
+	// a tight request loop against one table's QR could exhaust memory on
+	// a Pi-class till long before the 2h idle Sweep ever ran. Same
+	// pairRateLimiter+sourceOf shape already used for the identical threat
+	// class on the first-boot pairing/discovery routes (api_gates.go's
+	// rateLimited, ADR-0033 §8) — just applied inline in
+	// bindSelfOrderTableSession rather than via the apiGate wrapper, since
+	// only the mint path (not resume, not the busy check itself) may ever
+	// be throttled. 20/minute is generous for a guest fumbling a stale QR
+	// or bouncing off the idle-reset a few times, while still capping the
+	// realistic attack shape (one source looping the same GET).
+	limiter := newPairRateLimiter(time.Minute, 20)
 	mux.HandleFunc("GET /self-order", func(w http.ResponseWriter, r *http.Request) {
 		// Two entry paths (ADR-0103 Decision 2, ut-docs#2261):
 		//
@@ -140,7 +155,7 @@ func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 			bound := false
 			if requestedTable != "" && d.SelfOrderSessions != nil {
 				var busy bool
-				bound, busy = bindSelfOrderTableSession(w, r, d, requestedTable, time.Now())
+				bound, busy = bindSelfOrderTableSession(w, r, d, requestedTable, time.Now(), limiter)
 				if busy {
 					httpx.RenderPartial("ui/pages/self_order.html", map[string]any{
 						"title":    httpx.T(httpx.RequestLocale(r), "page.title.self_order"),
@@ -184,6 +199,16 @@ func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 //     resumed (this browser already held one for that table: the idle-reset
 //     bounce, or a deliberate re-open — nothing reset, nothing re-minted,
 //     the guest keeps their order) or freshly minted, with the cookie set.
+//   - busy=true is also what a refused mint reports (ut-docs#2432): either
+//     limiter (too many new-session mints from this source, recently) or
+//     d.SelfOrderSessions.Create() itself (the manager is at
+//     pos.MaxLiveSelfOrderSessions live sessions) refusing the request.
+//     Neither is distinguished from a genuinely busy table at the page
+//     layer — all three reuse the existing "till busy" screen and cost no
+//     new UI state or i18n key. Only a request that would actually MINT a
+//     session is ever subject to either check; resuming your own session
+//     (the branch just above) and the table-owner busy check are both
+//     unaffected.
 //
 // Table binding rides on the SAME TableID/TableLabel fields ADR-0054/
 // ut-docs#820 gave every pos.Service (SetTable/TableID/TableLabel) — not a
@@ -197,7 +222,7 @@ func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 // overwritten, so that old session could never be reached again — leaving
 // it would only keep the old table "busy" for everyone else until the idle
 // sweep.
-func bindSelfOrderTableSession(w http.ResponseWriter, r *http.Request, d *common.Deps, tableID string, now time.Time) (bound, busy bool) {
+func bindSelfOrderTableSession(w http.ResponseWriter, r *http.Request, d *common.Deps, tableID string, now time.Time, limiter *pairRateLimiter) (bound, busy bool) {
 	t, found, err := data.NewPOSRepo(d.Db).GetTable(r.Context(), tableID)
 	if err != nil || !found || !t.Enabled {
 		return false, false
@@ -209,10 +234,20 @@ func bindSelfOrderTableSession(w http.ResponseWriter, r *http.Request, d *common
 	if ownerToken, owner, ok := d.SelfOrderSessions.TableOwnerActive(t.ID, selfOrderTableBusyMaxIdle, now); ok && ownerToken != currentToken && len(owner.Lines()) > 0 {
 		return false, true
 	}
+	// ut-docs#2432: both checks below only ever gate an actual mint attempt
+	// (never the resume/busy branches above), and both run BEFORE the old
+	// session is removed just below — a browser switching tables must never
+	// lose its old session without successfully getting a new one.
+	if limiter != nil && !limiter.allow(sourceOf(r)) {
+		return false, true
+	}
 	if currentToken != "" {
 		d.SelfOrderSessions.Remove(currentToken)
 	}
-	token, svc := d.SelfOrderSessions.Create()
+	token, svc, ok := d.SelfOrderSessions.Create()
+	if !ok {
+		return false, true
+	}
 	svc.SetTable(t.ID, t.Label)
 	setSelfOrderSessionCookie(w, token, 0)
 	return true, false

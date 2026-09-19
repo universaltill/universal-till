@@ -77,17 +77,36 @@ func newSessionToken() string {
 	return hex.EncodeToString(raw)
 }
 
-// Create mints a new session and returns its token and fresh *Service.
-func (m *SessionBasketManager) Create() (string, *Service) {
+// MaxLiveSelfOrderSessions bounds the manager's total live-session count
+// (ut-docs#2432). The map is keyed by anonymous, LAN-reachable requests —
+// GET /self-order?table=<id> mints a new session on every cookieless hit
+// that isn't blocked by the busy guard — so nothing but this cap and the
+// idle Sweep (up to 2h away, see self_order_session_sweep.go) bounds its
+// size; a tight request loop against one table's QR can exhaust memory on
+// a Pi-class till long before Sweep ever runs. A real shop's simultaneous
+// table/guest-device count realistically tops out in the dozens to low
+// hundreds; 500 is generous headroom above that while still bounding
+// worst-case memory to a small, fixed number of lightweight *Service
+// instances (no DB connections, no goroutines per session).
+const MaxLiveSelfOrderSessions = 500
+
+// Create mints a new session and returns its token and fresh *Service, or
+// ok=false once the manager already holds MaxLiveSelfOrderSessions live
+// sessions — the caller must treat a false ok as "nothing was created" and
+// never use the zero-value token/Service returned alongside it.
+func (m *SessionBasketManager) Create() (string, *Service, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if len(m.sessions) >= MaxLiveSelfOrderSessions {
+		return "", nil, false
+	}
 	svc := m.factory()
 	token := newSessionToken()
 	for _, taken := m.sessions[token]; taken; _, taken = m.sessions[token] {
 		token = newSessionToken() // 2^128 space — practically unreachable, but never overwrite a live session
 	}
 	m.sessions[token] = &sessionBasket{svc: svc, lastSeen: m.clock()}
-	return token, svc
+	return token, svc, true
 }
 
 // Get returns the live session for token, refreshing its idle clock on a
