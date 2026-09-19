@@ -2593,6 +2593,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if d.KioskEngine != nil {
 			d.KioskEngine.SetConfig(newCfg)
 		}
+		d.SelfOrderSessions.SetConfig(newCfg) // every live table-QR session too (ADR-0103); nil-safe
 		settingsAudit(r, posRepo, elev, "settings", "-", "store_settings_saved", auditPayload)
 		settingsRespondSaved(w, r, elev)
 	})
@@ -2911,6 +2912,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			if d.KioskEngine != nil {
 				d.KioskEngine.SetConfig(newCfg)
 			}
+			d.SelfOrderSessions.SetConfig(newCfg) // every live table-QR session too (ADR-0103); nil-safe
 		case "display.mode":
 			// ut-docs#2121: this generic key/value door didn't get the same
 			// side effects as the dedicated POST /api/settings/display-mode
