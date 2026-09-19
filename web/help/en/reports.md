@@ -15,7 +15,7 @@ Sales totals by day, department and payment type; best and slow sellers; dead st
 ## How to use it
 
 1. Open Reports: the row at the top always shows your key numbers for the chosen period (revenue, sales, average sale, tax, discounts, refunds, net, last year) and a low-stock warning.
-2. Pick a tab below it — Sales trend, Items, Tax, Forecast, Payments & channels, Tips, or Day-end (EOD) — and that report loads when you open it.
+2. Pick a tab below it — Sales trend, Items, Tax, Forecast, Payments & channels, Tips, Day-end (EOD), or (for a manager/admin) Shrinkage & Loss — and that report loads when you open it.
 3. Run End of day (in the Day-end tab) when you close: it totals everything **since your last close** — not the calendar day — and can print for your records. A café that closed at 19:19 yesterday and closes at 19:19 today gets every sale in between on today's report, including last night's after-19:19 sales that a calendar-day report would have left stranded; anything rung up after tonight's close belongs to the next one. Each close records the exact moment it runs from and to, so you can always see precisely what a report covers: the printed report carries a **Zeitraum** line, and the archive list shows the same two timestamps side by side (`2026-08-23T19:10:00+02:00 – 2026-08-24T19:19:00+02:00`), in your own local time. Your very first close has no earlier close to start from, so it covers everything up to the moment you closed and shows just that one end timestamp.
 
 ## Ask your till
@@ -310,6 +310,26 @@ reason** breakdown for the selected period — e.g. a total for
 figure like "total bottle deposits paid out this week" without opening
 the Audit page. It only appears once there's at least one adjustment in
 the period.
+
+## Shrinkage & Loss (void/comp/waste)
+
+Removing a basket line before it's paid for (tap its ✕ on the sale screen)
+now records **why** whenever the line was worth anything: pick **Void**
+(a mis-ring or the customer changed their mind), **Comp** (given to the
+customer free of charge as a goodwill gesture), or **Waste** (spoiled,
+dropped, or a kitchen mistake). A manager or admin can pick a reason
+directly; a cashier is asked for a manager's PIN first, the same
+approval a price override needs. A free/$0 promotional line skips this
+entirely — there's no loss to categorize. This is separate from a
+refund: a refund returns money on a sale that already completed, while
+this covers only what never got that far.
+
+The **Shrinkage & Loss** tab (visible to a manager or admin) totals these
+removals for the selected period — value and count broken down by Void,
+Comp and Waste — plus a top-items table showing which products account
+for the most shrinkage value, so a pattern (one item dropped constantly,
+one line comped every shift) is visible without digging through the
+audit log.
 
 ## Seeing every till's sales (Journal)
 

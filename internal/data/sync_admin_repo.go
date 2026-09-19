@@ -454,6 +454,14 @@ var nonAdminTables = map[string]string{
 	// Local bookkeeping with no shop-wide meaning.
 	"issue_reports_sent": "dedup record of bug reports already sent FROM this till",
 	"audit_log":          "this till's own local action log (including per-till-scoped settings changes — see PerTillSettingPrefixes); a shop-wide combined audit view is a separate concern, not LAN admin sync's job",
+	// ut-docs#1465: pre-tender void/comp/waste event log — same reasoning
+	// as audit_log immediately above (an append-only, per-till action
+	// record, not shop-wide admin config), plus the sales-family reasoning
+	// above it: a primary-wins bundle with deleteMissing pruning is the
+	// wrong shape for an append-only ledger. Cross-till shrinkage reporting
+	// (the "Shrinkage & Loss" reports tab) reads only this till's own rows,
+	// same as every other per-till operational-history table in this list.
+	"shrinkage_events": "pre-tender void/comp/waste event log — append-only per-till history, same reasoning as audit_log/sales",
 
 	// Resolved classification (ADR-0099, ut-docs#2348, closing the question
 	// ut-docs#1671 deferred): correctly excluded. NOT a pure append-only

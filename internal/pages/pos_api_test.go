@@ -66,6 +66,11 @@ func newPOSTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 		// row at all, so this guard's added lookup is always a zero-row no-op
 		// for it.
 		"PLAIN": {SKU: "PLAIN", Name: "Plain Item", Qty: 1, PriceCents: 200, ItemID: "itm-plain2", TaxRateBP: 2000},
+		// FREE (ut-docs#1465): a $0 promotional line -- its extended value
+		// (qty × unit price) is always zero, so /api/pos/remove's shrinkage
+		// reason/elevation gate must skip it entirely (pos_api_shrinkage_
+		// test.go's TestRemoveHandler_ZeroValueLineSkipsGate).
+		"FREE": {SKU: "FREE", Name: "Free Sample", Qty: 1, PriceCents: 0, ItemID: "itm-plain2", TaxRateBP: 0},
 	}
 	engine := pos.NewServiceWithResolver(pos.Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver)
 	// Same charge-policy seam init.go wires in production (ADR-0061) — the
@@ -108,12 +113,19 @@ func posPostForm(mux *http.ServeMux, path, form string) *httptest.ResponseRecord
 }
 
 func TestRemoveHandler_ByCodeAndByKey(t *testing.T) {
+	// ut-docs#1465: ABC (PriceCents=100) has a non-zero extended value, so
+	// removing it now requires a reason and passes the void_comp_waste
+	// gate -- UT_AUTH=off (canPerform's own documented escape hatch) makes
+	// checkOrElevate an unconditional `allowed`, so this test still only
+	// exercises removal mechanics, not permission/elevation (covered by
+	// TestRemoveHandler_ShrinkageGate below).
+	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPOSTestDeps(t)
 
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
 		t.Fatalf("seed scan: %v", err)
 	}
-	rec := posPostForm(mux, "/api/pos/remove", "code=ABC")
+	rec := posPostForm(mux, "/api/pos/remove", "code=ABC&reason=void")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -125,7 +137,7 @@ func TestRemoveHandler_ByCodeAndByKey(t *testing.T) {
 		t.Fatalf("re-seed scan: %v", err)
 	}
 	key := dp.Engine.Basket().Lines[0].LineKey
-	rec = posPostForm(mux, "/api/pos/remove", "key="+key)
+	rec = posPostForm(mux, "/api/pos/remove", "key="+key+"&reason=void")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}

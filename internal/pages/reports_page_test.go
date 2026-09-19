@@ -861,7 +861,7 @@ func TestReportsPage_TopItemsDeferredToItemsTab(t *testing.T) {
 func TestReportsTabs_AllNamedTabsReturn200(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, _ := newReportsPageTestDeps(t)
-	for _, name := range []string{"sales-trend", "items", "tax", "forecast", "payments", "eod", "tips"} {
+	for _, name := range []string{"sales-trend", "items", "tax", "forecast", "payments", "eod", "tips", "shrinkage"} {
 		rec := getReportsTab(t, mux, name, "?days=14")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("tab %q: expected 200, got %d: %s", name, rec.Code, rec.Body.String())
