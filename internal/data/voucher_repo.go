@@ -21,11 +21,49 @@ import (
 // survive the reset — same soft-reference reasoning as
 // worker_allocations.source_id (ADR-0063).
 //
-// Only voucher_type 'multi_purpose' exists in this card; single-purpose
-// vouchers (VAT at issue) are ut-docs#1037.
+// Two kinds of voucher share these tables (ut-docs#1037, migration 036):
+//
+//   - purpose 'multi_purpose' (the default, ut-docs#1008): the 0% liability
+//     above — VAT arises at redemption, which happens through the tender
+//     path (DebitVoucherForRedemption from pos.CompleteSale).
+//   - purpose 'single_purpose' (§3 Abs. 13-15 UStG): the good and its VAT
+//     rate are known at issue, so the issuing sale is the taxable supply
+//     (pos.computeSaleTotals taxes it at issue_vat_rate_bp). Redemption is
+//     then the hand-over of an already-taxed good — RedeemSinglePurposeVoucher
+//     drains the voucher in one step and records the event, with NO tax
+//     event and no sale row. Because that tax has already been declared,
+//     the tender path must never accept a single-purpose voucher as
+//     payment (it would tax the same consideration twice against the
+//     goods' rates) — DebitVoucherForRedemption refuses one with
+//     ErrVoucherNotMultiPurpose, and the single-purpose path refuses a
+//     multi-purpose voucher with ErrVoucherNotSinglePurpose. The two never
+//     cross.
+//
+// vouchers.voucher_type is vestigial since migration 036 (always
+// 'multi_purpose'); `purpose` is the column that carries meaning.
+
+// Voucher purposes (vouchers.purpose, migration 036). Shared with
+// internal/pos and internal/pages so the string never appears twice.
+const (
+	VoucherPurposeMulti  = "multi_purpose"
+	VoucherPurposeSingle = "single_purpose"
+)
 
 // ErrVoucherNotFound is returned when a voucher id has no vouchers row.
 var ErrVoucherNotFound = errors.New("voucher not found")
+
+// ErrVoucherNotSinglePurpose is returned by RedeemSinglePurposeVoucher when
+// the voucher is not purpose 'single_purpose' — a multi-purpose voucher is
+// redeemed as PAYMENT through the tender path, never drained here.
+var ErrVoucherNotSinglePurpose = errors.New("voucher is not a single-purpose voucher")
+
+// ErrVoucherNotMultiPurpose is the double-tax guard (ut-docs#1037): the
+// tender path's DebitVoucherForRedemption refuses a 'single_purpose'
+// voucher, because its VAT was already declared at issue — accepting it as
+// payment for goods would tax the same consideration a second time at the
+// goods' own rates. Hard reject even under force (journal replay): no till
+// running this schema can journal such a redemption in the first place.
+var ErrVoucherNotMultiPurpose = errors.New("voucher is a single-purpose voucher and cannot be used as payment")
 
 // ErrVoucherIDExists is returned by CreateVoucher when the id is already
 // taken (vouchers.id is the operator-supplied TEXT PRIMARY KEY -- ut-docs#1127,
@@ -84,9 +122,16 @@ type Voucher struct {
 	BalanceMinor        int64  `json:"balance"`
 	Currency            string `json:"currency"`
 	VoucherType         string `json:"voucher_type"`
-	Status              string `json:"status"`
-	IssuedSaleID        string `json:"issued_sale_id"`
-	CreatedAt           string `json:"created_at"`
+	// Purpose is VoucherPurposeMulti or VoucherPurposeSingle (migration
+	// 036, ut-docs#1037). CreateVoucher defaults an empty value to multi.
+	Purpose string `json:"purpose"`
+	// IssueVATRateBP is the basis-point rate a single-purpose voucher was
+	// taxed at when issued; nil for a multi-purpose voucher. A pointer
+	// because a real 0% rate must stay distinguishable from "no rate".
+	IssueVATRateBP *int   `json:"issue_vat_rate_bp"`
+	Status         string `json:"status"`
+	IssuedSaleID   string `json:"issued_sale_id"`
+	CreatedAt      string `json:"created_at"`
 }
 
 // VoucherTransaction is one voucher_transactions row — a single issue or
@@ -113,13 +158,16 @@ func (r *POSRepo) CreateVoucher(ctx context.Context, tx *sql.Tx, v Voucher) erro
 	if v.VoucherType == "" {
 		v.VoucherType = "multi_purpose"
 	}
+	if v.Purpose == "" {
+		v.Purpose = VoucherPurposeMulti
+	}
 	if v.Status == "" {
 		v.Status = "active"
 	}
 	_, err := r.exec(tx).ExecContext(ctx, `
-INSERT INTO vouchers (id, holder_label, original_amount, balance, currency, voucher_type, status, issued_sale_id, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, v.ID, nullIfEmpty(v.HolderLabel), v.OriginalAmountMinor, v.BalanceMinor, v.Currency, v.VoucherType, v.Status, nullIfEmpty(v.IssuedSaleID), v.CreatedAt)
+INSERT INTO vouchers (id, holder_label, original_amount, balance, currency, voucher_type, purpose, issue_vat_rate_bp, status, issued_sale_id, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, v.ID, nullIfEmpty(v.HolderLabel), v.OriginalAmountMinor, v.BalanceMinor, v.Currency, v.VoucherType, v.Purpose, nullableInt(v.IssueVATRateBP), v.Status, nullIfEmpty(v.IssuedSaleID), v.CreatedAt)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("create voucher %q: %w", v.ID, ErrVoucherIDExists)
@@ -329,10 +377,11 @@ WHERE id = ? AND status IN ('active', 'redeemed')`, amountMinor, voucherID); err
 func (r *POSRepo) GetVoucherBalance(ctx context.Context, tx *sql.Tx, id string) (Voucher, error) {
 	var v Voucher
 	var holder, issuedSale sql.NullString
+	var rate sql.NullInt64
 	err := r.exec(tx).QueryRowContext(ctx, `
-SELECT id, holder_label, original_amount, balance, currency, voucher_type, status, issued_sale_id, created_at
+SELECT id, holder_label, original_amount, balance, currency, voucher_type, purpose, issue_vat_rate_bp, status, issued_sale_id, created_at
 FROM vouchers WHERE id = ?`, id).
-		Scan(&v.ID, &holder, &v.OriginalAmountMinor, &v.BalanceMinor, &v.Currency, &v.VoucherType, &v.Status, &issuedSale, &v.CreatedAt)
+		Scan(&v.ID, &holder, &v.OriginalAmountMinor, &v.BalanceMinor, &v.Currency, &v.VoucherType, &v.Purpose, &rate, &v.Status, &issuedSale, &v.CreatedAt)
 	if err == sql.ErrNoRows {
 		return v, fmt.Errorf("voucher %q: %w", id, ErrVoucherNotFound)
 	}
@@ -341,7 +390,84 @@ FROM vouchers WHERE id = ?`, id).
 	}
 	v.HolderLabel = holder.String
 	v.IssuedSaleID = issuedSale.String
+	if rate.Valid {
+		bp := int(rate.Int64)
+		v.IssueVATRateBP = &bp
+	}
 	return v, nil
+}
+
+// nullableInt maps a *int to the NULL-or-value shape a nullable INTEGER
+// column wants (nil -> NULL), the *int counterpart of nullIfEmpty.
+func nullableInt(p *int) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
+
+// RedeemSinglePurposeVoucher is the single-purpose redemption (ut-docs#1037):
+// the hand-over of the specific, already-taxed good a 'single_purpose'
+// voucher was sold for. Inside the caller's transaction (tx may be nil for a
+// direct exec), fail-closed in order: unknown id -> ErrVoucherNotFound;
+// purpose != 'single_purpose' -> ErrVoucherNotSinglePurpose (a multi-purpose
+// voucher is PAYMENT and goes through DebitVoucherForRedemption from the
+// tender path, never here); status != 'active' -> ErrVoucherNotActive
+// (already redeemed, or voided). Then, in one guarded UPDATE (the same
+// predicates-repeated-in-the-WHERE pattern DebitVoucherForRedemption uses,
+// so a concurrent redemption between the read and this write loses cleanly
+// with ErrVoucherNotActive rather than double-recording), the balance goes
+// to 0 and status to 'redeemed' — all-or-nothing, a single-purpose voucher
+// is never partly redeemed — and one 'redemption' voucher_transactions row
+// is written for the FULL original_amount.
+//
+// saleID is optional and purely informational: the same soft, FK-less
+// reference this file's header documents for every other sale_id here. No
+// sales row is read or written and no tax figure moves — the VAT on this
+// consideration was declared by the issuing sale (pos.computeSaleTotals),
+// which is the whole point of the single-purpose kind. Returns the
+// post-redemption row.
+func (r *POSRepo) RedeemSinglePurposeVoucher(ctx context.Context, tx *sql.Tx, voucherID, saleID, now string) (Voucher, error) {
+	if voucherID == "" {
+		return Voucher{}, fmt.Errorf("redeem single-purpose voucher: id is required")
+	}
+	before, err := r.GetVoucherBalance(ctx, tx, voucherID)
+	if err != nil {
+		return Voucher{}, err
+	}
+	if before.Purpose != VoucherPurposeSingle {
+		return Voucher{}, fmt.Errorf("voucher %q (purpose %s): %w", voucherID, before.Purpose, ErrVoucherNotSinglePurpose)
+	}
+	if before.Status != "active" {
+		return Voucher{}, fmt.Errorf("voucher %q (status %s): %w", voucherID, before.Status, ErrVoucherNotActive)
+	}
+	res, err := r.exec(tx).ExecContext(ctx, `
+UPDATE vouchers
+SET balance = 0, status = 'redeemed'
+WHERE id = ? AND status = 'active' AND purpose = 'single_purpose'`, voucherID)
+	if err != nil {
+		return Voucher{}, fmt.Errorf("redeem single-purpose voucher %q: %w", voucherID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return Voucher{}, fmt.Errorf("redeem single-purpose voucher %q: rows affected: %w", voucherID, err)
+	}
+	if n != 1 {
+		// The pre-read passed, so only a concurrent redemption/void between
+		// the read and this write can get here.
+		return Voucher{}, fmt.Errorf("voucher %q: %w", voucherID, ErrVoucherNotActive)
+	}
+	if err := r.RecordVoucherTransaction(ctx, tx, VoucherTransaction{
+		ID:          uuid.NewString(),
+		VoucherID:   voucherID,
+		SaleID:      saleID,
+		Type:        "redemption",
+		AmountMinor: before.OriginalAmountMinor,
+		CreatedAt:   now,
+	}); err != nil {
+		return Voucher{}, err
+	}
+	return r.GetVoucherBalance(ctx, tx, voucherID)
 }
 
 // EnsureVoucherLocalRow inserts v as this till's local mirror of a voucher it
@@ -365,13 +491,16 @@ func (r *POSRepo) EnsureVoucherLocalRow(ctx context.Context, tx *sql.Tx, v Vouch
 	if v.VoucherType == "" {
 		v.VoucherType = "multi_purpose"
 	}
+	if v.Purpose == "" {
+		v.Purpose = VoucherPurposeMulti
+	}
 	if v.Status == "" {
 		v.Status = "active"
 	}
 	_, err := r.exec(tx).ExecContext(ctx, `
-INSERT OR IGNORE INTO vouchers (id, holder_label, original_amount, balance, currency, voucher_type, status, issued_sale_id, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, v.ID, nullIfEmpty(v.HolderLabel), v.OriginalAmountMinor, v.BalanceMinor, v.Currency, v.VoucherType, v.Status, nullIfEmpty(v.IssuedSaleID), v.CreatedAt)
+INSERT OR IGNORE INTO vouchers (id, holder_label, original_amount, balance, currency, voucher_type, purpose, issue_vat_rate_bp, status, issued_sale_id, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, v.ID, nullIfEmpty(v.HolderLabel), v.OriginalAmountMinor, v.BalanceMinor, v.Currency, v.VoucherType, v.Purpose, nullableInt(v.IssueVATRateBP), v.Status, nullIfEmpty(v.IssuedSaleID), v.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("ensure voucher local row %q: %w", v.ID, err)
 	}
@@ -409,13 +538,20 @@ func (r *POSRepo) DebitVoucherForRedemption(ctx context.Context, tx *sql.Tx, vou
 		return fmt.Errorf("debit voucher: amount must be > 0")
 	}
 	var balance int64
-	var status string
-	err := r.exec(tx).QueryRowContext(ctx, `SELECT balance, status FROM vouchers WHERE id = ?`, voucherID).Scan(&balance, &status)
+	var status, purpose string
+	err := r.exec(tx).QueryRowContext(ctx, `SELECT balance, status, purpose FROM vouchers WHERE id = ?`, voucherID).Scan(&balance, &status, &purpose)
 	if err == sql.ErrNoRows {
 		return fmt.Errorf("voucher %q: %w", voucherID, ErrVoucherNotFound)
 	}
 	if err != nil {
 		return fmt.Errorf("debit voucher: %w", err)
+	}
+	// Double-tax guard (ut-docs#1037): a single-purpose voucher's VAT was
+	// declared by the sale that issued it, so it is never PAYMENT — see
+	// ErrVoucherNotMultiPurpose. Checked before status/balance and
+	// regardless of force, and repeated in both UPDATE predicates below.
+	if purpose != VoucherPurposeMulti {
+		return fmt.Errorf("voucher %q (purpose %s): %w", voucherID, purpose, ErrVoucherNotMultiPurpose)
 	}
 	// force widens the acceptable pre-read status from just 'active' to
 	// 'active' or 'redeemed' — 'void' is excluded either way, both here and
@@ -440,14 +576,14 @@ func (r *POSRepo) DebitVoucherForRedemption(ctx context.Context, tx *sql.Tx, vou
 UPDATE vouchers
 SET balance = balance - ?,
     status = CASE WHEN balance - ? = 0 THEN 'redeemed' ELSE status END
-WHERE id = ? AND status = 'active' AND balance >= ?`
+WHERE id = ? AND status = 'active' AND balance >= ? AND purpose = 'multi_purpose'`
 	args := []any{amountMinor, amountMinor, voucherID, amountMinor}
 	if force {
 		query = `
 UPDATE vouchers
 SET balance = balance - ?,
     status = CASE WHEN balance - ? = 0 THEN 'redeemed' ELSE status END
-WHERE id = ? AND status IN ('active', 'redeemed')`
+WHERE id = ? AND status IN ('active', 'redeemed') AND purpose = 'multi_purpose'`
 		args = []any{amountMinor, amountMinor, voucherID}
 	}
 	res, err := r.exec(tx).ExecContext(ctx, query, args...)
@@ -596,11 +732,22 @@ type VoucherRangeSummary struct {
 // misclassified as Issued, and a genuine sale-issued voucher can never be
 // misclassified as Imported. See VoucherRangeSummary's own doc comment for
 // why this is a separate bucket rather than an outright exclusion.
+//
+// Single-purpose vouchers (ut-docs#1037) are excluded ENTIRELY — issue and
+// redemption rows alike (the `v.purpose = 'multi_purpose'` join below).
+// This section is the LIABILITY reconciliation: eod_tax_bands.go's identity
+// is sum(band.Gross) == Net − vouchers issued, and a single-purpose issue is
+// revenue already inside a VAT band (taxed at issue), never a liability —
+// counting it here would show its value twice on one Z-report and break
+// that identity by exactly its amount. Its redemption is the hand-over of an
+// already-taxed good with no money moving, so it is not a "Redeemed" flow
+// either. The record of both stays in voucher_transactions itself.
 func (r *POSRepo) VouchersIssuedRedeemedForRange(ctx context.Context, from, to string) (VoucherRangeSummary, error) {
 	var out VoucherRangeSummary
 	rows, err := r.db.QueryContext(ctx, `
 SELECT vt.type, (vt.sale_id IS NULL), COUNT(*), COALESCE(SUM(vt.amount), 0)
 FROM voucher_transactions vt
+JOIN vouchers v ON v.id = vt.voucher_id AND v.purpose = 'multi_purpose'
 LEFT JOIN sales s ON s.id = vt.sale_id
 WHERE date(vt.created_at, 'localtime') BETWEEN date(?) AND date(?)
   AND (s.id IS NULL OR s.status != 'voided')
@@ -649,13 +796,16 @@ GROUP BY vt.type, (vt.sale_id IS NULL)`, from, to)
 // pos_repo.go's instantWindow for the comparison form and the zero-`from`
 // (till's first-ever close) unbounded case. Called out explicitly by the
 // ADR precisely because it lives in a different file than the fragments
-// inside dateRangeSummaryInstant itself and is easy to miss.
+// inside dateRangeSummaryInstant itself and is easy to miss. Same
+// single-purpose exclusion as the range function (ut-docs#1037 — see its
+// doc comment for why).
 func (r *POSRepo) VouchersIssuedRedeemedForInstantWindow(ctx context.Context, from, to time.Time) (VoucherRangeSummary, error) {
 	win, args := instantWindow("vt.created_at", from, to)
 	var out VoucherRangeSummary
 	rows, err := r.db.QueryContext(ctx, `
 SELECT vt.type, (vt.sale_id IS NULL), COUNT(*), COALESCE(SUM(vt.amount), 0)
 FROM voucher_transactions vt
+JOIN vouchers v ON v.id = vt.voucher_id AND v.purpose = 'multi_purpose'
 LEFT JOIN sales s ON s.id = vt.sale_id
 WHERE `+win+`
   AND (s.id IS NULL OR s.status != 'voided')

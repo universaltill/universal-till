@@ -887,7 +887,11 @@
          data-msg-voucher-added="{{ T "tender.status.voucher_added" }}"
          data-msg-voucher-removed="{{ T "tender.status.voucher_removed" }}"
          data-msg-voucher-auto-code="{{ T "tender.issue_voucher.auto_code" }}"
-         data-msg-no-pending-vouchers="{{ T "tender.issue_voucher.no_pending" }}">
+         data-msg-no-pending-vouchers="{{ T "tender.issue_voucher.no_pending" }}"
+         data-msg-voucher-single-purpose="{{ T "tender.issue_voucher.purpose_single" }}"
+         data-msg-voucher-vat-rate-invalid="{{ T "tender.status.voucher_vat_rate_invalid" }}"
+         data-msg-voucher-redeemed-single="{{ T "pos.toast.voucher_redeemed_single" }}"
+         data-tax-inclusive="{{ if .taxInclusive }}1{{ else }}0{{ end }}">
       <form class="split-tender-form" id="split-tender-form" autocomplete="off">
         {{ $default := .paymentMethodDefault }}
         <div class="split-grid">
@@ -928,6 +932,23 @@
               <input type="text" name="voucher_id" placeholder="{{ T "tender.voucher_id_placeholder" }}" maxlength="64" autocapitalize="characters" spellcheck="false">
             </label>
             <button class="btn secondary" type="button" id="split-tender-voucher-check">{{ T "tender.voucher_check" }}</button>
+          </div>
+          <!-- ut-docs#1037: single-purpose ("specific item") voucher
+               hand-over. app.js reveals this row — instead of pre-filling
+               the Amount box — when Check balance finds a voucher whose
+               purpose is single_purpose: such a voucher was taxed when it
+               was sold, so it is never tender (the server refuses it as a
+               payment). Redeem is a deliberate second tap after Check —
+               it POSTs /api/vouchers/{id}/redeem and is irreversible
+               (balance goes to 0 at once), unlike a pending payment row
+               that can still be removed before Complete Sale. The label
+               shows the voucher's value and holder so the cashier sees
+               what they are committing to. Same .btn.secondary sizing as
+               every other action in this panel. Same wrapper reasoning as
+               the two hidden fields around it. -->
+          <div id="split-tender-voucher-redeem" class="split-voucher-redeem" hidden>
+            <span id="split-tender-voucher-redeem-info" class="split-voucher-redeem-info"></span>
+            <button class="btn secondary" type="button" id="split-tender-voucher-redeem-btn">{{ T "tender.redeem_voucher" }}</button>
           </div>
           <!-- Same wrapper reasoning: a voucher redemption can't give change
                (sales.go rejects it), so app.js hides this field and forces
@@ -990,6 +1011,28 @@
             <label>{{ T "tender.issue_voucher.holder_label" }}
               <input type="text" name="holder_label" maxlength="200">
             </label>
+            <!-- ut-docs#1037: voucher purpose. A radio pair, each inside
+                 its own <label> (ux-specified): the German wording for the
+                 single-purpose option ("Bestimmter Artikel (jetzt
+                 versteuert)") is long and must be allowed to wrap, which a
+                 fixed-width segmented button would truncate. "Any use" is
+                 checked by default — today's multi-purpose behaviour,
+                 unchanged. The VAT-rate field below starts hidden and
+                 app.js reveals it only for the single-purpose choice, the
+                 same hidden-attribute + JS-toggle mechanism
+                 #split-tender-voucher-field / #split-tender-change-field
+                 use above. The rate is typed as a percentage (19, 7) and
+                 sent as basis points on issue_vouchers[].vat_rate_bp. -->
+            <fieldset class="split-issue-purpose">
+              <legend>{{ T "tender.issue_voucher.purpose" }}</legend>
+              <label><input type="radio" name="purpose" value="multi_purpose" checked> <span>{{ T "tender.issue_voucher.purpose_multi" }}</span></label>
+              <label><input type="radio" name="purpose" value="single_purpose"> <span>{{ T "tender.issue_voucher.purpose_single" }}</span></label>
+            </fieldset>
+            <div id="split-tender-issue-vat-field" class="split-issue-vat-field" hidden>
+              <label>{{ T "tender.issue_voucher.vat_rate" }}
+                <input type="text" inputmode="decimal" name="vat_rate" placeholder="19" maxlength="6">
+              </label>
+            </div>
           </div>
           <div class="split-controls">
             <button class="btn" type="button" id="split-tender-issue-add">{{ T "tender.issue_voucher.add" }}</button>

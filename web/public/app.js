@@ -218,6 +218,18 @@ window.utCurrency = (function(){
     var issueForm = card.querySelector('#split-tender-issue-form');
     var issueAddBtn = card.querySelector('#split-tender-issue-add');
     var vouchersList = card.querySelector('#split-tender-vouchers');
+    // ut-docs#1037: single-purpose vouchers — the purpose radios + VAT-rate
+    // field on the issue form, and the Redeem row under the voucher-id
+    // field. All optional, same as the ut-docs#1832 hooks above.
+    var issueVatField = card.querySelector('#split-tender-issue-vat-field');
+    var redeemRow = card.querySelector('#split-tender-voucher-redeem');
+    var redeemInfo = card.querySelector('#split-tender-voucher-redeem-info');
+    var redeemBtn = card.querySelector('#split-tender-voucher-redeem-btn');
+    // ut-docs#1037 (reviewer): the sale's pricing mode, for issueGross
+    // below. Absent (an older cached template) reads as inclusive — the
+    // pre-#1037 behaviour, and the mode in which face value already is the
+    // gross, so nothing changes for a multi-purpose issue either way.
+    var taxInclusive = card.getAttribute('data-tax-inclusive') !== '0';
 
     if (!form || !addBtn || !submitBtn || !clearBtn || !paymentsList) {
       return;
@@ -267,6 +279,29 @@ window.utCurrency = (function(){
         var changeInput = form.querySelector('input[name="change"]');
         if (changeInput) changeInput.value = window.utCurrency.toMajor(0);
       }
+      hideRedeem();
+    }
+
+    // ut-docs#1037: the Redeem row is only ever shown by a fresh Check
+    // balance result — any change of method or code hides it again, so a
+    // stale "Redeem" can never apply to a different voucher than the one
+    // the cashier last checked.
+    function hideRedeem(){
+      if (redeemRow) redeemRow.hidden = true;
+      if (redeemInfo) redeemInfo.textContent = '';
+      if (redeemRow) redeemRow.removeAttribute('data-voucher-id');
+    }
+
+    // ut-docs#1037: the purpose radios on the issue form. The VAT-rate field
+    // is hidden unless "specific item" is selected — same hidden-attribute
+    // toggle as syncVoucherField above.
+    function issuePurpose(){
+      if (!issueForm) return 'multi_purpose';
+      var checked = issueForm.querySelector('input[name="purpose"]:checked');
+      return checked && checked.value === 'single_purpose' ? 'single_purpose' : 'multi_purpose';
+    }
+    function syncIssuePurpose(){
+      if (issueVatField) issueVatField.hidden = issuePurpose() !== 'single_purpose';
     }
 
     function setStatus(message, level){
@@ -332,6 +367,12 @@ window.utCurrency = (function(){
       vouchersList.innerHTML = pendingVoucherIssues.map(function(issue, idx){
         var code = issue.code ? '<span class="pill-code">' + escapeHtml(issue.code) + '</span>' : escapeHtml(msg.msgVoucherAutoCode);
         var details = formatMoney(issue.amount);
+        if (issue.purpose === 'single_purpose') {
+          // ut-docs#1037: name the kind and the rate it will be taxed at,
+          // so a pending specific-item voucher is told apart from an
+          // any-use one before Complete Sale.
+          details += ' · ' + escapeHtml(msg.msgVoucherSinglePurpose) + ' ' + escapeHtml(formatVatRate(issue.vat_rate_bp)) + '%';
+        }
         if (issue.holder_label) {
           details += '<br><small>' + escapeHtml(issue.holder_label) + '</small>';
         }
@@ -345,9 +386,26 @@ window.utCurrency = (function(){
       }, 0);
     }
 
+    // ut-docs#1037 (reviewer): what a pending issue adds to what the
+    // customer owes. A multi-purpose voucher is a 0% liability — its face
+    // value, flat, as before. A SINGLE-purpose one is taxed at issue, so
+    // under EXCLUSIVE pricing its VAT rides on top of the face value (under
+    // inclusive the face value already contains it). Quoting the flat face
+    // value there left this panel short by exactly that VAT, and the server
+    // — which taxes the issue in pos.computeSaleTotals — then refused the
+    // cashier's own quoted amount with "does not cover the sale total".
+    // Mirrors pos.ComputeTaxBasisPoints's exclusive branch, half-up, so the
+    // two round identically.
+    function issueGross(issue){
+      if (issue.purpose !== 'single_purpose' || taxInclusive) return issue.amount;
+      var bp = Number(issue.vat_rate_bp || 0);
+      if (!Number.isFinite(bp) || bp <= 0) return issue.amount;
+      return issue.amount + Math.floor((issue.amount * bp + 5000) / 10000);
+    }
+
     function voucherIssueTotal(){
       return pendingVoucherIssues.reduce(function(sum, issue){
-        return sum + issue.amount;
+        return sum + issueGross(issue);
       }, 0);
     }
 
@@ -446,6 +504,23 @@ window.utCurrency = (function(){
           setStatus(msg.msgVoucherInvalid, 'error');
           return;
         }
+        if (voucher.purpose === 'single_purpose') {
+          // ut-docs#1037: a specific-item voucher was taxed when sold and
+          // is never tender — instead of pre-filling the Amount box, offer
+          // the deliberate second tap: Redeem (hands the item over, drains
+          // the voucher at once). The row names the value and holder so
+          // the cashier sees exactly what they are committing to.
+          if (redeemRow && redeemInfo) {
+            var info = formatMoney(voucher.original_amount);
+            if (voucher.holder_label) info += ' · ' + voucher.holder_label;
+            redeemInfo.textContent = info;
+            redeemRow.setAttribute('data-voucher-id', voucher.id);
+            redeemRow.hidden = false;
+          }
+          setStatus(msg.msgVoucherSinglePurpose, 'info');
+          return;
+        }
+        hideRedeem();
         var amountInput = form.querySelector('input[name="amount"]');
         if (amountInput && !amountInput.value) {
           var remaining = amountDue() - netPayments();
@@ -457,6 +532,22 @@ window.utCurrency = (function(){
         console.error('voucher balance check failed:', err);
         setStatus(msg.msgVoucherCheckUnavailable, 'error');
       }
+    }
+
+    // ut-docs#1037: the VAT rate is typed as a percentage ("19", "7",
+    // "5.5") and travels as basis points; formatVatRate is its inverse for
+    // the pending pill. A comma decimal separator is accepted (de/tr
+    // keyboards) — same tolerance window.utCurrency.toMinor has for amounts.
+    function parseVatRateBP(raw){
+      var text = String(raw || '').trim().replace(',', '.');
+      if (!text) return NaN;
+      var pct = Number(text);
+      if (!Number.isFinite(pct) || pct < 0 || pct > 100) return NaN;
+      return Math.round(pct * 100);
+    }
+    function formatVatRate(bp){
+      var pct = Number(bp || 0) / 100;
+      return Number.isInteger(pct) ? String(pct) : pct.toFixed(2).replace(/0+$/, '');
     }
 
     function addVoucherIssue(){
@@ -472,11 +563,69 @@ window.utCurrency = (function(){
       if (code) issue.code = code;
       var holder = String(data.get('holder_label') || '').trim();
       if (holder) issue.holder_label = holder;
+      if (issuePurpose() === 'single_purpose') {
+        var rateBP = parseVatRateBP(data.get('vat_rate'));
+        if (Number.isNaN(rateBP)) {
+          setStatus(msg.msgVoucherVatRateInvalid, 'error');
+          return false;
+        }
+        issue.purpose = 'single_purpose';
+        issue.vat_rate_bp = rateBP;
+      }
       pendingVoucherIssues.push(issue);
       renderVoucherIssues();
       issueForm.reset();
+      syncIssuePurpose();
       setStatus(fmt(msg.msgVoucherAdded, formatMoney(amountMinor)), 'success');
       return true;
+    }
+
+    // ut-docs#1037: the single-purpose hand-over. Irreversible on success
+    // (the server drains the voucher in one step), so the button is
+    // disabled while the request is in flight to swallow a double tap. A
+    // 404/409 (unknown, already redeemed, or not a specific-item voucher
+    // after all) gets the same invalid-voucher wording the balance check
+    // uses; anything else is a "could not reach the till" retry prompt.
+    async function redeemSinglePurposeVoucher(){
+      if (!redeemRow || !redeemBtn) return;
+      var id = redeemRow.getAttribute('data-voucher-id') || '';
+      if (!id) {
+        setStatus(msg.msgVoucherIdRequired, 'error');
+        return;
+      }
+      redeemBtn.disabled = true;
+      try {
+        var response = await fetch('/api/vouchers/' + encodeURIComponent(id) + '/redeem', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+          body: '{}'
+        });
+        if (response.status === 401) {
+          window.location.href = '/login';
+          return;
+        }
+        if (response.status === 404 || response.status === 409) {
+          setStatus(msg.msgVoucherInvalid, 'error');
+          hideRedeem();
+          return;
+        }
+        if (!response.ok) {
+          setStatus(msg.msgNetworkError, 'error');
+          return;
+        }
+        var payload = await response.json();
+        var voucher = payload && payload.data;
+        var amount = voucher && typeof voucher.original_amount === 'number' ? formatMoney(voucher.original_amount) : '';
+        hideRedeem();
+        var input = form.querySelector('input[name="voucher_id"]');
+        if (input) input.value = '';
+        setStatus(fmt(msg.msgVoucherRedeemedSingle, amount), 'success');
+      } catch (err) {
+        console.error('single-purpose voucher redeem failed:', err);
+        setStatus(msg.msgNetworkError, 'error');
+      } finally {
+        redeemBtn.disabled = false;
+      }
     }
 
     function fillRemaining(){
@@ -603,6 +752,7 @@ window.utCurrency = (function(){
       pendingVoucherIssues = [];
       renderVoucherIssues();
       if (issueForm) issueForm.reset();
+      syncIssuePurpose();
       clearForm();
       setStatus(msg.msgCleared, 'info');
     });
@@ -611,6 +761,18 @@ window.utCurrency = (function(){
     }
     if (voucherCheckBtn) {
       voucherCheckBtn.addEventListener('click', checkVoucherBalance);
+    }
+    var voucherIdInput = form.querySelector('input[name="voucher_id"]');
+    if (voucherIdInput) {
+      voucherIdInput.addEventListener('input', hideRedeem);
+    }
+    if (redeemBtn) {
+      redeemBtn.addEventListener('click', redeemSinglePurposeVoucher);
+    }
+    if (issueForm) {
+      issueForm.addEventListener('change', function(e){
+        if (e.target && e.target.name === 'purpose') syncIssuePurpose();
+      });
     }
     if (issueAddBtn) {
       issueAddBtn.addEventListener('click', addVoucherIssue);
@@ -643,6 +805,7 @@ window.utCurrency = (function(){
     renderPayments();
     renderVoucherIssues();
     syncVoucherField();
+    syncIssuePurpose();
   }
 
   ready(initSplitTender);

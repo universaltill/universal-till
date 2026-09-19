@@ -61,6 +61,10 @@ var wantSplitTenderMsgAttrs = []string{
 	"no-pending-vouchers",
 	"voucher-added",
 	"voucher-auto-code",
+	// ut-docs#1037 single-purpose vouchers.
+	"voucher-single-purpose",
+	"voucher-vat-rate-invalid",
+	"voucher-redeemed-single",
 	"voucher-balance",
 	"voucher-check-unavailable",
 	"voucher-id-required",
@@ -102,6 +106,12 @@ var splitTenderMsgLocaleKeys = map[string]string{
 	"voucher-id-required":       "tender.status.voucher_id_required",
 	"voucher-invalid":           "pos.toast.voucher_invalid",
 	"voucher-removed":           "tender.status.voucher_removed",
+	// ut-docs#1037 single-purpose vouchers: the balance check's verdict for
+	// a specific-item voucher (reuses the purpose label the "Sell a
+	// voucher" radio already renders) and the Redeem success line.
+	"voucher-single-purpose":   "tender.issue_voucher.purpose_single",
+	"voucher-vat-rate-invalid": "tender.status.voucher_vat_rate_invalid",
+	"voucher-redeemed-single":  "pos.toast.voucher_redeemed_single",
 }
 
 // dataMsgAttrsOnSplitTenderCard returns the data-msg-* attributes declared on

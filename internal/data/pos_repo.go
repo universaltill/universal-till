@@ -1787,7 +1787,14 @@ ORDER BY sl.sale_id, sl.line_no`, fromStr, toStr)
 			out[i].Lines = append(out[i].Lines, l)
 		}
 	}
-	return out, lineRows.Err()
+	if err := lineRows.Err(); err != nil {
+		return nil, err
+	}
+	if err := r.attachSinglePurposeVoucherIssues(ctx, out, idx,
+		`datetime(s.created_at) >= datetime(?) AND datetime(s.created_at) < datetime(?)`, fromStr, toStr); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // MarginRow is one item's revenue vs cost over the reporting window (only
@@ -3211,6 +3218,16 @@ type EODTaxBandSale struct {
 	// face value in any band (a 0% liability, not a taxable supply).
 	VoucherIssueTotal int64
 	Lines             []EODTaxBandLine
+	// SinglePurposeVoucherIssues (ut-docs#1037, migration 036): the
+	// single-purpose vouchers this sale issued — each a taxable supply AT
+	// issue, taxed at its own recorded rate by pos.computeSaleTotals and so
+	// inside this sale's subtotal/tax_total, but with NO sale_lines row.
+	// Without this read the banding would miss exactly that tax while
+	// TaxNet carried it, breaking sum(band.Tax) == TaxNet. The pages layer
+	// turns each into a pos.VATLine (the tax math lives in internal/pos,
+	// which this package cannot import). Multi-purpose issues are NOT here
+	// — they stay in VoucherIssueTotal, in no band (a 0% liability).
+	SinglePurposeVoucherIssues []EODTaxBandVoucherIssue
 	// Payments (ut-docs#1004): the sale's tendered revenue per method, for
 	// the method x VAT-rate cross-tab's apportionment. Ordered by method_id
 	// within the sale (the query's ORDER BY), which the apportionment
@@ -3228,6 +3245,53 @@ type EODTaxBandSale struct {
 type EODTaxBandPayment struct {
 	Method string
 	Amount int64
+}
+
+// EODTaxBandVoucherIssue is one single-purpose voucher issued in a sale
+// (ut-docs#1037): the rate it was taxed at (vouchers.issue_vat_rate_bp)
+// and its face value (the 'issue' transaction's amount) in the sale's own
+// pricing mode — gross under inclusive pricing, net under exclusive —
+// exactly the figure pos.computeSaleTotals handed to ComputeTaxBasisPoints.
+type EODTaxBandVoucherIssue struct {
+	RateBP int
+	Amount int64
+}
+
+// attachSinglePurposeVoucherIssues is the fourth fixed query shared by
+// SalesForTaxBands / SalesForTaxBandsInstant / SalesForTaxWindow
+// (ut-docs#1037): every single-purpose 'issue' transaction whose sale
+// matches salesWhere (the same completed-sale window predicate the
+// caller's own header query used, over alias `s`), grouped onto its sale
+// by the caller's idx. voucher_transactions.sale_id is the soft, FK-less
+// reference the voucher file header documents, so this is a plain equality
+// join, not an FK traversal. issue_vat_rate_bp is NOT NULL for every
+// single-purpose row by construction (pos.CompleteSale always writes it) —
+// COALESCE(…, 0) only guards a hand-edited row from failing the whole
+// report.
+func (r *POSRepo) attachSinglePurposeVoucherIssues(ctx context.Context, out []EODTaxBandSale, idx map[string]int, salesWhere string, args ...any) error {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT vt.sale_id, COALESCE(v.issue_vat_rate_bp, 0), vt.amount
+FROM voucher_transactions vt
+JOIN vouchers v ON v.id = vt.voucher_id
+JOIN sales s ON s.id = vt.sale_id
+WHERE vt.type = 'issue' AND v.purpose = 'single_purpose'
+  AND s.status = 'completed' AND `+salesWhere+`
+ORDER BY vt.sale_id, vt.rowid`, args...)
+	if err != nil {
+		return fmt.Errorf("eod band single-purpose voucher issues: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var saleID string
+		var vi EODTaxBandVoucherIssue
+		if err := rows.Scan(&saleID, &vi.RateBP, &vi.Amount); err != nil {
+			return fmt.Errorf("scan eod band single-purpose voucher issue: %w", err)
+		}
+		if i, ok := idx[saleID]; ok {
+			out[i].SinglePurposeVoucherIssues = append(out[i].SinglePurposeVoucherIssues, vi)
+		}
+	}
+	return rows.Err()
 }
 
 // SalesForTaxBands loads every completed sale (and return) in the SAME
@@ -3293,6 +3357,9 @@ ORDER BY sl.sale_id, sl.line_no`, from, to)
 		}
 	}
 	if err := lineRows.Err(); err != nil {
+		return nil, err
+	}
+	if err := r.attachSinglePurposeVoucherIssues(ctx, out, idx, `s.local_date BETWEEN date(?) AND date(?)`, from, to); err != nil {
 		return nil, err
 	}
 
@@ -3387,6 +3454,9 @@ ORDER BY sl.sale_id, sl.line_no`, sargs...)
 		}
 	}
 	if err := lineRows.Err(); err != nil {
+		return nil, err
+	}
+	if err := r.attachSinglePurposeVoucherIssues(ctx, out, idx, swin, sargs...); err != nil {
 		return nil, err
 	}
 
@@ -7155,6 +7225,15 @@ type SaleDetailVoucherIssue struct {
 	VoucherID   string `json:"voucher_id"`
 	HolderLabel string `json:"holder_label,omitempty"`
 	Amount      int64  `json:"amount"`
+	// Purpose / VATRateBP (ut-docs#1037, journal contract 1.10.0): set
+	// ONLY for a single-purpose voucher ('single_purpose' + the rate it was
+	// taxed at); both omitted for a multi-purpose one, so that wire shape
+	// is byte-identical to pre-1.10.0 and a pre-1.10.0 primary reading a
+	// multi-purpose entry sees nothing new. Replay needs them: without the
+	// purpose the primary would re-derive the sale as a 0% liability and
+	// land a different tax_total/total than the replica journaled.
+	Purpose   string `json:"purpose,omitempty"`
+	VATRateBP *int   `json:"vat_rate_bp,omitempty"`
 }
 
 type SaleDetailLine struct {
@@ -7331,7 +7410,7 @@ FROM payments WHERE sale_id = ? ORDER BY paid_at`, d.ID)
 	// traversal. The issue transaction's amount IS the face value; the
 	// holder label lives on the vouchers row.
 	viRows, err := r.db.QueryContext(ctx, `
-SELECT vt.voucher_id, COALESCE(v.holder_label, ''), vt.amount
+SELECT vt.voucher_id, COALESCE(v.holder_label, ''), vt.amount, v.purpose, v.issue_vat_rate_bp
 FROM voucher_transactions vt
 JOIN vouchers v ON v.id = vt.voucher_id
 WHERE vt.sale_id = ? AND vt.type = 'issue'
@@ -7342,8 +7421,20 @@ ORDER BY vt.rowid`, d.ID)
 	defer viRows.Close()
 	for viRows.Next() {
 		var vi SaleDetailVoucherIssue
-		if err := viRows.Scan(&vi.VoucherID, &vi.HolderLabel, &vi.Amount); err != nil {
+		var purpose string
+		var rate sql.NullInt64
+		if err := viRows.Scan(&vi.VoucherID, &vi.HolderLabel, &vi.Amount, &purpose, &rate); err != nil {
 			return SaleDetail{}, false, fmt.Errorf("scan sale voucher issue: %w", err)
+		}
+		// Only a single-purpose issue carries the two new fields on the
+		// wire (see SaleDetailVoucherIssue) — multi-purpose stays the
+		// pre-#1037 shape.
+		if purpose == VoucherPurposeSingle {
+			vi.Purpose = purpose
+			if rate.Valid {
+				bp := int(rate.Int64)
+				vi.VATRateBP = &bp
+			}
 		}
 		d.VoucherIssues = append(d.VoucherIssues, vi)
 	}

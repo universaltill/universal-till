@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
@@ -18,11 +19,16 @@ import (
 // tax and the whole-sale discount — so any sale carrying either broke the
 // Z-report's own identities, under-declaring VAT collected on service
 // charges. Those identities are: sum(band.Tax) == TaxNet always, and
-// sum(band.Gross) == Net on any day WITHOUT voucher issues — a voucher
-// issue's face value (ut-docs#1008) is inside Net (it is in sales.total)
-// but deliberately in NO band (a 0% liability, not a taxable supply), so
-// on a voucher day sum(band.Gross) == Net − vouchers issued, and the
-// GUTSCHEINE section supplies exactly that reconciling delta. This is the
+// sum(band.Gross) == Net on any day WITHOUT voucher issues — a MULTI-PURPOSE
+// voucher issue's face value (ut-docs#1008) is inside Net (it is in
+// sales.total) but deliberately in NO band (a 0% liability, not a taxable
+// supply), so on a voucher day sum(band.Gross) == Net − vouchers issued, and
+// the GUTSCHEINE section supplies exactly that reconciling delta. A
+// SINGLE-PURPOSE issue (ut-docs#1037) is the opposite case: taxed at issue,
+// so it IS in a band (eodVATLinesForSale re-adds it from the vouchers row,
+// since it has no sale_lines row) and is NOT in the GUTSCHEINE figure
+// (data.VouchersIssuedRedeemedForRange excludes it) — the identity holds
+// unchanged with both kinds on one day. This is the
 // SAME shared pos.VATBandsForSale the invoice's VAT table uses, so the
 // day-close can never disagree with the invoices issued for its sales.
 //
@@ -76,11 +82,8 @@ func computeEODTaxBands(ctx context.Context, repo *data.POSRepo, from, to string
 func computeEODTaxBandsFromSales(sales []data.EODTaxBandSale) []data.TaxBand {
 	agg := map[int]*data.TaxBand{}
 	for _, s := range sales {
-		lines := make([]pos.VATLine, 0, len(s.Lines))
-		for _, l := range s.Lines {
-			lines = append(lines, pos.VATLine{RateBP: l.RateBP, LineTotal: l.LineTotal, TaxAmount: l.TaxAmount})
-		}
 		inclusive := pos.InferTaxInclusive(s.Subtotal, s.DiscountTotal, s.TaxTotal, s.Total, s.ServiceCharge, s.VoucherIssueTotal)
+		lines := eodVATLinesForSale(s, inclusive)
 		sign := int64(1)
 		if s.SaleType == "return" {
 			sign = -1
@@ -105,6 +108,39 @@ func computeEODTaxBandsFromSales(sales []data.EODTaxBandSale) []data.TaxBand {
 		return nil
 	}
 	return out
+}
+
+// eodVATLinesForSale is the ONE adapter from a data.EODTaxBandSale to the
+// pos.VATLine slice VATBandsForSale bands — shared by computeEODTaxBandsFromSales
+// and computeEODMethodTaxBandsFromSales (and, through the former, the Tax
+// tab's computeTaxSummary) so every breakdown sees the same lines. It
+// re-adds the sale's SINGLE-PURPOSE voucher issues (ut-docs#1037) as lines:
+// each was taxed at issue by pos.computeSaleTotals — into the persisted
+// subtotal/tax_total — but has no sale_lines row, so banding sale_lines
+// alone would leave sum(band.Tax) short of TaxNet by exactly that tax. The
+// same ComputeTaxBasisPoints call, at the rate the voucher row recorded and
+// under the sale's own inferred pricing mode, re-derives the identical
+// figure the engine persisted. Multi-purpose issues are not in the read at
+// all (see data.EODTaxBandSale.SinglePurposeVoucherIssues).
+func eodVATLinesForSale(s data.EODTaxBandSale, inclusive bool) []pos.VATLine {
+	lines := make([]pos.VATLine, 0, len(s.Lines)+len(s.SinglePurposeVoucherIssues))
+	for _, l := range s.Lines {
+		lines = append(lines, pos.VATLine{RateBP: l.RateBP, LineTotal: l.LineTotal, TaxAmount: l.TaxAmount})
+	}
+	for _, vi := range s.SinglePurposeVoucherIssues {
+		lines = append(lines, singlePurposeVoucherVATLine(vi.RateBP, vi.Amount, inclusive))
+	}
+	return lines
+}
+
+// singlePurposeVoucherVATLine is a single-purpose voucher issue as the
+// pos.VATLine its issuing sale taxed it as (ut-docs#1037): amount is in the
+// sale's own pricing mode (gross inclusive / net exclusive, exactly what
+// computeSaleTotals passed), so the returned gross+tax match the engine's.
+// Shared by the day-close adapter above and the invoice's vatBreakdown.
+func singlePurposeVoucherVATLine(rateBP int, amount int64, inclusive bool) pos.VATLine {
+	tax, gross := pos.ComputeTaxBasisPoints(money.FromMinor(amount), rateBP, inclusive)
+	return pos.VATLine{RateBP: rateBP, LineTotal: gross.Minor(), TaxAmount: tax.Minor()}
 }
 
 // attachEODTaxBands fills rep.TaxBands for a report EndOfDay/EndOfDayRange

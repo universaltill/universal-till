@@ -1,0 +1,43 @@
+-- 036_single_purpose_vouchers.sql — universaltill/ut-docs#1037: single-
+-- purpose vouchers (Einzweck-Gutscheine, §3 Abs. 13-15 UStG). A voucher
+-- whose good — and therefore VAT rate — is already known when it is sold
+-- is a taxable supply AT ISSUE: VAT is due then, at that rate, not deferred
+-- to redemption the way a multi-purpose voucher's is (ut-docs#1008, where
+-- the issue is a 0% liability and VAT arises on the redeemed goods).
+--
+-- Two ADDITIVE columns on vouchers, nothing else touched:
+--
+--   purpose           'multi_purpose' (default — every pre-existing row and
+--                     every issue that doesn't say otherwise keeps today's
+--                     exact semantics) or 'single_purpose'. The CHECK is the
+--                     same fixed-vocabulary-at-the-schema convention
+--                     vouchers.status / voucher_transactions.type already use
+--                     in 001_init.sql.
+--   issue_vat_rate_bp The basis-point VAT rate the single-purpose voucher
+--                     was taxed at when issued (1900 = 19%). NULL for a
+--                     multi-purpose voucher — nullable deliberately, because
+--                     a real 0% rate (a zero-rated good) is a legitimate
+--                     single-purpose rate and a plain integer could not tell
+--                     it apart from "no rate". The rate rides the voucher row
+--                     so the day-close can band the issue at the rate it was
+--                     actually taxed at, never today's settings — the same
+--                     "sale's own tax signature" rule sale_lines.tax_rate_bp
+--                     follows.
+--
+-- voucher_type is left exactly as 001_init.sql defined it: NOT NULL DEFAULT
+-- 'multi_purpose' CHECK (voucher_type IN ('multi_purpose')). It is now
+-- VESTIGIAL — always 'multi_purpose', carrying no information; `purpose` is
+-- the column that means something. Widening its CHECK to add
+-- 'single_purpose' was the obvious alternative and is rejected for the
+-- reason 003_kitchen_station_display_flag.sql's header documents at length:
+-- 001_init.sql is frozen (ADR-0100 — its checksum is pinned in
+-- internal/db/shipped_migrations_test.go and verified at every till's
+-- boot), SQLite has no ALTER for a CHECK constraint, and the 12-step
+-- table rebuild that widening would need re-fires ON DELETE CASCADE /
+-- orphans child rows — voucher_transactions.voucher_id FKs onto
+-- vouchers(id), so a rebuild here risks exactly the silent-child-loss class
+-- of bug that file reproduced. Two additive columns carry the same
+-- information with none of that risk.
+ALTER TABLE vouchers ADD COLUMN purpose TEXT NOT NULL DEFAULT 'multi_purpose'
+    CHECK (purpose IN ('multi_purpose','single_purpose'));
+ALTER TABLE vouchers ADD COLUMN issue_vat_rate_bp INTEGER;

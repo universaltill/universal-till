@@ -133,11 +133,11 @@ func computeEODMethodTaxBandsFromSales(sales []data.EODTaxBandSale) []data.Metho
 			logging.L().Warnf("eod method tax bands: sale %s has zero total tendered, skipped from cross-tab", s.ID)
 			continue
 		}
-		lines := make([]pos.VATLine, 0, len(s.Lines))
-		for _, l := range s.Lines {
-			lines = append(lines, pos.VATLine{RateBP: l.RateBP, LineTotal: l.LineTotal, TaxAmount: l.TaxAmount})
-		}
 		inclusive := pos.InferTaxInclusive(s.Subtotal, s.DiscountTotal, s.TaxTotal, s.Total, s.ServiceCharge, s.VoucherIssueTotal)
+		// Same adapter as computeEODTaxBandsFromSales (single-purpose
+		// voucher issues included, ut-docs#1037) so the cross-tab's row
+		// sums keep reconciling to TaxBands.
+		lines := eodVATLinesForSale(s, inclusive)
 		sign := int64(1)
 		if s.SaleType == "return" {
 			sign = -1

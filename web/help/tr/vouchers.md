@@ -45,6 +45,28 @@ Neler ters gidebilir:
 
 Aynı listedeki eski **gift** yöntemi, bakiye takip etmeyen düz bir ödeme yöntemidir — kasanın düzenlediği hediye çekleri için **voucher** kullanın.
 
+## Belirli bir ürün için hediye çekleri
+
+Hediye çeklerinin çoğu **her amaç için**dir — müşteri neye harcayacağına sonra karar verir ve mallar hediye çeki harcandığında vergilendirilir. **Belirli bir ürün** için satılan bir hediye çeki (KDV oranı bu yüzden zaten bilinen belirli bir ürün ya da hizmet — Almanya'da *Einzweck-Gutschein*) ise satıldığında vergilendirilir ve daha sonra kullanılması yalnızca ürünün teslim edilmesidir. Kasa iki türü birbirinden ayrı tutar.
+
+Satmak:
+
+1. Panelin altındaki **Hediye çeki sat** bölümünde, **Hediye çeki türü** altından **Belirli bir ürün (vergi şimdi alınır)** seçeneğini seçin (varsayılan olan **Her amaç için**, yukarıda anlatılan olağan hediye çekidir).
+2. Bir **KDV oranı** kutusu belirir — ürünün oranını yüzde olarak yazın, örneğin `19` ya da `7`.
+3. Tutar, kod ve sahibi her zamanki gibi doldurun ve **Hediye çeki ekle**'ye basın. Bekleyen liste onu oranıyla birlikte *Belirli bir ürün* olarak işaretler. Satış KDV'yi o oranla hemen kaydeder; dolayısıyla hediye çeki, günün KDV dilimlerinde normal bir satış satırı gibi görünür — **GUTSCHEINE** borç bölümünde değil.
+
+Kullanmak:
+
+1. Ödeme panelinin **Böl** sekmesinde yöntem olarak **voucher**'ı seçin, kodu yazın ve **Bakiyeyi kontrol et**'e basın.
+2. Belirli bir ürün için hediye çekinde kasa tutar doldurmaz — bunun yerine hediye çekinin değerini ve sahibini bir **Kullan** düğmesinin yanında gösterir. Böyle bir hediye çeki asla ödeme olarak kullanılamaz: zaten vergilendirilmiştir, ödeme olarak almak aynı parayı iki kez vergilendirirdi.
+3. Ürünü teslim edin ve **Kullan**'a dokunun. Bu kesindir: hediye çeki hemen kullanılmış olarak işaretlenir, sonrasında tamamlanacak ya da kaldırılacak bir şey yoktur. Başka bir ödeme ya da vergi kaydedilmez — hediye çekini satan satış bunu zaten yapmıştır.
+
+Neler ters gidebilir:
+
+- Boş, negatif ya da 100'ün üzerindeki bir KDV oranı, hediye çeki eklenmeden önce reddedilir.
+- Zaten kullanılmış bir hediye çekinde **Kullan**'a dokunmak ya da satış ekranında belirli bir ürün için hediye çekini taratmak, bunu belirten bir mesajla reddedilir.
+- Başka bir kasada satılan belirli bir ürün için hediye çeki bu kasadan kontrol edilebilir ama henüz burada kullanılamaz — onu ana kasada ya da satan kasada kullanın.
+
 ## Gün sonu raporları ve diğer kasalar
 
 Gün sonu (Z) raporunun, o gün satılan ve harcanan hediye çekleri için kendi **GUTSCHEINE** bölümü vardır; hediye çeki satan bir satışı iptal etmek hediye çekini de (yalnızca kullanılmamışken) iptal eder — bkz. [Raporlar ve gün sonu](/help/reports). Bir kasada satılan hediye çeki dükkândaki başka herhangi bir kasada harcanabilir; bir kasa çevrimdışıyken bunun nasıl işlediği [Birden çok kasa (tek dükkân)](/help/multitill) sayfasında anlatılır.

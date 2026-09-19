@@ -45,6 +45,28 @@ Was schiefgehen kann:
 
 Die ältere Methode **Geschenkkarte** in derselben Liste ist eine einfache Zahlungsmethode, die kein Guthaben führt — verwenden Sie **Gutschein** für Gutscheine, die diese Kasse ausgegeben hat.
 
+## Gutscheine für einen bestimmten Artikel
+
+Die meisten Gutscheine gelten für **jede Verwendung** — die Kundin entscheidet später, wofür sie ihn ausgibt, und die Ware wird versteuert, wenn der Gutschein eingelöst wird. Ein Gutschein für einen **bestimmten Artikel** (ein konkretes Produkt oder eine konkrete Leistung, deren Umsatzsteuersatz damit schon feststeht — ein *Einzweck-Gutschein*) wird stattdessen beim Verkauf versteuert, und das spätere Einlösen ist einfach die Übergabe des Artikels. Die Kasse hält die beiden Arten auseinander.
+
+Verkauf:
+
+1. Wählen Sie unter **Gutschein verkaufen** bei **Gutscheinart** die Option **Bestimmter Artikel (jetzt versteuert)** (die Vorgabe **Jede Verwendung** ist der oben beschriebene gewöhnliche Gutschein).
+2. Ein Feld **MwSt.-Satz** erscheint — geben Sie den Satz des Artikels in Prozent ein, z. B. `19` oder `7`.
+3. Füllen Sie Wert, Code und Namen wie gewohnt aus und **Gutschein hinzufügen**. Die Liste der ausstehenden Gutscheine kennzeichnet ihn als *Bestimmter Artikel* mit seinem Satz. Der Verkauf erfasst die Umsatzsteuer zu diesem Satz sofort, der Gutschein erscheint also wie eine normale Verkaufsposition in den Steuersätzen des Tages — nicht im Abschnitt **GUTSCHEINE** für Verbindlichkeiten.
+
+Einlösen:
+
+1. Wählen Sie im Reiter **Aufteilen** die Methode **Gutschein**, tippen Sie den Code ein und dann **Guthaben prüfen**.
+2. Bei einem Gutschein für einen bestimmten Artikel trägt die Kasse keinen Betrag ein — sie zeigt stattdessen Wert und Namen des Gutscheins neben einer Schaltfläche **Einlösen**. Ein solcher Gutschein kann nie als Zahlung verwendet werden: Er ist bereits versteuert, ihn als Zahlung anzunehmen würde dasselbe Geld zweimal versteuern.
+3. Händigen Sie den Artikel aus und tippen Sie auf **Einlösen**. Das ist endgültig: Der Gutschein wird sofort als eingelöst markiert, ohne dass danach etwas abzuschließen oder zu entfernen wäre. Es wird keine weitere Zahlung und keine weitere Steuer erfasst — das hat der Verkauf des Gutscheins bereits getan.
+
+Was schiefgehen kann:
+
+- Ein leerer, negativer oder über 100 liegender MwSt.-Satz wird abgelehnt, bevor der Gutschein hinzugefügt wird.
+- Das Tippen auf **Einlösen** bei einem bereits eingelösten Gutschein, oder das Scannen eines Gutscheins für einen bestimmten Artikel im Verkaufsbildschirm, wird mit einer entsprechenden Meldung abgelehnt.
+- Ein an einer anderen Kasse verkaufter Gutschein für einen bestimmten Artikel lässt sich hier prüfen, aber noch nicht einlösen — lösen Sie ihn an der Hauptkasse oder an der Kasse ein, die ihn verkauft hat.
+
 ## Tagesabschluss und andere Kassen
 
 Der Tagesabschlussbericht (Z-Bericht) hat einen eigenen Abschnitt **GUTSCHEINE** für die an diesem Tag verkauften und eingelösten Gutscheine, und das Stornieren eines Verkaufs, mit dem ein Gutschein verkauft wurde, storniert den Gutschein mit — allerdings nur, solange er unbenutzt ist; siehe [Berichte & Tagesabschluss](/help/reports). Ein an einer Kasse verkaufter Gutschein kann an jeder anderen Kasse im Laden eingelöst werden; wie das funktioniert, während eine Kasse offline ist, steht unter [Mehrere Kassen (ein Laden)](/help/multitill).

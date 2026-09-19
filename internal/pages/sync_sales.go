@@ -335,12 +335,21 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 	// with their ORIGINAL ids/labels/amounts so the primary books the same
 	// liability rows (vouchers + voucher_transactions 'issue') the replica
 	// did, and voucher_issue_total/total re-derive identically.
+	// A single-purpose issue (ut-docs#1037, contract 1.10.0) carries its
+	// purpose and rate so the primary taxes it at issue exactly as the
+	// replica did; absent (every multi-purpose entry, and every pre-1.10.0
+	// peer) reconstructs the 0% liability as before.
 	for _, v := range j.Sale.VoucherIssues {
-		in.VoucherIssues = append(in.VoucherIssues, pos.VoucherIssueInput{
+		vi := pos.VoucherIssueInput{
 			VoucherID:   v.VoucherID,
 			HolderLabel: v.HolderLabel,
 			Amount:      money.FromMinor(v.Amount),
-		})
+			Purpose:     v.Purpose,
+		}
+		if v.VATRateBP != nil {
+			vi.VATRateBasisPoints = *v.VATRateBP
+		}
+		in.VoucherIssues = append(in.VoucherIssues, vi)
 	}
 	for _, l := range j.Sale.Lines {
 		in.Lines = append(in.Lines, pos.SaleLineInput{
