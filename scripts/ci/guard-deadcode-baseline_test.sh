@@ -25,6 +25,10 @@ GUARD="scripts/ci/guard-deadcode-baseline.sh"
 # headers are missing -- that root is always analyzed, so the "a new
 # unreachable function must be caught" assertion still means something in
 # a headless sandbox, not just in real CI (which always has the headers).
+# This detection check is intentionally the same one-liner as the guard's
+# own (scripts/ci/guard-deadcode-baseline.sh) -- if that guard's detection
+# ever changes, update this copy to match, or the fixture could land in a
+# root the guard no longer treats the same way.
 if pkg-config --exists gtk+-3.0 webkit2gtk-4.1 2>/dev/null; then
   FIXTURE="cmd/unitill-desktop/zzz_guard_test_fixture.go"
 else

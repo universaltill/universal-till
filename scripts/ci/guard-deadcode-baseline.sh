@@ -50,10 +50,11 @@
 # test-only-reachable, that's a real (if odd) baseline entry, not a bug in
 # this guard.
 #
-# Requires the same GTK/WebKit dev headers as the desktop-shell CI job
-# (cgo + real windowing libs to even type-check cmd/unitill-desktop under
-# `desktop`) -- mirror its "Install GTK/WebKit dev headers" step wherever
-# this runs. ut-docs#2425: where those headers aren't installed (this
+# For the full three-root analysis, requires the same GTK/WebKit dev
+# headers as the desktop-shell CI job (cgo + real windowing libs to even
+# type-check cmd/unitill-desktop under `desktop`) -- mirror its "Install
+# GTK/WebKit dev headers" step wherever this runs. ut-docs#2425: where
+# those headers aren't installed (this
 # guard's own sandbox/local-dev case, confirmed twice), cmd/unitill-desktop
 # can't even type-check, so drop it (and the now-pointless `desktop` tag --
 # nothing outside cmd/unitill-desktop carries that build tag) and analyze
