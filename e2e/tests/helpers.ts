@@ -233,19 +233,36 @@ export async function setOskMode(page: Page, mode: string) {
 // the actual Settings UI once per call site so a regression in the form
 // itself (wrong hx-post path, a select option renamed) fails an e2e spec
 // instead of only the Go-side unit tests.
-export async function setOrderTypePromptMode(page: Page, mode: 'top' | 'before_item' | 'at_pay') {
+// ut-docs#2427: an htmx-boosted form's HX-Redirect often lands a page on a
+// URL a moment before its own client-side settling (htmx:afterSwap
+// rebinding, reapplyFilters, …) is actually done — a plain page.goto()
+// issued right after can race that in-flight work and get rejected with
+// `net::ERR_ABORTED` or "Navigation … is interrupted by another navigation
+// to the same URL", intermittently, under load (e.g. e2e.yml's UI E2E run,
+// which drives 4 parallel workers each with their own server — more
+// runner-CPU contention than the PR-gating `e2e` job's single worker, so
+// the settle window is wider and the race is easier to hit there).
+// setOrderTypePromptMode already retried its own goto for exactly this
+// class of race; this generalizes that pattern so any caller chaining a
+// navigation onto another htmx-driven one gets the same resilience,
+// instead of every spec re-inventing it (or, worse, going unprotected).
+export async function gotoSettled(page: Page, url: string, attempts = 3): Promise<void> {
   await page.waitForLoadState('load').catch(() => {});
   for (let attempt = 1; ; attempt++) {
     try {
-      await page.goto('/settings#settings-order-type-prompt');
-      break;
+      await page.goto(url);
+      return;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const isNavigationRace = /interrupted by another navigation|ERR_ABORTED/.test(message);
-      if (!isNavigationRace || attempt >= 3) throw err;
+      if (!isNavigationRace || attempt >= attempts) throw err;
       await page.waitForLoadState('load').catch(() => {});
     }
   }
+}
+
+export async function setOrderTypePromptMode(page: Page, mode: 'top' | 'before_item' | 'at_pay') {
+  await gotoSettled(page, '/settings#settings-order-type-prompt');
   const select = page.locator('form[hx-post="/api/settings/order-type-prompt"] select');
   await select.selectOption(mode);
   await Promise.all([

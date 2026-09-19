@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page, Locator } from '@playwright/test';
-import { watchConsole } from './helpers';
+import { watchConsole, gotoSettled } from './helpers';
 
 // ut-docs#2403: e2e coverage for /fiscal-register's record_dialog
 // VIEW-MODE behaviour shipped in ut-docs#2186, mirroring
@@ -42,7 +42,7 @@ function fiscalGroupWithText(page: Page, text: string): Locator {
 // register (scripts/e2e_seed/main.go's "reg-1"/"Front Till"), so nothing
 // here can break an unrelated spec sharing this worker's till server.
 async function createRegister(page: Page, name: string, locationLabel?: string): Promise<void> {
-  await page.goto('/registers');
+  await gotoSettled(page, '/registers');
   await page.locator('#registers-new').click();
   const dlg = page.locator('#register-dialog');
   await expect(dlg).toBeVisible();
@@ -56,11 +56,16 @@ async function createRegister(page: Page, name: string, locationLabel?: string):
   ]);
   // The HX-Redirect's client-side navigation can still be settling
   // (htmx:afterSwap's own re-binding, reapplyFilters, …) the instant the
-  // URL itself matches -- a page.goto() to a DIFFERENT page issued right
-  // after this resolves can race that in-flight work and abort itself
-  // (net::ERR_ABORTED), confirmed by direct repro against a real browser.
-  // Every helper below that a test chains straight into another
-  // navigation waits for network idle first for the same reason.
+  // URL itself matches -- a navigation issued right after this resolves
+  // can race that in-flight work and abort itself (net::ERR_ABORTED, or
+  // "interrupted by another navigation to the same URL" when the next
+  // navigation targets the page this one just landed on), confirmed by
+  // direct repro against a real browser and seen intermittently in CI
+  // (ut-docs#2427). Every helper below that a test chains straight into
+  // another navigation waits for network idle first for the same reason,
+  // and every page.goto() in this file goes through gotoSettled(), which
+  // retries up to twice more on exactly this race as a second line of
+  // defense.
   await page.waitForLoadState('networkidle');
 }
 
@@ -69,7 +74,7 @@ async function createRegister(page: Page, name: string, locationLabel?: string):
 // test that needs a real "Main Location"-style group has to create its
 // own, same throwaway convention as createRegister above.
 async function createLocation(page: Page, name: string): Promise<void> {
-  await page.goto('/locations');
+  await gotoSettled(page, '/locations');
   await page.locator('#locations-new').click();
   const dlg = page.locator('#location-dialog');
   await expect(dlg).toBeVisible();
@@ -82,7 +87,7 @@ async function createLocation(page: Page, name: string): Promise<void> {
 }
 
 async function deactivateRegister(page: Page, name: string): Promise<void> {
-  await page.goto('/registers');
+  await gotoSettled(page, '/registers');
   await page.locator('#registers-table .register-row', { hasText: name }).first().click();
   const dlg = page.locator('#register-dialog');
   await expect(dlg).toBeVisible();
@@ -95,7 +100,7 @@ async function deactivateRegister(page: Page, name: string): Promise<void> {
 }
 
 async function createFiscalEntry(page: Page, registerLabel: string, easSerial: string): Promise<void> {
-  await page.goto('/fiscal-register');
+  await gotoSettled(page, '/fiscal-register');
   await page.locator('#fiscalregister-new').click();
   const dlg = page.locator(DIALOG);
   await expect(dlg).toBeVisible();
@@ -123,7 +128,7 @@ test.describe('fiscal-register record dialog view-mode behaviour (ut-docs#2186 /
     await createRegister(page, regName);
     await createFiscalEntry(page, regName, serial);
 
-    await page.goto('/fiscal-register');
+    await gotoSettled(page, '/fiscal-register');
     const row = fiscalRow(page, serial);
     await row.click();
     const dlg = page.locator(DIALOG);
@@ -195,7 +200,7 @@ test.describe('fiscal-register record dialog view-mode behaviour (ut-docs#2186 /
       await createFiscalEntry(page, regName, serial);
 
       await page.setViewportSize({ width: vp.width, height: vp.height });
-      await page.goto('/fiscal-register');
+      await gotoSettled(page, '/fiscal-register');
       const row = fiscalRow(page, serial);
       await row.click();
       const dlg = page.locator(DIALOG);
@@ -234,7 +239,7 @@ test.describe('fiscal-register record dialog view-mode behaviour (ut-docs#2186 /
     await createFiscalEntry(page, regName, serial);
     await deactivateRegister(page, regName);
 
-    await page.goto('/fiscal-register');
+    await gotoSettled(page, '/fiscal-register');
     const row = fiscalRow(page, serial);
     await row.click();
     const dlg = page.locator(DIALOG);
@@ -264,7 +269,7 @@ test.describe('fiscal-register record dialog view-mode behaviour (ut-docs#2186 /
     await createRegister(page, regName);
     await createFiscalEntry(page, regName, serial);
 
-    await page.goto('/fiscal-register');
+    await gotoSettled(page, '/fiscal-register');
     const row = fiscalRow(page, serial);
     await expect(row).toContainText('In service');
     await row.click();
@@ -308,7 +313,7 @@ test.describe('fiscal-register record dialog view-mode behaviour (ut-docs#2186 /
     await createFiscalEntry(page, groupedRegName, groupedSerial);
     await createFiscalEntry(page, unassignedRegName, unassignedSerial);
 
-    await page.goto('/fiscal-register');
+    await gotoSettled(page, '/fiscal-register');
     const groupedRow = fiscalRow(page, groupedSerial);
     const unassignedRow = fiscalRow(page, unassignedSerial);
     const groupedGroup = fiscalGroupWithText(page, groupedSerial);
