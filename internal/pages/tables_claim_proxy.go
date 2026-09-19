@@ -57,7 +57,12 @@ func postTableClaimOnPrimary(ctx context.Context, d *common.Deps, client *http.C
 	if !isReplica {
 		return false
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/sync/tables/"+action, strings.NewReader(form.Encode()))
+	// ut-docs#2270: bounds only THIS outbound call, when ctx carries the
+	// resume/move hot-path marker -- see crossTillHotPathNetCtx's own
+	// comment for why this must never be a deadline on ctx itself.
+	netCtx, cancel := crossTillHotPathNetCtx(ctx)
+	defer cancel()
+	req, err := http.NewRequestWithContext(netCtx, http.MethodPost, base+"/api/sync/tables/"+action, strings.NewReader(form.Encode()))
 	if err != nil {
 		return false
 	}

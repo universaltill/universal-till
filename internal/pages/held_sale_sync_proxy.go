@@ -97,7 +97,12 @@ func postHeldSaleOnPrimary(ctx context.Context, d *common.Deps, client *http.Cli
 	if err != nil {
 		return false
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/sync/held-sales/"+action, bytes.NewReader(payload))
+	// ut-docs#2270: bounds only THIS outbound call, when ctx carries the
+	// resume/move hot-path marker -- see crossTillHotPathNetCtx's own
+	// comment for why this must never be a deadline on ctx itself.
+	netCtx, cancel := crossTillHotPathNetCtx(ctx)
+	defer cancel()
+	req, err := http.NewRequestWithContext(netCtx, http.MethodPost, base+"/api/sync/held-sales/"+action, bytes.NewReader(payload))
 	if err != nil {
 		return false
 	}
@@ -163,7 +168,12 @@ func fetchHeldSalesFromPrimary(ctx context.Context, d *common.Deps, client *http
 	if !isReplica {
 		return nil, false
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/sync/held-sales", nil)
+	// ut-docs#2270: bounds only THIS outbound call, when ctx carries the
+	// resume/move hot-path marker -- see crossTillHotPathNetCtx's own
+	// comment for why this must never be a deadline on ctx itself.
+	netCtx, cancel := crossTillHotPathNetCtx(ctx)
+	defer cancel()
+	req, err := http.NewRequestWithContext(netCtx, http.MethodGet, base+"/api/sync/held-sales", nil)
 	if err != nil {
 		return nil, false
 	}

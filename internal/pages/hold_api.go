@@ -24,6 +24,108 @@ import (
 // screen load until resumed.
 const maxHoldLabelRunes = 64
 
+// crossTillHotPathProxyTimeout bounds EACH individual write-through hop
+// specifically on the resume and held/table-move request paths (ut-docs#2270,
+// split out of ut-docs#1920/ADR-0093's own review). Those two paths are the
+// only callers that stack several independent ~800ms-budgeted proxy calls
+// serially on one request:
+//   - resume: heldSaleForResume's primary fetch, heldSaleWriteThrough (the
+//     auto-park, only when the live basket is busy), claimTableWriteThrough,
+//     heldSaleDeleteWriteThrough -- up to FOUR, never five: the auto-park
+//     branch always ends in d.Engine.Reset(), which clears the engine's
+//     table id, so the release call right after (releaseTableClaim(ctx, d,
+//     posRepo, prevTable)) always sees an empty tableID and short-circuits
+//     before any network call (releaseTableClaimWriteThrough's own `if
+//     tableID == "" { return false }`) -- auto-park and a real release are
+//     mutually exclusive on this path, they never both cost a hop on the
+//     same request. Worst case today: ~3.2s (4 x 800ms), matching
+//     ut-docs#2270's own measurement.
+//   - held/table move: claimTableWriteThrough (new table), heldSaleWriteThrough
+//     (the move commit), releaseTableClaim (old table) -- plus TWO more this
+//     card's own review caught were still missing their bound: heldSaleForResume's
+//     lookup at the top, and fetchTablesFromPrimary (tables_sync_proxy.go),
+//     reached via the strip re-render every exit path of this handler ends
+//     with (renderHeldStrip / renderHeldStripWithToast). Up to FIVE. Worst
+//     case today: ~4s (5 x 800ms).
+//
+// A single-hop caller (the live basket's own table pick, a manual Hold, the
+// Open orders page listing, the floor plan, GET /ui/held on its own) is
+// unaffected -- it keeps the full 800ms budget (tableClaimProxyClient /
+// heldSaleProxyClient / tablesProxyClient's own Timeout) since stacking
+// isn't its problem. This is a pure timeout-budget tightening: the fallback
+// behaviour on expiry is identical to a clean refusal or any other failure
+// reaching the primary (silently degrade to the local-only read/write, same
+// offline-first guarantee as always) -- it does not reorder or parallelize
+// the hops, which stay serial on purpose (the move handler's
+// claim-new-before-release-old ordering is load-bearing, not incidental,
+// per its own comments). 300ms is generous for a genuinely reachable
+// primary on a LAN (sub-50ms typical) while bounding the pathological
+// dropped-packet case tightly: worst case becomes ~1.2s (resume, 4 x 300ms)
+// / ~1.5s (move, 5 x 300ms) -- both well under the pre-ADR-0093 baselines
+// the original issue quoted (~2.4s / ~1.6s), though note those two
+// baselines predate this comment's own hop recount above and so aren't
+// directly comparable hop-for-hop; what matters is both are comfortably
+// under 2s, not frozen-feeling.
+//
+// Trade-off, stated plainly: shortening this budget makes the OTHER
+// accepted, pre-existing ADR-0093 divergence window (primary applies a
+// write, but the replica's own copy of it stays local-only /
+// primary_synced=0 because this till's confirmation round-trip itself
+// timed out against a merely-busy, not actually unreachable, primary)
+// somewhat more likely to occur -- still bounded and self-healing on this
+// till's next successful write-through for the same id, same as the
+// pre-existing outage case, just a slightly wider window to hit it in.
+const crossTillHotPathProxyTimeout = 300 * time.Millisecond
+
+// crossTillHotPathTimeoutKey is the context key crossTillHotPathNetCtx below
+// looks for. Unexported so nothing outside this package can set or collide
+// with it.
+type crossTillHotPathTimeoutKey struct{}
+
+// withCrossTillHotPathTimeout marks ctx so the write-through/read proxy
+// helpers' OWN outbound HTTP call (postTableClaimOnPrimary,
+// postHeldSaleOnPrimary, fetchHeldSalesFromPrimary, fetchTablesFromPrimary)
+// bounds itself to crossTillHotPathProxyTimeout instead of the full 800ms
+// client Timeout. Deliberately NOT a context.WithTimeout on ctx itself:
+// every proxy function here falls back to a LOCAL repo call (repo.Upsert /
+// repo.Delete / repo.Get / repo.ClaimTableForTill / repo.ReleaseTableClaim /
+// the local table list) on that SAME ctx when the network leg fails, and a
+// ctx already past its own deadline fails a database/sql call immediately --
+// turning what must be a fast local read/write into a spurious error at
+// exactly the moment the primary is unreachable, poisoning the very
+// offline-first fallback this whole mechanism exists to degrade gracefully
+// through. So this only ever attaches a VALUE, never a deadline, to the ctx
+// that flows into local calls; only crossTillHotPathNetCtx below derives an
+// actual deadline-bound CHILD context, and only for one proxy helper's
+// single http.Client.Do call. resumeHeldSale and the held/table move
+// handler call this once, at the top, on the ctx they were handed -- for
+// the move handler this ALSO means rebinding it onto the *http.Request
+// itself (`r = r.WithContext(ctx)`), not just the local ctx variable, since
+// its own re-render at the end (renderHeldStrip / renderHeldStripWithToast)
+// derives its ctx from r.Context() independently, not from this closure.
+// Every proxy call nested under either marked ctx (including through
+// parkCurrentBasket, and through the re-render's own table-state fetch)
+// picks up the marker automatically since it rides the context value, and
+// every local DB call downstream keeps using the same, still-undecorated
+// ctx for its own (absent) deadline.
+func withCrossTillHotPathTimeout(ctx context.Context) context.Context {
+	return context.WithValue(ctx, crossTillHotPathTimeoutKey{}, crossTillHotPathProxyTimeout)
+}
+
+// crossTillHotPathNetCtx returns a context bounded to
+// crossTillHotPathProxyTimeout for a proxy helper's own outbound HTTP call,
+// when the caller's ctx was marked by withCrossTillHotPathTimeout above --
+// otherwise ctx is returned unchanged (the http.Client's own 800ms Timeout
+// still applies as the outer cap either way, so an un-marked caller is
+// unaffected). Always call the returned cancel -- a no-op on the unmarked
+// path, so it's safe to defer unconditionally.
+func crossTillHotPathNetCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	if budget, ok := ctx.Value(crossTillHotPathTimeoutKey{}).(time.Duration); ok {
+		return context.WithTimeout(ctx, budget)
+	}
+	return ctx, func() {}
+}
+
 // heldSaleMayHaveTable is the table-eligibility predicate over a held
 // payload (ut-docs#1181, ADR-0073 Decision 5): a table is allowed while any
 // LINE is dine-in — evaluated over the lines, with the legacy header
@@ -204,6 +306,15 @@ func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 	if id == "" {
 		return resumeNotFound
 	}
+	// ut-docs#2270: this request can stack up to four independent
+	// write-through hops (this lookup, the auto-park, the re-claim, the
+	// delete) -- mark ctx once so every one of them bounds its own outbound
+	// call tightly, see crossTillHotPathProxyTimeout. The old-table release
+	// a few lines below is NOT a fifth hop on this path: it only ever runs
+	// after an auto-park, whose own d.Engine.Reset() always clears the
+	// engine's table id first, so that release call always sees an empty
+	// tableID and short-circuits with no network call at all.
+	ctx = withCrossTillHotPathTimeout(ctx)
 	// ADR-0093 (ut-docs#1920): heldSaleForResume, not repo.Get -- on a
 	// replica an order parked at ANOTHER till exists only on the primary
 	// (the Open orders page lists it from there), and must open here too.
@@ -531,7 +642,19 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 	// held_sales row, never a claim), so asking it about this held sale's
 	// OWN claim on its OWN table would wrongly refuse the no-op.
 	mux.HandleFunc("POST /api/pos/held/table", func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
+		// ut-docs#2270: this request can stack up to five independent
+		// write-through hops (the lookup, the new-table claim, the move
+		// commit, the old-table release, and the re-render below's own
+		// table-state fetch) -- mark ctx once, and rebind it onto r itself
+		// (not just the local ctx variable) so every renderHeldStrip /
+		// renderHeldStripWithToast call below -- which each derive their
+		// OWN ctx from r.Context(), not from this closure's ctx -- picks up
+		// the marker too. GET /ui/held (below) deliberately calls
+		// renderHeldStrip directly on ITS OWN, unmarked request instead of
+		// through this handler, so it correctly keeps the full 800ms (it is
+		// genuinely single-hop, not stacked on anything).
+		ctx := withCrossTillHotPathTimeout(r.Context())
+		r = r.WithContext(ctx)
 		_ = r.ParseForm()
 		id := strings.TrimSpace(r.Form.Get("id"))
 		tableID := strings.TrimSpace(r.Form.Get("table_id"))
