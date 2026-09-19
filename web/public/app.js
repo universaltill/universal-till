@@ -903,6 +903,45 @@ document.addEventListener('click', function(e){
   setTimeout(function(){ if (notice.parentNode) notice.parentNode.removeChild(notice); }, 250);
 });
 
+// Shrinkage reason sheet (void/comp/waste, ut-docs#1465, G41) — delegated
+// so it survives every #basket outerHTML swap, same reasoning as the
+// notice-dismiss handler just above. The sheet is a real <dialog>
+// (web/ui/partials/basket.html's own comment on why: a top-layer dialog
+// can't be clipped by .basket-scroll's overflow:auto the way an
+// absolutely-positioned popover anchored to the row could). .show(), not
+// .showModal() — same reasoning as elevation_prompt.html's own dialog
+// (showModal() would make the rest of the page, including the on-screen
+// keyboard, inert). The toggle opens/closes the dialog client-side only;
+// the three reason buttons inside it are plain htmx POSTs.
+document.addEventListener('click', function(e){
+  var toggle = e.target.closest ? e.target.closest('.shrinkage-remove-toggle') : null;
+  if (toggle) {
+    var sheet = toggle.nextElementSibling;
+    if (!sheet || !sheet.classList.contains('shrinkage-sheet')) return;
+    var opening = !sheet.open;
+    // Only one sheet open at a time — closing every other one first means
+    // a second tap never leaves two dialogs open over two different lines.
+    document.querySelectorAll('.shrinkage-sheet').forEach(function(s){ if (s.open) s.close(); });
+    document.querySelectorAll('.shrinkage-remove-toggle').forEach(function(b){ b.setAttribute('aria-expanded', 'false'); });
+    if (opening) { sheet.show(); toggle.setAttribute('aria-expanded', 'true'); }
+    return;
+  }
+  var cancel = e.target.closest ? e.target.closest('.shrinkage-sheet-cancel') : null;
+  if (cancel) {
+    var openSheet = cancel.closest('.shrinkage-sheet');
+    if (openSheet) openSheet.close();
+    return;
+  }
+  // Tap-elsewhere dismisses without removing (card's own UX requirement) —
+  // any click that lands outside every open sheet/toggle closes them all.
+  // A non-modal .show() dialog has no backdrop of its own to catch this,
+  // so it's handled the same way as everything else here: delegation.
+  if (!e.target.closest || !e.target.closest('.shrinkage-remove')) {
+    document.querySelectorAll('.shrinkage-sheet').forEach(function(s){ if (s.open) s.close(); });
+    document.querySelectorAll('.shrinkage-remove-toggle[aria-expanded="true"]').forEach(function(b){ b.setAttribute('aria-expanded', 'false'); });
+  }
+});
+
 // Request failures surface in the client-side slot (#pos-alert) — a server
 // error response or an unreachable server would otherwise fail silently
 // (there was no htmx error handler at all before ut-docs#213). Strings come

@@ -39,6 +39,21 @@ async function resetBasket(page) {
   ]);
 }
 
+// ut-docs#1465 (G41): a basket line worth anything can no longer be removed
+// with a single tap — its ✕ (.btn-x, now also .shrinkage-remove-toggle) just
+// opens the void/comp/waste reason sheet client-side, and it's the reason
+// button INSIDE that <dialog> that actually POSTs /api/pos/remove. Only a
+// £0 line keeps the old one-tap ✕. Every spec that removes a priced line
+// goes through both taps. Picks the first reason button (Void) by position
+// rather than by label so this stays locale-independent.
+async function removeLineWithReason(page, row) {
+  await row.locator('.shrinkage-remove-toggle').click();
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/api/pos/remove')),
+    row.locator('.shrinkage-sheet-actions .btn').first().click(),
+  ]);
+}
+
 test.describe('sale screen basket layout + count + notices (ut-docs#213)', () => {
   // Server-side reset regardless of UI state, ALWAYS — a failed assertion
   // must not leave basket lines that cascade into the next specs on this
@@ -126,10 +141,7 @@ test.describe('sale screen basket layout + count + notices (ut-docs#213)', () =>
     // exact assertion still passed with the fix reverted). The dedicated,
     // deterministic guard is the next test below, which races a synthetic
     // click against htmx's internal settle timer directly.
-    await Promise.all([
-      page.waitForResponse((r) => r.url().includes('/api/pos/remove')),
-      page.locator('.basket .btn-x').last().click(),
-    ]);
+    await removeLineWithReason(page, page.locator('#basket-lines tr').last());
     await expect(badge).toHaveText('2');
 
     await resetBasket(page);
@@ -151,6 +163,16 @@ test.describe('sale screen basket layout + count + notices (ut-docs#213)', () =>
     // unbound button, so nothing happens. Post-fix (settleDelay=0), htmx
     // binds listeners synchronously inside the swap call, before our timer
     // even gets a turn on the event loop — so the click always lands bound.
+    //
+    // ut-docs#1465 review: the probe used to be the line's ✕ (.btn-x). That
+    // stopped being a valid probe for this property — on a priced line the
+    // ✕ is now the void/comp/waste sheet toggle, handled by a DELEGATED
+    // document-level listener in app.js that is bound once at page load and
+    // never by htmx, so it would "pass" regardless of settleDelay and prove
+    // nothing. The qty stepper's + button is the nearest equivalent that is
+    // still genuinely htmx-bound per-swap inside #basket (hx-post
+    // /api/pos/line, basket.html), so the race now watches that endpoint
+    // instead. Same property under test, a probe that can actually fail.
     const assertClean = watchConsole(page);
     await page.goto('/');
     await scan(page, CODES[0]);
@@ -162,19 +184,21 @@ test.describe('sale screen basket layout + count + notices (ut-docs#213)', () =>
         if (!target || target.id !== 'basket') return;
         document.body.removeEventListener('htmx:afterSwap', onAfterSwap);
         setTimeout(() => {
-          (document.querySelector('.basket .btn-x') as HTMLElement | null)?.click();
+          // Last .qty-step-btn in the basket = the freshly-swapped line's "+".
+          const steppers = document.querySelectorAll('.basket .qty-step-btn');
+          (steppers[steppers.length - 1] as HTMLElement | undefined)?.click();
         }, 0);
       };
       document.body.addEventListener('htmx:afterSwap', onAfterSwap);
     });
-    const removeRequestSeen = page
-      .waitForResponse((r) => r.url().includes('/api/pos/remove'), { timeout: 2000 })
+    const lineRequestSeen = page
+      .waitForResponse((r) => r.url().includes('/api/pos/line'), { timeout: 2000 })
       .then(() => true)
       .catch(() => false);
     await scan(page, CODES[1]); // swaps #basket, firing the listener registered above
 
-    expect(await removeRequestSeen, 'a click racing the settle window must still reach the server, not be silently dropped').toBe(true);
-    await expect(page.locator('[data-testid="basket-count"]')).toHaveText('1'); // scanned 2 lines, one removed by the race
+    expect(await lineRequestSeen, 'a click racing the settle window must still reach the server, not be silently dropped').toBe(true);
+    await expect(page.locator('[data-testid="basket-count"]')).toHaveText('3'); // 2 lines scanned, the raced "+" stepped one to qty 2
 
     await resetBasket(page);
     assertClean();

@@ -224,7 +224,65 @@
               </td>
               <td>{{ money .PriceCents }}</td>
               <td>{{ money .LineTotal }}</td>
-              <td><button class="btn danger btn-x" title="{{ T "basket.remove" }}" hx-post="/api/pos/remove" hx-vals='{{ jsonVals "key" .LineKey }}' hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">✕</button></td>
+              <td>
+                {{ if .PriceCents.IsZero }}
+                <button class="btn danger btn-x" title="{{ T "basket.remove" }}" hx-post="/api/pos/remove" hx-vals='{{ jsonVals "key" .LineKey }}' hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">✕</button>
+                {{ else }}
+                {{/* ut-docs#1465 (G41): a non-zero extended-value line
+                     (quantity × unit price) can't be removed with a bare
+                     tap any more -- a reason (void/comp/waste) is
+                     required, and the handler may gate it behind a
+                     manager-PIN elevation prompt (checkOrElevate). The
+                     toggle button opens a small 3-button sheet -- each
+                     reason button IS the confirmation, no separate
+                     confirm step -- as a native <dialog> (the SAME
+                     .modifier-modal/#hold-modal/#pfand-modal idiom this
+                     page's own modals already use), NOT an absolutely-
+                     positioned popover anchored to the row: .basket-scroll
+                     is a scrolling container (overflow-y/x: auto), so a
+                     row near the bottom of a long basket would clip an
+                     absolute popover instead of showing it. A <dialog>
+                     opened via .show() (never .showModal() -- same
+                     reasoning as elevation_prompt.html's own dialog:
+                     showModal() would make the rest of the page inert,
+                     including the custom on-screen keyboard, not needed
+                     here but kept consistent) renders in the top layer,
+                     centered, immune to any ancestor's overflow/clipping,
+                     and already comfortably inside the 1024×600 kiosk
+                     floor. .shrinkage-remove-toggle/.shrinkage-sheet/
+                     .shrinkage-sheet-cancel are handled by a delegated
+                     click listener in app.js (survives every #basket
+                     outerHTML swap, same as the notice-dismiss handler
+                     there).
+
+                     hx-target/hx-swap point at #shrinkage-hint (innerHTML)
+                     rather than #basket/outerHTML directly: a needsElevation
+                     response is a small, non-OOB hint fragment
+                     (elevation.go's renderElevationPrompt) that would
+                     otherwise replace #basket's own outerHTML -- destroying
+                     its id -- exactly the failure buttons_admin.html's own
+                     #buttons-grid-wrap comment documents and works around.
+                     The handler retargets back to #basket/outerHTML via
+                     HX-Retarget/HX-Reswap on its OWN actual-removal
+                     response (allowed/elevated), so a successful reason
+                     tap still swaps the whole basket exactly like the
+                     zero-value button above. */}}
+                <div class="shrinkage-remove">
+                  <button type="button" class="btn danger btn-x shrinkage-remove-toggle" title="{{ T "basket.remove" }}" aria-haspopup="dialog" aria-expanded="false">✕</button>
+                  <dialog class="modifier-modal shrinkage-sheet">
+                    <p class="shrinkage-sheet-prompt">{{ T "shrinkage.prompt" }}</p>
+                    <div class="shrinkage-sheet-actions">
+                      <button type="button" class="btn danger" hx-post="/api/pos/remove" hx-vals='{{ jsonVals "key" .LineKey "reason" "void" }}' hx-target="#shrinkage-hint" hx-swap="innerHTML" hx-sync="#basket:replace">{{ T "shrinkage.reason.void" }}</button>
+                      <button type="button" class="btn danger" hx-post="/api/pos/remove" hx-vals='{{ jsonVals "key" .LineKey "reason" "comp" }}' hx-target="#shrinkage-hint" hx-swap="innerHTML" hx-sync="#basket:replace">{{ T "shrinkage.reason.comp" }}</button>
+                      <button type="button" class="btn danger" hx-post="/api/pos/remove" hx-vals='{{ jsonVals "key" .LineKey "reason" "waste" }}' hx-target="#shrinkage-hint" hx-swap="innerHTML" hx-sync="#basket:replace">{{ T "shrinkage.reason.waste" }}</button>
+                    </div>
+                    <div class="modifier-actions">
+                      <button type="button" class="btn secondary shrinkage-sheet-cancel">{{ T "common.cancel" }}</button>
+                    </div>
+                  </dialog>
+                </div>
+                {{ end }}
+              </td>
             </tr>
           {{ end }}
         {{ else }}
@@ -233,6 +291,13 @@
       </tbody>
     </table>
   </div>
+  {{/* Elevation-prompt hint target for the shrinkage reason sheet above
+       (ut-docs#1465) -- always present so htmx can find it after every
+       #basket outerHTML swap, same "-msg"-style dedicated target every
+       other checkOrElevate call site uses (elevation.go's own doc
+       comment). Empty on a fresh render; a needsElevation response fills
+       it with elevation.hint's small text. */}}
+  <div id="shrinkage-hint" class="muted" aria-live="polite"></div>
   <div class="totals">
     <!-- Own full-width row, like .total below: a real customer name (CRM
          plugin) paired against a money figure in a half-width 2-col cell
