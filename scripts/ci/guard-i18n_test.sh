@@ -161,6 +161,125 @@ plant_vendor_js "TextContentProse" 'msg.textContent = "pick a from/to date";'
 expect_pass "a prose literal inside web/public/vendor/ (excluded)"
 clear_vendor_fixture "TextContentProse"
 
+# ut-docs#2423: a ternary whose branch is a raw literal was invisible to
+# check 5 -- jsassign_re only matches a literal appearing directly as the
+# RHS of the assignment, and a ternary's RHS starts with the condition
+# (`ok`), not a quote.
+plant "TernaryProse" '<script>
+status.textContent = ok ? "Saved successfully" : "Save failed";
+</script>'
+expect_fail "hardcoded prose ternary branch"
+clear_fixture "TernaryProse"
+
+# Same ternary, marked i18n:ignore on the statement line -- the escape
+# hatch must cover this shape identically.
+plant "TernaryProseIgnored" '<script>
+status.textContent = ok ? "Saved successfully" : "Save failed"; // i18n:ignore
+</script>'
+expect_pass "an i18n:ignore-marked ternary literal"
+clear_fixture "TernaryProseIgnored"
+
+# A ternary built entirely from translation lookups (the actual shape
+# already shipped in base.html/settings.html/tax_codes.html) has no
+# literal to flag at all -- must not false-positive on the identifiers.
+plant "TernarySafe" '<script>
+status.textContent = ok ? T.saved : T.failed;
+</script>'
+expect_pass "a ternary using translation variables (no literal)"
+clear_fixture "TernarySafe"
+
+# ut-docs#2423: a hardcoded prose literal returned from inside a .map()
+# callback was invisible to check 5 -- the RHS right after
+# `.innerHTML =` is `list`, not a quote, and the literal itself sits on a
+# later line inside the callback body (the actual multi-line shape
+# already shipped in promotions.html/settings.html/setup.html/tills.html
+# and app.js, all safe today -- this proves a genuinely unsafe instance of
+# the same shape would be caught).
+plant "MapProse" '<script>
+out.innerHTML = list.map(function (c) {
+  return "<div>No results found</div>";
+}).join("");
+</script>'
+expect_fail "hardcoded prose inside a .map() callback return"
+clear_fixture "MapProse"
+
+# Same .map() shape, but the callback only builds markup from escaped
+# data -- the real pattern already shipped in this codebase -- must not
+# false-positive.
+plant "MapSafe" '<script>
+out.innerHTML = list.map(function (c) {
+  return "<button>" + esc(c.Name) + "</button>";
+}).join(" ");
+</script>'
+expect_pass "a .map() callback building markup from escaped data only"
+clear_fixture "MapSafe"
+
+# Same unsafe .map() shape, marked i18n:ignore on the return line itself
+# -- the escape hatch must reach inside the callback body, not just the
+# assignment line.
+plant "MapProseIgnored" '<script>
+out.innerHTML = list.map(function (c) {
+  return "<div>No results found</div>"; // i18n:ignore
+}).join("");
+</script>'
+expect_pass "an i18n:ignore-marked map() literal"
+clear_fixture "MapProseIgnored"
+
+# A single-line arrow .map() returning a literal directly (no braced
+# body) must be caught too -- the arrow-shorthand variant of the same gap.
+plant "MapArrowProse" '<script>
+out.innerHTML = list.map(c => "No results found").join("");
+</script>'
+expect_fail "hardcoded prose in a single-line arrow .map() literal"
+clear_fixture "MapArrowProse"
+
+# ut-docs#2423 independent review (N1): strip_markup's unmatched-"<"
+# heuristic must not swallow a GENUINE "<" in real prose -- only a
+# trailing "<" that is actually tag-shaped (immediately followed by a
+# letter/slash/bang) may be treated as a truncated open tag. Before this
+# fix, "Discount < 5 percent is not allowed" silently stopped flagging,
+# because appending a synthetic ">" closed the whole rest of the
+# sentence as if it were one giant tag.
+plant "LessThanProse" '<script>
+msg.textContent = "Discount < 5 percent is not allowed";
+</script>'
+expect_fail "a genuine \"<\" inside real prose (not a truncated tag)"
+clear_fixture "LessThanProse"
+
+# ut-docs#2423 independent review (N3): strip_markup's PARTIAL-tag-concat
+# branch (the actual reason it exists) needs its own fixture -- the
+# original InnerHTMLMarkupOnly fixture above only exercises a COMPLETE
+# tag, which never enters that branch at all. Mirrors the real shape
+# already shipped in promotions.html/settings.html/setup.html/tills.html:
+# a .map() callback's first literal segment is a truncated open tag with
+# no closing ">", built up via concatenation with escaped data.
+plant "MapPartialTagConcat" '<script>
+out.innerHTML = list.map(function (c) {
+  return "<button type=\"button\" data-cust-pick=\"" + esc(c.ID) + "\">" + esc(c.Name) + "</button>";
+}).join(" ");
+</script>'
+expect_pass "a .map() callback building a tag via concatenation (no real prose)"
+clear_fixture "MapPartialTagConcat"
+
+# ut-docs#2423 independent review (N2): map_close_re must recognise a
+# close style other than `}).join(...)` on the exact same line --
+# `}, this).join(...)`, `}.bind(this))...`, or the closing `)` on its own
+# following line are all real JS. Before this fix, none of those matched
+# `^\s*\}\)`, so the bounded lookahead ran straight past the callback and
+# flagged an unrelated function's own return -- a confusing false
+# positive pointing at code with no .innerHTML/.textContent anywhere near
+# it.
+plant "MapCloseThisArg" '<script>
+out.innerHTML = rows.map(function (r) {
+  return render(r);
+}, this).join("");
+function helper() {
+  return "Something went wrong";
+}
+</script>'
+expect_pass "a .map() whose close style the bounded lookahead must not spill past"
+clear_fixture "MapCloseThisArg"
+
 # Sanity: the guard must still pass clean on the real, unmodified tree
 # (proves this test file itself, and the fixtures' cleanup, leave no
 # residue behind).
