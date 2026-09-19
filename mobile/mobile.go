@@ -66,6 +66,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/app"
 	"github.com/universaltill/universal-till/internal/bluetooth"
+	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/recovery"
 )
 
@@ -344,6 +345,17 @@ type BluetoothBridge interface {
 // verification were the separate follow-up ut-docs#1731.
 func SetBluetoothBridge(b BluetoothBridge) {
 	bluetooth.SetAndroidBridge(b)
+}
+
+// SetDeviceModel registers the on-device hardware model string (Android's
+// Build.MODEL) with internal/diagnostics (ut-docs#2235), mirroring
+// SetBluetoothBridge's shape above. Kotlin calls it exactly once, from
+// TillService.kt, before Mobile.start(), so the very first diagnostics
+// inventory event this boot already carries the real model instead of the
+// "" every build reported before this existed. Passing "" clears it,
+// restoring that default.
+func SetDeviceModel(model string) {
+	diagnostics.SetDeviceModel(model)
 }
 
 // freePort asks the OS for an unused port, probed on ALL interfaces

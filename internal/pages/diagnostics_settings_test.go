@@ -98,6 +98,13 @@ func auditActions(t *testing.T, d *common.Deps, action string) int {
 func TestDiagnosticsActivate_ManagerGateAndPersistence(t *testing.T) {
 	cloud := fakeActivateCloud(t, http.StatusOK, "")
 	mux, d := newDiagnosticsDeps(t, cloud.URL)
+	// ut-docs#2235: emitDiagnosticsInventory's Environment event must carry
+	// whatever diagnostics.DeviceModel() currently reports (wired from
+	// Android's Build.MODEL via mobile.SetDeviceModel on a real device; a
+	// desktop/service test process never calls that setter, so exercise the
+	// wiring directly here).
+	diagnostics.SetDeviceModel("Pixel-Test-9")
+	t.Cleanup(func() { diagnostics.SetDeviceModel("") })
 
 	rec := postForm(mux, "/api/settings/diagnostics/activate", url.Values{"code": {"abc"}}, &cashUser)
 	if rec.Code != http.StatusForbidden {
@@ -146,6 +153,9 @@ func TestDiagnosticsActivate_ManagerGateAndPersistence(t *testing.T) {
 		_ = json.Unmarshal(raw, &obj)
 		if obj["type"] == "environment" {
 			sawEnv = true
+			if obj["device_model"] != "Pixel-Test-9" {
+				t.Fatalf("environment event device_model = %v, want the diagnostics.DeviceModel() value (ut-docs#2235)", obj["device_model"])
+			}
 		}
 	}
 	if !sawEnv {
@@ -325,6 +335,83 @@ func TestSettingsPage_DiagnosticsCardGated(t *testing.T) {
 	}
 	if body := getAs(mux, "/settings", &cashUser).Body.String(); strings.Contains(body, `id="settings-diagnostics"`) || strings.Contains(body, "Diagnostic mode") {
 		t.Fatalf("cashier /settings leaks the diagnostics card")
+	}
+}
+
+// ut-docs#2235 (review finding on ut-docs#2169): diagnosticsViewFor's
+// diagnostics.PendingSummary() unmarshals every pending batch file on disk
+// and must only run when the page will actually render the card — i.e. for
+// a manager. This is the outer, page-level guard of that precondition — a
+// cashier's rendered GET /settings carries no trace of the pending-batch
+// state, and a manager's still shows the correct count — but the HTML
+// alone can't distinguish "PendingSummary ran and the card is merely
+// hidden" from "PendingSummary never ran"; both look identical to a
+// cashier's response, since #settings-diagnostics is template-gated on
+// isManager regardless of what diagnosticsViewIfManager returns. The
+// actual proof that the disk scan is skipped for a cashier is
+// TestDiagnosticsViewIfManager below, which asserts on the returned Go
+// value directly instead of the rendered page; this test exists alongside
+// it to guard the page-level behavior the fix is actually for.
+func TestSettingsPage_DiagnosticsPendingSummaryOnlyComputedForManager(t *testing.T) {
+	mux, d := newDiagnosticsDeps(t, "http://127.0.0.1:1")
+	if err := diagnostics.Activate(t.Context(), d.Settings, "sess-pending", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	// Queue one event and flush it to an on-disk batch, so PendingSummary
+	// would report a nonzero count if (and only if) it actually ran.
+	diagnostics.Emit(diagnostics.Gap{DroppedCount: 1})
+	if err := diagnostics.Flush(t.Context(), d.Settings); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := diagnostics.PendingSummary(); b != 1 {
+		t.Fatalf("setup: PendingSummary = %d batches, want 1", b)
+	}
+
+	cashierHTML := getAs(mux, "/settings", &cashUser).Body.String()
+	if strings.Contains(cashierHTML, `id="settings-diagnostics"`) {
+		t.Fatal("cashier /settings leaks the diagnostics card")
+	}
+	if strings.Contains(cashierHTML, "unsent batch") {
+		t.Fatal("cashier /settings leaks the pending-batch count text somewhere outside the gated card")
+	}
+
+	pendingCountWant := template.HTMLEscapeString(httpx.T("en", "settings.diagnostics.pending_count"))
+	// The locale value is a printf template ("%d unsent batches..."); the
+	// literal substring below the %d verb is enough to prove the real
+	// (non-zero-value) view rendered, without depending on printf's exact
+	// formatting of the count.
+	pendingCountWant = strings.SplitN(pendingCountWant, "%d", 2)[1]
+	managerHTML := getAs(mux, "/settings", &mgrUser).Body.String()
+	if !strings.Contains(managerHTML, `id="settings-diagnostics"`) {
+		t.Fatal("manager /settings lacks the diagnostics card")
+	}
+	if !strings.Contains(managerHTML, pendingCountWant) {
+		t.Fatalf("manager /settings lacks the pending-batch count, want substring %q in %s", pendingCountWant, managerHTML)
+	}
+}
+
+// TestDiagnosticsViewIfManager is the direct unit-level proof behind
+// TestSettingsPage_DiagnosticsPendingSummaryOnlyComputedForManager above:
+// isManager=false must short-circuit BEFORE diagnosticsViewFor (and so
+// before its diagnostics.PendingSummary() disk scan) ever runs, returning
+// the zero-value view outright, while isManager=true still computes and
+// returns the real one.
+func TestDiagnosticsViewIfManager(t *testing.T) {
+	_, d := newDiagnosticsDeps(t, "http://127.0.0.1:1")
+	if err := diagnostics.Activate(t.Context(), d.Settings, "sess-gate", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	diagnostics.Emit(diagnostics.Gap{DroppedCount: 1})
+	if err := diagnostics.Flush(t.Context(), d.Settings); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := diagnosticsViewIfManager(t.Context(), d, "en", false); got != (diagnosticsView{}) {
+		t.Fatalf("isManager=false must yield the zero-value view without calling diagnosticsViewFor/PendingSummary, got %+v", got)
+	}
+	got := diagnosticsViewIfManager(t.Context(), d, "en", true)
+	if !got.Active || got.PendingBatches != 1 {
+		t.Fatalf("isManager=true must yield the real view, got %+v", got)
 	}
 }
 
