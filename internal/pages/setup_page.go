@@ -620,6 +620,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if d.KioskEngine != nil {
 			d.KioskEngine.SetConfig(newCfg)
 		}
+		d.KioskSessions.SetConfigAll(newCfg) // ut-docs#2261: every live table session too (nil-safe)
 
 		if name := strings.TrimSpace(r.Form.Get("store_name")); name != "" {
 			if err := d.Settings.Set(r.Context(), "store.name", name); err != nil {

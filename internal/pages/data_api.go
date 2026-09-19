@@ -803,6 +803,14 @@ func cleanupInLiveBasket(ctx context.Context, d *common.Deps, includeActive bool
 		{cashierBasketMatch, d.Engine},
 		{kioskBasketMatch, d.KioskEngine},
 	}
+	// ut-docs#2261: every live table-QR session is "the kiosk side" for this
+	// check's purposes too (All() is nil-safe on an unwired store).
+	for _, e := range d.KioskSessions.All() {
+		baskets = append(baskets, struct {
+			kind demoBasketMatch
+			e    *pos.Service
+		}{kioskBasketMatch, e})
+	}
 	repo := data.NewPOSRepo(d.Db)
 	for _, b := range baskets {
 		if b.e == nil {

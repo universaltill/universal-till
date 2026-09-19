@@ -1737,6 +1737,7 @@
   "selforder.table_busy.hint": "سفارش میز دیگری هم‌اکنون روی همین دستگاه ثبت می‌شود. لطفاً کمی بعد دوباره امتحان کنید یا از یکی از کارکنان کمک بخواهید.",
   "selforder.table_busy.retry": "دوباره امتحان کنید",
   "selforder.table_busy.title": "این صندوق در حال حاضر مشغول است",
+  "selforder.table_joined": "سفارش برای این میز — %d کالا از قبل اضافه شده است",
   "selforder.tap_to_start": "برای شروع ضربه بزنید",
   "selforder.title": "اینجا سفارش دهید",
   "selforder.welcome": "خوش آمدید!",

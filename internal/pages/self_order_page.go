@@ -1,13 +1,37 @@
 package pages
 
 import (
+	"context"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/pos"
 )
+
+// selfOrderSessionCookie carries a table-QR guest's session token
+// (ut-docs#2261) — the only thing tying an anonymous browser to its table's
+// own basket in d.KioskSessions. Path "/" (Tester finding, ut-docs#2261
+// review — an earlier draft scoped it to "/self-order", which by RFC 6265
+// path-matching is NOT a prefix of "/api/self-order/*" and so is never sent
+// on any of the actual scan/cart/checkout mutation endpoints; confirmed with
+// a real curl cookie jar, where every mutation silently fell back to the
+// shared bare d.KioskEngine — the exact cross-table collision this card
+// exists to remove). HttpOnly so it's meaningless to read from JS, and
+// resolveOrderEngine is the only code that ever interprets it — a cashier
+// route ignores it same as any other cookie it doesn't recognise.
+// SameSite=Lax; no Secure flag, matching this codebase's auth.CookieName
+// convention (auth_page.go, also Path "/") — a LAN till is plain HTTP.
+const selfOrderSessionCookie = "self_order_session"
+
+// kioskSessionSweepInterval is how often the background loop evicts
+// idle-expired table sessions (memory hygiene only — Lookup already refuses
+// an expired session on its own, see pos.TableSessions.Sweep).
+const kioskSessionSweepInterval = 15 * time.Minute
 
 // registerSelfOrder serves the self-order kiosk flow (ADR-0020, spec 011
 // Phase 2 — shell only; browse/search/customize/cart is Phase 3, checkout
@@ -19,6 +43,59 @@ import (
 // already-authenticated visitor.
 func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /self-order", func(w http.ResponseWriter, r *http.Request) {
+		st := d.CurrentState()
+		startURL := "/self-order/shop"
+		// Table QR entry (ut-docs#815, reshaped by ut-docs#2261):
+		// /self-order?table=<tables.id> no longer binds the ONE process-global
+		// kiosk basket — it resolves (or creates) that table's OWN session in
+		// d.KioskSessions and hands the browser a cookie naming it, so two
+		// tables ordering at the same time never touch each other's basket.
+		// The old cross-table "till busy" fail-safe that stood in for real
+		// concurrency is gone with it: there is nothing left to collide.
+		//
+		// A guest revisiting ?table= (the shop page's idle-reset bounce, a
+		// deliberate restart) or a SECOND device scanning the same printed QR
+		// JOINS the table's live session — one shared cart per table, the
+		// same model Toast/Square/Lightspeed use, and the only one under which
+		// a table can split a bill. The join is surfaced as an inline banner
+		// on the shop screen (?joined=1), never a blocking interstitial.
+		//
+		// The table is still carried on the engine's own TableID/TableLabel
+		// (ADR-0054/ut-docs#820's existing pos.Service fields), just on the
+		// per-table engine now. An invalid/unknown/disabled id, or no ?table
+		// at all, falls through to the bare-kiosk path below — this never
+		// errors the page out over a bad/stale/tampered QR value.
+		if requestedTable := strings.TrimSpace(r.URL.Query().Get("table")); requestedTable != "" && d.KioskSessions != nil {
+			if t, found, err := data.NewPOSRepo(d.Db).GetTable(r.Context(), requestedTable); err == nil && found && t.Enabled {
+				token, engine, existed, err := d.KioskSessions.SessionForTable(t.ID)
+				if err == nil {
+					if !existed {
+						// SetTable is a no-op unless the (fresh, empty)
+						// basket's order type is dine-in, which it always is
+						// on a just-minted engine, so this always takes
+						// effect. A joined session already carries it.
+						engine.SetTable(t.ID, t.Label)
+					} else {
+						startURL += "?joined=1"
+					}
+					http.SetCookie(w, &http.Cookie{
+						Name:     selfOrderSessionCookie,
+						Value:    token,
+						Path:     "/",
+						HttpOnly: true,
+						SameSite: http.SameSiteLaxMode,
+					})
+					httpx.RenderPartial("ui/pages/self_order.html", map[string]any{
+						"title":         httpx.T(httpx.RequestLocale(r), "page.title.self_order"),
+						"idleResetSecs": st.KioskIdleResetSeconds,
+						"shopName":      d.Cfg.StoreName,
+						"startURL":      startURL,
+					})(w, r)
+					return
+				}
+			}
+		}
+		// Bare walk-up kiosk (no valid ?table=): UNCHANGED by ut-docs#2261.
 		// Landing here always means "start fresh" — whether an operator
 		// navigated here directly, or the shop-page idle timer (Phase 3)
 		// redirected back after inactivity. Without this, an abandoned
@@ -34,66 +111,70 @@ func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 		// exercise the basket (e.g. TestSelfOrderModeRedirectsHome) — this
 		// route is reachable from those too since it's part of the "/"
 		// mode-redirect flow, so guard rather than assume it's always set.
-		requestedTable := strings.TrimSpace(r.URL.Query().Get("table"))
 		if d.KioskEngine != nil {
-			// Busy guard (ut-docs#815 review finding — a different table's
-			// guest scanning their own QR silently wiped an in-progress
-			// table's basket AND rebound the session to the new table,
-			// reproduced for real: table A's guest loses their order, and
-			// table B's guest's checkout lands on table A's floor-plan
-			// tile). KioskEngine is one till-process-global basket
-			// (ADR-0020, scripts/ci/guard-kiosk-engine.sh) — correct for
-			// one physical kiosk, not safe for two different tables' own-
-			// phone sessions landing here around the same time. This does
-			// NOT make ordering concurrent — that needs a genuinely
-			// per-session basket, a real architecture change (see
-			// ut-docs#2261) — it only makes the single-basket limitation
-			// FAIL SAFE: a second table's guest sees a clear "till busy"
-			// message instead of silently destroying the first guest's
-			// order. Scoped narrowly: a DIFFERENT, non-empty ?table=
-			// colliding with an active (non-empty) table-bound basket. The
-			// guest re-scanning their OWN table's code always proceeds —
-			// that's both a deliberate restart and the idle-reset bounce
-			// (self_order_shop.go's idleResetURL), not a collision. A bare
-			// kiosk hit (no ?table= at all) is deliberately left unchanged:
-			// that is the physical kiosk's own long-standing "always start
-			// fresh" behaviour (ADR-0020) and a different, pre-existing
-			// risk this narrow fix does not attempt to solve — also
-			// ut-docs#2261's territory, not this card's.
-			activeTable := d.KioskEngine.TableID()
-			if requestedTable != "" && activeTable != "" && requestedTable != activeTable && len(d.KioskEngine.Lines()) > 0 {
-				httpx.RenderPartial("ui/pages/self_order.html", map[string]any{
-					"title":    httpx.T(httpx.RequestLocale(r), "page.title.self_order"),
-					"shopName": d.Cfg.StoreName,
-					"Busy":     true,
-				})(w, r)
-				return
-			}
 			d.KioskEngine.Reset()
-			// Table QR entry (ut-docs#815): /self-order?table=<tables.id>
-			// binds this fresh basket to a physical table for the rest of
-			// the session, carried on d.KioskEngine itself via the SAME
-			// TableID/TableLabel fields ADR-0054/ut-docs#820 already gave
-			// every pos.Service (SetTable/TableID/TableLabel,
-			// internal/pos/service.go) — not a new mechanism, the kiosk
-			// basket just uses the one the cashier engine already has.
-			// SetTable is a no-op unless the (just-Reset, empty) basket's
-			// order-type default is dine-in, which it always is here, so
-			// this always takes effect. An invalid/unknown/disabled table
-			// id, or no ?table param at all, leaves the basket with no
-			// table — today's unchanged behaviour — this never errors the
-			// page out over a bad/stale/tampered QR value.
-			if requestedTable != "" {
-				if t, found, err := data.NewPOSRepo(d.Db).GetTable(r.Context(), requestedTable); err == nil && found && t.Enabled {
-					d.KioskEngine.SetTable(t.ID, t.Label)
-				}
-			}
 		}
-		st := d.CurrentState()
+		// A leftover table-session cookie from an earlier ?table= visit on
+		// this browser must not make the walk-up flow act on that table's
+		// basket: drop it, so every later request resolves to d.KioskEngine.
+		// The table's session itself is left alone — another device at that
+		// table may still be ordering on it.
+		if _, err := r.Cookie(selfOrderSessionCookie); err == nil {
+			http.SetCookie(w, &http.Cookie{
+				Name:     selfOrderSessionCookie,
+				Value:    "",
+				Path:     "/",
+				MaxAge:   -1,
+				HttpOnly: true,
+				SameSite: http.SameSiteLaxMode,
+			})
+		}
 		httpx.RenderPartial("ui/pages/self_order.html", map[string]any{
 			"title":         httpx.T(httpx.RequestLocale(r), "page.title.self_order"),
 			"idleResetSecs": st.KioskIdleResetSeconds,
 			"shopName":      d.Cfg.StoreName,
+			"startURL":      startURL,
 		})(w, r)
 	})
+}
+
+// resolveOrderEngine returns the basket this self-order request acts on
+// (ut-docs#2261): the per-table session engine when the request carries a
+// valid, live session cookie, else the bare-kiosk d.KioskEngine unchanged
+// (today's behaviour). A cookie whose session is unknown or idle-evicted —
+// or one that outlived a till restart, since the store is in-memory —
+// never errors: it falls through exactly as if no cookie existed, the same
+// graceful degradation the bare kiosk's idle-reset already has.
+//
+// The second result reports whether a table session was resolved, for the
+// one caller (the shop page's joined banner) that must not trust the
+// guest-controllable ?joined flag on its own.
+func resolveOrderEngine(d *common.Deps, r *http.Request) (*pos.Service, bool) {
+	if c, err := r.Cookie(selfOrderSessionCookie); err == nil && c.Value != "" {
+		if engine, _, ok := d.KioskSessions.Lookup(c.Value); ok {
+			return engine, true
+		}
+	}
+	return d.KioskEngine, false
+}
+
+// StartKioskSessionSweep runs the periodic idle-session eviction for
+// d.KioskSessions (ut-docs#2261). Shape mirrors StartFiscalSignReconcileSweep
+// exactly: a goroutine, a ticker, wg.Done() on ctx.Done(). No initial delay
+// — the store is empty at boot, so the first tick is a no-op either way.
+func StartKioskSessionSweep(ctx context.Context, d *common.Deps, wg *sync.WaitGroup) {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		t := time.NewTicker(kioskSessionSweepInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				d.KioskSessions.Sweep(time.Now())
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 }

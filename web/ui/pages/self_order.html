@@ -25,24 +25,15 @@
     <main>
       <img class="selforder-logo" src="/public/assets/logo/unitill-logo.svg" alt="" />
       {{ if .shopName }}<p class="selforder-shop">{{ .shopName }}</p>{{ end }}
-      {{ if .Busy }}
-      {{/* ut-docs#815 (review finding, blocker 3 mitigation): a different
-           table's guest tried to start while this till's one shared basket
-           already has another table's order in progress (see the handler's
-           own comment). Never silently wipe that order — say so, and let
-           the guest retry in a moment rather than pretend the till is
-           available. */}}
-      <h1>{{ T "selforder.table_busy.title" }}</h1>
-      <p class="selforder-hint">{{ T "selforder.table_busy.hint" }}</p>
-      <button type="button" class="btn primary selforder-start" onclick="location.reload()">
-        {{ T "selforder.table_busy.retry" }}
-      </button>
-      {{ else }}
+      {{/* ut-docs#2261: the old "till busy" interstitial that stood here for
+           a different table's guest (ut-docs#815) is gone — every table now
+           has its own basket, so there is nothing to collide with. A guest
+           JOINING their table's live session is sent into the shop with
+           ?joined=1 (startURL), where a non-blocking banner says so. */}}
       <h1>{{ T "selforder.welcome" }}</h1>
-      <a class="btn primary selforder-start" href="/self-order/shop">
+      <a class="btn primary selforder-start" href="{{ .startURL }}">
         {{ T "selforder.tap_to_start" }}
       </a>
-      {{ end }}
     </main>
     <script>
       // Reset to the start screen after N idle seconds (ADR-0020) — this

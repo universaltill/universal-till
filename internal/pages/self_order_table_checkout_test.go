@@ -31,22 +31,17 @@ func TestSelfOrderShop_TableCheckout_AlwaysCounterOrderRegardlessOfPaymentMode(t
 	registerSelfOrder(mux, dp)
 	registerSelfOrderShop(mux, dp)
 
-	// Table QR entry.
-	mux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/self-order?table="+tableID, nil))
+	// Table QR entry. The guest's browser carries the per-table session
+	// cookie from here on (ut-docs#2261) — that cookie IS the table binding.
+	guest := newSelfOrderClient(t, mux)
+	guest.get("/self-order?table=" + tableID)
 
-	post := func(path, body string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
-		return rec
-	}
+	post := guest.post
 	post("/api/self-order/scan", "code=5000001")
 
 	// GET checkout must render the counter-confirm screen, never the
 	// payment-method picker — a guest's own phone has no card terminal.
-	getRec := httptest.NewRecorder()
-	mux.ServeHTTP(getRec, httptest.NewRequest(http.MethodGet, "/api/self-order/checkout", nil))
+	getRec := guest.get("/api/self-order/checkout")
 	if getRec.Code != http.StatusOK {
 		t.Fatalf("GET checkout: want 200, got %d: %s", getRec.Code, getRec.Body.String())
 	}
@@ -179,15 +174,10 @@ func TestSelfOrderShop_TableCheckout_TakeawayToggleCannotUnbindTable(t *testing.
 	mux := http.NewServeMux()
 	registerSelfOrder(mux, dp)
 	registerSelfOrderShop(mux, dp)
-	mux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/self-order?table="+tableID, nil))
+	guest := newSelfOrderClient(t, mux) // carries the per-table session cookie (ut-docs#2261)
+	guest.get("/self-order?table=" + tableID)
 
-	post := func(path, body string) *httptest.ResponseRecorder {
-		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
-		return rec
-	}
+	post := guest.post
 	post("/api/self-order/scan", "code=5000001")
 
 	// The toggle isn't offered for a table-bound session (the guest sees
@@ -201,12 +191,15 @@ func TestSelfOrderShop_TableCheckout_TakeawayToggleCannotUnbindTable(t *testing.
 	if !strings.Contains(cart.Body.String(), "T5") {
 		t.Fatalf("a table-bound cart must tell the guest which table it is bound to: %s", cart.Body.String())
 	}
-	if got := dp.KioskEngine.TableID(); got != tableID {
-		t.Fatalf("KioskEngine.TableID() after a takeaway toggle = %q, want %q (the table must stay bound)", got, tableID)
+	engine, _, ok := dp.KioskSessions.Lookup(guest.sessionToken())
+	if !ok {
+		t.Fatal("table session vanished")
+	}
+	if got := engine.TableID(); got != tableID {
+		t.Fatalf("session engine TableID() after a takeaway toggle = %q, want %q (the table must stay bound)", got, tableID)
 	}
 
-	getRec := httptest.NewRecorder()
-	mux.ServeHTTP(getRec, httptest.NewRequest(http.MethodGet, "/api/self-order/checkout", nil))
+	getRec := guest.get("/api/self-order/checkout")
 	if strings.Contains(getRec.Body.String(), `name="method"`) {
 		t.Fatalf("a table-bound checkout must never offer a payment method: %s", getRec.Body.String())
 	}
@@ -271,10 +264,10 @@ func TestSelfOrderShop_IdleResetKeepsTableBoundSession(t *testing.T) {
 	mux := http.NewServeMux()
 	registerSelfOrder(mux, dp)
 	registerSelfOrderShop(mux, dp)
-	mux.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/self-order?table="+tableID, nil))
+	guest := newSelfOrderClient(t, mux) // carries the per-table session cookie (ut-docs#2261)
+	guest.get("/self-order?table=" + tableID)
 
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/self-order/shop", nil))
+	rec := guest.get("/self-order/shop")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /self-order/shop: want 200, got %d", rec.Code)
 	}
@@ -282,8 +275,8 @@ func TestSelfOrderShop_IdleResetKeepsTableBoundSession(t *testing.T) {
 		t.Fatalf("the idle-reset bounce must carry the bound table: %s", rec.Body.String())
 	}
 
-	// A plain kiosk session (no table) keeps today's bare /self-order bounce.
-	dp.KioskEngine.Reset()
+	// A plain kiosk session (no table, no session cookie) keeps today's
+	// bare /self-order bounce — even while the table's session is live.
 	plain := httptest.NewRecorder()
 	mux.ServeHTTP(plain, httptest.NewRequest(http.MethodGet, "/self-order/shop", nil))
 	if strings.Contains(plain.Body.String(), "/self-order?table=") {

@@ -1737,6 +1737,7 @@
   "selforder.table_busy.hint": "Şu anda bu cihazdan başka bir masanın siparişi alınıyor. Lütfen biraz sonra tekrar deneyin veya bir personelden yardım isteyin.",
   "selforder.table_busy.retry": "Tekrar dene",
   "selforder.table_busy.title": "Bu kasa şu anda meşgul",
+  "selforder.table_joined": "Bu masa için sipariş — %d ürün zaten eklendi",
   "selforder.tap_to_start": "Başlamak için dokunun",
   "selforder.title": "Buradan sipariş verin",
   "selforder.welcome": "Hoş geldiniz!",

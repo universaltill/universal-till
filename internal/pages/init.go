@@ -286,6 +286,22 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	}, resolver)
 	kioskEngine.SetTaxRateAsker(taxAsker)
 	kioskEngine.SetChargePolicyAsker(chargeAsker)
+	// Per-table self-order sessions (ut-docs#2261): one engine PER TABLE,
+	// minted on demand by this factory — the same resolver/asker wiring as
+	// kioskEngine just above, wrapped so it isn't duplicated a third time.
+	// The Config is read off the LIVE kioskEngine at mint time, not the
+	// boot-time `state` this closure would otherwise capture: every
+	// settings/setup/rederive site already keeps kioskEngine.SetConfig
+	// current, so a table session that starts hours after a tax-rate change
+	// begins at the current rates (SetConfigAll only reaches sessions that
+	// already exist). idleTTL covers a full sitting; a table's session is
+	// freed well after it genuinely ended (StartKioskSessionSweep below).
+	kioskSessions := pos.NewTableSessions(func() *pos.Service {
+		e := pos.NewServiceWithResolver(kioskEngine.Config(), resolver)
+		e.SetTaxRateAsker(taxAsker)
+		e.SetChargePolicyAsker(chargeAsker)
+		return e
+	}, 4*time.Hour)
 
 	// One auth service for the whole till: login, sessions AND manager-PIN
 	// approvals share a single device-wide lockout.
@@ -362,6 +378,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		SettingsAmendments: common.BuildSettingsAmendments(pm),
 		Engine:             engine,
 		KioskEngine:        kioskEngine,
+		KioskSessions:      kioskSessions,
 		BtnStore:           btnStore,
 		CatalogRepo:        catalogRepo,
 		AuthSvc:            authSvc,
@@ -533,6 +550,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	StartAutoUpdateScheduler(bgCtx, dp, wg)                 // background unattended update (ut-docs#79); joined by app.Run's drain
 	StartPluginUpdateScheduler(bgCtx, dp, wg)               // background installed-plugin update check + language-pack auto-apply (ut-docs#1953); joined by app.Run's drain
 	StartFiscalSignReconcileSweep(bgCtx, dp, wg)            // periodic fiscal.sign.reconcile.ask sweep over backend-failure unsigned sales (ADR-0077 D3, ut-docs#1520); joined by app.Run's drain
+	StartKioskSessionSweep(bgCtx, dp, wg)                   // periodic idle table-session eviction for table-QR self-ordering (ut-docs#2261); joined by app.Run's drain
 	backfillLocaleConfirmedForDivergedPendingTills(ctx, dp) // ut-docs#1892: one-time backfill before any pending language install can silently override a pre-#1074 manual locale choice
 	StartBasePluginRetry(bgCtx, dp, wg)                     // retry country base-plugin auto-install while offline (ut-docs#591); joined by app.Run's drain
 	StartTSEProvisionRetry(bgCtx, dp, wg)                   // retry German TSE provisioning kickoff while offline (ADR-0053, ut-docs#802); joined by app.Run's drain
@@ -655,6 +673,7 @@ func newRederiveSettings(dp *common.Deps, authDisabled bool, i18n *config.I18n) 
 		}); dp.Engine.Config() != newCfg {
 			dp.Engine.SetConfig(newCfg)
 			dp.KioskEngine.SetConfig(newCfg)
+			dp.KioskSessions.SetConfigAll(newCfg) // ut-docs#2261: every live table session too
 		}
 		// ut-docs#2099 review finding B1: display.mode is deliberately NOT
 		// part of RuntimeState (see the boot-time InitSelfOrderMode call

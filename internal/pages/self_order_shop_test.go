@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
@@ -60,6 +61,12 @@ func setupSelfOrderShopDeps(t *testing.T) (*common.Deps, *db.DB) {
 		Settings:    settings.NewStore(d.DB),
 		Engine:      engine,
 		KioskEngine: kioskEngine,
+		// Per-table session store (ut-docs#2261), same factory shape as
+		// production Init: a fresh engine per table over the same resolver,
+		// at the bare-kiosk engine's CURRENT config (never a boot-time copy).
+		KioskSessions: pos.NewTableSessions(func() *pos.Service {
+			return pos.NewServiceWithResolver(kioskEngine.Config(), resolver)
+		}, time.Hour),
 		// AuthSvc (ut-docs#710): GET /settings's "isManager" flag and every
 		// mutating settings endpoint are now canPerform()-gated, which
 		// queries role_permissions for real via AuthSvc.Can() — db.Open

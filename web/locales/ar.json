@@ -1737,6 +1737,7 @@
   "selforder.table_busy.hint": "يتم حاليًا تقديم طلب طاولة أخرى على هذا الجهاز. يرجى المحاولة مرة أخرى بعد لحظات، أو استدعاء أحد أفراد الطاقم.",
   "selforder.table_busy.retry": "حاول مرة أخرى",
   "selforder.table_busy.title": "هذه الكاشير مشغولة الآن",
+  "selforder.table_joined": "الطلب لهذه الطاولة — تمت إضافة %d صنف بالفعل",
   "selforder.tap_to_start": "اضغط للبدء",
   "selforder.title": "اطلب هنا",
   "selforder.welcome": "أهلاً بك!",

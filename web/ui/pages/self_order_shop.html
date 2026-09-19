@@ -50,6 +50,11 @@
       .selforder-cart-total { font-weight:800; font-size:1.1rem; }
       .selforder-checkout { width:100%; min-height:52px; margin-block-start:.75rem; }
       .selforder-cart-empty { text-align:center; }
+      /* ut-docs#2261: one-line, non-blocking "you joined this table's order"
+         note. Logical properties only (RTL locales). */
+      .selforder-joined { margin-block-end:.75rem; padding-block:.5rem; padding-inline:.75rem;
+        border-radius:8px; background:var(--surface-muted, #eef2ff); color:var(--accent, #4f46e5);
+        font-weight:600; text-align:start; }
       @media (max-width: 720px) {
         .selforder-shop-main { grid-template-columns:1fr; }
         .selforder-cart { position:static; }
@@ -62,6 +67,14 @@
       <a class="btn secondary" href="/self-order">← {{ T "selforder.back" }}</a>
       <a class="selforder-exit" href="/login?next=kiosk" aria-label="{{ T "selforder.exit" }}"><span aria-hidden="true">🔒</span></a>
     </header>
+
+    {{ if ge .joinedCount 0 }}
+    {{/* ut-docs#2261: this browser joined a session another device at the
+         same table already started (or is its own idle-reset bounce back
+         into a live session). Informational, auto-presented, no dismiss —
+         never a modal, never the old table_busy interstitial. */}}
+    <p class="selforder-joined" role="status">{{ printf (T "selforder.table_joined") .joinedCount }}</p>
+    {{ end }}
 
     {{ if .Categories }}
     <div class="selforder-cats" role="group" aria-label="{{ T "products.title" }}">
