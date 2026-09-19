@@ -21,7 +21,7 @@
 
   <div class="grid" style="grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:1rem">
     <template x-for="p in items" :key="p.id">
-      <div class="card">
+      <div class="card" x-data="{ vOpen: false, versions: null, vLoading: false, vError: null }">
         <div style="display:flex; justify-content:space-between; align-items:baseline">
           <h3 style="margin:.2rem 0" x-text="p.name"></h3>
           <span class="tag" x-text="'v' + p.version"></span>
@@ -69,8 +69,56 @@
           <a class="btn secondary" hx-boost="false"
              :href="'/api/plugins/' + encodeURIComponent(p.id) + '/export?version=' + encodeURIComponent(p.version)"
              :download="p.id + '-' + p.version + '.tar.gz'">{{ T "plugins.manage.action.export" }}</a>
+          <button class="btn secondary"
+                  @click="vOpen = !vOpen; if (vOpen && versions === null && !vLoading) {
+                    vLoading = true; vError = null;
+                    fetch('/api/plugins/' + encodeURIComponent(p.id) + '/versions').then(function (res) {
+                      if (res.status === 401) { window.location.href = '/login'; return; }
+                      if (!res.ok) {
+                        return res.text().then(function (t) { vLoading = false; versions = null; vError = t || ('HTTP ' + res.status); });
+                      }
+                      return res.json().then(function (j) { vLoading = false; versions = (j.data && j.data.versions) || []; });
+                    }).catch(function (e) { vLoading = false; versions = null; vError = String(e); });
+                  }">{{ T "plugins.manage.action.versions" }}</button>
           <button class="btn danger"
                   @click="if (confirm('{{ T "plugins.manage.confirm_uninstall" }} ' + p.name + '?')) act('/api/plugins/' + p.id + '/uninstall', 'POST')">{{ T "plugins.manage.action.uninstall" }}</button>
+        </div>
+        {{/* ut-docs#2239: version history is fetched lazily on first open per
+             card (not eagerly with the rest of pluginsJSON at page load) so a
+             shop with many plugins doesn't pay an extra request per card just
+             to render a page nobody is troubleshooting yet. */}}
+        <div class="card" x-show="vOpen" style="margin-top:.6rem; background:var(--surface-2)">
+          <h4 style="margin:.2rem 0">{{ T "plugins.manage.versions_title" }}</h4>
+          <p class="muted" x-show="vLoading">⏳ …</p>
+          <p class="muted" x-show="!vLoading && vError" x-text="vError"></p>
+          {{/* ut-docs#2239 review: the currently-installed version is shown
+               from p.version (already on the page) rather than relying on
+               the fetched history's is_active flag — StoreVersion only ever
+               snapshots the version an update/rollback is LEAVING, so the
+               live active version is routinely absent from that history
+               (e.g. right after a fresh install with no update/rollback
+               yet), which would otherwise make it look like nothing is
+               currently installed. */}}
+          <template x-if="!vLoading && !vError">
+            <div>
+              <div style="display:flex; justify-content:space-between; align-items:center; gap:.5rem; flex-wrap:wrap; padding:.3rem 0">
+                <span x-text="p.version"></span>
+                <span class="tag">{{ T "plugins.manage.currently_installed" }}</span>
+              </div>
+              <template x-if="(versions || []).filter(function (v) { return v.version !== p.version; }).length === 0">
+                <p class="muted">{{ T "plugins.manage.no_versions" }}</p>
+              </template>
+              <ul style="list-style:none; padding:0; margin:0">
+                <template x-for="v in (versions || []).filter(function (v) { return v.version !== p.version; })" :key="v.version">
+                  <li style="display:flex; justify-content:space-between; align-items:center; gap:.5rem; flex-wrap:wrap; padding:.3rem 0">
+                    <span x-text="v.version"></span>
+                    <button class="btn secondary"
+                            @click="if (confirm('{{ T "plugins.manage.confirm_rollback" }} ' + p.name + ' ' + v.version + '?')) act('/api/plugins/' + p.id + '/rollback', 'POST', { version: v.version })">{{ T "plugins.manage.action.rollback_to" }}</button>
+                  </li>
+                </template>
+              </ul>
+            </div>
+          </template>
         </div>
       </div>
     </template>
@@ -98,9 +146,14 @@
     'plugins.uninstall.error.replica_use_primary': '{{ T "plugins.uninstall.error.replica_use_primary" }}',
     'plugins.manage.error.replica_use_primary': '{{ T "plugins.manage.error.replica_use_primary" }}'
   };
-  window.act = function (url, method) {
+  window.act = function (url, method, body) {
     msg.textContent = '⏳ …';
-    fetch(url, { method: method }).then(function (res) {
+    var opts = { method: method };
+    if (body !== undefined) {
+      opts.headers = { 'Content-Type': 'application/json' };
+      opts.body = JSON.stringify(body);
+    }
+    fetch(url, opts).then(function (res) {
       // ut-docs#2157: a session-expired 401 answers with the auth
       // middleware's {code,message} error OBJECT — unlike this plugin
       // endpoint's own errors, which are always the plain string T[...]
