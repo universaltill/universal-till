@@ -177,9 +177,16 @@ func TestModifierGroupDeleteUnassigned_RefusedOnReplica(t *testing.T) {
 	mux := http.NewServeMux()
 	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}, Settings: st})
 
-	rec := postModifiers(t, mux, "/api/catalog/modifier-group/delete-unassigned", "")
+	// expectedCount=1 matches the live count exactly (one orphan seeded
+	// above) — the replica gate must still be what refuses this, not the
+	// ut-docs#2421 stale-count check, which this correct count would
+	// otherwise pass.
+	rec := postModifiers(t, mux, "/api/catalog/modifier-group/delete-unassigned", "expectedCount=1")
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("delete-unassigned on replica: want 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "primary till") {
+		t.Fatalf("expected the replica-gate notice, not the stale-count notice, got:\n%s", rec.Body.String())
 	}
 	var n int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM item_modifier_groups`).Scan(&n); err != nil || n != 1 {
