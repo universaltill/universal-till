@@ -183,3 +183,56 @@ correct and complete and introduced no new regressions. N4 is fixed in
 its own repo/PR. N1/N2/N3/N5 are accepted, real follow-up work, filed as
 their own backlog cards rather than scope-creeping this one — none of
 them changes the correctness of what ships here.
+
+## Addendum: stale-PR sweep, merge conflict, CI red (2026-09-19, lane:cloud-24)
+
+A later cold cycle found this PR sitting reviewed-but-unmerged
+(`status:in-review`, review record already present) with `mergeable_state:
+dirty` against a `main` that had moved (PRs #1293/#1294 landed since). Per
+`PR-SWEEP.md`'s stale-PR-first handling:
+
+- Claimed the PR (issue-comment marker) before touching anything.
+- Merged `main` into the branch. One conflict, in the generated
+  `web/help/img/manifest.json` (both sides had changed `surface_sha256` —
+  a pure value collision, not a content merge) — resolved by regenerating
+  it for real via `make docs-shots` (124 screenshots, ~3.7 min) rather than
+  hand-picking either side's stale hash, per this repo's "regenerate
+  generated files with the repo's own tooling" convention.
+- Pushed the merge commit; `go build ./...` clean.
+- Real CI then failed on `desktop-shell`'s deadcode-baseline guard step
+  (`-tags=desktop`, full three-root analysis, which only real CI's
+  GTK/WebKit-header runner can execute): a new, genuinely unreachable
+  function, `internal/pos/session_manager.go: SessionBasketManager.TableOwner`.
+  Confirmed `desktop-shell` was green on `main` immediately before this
+  push, so this was this PR's own regression, not a base-branch flake —
+  worked it, not deferred or ported.
+  - Traced it: `TableOwner` (the unfiltered lookup) was narrowed to
+    `TableOwnerActive` (the recency-filtered one) for the busy-guard's
+    production call path by this PR's own review finding B1 above, but
+    the unfiltered method itself was deliberately kept — its extensive doc
+    comment documents the underlying "any session bound to this table"
+    semantics `TableOwnerActive` narrows from, and `internal/pages/
+    self_order_table_test.go` (a different package) calls it directly to
+    test that raw semantics, alongside `internal/pos/session_manager_test.go`'s
+    own direct unit tests. Grepped every call site: genuinely zero
+    production callers, only the two test files above — exactly the
+    guard's own documented "exported helper used exclusively by its own
+    tests" false-positive shape (its comment cites `ResetCacheForTests` as
+    the precedent).
+  - This is a legitimate test-only-reachable case, not dead code to
+    delete — deleting `TableOwner` would mean losing direct unit coverage
+    of the manager's raw table-binding storage, independent of the busy
+    guard's recency policy layered on top in `TableOwnerActive`. Added
+    `internal/pos/session_manager.go: unreachable func:
+    SessionBasketManager.TableOwner` to `scripts/ci/deadcode-baseline.txt`
+    (alphabetically placed, exact string match to the guard's own output).
+  - Verified: `gofmt -l .` clean, `go build ./...` clean, `go vet ./...`
+    clean, `go test ./internal/pos/... ./internal/pages/...` all green.
+    Could not re-run the `desktop-shell` deadcode step itself locally (no
+    GTK/WebKit headers in this sandbox — the same gap ut-docs#2425 exists
+    to narrow, tracked separately) — the baseline-entry fix was verified
+    by exact string match against the real CI failure's own output, and
+    left for CI's next run on this branch to confirm end-to-end.
+- Re-verified lane ownership (`SKILL.md` rule 7a) before this and stays
+  the same throughout: no independent fix for this card landed elsewhere,
+  no supersession found in `main`'s log or the issue's comments.
