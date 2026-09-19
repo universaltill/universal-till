@@ -141,5 +141,28 @@
     </div>
     {{ end }}
   </div>
+
+  {{/* ut-docs#2379: a shop with ZERO modifier groups anywhere in the
+       catalog — nothing directly linked, nothing left to attach, nothing
+       inherited from a category — had no way out of this attach-only
+       dialog (ADR-0101) to reach /modifiers, the only place a group can be
+       created. Deliberately gated on all THREE lists being empty, not just
+       ModifierGroups: a shop with an attachable or inherited group already
+       has a real path forward via the pickers above, and a second "go
+       create one" control there would just compete with it. Placed after
+       the inherited section (not right under "No Modifiers yet.") so the
+       operator has already seen there is genuinely nothing here — direct,
+       attachable or inherited — before being offered the way out. Same-tab
+       navigation only (utCatalogGoToModifiers, catalog.html's inline
+       script) — never target="_blank"/window.open, per this dialog's own
+       standing kiosk-chromeless constraint (catalog_variants.html's header
+       comment) — guarded against silently discarding the item form's own
+       unsaved edits underneath. */}}
+  {{ if and (not .ModifierGroups) (not .AttachableGroups) (not .InheritedGroups) }}
+  <div class="catalog-detail-modifiers-empty-cta">
+    <button type="button" class="btn secondary" id="modifier-empty-goto-modifiers"
+            onclick="return utCatalogGoToModifiers()">{{ T "catalog.modifiers.go_to_modifiers" }}</button>
+  </div>
+  {{ end }}
 </div>
 {{ end }}
