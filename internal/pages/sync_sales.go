@@ -132,6 +132,14 @@ func permanentJournalFailureReason(err error) string {
 		// unknown id -- see that function's own comment: it's "a real data
 		// gap... not a race", so it can never resolve itself on retry.
 		return "unknown voucher on redemption replay"
+	case errors.Is(err, data.ErrVoucherSinglePurposeMismatch):
+		// A single-purpose redemption that fails ADR-0105's exact-match
+		// rule on replay (an older peer without the rule, or a hand-built
+		// journal) would fail identically on every retry — the shape of the
+		// sale is the sale. Quarantine it as a Problem for a human; the
+		// money already moved at the issuing till, same reasoning as the
+		// two voucher cases around this one.
+		return "single-purpose voucher redemption does not match its voucher on replay"
 	case errors.Is(err, data.ErrVoucherIDExists):
 		// Colliding voucher code on an issue replay (ut-docs#1053 scenario
 		// 2): vouchers.id is an operator-supplied TEXT PRIMARY KEY, and two
@@ -335,11 +343,16 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 	// with their ORIGINAL ids/labels/amounts so the primary books the same
 	// liability rows (vouchers + voucher_transactions 'issue') the replica
 	// did, and voucher_issue_total/total re-derive identically.
+	// VoucherType/TaxRateBP (ADR-0105): what the ISSUING till stamped wins
+	// over this till's own current setting — an empty type (a pre-ADR-0105
+	// peer's journal) lets CompleteSale resolve it here, today's behaviour.
 	for _, v := range j.Sale.VoucherIssues {
 		in.VoucherIssues = append(in.VoucherIssues, pos.VoucherIssueInput{
 			VoucherID:   v.VoucherID,
 			HolderLabel: v.HolderLabel,
 			Amount:      money.FromMinor(v.Amount),
+			VoucherType: v.VoucherType,
+			TaxRateBP:   v.TaxRateBP,
 		})
 	}
 	for _, l := range j.Sale.Lines {

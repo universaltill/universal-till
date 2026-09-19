@@ -10,6 +10,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/uislot"
 )
@@ -43,10 +44,19 @@ const (
 	// only where an operator genuinely chooses (Settings' Language card, a
 	// store.locale write from the all-settings table, finishing setup);
 	// never by a derivation, for the same reason KeyLocaleConfirmed isn't.
-	KeyLocaleGeneration  = "store.locale_generation"
-	KeyTaxInclusive      = "store.tax_inclusive"
-	KeyTaxRate           = "store.tax_rate"
+	KeyLocaleGeneration = "store.locale_generation"
+	KeyTaxInclusive     = "store.tax_inclusive"
+	// KeyTaxRate is also the fallback rate for single-purpose vouchers
+	// (ADR-0105), which internal/pos resolves at issue time — so the
+	// literal lives there and this is an alias, never a second copy.
+	KeyTaxRate           = pos.SettingKeyStoreTaxRate
 	KeyServiceChargeRate = "store.service_charge_rate_pct"
+	// KeyVoucherDefaultType / KeyVoucherSinglePurposeTaxRateBP (ADR-0105,
+	// ut-docs#1037) are the Settings card's two voucher keys — see
+	// internal/pos/voucher_single_purpose.go, which owns the literals
+	// because CompleteSale reads them at issue time.
+	KeyVoucherDefaultType            = pos.SettingKeyVoucherDefaultType
+	KeyVoucherSinglePurposeTaxRateBP = pos.SettingKeyVoucherSinglePurposeTaxRateBP
 	// KeyAllowNegativeInventory is the shop-wide "let items sell with no
 	// stock behind them" switch, surfaced in Settings as "Sell items
 	// without tracking stock" (ut-docs#1843). It has existed and been

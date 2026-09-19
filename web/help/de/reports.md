@@ -52,6 +52,8 @@ Geschäftstages zählen.
 
 ## Geschenkgutscheine im Tagesabschlussbericht (Z)
 
+Verkauft Ihr Geschäft stattdessen **Einzweck-Gutscheine** (siehe [Gutscheine](/help/vouchers)), zeigt derselbe Abschnitt sie in eigenen Zeilen **SP issued** und **SP redeemed**. Ein Einzweck-Gutschein wird beim Verkauf besteuert, sein Wert ist also normaler Umsatz innerhalb der Steuersatz-Zeilen oben und kein geschuldetes Geld; die Einlösung wird nicht erneut besteuert, sodass der damit bezahlte Verkauf in den Tageseinnahmen enthalten ist, aber in keiner Steuersatz-Zeile — die Zeile **SP redeemed** ist genau diese Differenz.
+
 Verkauft oder akzeptiert Ihr Geschäft Mehrzweck-Geschenkgutscheine, zeigt der
 gedruckte Tagesabschlussbericht einen separaten Abschnitt **GUTSCHEINE**: wie
 viele Gutscheine an diesem Tag ausgestellt und eingelöst wurden und in welcher

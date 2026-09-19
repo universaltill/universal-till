@@ -46,6 +46,7 @@ func TestResolve_ZeroAmendmentsMatchesCoreSettingsExactly(t *testing.T) {
 		{Key: "settings-sell-screen", Label: "Sell screen"},
 		{Key: "settings-categories-tab", Label: "Categories tab"},
 		{Key: "settings-stock-tracking", Label: "Stock"},
+		{Key: "settings-vouchers", Label: "Gift voucher type"},
 		{Key: "settings-backup", Label: "Backups"},
 		{Key: "settings-data", Label: "🧹 Data management"},
 		{Key: "settings-retention", Label: "🗄️ Report retention"},

@@ -45,6 +45,22 @@ Was schiefgehen kann:
 
 Die ältere Methode **Geschenkkarte** in derselben Liste ist eine einfache Zahlungsmethode, die kein Guthaben führt — verwenden Sie **Gutschein** für Gutscheine, die diese Kasse ausgegeben hat.
 
+## Einzweck-Gutscheine
+
+Standardmäßig sind die Gutscheine, die Sie verkaufen, **Mehrzweck-Gutscheine**: für alles einlösbar, die Umsatzsteuer fällt also erst bei der Einlösung an. Gelten Ihre Gutscheine nur für ein bestimmtes Produkt oder einen bestimmten Steuersatz (ein Gutschein für „eine Torte“ oder nur für Waren zu 7 %), behandelt das deutsche Umsatzsteuerrecht sie als **Einzweck-Gutscheine**: Die Umsatzsteuer fällt beim *Verkauf* des Gutscheins an, und die spätere Einlösung wird nicht noch einmal besteuert. Welche Art Ihr Laden verkauft, ist eine Einstellung, die einmal für den ganzen Laden unter **Einstellungen → Gutscheinart** gewählt wird — das Personal wählt an der Kasse nie eine Art, und der Verkauf eines Gutscheins sieht in beiden Fällen genau gleich aus.
+
+Jeder Gutschein behält die Art, unter der er verkauft wurde. Eine spätere Änderung der Einstellung betrifft nur ab dann verkaufte Gutscheine.
+
+1. Öffnen Sie **Einstellungen**, suchen Sie **Gutscheinart** und wählen Sie **Einzweck**.
+2. Geben Sie den **Umsatzsteuersatz** ein, mit dem Ihre Einzweck-Gutscheine besteuert werden. Er beginnt mit dem Regelsatz Ihres Ladens; ändern Sie ihn nur, wenn der Gutschein für ermäßigt besteuerte Waren gilt.
+3. **Speichern**. Ab jetzt wird jeder verkaufte Gutschein auf dem Beleg und im Tagesabschluss mit diesem Satz besteuert — als normaler Umsatz, nicht als geschuldetes Geld.
+
+Was schiefgehen kann:
+
+- Ein Einzweck-Gutschein kann nur als **einzige Zahlung** für einen Verkauf eingelöst werden, dessen Artikel genau seinem Wert entsprechen, alle zu seinem Steuersatz — buchen Sie nur diese Artikel, wählen Sie **Gutschein** als einzige Zahlung über den vollen Betrag und schließen Sie den Verkauf ab. Teilzahlung, Mischen mit Bargeld oder Karte oder Artikel zu einem anderen Satz werden mit einer entsprechenden Meldung abgelehnt.
+- Ein Gutschein, der vor der Umstellung als Mehrzweck-Gutschein verkauft wurde, funktioniert weiterhin wie ein Mehrzweck-Gutschein — nichts wird umklassifiziert.
+- Der Tagesabschluss führt Einzweck-Gutscheine in eigenen Zeilen **SP issued** / **SP redeemed** auf, getrennt von den Mehrzweck-Zahlen.
+
 ## Tagesabschluss und andere Kassen
 
 Der Tagesabschlussbericht (Z-Bericht) hat einen eigenen Abschnitt **GUTSCHEINE** für die an diesem Tag verkauften und eingelösten Gutscheine, und das Stornieren eines Verkaufs, mit dem ein Gutschein verkauft wurde, storniert den Gutschein mit — allerdings nur, solange er unbenutzt ist; siehe [Berichte & Tagesabschluss](/help/reports). Ein an einer Kasse verkaufter Gutschein kann an jeder anderen Kasse im Laden eingelöst werden; wie das funktioniert, während eine Kasse offline ist, steht unter [Mehrere Kassen (ein Laden)](/help/multitill).

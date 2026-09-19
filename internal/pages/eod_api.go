@@ -517,16 +517,36 @@ func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode stri
 	// method. Same footer-line precedent as BY DEPARTMENT / BY TILL above;
 	// "GUTSCHEINE" matches the Germany-pilot Z-report vocabulary the card
 	// specifies. Omitted entirely on a day with no voucher activity.
-	if rep.VouchersIssuedCount > 0 || rep.VouchersRedeemedCount > 0 || rep.VouchersImportedCount > 0 {
+	//
+	// Single-purpose flows (ADR-0105, ut-docs#1037) print as their own two
+	// lines — "SP issued" is taxed revenue already inside the VAT bands
+	// above (informational, never a liability), "SP redeemed" is the
+	// reconciling delta for a sale whose lines are deliberately in no band
+	// (see eod_tax_bands.go). Same own-condition convention as Imported so
+	// a shop that never enables them sees no permanent zero lines; the
+	// section itself opens when ONLY single-purpose flows exist, but the
+	// multi-purpose Issued/Redeemed pair still prints only on its own
+	// activity.
+	anyMulti := rep.VouchersIssuedCount > 0 || rep.VouchersRedeemedCount > 0
+	anySingle := rep.VouchersSinglePurposeIssuedCount > 0 || rep.VouchersSinglePurposeRedeemedCount > 0
+	if anyMulti || rep.VouchersImportedCount > 0 || anySingle {
 		doc.Footer = append(doc.Footer, "", "GUTSCHEINE")
-		doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("Issued (%d)", rep.VouchersIssuedCount), money(rep.VouchersIssued)))
-		doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("Redeemed (%d)", rep.VouchersRedeemedCount), money(rep.VouchersRedeemed)))
+		if anyMulti {
+			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("Issued (%d)", rep.VouchersIssuedCount), money(rep.VouchersIssued)))
+			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("Redeemed (%d)", rep.VouchersRedeemedCount), money(rep.VouchersRedeemed)))
+		}
 		// Imported (ut-docs#1834): a separate line, own condition — most
 		// days have none, and unlike Issued/Redeemed (which always print as
 		// a pair once either is nonzero) this would otherwise add a
 		// permanent "Imported (0)" line to every single day's report.
 		if rep.VouchersImportedCount > 0 {
 			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("Imported (%d)", rep.VouchersImportedCount), money(rep.VouchersImported)))
+		}
+		if rep.VouchersSinglePurposeIssuedCount > 0 {
+			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("SP issued (%d)", rep.VouchersSinglePurposeIssuedCount), money(rep.VouchersSinglePurposeIssued)))
+		}
+		if rep.VouchersSinglePurposeRedeemedCount > 0 {
+			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("SP redeemed (%d)", rep.VouchersSinglePurposeRedeemedCount), money(rep.VouchersSinglePurposeRedeemed)))
 		}
 	}
 	// Cancellations (ut-docs#1012): a completed sale later VOIDED — e.g.

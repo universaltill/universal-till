@@ -21,11 +21,40 @@ import (
 // survive the reset — same soft-reference reasoning as
 // worker_allocations.source_id (ADR-0063).
 //
-// Only voucher_type 'multi_purpose' exists in this card; single-purpose
-// vouchers (VAT at issue) are ut-docs#1037.
+// voucher_type (ADR-0105, ut-docs#1037): 'multi_purpose' is the liability
+// described above; 'single_purpose' (§3 Abs. 15 UStG) is the opposite
+// timing — VAT is due AT ISSUE at the rate stamped in vouchers.tax_rate_bp,
+// and redemption is not a taxable event at all. The type is stamped per
+// row at issue from the shop's vouchers.default_type setting and never
+// changes afterwards (a later settings change never reclassifies an
+// already-issued voucher), which is why every reporting query here filters
+// on the ROW's type, never on the current setting.
+
+// VoucherTypeMultiPurpose / VoucherTypeSinglePurpose are the two values
+// vouchers.voucher_type's CHECK constraint admits (migration 036).
+const (
+	VoucherTypeMultiPurpose  = "multi_purpose"
+	VoucherTypeSinglePurpose = "single_purpose"
+)
 
 // ErrVoucherNotFound is returned when a voucher id has no vouchers row.
 var ErrVoucherNotFound = errors.New("voucher not found")
+
+// ErrVoucherSinglePurposeMismatch (ADR-0105 Decision 4) is returned by
+// pos.CompleteSale when a single-purpose voucher is tendered for anything
+// other than the exact, sole payment of a sale whose lines total the
+// voucher's own original_amount at its own stamped tax_rate_bp — mixed
+// tender, partial redemption, a different total, a line at another rate.
+// VAT on a single-purpose voucher was already collected at issue, and
+// redemption must add none; without a payment-to-line attribution
+// mechanism (a v1 non-goal) the only shape this codebase can prove adds
+// zero VAT is the exact whole-sale match, so anything else is refused
+// outright — fail-closed, same family as the sentinels above — rather than
+// silently mis-taxed. Defined here, not in internal/pos, so every layer
+// that classifies voucher failures (the tender handler's error mapping,
+// journal replay's permanent-vs-retryable split) finds it beside its
+// siblings.
+var ErrVoucherSinglePurposeMismatch = errors.New("a single-purpose voucher must be the sole, exact payment for a sale matching its own value and tax rate")
 
 // ErrVoucherIDExists is returned by CreateVoucher when the id is already
 // taken (vouchers.id is the operator-supplied TEXT PRIMARY KEY -- ut-docs#1127,
@@ -84,9 +113,50 @@ type Voucher struct {
 	BalanceMinor        int64  `json:"balance"`
 	Currency            string `json:"currency"`
 	VoucherType         string `json:"voucher_type"`
-	Status              string `json:"status"`
-	IssuedSaleID        string `json:"issued_sale_id"`
-	CreatedAt           string `json:"created_at"`
+	// TaxRateBP (ADR-0105, migration 036) is the basis-point rate a
+	// SINGLE-PURPOSE voucher was taxed at when issued — stamped once, read
+	// back by redemption validation and reporting so neither ever re-reads
+	// the (possibly since-changed) settings row. Meaningful only when
+	// VoucherType is VoucherTypeSinglePurpose; a multi-purpose voucher
+	// stores NULL and reads back as 0 here (the type, not this field, is
+	// what tells the two apart — a single-purpose voucher for zero-rated
+	// goods legitimately carries 0). omitempty keeps the cross-till JSON
+	// additive for a pre-ADR-0105 peer (ut-docs#1668's lookup/redeem
+	// endpoints ride this struct).
+	TaxRateBP    int    `json:"tax_rate_bp,omitempty"`
+	Status       string `json:"status"`
+	IssuedSaleID string `json:"issued_sale_id"`
+	CreatedAt    string `json:"created_at"`
+}
+
+// voucherTaxRateArg is the DB-boundary form of Voucher.TaxRateBP: NULL for
+// anything but a single-purpose voucher (no rate is fixed until redemption
+// determines it — the column's documented meaning), the stamped rate
+// otherwise.
+func voucherTaxRateArg(v Voucher) any {
+	if v.VoucherType != VoucherTypeSinglePurpose {
+		return nil
+	}
+	return v.TaxRateBP
+}
+
+// validateVoucherType is the shared shape check CreateVoucher and
+// EnsureVoucherLocalRow apply before writing: the type must be one the
+// CHECK constraint admits (so a bad value fails here with a readable
+// message, not a raw constraint error), and a single-purpose voucher must
+// carry a non-negative rate.
+func validateVoucherType(v Voucher) error {
+	switch v.VoucherType {
+	case VoucherTypeMultiPurpose:
+		return nil
+	case VoucherTypeSinglePurpose:
+		if v.TaxRateBP < 0 {
+			return fmt.Errorf("single-purpose voucher tax rate must be >= 0 basis points, got %d", v.TaxRateBP)
+		}
+		return nil
+	default:
+		return fmt.Errorf("invalid voucher type %q", v.VoucherType)
+	}
 }
 
 // VoucherTransaction is one voucher_transactions row — a single issue or
@@ -111,15 +181,18 @@ func (r *POSRepo) CreateVoucher(ctx context.Context, tx *sql.Tx, v Voucher) erro
 		return fmt.Errorf("create voucher: amount must be > 0")
 	}
 	if v.VoucherType == "" {
-		v.VoucherType = "multi_purpose"
+		v.VoucherType = VoucherTypeMultiPurpose
+	}
+	if err := validateVoucherType(v); err != nil {
+		return fmt.Errorf("create voucher: %w", err)
 	}
 	if v.Status == "" {
 		v.Status = "active"
 	}
 	_, err := r.exec(tx).ExecContext(ctx, `
-INSERT INTO vouchers (id, holder_label, original_amount, balance, currency, voucher_type, status, issued_sale_id, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, v.ID, nullIfEmpty(v.HolderLabel), v.OriginalAmountMinor, v.BalanceMinor, v.Currency, v.VoucherType, v.Status, nullIfEmpty(v.IssuedSaleID), v.CreatedAt)
+INSERT INTO vouchers (id, holder_label, original_amount, balance, currency, voucher_type, status, issued_sale_id, created_at, tax_rate_bp)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, v.ID, nullIfEmpty(v.HolderLabel), v.OriginalAmountMinor, v.BalanceMinor, v.Currency, v.VoucherType, v.Status, nullIfEmpty(v.IssuedSaleID), v.CreatedAt, voucherTaxRateArg(v))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("create voucher %q: %w", v.ID, ErrVoucherIDExists)
@@ -257,6 +330,15 @@ func (r *POSRepo) ReserveVoucherRedemption(ctx context.Context, tx *sql.Tx, vouc
 	if err != nil {
 		return Voucher{}, err
 	}
+	// ADR-0105 Decision 4, the half of the exact-match rule this path can
+	// see: a single-purpose voucher is redeemed for its full face value or
+	// not at all — no partial reservation. (Whether the redeeming sale's
+	// lines match is the replica's own pos.CompleteSale's check, which runs
+	// right after this reservation succeeds and releases it on failure.)
+	if before.VoucherType == VoucherTypeSinglePurpose && amountMinor != before.OriginalAmountMinor {
+		return Voucher{}, fmt.Errorf("reserve voucher redemption %q (tendered %d, face value %d): %w",
+			voucherID, amountMinor, before.OriginalAmountMinor, ErrVoucherSinglePurposeMismatch)
+	}
 	if err := r.DebitVoucherForRedemption(ctx, tx, voucherID, amountMinor, false); err != nil {
 		return Voucher{}, err
 	}
@@ -330,9 +412,9 @@ func (r *POSRepo) GetVoucherBalance(ctx context.Context, tx *sql.Tx, id string) 
 	var v Voucher
 	var holder, issuedSale sql.NullString
 	err := r.exec(tx).QueryRowContext(ctx, `
-SELECT id, holder_label, original_amount, balance, currency, voucher_type, status, issued_sale_id, created_at
+SELECT id, holder_label, original_amount, balance, currency, voucher_type, status, issued_sale_id, created_at, COALESCE(tax_rate_bp, 0)
 FROM vouchers WHERE id = ?`, id).
-		Scan(&v.ID, &holder, &v.OriginalAmountMinor, &v.BalanceMinor, &v.Currency, &v.VoucherType, &v.Status, &issuedSale, &v.CreatedAt)
+		Scan(&v.ID, &holder, &v.OriginalAmountMinor, &v.BalanceMinor, &v.Currency, &v.VoucherType, &v.Status, &issuedSale, &v.CreatedAt, &v.TaxRateBP)
 	if err == sql.ErrNoRows {
 		return v, fmt.Errorf("voucher %q: %w", id, ErrVoucherNotFound)
 	}
@@ -363,15 +445,18 @@ func (r *POSRepo) EnsureVoucherLocalRow(ctx context.Context, tx *sql.Tx, v Vouch
 		return fmt.Errorf("ensure voucher local row: id is required")
 	}
 	if v.VoucherType == "" {
-		v.VoucherType = "multi_purpose"
+		v.VoucherType = VoucherTypeMultiPurpose
+	}
+	if err := validateVoucherType(v); err != nil {
+		return fmt.Errorf("ensure voucher local row %q: %w", v.ID, err)
 	}
 	if v.Status == "" {
 		v.Status = "active"
 	}
 	_, err := r.exec(tx).ExecContext(ctx, `
-INSERT OR IGNORE INTO vouchers (id, holder_label, original_amount, balance, currency, voucher_type, status, issued_sale_id, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, v.ID, nullIfEmpty(v.HolderLabel), v.OriginalAmountMinor, v.BalanceMinor, v.Currency, v.VoucherType, v.Status, nullIfEmpty(v.IssuedSaleID), v.CreatedAt)
+INSERT OR IGNORE INTO vouchers (id, holder_label, original_amount, balance, currency, voucher_type, status, issued_sale_id, created_at, tax_rate_bp)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, v.ID, nullIfEmpty(v.HolderLabel), v.OriginalAmountMinor, v.BalanceMinor, v.Currency, v.VoucherType, v.Status, nullIfEmpty(v.IssuedSaleID), v.CreatedAt, voucherTaxRateArg(v))
 	if err != nil {
 		return fmt.Errorf("ensure voucher local row %q: %w", v.ID, err)
 	}
@@ -559,13 +644,95 @@ WHERE id = ? AND status = 'active' AND balance = original_amount`, id)
 // actually on the books — an imported voucher later redeemed has a
 // traceable origin in the report history, not a redemption with no
 // matching issue anywhere.
+//
+// SinglePurpose{Issued,Redeemed}{Count,Minor} (ADR-0105, ut-docs#1037) are
+// the single-purpose voucher flows, in buckets of their own and NEVER
+// folded into Issued/Redeemed: a single-purpose issue is not a liability
+// but ordinary taxed revenue already sitting in a normal VAT band (counting
+// it under GUTSCHEINE too would overstate Gesamtumsatz), and a single-
+// purpose redemption is not a taxable event (its sale's lines are left out
+// of the bands, so this bucket is the reconciling delta that keeps
+// sum(band.Gross) == Net − vouchers issued − single-purpose redeemed —
+// eod_tax_bands.go documents the identity). Reported so the day stays
+// auditable, informational only.
 type VoucherRangeSummary struct {
-	IssuedCount   int   `json:"issued_count"`
-	IssuedMinor   int64 `json:"issued"`
-	RedeemedCount int   `json:"redeemed_count"`
-	RedeemedMinor int64 `json:"redeemed"`
-	ImportedCount int   `json:"imported_count"`
-	ImportedMinor int64 `json:"imported"`
+	IssuedCount                int   `json:"issued_count"`
+	IssuedMinor                int64 `json:"issued"`
+	RedeemedCount              int   `json:"redeemed_count"`
+	RedeemedMinor              int64 `json:"redeemed"`
+	ImportedCount              int   `json:"imported_count"`
+	ImportedMinor              int64 `json:"imported"`
+	SinglePurposeIssuedCount   int   `json:"single_purpose_issued_count"`
+	SinglePurposeIssuedMinor   int64 `json:"single_purpose_issued"`
+	SinglePurposeRedeemedCount int   `json:"single_purpose_redeemed_count"`
+	SinglePurposeRedeemedMinor int64 `json:"single_purpose_redeemed"`
+}
+
+// voucherRangeSelect is the projection + grouping both range queries share:
+// one row per (transaction type, imported?, single-purpose?) so
+// addVoucherRangeRow can bucket it. The vouchers join is an INNER join on
+// the FK (every voucher_transactions row references a vouchers row by
+// constraint), so it can never drop a transaction.
+const voucherRangeSelect = `
+SELECT vt.type, (vt.sale_id IS NULL), (v.voucher_type = 'single_purpose'), COUNT(*), COALESCE(SUM(vt.amount), 0)
+FROM voucher_transactions vt
+JOIN vouchers v ON v.id = vt.voucher_id
+LEFT JOIN sales s ON s.id = vt.sale_id
+WHERE `
+
+const voucherRangeGroup = `
+  AND (s.id IS NULL OR s.status != 'voided')
+GROUP BY vt.type, (vt.sale_id IS NULL), (v.voucher_type = 'single_purpose')`
+
+// addVoucherRangeRow buckets one grouped row. Precedence: a single-purpose
+// row lands in its own bucket whatever else is true of it (an import is by
+// construction multi-purpose — import_vouchers_page.go never stamps a
+// type — so the singlePurpose && imported combination cannot occur today,
+// and if it ever did the single-purpose classification is the one that
+// keeps the VAT figures honest); then Imported; then Issued/Redeemed.
+func addVoucherRangeRow(out *VoucherRangeSummary, txType string, imported, singlePurpose bool, count int, amount int64) {
+	switch {
+	case txType == "issue" && singlePurpose:
+		out.SinglePurposeIssuedCount += count
+		out.SinglePurposeIssuedMinor += amount
+	case txType == "redemption" && singlePurpose:
+		out.SinglePurposeRedeemedCount += count
+		out.SinglePurposeRedeemedMinor += amount
+	case txType == "issue" && imported:
+		out.ImportedCount += count
+		out.ImportedMinor += amount
+	case txType == "issue":
+		out.IssuedCount += count
+		out.IssuedMinor += amount
+	case txType == "redemption":
+		// A redemption always carries a real sale_id
+		// (ReserveVoucherRedemption/pos.CompleteSale both require one
+		// non-empty) — imported is never true here in practice, but this
+		// case still only matches on txType so a future redemption-
+		// without-a-sale shape (none exists today) would still count as
+		// Redeemed rather than silently vanish.
+		out.RedeemedCount += count
+		out.RedeemedMinor += amount
+	}
+}
+
+// scanVoucherRange drains one voucherRangeSelect result set into out.
+func scanVoucherRange(rows *sql.Rows, out *VoucherRangeSummary, label string) error {
+	defer rows.Close()
+	for rows.Next() {
+		var txType string
+		var isImported, isSinglePurpose bool
+		var count int
+		var amount int64
+		if err := rows.Scan(&txType, &isImported, &isSinglePurpose, &count, &amount); err != nil {
+			return fmt.Errorf("%s: scan: %w", label, err)
+		}
+		addVoucherRangeRow(out, txType, isImported, isSinglePurpose, count, amount)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("%s: %w", label, err)
+	}
+	return nil
 }
 
 // VouchersIssuedRedeemedForRange aggregates voucher_transactions over
@@ -596,44 +763,18 @@ type VoucherRangeSummary struct {
 // misclassified as Issued, and a genuine sale-issued voucher can never be
 // misclassified as Imported. See VoucherRangeSummary's own doc comment for
 // why this is a separate bucket rather than an outright exclusion.
+//
+// A single-purpose voucher's rows (ADR-0105) are bucketed by the ROW's own
+// vouchers.voucher_type — see VoucherRangeSummary and addVoucherRangeRow.
 func (r *POSRepo) VouchersIssuedRedeemedForRange(ctx context.Context, from, to string) (VoucherRangeSummary, error) {
 	var out VoucherRangeSummary
-	rows, err := r.db.QueryContext(ctx, `
-SELECT vt.type, (vt.sale_id IS NULL), COUNT(*), COALESCE(SUM(vt.amount), 0)
-FROM voucher_transactions vt
-LEFT JOIN sales s ON s.id = vt.sale_id
-WHERE date(vt.created_at, 'localtime') BETWEEN date(?) AND date(?)
-  AND (s.id IS NULL OR s.status != 'voided')
-GROUP BY vt.type, (vt.sale_id IS NULL)`, from, to)
+	rows, err := r.db.QueryContext(ctx, voucherRangeSelect+
+		`date(vt.created_at, 'localtime') BETWEEN date(?) AND date(?)`+voucherRangeGroup, from, to)
 	if err != nil {
 		return out, fmt.Errorf("vouchers issued/redeemed for range: %w", err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var txType string
-		var isImported bool
-		var count int
-		var amount int64
-		if err := rows.Scan(&txType, &isImported, &count, &amount); err != nil {
-			return out, fmt.Errorf("vouchers issued/redeemed for range: scan: %w", err)
-		}
-		switch {
-		case txType == "issue" && isImported:
-			out.ImportedCount, out.ImportedMinor = count, amount
-		case txType == "issue":
-			out.IssuedCount, out.IssuedMinor = count, amount
-		case txType == "redemption":
-			// A redemption always carries a real sale_id
-			// (ReserveVoucherRedemption/pos.CompleteSale both require one
-			// non-empty) — isImported is never true here in practice, but
-			// the switch still only matches on txType for this case so a
-			// future redemption-without-a-sale shape (none exists today)
-			// would still count as Redeemed rather than silently vanish.
-			out.RedeemedCount, out.RedeemedMinor = count, amount
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return out, fmt.Errorf("vouchers issued/redeemed for range: %w", err)
+	if err := scanVoucherRange(rows, &out, "vouchers issued/redeemed for range"); err != nil {
+		return out, err
 	}
 	return out, nil
 }
@@ -653,36 +794,12 @@ GROUP BY vt.type, (vt.sale_id IS NULL)`, from, to)
 func (r *POSRepo) VouchersIssuedRedeemedForInstantWindow(ctx context.Context, from, to time.Time) (VoucherRangeSummary, error) {
 	win, args := instantWindow("vt.created_at", from, to)
 	var out VoucherRangeSummary
-	rows, err := r.db.QueryContext(ctx, `
-SELECT vt.type, (vt.sale_id IS NULL), COUNT(*), COALESCE(SUM(vt.amount), 0)
-FROM voucher_transactions vt
-LEFT JOIN sales s ON s.id = vt.sale_id
-WHERE `+win+`
-  AND (s.id IS NULL OR s.status != 'voided')
-GROUP BY vt.type, (vt.sale_id IS NULL)`, args...)
+	rows, err := r.db.QueryContext(ctx, voucherRangeSelect+win+voucherRangeGroup, args...)
 	if err != nil {
 		return out, fmt.Errorf("vouchers issued/redeemed for instant window: %w", err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var txType string
-		var isImported bool
-		var count int
-		var amount int64
-		if err := rows.Scan(&txType, &isImported, &count, &amount); err != nil {
-			return out, fmt.Errorf("vouchers issued/redeemed for instant window: scan: %w", err)
-		}
-		switch {
-		case txType == "issue" && isImported:
-			out.ImportedCount, out.ImportedMinor = count, amount
-		case txType == "issue":
-			out.IssuedCount, out.IssuedMinor = count, amount
-		case txType == "redemption":
-			out.RedeemedCount, out.RedeemedMinor = count, amount
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return out, fmt.Errorf("vouchers issued/redeemed for instant window: %w", err)
+	if err := scanVoucherRange(rows, &out, "vouchers issued/redeemed for instant window"); err != nil {
+		return out, err
 	}
 	return out, nil
 }

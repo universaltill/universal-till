@@ -1787,7 +1787,14 @@ ORDER BY sl.sale_id, sl.line_no`, fromStr, toStr)
 			out[i].Lines = append(out[i].Lines, l)
 		}
 	}
-	return out, lineRows.Err()
+	if err := lineRows.Err(); err != nil {
+		return nil, err
+	}
+	if err := r.attachSinglePurposeVoucherFlows(ctx, out, idx,
+		`datetime(s.created_at) >= datetime(?) AND datetime(s.created_at) < datetime(?)`, []any{fromStr, toStr}, "tax window"); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // MarginRow is one item's revenue vs cost over the reporting window (only
@@ -2476,11 +2483,22 @@ type EODReport struct {
 	// reported in a bucket of their own, distinct from VouchersIssued — see
 	// VoucherRangeSummary's doc comment (internal/data/voucher_repo.go) for
 	// why an import is never folded into Issued.
-	VouchersImportedCount int    `json:"vouchers_imported_count"`
-	VouchersImported      int64  `json:"vouchers_imported"`
-	FirstReceipt          string `json:"first_receipt"`
-	LastReceipt           string `json:"last_receipt"`
-	GeneratedAt           string `json:"generated_at"`
+	VouchersImportedCount int   `json:"vouchers_imported_count"`
+	VouchersImported      int64 `json:"vouchers_imported"`
+	// VouchersSinglePurpose{Issued,Redeemed}(Count) (ADR-0105, ut-docs#1037):
+	// single-purpose voucher flows, in buckets of their own — NEVER folded
+	// into VouchersIssued/VouchersRedeemed. An issue is ordinary taxed
+	// revenue (inside Gross, inside a normal VAT band), not a liability; a
+	// redemption is not a taxable event (its sale's lines stay OUT of the
+	// bands), so it is the reconciling delta eod_tax_bands.go's identity
+	// names. See VoucherRangeSummary (voucher_repo.go).
+	VouchersSinglePurposeIssuedCount   int    `json:"vouchers_single_purpose_issued_count"`
+	VouchersSinglePurposeIssued        int64  `json:"vouchers_single_purpose_issued"`
+	VouchersSinglePurposeRedeemedCount int    `json:"vouchers_single_purpose_redeemed_count"`
+	VouchersSinglePurposeRedeemed      int64  `json:"vouchers_single_purpose_redeemed"`
+	FirstReceipt                       string `json:"first_receipt"`
+	LastReceipt                        string `json:"last_receipt"`
+	GeneratedAt                        string `json:"generated_at"`
 	// GeneratedBy/Annotation (ut-docs#1012) are filled by internal/pages'
 	// generateEOD, NOT by EndOfDay/EndOfDayRange themselves (same
 	// layering convention as TaxBands/MethodTaxBands above — the actor
@@ -2794,12 +2812,7 @@ WHERE status = 'voided' AND (
 	if err != nil {
 		return rep, fmt.Errorf("eod vouchers: %w", err)
 	}
-	rep.VouchersIssuedCount = vouchers.IssuedCount
-	rep.VouchersIssued = vouchers.IssuedMinor
-	rep.VouchersRedeemedCount = vouchers.RedeemedCount
-	rep.VouchersRedeemed = vouchers.RedeemedMinor
-	rep.VouchersImportedCount = vouchers.ImportedCount
-	rep.VouchersImported = vouchers.ImportedMinor
+	applyVoucherFlows(&rep, vouchers)
 
 	rows, err := r.db.QueryContext(ctx, `
 SELECT p.method_id,
@@ -3049,12 +3062,7 @@ WHERE status = 'voided' AND `+vwin, vargs...).Scan(&rep.CancelCount, &rep.Cancel
 	if err != nil {
 		return rep, fmt.Errorf("eod instant vouchers: %w", err)
 	}
-	rep.VouchersIssuedCount = vouchers.IssuedCount
-	rep.VouchersIssued = vouchers.IssuedMinor
-	rep.VouchersRedeemedCount = vouchers.RedeemedCount
-	rep.VouchersRedeemed = vouchers.RedeemedMinor
-	rep.VouchersImportedCount = vouchers.ImportedCount
-	rep.VouchersImported = vouchers.ImportedMinor
+	applyVoucherFlows(&rep, vouchers)
 
 	mwin, margs := instantWindow("s.created_at", from, to)
 	rows, err := r.db.QueryContext(ctx, `
@@ -3211,11 +3219,92 @@ type EODTaxBandSale struct {
 	// face value in any band (a 0% liability, not a taxable supply).
 	VoucherIssueTotal int64
 	Lines             []EODTaxBandLine
+	// SinglePurposeVoucherIssues (ADR-0105 Decision 3, ut-docs#1037): the
+	// single-purpose vouchers this sale ISSUED — each a taxable supply at
+	// its stamped rate, deliberately never a sale_lines row (that table's
+	// CHECK requires a catalog identity), so the banding layer injects each
+	// as a synthetic line exactly the way pos.computeSaleTotals did when the
+	// sale was persisted. Without this the day-close re-derivation would
+	// under-declare VAT for exactly the sales that issued one. Multi-purpose
+	// issues never appear here (they are the 0% liability above).
+	SinglePurposeVoucherIssues []EODTaxBandVoucherIssue
+	// SinglePurposeRedeemed (ADR-0105 Decision 4): the summed amount of the
+	// single-purpose voucher(s) redeemed IN this sale — nonzero marks a sale
+	// whose lines must be left OUT of every VAT band (VAT was collected at
+	// issue; redemption is not a taxable event). Under v1's exact-whole-sale
+	// rule this is either 0 or the sale's whole total.
+	SinglePurposeRedeemed int64
 	// Payments (ut-docs#1004): the sale's tendered revenue per method, for
 	// the method x VAT-rate cross-tab's apportionment. Ordered by method_id
 	// within the sale (the query's ORDER BY), which the apportionment
 	// relies on for a stable "last payment takes the remainder" rule.
 	Payments []EODTaxBandPayment
+}
+
+// EODTaxBandVoucherIssue is one single-purpose voucher issued in a sale, in
+// the two figures the banding needs: the face value (gross — what the
+// customer paid, tax embedded) and the rate it was taxed at.
+type EODTaxBandVoucherIssue struct {
+	Amount int64
+	RateBP int
+}
+
+// applyVoucherFlows copies one VoucherRangeSummary onto the report — one
+// place, so the calendar-day and instant-window report paths can never
+// carry a different subset of the voucher buckets.
+func applyVoucherFlows(rep *EODReport, v VoucherRangeSummary) {
+	rep.VouchersIssuedCount = v.IssuedCount
+	rep.VouchersIssued = v.IssuedMinor
+	rep.VouchersRedeemedCount = v.RedeemedCount
+	rep.VouchersRedeemed = v.RedeemedMinor
+	rep.VouchersImportedCount = v.ImportedCount
+	rep.VouchersImported = v.ImportedMinor
+	rep.VouchersSinglePurposeIssuedCount = v.SinglePurposeIssuedCount
+	rep.VouchersSinglePurposeIssued = v.SinglePurposeIssuedMinor
+	rep.VouchersSinglePurposeRedeemedCount = v.SinglePurposeRedeemedCount
+	rep.VouchersSinglePurposeRedeemed = v.SinglePurposeRedeemedMinor
+}
+
+// attachSinglePurposeVoucherFlows is the fourth fixed query behind
+// SalesForTaxBands / SalesForTaxBandsInstant / SalesForTaxWindow (ADR-0105):
+// every single-purpose voucher_transactions row whose sale is in `out`
+// (matched by the caller-supplied sale predicate, so the window rule stays
+// the caller's), grouped per sale in Go. Voided sales are already absent
+// from idx (the header query filters status = 'completed'), so their rows
+// fall through the idx lookup. Multi-purpose rows are excluded at the
+// query: an issue is the 0% liability the header's voucher_issue_total
+// already carries, a redemption is just a payment method.
+func (r *POSRepo) attachSinglePurposeVoucherFlows(ctx context.Context, out []EODTaxBandSale, idx map[string]int, salePredicate string, args []any, label string) error {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT vt.sale_id, vt.type, vt.amount, COALESCE(v.tax_rate_bp, 0)
+FROM voucher_transactions vt
+JOIN vouchers v ON v.id = vt.voucher_id
+JOIN sales s ON s.id = vt.sale_id
+WHERE v.voucher_type = 'single_purpose' AND s.status = 'completed' AND `+salePredicate+`
+ORDER BY vt.sale_id, vt.rowid`, args...)
+	if err != nil {
+		return fmt.Errorf("%s single-purpose voucher flows: %w", label, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var saleID, txType string
+		var amount int64
+		var rateBP int
+		if err := rows.Scan(&saleID, &txType, &amount, &rateBP); err != nil {
+			return fmt.Errorf("scan %s single-purpose voucher flow: %w", label, err)
+		}
+		i, ok := idx[saleID]
+		if !ok {
+			continue
+		}
+		switch txType {
+		case "issue":
+			out[i].SinglePurposeVoucherIssues = append(out[i].SinglePurposeVoucherIssues, EODTaxBandVoucherIssue{Amount: amount, RateBP: rateBP})
+		case "redemption":
+			out[i].SinglePurposeRedeemed += amount
+		}
+	}
+	return rows.Err()
 }
 
 // EODTaxBandPayment is one payment's tendered REVENUE share for a sale
@@ -3322,7 +3411,16 @@ GROUP BY p.sale_id, p.method_id ORDER BY p.sale_id, p.method_id`, from, to)
 			out[i].Payments = append(out[i].Payments, p)
 		}
 	}
-	return out, payRows.Err()
+	if err := payRows.Err(); err != nil {
+		return nil, err
+	}
+	// Single-purpose voucher flows per sale (ADR-0105) — the fourth fixed
+	// query, same window predicate as the three above.
+	if err := r.attachSinglePurposeVoucherFlows(ctx, out, idx,
+		`s.local_date BETWEEN date(?) AND date(?)`, []any{from, to}, "eod band"); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // SalesForTaxBandsInstant is SalesForTaxBands' close-to-close sibling
@@ -3413,7 +3511,15 @@ GROUP BY p.sale_id, p.method_id ORDER BY p.sale_id, p.method_id`, sargs...)
 			out[i].Payments = append(out[i].Payments, p)
 		}
 	}
-	return out, payRows.Err()
+	if err := payRows.Err(); err != nil {
+		return nil, err
+	}
+	// Single-purpose voucher flows per sale (ADR-0105) — same instant
+	// window predicate as the lines/payments queries above.
+	if err := r.attachSinglePurposeVoucherFlows(ctx, out, idx, swin, sargs, "eod instant band"); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // ArchiveReport stores a generated report; kind+period is unique so the
@@ -7155,6 +7261,16 @@ type SaleDetailVoucherIssue struct {
 	VoucherID   string `json:"voucher_id"`
 	HolderLabel string `json:"holder_label,omitempty"`
 	Amount      int64  `json:"amount"`
+	// VoucherType/TaxRateBP (ADR-0105, ut-docs#1037) carry the
+	// classification the ISSUING till stamped, so a primary replaying this
+	// sale books the same type and rate rather than re-resolving them from
+	// its own settings at replay time (a later settings change must never
+	// reclassify an already-issued voucher). Both omitempty: a pre-ADR-0105
+	// peer's journal simply lacks them, which applyJournal reads as "resolve
+	// from the shop setting" — today's only behaviour, so the wire stays
+	// additive.
+	VoucherType string `json:"voucher_type,omitempty"`
+	TaxRateBP   int    `json:"tax_rate_bp,omitempty"`
 }
 
 type SaleDetailLine struct {
@@ -7331,7 +7447,7 @@ FROM payments WHERE sale_id = ? ORDER BY paid_at`, d.ID)
 	// traversal. The issue transaction's amount IS the face value; the
 	// holder label lives on the vouchers row.
 	viRows, err := r.db.QueryContext(ctx, `
-SELECT vt.voucher_id, COALESCE(v.holder_label, ''), vt.amount
+SELECT vt.voucher_id, COALESCE(v.holder_label, ''), vt.amount, v.voucher_type, COALESCE(v.tax_rate_bp, 0)
 FROM voucher_transactions vt
 JOIN vouchers v ON v.id = vt.voucher_id
 WHERE vt.sale_id = ? AND vt.type = 'issue'
@@ -7342,7 +7458,7 @@ ORDER BY vt.rowid`, d.ID)
 	defer viRows.Close()
 	for viRows.Next() {
 		var vi SaleDetailVoucherIssue
-		if err := viRows.Scan(&vi.VoucherID, &vi.HolderLabel, &vi.Amount); err != nil {
+		if err := viRows.Scan(&vi.VoucherID, &vi.HolderLabel, &vi.Amount, &vi.VoucherType, &vi.TaxRateBP); err != nil {
 			return SaleDetail{}, false, fmt.Errorf("scan sale voucher issue: %w", err)
 		}
 		d.VoucherIssues = append(d.VoucherIssues, vi)

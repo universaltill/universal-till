@@ -811,6 +811,52 @@
   });
 })();
 </script>
+<!-- ADR-0105 (ut-docs#1037): the shop-wide gift voucher type. Chosen once,
+     here, never per sale (SumUp's shipped precedent): multi-purpose is the
+     ut-docs#1008 liability (VAT when spent); single-purpose is taxed when
+     SOLD at the rate below, and can only be spent as the sole exact payment
+     for matching goods — that restriction is spelled out on the card itself
+     so a merchant enabling it understands it up front. Same hx-post/
+     elevation-wired shape as the stock card above; the server decides
+     (settings_page.go). -->
+<div class="card settings-wide" id="settings-vouchers">
+  <h2>{{ T "vouchers.settings.title" }} {{ helpLink "vouchers" }}</h2>
+  <p class="muted">{{ T "vouchers.settings.help" }}</p>
+  <form id="voucher-type-form" hx-post="/api/settings/voucher-type" hx-swap="none"
+        hx-on::before-request="document.getElementById('voucher-type-msg').textContent=''"
+        hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}">
+    <div class="set-row">
+      <label for="voucher-type-select">{{ T "vouchers.settings.type_label" }}</label>
+      <select id="voucher-type-select" name="type">
+        <option value="multi_purpose"{{ if eq .voucherType "multi_purpose" }} selected{{ end }}>{{ T "vouchers.settings.type_multi" }}</option>
+        <option value="single_purpose"{{ if eq .voucherType "single_purpose" }} selected{{ end }}>{{ T "vouchers.settings.type_single" }}</option>
+      </select>
+    </div>
+    <div class="set-row">
+      <label for="voucher-sp-rate">{{ T "vouchers.settings.rate_label" }}</label>
+      <input id="voucher-sp-rate" name="tax_rate_pct" type="number" inputmode="decimal" min="0" step="0.01" value="{{ .voucherRatePct }}" style="max-width:6rem">
+      <span class="muted">%</span>
+    </div>
+    <p class="muted">{{ T "vouchers.settings.rate_hint" }}</p>
+    <p class="muted">{{ T "vouchers.settings.redemption_note" }}</p>
+    <div class="set-row set-below">
+      <button class="btn" type="submit">{{ T "vouchers.settings.save" }}</button>
+      <span id="voucher-type-msg" aria-live="polite" class="muted"></span>
+    </div>
+  </form>
+</div>
+<script>
+(function () {
+  var f = document.getElementById('voucher-type-form');
+  if (!f) return;
+  var msg = document.getElementById('voucher-type-msg');
+  var T = { saved: "{{ T "settings.display.change_saved" }}" };
+  f.addEventListener('htmx:afterRequest', function (ev) {
+    var ct = ev.detail.xhr.getResponseHeader('Content-Type') || '';
+    if (ev.detail.successful && ct.indexOf('text/html') === -1) { renderNotice(msg, 'success', T.saved); }
+  });
+})();
+</script>
 <div class="card settings-wide" id="settings-backup">
   <h2>{{ T "settings.backup.title" }} {{ helpLink "backups" }}</h2>
   <p class="muted">{{ T "settings.backup.help" }}</p>

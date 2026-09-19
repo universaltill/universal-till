@@ -80,10 +80,38 @@ func voucherFromSyncRow(row syncVoucherRow) data.Voucher {
 		BalanceMinor:        row.Balance,
 		Currency:            row.Currency,
 		VoucherType:         row.VoucherType,
+		TaxRateBP:           row.TaxRateBP,
 		Status:              row.Status,
 		IssuedSaleID:        row.IssuedSaleID,
 		CreatedAt:           row.CreatedAt,
 	}
+}
+
+// syncVoucherRefusalError maps one of the primary's stable 409 reason
+// strings (sync_vouchers.go) to the matching data sentinel, or nil for a
+// reason this build does not recognise (the caller then falls back to a
+// local attempt, exactly as before). One table, so the primary's vocabulary
+// and this side's classification can never drift apart silently.
+func syncVoucherRefusalError(voucherID, reason string) error {
+	switch reason {
+	case syncVoucherErrNotActive:
+		return fmt.Errorf("voucher %q refused by primary: %w", voucherID, data.ErrVoucherNotActive)
+	case syncVoucherErrInsufficientBalance:
+		return fmt.Errorf("voucher %q refused by primary: %w", voucherID, data.ErrVoucherInsufficientBalance)
+	case syncVoucherErrAmountMismatch:
+		// Not reachable from this repo's own client (a given sale id
+		// always carries the same amount across retries) — a definitive
+		// refusal, not a fallback, precisely because it can only mean a
+		// caller is claiming something inconsistent with what the
+		// primary already committed (independent review finding).
+		return fmt.Errorf("voucher %q retried at a different amount than the primary already recorded: %w", voucherID, data.ErrVoucherRedemptionAmountMismatch)
+	case syncVoucherErrSinglePurposeMismatch:
+		// ADR-0105: a single-purpose voucher tendered for less than its
+		// face value — definitive; the cashier is told to ring exactly the
+		// voucher's goods and pay with nothing else.
+		return fmt.Errorf("voucher %q refused by primary: %w", voucherID, data.ErrVoucherSinglePurposeMismatch)
+	}
+	return nil
 }
 
 // fetchVoucherFromPrimary tries GET /api/sync/vouchers/{id} on the primary.
@@ -228,18 +256,8 @@ func reserveVoucherOnPrimary(ctx context.Context, d *common.Deps, client *http.C
 			Error string `json:"error"`
 		}
 		_ = json.NewDecoder(resp.Body).Decode(&out)
-		switch out.Error {
-		case syncVoucherErrNotActive:
-			return data.Voucher{}, false, false, fmt.Errorf("voucher %q refused by primary: %w", voucherID, data.ErrVoucherNotActive)
-		case syncVoucherErrInsufficientBalance:
-			return data.Voucher{}, false, false, fmt.Errorf("voucher %q refused by primary: %w", voucherID, data.ErrVoucherInsufficientBalance)
-		case syncVoucherErrAmountMismatch:
-			// Not reachable from this repo's own client (a given sale id
-			// always carries the same amount across retries) — a definitive
-			// refusal, not a fallback, precisely because it can only mean a
-			// caller is claiming something inconsistent with what the
-			// primary already committed (independent review finding).
-			return data.Voucher{}, false, false, fmt.Errorf("voucher %q retried at a different amount than the primary already recorded: %w", voucherID, data.ErrVoucherRedemptionAmountMismatch)
+		if err := syncVoucherRefusalError(voucherID, out.Error); err != nil {
+			return data.Voucher{}, false, false, err
 		}
 		logging.L().Debugf("voucher proxy: primary refused reserve %s for sale %s with unrecognised reason %q — using local", voucherID, saleID, out.Error)
 		return data.Voucher{}, false, false, nil

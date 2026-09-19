@@ -194,20 +194,20 @@
       "locale": "ar",
       "topic": "vouchers",
       "signature": {
-        "headings": 4,
-        "numbered_steps": 10,
+        "headings": 5,
+        "numbered_steps": 13,
         "sub_bullets": 0,
-        "top_bullets": 8,
-        "bold_leadins": 4
-      },
-      "english": {
-        "headings": 4,
-        "numbered_steps": 10,
-        "sub_bullets": 0,
-        "top_bullets": 8,
+        "top_bullets": 11,
         "bold_leadins": 5
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "english": {
+        "headings": 5,
+        "numbered_steps": 13,
+        "sub_bullets": 0,
+        "top_bullets": 11,
+        "bold_leadins": 6
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#1037 (ADR-0105): a new heading (single-purpose vouchers — 3 steps, 3 bullets, 1 bold lead-in) added to English and this locale with a real translation matching the same structure; the pre-existing 1-bold-lead-in gap is unchanged in size, just shifted (4->5, English 5->6)."
     },
     {
       "locale": "de",
@@ -555,20 +555,20 @@
       "locale": "fa",
       "topic": "vouchers",
       "signature": {
-        "headings": 4,
-        "numbered_steps": 10,
+        "headings": 5,
+        "numbered_steps": 13,
         "sub_bullets": 0,
-        "top_bullets": 8,
-        "bold_leadins": 6
+        "top_bullets": 11,
+        "bold_leadins": 7
       },
       "english": {
-        "headings": 4,
-        "numbered_steps": 10,
+        "headings": 5,
+        "numbered_steps": 13,
         "sub_bullets": 0,
-        "top_bullets": 8,
-        "bold_leadins": 5
+        "top_bullets": 11,
+        "bold_leadins": 6
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#1037 (ADR-0105): a new heading (single-purpose vouchers — 3 steps, 3 bullets, 1 bold lead-in) added to English and this locale with a real translation matching the same structure; the pre-existing 1-bold-lead-in gap is unchanged in size, just shifted (6->7, English 5->6)."
     },
     {
       "locale": "tr",
@@ -916,20 +916,20 @@
       "locale": "tr",
       "topic": "vouchers",
       "signature": {
-        "headings": 4,
-        "numbered_steps": 10,
+        "headings": 5,
+        "numbered_steps": 13,
         "sub_bullets": 0,
-        "top_bullets": 8,
-        "bold_leadins": 6
+        "top_bullets": 11,
+        "bold_leadins": 7
       },
       "english": {
-        "headings": 4,
-        "numbered_steps": 10,
+        "headings": 5,
+        "numbered_steps": 13,
         "sub_bullets": 0,
-        "top_bullets": 8,
-        "bold_leadins": 5
+        "top_bullets": 11,
+        "bold_leadins": 6
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#1037 (ADR-0105): a new heading (single-purpose vouchers — 3 steps, 3 bullets, 1 bold lead-in) added to English and this locale with a real translation matching the same structure; the pre-existing 1-bold-lead-in gap is unchanged in size, just shifted (6->7, English 5->6)."
     },
     {
       "locale": "ar",

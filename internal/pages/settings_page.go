@@ -637,15 +637,23 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// whole point: the heading text must not appear in the body at
 		// all, not merely be visually hidden).
 		showDataCard := isManager || sampleCount > 0 || len(pendingBasePluginRows) > 0 || restorePromptDeferred
+		// ADR-0105 (ut-docs#1037): the gift-voucher-type card's two values,
+		// read from the raw settings map (CompleteSale reads the same rows
+		// at issue time — there is deliberately no RuntimeState mirror to
+		// drift from). Absent type == multi_purpose; absent rate == the
+		// shop's standard rate, which is also what issuance falls back to.
+		voucherType, voucherRatePct := voucherTypeCardValues(all, st.TaxRatePct)
 		data := map[string]any{
-			"title":       httpx.T(httpx.RequestLocale(r), "page.title.settings"),
-			"theme":       st.Theme,
-			"themes":      availableThemes(r.Context(), d),
-			"settings":    st,
-			"settingsMap": all,
-			"menuItems":   d.MenuSnapshot(),
-			"uiScale":     strconv.FormatFloat(scale, 'f', -1, 64),
-			"isManager":   isManager,
+			"voucherType":    voucherType,
+			"voucherRatePct": voucherRatePct,
+			"title":          httpx.T(httpx.RequestLocale(r), "page.title.settings"),
+			"theme":          st.Theme,
+			"themes":         availableThemes(r.Context(), d),
+			"settings":       st,
+			"settingsMap":    all,
+			"menuItems":      d.MenuSnapshot(),
+			"uiScale":        strconv.FormatFloat(scale, 'f', -1, 64),
+			"isManager":      isManager,
 			// ADR-0092 §7 / ut-docs#2169: the diagnostic-mode card's state
 			// (web/ui/partials/diagnostics_block.html). Only computed for a
 			// manager: #settings-diagnostics (settings.html) is the ONLY
@@ -1410,6 +1418,64 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		d.SetState(st)
 		settingsAudit(r, posRepo, elev, "settings", common.KeyAllowNegativeInventory, "allow_negative_inventory_changed", map[string]any{"enabled": b})
+		settingsRespondSaved(w, r, elev)
+	})
+
+	// Gift voucher type (ADR-0105, ut-docs#1037): the shop chooses ONCE, as
+	// a setting, whether the vouchers it sells are multi-purpose (a 0%
+	// liability, VAT at redemption — ut-docs#1008, the default) or
+	// single-purpose (VAT at issue, at a fixed rate) — SumUp's shipped
+	// precedent, never a per-sale staff decision. Same manager-gated,
+	// elevation-wired shape as allow-negative-inventory above, but it
+	// writes the settings table directly (no RuntimeState field): pos.
+	// CompleteSale reads vouchers.default_type / single_purpose_tax_rate_bp
+	// from the table at issue time, so a mirror would only be something to
+	// drift from. Both keys land in ONE SetMany so a shop can never sit on
+	// single_purpose with no rate — an omitted rate on a switch to
+	// single-purpose defaults to the shop's standard rate, the same fallback
+	// pos.ResolveVoucherIssuePolicy applies. The rate is a decimal percent
+	// on the wire ("7", "10.5"), stored in basis points, parsed by the same
+	// helper the service-charge rate uses (NaN/Inf/negative refused).
+	mux.HandleFunc("POST /api/settings/voucher-type", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		_ = r.ParseForm()
+		typ := strings.TrimSpace(r.Form.Get("type"))
+		if typ != data.VoucherTypeMultiPurpose && typ != data.VoucherTypeSinglePurpose {
+			http.Error(w, "type must be multi_purpose or single_purpose", http.StatusBadRequest)
+			return
+		}
+		rateBP := -1
+		if raw := strings.TrimSpace(r.Form.Get("tax_rate_pct")); raw != "" {
+			bp, ok := common.ParseServiceChargeRateBasisPoints(raw)
+			if !ok {
+				http.Error(w, "tax_rate_pct must be a percentage >= 0", http.StatusBadRequest)
+				return
+			}
+			rateBP = bp
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			summaryKey := "elevation.summary.voucher_type_multi"
+			if typ == data.VoucherTypeSinglePurpose {
+				summaryKey = "elevation.summary.voucher_type_single"
+			}
+			renderElevationPrompt(w, r, "/api/settings/voucher-type", "#voucher-type-msg",
+				httpx.T(locale, summaryKey),
+				[]elevationHiddenField{{Name: "type", Value: typ}, {Name: "tax_rate_pct", Value: r.Form.Get("tax_rate_pct")}}, elev)
+			return
+		}
+		if rateBP < 0 && typ == data.VoucherTypeSinglePurpose {
+			rateBP = d.CurrentState().TaxRatePct * 100
+		}
+		kv := map[string]string{common.KeyVoucherDefaultType: typ}
+		if rateBP >= 0 {
+			kv[common.KeyVoucherSinglePurposeTaxRateBP] = strconv.Itoa(rateBP)
+		}
+		if err := d.Settings.SetMany(r.Context(), kv); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		settingsAudit(r, posRepo, elev, "settings", common.KeyVoucherDefaultType, "voucher_type_changed", map[string]any{"type": typ, "tax_rate_bp": rateBP})
 		settingsRespondSaved(w, r, elev)
 	})
 

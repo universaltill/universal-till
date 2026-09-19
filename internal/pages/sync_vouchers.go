@@ -73,9 +73,14 @@ type syncVoucherRow struct {
 	Balance        int64  `json:"balance"`
 	Currency       string `json:"currency"`
 	VoucherType    string `json:"voucher_type"`
-	Status         string `json:"status"`
-	IssuedSaleID   string `json:"issued_sale_id"`
-	CreatedAt      string `json:"created_at"`
+	// TaxRateBP (ADR-0105): a single-purpose voucher's stamped rate, so a
+	// replica's local mirror (EnsureVoucherLocalRow) can validate a
+	// redemption's lines against it. omitempty keeps the wire additive for
+	// a pre-ADR-0105 peer; 0/absent is what every multi-purpose row shows.
+	TaxRateBP    int    `json:"tax_rate_bp,omitempty"`
+	Status       string `json:"status"`
+	IssuedSaleID string `json:"issued_sale_id"`
+	CreatedAt    string `json:"created_at"`
 }
 
 func voucherToSyncRow(v data.Voucher) syncVoucherRow {
@@ -86,6 +91,7 @@ func voucherToSyncRow(v data.Voucher) syncVoucherRow {
 		Balance:        v.BalanceMinor,
 		Currency:       v.Currency,
 		VoucherType:    v.VoucherType,
+		TaxRateBP:      v.TaxRateBP,
 		Status:         v.Status,
 		IssuedSaleID:   v.IssuedSaleID,
 		CreatedAt:      v.CreatedAt,
@@ -115,6 +121,11 @@ const (
 	syncVoucherErrNotActive           = "voucher_not_active"
 	syncVoucherErrInsufficientBalance = "voucher_insufficient_balance"
 	syncVoucherErrAmountMismatch      = "voucher_redemption_amount_mismatch"
+	// syncVoucherErrSinglePurposeMismatch (ADR-0105): a single-purpose
+	// voucher reserved for anything but its full face value — a definitive
+	// refusal, mapped back to data.ErrVoucherSinglePurposeMismatch by the
+	// replica's proxy.
+	syncVoucherErrSinglePurposeMismatch = "voucher_single_purpose_mismatch"
 )
 
 // registerSyncVouchers mounts the primary-side voucher endpoints on the
@@ -198,6 +209,9 @@ func registerSyncVouchers(mux *http.ServeMux, d *common.Deps) {
 		case errors.Is(err, data.ErrVoucherRedemptionAmountMismatch):
 			logging.L().Errorf("sync voucher redeem %s for sale %s: %v", id, in.SaleID, err)
 			writeSyncOrdersJSON(w, http.StatusConflict, nil, syncVoucherErrAmountMismatch)
+			return
+		case errors.Is(err, data.ErrVoucherSinglePurposeMismatch):
+			writeSyncOrdersJSON(w, http.StatusConflict, nil, syncVoucherErrSinglePurposeMismatch)
 			return
 		case err != nil:
 			logging.L().Errorf("sync voucher redeem %s for sale %s: %v", id, in.SaleID, err)

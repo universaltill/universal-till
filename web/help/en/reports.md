@@ -89,6 +89,8 @@ already counting that sale as part of the previous business day.
 
 ## Gift vouchers on the day-end (Z) report
 
+If your shop sells **single-purpose** vouchers instead (see [Gift vouchers](/help/vouchers)), the same section shows them on their own **SP issued** and **SP redeemed** lines. A single-purpose voucher is taxed when it is sold, so its value is ordinary revenue inside the VAT-rate rows above, not money owed; spending one is not taxed again, so the sale it paid for is inside the day's takings but in no VAT-rate row — the **SP redeemed** line is exactly that difference.
+
 When your shop sells or accepts multi-purpose gift vouchers, the printed
 day-end report shows a separate **GUTSCHEINE** section: how many vouchers
 were issued and redeemed that day, and for how much. Selling a voucher is

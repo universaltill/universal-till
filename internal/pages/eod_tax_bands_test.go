@@ -101,9 +101,14 @@ func etbEndOfDay(t *testing.T, d *db.DB, day string) data.EODReport {
 // computed independently from the sales table by dateRangeSummary:
 //
 //	sum(band.Tax)   == rep.TaxNet          (tax net of returns)
-//	sum(band.Gross) == rep.Net             (tax-inclusive, net of refunds)
-//	sum(band.Net)   == rep.Net - rep.TaxNet (pre-tax net total)
+//	sum(band.Gross) == rep.Net − rep.VouchersIssued − rep.VouchersSinglePurposeRedeemed
+//	sum(band.Net)   == sum(band.Gross) − rep.TaxNet (pre-tax net total)
 //
+// The two voucher deltas (eod_tax_bands.go's own doc comment) are the only
+// amounts inside Net (sales.total) that are deliberately in NO band: a
+// multi-purpose ISSUE is a 0% liability (ut-docs#1008), and a single-
+// purpose REDEMPTION is not a taxable event (ADR-0105) — both are zero on
+// every voucher-free day, where this collapses to sum(band.Gross) == Net.
 // A Z-report whose printed rows don't add to its printed totals is legally
 // unusable — asserted here rather than inspected.
 func assertEODTaxBandIdentities(t *testing.T, rep data.EODReport) {
@@ -120,11 +125,13 @@ func assertEODTaxBandIdentities(t *testing.T, rep data.EODReport) {
 	if sumTax != rep.TaxNet {
 		t.Fatalf("sum of band tax %d != report TaxNet %d", sumTax, rep.TaxNet)
 	}
-	if sumGross != rep.Net {
-		t.Fatalf("sum of band gross %d != report Net %d", sumGross, rep.Net)
+	wantGross := rep.Net - rep.VouchersIssued - rep.VouchersSinglePurposeRedeemed
+	if sumGross != wantGross {
+		t.Fatalf("sum of band gross %d != report Net %d − vouchers issued %d − single-purpose redeemed %d = %d",
+			sumGross, rep.Net, rep.VouchersIssued, rep.VouchersSinglePurposeRedeemed, wantGross)
 	}
-	if sumNet != rep.Net-rep.TaxNet {
-		t.Fatalf("sum of band net %d != report Net-TaxNet %d", sumNet, rep.Net-rep.TaxNet)
+	if sumNet != wantGross-rep.TaxNet {
+		t.Fatalf("sum of band net %d != band gross %d − TaxNet %d", sumNet, wantGross, rep.TaxNet)
 	}
 }
 

@@ -508,6 +508,9 @@ var CoreSettings = []Entry{
 	{Key: "settings-sell-screen", Href: "#settings-sell-screen", LabelKey: "settings.sell_screen.title", Order: 1050},
 	{Key: "settings-categories-tab", Href: "#settings-categories-tab", LabelKey: "settings.categories_tab.title", Order: 1060},
 	{Key: "settings-stock-tracking", Href: "#settings-stock-tracking", LabelKey: "settings.stock_tracking.title", Order: 1100},
+	// ADR-0105 (ut-docs#1037): the shop-wide gift voucher type card, declared
+	// right after settings-stock-tracking in both places (template order too).
+	{Key: "settings-vouchers", Href: "#settings-vouchers", LabelKey: "vouchers.settings.title", Order: 1150},
 	{Key: "settings-backup", Href: "#settings-backup", LabelKey: "settings.backup.title", Order: 1200},
 	{Key: "settings-data", Href: "#settings-data", LabelKey: "settings.data.title", Order: 1300},
 	{Key: "settings-retention", Href: "#settings-retention", LabelKey: "settings.retention.title", Order: 1400},

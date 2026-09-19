@@ -33,6 +33,8 @@ Bu kaydırma, Satış eğilimi sekmesindeki en yoğun saat grafiğine de uygulan
 
 ## Gün sonu (Z) raporunda hediye çekleri
 
+Mağazanız bunun yerine **tek amaçlı** hediye çekleri satıyorsa (bkz. [Hediye çekleri](/help/vouchers)), aynı bölüm bunları kendi **SP issued** ve **SP redeemed** satırlarında gösterir. Tek amaçlı bir çek satıldığında vergilendirilir, dolayısıyla değeri yukarıdaki KDV oranı satırlarının içinde olağan gelirdir, borçlanılan para değil; harcanması yeniden vergilendirilmez, bu yüzden ödediği satış günün hasılatının içindedir ama hiçbir KDV oranı satırında değildir — **SP redeemed** satırı tam olarak bu farktır.
+
 Mağazanız çok amaçlı hediye çeki satıyor veya kabul ediyorsa, yazdırılan
 gün sonu raporunda ayrı bir **GUTSCHEINE** bölümü görünür: o gün kaç çekin
 satıldığı ve kullanıldığı, ve tutarları. Çek satışı, ürün geliri olarak

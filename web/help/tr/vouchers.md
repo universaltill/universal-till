@@ -45,6 +45,22 @@ Neler ters gidebilir:
 
 Aynı listedeki eski **gift** yöntemi, bakiye takip etmeyen düz bir ödeme yöntemidir — kasanın düzenlediği hediye çekleri için **voucher** kullanın.
 
+## Tek amaçlı hediye çekleri
+
+Varsayılan olarak sattığınız hediye çekleri **çok amaçlıdır**: her şeye harcanabilir, bu yüzden KDV yalnızca çek harcandığında alınır. Çekleriniz bilinen tek bir ürün veya tek bir KDV oranı içinse (bir „tek pasta“ çeki, ya da yalnızca %7'lik mallarda kullanılabilen bir çek), Alman KDV kuralları bunları **tek amaçlı** sayar: KDV çek *satıldığında* alınır ve daha sonra harcanması yeniden vergilendirilmez. Dükkânınızın hangi türü sattığı, **Ayarlar → Hediye çeki türü** altında tüm dükkân için bir kez seçilen bir ayardır — personel kasada asla bir tür seçmez ve çek satmak her iki durumda da tamamen aynı görünür.
+
+Her çek, satıldığı türü korur. Ayarı sonradan değiştirmek yalnızca o andan itibaren satılan çekleri etkiler.
+
+1. Önce **Ayarlar**'ı açın, **Hediye çeki türü**'nü bulun ve **Tek amaçlı**'yı seçin.
+2. Tek amaçlı çeklerinizin vergilendirildiği **KDV oranını** girin. Dükkânınızın standart oranıyla başlar; yalnızca çek indirimli oranlı mallar içinse değiştirin.
+3. **Kaydet**. Artık sattığınız her çek, fişte ve gün sonu raporunda o oranla vergilendirilir — borçlanılan para olarak değil, olağan gelir olarak.
+
+Neler ters gidebilir:
+
+- Tek amaçlı bir çek yalnızca, kalemleri tam olarak çekin değerine eşit olan ve hepsi çekin KDV oranında olan bir satışın **tek ödemesi** olarak harcanabilir — yalnızca o kalemleri okutun, tam tutar için tek ödeme olarak **hediye çeki**'ni seçin ve satışı tamamlayın. Kısmi ödeme, nakit veya kartla karıştırma ya da farklı oranlı kalemler bunu belirten bir mesajla reddedilir.
+- Ayarı değiştirmeden önce çok amaçlı olarak satılan bir çek yine çok amaçlı şekilde çalışır — hiçbir şey yeniden sınıflandırılmaz.
+- Gün sonu raporu tek amaçlı çekleri, çok amaçlı rakamlardan ayrı olarak kendi **SP issued** / **SP redeemed** satırlarında listeler.
+
 ## Gün sonu raporları ve diğer kasalar
 
 Gün sonu (Z) raporunun, o gün satılan ve harcanan hediye çekleri için kendi **GUTSCHEINE** bölümü vardır; hediye çeki satan bir satışı iptal etmek hediye çekini de (yalnızca kullanılmamışken) iptal eder — bkz. [Raporlar ve gün sonu](/help/reports). Bir kasada satılan hediye çeki dükkândaki başka herhangi bir kasada harcanabilir; bir kasa çevrimdışıyken bunun nasıl işlediği [Birden çok kasa (tek dükkân)](/help/multitill) sayfasında anlatılır.

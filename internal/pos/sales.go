@@ -151,6 +151,18 @@ type VoucherIssueInput struct {
 	// Amount is the voucher's face value (minor units), > 0. It becomes
 	// both original_amount and the opening balance (the liability).
 	Amount money.Money
+	// VoucherType (ADR-0105, ut-docs#1037) is data.VoucherTypeMultiPurpose
+	// or data.VoucherTypeSinglePurpose. Empty means "resolve from the
+	// shop's vouchers.default_type setting at issue time" — what every
+	// live tender does (there is no staff-facing type picker). A caller
+	// that already knows the classification — the LAN-sync journal replay,
+	// carrying what the ISSUING till stamped — sets it explicitly and it
+	// wins over this till's current setting. See voucher_single_purpose.go.
+	VoucherType string
+	// TaxRateBP is the basis-point rate a SINGLE-PURPOSE voucher is taxed
+	// at when sold (resolved with VoucherType when that is empty; ignored
+	// for multi-purpose). Stamped on the vouchers row as tax_rate_bp.
+	TaxRateBP int
 }
 
 type SaleLineInput struct {
@@ -413,6 +425,47 @@ func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, voucher
 		subtotal = subtotal.Add(lineNet)
 		vatLines = append(vatLines, VATLine{RateBP: l.TaxRateBasisPoints, LineTotal: lineGross.Minor(), TaxAmount: lineTax.Minor()})
 	}
+	// Voucher issue validation (ut-docs#1008/#1052) runs here, before the
+	// banding, because a SINGLE-PURPOSE issue (ADR-0105 Decision 3) is a
+	// taxable supply at issue and must be inside the bands: its face value
+	// joins vatLines as one synthetic line at its stamped rate — the same
+	// shared VATBandsForSale every other VAT figure goes through — and
+	// subtotal the way a real line's would (gross when inclusive, net when
+	// exclusive; see SinglePurposeVoucherVATLine for why the face is gross
+	// in both modes). The MULTI-PURPOSE arithmetic is untouched: it is
+	// applied below, after the negative clamp, exactly as before — only its
+	// per-voucher validation moved up here so both kinds share one pass.
+	// ut-docs#1052: the per-voucher ceiling below bounds each amount but
+	// not the count, so cap that too rather than lean on the incidental
+	// memory-exhaustion floor described on MaxVoucherIssuesPerSale.
+	if len(in.VoucherIssues) > MaxVoucherIssuesPerSale {
+		return 0, 0, 0, 0, 0, fmt.Errorf("sale issues %d vouchers, exceeding the maximum of %d per sale", len(in.VoucherIssues), MaxVoucherIssuesPerSale)
+	}
+	for i, v := range in.VoucherIssues {
+		if !v.Amount.IsPositive() {
+			return 0, 0, 0, 0, 0, fmt.Errorf("voucher issue %d: amount must be > 0", i+1)
+		}
+		// Defense in depth for the int64-overflow coverage bypass (review
+		// F3) — the same ceiling pos_api.go enforces at the HTTP boundary,
+		// re-checked here because the API is not the only CompleteSale
+		// caller (self-order, future plugin paths, journal replay).
+		if v.Amount > MaxVoucherIssueAmount {
+			return 0, 0, 0, 0, 0, fmt.Errorf("voucher issue %d: amount %d exceeds the maximum of %d minor units", i+1, v.Amount.Minor(), MaxVoucherIssueAmount.Minor())
+		}
+		if err := validateVoucherIssueType(v); err != nil {
+			return 0, 0, 0, 0, 0, fmt.Errorf("voucher issue %d: %w", i+1, err)
+		}
+		if v.VoucherType != data.VoucherTypeSinglePurpose {
+			continue
+		}
+		line, net := SinglePurposeVoucherVATLine(v.Amount, v.TaxRateBP)
+		if in.TaxInclusive {
+			subtotal = subtotal.Add(v.Amount)
+		} else {
+			subtotal = subtotal.Add(net)
+		}
+		vatLines = append(vatLines, line)
+	}
 	// serviceCharge=0 here deliberately: VATBandsForSale's discount
 	// apportionment never touches service-charge tax (it's added to bands
 	// in a separate step, after this one, in VATBandsForSale itself), so
@@ -458,23 +511,15 @@ func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, voucher
 	// summed face value is returned separately so CompleteSale can persist
 	// it on the sale header (sales.voucher_issue_total, migration 069) —
 	// InferTaxInclusive needs it on the other side of its identity.
-	// ut-docs#1052: the per-voucher ceiling below bounds each amount but
-	// not the count, so cap that too rather than lean on the incidental
-	// memory-exhaustion floor described on MaxVoucherIssuesPerSale.
-	if len(in.VoucherIssues) > MaxVoucherIssuesPerSale {
-		return 0, 0, 0, 0, 0, fmt.Errorf("sale issues %d vouchers, exceeding the maximum of %d per sale", len(in.VoucherIssues), MaxVoucherIssuesPerSale)
-	}
+	// A single-purpose issue (ADR-0105) is NOT a liability: it was folded
+	// into subtotal/taxTotal above, is already inside total through the
+	// ordinary subtotal arithmetic, and is deliberately kept OUT of
+	// voucherIssueTotal — so it is skipped here. (Count/amount/ceiling
+	// validation for every voucher ran in the pass above.)
 	const maxMoney = money.Money(math.MaxInt64)
 	for i, v := range in.VoucherIssues {
-		if !v.Amount.IsPositive() {
-			return 0, 0, 0, 0, 0, fmt.Errorf("voucher issue %d: amount must be > 0", i+1)
-		}
-		// Defense in depth for the int64-overflow coverage bypass (review
-		// F3) — the same ceiling pos_api.go enforces at the HTTP boundary,
-		// re-checked here because the API is not the only CompleteSale
-		// caller (self-order, future plugin paths, journal replay).
-		if v.Amount > MaxVoucherIssueAmount {
-			return 0, 0, 0, 0, 0, fmt.Errorf("voucher issue %d: amount %d exceeds the maximum of %d minor units", i+1, v.Amount.Minor(), MaxVoucherIssueAmount.Minor())
+		if v.VoucherType == data.VoucherTypeSinglePurpose {
+			continue
 		}
 		// ut-docs#1052: assert the running-total guarantee explicitly
 		// instead of relying on the count/amount ceilings above making it
@@ -760,6 +805,12 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 			in.Lines[i].ItemID = ""
 		}
 	}
+	// ADR-0105: stamp each issue's type/rate from the shop setting in force
+	// RIGHT NOW (or keep what a journal replay already stamped) before the
+	// totals are computed — a single-purpose issue changes subtotal/tax.
+	if err := resolveVoucherIssueTypes(ctx, sqlDB, in.VoucherIssues); err != nil {
+		return "", err
+	}
 	subtotal, taxTotal, serviceCharge, voucherIssueTotal, total, err := computeSaleTotals(in)
 	if err != nil {
 		return "", err
@@ -873,6 +924,22 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 					return err
 				}
 			}
+			// ADR-0105 Decision 4: a single-purpose voucher redemption is
+			// not a taxable event. Validate the exact-whole-sale shape
+			// under this transaction (fail-closed, the sale rolls back on
+			// a mismatch) and, when it holds, persist the header with
+			// subtotal/tax_total 0 — the mirror image of a multi-purpose
+			// ISSUE (excluded from revenue and tax, present in total), so
+			// the day-close's TaxNet never re-declares VAT already
+			// collected at issue. The sale_lines rows below still land
+			// normally (stock, receipt), and eod_tax_bands.go keeps them
+			// out of the bands via the redemption ledger row.
+			headerSubtotal, headerTaxTotal := subtotal, taxTotal
+			if spRedemption, err := singlePurposeRedemptionCheck(ctx, repo, tx, in, total); err != nil {
+				return err
+			} else if spRedemption {
+				headerSubtotal, headerTaxTotal = 0, 0
+			}
 			if err := repo.InsertSale(ctx, tx, data.InsertSaleParams{
 				SaleID:                  saleID,
 				ReceiptNo:               receiptNo,
@@ -882,9 +949,9 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 				CashierID:               in.CashierID,
 				CustomerID:              in.CustomerID,
 				Currency:                in.Currency,
-				Subtotal:                subtotal.Minor(),
+				Subtotal:                headerSubtotal.Minor(),
 				DiscountTotal:           in.SaleDiscount.Minor(),
-				TaxTotal:                taxTotal.Minor(),
+				TaxTotal:                headerTaxTotal.Minor(),
 				Total:                   total.Minor(),
 				ServiceCharge:           serviceCharge.Minor(),
 				ServiceChargeTaxBasisBP: in.ServiceChargeTaxBasisBP,
@@ -1039,6 +1106,8 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 					OriginalAmountMinor: v.Amount.Minor(),
 					BalanceMinor:        v.Amount.Minor(),
 					Currency:            in.Currency,
+					VoucherType:         v.VoucherType, // stamped by resolveVoucherIssueTypes (ADR-0105)
+					TaxRateBP:           v.TaxRateBP,
 					IssuedSaleID:        saleID,
 					CreatedAt:           now,
 				}); err != nil {

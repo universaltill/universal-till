@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
@@ -18,13 +19,25 @@ import (
 // tax and the whole-sale discount — so any sale carrying either broke the
 // Z-report's own identities, under-declaring VAT collected on service
 // charges. Those identities are: sum(band.Tax) == TaxNet always, and
-// sum(band.Gross) == Net on any day WITHOUT voucher issues — a voucher
-// issue's face value (ut-docs#1008) is inside Net (it is in sales.total)
-// but deliberately in NO band (a 0% liability, not a taxable supply), so
-// on a voucher day sum(band.Gross) == Net − vouchers issued, and the
-// GUTSCHEINE section supplies exactly that reconciling delta. This is the
-// SAME shared pos.VATBandsForSale the invoice's VAT table uses, so the
-// day-close can never disagree with the invoices issued for its sales.
+// sum(band.Gross) == Net on any day WITHOUT voucher flows — a MULTI-PURPOSE
+// voucher issue's face value (ut-docs#1008) is inside Net (it is in
+// sales.total) but deliberately in NO band (a 0% liability, not a taxable
+// supply), and so is the total of a sale that REDEEMED a SINGLE-PURPOSE
+// voucher (ADR-0105, ut-docs#1037: VAT was collected when that voucher
+// was sold, redemption is not a taxable event, so the redeeming sale's
+// lines are left out of every band and its header carries subtotal/
+// tax_total 0). So on a voucher day
+//
+//	sum(band.Gross) == Net − vouchers issued (multi-purpose)
+//	                       − single-purpose vouchers redeemed
+//
+// and the GUTSCHEINE section supplies exactly those two reconciling deltas
+// (EODReport.VouchersIssued / VouchersSinglePurposeRedeemed). A SINGLE-
+// PURPOSE issue, by contrast, is taxed revenue at issue: it is in Net AND
+// in its rate's band (injected as a synthetic line — see
+// eodVATLinesForSale), so it needs no delta. This is the SAME shared
+// pos.VATBandsForSale the invoice's VAT table uses, so the day-close can
+// never disagree with the invoices issued for its sales.
 //
 // sum(band.Tax) == TaxNet holds for every sale persisted by a build
 // carrying ut-docs#1035's fix onward. A sale row written by an OLDER build
@@ -66,6 +79,39 @@ func computeEODTaxBands(ctx context.Context, repo *data.POSRepo, from, to string
 	return computeEODTaxBandsFromSales(sales), nil
 }
 
+// eodVATLinesForSale is the ONE place a persisted sale becomes the VATLine
+// slice both aggregations in this package (per-rate bands here, the
+// method x rate cross-tab in eod_method_tax_bands.go, and the Tax tab via
+// computeTaxSummary) band from — so the three can never disagree about
+// what a single-purpose voucher does to a sale (ADR-0105, ut-docs#1037):
+//
+//   - A sale that REDEEMED a single-purpose voucher (SinglePurposeRedeemed
+//     > 0) contributes NOTHING: ok=false, and the caller skips the sale
+//     entirely. VAT on that voucher was collected at issue; redemption is
+//     not a taxable event, and pos.CompleteSale already persisted the
+//     header with subtotal/tax_total 0 (so TaxNet agrees). Its total is
+//     still inside Net — the GUTSCHEINE "single-purpose redeemed" bucket is
+//     the reconciling delta (see the file doc comment).
+//   - A sale that ISSUED single-purpose vouchers gets one synthetic line per
+//     voucher, built by the SAME pos.SinglePurposeVoucherVATLine the engine
+//     folded into subtotal/tax_total at persist time — an issue is a taxable
+//     supply that is deliberately never a sale_lines row, so without this
+//     the re-derived bands would under-declare exactly that VAT.
+func eodVATLinesForSale(s data.EODTaxBandSale) (lines []pos.VATLine, ok bool) {
+	if s.SinglePurposeRedeemed > 0 {
+		return nil, false
+	}
+	lines = make([]pos.VATLine, 0, len(s.Lines)+len(s.SinglePurposeVoucherIssues))
+	for _, l := range s.Lines {
+		lines = append(lines, pos.VATLine{RateBP: l.RateBP, LineTotal: l.LineTotal, TaxAmount: l.TaxAmount})
+	}
+	for _, v := range s.SinglePurposeVoucherIssues {
+		line, _ := pos.SinglePurposeVoucherVATLine(money.FromMinor(v.Amount), v.RateBP)
+		lines = append(lines, line)
+	}
+	return lines, true
+}
+
 // computeEODTaxBandsFromSales is computeEODTaxBands' pure aggregation step,
 // split out (ut-docs#1004 review finding) so attachEODBands can compute
 // TaxBands and MethodTaxBands from the SAME SalesForTaxBands read instead
@@ -76,9 +122,9 @@ func computeEODTaxBands(ctx context.Context, repo *data.POSRepo, from, to string
 func computeEODTaxBandsFromSales(sales []data.EODTaxBandSale) []data.TaxBand {
 	agg := map[int]*data.TaxBand{}
 	for _, s := range sales {
-		lines := make([]pos.VATLine, 0, len(s.Lines))
-		for _, l := range s.Lines {
-			lines = append(lines, pos.VATLine{RateBP: l.RateBP, LineTotal: l.LineTotal, TaxAmount: l.TaxAmount})
+		lines, ok := eodVATLinesForSale(s)
+		if !ok {
+			continue
 		}
 		inclusive := pos.InferTaxInclusive(s.Subtotal, s.DiscountTotal, s.TaxTotal, s.Total, s.ServiceCharge, s.VoucherIssueTotal)
 		sign := int64(1)

@@ -45,6 +45,22 @@ What can go wrong:
 
 The older **gift** method in the same list is a plain payment method that doesn't track a balance — use **voucher** for vouchers the till issued.
 
+## Single-purpose vouchers
+
+By default the vouchers you sell are **multi-purpose**: spendable on anything, so VAT is only charged when the voucher is spent. If your vouchers are for one known product or one VAT rate (a voucher for "one cake", or one only usable on 7% goods), German VAT rules treat them as **single-purpose**: VAT is charged when the voucher is *sold*, and spending it later is not taxed again. Which kind your shop sells is a setting, chosen once for the whole shop under **Settings → Gift voucher type** — staff never pick a type at the till, and selling a voucher looks exactly the same either way.
+
+Every voucher keeps the type it was sold under. Changing the setting later only affects vouchers sold from then on.
+
+1. Open **Settings**, find **Gift voucher type**, and choose **Single-purpose**.
+2. Enter the **VAT rate** your single-purpose vouchers are taxed at. It starts at your shop's standard rate; change it only if the voucher is for reduced-rate goods.
+3. **Save**. From now on each voucher you sell is taxed at that rate on the receipt and in the day-end report, as ordinary revenue rather than money owed.
+
+What can go wrong:
+
+- A single-purpose voucher can only be spent as the **sole payment** for a sale whose items add up to exactly its value, all at its VAT rate — ring up just those items, choose **voucher** as the only payment for the full amount, and complete the sale. Part-payment, mixing with cash or card, or items at a different rate are refused with a message saying so.
+- A voucher sold as multi-purpose before you changed the setting still works the multi-purpose way — nothing is reclassified.
+- The day-end report lists single-purpose vouchers on their own **SP issued** / **SP redeemed** lines, separate from the multi-purpose figures.
+
 ## Day-end reports and other tills
 
 The day-end (Z) report has its own **GUTSCHEINE** section for vouchers sold and spent that day, and voiding a sale that sold a voucher cancels the voucher with it (only while it's unused) — see [Reports & end of day](/help/reports). A voucher sold on one till can be spent on any other till in the shop; how that works while a till is offline is covered in [Multiple tills (one shop)](/help/multitill).

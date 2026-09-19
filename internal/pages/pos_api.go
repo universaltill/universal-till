@@ -684,6 +684,12 @@ func classifyTenderError(err error) string {
 	// wording instead of the generic "could not be completed".
 	case errors.Is(err, data.ErrVoucherIDExists):
 		return "pos.toast.voucher_code_exists"
+	// ADR-0105 (ut-docs#1037): a single-purpose voucher tendered as
+	// anything but the sole exact payment for a matching sale — its own
+	// wording, because the fix is a specific action (ring exactly the
+	// voucher's goods, pay with nothing else), not "check the code".
+	case errors.Is(err, data.ErrVoucherSinglePurposeMismatch):
+		return "pos.toast.voucher_single_purpose_mismatch"
 	// ADR-0084/ut-docs#1716: both reuse the existing generic "this voucher
 	// can't be redeemed as given" key rather than adding a new one. The
 	// duplicate-leg case IS reachable from the Split tab since ut-docs#1832

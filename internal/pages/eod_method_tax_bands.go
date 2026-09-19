@@ -110,6 +110,14 @@ func computeEODMethodTaxBands(ctx context.Context, repo *data.POSRepo, from, to 
 func computeEODMethodTaxBandsFromSales(sales []data.EODTaxBandSale) []data.MethodTaxBand {
 	agg := map[string]map[int]*data.MethodTaxBand{}
 	for _, s := range sales {
+		// Same single-purpose voucher treatment as computeEODTaxBandsFromSales
+		// (ADR-0105): resolved BEFORE the zero-tendered check so a redeeming
+		// sale — which does carry a payment — is skipped silently, not
+		// logged as a broken row.
+		lines, ok := eodVATLinesForSale(s)
+		if !ok {
+			continue
+		}
 		var totalTendered int64
 		shares := make([]int64, len(s.Payments))
 		for i, p := range s.Payments {
@@ -132,10 +140,6 @@ func computeEODMethodTaxBandsFromSales(sales []data.EODTaxBandSale) []data.Metho
 			// identity (ut-docs#1004 review finding).
 			logging.L().Warnf("eod method tax bands: sale %s has zero total tendered, skipped from cross-tab", s.ID)
 			continue
-		}
-		lines := make([]pos.VATLine, 0, len(s.Lines))
-		for _, l := range s.Lines {
-			lines = append(lines, pos.VATLine{RateBP: l.RateBP, LineTotal: l.LineTotal, TaxAmount: l.TaxAmount})
 		}
 		inclusive := pos.InferTaxInclusive(s.Subtotal, s.DiscountTotal, s.TaxTotal, s.Total, s.ServiceCharge, s.VoucherIssueTotal)
 		sign := int64(1)
