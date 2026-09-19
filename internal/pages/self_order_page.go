@@ -69,13 +69,44 @@ func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 			if t, found, err := data.NewPOSRepo(d.Db).GetTable(r.Context(), requestedTable); err == nil && found && t.Enabled {
 				token, engine, existed, err := d.KioskSessions.SessionForTable(t.ID)
 				if err == nil {
-					if !existed {
-						// SetTable is a no-op unless the (fresh, empty)
-						// basket's order type is dine-in, which it always is
-						// on a just-minted engine, so this always takes
-						// effect. A joined session already carries it.
+					// Re-assert the table binding on EVERY ?table= entry, not
+					// only on a freshly minted session (ut-docs#2261 review
+					// finding): pos.Service.Reset() — which a completed
+					// checkout calls, on both the counter and the card path —
+					// clears tableID/tableLabel, while the session itself
+					// stays live in the store for the whole idle TTL. So a
+					// joined session does NOT always still carry its table.
+					// Without this, the table's SECOND sitting (the normal
+					// restaurant case: one table orders another round) ran
+					// with no table bound at all —
+					// selfOrderForcesCounterCheckout went false and offered
+					// the CARD payment picker on a guest's own phone (which
+					// has no terminal; ut-docs#815's decision, and what the
+					// manual promises in all five locales), and the resulting
+					// order carried no table_id, so it never landed on the
+					// table's floor-plan tile. A no-op when the binding is
+					// already correct.
+					// The label is compared too, so a table renamed on the
+					// floor plan mid-session refreshes the cached label the
+					// counter order will be filed under, rather than keeping
+					// the one captured when the session started.
+					if engine.TableID() != t.ID || engine.TableLabel() != t.Label {
+						// ADR-0073 Decision 5: SetTable is a no-op with no
+						// dine-in line, so clear a leftover takeaway choice
+						// from the previous sitting first — a table session
+						// is always dine-in (the order-type handler enforces
+						// exactly that whenever a table IS bound).
+						if engine.OrderType() == pos.OrderTypeTakeaway {
+							engine.SetOrderType("")
+						}
 						engine.SetTable(t.ID, t.Label)
-					} else {
+					}
+					// "Joined" only means something when there is actually an
+					// order in progress to join — a live but empty session
+					// (nobody added anything yet, or the table just checked
+					// out) would otherwise greet the guest with "0 item(s)
+					// already added".
+					if existed && len(engine.Lines()) > 0 {
 						startURL += "?joined=1"
 					}
 					http.SetCookie(w, &http.Cookie{

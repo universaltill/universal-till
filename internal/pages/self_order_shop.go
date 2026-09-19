@@ -161,7 +161,13 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		// visit with a forged ?joined=1 shows nothing.
 		joinedCount := -1
 		if tableSession && r.URL.Query().Get("joined") == "1" {
-			joinedCount = len(engine.Lines())
+			// Only when there is genuinely an order in progress to join:
+			// a live-but-empty session (the table just checked out, or
+			// nobody has added anything yet) must not greet the guest
+			// with "0 item(s) already added".
+			if n := len(engine.Lines()); n > 0 {
+				joinedCount = n
+			}
 		}
 		httpx.RenderPartial("ui/pages/self_order_shop.html", map[string]any{
 			"title":         httpx.T(httpx.RequestLocale(r), "page.title.order_here"),

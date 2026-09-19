@@ -443,6 +443,94 @@ func TestSelfOrder_SessionCookieReachesAPIEndpoints_RealCookieJar(t *testing.T) 
 	}
 }
 
+// ut-docs#2261 review finding: a table's SECOND sitting must still be a
+// table-bound session. pos.Service.Reset() (which every completed checkout
+// calls) clears tableID/tableLabel, but the session itself stays live in
+// the store for the whole idle TTL — so `existed` alone can never be taken
+// as "this engine still carries its table". Before the fix, the next guest
+// scanning the same printed QR joined a table-LESS session:
+// selfOrderForcesCounterCheckout went false and offered the CARD payment
+// picker on a guest's own phone (which has no terminal — ut-docs#815's
+// decision, and what the manual promises in all five locales), and the
+// order it produced carried no table_id, so it never reached the table's
+// floor-plan tile. That is the ut-docs#815 bug class, re-entering through
+// the new session store.
+func TestSelfOrder_TableRebindsAfterCheckout_SecondSittingStaysTableBound(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	tableA := createTestTable(t, dp, "T1")
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+	seedStock(t, d, "itm-coffee", 100)
+
+	mux := http.NewServeMux()
+	registerSelfOrder(mux, dp)
+	registerSelfOrderShop(mux, dp)
+
+	// First sitting: scan in, order, check out (forced counter path).
+	first := newSelfOrderClient(t, mux)
+	first.get("/self-order?table=" + tableA)
+	first.post("/api/self-order/scan", "code=5000001")
+	if rec := first.post("/api/self-order/checkout", ""); rec.Code != http.StatusOK {
+		t.Fatalf("first checkout: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Second sitting: another guest scans the same printed QR. The session
+	// is still live (nothing swept it), so this is a join — but the engine
+	// behind it was Reset, so the table MUST be re-asserted.
+	second := newSelfOrderClient(t, mux)
+	landing := second.get("/self-order?table=" + tableA)
+	if landing.Code != http.StatusOK {
+		t.Fatalf("second sitting landing: %d %s", landing.Code, landing.Body.String())
+	}
+	// Nothing to join yet, so no "joined" banner promising 0 items.
+	if strings.Contains(landing.Body.String(), "joined=1") {
+		t.Fatalf("an empty live session must not advertise a joined order: %s", landing.Body.String())
+	}
+	eng, gotTable, ok := dp.KioskSessions.Lookup(second.sessionToken())
+	if !ok || gotTable != tableA {
+		t.Fatalf("second sitting session: ok=%v table=%q, want %q", ok, gotTable, tableA)
+	}
+	if eng.TableID() != tableA || eng.TableLabel() != "T1" {
+		t.Fatalf("second sitting engine lost its table binding: TableID=%q TableLabel=%q, want %q/%q",
+			eng.TableID(), eng.TableLabel(), tableA, "T1")
+	}
+
+	second.post("/api/self-order/scan", "code=5000001")
+	// Still forced down the counter path — never a card picker on a phone.
+	getRec := second.get("/api/self-order/checkout")
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("second sitting GET checkout: %d %s", getRec.Code, getRec.Body.String())
+	}
+	if strings.Contains(getRec.Body.String(), `name="method"`) {
+		t.Fatalf("a table-bound second sitting must never be offered a card payment method: %s", getRec.Body.String())
+	}
+	if rec := second.post("/api/self-order/checkout", ""); rec.Code != http.StatusOK {
+		t.Fatalf("second checkout: %d %s", rec.Code, rec.Body.String())
+	}
+	// Both counter orders carry the table, so both reach its floor-plan tile.
+	rows, err := d.DB.Query(`SELECT COALESCE(table_id,'') FROM kiosk_counter_orders`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var got string
+		if err := rows.Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got != tableA {
+			t.Fatalf("counter order %d has table_id=%q, want %q", n, got, tableA)
+		}
+		n++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("got %d counter orders, want 2", n)
+	}
+}
+
 // The registered sweep goroutine honors ctx cancellation and releases the
 // WaitGroup — the shape every StartX background job in init.go shares.
 func TestStartKioskSessionSweep_StopsOnContextCancel(t *testing.T) {

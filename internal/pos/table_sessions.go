@@ -33,8 +33,13 @@ import (
 // Locking: *Service already self-serializes every exported method (see
 // Service.mu's own doc comment), so nothing here wraps an engine call. The
 // store's own mu guards only its two maps. A nil *TableSessions is an inert
-// no-op for every method (bare-Deps test harnesses never wire one — same
-// convention as the existing `d.KioskEngine != nil` guards).
+// no-op for every method the peripheral call sites use — Lookup, All,
+// SetConfigAll, AnyHasItems and Sweep — so bare-Deps test harnesses that
+// never wire one stay valid (same convention as the existing
+// `d.KioskEngine != nil` guards). SessionForTable is the exception: it
+// MINTS state, so there is no sensible nil answer and it panics on a nil
+// store — its one caller (registerSelfOrder) checks `d.KioskSessions != nil`
+// before the table branch.
 type TableSessions struct {
 	mu sync.Mutex
 	// newEngine is the factory that mints one engine per table — captures the

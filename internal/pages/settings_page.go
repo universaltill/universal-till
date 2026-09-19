@@ -75,7 +75,8 @@ const (
 )
 
 // demoDataInLiveBasket reports which currently in-progress basket — cashier
-// and/or self-order kiosk, both passed in — references a demo catalogue
+// and/or self-order kiosk (the bare walk-up basket AND every live
+// per-table session, ut-docs#2261), all passed in — references a demo catalogue
 // item/variant or a demo customer, if either does. ut-docs#633: unlike a
 // HELD (parked) sale, a live basket has no held_sales row for
 // remove_demo.sql/remove_demo_customers_promos.sql's own safety check to
@@ -111,13 +112,26 @@ const (
 // becomes durable (there's no promotions management UI yet, so it hasn't
 // needed to), this stops being true silently — a change there should
 // revisit this function too.
-func demoDataInLiveBasket(cashier, kiosk *pos.Service) demoBasketMatch {
+func demoDataInLiveBasket(cashier, kiosk *pos.Service, sessions *pos.TableSessions) demoBasketMatch {
 	baskets := []struct {
 		kind demoBasketMatch
 		e    *pos.Service
 	}{
 		{cashierBasketMatch, cashier},
 		{kioskBasketMatch, kiosk},
+	}
+	// ut-docs#2261: every live table-QR session's basket is "the kiosk
+	// side" for this guard too — a guest at a table holding a demo item in
+	// their own per-table basket is exactly the dangling-FK case above, and
+	// d.KioskEngine no longer sees it. Same nil-safe All() snapshot, and the
+	// same kioskBasketMatch kind (the message tells the operator to clear
+	// the self-order basket, which is what a table session is), as
+	// data_api.go's sibling cleanupInLiveBasket.
+	for _, e := range sessions.All() {
+		baskets = append(baskets, struct {
+			kind demoBasketMatch
+			e    *pos.Service
+		}{kioskBasketMatch, e})
 	}
 	for _, b := range baskets {
 		if b.e == nil {
@@ -1898,7 +1912,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// offline, low-value target (worst case is the same FK-fail this
 		// guard exists to avoid in the first place, not data loss), and the
 		// window is one HTTP request wide.
-		if match := demoDataInLiveBasket(d.Engine, d.KioskEngine); match != noBasketMatch {
+		if match := demoDataInLiveBasket(d.Engine, d.KioskEngine, d.KioskSessions); match != noBasketMatch {
 			key := "settings.data.demo_in_basket_cashier"
 			if match == kioskBasketMatch {
 				key = "settings.data.demo_in_basket_kiosk"
