@@ -73,6 +73,11 @@ type syncVoucherRow struct {
 	Balance        int64  `json:"balance"`
 	Currency       string `json:"currency"`
 	VoucherType    string `json:"voucher_type"`
+	// Purpose / IssueVATRateBP (ut-docs#1037): additive — a pre-#1037 peer
+	// omits both, which voucherFromSyncRow / data.CreateVoucher read as
+	// multi-purpose, the only kind such a peer can have issued.
+	Purpose        string `json:"purpose,omitempty"`
+	IssueVATRateBP *int   `json:"issue_vat_rate_bp,omitempty"`
 	Status         string `json:"status"`
 	IssuedSaleID   string `json:"issued_sale_id"`
 	CreatedAt      string `json:"created_at"`
@@ -86,6 +91,8 @@ func voucherToSyncRow(v data.Voucher) syncVoucherRow {
 		Balance:        v.BalanceMinor,
 		Currency:       v.Currency,
 		VoucherType:    v.VoucherType,
+		Purpose:        v.Purpose,
+		IssueVATRateBP: v.IssueVATRateBP,
 		Status:         v.Status,
 		IssuedSaleID:   v.IssuedSaleID,
 		CreatedAt:      v.CreatedAt,
@@ -115,6 +122,9 @@ const (
 	syncVoucherErrNotActive           = "voucher_not_active"
 	syncVoucherErrInsufficientBalance = "voucher_insufficient_balance"
 	syncVoucherErrAmountMismatch      = "voucher_redemption_amount_mismatch"
+	// ut-docs#1037: the primary's double-tax guard refused a single-
+	// purpose voucher tendered as payment — definitive, like the others.
+	syncVoucherErrNotMultiPurpose = "voucher_not_multi_purpose"
 )
 
 // registerSyncVouchers mounts the primary-side voucher endpoints on the
@@ -194,6 +204,9 @@ func registerSyncVouchers(mux *http.ServeMux, d *common.Deps) {
 			return
 		case errors.Is(err, data.ErrVoucherInsufficientBalance):
 			writeSyncOrdersJSON(w, http.StatusConflict, nil, syncVoucherErrInsufficientBalance)
+			return
+		case errors.Is(err, data.ErrVoucherNotMultiPurpose):
+			writeSyncOrdersJSON(w, http.StatusConflict, nil, syncVoucherErrNotMultiPurpose)
 			return
 		case errors.Is(err, data.ErrVoucherRedemptionAmountMismatch):
 			logging.L().Errorf("sync voucher redeem %s for sale %s: %v", id, in.SaleID, err)

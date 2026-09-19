@@ -71,11 +71,23 @@ type vatBand struct {
 // here, ut-docs#1003) so the day-close Z-report's per-rate breakdown runs
 // the SAME per-sale banding — this is now just the data.SaleDetail adapter.
 func vatBreakdown(sale data.SaleDetail) []vatBand {
-	lines := make([]pos.VATLine, 0, len(sale.Lines))
+	inclusive := saleIsTaxInclusive(sale)
+	lines := make([]pos.VATLine, 0, len(sale.Lines)+len(sale.VoucherIssues))
 	for _, l := range sale.Lines {
 		lines = append(lines, pos.VATLine{RateBP: l.TaxRateBP, LineTotal: l.LineTotal, TaxAmount: l.TaxAmount})
 	}
-	bands := pos.VATBandsForSale(lines, sale.DiscountTotal, saleIsTaxInclusive(sale), sale.ServiceCharge, sale.ServiceChargeTaxBasisBP)
+	// Single-purpose voucher issues (ut-docs#1037) were taxed by this sale
+	// (they are inside its tax_total) but have no line row — declare them
+	// here exactly as the day-close does (eodVATLinesForSale), so the
+	// invoice's VAT table shows the tax the sale actually collected. A
+	// multi-purpose issue carries no Purpose on the detail and stays out,
+	// as before (a 0% liability, in no band).
+	for _, vi := range sale.VoucherIssues {
+		if vi.Purpose == data.VoucherPurposeSingle && vi.VATRateBP != nil {
+			lines = append(lines, singlePurposeVoucherVATLine(*vi.VATRateBP, vi.Amount, inclusive))
+		}
+	}
+	bands := pos.VATBandsForSale(lines, sale.DiscountTotal, inclusive, sale.ServiceCharge, sale.ServiceChargeTaxBasisBP)
 	out := make([]vatBand, 0, len(bands))
 	for _, b := range bands {
 		out = append(out, vatBand{RateBP: b.RateBP, Net: b.Net, Tax: b.Tax, Gross: b.Gross})

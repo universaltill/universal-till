@@ -80,6 +80,8 @@ func voucherFromSyncRow(row syncVoucherRow) data.Voucher {
 		BalanceMinor:        row.Balance,
 		Currency:            row.Currency,
 		VoucherType:         row.VoucherType,
+		Purpose:             row.Purpose,
+		IssueVATRateBP:      row.IssueVATRateBP,
 		Status:              row.Status,
 		IssuedSaleID:        row.IssuedSaleID,
 		CreatedAt:           row.CreatedAt,
@@ -233,6 +235,12 @@ func reserveVoucherOnPrimary(ctx context.Context, d *common.Deps, client *http.C
 			return data.Voucher{}, false, false, fmt.Errorf("voucher %q refused by primary: %w", voucherID, data.ErrVoucherNotActive)
 		case syncVoucherErrInsufficientBalance:
 			return data.Voucher{}, false, false, fmt.Errorf("voucher %q refused by primary: %w", voucherID, data.ErrVoucherInsufficientBalance)
+		case syncVoucherErrNotMultiPurpose:
+			// ut-docs#1037: the primary knows this voucher is single-purpose
+			// (taxed at issue) — a definitive refusal, never a "use local"
+			// fallback, or a replica with no local row would happily
+			// tender it and double-tax the goods.
+			return data.Voucher{}, false, false, fmt.Errorf("voucher %q refused by primary: %w", voucherID, data.ErrVoucherNotMultiPurpose)
 		case syncVoucherErrAmountMismatch:
 			// Not reachable from this repo's own client (a given sale id
 			// always carries the same amount across retries) — a definitive

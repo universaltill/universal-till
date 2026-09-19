@@ -151,6 +151,21 @@ type VoucherIssueInput struct {
 	// Amount is the voucher's face value (minor units), > 0. It becomes
 	// both original_amount and the opening balance (the liability).
 	Amount money.Money
+	// Purpose (ut-docs#1037) is data.VoucherPurposeMulti (the default —
+	// "" is treated identically, so every pre-#1037 caller is unchanged)
+	// or data.VoucherPurposeSingle. A single-purpose voucher is a taxable
+	// supply AT ISSUE (§3 Abs. 13-15 UStG): computeSaleTotals taxes Amount
+	// at VATRateBasisPoints like a line of the sale (into subtotal/
+	// taxTotal/total and the sale's per-rate VAT bands), NOT into the 0%
+	// multi-purpose liability (voucherIssueTotal). Amount is in the sale's
+	// own pricing mode, same as SaleLineInput.UnitPrice: gross under
+	// inclusive pricing, net (tax added on top) under exclusive.
+	Purpose string
+	// VATRateBasisPoints is the rate a single-purpose voucher is taxed at
+	// (1900 = 19%; 0 is a legitimate zero-rated good, not "unset"), 0..10000.
+	// Must be 0 for a multi-purpose voucher — a rate there is a caller bug
+	// and is rejected rather than silently dropped.
+	VATRateBasisPoints int
 }
 
 type SaleLineInput struct {
@@ -396,7 +411,7 @@ func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, voucher
 	// historical rows as-is unless concrete evidence surfaces that a real
 	// filed VAT return was affected. Re-read ut-docs#1114 before adding a
 	// reconciliation pass here.
-	vatLines := make([]VATLine, 0, len(in.Lines))
+	vatLines := make([]VATLine, 0, len(in.Lines)+len(in.VoucherIssues))
 	for _, l := range in.Lines {
 		if err := validateLine(l); err != nil {
 			return 0, 0, 0, 0, 0, err
@@ -412,6 +427,64 @@ func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, voucher
 		lineTax, lineGross := ComputeTaxBasisPoints(lineNet, l.TaxRateBasisPoints, in.TaxInclusive)
 		subtotal = subtotal.Add(lineNet)
 		vatLines = append(vatLines, VATLine{RateBP: l.TaxRateBasisPoints, LineTotal: lineGross.Minor(), TaxAmount: lineTax.Minor()})
+	}
+	// Voucher issues, part 1 — validation and the single-purpose tax
+	// (ut-docs#1008 / #1037). This runs BEFORE the VATBandsForSale call
+	// below (it used to sit after the negative clamp, together with the
+	// multi-purpose fold that is still down there) because a SINGLE-PURPOSE
+	// voucher is itself a taxable line of this sale: its tax has to be in
+	// vatLines for the banding to declare it, and its amount in subtotal so
+	// the discount proration and the inclusive/exclusive identities treat it
+	// exactly like a line (a single-purpose voucher is a supply of the good
+	// at issue, §3 Abs. 14 UStG). The validation (count cap, amount > 0,
+	// per-voucher ceiling) is shared by both kinds and is pure input
+	// checking with no dependence on anything computed later, so moving it
+	// up changes nothing for a multi-purpose issue except when its error
+	// surfaces relative to a bad line — the multi-purpose fold itself stays
+	// where it was, after the clamp, for the reason documented there.
+	// ut-docs#1052: the per-voucher ceiling bounds each amount but not the
+	// count, so cap that too rather than lean on the incidental
+	// memory-exhaustion floor described on MaxVoucherIssuesPerSale.
+	if len(in.VoucherIssues) > MaxVoucherIssuesPerSale {
+		return 0, 0, 0, 0, 0, fmt.Errorf("sale issues %d vouchers, exceeding the maximum of %d per sale", len(in.VoucherIssues), MaxVoucherIssuesPerSale)
+	}
+	// chargeLines is the service-charge apportionment basis: the sale's
+	// lines plus every single-purpose voucher, so the charge's tax is
+	// weighted across the SAME set of rate bands VATBandsForSale will see
+	// when the day-close/invoice re-derive this sale from its persisted
+	// figures (they hand it the voucher as a line too) — otherwise the two
+	// could disagree by a rounding unit on a sale carrying both.
+	chargeLines := ChargeTaxLinesFromSale(in.Lines)
+	for i, v := range in.VoucherIssues {
+		if !v.Amount.IsPositive() {
+			return 0, 0, 0, 0, 0, fmt.Errorf("voucher issue %d: amount must be > 0", i+1)
+		}
+		// Defense in depth for the int64-overflow coverage bypass (review
+		// F3) — the same ceiling pos_api.go enforces at the HTTP boundary,
+		// re-checked here because the API is not the only CompleteSale
+		// caller (self-order, future plugin paths, journal replay).
+		if v.Amount > MaxVoucherIssueAmount {
+			return 0, 0, 0, 0, 0, fmt.Errorf("voucher issue %d: amount %d exceeds the maximum of %d minor units", i+1, v.Amount.Minor(), MaxVoucherIssueAmount.Minor())
+		}
+		switch v.Purpose {
+		case "", data.VoucherPurposeMulti:
+			if v.VATRateBasisPoints != 0 {
+				return 0, 0, 0, 0, 0, fmt.Errorf("voucher issue %d: a vat rate is only valid for a single-purpose voucher", i+1)
+			}
+		case data.VoucherPurposeSingle:
+			if v.VATRateBasisPoints < 0 || v.VATRateBasisPoints > 10000 {
+				return 0, 0, 0, 0, 0, fmt.Errorf("voucher issue %d: vat rate %d basis points is out of range (0-10000)", i+1, v.VATRateBasisPoints)
+			}
+			// Same call, same TaxInclusive flag as a line: Amount is gross
+			// under inclusive pricing (tax carved out), net under exclusive
+			// (tax on top) — no second inclusive/exclusive notion.
+			lineTax, lineGross := ComputeTaxBasisPoints(v.Amount, v.VATRateBasisPoints, in.TaxInclusive)
+			subtotal = subtotal.Add(v.Amount)
+			vatLines = append(vatLines, VATLine{RateBP: v.VATRateBasisPoints, LineTotal: lineGross.Minor(), TaxAmount: lineTax.Minor()})
+			chargeLines = append(chargeLines, ChargeTaxLine{RateBP: v.VATRateBasisPoints, Net: v.Amount})
+		default:
+			return 0, 0, 0, 0, 0, fmt.Errorf("voucher issue %d: unknown purpose %q", i+1, v.Purpose)
+		}
 	}
 	// serviceCharge=0 here deliberately: VATBandsForSale's discount
 	// apportionment never touches service-charge tax (it's added to bands
@@ -441,7 +514,7 @@ func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, voucher
 	// Inclusive pricing embeds the charge's tax inside the charge amount
 	// (taxTotal declares it, total is unchanged); exclusive adds it on top
 	// via the taxTotal fold below — the same split the lines themselves get.
-	chargeTax := ServiceChargeTax(serviceCharge, ChargeTaxLinesFromSale(in.Lines), in.TaxInclusive, in.ServiceChargeTaxBasisBP)
+	chargeTax := ServiceChargeTax(serviceCharge, chargeLines, in.TaxInclusive, in.ServiceChargeTaxBasisBP)
 	taxTotal = taxTotal.Add(chargeTax)
 	total = discountedSubtotal.Add(serviceCharge)
 	if !in.TaxInclusive {
@@ -450,31 +523,23 @@ func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, voucher
 	if total.IsNegative() {
 		total = 0
 	}
-	// Voucher issues (ut-docs#1008): a 0% liability the customer pays for —
-	// folded into total AFTER the negative clamp (a sale discount must never
-	// eat into a voucher's face value: the full amount is owed to the future
-	// bearer), and NEVER into subtotal/taxTotal (it is not revenue and not a
-	// taxable supply; VAT arises only at redemption, ut-docs#1008). The
-	// summed face value is returned separately so CompleteSale can persist
-	// it on the sale header (sales.voucher_issue_total, migration 069) —
-	// InferTaxInclusive needs it on the other side of its identity.
-	// ut-docs#1052: the per-voucher ceiling below bounds each amount but
-	// not the count, so cap that too rather than lean on the incidental
-	// memory-exhaustion floor described on MaxVoucherIssuesPerSale.
-	if len(in.VoucherIssues) > MaxVoucherIssuesPerSale {
-		return 0, 0, 0, 0, 0, fmt.Errorf("sale issues %d vouchers, exceeding the maximum of %d per sale", len(in.VoucherIssues), MaxVoucherIssuesPerSale)
-	}
+	// Voucher issues, part 2 — the MULTI-PURPOSE fold (ut-docs#1008): a 0%
+	// liability the customer pays for — folded into total AFTER the
+	// negative clamp (a sale discount must never eat into a voucher's face
+	// value: the full amount is owed to the future bearer), and NEVER into
+	// subtotal/taxTotal (it is not revenue and not a taxable supply; VAT
+	// arises only at redemption, ut-docs#1008). The summed face value is
+	// returned separately so CompleteSale can persist it on the sale header
+	// (sales.voucher_issue_total, migration 069) — InferTaxInclusive needs
+	// it on the other side of its identity. A single-purpose voucher
+	// (ut-docs#1037) was already taxed into subtotal/vatLines in part 1
+	// above and is skipped here: it is not a liability and must not reach
+	// voucherIssueTotal, or InferTaxInclusive's identity would double-count
+	// it. Validation (count, amount, ceiling) already ran in part 1.
 	const maxMoney = money.Money(math.MaxInt64)
 	for i, v := range in.VoucherIssues {
-		if !v.Amount.IsPositive() {
-			return 0, 0, 0, 0, 0, fmt.Errorf("voucher issue %d: amount must be > 0", i+1)
-		}
-		// Defense in depth for the int64-overflow coverage bypass (review
-		// F3) — the same ceiling pos_api.go enforces at the HTTP boundary,
-		// re-checked here because the API is not the only CompleteSale
-		// caller (self-order, future plugin paths, journal replay).
-		if v.Amount > MaxVoucherIssueAmount {
-			return 0, 0, 0, 0, 0, fmt.Errorf("voucher issue %d: amount %d exceeds the maximum of %d minor units", i+1, v.Amount.Minor(), MaxVoucherIssueAmount.Minor())
+		if v.Purpose == data.VoucherPurposeSingle {
+			continue
 		}
 		// ut-docs#1052: assert the running-total guarantee explicitly
 		// instead of relying on the count/amount ceilings above making it
@@ -1033,12 +1098,24 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 			// as the sale — the sale_charges precedent (ADR-0062) for a
 			// sale-level financial event that is not an article line.
 			for _, v := range in.VoucherIssues {
+				// A single-purpose voucher (ut-docs#1037) records the rate
+				// it was taxed at (computeSaleTotals validated it) so the
+				// day-close can band the issue at the sale's own rate; a
+				// multi-purpose one carries NULL (CreateVoucher defaults
+				// an empty Purpose to multi).
+				var issueRate *int
+				if v.Purpose == data.VoucherPurposeSingle {
+					bp := v.VATRateBasisPoints
+					issueRate = &bp
+				}
 				if err := repo.CreateVoucher(ctx, tx, data.Voucher{
 					ID:                  v.VoucherID,
 					HolderLabel:         v.HolderLabel,
 					OriginalAmountMinor: v.Amount.Minor(),
 					BalanceMinor:        v.Amount.Minor(),
 					Currency:            in.Currency,
+					Purpose:             v.Purpose,
+					IssueVATRateBP:      issueRate,
 					IssuedSaleID:        saleID,
 					CreatedAt:           now,
 				}); err != nil {

@@ -676,6 +676,11 @@ func classifyTenderError(err error) string {
 		return "pos.toast.voucher_insufficient"
 	case errors.Is(err, data.ErrVoucherNotFound), errors.Is(err, data.ErrVoucherNotActive):
 		return "pos.toast.voucher_invalid"
+	// ut-docs#1037: a single-purpose voucher tendered as payment — the
+	// double-tax guard's refusal gets its own wording, because the fix is
+	// a different action (Redeem, in the same panel), not a different code.
+	case errors.Is(err, data.ErrVoucherNotMultiPurpose):
+		return "pos.toast.voucher_single_purpose_tender"
 	case errors.Is(err, pos.ErrVoucherOvertender):
 		return "pos.toast.voucher_overtender"
 	// ut-docs#1832: with the "Sell a voucher" UI an operator types a
@@ -935,6 +940,17 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				}
 			}
 			switch {
+			case found && v.Purpose == data.VoucherPurposeSingle:
+				// ut-docs#1037: a single-purpose voucher is never tender
+				// (its VAT was declared at issue — the double-tax guard in
+				// data.DebitVoucherForRedemption would refuse it at
+				// checkout anyway), so it is not offered as a pay-grid
+				// option; the toast points the cashier at the Split tab's
+				// Check balance → Redeem hand-over instead.
+				b := d.Engine.Basket()
+				b.ToastMessage = httpx.T(locale, "pos.toast.voucher_single_purpose_tender")
+				b.ToastLevel = "error"
+				render(&b)
 			case found && v.Status == "active" && v.BalanceMinor > 0:
 				// Stash the pending voucher on the engine (internal/pos)
 				// so the sale screen can offer its balance as a pay-grid
@@ -1401,10 +1417,15 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			// (web/public/app.js initSplitTender, ut-docs#1832) on the
 			// same POST as the payments — sent as an empty list when
 			// nothing is pending.
+			// Purpose / VATRateBP (ut-docs#1037): "" or "multi_purpose"
+			// is today's 0% liability; "single_purpose" is taxed at issue
+			// at vat_rate_bp (0..10000) and never becomes a liability.
 			IssueVouchers []struct {
 				Amount      int64  `json:"amount"`
 				Code        string `json:"code,omitempty"`
 				HolderLabel string `json:"holder_label,omitempty"`
+				Purpose     string `json:"purpose,omitempty"`
+				VATRateBP   int    `json:"vat_rate_bp,omitempty"`
 			} `json:"issue_vouchers,omitempty"`
 			Discount      int64  `json:"discount,omitempty"`
 			RegisterID    string `json:"registerId,omitempty"`
@@ -1480,10 +1501,31 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				http.Error(w, "invalid voucher issue", http.StatusBadRequest)
 				return
 			}
+			// ut-docs#1037: purpose is a closed vocabulary and the rate a
+			// bounded range — computeSaleTotals re-checks both, but fail
+			// here first, before the basket-total pass, same reasoning as
+			// the count cap above.
+			switch v.Purpose {
+			case "", data.VoucherPurposeMulti:
+				if v.VATRateBP != 0 {
+					http.Error(w, "invalid voucher issue", http.StatusBadRequest)
+					return
+				}
+			case data.VoucherPurposeSingle:
+				if v.VATRateBP < 0 || v.VATRateBP > 10000 {
+					http.Error(w, "invalid voucher issue", http.StatusBadRequest)
+					return
+				}
+			default:
+				http.Error(w, "invalid voucher issue", http.StatusBadRequest)
+				return
+			}
 			voucherIssues = append(voucherIssues, pos.VoucherIssueInput{
-				VoucherID:   v.Code,
-				HolderLabel: v.HolderLabel,
-				Amount:      money.FromMinor(v.Amount),
+				VoucherID:          v.Code,
+				HolderLabel:        v.HolderLabel,
+				Amount:             money.FromMinor(v.Amount),
+				Purpose:            v.Purpose,
+				VATRateBasisPoints: v.VATRateBP,
 			})
 			voucherIssueTotal = voucherIssueTotal.Add(money.FromMinor(v.Amount))
 		}

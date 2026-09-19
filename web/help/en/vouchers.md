@@ -4,7 +4,7 @@ title: Gift vouchers
 section: Everyday selling
 order: 25
 summary: Sell multi-purpose gift vouchers from the payment panel's Split tab and take them as payment — check the balance before you commit, and the receipt prints every code you issued.
-keywords: [voucher, gift voucher, gift card, gutschein, redeem, balance, issue, code]
+keywords: [voucher, gift voucher, gift card, gutschein, einzweck, single-purpose, specific item, redeem, balance, issue, code]
 ---
 
 # Gift vouchers
@@ -44,6 +44,28 @@ What can go wrong:
 - A voucher can be used once per sale, and a voucher being sold in this same sale can't pay for it.
 
 The older **gift** method in the same list is a plain payment method that doesn't track a balance — use **voucher** for vouchers the till issued.
+
+## Vouchers for a specific item
+
+Most gift vouchers are for **any use** — the customer decides later what to spend them on, and the goods are taxed when the voucher is spent. A voucher sold for a **specific item** (a particular product or service, so its VAT rate is already known — in Germany an *Einzweck-Gutschein*) is taxed when it is sold instead, and redeeming it later is simply handing the item over. The till keeps the two kinds apart.
+
+Selling one:
+
+1. In **Sell a voucher**, choose **Specific item (taxed now)** under **Voucher type** (the default, **Any use**, is the everyday voucher described above).
+2. A **VAT rate** box appears — type the rate the item carries as a percentage, e.g. `19` or `7`.
+3. Fill in the amount, code and holder as usual and **Add Voucher**. The pending list marks it *Specific item* with its rate. The sale records the VAT at that rate straight away, so the voucher shows in the day's VAT bands like a normal sale line — not in the **GUTSCHEINE** liability section.
+
+Redeeming one:
+
+1. In the **Split** tab, choose **voucher** as the method and type the code, then **Check balance**.
+2. For a specific-item voucher the till does not fill in an amount — it shows the voucher's value and holder next to a **Redeem** button instead. Such a voucher can never be used as a payment: it has already been taxed, so taking it as payment would tax the same money twice.
+3. Hand over the item and tap **Redeem**. This is final: the voucher is marked as used at once, with nothing to complete or remove afterwards. No further payment or tax is recorded — the sale that sold the voucher already did that.
+
+What can go wrong:
+
+- A VAT rate that is empty, negative or above 100 is refused before the voucher is added.
+- Tapping **Redeem** on a voucher that has already been used, or scanning a specific-item voucher at the sale screen, is refused with a message saying so.
+- A specific-item voucher sold on another till can be checked from this one but not yet redeemed here — redeem it on the main till or on the till that sold it.
 
 ## Day-end reports and other tills
 
