@@ -109,9 +109,14 @@
        stacking two visible dialogs. Closing any open .shrinkage-sheet
        here is a no-op on every other checkOrElevate site (nothing
        matches the selector), so this is safe to do unconditionally
-       rather than special-casing the void/comp/waste caller. */}}
+       rather than special-casing the void/comp/waste caller. Resetting
+       aria-expanded on the matching .shrinkage-remove-toggle alongside
+       the close mirrors app.js's own click-outside handler (basket.html)
+       so a screen reader isn't told the (now closed) sheet is still
+       expanded once the PIN prompt is dismissed. */}}
   <script>
     document.querySelectorAll('.shrinkage-sheet').forEach(function (s) { if (s.open) s.close(); });
+    document.querySelectorAll('.shrinkage-remove-toggle[aria-expanded="true"]').forEach(function (b) { b.setAttribute('aria-expanded', 'false'); });
     document.currentScript.closest('dialog').show();
   </script>
 </dialog>

@@ -63,7 +63,7 @@ INSERT INTO shrinkage_events (
 // reporting window — mirrors MethodTotal's own {label, count, amount}
 // shape (PaymentBreakdown, above in pos_repo.go).
 type ShrinkageReasonTotal struct {
-	ReasonCategory string `json:"reasonCategory"`
+	ReasonCategory string `json:"reason_category"`
 	Count          int    `json:"count"`
 	Total          int64  `json:"total"`
 }

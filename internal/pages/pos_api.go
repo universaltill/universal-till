@@ -1106,15 +1106,29 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 					logging.L().Errorf("insert shrinkage audit: %v", err)
 				}
 			}
-			// The reason-picker sheet's buttons declare a small dedicated
-			// hint target (#shrinkage-hint, innerHTML) so a needsElevation
-			// response above doesn't blow away #basket's own id (same
-			// problem/fix buttons_admin.html's #buttons-grid-wrap comment
-			// documents) -- override it back to the normal full-basket
-			// outerHTML swap for this, the actual-removal response.
-			w.Header().Set("HX-Retarget", "#basket")
-			w.Header().Set("HX-Reswap", "outerHTML")
 		}
+
+		// The reason-picker sheet's buttons declare a small dedicated hint
+		// target (#shrinkage-hint, innerHTML) so a needsElevation response
+		// above doesn't blow away #basket's own id (same problem/fix
+		// buttons_admin.html's #buttons-grid-wrap comment documents) --
+		// override it back to the normal full-basket outerHTML swap for
+		// the actual-removal response below.
+		//
+		// Set UNCONDITIONALLY, not just inside the non-zero branch above
+		// (ut-docs#1465 review): basket.html picks the reason sheet on
+		// `.PriceCents.IsZero`, i.e. the UNIT price, while this handler
+		// gates on the EXTENDED value (money.MulQty rounds qty × unit
+		// price). Those disagree for a line whose unit price is non-zero
+		// but whose extended value rounds to zero -- a weighed line at a
+		// near-zero decoded weight, say -- where the operator is shown the
+		// sheet, taps a reason, and this handler takes the zero-value
+		// path. Without the override that response's full-basket HTML is
+		// innerHTML-swapped into #shrinkage-hint, which lives INSIDE
+		// #basket: a nested duplicate basket. It is a no-op for the plain
+		// zero-value ✕ button, which already targets #basket/outerHTML.
+		w.Header().Set("HX-Retarget", "#basket")
+		w.Header().Set("HX-Reswap", "outerHTML")
 
 		if key != "" {
 			// Voiding the last dine-in line clears the table (ADR-0073
