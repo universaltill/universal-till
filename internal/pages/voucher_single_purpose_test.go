@@ -11,6 +11,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/money"
+	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
@@ -287,5 +288,91 @@ func TestApplyJournal_ReplicatesSinglePurposeVoucherIssue(t *testing.T) {
 	}
 	if rTax != pTax || rTotal != pTotal || pTax == 0 {
 		t.Fatalf("totals drifted across replay: replica tax=%d total=%d, primary tax=%d total=%d", rTax, rTotal, pTax, pTotal)
+	}
+}
+
+// spExclusiveTender posts one quick-tender (zero-amount payment, so the
+// handler fills in what it DEMANDS) issuing a single-purpose voucher under
+// the harness's default EXCLUSIVE pricing, and returns the persisted
+// sale total / tax_total and the payment the handler filled in.
+func spExclusiveTender(t *testing.T, serviceChargeBP int, body string) (total, taxTotal, paid int64) {
+	t.Helper()
+	mux, dp := newPOSTestDeps(t)
+	if serviceChargeBP != 0 {
+		dp.UpdateState(func(s *common.RuntimeState) { s.ServiceChargeRateBasisPoints = serviceChargeBP })
+	}
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("tender: HTTP %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "does not cover the sale total") {
+		t.Fatalf("tender refused its own demanded amount — the handler's total disagrees with pos.computeSaleTotals")
+	}
+	if err := dp.Db.QueryRow(`SELECT total, tax_total FROM sales`).Scan(&total, &taxTotal); err != nil {
+		t.Fatalf("query sale: %v", err)
+	}
+	if err := dp.Db.QueryRow(`SELECT amount FROM payments`).Scan(&paid); err != nil {
+		t.Fatalf("query payment: %v", err)
+	}
+	return total, taxTotal, paid
+}
+
+// Reviewer regression (ut-docs#1037): under EXCLUSIVE pricing the
+// quick-tender handler must demand the single-purpose voucher's VAT too.
+// It used to add the face value as if it were the multi-purpose 0%
+// liability, so the demanded total came out short by exactly that VAT and
+// CompleteSale — which taxes the issue via computeSaleTotals — rejected the
+// handler's own figure, making the sale impossible to complete at all.
+// Every pre-existing test on this path priced tax-inclusive, where the two
+// happen to agree, which is why it was not caught.
+func TestTenderHandler_SinglePurposeVoucherExclusivePricingDemandsItsVAT(t *testing.T) {
+	// ABC: 100 @20% -> 120. Voucher 2500 @19% -> 2975. Total 3095, tax 495.
+	total, taxTotal, paid := spExclusiveTender(t, 0,
+		`{"payments":[{"method":"cash","amount":0}],"offline":true,`+
+			`"issue_vouchers":[{"amount":2500,"code":"GS-SP-EXCL","purpose":"single_purpose","vat_rate_bp":1900}]}`)
+	if total != 3095 || taxTotal != 495 {
+		t.Fatalf("sale total=%d tax_total=%d, want 3095/495", total, taxTotal)
+	}
+	if paid != total {
+		t.Fatalf("handler demanded %d but the sale total is %d — the quick-tender figure must equal what CompleteSale enforces", paid, total)
+	}
+}
+
+// Same path with a SERVICE CHARGE: computeSaleTotals apportions the
+// charge's tax across the single-purpose voucher's rate band as well as the
+// lines', so the handler must weigh the same set or the two drift by a
+// rounding unit and the sale is refused again.
+func TestTenderHandler_SinglePurposeVoucherExclusiveWithServiceCharge(t *testing.T) {
+	total, taxTotal, paid := spExclusiveTender(t, 1000,
+		`{"payments":[{"method":"cash","amount":0}],"offline":true,`+
+			`"issue_vouchers":[{"amount":2500,"code":"GS-SP-SC","purpose":"single_purpose","vat_rate_bp":700}]}`)
+	if paid != total {
+		t.Fatalf("handler demanded %d but the sale total is %d (service-charge apportionment drifted)", paid, total)
+	}
+	if taxTotal == 0 {
+		t.Fatalf("tax_total must carry the voucher's VAT and the charge's, got 0")
+	}
+}
+
+// The MULTI-PURPOSE path under the same exclusive pricing is unchanged: its
+// face value is a 0% liability that rides on top of the taxed total and
+// contributes no tax of its own.
+func TestTenderHandler_MultiPurposeVoucherExclusivePricingUnchanged(t *testing.T) {
+	// ABC: 100 @20% -> 120, plus the 2500 liability = 2620, tax still 20.
+	total, taxTotal, paid := spExclusiveTender(t, 0,
+		`{"payments":[{"method":"cash","amount":0}],"offline":true,`+
+			`"issue_vouchers":[{"amount":2500,"code":"GS-MP-EXCL","purpose":"multi_purpose"}]}`)
+	if total != 2620 || taxTotal != 20 {
+		t.Fatalf("sale total=%d tax_total=%d, want 2620/20 (the 0%% liability adds no tax)", total, taxTotal)
+	}
+	if paid != total {
+		t.Fatalf("handler demanded %d but the sale total is %d", paid, total)
 	}
 }

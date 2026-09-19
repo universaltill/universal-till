@@ -1495,7 +1495,17 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		var voucherIssues []pos.VoucherIssueInput
+		// voucherIssueTotal is the MULTI-PURPOSE face value only — the 0%
+		// liability that rides on top of the taxed total after the clamp.
+		// A single-purpose issue (ut-docs#1037) is a taxable supply at
+		// issue instead, so it goes into singlePurposeIssues and is folded
+		// into the taxed base below, exactly as pos.computeSaleTotals does.
+		// Keeping it in voucherIssueTotal demanded its face value with NO
+		// tax, so under EXCLUSIVE pricing this quick-tender total came out
+		// short by the voucher's VAT and CompleteSale rejected the sale
+		// outright ("Amount received does not cover the sale total").
 		var voucherIssueTotal money.Money
+		var singlePurposeIssues []pos.ChargeTaxLine
 		for _, v := range in.IssueVouchers {
 			if v.Amount <= 0 || money.FromMinor(v.Amount) > pos.MaxVoucherIssueAmount || len(v.Code) > 64 || len(v.HolderLabel) > 200 {
 				http.Error(w, "invalid voucher issue", http.StatusBadRequest)
@@ -1527,6 +1537,13 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				Purpose:            v.Purpose,
 				VATRateBasisPoints: v.VATRateBP,
 			})
+			if v.Purpose == data.VoucherPurposeSingle {
+				singlePurposeIssues = append(singlePurposeIssues, pos.ChargeTaxLine{
+					RateBP: v.VATRateBP,
+					Net:    money.FromMinor(v.Amount),
+				})
+				continue
+			}
 			voucherIssueTotal = voucherIssueTotal.Add(money.FromMinor(v.Amount))
 		}
 
@@ -1771,7 +1788,22 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 			chargeTaxBasisBP = policy.ServiceChargeTaxBasisBP
 		}
-		chargeTax := pos.ServiceChargeTax(serviceCharge, pos.ChargeTaxLinesFromSale(saleLines), d.CurrentState().TaxInclusive, chargeTaxBasisBP)
+		// ut-docs#1037: a single-purpose voucher is taxed at issue, so it is
+		// part of BOTH the service charge's rate-band apportionment and the
+		// taxed base — mirroring pos.computeSaleTotals, which is what
+		// CompleteSale enforces against this demanded total. Folded in AFTER
+		// serviceCharge itself is computed, deliberately: the charge's own
+		// base stays the lines-only, post-discount subtotal the basket
+		// engine quotes on screen (internal/pos/service.go recomputeTotals),
+		// so screen and demand still agree.
+		chargeLines := pos.ChargeTaxLinesFromSale(saleLines)
+		chargeLines = append(chargeLines, singlePurposeIssues...)
+		for _, sp := range singlePurposeIssues {
+			spTax, _ := pos.ComputeTaxBasisPoints(sp.Net, sp.RateBP, d.CurrentState().TaxInclusive)
+			subtotal = subtotal.Add(sp.Net)
+			taxTotal = taxTotal.Add(spTax)
+		}
+		chargeTax := pos.ServiceChargeTax(serviceCharge, chargeLines, d.CurrentState().TaxInclusive, chargeTaxBasisBP)
 		total := subtotal.Sub(discount).Add(serviceCharge)
 		if !d.CurrentState().TaxInclusive {
 			// Exclusive pricing: the charge's tax rides on top exactly like

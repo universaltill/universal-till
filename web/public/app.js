@@ -225,6 +225,11 @@ window.utCurrency = (function(){
     var redeemRow = card.querySelector('#split-tender-voucher-redeem');
     var redeemInfo = card.querySelector('#split-tender-voucher-redeem-info');
     var redeemBtn = card.querySelector('#split-tender-voucher-redeem-btn');
+    // ut-docs#1037 (reviewer): the sale's pricing mode, for issueGross
+    // below. Absent (an older cached template) reads as inclusive — the
+    // pre-#1037 behaviour, and the mode in which face value already is the
+    // gross, so nothing changes for a multi-purpose issue either way.
+    var taxInclusive = card.getAttribute('data-tax-inclusive') !== '0';
 
     if (!form || !addBtn || !submitBtn || !clearBtn || !paymentsList) {
       return;
@@ -381,9 +386,26 @@ window.utCurrency = (function(){
       }, 0);
     }
 
+    // ut-docs#1037 (reviewer): what a pending issue adds to what the
+    // customer owes. A multi-purpose voucher is a 0% liability — its face
+    // value, flat, as before. A SINGLE-purpose one is taxed at issue, so
+    // under EXCLUSIVE pricing its VAT rides on top of the face value (under
+    // inclusive the face value already contains it). Quoting the flat face
+    // value there left this panel short by exactly that VAT, and the server
+    // — which taxes the issue in pos.computeSaleTotals — then refused the
+    // cashier's own quoted amount with "does not cover the sale total".
+    // Mirrors pos.ComputeTaxBasisPoints's exclusive branch, half-up, so the
+    // two round identically.
+    function issueGross(issue){
+      if (issue.purpose !== 'single_purpose' || taxInclusive) return issue.amount;
+      var bp = Number(issue.vat_rate_bp || 0);
+      if (!Number.isFinite(bp) || bp <= 0) return issue.amount;
+      return issue.amount + Math.floor((issue.amount * bp + 5000) / 10000);
+    }
+
     function voucherIssueTotal(){
       return pendingVoucherIssues.reduce(function(sum, issue){
-        return sum + issue.amount;
+        return sum + issueGross(issue);
       }, 0);
     }
 

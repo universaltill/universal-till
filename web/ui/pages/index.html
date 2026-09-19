@@ -890,7 +890,8 @@
          data-msg-no-pending-vouchers="{{ T "tender.issue_voucher.no_pending" }}"
          data-msg-voucher-single-purpose="{{ T "tender.issue_voucher.purpose_single" }}"
          data-msg-voucher-vat-rate-invalid="{{ T "tender.status.voucher_vat_rate_invalid" }}"
-         data-msg-voucher-redeemed-single="{{ T "pos.toast.voucher_redeemed_single" }}">
+         data-msg-voucher-redeemed-single="{{ T "pos.toast.voucher_redeemed_single" }}"
+         data-tax-inclusive="{{ if .taxInclusive }}1{{ else }}0{{ end }}">
       <form class="split-tender-form" id="split-tender-form" autocomplete="off">
         {{ $default := .paymentMethodDefault }}
         <div class="split-grid">
