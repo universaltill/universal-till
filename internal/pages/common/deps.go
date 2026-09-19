@@ -87,10 +87,20 @@ type Deps struct {
 	// to read or mutate the cashier's live sale (before the split, merely
 	// landing on GET /self-order wiped the cashier's in-progress basket).
 	KioskEngine *pos.Service
-	BtnStore    *ui.ButtonStore
-	CatalogRepo *marketplace.CatalogRepository
-	AuthSvc     *auth.Service
-	AI          *ai.Service
+	// SelfOrderSessions holds one independent basket per table-bound
+	// self-order guest session (ADR-0103, ut-docs#2261): a guest scanning a
+	// table's QR on their own phone gets their own *pos.Service here, keyed
+	// by the HttpOnly session cookie pages.selfOrderEngine reads, so several
+	// tables can order concurrently instead of sharing KioskEngine's one
+	// basket. KioskEngine itself stays the bare walk-up/physical-kiosk
+	// basket (no ?table=), unchanged. Set once in pages.Init; handlers
+	// nil-check it so bare-Deps tests stay valid (the manager's own methods
+	// are nil-receiver-safe too).
+	SelfOrderSessions *pos.SessionBasketManager
+	BtnStore          *ui.ButtonStore
+	CatalogRepo       *marketplace.CatalogRepository
+	AuthSvc           *auth.Service
+	AI                *ai.Service
 	// WindowCtl is the host-OS hook for the till's own window/process
 	// (ut-docs#608 scaffold) — exiting kiosk/fullscreen to the OS desktop,
 	// and applying a window-mode change. pages.Init wires the real

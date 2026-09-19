@@ -43,6 +43,7 @@ internal/plugins/plugins.go: unreachable func: Manager.CatalogList
 internal/plugins/revocation.go: unreachable func: RevocationChecker.GetRevokedPlugins
 internal/plugins/rollback.go: unreachable func: RollbackManager.GetVersionHistory
 internal/pos/order_status.go: unreachable func: OrderStatusBroadcaster.SubscriberCount
+internal/pos/session_manager.go: unreachable func: SessionBasketManager.TableOwner
 internal/pos/service.go: unreachable func: Service.ScanQty
 internal/pos/service.go: unreachable func: Service.SetLineOrderType
 internal/pos/service.go: unreachable func: Service.Tender
