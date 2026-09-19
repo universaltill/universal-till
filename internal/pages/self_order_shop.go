@@ -132,19 +132,21 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		cats, _ := data.NewCatalogRepo(d.Db).ReadLookup(r.Context(), "categories")
 		// idleResetURL (ut-docs#815 review finding, BLOCKER 2): the idle
 		// timer sends this page back to /self-order, which Reset()s the
-		// basket -- and with it the table a QR session bound
+		// walk-up basket -- and used to drop the table a QR session bound
 		// (registerSelfOrder). On a shop's own kiosk terminal that is exactly
 		// right ("start fresh for the next customer"), but on a GUEST'S OWN
 		// PHONE the default 60s of not touching the screen (reading the menu,
 		// talking to the table) silently unbound their table and dropped the
 		// next checkout back onto the card/contactless path their phone
-		// cannot use. Carrying ?table= through the bounce re-binds the same
-		// table on the way back in, where it is re-validated (enabled, still
-		// exists) exactly as on the first scan -- this never resurrects a
-		// table /self-order would refuse today.
+		// cannot use. Carrying ?table= through the bounce lands the guest
+		// back on their own table -- since ADR-0103 (ut-docs#2261) that
+		// RESUMES their per-session basket via the session cookie rather
+		// than re-binding a wiped one, and the table is re-validated
+		// (enabled, still exists) exactly as on the first scan -- this never
+		// resurrects a table /self-order would refuse today.
 		idleResetURL := "/self-order"
-		if d.KioskEngine != nil {
-			if tableID := d.KioskEngine.TableID(); tableID != "" {
+		if eng := selfOrderEngine(d, r); eng != nil {
+			if tableID := eng.TableID(); tableID != "" {
 				idleResetURL += "?table=" + url.QueryEscape(tableID)
 			}
 		}
@@ -159,7 +161,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 	// Cart-only render, for the page's own hx-trigger="load" fragment —
 	// same pattern index.html uses for /ui/basket.
 	mux.HandleFunc("GET /api/self-order/cart", func(w http.ResponseWriter, r *http.Request) {
-		renderKioskCart(w, r, d)
+		renderKioskCart(w, r, d, selfOrderEngine(d, r))
 	})
 
 	// Renamed from /api/self-order/search (ut-docs#419) — the kiosk is
@@ -180,6 +182,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 
 	mux.HandleFunc("POST /api/self-order/scan", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
+		eng := selfOrderEngine(d, r)
 		code := strings.TrimSpace(r.Form.Get("code"))
 		qty := 1.0
 		if v := r.Form.Get("qty"); v != "" {
@@ -207,12 +210,12 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			// this session already found itemID variant-free — see
 			// pos.Service.HasNoSellableVariants' doc comment for why this
 			// can't reintroduce #2227 review finding F1.
-			if base, ok := d.KioskEngine.ResolveBase(code); ok && base.VariantID == "" && base.ItemID != "" && !base.QtyFromCode && !d.KioskEngine.HasNoSellableVariants(base.ItemID) {
+			if base, ok := eng.ResolveBase(code); ok && base.VariantID == "" && base.ItemID != "" && !base.QtyFromCode && !eng.HasNoSellableVariants(base.ItemID) {
 				variants, err := data.NewCatalogRepo(d.Db).ItemVariantsFor(r.Context(), base.ItemID)
 				if err != nil {
 					// Deliberately NOT memoized — a transient error must stay
 					// retryable, not get cached as a false "no variants".
-					renderKioskCartWithMessage(w, r, d, httpx.T(httpx.ResolveLocale(w, r), "modifiers.variant_unavailable"))
+					renderKioskCartWithMessage(w, r, d, eng, httpx.T(httpx.ResolveLocale(w, r), "modifiers.variant_unavailable"))
 					return
 				}
 				if len(sellableVariants(variants)) > 0 {
@@ -222,24 +225,24 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 					// choice this anonymous endpoint can't make. Reuse the
 					// existing "variant_required" key instead (no new i18n
 					// key, already present in every locale).
-					renderKioskCartWithMessage(w, r, d, httpx.T(httpx.ResolveLocale(w, r), "modifiers.variant_required"))
+					renderKioskCartWithMessage(w, r, d, eng, httpx.T(httpx.ResolveLocale(w, r), "modifiers.variant_required"))
 					return
 				}
-				d.KioskEngine.MarkNoSellableVariants(base.ItemID)
+				eng.MarkNoSellableVariants(base.ItemID)
 			}
 			// Item resolution + add ONLY — no promo-code-via-code fallback,
 			// no scan-to-refund, no customer-barcode lookup. Those are
 			// cashier-facing behaviors on /api/pos/scan that must not be
 			// reachable from this anonymous surface.
-			d.KioskEngine.ScanQtyWithResult(code, qty)
+			eng.ScanQtyWithResult(code, qty)
 		}
-		renderKioskCart(w, r, d)
+		renderKioskCart(w, r, d, eng)
 	})
 
 	mux.HandleFunc("GET /api/self-order/modifiers", func(w http.ResponseWriter, r *http.Request) {
 		itemID := strings.TrimSpace(r.URL.Query().Get("item"))
 		code := strings.TrimSpace(r.URL.Query().Get("code"))
-		base, ok := d.KioskEngine.ResolveBase(code)
+		base, ok := selfOrderEngine(d, r).ResolveBase(code)
 		if !ok || itemID == "" {
 			http.Error(w, "item not found", http.StatusNotFound)
 			return
@@ -271,15 +274,16 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		code := strings.TrimSpace(r.Form.Get("code"))
 		itemID := strings.TrimSpace(r.Form.Get("itemId"))
+		eng := selfOrderEngine(d, r)
 
-		base, selected, userMsg, err := resolveAndValidateModifiers(r.Context(), d, d.KioskEngine, httpx.ResolveLocale(w, r), code, itemID, r.Form)
+		base, selected, userMsg, err := resolveAndValidateModifiers(r.Context(), d, eng, httpx.ResolveLocale(w, r), code, itemID, r.Form)
 		if err != nil {
 			if userMsg == "" {
 				http.Error(w, "failed to load customization options", http.StatusInternalServerError)
 				return
 			}
 			w.WriteHeader(http.StatusBadRequest)
-			renderKioskCartWithMessage(w, r, d, userMsg)
+			renderKioskCartWithMessage(w, r, d, eng, userMsg)
 			return
 		}
 		qty := 1.0
@@ -288,8 +292,8 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 				qty = f
 			}
 		}
-		d.KioskEngine.AddLineWithModifiers(base, qty, selected)
-		renderKioskCart(w, r, d)
+		eng.AddLineWithModifiers(base, qty, selected)
+		renderKioskCart(w, r, d, eng)
 	})
 
 	// Qty-only line edit — deliberately no discount field at all (unlike
@@ -300,6 +304,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 	// any future direct-entry UI.
 	mux.HandleFunc("POST /api/self-order/line", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
+		eng := selfOrderEngine(d, r)
 		key := strings.TrimSpace(r.Form.Get("key"))
 		if key == "" {
 			http.Error(w, "key required", http.StatusBadRequest)
@@ -312,7 +317,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 				http.Error(w, "invalid delta", http.StatusBadRequest)
 				return
 			}
-			for _, l := range d.KioskEngine.Basket().Lines {
+			for _, l := range eng.Basket().Lines {
 				if l.LineKey == key {
 					qty = l.Qty + delta
 					break
@@ -326,8 +331,8 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 				qty = f
 			}
 		}
-		d.KioskEngine.UpdateLineByKey(key, qty, 0)
-		renderKioskCart(w, r, d)
+		eng.UpdateLineByKey(key, qty, 0)
+		renderKioskCart(w, r, d, eng)
 	})
 
 	// Dine-in/takeaway toggle (ut-docs#260) — the kiosk-facing twin of the
@@ -339,6 +344,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 	// SaleInput.OrderType wiring both pick this up with no further changes.
 	mux.HandleFunc("POST /api/self-order/order-type", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
+		eng := selfOrderEngine(d, r)
 		orderType := ""
 		if r.Form.Get("order_type") == pos.OrderTypeTakeaway {
 			orderType = pos.OrderTypeTakeaway
@@ -359,22 +365,23 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		// UI-soft-gate + server-enforcement pairing ut-docs#1355 established
 		// for the cashier's own table picker -- this surface is anonymous and
 		// auth-exempt, so the UI alone can never be the enforcement point.
-		if orderType == pos.OrderTypeTakeaway && d.KioskEngine.TableID() != "" {
+		if orderType == pos.OrderTypeTakeaway && eng.TableID() != "" {
 			orderType = ""
 		}
-		d.KioskEngine.SetOrderType(orderType)
-		renderKioskCart(w, r, d)
+		eng.SetOrderType(orderType)
+		renderKioskCart(w, r, d, eng)
 	})
 
 	mux.HandleFunc("POST /api/self-order/remove", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
+		eng := selfOrderEngine(d, r)
 		key := strings.TrimSpace(r.Form.Get("key"))
 		if key == "" {
 			http.Error(w, "key required", http.StatusBadRequest)
 			return
 		}
-		d.KioskEngine.RemoveLine(key)
-		renderKioskCart(w, r, d)
+		eng.RemoveLine(key)
+		renderKioskCart(w, r, d, eng)
 	})
 
 	repo := data.NewPOSRepo(d.Db)
@@ -390,12 +397,13 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 	// ListActiveNonCashPaymentMethods call below, so a counter-mode kiosk
 	// never even queries payment methods it will never show.
 	mux.HandleFunc("GET /api/self-order/checkout", func(w http.ResponseWriter, r *http.Request) {
-		if len(d.KioskEngine.Lines()) == 0 {
+		eng := selfOrderEngine(d, r)
+		if len(eng.Lines()) == 0 {
 			http.Error(w, "basket is empty", http.StatusBadRequest)
 			return
 		}
-		if selfOrderForcesCounterCheckout(d) {
-			renderKioskCounterConfirmPicker(w, r, d)
+		if selfOrderForcesCounterCheckout(d, eng) {
+			renderKioskCounterConfirmPicker(w, r, eng)
 			return
 		}
 		methods, err := repo.ListActiveNonCashPaymentMethods(r.Context())
@@ -403,18 +411,22 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "failed to load payment methods", http.StatusInternalServerError)
 			return
 		}
-		renderKioskPaymentPicker(w, r, d, methods, "")
+		renderKioskPaymentPicker(w, r, eng, methods, "")
 	})
 
 	mux.HandleFunc("POST /api/self-order/checkout", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
+		// eng is this request's basket; token is non-empty only when it is
+		// a table-QR guest session (ADR-0103), which a completed checkout
+		// must remove rather than reset (releaseSelfOrderSession).
+		eng, token := selfOrderSession(d, r)
 		// ut-docs#582/#815: counter-order checkout is a COMPLETELY separate
 		// path -- checked before any method/ListActiveNonCashPaymentMethods
 		// code runs -- because it creates no sale/payment at all. Kiosk
 		// (default) mode below this branch is byte-identical to before
 		// these cards for a session with no table bound.
-		if selfOrderForcesCounterCheckout(d) {
-			completeCounterOrderCheckout(w, r, d)
+		if selfOrderForcesCounterCheckout(d, eng) {
+			completeCounterOrderCheckout(w, r, d, eng, token)
 			return
 		}
 		// ut-docs#1795: same canonicalization as the cashier tender/refund
@@ -428,7 +440,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		// class this card fixes elsewhere.
 		method := strings.ToLower(strings.TrimSpace(r.Form.Get("method")))
 
-		lines := d.KioskEngine.Lines()
+		lines := eng.Lines()
 		if len(lines) == 0 {
 			http.Error(w, "basket is empty", http.StatusBadRequest)
 			return
@@ -454,7 +466,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			// so the method MUST already be one of the shop's own active
 			// non-cash methods.
 			w.WriteHeader(http.StatusBadRequest)
-			renderKioskPaymentPicker(w, r, d, methods, "selforder.checkout.invalid_method")
+			renderKioskPaymentPicker(w, r, eng, methods, "selforder.checkout.invalid_method")
 			return
 		}
 
@@ -468,7 +480,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "failed to prepare sale", http.StatusInternalServerError)
 			return
 		}
-		saleLines, total, taxBlocked := kioskSaleLinesAndTotal(d, locID)
+		saleLines, total, taxBlocked := kioskSaleLinesAndTotal(d, eng, locID)
 		if taxBlocked {
 			// ut-docs#368 — same fail-closed rule as the cashier tender
 			// path: a basket line whose registered tax plugin is broken
@@ -476,12 +488,12 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			// anonymous customer can't repair anything, so the message
 			// points them to the counter.
 			w.WriteHeader(http.StatusConflict)
-			renderKioskPaymentPicker(w, r, d, methods, "selforder.checkout.tax_unavailable")
+			renderKioskPaymentPicker(w, r, eng, methods, "selforder.checkout.tax_unavailable")
 			return
 		}
 		if !total.IsPositive() {
 			w.WriteHeader(http.StatusBadRequest)
-			renderKioskPaymentPicker(w, r, d, methods, "selforder.checkout.invalid_method")
+			renderKioskPaymentPicker(w, r, eng, methods, "selforder.checkout.invalid_method")
 			return
 		}
 
@@ -530,12 +542,12 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			// anonymous request, unlike the cashier tender handler's
 			// signed-in-operator CashierID.
 			CashierID:              "kiosk",
-			CustomerID:             d.KioskEngine.CustomerID(),
-			OrderType:              d.KioskEngine.OrderType(),
+			CustomerID:             eng.CustomerID(),
+			OrderType:              eng.OrderType(),
 			AllowNegativeInventory: allowNegative,
 			ActorID:                "kiosk",
 		}
-		saleID, err := completeTender(r.Context(), d, d.KioskEngine, repo, saleInput, saleInput.Payments, "kiosk")
+		saleID, err := completeTender(r.Context(), d, eng, repo, saleInput, saleInput.Payments, "kiosk")
 		if err != nil {
 			var declined *paymentDeclinedError
 			var noReceipt *fiscalDeviceNoReceiptError
@@ -567,9 +579,17 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 				msgKey = "selforder.checkout.fiscal_blocked"
 			}
 			w.WriteHeader(status)
-			renderKioskPaymentPicker(w, r, d, methods, msgKey)
+			renderKioskPaymentPicker(w, r, eng, methods, msgKey)
 			return
 		}
+
+		// The sale is committed and completeTender has Reset() the engine;
+		// a table-QR session (token != "") is additionally removed from the
+		// manager and its cookie cleared (ADR-0103 D5) so the table is free
+		// at once — a no-op for the walk-up KioskEngine path. In practice a
+		// table-bound session always takes the counter branch above
+		// (selfOrderForcesCounterCheckout), so this is the defensive half.
+		releaseSelfOrderSession(w, d, token)
 
 		// ut-docs#1817: GetSaleDetailByID (not the narrower SaleTotals) so
 		// the confirmation screen gets DisplayNo already resolved to
@@ -599,23 +619,24 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 // rather than attempting a sale/card payment. True whenever the till's
 // own kiosk.payment_mode is "counter" (unchanged #582 behaviour), OR
 // whenever the current self-order session is bound to a physical table
-// (ut-docs#815) -- d.KioskEngine.TableID() is only ever non-empty when
-// this session started at /self-order?table=<validEnabledTableID>
+// (ut-docs#815) -- eng.TableID() is only ever non-empty when this request's
+// basket (selfOrderEngine: the guest's own per-table session since
+// ADR-0103) started at /self-order?table=<validEnabledTableID>
 // (registerSelfOrder). A guest's own phone has no card terminal attached
 // to it regardless of what the till itself is configured for, so a table
 // session ALWAYS forces the counter path -- a deliberate Architect
 // decision (ut-docs#815 brief), not a bug: the till's kiosk.payment_mode
 // setting only ever governs a checkout with no table bound.
-func selfOrderForcesCounterCheckout(d *common.Deps) bool {
-	return d.CurrentState().KioskPaymentMode == common.KioskPaymentModeCounter || d.KioskEngine.TableID() != ""
+func selfOrderForcesCounterCheckout(d *common.Deps, eng *pos.Service) bool {
+	return d.CurrentState().KioskPaymentMode == common.KioskPaymentModeCounter || eng.TableID() != ""
 }
 
 // renderKioskCounterConfirmPicker renders the "pay at counter" confirm
 // screen (ut-docs#582) — the counter-mode twin of renderKioskPaymentPicker
 // above: no payment methods to choose, just one big "place order" button.
-func renderKioskCounterConfirmPicker(w http.ResponseWriter, r *http.Request, d *common.Deps) {
+func renderKioskCounterConfirmPicker(w http.ResponseWriter, r *http.Request, eng *pos.Service) {
 	httpx.RenderPartial("ui/partials/self_order_counter_confirm.html", map[string]any{
-		"Total": d.KioskEngine.Basket().Total,
+		"Total": eng.Basket().Total,
 	})(w, r)
 }
 
@@ -641,12 +662,15 @@ func counterOrderModifierNames(mods []data.SelectedModifier) []string {
 // payment to take, so there must be no sale/payment row either. It records
 // a kiosk_counter_orders row instead (internal/data/
 // kiosk_counter_orders_repo.go), fires a best-effort kitchen ticket, clears
-// the kiosk basket the same way GET /self-order does on every fresh visit
-// (d.KioskEngine.Reset()), and renders the SAME self_order_confirmation.html
-// partial the kiosk path uses, with CounterMode=true selecting the
-// "selforder.confirm.counter_hint" copy instead of the payment-flow hint.
-func completeCounterOrderCheckout(w http.ResponseWriter, r *http.Request, d *common.Deps) {
-	lines := d.KioskEngine.Lines()
+// the basket — the walk-up KioskEngine the same way GET /self-order does on
+// every fresh visit (Reset()); a table-QR guest session (token != "",
+// ADR-0103 D5) by removing it from the manager and clearing its cookie so
+// the table is free at once — and renders the SAME
+// self_order_confirmation.html partial the kiosk path uses, with
+// CounterMode=true selecting the "selforder.confirm.counter_hint" copy
+// instead of the payment-flow hint.
+func completeCounterOrderCheckout(w http.ResponseWriter, r *http.Request, d *common.Deps, eng *pos.Service, token string) {
+	lines := eng.Lines()
 	if len(lines) == 0 {
 		http.Error(w, "basket is empty", http.StatusBadRequest)
 		return
@@ -662,7 +686,7 @@ func completeCounterOrderCheckout(w http.ResponseWriter, r *http.Request, d *com
 
 	repo := data.NewKioskCounterOrdersRepo(d.Db)
 	order, err := repo.Create(r.Context(), data.KioskCounterOrder{
-		OrderType: d.KioskEngine.OrderType(),
+		OrderType: eng.OrderType(),
 		// TableID/TableLabel (ut-docs#815): "" for a plain kiosk-till
 		// counter order (#582, unaffected) -- only set when this checkout
 		// is forced by a table-bound session (selfOrderForcesCounterCheckout).
@@ -670,8 +694,8 @@ func completeCounterOrderCheckout(w http.ResponseWriter, r *http.Request, d *com
 		// repo: SetTable (registerSelfOrder) already resolved and cached
 		// both at session start, same as CustomerID/CustomerName elsewhere
 		// on this same Service.
-		TableID:    d.KioskEngine.TableID(),
-		TableLabel: d.KioskEngine.TableLabel(),
+		TableID:    eng.TableID(),
+		TableLabel: eng.TableLabel(),
 		Lines:      orderLines,
 	})
 	if err != nil {
@@ -681,8 +705,14 @@ func completeCounterOrderCheckout(w http.ResponseWriter, r *http.Request, d *com
 
 	// Same post-checkout reset the kiosk (card/contactless) path gets via
 	// completeTender's own engine.Reset() call — a counter order is just as
-	// "done" from the kiosk's point of view as a paid sale.
-	d.KioskEngine.Reset()
+	// "done" from the kiosk's point of view as a paid sale. A table-QR
+	// session is removed outright instead (ADR-0103 D5; header write, so it
+	// runs before RenderPartial below).
+	if token != "" {
+		releaseSelfOrderSession(w, d, token)
+	} else {
+		eng.Reset()
+	}
 
 	printCounterOrderTicketAsync(d, order)
 
@@ -776,16 +806,16 @@ func kitchenTicketForCounterOrder(order data.KioskCounterOrder, cfg print.Config
 // basket. Kiosk sales never carry a sale-level discount (no UI surfaces one
 // to an anonymous customer), so this is deliberately simpler than the
 // cashier path, which also honors a client- or basket-supplied discount.
-func kioskSaleLinesAndTotal(d *common.Deps, locID string) ([]pos.SaleLineInput, money.Money, bool) {
+func kioskSaleLinesAndTotal(d *common.Deps, eng *pos.Service, locID string) ([]pos.SaleLineInput, money.Money, bool) {
 	var saleLines []pos.SaleLineInput
 	subtotal, taxTotal := money.Zero, money.Zero
-	for _, l := range d.KioskEngine.Lines() {
+	for _, l := range eng.Lines() {
 		// Same resolution as the cashier tender handler (pos_api.go) —
 		// required by this function's own invariant above. taxBlocked is
 		// the same ut-docs#368 fail-closed signal the cashier path honors:
 		// a line whose registered tax plugin is broken must not be sold at
 		// a silently-wrong base rate on this surface either.
-		taxBP, taxBlocked := d.KioskEngine.EffectiveLineTaxRateBP(l)
+		taxBP, taxBlocked := eng.EffectiveLineTaxRateBP(l)
 		if taxBlocked {
 			return nil, money.Zero, true
 		}
@@ -819,12 +849,14 @@ func kioskSaleLinesAndTotal(d *common.Deps, locID string) ([]pos.SaleLineInput, 
 	return saleLines, total, false
 }
 
-func renderKioskCart(w http.ResponseWriter, r *http.Request, d *common.Deps) {
-	renderKioskCartWithMessage(w, r, d, "")
+// renderKioskCart renders this request's basket (eng: selfOrderEngine's
+// answer — the guest's own table session, or the walk-up KioskEngine).
+func renderKioskCart(w http.ResponseWriter, r *http.Request, d *common.Deps, eng *pos.Service) {
+	renderKioskCartWithMessage(w, r, d, eng, "")
 }
 
-func renderKioskCartWithMessage(w http.ResponseWriter, r *http.Request, d *common.Deps, message string) {
-	b := d.KioskEngine.Basket()
+func renderKioskCartWithMessage(w http.ResponseWriter, r *http.Request, d *common.Deps, eng *pos.Service, message string) {
+	b := eng.Basket()
 	if message != "" {
 		b.ToastMessage = message
 	}
@@ -843,17 +875,17 @@ func renderKioskCartWithMessage(w http.ResponseWriter, r *http.Request, d *commo
 		// the till's payment mode alone — a table-bound session never takes
 		// payment on the phone either, so its cart button must not promise
 		// one (in ar/fa/tr "selforder.checkout" literally reads "Pay").
-		"CounterMode": selfOrderForcesCounterCheckout(d),
+		"CounterMode": selfOrderForcesCounterCheckout(d, eng),
 	})(w, r)
 }
 
 // renderKioskPaymentPicker renders the payment-method modal. errKey, if set,
 // is an i18n key (not raw text — this is a public, anonymous-facing surface)
 // shown as an inline error above the method list.
-func renderKioskPaymentPicker(w http.ResponseWriter, r *http.Request, d *common.Deps, methods []data.PaymentMethod, errKey string) {
+func renderKioskPaymentPicker(w http.ResponseWriter, r *http.Request, eng *pos.Service, methods []data.PaymentMethod, errKey string) {
 	httpx.RenderPartial("ui/partials/self_order_payment_picker.html", map[string]any{
 		"Methods": methods,
-		"Total":   d.KioskEngine.Basket().Total,
+		"Total":   eng.Basket().Total,
 		"ErrKey":  errKey,
 	})(w, r)
 }

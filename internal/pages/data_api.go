@@ -95,6 +95,17 @@ type exportRequestPayload struct {
 	// means "fall back to the legacy per-sale grain" -- and omitempty would
 	// collapse both into absence.
 	EODCloses []data.EODCloseExport `json:"eod_closes"`
+	// FiscalRegisterDE is Germany's §146a Abs. 4 AO till/TSE notification
+	// register (ut-docs#937, follow-up to #665's core data capture) --
+	// gated exactly like TaxCodes/Items: the resolved entry must declare
+	// "fiscal_register_de" in its Entities AND the plugin must hold
+	// fiscal_register_de:read. Always read from the FIXED German tax
+	// plugin's own storage namespace (taxDePluginID), never the requesting
+	// entry's own plugin id -- see the gather site in registerDataAPI for
+	// why. Deliberately NO omitempty, same reasoning as EODCloses: "[]"
+	// (declared+granted, register genuinely empty) must stay
+	// wire-distinguishable from null (not declared / not granted).
+	FiscalRegisterDE []data.FiscalRegisterDE `json:"fiscal_register_de"`
 }
 
 // exportResponse is the JSON a plugin writes to stdout to answer
@@ -627,16 +638,37 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 
+		// wantsFiscalRegisterDE (ut-docs#937) is resolved here, ahead of the
+		// sales gather below, for the exact same reason eod_closes is: an
+		// entry declaring "fiscal_register_de" never reads Sales at all (the
+		// register isn't sale-dated), so the per-sale ledger -- and,
+		// crucially, the maxExportSalesRows cap sized for it -- must not
+		// apply to it either. Review finding (ut-docs#937): the first draft
+		// only added the FiscalRegisterDE gather further down in this
+		// function, reusing tax-de's own sales:read grant unconditionally --
+		// a shop with more than maxExportSalesRows (50,000) sales in the
+		// selected range got a flat 400 ("narrow the date range") trying to
+		// export a ledger that has nothing to do with sales volume at all,
+		// and every shop below that cap paid for gathering+marshaling the
+		// full sales ledger into the plugin dispatch for nothing.
+		wantsFiscalRegisterDE := false
+		for _, e := range entry.Entities {
+			if e == "fiscal_register_de" {
+				wantsFiscalRegisterDE = true
+				break
+			}
+		}
+
 		var sales []data.ExportSaleRow
-		if hasSales && !wantsEODCloses {
+		if hasSales && !wantsEODCloses && !wantsFiscalRegisterDE {
 			// ut-docs#439: reject before the expensive batch gather (and the
 			// WASM dispatch after it) if the matched row count exceeds the
 			// bound, the same "reject before doing the expensive work" shape
 			// the range cap above already uses. A cheap COUNT(*) first, not
 			// SalesForExport's own row count, so an over-large match never
 			// pays for the full batch gather it's about to be rejected for.
-			// Skipped entirely (cap included) for an eod_closes entry -- see
-			// the comment above.
+			// Skipped entirely (cap included) for an eod_closes or
+			// fiscal_register_de entry -- see the comments above.
 			count, cerr := posRepo.CountSalesForExport(r.Context(), from, to)
 			if cerr != nil {
 				respond(w, http.StatusInternalServerError, false, cerr.Error())
@@ -727,12 +759,41 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 
+		// FiscalRegisterDE (ut-docs#937) mirrors TaxCodes' shape exactly:
+		// gated on the entry DECLARING "fiscal_register_de" in its
+		// Entities (resolved above, ahead of the sales gather) in addition
+		// to the fiscal_register_de:read permission grant, so an entry
+		// installed before #937 keeps getting exactly today's payload
+		// regardless of what permissions it happens to hold. Unlike
+		// Items/TaxCodes (core catalog data), the register lives in ONE
+		// fixed plugin's own storage namespace (ADR-0072) -- always read
+		// via the taxDePluginID constant the fiscal-register page itself
+		// uses, never entry.PluginID, so a hypothetical second export
+		// plugin that also declared this entity would read the German tax
+		// plugin's real register rather than its own (always-empty)
+		// storage namespace.
+		var fiscalRegisterDE []data.FiscalRegisterDE
+		if wantsFiscalRegisterDE {
+			hasFiscalRegisterRead, cerr := plugins.CheckPermissionGranted(r.Context(), d.Db, entry.PluginID, "fiscal_register_de:read")
+			if cerr != nil {
+				respond(w, http.StatusInternalServerError, false, cerr.Error())
+				return
+			}
+			if hasFiscalRegisterRead {
+				fiscalRegisterDE, err = data.NewFiscalRegisterDEStore(d.Db, taxDePluginID).List(r.Context())
+				if err != nil {
+					respond(w, http.StatusInternalServerError, false, err.Error())
+					return
+				}
+			}
+		}
+
 		// AskPlugin, not Ask: entry was resolved to a specific owning
 		// plugin above, and must not silently accept another installed
 		// plugin's answer to the same event type (ut-docs#189 review).
 		resp, ok, err := plugins.SharedBus(d.Db).AskPlugin(r.Context(), entry.PluginID, "export.requested.ask", exportRequestPayload{
 			From: from, To: to, EntryKey: entry.Key, Sales: sales, Stock: stock, Items: items, TaxCodes: taxCodes,
-			EODCloses: eodCloses,
+			EODCloses: eodCloses, FiscalRegisterDE: fiscalRegisterDE,
 		})
 		if err != nil {
 			respond(w, http.StatusInternalServerError, false, err.Error())

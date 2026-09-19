@@ -620,6 +620,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if d.KioskEngine != nil {
 			d.KioskEngine.SetConfig(newCfg)
 		}
+		d.SelfOrderSessions.SetConfig(newCfg) // every live table-QR session too (ADR-0103); nil-safe
 
 		if name := strings.TrimSpace(r.Form.Get("store_name")); name != "" {
 			if err := d.Settings.Set(r.Context(), "store.name", name); err != nil {

@@ -286,6 +286,22 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	}, resolver)
 	kioskEngine.SetTaxRateAsker(taxAsker)
 	kioskEngine.SetChargePolicyAsker(chargeAsker)
+	// Table-QR guest sessions (ADR-0103, ut-docs#2261) each get their OWN
+	// engine from this factory, built exactly like kioskEngine above — same
+	// resolver, same shared askers (the same one-shared-instance reasoning:
+	// nothing in either cache is basket-specific) — so a session basket
+	// behaves identically to the kiosk basket in everything but lifetime.
+	// The Config is read off kioskEngine at mint time, not captured from
+	// boot-time `state`: the settings handlers push tax/service-charge
+	// changes to kioskEngine via SetConfig, so a session minted after such
+	// a change starts on the current rates (and live sessions get the same
+	// push through SelfOrderSessions.SetConfig at those sites).
+	selfOrderSessions := pos.NewSessionBasketManager(func() *pos.Service {
+		s := pos.NewServiceWithResolver(kioskEngine.Config(), resolver)
+		s.SetTaxRateAsker(taxAsker)
+		s.SetChargePolicyAsker(chargeAsker)
+		return s
+	})
 
 	// One auth service for the whole till: login, sessions AND manager-PIN
 	// approvals share a single device-wide lockout.
@@ -362,6 +378,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		SettingsAmendments: common.BuildSettingsAmendments(pm),
 		Engine:             engine,
 		KioskEngine:        kioskEngine,
+		SelfOrderSessions:  selfOrderSessions,
 		BtnStore:           btnStore,
 		CatalogRepo:        catalogRepo,
 		AuthSvc:            authSvc,
@@ -528,6 +545,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	rederiveSettings := newRederiveSettings(dp, authDisabled, i18n)
 	StartSyncPull(bgCtx, dp, rederiveSettings, wg)          // joined by app.Run's drain
 	StartHeldOrderClaimReaffirm(bgCtx, dp, wg)              // periodic held-order table-claim re-affirm (ut-docs#1724); joined by app.Run's drain
+	StartSelfOrderSessionSweep(bgCtx, dp, wg)               // evict idle table-QR self-order sessions (ADR-0103 D5, ut-docs#2261); joined by app.Run's drain
 	StartCloudSync(bgCtx, dp, rederiveSettings, wg)         // ADR-0018 cloud heartbeat + directives; joined by app.Run's drain
 	StartEODScheduler(bgCtx, dp, wg)                        // background Z-report (docs: G30); joined by app.Run's drain
 	StartAutoUpdateScheduler(bgCtx, dp, wg)                 // background unattended update (ut-docs#79); joined by app.Run's drain
@@ -655,6 +673,7 @@ func newRederiveSettings(dp *common.Deps, authDisabled bool, i18n *config.I18n) 
 		}); dp.Engine.Config() != newCfg {
 			dp.Engine.SetConfig(newCfg)
 			dp.KioskEngine.SetConfig(newCfg)
+			dp.SelfOrderSessions.SetConfig(newCfg) // every live table-QR session too (ADR-0103)
 		}
 		// ut-docs#2099 review finding B1: display.mode is deliberately NOT
 		// part of RuntimeState (see the boot-time InitSelfOrderMode call

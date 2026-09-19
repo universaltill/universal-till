@@ -283,26 +283,32 @@ WHERE sale_id = ?
 // German tax plugin's namespace (see FiscalRegisterDEStore below); the
 // Register*/Location* display fields are resolved live at read time and are
 // never stored.
+// JSON tags (ut-docs#937) mirror TaxCodeView's precedent: this type was
+// never JSON-marshaled before #937 (the fiscal-register page renders it via
+// Go html/template field access, which ignores struct tags), so adding tags
+// changes no existing wire format. Now also the wire shape of
+// exportRequestPayload's "fiscal_register_de" field (internal/pages/
+// data_api.go) — snake_case per universal-till/CLAUDE.md.
 type FiscalRegisterDE struct {
-	ID                 string
-	RegisterID         string
-	RegisterName       string
-	LocationID         string
-	LocationName       string
-	LocationStreet     string
-	LocationPostcode   string
-	LocationCity       string
-	EasType            string
-	EasSoftware        string
-	EasSerial          string
-	TSESerial          string
-	TSECertificationID string
-	TSEType            string
-	AcquiredOn         string
-	CommissionedOn     *string
-	DecommissionedOn   *string
-	CreatedAt          string
-	UpdatedAt          string
+	ID                 string  `json:"id"`
+	RegisterID         string  `json:"register_id"`
+	RegisterName       string  `json:"register_name"`
+	LocationID         string  `json:"location_id"`
+	LocationName       string  `json:"location_name"`
+	LocationStreet     string  `json:"location_street"`
+	LocationPostcode   string  `json:"location_postcode"`
+	LocationCity       string  `json:"location_city"`
+	EasType            string  `json:"eas_type"`
+	EasSoftware        string  `json:"eas_software"`
+	EasSerial          string  `json:"eas_serial"`
+	TSESerial          string  `json:"tse_serial"`
+	TSECertificationID string  `json:"tse_certification_id"`
+	TSEType            string  `json:"tse_type"`
+	AcquiredOn         string  `json:"acquired_on"`
+	CommissionedOn     *string `json:"commissioned_on"`
+	DecommissionedOn   *string `json:"decommissioned_on"`
+	CreatedAt          string  `json:"created_at"`
+	UpdatedAt          string  `json:"updated_at"`
 }
 
 // RegisterLocationRow is one register's identity plus its stock location's

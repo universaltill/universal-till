@@ -60,6 +60,12 @@ func setupSelfOrderShopDeps(t *testing.T) (*common.Deps, *db.DB) {
 		Settings:    settings.NewStore(d.DB),
 		Engine:      engine,
 		KioskEngine: kioskEngine,
+		// SelfOrderSessions (ut-docs#2261, ADR-0103): the per-table-session
+		// basket manager, with the same factory shape production Init uses —
+		// each session is a Service built exactly like kioskEngine above.
+		SelfOrderSessions: pos.NewSessionBasketManager(func() *pos.Service {
+			return pos.NewServiceWithResolver(kioskEngine.Config(), resolver)
+		}),
 		// AuthSvc (ut-docs#710): GET /settings's "isManager" flag and every
 		// mutating settings endpoint are now canPerform()-gated, which
 		// queries role_permissions for real via AuthSvc.Can() — db.Open

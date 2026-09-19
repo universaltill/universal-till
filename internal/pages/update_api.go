@@ -118,9 +118,13 @@ func autoUpdateTick(ctx context.Context, d *common.Deps, now time.Time) {
 	// Both engines (ut-docs#449): the kiosk basket is a separate instance
 	// from the cashier's, so an unattended update mid-kiosk-order must be
 	// blocked too, not just a cashier's mid-sale basket. d.KioskEngine is
-	// nil in some test harnesses that never wire a kiosk engine.
+	// nil in some test harnesses that never wire a kiosk engine. Since
+	// ADR-0103 (ut-docs#2261) a table-QR guest's basket lives in its own
+	// session rather than KioskEngine, so those count too (HasItems is
+	// nil-receiver-safe).
 	if d.Engine.Basket().ItemCount() > 0 ||
-		(d.KioskEngine != nil && d.KioskEngine.Basket().ItemCount() > 0) {
+		(d.KioskEngine != nil && d.KioskEngine.Basket().ItemCount() > 0) ||
+		d.SelfOrderSessions.HasItems() {
 		return
 	}
 	// Mark the attempt BEFORE calling Apply so a failure (or a stale-cache

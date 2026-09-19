@@ -50,10 +50,18 @@
 # test-only-reachable, that's a real (if odd) baseline entry, not a bug in
 # this guard.
 #
-# Requires the same GTK/WebKit dev headers as the desktop-shell CI job
-# (cgo + real windowing libs to even type-check cmd/unitill-desktop under
-# `desktop`) -- mirror its "Install GTK/WebKit dev headers" step wherever
-# this runs.
+# For the full three-root analysis, requires the same GTK/WebKit dev
+# headers as the desktop-shell CI job (cgo + real windowing libs to even
+# type-check cmd/unitill-desktop under `desktop`) -- mirror its "Install
+# GTK/WebKit dev headers" step wherever this runs. ut-docs#2425: where
+# those headers aren't installed (this
+# guard's own sandbox/local-dev case, confirmed twice), cmd/unitill-desktop
+# can't even type-check, so drop it (and the now-pointless `desktop` tag --
+# nothing outside cmd/unitill-desktop carries that build tag) and analyze
+# just `.` + `./cmd/unitill-uninstall`. Same carve-out `.golangci.yml`
+# already has for `unused`, and the same reasoning: less coverage locally,
+# but runnable, rather than an outright failure. Real CI installs the
+# headers and always gets the full three-root analysis.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -71,7 +79,14 @@ if [[ ! -f "${BASELINE_FILE}" ]]; then
   exit 1
 fi
 
-raw_output="$(go run "${DEADCODE_PKG}" -tags=desktop -test=false . ./cmd/unitill-desktop ./cmd/unitill-uninstall 2>/tmp/deadcode-baseline-guard-stderr.$$)" \
+if pkg-config --exists gtk+-3.0 webkit2gtk-4.1 2>/dev/null; then
+  deadcode_args=(-tags=desktop -test=false . ./cmd/unitill-desktop ./cmd/unitill-uninstall)
+else
+  echo "⚠ deadcode-baseline guard: GTK3/WebKit2GTK dev headers not found via pkg-config -- skipping ./cmd/unitill-desktop (unrunnable without them); real CI still analyzes all three roots" >&2
+  deadcode_args=(-test=false . ./cmd/unitill-uninstall)
+fi
+
+raw_output="$(go run "${DEADCODE_PKG}" "${deadcode_args[@]}" 2>/tmp/deadcode-baseline-guard-stderr.$$)" \
   || {
     echo "❌ deadcode-baseline guard: 'deadcode' itself failed" >&2
     cat /tmp/deadcode-baseline-guard-stderr.$$ >&2
