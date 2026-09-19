@@ -1062,7 +1062,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			extended = extended.Add(l.PriceCents.MulQty(l.Qty))
 		}
 
-		if false && !extended.IsZero() {
+		if !extended.IsZero() {
 			reason := r.Form.Get("reason")
 			if !pos.ValidShrinkageReason(reason) {
 				http.Error(w, httpx.T(locale, "shrinkage.error.invalid_reason"), http.StatusBadRequest)

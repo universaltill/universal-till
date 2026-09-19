@@ -100,5 +100,18 @@
       <button type="submit" class="btn primary">{{ T "elevation.submit" }}</button>
     </div>
   </form>
-  <script>document.currentScript.closest('dialog').show()</script>
+  {{/* ut-docs#1465 review: a checkOrElevate retry can fire while the
+       shrinkage void/comp/waste reason sheet (basket.html's
+       .shrinkage-sheet, opened via the same non-modal .show() as this
+       dialog) is still open behind it — neither dialog is modal (both
+       need the custom OSK reachable, see this file's own doc comment
+       above), so nothing closes the first one when this one opens,
+       stacking two visible dialogs. Closing any open .shrinkage-sheet
+       here is a no-op on every other checkOrElevate site (nothing
+       matches the selector), so this is safe to do unconditionally
+       rather than special-casing the void/comp/waste caller. */}}
+  <script>
+    document.querySelectorAll('.shrinkage-sheet').forEach(function (s) { if (s.open) s.close(); });
+    document.currentScript.closest('dialog').show();
+  </script>
 </dialog>
