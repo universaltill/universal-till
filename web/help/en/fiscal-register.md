@@ -12,7 +12,7 @@ keywords: [fiscal, germany, AO, TSE, ELSTER, kassensichv, notification, till, re
 
 Since 2020, German tax law (§146a Abs. 4 AO) has required every shop using an electronic till to report that till — and its TSE, the certified device that signs each sale — to their local Finanzamt. The notification itself is filed through the tax office's own **Mein ELSTER** portal, by the shop, not by Universal Till. This page exists so you have the details that filing needs already written down and organized by location, instead of hunting through paperwork when it's time to submit.
 
-This page only records data. It does not fill in, generate, or submit anything to ELSTER on your behalf, and it has no export yet (a printable/exportable summary is planned as a separate piece of work). Whether what you enter here is complete and correct for your situation is between you and your tax advisor or the Finanzamt — this page doesn't check that for you.
+This page only records data. It does not fill in, generate, or submit anything to ELSTER on your behalf. Whether what you enter here is complete and correct for your situation is between you and your tax advisor or the Finanzamt — this page doesn't check that for you.
 
 ## How to use it
 
@@ -28,3 +28,4 @@ This page only records data. It does not fill in, generate, or submit anything t
 - A till with no location assigned still shows up, under its own "no location assigned" group, so nothing you've entered is ever silently hidden.
 - The one-month banner is a reminder, not an enforcement mechanism, and it isn't only for new entries — it also appears for a month after you mark a till decommissioned, since removing a till needs its own notification too. Dismissing it isn't possible because there's nothing to dismiss; it simply stops showing once a month has passed since whichever date triggered it.
 - The fiscal register is shop-wide and always managed from the **main till**: on a joined till, adding an entry, marking one decommissioned, or saving a location's address shows a message pointing you back to the main till, rather than accepting a change that would only apply locally. Entries added on the main till reach every joined till automatically, the same way registers and locations do.
+- You can export everything on this page as a plain-text summary — organized the same way, one block per business location — from **Data management → Export** (pick the §146a Abs. 4 AO entry). It's a summary to help you fill in Mein ELSTER yourself, not a file ELSTER accepts directly.

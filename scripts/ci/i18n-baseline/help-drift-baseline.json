@@ -292,17 +292,17 @@
         "headings": 3,
         "numbered_steps": 5,
         "sub_bullets": 0,
-        "top_bullets": 4,
+        "top_bullets": 5,
         "bold_leadins": 1
       },
       "english": {
         "headings": 3,
         "numbered_steps": 5,
         "sub_bullets": 0,
-        "top_bullets": 4,
+        "top_bullets": 5,
         "bold_leadins": 0
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#937: a new bullet (the §146a export, now that it exists) added to English and this locale with a real translation matching the same structure; the pre-existing bold_leadins gap is unchanged in size, just shifted (top_bullets 4->5 on both sides)."
     },
     {
       "locale": "fa",
@@ -634,17 +634,17 @@
         "headings": 3,
         "numbered_steps": 5,
         "sub_bullets": 0,
-        "top_bullets": 4,
+        "top_bullets": 5,
         "bold_leadins": 1
       },
       "english": {
         "headings": 3,
         "numbered_steps": 5,
         "sub_bullets": 0,
-        "top_bullets": 4,
+        "top_bullets": 5,
         "bold_leadins": 0
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#937: a new bullet (the §146a export, now that it exists) added to English and this locale with a real translation matching the same structure; the pre-existing bold_leadins gap is unchanged in size, just shifted (top_bullets 4->5 on both sides)."
     },
     {
       "locale": "tr",

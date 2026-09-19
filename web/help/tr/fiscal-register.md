@@ -12,7 +12,7 @@ keywords: [mali, almanya, AO, TSE, ELSTER, kassensichv, bildirim, kasa, kayıt]
 
 2020'den beri, Alman vergi hukuku (§146a Abs. 4 AO), elektronik kasa kullanan her işletmenin bu kasayı — ve her satışı imzalayan sertifikalı cihaz olan TSE'sini — yerel vergi dairesine (Finanzamt) bildirmesini zorunlu kılar. Bildirimin kendisi, işletme tarafından, vergi dairesinin kendi **Mein ELSTER** portalı üzerinden gönderilir — Universal Till tarafından değil. Bu sayfa, o bildirimin gerektirdiği bilgileri, gönderim zamanı evrak karıştırmak yerine önceden yazılmış ve konuma göre düzenlenmiş halde tutmanız için var.
 
-Bu sayfa yalnızca veri kaydeder. Sizin adınıza ELSTER'e hiçbir şey doldurmaz, oluşturmaz veya göndermez ve henüz bir dışa aktarma özelliği yoktur (yazdırılabilir/dışa aktarılabilir bir özet ayrı bir iş olarak planlanmaktadır). Buraya girdiğiniz bilgilerin durumunuz için eksiksiz ve doğru olup olmadığı sizinle vergi danışmanınız veya Finanzamt arasındadır — bu sayfa bunu sizin için kontrol etmez.
+Bu sayfa yalnızca veri kaydeder. Sizin adınıza ELSTER'e hiçbir şey doldurmaz, oluşturmaz veya göndermez. Buraya girdiğiniz bilgilerin durumunuz için eksiksiz ve doğru olup olmadığı sizinle vergi danışmanınız veya Finanzamt arasındadır — bu sayfa bunu sizin için kontrol etmez.
 
 ## Nasıl kullanılır
 
@@ -28,3 +28,4 @@ Bu sayfa yalnızca veri kaydeder. Sizin adınıza ELSTER'e hiçbir şey doldurma
 - Herhangi bir konuma atanmamış bir kasa da kendi "konum atanmamış" grubunun altında görünmeye devam eder, böylece girdiğiniz hiçbir şey asla gizlenmez.
 - Tek aylık bant bir hatırlatmadır, bir yaptırım mekanizması değildir, ve yalnızca yeni eklenen kayıtlara özgü değildir — bir kasayı hizmet dışı olarak işaretledikten sonra da bir ay boyunca görünür, çünkü bir kasayı hizmetten kaldırmak da kendi bildirimini gerektirir. Kapatılamaz çünkü kapatılacak bir şey yoktur; kendisini tetikleyen tarihten bir ay sonra kendiliğinden görünmez olur.
 - Mali kayıt defteri mağaza genelindedir ve her zaman **ana kasadan** yönetilir: katılmış bir kasada, bir kayıt eklemek, birini hizmet dışı olarak işaretlemek veya bir konumun adresini kaydetmek, sizi ana kasaya yönlendiren bir mesaj gösterir — yalnızca yerel olarak uygulanacak bir değişikliği kabul etmek yerine. Ana kasada eklenen kayıtlar, kasalar ve konumlar gibi, otomatik olarak her katılmış kasaya ulaşır.
+- Bu sayfadaki her şeyi düz metin bir özet olarak — aynı şekilde düzenlenmiş, her işletme konumu için bir blok — **Veri yönetimi → Dışa aktar**'dan dışa aktarabilirsiniz (§146a Abs. 4 AO kaydını seçin). Bu, Mein ELSTER'i kendiniz doldurmanıza yardımcı olacak bir özettir, ELSTER'in doğrudan kabul ettiği bir dosya değildir.

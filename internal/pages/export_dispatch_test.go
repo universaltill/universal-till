@@ -1429,6 +1429,158 @@ func TestExportDispatch_OmitsEODClosesWithoutSalesReadPermission(t *testing.T) {
 	}
 }
 
+// TestExportDispatch_PayloadIncludesFiscalRegisterDEData is ut-docs#937's
+// parity test for TestExportDispatch_PayloadIncludesTaxCodesData: an entry
+// that declares "fiscal_register_de" and holds fiscal_register_de:read gets
+// the full §146a Abs. 4 AO register (data.FiscalRegisterDEStore.List, always
+// read from the fixed German tax plugin's own storage namespace, never the
+// requesting entry's own plugin id — see data_api.go's gating comment) in
+// the dispatched payload.
+func TestExportDispatch_PayloadIncludesFiscalRegisterDEData(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithEntities(t, dp.Db, taxDePluginID, "paragraph146a-de", "AO Register Export", []string{"fiscal_register_de"}, false)
+	grantExportPluginPermission(t, dp.Db, taxDePluginID, "fiscal_register_de:read")
+
+	regID := createRegisterForFiscalTest(t, dp, "Front Till")
+	store := data.NewFiscalRegisterDEStore(dp.Db, taxDePluginID)
+	if _, err := store.Create(t.Context(), regID, "Tablet-/App-Kassen-Systeme", "AwesomePOS 1.0", "eas-exp",
+		"tse-exp", "cert-exp", "Cloud", "2026-01-15", nil); err != nil {
+		t.Fatalf("seed fiscal register entry: %v", err)
+	}
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), taxDePluginID, []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		FiscalRegisterDE []struct {
+			EasSerial        string  `json:"eas_serial"`
+			TSESerial        string  `json:"tse_serial"`
+			RegisterName     string  `json:"register_name"`
+			CommissionedOn   *string `json:"commissioned_on"`
+			DecommissionedOn *string `json:"decommissioned_on"`
+		} `json:"fiscal_register_de"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	if len(payload.FiscalRegisterDE) != 1 {
+		t.Fatalf("expected 1 fiscal register entry in payload, got %+v", payload.FiscalRegisterDE)
+	}
+	got := payload.FiscalRegisterDE[0]
+	if got.EasSerial != "eas-exp" || got.TSESerial != "tse-exp" || got.RegisterName != "Front Till" {
+		t.Fatalf("unexpected fiscal register row: %+v", got)
+	}
+	if got.CommissionedOn != nil || got.DecommissionedOn != nil {
+		t.Fatalf("expected nil commissioned_on/decommissioned_on, got %+v", got)
+	}
+}
+
+// TestExportDispatch_OmitsFiscalRegisterDEWhenEntityNotDeclared mirrors
+// TestExportDispatch_OmitsTaxCodesWhenEntityNotDeclared: fiscal_register_de:read
+// alone must NOT deliver the register — the entry has to declare the entity too.
+func TestExportDispatch_OmitsFiscalRegisterDEWhenEntityNotDeclared(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithEntities(t, dp.Db, taxDePluginID, "paragraph146a-de", "AO Register Export", nil, false)
+	grantExportPluginPermission(t, dp.Db, taxDePluginID, "fiscal_register_de:read")
+
+	regID := createRegisterForFiscalTest(t, dp, "Front Till")
+	store := data.NewFiscalRegisterDEStore(dp.Db, taxDePluginID)
+	if _, err := store.Create(t.Context(), regID, "Tablet-/App-Kassen-Systeme", "AwesomePOS 1.0", "eas-exp",
+		"tse-exp", "cert-exp", "Cloud", "2026-01-15", nil); err != nil {
+		t.Fatalf("seed fiscal register entry: %v", err)
+	}
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), taxDePluginID, []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		FiscalRegisterDE json.RawMessage `json:"fiscal_register_de"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	if payload.FiscalRegisterDE != nil && string(payload.FiscalRegisterDE) != "null" {
+		t.Fatalf("expected fiscal_register_de null without a declared \"fiscal_register_de\" entity, got %s", payload.FiscalRegisterDE)
+	}
+}
+
+// TestExportDispatch_OmitsFiscalRegisterDEWithoutReadPermission mirrors
+// TestExportDispatch_OmitsTaxCodesWithoutTaxCodesReadPermission on the other
+// axis: a declared "fiscal_register_de" entity without the read grant must
+// still omit — declaration and permission gate independently.
+func TestExportDispatch_OmitsFiscalRegisterDEWithoutReadPermission(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithEntities(t, dp.Db, taxDePluginID, "paragraph146a-de", "AO Register Export", []string{"fiscal_register_de"}, false)
+
+	regID := createRegisterForFiscalTest(t, dp, "Front Till")
+	store := data.NewFiscalRegisterDEStore(dp.Db, taxDePluginID)
+	if _, err := store.Create(t.Context(), regID, "Tablet-/App-Kassen-Systeme", "AwesomePOS 1.0", "eas-exp",
+		"tse-exp", "cert-exp", "Cloud", "2026-01-15", nil); err != nil {
+		t.Fatalf("seed fiscal register entry: %v", err)
+	}
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), taxDePluginID, []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (missing fiscal_register_de:read must not fail the whole request), got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		FiscalRegisterDE json.RawMessage `json:"fiscal_register_de"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	if payload.FiscalRegisterDE != nil && string(payload.FiscalRegisterDE) != "null" {
+		t.Fatalf("expected fiscal_register_de null without fiscal_register_de:read, got %s", payload.FiscalRegisterDE)
+	}
+}
+
 // TestExportDispatch_EODClosesEntrySkipsSalesGatherAndCap: an entry that
 // declares "eod_closes" books the day-close grain and never reads
 // payload.Sales, so the per-sale gather AND the maxExportSalesRows cap
@@ -1537,5 +1689,124 @@ func TestExportDispatch_EODClosesFieldPresentButEmptyInRange(t *testing.T) {
 	}
 	if string(payload.EODCloses) != "[]" {
 		t.Fatalf(`expected a present-but-empty "eod_closes":[] for an empty range, got %s`, payload.EODCloses)
+	}
+}
+
+// TestExportDispatch_FiscalRegisterDEEntrySkipsSalesGatherAndCap is
+// ut-docs#937's parity test for TestExportDispatch_EODClosesEntrySkipsSalesGatherAndCap
+// (independent-review finding B1): an entry that declares "fiscal_register_de"
+// never reads payload.Sales -- the register isn't sale-dated -- so the
+// per-sale gather AND the maxExportSalesRows cap must not apply to it either.
+// ut-plugin-tax-de's real manifest declares sales:read (for TSE signing) as
+// well as fiscal_register_de:read, so hasSales is true for its
+// paragraph146a-de entry in production; without this skip, a shop with more
+// sales in the selected range than the cap allows could never run the §146a
+// export at all, and every shop below the cap paid to gather+marshal the
+// full sales ledger for an export that never reads it.
+func TestExportDispatch_FiscalRegisterDEEntrySkipsSalesGatherAndCap(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	orig := maxExportSalesRows
+	maxExportSalesRows = 2
+	t.Cleanup(func() { maxExportSalesRows = orig })
+
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithEntities(t, dp.Db, taxDePluginID, "paragraph146a-de", "AO Register Export", []string{"fiscal_register_de"}, false)
+	grantExportPluginPermission(t, dp.Db, taxDePluginID, "sales:read")
+	grantExportPluginPermission(t, dp.Db, taxDePluginID, "fiscal_register_de:read")
+
+	regID := createRegisterForFiscalTest(t, dp, "Front Till")
+	store := data.NewFiscalRegisterDEStore(dp.Db, taxDePluginID)
+	if _, err := store.Create(t.Context(), regID, "Tablet-/App-Kassen-Systeme", "AwesomePOS 1.0", "eas-cap",
+		"tse-cap", "cert-cap", "Cloud", "2026-01-15", nil); err != nil {
+		t.Fatalf("seed fiscal register entry: %v", err)
+	}
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dp.Db.Exec(q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	// Three sales -- OVER the (test-shrunk) cap, so a surviving cap check
+	// would 400 this request before dispatch ever ran.
+	for i, r := range []string{"R1", "R2", "R3"} {
+		mustExec(`INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at)
+		          VALUES(?, ?, 'completed', 'sale', 'GBP', 1000, 0, 0, 1000, ?)`,
+			fmt.Sprintf("fr-sale-%d", i), r, fmt.Sprintf("2026-01-%02dT10:00:00Z", i+1))
+	}
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), taxDePluginID, []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (the sales cap must not apply to a fiscal_register_de entry), got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		Sales            json.RawMessage         `json:"sales"`
+		FiscalRegisterDE []data.FiscalRegisterDE `json:"fiscal_register_de"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	if string(payload.Sales) != "null" {
+		t.Fatalf("expected sales to be null (never gathered) for a fiscal_register_de entry, got %s", payload.Sales)
+	}
+	if len(payload.FiscalRegisterDE) != 1 {
+		t.Fatalf("expected the fiscal register entry in fiscal_register_de, got %+v", payload.FiscalRegisterDE)
+	}
+}
+
+// TestExportDispatch_FiscalRegisterDEFieldPresentButEmptyInRange mirrors
+// TestExportDispatch_EODClosesFieldPresentButEmptyInRange (independent-review
+// finding S4): an entry that declares "fiscal_register_de" and holds
+// fiscal_register_de:read gets a PRESENT, EMPTY "fiscal_register_de":[] —
+// never an absent/null field — when the register genuinely has no entries
+// yet, so a subscribing plugin can distinguish "supported, nothing recorded"
+// from "not declared/not granted".
+func TestExportDispatch_FiscalRegisterDEFieldPresentButEmptyInRange(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithEntities(t, dp.Db, taxDePluginID, "paragraph146a-de", "AO Register Export", []string{"fiscal_register_de"}, false)
+	grantExportPluginPermission(t, dp.Db, taxDePluginID, "fiscal_register_de:read")
+	// No fiscal register entry seeded -- the register is genuinely empty.
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), taxDePluginID, []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-01-01"}, "to": {"2026-01-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		FiscalRegisterDE json.RawMessage `json:"fiscal_register_de"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	if string(payload.FiscalRegisterDE) != "[]" {
+		t.Fatalf(`expected a present-but-empty "fiscal_register_de":[] for an empty register, got %s`, payload.FiscalRegisterDE)
 	}
 }
