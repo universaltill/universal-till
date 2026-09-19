@@ -18,7 +18,18 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 GUARD="scripts/ci/guard-deadcode-baseline.sh"
-FIXTURE="cmd/unitill-desktop/zzz_guard_test_fixture.go"
+# ut-docs#2425: the guard itself drops the ./cmd/unitill-desktop root when
+# GTK3/WebKit2GTK dev headers aren't available, so a fixture planted there
+# would never be analyzed and this test would spuriously pass in that same
+# headless case. Plant it under the repo-root `.` package instead when
+# headers are missing -- that root is always analyzed, so the "a new
+# unreachable function must be caught" assertion still means something in
+# a headless sandbox, not just in real CI (which always has the headers).
+if pkg-config --exists gtk+-3.0 webkit2gtk-4.1 2>/dev/null; then
+  FIXTURE="cmd/unitill-desktop/zzz_guard_test_fixture.go"
+else
+  FIXTURE="zzz_guard_test_fixture.go"
+fi
 FAIL_COUNT=0
 
 # Invoked indirectly via `trap ... EXIT`, not a direct call -- shellcheck cannot see that (SC2317 false positive).
