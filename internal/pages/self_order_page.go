@@ -187,16 +187,26 @@ func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 //
 // Table binding rides on the SAME TableID/TableLabel fields ADR-0054/
 // ut-docs#820 gave every pos.Service (SetTable/TableID/TableLabel) — not a
-// new mechanism. SetTable is a no-op unless the (fresh, empty) basket's
-// order-type default is dine-in, which it always is here, so it always
-// takes effect.
+// new mechanism. SetTable is a no-op when the basket has no dine-in line and
+// the order type is Takeaway (ut-docs#1355) — true for the mint path below
+// (a fresh, empty basket whose default is always dine-in here), and ALSO
+// true for the move path's already-live basket, but for a different, less
+// local reason: self_order_shop.go's completeCounterOrderCheckout /
+// order-type toggle clamps a table-bound session's order type to "" once it
+// holds a table, specifically so it can never flip to Takeaway
+// (TestSelfOrderShop_TableCheckout_TakeawayToggleCannotUnbindTable pins
+// this). If that clamp is ever relaxed, SetTable below would silently no-op
+// and strand the moved guest's basket with no table.
 //
 // A browser whose cookie names a live session for a DIFFERENT table (a
-// phone that moved tables and scanned the new one) gets a fresh session for
-// the new table, and its old one is removed: the cookie is about to be
-// overwritten, so that old session could never be reached again — leaving
-// it would only keep the old table "busy" for everyone else until the idle
-// sweep.
+// phone that moved tables and scanned the new one) keeps that SAME session
+// — just rebound to the new table via SetTable, exactly how the cashier's
+// own table picker moves a sale between tables (ADR-0054, ut-docs#820) —
+// rather than being discarded for a fresh, empty one (ut-docs#2433, ADR-0103
+// review finding N2: silently losing whatever the guest had already added
+// was never an ADR-mandated behavior, just an unhandled gap). The old table
+// is freed automatically: TableID() now reports the new table, so
+// TableOwnerActive no longer finds this session there.
 func bindSelfOrderTableSession(w http.ResponseWriter, r *http.Request, d *common.Deps, tableID string, now time.Time) (bound, busy bool) {
 	t, found, err := data.NewPOSRepo(d.Db).GetTable(r.Context(), tableID)
 	if err != nil || !found || !t.Enabled {
@@ -210,7 +220,8 @@ func bindSelfOrderTableSession(w http.ResponseWriter, r *http.Request, d *common
 		return false, true
 	}
 	if currentToken != "" {
-		d.SelfOrderSessions.Remove(currentToken)
+		current.SetTable(t.ID, t.Label)
+		return true, false // moved, basket kept
 	}
 	token, svc := d.SelfOrderSessions.Create()
 	svc.SetTable(t.ID, t.Label)
