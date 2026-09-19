@@ -187,6 +187,21 @@ func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 //     bounce, or a deliberate re-open — nothing reset, nothing re-minted,
 //     the guest keeps their order) or freshly minted, with the cookie set.
 //
+// The resume case is NOT special-cased ahead of the busy check (fixed
+// ut-docs#2434, independent review of this same card, finding S4): a
+// browser whose own cookie already names this table still goes through
+// BindTable below, because a resume can itself be the stale side of a
+// race — this session went idle past selfOrderTableBusyMaxIdle, a
+// DIFFERENT phone's scan (correctly) no longer saw it as busy and bound
+// its own session to the table, and only then did this browser wake up
+// and re-request its own table. Without this, that sequence produced two
+// live, recently-active sessions on one table (two kiosk_counter_orders
+// rows at checkout) — the exact bug this card exists to close, just
+// reached via the resume path instead of two concurrent mints. BindTable
+// excludes the caller's own token from its busy scan, so an UNCONTESTED
+// resume (the normal case — nobody else has touched this table) is still
+// never busy, same guarantee as before.
+//
 // Table binding rides on the SAME TableID/TableLabel fields ADR-0054/
 // ut-docs#820 gave every pos.Service (SetTable/TableID/TableLabel) — not a
 // new mechanism. SetTable is a no-op when the basket has no dine-in line and
@@ -215,9 +230,6 @@ func bindSelfOrderTableSession(w http.ResponseWriter, r *http.Request, d *common
 		return false, false
 	}
 	current, currentToken := selfOrderSession(d, r)
-	if currentToken != "" && current.TableID() == t.ID {
-		return true, false // resume
-	}
 	var mover *pos.Service
 	if currentToken != "" {
 		mover = current
@@ -227,7 +239,7 @@ func bindSelfOrderTableSession(w http.ResponseWriter, r *http.Request, d *common
 		return false, true
 	}
 	if svc == mover {
-		return true, false // moved, basket kept, cookie unchanged
+		return true, false // resumed (own table unchanged) or moved (basket kept), cookie unchanged
 	}
 	setSelfOrderSessionCookie(w, token, 0)
 	return true, false

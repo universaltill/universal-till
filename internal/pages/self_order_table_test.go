@@ -283,7 +283,7 @@ func TestSelfOrder_DifferentTable_GetsOwnIndependentSession(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /self-order?table=<tableB>: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), "This table already has an order in progress") {
+	if strings.Contains(rec.Body.String(), "This table is already in use") {
 		t.Fatalf("a different table must get its own session, never the busy screen: %s", rec.Body.String())
 	}
 	if b.engine(dp) == nil || b.engine(dp) == a.engine(dp) {
@@ -340,7 +340,7 @@ func TestSelfOrder_SameGuestScansDifferentTable_PreservesBasket(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /self-order?table=<tableB>: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), "This table already has an order in progress") {
+	if strings.Contains(rec.Body.String(), "This table is already in use") {
 		t.Fatalf("moving to an unheld table must never show busy: %s", rec.Body.String())
 	}
 
@@ -371,7 +371,7 @@ func TestSelfOrder_SameGuestScansDifferentTable_PreservesBasket(t *testing.T) {
 	// Table A is immediately free for a new scan by someone else.
 	other := newSelfOrderGuest(t, mux)
 	rec2 := other.get("/self-order?table=" + tableA)
-	if strings.Contains(rec2.Body.String(), "This table already has an order in progress") {
+	if strings.Contains(rec2.Body.String(), "This table is already in use") {
 		t.Fatal("the vacated table must not still show busy after the guest moved off it")
 	}
 	if other.engine(dp) == nil || other.engine(dp) == svc {
@@ -411,7 +411,7 @@ func TestSelfOrder_MovingOntoBusyTable_ShowsBusyAndKeepsMoverOnOriginalTable(t *
 	moverToken := mover.sessionToken()
 
 	rec := mover.get("/self-order?table=" + tableB)
-	if !strings.Contains(rec.Body.String(), "This table already has an order in progress") {
+	if !strings.Contains(rec.Body.String(), "This table is already in use") {
 		t.Fatalf("expected the busy screen when moving onto a held table, got: %s", rec.Body.String())
 	}
 	if got := mover.sessionToken(); got != moverToken {
@@ -459,7 +459,7 @@ func TestSelfOrder_SameTableRescan_NeverBusy(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /self-order?table=<same table>: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), "This table already has an order in progress") {
+	if strings.Contains(rec.Body.String(), "This table is already in use") {
 		t.Fatalf("re-scanning the same table must never show the busy screen, got: %s", rec.Body.String())
 	}
 	if got := g.sessionToken(); got != token {
@@ -504,7 +504,7 @@ func TestSelfOrder_SameTableEmptySession_ShowsBusy(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /self-order?table=<tableA> from a second phone: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "This table already has an order in progress") {
+	if !strings.Contains(rec.Body.String(), "This table is already in use") {
 		t.Fatalf("an empty table-bound session still holds the table — must show busy, got: %s", rec.Body.String())
 	}
 	if second.sessionToken() != "" {
@@ -520,7 +520,7 @@ func TestSelfOrder_SameTableEmptySession_ShowsBusy(t *testing.T) {
 		t.Fatal("the first phone's session must be unaffected by the second phone's blocked scan")
 	}
 	// The first phone's own re-scan of their own table is still never busy.
-	if rec := first.get("/self-order?table=" + tableA); strings.Contains(rec.Body.String(), "This table already has an order in progress") {
+	if rec := first.get("/self-order?table=" + tableA); strings.Contains(rec.Body.String(), "This table is already in use") {
 		t.Fatal("the owning guest must never be blocked from their own (empty) table")
 	}
 }
@@ -551,7 +551,7 @@ func TestSelfOrder_SameTableHeldByAnotherSession_ShowsBusy(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /self-order?table=<held table>: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "This table already has an order in progress") {
+	if !strings.Contains(rec.Body.String(), "This table is already in use") {
 		t.Fatalf("expected the busy screen for a table another session holds with items, got: %s", rec.Body.String())
 	}
 	if other.sessionToken() != "" {
@@ -562,7 +562,7 @@ func TestSelfOrder_SameTableHeldByAnotherSession_ShowsBusy(t *testing.T) {
 	// cookies) is the same case.
 	raw := httptest.NewRecorder()
 	mux.ServeHTTP(raw, httptest.NewRequest(http.MethodGet, "/self-order?table="+tableA, nil))
-	if !strings.Contains(raw.Body.String(), "This table already has an order in progress") {
+	if !strings.Contains(raw.Body.String(), "This table is already in use") {
 		t.Fatalf("a cookieless scan of a held table must see the busy screen, got: %s", raw.Body.String())
 	}
 
@@ -576,7 +576,7 @@ func TestSelfOrder_SameTableHeldByAnotherSession_ShowsBusy(t *testing.T) {
 		t.Fatalf("owner's basket has %d lines, want unchanged 1", n)
 	}
 	// The owner is still not busy on their own re-scan.
-	if rec := owner.get("/self-order?table=" + tableA); strings.Contains(rec.Body.String(), "This table already has an order in progress") {
+	if rec := owner.get("/self-order?table=" + tableA); strings.Contains(rec.Body.String(), "This table is already in use") {
 		t.Fatal("the owning guest must never be blocked from their own table")
 	}
 }
@@ -745,7 +745,7 @@ func TestSelfOrder_CheckoutCompletionRemovesSession(t *testing.T) {
 	stale.AddCookie(&http.Cookie{Name: selfOrderSessionCookie, Value: oldToken})
 	staleRec := httptest.NewRecorder()
 	mux.ServeHTTP(staleRec, stale)
-	if strings.Contains(staleRec.Body.String(), "This table already has an order in progress") {
+	if strings.Contains(staleRec.Body.String(), "This table is already in use") {
 		t.Fatal("a stale token must not see busy on a freed table")
 	}
 	newToken := ""
@@ -793,7 +793,7 @@ func TestSelfOrder_IdleSweepEvictsStaleSession(t *testing.T) {
 	// The phone still carries the old cookie; the table is free, so the
 	// scan mints a new session rather than resuming or blocking.
 	rec := g.get("/self-order?table=" + tableA)
-	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "This table already has an order in progress") {
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "This table is already in use") {
 		t.Fatalf("scan after sweep: want 200, not busy; got %d: %s", rec.Code, rec.Body.String())
 	}
 	if got := g.sessionToken(); got == "" || got == oldToken {

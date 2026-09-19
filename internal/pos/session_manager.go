@@ -29,9 +29,13 @@ import (
 // single-lock convention (see the Service struct's doc comment) — every
 // exported method takes it exactly once at its own top and calls only
 // unexported helpers that assume it is held. Lock order is manager.mu ->
-// Service.mu (TableOwner/HasItems/SetConfig call Service methods while
-// holding mu); a Service never calls back into the manager, so that order
-// can't invert.
+// Service.mu (TableOwner/HasItems/SetConfig/BindTable call Service methods
+// while holding mu — BindTable's own SetTable call is the first MUTATING
+// one, and per ut-docs#2434 review finding S1 it can itself trigger a
+// blocking plugin tax/charge-policy ask, serializing every OTHER table's
+// concurrent request behind it for that ask's duration; tracked as a
+// follow-up rather than fixed here, see that card); a Service never calls
+// back into the manager, so that order can't invert.
 type SessionBasketManager struct {
 	mu       sync.Mutex
 	sessions map[string]*sessionBasket
@@ -187,10 +191,15 @@ func (m *SessionBasketManager) TableOwnerActive(tableID string, maxIdle time.Dur
 //
 // mover, if non-nil, is the CALLER'S OWN already-resolved live session
 // (ownToken is its token) to move onto tableID rather than replace — the
-// existing-cookie "guest scanned a different table" case. mover == nil
-// (ownToken == "") is the fresh-browser mint case. The caller is expected
-// to have already handled the "re-scanning your own current table"
-// resume case before calling this — BindTable only ever moves or mints.
+// existing-cookie "guest scanned a different table, or is re-scanning
+// their own current one (a resume)" case; a resume is simply a move where
+// tableID already equals mover.TableID(), a no-op SetTable. mover == nil
+// (ownToken == "") is the fresh-browser mint case. **The resume case is
+// NOT special-cased by the caller ahead of this method** (fixed
+// ut-docs#2434 review finding S4): routing every path — mint, move, AND
+// resume — through this same critical section is what makes the guard
+// atomic against a stale-then-resumed session racing a different phone's
+// fresh bind, not just against two fresh binds.
 //
 // busy=true when a DIFFERENT live session (any token != ownToken) is
 // already bound to tableID and was touched within maxIdle of now — no
@@ -201,8 +210,18 @@ func (m *SessionBasketManager) TableOwnerActive(tableID string, maxIdle time.Dur
 // never counts, the same recency window TableOwnerActive already
 // documents, so the B1 idle-recovery guarantee is unaffected by dropping
 // the item-count check: an abandoned EMPTY session frees its table after
-// maxIdle exactly as an abandoned non-empty one already did.
+// maxIdle exactly as an abandoned non-empty one already did. Because
+// ownToken is always excluded from the scan, an UNCONTESTED resume (the
+// normal case — nobody else has touched this table) is still never busy.
+//
+// A nil manager or empty tableID both report not-busy with no service and
+// no token — same "there is nothing to check" contract TableOwner(Active)
+// already use, even though today's only caller (bindSelfOrderTableSession)
+// never reaches here with either.
 func (m *SessionBasketManager) BindTable(tableID, tableLabel, ownToken string, mover *Service, maxIdle time.Duration, now time.Time) (token string, svc *Service, busy bool) {
+	if m == nil || tableID == "" {
+		return "", nil, false
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cutoff := now.Add(-maxIdle)
@@ -214,11 +233,14 @@ func (m *SessionBasketManager) BindTable(tableID, tableLabel, ownToken string, m
 			return "", nil, true
 		}
 	}
-	if mover != nil {
+	// mover is only honoured when its own session is still actually live in
+	// this manager — a Get a moment ago doesn't guarantee it still is
+	// (concurrent Sweep/Remove). Falling through to mint instead of
+	// silently "succeeding" on an orphaned *Service avoids leaving the
+	// guest bound to no cookie at all.
+	if sb, ok := m.sessions[ownToken]; mover != nil && ok {
 		mover.SetTable(tableID, tableLabel)
-		if sb, ok := m.sessions[ownToken]; ok {
-			sb.lastSeen = m.clock()
-		}
+		sb.lastSeen = m.clock()
 		return ownToken, mover, false
 	}
 	svc = m.factory()
