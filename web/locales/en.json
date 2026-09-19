@@ -2587,5 +2587,6 @@
   "modifiers.filter_unassigned": "Show only unassigned",
   "modifiers.unassigned_count": "%d unassigned group(s)",
   "modifiers.delete_unassigned": "Delete all unassigned groups",
-  "modifiers.delete_unassigned_confirm": "Delete all %d unassigned modifier group(s) everywhere? Past sales keep the modifiers they recorded."
+  "modifiers.delete_unassigned_confirm": "Delete all %d unassigned modifier group(s) everywhere? Past sales keep the modifiers they recorded.",
+  "modifiers.delete_unassigned_stale": "The unassigned list changed since this page loaded — nothing was deleted. Reload and try again."
 }

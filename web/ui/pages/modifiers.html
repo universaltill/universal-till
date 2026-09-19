@@ -73,8 +73,16 @@
       <input type="checkbox" id="modifiers-filter-unassigned"> {{ T "modifiers.filter_unassigned" }}
     </label>
     <span class="muted">{{ printf (T "modifiers.unassigned_count") .UnassignedCount }}</span>
+    {{/* ut-docs#2421: the count this confirm names is server-rendered from
+         the previous GET, so it can go stale before the click (a second
+         tab, another till, a new group created since — new groups are
+         unassigned by definition). Carried back as expectedCount so the
+         handler can refuse a mismatch instead of silently deleting more
+         than the operator confirmed — same hx-vals-on-a-bare-button shape
+         as every other id/count this page already round-trips this way. */}}
     <button type="button" class="btn secondary"
             hx-post="/api/catalog/modifier-group/delete-unassigned"
+            hx-vals='{{ jsonVals "expectedCount" .UnassignedCount }}'
             hx-confirm="{{ printf (T "modifiers.delete_unassigned_confirm") .UnassignedCount }}"
             hx-target="#modifiers-list" hx-swap="outerHTML">{{ T "modifiers.delete_unassigned" }}</button>
   </div>

@@ -115,7 +115,7 @@ func TestModifierGroupDeleteUnassigned_RemovesOnlyUnassigned(t *testing.T) {
 	mux := http.NewServeMux()
 	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}})
 
-	rec := postModifiers(t, mux, "/api/catalog/modifier-group/delete-unassigned", "")
+	rec := postModifiers(t, mux, "/api/catalog/modifier-group/delete-unassigned", "expectedCount=1")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("delete-unassigned: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -144,9 +144,10 @@ func TestModifierGroupDeleteUnassigned_RemovesOnlyUnassigned(t *testing.T) {
 		}
 	}
 
-	// Nothing left unassigned: a second call is a harmless no-op, not an
-	// error, and the survivor is still untouched.
-	rec2 := postModifiers(t, mux, "/api/catalog/modifier-group/delete-unassigned", "")
+	// Nothing left unassigned: a second call naming the now-correct count
+	// (0) is a harmless no-op, not an error, and the survivor is still
+	// untouched.
+	rec2 := postModifiers(t, mux, "/api/catalog/modifier-group/delete-unassigned", "expectedCount=0")
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("second delete-unassigned: want 200, got %d: %s", rec2.Code, rec2.Body.String())
 	}
@@ -183,5 +184,51 @@ func TestModifierGroupDeleteUnassigned_RefusedOnReplica(t *testing.T) {
 	var n int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM item_modifier_groups`).Scan(&n); err != nil || n != 1 {
 		t.Fatalf("group rows after refused mutation = %d err=%v, want 1 (untouched)", n, err)
+	}
+}
+
+// ut-docs#2421: the confirm dialog's count is server-rendered on the
+// previous GET, so it can go stale before the click — another operator
+// creating a group (unassigned by definition) or detaching a group's last
+// link is exactly this shape. A submission naming a stale expectedCount
+// must be refused (409 + notice, not a silent over-delete), and nothing may
+// be deleted.
+func TestModifierGroupDeleteUnassigned_StaleCountRefused(t *testing.T) {
+	chdirToRepoRoot(t)
+	db := setupCatalogPageDB(t)
+	defer db.Close()
+	repo := data.NewModifierRepo(db)
+	if _, err := repo.CreateGroup(t.Context(), "orphan1", "Orphan One", false, 0, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateGroup(t.Context(), "orphan2", "Orphan Two", false, 0, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}})
+
+	// The dialog was rendered when there was only 1 unassigned group (e.g.
+	// "orphan2" was created in another tab after that GET); the live count
+	// is now 2.
+	rec := postModifiers(t, mux, "/api/catalog/modifier-group/delete-unassigned", "expectedCount=1")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("stale expectedCount: want 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `data-group-id="orphan1"`) || !strings.Contains(rec.Body.String(), `data-group-id="orphan2"`) {
+		t.Fatalf("refused mutation must re-render both untouched groups, got:\n%s", rec.Body.String())
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM item_modifier_groups`).Scan(&n); err != nil || n != 2 {
+		t.Fatalf("group rows after refused stale-count mutation = %d err=%v, want 2 (untouched)", n, err)
+	}
+
+	// A missing/unparsable expectedCount (e.g. a non-htmx or hand-crafted
+	// request) is refused the same way, never trusted as "no check needed".
+	rec2 := postModifiers(t, mux, "/api/catalog/modifier-group/delete-unassigned", "")
+	if rec2.Code != http.StatusConflict {
+		t.Fatalf("missing expectedCount: want 409, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM item_modifier_groups`).Scan(&n); err != nil || n != 2 {
+		t.Fatalf("group rows after missing-count mutation = %d err=%v, want 2 (untouched)", n, err)
 	}
 }
