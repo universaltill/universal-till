@@ -141,7 +141,15 @@ func fetchTablesFromPrimary(ctx context.Context, d *common.Deps, client *http.Cl
 	if !isReplica {
 		return nil, false
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/sync/tables", nil)
+	// ut-docs#2270: bounds only THIS outbound call, when ctx carries the
+	// resume/move hot-path marker -- see crossTillHotPathNetCtx's own
+	// comment for why this must never be a deadline on ctx itself. Every
+	// OTHER caller of tablesWithStateForDisplay (the floor plan, the live
+	// basket's table picker) is unaffected -- its ctx is never marked, so
+	// this stays a no-op there and it keeps the full 800ms.
+	netCtx, cancel := crossTillHotPathNetCtx(ctx)
+	defer cancel()
+	req, err := http.NewRequestWithContext(netCtx, http.MethodGet, base+"/api/sync/tables", nil)
 	if err != nil {
 		return nil, false
 	}
