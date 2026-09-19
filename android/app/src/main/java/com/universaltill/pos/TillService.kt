@@ -3,6 +3,7 @@ package com.universaltill.pos
 import android.app.Service
 import android.content.Intent
 import android.os.Binder
+import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationChannelCompat
 import androidx.core.app.NotificationCompat
@@ -112,6 +113,14 @@ class TillService : Service() {
                 // into the start path — the constructor only stores a
                 // reference; the adapter is not touched until a request
                 // arrives.
+                // ut-docs#2235: register the device's hardware model BEFORE
+                // the server starts, same reasoning as the Bluetooth bridge
+                // just below — the very first diagnostics inventory event
+                // this boot emits (internal/pages/diagnostics_settings.go's
+                // emitDiagnosticsInventory) must already see it, not report
+                // "" for the first event and the real value only from the
+                // next boot on.
+                Mobile.setDeviceModel(Build.MODEL)
                 Mobile.setBluetoothBridge(BluetoothBridgeImpl(applicationContext))
                 val addr = Mobile.start(filesDir.absolutePath)
                 address = addr

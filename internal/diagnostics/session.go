@@ -149,7 +149,17 @@ type StopResult struct {
 // operator asked for must take effect now, not after the disk recovers —
 // the next boot re-reads whatever the rows say, which is the accepted
 // degradation).
+//
+// Serialized against Flush by flushStopMu (queue.go, ut-docs#2235): without
+// it, a Flush racing this call could read the still-active session before
+// current.Swap(nil) below and then write a fresh batch file after
+// drainSessionDir has already deleted everything, briefly resurrecting a
+// batch this "DISCARDS every not-yet-uploaded batch" guarantee says is
+// gone. Taking the same mutex at the top of both functions closes that
+// window completely.
 func Stop(ctx context.Context, kv KV, reason string) (StopResult, error) {
+	flushStopMu.Lock()
+	defer flushStopMu.Unlock()
 	s := current.Swap(nil)
 	res := StopResult{}
 	if s == nil {

@@ -67,6 +67,23 @@ type ringBuffer struct {
 // ring is the process-wide instance.
 var ring ringBuffer
 
+// flushStopMu serializes Flush's full body against Stop's full body
+// (ut-docs#2235). Without it, Flush's current.Load() at its top can read
+// the still-active session a concurrent Stop then swaps to nil and drains
+// (drainSessionDir) — and if that interleaves between Flush's read and its
+// later os.MkdirAll+file-write, Flush recreates the session's pending
+// directory and writes a fresh batch file into it AFTER Stop already
+// deleted everything, briefly resurrecting a batch Stop's "DISCARDS every
+// not-yet-uploaded batch" guarantee (session.go's Stop doc comment) says is
+// gone. Taking this at the very top of both functions and holding it for
+// their whole body fully serializes the two, so neither can ever observe
+// the other's half-done state. Cheap: Flush only runs from the cloudsync
+// tick goroutine (never a request path, see Flush's own doc comment) and
+// Stop only from the settings stop handler, Revoke, and cloudsync's own
+// terminal-409/404 session path (internal/cloudsync/diagnostics.go) — all
+// already infrequent, so full serialization here is not a contended path.
+var flushStopMu sync.Mutex
+
 // add appends one encoded event, evicting the oldest at capacity.
 func (r *ringBuffer) add(raw []byte, at time.Time) {
 	r.mu.Lock()
@@ -110,7 +127,13 @@ type batchFile struct {
 // tick only; never from a request path. A disk failure drops the affected
 // events (counted toward the next gap) rather than growing memory without
 // bound, and is returned for the tick to log.
+//
+// Serialized against Stop by flushStopMu (ut-docs#2235) for its whole body,
+// from this Load below through the last file write — see flushStopMu's own
+// doc comment for the race that closes.
 func Flush(ctx context.Context, kv KV) error {
+	flushStopMu.Lock()
+	defer flushStopMu.Unlock()
 	s := current.Load()
 	if s == nil {
 		return nil
@@ -240,8 +263,24 @@ func writeBatch(dir, sessionID string, seq int, events []json.RawMessage, now ti
 }
 
 // evictOverflow enforces maxPendingBatches across the whole pending tree,
-// removing the oldest batches first, and returns how many EVENTS were
-// discarded so the caller can fold them into the next gap marker.
+// removing batches in Pending's own order (per-session: SessionID string
+// order, then Seq) and returns how many EVENTS were discarded so the caller
+// can fold them into the next gap marker. That order is only "oldest
+// first" WITHIN one session — SessionID is an opaque string with no
+// relationship to activation time, so during the narrow window where two
+// sessions' on-disk batches coexist (around activate/revoke) eviction is
+// not strictly chronological across sessions: it can drop the newer
+// session's batches before the older session's. Accepted as a narrow
+// inaccuracy (ut-docs#2235, unlike the Flush/Stop race flushStopMu closes
+// below — that one is a correctness guarantee this package's own doc
+// comments promise callers; this one is a best-effort eviction ordering
+// nothing promises to be exact): the coexistence window is brief and
+// self-limiting (only around activate/revoke), and fixing it for real
+// would mean changing Pending()'s global sort order, which cloudsync's own
+// upload draining also depends on and which is out of scope here. Note
+// this is about EVICTION ORDER only — the events an eviction discards are
+// gone for good (folded into the next gap marker), not recovered once the
+// window passes.
 func evictOverflow() int {
 	batches, err := Pending()
 	if err != nil || len(batches) <= maxPendingBatches {

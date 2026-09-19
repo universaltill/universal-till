@@ -59,6 +59,25 @@ func diagnosticsViewFor(ctx context.Context, d *common.Deps, locale string) diag
 	return v
 }
 
+// diagnosticsViewIfManager is the GET /settings page's own entry point into
+// diagnosticsViewFor: it computes the real view only when isManager, else
+// returns the zero-value diagnosticsView unchanged (review finding on
+// ut-docs#2169, ut-docs#2235). settings.html's #settings-diagnostics card —
+// the only template consumer of the "diagnostics" data key — is itself
+// wrapped in {{ if .isManager }}, so this changes nothing a cashier ever
+// sees; it only stops diagnosticsViewFor's diagnostics.PendingSummary() call
+// (which unmarshals every pending batch file on disk) from running on every
+// cashier page load. The dedicated diagnostics API handlers below
+// (activate/stop/cancel-stop/GET fragment) call diagnosticsViewFor directly
+// — they are already gated by requireManager inside their own handlers and
+// genuinely need the real summary regardless of this page's isManager flag.
+func diagnosticsViewIfManager(ctx context.Context, d *common.Deps, locale string, isManager bool) diagnosticsView {
+	if !isManager {
+		return diagnosticsView{}
+	}
+	return diagnosticsViewFor(ctx, d, locale)
+}
+
 // renderDiagnosticsBlock answers an htmx swap of the card body with the
 // nav chip pushed out-of-band in the same response, so the rail flips the
 // moment the card does rather than on the chip's next 30s poll.
@@ -99,9 +118,11 @@ func auditDiagnostics(ctx context.Context, d *common.Deps, actorID, action strin
 // inventory events (ADR-0092 §2: app/build/OS/device/till id and plugin
 // id/version/checksum/state) — once at activation and once per boot while
 // active, so every session opens with the till's identity. No-op when
-// inactive. DeviceModel is left empty for now: the Android shell does not
-// plumb Build.MODEL through the gomobile bind (mobile.go sets only data/
-// tmp/listen env) — a follow-up, not silently faked.
+// inactive. DeviceModel is wired through diagnostics.DeviceModel()
+// (ut-docs#2235): only ever non-empty on the Android mobile build, since
+// TillService.kt is the only caller of mobile.SetDeviceModel (Build.MODEL)
+// — desktop/service builds have no caller for it, so it stays "" there,
+// same as before this was wired.
 func emitDiagnosticsInventory(ctx context.Context, d *common.Deps) {
 	if !diagnostics.Active() {
 		return
@@ -118,6 +139,7 @@ func emitDiagnosticsInventory(ctx context.Context, d *common.Deps) {
 		AppVersion:  buildinfo.Version,
 		OS:          runtime.GOOS,
 		Arch:        runtime.GOARCH,
+		DeviceModel: diagnostics.DeviceModel(),
 		TillID:      enroll.CurrentStatus().DeviceID,
 		DisplayMode: displayMode,
 	})
