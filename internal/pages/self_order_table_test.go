@@ -310,6 +310,133 @@ func TestSelfOrder_DifferentTable_GetsOwnIndependentSession(t *testing.T) {
 	}
 }
 
+// A guest who moves seats and scans a DIFFERENT table's QR while their
+// current session still holds items must keep those items — the same
+// rebind-in-place ADR-0054's table picker already does for the cashier,
+// not a fresh empty basket (ut-docs#2433, ADR-0103 review finding N2: this
+// used to silently discard the guest's in-progress basket).
+func TestSelfOrder_SameGuestScansDifferentTable_PreservesBasket(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	tableA := createSelfOrderTable(t, dp, "T1", 100)
+	tableB := createSelfOrderTable(t, dp, "T2", 200)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+	seedStock(t, d, "itm-coffee", 10)
+
+	mux := http.NewServeMux()
+	registerSelfOrder(mux, dp)
+	registerSelfOrderShop(mux, dp)
+
+	g := newSelfOrderGuest(t, mux)
+	g.get("/self-order?table=" + tableA)
+	g.post("/api/self-order/scan", "code=5000001")
+	firstSvc := g.engine(dp)
+	if n := len(firstSvc.Lines()); n != 1 {
+		t.Fatalf("precondition: guest's basket has %d lines, want 1", n)
+	}
+	firstToken := g.sessionToken()
+
+	// The guest moves to table B (same browser/cookie) before checking out.
+	rec := g.get("/self-order?table=" + tableB)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /self-order?table=<tableB>: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "This table already has an order in progress") {
+		t.Fatalf("moving to an unheld table must never show busy: %s", rec.Body.String())
+	}
+
+	svc := g.engine(dp)
+	if svc == nil {
+		t.Fatal("guest must still resolve to a live session after moving tables")
+	}
+	if n := len(svc.Lines()); n != 1 {
+		t.Fatalf("basket has %d lines after moving tables, want 1 (must be preserved, not discarded)", n)
+	}
+	if got := svc.TableID(); got != tableB {
+		t.Fatalf("TableID() after move = %q, want new table %q", got, tableB)
+	}
+	if got := svc.TableLabel(); got != "T2" {
+		t.Fatalf("TableLabel() after move = %q, want %q", got, "T2")
+	}
+	// Same session, rebound in place — not a fresh session replacing it.
+	if svc != firstSvc {
+		t.Fatal("moving tables must rebind the SAME session, not mint a new one (that's how the basket was lost)")
+	}
+	if got := g.sessionToken(); got != firstToken {
+		t.Fatalf("session cookie changed across a table move: got %q, want unchanged %q", got, firstToken)
+	}
+	if n := dp.SelfOrderSessions.Len(); n != 1 {
+		t.Fatalf("live sessions = %d, want 1 (no orphaned session left behind for the old table)", n)
+	}
+
+	// Table A is immediately free for a new scan by someone else.
+	other := newSelfOrderGuest(t, mux)
+	rec2 := other.get("/self-order?table=" + tableA)
+	if strings.Contains(rec2.Body.String(), "This table already has an order in progress") {
+		t.Fatal("the vacated table must not still show busy after the guest moved off it")
+	}
+	if other.engine(dp) == nil || other.engine(dp) == svc {
+		t.Fatal("a new scan of the vacated table must get its own independent session")
+	}
+}
+
+// A guest with items on table A who scans table B while B is already held
+// by a DIFFERENT, non-empty, recently-active session must see the busy
+// screen — the move must not bypass ADR-0103 Decision 4's busy guard. The
+// mover keeps their own table A session and basket untouched, and the
+// incumbent on table B is undisturbed (ut-docs#2433 review, S2: the busy
+// guard is checked before the move rebinds, but that interaction had no
+// direct test).
+func TestSelfOrder_MovingOntoBusyTable_ShowsBusyAndKeepsMoverOnOriginalTable(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	tableA := createSelfOrderTable(t, dp, "T1", 100)
+	tableB := createSelfOrderTable(t, dp, "T2", 200)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+	seedStock(t, d, "itm-coffee", 10)
+
+	mux := http.NewServeMux()
+	registerSelfOrder(mux, dp)
+	registerSelfOrderShop(mux, dp)
+
+	// The incumbent already holds table B with a non-empty basket.
+	incumbent := newSelfOrderGuest(t, mux)
+	incumbent.get("/self-order?table=" + tableB)
+	incumbent.post("/api/self-order/scan", "code=5000001")
+	incumbentSvc := incumbent.engine(dp)
+
+	// The mover has their own items on table A, then scans table B.
+	mover := newSelfOrderGuest(t, mux)
+	mover.get("/self-order?table=" + tableA)
+	mover.post("/api/self-order/scan", "code=5000001")
+	moverSvc := mover.engine(dp)
+	moverToken := mover.sessionToken()
+
+	rec := mover.get("/self-order?table=" + tableB)
+	if !strings.Contains(rec.Body.String(), "This table already has an order in progress") {
+		t.Fatalf("expected the busy screen when moving onto a held table, got: %s", rec.Body.String())
+	}
+	if got := mover.sessionToken(); got != moverToken {
+		t.Fatalf("mover's session cookie changed on a busy-blocked move: got %q, want unchanged %q", got, moverToken)
+	}
+	if got := mover.engine(dp); got != moverSvc {
+		t.Fatal("mover must still resolve to their own original session, not the incumbent's")
+	}
+	if got := moverSvc.TableID(); got != tableA {
+		t.Fatalf("mover's TableID() after a busy-blocked move = %q, want unchanged original table %q", got, tableA)
+	}
+	if n := len(moverSvc.Lines()); n != 1 {
+		t.Fatalf("mover's basket has %d lines after a busy-blocked move, want unchanged 1", n)
+	}
+	if got := incumbentSvc.TableID(); got != tableB {
+		t.Fatalf("incumbent's TableID() = %q, want unchanged %q", got, tableB)
+	}
+	if n := len(incumbentSvc.Lines()); n != 1 {
+		t.Fatalf("incumbent's basket has %d lines, want unchanged 1", n)
+	}
+	if n := dp.SelfOrderSessions.Len(); n != 2 {
+		t.Fatalf("live sessions = %d, want 2 (mover on A, incumbent on B)", n)
+	}
+}
+
 // Re-scanning your OWN table's code (the idle-reset bounce, or a deliberate
 // re-open) is never "busy" — it's the same guest, and it RESUMES their
 // session: same token, same table, basket kept (ADR-0103 Decision 2).
