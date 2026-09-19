@@ -20,7 +20,16 @@
 #      of this glob closed ut-docs#453's follow-up gap: this check used to
 #      scan only web/ui/**/*.html, and a live instance of the same bug class
 #      shipped in web/public/app.js until it was migrated to source its
-#      strings from server-rendered data-* attributes instead.
+#      strings from server-rendered data-* attributes instead. Also catches
+#      a literal in a ternary branch (`.textContent = ok ? "Saved" :
+#      "Failed"`) and a literal returned from inside a `.map(...)` callback
+#      whose result feeds .innerHTML — both invisible to the original
+#      direct-assignment-only regex, which only ever looked right after the
+#      `=` sign. The tag-stripping step (now the shared strip_markup
+#      helper) also now recognises a truncated open tag with no closing
+#      `>` — the shape a .map() callback's first concatenated literal
+#      segment regularly is — without over-eating a genuine "<" that
+#      shows up in real prose (ut-docs#2423).
 #   6. No hardcoded prose literal assigned straight to pos.Basket.ToastMessage
 #      (the sale screen's single notification field, ut-docs#213) — invisible
 #      to check 3, which only scans literals passed directly to
@@ -235,20 +244,108 @@ if hxvals_hits:
 jsassign_re = re.compile(r'''\.(?:textContent|innerHTML)\s*=\s*(['"])((?:(?!\1)[^\\]|\\.)*)\1''')
 rendernotice_re = re.compile(r'''renderNotice\([^,]+,\s*['"][a-z]+['"]\s*,\s*(['"])((?:(?!\1)[^\\]|\\.)*)\1''')
 tag_re = re.compile(r'<[^>]*>')
+
+def strip_markup(literal):
+    # ut-docs#2423: a literal built via string concatenation (`'<button
+    # type="button" data-x="' + esc(y) + '">'`) is regularly only a
+    # PARTIAL open tag once the regex above has isolated just one segment
+    # of it -- it has no closing `>` for tag_re to anchor on, so its bare
+    # attribute names (`type button`, `data cust pick`) read as prose.
+    # Treat an unmatched-open-tag literal as if it were closed before
+    # stripping, the same way a complete tag already strips cleanly. Only
+    # when the trailing unmatched `<` is actually tag-shaped (followed by
+    # a letter/slash/bang, no `>` before the literal ends) -- independent
+    # review (ut-docs#2423) caught the naive `count('<') > count('>')`
+    # version silently swallowing a genuine "<" in real prose, e.g.
+    # "Discount < 5 percent is not allowed": that trailing "< 5 percent
+    # is not allowed" isn't a tag at all, so closing it consumed the rest
+    # of the sentence and the finding vanished.
+    if re.search(r'<[A-Za-z/!][^>]*$', literal):
+        literal = literal + '>'
+    return tag_re.sub(' ', literal)
+
+# ut-docs#2423: jsassign_re above only matches a literal appearing
+# directly as the RHS of .textContent/.innerHTML =, so two other shapes
+# were invisible to it:
+#   - a ternary whose branch is a raw literal (`.textContent = ok ?
+#     "Saved" : "Failed"` -- the RHS right after `=` is `ok`, not a
+#     quote, so jsassign_re never matches at all);
+#   - a literal returned from inside a `.map(...)` callback whose RESULT
+#     feeds .innerHTML (`.innerHTML = list.map(function (c) { return
+#     "<div>No results</div>"; }).join("")` -- the RHS right after `=`
+#     is `list`, and the literal itself is usually on a different line
+#     entirely, inside the callback body).
+# Same narrow, line-based heuristic as the rest of this check: near-zero
+# false positives over exhaustive recall.
+ternary_assign_re = re.compile(r'\.(?:textContent|innerHTML)\s*=\s*[^;\n]*\?[^;\n]*:[^;\n]*')
+ternary_literal_re = re.compile(r'''[?:]\s*(['"])((?:(?!\1)[^\\]|\\.)*)\1''')
+map_assign_re = re.compile(r'\.(?:textContent|innerHTML)\s*=\s*[^;\n]*\.map\(')
+map_arrow_literal_re = re.compile(
+    r'''\.map\(\s*(?:function\s*\([^)]*\)\s*\{?\s*return\s+|[^=\n]*=>\s*)(['"])((?:(?!\1)[^\\]|\\.)*)\1'''
+)
+map_return_re = re.compile(r'''return\s+(['"])((?:(?!\1)[^\\]|\\.)*)\1''')
+# Matches only the callback's own closing brace, not also requiring the
+# immediately-following `)` on the same line -- independent review
+# (ut-docs#2423) found real close styles (`}, this).join(...)`,
+# `}.bind(this)).join(...)`, or the `)` on its own next line) that
+# `^\s*\}\)` doesn't match, letting the bounded scan below run past the
+# callback entirely and flag an unrelated function's own `return "...";`
+# a false positive with a confusing message pointing at code nowhere near
+# .innerHTML/.textContent. `^\s*\}` is a strict superset, so it can only
+# stop the scan EARLIER, never later -- it can't introduce a new miss.
+map_close_re = re.compile(r'^\s*\}')
+MAP_SCAN_LINES = 40  # bounded lookahead past a multi-line .map() callback's open brace
+
 jsassign_files = sorted(glob.glob("web/ui/**/*.html", recursive=True)) + sorted(
     f for f in glob.glob("web/public/**/*.js", recursive=True)
     if not f.startswith("web/public/vendor/")
 )
 jsassign_hits = []
 for f in jsassign_files:
-    for i, line in enumerate(open(f, encoding="utf-8").read().splitlines(), 1):
+    lines = open(f, encoding="utf-8").read().splitlines()
+    for idx, line in enumerate(lines):
+        i = idx + 1
         if "i18n:ignore" in line:
             continue
         for m in list(jsassign_re.finditer(line)) + list(rendernotice_re.finditer(line)):
             literal = m.group(2)
-            stripped = tag_re.sub(' ', literal)
+            stripped = strip_markup(literal)
             if prose_re.search(stripped):
                 jsassign_hits.append((f, i, literal))
+
+        tm = ternary_assign_re.search(line)
+        if tm:
+            for lm in ternary_literal_re.finditer(tm.group(0)):
+                literal = lm.group(2)
+                stripped = strip_markup(literal)
+                if prose_re.search(stripped):
+                    jsassign_hits.append((f, i, literal))
+
+        if map_assign_re.search(line):
+            am = map_arrow_literal_re.search(line)
+            if am:
+                literal = am.group(2)
+                stripped = strip_markup(literal)
+                if prose_re.search(stripped):
+                    jsassign_hits.append((f, i, literal))
+            elif line.rstrip().endswith('{'):
+                # Multi-line callback body -- scan forward (bounded) for
+                # `return "...";` until the callback/map call visibly
+                # closes. Only entered for the braced-body shape (the
+                # line ends with `{`), never for an already-fully-matched
+                # single-line arrow above, to keep the lookahead from
+                # wandering into unrelated code when there's nothing left
+                # to find.
+                for j in range(idx + 1, min(idx + 1 + MAP_SCAN_LINES, len(lines))):
+                    jline = lines[j]
+                    if "i18n:ignore" not in jline:
+                        for rm in map_return_re.finditer(jline):
+                            literal = rm.group(2)
+                            stripped = strip_markup(literal)
+                            if prose_re.search(stripped):
+                                jsassign_hits.append((f, j + 1, literal))
+                    if map_close_re.match(jline):
+                        break
 
 if jsassign_hits:
     fail = True
