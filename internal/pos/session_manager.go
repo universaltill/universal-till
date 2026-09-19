@@ -119,13 +119,18 @@ func (m *SessionBasketManager) Remove(token string) {
 }
 
 // TableOwner finds a live session currently bound to tableID (any session
-// whose Service.TableID() matches) — the narrowed busy guard's lookup
-// (ADR-0103 Decision 4): the page blocks a scan only when the SAME table
-// already has a live, non-empty session owned by a different cookie. An
-// empty tableID never matches (an unbound session has TableID "", and
-// "which session owns no table" is not a meaningful question). If two
-// sessions were ever bound to one table, either may be returned; the page
-// handler's own flow makes that state unreachable in practice.
+// whose Service.TableID() matches) — the unfiltered lookup behind
+// TableOwnerActive below (ADR-0103 Decision 4, narrowed by ut-docs#2261
+// review finding B1): TableOwnerActive is what the page's busy guard
+// actually calls. An empty tableID never matches (an unbound session has
+// TableID "", and "which session owns no table" is not a meaningful
+// question). If two sessions were ever bound to one table — reachable in
+// practice since B1: an old session that went idle past
+// selfOrderTableBusyMaxIdle stays bound but stops blocking a new scan,
+// which can bind a second session to the same table — either may be
+// returned; when both are non-empty the busy guard's own caller treats
+// either as busy, so which one TableOwner(Active) happens to return is not
+// observable through that path.
 func (m *SessionBasketManager) TableOwner(tableID string) (string, *Service, bool) {
 	if m == nil || tableID == "" {
 		return "", nil, false
