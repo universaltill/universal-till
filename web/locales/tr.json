@@ -1045,6 +1045,7 @@
   "modifiers.delete_confirm": "Bu Modifikasyon grubu her yerden silinsin mi? Tüm kategorilerden ve ürünlerden kaldırılacak. Geçmiş satışlar kaydettikleri Modifikasyonları korur.",
   "modifiers.delete_unassigned": "Atanmamış tüm grupları sil",
   "modifiers.delete_unassigned_confirm": "Atanmamış %d Modifikasyon grubunun tümü her yerden silinsin mi? Geçmiş satışlar kaydettikleri Modifikasyonları korur.",
+  "modifiers.delete_unassigned_stale": "Bu sayfa yüklendiğinden beri atanmamış liste değişti — hiçbir şey silinmedi. Sayfayı yeniden yükleyip tekrar deneyin.",
   "modifiers.empty": "Henüz Modifikasyon yok — ilk grubunuzu yukarıda oluşturun.",
   "modifiers.empty_cta": "Kataloğu aç",
   "modifiers.error.server": "Modifikasyonlar yüklenirken bir hata oluştu. Lütfen tekrar deneyin.",

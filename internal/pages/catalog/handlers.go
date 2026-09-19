@@ -1659,10 +1659,18 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// is the exact same definition modifiersPageData's UnassignedCount and
 	// this page's own .modifier-unassigned hint already use — no category
 	// link, no item link — so this can never delete a group still offered
-	// anywhere. The confirm text (modifiers.html) already names the count
-	// server-rendered from that same UnassignedCount, so there is nothing
-	// left to re-derive or double-check here. Same gates and same cascade/
-	// past-sales guarantee as the single-group delete above.
+	// anywhere. Same gates and same cascade/past-sales guarantee as the
+	// single-group delete above.
+	//
+	// ut-docs#2421: the confirm dialog's count is server-rendered from the
+	// *previous* GET (modifiersPageData's own independent Go-side tally),
+	// so it can go stale before the click — another operator (a second
+	// tab, another till, someone detaching a group's last link elsewhere)
+	// changes what's unassigned, or simply creates a new group, which is
+	// unassigned by definition. Re-check a fresh count against what the
+	// button's hx-vals carried back (same re-validate-server-side shape as
+	// #2046's attach-picker 409) and refuse rather than silently deleting
+	// more than the operator confirmed.
 	mux.HandleFunc("/api/catalog/modifier-group/delete-unassigned", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -1672,6 +1680,21 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
+			return
+		}
+		_ = r.ParseForm()
+		expected, err := strconv.Atoi(strings.TrimSpace(r.Form.Get("expectedCount")))
+		if err != nil {
+			renderModifierMutationResult(w, r, "", http.StatusConflict, httpx.T(httpx.RequestLocale(r), "modifiers.delete_unassigned_stale"))
+			return
+		}
+		live, err := modRepo.CountUnassignedGroups(r.Context())
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "modifiers.error.server", "catalog delete-unassigned", err)
+			return
+		}
+		if live != expected {
+			renderModifierMutationResult(w, r, "", http.StatusConflict, httpx.T(httpx.RequestLocale(r), "modifiers.delete_unassigned_stale"))
 			return
 		}
 		if _, err := modRepo.DeleteUnassignedGroups(r.Context()); err != nil {

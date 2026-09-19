@@ -1084,6 +1084,25 @@ WHERE id NOT IN (SELECT group_id FROM item_modifier_group_links)
 	return int(n), nil
 }
 
+// CountUnassignedGroups returns how many groups DeleteUnassignedGroups would
+// delete right now — the SAME "neither category nor item link" WHERE clause,
+// as a COUNT instead of a DELETE (ut-docs#2421). The bulk-delete handler
+// calls this immediately before deleting, to catch what its confirm dialog's
+// count (server-rendered on the *previous* GET, by modifiersPageData's own
+// independent Go-side tally) can no longer promise: another operator having
+// created, or unassigned the last link from, a group in between.
+func (r *ModifierRepo) CountUnassignedGroups(ctx context.Context) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM item_modifier_groups
+WHERE id NOT IN (SELECT group_id FROM item_modifier_group_links)
+  AND id NOT IN (SELECT group_id FROM category_modifier_group_links)`).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count unassigned modifier groups: %w", err)
+	}
+	return n, nil
+}
+
 // CreateOption adds a selectable option to a modifier group.
 func (r *ModifierRepo) CreateOption(ctx context.Context, id, groupID, name string, priceDeltaMinor int64, sortOrder int) (string, error) {
 	if groupID == "" {
