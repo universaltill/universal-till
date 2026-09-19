@@ -627,6 +627,49 @@
   // have id ''), which is why this is a separate counter rather than
   // reusing #item-id.
   var formSession = 0;
+  // ut-docs#2379: the nested "Manage customization groups" dialog's
+  // go-to-/modifiers empty-state control (modifier_group_admin.html,
+  // #modifier-empty-goto-modifiers) needs to warn about the item-form's
+  // own unsaved edits before leaving — this dialog's Close button (below)
+  // has no such guard today, so this is new protection, not parity with
+  // an existing one; the AC explicitly rules out a SILENT loss for this
+  // specific path, so window.confirm() only when something has actually
+  // changed since open.
+  //
+  // Snapshotting via FormData (record-dialog.js's own confirmDiscard
+  // technique) was tried first and is WRONG here (independent review,
+  // ut-docs#2379): #item-price — the field the operator actually types
+  // into — carries no `name` attribute at all; only the hidden
+  // #item-price-minor (name="price") does, and that's written exactly
+  // once, by the submit handler (search "item-price-minor" below). A
+  // FormData snapshot taken at open() is therefore byte-identical to one
+  // taken after editing ONLY the price, and the guard would silently let
+  // the edit through — precisely the silent loss the AC forbids.
+  //
+  // formSession is immune to this: its own 'input' listener (search
+  // "formSession++" below) is bound to the FORM, and a native 'input'
+  // event bubbles up from ANY field regardless of whether that field has
+  // a `name` attribute, so a price edit bumps it exactly like a name or
+  // barcode edit does. Snapshotted at the top of openModal() below, where
+  // both call sites (New/row-click) have already bumped formSession and
+  // finished setting the form's fields for this open — a later save
+  // itself never bumps formSession again (only genuine operator input,
+  // an explicit reset, or a fresh open do), so this can't false-fire
+  // right after a successful, still-showing "Saved" state either.
+  var modifiersNavSession = null;
+  window.utCatalogGoToModifiers = function () {
+    if (modifiersNavSession !== null && formSession !== modifiersNavSession) {
+      if (!window.confirm('{{ T "common.discard_confirm" }}')) return false;
+    }
+    // Same-tab navigation only (never target="_blank"/window.open) — the
+    // kiosk build is fully chromeless, catalog_variants.html's own header
+    // comment. A plain assign, same technique this file's own returnTo
+    // handling already uses (search "location.assign" above), not an
+    // in-shell htmx swap — the items-shell swap is a nice-to-have left for
+    // a follow-up, not something this card's acceptance criteria asks for.
+    location.assign('/modifiers');
+    return false;
+  };
   // ut-docs#1956 (independent review, root cause behind F1/F2/F3): Alpine's
   // x-show DOM write is NOT synchronous, and it is not on the microtask
   // queue or the first animation frame either — it lands on the SECOND.
@@ -678,6 +721,14 @@
   // already open, so this also stays safe against the same
   // already-open-dialog case showModal() would have thrown on.
   function openModal() {
+    // ut-docs#2379: both call sites (New/row-click) have already bumped
+    // formSession and finished setting the form's fields by the time they
+    // call openModal() — see addBtn's and openCatalogRow's own
+    // formSession++ lines just above their openModal() calls — so this is
+    // the right, single place to snapshot "clean" for
+    // utCatalogGoToModifiers' guard above, rather than duplicating the
+    // snapshot at every call site.
+    modifiersNavSession = formSession;
     // ut-docs#1956: every open lands on the Details tab, whichever tab the
     // previous session left selected — a merchant never opens item B onto
     // item A's "Print labels" tab. The Alpine scope on #item-form-root

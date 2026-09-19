@@ -273,6 +273,7 @@
   "catalog.modifiers.attach_placeholder": "اختر مجموعة…",
   "catalog.modifiers.detach": "إزالة من هذا الصنف",
   "catalog.modifiers.detach_confirm": "إزالة هذه المجموعة من هذا الصنف؟ ستبقى مرتبطة بأي أصناف أخرى تستخدمها.",
+  "catalog.modifiers.go_to_modifiers": "الانتقال إلى الإضافات لإنشاء مجموعة",
   "catalog.modifiers.group_example": "مثال: إضافات",
   "catalog.modifiers.group_name": "اسم المجموعة",
   "catalog.modifiers.inherited_help": "تأتي هذه المجموعات من فئة الصنف وتُعرض تلقائيًا. تخطَّ إحداها لاستبعادها لهذا الصنف فقط — تحتفظ الفئة بها.",
