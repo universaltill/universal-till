@@ -812,3 +812,70 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.prepare.outputs.tag }}
         run: gh release edit "$TAG" --draft=false --latest
+
+  # ut-docs#2274: on the workflow_dispatch path, `prepare` creates and
+  # pushes the tag before any build job runs (so every downstream job can
+  # `checkout` it) — meaning a build failure or a manually cancelled run
+  # after that point permanently burns the version number: the tag is real,
+  # but nothing was ever published under it, and the next auto-bump reads
+  # this dead tag as "latest" and skips past a version nobody ever
+  # shipped. Happened for real three times (v0.14.21, v0.15.0, v0.17.0),
+  # each noticed and cleaned up by hand days later. Rather than restructure
+  # every job's `ref: needs.prepare.outputs.tag` checkout (and goreleaser's
+  # own tag-based versioning) to defer tagging until after the build — a
+  # much larger, harder-to-verify change to a pipeline that ships real
+  # builds — this job removes the tag (and any draft release goreleaser
+  # already created) the moment it's clear the run did NOT reach
+  # `publish-release`, so a dead run never leaves debris for a human (or a
+  # future cycle) to notice and clean up later.
+  #
+  # Known tradeoff (independent review, ut-docs#2274): if every platform
+  # build already succeeded and the run is cancelled during
+  # `publish-release`'s own undraft step, this deletes a fully-built draft
+  # release (all assets already uploaded, signed/notarized where
+  # applicable) rather than leaving it for a retry to just flip live.
+  # Accepted deliberately — that window is a single `gh release edit`
+  # call wide, versus the three real incidents this job exists to prevent,
+  # all of which failed well before any release was buildable at all.
+  cleanup-orphaned-tag:
+    needs:
+      [
+        prepare,
+        linux-shells,
+        goreleaser,
+        windows-installer,
+        macos-app,
+        android-app,
+        verify-versions,
+        publish-release,
+      ]
+    # Only for a tag `prepare` itself created (the workflow_dispatch path —
+    # see prepare's own `if [ event_name = push ]` branch above). A tag
+    # pushed by a human (`git tag && git push`, or scripts/release.sh) is
+    # explicit intent and must never be deleted out from under them by CI —
+    # `push`-triggered runs skip this job entirely.
+    # `always()` (not the default implicit success() on `needs`) so this
+    # still runs when a build job failed OR the whole run was cancelled —
+    # exactly the two cases that orphan a tag.
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && needs.prepare.result == 'success' && needs.publish-release.result != 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Delete the orphaned tag and any draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          echo "::warning::Release ${TAG} did not complete (publish-release: ${{ needs.publish-release.result }}) — deleting the tag so it doesn't burn this version number for the next attempt."
+          # `--cleanup-tag` removes both the release object and the tag in
+          # one call when a (draft) release exists; if goreleaser never got
+          # far enough to create one, that call finds nothing and the
+          # explicit tag delete below is what actually cleans up. Both are
+          # best-effort: this is a cleanup step for an already-failed run,
+          # so it must never itself fail the job over a tag that's already
+          # gone (e.g. `--cleanup-tag` already removed it).
+          gh release delete "${TAG}" --yes --cleanup-tag 2>/dev/null || true
+          git push origin ":refs/tags/${TAG}" 2>/dev/null || true
