@@ -344,3 +344,194 @@ func TestSessionBasketManager_ConcurrentSessionsDoNotInterfere(t *testing.T) {
 		t.Fatalf("Len() after concurrent Remove = %d, want 0", m.Len())
 	}
 }
+
+// ut-docs#2434 (ADR-0103 review finding N3): the busy-check and the bind
+// used to be two separate manager.mu critical sections
+// (TableOwnerActive, then Create+SetTable), so two goroutines could both
+// observe "not busy" before either bound — a real check-then-act race, not
+// just a threshold gap. BindTable collapses both into one critical
+// section; proven here with many goroutines racing to bind the identical
+// table: exactly one must succeed, every other must see busy and mint
+// nothing.
+//
+// Run under an OUTER loop, fresh manager per trial (ut-docs#2434
+// independent-review finding S2): `go test -race` alone does NOT prove
+// this — the old two-call implementation has no data race at all (both
+// halves were individually mutex-guarded), only a logic race, so `-race`
+// stays silent against a reverted fix. The only signal a single trial
+// gives is `bound != 1`, and that's PROBABILISTIC: re-running the old
+// racy implementation against this test's exact shape (32 goroutines, one
+// start gate) let two goroutines both win in 5/20 trials under `-race`
+// and 2/20 without — a revert would pass this test most of the time on a
+// single run. Looping drives a false pass down to effectively zero at
+// negligible cost (each trial is sub-millisecond).
+func TestSessionBasketManager_BindTable_ConcurrentSameTableBindsExactlyOnce(t *testing.T) {
+	const trials = 30
+	const guests = 32
+	for trial := 0; trial < trials; trial++ {
+		m := NewSessionBasketManager(func() *Service {
+			return NewServiceWithResolver(Config{TaxRateBasisPoints: 2000}, nil)
+		})
+
+		var wg sync.WaitGroup
+		var start sync.WaitGroup
+		start.Add(1)
+		var resMu sync.Mutex
+		bound, busy := 0, 0
+		var boundToken string
+		var boundSvc *Service
+		for g := 0; g < guests; g++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				start.Wait()
+				tok, svc, isBusy := m.BindTable("table-A", "T1", "", nil, time.Hour, time.Now())
+				resMu.Lock()
+				defer resMu.Unlock()
+				if isBusy {
+					busy++
+					if tok != "" || svc != nil {
+						t.Errorf("trial %d: busy result must return no token/service, got (%q, %p)", trial, tok, svc)
+					}
+					return
+				}
+				bound++
+				boundToken, boundSvc = tok, svc
+			}()
+		}
+		start.Done()
+		wg.Wait()
+
+		if bound != 1 {
+			t.Fatalf("trial %d: bound = %d, want exactly 1 — a real concurrent race must never let two mints win", trial, bound)
+		}
+		if busy != guests-1 {
+			t.Fatalf("trial %d: busy = %d, want %d", trial, busy, guests-1)
+		}
+		if n := m.Len(); n != 1 {
+			t.Fatalf("trial %d: live sessions after the race = %d, want 1", trial, n)
+		}
+		svc, ok := m.Get(boundToken)
+		if !ok || svc != boundSvc {
+			t.Fatalf("trial %d: the one winning bind's token must resolve back to its own service", trial)
+		}
+		if got := svc.TableID(); got != "table-A" {
+			t.Fatalf("trial %d: winning session's TableID() = %q, want %q", trial, got, "table-A")
+		}
+	}
+}
+
+// The mover case (an existing session's own table changes) is atomic the
+// same way: a live session moving onto a table another live session
+// already holds must see busy and stay on its original table, never lose
+// its own binding or basket.
+func TestSessionBasketManager_BindTable_MoverBlockedByBusyTableKeepsOwnBinding(t *testing.T) {
+	m, now := newTestSessionManager(t)
+
+	_, incumbent := m.Create()
+	incumbent.SetTable("table-B", "T2")
+
+	moverToken, mover := m.Create()
+	mover.SetTable("table-A", "T1")
+	mover.AddLineWithModifiers(BasketLine{SKU: "x", ItemID: "x", Name: "line", PriceCents: 100}, 1, nil)
+
+	tok, svc, busy := m.BindTable("table-B", "T2", moverToken, mover, time.Hour, *now)
+	if !busy {
+		t.Fatal("moving onto a table another live session already holds must report busy")
+	}
+	if tok != "" || svc != nil {
+		t.Fatalf("busy result must return no token/service, got (%q, %p)", tok, svc)
+	}
+	if got := mover.TableID(); got != "table-A" {
+		t.Fatalf("mover's TableID() after a busy-blocked move = %q, want unchanged %q", got, "table-A")
+	}
+	if n := len(mover.Lines()); n != 1 {
+		t.Fatalf("mover's basket has %d lines after a busy-blocked move, want unchanged 1", n)
+	}
+	if got := incumbent.TableID(); got != "table-B" {
+		t.Fatalf("incumbent's TableID() = %q, want unchanged %q", got, "table-B")
+	}
+}
+
+// ut-docs#2434 independent-review finding N4: the B1 idle-recovery
+// guarantee is now load-bearing for an EMPTY session too (dropping the
+// item-count exception means an empty session blocks exactly like a
+// non-empty one while active), but nothing previously asserted that an
+// EMPTY session actually frees its table via BindTable once idle past
+// maxIdle — every existing idle-recovery test seeds a non-empty session.
+func TestSessionBasketManager_BindTable_EmptySessionFreesTableAfterMaxIdle(t *testing.T) {
+	m, now := newTestSessionManager(t)
+
+	_, first := m.Create()
+	first.SetTable("table-A", "T1") // bound, zero lines
+
+	if _, _, busy := m.BindTable("table-A", "T1", "", nil, 10*time.Minute, *now); !busy {
+		t.Fatal("right after binding: a second, unrelated scan of the same table must see busy, even though the first session is empty")
+	}
+
+	later := now.Add(10*time.Minute + time.Second)
+	tok, svc, busy := m.BindTable("table-A", "T1", "", nil, 10*time.Minute, later)
+	if busy {
+		t.Fatal("an EMPTY session idle past maxIdle must not block a new scan of its table")
+	}
+	if svc == nil || svc == first {
+		t.Fatal("the new scan should have bound a fresh session, not the aged-out empty one")
+	}
+	if got := svc.TableID(); got != "table-A" {
+		t.Fatalf("new session's TableID() = %q, want %q", got, "table-A")
+	}
+	if got, ok := m.Get(tok); !ok || got != svc {
+		t.Fatal("the new token must resolve back to the new session")
+	}
+}
+
+// ut-docs#2434 independent-review finding S4: bindSelfOrderTableSession
+// used to special-case "resume my own current table" BEFORE the busy
+// check, unconditionally. That's a gap, not just a simplification: A
+// binds table T (non-empty), goes idle past maxIdle with no further
+// activity, a DIFFERENT phone (B) correctly sees A as stale and legitimately
+// binds T, and only THEN does A's phone wake and resume its own stale
+// cookie for T — the old early-return let A resume unconditionally,
+// producing two live, recently-active sessions on one table (two
+// kiosk_counter_orders rows at checkout), the exact class of bug this
+// card exists to close, just reached via the resume path instead of two
+// concurrent mints. Fixed by routing the resume case through the SAME
+// BindTable call as mint/move — this proves BindTable itself correctly
+// reports busy when a stale session's own token+service (the "mover" a
+// resume caller now always passes) contests a table another, currently
+// more-recently-active session already holds.
+func TestSessionBasketManager_BindTable_StaleResumeAfterCompetingBindSeesBusy(t *testing.T) {
+	m, now := newTestSessionManager(t)
+
+	aToken, aSvc := m.Create() // lastSeen stamped at *now via m.clock()
+	aSvc.SetTable("table-A", "T1")
+	aSvc.AddLineWithModifiers(BasketLine{SKU: "x", ItemID: "x", Name: "line", PriceCents: 100}, 1, nil)
+
+	// Advance the fake clock past maxIdle with no further touch of A's
+	// session, then bind B — B's own lastSeen is stamped at this later
+	// time via the same m.clock() mechanism A's was stamped at originally.
+	*now = now.Add(10*time.Minute + time.Second)
+	bToken, bSvc, busy := m.BindTable("table-A", "T1", "", nil, 10*time.Minute, *now)
+	if busy || bSvc == nil {
+		t.Fatalf("B's fresh scan after A went stale: busy=%v svc=%v, want busy=false, a bound session", busy, bSvc)
+	}
+	if bToken == aToken {
+		t.Fatal("B must get its OWN token, not A's")
+	}
+
+	// A's phone wakes and "resumes" a moment later — the exact call
+	// bindSelfOrderTableSession now makes unconditionally, passing A's own
+	// live *Service as mover.
+	*now = now.Add(time.Second)
+	tok, svc, aBusy := m.BindTable("table-A", "T1", aToken, aSvc, 10*time.Minute, *now)
+	if !aBusy {
+		t.Fatal("A's stale resume after B's legitimate bind must see busy=true")
+	}
+	if tok != "" || svc != nil {
+		t.Fatalf("busy result must return no token/service, got (%q, %p)", tok, svc)
+	}
+	// B's own binding is untouched by A's blocked resume attempt.
+	if got, ok := m.Get(bToken); !ok || got != bSvc || got.TableID() != "table-A" {
+		t.Fatal("B's session must be unaffected by A's blocked resume")
+	}
+}
