@@ -273,6 +273,7 @@
   "catalog.modifiers.attach_placeholder": "یک گروه انتخاب کنید…",
   "catalog.modifiers.detach": "حذف از این کالا",
   "catalog.modifiers.detach_confirm": "این گروه از این کالا حذف شود؟ به کالاهای دیگری که از آن استفاده می‌کنند همچنان متصل می‌ماند.",
+  "catalog.modifiers.go_to_modifiers": "رفتن به افزودنی‌ها برای ایجاد گروه",
   "catalog.modifiers.group_example": "مثلاً افزودنی‌ها",
   "catalog.modifiers.group_name": "نام گروه",
   "catalog.modifiers.inherited_help": "این گروه‌ها از دستهٔ کالا می‌آیند و به‌طور خودکار ارائه می‌شوند. یکی را رد کنید تا فقط برای این کالا کنار گذاشته شود — دسته آن را نگه می‌دارد.",

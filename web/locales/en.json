@@ -273,6 +273,7 @@
   "catalog.modifiers.attach_placeholder": "Choose a group…",
   "catalog.modifiers.detach": "Remove from this item",
   "catalog.modifiers.detach_confirm": "Remove this group from this item? It stays attached to any other items using it.",
+  "catalog.modifiers.go_to_modifiers": "Go to Modifiers to create a group",
   "catalog.modifiers.group_example": "e.g. Extras",
   "catalog.modifiers.group_name": "Group name",
   "catalog.modifiers.inherited_help": "These groups come from the item's category and are offered automatically. Skip one to leave it out for this item only — the category keeps it.",

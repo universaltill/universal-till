@@ -812,6 +812,10 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
    now renders from modifier_group_admin.html on /modifiers and in the
    nested dialog. */
 .catalog-detail-modifiers-summary { margin-block-start: 1rem; }
+/* ut-docs#2379 review finding: this button sits right after the inherited
+   section above it (modifier_group_admin.html) with no rule of its own —
+   same 1rem convention as its siblings above, not a new value. */
+.catalog-detail-modifiers-empty-cta { margin-block-start: 1rem; }
 .catalog-modifiers-summary-line { margin-block: .2rem; }
 .modifier-admin-group { border: 1px solid var(--border); border-radius: var(--radius);
                          padding: .6rem .75rem; margin-block-end: .6rem; }
