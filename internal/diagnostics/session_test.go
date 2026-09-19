@@ -3,6 +3,8 @@ package diagnostics
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -156,6 +158,79 @@ func TestStop_IsImmediateDiscardsPendingAndMarksReport(t *testing.T) {
 	Emit(Gap{DroppedCount: 1})
 	if got := drainRing(t); len(got) != 0 {
 		t.Fatal("Emit buffered an event after Stop")
+	}
+}
+
+// TestFlushStopMu_BlocksFlushWhileStopSectionHeld is a deterministic
+// regression for flushStopMu (queue.go, ut-docs#2235): it proves Flush
+// genuinely blocks for as long as the shared mutex is held by another
+// critical section (standing in for Stop's), rather than relying on a
+// timing-sensitive interleaving of the real Flush/Stop bodies. Before the
+// fix, Flush took no lock at all and this would return almost immediately.
+func TestFlushStopMu_BlocksFlushWhileStopSectionHeld(t *testing.T) {
+	kv := withActiveSession(t)
+	Emit(Gap{DroppedCount: 1})
+
+	flushStopMu.Lock()
+	done := make(chan error, 1)
+	go func() { done <- Flush(context.Background(), kv) }()
+
+	select {
+	case <-done:
+		flushStopMu.Unlock()
+		t.Fatal("Flush returned while flushStopMu was held elsewhere — it no longer takes the shared lock")
+	case <-time.After(150 * time.Millisecond):
+		// expected: Flush is blocked waiting for flushStopMu
+	}
+	flushStopMu.Unlock()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Flush: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Flush never completed after flushStopMu was released")
+	}
+}
+
+// TestFlushStopMu_ConcurrentFlushAndStopNeverLeavesABatch runs Flush and
+// Stop concurrently, repeatedly, and asserts the session's pending
+// directory is always empty afterwards — Stop's "DISCARDS every
+// not-yet-uploaded batch" guarantee (its own doc comment) must hold even
+// when a Flush was racing it (ut-docs#2235). With flushStopMu in place only
+// two orderings are ever observable: Flush runs to completion first and
+// Stop then drains what it wrote, or Stop runs to completion first and
+// Flush's current.Load() then sees nil and writes nothing — both leave the
+// directory empty. Before the fix, the interleaving where Flush reads the
+// session before Stop's swap-to-nil but writes its batch file after
+// drainSessionDir already ran could leave a batch behind.
+func TestFlushStopMu_ConcurrentFlushAndStopNeverLeavesABatch(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		kv := withActiveSession(t)
+		sess, _ := Current()
+		Emit(Gap{DroppedCount: 1})
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			_ = Flush(context.Background(), kv)
+		}()
+		go func() {
+			defer wg.Done()
+			_, _ = Stop(context.Background(), kv, EndedStopped)
+		}()
+		wg.Wait()
+
+		dir := filepath.Join(PendingDir, sess.ID)
+		entries, err := os.ReadDir(dir)
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatalf("iteration %d: ReadDir %s: %v", i, dir, err)
+		}
+		if len(entries) != 0 {
+			t.Fatalf("iteration %d: pending dir %s not empty after concurrent Flush/Stop: %v", i, dir, entries)
+		}
 	}
 }
 

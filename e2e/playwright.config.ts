@@ -107,8 +107,32 @@ const STATIC_SERVER_WORKERS = 1;
 
 export default defineConfig<{}, WorkerOptions>({
   testDir: './tests',
-  timeout: 30_000,
-  retries: process.env.CI ? 1 : 0,
+  // ut-docs#2427 (independent review): a 10s expect timeout leaves only
+  // 3x headroom under the 30s test timeout below -- two assertions each
+  // genuinely near-maxing their poll window in the same test would blow
+  // the test timeout too, trading a specific, diagnostic assertion
+  // failure for a vaguer "Test timeout exceeded". Raised alongside the
+  // expect timeout for the same contention headroom, not because any
+  // single test is anywhere near 45s today (slowest observed locally:
+  // ~7.3s).
+  timeout: 45_000,
+  // ut-docs#2427: the default assertion-poll timeout (Playwright's own
+  // 5s default) had no headroom for the runner-CPU contention this
+  // project's own 4-worker CI run creates -- each worker boots and drives
+  // its own full till server (see the `default` project/e2eWorkerServer
+  // comment below), so a transient scheduling hiccup on a shared GitHub
+  // Actions runner can occasionally push a real, correct render past 5s
+  // with nothing actually wrong. Matches tests/e2e/playwright.config.ts's
+  // own already-more-generous 10s expect timeout.
+  expect: { timeout: 10_000 },
+  // ut-docs#2427: repro'd this run's exact failure shape directly (real
+  // browser, real till, 4 CI-matching workers) -- a handful of tests still
+  // occasionally miss even the 10s expect timeout above under genuine
+  // 4-way CPU contention, not a deterministic bug (the same suite passes
+  // clean the large majority of runs). One retry already existed; matches
+  // tests/e2e/playwright.config.ts's own already-higher 2 retries so a
+  // second transient hiccup on the same test doesn't also fail the run.
+  retries: process.env.CI ? 2 : 0,
   // Builds the till binary once per run for the per-worker servers.
   globalSetup: require.resolve('./global-setup'),
   // Parallel since ut-docs#2345: each `default`-project worker drives its
