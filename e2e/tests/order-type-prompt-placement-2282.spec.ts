@@ -315,8 +315,20 @@ test.describe('ut-docs#2282 dine-in/takeaway prompt placement', () => {
 
     // A hardware wedge types the whole code in a burst and finishes with
     // Enter; focus is wherever showModal() put it (inside the dialog).
-    await page.keyboard.type('5000000000012', { delay: 5 });
-    await page.keyboard.press('Enter');
+    // Driven through window.utScan.submit() (ut-docs#2429) rather than
+    // simulated per-keystroke `page.keyboard.type` + Enter: under
+    // CI-matching parallel load, a real inter-keystroke gap exceeding
+    // app.js's own 100ms scan-buffer reset can truncate the simulated
+    // barcode mid-burst -- a timing artifact of the simulation, not of
+    // the app -- producing a stable "Item not found" instead of a slow
+    // render. submit() drives the exact same form-submit path a real
+    // wedge's buffered Enter keystroke does, with no timing dependency.
+    await page.evaluate((code) => {
+      const scan = (window as any).utScan;
+      const codeInput = scan.input();
+      if (!codeInput) throw new Error('utScan.input() found no scan code field -- selector regressed');
+      scan.submit(code, codeInput);
+    }, '5000000000012');
     // Still open (the scan was intercepted, not answered) and nothing landed.
     await expect(page.locator('#order-type-prompt-modal:modal')).toHaveCount(1);
     await expect(page.locator('#basket')).toHaveAttribute('data-lines-count', '0');

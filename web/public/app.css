@@ -2592,6 +2592,35 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
 .qty-input { width: 3.4rem; padding: .25rem .3rem; font-size: .85rem; line-height: 1.2; }
 .disc-input { width: 3.4rem; padding: .25rem .3rem; font-size: .8rem; line-height: 1.2; }
 .btn-x { padding: .3rem .4rem; font-size: .8rem; min-height: 0; }
+/* Shrinkage reason sheet (ut-docs#1465, G41): the toggle button is
+   .btn-x itself (same touch target as the plain remove button it
+   replaces for a non-zero-value line — the card's own hard requirement).
+   The sheet itself is a native <dialog> (.modifier-modal base, same as
+   #hold-modal/#pfand-modal/#elevation-modal) opened via .show() (never
+   .showModal(), same reasoning as elevation_prompt.html).
+   CORRECTION (Tester finding, ut-docs#1465 review): .show() does NOT get
+   the browser's top-layer/margin:auto centering — that is a .showModal()
+   -only behavior — so unlike #hold-modal/#pfand-modal/#elevation-modal
+   (each a top-level element near <body>), THIS dialog is nested inside
+   each basket line row, and without an explicit position here it renders
+   at that row's own in-flow position — measured overflowing past the
+   bottom of a 360px-tall viewport on a line near the end of a long
+   basket, with no scroll affordance surfaced. `position: fixed` +
+   centering below takes it out of flow and out of `.basket-scroll`'s
+   overflow:auto entirely (fixed is viewport-relative; nothing in this
+   dialog's ancestor chain sets `transform`, which is the only thing that
+   would re-trap a fixed-position descendant) — this is what the comment
+   above originally claimed happened for free and didn't. inset-inline
+   (not left/right) keeps this RTL-correct with no separate ruleset. */
+.shrinkage-sheet {
+  position: fixed; inset-block-start: 50%; inset-inline: 0;
+  transform: translateY(-50%); margin-inline: auto;
+  max-height: min(80vh, 32rem); overflow-y: auto;
+}
+.shrinkage-remove { display: inline-block; }
+.shrinkage-sheet-prompt { margin: 0 0 .3rem; font-size: .95rem; font-weight: 600; }
+.shrinkage-sheet-actions { display: flex; flex-direction: column; gap: .5rem; }
+.shrinkage-sheet-actions .btn { white-space: nowrap; }
 /* ut-docs#2217: the +/- stepper is its OWN row, the same 3.4rem width as
    .qty-input/.disc-input above and below it — NOT flanking .qty-input
    horizontally. Three width attempts were tried in that flanking shape

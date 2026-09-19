@@ -64,8 +64,13 @@ test('uploading a catalog item photo makes it appear on the till', async ({ page
 
   // Clear the basket line so this spec doesn't leave a dangling item for
   // whichever spec runs next (shared server-side basket).
-  await page.locator('#basket-lines tr', { hasText: 'Sparkling Water' })
-    .locator('.btn-x').click();
+  // ut-docs#1465 (G41): a priced line's ✕ now only opens the void/comp/waste
+  // reason sheet; the reason button inside it is what actually removes the
+  // line. First reason button = Void, picked by position to stay
+  // locale-independent.
+  const basketRow = page.locator('#basket-lines tr', { hasText: 'Sparkling Water' });
+  await basketRow.locator('.shrinkage-remove-toggle').click();
+  await basketRow.locator('.shrinkage-sheet-actions .btn').first().click();
   await expect(page.locator('#basket')).not.toContainText('Sparkling Water');
 
   assertClean();

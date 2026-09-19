@@ -228,27 +228,32 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		httpx.Render("ui/pages/reports.html", map[string]any{
-			"title":         httpx.T(httpx.RequestLocale(r), "page.title.reports"),
-			"theme":         d.CurrentState().Theme,
-			"menuItems":     d.MenuSnapshot(),
-			"CanAsk":        aiService(r.Context(), d).CanAsk() && canPerform(d, r, "reports"),
-			"IsManager":     canPerform(d, r, "reports"),
-			"Days":          days,
-			"Period":        reportPeriodParam(r),
-			"Anchor":        window.Anchor,
-			"PeriodLabel":   window.Label,
-			"YoYHas":        lastYear.Count > 0,
-			"YoYNow":        curPeriod.Total,
-			"YoYThen":       lastYear.Total,
-			"YoYPct":        yoyPct,
-			"RunningOut":    runningOut,
-			"GrandTotal":    grandTotal,
-			"GrandTax":      grandTax,
-			"GrandDiscount": grandDiscount,
-			"GrandCount":    grandCount,
-			"GrandAvg":      grandAvg,
-			"GrandRefunds":  grandRefunds,
-			"GrandNet":      grandNet,
+			"title":     httpx.T(httpx.RequestLocale(r), "page.title.reports"),
+			"theme":     d.CurrentState().Theme,
+			"menuItems": d.MenuSnapshot(),
+			"CanAsk":    aiService(r.Context(), d).CanAsk() && canPerform(d, r, "reports"),
+			"IsManager": canPerform(d, r, "reports"),
+			// ut-docs#1465: gates the "Shrinkage & Loss" tab button's own
+			// visibility on void_comp_waste specifically (not the generic
+			// "reports" IsManager flag above) -- same "eod" tab model this
+			// file's own /ui/reports/tab/{name} switch documents.
+			"CanViewShrinkage": canPerform(d, r, "void_comp_waste"),
+			"Days":             days,
+			"Period":           reportPeriodParam(r),
+			"Anchor":           window.Anchor,
+			"PeriodLabel":      window.Label,
+			"YoYHas":           lastYear.Count > 0,
+			"YoYNow":           curPeriod.Total,
+			"YoYThen":          lastYear.Total,
+			"YoYPct":           yoyPct,
+			"RunningOut":       runningOut,
+			"GrandTotal":       grandTotal,
+			"GrandTax":         grandTax,
+			"GrandDiscount":    grandDiscount,
+			"GrandCount":       grandCount,
+			"GrandAvg":         grandAvg,
+			"GrandRefunds":     grandRefunds,
+			"GrandNet":         grandNet,
 		})(w, r)
 	})
 
@@ -382,6 +387,35 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 				"Departments":     departments,
 				"Tills":           tills,
 				"CashAdjustments": cashAdjustments,
+			})(w, r)
+		case "shrinkage":
+			// ut-docs#1465 (G41): "Shrinkage & Loss" -- gated on the SAME
+			// void_comp_waste permission /api/pos/remove's reason gate
+			// itself checks (not the generic "reports" IsManager flag,
+			// unlike the "eod" tab's own two-permission split below): this
+			// tab has no separate elevation-gated action of its own to
+			// split view-vs-act on, so one permission does both jobs. The
+			// button that opens this tab is hidden from a role that can't
+			// view it (reports.html's CanViewShrinkage), but the handler
+			// re-checks directly too -- defense in depth against a direct
+			// GET, same reasoning as every other canPerform-gated tab.
+			var byReason []data.ShrinkageReasonTotal
+			var topItems []data.TopItem
+			if canPerform(d, r, "void_comp_waste") {
+				byReason, _ = repo.ShrinkageByReason(r.Context(), window.From, window.To)
+				topItems, _ = repo.ShrinkageTopItems(r.Context(), window.From, window.To, 10)
+			}
+			var totalValue int64
+			var totalCount int
+			for _, rt := range byReason {
+				totalValue += rt.Total
+				totalCount += rt.Count
+			}
+			httpx.RenderPartial("ui/partials/reports_tab_shrinkage.html", map[string]any{
+				"ByReason":   byReason,
+				"TopItems":   topItems,
+				"TotalValue": totalValue,
+				"TotalCount": totalCount,
 			})(w, r)
 		case "eod":
 			// ut-docs#794 review finding (blocker): this used to gate the

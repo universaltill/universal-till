@@ -1,0 +1,37 @@
+{{/* Shrinkage & Loss report tab (ut-docs#1465, G41) -- mirrors
+     reports_tab_tax.html's table layout convention. ByReason/TopItems are
+     both empty (not an error) for a shop with no shrinkage events yet, or
+     one whose session lacks void_comp_waste (reports_page.go's own
+     canPerform re-check) -- either way this renders the same "none" empty
+     state as every other tab. */}}
+<div class="card">
+  <h2>{{ T "reports.shrinkage_summary" }}</h2>
+  <p class="muted" style="margin-block-start:0">{{ T "reports.shrinkage_summary_hint" }}</p>
+  <table class="table">
+    <thead><tr><th>{{ T "reports.shrinkage_reason" }}</th><th style="text-align:end">{{ T "reports.shrinkage_count" }}</th><th style="text-align:end">{{ T "reports.shrinkage_value" }}</th></tr></thead>
+    <tbody>
+      {{ range .ByReason }}
+      <tr><td>{{ T (printf "shrinkage.reason.%s" .ReasonCategory) }}</td><td class="muted" style="text-align:end">{{ .Count }}</td><td style="text-align:end">{{ money .Total }}</td></tr>
+      {{ else }}
+      <tr><td colspan="3" class="empty">{{ T "reports.none" }}</td></tr>
+      {{ end }}
+    </tbody>
+    {{ if .ByReason }}
+    <tfoot>
+      <tr><td style="font-weight:600">{{ T "reports.shrinkage_total" }}</td><td class="muted" style="text-align:end; font-weight:600">{{ .TotalCount }}</td><td style="text-align:end; font-weight:600">{{ money .TotalValue }}</td></tr>
+    </tfoot>
+    {{ end }}
+  </table>
+</div>
+<div class="card">
+  <h2>{{ T "reports.shrinkage_top_items" }}</h2>
+  <table class="table">
+    <tbody>
+      {{ range .TopItems }}
+      <tr><td>{{ .Name }}</td><td class="muted">×{{ qty .Qty }}</td><td style="text-align:end">{{ money .Revenue }}</td></tr>
+      {{ else }}
+      <tr><td class="empty">{{ T "reports.none" }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>

@@ -86,7 +86,13 @@ test('a catalog item with neither barcode nor SKU can be added as a button and r
   // Cleanup: remove the shortcut, deactivate the item, clear the basket --
   // this spec must not leave state for whichever spec runs next on the
   // shared dev server.
-  await page.locator('#basket-lines tr', { hasText: name }).locator('.btn-x').click();
+  // ut-docs#1465 (G41): a priced line's ✕ now only opens the void/comp/waste
+  // reason sheet; the reason button inside it is what actually removes the
+  // line. First reason button = Void, picked by position to stay
+  // locale-independent.
+  const basketRow = page.locator('#basket-lines tr', { hasText: name });
+  await basketRow.locator('.shrinkage-remove-toggle').click();
+  await basketRow.locator('.shrinkage-sheet-actions .btn').first().click();
   await expect(page.locator('#basket')).not.toContainText(name);
   await page.request.post('/api/buttons/remove', { form: { code: code! } });
   await page.goto('/catalog');

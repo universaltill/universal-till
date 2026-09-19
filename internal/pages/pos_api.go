@@ -25,6 +25,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -1026,6 +1027,15 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	// item can have multiple modifier-distinct lines sharing one SKU);
 	// falls back to the legacy SKU/code param for any caller that predates
 	// LineKey.
+	//
+	// ut-docs#1465 (G41, structured void/comp/waste): removing a line whose
+	// EXTENDED value (quantity × unit price) is non-zero now requires a
+	// `reason` (void|comp|waste) and goes through checkOrElevate("void_comp_
+	// waste") -- the exact pos_api.go/buttons_api.go pattern every other
+	// checkOrElevate site already uses. A zero/free promotional line skips
+	// this gate entirely and removes exactly as before: there's no loss to
+	// categorize. This is deliberately PRE-tender only -- a completed sale's
+	// return/void is refund_page.go's own G27 flow, untouched here.
 	mux.HandleFunc("/api/pos/remove", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		key := strings.TrimSpace(r.Form.Get("key"))
@@ -1034,6 +1044,92 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "key or code required", http.StatusBadRequest)
 			return
 		}
+		locale := httpx.ResolveLocale(w, r)
+
+		// Snapshot the line(s) this request would remove BEFORE removing
+		// them -- Remove(code) can match more than one line sharing a SKU
+		// (NoMerge price-embedded labels), RemoveLine(key) always exactly
+		// one. Needed for both the extended-value gate below and the
+		// shrinkage event(s)/audit row this handler now writes on removal.
+		var matched []pos.BasketLine
+		for _, l := range d.Engine.Basket().Lines {
+			if (key != "" && l.LineKey == key) || (key == "" && code != "" && l.SKU == code) {
+				matched = append(matched, l)
+			}
+		}
+		var extended money.Money
+		for _, l := range matched {
+			extended = extended.Add(l.PriceCents.MulQty(l.Qty))
+		}
+
+		if !extended.IsZero() {
+			reason := r.Form.Get("reason")
+			if !pos.ValidShrinkageReason(reason) {
+				http.Error(w, httpx.T(locale, "shrinkage.error.invalid_reason"), http.StatusBadRequest)
+				return
+			}
+			elev := checkOrElevate(d, r, "void_comp_waste", r.Form.Get("override_pin"))
+			if elev.Outcome == needsElevation {
+				hidden := []elevationHiddenField{{Name: "reason", Value: reason}}
+				if key != "" {
+					hidden = append(hidden, elevationHiddenField{Name: "key", Value: key})
+				} else {
+					hidden = append(hidden, elevationHiddenField{Name: "code", Value: code})
+				}
+				renderElevationPrompt(w, r, "/api/pos/remove", "#shrinkage-hint",
+					fmt.Sprintf(httpx.T(locale, "elevation.summary.void_comp_waste"), httpx.T(locale, "shrinkage.reason."+reason)),
+					hidden, elev)
+				return
+			}
+
+			now := time.Now().UTC().Format(time.RFC3339)
+			registerID := tillRegisterIDBestEffort(r.Context(), d)
+			auditEntityID := key
+			if auditEntityID == "" {
+				auditEntityID = code
+			}
+			for _, l := range matched {
+				lineExtended := l.PriceCents.MulQty(l.Qty)
+				if err := repo.InsertShrinkageEvent(r.Context(), nil, reason, l.ItemID, l.Name, l.SKU, l.Qty,
+					l.PriceCents, lineExtended, elev.ActorID, elev.ApproverID, "", l.OrderType, registerID, now, ""); err != nil {
+					logging.L().Errorf("insert shrinkage event: %v", err)
+				}
+			}
+			if elev.Outcome == elevated {
+				if err := repo.InsertAuditElevated(r.Context(), nil, elev.ApproverID, elev.ActorID, "pos_line", auditEntityID, reason,
+					map[string]any{"key": key, "code": code}, now, ""); err != nil {
+					logging.L().Errorf("insert elevated shrinkage audit: %v", err)
+				}
+			} else {
+				if err := repo.InsertAudit(r.Context(), nil, elev.ActorID, "pos_line", auditEntityID, reason,
+					map[string]any{"key": key, "code": code}, now, ""); err != nil {
+					logging.L().Errorf("insert shrinkage audit: %v", err)
+				}
+			}
+		}
+
+		// The reason-picker sheet's buttons declare a small dedicated hint
+		// target (#shrinkage-hint, innerHTML) so a needsElevation response
+		// above doesn't blow away #basket's own id (same problem/fix
+		// buttons_admin.html's #buttons-grid-wrap comment documents) --
+		// override it back to the normal full-basket outerHTML swap for
+		// the actual-removal response below.
+		//
+		// Set UNCONDITIONALLY, not just inside the non-zero branch above
+		// (ut-docs#1465 review): basket.html picks the reason sheet on
+		// `.PriceCents.IsZero`, i.e. the UNIT price, while this handler
+		// gates on the EXTENDED value (money.MulQty rounds qty × unit
+		// price). Those disagree for a line whose unit price is non-zero
+		// but whose extended value rounds to zero -- a weighed line at a
+		// near-zero decoded weight, say -- where the operator is shown the
+		// sheet, taps a reason, and this handler takes the zero-value
+		// path. Without the override that response's full-basket HTML is
+		// innerHTML-swapped into #shrinkage-hint, which lives INSIDE
+		// #basket: a nested duplicate basket. It is a no-op for the plain
+		// zero-value ✕ button, which already targets #basket/outerHTML.
+		w.Header().Set("HX-Retarget", "#basket")
+		w.Header().Set("HX-Reswap", "outerHTML")
+
 		if key != "" {
 			// Voiding the last dine-in line clears the table (ADR-0073
 			// D5) -- release its persisted claim too (ut-docs#1390).
@@ -1049,7 +1145,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				releaseTableClaim(r.Context(), d, repo, prevTable)
 			}
 		}
-		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		funcs := httpx.FuncsFor(locale)
 		basketView, _ := ui.NewBasketView(funcs)
 		b := d.Engine.Basket()
 		_ = basketView.Render(w, b)
