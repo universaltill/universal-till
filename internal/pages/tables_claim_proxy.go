@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -170,17 +171,22 @@ func releaseAllTableClaimsOnPrimary(ctx context.Context, d *common.Deps, client 
 // branch, but taking the local claim is the offline-first guarantee, and this
 // branch is precisely the one a till runs when nothing else is reachable. It
 // must not have become easier to fail than the single statement it replaced.
-func claimTableWriteThrough(ctx context.Context, d *common.Deps, repo *data.POSRepo, tableID string) (claimed bool, err error) {
+//
+// periodic marks the mechanical re-affirm path (reaffirmHeldOrderTableClaims)
+// as opposed to an operator-driven pick. It changes NOTHING about the claim
+// work itself — every branch below runs identically either way — and only
+// narrows the DIAGNOSTIC side effect; see emitTableClaim (ut-docs#2234).
+func claimTableWriteThrough(ctx context.Context, d *common.Deps, repo *data.POSRepo, tableID string, periodic bool) (claimed bool, err error) {
 	ok, claimed := claimTableOnPrimary(ctx, d, tableClaimProxyClient, tableID)
 	if !ok {
 		claimed, err := repo.ClaimTableForTill(ctx, tableID, "", time.Now().Add(-tillClaimTTL))
 		if err == nil {
-			emitTableClaim(tableID, claimed, nil, diagnostics.ViaLocal)
+			emitTableClaim(tableID, claimed, nil, diagnostics.ViaLocal, periodic)
 			return claimed, nil
 		}
 		logging.L().Debugf("table claim: local reconciling claim of %s failed (%v) — using the plain local claim", tableID, err)
 		claimed, err = repo.ClaimTable(ctx, tableID)
-		emitTableClaim(tableID, claimed, err, diagnostics.ViaLocal)
+		emitTableClaim(tableID, claimed, err, diagnostics.ViaLocal, periodic)
 		return claimed, err
 	}
 	if claimed {
@@ -188,7 +194,7 @@ func claimTableWriteThrough(ctx context.Context, d *common.Deps, repo *data.POSR
 			logging.L().Debugf("table claim proxy: local mirror of primary-granted claim %s failed: %v", tableID, err)
 		}
 	}
-	emitTableClaim(tableID, claimed, nil, diagnostics.ViaPrimary)
+	emitTableClaim(tableID, claimed, nil, diagnostics.ViaPrimary, periodic)
 	return claimed, nil
 }
 
@@ -197,7 +203,25 @@ func claimTableWriteThrough(ctx context.Context, d *common.Deps, repo *data.POSR
 // the table's operator-typed label never travels. This is THE single
 // choke point every basket/hold table pick goes through, so wiring it
 // here covers all three callers (pos_api.go, hold_api.go ×2).
-func emitTableClaim(tableID string, claimed bool, err error, via string) {
+//
+// periodic narrows ONLY the mechanical re-affirm path (ADR-0092's
+// Amendment (2026-09-20), ut-docs#2234): reaffirmHeldOrderTableClaims runs
+// every ~30s for every held order that has a table, so an untouched parked
+// order used to put a byte-identical event into the stream roughly twice a
+// minute — pure churn that buries the transitions a viewer is actually
+// reading the stream for. When periodic is true and this table's (outcome,
+// via) pair is unchanged since the last emit WITHIN THE CURRENT SESSION, the
+// event is skipped — via is part of the identity deliberately: a claim that
+// stays "claimed" while via flips primary<->local is a real primary-
+// reachability transition, not churn, and must never be swallowed by this
+// dedup. When periodic is false — every operator-driven pick, i.e.
+// pos_api.go and hold_api.go — the emit is unconditional exactly as before,
+// repeat outcome or not: an operator action that produced no event would be
+// a real diagnostics bug, and no amount of churn reduction is worth it.
+//
+// Only the DIAGNOSTIC side effect is gated. The claim work in
+// claimTableWriteThrough always runs regardless of this function's answer.
+func emitTableClaim(tableID string, claimed bool, err error, via string, periodic bool) {
 	if !diagnostics.Active() {
 		return
 	}
@@ -208,7 +232,55 @@ func emitTableClaim(tableID string, claimed bool, err error, via string) {
 	case claimed:
 		outcome = diagnostics.TableOutcomeClaimed
 	}
+	if periodic && periodicClaimEmitIsRepeat(tableID, outcome, via) {
+		return
+	}
 	diagnostics.Emit(diagnostics.TableAssignment{TableID: tableID, Action: diagnostics.TableActionClaim, Outcome: outcome, Via: via})
+}
+
+// periodicClaimEmit is what the periodic re-affirm path last emitted for one
+// table: the (outcome, via) pair, plus the diagnostic session it belonged to.
+type periodicClaimEmit struct {
+	sessionID string
+	outcome   string
+	via       string
+}
+
+// periodicClaimEmitLast is that record per table id, guarded by
+// periodicClaimEmitMu. It is bounded by the number of tables in the shop —
+// a few dozen at most, one small struct each — so it needs no eviction.
+var (
+	periodicClaimEmitMu   sync.Mutex
+	periodicClaimEmitLast = map[string]periodicClaimEmit{}
+)
+
+// periodicClaimEmitIsRepeat reports whether the periodic re-affirm path has
+// ALREADY emitted this exact (outcome, via) pair for this table within the
+// currently active diagnostic session — and, when it has not, records it so
+// the next identical tick is the one that gets skipped.
+//
+// The session id is part of the key on purpose: a fresh session must never
+// be silently gapped by what a previous session happened to have seen, so
+// its first re-affirm of every table always emits. via is part of the key
+// for the same reason: it changing (primary<->local) is a real reachability
+// transition worth a fresh event, even with outcome unchanged.
+//
+// A caller only reaches this with diagnostics active (emitTableClaim returns
+// early otherwise), so Current's ok is true in practice; the defensive
+// false branch emits rather than suppresses — losing an event is the worse
+// failure of the two.
+func periodicClaimEmitIsRepeat(tableID, outcome, via string) bool {
+	s, ok := diagnostics.Current()
+	if !ok {
+		return false
+	}
+	periodicClaimEmitMu.Lock()
+	defer periodicClaimEmitMu.Unlock()
+	if last, seen := periodicClaimEmitLast[tableID]; seen && last.sessionID == s.ID && last.outcome == outcome && last.via == via {
+		return true
+	}
+	periodicClaimEmitLast[tableID] = periodicClaimEmit{sessionID: s.ID, outcome: outcome, via: via}
+	return false
 }
 
 // reaffirmHeldOrderTableClaims write-throughs this till's PRIMARY-side claim
@@ -255,7 +327,12 @@ func reaffirmHeldOrderTableClaims(ctx context.Context, d *common.Deps, posRepo *
 		if h.TableID == "" {
 			continue
 		}
-		claimed, err := claimTableWriteThrough(ctx, d, posRepo, h.TableID)
+		// periodic=true for BOTH callers (ut-docs#2234): this is the
+		// mechanical re-affirm, where an unchanged outcome is churn, not
+		// news. The boot caller loses nothing by it — the dedup cache is
+		// in-process and therefore empty at boot, so its one-shot pass is
+		// always a first observation and always emits.
+		claimed, err := claimTableWriteThrough(ctx, d, posRepo, h.TableID, true)
 		switch {
 		case err != nil, !claimed && logRefusalAsError:
 			logging.L().Errorf("%s held order %s's table %s: claimed=%v err=%v", logPrefix, h.ID, h.TableID, claimed, err)

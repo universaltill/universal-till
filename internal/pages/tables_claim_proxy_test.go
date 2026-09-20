@@ -348,7 +348,7 @@ func TestClaimTableWriteThrough_Helper(t *testing.T) {
 
 	granting := newClaimProxyPrimary(t, true)
 	setReplicaSettings(t, dp.Settings, granting.srv.URL, "b-123")
-	if claimed, err := claimTableWriteThrough(ctx, dp, repo, t1); err != nil || !claimed {
+	if claimed, err := claimTableWriteThrough(ctx, dp, repo, t1, false); err != nil || !claimed {
 		t.Fatalf("granted: claimed=%v err=%v", claimed, err)
 	}
 	if !tableOccupied(t, dp, t1) {
@@ -357,7 +357,7 @@ func TestClaimTableWriteThrough_Helper(t *testing.T) {
 
 	refusing := newClaimProxyPrimary(t, false)
 	setReplicaSettings(t, dp.Settings, refusing.srv.URL, "b-123")
-	if claimed, err := claimTableWriteThrough(ctx, dp, repo, t2); err != nil || claimed {
+	if claimed, err := claimTableWriteThrough(ctx, dp, repo, t2, false); err != nil || claimed {
 		t.Fatalf("refused: claimed=%v err=%v, want false/nil", claimed, err)
 	}
 	if tableOccupied(t, dp, t2) {
@@ -414,14 +414,14 @@ func TestClaimTableWriteThrough_LocalBranchExpiresAnotherTillsStaleClaim(t *test
 
 	// While till 2 is live, the primary's own pick is refused — the claim is
 	// genuinely someone else's.
-	if claimed, err := claimTableWriteThrough(ctx, dp, repo, live); err != nil || claimed {
+	if claimed, err := claimTableWriteThrough(ctx, dp, repo, live, false); err != nil || claimed {
 		t.Fatalf("a live till's claim must still block the primary, got claimed=%v err=%v", claimed, err)
 	}
 
 	// Till 2 goes dark: last_seen_at falls outside the TTL.
 	touchTill(t, dp, till2, time.Now().UTC().Add(-30*time.Minute))
 
-	claimed, err := claimTableWriteThrough(ctx, dp, repo, dead)
+	claimed, err := claimTableWriteThrough(ctx, dp, repo, dead, false)
 	if err != nil || !claimed {
 		t.Fatalf("the primary must be able to take a dead till's table, got claimed=%v err=%v", claimed, err)
 	}
@@ -458,7 +458,7 @@ func TestClaimTableWriteThrough_LocalBranchStillClaimsWhenReconcileFails(t *test
 		t.Fatalf("drop tills: %v", err)
 	}
 
-	claimed, err := claimTableWriteThrough(ctx, dp, repo, t1)
+	claimed, err := claimTableWriteThrough(ctx, dp, repo, t1, false)
 	if err != nil || !claimed {
 		t.Fatalf("the local claim must still succeed when reconciliation cannot run, got claimed=%v err=%v", claimed, err)
 	}

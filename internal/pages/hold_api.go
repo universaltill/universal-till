@@ -393,7 +393,7 @@ func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 	d.Engine.RestoreHeld(snap, pos.HeldOrigin{ID: held.ID, Label: held.Label, CreatedAt: held.CreatedAt})
 	restoredTable := d.Engine.TableID()
 	if restoredTable != "" && restoredTable != prevTable {
-		if claimed, err := claimTableWriteThrough(ctx, d, posRepo, restoredTable); err != nil || !claimed {
+		if claimed, err := claimTableWriteThrough(ctx, d, posRepo, restoredTable, false); err != nil || !claimed {
 			log.Printf("resume %s: re-claim table %s failed (claimed=%v): %v", id, restoredTable, claimed, err)
 		}
 	}
@@ -718,7 +718,7 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 					renderHeldStripWithToast(w, r, httpx.T(httpx.ResolveLocale(w, r), "basket.table.occupied"), "error")
 					return
 				}
-				claimed, err := claimTableWriteThrough(ctx, d, posRepo, tableID)
+				claimed, err := claimTableWriteThrough(ctx, d, posRepo, tableID, false)
 				if err != nil {
 					log.Printf("held table move %s: claim %s failed: %v", id, tableID, err)
 				}
