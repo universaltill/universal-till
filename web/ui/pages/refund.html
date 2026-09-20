@@ -19,6 +19,11 @@
   <p class="muted">{{ T "refund.help" }}</p>
   <form id="refund-form" hx-post="/api/refund" hx-swap="none">
     <input type="hidden" name="receipt" value="{{ .Sale.ReceiptNo }}">
+    <!-- ut-docs#2415: a fresh id per page render, folded by POST /api/refund
+         into its payment.<key>.refund idempotency key so a re-tap of Refund
+         on THIS same form asks the plugin the same question -- mirrors the
+         basket's own TenderAttemptID (ut-docs#1762). -->
+    <input type="hidden" name="refund_attempt_id" value="{{ .RefundAttemptID }}">
     <!-- ut-docs#1493: kept current by web/public/app.js's updateOfflineFlag()
          (navigator.onLine), same #offline-flag id the sale screen
          (index.html) and self-order checkout use -- lets a known-offline
