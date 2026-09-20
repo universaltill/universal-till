@@ -248,3 +248,11 @@ impossible to complete under tax-exclusive pricing, on both the server's demande
 client's quoted total), covered by three new regression tests. The multi-purpose path is
 behaviourally unchanged. The migration is safely additive with an independently verified
 checksum, and the double-tax guard holds on every redemption path including forced journal replay.
+
+## Addendum (2026-09-20, ut-docs#2447)
+
+This design's rationale — including the competing shop-level-setting alternative that was built
+the same day and **not** adopted — is now documented retroactively in `ut-docs`
+[ADR-0105](https://github.com/universaltill/ut-docs/blob/main/adr/0105-single-purpose-voucher-tax-at-issue.md)
+(ut-docs#2440). See that ADR for why the per-sale staff choice shipped here was kept over the
+alternative, rather than this review record.
