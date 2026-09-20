@@ -156,20 +156,20 @@
       "locale": "ar",
       "topic": "reports",
       "signature": {
-        "headings": 17,
+        "headings": 18,
         "numbered_steps": 3,
         "sub_bullets": 0,
-        "top_bullets": 15,
-        "bold_leadins": 15
-      },
-      "english": {
-        "headings": 20,
-        "numbered_steps": 10,
-        "sub_bullets": 0,
-        "top_bullets": 18,
+        "top_bullets": 20,
         "bold_leadins": 19
       },
-      "reason": "ut-docs#331 — reports.md gained two new English sections (\"Ask your till\" and \"The audit log\") as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Pre-existing ut-docs#1962 drift on this topic is folded into this same entry rather than tracked twice. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#2410: a new \"Fiscal device (ÖKC) status for Türkiye\" heading added to English AND translated into this locale with a real translation matching the same structure; the pre-existing gap is unchanged in size, just shifted (16->17 headings, English 18->19). Updated ut-docs#1465: a new heading (\"Shrinkage & Loss (void/comp/waste)\", English only per this card's own EN-first sequencing) added to English; this locale's own translation follows in a fast-follow pack PR, so the pre-existing gap widens by +1 heading on the English side only (19->20), everything else unchanged."
+      "english": {
+        "headings": 21,
+        "numbered_steps": 10,
+        "sub_bullets": 0,
+        "top_bullets": 23,
+        "bold_leadins": 23
+      },
+      "reason": "ut-docs#331 — reports.md gained two new English sections (\"Ask your till\" and \"The audit log\") as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Pre-existing ut-docs#1962 drift on this topic is folded into this same entry rather than tracked twice. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#2410: a new \"Fiscal device (ÖKC) status for Türkiye\" heading added to English AND translated into this locale with a real translation matching the same structure; the pre-existing gap is unchanged in size, just shifted (16->17 headings, English 18->19). Updated ut-docs#1465: a new heading (\"Shrinkage & Loss (void/comp/waste)\", English only per this card's own EN-first sequencing) added to English; this locale's own translation follows in a fast-follow pack PR, so the pre-existing gap widens by +1 heading on the English side only (19->20), everything else unchanged. Updated ut-docs#988: a new \"Yüzde usulü pool distribution (Yüzde Usulü tab)\" heading added to English AND translated into this locale with a real translation matching the same structure (1 heading, 5 top-level bullets, 4 bold lead-ins); the pre-existing gap is unchanged in size, just shifted."
     },
     {
       "locale": "ar",
@@ -213,20 +213,20 @@
       "locale": "de",
       "topic": "reports",
       "signature": {
-        "headings": 16,
+        "headings": 17,
         "numbered_steps": 3,
         "sub_bullets": 0,
-        "top_bullets": 15,
-        "bold_leadins": 15
-      },
-      "english": {
-        "headings": 20,
-        "numbered_steps": 10,
-        "sub_bullets": 0,
-        "top_bullets": 18,
+        "top_bullets": 20,
         "bold_leadins": 19
       },
-      "reason": "ut-docs#331 — reports.md gained two new English sections (\"Ask your till\" and \"The audit log\") as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Pre-existing ut-docs#1962 drift on this topic is folded into this same entry rather than tracked twice. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#2410: a new \"Fiscal device (ÖKC) status for Türkiye\" heading added to English (Turkey-only feature, de is not a market this card touches, so de itself is deliberately unchanged) — the pre-existing gap widens by exactly the one new English heading (English 18->19, de unchanged at 16). Updated ut-docs#1465: a new heading (\"Shrinkage & Loss (void/comp/waste)\", English only per this card's own EN-first sequencing) added to English; this locale's own translation follows in a fast-follow pack PR, so the pre-existing gap widens by +1 heading on the English side only (19->20), everything else unchanged."
+      "english": {
+        "headings": 21,
+        "numbered_steps": 10,
+        "sub_bullets": 0,
+        "top_bullets": 23,
+        "bold_leadins": 23
+      },
+      "reason": "ut-docs#331 — reports.md gained two new English sections (\"Ask your till\" and \"The audit log\") as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Pre-existing ut-docs#1962 drift on this topic is folded into this same entry rather than tracked twice. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#2410: a new \"Fiscal device (ÖKC) status for Türkiye\" heading added to English (Turkey-only feature, de is not a market this card touches, so de itself is deliberately unchanged) — the pre-existing gap widens by exactly the one new English heading (English 18->19, de unchanged at 16). Updated ut-docs#1465: a new heading (\"Shrinkage & Loss (void/comp/waste)\", English only per this card's own EN-first sequencing) added to English; this locale's own translation follows in a fast-follow pack PR, so the pre-existing gap widens by +1 heading on the English side only (19->20), everything else unchanged. Updated ut-docs#988: a new \"Yüzde usulü pool distribution (Yüzde Usulü tab)\" heading added to English AND translated into this locale with a real translation matching the same structure (1 heading, 5 top-level bullets, 4 bold lead-ins); the pre-existing gap is unchanged in size, just shifted."
     },
     {
       "locale": "de",
@@ -802,20 +802,20 @@
       "locale": "tr",
       "topic": "reports",
       "signature": {
-        "headings": 17,
+        "headings": 18,
         "numbered_steps": 3,
         "sub_bullets": 0,
-        "top_bullets": 15,
-        "bold_leadins": 17
+        "top_bullets": 20,
+        "bold_leadins": 22
       },
       "english": {
-        "headings": 20,
+        "headings": 21,
         "numbered_steps": 10,
         "sub_bullets": 0,
-        "top_bullets": 18,
-        "bold_leadins": 19
+        "top_bullets": 23,
+        "bold_leadins": 23
       },
-      "reason": "ut-docs#331 — reports.md gained two new English sections (\"Ask your till\" and \"The audit log\") as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Pre-existing ut-docs#1962 drift on this topic is folded into this same entry rather than tracked twice. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#2410: a new \"Fiscal device (ÖKC) status for Türkiye\" heading added to English AND translated into this locale with a real translation matching the same structure; the pre-existing gap is unchanged in size, just shifted (16->17 headings, English 18->19). Updated ut-docs#1465: a new heading (\"Shrinkage & Loss (void/comp/waste)\", English only per this card's own EN-first sequencing) added to English; this locale's own translation follows in a fast-follow pack PR, so the pre-existing gap widens by +1 heading on the English side only (19->20), everything else unchanged."
+      "reason": "ut-docs#331 — reports.md gained two new English sections (\"Ask your till\" and \"The audit log\") as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Pre-existing ut-docs#1962 drift on this topic is folded into this same entry rather than tracked twice. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#2410: a new \"Fiscal device (ÖKC) status for Türkiye\" heading added to English AND translated into this locale with a real translation matching the same structure; the pre-existing gap is unchanged in size, just shifted (16->17 headings, English 18->19). Updated ut-docs#1465: a new heading (\"Shrinkage & Loss (void/comp/waste)\", English only per this card's own EN-first sequencing) added to English; this locale's own translation follows in a fast-follow pack PR, so the pre-existing gap widens by +1 heading on the English side only (19->20), everything else unchanged. Updated ut-docs#988: a new \"Yüzde usulü pool distribution (Yüzde Usulü tab)\" heading added to English AND translated into this locale with a real translation matching the same structure (1 heading, 5 top-level bullets, 4 bold lead-ins); the pre-existing gap is unchanged in size, just shifted."
     },
     {
       "locale": "tr",
@@ -1296,20 +1296,20 @@
       "locale": "fa",
       "topic": "reports",
       "signature": {
-        "headings": 17,
+        "headings": 18,
         "numbered_steps": 3,
         "sub_bullets": 0,
-        "top_bullets": 15,
-        "bold_leadins": 16
+        "top_bullets": 20,
+        "bold_leadins": 20
       },
       "english": {
-        "headings": 20,
+        "headings": 21,
         "numbered_steps": 10,
         "sub_bullets": 0,
-        "top_bullets": 18,
-        "bold_leadins": 19
+        "top_bullets": 23,
+        "bold_leadins": 23
       },
-      "reason": "ut-docs#331 — reports.md gained two new English sections (\"Ask your till\" and \"The audit log\") as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. fa matched English exactly before this change (no ut-docs#1962 drift existed on this locale/topic pair) — this entry is newly introduced by this card alone, not a fold-in of pre-existing drift. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#2410: a new \"Fiscal device (ÖKC) status for Türkiye\" heading added to English AND translated into this locale with a real translation matching the same structure; the pre-existing gap is unchanged in size, just shifted (16->17 headings, English 18->19). Updated ut-docs#1465: a new heading (\"Shrinkage & Loss (void/comp/waste)\", English only per this card's own EN-first sequencing) added to English; this locale's own translation follows in a fast-follow pack PR, so the pre-existing gap widens by +1 heading on the English side only (19->20), everything else unchanged."
+      "reason": "ut-docs#331 — reports.md gained two new English sections (\"Ask your till\" and \"The audit log\") as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. fa matched English exactly before this change (no ut-docs#1962 drift existed on this locale/topic pair) — this entry is newly introduced by this card alone, not a fold-in of pre-existing drift. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr). Updated ut-docs#2410: a new \"Fiscal device (ÖKC) status for Türkiye\" heading added to English AND translated into this locale with a real translation matching the same structure; the pre-existing gap is unchanged in size, just shifted (16->17 headings, English 18->19). Updated ut-docs#1465: a new heading (\"Shrinkage & Loss (void/comp/waste)\", English only per this card's own EN-first sequencing) added to English; this locale's own translation follows in a fast-follow pack PR, so the pre-existing gap widens by +1 heading on the English side only (19->20), everything else unchanged. Updated ut-docs#988: a new \"Yüzde usulü pool distribution (Yüzde Usulü tab)\" heading added to English AND translated into this locale with a real translation matching the same structure (1 heading, 5 top-level bullets, 4 bold lead-ins); the pre-existing gap is unchanged in size, just shifted."
     },
     {
       "locale": "ar",

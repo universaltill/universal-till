@@ -1,0 +1,268 @@
+{{ if .CanView }}
+<div class="card">
+  <p class="muted">{{ T "reports.yuzde.place_of_business" }}: <strong>{{ .StoreName }}</strong></p>
+</div>
+
+{{ $qs := printf "days=%d" .Days }}
+{{ if .Period }}{{ $qs = printf "period=%s&anchor=%s" .Period .Anchor }}{{ end }}
+{{/* The worker filter is only shown to a CanRecord session — its own value
+     is ignored server-side for a CanView-only session (renderYuzdeTab, the
+     same ut-docs#964 review finding the tips tab carries), so showing it
+     there would just be a dropdown that silently does nothing. */}}
+{{ if .CanRecord }}
+<div class="card" style="margin-top:1rem">
+  <form hx-get="/ui/reports/tab/yuzde" hx-target="#report-tab-panel" hx-swap="innerHTML" hx-trigger="change">
+    {{ if .Period }}
+    <input type="hidden" name="period" value="{{ .Period }}">
+    <input type="hidden" name="anchor" value="{{ .Anchor }}">
+    {{ else }}
+    <input type="hidden" name="days" value="{{ .Days }}">
+    {{ end }}
+    <label>{{ T "reports.yuzde.filter_worker" }}
+      <select name="cashier">
+        <option value="" {{ if not .CashierFilter }}selected{{ end }}>{{ T "reports.yuzde.filter_all_workers" }}</option>
+        {{ $selected := .CashierFilter }}
+        {{ range .Workers }}
+        <option value="{{ .ID }}" {{ if eq .ID $selected }}selected{{ end }}>{{ if .DisplayName }}{{ .DisplayName }}{{ else }}{{ .Username }}{{ end }}</option>
+        {{ end }}
+      </select>
+    </label>
+  </form>
+</div>
+{{ end }}
+
+{{/* ONE figure, deliberately: WorkerAllocationsSummary's own doc comment
+     says a "received vs allocated" pair is a tautology for a yüzde usulü
+     pool (both sides are computed from these very rows — there is no
+     separate collection record), so rendering the pair the tips tab shows
+     would invite reading it as a check that passed. */}}
+<div class="report-cards" style="margin-top:1rem">
+  <div class="card kpi">
+    <div class="kpi-label">{{ T "reports.yuzde.distributed" }}</div>
+    <div class="kpi-value">{{ money .Distributed }}</div>
+  </div>
+</div>
+
+{{ if .CanRecord }}
+<div class="card" style="margin-top:1rem">
+  <h2>{{ T "reports.yuzde.detail_title" }}</h2>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>{{ T "reports.yuzde.col_date" }}</th>
+        <th>{{ T "reports.yuzde.col_worker" }}</th>
+        <th>{{ T "reports.yuzde.col_amount" }}</th>
+        <th>{{ T "reports.yuzde.col_note" }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Detail }}
+      <tr>
+        <td>{{ datetime .AllocatedAt }}</td>
+        <td>{{ .Worker }}</td>
+        <td style="text-align:end">{{ money .AmountMinor }}</td>
+        <td class="muted">{{ .Note }}</td>
+      </tr>
+      {{ else }}
+      <tr><td class="empty" colspan="4">{{ T "reports.none" }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>
+
+<div class="card" style="margin-top:1rem">
+  <h2>{{ T "reports.yuzde.record_title" }}</h2>
+  <form id="yuzde-record-form" hx-post="/api/reports/worker-allocations/pool" hx-target="#report-tab-panel" hx-swap="innerHTML">
+    {{ if .Period }}
+    <input type="hidden" name="period" value="{{ .Period }}">
+    <input type="hidden" name="anchor" value="{{ .Anchor }}">
+    {{ else }}
+    <input type="hidden" name="days" value="{{ .Days }}">
+    {{ end }}
+    {{ if .CashierFilter }}<input type="hidden" name="cashier" value="{{ .CashierFilter }}">{{ end }}
+    <label>{{ T "reports.yuzde.form_date" }}
+      <input type="date" name="date" value="{{ .Today }}" max="{{ .Today }}" required>
+    </label>
+    {{/* Same text + inputmode="decimal" + oninput money field the tips form
+         uses (ut-docs#1272/#1249): type="number" + onchange misses osk.js's
+         `input`-only keystrokes and wipes a momentarily-invalid decimal
+         while typing, and window.utCurrency.toMinor() replaces a hardcoded
+         * 100 that is wrong by 100x on any 0-decimal currency. */}}
+    <input type="hidden" name="pool_total" id="yuzde-pool-total-minor">
+    <label>{{ T "reports.yuzde.form_pool_total" }} ({{ currency.Display }})
+      <input type="text" id="yuzde-pool-total" inputmode="decimal" {{ moneypattern currency.Decimals false }} required {{ moneyplaceholder currency.Decimals 0 }}
+             oninput="document.getElementById('yuzde-pool-total-minor').value = window.utCurrency.toMinor(this.value)">
+    </label>
+    <p class="muted" style="font-size:.8rem">{{ T "reports.yuzde.form_pool_total_hint" }}</p>
+
+    {{/* One distribution event = several worker rows sharing one batch id
+         (ADR-0063 Decision 3). The three fields below repeat per row and are
+         read index-aligned server-side (r.Form["cashier_id"]/["amount"]/
+         ["row_note"], registerYuzdePoolAPI) — plain repeated names, this
+         codebase's own convention (sync_tables_claim.go's keep_table_id),
+         not "[]"-suffixed ones. */}}
+    <div id="yuzde-rows">
+      <div class="yuzde-row" style="display:flex; gap:.4rem; flex-wrap:wrap; align-items:end; margin-top:.4rem">
+        <label>{{ T "reports.yuzde.form_worker" }}
+          <select name="cashier_id" required>
+            <option value="" disabled selected>{{ T "reports.yuzde.form_worker_pick" }}</option>
+            {{ range .Workers }}
+            <option value="{{ .ID }}">{{ if .DisplayName }}{{ .DisplayName }}{{ else }}{{ .Username }}{{ end }}</option>
+            {{ end }}
+          </select>
+        </label>
+        <input type="hidden" name="amount" class="yuzde-amount-minor" id="yuzde-amount-minor-0">
+        <label>{{ T "reports.yuzde.form_amount" }} ({{ currency.Display }})
+          <input type="text" class="yuzde-amount" id="yuzde-amount-0" inputmode="decimal" {{ moneypattern currency.Decimals false }} required {{ moneyplaceholder currency.Decimals 0 }}
+                 oninput="document.getElementById('yuzde-amount-minor-0').value = window.utCurrency.toMinor(this.value)">
+        </label>
+        <label>{{ T "reports.yuzde.form_note" }}
+          <input type="text" name="row_note" placeholder="{{ T "reports.yuzde.form_note_hint" }}">
+        </label>
+        <button type="button" class="btn secondary yuzde-remove-worker" hidden>{{ T "reports.yuzde.form_remove_worker" }}</button>
+      </div>
+    </div>
+
+    {{/* The blank row the add-worker button clones. __IDX__ is replaced with
+         a fresh counter value on clone (see the script below) so each row's
+         amount input and its minor-units hidden field keep a unique id pair
+         — ids inside a <template> are inert until it's cloned, so the
+         placeholder never collides with a real element. */}}
+    <template id="yuzde-row-template">
+      <div class="yuzde-row" style="display:flex; gap:.4rem; flex-wrap:wrap; align-items:end; margin-top:.4rem">
+        <label>{{ T "reports.yuzde.form_worker" }}
+          <select name="cashier_id" required>
+            <option value="" disabled selected>{{ T "reports.yuzde.form_worker_pick" }}</option>
+            {{ range .Workers }}
+            <option value="{{ .ID }}">{{ if .DisplayName }}{{ .DisplayName }}{{ else }}{{ .Username }}{{ end }}</option>
+            {{ end }}
+          </select>
+        </label>
+        <input type="hidden" name="amount" class="yuzde-amount-minor" id="yuzde-amount-minor-__IDX__">
+        <label>{{ T "reports.yuzde.form_amount" }} ({{ currency.Display }})
+          <input type="text" class="yuzde-amount" id="yuzde-amount-__IDX__" inputmode="decimal" {{ moneypattern currency.Decimals false }} required {{ moneyplaceholder currency.Decimals 0 }}
+                 oninput="document.getElementById('yuzde-amount-minor-__IDX__').value = window.utCurrency.toMinor(this.value)">
+        </label>
+        <label>{{ T "reports.yuzde.form_note" }}
+          <input type="text" name="row_note" placeholder="{{ T "reports.yuzde.form_note_hint" }}">
+        </label>
+        <button type="button" class="btn secondary yuzde-remove-worker">{{ T "reports.yuzde.form_remove_worker" }}</button>
+      </div>
+    </template>
+
+    <button type="button" id="yuzde-add-worker" class="btn secondary" style="margin-top:.4rem">{{ T "reports.yuzde.form_add_worker" }}</button>
+
+    {{/* A live sum of the rows above — an entry aid only. The real check
+         that the rows add up to the declared pool total runs server-side
+         (registerYuzdePoolAPI), which is the only place it can be trusted. */}}
+    <p class="muted" style="margin-top:.4rem">{{ T "reports.yuzde.form_running_total" }}: <span id="yuzde-running-total" aria-live="polite"></span></p>
+
+    <button type="submit" class="btn primary">{{ T "reports.yuzde.form_submit" }}</button>
+    <div id="yuzde-result" class="muted" aria-live="polite" style="min-height:1.3rem; margin-top:.4rem"></div>
+  </form>
+</div>
+
+<script>
+// Same structural reasoning as reports_tab_tips.html's own script: this form
+// targets #report-tab-panel (a full re-render of this tab on success, so the
+// updated distributed total shows in place), so htmx's default "never swap a
+// non-2xx response" would otherwise drop every validation/save error
+// silently — the Record button would look dead. Listeners bind to the form
+// element itself rather than document.body: this whole partial is torn down
+// and re-created on every htmx swap into the panel, so a fresh listener on
+// the fresh node replaces the old one instead of accumulating.
+//
+// The rest is this tab's own multi-row entry: add/remove a worker row, and a
+// running total of the rows' minor-unit amounts.
+(function () {
+  var form = document.getElementById('yuzde-record-form');
+  var msg = document.getElementById('yuzde-result');
+  if (!form || !msg) return;
+  var rowsBox = document.getElementById('yuzde-rows');
+  var tpl = document.getElementById('yuzde-row-template');
+  var addBtn = document.getElementById('yuzde-add-worker');
+  var totalOut = document.getElementById('yuzde-running-total');
+  if (!rowsBox || !tpl || !addBtn || !totalOut) return;
+  // Row 0 is rendered server-side, so fresh clones start numbering at 1.
+  var nextIdx = 1;
+
+  function recomputeTotal() {
+    var sum = 0;
+    rowsBox.querySelectorAll('input.yuzde-amount-minor').forEach(function (el) {
+      var v = parseInt(el.value, 10);
+      if (!isNaN(v)) sum += v;
+    });
+    totalOut.textContent = window.utCurrency ? window.utCurrency.format(sum) : String(sum);
+  }
+
+  // A distribution needs at least one worker, so the last remaining row's
+  // own Remove button is hidden rather than left to empty the form.
+  function updateRemoveButtons() {
+    var rows = rowsBox.querySelectorAll('.yuzde-row');
+    rows.forEach(function (row) {
+      var btn = row.querySelector('.yuzde-remove-worker');
+      if (btn) btn.hidden = rows.length < 2;
+    });
+  }
+
+  function wireRow(row) {
+    // The minor-units conversion itself stays on each amount input's own
+    // inline oninput (identical to the tips form's single field) — this
+    // listener only reacts to it, keeping the running total in step.
+    var amount = row.querySelector('input.yuzde-amount');
+    if (amount) amount.addEventListener('input', recomputeTotal);
+    var remove = row.querySelector('.yuzde-remove-worker');
+    if (remove) {
+      remove.addEventListener('click', function () {
+        if (rowsBox.querySelectorAll('.yuzde-row').length < 2) return;
+        row.remove();
+        updateRemoveButtons();
+        recomputeTotal();
+      });
+    }
+  }
+
+  rowsBox.querySelectorAll('.yuzde-row').forEach(wireRow);
+
+  addBtn.addEventListener('click', function () {
+    var row = tpl.content.cloneNode(true).querySelector('.yuzde-row');
+    if (!row) return;
+    row.innerHTML = row.innerHTML.split('__IDX__').join(String(nextIdx));
+    nextIdx++;
+    rowsBox.appendChild(row);
+    wireRow(row);
+    updateRemoveButtons();
+    recomputeTotal();
+    // UX review finding: the new row lands inside #yuzde-rows, which is
+    // BEFORE this button in DOM order — so without this, a keyboard user's
+    // very next Tab after clicking "Add worker" jumps straight to the
+    // submit button, skipping the row they just asked for entirely
+    // (confirmed live: Tab after Add-worker landed on "Record distribution"
+    // with nothing in between). Moving focus into the new row's first
+    // field is also the natural next step for a mouse/touch user, who
+    // otherwise has to reach back down to a spot that may have scrolled.
+    var firstField = row.querySelector('select[name="cashier_id"]');
+    if (firstField) firstField.focus();
+  });
+
+  updateRemoveButtons();
+  recomputeTotal();
+
+  form.addEventListener('htmx:responseError', function (ev) {
+    msg.textContent = '✗ ' + (ev.detail.xhr.responseText || '');
+  });
+  // A network-level failure (this back-office tablet dropping off the shop
+  // LAN mid-tap) never reaches htmx:responseError — there is no response at
+  // all — so htmx fires htmx:sendError instead (ut-docs#1287).
+  var T = { serverError: "{{ T "designer.error.server" }}" };
+  form.addEventListener('htmx:sendError', function () {
+    msg.textContent = '✗ ' + T.serverError;
+  });
+})();
+</script>
+
+<div class="card" style="margin-top:1rem">
+  <a class="btn secondary" hx-boost="false" href="/api/reports/worker-allocations/pool/export?from={{ .From }}&amp;to={{ .To }}{{ if .CashierFilter }}&amp;cashier={{ .CashierFilter }}{{ end }}">{{ T "reports.yuzde.export_btn" }}</a>
+</div>
+{{ end }}
+{{ end }}

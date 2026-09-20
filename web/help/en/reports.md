@@ -15,7 +15,7 @@ Sales totals by day, department and payment type; best and slow sellers; dead st
 ## How to use it
 
 1. Open Reports: the row at the top always shows your key numbers for the chosen period (revenue, sales, average sale, tax, discounts, refunds, net, last year) and a low-stock warning.
-2. Pick a tab below it — Sales trend, Items, Tax, Forecast, Payments & channels, Tips, Day-end (EOD), or (for a manager/admin) Shrinkage & Loss — and that report loads when you open it.
+2. Pick a tab below it — Sales trend, Items, Tax, Forecast, Payments & channels, Tips, Yüzde Usulü, Day-end (EOD), or (for a manager/admin) Shrinkage & Loss — and that report loads when you open it.
 3. Run End of day (in the Day-end tab) when you close: it totals everything **since your last close** — not the calendar day — and can print for your records. A café that closed at 19:19 yesterday and closes at 19:19 today gets every sale in between on today's report, including last night's after-19:19 sales that a calendar-day report would have left stranded; anything rung up after tonight's close belongs to the next one. Each close records the exact moment it runs from and to, so you can always see precisely what a report covers: the printed report carries a **Zeitraum** line, and the archive list shows the same two timestamps side by side (`2026-08-23T19:10:00+02:00 – 2026-08-24T19:19:00+02:00`), in your own local time. Your very first close has no earlier close to start from, so it covers everything up to the moment you closed and shows just that one end timestamp.
 
 ## Ask your till
@@ -432,6 +432,33 @@ its own.
   tipped payment regardless of who the tip belongs to, while "Received"
   only counts tips recorded for the employee (the default) — the two are
   expected to differ once a tip is recorded for the business instead.
+
+## Yüzde usulü pool distribution (Yüzde Usulü tab)
+
+The **Yüzde Usulü** tab records how a Turkey İş Kanunu 4857 art. 51
+"yüzde usulü" percentage collection is distributed to staff, and reports
+on it. Like the Tips tab, it records what a manager tells it — the
+software does not detect or move any money on its own, and no bill line
+is ever created for this collection.
+
+- **Distributed** — one total for the selected period: the amount
+  recorded as paid out under yüzde usulü. There is no separate "received"
+  figure to compare it against — because no bill line exists, this ledger
+  is the only record of the collection, so recording a distribution IS
+  the record of the collection.
+- **Recording a distribution** — a manager (Worker payouts permission)
+  enters the date, the total pool collected, then one row per worker
+  (worker, amount, optional note) — add as many rows as there are workers
+  sharing the pool. The amounts must add up to the pool total before the
+  till accepts it; the date can't be in the future.
+- **A worker's own records** — use the Worker filter to narrow both the
+  total and the distribution list to one person.
+- **Export** — download the distribution records for a date range
+  (optionally one worker) as a CSV file, for handing to a worker, an
+  accountant, or anyone else who needs the underlying records.
+- Distribution records are kept alongside the shop's other financial
+  records and are not deleted early — the same retention as everything
+  else on this page (see Report retention above).
 
 ## Reconciling a card payment (receipt detail)
 

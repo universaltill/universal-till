@@ -15,7 +15,7 @@ Umsatzsummen nach Tag, Abteilung und Zahlungsart; Bestseller und Ladenhüter; to
 ## Verwendung
 
 1. Öffnen Sie „Berichte“: Die Zeile oben zeigt immer Ihre Kennzahlen für den gewählten Zeitraum (Umsatz, Verkäufe, Durchschnittsverkauf, Steuer, Rabatte, Rückerstattungen, Netto, Vorjahr) und eine Warnung bei niedrigem Bestand.
-2. Wählen Sie darunter einen Reiter — Umsatztrend, Artikel, Steuer, Prognose, Zahlungen & Kanäle, Trinkgeld oder Tagesabschluss (EOD) — und dieser Bericht lädt beim Öffnen.
+2. Wählen Sie darunter einen Reiter — Umsatztrend, Artikel, Steuer, Prognose, Zahlungen & Kanäle, Trinkgeld, Yüzde Usulü oder Tagesabschluss (EOD) — und dieser Bericht lädt beim Öffnen.
 3. Führen Sie Tagesabschluss (im Reiter „Tagesabschluss“) beim Schließen aus: Er summiert alles **seit Ihrem letzten Abschluss** — nicht den Kalendertag — und kann für Ihre Unterlagen gedruckt werden. Ein Café, das gestern um 19:19 Uhr geschlossen hat und heute um 19:19 Uhr schließt, erhält jeden Verkauf dazwischen im heutigen Bericht, einschließlich der Verkäufe von gestern Nacht nach 19:19 Uhr, die ein Kalendertag-Bericht sonst gestrandet hätte; alles, was nach dem heutigen Abschluss gebucht wird, gehört zum nächsten. Jeder Abschluss zeichnet den genauen Zeitpunkt auf, von dem bis zu dem er reicht, sodass Sie immer genau sehen können, was ein Bericht abdeckt: Der gedruckte Bericht trägt eine **Zeitraum**-Zeile, und die Archivliste zeigt dieselben beiden Zeitstempel nebeneinander (`2026-08-23T19:10:00+02:00 – 2026-08-24T19:19:00+02:00`), in Ihrer eigenen Ortszeit. Ihr allererster Abschluss hat keinen früheren Abschluss, von dem aus er startet, und deckt daher alles bis zum Moment des Abschlusses ab und zeigt nur diesen einen Endzeitstempel.
 
 ## Berichtszeiträume
@@ -369,6 +369,39 @@ Software erkennt oder bewegt kein Geld von sich aus.
   nur für den Mitarbeiter erfasste Trinkgelder zählt (der Standardfall) —
   die beiden weichen erwartungsgemäß voneinander ab, sobald ein Trinkgeld
   stattdessen für das Geschäft erfasst wird.
+
+## Yüzde-usulü-Pool-Verteilung (Reiter "Yüzde Usulü")
+
+Der Reiter **Yüzde Usulü** erfasst, wie eine nach dem türkischen İş Kanunu
+4857 Art. 51 ("yüzde usulü") eingezogene Prozentabgabe an die Mitarbeiter
+verteilt wird, und berichtet darüber. Wie der Reiter "Trinkgeld" erfasst
+er nur, was ein Manager einträgt — die Software erkennt oder bewegt
+selbst kein Geld, und für diese Einnahme wird nie eine Rechnungszeile
+erstellt.
+
+- **Verteilt** — eine Summe für den gewählten Zeitraum: der Betrag, der
+  als unter yüzde usulü ausgezahlt erfasst wurde. Es gibt keine separate
+  "eingegangen"-Zahl zum Vergleich — da keine Rechnungszeile existiert,
+  ist dieses Journal der einzige Nachweis der Einnahme, sodass das
+  Erfassen einer Verteilung zugleich der Nachweis der Einnahme ist.
+- **Eine Verteilung erfassen** — ein Manager (Berechtigung
+  "Mitarbeiterauszahlungen") gibt das Datum, den insgesamt eingezogenen
+  Pool-Betrag und dann eine Zeile pro Mitarbeiter ein (Mitarbeiter,
+  Betrag, optionale Notiz) — fügen Sie so viele Zeilen hinzu, wie
+  Mitarbeiter den Pool teilen. Die Beträge müssen dem Pool-Gesamtbetrag
+  entsprechen, bevor die Kasse den Eintrag akzeptiert; das Datum darf
+  nicht in der Zukunft liegen.
+- **Eigene Aufzeichnungen eines Mitarbeiters** — mit dem Mitarbeiterfilter
+  lassen sich sowohl die Summe als auch die Verteilungsliste auf eine
+  Person eingrenzen.
+- **Export** — die Verteilungsaufzeichnungen für einen Zeitraum (optional
+  für einen Mitarbeiter) als CSV-Datei herunterladen, um sie einem
+  Mitarbeiter, einem Steuerberater oder einer anderen Person zu
+  übergeben, die die zugrunde liegenden Aufzeichnungen benötigt.
+- Verteilungsaufzeichnungen werden zusammen mit den übrigen
+  Finanzunterlagen des Geschäfts aufbewahrt und nicht vorzeitig gelöscht —
+  dieselbe Aufbewahrungsfrist wie für alles andere auf dieser Seite
+  (siehe "Berichtsaufbewahrung" oben).
 
 ## Eine Kartenzahlung abgleichen (Belegdetail)
 

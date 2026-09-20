@@ -14,7 +14,7 @@ Gün, reyon ve ödeme türüne göre satış toplamları; en çok/yavaş satanla
 ## Nasıl kullanılır
 
 1. Raporlar'ı açın: üstteki satır seçili dönemin ana rakamlarını (ciro, satış, ortalama satış, vergi, indirimler, iadeler, net, geçen yıl) ve düşük stok uyarısını her zaman gösterir.
-2. Altındaki sekmelerden birini seçin — Satış eğilimi, Ürünler, Vergi, Tahmin, Ödemeler ve kanallar, Bahşişler veya Gün sonu (EOD) — o rapor yalnızca sekmeyi açtığınızda çalışır.
+2. Altındaki sekmelerden birini seçin — Satış eğilimi, Ürünler, Vergi, Tahmin, Ödemeler ve kanallar, Bahşişler, Yüzde Usulü veya Gün sonu (EOD) — o rapor yalnızca sekmeyi açtığınızda çalışır.
 3. Kapanışta Gün sonu'nu (Gün sonu sekmesinde) çalıştırın: günü toplar ve kayıtlarınız için yazdırabilir.
 
 ## Rapor dönemleri
@@ -331,6 +331,34 @@ etmez veya taşımaz.
   olduğuna bakmaksızın bahşişli her ödemeyi sayar; "Alınan" ise yalnızca
   çalışana kaydedilen bahşişleri sayar (varsayılan) — bir bahşiş
   işletmeye kaydedildiğinde ikisinin farklı çıkması beklenir.
+
+## Yüzde usulü havuz dağıtımı (Yüzde Usulü sekmesi)
+
+**Yüzde Usulü** sekmesi, 4857 sayılı İş Kanunu'nun 51. maddesindeki
+"yüzde usulü" ile toplanan tutarın çalışanlara nasıl dağıtıldığını
+kaydeder ve raporlar. Bahşişler sekmesi gibi, yalnızca bir yöneticinin
+girdiği bilgiyi kaydeder — yazılım kendiliğinden para tespit etmez veya
+taşımaz, ve bu tahsilat için hiçbir zaman fiş satırı oluşturulmaz.
+
+- **Dağıtılan** — seçilen dönem için tek bir tutar: yüzde usulü
+  kapsamında dağıtıldığı kaydedilen miktar. Karşılaştırılacak ayrı bir
+  "tahsil edilen" rakamı yoktur — fiş satırı olmadığı için bu defter,
+  tahsilatın tek kaydıdır; dolayısıyla bir dağıtımı kaydetmek, tahsilatın
+  kaydını oluşturmakla aynı şeydir.
+- **Dağıtım kaydetme** — bir yönetici (Çalışan ödemeleri izni) tarihi,
+  toplanan havuz tutarını ve ardından çalışan başına bir satır (çalışan,
+  tutar, isteğe bağlı not) girer — havuzu paylaşan çalışan sayısı kadar
+  satır ekleyin. Till bu kaydı kabul etmeden önce tutarlar toplanan havuz
+  tutarına eşit olmalıdır; tarih gelecekte olamaz.
+- **Bir çalışanın kendi kayıtları** — hem toplamı hem de dağıtım listesini
+  tek bir kişiyle sınırlamak için Çalışan filtresini kullanın.
+- **Dışa aktarma** — bir çalışana, muhasebeciye veya temel kayıtlara
+  ihtiyaç duyan başka birine vermek üzere, bir tarih aralığı için
+  (isteğe bağlı olarak tek bir çalışan için) dağıtım kayıtlarını CSV
+  dosyası olarak indirin.
+- Dağıtım kayıtları, bu sayfadaki diğer her şeyle aynı saklama süresiyle
+  (yukarıdaki Rapor saklama bölümüne bakın) dükkânın diğer mali
+  kayıtlarıyla birlikte tutulur ve erken silinmez.
 
 ## Kart ödemesi mutabakatı (fiş detayı)
 

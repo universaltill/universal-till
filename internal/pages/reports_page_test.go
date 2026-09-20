@@ -861,7 +861,7 @@ func TestReportsPage_TopItemsDeferredToItemsTab(t *testing.T) {
 func TestReportsTabs_AllNamedTabsReturn200(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, _ := newReportsPageTestDeps(t)
-	for _, name := range []string{"sales-trend", "items", "tax", "forecast", "payments", "eod", "tips", "shrinkage"} {
+	for _, name := range []string{"sales-trend", "items", "tax", "forecast", "payments", "eod", "tips", "yuzde", "shrinkage"} {
 		rec := getReportsTab(t, mux, name, "?days=14")
 		if rec.Code != http.StatusOK {
 			t.Fatalf("tab %q: expected 200, got %d: %s", name, rec.Code, rec.Body.String())
@@ -1003,7 +1003,7 @@ func TestReportsPage_TabNavWiredToFragmentRoutes(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, name := range []string{"sales-trend", "items", "tax", "forecast", "payments", "eod", "tips"} {
+	for _, name := range []string{"sales-trend", "items", "tax", "forecast", "payments", "eod", "tips", "yuzde"} {
 		want := `hx-get="/ui/reports/tab/` + name + `?days=30"`
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected the tab nav to contain %s, got: %s", want, body)
@@ -1719,5 +1719,474 @@ func TestReportsPage_WorkerAllocationExport_EscapesFormulaInjection(t *testing.T
 	}
 	if !strings.Contains(body, `'+SUM(A1:A9)`) {
 		t.Fatalf("expected the note defused with a leading apostrophe, got: %s", body)
+	}
+}
+
+// ── ut-docs#988 (ADR-0063 step 2/2): the Turkey "yüzde usulü" tab ─────────
+//
+// Key shape difference from the UK "tips" flow above: a pool distribution is
+// ONE event split across SEVERAL workers, all sharing one batch source_id,
+// and the per-worker amounts must add up exactly to the manager-declared
+// pool total (the "distributed in full" check, enforced at entry time —
+// there is no bill line to reconcile against, see
+// WorkerAllocationsSummary's own doc comment on why the ledger is its own
+// only evidence).
+
+func yuzdePoolRows(t *testing.T, dp *common.Deps) []data.WorkerAllocation {
+	t.Helper()
+	today := time.Now().Format("2006-01-02")
+	rows, err := data.NewPOSRepo(dp.Db).ListWorkerAllocations(t.Context(), today, today, "", "yuzde_usulu_pool")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rows
+}
+
+// A role holding `reports` but not `worker_allocation` sees the distributed
+// total only — no record form, no row-level detail table, no export link.
+// Same CanView/CanRecord split renderTipsTab uses (ut-docs#794/#964).
+func TestReportsPage_YuzdeTabSummaryVisibleWithoutWorkerAllocationPermission(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+	authRepo := data.NewAuthRepo(dp.Db)
+
+	if err := authRepo.SetRolePermission(ctx, nil, "cashier", "reports", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,role,is_active) VALUES('worker1','worker1','Worker One','cashier',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note,local_date) VALUES('ya1','yuzde_usulu_pool','pool-batch-1','worker1',300,datetime('now'),'kitchen 30%',date('now','localtime'))`); err != nil {
+		t.Fatal(err)
+	}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/reports/tab/yuzde", nil), auth.User{ID: "u1", Role: "cashier"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "£3.00") {
+		t.Fatalf("expected the distributed total visible under `reports` alone, got: %s", body)
+	}
+	if strings.Contains(body, `hx-post="/api/reports/worker-allocations/pool"`) {
+		t.Fatalf("expected the record form hidden without worker_allocation, got: %s", body)
+	}
+	if strings.Contains(body, "/api/reports/worker-allocations/pool/export") {
+		t.Fatalf("expected the export link hidden without worker_allocation, got: %s", body)
+	}
+	// The row-level detail (this worker's own note) must stay hidden too.
+	if strings.Contains(body, "kitchen 30%") {
+		t.Fatalf("expected the row-level detail table hidden without worker_allocation, got: %s", body)
+	}
+
+	// A manager holds worker_allocation and must see all three.
+	req = auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/reports/tab/yuzde", nil), auth.User{ID: "mgr1", Role: "manager"})
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body = rec.Body.String()
+	if !strings.Contains(body, `hx-post="/api/reports/worker-allocations/pool"`) {
+		t.Fatalf("expected the record form visible for a manager, got: %s", body)
+	}
+	if !strings.Contains(body, "/api/reports/worker-allocations/pool/export") {
+		t.Fatalf("expected the export link visible for a manager, got: %s", body)
+	}
+	if !strings.Contains(body, "kitchen 30%") {
+		t.Fatalf("expected the row-level detail table visible for a manager, got: %s", body)
+	}
+}
+
+// A valid multi-worker distribution persists ONE row per worker, all sharing
+// a single batch source_id (ADR-0063 Decision 3), each carrying its own
+// submitted note — and the re-rendered tab shows the updated distributed
+// total immediately.
+func TestReportsPage_RecordYuzdePool_MultiWorkerDistributionPersistsOneBatch(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	for _, u := range []string{"worker1", "worker2"} {
+		if _, err := dp.Db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,role,is_active) VALUES(?,?,?,'cashier',1)`, u, u, u); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	today := time.Now().Format("2006-01-02")
+	form := url.Values{
+		"date":       {today},
+		"pool_total": {"1000"},
+		"cashier_id": {"worker1", "worker2"},
+		"amount":     {"300", "700"},
+		"row_note":   {"kitchen 30%", "floor 70%"},
+	}
+	rec := postForm(mux, "/api/reports/worker-allocations/pool", form, &auth.User{ID: "mgr1", Role: "manager"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "£10.00") {
+		t.Fatalf("expected the refreshed tab to show the new distributed total (£10.00), got: %s", rec.Body.String())
+	}
+
+	rows := yuzdePoolRows(t, dp)
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 persisted pool rows, got %d", len(rows))
+	}
+	if rows[0].SourceID == "" || rows[0].SourceID != rows[1].SourceID {
+		t.Fatalf("expected both rows to share one non-empty batch source_id, got %q and %q", rows[0].SourceID, rows[1].SourceID)
+	}
+	byWorker := map[string]data.WorkerAllocation{}
+	for _, row := range rows {
+		byWorker[row.CashierID] = row
+	}
+	if got := byWorker["worker1"]; got.AmountMinor != 300 || got.Note != "kitchen 30%" {
+		t.Fatalf("unexpected worker1 row: amount=%d note=%q", got.AmountMinor, got.Note)
+	}
+	if got := byWorker["worker2"]; got.AmountMinor != 700 || got.Note != "floor 70%" {
+		t.Fatalf("unexpected worker2 row: amount=%d note=%q", got.AmountMinor, got.Note)
+	}
+
+	// One audit entry for the distribution EVENT, not one per row.
+	var auditCount int
+	if err := dp.Db.QueryRowContext(ctx, `SELECT count(*) FROM audit_log WHERE action = 'yuzde_pool_recorded'`).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("expected 1 yuzde_pool_recorded audit entry, got %d", auditCount)
+	}
+}
+
+// Independent-review finding: a plain `sum += amountMinor` with a
+// post-addition `sum > poolTotal` bail-out is defeated by int64 overflow —
+// a large-enough row wraps the running sum negative, so the "did we
+// already exceed the total" check (a negative can never exceed a positive
+// poolTotal) silently stops firing, and further rows can climb the wrapped
+// sum back up to exactly match an attacker-chosen poolTotal. See the
+// verified 4-row construction in the test body below (independently
+// simulated in Python before writing this, not hand-waved) and proves
+// it's rejected — before the fix, this exact sequence bypassed the
+// mismatch check entirely (200, all four rows persisted).
+func TestReportsPage_RecordYuzdePool_IntegerOverflowInSumCheckIsRejected(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	for _, u := range []string{"worker1", "worker2", "worker3", "worker4"} {
+		if _, err := dp.Db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,role,is_active) VALUES(?,?,?,'cashier',1)`, u, u, u); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// A verified (Python-simulated, not hand-waved) int64-wraparound bypass
+	// of the pre-existing "if sum > poolTotal { reject }" incremental check
+	// alone: sum after row1 (5e18) is <= poolTotal, so it passes; sum after
+	// row2 wraps NEGATIVE (5e18+5e18 exceeds MaxInt64), which can never be
+	// ">" a positive poolTotal, so the incremental check is blind to it;
+	// row3 climbs back up to exactly 0; row4 lands exactly on poolTotal —
+	// so with ONLY the old incremental check, this sequence is accepted
+	// (final sum == poolTotal, no rejection at any row) despite the
+	// individual amounts summing to 23,446,744,073,709,551,616 in real
+	// arithmetic, nowhere close to the declared 5e18 pool. The fix
+	// (`amountMinor > math.MaxInt64-sum` checked BEFORE each addition)
+	// must catch this at row 2, the exact point the true sum first exceeds
+	// math.MaxInt64, before any wraparound can occur.
+	today := time.Now().Format("2006-01-02")
+	form := url.Values{
+		"date":       {today},
+		"pool_total": {"5000000000000000000"},
+		"cashier_id": {"worker1", "worker2", "worker3", "worker4"},
+		"amount":     {"5000000000000000000", "5000000000000000000", "8446744073709551616", "5000000000000000000"},
+		"row_note":   {"", "", "", ""},
+	}
+	rec := postForm(mux, "/api/reports/worker-allocations/pool", form, &auth.User{ID: "mgr1", Role: "manager"})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 (overflow must be rejected, not silently wrapped to a matching sum), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), httpx.T("en", "reports.yuzde.error.mismatch")) {
+		t.Fatalf("expected the localized mismatch message, got: %s", rec.Body.String())
+	}
+	if n := workerAllocationCount(t, dp); n != 0 {
+		t.Fatalf("expected nothing persisted when the sum overflows, got %d rows", n)
+	}
+}
+
+// The "distributed in full" check: per-worker amounts that don't add up to
+// the manager-declared pool total are rejected, and the whole batch rolls
+// back (no partial distribution is ever persisted).
+func TestReportsPage_RecordYuzdePool_SumMismatchRejectedAndWritesNothing(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	for _, u := range []string{"worker1", "worker2"} {
+		if _, err := dp.Db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,role,is_active) VALUES(?,?,?,'cashier',1)`, u, u, u); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	today := time.Now().Format("2006-01-02")
+	form := url.Values{
+		"date":       {today},
+		"pool_total": {"1000"},
+		"cashier_id": {"worker1", "worker2"},
+		"amount":     {"300", "600"}, // 900 != 1000
+		"row_note":   {"", ""},
+	}
+	rec := postForm(mux, "/api/reports/worker-allocations/pool", form, &auth.User{ID: "mgr1", Role: "manager"})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), httpx.T("en", "reports.yuzde.error.mismatch")) {
+		t.Fatalf("expected the localized mismatch message, got: %s", rec.Body.String())
+	}
+	if n := workerAllocationCount(t, dp); n != 0 {
+		t.Fatalf("expected the whole batch rolled back, got %d rows", n)
+	}
+}
+
+// The same worker twice in one distribution is a data-entry mistake, not two
+// legitimate shares — rejected outright rather than silently summed.
+func TestReportsPage_RecordYuzdePool_DuplicateWorkerRejectedAndWritesNothing(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,role,is_active) VALUES('worker1','worker1','Worker One','cashier',1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	today := time.Now().Format("2006-01-02")
+	form := url.Values{
+		"date":       {today},
+		"pool_total": {"1000"},
+		"cashier_id": {"worker1", "worker1"},
+		"amount":     {"400", "600"}, // sums correctly — only the duplicate is wrong
+		"row_note":   {"", ""},
+	}
+	rec := postForm(mux, "/api/reports/worker-allocations/pool", form, &auth.User{ID: "mgr1", Role: "manager"})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), httpx.T("en", "reports.yuzde.error.duplicate_worker")) {
+		t.Fatalf("expected the localized duplicate-worker message, got: %s", rec.Body.String())
+	}
+	if n := workerAllocationCount(t, dp); n != 0 {
+		t.Fatalf("expected nothing persisted, got %d rows", n)
+	}
+}
+
+// Same malformed-request rejections the tips POST already applies, on the
+// pool handler's own (multi-row) shape — each writes nothing.
+func TestReportsPage_RecordYuzdePool_InvalidInputsRejectedAndWriteNothing(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,role,is_active) VALUES('worker1','worker1','Worker One','cashier',1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	today := time.Now().Format("2006-01-02")
+	tomorrow := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
+	manager := &auth.User{ID: "mgr1", Role: "manager"}
+
+	cases := []struct {
+		name string
+		form url.Values
+	}{
+		{"future date", url.Values{"date": {tomorrow}, "pool_total": {"100"}, "cashier_id": {"worker1"}, "amount": {"100"}, "row_note": {""}}},
+		{"unknown cashier", url.Values{"date": {today}, "pool_total": {"100"}, "cashier_id": {"does-not-exist"}, "amount": {"100"}, "row_note": {""}}},
+		{"no worker rows", url.Values{"date": {today}, "pool_total": {"100"}}},
+		{"ragged row fields", url.Values{"date": {today}, "pool_total": {"100"}, "cashier_id": {"worker1", "worker1"}, "amount": {"100"}, "row_note": {""}}},
+		{"zero pool total", url.Values{"date": {today}, "pool_total": {"0"}, "cashier_id": {"worker1"}, "amount": {"0"}, "row_note": {""}}},
+		{"negative pool total", url.Values{"date": {today}, "pool_total": {"-100"}, "cashier_id": {"worker1"}, "amount": {"-100"}, "row_note": {""}}},
+		{"zero row amount", url.Values{"date": {today}, "pool_total": {"100"}, "cashier_id": {"worker1"}, "amount": {"0"}, "row_note": {""}}},
+		{"non-numeric row amount", url.Values{"date": {today}, "pool_total": {"100"}, "cashier_id": {"worker1"}, "amount": {"lots"}, "row_note": {""}}},
+		{"malformed date", url.Values{"date": {"25/08/2026"}, "pool_total": {"100"}, "cashier_id": {"worker1"}, "amount": {"100"}, "row_note": {""}}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rec := postForm(mux, "/api/reports/worker-allocations/pool", c.form, manager)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+	if n := workerAllocationCount(t, dp); n != 0 {
+		t.Fatalf("expected no rows written by any rejected request, got %d", n)
+	}
+}
+
+// A session lacking `worker_allocation` gets 403 from both the pool POST and
+// the pool export GET — same gate the tips endpoints use.
+func TestReportsPage_YuzdePool_ForbiddenWithoutPermission(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,role,is_active) VALUES('worker1','worker1','Worker One','cashier',1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	cashier := &auth.User{ID: "u1", Role: "cashier"}
+	today := time.Now().Format("2006-01-02")
+	form := url.Values{"date": {today}, "pool_total": {"100"}, "cashier_id": {"worker1"}, "amount": {"100"}, "row_note": {""}}
+	rec := postForm(mux, "/api/reports/worker-allocations/pool", form, cashier)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 from POST, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if n := workerAllocationCount(t, dp); n != 0 {
+		t.Fatalf("expected no row written by a forbidden POST, got %d", n)
+	}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/api/reports/worker-allocations/pool/export?from=2026-08-25&to=2026-08-25", nil), *cashier)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 from export GET, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// The pool export carries a `batch` column the on-screen table deliberately
+// omits: an accountant reconciling "distributed in full" needs to see which
+// rows belong to the same distribution event.
+func TestReportsPage_YuzdePoolExport_ReturnsCSVWithBatchColumn(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	for _, u := range []string{"worker1", "worker2"} {
+		if _, err := dp.Db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,role,is_active) VALUES(?,?,?,'cashier',1)`, u, u, u); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, row := range []struct {
+		id, cashier, note string
+		amount            int
+	}{
+		{"ya1", "worker1", "kitchen 30%", 300},
+		{"ya2", "worker2", "floor 70%", 700},
+	} {
+		if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note,local_date) VALUES(?,'yuzde_usulu_pool','pool-batch-1',?,?,'2026-08-25T18:00:00Z',?,date('2026-08-25T18:00:00Z','localtime'))`,
+			row.id, row.cashier, row.amount, row.note); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A UK tip row in the same window must NOT leak into this export — each
+	// source_type is a distinct legal record (ListWorkerAllocations' own doc
+	// comment), not one combined feed.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note,local_date) VALUES('wa-tip','tip','','worker1',999,'2026-08-25T18:00:00Z','a uk tip payout',date('2026-08-25T18:00:00Z','localtime'))`); err != nil {
+		t.Fatal(err)
+	}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/api/reports/worker-allocations/pool/export?from=2026-08-25&to=2026-08-25", nil), auth.User{ID: "mgr1", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/csv" {
+		t.Fatalf("expected Content-Type text/csv, got %q", ct)
+	}
+	if cd := rec.Header().Get("Content-Disposition"); !strings.Contains(cd, "yuzde-usulu-2026-08-25-to-2026-08-25.csv") {
+		t.Fatalf("expected the yuzde-usulu filename, got %q", cd)
+	}
+	body := rec.Body.String()
+	lines := strings.Split(strings.TrimSpace(strings.ReplaceAll(body, "\r\n", "\n")), "\n")
+	if lines[0] != "date,worker,amount_minor,note,batch" {
+		t.Fatalf("unexpected CSV header %q (full body: %s)", lines[0], body)
+	}
+	if len(lines) != 3 {
+		t.Fatalf("expected a header plus one row per pool allocation (3 lines), got %d: %s", len(lines), body)
+	}
+	for _, line := range lines[1:] {
+		if !strings.HasSuffix(line, ",pool-batch-1") {
+			t.Fatalf("expected every data row to carry the shared batch id, got: %s", line)
+		}
+	}
+	if strings.Contains(body, "a uk tip payout") {
+		t.Fatalf("expected the UK tip row excluded from the pool export, got: %s", body)
+	}
+	if !strings.Contains(body, "kitchen 30%") || !strings.Contains(body, "floor 70%") {
+		t.Fatalf("expected each row's own note in the export, got: %s", body)
+	}
+
+	var auditCount int
+	if err := dp.Db.QueryRowContext(ctx, `SELECT count(*) FROM audit_log WHERE action = 'yuzde_pool_exported'`).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("expected 1 yuzde_pool_exported audit entry, got %d", auditCount)
+	}
+}
+
+// Same ut-docs#964 blocker-2 leak, re-checked on this tab: a `reports`-only
+// session must never read one named worker's distributed total via ?cashier=.
+func TestReportsPage_YuzdeTabCashierFilterIgnoredWithoutWorkerAllocationPermission(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+	authRepo := data.NewAuthRepo(dp.Db)
+
+	if err := authRepo.SetRolePermission(ctx, nil, "cashier", "reports", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note,local_date) VALUES('ya1','yuzde_usulu_pool','pool-batch-1','worker1',300,datetime('now'),'',date('now','localtime'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note,local_date) VALUES('ya2','yuzde_usulu_pool','pool-batch-1','worker2',4242,datetime('now'),'',date('now','localtime'))`); err != nil {
+		t.Fatal(err)
+	}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/reports/tab/yuzde?cashier=worker2", nil), auth.User{ID: "u1", Role: "cashier"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "£45.42") {
+		t.Fatalf("expected the shop-wide distributed total (?cashier= ignored), got: %s", body)
+	}
+	if strings.Contains(body, "£42.42") {
+		t.Fatalf("LEAK: worker2's isolated total shown to a reports-only session via ?cashier=, got: %s", body)
+	}
+}
+
+// ADR-0063/#988: the pool summary is a single "distributed" figure. The
+// repo's own WorkerAllocationsSummary doc comment states Received ==
+// Allocated for "yuzde_usulu_pool" BY CONSTRUCTION — a tautology, "not a
+// passed compliance check" — so this tab must never render the paired
+// received-vs-allocated KPI the tips tab does.
+func TestReportsPage_YuzdeTabShowsSingleDistributedFigureNotAPair(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note,local_date) VALUES('ya1','yuzde_usulu_pool','pool-batch-1','worker1',300,datetime('now'),'',date('now','localtime'))`); err != nil {
+		t.Fatal(err)
+	}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/reports/tab/yuzde", nil), auth.User{ID: "mgr1", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, httpx.T("en", "reports.yuzde.distributed")) {
+		t.Fatalf("expected the distributed KPI label, got: %s", body)
+	}
+	// The £3.00 total must appear exactly once in the KPI row — a second
+	// "received" copy of the same number is the misleading pairing.
+	if n := strings.Count(body, `<div class="kpi-value">£3.00</div>`); n != 1 {
+		t.Fatalf("expected exactly one KPI value for the pool total, got %d: %s", n, body)
+	}
+	if strings.Contains(body, httpx.T("en", "reports.tips.tip_received")) {
+		t.Fatalf("expected no received-vs-allocated pairing on the pool tab, got: %s", body)
 	}
 }

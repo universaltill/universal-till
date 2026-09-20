@@ -4,6 +4,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"math"
 	"mime"
 	"net/http"
 	"net/url"
@@ -554,12 +555,22 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			})(w, r)
 		case "tips":
 			renderTipsTab(repo, d, r, window)(w, r)
+		case "yuzde":
+			// ut-docs#988 (ADR-0063 step 2/2): Turkey "yüzde usulü" (İş
+			// Kanunu 4857 art. 51) — a separate tab from "tips", not a
+			// source_type toggle inside it: the two are distinct legal
+			// records with distinct shapes (a UK payout is one worker per
+			// submission; a pool distribution is one event split across
+			// several workers), and ListWorkerAllocations is deliberately
+			// single-source_type for the same reason (see its doc comment).
+			renderYuzdeTab(repo, d, r, window)(w, r)
 		default:
 			http.NotFound(w, r)
 		}
 	})
 
 	registerWorkerAllocationAPI(mux, d)
+	registerYuzdePoolAPI(mux, d)
 }
 
 // workerAllocationDisplayNames maps every user's cashier_id to a
@@ -937,6 +948,357 @@ func registerWorkerAllocationAPI(mux *http.ServeMux, d *common.Deps) {
 			// Headers and a 200 are already on the wire (same precedent as
 			// eod_api.go's archive/export) -- log rather than panic.
 			logging.L().Errorf("worker allocation export: csv write: %v", err)
+		}
+	})
+}
+
+// yuzdeDetailRow is one row of the "yüzde usulü" tab's distribution-detail
+// table. Deliberately NOT tipsDetailRow: that carries a SourceType column
+// the UK tab renders because it merges two source types into one feed
+// (tip + service_charge), while this tab is single-source_type by
+// construction — every row is a "yuzde_usulu_pool" row, so a type column
+// would be a constant. The batch id (SourceID) is likewise absent here: it
+// only earns its space in the CSV export, where an accountant reconciles
+// which rows belong to the same distribution event (see
+// registerYuzdePoolAPI's export handler).
+type yuzdeDetailRow struct {
+	AllocatedAt string
+	Worker      string
+	AmountMinor int64
+	Note        string
+}
+
+// renderYuzdeTab builds and renders the "yuzde" tab fragment — factored out
+// of the tab switch the same way renderTipsTab is, so the record-distribution
+// POST handler can re-render the SAME fragment after a successful write.
+//
+// Visibility mirrors renderTipsTab exactly: CanView (`reports`) gates the
+// distributed total; CanRecord (`worker_allocation`) additionally gates the
+// row-level detail table, the record form and the export link. The ?cashier=
+// filter is honored ONLY for a canRecord session — the same leak independent
+// review found on #964 (a `reports`-only session reading any named worker's
+// own total by picking them out of the query string) must not be
+// reintroduced here.
+//
+// Unlike the tips tab, only ONE figure is rendered: AllocatedMinor, labelled
+// "distributed". WorkerAllocationsSummary's own doc comment is explicit that
+// for "yuzde_usulu_pool" its ReceivedMinor is computed from the very same
+// ledger rows — "Received == Allocated here BY CONSTRUCTION, a tautology,
+// not a passed compliance check; a step-2 consumer must not render it as
+// one" — so the received-vs-allocated pair the UK tab shows would be a
+// meaningless (and actively misleading) comparison on this tab.
+func renderYuzdeTab(repo *data.POSRepo, d *common.Deps, r *http.Request, window reportWindow) http.HandlerFunc {
+	ctx := r.Context()
+	canView := canPerform(d, r, "reports")
+	canRecord := canPerform(d, r, "worker_allocation")
+	cashierFilter := ""
+	if canRecord {
+		cashierFilter = strings.TrimSpace(r.URL.Query().Get("cashier"))
+	}
+
+	var summary data.WorkerAllocationSummary
+	var workers []data.UserRow
+	var detail []yuzdeDetailRow
+	from, to := workerAllocationDateRange(window)
+
+	if canView {
+		summary, _ = repo.WorkerAllocationsSummary(ctx, from, to, cashierFilter, "yuzde_usulu_pool")
+		if canRecord {
+			allUsers, _ := data.NewAuthRepo(d.Db).ListUsers(ctx)
+			workers = allUsers
+			names := workerAllocationDisplayNames(allUsers)
+			rows, _ := repo.ListWorkerAllocations(ctx, from, to, cashierFilter, "yuzde_usulu_pool")
+			for _, row := range rows {
+				worker := names[row.CashierID]
+				if worker == "" {
+					worker = row.CashierID
+				}
+				detail = append(detail, yuzdeDetailRow{
+					AllocatedAt: row.AllocatedAt,
+					Worker:      worker,
+					AmountMinor: row.AmountMinor,
+					Note:        row.Note,
+				})
+			}
+		}
+	}
+
+	return httpx.RenderPartial("ui/partials/reports_tab_yuzde.html", map[string]any{
+		"StoreName":     storeNameOrDefault(ctx, d),
+		"CanView":       canView,
+		"CanRecord":     canRecord,
+		"CashierFilter": cashierFilter,
+		"Workers":       workers,
+		"Distributed":   summary.AllocatedMinor,
+		"Detail":        detail,
+		"From":          from,
+		"To":            to,
+		// LOCAL, matching the POST handler's own future-date check — same
+		// reasoning as renderTipsTab's own Today (every other clock this
+		// ledger touches is local, not UTC).
+		"Today":  time.Now().Format("2006-01-02"),
+		"Days":   parseReportDays(r),
+		"Period": reportPeriodParam(r),
+		"Anchor": window.Anchor,
+	})
+}
+
+// yuzdePoolRow is one parsed-and-validated worker share of a single pool
+// distribution, between parsing the request's three parallel repeated form
+// fields and writing the batch's rows inside one transaction.
+type yuzdePoolRow struct {
+	CashierID   string
+	AmountMinor int64
+	Note        string
+}
+
+// registerYuzdePoolAPI mounts the record-a-distribution POST and the CSV
+// export GET behind the "yuzde" tab (ut-docs#988), alongside — not inside —
+// registerWorkerAllocationAPI's UK pair: the two flows share a ledger table
+// and a permission, but not a request shape, so folding them into one
+// handler would mean a source_type-conditional validator with two disjoint
+// branches.
+//
+// The distribution is a BATCH: one event, several workers, one shared
+// source_id (ADR-0063 Decision 3), and per-worker amounts that must add up
+// exactly to the manager-declared pool total. The sum check is what records
+// "distributed in full" at entry time — Turkey collects a yüzde with no bill
+// line at all (ADR-0062/ut-docs#962 forbid one outright), so there is no
+// independent collection record to reconcile against later: the ledger is
+// its own only evidence, and the declared total is only meaningful if it is
+// checked at the moment it's declared.
+func registerYuzdePoolAPI(mux *http.ServeMux, d *common.Deps) {
+	repo := data.NewPOSRepo(d.Db)
+	authRepo := data.NewAuthRepo(d.Db)
+
+	mux.HandleFunc("POST /api/reports/worker-allocations/pool", func(w http.ResponseWriter, r *http.Request) {
+		if !canPerform(d, r, "worker_allocation") {
+			http.Error(w, "worker_allocation permission required", http.StatusForbidden)
+			return
+		}
+		ctx := r.Context()
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form data", http.StatusBadRequest)
+			return
+		}
+
+		date := strings.TrimSpace(r.FormValue("date"))
+		if !eodDateRe.MatchString(date) {
+			http.Error(w, "date must be YYYY-MM-DD", http.StatusBadRequest)
+			return
+		}
+
+		poolTotal, err := strconv.ParseInt(strings.TrimSpace(r.FormValue("pool_total")), 10, 64)
+		if err != nil || poolTotal <= 0 {
+			http.Error(w, "pool_total must be a positive integer (minor units)", http.StatusBadRequest)
+			return
+		}
+
+		// Three PARALLEL repeated fields, index-aligned: row i is
+		// cashier_id[i] / amount[i] / row_note[i]. Plain repeated names
+		// (r.Form["cashier_id"]) rather than "[]"-suffixed ones, matching
+		// this codebase's existing convention for repeatable form fields
+		// (sync_tables_claim.go's keep_table_id). A ragged request — the
+		// three slices disagreeing in length — is a malformed request, not
+		// an operator mistake the UI can produce, so it gets the same plain
+		// http.Error treatment as the other 400s here rather than a
+		// translated message.
+		cashierIDs := r.Form["cashier_id"]
+		amounts := r.Form["amount"]
+		notes := r.Form["row_note"]
+		if len(cashierIDs) == 0 || len(amounts) != len(cashierIDs) || len(notes) != len(cashierIDs) {
+			http.Error(w, "at least one worker row required", http.StatusBadRequest)
+			return
+		}
+
+		rows := make([]yuzdePoolRow, 0, len(cashierIDs))
+		seen := make(map[string]bool, len(cashierIDs))
+		var sum int64
+		for i, rawCashier := range cashierIDs {
+			cashierID := strings.TrimSpace(rawCashier)
+			if cashierID == "" {
+				http.Error(w, "cashier_id is required", http.StatusBadRequest)
+				return
+			}
+			// The same worker twice in one distribution is a data-entry
+			// slip (a mis-picked dropdown), not two legitimate shares:
+			// silently summing them would record a distribution nobody
+			// intended, and the row-per-worker shape ADR-0063 designs is
+			// what makes each worker's own share readable back.
+			if seen[cashierID] {
+				common.LocalizedError(w, r, http.StatusBadRequest, "reports.yuzde.error.duplicate_worker")
+				return
+			}
+			seen[cashierID] = true
+			if _, found, err := authRepo.GetUser(ctx, cashierID); err != nil || !found {
+				http.Error(w, "cashier_id must be a real user id", http.StatusBadRequest)
+				return
+			}
+			amountMinor, err := strconv.ParseInt(strings.TrimSpace(amounts[i]), 10, 64)
+			if err != nil || amountMinor <= 0 {
+				http.Error(w, "amount must be a positive integer (minor units)", http.StatusBadRequest)
+				return
+			}
+			// Independent review finding: "every amount is positive so the
+			// sum only grows" is true in real arithmetic but NOT in int64
+			// arithmetic — a hand-crafted request with a row near
+			// math.MaxInt64 wraps `sum` negative, and `sum > poolTotal`
+			// (a negative can never exceed a positive poolTotal) then
+			// silently stops catching the overflow, letting a second
+			// crafted row bring the wrapped sum back to exactly match an
+			// attacker-chosen poolTotal — defeating the one invariant
+			// ("distributed in full") this whole check exists to enforce.
+			// Reject before adding whenever the addition itself would
+			// overflow, rather than trusting the post-addition value.
+			if amountMinor > math.MaxInt64-sum {
+				common.LocalizedError(w, r, http.StatusBadRequest, "reports.yuzde.error.mismatch")
+				return
+			}
+			sum += amountMinor
+			// Every amount is positive and overflow is now ruled out above,
+			// so the running sum only grows: bailing out as soon as it
+			// passes the declared total reports the mismatch as early as
+			// possible instead of only at the end.
+			if sum > poolTotal {
+				common.LocalizedError(w, r, http.StatusBadRequest, "reports.yuzde.error.mismatch")
+				return
+			}
+			rows = append(rows, yuzdePoolRow{CashierID: cashierID, AmountMinor: amountMinor, Note: notes[i]})
+		}
+		if sum != poolTotal {
+			common.LocalizedError(w, r, http.StatusBadRequest, "reports.yuzde.error.mismatch")
+			return
+		}
+
+		allocatedAt, isFuture, err := workerAllocationRequestedAt(date, time.Now())
+		if err != nil {
+			http.Error(w, "date must be YYYY-MM-DD", http.StatusBadRequest)
+			return
+		}
+		if isFuture {
+			http.Error(w, "date must not be in the future", http.StatusBadRequest)
+			return
+		}
+
+		// ONE batch id shared by every row of this distribution event
+		// (ADR-0063 Decision 3) — the marker that makes "these shares were
+		// one distribution of one pool" readable back off the ledger, and
+		// what the export's own `batch` column carries.
+		batchID := uuid.NewString()
+
+		tx, err := d.Db.BeginTx(ctx, nil)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "reports.yuzde.error.save", "yuzde_pool_record", err)
+			return
+		}
+		defer tx.Rollback()
+
+		auditRows := make([]map[string]any, 0, len(rows))
+		for _, row := range rows {
+			if err := repo.InsertWorkerAllocation(ctx, tx, uuid.NewString(), "yuzde_usulu_pool", batchID, row.CashierID, row.AmountMinor, allocatedAt, row.Note); err != nil {
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "reports.yuzde.error.save", "yuzde_pool_record", err)
+				return
+			}
+			auditRows = append(auditRows, map[string]any{"cashier_id": row.CashierID, "amount_minor": row.AmountMinor, "note": row.Note})
+		}
+		actorID := getSessionUserID(r)
+		now := time.Now().UTC().Format(time.RFC3339)
+		// One audit entry for the distribution EVENT (keyed on the batch
+		// id), not one per row — the event is what a manager or an
+		// inspector reads back, and the rows it covers are in its payload.
+		if err := repo.InsertAudit(ctx, tx, actorID, "worker_allocation", batchID, "yuzde_pool_recorded",
+			map[string]any{"batch_id": batchID, "pool_total_minor": poolTotal, "rows": auditRows}, now, ""); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "reports.yuzde.error.save", "yuzde_pool_record", err)
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "reports.yuzde.error.save", "yuzde_pool_record", err)
+			return
+		}
+
+		// Same window-param round-trip the tips POST does, and for the same
+		// reason: parseReportWindow/renderYuzdeTab read r.URL.Query(), which
+		// is empty for this POST's body-encoded fields, so the operator's
+		// current window (and worker filter) would silently reset to the
+		// 14-day/all-workers default on the htmx swap. Copied AFTER every
+		// r.FormValue/r.Form read above.
+		q := url.Values{}
+		if period := r.FormValue("period"); period != "" {
+			q.Set("period", period)
+			q.Set("anchor", r.FormValue("anchor"))
+		} else if days := r.FormValue("days"); days != "" {
+			q.Set("days", days)
+		}
+		if cashier := r.FormValue("cashier"); cashier != "" {
+			q.Set("cashier", cashier)
+		}
+		r.URL.RawQuery = q.Encode()
+
+		bizDayStart, _, _ := d.Settings.Get(ctx, keyReportsBusinessDayStart)
+		window := parseReportWindow(r, bizDayStart)
+		renderYuzdeTab(repo, d, r, window)(w, r)
+	})
+
+	mux.HandleFunc("GET /api/reports/worker-allocations/pool/export", func(w http.ResponseWriter, r *http.Request) {
+		if !canPerform(d, r, "worker_allocation") {
+			http.Error(w, "worker_allocation permission required", http.StatusForbidden)
+			return
+		}
+		ctx := r.Context()
+		from := strings.TrimSpace(r.URL.Query().Get("from"))
+		to := strings.TrimSpace(r.URL.Query().Get("to"))
+		if !eodDateRe.MatchString(from) || !eodDateRe.MatchString(to) {
+			http.Error(w, "from and to must be YYYY-MM-DD", http.StatusBadRequest)
+			return
+		}
+		if from > to {
+			http.Error(w, "from must not be after to", http.StatusBadRequest)
+			return
+		}
+		cashierID := strings.TrimSpace(r.URL.Query().Get("cashier"))
+
+		// Same tolerant "" -> raw id fallback as the tab's own worker-name
+		// lookup, for the same reason the tips export documents.
+		allUsers, _ := authRepo.ListUsers(ctx)
+		names := workerAllocationDisplayNames(allUsers)
+
+		rows, err := repo.ListWorkerAllocations(ctx, from, to, cashierID, "yuzde_usulu_pool")
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "reports.yuzde.error.export", "yuzde_pool_export", err)
+			return
+		}
+
+		now := time.Now().UTC().Format(time.RFC3339)
+		actorID := getSessionUserID(r)
+		_ = repo.InsertAudit(ctx, nil, actorID, "worker_allocation", "-", "yuzde_pool_exported",
+			map[string]any{"from": from, "to": to, "cashier": cashierID}, now, "")
+
+		filename := fmt.Sprintf("yuzde-usulu-%s-to-%s.csv", from, to)
+		w.Header().Set("Content-Type", "text/csv")
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filename}))
+		w.WriteHeader(http.StatusOK)
+		cw := csv.NewWriter(w)
+		// `batch` is export-only (the on-screen table omits it): an
+		// accountant checking that a pool was distributed in full needs to
+		// see which rows belong to the same distribution event, which on
+		// screen is just noise next to the per-row detail.
+		_ = cw.Write([]string{"date", "worker", "amount_minor", "note", "batch"})
+		for _, row := range rows {
+			worker := names[row.CashierID]
+			if worker == "" {
+				worker = row.CashierID
+			}
+			// csvSafe on worker + note, same formula-injection reasoning as
+			// the tips export (ut-docs#1020 item 2): both are operator-set
+			// text opened directly in Excel/Sheets. The batch id is a
+			// server-generated uuid, so it can't carry a leading =/+/-/@.
+			_ = cw.Write([]string{row.AllocatedAt, csvSafe(worker), strconv.FormatInt(row.AmountMinor, 10), csvSafe(row.Note), row.SourceID})
+		}
+		cw.Flush()
+		if err := cw.Error(); err != nil {
+			// Headers and a 200 are already on the wire — log rather than
+			// panic, same precedent as the tips export.
+			logging.L().Errorf("yuzde pool export: csv write: %v", err)
 		}
 	})
 }
