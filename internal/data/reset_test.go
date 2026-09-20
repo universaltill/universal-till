@@ -692,6 +692,73 @@ func TestRestoreRefusesWhenShopHasTradedSinceReset(t *testing.T) {
 	}
 }
 
+// TestRestoreRefusesWhenNewWorkerAllocationOrPoolCollectionSinceReset closes
+// a gap independent review found in ut-docs#988: restoreEmptyCheckTables
+// (internal/data/reset_archive_repo.go) lists worker_allocations and
+// yuzde_usulu_pool_collections precisely so a restore can't silently MERGE a
+// pre-reset archived batch with a real record a manager entered after the
+// reset (ADR-0042 §2: restore must return to exactly the pre-reset state,
+// never a merge) — but until this test, nothing actually exercised that for
+// either table; deleting either entry from restoreEmptyCheckTables left the
+// whole suite green. Table-driven over both, same shape as
+// TestRestoreRefusesWhenShopHasTradedSinceReset above (that test already
+// covers "sales" itself).
+func TestRestoreRefusesWhenNewWorkerAllocationOrPoolCollectionSinceReset(t *testing.T) {
+	cases := []struct {
+		name        string
+		archiveSeed string // inserted BEFORE reset, so there's a real batch to attempt restoring
+		postReset   string // inserted AFTER reset, on the live table restoreEmptyCheckTables must catch
+	}{
+		{
+			name:        "worker_allocations",
+			archiveSeed: `INSERT INTO worker_allocations (id, source_type, source_id, cashier_id, amount_minor, allocated_at, note) VALUES ('wa1','tip','','cashier1',500,'2026-08-25T10:00:00Z','')`,
+			postReset:   `INSERT INTO worker_allocations (id, source_type, source_id, cashier_id, amount_minor, allocated_at, note) VALUES ('wa2','tip','','cashier1',300,'2026-08-25T11:00:00Z','')`,
+		},
+		{
+			name:        "yuzde_usulu_pool_collections",
+			archiveSeed: `INSERT INTO yuzde_usulu_pool_collections (id, amount_minor, collected_at, basis_note, recorded_by, local_date) VALUES ('pc1',1000,'2026-08-25T10:00:00Z','','mgr1','2026-08-25')`,
+			postReset:   `INSERT INTO yuzde_usulu_pool_collections (id, amount_minor, collected_at, basis_note, recorded_by, local_date) VALUES ('pc2',700,'2026-08-25T11:00:00Z','','mgr1','2026-08-25')`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d, x, count := resetTestDB(t, tc.name+".db")
+			x(tc.archiveSeed)
+
+			repo := data.NewPOSRepo(d.DB)
+			ctx := context.Background()
+			_, batchID, err := repo.ResetTransactionHistory(ctx, "", "")
+			if err != nil {
+				t.Fatalf("reset: %v", err)
+			}
+			if c := count(tc.name); c != 0 {
+				t.Fatalf("%s not cleared by reset: %d", tc.name, c)
+			}
+
+			// The shop records a new one after the reset, before anyone
+			// restores — the exact scenario the review flagged: a manager
+			// recording today's pool/payout after a reset, then someone
+			// restoring, would otherwise silently merge the archived batch
+			// with this new live row (different ids, no PK collision, so it
+			// would go unnoticed).
+			x(tc.postReset)
+
+			_, err = repo.RestoreResetBatch(ctx, batchID, "", "")
+			if !errors.Is(err, data.ErrShopHasTradedSinceReset) {
+				t.Fatalf("restore after new %s row: err=%v, want ErrShopHasTradedSinceReset", tc.name, err)
+			}
+			// Refusal must touch NOTHING: the new row stays, the archive stays.
+			if c := count(tc.name); c != 1 {
+				t.Fatalf("post-reset %s row must be untouched, count=%d", tc.name, c)
+			}
+			if c := count(tc.name + "_archive"); c != 1 {
+				t.Fatalf("archived %s must be untouched, count=%d", tc.name, c)
+			}
+		})
+	}
+}
+
 // Independent review, ut-docs#187: reset empties the live sale_lines table,
 // so CleanupObsoleteItems / "Remove sample data" / a future catalog action
 // that decides an item is safe to delete by checking for LIVE sale_lines

@@ -65,9 +65,12 @@ VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(date(?, 'localtime'), ''))
 // missing — a caller (or a human) comparing the two fields needs a window
 // wide enough to contain both the collection and its payout, and must
 // treat a per-cashier scope as "this worker's payouts" vs "this shop's
-// collections", not a like-for-like pair. For "yuzde_usulu_pool" the
-// comparison is a tautology (see below) and must never be presented as a
-// pass/fail check on its own.
+// collections", not a like-for-like pair. That holds for
+// "yuzde_usulu_pool" too, whose Received side became a real, independent
+// record with ut-docs#988 (yuzde_usulu_pool_collections) rather than the
+// tautological re-sum of Allocated it was before — a genuine difference
+// there (a pool collected but not yet fully distributed) is expected and
+// must never be presented as a failed compliance check on its own.
 type WorkerAllocationSummary struct {
 	SourceType     string
 	ReceivedMinor  int64
@@ -106,16 +109,25 @@ type WorkerAllocationSummary struct {
 //     was FOR" is what the allocation rows (the "allocated" side) record.
 //   - "yuzde_usulu_pool": Turkey collects a percentage with no underlying
 //     bill line (ADR-0062/ut-docs#962 forbid a Turkey service-charge row
-//     outright) and this ADR does not invent the collection-side
-//     mechanism (ut-docs#965's own remaining scope) — so "received" for a
-//     pool is the same worker_allocations rows summed by their shared
-//     source_id batch marker (ADR-0063 Decision 3): the ledger is, for
-//     now, its own evidence that a pool was distributed in full at the
-//     moment it's recorded — Received == Allocated here BY CONSTRUCTION,
-//     a tautology, not a passed compliance check; a step-2 consumer must
-//     not render it as one. cashierID has no effect on the received total
-//     for this source_type (a pool's "received" side is the whole pool,
-//     not one worker's share) but continues to scope "allocated".
+//     outright), so there is no sale/payment/charge row to read — "received"
+//     instead sums yuzde_usulu_pool_collections, the independent,
+//     operator-entered collection record added by ut-docs#988 (the
+//     collection-side mechanism ADR-0063 Decision 3 deferred), via
+//     YuzdeUsuluPoolCollectionsTotal. Until that record existed this branch
+//     summed worker_allocations itself — the very distribution rows it is
+//     supposed to be checked against — so Received == Allocated held BY
+//     CONSTRUCTION and the comparison could never say anything. It now
+//     compares two independent records and they can legitimately differ:
+//     a pool collected today but only partly distributed so far reads
+//     Received 1000 / Allocated 600, which is exactly the state this
+//     report exists to make visible. As with "tip", a difference is not by
+//     itself a finding — the two sides run on different clocks (collection
+//     time vs allocated_at, which ADR-0063 Decision 1 says "may be later
+//     than the sale/payment") — so it must still never be rendered as a
+//     pass/fail compliance check. cashierID has no effect on the received
+//     total for this source_type (a pool's "received" side is the whole
+//     pool as collected, not one worker's share) but continues to scope
+//     "allocated".
 //   - "service_charge": needs sale_charges (ADR-0062, migration only —
 //     ut-docs#984 landed the schema, but ut-docs#985's step 2 is what
 //     wires anything to actually WRITE a row, so the table exists but is
@@ -176,17 +188,18 @@ WHERE p.local_date BETWEEN date(?) AND date(?)
 			return out, fmt.Errorf("worker allocations summary: received (tip): %w", err)
 		}
 	case "yuzde_usulu_pool":
-		// No separate collection record exists yet (see doc comment above)
-		// — the ledger's own rows are the only evidence, so "received" for
-		// a pool matches "allocated" by construction, deliberately without
-		// the cashier_id filter (a pool's received side is the whole
-		// pool's collection, not one worker's share).
-		receivedQuery := `
-SELECT COALESCE(SUM(amount_minor), 0) FROM worker_allocations
-WHERE source_type = 'yuzde_usulu_pool' AND local_date BETWEEN date(?) AND date(?)`
-		if err := r.db.QueryRowContext(ctx, receivedQuery, from, to).Scan(&out.ReceivedMinor); err != nil {
+		// The independent collection record (ut-docs#988, migration 037) —
+		// what was collected INTO the pool, as a manager recorded it, with
+		// no bill line of its own. Deliberately NOT the worker_allocations
+		// rows this function already summed above for "allocated": that was
+		// the pre-#988 tautology (see the doc comment above). Deliberately
+		// without a cashier_id scope, too — a pool's received side is the
+		// whole pool's collection, not one worker's share.
+		received, err := r.YuzdeUsuluPoolCollectionsTotal(ctx, from, to)
+		if err != nil {
 			return out, fmt.Errorf("worker allocations summary: received (yuzde_usulu_pool): %w", err)
 		}
+		out.ReceivedMinor = received
 	case "service_charge":
 		// sale_charges exists (ADR-0062, ut-docs#984) but nothing writes to
 		// it until ut-docs#985 lands — see doc comment above. ReceivedMinor

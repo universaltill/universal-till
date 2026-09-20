@@ -238,22 +238,29 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			// "reports" IsManager flag above) -- same "eod" tab model this
 			// file's own /ui/reports/tab/{name} switch documents.
 			"CanViewShrinkage": canPerform(d, r, "void_comp_waste"),
-			"Days":             days,
-			"Period":           reportPeriodParam(r),
-			"Anchor":           window.Anchor,
-			"PeriodLabel":      window.Label,
-			"YoYHas":           lastYear.Count > 0,
-			"YoYNow":           curPeriod.Total,
-			"YoYThen":          lastYear.Total,
-			"YoYPct":           yoyPct,
-			"RunningOut":       runningOut,
-			"GrandTotal":       grandTotal,
-			"GrandTax":         grandTax,
-			"GrandDiscount":    grandDiscount,
-			"GrandCount":       grandCount,
-			"GrandAvg":         grandAvg,
-			"GrandRefunds":     grandRefunds,
-			"GrandNet":         grandNet,
+			// ut-docs#988: the "yüzde usulü" pool tab is a Turkey-only
+			// obligation (İş Kanunu 4857 art. 51) with no meaning anywhere
+			// else, so its tab button is gated on the shop's configured
+			// country rather than on a permission — the permission gate
+			// inside the tab is still `worker_allocation`, shared with the
+			// Tips tab (ADR-0063: one ledger, two filtered views).
+			"ShowYuzdeUsulu": d.CurrentState().Country == "TR",
+			"Days":           days,
+			"Period":         reportPeriodParam(r),
+			"Anchor":         window.Anchor,
+			"PeriodLabel":    window.Label,
+			"YoYHas":         lastYear.Count > 0,
+			"YoYNow":         curPeriod.Total,
+			"YoYThen":        lastYear.Total,
+			"YoYPct":         yoyPct,
+			"RunningOut":     runningOut,
+			"GrandTotal":     grandTotal,
+			"GrandTax":       grandTax,
+			"GrandDiscount":  grandDiscount,
+			"GrandCount":     grandCount,
+			"GrandAvg":       grandAvg,
+			"GrandRefunds":   grandRefunds,
+			"GrandNet":       grandNet,
 		})(w, r)
 	})
 
@@ -554,6 +561,8 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			})(w, r)
 		case "tips":
 			renderTipsTab(repo, d, r, window)(w, r)
+		case "yuzde-usulu":
+			renderYuzdeUsuluTab(repo, d, r, window)(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -751,6 +760,121 @@ func renderTipsTab(repo *data.POSRepo, d *common.Deps, r *http.Request, window r
 	})
 }
 
+// yuzdeUsuluCollectionRow is one yuzde_usulu_pool_collections row for the
+// "yuzde-usulu" tab's collections table and its pool picker — the same
+// join-in-Go-not-SQL shape as tipsDetailRow above, resolving recorded_by to
+// a human name through workerAllocationDisplayNames rather than dumping a
+// raw user id.
+type yuzdeUsuluCollectionRow struct {
+	ID          string
+	CollectedAt string
+	AmountMinor int64
+	BasisNote   string
+	RecordedBy  string
+}
+
+// renderYuzdeUsuluTab builds and renders the "yuzde-usulu" tab fragment —
+// Turkey's İş Kanunu 4857 art. 51 "yüzde usulü" pool view (ut-docs#988,
+// ADR-0063's own step 2/2). Factored out of the tab switch for the same
+// reason renderTipsTab is: both POST handlers behind this tab re-render
+// this SAME fragment on success, so the htmx swap shows updated totals in
+// place.
+//
+// Structurally this mirrors renderTipsTab deliberately — same CanView
+// (`reports`) / CanRecord (`worker_allocation`) split, same reused
+// permission (ADR-0063 Decision 2: one ledger, two filtered views, so a
+// second permission would only let the two obligations drift apart), and
+// the same rule that a ?cashier= filter is honored ONLY for a CanRecord
+// session (ut-docs#964's own review blocker: otherwise a `reports`-only
+// session could read any named worker's totals straight off the query
+// string).
+//
+// The two KPIs are the point of this tab and of this card: Collected reads
+// the independent yuzde_usulu_pool_collections record, Distributed reads
+// worker_allocations. Before ut-docs#988 those were the same rows summed
+// twice (see WorkerAllocationsSummary's doc comment), so the comparison
+// could not say anything; they can now legitimately differ.
+func renderYuzdeUsuluTab(repo *data.POSRepo, d *common.Deps, r *http.Request, window reportWindow) http.HandlerFunc {
+	ctx := r.Context()
+	canView := canPerform(d, r, "reports")
+	canRecord := canPerform(d, r, "worker_allocation")
+	cashierFilter := ""
+	if canRecord {
+		cashierFilter = strings.TrimSpace(r.URL.Query().Get("cashier"))
+	}
+
+	var summary data.WorkerAllocationSummary
+	var workers []data.UserRow
+	var collections []yuzdeUsuluCollectionRow
+	var detail []tipsDetailRow
+	from, to := workerAllocationDateRange(window)
+
+	if canView {
+		// One query pair for both KPIs: summary.ReceivedMinor IS the
+		// collections total (that source_type's branch calls
+		// YuzdeUsuluPoolCollectionsTotal), deliberately unscoped by
+		// cashier — a pool's collected side is the whole pool, never one
+		// worker's share — while AllocatedMinor honors cashierFilter.
+		summary, _ = repo.WorkerAllocationsSummary(ctx, from, to, cashierFilter, "yuzde_usulu_pool")
+		if canRecord {
+			allUsers, _ := data.NewAuthRepo(d.Db).ListUsers(ctx)
+			workers = allUsers
+			names := workerAllocationDisplayNames(allUsers)
+
+			poolRows, _ := repo.ListYuzdeUsuluPoolCollections(ctx, from, to)
+			for _, p := range poolRows {
+				recordedBy := names[p.RecordedBy]
+				if recordedBy == "" {
+					recordedBy = p.RecordedBy
+				}
+				collections = append(collections, yuzdeUsuluCollectionRow{
+					ID:          p.ID,
+					CollectedAt: p.CollectedAt,
+					AmountMinor: p.AmountMinor,
+					BasisNote:   p.BasisNote,
+					RecordedBy:  recordedBy,
+				})
+			}
+
+			allocRows, _ := repo.ListWorkerAllocations(ctx, from, to, cashierFilter, "yuzde_usulu_pool")
+			for _, m := range allocRows {
+				worker := names[m.CashierID]
+				if worker == "" {
+					worker = m.CashierID
+				}
+				detail = append(detail, tipsDetailRow{
+					AllocatedAt: m.AllocatedAt,
+					Worker:      worker,
+					SourceType:  m.SourceType,
+					AmountMinor: m.AmountMinor,
+					Note:        m.Note,
+				})
+			}
+		}
+	}
+
+	return httpx.RenderPartial("ui/partials/reports_tab_yuzde_usulu.html", map[string]any{
+		"StoreName":     storeNameOrDefault(ctx, d),
+		"CanView":       canView,
+		"CanRecord":     canRecord,
+		"CashierFilter": cashierFilter,
+		"Workers":       workers,
+		"Collected":     summary.ReceivedMinor,
+		"Distributed":   summary.AllocatedMinor,
+		"Collections":   collections,
+		"Detail":        detail,
+		"From":          from,
+		"To":            to,
+		// LOCAL, matching both POST handlers' own future-date check
+		// (workerAllocationRequestedAt) — see renderTipsTab's own note for
+		// why every clock this tab touches is local, never UTC.
+		"Today":  time.Now().Format("2006-01-02"),
+		"Days":   parseReportDays(r),
+		"Period": reportPeriodParam(r),
+		"Anchor": window.Anchor,
+	})
+}
+
 // registerWorkerAllocationAPI mounts the record-a-payout POST and the CSV
 // export GET behind the "tips" tab (ut-docs#964). A separate function
 // (rather than inlining the two mux.HandleFunc calls directly in the
@@ -789,10 +913,53 @@ func registerWorkerAllocationAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
+		// "yuzde_usulu_pool" (ut-docs#988) joins the two original values:
+		// the SAME endpoint records a Turkey pool distribution, because
+		// ADR-0063 Decision 2 is explicitly one ledger with two filtered
+		// views — a second write path would be exactly how the two
+		// obligations silently drift apart. The tip/service_charge request
+		// shape is unchanged for existing callers: only the accepted set
+		// widens, and only the new value requires the extra pool_id field
+		// below.
 		sourceType := strings.TrimSpace(r.FormValue("source_type"))
-		if sourceType != "tip" && sourceType != "service_charge" {
-			http.Error(w, `source_type must be "tip" or "service_charge"`, http.StatusBadRequest)
+		if sourceType != "tip" && sourceType != "service_charge" && sourceType != "yuzde_usulu_pool" {
+			http.Error(w, `source_type must be "tip", "service_charge" or "yuzde_usulu_pool"`, http.StatusBadRequest)
 			return
+		}
+
+		// sourceID stays "" for tip/service_charge exactly as before (a UK
+		// payout is not traced to one payment row from this form). For a
+		// pool distribution it is the collection the money is coming out
+		// of — ADR-0063 Decision 3's "shared source_id (a pool-batch
+		// identifier, not a sales.id) linking every worker_allocations row
+		// from one distribution event", which since ut-docs#988 is a real
+		// yuzde_usulu_pool_collections row rather than a bare marker
+		// string. Validated here (400, not 500) so a distribution can
+		// never point at a pool that does not exist.
+		sourceID := ""
+		if sourceType == "yuzde_usulu_pool" {
+			poolID := strings.TrimSpace(r.FormValue("pool_id"))
+			if poolID == "" {
+				http.Error(w, "pool_id is required for a yuzde_usulu_pool distribution", http.StatusBadRequest)
+				return
+			}
+			// Distinguish "no such pool" (a 400 on an operator-supplied
+			// pool_id) from a real query failure (a 500) — GetYuzdeUsuluPoolCollection's
+			// own doc comment promises exactly this distinction; collapsing
+			// both into one 400 would misreport a DB fault (e.g. "database
+			// is locked" during a concurrent reset) as the operator's own
+			// mistake, with nothing reaching the log (independent review,
+			// ut-docs#988).
+			_, found, err := repo.GetYuzdeUsuluPoolCollection(ctx, poolID)
+			if err != nil {
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "reports.tips.error.save", "worker_allocation_record", err)
+				return
+			}
+			if !found {
+				http.Error(w, "pool_id must be a recorded pool collection", http.StatusBadRequest)
+				return
+			}
+			sourceID = poolID
 		}
 
 		amtStr := strings.TrimSpace(r.FormValue("amount"))
@@ -822,14 +989,22 @@ func registerWorkerAllocationAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		defer tx.Rollback()
 
-		if err := repo.InsertWorkerAllocation(ctx, tx, id, sourceType, "", cashierID, amountMinor, allocatedAt, note); err != nil {
+		if err := repo.InsertWorkerAllocation(ctx, tx, id, sourceType, sourceID, cashierID, amountMinor, allocatedAt, note); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "reports.tips.error.save", "worker_allocation_record", err)
 			return
 		}
 		actorID := getSessionUserID(r)
 		now := time.Now().UTC().Format(time.RFC3339)
+		auditDetail := map[string]any{"source_type": sourceType, "cashier_id": cashierID, "amount_minor": amountMinor, "note": note}
+		// Only present for a pool distribution — a tip/service_charge audit
+		// row keeps exactly the fields it had before ut-docs#988 (sourceID
+		// is always "" on those paths, so recording it would be noise on
+		// every existing UK record).
+		if sourceID != "" {
+			auditDetail["source_id"] = sourceID
+		}
 		if err := repo.InsertAudit(ctx, tx, actorID, "worker_allocation", id, "worker_allocation_recorded",
-			map[string]any{"source_type": sourceType, "cashier_id": cashierID, "amount_minor": amountMinor, "note": note}, now, ""); err != nil {
+			auditDetail, now, ""); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "reports.tips.error.save", "worker_allocation_record", err)
 			return
 		}
@@ -863,7 +1038,115 @@ func registerWorkerAllocationAPI(mux *http.ServeMux, d *common.Deps) {
 
 		bizDayStart, _, _ := d.Settings.Get(ctx, keyReportsBusinessDayStart)
 		window := parseReportWindow(r, bizDayStart)
+		// A pool distribution is submitted from the "yuzde-usulu" tab, not
+		// the "tips" tab, so it must swap that tab's own fragment back into
+		// #report-tab-panel (ut-docs#988) — re-rendering the tips fragment
+		// here would replace the operator's open tab with a different
+		// report. tip/service_charge is untouched: same fragment, same
+		// bytes, as before.
+		if sourceType == "yuzde_usulu_pool" {
+			renderYuzdeUsuluTab(repo, d, r, window)(w, r)
+			return
+		}
 		renderTipsTab(repo, d, r, window)(w, r)
+	})
+
+	// POST /api/reports/worker-allocations/pool-collections records the
+	// COLLECTION side of a Turkey yüzde usulü pool (ut-docs#988) — "we
+	// collected X today", with deliberately NO customer-facing bill line,
+	// since a Turkey service-charge line is forbidden outright
+	// (ut-docs#962, common.ServiceChargeForbidden — untouched here). It is
+	// a separate endpoint from the distribution POST above because it
+	// writes a different table for a different event: money coming IN to
+	// the pool, not going OUT to a named worker. It reuses the same
+	// `worker_allocation` permission (ADR-0063 Decision 2: one ledger, two
+	// filtered views — a separate permission would let the two obligations
+	// drift apart) and the same date validation, so a collection can no
+	// more be backdated into the future than a payout can.
+	mux.HandleFunc("POST /api/reports/worker-allocations/pool-collections", func(w http.ResponseWriter, r *http.Request) {
+		if !canPerform(d, r, "worker_allocation") {
+			http.Error(w, "worker_allocation permission required", http.StatusForbidden)
+			return
+		}
+		ctx := r.Context()
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "invalid form data", http.StatusBadRequest)
+			return
+		}
+
+		date := strings.TrimSpace(r.FormValue("date"))
+		if !eodDateRe.MatchString(date) {
+			http.Error(w, "date must be YYYY-MM-DD", http.StatusBadRequest)
+			return
+		}
+
+		amtStr := strings.TrimSpace(r.FormValue("amount"))
+		amountMinor, err := strconv.ParseInt(amtStr, 10, 64)
+		if err != nil || amountMinor <= 0 {
+			http.Error(w, "amount must be a positive integer (minor units)", http.StatusBadRequest)
+			return
+		}
+
+		basisNote := r.FormValue("basis_note")
+
+		collectedAt, isFuture, err := workerAllocationRequestedAt(date, time.Now())
+		if err != nil {
+			http.Error(w, "date must be YYYY-MM-DD", http.StatusBadRequest)
+			return
+		}
+		if isFuture {
+			http.Error(w, "date must not be in the future", http.StatusBadRequest)
+			return
+		}
+		id := uuid.NewString()
+		actorID := getSessionUserID(r)
+
+		tx, err := d.Db.BeginTx(ctx, nil)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "reports.yuzde_usulu.error.save", "yuzde_usulu_pool_collection_record", err)
+			return
+		}
+		defer tx.Rollback()
+
+		// recorded_by is the session user who entered it — the collection's
+		// own attribution, distinct from worker_allocations.cashier_id
+		// (who a distribution was paid TO).
+		if err := repo.InsertYuzdeUsuluPoolCollection(ctx, tx, id, actorID, amountMinor, collectedAt, basisNote); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "reports.yuzde_usulu.error.save", "yuzde_usulu_pool_collection_record", err)
+			return
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		if err := repo.InsertAudit(ctx, tx, actorID, "yuzde_usulu_pool_collection", id, "yuzde_usulu_pool_collection_recorded",
+			map[string]any{"amount_minor": amountMinor, "basis_note": basisNote}, now, ""); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "reports.yuzde_usulu.error.save", "yuzde_usulu_pool_collection_record", err)
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "reports.yuzde_usulu.error.save", "yuzde_usulu_pool_collection_record", err)
+			return
+		}
+
+		// Same window-preserving re-render as the distribution POST above
+		// (see its own comment for why the already-parsed form values are
+		// copied onto r.URL.RawQuery): parseReportWindow/renderYuzdeUsuluTab
+		// read r.URL.Query(), which is empty for this POST's body-encoded
+		// fields, so without this the refreshed tab would silently reset to
+		// the 14-day default instead of the window the operator had open.
+		q := url.Values{}
+		if period := r.FormValue("period"); period != "" {
+			q.Set("period", period)
+			q.Set("anchor", r.FormValue("anchor"))
+		} else if days := r.FormValue("days"); days != "" {
+			q.Set("days", days)
+		}
+		if cashier := r.FormValue("cashier"); cashier != "" {
+			q.Set("cashier", cashier)
+		}
+		r.URL.RawQuery = q.Encode()
+
+		bizDayStart, _, _ := d.Settings.Get(ctx, keyReportsBusinessDayStart)
+		window := parseReportWindow(r, bizDayStart)
+		renderYuzdeUsuluTab(repo, d, r, window)(w, r)
 	})
 
 	mux.HandleFunc("GET /api/reports/worker-allocations/export", func(w http.ResponseWriter, r *http.Request) {
@@ -902,9 +1185,22 @@ func registerWorkerAllocationAPI(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "reports.tips.error.export", "worker_allocation_export", err)
 			return
 		}
-		rows := make([]data.WorkerAllocation, 0, len(tipRows)+len(scRows))
+		// yuzde_usulu_pool (ut-docs#988) is merged into this SAME export
+		// rather than getting one of its own: these are rows of one ledger
+		// (ADR-0063 Decision 2), the CSV already carries source_type on
+		// every row to tell them apart, and a second endpoint would be a
+		// second thing to keep in step with this one. Additive for existing
+		// callers — a shop that has never recorded a pool gets byte-
+		// identical output, since the extra rows simply do not exist.
+		poolRows, err := repo.ListWorkerAllocations(ctx, from, to, cashierID, "yuzde_usulu_pool")
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "reports.tips.error.export", "worker_allocation_export", err)
+			return
+		}
+		rows := make([]data.WorkerAllocation, 0, len(tipRows)+len(scRows)+len(poolRows))
 		rows = append(rows, tipRows...)
 		rows = append(rows, scRows...)
+		rows = append(rows, poolRows...)
 		sort.Slice(rows, func(i, j int) bool { return rows[i].AllocatedAt > rows[j].AllocatedAt })
 
 		now := time.Now().UTC().Format(time.RFC3339)
