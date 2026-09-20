@@ -2033,6 +2033,270 @@ func TestPostRefund_NonOKCPluginForgedEvidence_NotPersistedOrConfirmed(t *testin
 	}
 }
 
+// ut-docs#2415: refund_page.go's GET handler mints a fresh
+// refund_attempt_id per page render (the hidden field the POST handler
+// below folds into its idempotency key) -- without it, every browser
+// reload of the refund screen would carry no attempt identity at all and
+// silently fall back to the pre-fix fresh-id-per-call behaviour.
+func TestRefundPage_RendersRefundAttemptID(t *testing.T) {
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+	get := func() string {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/refund/"+receiptNo, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /refund/%s: %d", receiptNo, rec.Code)
+		}
+		m := regexp.MustCompile(`name="refund_attempt_id" value="([^"]+)"`).FindStringSubmatch(rec.Body.String())
+		if m == nil {
+			t.Fatalf("refund-form is missing its hidden refund_attempt_id input (ut-docs#2415): %s", rec.Body.String())
+		}
+		return m[1]
+	}
+
+	first := get()
+	second := get()
+	if first == second {
+		t.Fatalf("two separate page loads minted the SAME refund_attempt_id (%q) -- a fresh page load must mint a fresh attempt, per ut-docs#2415's \"reset ... or completes\" requirement", first)
+	}
+}
+
+// ut-docs#2415: mirrors TestTenderHandler_RetriedTenderOnSameBasketReusesIdempotencyKey
+// (pos_api_test.go) for the refund path -- the operator re-tapping Refund
+// after a timeout on the SAME rendered form (same refund_attempt_id, same
+// selected lines/amount/method) must ask the plugin the SAME question, so
+// a device that already printed the iade fişi recognizes the repeat
+// instead of printing a second one.
+func TestPostRefund_RetriedRefundOnSameAttemptReusesIdempotencyKey(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated, min_pos_version, api_version, published_at)
+	          VALUES ('com.universaltill.payment-demo', '1.0.0', 'Demo Pay', 'demopay', 'wasm', 'plugin.wasm', 'https://example.test/demopay.wasm', 'deadbeef', 'auth', 'site', '[]', 0, '0.0.0', '1', datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.payment-demo', 'Demo Pay', '1.0.0', 'plugin.wasm', 'wasm', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
+	          VALUES ('e-demopay', 'com.universaltill.payment-demo', 'demopay', 'Demo Pay', 'payment', 'payment.demopay.requested', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+	          VALUES ('h-demopay', 'com.universaltill.payment-demo', 'payment.demopay.refund', 'handle_refund', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+	          VALUES ('p-demopay', 'com.universaltill.payment-demo', 'events:receive', 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.demopay.refund", plugins.Blocking)
+	var seenIDs []string
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.payment-demo",
+		[]string{"payment.demopay.refund"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			seenIDs = append(seenIDs, ev.ID)
+			// Every attempt in this test declines -- what's under test is
+			// whether a retry on the SAME attempt carries the same id, not
+			// what happens on eventual success.
+			return nil, errors.New("demopay: provider declined")
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := "receipt=" + receiptNo + "&qty_0=2&method=demopay&refund_attempt_id=fixed-attempt-1"
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusPaymentRequired {
+			t.Fatalf("attempt %d: want 402 on a declined plugin gate, got %d: %s", i, rec.Code, rec.Body.String())
+		}
+	}
+
+	if len(seenIDs) != 2 {
+		t.Fatalf("plugin saw %d refund calls, want 2 (one per POST): %v", len(seenIDs), seenIDs)
+	}
+	if seenIDs[0] == "" {
+		t.Fatalf("first attempt's event id was empty")
+	}
+	if seenIDs[0] != seenIDs[1] {
+		t.Fatalf("retry of the SAME refund attempt used a different idempotency key: first=%q second=%q", seenIDs[0], seenIDs[1])
+	}
+}
+
+// ut-docs#2415 (mirrors ut-docs#1762's own review finding, re-applied to
+// the refund path): the SAME refund_attempt_id must NOT reuse the same
+// idempotency key when the actual refunded content changes -- otherwise a
+// genuinely different refund on the same attempt/page load would replay
+// the device's memoized answer for the WRONG amount, unnoticed.
+func TestPostRefund_ChangedRefundAmountOnSameAttemptGetsDifferentIdempotencyKey(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated, min_pos_version, api_version, published_at)
+	          VALUES ('com.universaltill.payment-demo', '1.0.0', 'Demo Pay', 'demopay', 'wasm', 'plugin.wasm', 'https://example.test/demopay.wasm', 'deadbeef', 'auth', 'site', '[]', 0, '0.0.0', '1', datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.payment-demo', 'Demo Pay', '1.0.0', 'plugin.wasm', 'wasm', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
+	          VALUES ('e-demopay', 'com.universaltill.payment-demo', 'demopay', 'Demo Pay', 'payment', 'payment.demopay.requested', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+	          VALUES ('h-demopay', 'com.universaltill.payment-demo', 'payment.demopay.refund', 'handle_refund', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+	          VALUES ('p-demopay', 'com.universaltill.payment-demo', 'events:receive', 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.demopay.refund", plugins.Blocking)
+	var seenIDs []string
+	var seenAmounts []int64
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.payment-demo",
+		[]string{"payment.demopay.refund"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			seenIDs = append(seenIDs, ev.ID)
+			var p struct {
+				Amount int64 `json:"amount"`
+			}
+			_ = json.Unmarshal(ev.Payload, &p)
+			seenAmounts = append(seenAmounts, p.Amount)
+			return nil, errors.New("demopay: provider declined")
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	// SAME refund_attempt_id (the same rendered page/form) both times, but
+	// the operator refunds a different quantity the second time -- a
+	// genuinely different refund, not a retry of the first.
+	for _, qty := range []string{"2", "1"} {
+		body := "receipt=" + receiptNo + "&qty_0=" + qty + "&method=demopay&refund_attempt_id=fixed-attempt-1"
+		req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusPaymentRequired {
+			t.Fatalf("qty=%s: want 402 on a declined plugin gate, got %d: %s", qty, rec.Code, rec.Body.String())
+		}
+	}
+
+	if len(seenIDs) != 2 {
+		t.Fatalf("plugin saw %d refund calls, want 2: %v", len(seenIDs), seenIDs)
+	}
+	if seenAmounts[0] == seenAmounts[1] {
+		t.Fatalf("test fixture error: both requests carried the same amount (%d) -- the amount must actually differ for this test to be meaningful", seenAmounts[0])
+	}
+	if seenIDs[0] == seenIDs[1] {
+		t.Fatalf("a changed refund amount on the SAME attempt reused the SAME idempotency key (%q) -- the device would replay the first attempt's stale answer for the new amount", seenIDs[0])
+	}
+}
+
+// ut-docs#2415 independent review finding (blocker): unlike the tender
+// side, where engine.Reset() clears TenderAttemptID the instant a sale
+// commits, a refund's attempt id lives in a client-held hidden field with
+// nothing server-side to invalidate it once a refund completes -- the
+// refund page carries no Cache-Control: no-store, so a bfcache'd back-
+// navigation can resubmit the exact same stale form. Without folding
+// something server-side (guard.returnedQtyByLine, which changes the
+// instant ANY refund against this sale commits) into the key, two
+// SEPARATE, sequentially COMMITTED partial refunds of the same sale/
+// method/amount would share one requestID -- the device would silently
+// replay the FIRST refund's iade fişi evidence for the second: two
+// refunds paid out, one legal refund receipt on file.
+func TestPostRefund_TwoCommittedRefundsOnSameAttemptGetDifferentIdempotencyKeys(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated, min_pos_version, api_version, published_at)
+	          VALUES ('com.universaltill.payment-demo', '1.0.0', 'Demo Pay', 'demopay', 'wasm', 'plugin.wasm', 'https://example.test/demopay.wasm', 'deadbeef', 'auth', 'site', '[]', 0, '0.0.0', '1', datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.payment-demo', 'Demo Pay', '1.0.0', 'plugin.wasm', 'wasm', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
+	          VALUES ('e-demopay', 'com.universaltill.payment-demo', 'demopay', 'Demo Pay', 'payment', 'payment.demopay.requested', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+	          VALUES ('h-demopay', 'com.universaltill.payment-demo', 'payment.demopay.refund', 'handle_refund', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+	          VALUES ('p-demopay', 'com.universaltill.payment-demo', 'events:receive', 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.demopay.refund", plugins.Blocking)
+	var seenIDs []string
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.payment-demo",
+		[]string{"payment.demopay.refund"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			seenIDs = append(seenIDs, ev.ID)
+			// Every attempt in this test APPROVES -- unlike the sibling
+			// tests above, this one must reach CompleteSale and actually
+			// commit each return, since the bug under test only exists
+			// AFTER a refund has genuinely completed.
+			return json.RawMessage(`{"provider":"demopay","outcome":"approved"}`), nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The seeded sale sold 2 units of itm1. Two SEPARATE, real partial
+	// refunds of 1 unit each -- same refund_attempt_id both times (the
+	// operator's browser restored the same stale form via back/forward,
+	// or simply never re-fetched a fresh one), each one a genuinely
+	// distinct return the operator intends to actually happen.
+	for i := 0; i < 2; i++ {
+		body := "receipt=" + receiptNo + "&qty_0=1&method=demopay&refund_attempt_id=fixed-attempt-1"
+		req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("refund %d: want 200 (plugin approves), got %d: %s", i, rec.Code, rec.Body.String())
+		}
+	}
+
+	var returnCount int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales WHERE sale_type = 'return'`).Scan(&returnCount); err != nil {
+		t.Fatalf("query sales: %v", err)
+	}
+	if returnCount != 2 {
+		t.Fatalf("expected two separate committed returns, got %d", returnCount)
+	}
+
+	if len(seenIDs) != 2 {
+		t.Fatalf("plugin saw %d refund calls, want 2: %v", len(seenIDs), seenIDs)
+	}
+	if seenIDs[0] == "" {
+		t.Fatalf("first refund's event id was empty")
+	}
+	if seenIDs[0] == seenIDs[1] {
+		t.Fatalf("two SEPARATE, committed refunds on the same stale attempt id shared ONE idempotency key (%q) -- the device would replay the first refund's iade fişi evidence for the second, a real double-refund/single-receipt fiscal bug", seenIDs[0])
+	}
+}
+
 // ut-docs#944: CompleteSale's own failure used to leak raw Go/SQL error text
 // via http.Error(w, err.Error(), 400). Forced here by dropping
 // stock_movements -- a table CompleteSale's own transaction writes to

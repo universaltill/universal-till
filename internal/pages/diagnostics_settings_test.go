@@ -29,10 +29,21 @@ func withDiagnosticsTestState(t *testing.T) {
 	orig := diagnostics.PendingDir
 	diagnostics.PendingDir = t.TempDir()
 	_, _ = diagnostics.Stop(context.Background(), noopKV{}, diagnostics.EndedStopped)
+	resetPeriodicTableClaimDedup()
 	t.Cleanup(func() {
 		_, _ = diagnostics.Stop(context.Background(), noopKV{}, diagnostics.EndedStopped)
+		resetPeriodicTableClaimDedup()
 		diagnostics.PendingDir = orig
 	})
+}
+
+// resetPeriodicTableClaimDedup clears tables_claim_proxy.go's package-level
+// periodic-reaffirm emit cache (ut-docs#2234), so one test's suppression
+// state can never leak into the next.
+func resetPeriodicTableClaimDedup() {
+	periodicClaimEmitMu.Lock()
+	defer periodicClaimEmitMu.Unlock()
+	periodicClaimEmitLast = map[string]periodicClaimEmit{}
 }
 
 type noopKV struct{}
@@ -575,7 +586,7 @@ func TestClaimTableWriteThroughEmitsTableAssignment(t *testing.T) {
 	}
 	repo := data.NewPOSRepo(dp.Db)
 	tableID := createTestTable(t, dp, "Window Seat PIN 4321")
-	if claimed, err := claimTableWriteThrough(context.Background(), dp, repo, tableID); err != nil || !claimed {
+	if claimed, err := claimTableWriteThrough(context.Background(), dp, repo, tableID, false); err != nil || !claimed {
 		t.Fatalf("first claim: %v %v", claimed, err)
 	}
 	// A second local claim of a table THIS till holds is a refresh (the
@@ -591,7 +602,7 @@ func TestClaimTableWriteThroughEmitsTableAssignment(t *testing.T) {
 	if claimed, err := repo.ClaimTableForTill(context.Background(), tableID, "till-other", time.Now().Add(-time.Hour)); err != nil || !claimed {
 		t.Fatalf("other till's claim: %v %v", claimed, err)
 	}
-	if claimed, err := claimTableWriteThrough(context.Background(), dp, repo, tableID); err != nil || claimed {
+	if claimed, err := claimTableWriteThrough(context.Background(), dp, repo, tableID, false); err != nil || claimed {
 		t.Fatalf("second claim: claimed=%v err=%v, want refused", claimed, err)
 	}
 	evs := ringEventsOfType(t, "table_assignment")
@@ -609,6 +620,225 @@ func TestClaimTableWriteThroughEmitsTableAssignment(t *testing.T) {
 		if strings.Contains(raw, "Window") || strings.Contains(raw, "4321") {
 			t.Fatalf("table label leaked: %s", raw)
 		}
+	}
+}
+
+// --- ut-docs#2234: periodic held-order re-affirm churn ---------------------
+//
+// The ~30s held-order re-affirm tick (sync_admin.go's
+// heldOrderClaimReaffirmTick -> reaffirmHeldOrderTableClaims) re-claims
+// every parked order's table whether or not anything changed, which used to
+// put a byte-identical table_assignment into the stream roughly twice a
+// minute per parked order. ADR-0092's Amendment (2026-09-20) narrows ONLY
+// that path: an unchanged outcome for the same table within the same
+// diagnostic session is not re-emitted. Everything an operator does still
+// emits unconditionally.
+
+// letAnotherLiveTillHold hands tableID to a DIFFERENT, still-live till, so
+// this till's next claim is genuinely refused (a plain re-claim of a table
+// this till already holds is a refresh that still reports claimed, the
+// own-empty-till-id row disjunct of ut-docs#1704).
+func letAnotherLiveTillHold(t *testing.T, dp *common.Deps, repo *data.POSRepo, tableID string) {
+	t.Helper()
+	if err := repo.ReleaseTableClaim(context.Background(), tableID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO tills (id, name, bearer_hash, last_seen_at) VALUES ('till-other', 'Other', 'bh-o', ?)`,
+		time.Now().UTC().Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+	if claimed, err := repo.ClaimTableForTill(context.Background(), tableID, "till-other", time.Now().Add(-time.Hour)); err != nil || !claimed {
+		t.Fatalf("other till's claim: claimed=%v err=%v", claimed, err)
+	}
+}
+
+// Two ticks, same table, same session, identical outcome: one event, not two.
+func TestPeriodicReaffirmSuppressesUnchangedTableAssignment(t *testing.T) {
+	withDiagnosticsTestState(t)
+	_, dp := newPOSTestDeps(t)
+	if err := diagnostics.Activate(t.Context(), dp.Settings, "sess-periodic-same", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	repo := data.NewPOSRepo(dp.Db)
+	tableID := createTestTable(t, dp, "T1")
+	for i := 0; i < 2; i++ {
+		if claimed, err := claimTableWriteThrough(context.Background(), dp, repo, tableID, true); err != nil || !claimed {
+			t.Fatalf("tick %d: claimed=%v err=%v", i, claimed, err)
+		}
+	}
+	evs := ringEventsOfType(t, "table_assignment")
+	if len(evs) != 1 {
+		t.Fatalf("table_assignment events = %d, want 1 (the second tick is unchanged churn)", len(evs))
+	}
+	if evs[0]["table_id"] != tableID || evs[0]["outcome"] != diagnostics.TableOutcomeClaimed {
+		t.Fatalf("event = %v", evs[0])
+	}
+	// The claim itself is never gated — only the diagnostic side effect is.
+	if !tableOccupied(t, dp, tableID) {
+		t.Fatal("the suppressed tick must still have done the claim work")
+	}
+}
+
+// The first observation of a table within a session always emits — there is
+// no prior cache entry to compare against.
+func TestPeriodicReaffirmFirstObservationEmits(t *testing.T) {
+	withDiagnosticsTestState(t)
+	_, dp := newPOSTestDeps(t)
+	if err := diagnostics.Activate(t.Context(), dp.Settings, "sess-periodic-first", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	repo := data.NewPOSRepo(dp.Db)
+	tableID := createTestTable(t, dp, "T1")
+	if claimed, err := claimTableWriteThrough(context.Background(), dp, repo, tableID, true); err != nil || !claimed {
+		t.Fatalf("first tick: claimed=%v err=%v", claimed, err)
+	}
+	evs := ringEventsOfType(t, "table_assignment")
+	if len(evs) != 1 || evs[0]["outcome"] != diagnostics.TableOutcomeClaimed {
+		t.Fatalf("events = %v, want one claimed", evs)
+	}
+}
+
+// A genuine change between ticks is exactly what the stream exists to show:
+// claimed on tick 1, refused on tick 2 (another live till took the table)
+// emits BOTH.
+func TestPeriodicReaffirmEmitsWhenOutcomeChanges(t *testing.T) {
+	withDiagnosticsTestState(t)
+	_, dp := newPOSTestDeps(t)
+	if err := diagnostics.Activate(t.Context(), dp.Settings, "sess-periodic-change", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	repo := data.NewPOSRepo(dp.Db)
+	tableID := createTestTable(t, dp, "T1")
+	if claimed, err := claimTableWriteThrough(context.Background(), dp, repo, tableID, true); err != nil || !claimed {
+		t.Fatalf("tick 1: claimed=%v err=%v", claimed, err)
+	}
+	letAnotherLiveTillHold(t, dp, repo, tableID)
+	if claimed, err := claimTableWriteThrough(context.Background(), dp, repo, tableID, true); err != nil || claimed {
+		t.Fatalf("tick 2: claimed=%v err=%v, want refused", claimed, err)
+	}
+	evs := ringEventsOfType(t, "table_assignment")
+	if len(evs) != 2 {
+		t.Fatalf("table_assignment events = %d, want 2 (the outcome changed)", len(evs))
+	}
+	if evs[0]["outcome"] != diagnostics.TableOutcomeClaimed || evs[1]["outcome"] != diagnostics.TableOutcomeRefused {
+		t.Fatalf("outcomes = %v / %v", evs[0]["outcome"], evs[1]["outcome"])
+	}
+}
+
+// A fresh diagnostic session must never be silently gapped by what the
+// PREVIOUS session already saw: the cache is scoped by session id, so the
+// new session's first re-affirm of the same table with the same outcome
+// still emits.
+func TestPeriodicReaffirmEmitsAgainInNewDiagnosticSession(t *testing.T) {
+	withDiagnosticsTestState(t)
+	_, dp := newPOSTestDeps(t)
+	if err := diagnostics.Activate(t.Context(), dp.Settings, "sess-periodic-old", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	repo := data.NewPOSRepo(dp.Db)
+	tableID := createTestTable(t, dp, "T1")
+	for i := 0; i < 2; i++ {
+		if claimed, err := claimTableWriteThrough(context.Background(), dp, repo, tableID, true); err != nil || !claimed {
+			t.Fatalf("old session tick %d: claimed=%v err=%v", i, claimed, err)
+		}
+	}
+	if evs := ringEventsOfType(t, "table_assignment"); len(evs) != 1 {
+		t.Fatalf("old session: events = %d, want 1", len(evs))
+	}
+	// A new session starts (Activate resets the ring), same table, same
+	// outcome as the old session's last emit.
+	if err := diagnostics.Activate(t.Context(), dp.Settings, "sess-periodic-new", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if claimed, err := claimTableWriteThrough(context.Background(), dp, repo, tableID, true); err != nil || !claimed {
+		t.Fatalf("new session tick: claimed=%v err=%v", claimed, err)
+	}
+	evs := ringEventsOfType(t, "table_assignment")
+	if len(evs) != 1 || evs[0]["table_id"] != tableID {
+		t.Fatalf("new session: events = %v, want the same table re-emitted once", evs)
+	}
+}
+
+// The invariant that must never regress: an operator-driven claim
+// (periodic=false, i.e. pos_api.go / hold_api.go) ALWAYS emits, even twice
+// in a row with an identical outcome. Deduplicating those would be a real
+// diagnostics bug, not an optimization.
+func TestOperatorDrivenClaimAlwaysEmitsEvenWhenUnchanged(t *testing.T) {
+	withDiagnosticsTestState(t)
+	_, dp := newPOSTestDeps(t)
+	if err := diagnostics.Activate(t.Context(), dp.Settings, "sess-operator-claim", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	repo := data.NewPOSRepo(dp.Db)
+	tableID := createTestTable(t, dp, "T1")
+	for i := 0; i < 2; i++ {
+		if claimed, err := claimTableWriteThrough(context.Background(), dp, repo, tableID, false); err != nil || !claimed {
+			t.Fatalf("operator claim %d: claimed=%v err=%v", i, claimed, err)
+		}
+	}
+	evs := ringEventsOfType(t, "table_assignment")
+	if len(evs) != 2 {
+		t.Fatalf("table_assignment events = %d, want 2 — an operator-driven claim is never deduplicated", len(evs))
+	}
+}
+
+// Per-table state: one table's cache entry must never suppress another
+// table's first emit in the same pass.
+func TestPeriodicReaffirmDedupIsPerTable(t *testing.T) {
+	withDiagnosticsTestState(t)
+	_, dp := newPOSTestDeps(t)
+	if err := diagnostics.Activate(t.Context(), dp.Settings, "sess-periodic-multi", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	repo := data.NewPOSRepo(dp.Db)
+	tableA := createTestTable(t, dp, "T1")
+	tableB := createTestTable(t, dp, "T2")
+	for _, id := range []string{tableA, tableA, tableB} {
+		if claimed, err := claimTableWriteThrough(context.Background(), dp, repo, id, true); err != nil || !claimed {
+			t.Fatalf("periodic claim of %s: claimed=%v err=%v", id, claimed, err)
+		}
+	}
+	evs := ringEventsOfType(t, "table_assignment")
+	if len(evs) != 2 {
+		t.Fatalf("table_assignment events = %d, want 2 (A once, B once)", len(evs))
+	}
+	if evs[0]["table_id"] != tableA || evs[1]["table_id"] != tableB {
+		t.Fatalf("events = %v, want table A then table B", evs)
+	}
+}
+
+// A claim that stays "claimed" while via flips primary<->local is a real
+// primary-reachability transition, not churn — the dedup key includes via
+// specifically so a failover between ticks is never silently swallowed.
+func TestPeriodicReaffirmEmitsWhenViaChanges(t *testing.T) {
+	withDiagnosticsTestState(t)
+	_, dp := newPOSTestDeps(t)
+	if err := diagnostics.Activate(t.Context(), dp.Settings, "sess-periodic-via", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	repo := data.NewPOSRepo(dp.Db)
+	tableID := createTestTable(t, dp, "T1")
+
+	primary := newClaimProxyPrimary(t, true)
+	setReplicaSettings(t, dp.Settings, primary.srv.URL, "b-123")
+	if claimed, err := claimTableWriteThrough(context.Background(), dp, repo, tableID, true); err != nil || !claimed {
+		t.Fatalf("tick 1 (primary reachable): claimed=%v err=%v", claimed, err)
+	}
+
+	primary.srv.Close() // primary goes unreachable between ticks
+	if claimed, err := claimTableWriteThrough(context.Background(), dp, repo, tableID, true); err != nil || !claimed {
+		t.Fatalf("tick 2 (primary unreachable, local fallback): claimed=%v err=%v", claimed, err)
+	}
+
+	evs := ringEventsOfType(t, "table_assignment")
+	if len(evs) != 2 {
+		t.Fatalf("table_assignment events = %d, want 2 (outcome unchanged but via flipped primary->local)", len(evs))
+	}
+	if evs[0]["outcome"] != diagnostics.TableOutcomeClaimed || evs[1]["outcome"] != diagnostics.TableOutcomeClaimed {
+		t.Fatalf("both ticks must report claimed: %v / %v", evs[0]["outcome"], evs[1]["outcome"])
+	}
+	if evs[0]["via"] != diagnostics.ViaPrimary || evs[1]["via"] != diagnostics.ViaLocal {
+		t.Fatalf("via = %v / %v, want primary then local", evs[0]["via"], evs[1]["via"])
 	}
 }
 

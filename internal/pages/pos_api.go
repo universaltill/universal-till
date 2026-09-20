@@ -1346,7 +1346,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				// is the cheap, held_sales-aware pre-check; losing here
 				// means a concurrent claim landed in between -- same
 				// "occupied" answer, no 500.
-				claimed, err = claimTableWriteThrough(ctx, d, repo, tableID)
+				claimed, err = claimTableWriteThrough(ctx, d, repo, tableID, false)
 			}
 			if err != nil {
 				log.Printf("table claim: %s: %v", tableID, err)
