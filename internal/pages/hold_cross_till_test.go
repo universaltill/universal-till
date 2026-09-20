@@ -142,7 +142,7 @@ func TestHoldOnReplica_OccupiesTableOnPrimary(t *testing.T) {
 		t.Fatalf("scan: %v", err)
 	}
 	posRepo := data.NewPOSRepo(dp.Db)
-	claimed, err := claimTableWriteThrough(context.Background(), dp, posRepo, tableID)
+	claimed, err := claimTableWriteThrough(context.Background(), dp, posRepo, tableID, false)
 	if err != nil || !claimed {
 		t.Fatalf("seed table pick: claimed=%v err=%v", claimed, err)
 	}
@@ -197,7 +197,7 @@ func TestHoldOnReplica_MoveMigratesOccupancyOnPrimary(t *testing.T) {
 		t.Fatalf("scan: %v", err)
 	}
 	posRepo := data.NewPOSRepo(dp.Db)
-	if claimed, err := claimTableWriteThrough(context.Background(), dp, posRepo, t1); err != nil || !claimed {
+	if claimed, err := claimTableWriteThrough(context.Background(), dp, posRepo, t1, false); err != nil || !claimed {
 		t.Fatalf("seed table pick: claimed=%v err=%v", claimed, err)
 	}
 	dp.Engine.SetTable(t1, "T1")
