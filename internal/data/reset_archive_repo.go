@@ -148,6 +148,17 @@ var resetArchiveTables = []resetArchiveTable{
 	// held_sales_archive.table_id, 056 tracking_token) — see reset_test.go's
 	// round-trip tests for the precedent this follows.
 	{"worker_allocations", "id, source_type, source_id, cashier_id, amount_minor, allocated_at, note, local_date"},
+	// yuzde_usulu_pool_collections (ut-docs#988, migration 037) is the
+	// collection-side twin of the worker_allocations rows directly above —
+	// what was collected INTO a Turkey yüzde usulü pool, as opposed to what
+	// was distributed out of it — and sits here for exactly the same
+	// reason: it has no FK to sales/payments either (it cannot have one, a
+	// Turkey pool collection has no bill line at all — ut-docs#962), so its
+	// position in this child-before-parent ordering is not load-bearing.
+	// Its own local_date column is carried here for the same reason
+	// worker_allocations' is: the archive round-trip must keep it, or a
+	// restored row would come back invisible to every date-range report.
+	{"yuzde_usulu_pool_collections", "id, amount_minor, collected_at, basis_note, recorded_by, local_date"},
 	{"invoices", "id, series, invoice_no, display_no, kind, sale_id, original_invoice_id, customer_name, customer_address, customer_vat_no, seller_json, net_total, tax_total, gross_total, vat_breakdown_json, issued_at, issued_by"},
 	{"payments", "id, sale_id, method_id, amount, currency, reference, change_given, paid_at, tip_amount, tip_recipient, masked_pan, auth_code, terminal_id, trace_id, voucher_id, local_date"},
 	{"sale_links", "id, sale_id, original_sale_id, reason"},
@@ -181,8 +192,12 @@ var resetArchiveTables = []resetArchiveTable{
 // table while all four other checks pass, and RestoreResetBatch would then
 // re-insert the archived batch's rows alongside it — a merge, which
 // ADR-0042 §2 says restore must never be ("return to exactly the pre-reset
-// state, never a merge").
-var restoreEmptyCheckTables = []string{"sales", "held_sales", "shifts", "stock_movements", "worker_allocations"}
+// state, never a merge"). yuzde_usulu_pool_collections (ut-docs#988) joins
+// it for the identical reason, one step earlier in the same flow: a pool
+// COLLECTION needs no sale/shift/held-sale row either, so a manager who
+// recorded today's pool after a reset would otherwise leave a live
+// collection row that every other check here is blind to.
+var restoreEmptyCheckTables = []string{"sales", "held_sales", "shifts", "stock_movements", "worker_allocations", "yuzde_usulu_pool_collections"}
 
 // ResetTransactionHistory clears ALL transactional data — sales, payments,
 // invoices, shifts, held sales, stock movements and the sale-line modifier

@@ -5,7 +5,7 @@ section: Running the business
 order: 210
 summary: Sales totals by day, department and payment type; best and slow sellers; dead stock; busiest days and hours; margins; tax summary; year-over-year — plus the end-of-day (Z) report for cashing up.
 routes: [/reports, /journal, /journal/{receipt}, /shifts, /audit]
-keywords: [z report, end of day, takings, journal, shift, audit, tips, tronc, service charge, worker allocation, ask your till, ai]
+keywords: [z report, end of day, takings, journal, shift, audit, tips, tronc, service charge, worker allocation, yüzde usulü, tip pooling, ask your till, ai]
 ---
 
 # Reports & end of day
@@ -432,6 +432,44 @@ its own.
   tipped payment regardless of who the tip belongs to, while "Received"
   only counts tips recorded for the employee (the default) — the two are
   expected to differ once a tip is recorded for the business instead.
+
+## Yüzde usulü pool distribution (Türkiye)
+
+The **Yüzde usulü** tab is for shops in Türkiye that operate a *yüzde
+usulü* pool (İş Kanunu 4857 art. 51): a percentage collected and shared
+out among staff. It appears only when the shop's country is set to
+Türkiye. Like the Tips tab, it records what a manager tells it — the
+software does not detect, calculate or move any money on its own, and it
+does not decide whether your shop runs a pool or at what percentage.
+
+- **No line on the customer's bill** — a Türkiye service-charge line is
+  not something this till will add to a bill, so a pool collection is
+  recorded separately, by a manager, and never appears on a receipt.
+- **Recording a collection** — a manager (Worker payouts permission) picks
+  the date the money was collected, the amount, and an optional basis note
+  describing how the pool is meant to be shared ("kitchen 30% / floor
+  70%"), then submits. The date can't be in the future — this records
+  money already taken.
+- **Recording a distribution** — pick the collection the money is coming
+  out of, the worker, the date it was actually paid, the amount and an
+  optional note. Each distribution is one worker's share of one
+  collection, so a pool paid to four people is four records.
+- **Collected vs distributed** — two totals for the selected period: what
+  was collected into the pool, and what has been recorded as paid out of
+  it to named workers. These are two separate records, so they can differ
+  — a pool collected today and paid out at the end of the week reads as
+  collected-but-not-yet-distributed until those payouts are recorded. A
+  difference is not by itself a problem; check over a window wide enough
+  to cover both.
+- **A worker's own records** — use the Worker filter to narrow the
+  distributions list to one person, e.g. to show them what has been
+  recorded as paid to them.
+- **Export** — the same CSV export as the Tips tab, which includes pool
+  distributions alongside tip and service-charge records, for handing to a
+  worker, an accountant, or anyone else who needs the underlying records.
+- Pool records are kept alongside the shop's other financial records and
+  are not deleted early — the same retention as everything else on this
+  page (see Report retention above).
 
 ## Reconciling a card payment (receipt detail)
 

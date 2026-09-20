@@ -332,6 +332,46 @@ etmez veya taşımaz.
   çalışana kaydedilen bahşişleri sayar (varsayılan) — bir bahşiş
   işletmeye kaydedildiğinde ikisinin farklı çıkması beklenir.
 
+## Yüzde usulü havuz dağıtımı (Türkiye)
+
+Bu **Yüzde usulü** sekmesi, Türkiye'de yüzde usulü havuz uygulayan
+işyerleri içindir (İş Kanunu 4857 md. 51): tahsil edilip personel arasında paylaşılan
+bir yüzde. Yalnızca işyerinin ülkesi Türkiye olarak ayarlandığında görünür.
+Bahşişler sekmesi gibi, yalnızca bir yöneticinin girdiğini kaydeder —
+yazılım kendiliğinden hiçbir parayı tespit etmez, hesaplamaz veya taşımaz;
+işyerinizin havuz uygulayıp uygulamayacağına ya da hangi yüzdeyle
+uygulayacağına da karar vermez.
+
+- **Müşterinin adisyonunda satır yok** — bu kasa, adisyona bir Türkiye
+  servis ücreti satırı eklemez; bu yüzden havuz tahsilatı ayrıca, bir
+  yönetici tarafından kaydedilir ve hiçbir fişte görünmez.
+- **Tahsilat kaydetme** — bir yönetici ("Çalışan ödemeleri" yetkisiyle)
+  paranın tahsil edildiği tarihi, tutarı ve havuzun nasıl paylaşılacağını
+  anlatan isteğe bağlı bir dağıtım esası notunu ("mutfak %30 / servis %70")
+  seçip gönderir. Tarih gelecekte olamaz — bu, halihazırda alınmış parayı
+  kaydeder.
+- **Dağıtım kaydetme** — paranın çıktığı tahsilatı, çalışanı, paranın
+  gerçekten ödendiği tarihi, tutarı ve isteğe bağlı bir notu seçin. Her
+  dağıtım, bir tahsilattan tek bir çalışanın payıdır; dolayısıyla dört
+  kişiye ödenen bir havuz dört kayıt eder.
+- **Toplanan ve dağıtılan** — seçili dönem için iki toplam: havuzda
+  toplanan ve bundan adı belirtilen çalışanlara ödendiği kaydedilen.
+  Bunlar iki ayrı kayıttır, dolayısıyla farklı olabilirler — bugün
+  toplanıp hafta sonunda ödenen bir havuz, o ödemeler kaydedilene kadar
+  toplanmış ama henüz dağıtılmamış olarak okunur. Bir fark tek başına
+  sorun değildir; her ikisini de kapsayacak kadar geniş bir pencerede
+  kontrol edin.
+- **Bir çalışanın kendi kayıtları** — dağıtım listesini tek bir kişiyle
+  sınırlamak için Çalışan filtresini kullanın, örneğin kendisine ödendiği
+  kaydedileni ona göstermek için.
+- **Dışa aktarma** — Bahşişler sekmesindeki CSV dışa aktarmanın aynısı;
+  havuz dağıtımlarını bahşiş ve servis ücreti kayıtlarıyla birlikte içerir,
+  bir çalışana, bir muhasebeciye ya da ayrıntılı kayıtlara ihtiyaç duyan
+  başka birine vermek için.
+- Havuz kayıtları, işyerinin diğer mali kayıtlarıyla birlikte tutulur ve
+  erken silinmez — bu sayfadaki diğer her şeyle aynı saklama süresi
+  (yukarıdaki Rapor saklama bölümüne bakın).
+
 ## Kart ödemesi mutabakatı (fiş detayı)
 
 İşlem geçmişinden bir fişi açmak tam ödeme detayını gösterir — bir kart
