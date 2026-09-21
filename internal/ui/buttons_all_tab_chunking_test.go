@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// TestChunkStrings pins chunkStrings' boundary behavior directly (no DB) —
+// TestChunkStrings pins ChunkStrings' boundary behavior directly (no DB) —
 // the empty case, an exact multiple of the chunk size, a remainder, and a
 // chunk size bigger than the whole input.
 func TestChunkStrings(t *testing.T) {
@@ -26,13 +26,13 @@ func TestChunkStrings(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := chunkStrings(tc.ids, tc.size)
+			got := ChunkStrings(tc.ids, tc.size)
 			if len(got) != len(tc.want) {
-				t.Fatalf("chunkStrings(%v, %d) = %v, want %v", tc.ids, tc.size, got, tc.want)
+				t.Fatalf("ChunkStrings(%v, %d) = %v, want %v", tc.ids, tc.size, got, tc.want)
 			}
 			for i := range got {
 				if strings.Join(got[i], ",") != strings.Join(tc.want[i], ",") {
-					t.Fatalf("chunkStrings(%v, %d)[%d] = %v, want %v", tc.ids, tc.size, i, got[i], tc.want[i])
+					t.Fatalf("ChunkStrings(%v, %d)[%d] = %v, want %v", tc.ids, tc.size, i, got[i], tc.want[i])
 				}
 			}
 		})
@@ -43,13 +43,13 @@ func TestChunkStrings(t *testing.T) {
 // LoadAllActive actually uses it for.
 func TestMergeMapInto(t *testing.T) {
 	dst := map[string]bool{"a": true}
-	mergeMapInto(dst, map[string]bool{"b": true, "c": false})
+	MergeMapInto(dst, map[string]bool{"b": true, "c": false})
 	if len(dst) != 3 || !dst["a"] || !dst["b"] || dst["c"] {
 		t.Fatalf("unexpected merged bool map: %+v", dst)
 	}
 
 	prices := map[string]int64{"x": 100}
-	mergeMapInto(prices, map[string]int64{"y": 200})
+	MergeMapInto(prices, map[string]int64{"y": 200})
 	if len(prices) != 2 || prices["x"] != 100 || prices["y"] != 200 {
 		t.Fatalf("unexpected merged int64 map: %+v", prices)
 	}
