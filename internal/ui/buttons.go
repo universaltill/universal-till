@@ -592,7 +592,14 @@ func (s *ButtonStore) SearchSellable(ctx context.Context, q string, limit int) (
 	}
 	var hasMods map[string]bool
 	if s.modRepo != nil {
-		hasMods, _ = s.modRepo.ItemIDsWithModifiers(ctx, itemIDs)
+		hasMods, err = s.modRepo.ItemIDsWithModifiers(ctx, itemIDs)
+		if err != nil {
+			// Previously silently discarded (`_`) — same non-fatal-but-loud
+			// treatment as the hasVariants/currentPrices lookups just below
+			// (ut-docs#2454; mirrors ut-docs#2318/#2451's identical fix
+			// elsewhere in this file).
+			logging.L().Warnf("ui: search-sellable items-with-modifiers failed, every result falls back to plain add-to-basket: %v", err)
+		}
 	}
 	var hasVariants map[string]bool
 	var currentPrices map[string]int64
@@ -647,7 +654,15 @@ func (s *ButtonStore) Load() ([]Button, error) {
 	}
 	var hasMods map[string]bool
 	if s.modRepo != nil {
-		hasMods, _ = s.modRepo.ItemIDsWithModifiers(ctx, itemIDs)
+		var err error
+		hasMods, err = s.modRepo.ItemIDsWithModifiers(ctx, itemIDs)
+		if err != nil {
+			// Previously silently discarded (`_`) — same non-fatal-but-loud
+			// treatment as the hasVariants/currentPrices lookups just below
+			// (ut-docs#2454; mirrors ut-docs#2318/#2451's identical fix
+			// elsewhere in this file).
+			logging.L().Warnf("ui: load items-with-modifiers failed, every tile falls back to plain add-to-basket: %v", err)
+		}
 	}
 	var hasVariants map[string]bool
 	var currentPrices map[string]int64
