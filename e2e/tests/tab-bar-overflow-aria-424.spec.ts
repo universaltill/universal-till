@@ -99,23 +99,28 @@ test.describe('tab-bar overflow + ARIA tabs pattern (ut-docs#424)', () => {
       items = [];
     });
 
-    test('12+ categories stay on ONE scrollable row, leaving product tiles visible (ut-docs#2173/#993)', async ({ page }) => {
+    test('12+ categories stay on ONE row and never scroll, leaving product tiles visible (ut-docs#2173/#993, ut-docs#2307)', async ({ page }) => {
       // ut-docs#424 originally required this exact tab bar to WRAP onto
       // multiple rows for a large category count (flex-wrap: wrap) — see
-      // git history for that version of this test. ut-docs#2173
-      // deliberately reverses that, FOR THIS ONE TAB BAR ONLY (the
-      // sale-screen category strip, `.products .tab-bar`): at 1024x600 with
-      // 12 categories the old wrapping bar alone ran 247px over 5 rows and
-      // left ZERO product tiles visible on the kiosk floor (ut-docs#993).
-      // It is now a single-row, horizontally-scrollable strip instead —
-      // asserted below as exactly one distinct `top` offset among the
-      // tabs. #424's OTHER acceptance criteria are unaffected and still
-      // enforced here: no tab may wrap its own label across multiple
-      // lines (the height assertion, kept verbatim), and the tender
-      // Pay/Split bar's own `.tab-bar` keeps its original wrap behaviour
-      // untouched (see the generic `.tab-bar` tests further down this
-      // file, and app.css's own comment on why that rule is never scoped
-      // away from by this card).
+      // git history for that version of this test. ut-docs#2173 reversed
+      // that, FOR THIS ONE TAB BAR ONLY (the sale-screen category strip,
+      // `.products .tab-bar`): at 1024x600 with 12 categories the old
+      // wrapping bar alone ran 247px over 5 rows and left ZERO product
+      // tiles visible on the kiosk floor (ut-docs#993) — it became a
+      // single-row, horizontally-SCROLLABLE strip instead. ut-docs#2307
+      // went one step further and removed the scrolling too: a category
+      // tab that doesn't fit the one row is hidden (not scrolled to) and
+      // reachable instead through the trailing "..." button's own sheet
+      // (full coverage: sale-screen-category-strip-overflow-2307.spec.ts).
+      // What's still #424's own AC and still worth pinning here: whatever
+      // IS on screen stays on exactly one row (measured against only the
+      // VISIBLE tabs — a hidden/display:none one reads an all-zero rect,
+      // which would otherwise misread as a second "row" at top:0), no tab
+      // wraps its own label, and the row freeing up space actually leaves
+      // a product tile visible. The tender Pay/Split bar's own `.tab-bar`
+      // keeps its original wrap behaviour untouched (see the generic
+      // `.tab-bar` tests further down this file, and app.css's own
+      // comment on why that rule is never scoped away from by this card).
       const assertClean = watchConsole(page);
       await page.setViewportSize({ width: 1024, height: 600 });
       items = overflowItems('Wrap', '71');
@@ -125,24 +130,33 @@ test.describe('tab-bar overflow + ARIA tabs pattern (ut-docs#424)', () => {
       await page.goto('/');
       const tabBar = page.locator('.products .tab-bar');
       await expect(tabBar).toBeVisible();
+      // The DOM still holds every tab regardless of which ones are shown
+      // (see ut-docs#2307's own coverage for the fit/overflow split
+      // itself) — a plain CSS class locator matches a hidden tab just as
+      // well as a visible one, so this count is unaffected by that card.
       await expect(tabBar.locator('.tab')).toHaveCount(CATEGORY_COUNT + 3, { timeout: 10_000 }); // + seeded Food/Drinks + ut-docs#2212's All tab
       await waitForStableLayout(page, '.products .tab-bar, .products .tab-bar .tab');
 
-      const boxes = await tabBar.locator('.tab').evaluateAll((els) =>
+      // ut-docs#2307: never overflows its own box — nothing left to
+      // scroll to.
+      const overflowPx = await tabBar.evaluate((el) => el.scrollWidth - el.clientWidth);
+      expect(overflowPx, `tab-bar must not overflow, got ${overflowPx}px`).toBeLessThanOrEqual(1);
+
+      const boxes = await tabBar.locator('.tab:not([hidden])').evaluateAll((els) =>
         els.map((el) => {
           const r = (el as HTMLElement).getBoundingClientRect();
           return { top: Math.round(r.top), height: Math.round(r.height) };
         }),
       );
+      expect(boxes.length, 'at least the fixed tabs should be visible').toBeGreaterThan(0);
 
-      // ut-docs#2173: every tab now shares the SAME top offset — one row,
-      // not many. This is the exact opposite of #424's original assertion
-      // for this tab bar.
+      // ut-docs#2173: every VISIBLE tab shares the SAME top offset — one
+      // row, not many.
       const rowsSeen = new Set(boxes.map((b) => b.top));
       expect(rowsSeen.size, `sale-screen tab bar should stay on exactly one row, saw tops: ${JSON.stringify(boxes)}`).toBe(1);
 
-      // #424's own AC: every tab stays a single readable line, never a
-      // squashed multi-line label.
+      // #424's own AC: every visible tab stays a single readable line,
+      // never a squashed multi-line label.
       //
       // ut-docs#2173's independent review pointed out that the height check
       // below, kept from the pre-#2173 version of this test, can no longer
@@ -160,13 +174,13 @@ test.describe('tab-bar overflow + ARIA tabs pattern (ut-docs#424)', () => {
       for (const b of boxes) {
         expect(b.height, 'a tab must not have wrapped its own label across multiple lines').toBeLessThan(60);
       }
-      const clipped = await tabBar.locator('.tab').evaluateAll((els) =>
+      const clipped = await tabBar.locator('.tab:not([hidden])').evaluateAll((els) =>
         els
           .map((el) => ({ label: (el.textContent || '').trim(), scrollW: el.scrollWidth, clientW: el.clientWidth }))
           // 1px of tolerance for sub-pixel layout rounding.
           .filter((t) => t.scrollW > t.clientW + 1),
       );
-      expect(clipped, `every tab must show its whole label — these are clipped inside their own box: ${JSON.stringify(clipped)}`).toEqual([]);
+      expect(clipped, `every visible tab must show its whole label — these are clipped inside their own box: ${JSON.stringify(clipped)}`).toEqual([]);
 
       // ut-docs#993: the tab bar being single-row is only useful if it
       // actually frees up room for product tiles. Assert real geometry,
@@ -207,8 +221,18 @@ test.describe('tab-bar overflow + ARIA tabs pattern (ut-docs#424)', () => {
 
       await page.goto('/');
       const tabBar = page.locator('.products .tab-bar');
+      // getByRole('tab') only resolves elements actually in the
+      // accessibility tree — since ut-docs#2307 an overflowed category tab
+      // is a real `hidden` attribute (display:none), which drops it out of
+      // that tree same as it drops out of the page visually, so this is
+      // exactly the VISIBLE tab count now (fixed tabs + however many
+      // categories fit at this viewport), not the full 12-category import.
+      // The fit-vs-overflow split itself is sale-screen-category-strip-
+      // overflow-2307.spec.ts's own job, not this file's — this test only
+      // needs "more than one", to have something real to arrow-key between.
       const tabs = tabBar.getByRole('tab');
-      await expect(tabs).toHaveCount(CATEGORY_COUNT + 3, { timeout: 10_000 }); // + seeded Food/Drinks + ut-docs#2212's All tab
+      const count = await tabs.count();
+      expect(count, 'at least the fixed tabs plus one real category should be reachable').toBeGreaterThan(1);
 
       // ut-docs#2212's All tab is selected by default and deliberately
       // carries no aria-controls (it owns no single panel — see
@@ -218,7 +242,6 @@ test.describe('tab-bar overflow + ARIA tabs pattern (ut-docs#424)', () => {
       // before proceeding — the roving-tabindex/arrow-key mechanics under
       // test are unaffected by which tab starts active.
       await tabs.nth(1).click();
-      const count = await tabs.count();
 
       // Exactly one tab is the roving-tabindex stop and carries aria-selected.
       await expect(tabBar.locator('[aria-selected="true"]')).toHaveCount(1);

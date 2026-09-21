@@ -629,50 +629,15 @@
         }
         document.body.addEventListener('htmx:afterSwap', refresh);
       })();
-      // ut-docs#2173: sale-screen category strip scroll-fade wiring — the
-      // same window.utTabBarFade recipe catalog.html's item-form tab strip
-      // already uses (ut-docs#2024), shared via app.js so its subtle
-      // LTR/RTL scroll-origin handling isn't duplicated (see app.js's own
-      // comment). Unlike catalog.html's IIFE, which lives INSIDE the
-      // fragment htmx re-renders (so it re-runs its own listener-attach
-      // logic on every swap and only guards the WINDOW-level resize
-      // listener against re-registration), this is the page's own
-      // top-level <script>: it parses and runs exactly once per page load,
-      // never inside the /ui/buttons fragment itself. The
-      // .products-finder .tab-bar element does not exist yet at that
-      // point — /ui/buttons's hx-trigger="load" hx-swap="outerHTML" (see
-      // the .products div above) inserts it asynchronously, and the same
-      // swap can happen again later (e.g. an htmx-boosted return to this
-      // page) — so the scroll listener is (re)attached from an
-      // htmx:afterSwap handler registered once here, rather than assumed
-      // present at DOMContentLoaded. wire()'s own per-element flag stops a
-      // second attach if the bar is still the same node next time
-      // afterSwap fires for something unrelated (e.g. #basket).
-      (function () {
-        function liveTabBar() { return document.querySelector('.products-finder .tab-bar'); }
-        function wire(bar) {
-          if (!bar || bar.__utFadeWired) return;
-          bar.__utFadeWired = true;
-          bar.addEventListener('scroll', function () { window.utTabBarFade(bar); }, { passive: true });
-          window.utTabBarFade(bar);
-        }
-        document.body.addEventListener('htmx:afterSwap', function () { wire(liveTabBar()); });
-        UT.ready(function () { wire(liveTabBar()); });
-        // ut-docs#2032's own cross-breakpoint gap (catalog.html): scroll
-        // alone misses a viewport resize/rotation while nothing scrolls.
-        // The once-only flag lives on the #ut-page element, not on window:
-        // under the persistent shell (ADR-0098) the shell drops this page's
-        // window listeners when the page is swapped away, so a window flag
-        // would leave the SECOND visit with no listener at all (independent
-        // review, 2026-09-17). Same shape as catalog.html's guard.
-        var pageEl = document.getElementById('ut-page') || document.body;
-        if (!pageEl.__saleTabBarFadeResizeWired) {
-          pageEl.__saleTabBarFadeResizeWired = true;
-          var recompute = function () { window.utTabBarFade(liveTabBar()); };
-          window.addEventListener('resize', recompute);
-          window.addEventListener('orientationchange', recompute);
-        }
-      })();
+      // ut-docs#2307 SUPERSEDED the sale-screen category strip's
+      // scroll-fade wiring that used to live here (ut-docs#2173): the
+      // strip no longer scrolls at all — buttons.html's own
+      // applyCategoryOverflow() now hides whichever category tabs don't
+      // fit and reveals a trailing "..." button instead, so there is no
+      // scrollLeft/scrollWidth left to fade against. Removed rather than
+      // left dead: window.utTabBarFade (app.js) is still live for
+      // catalog.html's own item-form tab strip (ut-docs#2024), which is
+      // unaffected by this card and keeps its own wiring untouched.
       // ut-docs#2308: basket/products divider drag. Touch-and-hold (~300ms)
       // then drag (mouse: plain drag, no hold) resizes the basket column
       // live via the `--basket-col-width` custom property app.css's

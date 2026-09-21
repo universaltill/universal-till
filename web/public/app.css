@@ -1884,10 +1884,18 @@ a.btn, a.btn:hover { text-decoration: none; }
    this one is ALWAYS single-row, at every width — the sale screen never
    had room to spare for a second row, so unlike .catalog-form-head
    .tab-bar (which only goes nowrap under its own max-width: 700px query,
-   ut-docs#2000/#2024) this is not inside any media query at all. */
+   ut-docs#2000/#2024) this is not inside any media query at all.
+   ut-docs#2307 (product owner: too many categories used to scroll — "I
+   prefer to have a ... button at the right"): overflow-x: auto/scrolling
+   is GONE. buttons.html's own applyCategoryOverflow() now hides whichever
+   trailing category tabs don't fit this row and reveals the trailing
+   '...' button (.tab-more below) instead — overflow: hidden here only
+   clips the brief instant (well under one frame, never painted) that
+   method's own measurement pass can leave a not-yet-hidden tab spilling
+   past this box's edge while it reads that tab's natural width. */
 .products-finder .tab-bar {
   flex: 1 1 auto; min-inline-size: 0;
-  flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden;
+  flex-wrap: nowrap; overflow: hidden;
   padding-block: 2px; margin-bottom: 0;
   /* ut-docs#2214 (product owner, on-device): the generic .tab-bar's
      border-block-end sits directly above the category heading/quick-button
@@ -1896,53 +1904,56 @@ a.btn, a.btn:hover { text-decoration: none; }
      .tab-bar (ut-docs#2024, below) already applied to its own tab bar. */
   border-block-end: 0;
 }
-/* overflow-y: hidden above (needed so the horizontal scrollbar doesn't add
-   height) clips both the active tab's border-bottom indicator and its
-   focus ring, since .tab uses a negative margin-bottom to overlap the
-   bar's own border — same gap independent review found in
-   .catalog-form-head .tab-bar (ut-docs#2000) and the same fix, ported
-   here rather than duplicated by accident. */
+/* overflow: hidden above (unchanged reasoning from when this was
+   overflow-y: hidden only, ut-docs#2173/#2000) still clips both the
+   active tab's border-bottom indicator and its focus ring, since .tab
+   uses a negative margin-bottom to overlap the bar's own border. */
 .products-finder .tab-bar .tab:focus-visible {
   outline: 2px solid var(--focus, var(--accent)); outline-offset: -2px;
 }
-/* Scroll-shadow recipe ported verbatim from .catalog-form-head .tab-bar
-   (ut-docs#2024, below in this file) rather than duplicated with drift —
-   Math.abs(scrollLeft) window.utTabBarFade (app.js) drives these same two
-   classes for both call sites; only the selector differs. See that
-   section's own comment for why a pure-CSS background-attachment "scroll
-   shadow" was rejected (backwards under RTL) in favor of real JS
-   scrollLeft/scrollWidth arithmetic toggling these two classes, and why
-   the fade's gradient *direction* (not whether it shows) needs its own
-   dir="rtl" override below. */
-.products-finder .tab-bar::before,
-.products-finder .tab-bar::after {
-  content: ""; position: sticky; flex: none; pointer-events: none;
-  inline-size: 1.1rem; block-size: 100%; opacity: 0;
-  transition: opacity .15s ease;
+/* ut-docs#2307 (independent review): buttons.html's applyCategoryOverflow()
+   adds this class for the duration of ONE synchronous measurement pass and
+   removes it again before anything can paint. .tab is flex: 1 1 0% (the
+   generic .tab-bar rule below), so a visible tab's rendered width is its
+   stretched share of the row, not the width it actually needs — and that
+   share depends on how many siblings that same method hid on its last
+   pass, which made the measurement feed on its own output and left a
+   widened strip permanently showing fewer tabs than fit (1600px -> 620px
+   -> 1600px showed 2 where a fresh load showed 4). The fix itself is that
+   the method now measures with every tab un-hidden; this rule is
+   belt-and-braces on top, so the pass is a content-width measurement
+   unconditionally rather than only on the branch that reaches it. */
+.products-finder .tab-bar.ut-measuring .tab { flex: 0 0 auto; }
+/* ut-docs#2307: the trailing "more categories" button — see
+   buttons.html's own comment above it for the full behaviour
+   (applyCategoryOverflow() shows/hides it, never CSS alone). flex: 0 0
+   auto (not .tab's own flex: 1, below in this file's generic .tab-bar
+   rule) — a fixed-footprint icon button must never compete with the real
+   tabs for the row's free space; that fixed footprint is exactly what
+   lets applyCategoryOverflow() treat its width as a constant once
+   measured. margin-inline-start (never margin-left) keeps a small gap
+   from the last tab correct under RTL too.
+   :not([hidden]) on the layout rule matters (found live, real bug): a
+   plain class selector's specificity beats the UA stylesheet's own
+   `[hidden] { display: none }`, so an un-guarded `display: inline-flex`
+   here would make applyCategoryOverflow()'s own `.hidden = true` a no-op
+   — the button stayed visibly on screen even while its `hidden` attribute
+   was genuinely set (a shop with everything already fitting saw a dead
+   "..." button that did nothing new, requirement 5's own hidden-entirely
+   case). */
+.products-finder .tab-bar .tab-more:not([hidden]) {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  padding: .4rem .5rem; margin-inline-start: .15rem; align-self: center;
+  background: none; border: none; border-radius: var(--radius);
+  color: var(--muted); cursor: pointer;
 }
-.products-finder .tab-bar::before {
-  order: -1; inset-inline-start: 0;
-  background: linear-gradient(to right, var(--surface), transparent);
+.products-finder .tab-bar .tab-more:hover,
+.products-finder .tab-bar .tab-more[aria-expanded="true"] {
+  background: var(--surface-2); color: var(--text);
 }
-.products-finder .tab-bar::after {
-  order: 999; inset-inline-end: 0;
-  background: linear-gradient(to left, var(--surface), transparent);
+.products-finder .tab-bar .tab-more:focus-visible {
+  outline: 2px solid var(--focus, var(--accent)); outline-offset: -2px;
 }
-html[dir="rtl"] .products-finder .tab-bar::before {
-  background: linear-gradient(to left, var(--surface), transparent);
-}
-html[dir="rtl"] .products-finder .tab-bar::after {
-  background: linear-gradient(to right, var(--surface), transparent);
-}
-.products-finder .tab-bar.tab-bar--fade-start::before,
-.products-finder .tab-bar.tab-bar--fade-end::after {
-  opacity: 1;
-}
-/* Deliberately NOT setting touch-action on .products-strip or
-   .products-finder .tab-bar: the default is what lets a vertical finger-
-   pan that starts on the strip keep scrolling the products panel beneath
-   it (.pos-container > .products' own overflow-y: auto) rather than being
-   captured by this row — looks like an omission, isn't one. */
 /* ut-docs#2173 — the back arrow is the first direction-dependent icon in
    this registry (internal/httpx/icons.go): every other rail glyph reads
    the same in LTR and RTL, but "back" must point startward, so it's
@@ -1997,7 +2008,15 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
    (measured 119px against a real 140.75px product tile, both two-line
    names, neither one hand-picked to make a point). 9.5rem/152px clears
    that measured case with margin. */
-.category-tile {
+/* ut-docs#2307: .category-overflow-tile (the category-strip overflow
+   sheet's own tiles) shares this whole ruleset by SELECTOR, not by class
+   name on the markup — it deliberately does NOT also carry the literal
+   `category-tile` class the way an earlier draft did. That draft made
+   sell-screen-categories-tab-2283.spec.ts's own `.category-tile` locator
+   start resolving to this sheet's tiles instead of the real Categories-tab
+   picker's (this dialog sits earlier in the DOM) — same class, different
+   click behaviour, a real collision, not just cosmetic. */
+.category-tile, .category-overflow-tile {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: .3rem; padding: .6rem .5rem; min-height: 9.5rem; border: 1px solid var(--border);
   border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow);
@@ -2006,8 +2025,8 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
   user-select: none; touch-action: manipulation; -webkit-touch-callout: none;
   border-inline-start: 4px solid var(--cat-color, var(--accent));
 }
-.category-tile:hover { border-color: #cbd5e1; box-shadow: 0 3px 8px rgba(15, 23, 42, .12); }
-.category-tile:active { transform: scale(.97); }
+.category-tile:hover, .category-overflow-tile:hover { border-color: #cbd5e1; box-shadow: 0 3px 8px rgba(15, 23, 42, .12); }
+.category-tile:active, .category-overflow-tile:active { transform: scale(.97); }
 .category-tile-name {
   font-weight: 600; font-size: .95rem; line-height: 1.25;
   overflow-wrap: anywhere;
@@ -2018,6 +2037,35 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
    content" call .barcode-backfill-modal made for its own wide table. */
 .category-items-modal { max-width: 44rem; width: 94vw; }
 .category-items-modal-body { max-height: 60vh; overflow-y: auto; margin-block: .5rem; }
+
+/* ut-docs#2307: the category strip's trailing "..." sheet — every
+   category, once, as a large touch target (product owner's own card
+   text: "shows all the categories to select"). Reuses .category-tile's
+   own frame/name-clamp above (so the density/look matches the Categories
+   tab's own tiles exactly) plus .category-filter-dialog-head's title-row
+   layout (category_filter_popover.html) for the heading + close button,
+   rather than a third near-duplicate of either. */
+/* position: fixed (not the dialog UA stylesheet's own absolute/margin:auto
+   centering) -- same explicit-geometry recipe as #hold-modal/#pfand-modal/
+   #elevation-modal/#table-add-modal/.category-filter-dialog above: this
+   dialog is nested inside .products-finder rather than sitting at the page
+   root the way #category-items-modal does, so it must not depend on every
+   ancestor between it and the viewport staying position:static for its own
+   centering to land correctly. z-index: 500 matches that same family. */
+.category-overflow-dialog {
+  position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500;
+  max-width: 30rem; width: 92vw;
+}
+.category-overflow-grid { max-height: 60vh; overflow-y: auto; margin-block: .5rem; }
+.category-overflow-count { font-size: .78rem; color: var(--muted); }
+/* The active category — a ring, not the tab's own underline (this tile
+   has no shared baseline to underline against), same --cat-color
+   convention .tab-bar .tab.active (below) already uses so the accent
+   colour is the category's own rather than a generic one. */
+.category-overflow-tile.active {
+  border-color: var(--cat-color, var(--accent));
+  box-shadow: 0 0 0 2px var(--cat-color, var(--accent)) inset;
+}
 
 /* ---------- Product tiles ----------
    The whole tile is one touch target: image, name, price. */

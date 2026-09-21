@@ -246,6 +246,11 @@ var railIcons = map[string]string{
 	// glyph, growing this registry the same way "filter"/"landmark"/
 	// "scan-barcode" already did. Lucide's "eye" path, unmodified.
 	"eye": `<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/>`,
+	// ut-docs#2307: the sale-screen category strip's trailing "more
+	// categories" button — three dots, the standard "overflow menu"
+	// affordance (same read as the product owner's own "…" request on the
+	// card). Lucide's "ellipsis" path, unmodified.
+	"ellipsis": `<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>`,
 }
 
 // iconSVGOpen is the one shared wrapper every rail icon renders inside.

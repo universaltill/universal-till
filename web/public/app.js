@@ -2197,10 +2197,13 @@ window.utPostWithElevation = function (url, params, onDone, onCancel) {
 // inline script (the catalog item-form tab strip, ≤700px only). ut-docs#2173
 // added a second call site — the sale screen's always-single-row category
 // strip (index.html) — and the scroll-origin handling above is subtle
-// enough that it must not be duplicated, so it now lives here once and both
-// pages call window.utTabBarFade(el). catalog.html keeps a same-named local
-// wrapper that delegates to this, so its own comments/call sites didn't
-// need to change.
+// enough that it must not be duplicated, so it moved here once. catalog.html
+// keeps a same-named local wrapper that delegates to this, so its own
+// comments/call sites didn't need to change. ut-docs#2307 removed index.html's
+// own call site again: that strip no longer scrolls at all (a category tab
+// that doesn't fit is hidden behind a trailing "..." button instead of
+// fading off-screen), so this is back down to catalog.html's one caller —
+// left here, not deleted, since nothing about ITS own tab strip changed.
 window.utTabBarFade = function (el) {
   if (!el) return;
   var max = el.scrollWidth - el.clientWidth;
