@@ -302,7 +302,7 @@
          reaching the tablist without a tab holding focus) rather than
          indexing off document.activeElement's -1 ('not found') result. */
       focusTab(dir) {
-        const tabs = Array.from(this.$el.querySelectorAll('[role=tab]'));
+        const tabs = Array.from(this.$el.querySelectorAll('[role=tab]')).filter((t) => !t.hidden);
         if (!tabs.length) return;
         const i = Math.max(0, tabs.indexOf(document.activeElement));
         const next = tabs[(i + dir + tabs.length) % tabs.length];
@@ -332,8 +332,213 @@
         if (window.htmx) { window.htmx.process(body); }
         const modal = document.getElementById('category-items-modal');
         if (modal) modal.show();
+      },
+      /* ut-docs#2307: the category strip never scrolls any more (product
+         owner's card -- see this file's own comment above the .tab-bar
+         div below for the full reasoning); instead this measures how many
+         of the per-category tabs actually fit in one row at the CURRENT
+         width and hides the rest, revealing the trailing '...' button
+         (x-ref moreBtn) only once at least one of them doesn't. Runs once
+         on mount (x-init below) and again on every resize the strip's own
+         box goes through -- a ResizeObserver on the bar itself, not the
+         window, since the bar's rendered width is what actually changes
+         (basket/products divider drag, ut-docs#2308, resizes this without
+         any window resize event firing at all). */
+      categoryOverflowOpen: false,
+      applyCategoryOverflow() {
+        const bar = this.$refs.tabBar;
+        const more = this.$refs.moreBtn;
+        if (!bar || !more) return;
+        const fixedTabs = Array.from(bar.querySelectorAll('.tab:not([data-cat-tab])'));
+        const catTabs = Array.from(bar.querySelectorAll('.tab[data-cat-tab]'));
+        if (!catTabs.length) { more.hidden = true; return; }
+        const cs = getComputedStyle(bar);
+        const gap = parseFloat(cs.columnGap || cs.gap) || 0;
+        // Sums an ordered row of widths plus one gap between every pair of
+        // adjacent items -- NOT per item -- so this stays correct whether
+        // there are zero fixed tabs (Categories/All are both opt-in, off
+        // by default), one, or two.
+        const sumWithGaps = (widths) => widths.reduce((sum, w, i) => sum + w + (i > 0 ? gap : 0), 0);
+        // bar's own rendered width is the row's real available budget
+        // regardless of which children are currently hidden: .tab-bar is
+        // the only flex:1 1 auto item in .products-strip (app.css), so it
+        // always claims whatever space is left over from the search/edit
+        // icons next to it, independent of its own content.
+        const available = bar.getBoundingClientRect().width;
+        /* Independent review (ut-docs#2307): a tab's required width is NOT
+           its rendered width. .tab-bar .tab is flex: 1 1 0% (app.css), so
+           a VISIBLE tab is stretched to share out whatever slack the row
+           has -- and how much slack there is depends on how many of its
+           siblings this method hid on its LAST pass. Measuring rendered
+           widths therefore fed this method its own previous output: once
+           the row had narrowed and hidden some tabs, the survivors each
+           measured wider, so widening the strip back out never brought the
+           hidden ones back. Reproduced live at 1600px -> 620px -> 1600px:
+           two category tabs showing where a fresh load at that same width
+           showed four, permanent until a reload -- and the divider drag
+           this method exists to follow (ut-docs#2308) walks exactly that
+           path. Caching the first measurement in the element's dataset (an
+           earlier draft) could not fix it either: the first measurement is
+           already a stretched one.
+           So the row is measured in ONE deliberate pass with every
+           category tab un-hidden. That is what actually fixes it: laid out
+           all at once the set overflows, so no tab has any slack to be
+           stretched by and each reports its own min-content floor
+           (white-space: nowrap on .tab) -- a figure that does not depend
+           on what the previous pass happened to hide. Same synchronous
+           read-before-paint trick the '...' button's own measurement below
+           already uses -- nothing is painted between the write and the
+           restore -- and the reason .products-finder .tab-bar carries
+           overflow: hidden at all.
+           .ut-measuring (app.css) switches flex-grow off for that same
+           instant. It is belt-and-braces, NOT the fix: un-hiding alone is
+           already sufficient on the only branch that reaches here (the
+           one where the full set does not fit). It is kept so this stays a
+           content-width measurement unconditionally, rather than one that
+           is right only because of which branch called it. Checked both
+           ways while reviewing: regression test (d) in
+           sale-screen-category-strip-overflow-2307.spec.ts still passes
+           with this rule alone disabled, and fails with the un-hiding
+           alone removed. */
+        const wasHidden = catTabs.map((t) => t.hidden);
+        bar.classList.add('ut-measuring');
+        catTabs.forEach((t) => { t.hidden = false; });
+        const fixedWidths = fixedTabs.map((el) => el.getBoundingClientRect().width);
+        const catWidths = catTabs.map((el) => el.getBoundingClientRect().width);
+        catTabs.forEach((t, i) => { t.hidden = wasHidden[i]; });
+        bar.classList.remove('ut-measuring');
+
+        if (sumWithGaps(fixedWidths.concat(catWidths)) <= available + 0.5) {
+          catTabs.forEach((t) => { t.hidden = false; });
+          more.hidden = true;
+          return;
+        }
+        // Overflow needed: reserve room for '...' itself, measuring its
+        // own natural width once (briefly un-hiding it to read a real
+        // box) -- this happens synchronously, before the next paint, so
+        // there is nothing for the operator to see flash by.
+        if (more.dataset.utNatW === undefined) {
+          const wasHidden = more.hidden;
+          more.hidden = false;
+          more.dataset.utNatW = String(more.getBoundingClientRect().width);
+          more.hidden = wasHidden;
+        }
+        const moreWidth = parseFloat(more.dataset.utNatW || '0');
+        const fitFor = (widths) => {
+          for (let n = widths.length; n >= 0; n--) {
+            if (sumWithGaps(fixedWidths.concat(widths.slice(0, n), [moreWidth])) <= available + 0.5) return n;
+          }
+          return 0;
+        };
+        let fitCount = fitFor(catWidths);
+        /* Independent review (ut-docs#2307): the SELECTED category tab must
+           never be the one a narrowing resize hides. Hiding by DOM order
+           alone got three things wrong at once, all reproduced live by
+           selecting the 4th tab at 1600px then narrowing to 620px: the
+           strip showed NO active tab at all while its panel still showed
+           that category's items; the roving tabindex puts the only
+           tabindex of 0 on the selected tab, so hiding it left the whole
+           tablist with no keyboard stop (the trailing ... button, a plain
+           button outside the tablist, stayed the only Tab-reachable
+           control in the row); and focus sitting on that tab fell back to
+           the document body, where the strip's own arrow-key handler can
+           no longer see it -- it is bound on .tab-bar, which no longer
+           contains document.activeElement, so focusTab never runs again.
+           Promoting it to the front is exactly what
+           selectCategoryFromOverflow() already does for the sheet path, so
+           both paths now agree that the category you picked keeps its spot
+           in the strip; it only fires when the alternative is that tab
+           vanishing, so a resize that changes nothing never reorders the
+           row gratuitously. The re-fit afterwards is load-bearing:
+           promotion permutes the widths, so the fitting count has to be
+           recomputed against the NEW order rather than reused. */
+        const activeTab = document.getElementById('cat-tab-' + (this.tab || 'uncategorized'));
+        const activeIdx = activeTab ? catTabs.indexOf(activeTab) : -1;
+        if (fitCount > 0 && activeIdx >= fitCount) {
+          const activeWidth = catWidths[activeIdx];
+          this.promoteCategoryTab(this.tab);
+          catTabs.splice(activeIdx, 1); catTabs.unshift(activeTab);
+          catWidths.splice(activeIdx, 1); catWidths.unshift(activeWidth);
+          fitCount = fitFor(catWidths);
+        }
+        catTabs.forEach((t, i) => { t.hidden = i >= fitCount; });
+        more.hidden = false;
+      },
+      setupCategoryOverflow() {
+        const bar = this.$refs.tabBar;
+        if (!bar) return;
+        this.applyCategoryOverflow();
+        if (typeof ResizeObserver === 'undefined') return;
+        new ResizeObserver(() => { this.applyCategoryOverflow(); }).observe(bar);
+      },
+      /* Moves the chosen category's own tab button to be the FIRST
+         per-category tab (right after any fixed tabs, ahead of every
+         other category) -- plain DOM reordering of the REAL, already-
+         bound tab button (not a re-render), so Alpine's own bindings on
+         it (:class, :aria-selected, @click, ...) keep working untouched.
+         'most recently chosen from the overflow sheet first' (card's own
+         wording) is exactly what always inserting at the front gives for
+         free -- no separate order array to keep in sync. */
+      promoteCategoryTab(id) {
+        const bar = this.$refs.tabBar;
+        if (!bar) return;
+        const tabEl = document.getElementById('cat-tab-' + (id || 'uncategorized'));
+        const anchor = bar.querySelector('.tab[data-cat-tab]');
+        if (!tabEl || !anchor || tabEl === anchor) return;
+        bar.insertBefore(tabEl, anchor);
+      },
+      /* The overflow sheet's own tile click handler: same effect as
+         tapping that category's real tab (sets `tab`), then promotes it
+         into the visible strip (see promoteCategoryTab above) and
+         recomputes the fit -- the strip never scrolls (see
+         applyCategoryOverflow's own comment), so 'bring the selection
+         into view' can only ever mean 'reorder it into the fitting set',
+         never 'scroll to it'. */
+      selectCategoryFromOverflow(id) {
+        this.promoteCategoryTab(id);
+        this.tab = id;
+        this.applyCategoryOverflow();
+        this.closeCategoryOverflow();
+      },
+      openCategoryOverflow() {
+        const dlg = this.$refs.overflowDialog;
+        if (!dlg || dlg.open) return;
+        // Non-modal .show(), never .showModal() -- same reason every other
+        // dialog in this file/category_filter_popover.html gives: the
+        // till's own on-screen keyboard must stay reachable.
+        dlg.show();
+        this.categoryOverflowOpen = true;
+        this.$nextTick(() => { const b = this.$refs.overflowClose; if (b) b.focus(); });
+      },
+      closeCategoryOverflow() {
+        const dlg = this.$refs.overflowDialog;
+        if (!dlg || !dlg.open) return;
+        dlg.close();
+        this.categoryOverflowOpen = false;
+        this.$nextTick(() => { const b = this.$refs.moreBtn; if (b) b.focus(); });
+      },
+      /* Manual focus trap -- .show() (above) is deliberately non-modal, so
+         unlike a real showModal() dialog the browser does not confine Tab
+         navigation to it on its own. Same small, self-contained algorithm
+         record-dialog.js's own trapTab/focusables pair already uses for
+         ITS dialogs, duplicated rather than shared: that file's trap is
+         wired globally against every [data-record-dialog], a much bigger
+         piece of machinery (prefill, discard-guard, ...) this one-sheet
+         feature has no other reason to pull in. */
+      trapOverflowTab(ev) {
+        const dlg = this.$refs.overflowDialog;
+        if (!dlg) return;
+        const list = Array.from(dlg.querySelectorAll('button, [href], input, select, textarea, [tabindex]'))
+          .filter((el) => !el.hidden && el.getClientRects().length > 0);
+        if (!list.length) { ev.preventDefault(); return; }
+        const idx = list.indexOf(document.activeElement);
+        if (ev.shiftKey) {
+          if (idx <= 0) { ev.preventDefault(); list[list.length - 1].focus(); }
+        } else if (idx === -1 || idx === list.length - 1) {
+          ev.preventDefault(); list[0].focus();
+        }
       }
-    }" x-init="restoreGridState()">
+    }" x-init="restoreGridState(); setupCategoryOverflow()">
       <!-- ut-docs#2173 (closes ut-docs#993): the sale screen used to spend
            TWO full rows of height before the first product tile -- this
            .products-header row (title + an always-expanded search input +
@@ -341,9 +546,13 @@
            that, unbounded (flex-wrap: wrap). At 1024x600 with 12
            categories the tab bar alone ran 247px over 5 rows and ZERO
            tiles were visible on the kiosk floor. Both rows are now ONE
-           .products-strip: the category tab bar stays a real single-row,
-           horizontally-scrolling tablist (app.css's .products-finder
-           .tab-bar), with the search and edit icon buttons pinned at its
+           .products-strip: the category tab bar stays a real single-row
+           tablist (app.css's .products-finder .tab-bar) -- ut-docs#2307
+           replaced its original horizontal-scroll behavior with a measured
+           fit-or-overflow one (see applyCategoryOverflow() above: it never
+           scrolls any more at all, a category tab that doesn't fit is
+           hidden and reachable instead through the trailing '...' button's
+           own sheet) -- with the search and edit icon buttons pinned at its
            trailing end. Tapping search swaps the strip out for the same
            #products-search input IN PLACE (x-show, not a second row) via
            searching/openSearch()/closeSearch() above, with a back arrow at
@@ -380,7 +589,7 @@
              once via its stacked section header; tabs make that one-at-a-
              time, so the tab itself is now what carries the color instead
              of losing it. */}}
-        <div class="tab-bar" role="tablist" x-show="!searching" @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
+        <div class="tab-bar" role="tablist" x-ref="tabBar" x-show="!searching" @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
           {{/* ut-docs#2283: the optional "Categories" tab — settings-gated
                (Settings → Categories tab), OFF by default, so a shop that
                never opens that toggle sees exactly today's tab bar. Always
@@ -401,7 +610,7 @@
                comment previously claimed "no aria-controls" while the
                button set one anyway. */}}
           {{ if .CategoriesTabEnabled }}
-          <button type="button" id="cat-tab-categories" class="tab" role="tab" :class="tab === '__categories__' && 'active'" :aria-selected="tab === '__categories__'" :tabindex="tab === '__categories__' ? 0 : -1" aria-controls="cat-panel-categories" @click="tab = '__categories__'; $el.scrollIntoView({ block: 'nearest', inline: 'nearest' })">{{ T "products.categories" }}</button>
+          <button type="button" id="cat-tab-categories" class="tab" role="tab" :class="tab === '__categories__' && 'active'" :aria-selected="tab === '__categories__'" :tabindex="tab === '__categories__' ? 0 : -1" aria-controls="cat-panel-categories" @click="tab = '__categories__'">{{ T "products.categories" }}</button>
           {{ end }}
           {{ if $showAllTab }}
           {{/* ut-docs#2212: the All tab, always first, always selected by
@@ -418,19 +627,86 @@
                no-single-owned-target tab in this file. No --cat-color
                either: All isn't one category, so it has nothing to
                color-code with. */}}
-          <button type="button" id="cat-tab-all" class="tab" role="tab" :class="tab === '__all__' && 'active'" :aria-selected="tab === '__all__'" :tabindex="tab === '__all__' ? 0 : -1" @click="tab = '__all__'; $el.scrollIntoView({ block: 'nearest', inline: 'nearest' })">{{ T "products.all" }}</button>
+          <button type="button" id="cat-tab-all" class="tab" role="tab" :class="tab === '__all__' && 'active'" :aria-selected="tab === '__all__'" :tabindex="tab === '__all__' ? 0 : -1" @click="tab = '__all__'">{{ T "products.all" }}</button>
           {{ end }}
           {{ range .Groups }}
-          {{/* $el.scrollIntoView({ block: 'nearest', inline: 'nearest' }):
-               ut-docs#2173 made this bar horizontally-scrolling, so
-               selecting an off-screen tab (click, or focusTab()'s arrow-key
-               nav above) must bring it into view. block: 'nearest' is
-               deliberate -- it must never scroll the PAGE vertically, only
-               the strip itself horizontally (inline: 'nearest'); 'center'
-               or 'start' would fight that. */}}
-          <button type="button" id="cat-tab-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" class="tab" role="tab" style="--cat-color: {{ .Color }}" :class="tab === '{{ .ID }}' && 'active'" :aria-selected="tab === '{{ .ID }}'" :tabindex="tab === '{{ .ID }}' ? 0 : -1" aria-controls="cat-panel-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" @click="tab = '{{ .ID }}'; $el.scrollIntoView({ block: 'nearest', inline: 'nearest' })">{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</button>
+          {{/* data-cat-tab (ut-docs#2307): a plain boolean marker so
+               applyCategoryOverflow() (this file's own x-data, above) can
+               select exactly the per-category tabs -- never the fixed
+               Categories/All tabs above, which the card's own requirement
+               keeps always visible -- without having to duplicate the
+               '__categories__'/'__all__' sentinel checks in JS. */}}
+          <button type="button" id="cat-tab-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" class="tab" role="tab" data-cat-tab style="--cat-color: {{ .Color }}" :class="tab === '{{ .ID }}' && 'active'" :aria-selected="tab === '{{ .ID }}'" :tabindex="tab === '{{ .ID }}' ? 0 : -1" aria-controls="cat-panel-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" @click="tab = '{{ .ID }}'">{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</button>
           {{ end }}
+          {{/* ut-docs#2307: the trailing "more categories" button --
+               card's own literal ask ("a ... button at the right; when
+               clicked it shows all the categories"). Lives INSIDE .tab-bar
+               itself, as the last flex child, so it lands immediately
+               after the last VISIBLE category tab rather than off past
+               whatever flex-grow slack .tab-bar (flex: 1 1 auto,
+               app.css) claims from .products-strip -- see .tab-more's own
+               CSS comment. Starts `hidden` (server-rendered default) so a
+               shop whose categories already fit sees zero change before
+               Alpine ever runs; applyCategoryOverflow() is what un-hides
+               it, and only once at least one category tab genuinely
+               doesn't fit (requirement: hidden entirely when everything
+               fits). Deliberately NOT role="tab" -- it doesn't select a
+               tab panel, it opens a dialog (aria-haspopup="dialog"), so it
+               sits in the tablist's flex ROW without joining the tablist's
+               OWN roving-tabindex set (focusTab() above only ever queries
+               [role=tab]) or claiming a tabindex of its own beyond the
+               plain button default -- a keyboard user reaches it with a
+               plain Tab press right after the active category tab, same
+               as any other control after this one. */}}
+          <button type="button" id="cat-tab-more" class="tab-more" x-ref="moreBtn" hidden
+                  aria-haspopup="dialog" aria-controls="category-overflow-dialog" :aria-expanded="categoryOverflowOpen"
+                  aria-label="{{ T "products.more_categories" }}" title="{{ T "products.more_categories" }}"
+                  @click="openCategoryOverflow()">
+            <span class="btn-ico" aria-hidden="true">{{ icon "ellipsis" }}</span>
+          </button>
         </div>
+        {{/* ut-docs#2307: the "..." sheet itself -- every category, as a
+             large touch target (card's own ask), reusing
+             category_filter_popover.html's own dialog shape/class
+             (.modifier-modal, a non-modal .show(), never .showModal() --
+             see openCategoryOverflow()'s own comment) rather than a third
+             near-duplicate of that pattern. len $g.Buttons costs nothing
+             extra: .Groups[].Buttons is already loaded for the tab loop
+             above, same data, no new query (card's own explicit
+             constraint).
+
+             .category-overflow-tile, NOT .category-tile (review fix): the
+             ut-docs#2283 Categories-tab picker already owns that exact
+             class name for a DIFFERENT click behaviour (opens the
+             per-category item picker, never closes this sheet) --
+             sell-screen-categories-tab-2283.spec.ts's own
+             page.locator('.category-tile').first() started resolving to
+             THIS sheet's tiles instead once they shared the name, since
+             this dialog sits earlier in the DOM. app.css shares the
+             visual ruleset across both class names by selector list
+             instead, so the two never look different by accident. */}}
+        <dialog id="category-overflow-dialog" x-ref="overflowDialog" class="modifier-modal category-overflow-dialog"
+                aria-labelledby="category-overflow-dialog-title"
+                @keydown.escape.prevent="closeCategoryOverflow()" @keydown.tab="trapOverflowTab($event)">
+          <div class="category-filter-dialog-head">
+            <h3 id="category-overflow-dialog-title">{{ T "products.categories" }}</h3>
+            <button type="button" x-ref="overflowClose" class="btn secondary btn-icon"
+                    aria-label="{{ T "common.close" }}" title="{{ T "common.close" }}"
+                    @click="closeCategoryOverflow()">
+              <span class="btn-ico" aria-hidden="true">{{ icon "x" }}</span>
+            </button>
+          </div>
+          <div class="grid category-overflow-grid">
+            {{ range $g := .Groups }}
+            <button type="button" class="category-overflow-tile" style="--cat-color: {{ $g.Color }}"
+                    :class="tab === '{{ $g.ID }}' && 'active'" :aria-current="tab === '{{ $g.ID }}' ? 'true' : null"
+                    @click="selectCategoryFromOverflow('{{ $g.ID }}')">
+              <span class="category-tile-name">{{ if $g.ID }}{{ $g.Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</span>
+              <span class="category-overflow-count">{{ printf (T "categories.item_count") (len $g.Buttons) }}</span>
+            </button>
+            {{ end }}
+          </div>
+        </dialog>
         {{ end }}
         {{/* ut-docs#2294: search is now a real server round trip (matches
              every active catalog item — barcode/SKU/name — not just what
