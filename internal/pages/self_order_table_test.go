@@ -638,6 +638,109 @@ func TestSelfOrder_StaleSessionNoLongerBlocksBusyGuard(t *testing.T) {
 	}
 }
 
+// ut-docs#2444 (review finding S3 of ut-docs#2434's own record). Real
+// scenario this reproduces: a guest scans the table QR from an in-app
+// browser (a separate cookie jar — Android Google Lens / Instagram /
+// WhatsApp WebView are common sources), then taps "open in Chrome" before
+// adding anything. Chrome carries no cookie for the session the in-app
+// browser minted, so it's a fresh scan of the guest's OWN still-empty
+// session — which, before this card, self-locked them out for the full
+// selfOrderTableBusyMaxIdle (10 minutes). An EMPTY session must instead
+// free its table after the much shorter selfOrderTableBusyMaxIdleEmpty,
+// unlike TestSelfOrder_StaleSessionNoLongerBlocksBusyGuard's non-empty
+// case above, which still needs the full window.
+func TestSelfOrder_StaleEmptySessionNoLongerBlocksBusyGuardAfterShortWindow(t *testing.T) {
+	dp, _ := setupSelfOrderShopDeps(t)
+	tableA := createSelfOrderTable(t, dp, "T1", 100)
+
+	mux := http.NewServeMux()
+	registerSelfOrder(mux, dp)
+
+	// The in-app-browser scan: table-bound, but the guest never adds an
+	// item before switching browsers.
+	inAppBrowser := newSelfOrderGuest(t, mux)
+	inAppBrowser.get("/self-order?table=" + tableA)
+	inAppToken := inAppBrowser.sessionToken()
+
+	// Right now, a second, cookieless browser scanning the same table is
+	// still busy — the immediate-collision guarantee is unchanged by this
+	// card (TestSelfOrder_SameTableEmptySession_ShowsBusy's own baseline,
+	// re-asserted here for this scenario).
+	reqNow := httptest.NewRequest(http.MethodGet, "/self-order?table="+tableA, nil)
+	if bound, busy := bindSelfOrderTableSession(httptest.NewRecorder(), reqNow, dp, tableA, time.Now()); bound || !busy {
+		t.Fatalf("right after the in-app-browser's scan: want busy (not bound), got bound=%v busy=%v", bound, busy)
+	}
+
+	// selfOrderTableBusyMaxIdleEmpty later — well short of the full
+	// selfOrderTableBusyMaxIdle — Chrome's own scan (no cookie at all) must
+	// no longer be blocked.
+	future := time.Now().Add(selfOrderTableBusyMaxIdleEmpty + time.Second)
+	if future.Sub(time.Now()) >= selfOrderTableBusyMaxIdle {
+		t.Fatal("test setup bug: selfOrderTableBusyMaxIdleEmpty must be shorter than selfOrderTableBusyMaxIdle for this test to prove anything")
+	}
+	reqLater := httptest.NewRequest(http.MethodGet, "/self-order?table="+tableA, nil)
+	bound, busy := bindSelfOrderTableSession(httptest.NewRecorder(), reqLater, dp, tableA, future)
+	if busy {
+		t.Fatal("an EMPTY session idle past selfOrderTableBusyMaxIdleEmpty must not block a new scan of its table, even though selfOrderTableBusyMaxIdle hasn't elapsed")
+	}
+	if !bound {
+		t.Fatal("the new scan should have bound a fresh session once the empty one aged out of the shorter busy-guard window")
+	}
+
+	// The in-app browser's own abandoned session is untouched — still live,
+	// still resumable by its own cookie.
+	if _, ok := dp.SelfOrderSessions.Get(inAppToken); !ok {
+		t.Fatal("the in-app browser's own abandoned session must still be live (not evicted — only de-prioritized for the busy guard)")
+	}
+}
+
+// The other half of the ut-docs#2444 split, driven through the real
+// production constants and wiring (ut-docs#2444 review finding N3): a
+// NON-EMPTY session must still block a competing scan once idle past
+// selfOrderTableBusyMaxIdleEmpty — it only frees after the full,
+// much-longer selfOrderTableBusyMaxIdle, exactly like before this card.
+// Guards specifically against the two production constants being passed
+// to BindTable in the wrong order (empirically confirmed during review:
+// swapping them makes this test fail while the immediate-collision tests
+// above stay green).
+func TestSelfOrder_NonEmptySessionStillBlocksPastEmptyMaxIdleWindow(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	tableA := createSelfOrderTable(t, dp, "T1", 100)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+	seedStock(t, d, "itm-coffee", 10)
+
+	mux := http.NewServeMux()
+	registerSelfOrder(mux, dp)
+	registerSelfOrderShop(mux, dp)
+
+	owner := newSelfOrderGuest(t, mux)
+	owner.get("/self-order?table=" + tableA)
+	owner.post("/api/self-order/scan", "code=5000001")
+	ownerToken := owner.sessionToken()
+
+	if selfOrderTableBusyMaxIdleEmpty >= selfOrderTableBusyMaxIdle {
+		t.Fatal("test setup bug: selfOrderTableBusyMaxIdleEmpty must be shorter than selfOrderTableBusyMaxIdle for this test to prove anything")
+	}
+	pastEmptyStillWithinMaxIdle := time.Now().Add(selfOrderTableBusyMaxIdleEmpty + time.Second)
+	reqLater := httptest.NewRequest(http.MethodGet, "/self-order?table="+tableA, nil)
+	if bound, busy := bindSelfOrderTableSession(httptest.NewRecorder(), reqLater, dp, tableA, pastEmptyStillWithinMaxIdle); bound || !busy {
+		t.Fatalf("a NON-EMPTY session idle past selfOrderTableBusyMaxIdleEmpty (but still within selfOrderTableBusyMaxIdle) must still block a competing scan, got bound=%v busy=%v", bound, busy)
+	}
+
+	pastMaxIdle := time.Now().Add(selfOrderTableBusyMaxIdle + time.Second)
+	reqEvenLater := httptest.NewRequest(http.MethodGet, "/self-order?table="+tableA, nil)
+	bound, busy := bindSelfOrderTableSession(httptest.NewRecorder(), reqEvenLater, dp, tableA, pastMaxIdle)
+	if busy {
+		t.Fatal("a NON-EMPTY session idle past the full selfOrderTableBusyMaxIdle must eventually free its table too")
+	}
+	if !bound {
+		t.Fatal("the new scan should have bound a fresh session once the non-empty one aged out")
+	}
+	if _, ok := dp.SelfOrderSessions.Get(ownerToken); !ok {
+		t.Fatal("the owner's own abandoned session must still be live (not evicted — only de-prioritized for the busy guard)")
+	}
+}
+
 // The HTTP-level version of the concurrency guarantee (the lower-level one is
 // TestSessionBasketManager_ConcurrentSessionsDoNotInterfere in internal/pos):
 // two tables' guests, driven through the real handlers with independent

@@ -23,6 +23,19 @@ import (
 // as "holding" the table for a DIFFERENT phone's scan.
 const selfOrderTableBusyMaxIdle = 10 * time.Minute
 
+// selfOrderTableBusyMaxIdleEmpty is BindTable's busy-recency window for a
+// table-bound session that has never added an item (ut-docs#2444, review
+// finding S3 of ut-docs#2434's own record). The race BindTable's atomic
+// bind exists to close only needs a window of milliseconds-to-seconds, so
+// this is deliberately far shorter than selfOrderTableBusyMaxIdle: without
+// it, a guest who scans from an in-app-browser (Android Google Lens /
+// Instagram / WhatsApp WebView — a separate cookie jar) then taps "open in
+// Chrome" (common) re-scans their OWN still-empty session from a browser
+// that carries no cookie for it, and used to self-lock for the full 10
+// minutes with no staff-facing way to release it early. A session holding
+// at least one line still uses selfOrderTableBusyMaxIdle, unaffected.
+const selfOrderTableBusyMaxIdleEmpty = 90 * time.Second
+
 // selfOrderSessionCookie carries a table-bound guest's session token
 // (ADR-0103 Decision 2, ut-docs#2261) — the key into
 // common.Deps.SelfOrderSessions. Minted only by GET /self-order?table=<id>,
@@ -177,11 +190,13 @@ func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 //     staggered scans before either added an item used to slip through).
 //     Nothing minted; the caller renders the existing "till busy" screen
 //     (ut-docs#815's own template, copy revised by ut-docs#2261 review
-//     finding B2 for the narrowed trigger). A session idle past
-//     selfOrderTableBusyMaxIdle never blocks — see BindTable's own doc
-//     comment (ut-docs#2261 review finding B1): an abandoned cart, empty or
-//     not, must not hold a table hostage for the full 2h memory-bound
-//     sweep window.
+//     finding B2 for the narrowed trigger). A session idle past its own
+//     recency window never blocks — see BindTable's own doc comment
+//     (ut-docs#2261 review finding B1, ut-docs#2444 review finding S3): an
+//     abandoned cart must not hold a table hostage, and an EMPTY one uses a
+//     far shorter window (selfOrderTableBusyMaxIdleEmpty) than a non-empty
+//     one (selfOrderTableBusyMaxIdle) so a guest can't self-lock their own
+//     table for minutes just by re-scanning from a second cookie jar.
 //   - bound=true: this request now has a live session bound to the table —
 //     resumed (this browser already held one for that table: the idle-reset
 //     bounce, or a deliberate re-open — nothing reset, nothing re-minted,
@@ -234,7 +249,7 @@ func bindSelfOrderTableSession(w http.ResponseWriter, r *http.Request, d *common
 	if currentToken != "" {
 		mover = current
 	}
-	token, svc, busy := d.SelfOrderSessions.BindTable(t.ID, t.Label, currentToken, mover, selfOrderTableBusyMaxIdle, now)
+	token, svc, busy := d.SelfOrderSessions.BindTable(t.ID, t.Label, currentToken, mover, selfOrderTableBusyMaxIdle, selfOrderTableBusyMaxIdleEmpty, now)
 	if busy {
 		return false, true
 	}
