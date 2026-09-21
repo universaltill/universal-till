@@ -408,6 +408,41 @@ func (s *ButtonStore) SearchItems(ctx context.Context, q string, offset, limit i
 	return out, nil
 }
 
+// allActiveIDChunkSize bounds how many item ids LoadAllActive batches into
+// a single repo call for ItemIDsWithModifiers/ItemIDsWithVariants/
+// ItemCurrentPrices (ut-docs#2318). Comfortably under SQLite's bind-variable
+// ceiling (32766) even for the most param-hungry of the three
+// (ItemIDsWithModifiers, at 2 args per id), with plenty of headroom for
+// catalog growth.
+const allActiveIDChunkSize = 500
+
+// chunkStrings splits ids into slices of at most size each (size must be
+// > 0), returning nil for an empty input. Each returned slice is capped at
+// its own length (full slice expression) so nothing a caller does with one
+// chunk can alias into another.
+func chunkStrings(ids []string, size int) [][]string {
+	if len(ids) == 0 {
+		return nil
+	}
+	chunks := make([][]string, 0, (len(ids)+size-1)/size)
+	for len(ids) > 0 {
+		end := size
+		if end > len(ids) {
+			end = len(ids)
+		}
+		chunks = append(chunks, ids[:end:end])
+		ids = ids[end:]
+	}
+	return chunks
+}
+
+// mergeMapInto copies every entry of src into dst.
+func mergeMapInto[K comparable, V any](dst map[K]V, src map[K]V) {
+	for k, v := range src {
+		dst[k] = v
+	}
+}
+
 // LoadAllActive returns EVERY active catalog item as a Button-shaped tile
 // (ut-docs#2294) — unlike Load (shortcut_buttons rows only, i.e. Designer
 // quick buttons), this is sourced straight from the catalog itself
@@ -445,25 +480,59 @@ func (s *ButtonStore) LoadAllActive(ctx context.Context) ([]Button, error) {
 	if err != nil {
 		logging.L().Warnf("ui: load all-active items thumbnails failed, tiles fall back to no image: %v", err)
 	}
+	// The next three lookups are chunked (ut-docs#2318): SQLite's bind-
+	// variable ceiling (32766) is well within plausible active-catalog
+	// sizes when called unchunked with the WHOLE id set —
+	// ItemIDsWithModifiers alone binds 2 args per id, so it starts failing
+	// past ~16,383 active items. Each of the three functions treated its
+	// own failure as non-fatal already (a warn + per-tile fallback), which
+	// is safe for Load's small quick-button input but was silently
+	// dangerous here: a modifier prompt, a variant prompt or a promotional
+	// price could vanish with no visible sign anything went wrong. Chunking
+	// keeps every call comfortably under the ceiling regardless of catalog
+	// size, and merging per-chunk results means a failure now degrades only
+	// the chunk that failed, not the whole active catalog.
+	idChunks := chunkStrings(itemIDs, allActiveIDChunkSize)
 	var hasMods map[string]bool
 	if s.modRepo != nil {
-		hasMods, _ = s.modRepo.ItemIDsWithModifiers(ctx, itemIDs)
+		hasMods = map[string]bool{}
+		for _, chunk := range idChunks {
+			m, err := s.modRepo.ItemIDsWithModifiers(ctx, chunk)
+			if err != nil {
+				// Previously silently discarded (`_`) — now logged like the
+				// other two lookups below, since silence is exactly the
+				// failure mode this fix exists to remove.
+				logging.L().Warnf("ui: load all-active items-with-modifiers failed for a batch of %d item(s), those tiles fall back to plain add-to-basket: %v", len(chunk), err)
+				continue
+			}
+			mergeMapInto(hasMods, m)
+		}
 	}
 	var hasVariants map[string]bool
 	var currentPrices map[string]int64
 	if s.catalogRepo != nil {
-		hasVariants, err = s.catalogRepo.ItemIDsWithVariants(ctx, itemIDs)
-		if err != nil {
-			// Same money-correctness-affecting non-fatal-but-loud treatment
-			// as Load's own hasVariants error handling (ut-docs#2209 review
-			// finding 5): on this error every tile falls back to
-			// straight-to-basket at the parent's base price.
-			logging.L().Warnf("ui: load all-active items-with-variants failed, every tile falls back to parent-price add (ut-docs#2209): %v", err)
+		hasVariants = map[string]bool{}
+		for _, chunk := range idChunks {
+			m, err := s.catalogRepo.ItemIDsWithVariants(ctx, chunk)
+			if err != nil {
+				// Same money-correctness-affecting non-fatal-but-loud treatment
+				// as Load's own hasVariants error handling (ut-docs#2209 review
+				// finding 5): on this error every tile in the failed batch falls
+				// back to straight-to-basket at the parent's base price.
+				logging.L().Warnf("ui: load all-active items-with-variants failed for a batch of %d item(s), those tiles fall back to parent-price add (ut-docs#2209): %v", len(chunk), err)
+				continue
+			}
+			mergeMapInto(hasVariants, m)
 		}
-		currentPrices, err = s.catalogRepo.ItemCurrentPrices(ctx, itemIDs)
-		if err != nil {
-			// Same as Load's own currentPrices error handling (ut-docs#2258).
-			logging.L().Warnf("ui: load all-active current prices failed, every tile falls back to raw base_price (ut-docs#2258): %v", err)
+		currentPrices = map[string]int64{}
+		for _, chunk := range idChunks {
+			p, err := s.catalogRepo.ItemCurrentPrices(ctx, chunk)
+			if err != nil {
+				// Same as Load's own currentPrices error handling (ut-docs#2258).
+				logging.L().Warnf("ui: load all-active current prices failed for a batch of %d item(s), those tiles fall back to raw base_price (ut-docs#2258): %v", len(chunk), err)
+				continue
+			}
+			mergeMapInto(currentPrices, p)
 		}
 	}
 	out := make([]Button, 0, len(items))
