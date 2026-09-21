@@ -2,12 +2,10 @@ package plugins
 
 import (
 	"crypto/ed25519"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,19 +78,20 @@ func NewManifestVerifier(publicKeyHex string) (*ManifestVerifier, error) {
 func (mv *ManifestVerifier) VerifyArtifact(artifactPath, expectedChecksum string) error {
 	log := logging.L()
 
-	// Calculate SHA256 of artifact
-	f, err := os.Open(artifactPath)
+	actualChecksum, err := ComputeSHA256(artifactPath)
 	if err != nil {
-		return fmt.Errorf("failed to open artifact: %w", err)
-	}
-	defer f.Close()
-
-	hasher := sha256.New()
-	if _, err := io.Copy(hasher, f); err != nil {
+		// ComputeSHA256 wraps an open failure as "open file: %w" and a read
+		// failure as "hash file: %w" (see its own doc comment/tests) — key
+		// off that stable prefix, not a fresh os.Stat, so every open
+		// failure (missing file, permission denied, too many open files,
+		// ...) maps back to VerifyArtifact's own pre-existing "failed to
+		// open artifact" wording, not just the not-found case a Stat retry
+		// would happen to reproduce.
+		if strings.HasPrefix(err.Error(), "open file:") {
+			return fmt.Errorf("failed to open artifact: %w", errors.Unwrap(err))
+		}
 		return fmt.Errorf("failed to hash artifact: %w", err)
 	}
-
-	actualChecksum := hex.EncodeToString(hasher.Sum(nil))
 
 	if actualChecksum != expectedChecksum {
 		log.Warnf("[Verifier] Checksum mismatch: expected %s, got %s", expectedChecksum, actualChecksum)

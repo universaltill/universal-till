@@ -35,7 +35,6 @@ internal/pihealth/pihealth.go: unreachable func: CheckNow
 internal/plugins/ipc.go: unreachable func: EventBus.GetEventMode
 internal/plugins/ipc.go: unreachable func: EventBus.Subscribe
 internal/plugins/ipc.go: unreachable func: EventBus.Unsubscribe
-internal/plugins/manifest.go: unreachable func: ComputeSHA256
 internal/plugins/marketplace/catalog_repository.go: unreachable func: CatalogRepository.Filter
 internal/plugins/marketplace/client.go: unreachable func: Client.GetRevocations
 internal/plugins/marketplace/client.go: unreachable func: Client.ReportPluginStatus
