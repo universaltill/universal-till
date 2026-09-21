@@ -428,11 +428,19 @@ func TestSessionBasketManager_BindTable_ConcurrentSameTableBindsExactlyOnce(t *t
 func TestSessionBasketManager_BindTable_MoverBlockedByBusyTableKeepsOwnBinding(t *testing.T) {
 	m, now := newTestSessionManager(t)
 
-	_, incumbent := m.Create()
-	incumbent.SetTable("table-B", "T2")
+	// Bind both fixtures through BindTable itself, not a direct
+	// svc.SetTable call — the manager's own busy-check now scans its own
+	// sessionBasket.tableID record (ut-docs#2443), which only BindTable
+	// keeps in sync; a direct SetTable bypasses it entirely.
+	incumbentToken, incumbent := m.Create()
+	if _, _, busy := m.BindTable("table-B", "T2", incumbentToken, incumbent, time.Hour, *now); busy {
+		t.Fatal("setup: incumbent's own bind to table-B must not itself report busy")
+	}
 
 	moverToken, mover := m.Create()
-	mover.SetTable("table-A", "T1")
+	if _, _, busy := m.BindTable("table-A", "T1", moverToken, mover, time.Hour, *now); busy {
+		t.Fatal("setup: mover's own bind to table-A must not itself report busy")
+	}
 	mover.AddLineWithModifiers(BasketLine{SKU: "x", ItemID: "x", Name: "line", PriceCents: 100}, 1, nil)
 
 	tok, svc, busy := m.BindTable("table-B", "T2", moverToken, mover, time.Hour, *now)
@@ -462,8 +470,13 @@ func TestSessionBasketManager_BindTable_MoverBlockedByBusyTableKeepsOwnBinding(t
 func TestSessionBasketManager_BindTable_EmptySessionFreesTableAfterMaxIdle(t *testing.T) {
 	m, now := newTestSessionManager(t)
 
-	_, first := m.Create()
-	first.SetTable("table-A", "T1") // bound, zero lines
+	// Bind through BindTable itself (ut-docs#2443) — a direct svc.SetTable
+	// call would leave the manager's own sessionBasket.tableID record at
+	// "", invisible to BindTable's busy-check.
+	firstToken, first := m.Create()
+	if _, _, busy := m.BindTable("table-A", "T1", firstToken, first, 10*time.Minute, *now); busy {
+		t.Fatal("setup: first's own bind to table-A must not itself report busy")
+	} // bound, zero lines
 
 	if _, _, busy := m.BindTable("table-A", "T1", "", nil, 10*time.Minute, *now); !busy {
 		t.Fatal("right after binding: a second, unrelated scan of the same table must see busy, even though the first session is empty")
@@ -504,7 +517,12 @@ func TestSessionBasketManager_BindTable_StaleResumeAfterCompetingBindSeesBusy(t 
 	m, now := newTestSessionManager(t)
 
 	aToken, aSvc := m.Create() // lastSeen stamped at *now via m.clock()
-	aSvc.SetTable("table-A", "T1")
+	// Bind through BindTable itself (ut-docs#2443) — a direct SetTable call
+	// would leave the manager's own sessionBasket.tableID record at "",
+	// so A would never register as busy below regardless of staleness.
+	if _, _, busy := m.BindTable("table-A", "T1", aToken, aSvc, 10*time.Minute, *now); busy {
+		t.Fatal("setup: A's own bind to table-A must not itself report busy")
+	}
 	aSvc.AddLineWithModifiers(BasketLine{SKU: "x", ItemID: "x", Name: "line", PriceCents: 100}, 1, nil)
 
 	// Advance the fake clock past maxIdle with no further touch of A's
@@ -533,5 +551,174 @@ func TestSessionBasketManager_BindTable_StaleResumeAfterCompetingBindSeesBusy(t 
 	// B's own binding is untouched by A's blocked resume attempt.
 	if got, ok := m.Get(bToken); !ok || got != bSvc || got.TableID() != "table-A" {
 		t.Fatal("B's session must be unaffected by A's blocked resume")
+	}
+}
+
+// slowChargeAsker blocks in AskChargePolicy until release is closed, so a
+// test can hold a Service's SetTable call open for as long as it needs to
+// prove some other manager operation is (or isn't) blocked behind it. The
+// FIRST call is let through immediately: SetChargePolicyAsker itself
+// synchronously triggers one recomputeTotals (and so one AskChargePolicy
+// call) as part of installing the asker, before the test's real BindTable
+// call is even made — blocking that first, setup-only call would deadlock
+// the test itself rather than the thing under test.
+type slowChargeAsker struct {
+	mu        sync.Mutex
+	calls     int
+	startOnce sync.Once
+	released  sync.Once
+	started   chan struct{}
+	release   chan struct{}
+}
+
+func newSlowChargeAsker() *slowChargeAsker {
+	return &slowChargeAsker{started: make(chan struct{}), release: make(chan struct{})}
+}
+
+// releaseNow unblocks every current and future AskChargePolicy call stuck
+// in this asker, exactly once. Idempotent so a test can call it both
+// explicitly (once its own assertions are done) and via a t.Cleanup
+// safety net (in case a t.Fatal fires first) without a double-close panic.
+func (a *slowChargeAsker) releaseNow() {
+	a.released.Do(func() { close(a.release) })
+}
+
+func (a *slowChargeAsker) AskChargePolicy() (ChargePolicy, bool) {
+	a.mu.Lock()
+	a.calls++
+	isSetupCall := a.calls == 1
+	a.mu.Unlock()
+	if isSetupCall {
+		return ChargePolicy{}, false
+	}
+	a.startOnce.Do(func() { close(a.started) })
+	<-a.release
+	return ChargePolicy{}, false
+}
+
+// ut-docs#2443 (review finding S1 on ut-docs#2434): BindTable used to call
+// mover.SetTable/svc.SetTable INSIDE the manager's m.mu critical section,
+// so a slow plugin charge-policy ask triggered by one guest's bind
+// serialized every OTHER table's concurrent BindTable behind it for the
+// ask's duration. This proves the fix: a deliberately-stuck ask on
+// table-A's bind must not stop a concurrent bind on table-B from
+// completing immediately.
+func TestSessionBasketManager_BindTable_SlowChargePolicyAskDoesNotBlockOtherTables(t *testing.T) {
+	m, now := newTestSessionManager(t)
+
+	moverToken, mover := m.Create()
+	asker := newSlowChargeAsker()
+	// Safety net: if an assertion below t.Fatal's before the explicit
+	// releaseNow() call further down runs, this still unblocks the
+	// goroutine parked in AskChargePolicy instead of leaking it for the
+	// life of the test binary (ut-docs#2443 N5).
+	t.Cleanup(asker.releaseNow)
+	mover.SetChargePolicyAsker(asker)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		m.BindTable("table-A", "T1", moverToken, mover, time.Hour, *now)
+	}()
+
+	select {
+	case <-asker.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("mover's SetTable never reached the slow charge-policy ask")
+	}
+
+	// Table-A's bind is now stuck inside the ask. A concurrent bind on a
+	// completely different table must complete immediately — if it's
+	// still waiting on m.mu, that mu is being held across the ask, which
+	// is exactly the regression this card fixes.
+	otherDone := make(chan struct{})
+	go func() {
+		defer close(otherDone)
+		tok, svc, busy := m.BindTable("table-B", "T2", "", nil, time.Hour, *now)
+		if busy || svc == nil || tok == "" {
+			t.Errorf("table-B bind while table-A's ask is stuck: busy=%v svc=%v tok=%q, want a clean bind", busy, svc, tok)
+		}
+	}()
+
+	select {
+	case <-otherDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("table-B's BindTable is still blocked behind table-A's in-flight charge-policy ask — m.mu is being held across the ask")
+	}
+
+	asker.releaseNow()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("table-A's BindTable never returned after its ask was released")
+	}
+
+	if got := mover.TableID(); got != "table-A" {
+		t.Fatalf("mover's TableID() after its bind completed = %q, want %q", got, "table-A")
+	}
+}
+
+// ut-docs#2443 M1: the test above only exercises the MOVER path, where
+// BindTable never calls m.factory() at all. The mint path (mover == nil,
+// the common first-ever-scan case in production) has its own blocking-ask
+// source — m.factory() itself installs tax/charge-policy askers, and that
+// installation synchronously triggers one AskChargePolicy call — which a
+// first cut of this fix left running INSIDE m.mu, defeating the card's
+// point for its most common path. This proves the actual fix (building the
+// fresh Service before m.mu.Lock() when mover is nil): a still-in-flight,
+// deliberately-stuck ask from one mint's OWN factory call must not stop a
+// concurrent, unrelated manager operation (Get, here — it only ever needs
+// m.mu briefly) from completing immediately.
+func TestSessionBasketManager_BindTable_MintPathFactoryAskDoesNotHoldLock(t *testing.T) {
+	asker := newSlowChargeAsker()
+	t.Cleanup(asker.releaseNow)
+	m := NewSessionBasketManager(func() *Service {
+		s := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000}, nil)
+		s.SetChargePolicyAsker(asker) // installing it synchronously recomputes once
+		return s
+	})
+	now := time.Now()
+
+	// A pre-existing, unrelated session: Create()'s own factory call is
+	// AskChargePolicy's call #1 (the setup call slowChargeAsker always
+	// lets through immediately), so this session is minted synchronously,
+	// before table-A's mint below makes call #2 — the one that blocks.
+	existingToken, _ := m.Create()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		m.BindTable("table-A", "T1", "", nil, time.Hour, now)
+	}()
+
+	select {
+	case <-asker.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("table-A's mint never reached its factory's charge-policy ask")
+	}
+
+	// Table-A's mint is now stuck inside its OWN factory's ask. A Get on a
+	// completely unrelated, already-live session must complete
+	// immediately — if it's still waiting on m.mu, that mu is being held
+	// across m.factory() itself, not just across the later SetTable call.
+	getDone := make(chan struct{})
+	go func() {
+		defer close(getDone)
+		if _, ok := m.Get(existingToken); !ok {
+			t.Error("Get on an unrelated, already-live session failed while table-A's mint was stuck in its own factory's ask")
+		}
+	}()
+
+	select {
+	case <-getDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Get() on an unrelated session is still blocked behind table-A's in-flight factory charge-policy ask — m.factory() is being called under m.mu")
+	}
+
+	asker.releaseNow()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("table-A's BindTable never returned after its ask was released")
 	}
 }
