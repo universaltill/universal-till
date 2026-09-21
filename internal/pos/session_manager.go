@@ -27,15 +27,36 @@ import (
 //
 // Locking: mu is a plain, NON-reentrant Mutex following Service's own
 // single-lock convention (see the Service struct's doc comment) — every
-// exported method takes it exactly once at its own top and calls only
-// unexported helpers that assume it is held. Lock order is manager.mu ->
-// Service.mu (TableOwner/HasItems/SetConfig/BindTable call Service methods
-// while holding mu — BindTable's own SetTable call is the first MUTATING
-// one, and per ut-docs#2434 review finding S1 it can itself trigger a
-// blocking plugin tax/charge-policy ask, serializing every OTHER table's
-// concurrent request behind it for that ask's duration; tracked as a
-// follow-up rather than fixed here, see that card); a Service never calls
-// back into the manager, so that order can't invert.
+// exported method except BindTable takes it exactly once at its own top
+// and calls only unexported helpers that assume it is held. Lock order is
+// manager.mu -> Service.mu (TableOwner/HasItems/SetConfig call Service
+// methods while holding mu). SetConfig in particular still has the SAME
+// blocking-ask exposure BindTable used to (its Service.SetConfig call can
+// itself trigger a blocking plugin tax/charge-policy ask via
+// recomputeTotals, serializing every OTHER live session's own request
+// behind it for the ask's duration) — untouched by ut-docs#2443, which is
+// scoped to BindTable alone; not yet filed as its own follow-up.
+//
+// BindTable is the one exception, and takes mu up to three times (ut-docs#2443,
+// review finding S1 on ut-docs#2434, and the round-2 review of that first
+// fix that found it didn't go far enough): both `factory()` (which installs
+// tax/charge-policy askers — installing either synchronously recomputes
+// totals, which can invoke a blocking plugin ask) and `SetTable` can block
+// on that same kind of ask, and BindTable's own busy-check loop needs mu
+// too — holding mu across either blocking call would serialize every OTHER
+// table's concurrent BindTable/Get behind it for the ask's duration. So a
+// fresh Service is built BEFORE the first mu acquisition wherever the call
+// shape lets that be decided up front (a nil mover — see BindTable's own
+// comment for the one rare fallback where it can't), the claim itself is
+// recorded on the manager's own sessionBasket inside one lock/unlock,
+// SetTable then runs unlocked, and a final short lock/unlock writes back
+// whatever the Service actually ended up holding (never blindly the
+// requested tableID — SetTable can silently no-op for an all-takeaway
+// basket) so sessionBasket.tableID stays the authoritative record for
+// BindTable's own busy-check even when two calls sharing one ownToken (a
+// double-tap) complete their unlocked SetTable calls out of order. A
+// Service never calls back into the manager, so lock order still can't
+// invert.
 type SessionBasketManager struct {
 	mu       sync.Mutex
 	sessions map[string]*sessionBasket
@@ -53,6 +74,32 @@ type SessionBasketManager struct {
 type sessionBasket struct {
 	svc      *Service
 	lastSeen time.Time
+	// tableID is BindTable's own record of which table this session holds
+	// — read and written under m.mu alone, with no Service call involved,
+	// so recording or checking a claim never needs to touch svc while
+	// m.mu is held (ut-docs#2443, review finding S1 on ut-docs#2434). It
+	// is kept eventually consistent with svc.TableID() by a write-back
+	// BindTable does right after its own (unlocked) SetTable call — NOT
+	// a live mirror: TableOwner/TableOwnerActive below still read
+	// sb.svc.TableID() directly (a deliberate, pre-existing choice — see
+	// their own comments), so the two can disagree for the brief unlocked
+	// window while a BindTable call's SetTable is still in flight. That
+	// window is what makes S1's fix possible at all; BindTable's own
+	// busy-check is what actually enforces one-session-per-table, and it
+	// always reads this field, never svc.TableID().
+	//
+	// The eventual-consistency guarantee holds only for changes BindTable
+	// itself makes. Nothing here re-syncs if svc's table is cleared some
+	// OTHER way (e.g. an order-type change reaching applyTablePolicyLocked)
+	// — today that path is blocked from ever reaching a table-bound
+	// self-order session only by a clamp in a different package
+	// (self_order_shop.go's takeaway-toggle guard, pinned by
+	// TestSelfOrderShop_TableCheckout_TakeawayToggleCannotUnbindTable), not
+	// by anything in this file. If that clamp is ever relaxed, this field
+	// can strand a phantom claim (a table sb.tableID calls busy that no
+	// Service actually holds) — flagged in round 2 of ut-docs#2443's
+	// review, not yet fixed or filed as its own follow-up.
+	tableID string
 }
 
 // NewSessionBasketManager returns an empty manager. factory builds each new
@@ -125,8 +172,12 @@ func (m *SessionBasketManager) Remove(token string) {
 // TableOwner finds a live session currently bound to tableID (any session
 // whose Service.TableID() matches) — the unfiltered lookup behind
 // TableOwnerActive below (ADR-0103 Decision 4, narrowed by ut-docs#2261
-// review finding B1): TableOwnerActive is what the page's busy guard
-// actually calls. An empty tableID never matches (an unbound session has
+// review finding B1). Reads sb.svc.TableID() directly, unlike BindTable's
+// own busy-check (sb.tableID) — the two can disagree for the brief window
+// while a BindTable call's own SetTable is still in flight, unlocked
+// (ut-docs#2443 N2); this method and TableOwnerActive are read-only
+// diagnostic/test queries, never the enforcement path, so that window is
+// harmless here. An empty tableID never matches (an unbound session has
 // TableID "", and "which session owns no table" is not a meaningful
 // question). If two sessions were ever bound to one table — reachable in
 // practice since B1: an old session that went idle past
@@ -185,11 +236,15 @@ func (m *SessionBasketManager) TableOwnerActive(tableID string, maxIdle time.Dur
 
 // BindTable atomically resolves one guest's scan of tableID (ut-docs#2434,
 // ADR-0103 review finding N3, corrected in the ADR itself): the busy check
-// and the bind (move an existing session onto tableID, or mint a fresh
+// and the claim (move an existing session onto tableID, or mint a fresh
 // one) run under one m.mu critical section, so no other goroutine's own
 // BindTable call can land between "is this table free" and "claim it" —
 // closing the exact check-then-act race that previously let two phones
-// scanning the same table, before either added an item, both bind.
+// scanning the same table, before either added an item, both bind. The
+// actual SetTable call, and any blocking plugin ask it can trigger, always
+// runs AFTER that critical section releases mu (ut-docs#2443) — see the
+// type's own Locking comment for why, and sessionBasket.tableID's comment
+// for how the claim stays correct across that unlocked window.
 //
 // mover, if non-nil, is the CALLER'S OWN already-resolved live session
 // (ownToken is its token) to move onto tableID rather than replace — the
@@ -231,7 +286,12 @@ func (m *SessionBasketManager) TableOwnerActive(tableID string, maxIdle time.Dur
 // this whole loop runs under m.mu, the exact class of bug ut-docs#2443
 // (finding S1 of a DIFFERENT card) just closed on the bind path. Lines()
 // is a lock/copy/unlock with no recompute, so this scan never blocks on a
-// plugin round-trip just to classify a candidate session.
+// plugin round-trip just to classify a candidate session — unlike
+// sb.tableID (read with no Service call at all, for the SetTable-in-
+// flight reason its own comment explains), Lines() DOES take Service.mu,
+// but only ever briefly: nothing here waits on a plugin ask the way
+// Basket() can, so it's a different, narrower exception to "no Service
+// call under m.mu" than sb.tableID's, not a violation of it.
 //
 // A nil manager or empty tableID both report not-busy with no service and
 // no token — same "there is nothing to check" contract TableOwner(Active)
@@ -241,15 +301,28 @@ func (m *SessionBasketManager) BindTable(tableID, tableLabel, ownToken string, m
 	if m == nil || tableID == "" {
 		return "", nil, false
 	}
+	// A nil mover means this call can only possibly mint a fresh session
+	// (the common first-ever-scan case) — build that Service now, BEFORE
+	// taking m.mu: m.factory() installs the tax/charge-policy askers, and
+	// installing either synchronously recomputes totals, which can invoke
+	// the same kind of blocking plugin ask SetTable itself can trigger
+	// (ut-docs#2443 M1 — building it inside the lock, as a first cut of
+	// this fix did, defeated this card's whole point for the mint path,
+	// its most common one). Discarded unused if the table turns out busy.
+	// A non-nil mover skips this: the common resume/move path never needs
+	// a new Service at all, so never pays for one it won't use.
+	var freshSvc *Service
+	if mover == nil {
+		freshSvc = m.factory()
+	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	cutoff := now.Add(-maxIdle)
 	emptyCutoff := now.Add(-emptyMaxIdle)
 	for tok, sb := range m.sessions {
 		if tok == ownToken {
 			continue
 		}
-		if sb.svc.TableID() != tableID {
+		if sb.tableID != tableID {
 			continue
 		}
 		c := cutoff
@@ -257,6 +330,7 @@ func (m *SessionBasketManager) BindTable(tableID, tableLabel, ownToken string, m
 			c = emptyCutoff
 		}
 		if !sb.lastSeen.Before(c) {
+			m.mu.Unlock()
 			return "", nil, true
 		}
 	}
@@ -266,17 +340,78 @@ func (m *SessionBasketManager) BindTable(tableID, tableLabel, ownToken string, m
 	// silently "succeeding" on an orphaned *Service avoids leaving the
 	// guest bound to no cookie at all.
 	if sb, ok := m.sessions[ownToken]; mover != nil && ok {
-		mover.SetTable(tableID, tableLabel)
+		// Record the claim on the manager's own sessionBasket, and release
+		// mu, BEFORE calling SetTable (ut-docs#2443, review finding S1 on
+		// ut-docs#2434): SetTable -> recomputeTotals can invoke a blocking
+		// plugin tax/charge-policy ask, and every other table's own
+		// BindTable/Get needs mu too — holding it across that ask would
+		// serialize every other guest's request behind this one's ask.
+		// The claim recorded here under mu is what makes a concurrent
+		// BindTable see busy, so unlocking before the SetTable call does
+		// not reopen the check-then-act race ut-docs#2434 closed.
+		//
+		// sb.svc, not the caller's own mover — always the same live
+		// Service in valid production use (mover IS sb.svc, resolved by
+		// the caller a moment before this call), but acting on the
+		// manager's own record rather than trusting the caller's copy of
+		// it keeps that an invariant this method enforces, not one it
+		// merely assumes (ut-docs#2443 N4).
+		sb.tableID = tableID
 		sb.lastSeen = m.clock()
-		return ownToken, mover, false
+		m.mu.Unlock()
+		sb.svc.SetTable(tableID, tableLabel)
+		// Write back whatever the Service actually ended up holding, not
+		// the tableID this call requested (ut-docs#2443 M2/M3): SetTable
+		// silently no-ops for an all-takeaway basket (Service.SetTable's
+		// own hasDineInLine guard), which would otherwise leave sb.tableID
+		// claiming a table the Service never actually took, permanently
+		// blocking every other guest from it. The same write-back is also
+		// what makes two calls racing on the SAME ownToken (a double-tap)
+		// converge correctly: whichever SetTable call actually finishes
+		// last is the one whose result lands here, matching what
+		// sb.svc.TableID() itself will report from then on — without it,
+		// the two calls' m.mu-protected claim writes and their unlocked
+		// SetTable calls could complete in opposite orders and leave
+		// sb.tableID and sb.svc.TableID() permanently disagreeing, which
+		// is exactly the double-bind ut-docs#2434 closed, reopened via a
+		// different path. Re-checks the session is still the same one
+		// (not evicted by a concurrent Remove/Sweep) before writing.
+		m.mu.Lock()
+		if m.sessions[ownToken] == sb {
+			sb.tableID = sb.svc.TableID()
+		}
+		m.mu.Unlock()
+		return ownToken, sb.svc, false
 	}
-	svc = m.factory()
+	if freshSvc == nil {
+		// Rare fallback: mover was non-nil but its session was evicted
+		// (Sweep/Remove) between the caller's Get and this call, so the
+		// branch above didn't run. Minting here still builds the Service
+		// under mu, same as before this card — accepted as a genuinely
+		// rare race (a Get a moment ago doesn't guarantee the session is
+		// still live), not the common mint path ut-docs#2443's fix is
+		// actually about.
+		freshSvc = m.factory()
+	}
+	svc = freshSvc
 	token = newSessionToken()
 	for _, taken := m.sessions[token]; taken; _, taken = m.sessions[token] {
 		token = newSessionToken() // 2^128 space — practically unreachable, but never overwrite a live session
 	}
+	m.sessions[token] = &sessionBasket{svc: svc, lastSeen: m.clock(), tableID: tableID}
+	m.mu.Unlock()
 	svc.SetTable(tableID, tableLabel)
-	m.sessions[token] = &sessionBasket{svc: svc, lastSeen: m.clock()}
+	// Same write-back reasoning as the mover branch above (ut-docs#2443
+	// M2/M3) — a fresh mint can no-op its own SetTable too (an all-takeaway
+	// default basket), and while two calls can't share a freshly-minted
+	// token's ownToken (it doesn't exist until this call creates it), the
+	// principle that sb.tableID must reflect what the Service actually
+	// holds, never merely what was requested, is the same either way.
+	m.mu.Lock()
+	if sb := m.sessions[token]; sb != nil {
+		sb.tableID = svc.TableID()
+	}
+	m.mu.Unlock()
 	return token, svc, false
 }
 

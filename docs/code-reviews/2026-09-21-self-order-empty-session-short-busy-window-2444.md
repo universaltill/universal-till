@@ -106,6 +106,33 @@ vet` clean, `golangci-lint run` 0 issues,
 the full unfiltered `go test ./internal/pages/... -race` (`make
 test-race-pages`) as this pipeline's one full gate before commit.
 
+## Base-branch merge (ut-docs#2443 landed mid-cycle)
+
+`universal-till#1309` (ut-docs#2443's own fix, a separate card from the
+same ut-docs#2434 review) merged into `main` while this fix was in
+review, restructuring `BindTable` itself: the busy-scan loop now matches
+on a new manager-owned `sessionBasket.tableID` field instead of
+`sb.svc.TableID()`, specifically so the busy-check never depends on
+`SetTable`'s own still-in-flight, unlocked write. Merging `main` into
+this branch produced a real conflict in the busy-scan loop, resolved by
+keeping `#2443`'s `sb.tableID` match and layering this card's
+empty/non-empty window split on top of it — the `len(Lines()) == 0`
+check this review's own S1 fix required stays correct and cheap under
+the new structure for the same reason `TableOwner`/`TableOwnerActive`
+already call `sb.svc.TableID()` under `m.mu`: it takes `Service.mu`
+briefly but never waits on a plugin ask, unlike `Basket()`. Several test
+call sites `#2443` added (`TestSessionBasketManager_BindTable_
+SlowChargePolicyAskDoesNotBlockOtherTables`, `..._MintPathFactoryAsk
+DoesNotHoldLock`, and setup lines in tests both cards touched) needed the
+new two-duration signature and, in one case
+(`..._NonEmptySessionOutlastsEmptyMaxIdle`'s setup), needed to bind
+through `BindTable` itself rather than a direct `svc.SetTable` call —
+the latter would leave `sb.tableID` unset under `#2443`'s new design and
+silently break the test. Full `internal/pos` package (`-race`, all
+tests, not just the touched ones) and the full `internal/pages` `-race`
+gate (`make test-race-pages`) both re-run clean after the merge; see
+Verdict.
+
 ## Confirmed clean, no action needed
 
 - Backend-only diff (`git diff --stat`: 4 `.go` files) — no
