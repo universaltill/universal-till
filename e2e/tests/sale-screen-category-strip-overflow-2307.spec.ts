@@ -170,7 +170,10 @@ test.describe('sale screen category strip overflow (ut-docs#2307)', () => {
       expect(hiddenCount, 'at least one category tab must have overflowed').toBeGreaterThan(0);
 
       // Opening the sheet: every one of the 15 categories is listed, each
-      // as its own large tile with a name, colour swatch and item count.
+      // as its own large tile with a name, colour swatch and quick-button
+      // count (ut-docs#2450: this is the button count, not the catalog's
+      // real item count — those are two different numbers and now two
+      // different i18n keys).
       await more.click();
       const dialog = page.locator('#category-overflow-dialog');
       await expect(dialog).toBeVisible();
@@ -178,7 +181,7 @@ test.describe('sale screen category strip overflow (ut-docs#2307)', () => {
       for (const c of cats) {
         const tile = dialog.locator('.category-overflow-tile', { hasText: c.name });
         await expect(tile, `sheet tile for ${c.name}`).toHaveCount(1);
-        await expect(tile.locator('.category-overflow-count')).toHaveText('1 item(s)');
+        await expect(tile.locator('.category-overflow-count')).toHaveText('1 button(s)');
       }
 
       // Selecting the 14th category (card's own example) closes the sheet
