@@ -233,6 +233,40 @@ func TestSessionBasketManager_HasItems(t *testing.T) {
 	}
 }
 
+// ut-docs#2449 (follow-up from the ut-docs#2444 review, same lock-scope class
+// as ut-docs#2443/#2444): HasItems used to decide "does this session hold an
+// item" via svc.Basket().ItemCount() > 0, all under m.mu. Basket() always
+// calls recomputeTotals(), which — on any session with a tax/charge-policy
+// asker installed (any country plugin, ADR-0061) — can perform a blocking
+// plugin round-trip. HasItems runs under the manager's own lock, so a stuck
+// ask on ANY live session would serialize every other manager operation (and
+// every other session's request) behind it for the ask's duration. This
+// proves the fix: HasItems must not invoke the charge-policy asker at all.
+func TestSessionBasketManager_HasItems_DoesNotBlockOnChargePolicyAsk(t *testing.T) {
+	m, _ := newTestSessionManager(t)
+
+	_, svc := m.Create()
+	asker := newSlowChargeAsker()
+	t.Cleanup(asker.releaseNow)
+	svc.SetChargePolicyAsker(asker)
+
+	done := make(chan struct{})
+	var got bool
+	go func() {
+		defer close(done)
+		got = m.HasItems()
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("HasItems blocked on a plugin charge-policy ask — same lock-scope class as ut-docs#2443/#2444")
+	}
+	if got {
+		t.Fatal("HasItems() = true for a session with no lines, want false")
+	}
+}
+
 // A nil manager is a valid "no sessions" receiver — page handlers nil-check
 // common.Deps.SelfOrderSessions, but the cheap read-only methods are made
 // nil-safe too so a bare-Deps caller can't panic on them.

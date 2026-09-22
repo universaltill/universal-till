@@ -35,7 +35,11 @@ import (
 // itself trigger a blocking plugin tax/charge-policy ask via
 // recomputeTotals, serializing every OTHER live session's own request
 // behind it for the ask's duration) — untouched by ut-docs#2443, which is
-// scoped to BindTable alone; not yet filed as its own follow-up.
+// scoped to BindTable alone, and not fixed by ut-docs#2449 either, which is
+// scoped to HasItems alone; not yet filed as its own follow-up. HasItems
+// itself no longer has this exposure (ut-docs#2449): it reads
+// Service.Lines(), a lock/copy/unlock with no recompute and no plugin call —
+// the same fix BindTable's own busy-check path took in ut-docs#2444.
 //
 // BindTable is the one exception, and takes mu up to three times (ut-docs#2443,
 // review finding S1 on ut-docs#2434, and the round-2 review of that first
@@ -463,7 +467,7 @@ func (m *SessionBasketManager) HasItems() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, sb := range m.sessions {
-		if sb.svc.Basket().ItemCount() > 0 {
+		if len(sb.svc.Lines()) > 0 {
 			return true
 		}
 	}
