@@ -16,7 +16,6 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/print"
-	"github.com/universaltill/universal-till/internal/ui"
 )
 
 // shopItem is one tile on the kiosk browse grid. Deliberately a distinct
@@ -67,7 +66,7 @@ func loadShopItems(ctx context.Context, d *common.Deps) ([]shopItem, error) {
 	// regardless of catalog size, and merging per-chunk results means a
 	// failure now degrades only the chunk that failed, not the whole kiosk
 	// grid.
-	idChunks := ui.ChunkStrings(ids, ui.AllActiveIDChunkSize)
+	idChunks := data.ChunkStrings(ids, data.IDChunkSize)
 	modifierRepo := data.NewModifierRepo(d.Db)
 	// Unsized, like LoadAllActive's own hasMods/hasVariants (buttons.go):
 	// on a typical catalog only a handful of items actually have
@@ -86,7 +85,7 @@ func loadShopItems(ctx context.Context, d *common.Deps) ([]shopItem, error) {
 			logging.L().Warnf("kiosk: load items-with-modifiers failed for a batch of %d item(s), those tiles fall back to plain add-to-basket: %v", len(chunk), err)
 			continue
 		}
-		ui.MergeMapInto(hasMods, m)
+		data.MergeMapInto(hasMods, m)
 	}
 	hasVariants := map[string]bool{}
 	for _, chunk := range idChunks {
@@ -99,7 +98,7 @@ func loadShopItems(ctx context.Context, d *common.Deps) ([]shopItem, error) {
 			logging.L().Warnf("kiosk: load items-with-variants failed for a batch of %d item(s), those tiles fall back to parent-price add (ut-docs#2209): %v", len(chunk), err)
 			continue
 		}
-		ui.MergeMapInto(hasVariants, m)
+		data.MergeMapInto(hasVariants, m)
 	}
 	currentPrices := make(map[string]int64, len(ids))
 	for _, chunk := range idChunks {
@@ -112,7 +111,7 @@ func loadShopItems(ctx context.Context, d *common.Deps) ([]shopItem, error) {
 			logging.L().Warnf("kiosk: load item current prices failed for a batch of %d item(s), those tiles fall back to raw base_price (ut-docs#2258): %v", len(chunk), err)
 			continue
 		}
-		ui.MergeMapInto(currentPrices, p)
+		data.MergeMapInto(currentPrices, p)
 	}
 	thumbnails, _ := repo.ItemThumbnails(ctx) // best-effort: a read error just means every tile falls back to no-image, same as a missing row
 
