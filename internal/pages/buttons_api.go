@@ -91,6 +91,28 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		btnHTTP.List(w, r)
 	})
 
+	// Sell screen All-tab "load more" (ut-docs#2319): the next page of
+	// ButtonStore.LoadAllActive beyond the first AllTabPageSize items GET
+	// /ui/buttons itself already inlined — see ui.ButtonsHTTP.AllMore's own
+	// doc comment. Mirrors /api/buttons/search's offset-query-param shape
+	// below, applied to the sale screen's own grid instead of the
+	// Designer's shortcut search.
+	mux.HandleFunc("/ui/buttons/all/more", func(w http.ResponseWriter, r *http.Request) {
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		renderer, err := ui.NewRenderer(
+			filepath.Join("web", "ui", "layouts", "base.html"),
+			filepath.Join("web", "ui", "pages", "index.html"),
+			filepath.Join("web", "ui", "partials", "buttons.html"),
+			funcs,
+		)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
+			return
+		}
+		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore, View: renderer}
+		btnHTTP.AllMore(w, r)
+	})
+
 	// Sell-screen live search (ut-docs#2294): every active catalog item
 	// matching q, rendered as the same tile component a quick-button/All-tab
 	// tile already uses -- distinct from /api/buttons/search above, which
