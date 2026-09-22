@@ -408,42 +408,6 @@ func (s *ButtonStore) SearchItems(ctx context.Context, q string, offset, limit i
 	return out, nil
 }
 
-// AllActiveIDChunkSize bounds how many item ids a single repo call for
-// ItemIDsWithModifiers/ItemIDsWithVariants/ItemCurrentPrices batches at once
-// (ut-docs#2318; exported ut-docs#2451 so internal/pages' loadShopItems can
-// share the same ceiling rather than duplicating the constant). Comfortably
-// under SQLite's bind-variable ceiling (32766) even for the most
-// param-hungry of the three (ItemIDsWithModifiers, at 2 args per id), with
-// plenty of headroom for catalog growth.
-const AllActiveIDChunkSize = 500
-
-// ChunkStrings splits ids into slices of at most size each (size must be
-// > 0), returning nil for an empty input. Each returned slice is capped at
-// its own length (full slice expression) so nothing a caller does with one
-// chunk can alias into another.
-func ChunkStrings(ids []string, size int) [][]string {
-	if len(ids) == 0 {
-		return nil
-	}
-	chunks := make([][]string, 0, (len(ids)+size-1)/size)
-	for len(ids) > 0 {
-		end := size
-		if end > len(ids) {
-			end = len(ids)
-		}
-		chunks = append(chunks, ids[:end:end])
-		ids = ids[end:]
-	}
-	return chunks
-}
-
-// MergeMapInto copies every entry of src into dst.
-func MergeMapInto[K comparable, V any](dst map[K]V, src map[K]V) {
-	for k, v := range src {
-		dst[k] = v
-	}
-}
-
 // LoadAllActive returns EVERY active catalog item as a Button-shaped tile
 // (ut-docs#2294) — unlike Load (shortcut_buttons rows only, i.e. Designer
 // quick buttons), this is sourced straight from the catalog itself
@@ -493,7 +457,7 @@ func (s *ButtonStore) LoadAllActive(ctx context.Context) ([]Button, error) {
 	// keeps every call comfortably under the ceiling regardless of catalog
 	// size, and merging per-chunk results means a failure now degrades only
 	// the chunk that failed, not the whole active catalog.
-	idChunks := ChunkStrings(itemIDs, AllActiveIDChunkSize)
+	idChunks := data.ChunkStrings(itemIDs, data.IDChunkSize)
 	var hasMods map[string]bool
 	if s.modRepo != nil {
 		hasMods = map[string]bool{}
@@ -506,7 +470,7 @@ func (s *ButtonStore) LoadAllActive(ctx context.Context) ([]Button, error) {
 				logging.L().Warnf("ui: load all-active items-with-modifiers failed for a batch of %d item(s), those tiles fall back to plain add-to-basket: %v", len(chunk), err)
 				continue
 			}
-			MergeMapInto(hasMods, m)
+			data.MergeMapInto(hasMods, m)
 		}
 	}
 	var hasVariants map[string]bool
@@ -523,7 +487,7 @@ func (s *ButtonStore) LoadAllActive(ctx context.Context) ([]Button, error) {
 				logging.L().Warnf("ui: load all-active items-with-variants failed for a batch of %d item(s), those tiles fall back to parent-price add (ut-docs#2209): %v", len(chunk), err)
 				continue
 			}
-			MergeMapInto(hasVariants, m)
+			data.MergeMapInto(hasVariants, m)
 		}
 		currentPrices = map[string]int64{}
 		for _, chunk := range idChunks {
@@ -533,7 +497,7 @@ func (s *ButtonStore) LoadAllActive(ctx context.Context) ([]Button, error) {
 				logging.L().Warnf("ui: load all-active current prices failed for a batch of %d item(s), those tiles fall back to raw base_price (ut-docs#2258): %v", len(chunk), err)
 				continue
 			}
-			MergeMapInto(currentPrices, p)
+			data.MergeMapInto(currentPrices, p)
 		}
 	}
 	out := make([]Button, 0, len(items))
