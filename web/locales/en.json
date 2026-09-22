@@ -1413,6 +1413,7 @@
   "products.all": "All",
   "products.categories": "Categories",
   "products.categories_modal_title": "Category items",
+  "products.category_button_count": "%d button(s)",
   "products.edit": "Edit quick buttons",
   "products.empty": "No products yet. Add some in Quick Buttons.",
   "products.more_categories": "More categories",

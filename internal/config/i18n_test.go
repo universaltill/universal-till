@@ -4,8 +4,11 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/universaltill/universal-till/web/locales"
 )
 
 // TestNewI18nFS_WorksFromAnyWorkingDirectory guards the real startup crash
@@ -149,5 +152,40 @@ func TestT_FallsBackFromRegionTagToBaseLanguage(t *testing.T) {
 	i := newTestI18n(t)
 	if got := i.T("fa-IR", "basket.total"); got != "جمع" {
 		t.Fatalf("T(fa-IR, basket.total) = %q, want the fa base translation", got)
+	}
+}
+
+// ut-docs#2450: the sell-screen category-overflow sheet's own quick-button
+// count used to reuse "categories.item_count" — the admin catalog table's
+// real item-count key — so the same string rendered two different numbers
+// depending which screen you were on. This loads the REAL shipped bundle
+// (not a synthetic fixture, unlike every other test in this file) so it
+// actually pins production's web/locales/*.json content, not just this
+// package's own T/Has logic: it would have failed red before the fix (T
+// falls back to the bare key per TestNewI18nFS_MissingFallbackLocaleIsEmptyNotError
+// above) and confirms every core locale ships a real, distinct translation
+// with the same %d verb as the key it was split from.
+func TestRealLocaleBundle_CategoryButtonCountResolvesInEveryCoreLocale(t *testing.T) {
+	i18n, err := NewI18nFS(locales.FS, "en")
+	if err != nil {
+		t.Fatalf("NewI18nFS(real bundle): %v", err)
+	}
+	const key = "products.category_button_count"
+	if !i18n.Has(key) {
+		t.Fatalf("%s not found anywhere in the real locale bundle", key)
+	}
+	for _, loc := range []string{"en", "fa", "tr", "ar"} {
+		got := i18n.T(loc, key)
+		if got == key {
+			t.Errorf("T(%s, %s) fell back to the bare key — translation missing from web/locales/%s.json", loc, key, loc)
+		}
+		if !strings.Contains(got, "%d") {
+			t.Errorf("T(%s, %s) = %q, want it to keep the %%d count verb", loc, key, got)
+		}
+	}
+	// The two keys must be free to diverge in value (that's the whole point
+	// of splitting them) even though they share the same %d shape.
+	if got, item := i18n.T("en", key), i18n.T("en", "categories.item_count"); got == item {
+		t.Errorf("products.category_button_count and categories.item_count still resolve identically (%q) in en — the split didn't take", got)
 	}
 }

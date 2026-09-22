@@ -702,7 +702,7 @@
                     :class="tab === '{{ $g.ID }}' && 'active'" :aria-current="tab === '{{ $g.ID }}' ? 'true' : null"
                     @click="selectCategoryFromOverflow('{{ $g.ID }}')">
               <span class="category-tile-name">{{ if $g.ID }}{{ $g.Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</span>
-              <span class="category-overflow-count">{{ printf (T "categories.item_count") (len $g.Buttons) }}</span>
+              <span class="category-overflow-count">{{ printf (T "products.category_button_count") (len $g.Buttons) }}</span>
             </button>
             {{ end }}
           </div>

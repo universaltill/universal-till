@@ -1428,6 +1428,7 @@
   "products.all": "Tümü",
   "products.categories": "Kategoriler",
   "products.categories_modal_title": "Kategori ürünleri",
+  "products.category_button_count": "%d düğme",
   "products.edit": "Hızlı düğmeleri düzenle",
   "products.empty": "Henüz ürün yok. Hızlı Düğmeler'den bazılarını ekleyin.",
   "products.more_categories": "Daha fazla kategori",
