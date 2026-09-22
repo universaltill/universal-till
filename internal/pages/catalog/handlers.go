@@ -31,7 +31,6 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/itemsnav"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/pos"
-	"github.com/universaltill/universal-till/internal/ui"
 )
 
 // modifierAdminItem is the template data shape modifier_group_admin.html
@@ -812,13 +811,13 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		// only that chunk's rows to base_price (buildCatalogRows' own
 		// fallback) instead of silently losing every promotional price.
 		currentPrices := map[string]int64{}
-		for _, chunk := range ui.ChunkStrings(itemIDs, ui.AllActiveIDChunkSize) {
+		for _, chunk := range data.ChunkStrings(itemIDs, data.IDChunkSize) {
 			p, err := repo.ItemCurrentPrices(r.Context(), chunk)
 			if err != nil {
 				log.Printf("[catalog] current prices failed for a batch of %d item(s), those rows fall back to base_price: %v", len(chunk), err)
 				continue
 			}
-			ui.MergeMapInto(currentPrices, p)
+			data.MergeMapInto(currentPrices, p)
 		}
 		// ut-docs#2090: whether this render is an /items-shell fragment
 		// swap (true) or a bare/standalone page (false) — catalog.html's
