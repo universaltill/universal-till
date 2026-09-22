@@ -2081,6 +2081,16 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
    overflow-wrap, verified against a realistic long name before shipping,
    not asserted without checking. */
 .grid { display: grid; gap: .5rem; grid-template-columns: repeat(auto-fill, minmax(7rem, 1fr)); }
+/* ut-docs#2319: the All tab's "load more" button (buttons.html's
+   all-more-button) sits inside the same .grid as the product tiles it
+   loads more of — span the full row instead of sizing to one tile column.
+   Its touch target comes from the `.compact` class already on the element
+   (2.5rem/40px, the app's own established deliberate secondary-action
+   floor — see .order-type-option's comment above for the product-owner
+   precedent), not from a rule here; a `min-height` here would be dead
+   weight, since `.btn.compact`'s two-class selector always outranks this
+   single-class one. */
+.all-more-btn { grid-column: 1 / -1; }
 /* ut-docs#1354: the Designer's reorder tiles (#buttons-grid-admin) share
    .grid with the sale-screen product grid above, but #1221's three
    touch-target-sized (46px) move-up/move-down/remove buttons — plus their

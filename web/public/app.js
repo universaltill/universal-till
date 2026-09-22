@@ -1055,6 +1055,57 @@ document.addEventListener('htmx:afterSwap', function (evt) {
   try { document.title = decodeURIComponent(encoded); } catch (_) {}
 });
 
+// ut-docs#2319: the All tab's "load more" button (buttons.html's
+// all-more-button, hx-swap="outerHTML" on itself) drops keyboard focus to
+// <body> once it retires itself, the same class of bug utTileJiggle's
+// exit() already guards against for a different control (this file's own
+// comment there: "keep keyboard focus on the screen rather than letting it
+// fall to <body>"). Per the verified htmx 1.9.12 outerHTML mechanics
+// documented on the fade-in-on-swap listener below, `evt.detail.target` is
+// the OLD, detached button by the time this fires, but its `id` attribute
+// survives detachment — so a same-id lookup finds the live replacement
+// whenever more items remain (AllMore's own fragment re-renders the same
+// #buttons-all-more id).
+//
+// Scope, corrected in independent review (ut-docs#2319 review, verified
+// against the vendored htmx.min.js, not assumed):
+//
+//  1. htmx ALREADY re-focuses a same-id replacement by itself — its swap
+//     closure saves document.activeElement before the swap and afterwards,
+//     if that element left the document (`se()`/bodyContains) and carries
+//     an id, does getElementById(id).focus(). So the "more remain" branch
+//     below is defence-in-depth, not the load-bearing fix; the case htmx
+//     genuinely cannot handle is EXHAUSTED — no replacement button exists
+//     at all — where focus goes to the last tile the response just
+//     appended, mirroring exit()'s own "first real tile" fallback rather
+//     than leaving focus on a detached node.
+//  2. htmx fires htmx:afterSwap once per INSERTED ELEMENT (`oe(n.elts, …)`
+//     in the minified source; the outerHTML handler `Ie()` pushes every
+//     inserted element node into that list), so one "load more" click
+//     dispatches it up to AllTabPageSize + 1 = 201 times, all carrying the
+//     same detail.target. Re-running the exhausted branch's
+//     querySelectorAll over a fully-loaded All grid 201 times is a real,
+//     avoidable hitch on the Raspberry Pi kiosk this card exists to speed
+//     up, so the request's own xhr is used as a once-per-swap token. Every
+//     dispatch happens after ALL nodes are inserted and after `Ie()` has
+//     removed the old button, so acting on the first one is correct.
+(function () {
+  var lastSwap = null; // the xhr of the swap already handled
+  document.addEventListener('htmx:afterSwap', function (evt) {
+    var d = evt.detail;
+    var oldTarget = d && d.target;
+    if (!oldTarget || oldTarget.id !== 'buttons-all-more') return;
+    if (d.xhr && d.xhr === lastSwap) return;
+    lastSwap = d.xhr || null;
+    var next = document.getElementById('buttons-all-more');
+    if (next) { next.focus(); return; }
+    var grid = document.getElementById('buttons-grid-all');
+    var tiles = grid ? grid.querySelectorAll('.btn-tile[data-code]') : [];
+    var last = tiles[tiles.length - 1];
+    if (last) last.focus();
+  });
+})();
+
 // Dismiss control — delegated so it survives every #basket outerHTML swap.
 document.addEventListener('click', function(e){
   var btn = e.target.closest ? e.target.closest('.notice-dismiss') : null;

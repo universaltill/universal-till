@@ -821,6 +821,34 @@ type ButtonsHTTP struct {
 	Granted bool
 }
 
+// AllTabPageSize bounds how many of the sell screen's All-tab items
+// (ButtonStore.LoadAllActive) any single response ships (ut-docs#2319):
+// GET /ui/buttons used to inline EVERY active item into the All grid every
+// time it rendered — including on the "modifiers-changed"/"buttons-changed"
+// whole-document refetch buttons.html's root wires up on every modifier/
+// button-config change — so a 2000-item catalog shipped ~1MB of HTML on
+// each such edit. 200 matches ut-docs#2294's own "usable with a 200+ item
+// catalog" acceptance bar: a catalog at or under that size still renders in
+// one response exactly as before (no load-more button appears at all), so
+// this only starts bounding cost once a catalog crosses the size #2294
+// already committed to supporting without complaint.
+const AllTabPageSize = 200
+
+// pageButtons slices all starting at offset, returning at most
+// AllTabPageSize items and whether more remain beyond this page. offset
+// past the end of all returns an empty page with hasMore false, never a
+// panic — a stale/hand-edited offset query param is untrusted input.
+func pageButtons(all []Button, offset int) (page []Button, hasMore bool) {
+	if offset < 0 || offset >= len(all) {
+		return nil, false
+	}
+	end := offset + AllTabPageSize
+	if end >= len(all) {
+		return all[offset:], false
+	}
+	return all[offset:end], true
+}
+
 func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 	btns, _ := h.Store.Load()
 	cats, err := h.Store.LoadCategories(r.Context())
@@ -837,12 +865,18 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 	// -- never on a basket mutation), not re-queried per basket change.
 	// Skipped entirely when the setting is off, so a till that never wants
 	// the tab pays nothing for it.
-	var allBtns []Button
+	var allPage []Button
+	var allHasMore bool
 	if !h.HideAllTab {
-		allBtns, err = h.Store.LoadAllActive(r.Context())
+		allBtns, err := h.Store.LoadAllActive(r.Context())
 		if err != nil {
 			logging.L().Errorf("buttons list: load all-active items: %v", err)
 		}
+		// ut-docs#2319: only the first page ships on the initial render (and
+		// on every modifiers-changed/buttons-changed whole-document
+		// refetch) — see AllTabPageSize's own doc comment. The rest loads
+		// on demand via the "load more" button AllMore serves below.
+		allPage, allHasMore = pageButtons(allBtns, 0)
 	}
 	categoriesTabEnabled, err := h.Store.CategoriesTabEnabled(r.Context())
 	if err != nil {
@@ -855,9 +889,42 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 	stampLocked(groups, h.Granted)
 	_ = h.View.Render(w, "buttons", map[string]any{
 		"Groups":               groups,
-		"AllButtons":           ToVM(allBtns),
+		"AllButtons":           ToVM(allPage),
+		"AllHasMore":           allHasMore,
+		"AllNextOffset":        len(allPage),
 		"ShowAllTab":           !h.HideAllTab,
 		"CategoriesTabEnabled": categoriesTabEnabled,
+	})
+}
+
+// AllMore renders the next page of the sell screen's All tab (ut-docs#2319)
+// — the same offset-paginated "load more" shape
+// internal/pages/buttons_api.go's /api/buttons/search already uses for the
+// Designer's own item search, applied here to bound GET /ui/buttons's
+// response size instead. Reloads the full active set via LoadAllActive on
+// every call rather than caching a page cursor server-side: this is a
+// deliberate simplification (the card's own "lean on search/page it"
+// options are a fix for response SIZE, not for LoadAllActive's own query
+// cost, which #2318's chunking already bounds against SQLite's bind
+// ceiling regardless of catalog size) — a follow-up card can revisit
+// per-request caching if the extra query load ever proves to matter in
+// practice.
+func (h *ButtonsHTTP) AllMore(w http.ResponseWriter, r *http.Request) {
+	offset := 0
+	if off := r.URL.Query().Get("offset"); off != "" {
+		if v, err := strconv.Atoi(off); err == nil && v >= 0 {
+			offset = v
+		}
+	}
+	all, err := h.Store.LoadAllActive(r.Context())
+	if err != nil {
+		logging.L().Errorf("buttons all-more: load all-active items: %v", err)
+	}
+	page, hasMore := pageButtons(all, offset)
+	_ = h.View.Render(w, "all-more-fragment", map[string]any{
+		"Buttons":    ToVM(page),
+		"HasMore":    hasMore,
+		"NextOffset": offset + len(page),
 	})
 }
 

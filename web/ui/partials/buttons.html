@@ -846,6 +846,12 @@
              default any more, so THEY get cloaked). */}}
         <div id="buttons-grid-all" class="grid" x-show="showAllGrid()">
           {{ range .AllButtons }}{{ template "product-tile" . }}{{ end }}
+          {{/* ut-docs#2319: only the first AllTabPageSize items ship in this
+               response (see the Go side's own doc comment on that
+               constant) — a catalog at or under that size never renders
+               this button at all (.AllHasMore is false), so a small till's
+               All tab is completely unchanged. */}}
+          {{ if .AllHasMore }}{{ template "all-more-button" (dict "Offset" .AllNextOffset) }}{{ end }}
         </div>
         {{ end }}
         {{ range $g := .Groups }}
@@ -1034,6 +1040,30 @@
      data-pos is the tile's index in the GLOBAL sort order (ui.ButtonVM.Pos)
      -- what utTileJiggle needs to rebuild the full list /api/buttons/reorder
      expects, since this grid's DOM order is grouped by category. */}}
+{{/* all-more-button (ut-docs#2319): the All tab's "load more" trigger,
+     shown only while ButtonsHTTP.List/AllMore report more items beyond the
+     current page (AllTabPageSize). hx-target="this"/hx-swap="outerHTML"
+     replaces the button itself with the next page's tiles followed by
+     either a fresh button (more still remain) or nothing (exhausted) —
+     "all-more-fragment" below renders exactly that pair, so the button's
+     own outerHTML swap both appends the new tiles into #buttons-grid-all
+     (they land where the button was, i.e. after the tiles already there)
+     and re-arms or retires itself in one response. grid-column: 1 / -1
+     (app.css) spans the full grid row so it never sits mid-row like a tile. */}}
+{{ define "all-more-button" }}
+{{ $_ := req . "Offset" }}
+  <button type="button" class="btn secondary compact all-more-btn" id="buttons-all-more"
+          hx-get="/ui/buttons/all/more?offset={{ .Offset }}" hx-target="this" hx-swap="outerHTML"
+          data-testid="all-more-btn">{{ T "products.load_more" }}</button>
+{{ end }}
+
+{{/* all-more-fragment: AllMore's own response body — see all-more-button
+     above for how its outerHTML swap uses this. */}}
+{{ define "all-more-fragment" }}
+  {{ range .Buttons }}{{ template "product-tile" . }}{{ end }}
+  {{ if .HasMore }}{{ template "all-more-button" (dict "Offset" .NextOffset) }}{{ end }}
+{{ end }}
+
 {{ define "product-tile" }}
   {{ $colored := and (not .ImageURL) .Color }}
   <div class="tile-cell" data-name="{{ .Label }}" x-show="matches($el)">
