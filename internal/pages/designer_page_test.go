@@ -81,14 +81,21 @@ func TestDesigner_RendersSeededButtons(t *testing.T) {
 	mux := http.NewServeMux()
 	registerDesigner(mux, dp)
 
-	req := httptest.NewRequest(http.MethodGet, "/designer", nil)
+	// ut-docs#2174: the page itself hosts a placeholder; the buttons render
+	// in the live-replica fragment it fetches (GET /ui/designer/buttons),
+	// through the sale screen's own product-tile template.
+	req := httptest.NewRequest(http.MethodGet, "/ui/designer/buttons", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /designer: code %d body %s", rec.Code, rec.Body.String())
+		t.Fatalf("GET /ui/designer/buttons: code %d body %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "Zephyr Tile") {
-		t.Fatalf("expected the seeded button label rendered in the grid, got %s", rec.Body.String())
+	body := rec.Body.String()
+	if !strings.Contains(body, "Zephyr Tile") {
+		t.Fatalf("expected the seeded button label rendered in the replica, got %s", body)
+	}
+	if !strings.Contains(body, `class="tile-cell"`) || !strings.Contains(body, `data-code="ZZZ"`) {
+		t.Fatalf("replica must render the sale screen's own product-tile markup, got %s", body)
 	}
 }
 

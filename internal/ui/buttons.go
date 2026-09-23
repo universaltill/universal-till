@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -183,6 +184,23 @@ func resolveCategoryColor(c data.CategoryNode) string {
 // with no category, or a category_id that no longer resolves, land in a
 // trailing synthetic bucket (ID == ""), included only when non-empty.
 func BuildCategoryGroups(buttons []Button, cats []data.CategoryNode) []*CategoryGroup {
+	return buildCategoryGroups(buttons, cats, false)
+}
+
+// BuildCategoryGroupsKeepEmpty (ut-docs#2174) is BuildCategoryGroups with
+// the empty-branch pruning switched off — for the Designer's live replica
+// of the sale screen, which is an EDITOR: a category with no quick buttons
+// yet (just created from the replica's own + tab, or emptied by removing
+// its last button) must still render as a tab there, or the operator could
+// never see, rename, recolour or fill the category they just made. The
+// sale screen keeps pruning (an unused imported category never shows as an
+// empty header on the till). Same tree, same order, same uncategorized
+// bucket, same global Pos stamping — only the prune step differs.
+func BuildCategoryGroupsKeepEmpty(buttons []Button, cats []data.CategoryNode) []*CategoryGroup {
+	return buildCategoryGroups(buttons, cats, true)
+}
+
+func buildCategoryGroups(buttons []Button, cats []data.CategoryNode, keepEmpty bool) []*CategoryGroup {
 	byID := make(map[string]*CategoryGroup, len(cats))
 	nodeByID := make(map[string]data.CategoryNode, len(cats))
 	for _, c := range cats {
@@ -221,13 +239,15 @@ func BuildCategoryGroups(buttons []Button, cats []data.CategoryNode) []*Category
 		g.Buttons = append(g.Buttons, vm)
 	}
 
-	kept := roots[:0]
-	for _, g := range roots {
-		if pruneEmptyCategoryGroup(g) {
-			kept = append(kept, g)
+	if !keepEmpty {
+		kept := roots[:0]
+		for _, g := range roots {
+			if pruneEmptyCategoryGroup(g) {
+				kept = append(kept, g)
+			}
 		}
+		roots = kept
 	}
-	roots = kept
 
 	for _, g := range roots {
 		setAncestorNames(g, g.Name)
@@ -819,6 +839,17 @@ type ButtonsHTTP struct {
 	// default and matches none of those tests' assertions touching the
 	// jiggle-mode lock affordance either way.
 	Granted bool
+	// Designer (ut-docs#2174) renders the SAME buttons.html fragment as the
+	// Designer page's live replica of the sale screen (GET
+	// /ui/designer/buttons, designer_page.go) instead of the sale screen
+	// itself: empty categories are kept (BuildCategoryGroupsKeepEmpty —
+	// an editor must show the category you just created), the root
+	// refetches itself from the Designer route on buttons-changed, the
+	// strip's pencil becomes the edit-mode toggle instead of a link to
+	// /designer, and every category tab gains its edit affordances
+	// (pencil + popover, + tab). The tile grid itself is byte-for-byte the
+	// sale screen's — that is the point: one template, no fork.
+	Designer bool
 }
 
 // AllTabPageSize bounds how many of the sell screen's All-tab items
@@ -885,7 +916,12 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 		// tab stays off this render, not that the whole sale screen fails.
 		logging.L().Warnf("buttons list: load categories-tab setting: %v", err)
 	}
-	groups := BuildCategoryGroups(btns, cats)
+	var groups []*CategoryGroup
+	if h.Designer {
+		groups = BuildCategoryGroupsKeepEmpty(btns, cats)
+	} else {
+		groups = BuildCategoryGroups(btns, cats)
+	}
 	stampLocked(groups, h.Granted)
 	_ = h.View.Render(w, "buttons", map[string]any{
 		"Groups":               groups,
@@ -894,6 +930,12 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 		"AllNextOffset":        len(allPage),
 		"ShowAllTab":           !h.HideAllTab,
 		"CategoriesTabEnabled": categoriesTabEnabled,
+		"Designer":             h.Designer,
+		// The category popovers' colour swatches: the SAME fixed palette
+		// /categories' dialog and the item editor offer (validated
+		// server-side by catalogtypes.ValidItemColor in
+		// designer_categories_api.go). Only read in Designer mode.
+		"ItemColors": catalogtypes.ItemColors(),
 	})
 }
 
@@ -1001,11 +1043,13 @@ func (h *ButtonsHTTP) Add(w http.ResponseWriter, r *http.Request) bool {
 	// button set changed => buttons-changed", with no per-route exceptions
 	// for a future caller to trip over.
 	w.Header().Set("HX-Trigger", "buttons-changed")
-	// Re-render admin grid so htmx swaps only the grid in designer
-	btns, _ := h.Store.Load()
-	_ = h.View.Render(w, "buttons_admin_grid", map[string]any{
-		"Buttons": ToVM(btns),
-	})
+	// ut-docs#2174: no body. This used to re-render buttons_admin.html's
+	// flat "buttons_admin_grid" for the Designer to swap in; that grid is
+	// retired — the Designer now hosts a live replica of the sale screen
+	// (the same self-refreshing buttons.html root), and the HX-Trigger
+	// above is what refreshes it, exactly as /api/buttons/reorder already
+	// worked. 204 is what htmx expects for "trigger, don't swap".
+	w.WriteHeader(http.StatusNoContent)
 	return true
 }
 
@@ -1041,10 +1085,8 @@ func (h *ButtonsHTTP) Remove(w http.ResponseWriter, r *http.Request) bool {
 	// posts to this same route, and this header is what makes the grid
 	// drop the tile without a reload.
 	w.Header().Set("HX-Trigger", "buttons-changed")
-	btns, _ := h.Store.Load()
-	_ = h.View.Render(w, "buttons_admin_grid", map[string]any{
-		"Buttons": ToVM(btns),
-	})
+	// ut-docs#2174: no body, same as Add above.
+	w.WriteHeader(http.StatusNoContent)
 	return true
 }
 

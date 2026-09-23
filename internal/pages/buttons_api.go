@@ -207,7 +207,15 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		imageURL := r.Form.Get("imageUrl")
 		elev := checkOrElevate(d, r, "catalog_management", r.Form.Get("override_pin"))
 		if elev.Outcome == needsElevation {
-			renderElevationPrompt(w, r, "/api/buttons/add", "#buttons-grid-wrap",
+			// ut-docs#2174: "#buttons-add-error" (the Designer's own error
+			// surface, the only page this route is called from) -- the
+			// retired flat grid's "#buttons-grid-wrap" wrapper is gone, and
+			// htmx never issues a request whose hx-target doesn't resolve
+			// (htmx:targetError), so the dialog's retry must name an
+			// element that exists. A successful retry is a 204 (nothing
+			// swapped; HX-Trigger refreshes the replica); a refusal's
+			// fragment lands in that error element, same as a direct add's.
+			renderElevationPrompt(w, r, "/api/buttons/add", "#buttons-add-error",
 				fmt.Sprintf(httpx.T(httpx.ResolveLocale(w, r), "elevation.summary.buttons_add"), label),
 				[]elevationHiddenField{
 					{Name: "label", Value: label},
@@ -247,28 +255,27 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		// idempotent ParseForm call below) so the elevation check has the
 		// code to mirror as a hidden field on the dialog's retry.
 		//
-		// This route is reached from TWO different surfaces with different
-		// hx-target/hx-swap of their own -- the Designer's grid
-		// (buttons_admin.html, "#buttons-grid-wrap"/innerHTML) and the sell
-		// screen's jiggle-mode remove badge (buttons.html's
-		// .tile-badge-remove, hx-swap="none", ut-docs#2339). "#buttons-grid-wrap"
-		// is used as the elevation retry target unconditionally either way:
-		// on the Designer it's exactly the original target; from the jiggle
-		// badge that id doesn't exist in the DOM at all, so the retry's own
-		// response there is silently unswapped by htmx (same as any
-		// unmatched hx-target) -- but the SALE SCREEN grid still updates
-		// correctly regardless, because HX-Trigger: buttons-changed
-		// (ButtonsHTTP.Remove's own header, unconditional on success) fires
-		// independently of target resolution and is what buttons.html's
-		// root actually listens for, AND the elevation dialog itself renders
-		// regardless of hx-swap="none" -- it's OOB-swapped into the shared
-		// #elevation-modal placeholder (elevation_prompt.html), a swap htmx
-		// processes independently of the triggering element's own hx-swap.
+		// This route is reached from the jiggle-mode remove badge
+		// (buttons.html's .tile-badge-remove, hx-swap="none", ut-docs#2339)
+		// on BOTH the sale screen and, since ut-docs#2174, the Designer's
+		// live replica of it -- the Designer's own flat grid (and its
+		// "#buttons-grid-wrap" target) is retired. The elevation retry
+		// targets "this" (the dialog's own form): htmx refuses to issue a
+		// request whose hx-target doesn't resolve (htmx:targetError), so
+		// the old, Designer-only wrapper id would have silently killed
+		// every PIN retry from the sale screen; "this" always resolves, a
+		// successful retry is a 204 (nothing to swap), and the grid still
+		// updates because HX-Trigger: buttons-changed (ButtonsHTTP.Remove's
+		// own header) is what buttons.html's root actually listens for.
+		// The dialog itself renders regardless of the badge's hx-swap="none"
+		// -- it's OOB-swapped into the shared #elevation-modal placeholder
+		// (elevation_prompt.html), a swap htmx processes independently of
+		// the triggering element's own hx-swap.
 		_ = r.ParseForm()
 		code := r.Form.Get("code")
 		elev := checkOrElevate(d, r, "catalog_management", r.Form.Get("override_pin"))
 		if elev.Outcome == needsElevation {
-			renderElevationPrompt(w, r, "/api/buttons/remove", "#buttons-grid-wrap",
+			renderElevationPrompt(w, r, "/api/buttons/remove", "this",
 				fmt.Sprintf(httpx.T(httpx.ResolveLocale(w, r), "elevation.summary.buttons_remove"), code),
 				[]elevationHiddenField{{Name: "code", Value: code}}, elev)
 			return

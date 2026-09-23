@@ -47,7 +47,13 @@ func TestButtonsHTTPList_RendersTiles(t *testing.T) {
 	}
 }
 
-func TestButtonsHTTPAdd_NormalizesImageAndRendersGrid(t *testing.T) {
+// ut-docs#2174: Add/Remove no longer re-render the retired flat admin grid
+// (buttons_admin_grid is gone with buttons_admin.html's move-up/move-down
+// list); they answer 204 + HX-Trigger: buttons-changed, and the Designer's
+// live replica (same self-refreshing buttons.html root the sale screen
+// uses) refetches itself on that event -- exactly how /api/buttons/reorder
+// already answered before this card.
+func TestButtonsHTTPAdd_NormalizesImageAndTriggersRefresh(t *testing.T) {
 	h, store := newButtonsHTTP(t, "buttons_admin.html")
 
 	cases := []struct {
@@ -63,11 +69,11 @@ func TestButtonsHTTPAdd_NormalizesImageAndRendersGrid(t *testing.T) {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rec := httptest.NewRecorder()
 		h.Add(rec, req)
-		if rec.Code != 200 {
-			t.Fatalf("Add(%q) = %d (%s)", tc.in, rec.Code, rec.Body.String())
+		if rec.Code != 204 {
+			t.Fatalf("Add(%q) = %d (%s), want 204", tc.in, rec.Code, rec.Body.String())
 		}
-		if !strings.Contains(rec.Body.String(), "buttons-grid-admin") {
-			t.Fatalf("Add did not re-render admin grid: %s", rec.Body.String())
+		if got := rec.Header().Get("HX-Trigger"); got != "buttons-changed" {
+			t.Fatalf("Add HX-Trigger = %q, want buttons-changed", got)
 		}
 	}
 	btns, err := store.Load()
@@ -153,7 +159,7 @@ func TestButtonsHTTPAdd_StoreValidationErrorRendersNonEmptyHTMLBody(t *testing.T
 	}
 }
 
-func TestButtonsHTTPRemove_DeletesAndRerenders(t *testing.T) {
+func TestButtonsHTTPRemove_DeletesAndTriggersRefresh(t *testing.T) {
 	h, store := newButtonsHTTP(t, "buttons_admin.html")
 	if err := store.Add(Button{Label: "Coffee", Code: "C1", ItemID: "i1"}); err != nil {
 		t.Fatalf("Add: %v", err)
@@ -164,8 +170,11 @@ func TestButtonsHTTPRemove_DeletesAndRerenders(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	h.Remove(rec, req)
-	if rec.Code != 200 {
-		t.Fatalf("Remove = %d (%s)", rec.Code, rec.Body.String())
+	if rec.Code != 204 {
+		t.Fatalf("Remove = %d (%s), want 204", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("HX-Trigger"); got != "buttons-changed" {
+		t.Fatalf("Remove HX-Trigger = %q, want buttons-changed", got)
 	}
 	if btns, _ := store.Load(); len(btns) != 0 {
 		t.Fatalf("button not removed: %+v", btns)

@@ -95,6 +95,42 @@ func TestBuildCategoryGroups_PrunesEmptyBranches(t *testing.T) {
 	}
 }
 
+// TestBuildCategoryGroupsKeepEmpty_KeepsEmptyRootsForTheDesigner
+// (ut-docs#2174): the Designer's live replica is an EDITOR, so a category
+// with no quick buttons yet (just created from the + tab, or emptied by
+// removing its last button) must still render as a tab there -- pruning is
+// a sale-screen concern only. Same tree, same order, same uncategorized
+// bucket; only the pruning step is skipped.
+func TestBuildCategoryGroupsKeepEmpty_KeepsEmptyRootsForTheDesigner(t *testing.T) {
+	cats := []data.CategoryNode{
+		{ID: "drinks", Name: "Drinks", SortOrder: 0},
+		{ID: "empty-parent", Name: "Nothing Here", SortOrder: 1},
+		{ID: "empty-child", Name: "Also Nothing", ParentID: "empty-parent", SortOrder: 0},
+	}
+	buttons := []Button{
+		{Label: "Cola", Code: "C1", ItemID: "i1", CategoryID: "drinks"},
+		{Label: "Stray", Code: "S1", ItemID: "i2"},
+	}
+
+	groups := BuildCategoryGroupsKeepEmpty(buttons, cats)
+	if len(groups) != 3 {
+		t.Fatalf("len(groups) = %d, want 3 (drinks, empty-parent, uncategorized): %+v", len(groups), groups)
+	}
+	if groups[0].ID != "drinks" || groups[1].ID != "empty-parent" || groups[2].ID != "" {
+		t.Fatalf("unexpected root order: %q %q %q", groups[0].ID, groups[1].ID, groups[2].ID)
+	}
+	if len(groups[1].Children) != 1 || groups[1].Children[0].ID != "empty-child" {
+		t.Fatalf("empty subcategory must survive too: %+v", groups[1].Children)
+	}
+	if groups[0].Buttons[0].Pos != 0 || groups[2].Buttons[0].Pos != 1 {
+		t.Fatalf("global Pos must still be stamped: %+v / %+v", groups[0].Buttons, groups[2].Buttons)
+	}
+	// And the sale-screen builder is unchanged: still pruned.
+	if pruned := BuildCategoryGroups(buttons, cats); len(pruned) != 2 {
+		t.Fatalf("BuildCategoryGroups must still prune: %+v", pruned)
+	}
+}
+
 // TestBuildCategoryGroups_UncategorizedBucket: buttons whose item has no
 // category (or a category_id that no longer resolves) must not be dropped —
 // they land in a trailing synthetic group, present only when non-empty.

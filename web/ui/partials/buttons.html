@@ -38,7 +38,18 @@
      see ut-docs#2294's own query-count test for why that distinction is
      load-bearing: the All grid must re-fetch on either of these, but never
      on a basket/scan event. */}}
-<div class="products" hx-get="/ui/buttons" hx-trigger="modifiers-changed from:body, buttons-changed from:body" hx-swap="outerHTML">
+{{/* ut-docs#2174: $designer -- this same fragment is ALSO the Designer
+     page's live replica of the sale screen (GET /ui/designer/buttons,
+     designer_page.go, ui.ButtonsHTTP.Designer). One template, not a fork:
+     the tile grid renders byte-for-byte as on the sale screen; only the
+     category strip grows edit affordances (a pencil per category tab that
+     opens an inline rename/recolour/remove popover, a trailing + tab, and
+     the strip's own pencil becoming the edit-mode toggle instead of a link
+     to /designer), empty categories are kept so a just-created one shows,
+     and the root refetches itself from the Designer route on
+     buttons-changed. Every {{ if $designer }} below is one of those. */}}
+{{ $designer := .Designer }}
+<div class="products" hx-get="{{ if $designer }}/ui/designer/buttons{{ else }}/ui/buttons{{ end }}" hx-trigger="modifiers-changed from:body, buttons-changed from:body" hx-swap="outerHTML">
   {{/* ut-docs#2294: $showAllTab (settings.sale.show_all_tab, .ShowAllTab,
        default true, ANDed with there being at least one active item to
        show) is computed up here, ahead of the empty-state branch below,
@@ -54,7 +65,11 @@
        "off" is supposed to restore -- not render a silently blank screen
        with nothing sellable and no CTA telling the operator why. */}}
   {{ $showAllTab := and .ShowAllTab .AllButtons }}
-  {{ if and (not .Groups) (not $showAllTab) }}
+  {{/* ut-docs#2174: the Designer never takes the empty-state branch -- a
+       shop with no categories and no buttons yet still needs the strip
+       (its + tab is how the first category gets made) and the tabbed
+       grid it edits into. */}}
+  {{ if and (not .Groups) (not $showAllTab) (not $designer) }}
   <div class="products-header">
     <h2>{{ T "products.title" }}</h2>
     <!-- 2026-08-30 (product owner, live on the tablet, comparing against a
@@ -91,10 +106,17 @@
          here is only reached when $showAllTab is false, and by
          construction $hasTabs was only true via `gt (len .Groups) 1` in
          that case, so the index is always safe (len >= 2). */}}
-    {{ $hasTabs := or $showAllTab (gt (len .Groups) 1) }}
+    {{/* ut-docs#2174: the Designer ALWAYS renders the tabbed branch, even
+         for one (or zero) categories -- the tab strip is where categories
+         get edited, so it must exist to edit into. Its default tab is the
+         first real category rather than All: the All grid (every catalog
+         item, alphabetical) is not editable, so landing an editor on it
+         would show a screen where nothing can be done. */}}
+    {{ $hasTabs := or $showAllTab (gt (len .Groups) 1) $designer }}
     {{ $flat := and (not $hasTabs) (eq (len .Groups) 1) (eq (index .Groups 0).ID "") }}
     {{ $defaultTab := "__all__" }}
-    {{ if not $showAllTab }}{{ if $hasTabs }}{{ $defaultTab = (index .Groups 0).ID }}{{ end }}{{ end }}
+    {{ if not $showAllTab }}{{ if $hasTabs }}{{ if .Groups }}{{ $defaultTab = (index .Groups 0).ID }}{{ else }}{{ $defaultTab = "" }}{{ end }}{{ end }}{{ end }}
+    {{ if and $designer .Groups }}{{ $defaultTab = (index .Groups 0).ID }}{{ end }}
     {{/* .ID is interpolated raw into an Alpine JS string literal below
          (x-data, :class, @click) — html/template auto-escapes this as a
          plain HTML attribute (a literal ' survives as &#39;, which the
@@ -247,7 +269,15 @@
          it's a picker for possibly several items from the same category in
          a row, not a single-shot chooser -- closes only via its own Close
          button, same as #parked-orders-modal. */}}
-    <section class="products-finder" aria-labelledby="products-panel-title" x-data="{
+    {{/* ut-docs#2174: .cat-editable marks the Designer's replica for
+         app.js's utTileJiggle (it extends its edit mode to the category
+         tabs only under this class) and for the CSS that reveals the
+         strip's edit affordances once that mode adds .cat-edit-mode here.
+         @cat-edit-changed: app.js dispatches it on this section when the
+         mode toggles, so applyCategoryOverflow() (which un-hides every tab
+         while editing and re-fits afterwards -- see its own comment) runs
+         at exactly those two moments. */}}
+    <section class="products-finder{{ if $designer }} cat-editable{{ end }}" aria-labelledby="products-panel-title" @cat-edit-changed="applyCategoryOverflow()" x-data="{
       tab: '{{ if $hasTabs }}{{ $defaultTab }}{{ end }}',
       q: '',
       matches(tileEl) { return !this.q || tileEl.dataset.name.toLowerCase().includes(this.q.toLowerCase()); },
@@ -352,6 +382,18 @@
         if (!bar || !more) return;
         const fixedTabs = Array.from(bar.querySelectorAll('.tab:not([data-cat-tab])'));
         const catTabs = Array.from(bar.querySelectorAll('.tab[data-cat-tab]'));
+        /* ut-docs#2174: while the Designer's category edit mode is on, the
+           strip wraps (app.css .cat-edit-mode .tab-bar) so that EVERY tab
+           is on screen to be renamed, reordered or removed -- an editor
+           that hid the tabs that don't fit could not edit them. No
+           overflow fitting in that state; the '...' button stays hidden.
+           Leaving the mode re-runs this (the cat-edit-changed listener on
+           this section) and the fit-or-overflow behaviour returns. */
+        if (this.$el.classList.contains('cat-edit-mode')) {
+          catTabs.forEach((t) => { t.hidden = false; });
+          more.hidden = true;
+          return;
+        }
         if (!catTabs.length) { more.hidden = true; return; }
         const cs = getComputedStyle(bar);
         const gap = parseFloat(cs.columnGap || cs.gap) || 0;
@@ -486,7 +528,14 @@
         const tabEl = document.getElementById('cat-tab-' + (id || 'uncategorized'));
         const anchor = bar.querySelector('.tab[data-cat-tab]');
         if (!tabEl || !anchor || tabEl === anchor) return;
-        bar.insertBefore(tabEl, anchor);
+        /* ut-docs#2174: on the Designer's replica a real category tab is
+           wrapped in .cat-tab-cell (tab + its pencil, display: contents at
+           rest), so the node to move is the wrapper, never the tab alone
+           -- insertBefore on the bar with a grandchild anchor throws. */
+        const node = tabEl.closest('.cat-tab-cell') || tabEl;
+        const anchorNode = anchor.closest('.cat-tab-cell') || anchor;
+        if (node === anchorNode) return;
+        bar.insertBefore(node, anchorNode);
       },
       /* The overflow sheet's own tile click handler: same effect as
          tapping that category's real tab (sets `tab`), then promotes it
@@ -590,7 +639,15 @@
              once via its stacked section header; tabs make that one-at-a-
              time, so the tab itself is now what carries the color instead
              of losing it. */}}
-        <div class="tab-bar" role="tablist" x-ref="tabBar" x-show="!searching" @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
+        {{/* ut-docs#2174: the two arrow-key handlers step aside while the
+             Designer's category edit mode is on (.cat-edit-mode on the
+             section) -- there app.js's utTileJiggle owns ArrowLeft/Right
+             on a focused category tab (it MOVES the tab, the same
+             keyboard reorder tiles already have), so the tablist's own
+             roving focus must not also fire and jump focus off the tab
+             that was just moved. .prevent still runs either way; the
+             page never scrolls on an arrow key here. */}}
+        <div class="tab-bar" role="tablist" x-ref="tabBar" x-show="!searching" @keydown.right.prevent="if (!$el.closest('.cat-edit-mode')) focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="if (!$el.closest('.cat-edit-mode')) focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
           {{/* ut-docs#2283: the optional "Categories" tab — settings-gated
                (Settings → Categories tab), OFF by default, so a shop that
                never opens that toggle sees exactly today's tab bar. Always
@@ -630,14 +687,61 @@
                color-code with. */}}
           <button type="button" id="cat-tab-all" class="tab" role="tab" :class="tab === '__all__' && 'active'" :aria-selected="tab === '__all__'" :tabindex="tab === '__all__' ? 0 : -1" @click="tab = '__all__'">{{ T "products.all" }}</button>
           {{ end }}
-          {{ range .Groups }}
+          {{ range $i, $g := .Groups }}
           {{/* data-cat-tab (ut-docs#2307): a plain boolean marker so
                applyCategoryOverflow() (this file's own x-data, above) can
                select exactly the per-category tabs -- never the fixed
                Categories/All tabs above, which the card's own requirement
                keeps always visible -- without having to duplicate the
-               '__categories__'/'__all__' sentinel checks in JS. */}}
-          <button type="button" id="cat-tab-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" class="tab" role="tab" data-cat-tab style="--cat-color: {{ .Color }}" :class="tab === '{{ .ID }}' && 'active'" :aria-selected="tab === '{{ .ID }}'" :tabindex="tab === '{{ .ID }}' ? 0 : -1" aria-controls="cat-panel-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" @click="tab = '{{ .ID }}'">{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</button>
+               '__categories__'/'__all__' sentinel checks in JS.
+               data-sort (ut-docs#2174): this tab's index in the SERVER
+               order. promoteCategoryTab() (ut-docs#2307) reorders the
+               strip's DOM for a purely visual "selected tab stays
+               visible" effect; the Designer's edit mode persists the
+               strip's DOM order as the real category order, so app.js
+               restores this server order the moment the mode is entered
+               -- a promotion must never be mistaken for an edit. */}}
+          {{ with $g }}
+          {{/* ut-docs#2174: on the Designer's replica every REAL category
+               tab (never the synthetic uncategorized bucket -- it has no
+               row to rename, recolour, remove or reorder) is wrapped in
+               .cat-tab-cell together with its pencil. The wrapper is the
+               exact counterpart of the tile grid's .tile-cell (app.css):
+               display: contents at rest, so the tab stays the flex item
+               and the resting strip is pixel-identical to the sale
+               screen's, and the positioned, draggable cell in edit mode.
+               data-cat-id is what app.js's utTileJiggle posts to
+               /api/designer/categories/reorder, in DOM order, on Done.
+               The pencil is a real <button> with aria-label (keyboard and
+               screen-reader reachable), display: none outside edit mode;
+               data-cat-popover names the <dialog> it opens (rendered
+               after the strip, below -- not inside the bar, so the bar's
+               overflow: hidden and the tabs' own transforms never clip or
+               shift it). */}}
+          {{ if and $designer .ID }}<div class="cat-tab-cell" data-cat-id="{{ .ID }}" data-testid="cat-tab-cell">{{ end }}
+          <button type="button" id="cat-tab-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" class="tab" role="tab" data-cat-tab data-sort="{{ $i }}" style="--cat-color: {{ .Color }}" :class="tab === '{{ .ID }}' && 'active'" :aria-selected="tab === '{{ .ID }}'" :tabindex="tab === '{{ .ID }}' ? 0 : -1" aria-controls="cat-panel-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" @click="tab = '{{ .ID }}'">{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</button>
+          {{ if and $designer .ID }}
+          <button type="button" class="cat-tab-edit" data-cat-popover="cat-edit-{{ .ID }}" data-testid="cat-tab-edit"
+                  aria-haspopup="dialog" aria-controls="cat-edit-{{ .ID }}"
+                  aria-label="{{ T "categories.edit" }}: {{ .Name }}" title="{{ T "categories.edit" }}">
+            <span class="btn-ico" aria-hidden="true">{{ icon "pencil" }}</span>
+          </button>
+          </div>
+          {{ end }}
+          {{ end }}
+          {{ end }}
+          {{ if $designer }}
+          {{/* ut-docs#2174: the + tab -- appended at the end of the strip,
+               edit mode only (display: none otherwise, app.css). Like
+               .tab-more below it is NOT role="tab" (it opens a dialog,
+               it doesn't select a panel) and not data-cat-tab, so it never
+               joins the tablist's roving tabindex or the overflow fitting
+               (which is off in edit mode anyway). */}}
+          <button type="button" class="tab-add" data-cat-popover="cat-add" data-testid="designer-cat-add"
+                  aria-haspopup="dialog" aria-controls="cat-add"
+                  aria-label="{{ T "categories.new" }}" title="{{ T "categories.new" }}">
+            <span class="btn-ico" aria-hidden="true">{{ icon "plus" }}</span>
+          </button>
           {{ end }}
           {{/* ut-docs#2307: the trailing "more categories" button --
                card's own literal ask ("a ... button at the right; when
@@ -752,12 +856,147 @@
                 @click="openSearch()">
           <span class="btn-ico" aria-hidden="true">{{ icon "search" }}</span>
         </button>
+        {{ if $designer }}
+        {{/* ut-docs#2174: on the Designer's replica the strip's pencil --
+             the SAME slot, same icon, same place the operator already
+             looks for "edit" on the sale screen -- is the edit-mode
+             toggle (app.js utTileJiggle's designer entry point: tiles
+             jiggle AND the category tabs gain their pencils, + tab and
+             drag/keyboard reorder, one mode, one entry point) rather
+             than a link to the page we are already on. aria-pressed
+             tracks the mode. */}}
+        <button type="button" x-show="!searching"
+                class="btn secondary compact btn-icon products-strip-edit designer-edit-toggle" data-testid="designer-edit-toggle"
+                aria-pressed="false"
+                aria-label="{{ T "designer.edit_mode.toggle" }}" title="{{ T "designer.edit_mode.toggle" }}">
+          <span class="btn-ico" aria-hidden="true">{{ icon "pencil" }}</span>
+        </button>
+        {{ else }}
         <a href="/designer" x-show="!searching"
            class="btn secondary compact btn-icon products-strip-edit" data-testid="products-add-link"
            aria-label="{{ T "products.edit" }}" title="{{ T "products.edit" }}">
           <span class="btn-ico" aria-hidden="true">{{ icon "pencil" }}</span>
         </a>
+        {{ end }}
       </div>
+      {{ if $designer }}
+      {{/* ut-docs#2174: the category popovers -- one non-modal <dialog>
+           per real category (rename + the /categories colour swatches +
+           Save + Remove) and one for the + tab (name + colour + Create).
+           Rendered here, OUTSIDE .tab-bar, as position: fixed boxes app.js
+           places under the pencil/+ that opened them and clamps to the
+           viewport (so at 1024x600 a popover for the last tab never runs
+           off the inline-end edge, and its bounded max-block-size scrolls
+           internally rather than pushing the tile grid down -- app.css
+           .cat-popover). Non-modal .show(), never .showModal(): the
+           till's own on-screen keyboard must stay reachable for the name
+           input, the same rule every other dialog in this file follows.
+
+           Each form is a plain hx-post into its OWN popover's aria-live
+           message region (innerHTML, never outerHTML -- see
+           record_dialog_msg.html): a refusal (blank name, off-palette
+           colour, "N active item(s) are still in this category") lands
+           there, translated, with the operator's edits intact; a success
+           is 204 + HX-Trigger: buttons-changed, which re-renders this
+           whole root from the server (popover and all, closed), and
+           app.js's afterSettle hook puts the edit mode back.
+
+           The colour grid is /categories' #category-color-grid markup
+           verbatim (catalog.html's item-color-grid contract: data-color,
+           aria-pressed, ONE hidden input submitted, the "none" tile
+           clears it) -- same fixed catalogtypes.ItemColors palette, same
+           server-side allowlist. Painting the pressed tile is app.js's
+           job (utTileJiggle's popover open), as categories.html's own
+           script does it there.
+
+           Remove is /categories' exact hx-confirm shape (categories.html
+           record_dialog_destructive): htmx's own confirm, read fresh in
+           the same call that issues the request, so a cancel truly aborts
+           -- and the same categories.deactivate_confirm copy. It posts
+           active=0: deactivate, never erase (a deactivated category's
+           items keep their assignment; /categories can reactivate it). A
+           category that still has active items is refused with the count
+           (ErrCategoryHasItems -> categories.error.deactivate_blocked),
+           unchanged. */}}
+      <div class="cat-popovers">
+        {{ range $g := .Groups }}{{ if $g.ID }}
+        <dialog id="cat-edit-{{ $g.ID }}" class="cat-popover" data-testid="cat-popover" aria-labelledby="cat-edit-title-{{ $g.ID }}">
+          <div class="cat-popover-head">
+            <h3 id="cat-edit-title-{{ $g.ID }}">{{ T "categories.edit" }}</h3>
+            <button type="button" class="btn secondary btn-icon cat-popover-close"
+                    aria-label="{{ T "common.close" }}" title="{{ T "common.close" }}">
+              <span class="btn-ico" aria-hidden="true">{{ icon "x" }}</span>
+            </button>
+          </div>
+          <form class="cat-popover-form" autocomplete="off"
+                hx-post="/api/designer/categories/{{ $g.ID }}" hx-target="#cat-edit-msg-{{ $g.ID }}" hx-swap="innerHTML">
+            <label>{{ T "categories.col.name" }}
+              <input type="text" name="name" required value="{{ $g.Name }}" placeholder="{{ T "categories.create_placeholder" }}" data-testid="cat-popover-name">
+            </label>
+            <div class="category-dialog-label">{{ T "catalog.color" }}</div>
+            <div class="picker-grid item-color-grid cat-popover-colors" role="group" aria-label="{{ T "catalog.color" }}">
+              {{ range $.ItemColors }}
+              <button type="button" class="picker-tile item-color-tile" data-color="{{ .Hex }}" aria-pressed="false" title="{{ T .I18nKey }}" style="--swatch: {{ .Hex }}">
+                <span class="swatch-dot" aria-hidden="true"></span>
+                <span>{{ T .I18nKey }}</span>
+              </button>
+              {{ end }}
+              <button type="button" class="picker-tile item-color-tile" data-color="" aria-pressed="true">{{ T "catalog.color.none" }}</button>
+            </div>
+            {{/* .Color here is the RESOLVED colour (an explicit one, or the
+                 deterministic auto-swatch ui.resolveCategoryColor picked).
+                 Only an explicit, on-palette value paints a pressed tile
+                 (app.js matches data-color); an auto-colour matches none,
+                 so "no colour" reads as pressed -- which is the truth. */}}
+            <input type="hidden" name="color" value="{{ $g.Color }}" data-testid="cat-popover-color">
+            <div id="cat-edit-msg-{{ $g.ID }}" class="cat-popover-msg" role="status" aria-live="polite"></div>
+            <div class="cat-popover-actions">
+              <button type="submit" class="btn primary compact" data-testid="cat-popover-save">{{ T "common.save" }}</button>
+            </div>
+          </form>
+          <form class="cat-popover-remove"
+                hx-post="/api/designer/categories/{{ $g.ID }}/active" hx-confirm="{{ T "categories.deactivate_confirm" }}"
+                hx-target="#cat-edit-msg-{{ $g.ID }}" hx-swap="innerHTML">
+            <input type="hidden" name="active" value="0">
+            <button type="submit" class="btn secondary btn-icon btn-icon-danger" data-testid="cat-popover-remove"
+                    aria-label="{{ T "categories.deactivate" }}" title="{{ T "categories.deactivate" }}">
+              <span class="btn-ico" aria-hidden="true">{{ icon "trash-2" }}</span>
+            </button>
+          </form>
+        </dialog>
+        {{ end }}{{ end }}
+        <dialog id="cat-add" class="cat-popover" data-testid="cat-popover-add" aria-labelledby="cat-add-title">
+          <div class="cat-popover-head">
+            <h3 id="cat-add-title">{{ T "categories.create" }}</h3>
+            <button type="button" class="btn secondary btn-icon cat-popover-close"
+                    aria-label="{{ T "common.close" }}" title="{{ T "common.close" }}">
+              <span class="btn-ico" aria-hidden="true">{{ icon "x" }}</span>
+            </button>
+          </div>
+          <form class="cat-popover-form" autocomplete="off"
+                hx-post="/api/designer/categories" hx-target="#cat-add-msg" hx-swap="innerHTML">
+            <label>{{ T "categories.col.name" }}
+              <input type="text" name="name" required placeholder="{{ T "categories.create_placeholder" }}" data-testid="cat-popover-name">
+            </label>
+            <div class="category-dialog-label">{{ T "catalog.color" }}</div>
+            <div class="picker-grid item-color-grid cat-popover-colors" role="group" aria-label="{{ T "catalog.color" }}">
+              {{ range .ItemColors }}
+              <button type="button" class="picker-tile item-color-tile" data-color="{{ .Hex }}" aria-pressed="false" title="{{ T .I18nKey }}" style="--swatch: {{ .Hex }}">
+                <span class="swatch-dot" aria-hidden="true"></span>
+                <span>{{ T .I18nKey }}</span>
+              </button>
+              {{ end }}
+              <button type="button" class="picker-tile item-color-tile" data-color="" aria-pressed="true">{{ T "catalog.color.none" }}</button>
+            </div>
+            <input type="hidden" name="color" value="" data-testid="cat-popover-color">
+            <div id="cat-add-msg" class="cat-popover-msg" role="status" aria-live="polite"></div>
+            <div class="cat-popover-actions">
+              <button type="submit" class="btn primary compact" data-testid="cat-popover-save">{{ T "categories.create" }}</button>
+            </div>
+          </form>
+        </dialog>
+      </div>
+      {{ end }}
       {{/* ut-docs#2294: search results are a SEPARATE view from the tabs/
            grid below, not a filter layered on top of them — while q is
            non-empty, #buttons-grid hides (x-show="!q" below) and this
@@ -783,7 +1022,9 @@
            a focused tile -- app.js). common.done is the existing generic
            key (settings/plugins modals use it too), not a new one. */}}
       <div class="jiggle-bar" data-testid="jiggle-bar" role="status" aria-live="polite" hidden>
-        <span class="jiggle-bar-title">{{ T "buttons.edit_mode.title" }}</span>
+        {{/* ut-docs#2174: on the Designer the same mode also covers the
+             category strip, so the bar says so. */}}
+        <span class="jiggle-bar-title">{{ if $designer }}{{ T "designer.edit_mode.title" }}{{ else }}{{ T "buttons.edit_mode.title" }}{{ end }}</span>
         <button type="button" class="btn primary compact jiggle-done" data-testid="jiggle-done">{{ T "common.done" }}</button>
       </div>
       <div id="buttons-grid" class="category-groups" x-show="!q">
@@ -894,6 +1135,10 @@
              literal string. */}}
         <div id="cat-panel-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}" :role="(q || tab === '__all__') ? 'group' : 'tabpanel'" :aria-labelledby="(q || tab === '__all__') ? null : 'cat-tab-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}'" class="products-tab-panel" style="--cat-color: {{ $g.Color }}" x-show="panelVisible('{{ $g.ID }}', $el)" {{ if ne $g.ID $defaultTab }}x-cloak{{ end }}>
           {{ template "category-group-body-tabbed" $g }}
+          {{/* ut-docs#2174: only the Designer ever renders an EMPTY
+               category (BuildCategoryGroupsKeepEmpty); say what to do
+               about it rather than show a blank panel. */}}
+          {{ if and $designer (not $g.Buttons) (not $g.Children) }}<p class="empty" data-testid="designer-category-empty">{{ T "designer.category.empty" }}</p>{{ end }}
         </div>
         {{ end }}
         {{/* ut-docs#2181: one "no matches" message for the whole tabbed

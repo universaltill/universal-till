@@ -1127,7 +1127,8 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// The reason-picker sheet's buttons declare a small dedicated hint
 		// target (#shrinkage-hint, innerHTML) so a needsElevation response
 		// above doesn't blow away #basket's own id (same problem/fix
-		// buttons_admin.html's #buttons-grid-wrap comment documents) --
+		// elevation.go's renderElevationPrompt doc comment describes --
+		// its hint must land in a target whose id survives the swap) --
 		// override it back to the normal full-basket outerHTML swap for
 		// the actual-removal response below.
 		//

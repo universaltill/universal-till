@@ -227,8 +227,14 @@ func TestButtonsAddValidatesPersistsAndNormalizesImage(t *testing.T) {
 		"itemId":   {"itm1"},
 		"imageUrl": {"apple.png"},
 	}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("add = %d (%s)", rec.Code, rec.Body.String())
+	// ut-docs#2174: 204 + HX-Trigger, no body -- the Designer's live replica
+	// refetches itself on buttons-changed (the retired flat grid used to be
+	// re-rendered here).
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("add = %d (%s), want 204", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("HX-Trigger"); got != "buttons-changed" {
+		t.Fatalf("add HX-Trigger = %q, want buttons-changed", got)
 	}
 	var image string
 	if err := d.Db.QueryRow(`SELECT image_path FROM shortcut_buttons WHERE barcode='ABC'`).Scan(&image); err != nil {
@@ -236,10 +242,6 @@ func TestButtonsAddValidatesPersistsAndNormalizesImage(t *testing.T) {
 	}
 	if image != "/public/images/apple.png" {
 		t.Fatalf("image_path = %q, want /public/images/apple.png", image)
-	}
-	// The response is the re-rendered admin grid containing the new tile.
-	if !strings.Contains(rec.Body.String(), "Apple") {
-		t.Fatalf("admin grid response missing added button: %s", rec.Body.String())
 	}
 
 	// An absolute URL is stored untouched.
@@ -249,7 +251,7 @@ func TestButtonsAddValidatesPersistsAndNormalizesImage(t *testing.T) {
 		"itemId":   {"itm1"},
 		"imageUrl": {"https://cdn.example.com/pear.png"},
 	}, nil)
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusNoContent {
 		t.Fatalf("add absolute-url = %d (%s)", rec.Code, rec.Body.String())
 	}
 	if err := d.Db.QueryRow(`SELECT image_path FROM shortcut_buttons WHERE barcode='DEF'`).Scan(&image); err != nil {
@@ -267,8 +269,11 @@ func TestButtonsRemoveDeletesRow(t *testing.T) {
 	}
 
 	rec := postForm(mux, "/api/buttons/remove", url.Values{"code": {"ABC"}}, nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("remove = %d (%s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("remove = %d (%s), want 204", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("HX-Trigger"); got != "buttons-changed" {
+		t.Fatalf("remove HX-Trigger = %q, want buttons-changed", got)
 	}
 	var n int
 	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM shortcut_buttons WHERE barcode='ABC'`).Scan(&n); err != nil {

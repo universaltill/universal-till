@@ -34,7 +34,7 @@ test('Designer search box returns results when typed via the on-screen keyboard'
   }
   await expect(search).toHaveValue('spa');
 
-  await expect(page.locator('#search-results')).toContainText('Sparkling Water', { timeout: 5000 });
+  await expect(page.locator('#designer-search-results')).toContainText('Sparkling Water', { timeout: 5000 });
 
   assertClean();
 });
@@ -48,7 +48,7 @@ test('Designer search box returns results when typed on a real keyboard', async 
   const search = page.locator('#search');
   await search.pressSequentially('spa', { delay: 20 });
 
-  await expect(page.locator('#search-results')).toContainText('Sparkling Water', { timeout: 5000 });
+  await expect(page.locator('#designer-search-results')).toContainText('Sparkling Water', { timeout: 5000 });
 
   assertClean();
 });
@@ -79,7 +79,7 @@ test('search-result add button has user-select/touch-action protection outside k
 
   const search = page.locator('#search');
   await search.pressSequentially('spa', { delay: 20 });
-  const result = page.locator('#search-results .result', { hasText: 'Sparkling Water' });
+  const result = page.locator('#designer-search-results .result', { hasText: 'Sparkling Water' });
   await expect(result).toBeVisible({ timeout: 5000 });
 
   const style = await result.evaluate((el) => {
@@ -101,7 +101,11 @@ test('Designer search result tap-to-add works from a touch context (ut-docs#1170
   const assertClean = watchConsole(page);
 
   await page.goto('/designer');
-  const tiles = page.locator('#buttons-grid-admin .tile-name', { hasText: 'Sparkling Water' });
+  // ut-docs#2174: the Designer shows the live sale-screen replica; a quick
+  // button renders as a tile in its category's own panel (`.products-tab-
+  // panel`, NOT the All grid, which lists every catalog item regardless).
+  await expect(page.locator('.products-finder.cat-editable')).toBeVisible();
+  const tiles = page.locator('.products-tab-panel .btn-tile', { hasText: 'Sparkling Water' });
   // Count-based, not visibility-based: the shared dev till server persists
   // added tiles across repeated local runs (reuseExistingServer), so a
   // previous run may have already added this item — assert the tap adds
@@ -111,7 +115,7 @@ test('Designer search result tap-to-add works from a touch context (ut-docs#1170
   const search = page.locator('#search');
   await search.pressSequentially('spa', { delay: 20 });
 
-  const result = page.locator('#search-results .result', { hasText: 'Sparkling Water' });
+  const result = page.locator('#designer-search-results .result', { hasText: 'Sparkling Water' });
   await expect(result).toBeVisible({ timeout: 5000 });
   await result.tap();
 
@@ -119,4 +123,71 @@ test('Designer search result tap-to-add works from a touch context (ut-docs#1170
 
   assertClean();
   await ctx.close();
+});
+
+// ut-docs#2174 review (Tester): at the pilot till's actual 1024x600 kiosk
+// viewport, the live-replica redesign pushed this search box far enough
+// down the page that its own results dropdown rendered UNDER the sticky
+// .statusbar footer (position: sticky; bottom: 0; z-index: 90) -- reused
+// live at this exact viewport before the fix: the search INPUT itself sat
+// partly behind the footer on plain page load, and a result near the
+// dropdown's own bottom edge was untappable (Playwright: "<footer
+// class=\"statusbar\"> intercepts pointer events"), no matter how far the
+// page was scrolled, because the footer's sticky pin always reclaims the
+// viewport's bottom band. Geometric, not tap-based (per the `ux` skill's
+// own "turn the layout into a geometric assertion" rule, sale-screen-213.
+// spec.ts's precedent): elementFromPoint at the result's own center must
+// resolve to the result itself, never the footer sitting on top of it.
+test('the search-results dropdown is never occluded by the status bar at the kiosk viewport (ut-docs#2174)', async ({
+  page,
+}) => {
+  const assertClean = watchConsole(page);
+  await page.setViewportSize({ width: 1024, height: 600 });
+  await page.goto('/designer');
+
+  const search = page.locator('#search');
+  await search.pressSequentially('spa', { delay: 20 });
+  const result = page.locator('#designer-search-results .result', { hasText: 'Sparkling Water' });
+  await expect(result).toBeVisible({ timeout: 5000 });
+
+  const hit = await result.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const cx = r.left + r.width / 2;
+    const cy = r.top + r.height / 2;
+    const top = document.elementFromPoint(cx, cy);
+    return { tag: top?.tagName, cls: top?.className, isResultOrChild: !!(top && el.contains(top)) };
+  });
+  expect(hit.isResultOrChild, `topmost element at the result's center was ${hit.tag}.${hit.cls}, not the result itself`).toBe(
+    true,
+  );
+
+  assertClean();
+});
+
+// ut-docs#2174 review (Reviewer): the search result used to swap its
+// response into the retired flat grid's wrapper, so a refused add was at
+// least visible there. With that grid gone it posted hx-swap="none", and a
+// refusal (ui.ButtonsHTTP.Add's 400 text/html fragment) vanished silently:
+// app.js's global htmx:beforeSwap marks such a fragment not-an-error, so
+// htmx:responseError never fires for it either. The refusal must land in
+// #buttons-add-error and stay there. The route is stubbed with the exact
+// shape ButtonsHTTP.Add writes on a store failure -- the real failure
+// modes (a DB error, an item with no name) aren't reachable from a seeded
+// catalog.
+test('a refused search-result add shows its message in the add-error region (ut-docs#2174)', async ({ page }) => {
+  const assertClean = watchConsole(page, /status of 400/);
+  await page.goto('/designer');
+  await page.route('**/api/buttons/add', (route) =>
+    route.fulfill({
+      status: 400,
+      contentType: 'text/html; charset=utf-8',
+      body: '<div class="error">Refused by the server</div>',
+    }),
+  );
+  await page.locator('#search').pressSequentially('spa', { delay: 20 });
+  const result = page.locator('#designer-search-results .result', { hasText: 'Sparkling Water' });
+  await expect(result).toBeVisible({ timeout: 5000 });
+  await result.click();
+  await expect(page.locator('#buttons-add-error')).toContainText('Refused by the server');
+  assertClean();
 });

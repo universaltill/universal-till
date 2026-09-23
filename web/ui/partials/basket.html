@@ -260,8 +260,9 @@
                      response is a small, non-OOB hint fragment
                      (elevation.go's renderElevationPrompt) that would
                      otherwise replace #basket's own outerHTML -- destroying
-                     its id -- exactly the failure buttons_admin.html's own
-                     #buttons-grid-wrap comment documents and works around.
+                     its id -- exactly the failure elevation.go's
+                     renderElevationPrompt doc comment describes (its hint
+                     must land in a target whose id survives the swap).
                      The handler retargets back to #basket/outerHTML via
                      HX-Retarget/HX-Reswap on its OWN actual-removal
                      response (allowed/elevated), so a successful reason

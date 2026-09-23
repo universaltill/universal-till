@@ -1,11 +1,27 @@
 {{ define "content" }}
 <div class="page-head">
   <h1>{{ T "designer.title" }}</h1>
-  <span class="muted">{{ T "designer.reorder_hint" }}</span>
-  <!-- ut-docs#2285: discoverability for the sell-screen's own long-press
-       sheet, which offers the same reorder (plus Remove/Edit) with no
-       visible affordance of its own on a tile. -->
-  <span class="muted">{{ T "designer.long_press_hint" }}</span>
+  <!-- ut-docs#2174: what the operator is looking at below is the sale
+       screen's own product panel, editable in place -- one hint says so
+       and names the single entry point (the strip's pencil, or a hold on a
+       tile, exactly as on the sale screen itself). -->
+  <span class="muted">{{ T "designer.replica_hint" }}</span>
+</div>
+
+{{/* ut-docs#2174: the live replica. This placeholder fetches GET
+     /ui/designer/buttons once on load and outerHTML-swaps itself away for
+     the fragment -- the very same buttons.html the sale screen renders
+     through index.html's identical placeholder (with /ui/buttons), with
+     ui.ButtonsHTTP.Designer on. From then on the fragment's own root
+     refetches itself on buttons-changed (every add/remove/reorder of a
+     button, every category edit made here), so each edit shows up in the
+     replica immediately with no save-then-navigate round trip.
+     .designer-replica (app.css) gives it the sale screen's .products panel
+     frame and bounded height, so the grid keeps the proportions cashiers
+     see and scrolls internally rather than pushing the add-a-button search
+     below it off a 1024x600 screen. */}}
+<div class="designer designer-replica">
+  <div hx-get="/ui/designer/buttons" hx-trigger="load" hx-swap="outerHTML"></div>
 </div>
 
 <div class="designer">

@@ -98,11 +98,15 @@ func TestButtonsSearchHxValsFallsBackToSKUForBarcodeLessItem(t *testing.T) {
 		"code":   {vals["code"]},
 		"itemId": {vals["itemId"]},
 	}, nil)
-	if addRec.Code != 200 {
-		t.Fatalf("add SKU-only item = %d, want 200 (%s)", addRec.Code, addRec.Body.String())
+	if addRec.Code != 204 {
+		t.Fatalf("add SKU-only item = %d, want 204 (%s)", addRec.Code, addRec.Body.String())
 	}
-	if !strings.Contains(addRec.Body.String(), "Loose Screw") {
-		t.Fatalf("admin grid response missing added SKU-only tile: %s", addRec.Body.String())
+	// ut-docs#2174: the tile now shows up in the Designer's live replica
+	// (rendered by GET /ui/designer/buttons) rather than in the add
+	// response's own body.
+	var stored int
+	if err := d.Db.QueryRow(`SELECT count(*) FROM shortcut_buttons WHERE barcode = ?`, vals["code"]).Scan(&stored); err != nil || stored != 1 {
+		t.Fatalf("SKU-only tile not persisted (count=%d err=%v)", stored, err)
 	}
 }
 

@@ -47,10 +47,13 @@ test('a catalog item with neither barcode nor SKU can be added as a button and r
   const search = page.locator('#search');
   await search.pressSequentially(name.slice(0, 14), { delay: 20 });
 
-  const result = page.locator('#search-results .result', { hasText: name });
+  const result = page.locator('#designer-search-results .result', { hasText: name });
   await expect(result).toBeVisible({ timeout: 5000 });
 
-  const tilesBefore = page.locator('#buttons-grid-admin .tile-name', { hasText: name });
+  // ut-docs#2174: the Designer shows the live sale-screen replica; the
+  // new quick button lands as a tile in its category's own panel there.
+  await expect(page.locator('.products-finder.cat-editable')).toBeVisible();
+  const tilesBefore = page.locator(`.products-tab-panel .btn-tile[data-name="${name}"]`);
   const before = await tilesBefore.count();
   await result.click();
 
@@ -59,8 +62,7 @@ test('a catalog item with neither barcode nor SKU can be added as a button and r
   // appeared, not merely that no error was thrown.
   await expect(tilesBefore).toHaveCount(before + 1, { timeout: 5000 });
 
-  const adminTile = page.locator('.reorderable-tile', { hasText: name });
-  const code = await adminTile.getAttribute('data-code');
+  const code = await tilesBefore.first().getAttribute('data-code');
   expect(code, 'added button must carry a real, non-empty code').toBeTruthy();
   expect(code).not.toBe('');
 

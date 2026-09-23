@@ -30,8 +30,8 @@ func TestButtonsAdd_ElevatedPINWritesAuditRow(t *testing.T) {
 	if isElevationPrompt(rec) {
 		t.Fatalf("expected the PIN to clear the gate, got an elevation prompt: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec.Code != http.StatusOK {
-		t.Fatalf("add with approver PIN: code=%d, want 200: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("add with approver PIN: code=%d, want 204: %s", rec.Code, rec.Body.String())
 	}
 
 	var count int
@@ -65,8 +65,8 @@ func TestButtonsRemove_ElevatedPINWritesAuditRow(t *testing.T) {
 	if isElevationPrompt(rec) {
 		t.Fatalf("expected the PIN to clear the gate, got an elevation prompt: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec.Code != http.StatusOK {
-		t.Fatalf("remove with approver PIN: code=%d, want 200: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("remove with approver PIN: code=%d, want 204: %s", rec.Code, rec.Body.String())
 	}
 
 	var count int
@@ -107,8 +107,8 @@ func TestButtonsAdd_NonElevatedManager_NoAuditRow(t *testing.T) {
 	if isElevationPrompt(rec) {
 		t.Fatalf("manager add: got elevation prompt, want past the gate: %d %s", rec.Code, rec.Body.String())
 	}
-	if rec.Code != http.StatusOK {
-		t.Fatalf("manager add: code=%d, want 200: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("manager add: code=%d, want 204: %s", rec.Code, rec.Body.String())
 	}
 
 	var count int

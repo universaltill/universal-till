@@ -1665,10 +1665,40 @@ function initOfflineOverride(updateFn){
 // persisted reorder is harmless; they're refreshed client-side anyway.
 //
 // Scoped to the sale screen by the #buttons-grid ancestor in every
-// selector: the Designer's admin tiles (#buttons-grid-admin) and the
-// Categories-tab item picker's cloned tiles (#category-items-modal,
-// outside #buttons-grid) never match, and the plugin-contributed
-// #plugin-buttons strip is a sibling of the grid, not inside it.
+// selector: the Categories-tab item picker's cloned tiles
+// (#category-items-modal, outside #buttons-grid) never match, and the
+// plugin-contributed #plugin-buttons strip is a sibling of the grid, not
+// inside it.
+//
+// ut-docs#2174 -- the Designer's live replica. /designer now renders this
+// very same grid (GET /ui/designer/buttons, the same buttons.html) inside
+// a .products-finder.cat-editable section, and THIS mode is its editor:
+// the mode is unchanged for tiles, and extended -- not duplicated -- to
+// the category strip. Same cell model (a .cat-tab-cell wrapping a real
+// category tab + its pencil is to the strip what .tile-cell is to the
+// grid), same startDrag/reorderAt/moveCell/keyboard code paths with the
+// cell passed explicitly instead of assumed to be tile.parentElement, same
+// Done/Escape/tap-outside exit, one more dirty flag (catDirty) persisted
+// on exit with ONE POST to /api/designer/categories/reorder (ids in DOM
+// order -- the same shape /api/categories/reorder takes). Entry points on
+// the Designer: the strip's pencil (.designer-edit-toggle, the same slot
+// the sale screen's own edit link sits in), a hold/right-click on a tile
+// exactly as on the sale screen, or a plain tap on a tile (a tile is not
+// sellable there -- there is no basket -- so a tap that would otherwise
+// fire hx-post at a target that doesn't exist enters the mode instead).
+// While the mode is on, .cat-edit-mode on the section is what reveals
+// the strip's pencils and + tab (app.css) and makes the strip wrap so
+// every tab is reachable (buttons.html's applyCategoryOverflow stands
+// down under that class); a tap anywhere inside that section -- a tab, a
+// pencil, a popover -- never counts as "outside" for the exit rule. The
+// per-category popover (rename / colour swatches / Save / Remove) is a
+// server-rendered non-modal <dialog> this file merely opens, positions
+// under its pencil clamped to the viewport, paints the pressed swatch in,
+// and closes; its forms are plain htmx, and their success (204 +
+// HX-Trigger: buttons-changed) re-renders the root, after which the
+// afterSettle hook below puts the mode back exactly as it already did
+// for a Remove from inside the mode. Nothing here runs on the sale
+// screen: every Designer-only path is gated on finder() being non-null.
 (function () {
   var HOLD_MS = 500;
   var MOVE_CANCEL_PX = 10;
@@ -1677,12 +1707,25 @@ function initOfflineOverride(updateFn){
   var EDGE_SCROLL_STEP = 10;
 
   var active = false;   // edit mode on
-  var dirty = false;    // a reorder happened since the last persist
-  var hold = null;      // { timer, pointerId, x, y, tile } -- an armed long-press
-  var drag = null;      // { tile, cell, pointerId, offX, offY, moved, onLost }
+  var dirty = false;    // a tile reorder happened since the last persist
+  var catDirty = false; // a category-tab reorder happened since the last persist (Designer only)
+  var hold = null;      // { timer, pointerId, x, y, tile, cell } -- an armed long-press
+  var drag = null;      // { tile, cell, pointerId, offX, offY, moved }
+  var openPopover = null;   // the .cat-popover <dialog> currently shown (Designer only)
+  var popoverOpener = null; // the pencil/+ button that opened it, for focus return
 
   function grid() { return document.getElementById('buttons-grid'); }
   function bar() { return document.querySelector('.products-finder .jiggle-bar'); }
+  // ut-docs#2174: the Designer's replica section, or null on the sale
+  // screen -- the one switch every Designer-only path below is gated on.
+  function finder() { return document.querySelector('.products-finder.cat-editable'); }
+  // A real category tab's cell in the Designer's strip (never the synthetic
+  // uncategorized tab, which has no wrapper -- nothing to rename or reorder).
+  function catCellFor(el) {
+    return el && el.closest ? el.closest('.products-finder.cat-editable .tab-bar .cat-tab-cell') : null;
+  }
+  function catTabOf(cell) { return cell.querySelector(':scope > .tab[data-cat-tab]'); }
+  function isCatCell(cell) { return !!(cell && cell.classList && cell.classList.contains('cat-tab-cell')); }
   // ut-docs#2294 fallout: #buttons-grid-all (the All tab's own dedicated
   // grid, every active catalog item -- not just quick buttons) renders
   // INSIDE #buttons-grid, so a plain '#buttons-grid .btn-tile[data-code]'
@@ -1707,10 +1750,60 @@ function initOfflineOverride(updateFn){
     return (b && !inAllGrid(b)) ? b : null;
   }
   function isRTL(el) { return getComputedStyle(el).direction === 'rtl'; }
+  // The reorderable children of one container: .tile-cell's of a .grid, or
+  // .cat-tab-cell's of the Designer strip's .tab-bar (ut-docs#2174) --
+  // never the strip's fixed Categories/All/uncategorized tabs or its
+  // '...'/+ buttons, which stay put while the category cells move around
+  // them.
   function visibleCells(gridEl) {
     return Array.prototype.filter.call(gridEl.children, function (c) {
-      return c.classList.contains('tile-cell') && c.getClientRects().length > 0;
+      return (c.classList.contains('tile-cell') || c.classList.contains('cat-tab-cell')) && c.getClientRects().length > 0;
     });
+  }
+
+  // ut-docs#2174: reflect the mode onto the Designer's strip -- the class
+  // app.css/buttons.html key their edit affordances and wrapping off, the
+  // toggle's pressed state, and the event applyCategoryOverflow() listens
+  // for to un-hide every tab (entering) or re-fit the strip (leaving).
+  function setCatEditMode(on) {
+    var f = finder();
+    if (!f) return;
+    if (on) restoreStripOrder(f);
+    f.classList.toggle('cat-edit-mode', on);
+    var toggle = f.querySelector('.designer-edit-toggle');
+    if (toggle) toggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+    f.dispatchEvent(new CustomEvent('cat-edit-changed', { bubbles: false }));
+  }
+
+  // ut-docs#2174: put the Designer strip's category tabs back into SERVER
+  // order (each tab's data-sort, buttons.html) before editing starts.
+  // buttons.html's promoteCategoryTab() (ut-docs#2307) moves the selected
+  // tab to the front of the strip's DOM so it stays visible when the row
+  // is too narrow -- a visual-only rearrangement on the sale screen, but
+  // the Designer persists the strip's DOM order as the real category
+  // order on Done, so without this a promotion made at rest would be
+  // saved as if the operator had dragged that tab to the front (caught by
+  // the e2e spec: Done posted the selected tab first). Every real
+  // category tab is re-inserted, sorted, just before the + tab, which is
+  // the strip's fixed trailing element in Designer mode.
+  function restoreStripOrder(f) {
+    var bar = f.querySelector('.tab-bar');
+    var anchor = bar && bar.querySelector('.tab-add');
+    if (!bar || !anchor) return;
+    var nodes = Array.prototype.map.call(bar.querySelectorAll('.tab[data-cat-tab]'), function (t) {
+      return { node: t.closest('.cat-tab-cell') || t, sort: parseInt(t.dataset.sort, 10) };
+    });
+    if (nodes.some(function (n) { return isNaN(n.sort); })) return;
+    // A no-op unless something actually moved: a freshly rendered strip
+    // (every re-enter after a buttons-changed swap comes through here,
+    // before Alpine has necessarily initialised the new tabs' bindings)
+    // must not be touched -- moving nodes there re-triggers Alpine's
+    // init on them mid-flight and the selected tab lost its
+    // aria-selected/active state (caught by the e2e spec).
+    var inOrder = nodes.every(function (n, i) { return i === 0 || n.sort > nodes[i - 1].sort; });
+    if (inOrder) return;
+    nodes.sort(function (a, b) { return a.sort - b.sort; });
+    nodes.forEach(function (n) { bar.insertBefore(n.node, anchor); });
   }
 
   function enter() {
@@ -1719,14 +1812,25 @@ function initOfflineOverride(updateFn){
     active = true;
     g.classList.add('jiggle-mode');
     if (b) b.hidden = false;
+    setCatEditMode(true);
   }
   function exit() {
     if (!active) return;
     endDrag(null);
     clearHold();
+    closePopover(false);
     active = false;
+    // Capture and persist the strip's edited order BEFORE leaving the
+    // category edit mode: setCatEditMode(false) below makes
+    // applyCategoryOverflow() re-fit the strip, which may promote the
+    // selected tab to the front (see restoreStripOrder above) -- an order
+    // read after that would save the promotion. persistOrder() reads the
+    // tile grid only, so it is unaffected either way; orderedCategoryIDs()
+    // is read synchronously inside persistCatOrder() before any await.
+    persistAll();
     var g = grid(), b = bar();
     if (g) g.classList.remove('jiggle-mode');
+    setCatEditMode(false);
     if (b) {
       // Done itself is about to be display:none'd; keep keyboard focus on
       // the screen rather than letting it fall to <body>.
@@ -1747,10 +1851,48 @@ function initOfflineOverride(updateFn){
       }
       b.hidden = true;
     }
-    if (dirty) { dirty = false; persistOrder(); }
   }
 
   // ---- order + persistence ----
+  // Everything unsaved, in one go: the tile order (dirty) and, on the
+  // Designer, the category order (catDirty). Every exit path and every
+  // "the grid is about to re-render from the server" hook below goes
+  // through here so neither list can be silently dropped. Never rejects.
+  function persistAll() {
+    var jobs = [];
+    if (dirty) { dirty = false; jobs.push(persistOrder()); }
+    if (catDirty) { catDirty = false; jobs.push(persistCatOrder()); }
+    return Promise.all(jobs);
+  }
+  // ut-docs#2174: the Designer strip's category ids in their new DOM
+  // order -- the same repeated-"ids" FormData /api/categories/reorder
+  // takes, posted to the Designer's own twin of that route. A plain
+  // fetch, not utPostWithElevation: that route answers a non-granted
+  // session with a flat 403 (the Designer page itself is unreachable
+  // without catalog_management, so there is nobody here to elevate), and a
+  // refusal/transport failure surfaces via #pos-alert and a refetch, same
+  // as persistOrder() below.
+  function orderedCategoryIDs() {
+    var f = finder();
+    if (!f) return [];
+    return Array.prototype.map.call(f.querySelectorAll('.tab-bar .cat-tab-cell[data-cat-id]'), function (c) { return c.dataset.catId; });
+  }
+  function persistCatOrder() {
+    var ids = orderedCategoryIDs();
+    if (!ids.length) return Promise.resolve();
+    var fd = new FormData();
+    ids.forEach(function (id) { fd.append('ids', id); });
+    return fetch('/api/designer/categories/reorder', { method: 'POST', body: fd }).then(function (res) {
+      if (res.ok) return;
+      return res.text().then(function (text) {
+        showAlert((text || '').trim(), 'server');
+        refetchGrid(); // the strip shows an order that never took -- reload it
+      });
+    }).catch(function () {
+      showAlert('', 'network');
+      refetchGrid();
+    });
+  }
   function orderedCodes() {
     var tiles = Array.prototype.slice.call(document.querySelectorAll('#buttons-grid .btn-tile[data-code]'))
       .filter(function (t) { return !inAllGrid(t); });
@@ -1860,18 +2002,34 @@ function initOfflineOverride(updateFn){
     if (!grid()) return;
     if (e.button !== undefined && e.button !== 0) return; // right-click: see contextmenu below
     if (badgeFor(e.target)) return; // a badge tap is that badge's own action, never a hold or a drag
+    // ut-docs#2174: an open category popover closes on a pointerdown
+    // anywhere outside it (its opener toggles it on click instead); a
+    // pointerdown INSIDE it is the popover's own business (typing a name,
+    // picking a swatch) and never a hold, a drag or an exit.
+    if (openPopover) {
+      if (openPopover.contains(e.target)) return;
+      if (!(e.target.closest && e.target.closest('[data-cat-popover]'))) closePopover(false);
+    }
+    // The strip's own controls act on click; never arm a hold on them.
+    if (e.target.closest && e.target.closest('.cat-tab-edit, .tab-add, .designer-edit-toggle')) return;
     var tile = tileFor(e.target);
-    if (!tile) {
+    var catCell = tile ? null : catCellFor(e.target);
+    if (!tile && !catCell) {
       // Outside the grid (basket, nav rail, category strip, ...) while
       // editing: leave the mode -- except the Done bar, whose own button
-      // does that on click. A pointerdown INSIDE the grid but between
-      // tiles (a header, a gap) is neither an exit nor a hold.
-      if (active && !(e.target.closest && (e.target.closest('#buttons-grid') || e.target.closest('.jiggle-bar')))) exit();
+      // does that on click, and (ut-docs#2174) the Designer's own
+      // editable strip section, every part of which is part of the edit.
+      // A pointerdown INSIDE the grid but between tiles (a header, a gap)
+      // is neither an exit nor a hold.
+      if (active && !(e.target.closest && (e.target.closest('#buttons-grid') || e.target.closest('.jiggle-bar') || e.target.closest('.products-finder.cat-editable')))) exit();
       return;
     }
-    if (active) { startDrag(e, tile); return; }
+    var subject = tile || catTabOf(catCell);
+    var cell = tile ? tile.parentElement : catCell;
+    if (!subject) return;
+    if (active) { startDrag(e, subject, cell); return; }
     clearHold();
-    var h = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, tile: tile };
+    var h = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, tile: subject, cell: cell };
     h.timer = setTimeout(function () {
       hold = null;
       if (navigator.vibrate) navigator.vibrate(15);
@@ -1879,7 +2037,9 @@ function initOfflineOverride(updateFn){
       // The finger is still down on this tile: let the very same gesture
       // continue straight into a drag (iOS does exactly this), so a hold-
       // and-slide reorders in one motion instead of hold, lift, press again.
-      startDrag({ pointerId: h.pointerId, clientX: h.x, clientY: h.y, preventDefault: function () {} }, tile);
+      // (enter() has just made a category cell a real positioned box, so
+      // the offset measurement inside startDrag reads a live rect.)
+      startDrag({ pointerId: h.pointerId, clientX: h.x, clientY: h.y, preventDefault: function () {} }, h.tile, h.cell);
     }, HOLD_MS);
     hold = h;
   });
@@ -1909,23 +2069,39 @@ function initOfflineOverride(updateFn){
   // Capture phase, deliberately: must run BEFORE the tile's own bubbling
   // hx-trigger="click" handler sees the same click. Eats the hold's
   // trailing click, taps on jiggling tiles, and keyboard activation alike.
+  // ut-docs#2174: on the Designer's replica EVERY product tile's click is
+  // eaten, mode or no mode, All grid and search results included -- there
+  // is no basket or modifier dialog on that page for hx-post/hx-get to
+  // land in (htmx would only log htmx:targetError) -- and a tap on a
+  // reorderable tile at rest enters the mode instead of being a dead tap.
   document.addEventListener('click', function (e) {
+    if (finder()) {
+      var any = e.target.closest ? e.target.closest('.products-finder.cat-editable .btn-tile') : null;
+      if (!any) return;
+      e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+      if (!active && tileFor(e.target)) enter();
+      return;
+    }
     if (!active) return;
     if (!tileFor(e.target)) return;
     e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
   }, true);
 
   // ---- drag ----
-  function startDrag(e, tile) {
+  // cell: the positioned box the subject sits in -- a tile's .tile-cell
+  // parent (the default when omitted, exactly as before), or a category
+  // tab's .cat-tab-cell (ut-docs#2174).
+  function startDrag(e, tile, cell) {
     if (drag) return;
     e.preventDefault(); // no text selection / native image drag under the finger
+    cell = cell || tile.parentElement;
     // Offsets are measured against the CELL, never the tile: the tile
     // carries the jiggle rotation and, once .dragging, a scale, both of
     // which skew its own rect; the cell is never transformed and the tile
     // fills it exactly in edit mode (app.css).
-    var rect = tile.parentElement.getBoundingClientRect();
+    var rect = cell.getBoundingClientRect();
     drag = {
-      tile: tile, cell: tile.parentElement, pointerId: e.pointerId,
+      tile: tile, cell: cell, pointerId: e.pointerId,
       offX: e.clientX - rect.left, offY: e.clientY - rect.top, moved: false
     };
     capture();
@@ -1992,7 +2168,7 @@ function initOfflineOverride(updateFn){
   function moveCell(cells, cell, domMove) {
     var before = cells.filter(function (c) { return c !== cell; }).map(function (c) { return { c: c, r: c.getBoundingClientRect() }; });
     domMove();
-    dirty = true;
+    if (isCatCell(cell)) catDirty = true; else dirty = true;
     if (drag && drag.cell === cell) capture();
     before.forEach(function (b) {
       var r2 = b.c.getBoundingClientRect();
@@ -2028,14 +2204,29 @@ function initOfflineOverride(updateFn){
   // moves it one place among its visible siblings (DOM step flipped under
   // RTL, same convention as buttons.html's focusTab), so the reorder the
   // retired sheet offered by keyboard (Move earlier/later) is still there.
+  // ut-docs#2174: the same two keys on a focused CATEGORY TAB in the
+  // Designer's strip move that tab (its .cat-tab-cell) among its siblings
+  // -- buttons.html's own tablist arrow handlers stand down under
+  // .cat-edit-mode so focus stays on the tab just moved. Escape closes an
+  // open category popover first, and only exits the mode on a second
+  // press, so a half-typed rename is never thrown away by the same key
+  // that dismisses it.
   document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && openPopover) { e.preventDefault(); closePopover(true); return; }
     if (!active) return;
     if (e.key === 'Escape') { e.preventDefault(); exit(); return; }
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-    var tile = tileFor(e.target);
-    if (!tile) return;
+    var tile = tileFor(e.target), cell;
+    if (tile) {
+      cell = tile.parentElement;
+    } else {
+      cell = catCellFor(e.target);
+      if (!cell) return;
+      tile = catTabOf(cell);
+      if (!tile) return;
+    }
     e.preventDefault();
-    var cell = tile.parentElement, gridEl = cell.parentElement;
+    var gridEl = cell.parentElement;
     var cells = visibleCells(gridEl);
     var i = cells.indexOf(cell);
     var step = (e.key === 'ArrowRight') ? 1 : -1;
@@ -2051,6 +2242,113 @@ function initOfflineOverride(updateFn){
     if (btn) exit();
   });
 
+  // ---- Designer only (ut-docs#2174): toggle, category popovers ----
+  // The strip's pencil: the Designer's one visible entry point (a hold or
+  // a tap on a tile also enters, exactly as the sale screen's own hold).
+  document.addEventListener('click', function (e) {
+    var t = e.target.closest ? e.target.closest('.products-finder.cat-editable .designer-edit-toggle') : null;
+    if (!t) return;
+    e.preventDefault();
+    if (active) exit(); else enter();
+  });
+  // A pencil (or the + tab) opens its own server-rendered popover; a
+  // second click on the same opener closes it.
+  document.addEventListener('click', function (e) {
+    var opener = e.target.closest ? e.target.closest('.products-finder.cat-editable [data-cat-popover]') : null;
+    if (!opener) return;
+    e.preventDefault();
+    var dlg = document.getElementById(opener.dataset.catPopover);
+    if (!dlg) return;
+    if (openPopover === dlg) { closePopover(true); return; }
+    showPopover(dlg, opener);
+  });
+  document.addEventListener('click', function (e) {
+    var close = e.target.closest ? e.target.closest('.cat-popover .cat-popover-close') : null;
+    if (close) { e.preventDefault(); closePopover(true); }
+  });
+  function showPopover(dlg, opener) {
+    closePopover(false);
+    var msg = dlg.querySelector('.cat-popover-msg');
+    if (msg) msg.textContent = '';
+    paintPopoverColor(dlg);
+    // Non-modal .show(), never .showModal(): the till's own on-screen
+    // keyboard must stay reachable for the name input -- the same rule
+    // every other dialog on the sale screen follows.
+    if (typeof dlg.show === 'function') dlg.show(); else dlg.setAttribute('open', '');
+    openPopover = dlg; popoverOpener = opener;
+    positionPopover(dlg, opener);
+    var input = dlg.querySelector('input[name="name"]');
+    if (input) { input.focus(); if (input.select) input.select(); }
+  }
+  // Under its opener, then clamped so it never leaves the viewport: at
+  // 1024x600 the popover for the last tab in the strip would otherwise run
+  // off the inline-end edge, and one opened low would run off the bottom
+  // (it flips above the opener then). Inline placement is written as an
+  // inset-inline-START distance so RTL (fa/ar) mirrors it for free --
+  // never left/right.
+  function positionPopover(dlg, opener) {
+    var r = opener.getBoundingClientRect();
+    var w = dlg.offsetWidth, h = dlg.offsetHeight;
+    var vw = window.innerWidth, vh = window.innerHeight, pad = 8;
+    var top = r.bottom + 4;
+    if (top + h > vh - pad) top = Math.max(pad, r.top - h - 4);
+    var start = isRTL(dlg) ? (vw - r.right) : r.left;
+    start = Math.max(pad, Math.min(start, vw - w - pad));
+    dlg.style.insetBlockStart = top + 'px';
+    dlg.style.insetInlineStart = start + 'px';
+  }
+  function closePopover(refocus) {
+    if (!openPopover) return;
+    var d = openPopover, opener = popoverOpener;
+    openPopover = null; popoverOpener = null;
+    try { d.close(); } catch (err) { d.removeAttribute('open'); }
+    if (refocus && opener && opener.isConnected) opener.focus();
+  }
+  // The popover's colour swatches: categories.html's #category-color-grid
+  // contract exactly (data-color tiles, aria-pressed, ONE hidden input
+  // submitted, the "none" tile clears it) with the same roving tabindex,
+  // just delegated here because the popovers are re-rendered with the
+  // grid. A stored value that matches no tile (a category with no explicit
+  // colour renders its deterministic auto-swatch, which is never a palette
+  // value) presses "no colour" and clears the input -- the truthful state,
+  // so an untouched Save changes nothing.
+  function paintPopoverColor(dlg) {
+    var input = dlg.querySelector('input[name="color"]');
+    var tiles = Array.prototype.slice.call(dlg.querySelectorAll('.item-color-tile'));
+    var hex = input ? (input.value || '') : '';
+    var matched = tiles.some(function (b) { return (b.dataset.color || '') === hex; });
+    if (!matched) { hex = ''; if (input) input.value = ''; }
+    tiles.forEach(function (b) {
+      var pressed = (b.dataset.color || '') === hex;
+      b.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+      b.setAttribute('tabindex', pressed ? '0' : '-1');
+    });
+  }
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest ? e.target.closest('.cat-popover .item-color-tile') : null;
+    if (!b) return;
+    var dlg = b.closest('.cat-popover');
+    var input = dlg.querySelector('input[name="color"]');
+    if (input) input.value = b.dataset.color || '';
+    paintPopoverColor(dlg);
+    b.focus();
+  });
+  document.addEventListener('keydown', function (e) {
+    var b = e.target.closest ? e.target.closest('.cat-popover .item-color-tile') : null;
+    if (!b) return;
+    var hs = isRTL(b) ? -1 : 1; // DOM step for "visually next", same as categories.html
+    var step = (e.key === 'ArrowRight') ? hs
+             : (e.key === 'ArrowLeft') ? -hs
+             : (e.key === 'ArrowDown') ? 4   // the popover packs four across (app.css)
+             : (e.key === 'ArrowUp') ? -4 : 0;
+    if (!step) return;
+    var tiles = Array.prototype.slice.call(b.closest('.cat-popover-colors').querySelectorAll('.item-color-tile'));
+    var i = tiles.indexOf(b);
+    if (i < 0) return;
+    e.preventDefault();
+    tiles[(i + step + tiles.length) % tiles.length].focus();
+  });
+
   // The edit badge is a plain <a href> into the catalog: following it tears
   // this document down, which would silently discard an unsaved reorder --
   // the same hazard the two htmx hooks below already close for the remove
@@ -2062,14 +2360,13 @@ function initOfflineOverride(updateFn){
   // and must never eat a badge's own click.
   document.addEventListener('click', function (e) {
     var edit = e.target.closest ? e.target.closest('#buttons-grid .tile-badge-edit') : null;
-    if (!edit || inAllGrid(edit) || !active || !dirty) return;
+    if (!edit || inAllGrid(edit) || !active || !(dirty || catDirty)) return;
     var href = edit.getAttribute('href');
     if (!href) return;
     e.preventDefault();
-    dirty = false;
-    // Navigate even if the POST failed: persistOrder() surfaces its own
-    // error and never rejects, so this resolves either way.
-    persistOrder().then(function () { window.location.href = href; });
+    // Navigate even if a POST failed: persistAll() surfaces its own
+    // errors and never rejects, so this resolves either way.
+    persistAll().then(function () { window.location.href = href; });
   });
 
   // ---- htmx interplay ----
@@ -2081,26 +2378,32 @@ function initOfflineOverride(updateFn){
   document.body.addEventListener('htmx:confirm', function (e) {
     var elt = e.detail && e.detail.elt;
     if (!elt || !elt.classList || !elt.classList.contains('tile-badge-remove')) return;
-    if (!dirty) return; // nothing pending: htmx's own confirm + request as usual
+    if (!dirty && !catDirty) return; // nothing pending: htmx's own confirm + request as usual
     e.preventDefault();
     if (e.detail.question && !window.confirm(e.detail.question)) return;
-    dirty = false;
-    persistOrder().then(function () { e.detail.issueRequest(true); });
+    persistAll().then(function () { e.detail.issueRequest(true); });
   });
   // Any OTHER refetch of the grid root while a reorder is unsaved (a
-  // modifiers-changed from elsewhere): persist first, then re-trigger it.
+  // modifiers-changed from elsewhere; on the Designer, the buttons-changed
+  // a category popover's Save/Remove or a search-result add fires):
+  // persist first, then re-trigger it. Both roots -- the sale screen's
+  // /ui/buttons and the Designer's /ui/designer/buttons (ut-docs#2174).
   document.body.addEventListener('htmx:beforeRequest', function (e) {
     var elt = e.detail && e.detail.elt;
-    if (!active || !dirty || !elt || !elt.matches || !elt.matches('.products[hx-get="/ui/buttons"]')) return;
+    if (!active || !(dirty || catDirty) || !elt || !elt.matches) return;
+    if (!elt.matches('.products[hx-get="/ui/buttons"], .products[hx-get="/ui/designer/buttons"]')) return;
     e.preventDefault();
-    dirty = false;
-    persistOrder().then(refetchGrid);
+    persistAll().then(refetchGrid);
   });
   // The grid root outerHTML-swaps itself on buttons-changed (a Remove from
   // inside the mode does exactly that): the fresh render has no
   // .jiggle-mode class and a hidden bar, so put the mode back -- iOS keeps
-  // jiggling after a delete too. Idempotent, so any settle is fine.
+  // jiggling after a delete too. Idempotent, so any settle is fine. On the
+  // Designer the same swap also replaces an open category popover with a
+  // fresh, closed one (a Save/Remove/Create just succeeded): forget the
+  // detached dialog so the next pencil tap opens the live one.
   document.body.addEventListener('htmx:afterSettle', function () {
+    if (openPopover && !openPopover.isConnected) { openPopover = null; popoverOpener = null; }
     if (active && grid() && !grid().classList.contains('jiggle-mode')) enter();
   });
 })();
