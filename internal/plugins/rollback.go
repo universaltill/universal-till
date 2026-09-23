@@ -177,6 +177,14 @@ func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion
 		return fmt.Errorf("rollback to %s rejected: %w", targetVersion, err)
 	}
 
+	// Same protection for a role:"preset" layout entry (ADR-0106 C) — the
+	// rollback target may have been a preset while the current version is
+	// not, and another plugin's preset may have become active since; a
+	// fresh install would refuse a second active preset, so must this.
+	if err := validateLayoutPresetExclusivity(ctx, repo, tx, pluginID, manifest.Entries); err != nil {
+		return fmt.Errorf("rollback to %s rejected: %w", targetVersion, err)
+	}
+
 	// Same protection for layout amendments (ADR-0088) — a rolled-back
 	// manifest may hide a protected key or restructure a key another
 	// plugin has since taken; a fresh install would refuse it, so must this.

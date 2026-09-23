@@ -117,6 +117,10 @@ jobs:
         run: bash scripts/ci/guard-compliance-claims.sh
       - name: Compliance-claims wording guard regression test
         run: bash scripts/ci/guard-compliance-claims_test.sh
+      - name: Competitor-naming guard (ADR-0106)
+        run: bash scripts/ci/guard-competitor-naming.sh
+      - name: Competitor-naming guard regression test
+        run: bash scripts/ci/guard-competitor-naming_test.sh
       - name: Manual screenshot freshness guard
         run: bash scripts/ci/guard-docs-shots.sh
       - name: Manual screenshot freshness guard regression test

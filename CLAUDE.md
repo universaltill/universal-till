@@ -65,9 +65,20 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   allow/forbid list: ut-docs#667. Scans `web/locales/*.json`, `web/help/**`,
   `web/ui/**`. Reviewed exception: `compliance-claim:allow`.
 
+## Competitor naming (ADR-0106, `scripts/ci/guard-competitor-naming.sh`)
+- Never name a layout/theme plugin after a competitor or describe the
+  product as imitating one ("SumUp-style", "like Zettle"). Name presets for
+  what they do. Scans `web/locales/*.json`, `web/help/**`, `web/ui/**`,
+  `plugins/**/plugin.json` (+ their `locales/`). Reviewed exception
+  (help/UI only): same-line `naming-rule:allow`.
+
 ## Plugins
 - Installed plugins are Ed25519-verified before they run
   (`internal/plugins/manifest_verifier.go`). Never run an unverified plugin.
+- A `layout` entry's config may set `"role": "preset"` (ADR-0106; any other
+  role value is refused): only one preset can be active — refused at
+  `PersistManifest`, `/enable` (409) and `Rollback`, mirroring the
+  fiscal-sign exclusive group; fail closed on DB error.
 
 ## Agent worktree hygiene
 - `.claude/worktrees/` accumulates stale agent worktrees that pollute

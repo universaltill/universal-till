@@ -23,6 +23,7 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/plugins/oauth"
+	"github.com/universaltill/universal-till/internal/uislot"
 )
 
 func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
@@ -469,6 +470,49 @@ func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.Handl
 						"data": nil,
 						"error": fmt.Sprintf("cannot enable %s: %s (%s) is already the active fiscal signing provider (holds %s) — %s is an exclusive extension point, one owner across %s; disable the active provider first",
 							pluginID, ownerName, ownerID, heldEvent, declared, strings.Join(plugins.FiscalSignExclusiveEvents, ", ")),
+					})
+					return
+				}
+			}
+			// A role:"preset" layout plugin is a complete named
+			// arrangement, mutually exclusive with any OTHER active
+			// preset (ADR-0106 Decision C, ut-docs#1905) — a second,
+			// independent exclusivity group from the fiscal-sign one
+			// above, same two enforcement points: the persist-time
+			// check in plugins.PersistManifest covers install/update,
+			// this one covers re-enabling an installed-but-disabled
+			// preset. Ordinary layout plugins (no role) never reach the
+			// owner query. FAIL CLOSED on a DB error, same as above:
+			// "couldn't verify" must never activate a possibly-second
+			// preset.
+			declaresPreset, presetErr := pluginRepo.HasActiveLayoutRole(ctx, pluginID, uislot.PresetRole)
+			if presetErr != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"data":  nil,
+					"error": fmt.Sprintf("cannot enable %s: layout preset exclusivity check failed: %v", pluginID, presetErr),
+				})
+				return
+			}
+			if declaresPreset {
+				ownerID, ownerName, found, ownerErr := plugins.LayoutPresetOwner(ctx, pluginRepo, nil, pluginID)
+				if ownerErr != nil {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusInternalServerError)
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"data":  nil,
+						"error": fmt.Sprintf("cannot enable %s: layout preset exclusivity check failed: %v", pluginID, ownerErr),
+					})
+					return
+				}
+				if found {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusConflict)
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"data": nil,
+						"error": fmt.Sprintf("cannot enable %s: %s (%s) is already the active layout preset — only one preset can be active at a time (ADR-0106); disable the active preset first",
+							pluginID, ownerName, ownerID),
 					})
 					return
 				}
