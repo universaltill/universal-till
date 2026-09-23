@@ -2,7 +2,9 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -12,6 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fiscal"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -2399,5 +2402,403 @@ func TestCloudUpsertModifierGroup_BlankOptionNameFails(t *testing.T) {
 		if g.Name == "Blank Option" {
 			t.Fatalf("no group must be created when an option is refused")
 		}
+	}
+}
+
+// --- config report: categories / modifier_groups / kitchen_stations
+// (ut-docs#2472, ADR-0095 Decision 2 read side) ---
+
+// remoteConfigReportJSON runs the wired DeviceExtra and round-trips it
+// through encoding/json — the same encoding the heartbeat itself sends —
+// so the tests below assert on the wire shape (snake_case keys, `[]` not
+// `null`, ints not strings), not on Go types the cloud never sees.
+func remoteConfigReportJSON(t *testing.T, dp *common.Deps) (string, map[string]json.RawMessage) {
+	t.Helper()
+	extra := buildCloudHooks(dp, nil).DeviceExtra(t.Context())
+	raw, err := json.Marshal(extra)
+	if err != nil {
+		t.Fatalf("marshal DeviceExtra: %v", err)
+	}
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal DeviceExtra: %v", err)
+	}
+	return string(raw), decoded
+}
+
+// decodeReport decodes one DeviceExtra key into out, failing when the key
+// is absent — a missing key would otherwise decode into a zero value and
+// pass the wrong assertion.
+func decodeReport(t *testing.T, decoded map[string]json.RawMessage, key string, out any) {
+	t.Helper()
+	raw, ok := decoded[key]
+	if !ok {
+		t.Fatalf("DeviceExtra key %q missing", key)
+	}
+	if err := json.Unmarshal(raw, out); err != nil {
+		t.Fatalf("decode %s (%s): %v", key, raw, err)
+	}
+}
+
+// assertExactKeys fails unless the JSON object has exactly the given keys
+// — the wire contract names every key, and an extra one (a leaked
+// printer_address, say) is as wrong as a missing one.
+func assertExactKeys(t *testing.T, label string, raw json.RawMessage, want ...string) {
+	t.Helper()
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		t.Fatalf("%s: not a JSON object (%s): %v", label, raw, err)
+	}
+	if len(obj) != len(want) {
+		t.Fatalf("%s: got %d keys, want %d (%v): %s", label, len(obj), len(want), want, raw)
+	}
+	for _, k := range want {
+		if _, ok := obj[k]; !ok {
+			t.Fatalf("%s: key %q missing: %s", label, k, raw)
+		}
+	}
+}
+
+type configReportCategory struct {
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	ParentID         string   `json:"parent_id"`
+	Color            string   `json:"color"`
+	SortOrder        int      `json:"sort_order"`
+	Active           bool     `json:"active"`
+	ModifierGroupIDs []string `json:"modifier_group_ids"`
+	StationIDs       []string `json:"station_ids"`
+}
+
+type configReportOption struct {
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	PriceDeltaMinor int64  `json:"price_delta_minor"`
+	SortOrder       int    `json:"sort_order"`
+	Active          bool   `json:"active"`
+}
+
+type configReportGroup struct {
+	ID          string               `json:"id"`
+	Name        string               `json:"name"`
+	Required    bool                 `json:"required"`
+	MinSelect   int                  `json:"min_select"`
+	MaxSelect   int                  `json:"max_select"`
+	SortOrder   int                  `json:"sort_order"`
+	Active      bool                 `json:"active"`
+	Options     []configReportOption `json:"options"`
+	CategoryIDs []string             `json:"category_ids"`
+	Items       []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"items"`
+	ItemsTotal int `json:"items_total"`
+}
+
+type configReportStation struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// An empty shop reports `[]` for all three keys — never `null`, which the
+// cloud side would decode into a nil slice and render as "loading" or
+// "unknown" rather than "nothing configured".
+func TestRemoteConfigReport_EmptyShopGivesEmptyArrays(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	_, decoded := remoteConfigReportJSON(t, dp)
+	for _, key := range []string{"categories", "modifier_groups", "kitchen_stations"} {
+		raw, ok := decoded[key]
+		if !ok {
+			t.Fatalf("DeviceExtra key %q missing", key)
+		}
+		if string(raw) != "[]" {
+			t.Fatalf("%s on an empty shop = %s, want []", key, raw)
+		}
+	}
+}
+
+// One of everything, linked every way the contract carries: a child
+// category with a colour, two modifier groups linked to the parent in an
+// explicit order, options with a price delta, a direct item link, and a
+// kitchen station (WITH a printer address, which must not travel) routed
+// from the parent category.
+func TestRemoteConfigReport_CategoriesGroupsStationsLinked(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	cat := data.NewCatalogRepo(dp.Db)
+	mods := data.NewModifierRepo(dp.Db)
+	posr := data.NewPOSRepo(dp.Db)
+
+	drinksID, err := cat.CreateCategoryWithColor(ctx, "Drinks", catalogtypes.ItemColors()[0].Hex)
+	if err != nil {
+		t.Fatalf("create Drinks: %v", err)
+	}
+	hotID, err := cat.CreateCategoryWithColor(ctx, "Hot drinks", "")
+	if err != nil {
+		t.Fatalf("create Hot drinks: %v", err)
+	}
+	// No repo setter for parent_id yet (the categories admin screen edits
+	// name/colour only); a test-only direct write is the seed pattern
+	// seedForPages uses.
+	if _, err := dp.Db.ExecContext(ctx, `UPDATE categories SET parent_id = ?, is_active = 0 WHERE id = ?`, drinksID, hotID); err != nil {
+		t.Fatalf("set parent: %v", err)
+	}
+	if _, err := mods.CreateGroup(ctx, "grp_milk", "Milk", true, 1, 1, 3); err != nil {
+		t.Fatalf("create Milk: %v", err)
+	}
+	if _, err := mods.CreateOption(ctx, "opt_oat", "grp_milk", "Oat", 40, 1); err != nil {
+		t.Fatalf("create Oat: %v", err)
+	}
+	if _, err := mods.CreateOption(ctx, "opt_soy", "grp_milk", "Soy", 0, 0); err != nil {
+		t.Fatalf("create Soy: %v", err)
+	}
+	if _, err := mods.CreateGroup(ctx, "grp_size", "Size", false, 0, 1, 1); err != nil {
+		t.Fatalf("create Size: %v", err)
+	}
+	// Linked Size first, Milk second — the report must keep that order.
+	if err := mods.SetCategoryModifierGroups(ctx, drinksID, []string{"grp_size", "grp_milk"}); err != nil {
+		t.Fatalf("link groups to Drinks: %v", err)
+	}
+	if err := mods.LinkGroupToItem(ctx, "itm1", "grp_milk", 0); err != nil {
+		t.Fatalf("link Milk to itm1: %v", err)
+	}
+	const printerAddr = "192.168.77.9:9100"
+	barID, err := posr.CreateKitchenStation(ctx, "Bar", "printer", printerAddr)
+	if err != nil {
+		t.Fatalf("create Bar: %v", err)
+	}
+	if err := posr.SetCategoryStationRoutes(ctx, drinksID, []string{barID}); err != nil {
+		t.Fatalf("route Drinks to Bar: %v", err)
+	}
+
+	raw, decoded := remoteConfigReportJSON(t, dp)
+
+	// Kitchen stations: id + name, nothing else — never the printer address
+	// or destination (that is device/network topology, not menu config).
+	if strings.Contains(raw, printerAddr) || strings.Contains(raw, "printer_address") ||
+		strings.Contains(raw, "destination") {
+		t.Fatalf("printer/destination details leaked into the device report: %s", raw)
+	}
+	var stations []configReportStation
+	decodeReport(t, decoded, "kitchen_stations", &stations)
+	if len(stations) != 1 || stations[0].ID != barID || stations[0].Name != "Bar" {
+		t.Fatalf("kitchen_stations = %+v", stations)
+	}
+	var stationObjs []json.RawMessage
+	decodeReport(t, decoded, "kitchen_stations", &stationObjs)
+	assertExactKeys(t, "kitchen_stations[0]", stationObjs[0], "id", "name")
+
+	// Categories.
+	var cats []configReportCategory
+	decodeReport(t, decoded, "categories", &cats)
+	if len(cats) != 2 {
+		t.Fatalf("categories = %+v", cats)
+	}
+	var catObjs []json.RawMessage
+	decodeReport(t, decoded, "categories", &catObjs)
+	for i, o := range catObjs {
+		assertExactKeys(t, fmt.Sprintf("categories[%d]", i), o,
+			"id", "name", "parent_id", "color", "sort_order", "active", "modifier_group_ids", "station_ids")
+	}
+	byID := map[string]configReportCategory{}
+	for _, c := range cats {
+		byID[c.ID] = c
+	}
+	drinks, hot := byID[drinksID], byID[hotID]
+	if drinks.Name != "Drinks" || drinks.ParentID != "" || drinks.Color != catalogtypes.ItemColors()[0].Hex ||
+		!drinks.Active || drinks.SortOrder != 0 {
+		t.Fatalf("Drinks = %+v", drinks)
+	}
+	if got := strings.Join(drinks.ModifierGroupIDs, ","); got != "grp_size,grp_milk" {
+		t.Fatalf("Drinks.modifier_group_ids = %q, want the linked order grp_size,grp_milk", got)
+	}
+	if len(drinks.StationIDs) != 1 || drinks.StationIDs[0] != barID {
+		t.Fatalf("Drinks.station_ids = %v", drinks.StationIDs)
+	}
+	if hot.Name != "Hot drinks" || hot.ParentID != drinksID || hot.Color != "" || hot.Active || hot.SortOrder != 1 {
+		t.Fatalf("Hot drinks = %+v", hot)
+	}
+	// An unlinked category reports empty lists, not null.
+	if !strings.Contains(string(catObjs[1]), `"modifier_group_ids":[]`) || !strings.Contains(string(catObjs[1]), `"station_ids":[]`) {
+		t.Fatalf("unlinked category must report [] lists: %s", catObjs[1])
+	}
+
+	// Modifier groups (ordered by name: Milk, Size).
+	var groups []configReportGroup
+	decodeReport(t, decoded, "modifier_groups", &groups)
+	if len(groups) != 2 || groups[0].ID != "grp_milk" || groups[1].ID != "grp_size" {
+		t.Fatalf("modifier_groups = %+v", groups)
+	}
+	var groupObjs []json.RawMessage
+	decodeReport(t, decoded, "modifier_groups", &groupObjs)
+	for i, o := range groupObjs {
+		assertExactKeys(t, fmt.Sprintf("modifier_groups[%d]", i), o,
+			"id", "name", "required", "min_select", "max_select", "sort_order", "active",
+			"options", "category_ids", "items", "items_total")
+	}
+	milk := groups[0]
+	if milk.Name != "Milk" || !milk.Required || milk.MinSelect != 1 || milk.MaxSelect != 1 ||
+		milk.SortOrder != 3 || !milk.Active {
+		t.Fatalf("Milk = %+v", milk)
+	}
+	if len(milk.Options) != 2 || milk.Options[0].ID != "opt_soy" || milk.Options[1].ID != "opt_oat" {
+		t.Fatalf("Milk.options (want sort order Soy, Oat) = %+v", milk.Options)
+	}
+	if o := milk.Options[1]; o.Name != "Oat" || o.PriceDeltaMinor != 40 || o.SortOrder != 1 || !o.Active {
+		t.Fatalf("Oat = %+v", o)
+	}
+	var milkObj struct {
+		Options []json.RawMessage `json:"options"`
+	}
+	if err := json.Unmarshal(groupObjs[0], &milkObj); err != nil {
+		t.Fatalf("decode Milk options: %v", err)
+	}
+	assertExactKeys(t, "Milk.options[0]", milkObj.Options[0], "id", "name", "price_delta_minor", "sort_order", "active")
+	if len(milk.CategoryIDs) != 1 || milk.CategoryIDs[0] != drinksID {
+		t.Fatalf("Milk.category_ids = %v", milk.CategoryIDs)
+	}
+	if len(milk.Items) != 1 || milk.Items[0].ID != "itm1" || milk.Items[0].Name != "Apple" || milk.ItemsTotal != 1 {
+		t.Fatalf("Milk.items = %+v total=%d", milk.Items, milk.ItemsTotal)
+	}
+	size := groups[1]
+	if size.Required || size.MinSelect != 0 || size.MaxSelect != 1 || size.SortOrder != 1 {
+		t.Fatalf("Size = %+v", size)
+	}
+	if len(size.CategoryIDs) != 1 || size.CategoryIDs[0] != drinksID || size.ItemsTotal != 0 {
+		t.Fatalf("Size links = %+v", size)
+	}
+	// A group with no options or items reports [] for both, not null.
+	if !strings.Contains(string(groupObjs[1]), `"options":[]`) || !strings.Contains(string(groupObjs[1]), `"items":[]`) {
+		t.Fatalf("Size must report [] for options and items: %s", groupObjs[1])
+	}
+
+	// The existing fields still ride along.
+	for _, k := range []string{"theme", "themes", "problems", "till_settings", "quick_buttons"} {
+		if _, present := decoded[k]; !present {
+			t.Fatalf("existing DeviceExtra field %q lost", k)
+		}
+	}
+}
+
+// A group directly linked to more items than the cap reports only the first
+// remoteReportMaxGroupItems of them but the real total — the heartbeat is a
+// status report, not a catalogue sync, and a shop with thousands of items
+// on one group must not inflate every heartbeat.
+func TestRemoteModifierGroupsReport_CapsItemsAndReportsTotal(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	cat := data.NewCatalogRepo(dp.Db)
+	mods := data.NewModifierRepo(dp.Db)
+	if _, err := mods.CreateGroup(ctx, "grp_big", "Big", false, 0, 1, 0); err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	total := remoteReportMaxGroupItems + 5
+	for i := 0; i < total; i++ {
+		id := fmt.Sprintf("itm_cap_%04d", i)
+		if _, err := cat.CreateItem(ctx, catalogtypes.ItemInput{ID: id, SKU: id, Name: "Cap " + id, BasePrice: 100, IsActive: true}); err != nil {
+			t.Fatalf("create item %s: %v", id, err)
+		}
+		if err := mods.LinkGroupToItem(ctx, id, "grp_big", i); err != nil {
+			t.Fatalf("link item %s: %v", id, err)
+		}
+	}
+
+	_, decoded := remoteConfigReportJSON(t, dp)
+	var groups []configReportGroup
+	decodeReport(t, decoded, "modifier_groups", &groups)
+	if len(groups) != 1 {
+		t.Fatalf("modifier_groups = %+v", groups)
+	}
+	if len(groups[0].Items) != remoteReportMaxGroupItems {
+		t.Fatalf("items reported = %d, want the cap %d", len(groups[0].Items), remoteReportMaxGroupItems)
+	}
+	if groups[0].ItemsTotal != total {
+		t.Fatalf("items_total = %d, want the real count %d", groups[0].ItemsTotal, total)
+	}
+}
+
+// The heartbeat carries the till's ISO 4217 currency (ut-docs#2472) so the
+// cloud panel can format the reported modifier price deltas with the right
+// symbol and scale instead of a bare number.
+func TestRemoteConfigReport_CarriesCurrency(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	_, decoded := remoteConfigReportJSON(t, dp)
+	var got string
+	decodeReport(t, decoded, "currency", &got)
+	if want := dp.CurrentState().Currency; got != want || got == "" {
+		t.Fatalf("currency = %q, want the till's %q (non-empty)", got, want)
+	}
+	// The minor-unit exponent travels too: the cloud's own currency data
+	// (CLDR) disagrees with the till's for PKR and has no IRT at all
+	// (2026-09-23 review), so the till is the authority on scale.
+	var decimals int
+	decodeReport(t, decoded, "currency_decimals", &decimals)
+	if want := httpx.CurrencyByCode(got).Decimals; decimals != want {
+		t.Fatalf("currency_decimals = %d, want %d", decimals, want)
+	}
+}
+
+// A failed read must NOT report an empty list: the cloud treats a present
+// empty list as "the till has none" and would wipe its last good copy
+// (2026-09-23 review). The keys are left out instead, which the cloud reads
+// as "keep what you have".
+func TestRemoteConfigReport_ReadErrorOmitsKeys(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	hooks := buildCloudHooks(dp, nil)
+	dp.Db.Close()
+	extra := hooks.DeviceExtra(t.Context())
+	for _, key := range []string{"categories", "modifier_groups", "kitchen_stations"} {
+		if v, ok := extra[key]; ok {
+			t.Fatalf("%s present (%v) after a read error; must be omitted so the cloud keeps its copy", key, v)
+		}
+	}
+}
+
+// Unchanged config is not re-sent on every 2-minute heartbeat — only when
+// it changes, or once per refresh period so a cloud that lost its copy
+// recovers (2026-09-23 review: hundreds of KB every tick otherwise).
+func TestRemoteConfigReport_SentOnlyWhenChanged(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	hooks := buildCloudHooks(dp, nil)
+	ctx := t.Context()
+	if _, ok := hooks.DeviceExtra(ctx)["categories"]; !ok {
+		t.Fatal("first heartbeat must carry categories")
+	}
+	if v, ok := hooks.DeviceExtra(ctx)["categories"]; ok {
+		t.Fatalf("unchanged config re-sent on the next heartbeat: %v", v)
+	}
+	if _, err := data.NewCatalogRepo(dp.Db).CreateCategoryWithColor(ctx, "Changed", ""); err != nil {
+		t.Fatalf("create category: %v", err)
+	}
+	if _, ok := hooks.DeviceExtra(ctx)["categories"]; !ok {
+		t.Fatal("a changed config must be sent on the next heartbeat")
+	}
+	prev := configReportRefresh
+	configReportRefresh = 0
+	t.Cleanup(func() { configReportRefresh = prev })
+	if _, ok := hooks.DeviceExtra(ctx)["categories"]; !ok {
+		t.Fatal("after the refresh period an unchanged config must be re-sent")
+	}
+}
+
+// A config too big for the byte budget is left out rather than sent: the
+// cloud refuses a sync body over 4 MiB, and a refused sync would also cut
+// the till off from its directives (2026-09-23 review).
+func TestRemoteConfigReport_OverBudgetOmits(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	prev := configReportByteBudget
+	configReportByteBudget = 8
+	t.Cleanup(func() { configReportByteBudget = prev })
+	if _, err := data.NewCatalogRepo(dp.Db).CreateCategoryWithColor(t.Context(), "Big enough", ""); err != nil {
+		t.Fatalf("create category: %v", err)
+	}
+	extra := buildCloudHooks(dp, nil).DeviceExtra(t.Context())
+	for _, key := range []string{"categories", "modifier_groups", "kitchen_stations"} {
+		if _, ok := extra[key]; ok {
+			t.Fatalf("%s sent although the config exceeds the byte budget", key)
+		}
+	}
+	if _, ok := extra["quick_buttons"]; !ok {
+		t.Fatal("the rest of the heartbeat must still be sent")
 	}
 }

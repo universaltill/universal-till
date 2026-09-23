@@ -2,6 +2,8 @@ package pages
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -21,6 +23,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/enroll"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
@@ -245,6 +248,232 @@ func remoteQuickButtonsReport(ctx context.Context, d *common.Deps) []map[string]
 	return out
 }
 
+// remoteReportMaxGroupItems caps the per-group `items` list in the
+// modifier_groups device report (ut-docs#2472). The heartbeat is a status
+// report, not a catalogue sync: a group directly linked to thousands of
+// items would otherwise inflate every heartbeat. `items_total` always
+// carries the real count so the cloud can say "and N more".
+const remoteReportMaxGroupItems = 200
+
+// Count caps for the config report, matching what ut-cloud keeps when it
+// stores the report (handlers/stores.go), so the till never sends what the
+// cloud would truncate anyway (2026-09-23 review, ut-docs#2472).
+const (
+	remoteReportMaxCategories = 1000
+	remoteReportMaxGroups     = 500
+	remoteReportMaxOptions    = 100
+	remoteReportMaxIDs        = 500
+	remoteReportMaxStations   = 200
+)
+
+// configReportByteBudget bounds the marshalled size of the three config
+// lists in one heartbeat. ut-cloud refuses a sync body over 4 MiB, and a
+// refused sync also means no directives for this till, so a shop whose menu
+// is too big leaves the lists out (with a warning) instead of losing its
+// whole heartbeat. A var so tests can shrink it.
+var configReportByteBudget = 1 << 20
+
+// configReportRefresh is how often an UNCHANGED config report is re-sent.
+// Between refreshes the lists go only when their content changes; the cloud
+// keeps its last copy when the keys are absent. The periodic re-send lets a
+// cloud that lost its copy recover. A var so tests can set it to 0.
+var configReportRefresh = 30 * time.Minute
+
+// configReportGate decides, per heartbeat, whether the config lists ride
+// along (content changed, or the refresh period passed). One per hooks set.
+type configReportGate struct {
+	mu       sync.Mutex
+	lastHash [sha256.Size]byte
+	lastSent time.Time
+}
+
+// add puts categories / modifier_groups / kitchen_stations into extra when
+// they should be sent. A read error, an over-budget payload or an unchanged
+// config within the refresh period leaves all three keys out: the cloud
+// reads a missing key as "keep what you have", whereas an empty list would
+// wipe its copy.
+func (g *configReportGate) add(ctx context.Context, d *common.Deps, extra map[string]any) {
+	cats := remoteCategoriesReport(ctx, d)
+	groups := remoteModifierGroupsReport(ctx, d)
+	stations := remoteKitchenStationsReport(ctx, d)
+	if cats == nil || groups == nil || stations == nil {
+		return
+	}
+	lists := map[string]any{"categories": cats, "modifier_groups": groups, "kitchen_stations": stations}
+	raw, err := json.Marshal(lists)
+	if err != nil {
+		logging.L().Warnf("cloudsync: config report marshal failed: %v", err)
+		return
+	}
+	if len(raw) > configReportByteBudget {
+		logging.L().Warnf("cloudsync: config report is %d bytes, over the %d-byte budget; not sent", len(raw), configReportByteBudget)
+		return
+	}
+	sum := sha256.Sum256(raw)
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if sum == g.lastHash && time.Since(g.lastSent) < configReportRefresh {
+		return
+	}
+	g.lastHash, g.lastSent = sum, time.Now()
+	for k, v := range lists {
+		extra[k] = v
+	}
+}
+
+// capIDs trims an id list to remoteReportMaxIDs.
+func capIDs(ids []string) []string {
+	ids = nonNilIDs(ids)
+	if len(ids) > remoteReportMaxIDs {
+		return ids[:remoteReportMaxIDs]
+	}
+	return ids
+}
+
+// nonNilIDs returns ids as-is, or an empty (never nil) slice, so a category
+// with no links serialises as `[]` rather than `null` — the cloud decodes
+// these lists into slices and must be able to tell "nothing linked" from
+// "not reported".
+func nonNilIDs(ids []string) []string {
+	if ids == nil {
+		return []string{}
+	}
+	return ids
+}
+
+// remoteCategoriesReport is the read side for DeviceExtra's `categories`
+// (ut-docs#2472, ADR-0095 Decision 2): every category, active or not, in
+// ListCategories' own sort_order/name order, each with the ordered modifier
+// groups linked to it and the kitchen stations it routes to — the three
+// reads the categories admin screen itself makes, so the cloud's category
+// editor pre-fills from applied state, not what was queued. Same "report
+// what's actually there, never fail the heartbeat" pattern as
+// remoteQuickButtonsReport above, except that a read error returns nil
+// (never an empty list, which the cloud would store as "none").
+func remoteCategoriesReport(ctx context.Context, d *common.Deps) []map[string]any {
+	cats, err := data.NewCatalogRepo(d.Db).ListCategories(ctx)
+	if err != nil {
+		logging.L().Warnf("cloudsync: categories report failed: %v", err)
+		return nil
+	}
+	groupLinks, err := data.NewModifierRepo(d.Db).AllCategoryModifierGroupLinks(ctx)
+	if err != nil {
+		logging.L().Warnf("cloudsync: categories report (modifier group links) failed: %v", err)
+		return nil
+	}
+	stationRoutes, err := data.NewPOSRepo(d.Db).AllCategoryStationRoutes(ctx)
+	if err != nil {
+		logging.L().Warnf("cloudsync: categories report (station routes) failed: %v", err)
+		return nil
+	}
+	if len(cats) > remoteReportMaxCategories {
+		cats = cats[:remoteReportMaxCategories]
+	}
+	out := make([]map[string]any, 0, len(cats))
+	for _, c := range cats {
+		out = append(out, map[string]any{
+			"id":                 c.ID,
+			"name":               c.Name,
+			"parent_id":          c.ParentID,
+			"color":              c.Color,
+			"sort_order":         c.SortOrder,
+			"active":             c.IsActive,
+			"modifier_group_ids": capIDs(groupLinks[c.ID]),
+			"station_ids":        capIDs(stationRoutes[c.ID]),
+		})
+	}
+	return out
+}
+
+// remoteModifierGroupsReport is the read side for DeviceExtra's
+// `modifier_groups` (ut-docs#2472, ADR-0095 Decision 2): every group in the
+// shop once — active or not, assigned or not, the ADR-0101 shop-wide view —
+// with its options, the categories it is linked to and the items it is
+// DIRECTLY linked to (never category inheritance), all off the single
+// ListAllModifierGroupsWithAssignments read behind /modifiers. `items` is
+// capped at remoteReportMaxGroupItems; `items_total` is the real count.
+// Option price deltas travel as integer minor units (`price_delta_minor`),
+// the same boundary form the repo stores. A read error logs and returns nil
+// (see configReportGate) rather than failing the heartbeat.
+func remoteModifierGroupsReport(ctx context.Context, d *common.Deps) []map[string]any {
+	groups, err := data.NewModifierRepo(d.Db).ListAllModifierGroupsWithAssignments(ctx)
+	if err != nil {
+		logging.L().Warnf("cloudsync: modifier groups report failed: %v", err)
+		return nil
+	}
+	if len(groups) > remoteReportMaxGroups {
+		groups = groups[:remoteReportMaxGroups]
+	}
+	out := make([]map[string]any, 0, len(groups))
+	for _, g := range groups {
+		opts := g.Options
+		if len(opts) > remoteReportMaxOptions {
+			opts = opts[:remoteReportMaxOptions]
+		}
+		options := make([]map[string]any, 0, len(opts))
+		for _, o := range opts {
+			options = append(options, map[string]any{
+				"id":                o.ID,
+				"name":              o.Name,
+				"price_delta_minor": o.PriceDeltaMinor,
+				"sort_order":        o.SortOrder,
+				"active":            o.IsActive,
+			})
+		}
+		categoryIDs := make([]string, 0, len(g.Categories))
+		for _, c := range g.Categories {
+			categoryIDs = append(categoryIDs, c.ID)
+		}
+		reported := g.Items
+		if len(reported) > remoteReportMaxGroupItems {
+			reported = reported[:remoteReportMaxGroupItems]
+		}
+		items := make([]map[string]any, 0, len(reported))
+		for _, it := range reported {
+			items = append(items, map[string]any{"id": it.ID, "name": it.Name})
+		}
+		out = append(out, map[string]any{
+			"id":           g.ID,
+			"name":         g.Name,
+			"required":     g.Required,
+			"min_select":   g.MinSelect,
+			"max_select":   g.MaxSelect,
+			"sort_order":   g.SortOrder,
+			"active":       g.IsActive,
+			"options":      options,
+			"category_ids": capIDs(categoryIDs),
+			"items":        items,
+			"items_total":  len(g.Items),
+		})
+	}
+	return out
+}
+
+// remoteKitchenStationsReport is the read side for DeviceExtra's
+// `kitchen_stations` (ut-docs#2472, ADR-0095 Decision 2): id + name of every
+// station, enabled or not, so the cloud's category editor can label the
+// station_ids it gets from remoteCategoriesReport. Deliberately NOTHING
+// else — a station's printer address and destination type are the shop's
+// LAN topology, which never leaves the till (the same line
+// remoteTillSettingsReport draws by never whitelisting printer.address).
+// A read error logs and returns nil (see configReportGate) rather than
+// failing the heartbeat.
+func remoteKitchenStationsReport(ctx context.Context, d *common.Deps) []map[string]any {
+	stations, err := data.NewPOSRepo(d.Db).ListKitchenStations(ctx)
+	if err != nil {
+		logging.L().Warnf("cloudsync: kitchen stations report failed: %v", err)
+		return nil
+	}
+	if len(stations) > remoteReportMaxStations {
+		stations = stations[:remoteReportMaxStations]
+	}
+	out := make([]map[string]any, 0, len(stations))
+	for _, s := range stations {
+		out = append(out, map[string]any{"id": s.ID, "name": s.Name})
+	}
+	return out
+}
+
 // StartCloudSync wires the ADR-0018 directive hooks to the till's real
 // action paths and starts the cloud sync loop. Every hook is the same move
 // an operator makes locally — remote installs still go through the
@@ -258,6 +487,7 @@ func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.C
 // exercise the wiring (which hook handles which directive, what the device
 // report carries) without starting the sync goroutine.
 func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.Hooks {
+	configGate := &configReportGate{}
 	return cloudsync.Hooks{
 		SetSetting: func(ctx context.Context, key, value string) (string, error) {
 			if err := rejectRemoteFiscalPostureWrite(d, key); err != nil {
@@ -378,7 +608,7 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		// "theme.midnight.label" in the portal.
 		DeviceExtra: func(ctx context.Context) map[string]any {
 			themes := cloudThemeOptions(ctx, d)
-			return map[string]any{
+			extra := map[string]any{
 				"theme":    d.CurrentState().Theme,
 				"themes":   themes,
 				"problems": collectProblems(ctx, d),
@@ -392,7 +622,22 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 				// real state rather than only what was queued. See
 				// remoteQuickButtonsReport.
 				"quick_buttons": remoteQuickButtonsReport(ctx, d),
+				// The shop's ISO 4217 currency and its minor-unit exponent,
+				// so the cloud formats the config report's price deltas with
+				// the right symbol and scale (ut-docs#2472). The till is the
+				// authority on scale: the cloud's CLDR data disagrees for
+				// PKR and has no IRT.
+				"currency":          d.CurrentState().Currency,
+				"currency_decimals": httpx.CurrencyByCode(d.CurrentState().Currency).Decimals,
 			}
+			// ut-docs#2472 (ADR-0095 Decision 2, read side): the applied
+			// menu configuration — categories with their modifier-group and
+			// kitchen-station links, every modifier group with options and
+			// assignments, and station id+name only — for the cloud's
+			// category/modifier editors to pre-fill from real state. Sent
+			// only when it changed (see configReportGate).
+			configGate.add(ctx, d, extra)
+			return extra
 		},
 	}
 }
