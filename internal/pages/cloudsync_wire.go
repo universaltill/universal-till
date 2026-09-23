@@ -77,16 +77,19 @@ func rejectRemoteFiscalPostureWrite(d *common.Deps, key string) error {
 // Never on this list, by decision: printer addresses/device paths,
 // payment-terminal pairing, fiscal/TSE credentials or posture, PINs, network
 // or sync topology, store.country (its fiscal side-effects are
-// SetSetting's job). Intentionally extensible: order-type prompt placement,
-// the Categories-tab toggle and the order-number scheme are expected
-// follow-ups once those settings exist (concurrent, unmerged work).
+// SetSetting's job). order-type prompt placement, the Categories-tab toggle
+// and the order-number scheme (ut-docs#2473) round out the ut-docs#2289
+// slice — every setting that design named is now on this list.
 var allowedRemoteTillSettingKeys = map[string]bool{
-	keyPrinterReceiptPolicy:  true,
-	keyReceiptHeader1:        true,
-	keyReceiptHeader2:        true,
-	keyReceiptHeader3:        true,
-	keyReceiptFooter:         true,
-	common.KeyKioskIdleReset: true,
+	keyPrinterReceiptPolicy:         true,
+	keyReceiptHeader1:               true,
+	keyReceiptHeader2:               true,
+	keyReceiptHeader3:               true,
+	keyReceiptFooter:                true,
+	common.KeyKioskIdleReset:        true,
+	data.OrderTypePromptModeKey:     true,
+	data.SellScreenCategoriesTabKey: true,
+	data.SaleDisplayNoSchemeKey:     true,
 }
 
 // cloudSetTillSetting is the set_till_setting hook: whitelist check, then the
@@ -129,6 +132,43 @@ func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(cont
 	case keyReceiptHeader1, keyReceiptHeader2, keyReceiptHeader3, keyReceiptFooter:
 		// Receipt header/footer lines: free text, trimmed, blank clears —
 		// exactly what receipt_designer.go's save does.
+	case data.OrderTypePromptModeKey:
+		// Mirrors /api/settings/order-type-prompt (settings_page.go): must be
+		// one of the three modes. Unlike that generic /api/settings door's
+		// OWN OrderTypePromptModeKey case (which leans on
+		// InitOrderTypePromptMode's own fallback-to-"top" and skips
+		// validation), this hook fails closed like every other case here —
+		// a remote result column should say why nothing changed, not silently
+		// coerce an unrecognised value to "top". The prompt mode lives
+		// OUTSIDE RuntimeState (same ut-docs#2121-class gap display.mode's
+		// own re-derive documents), so the generic `rederive` callback below
+		// never reaches it — this hook must make the identical live-republish
+		// call the dedicated handler does, or the sale screen keeps showing
+		// the OLD placement until the till restarts.
+		if value != data.OrderTypePromptModeTop && value != data.OrderTypePromptModeBeforeItem && value != data.OrderTypePromptModeAtPay {
+			return "", fmt.Errorf("%s must be one of top, before_item, at_pay", key)
+		}
+	case data.SellScreenCategoriesTabKey:
+		// Mirrors /api/settings/categories-tab: boolean, normalized to the
+		// "1"/"0" strings ButtonStore.CategoriesTabEnabled compares against
+		// (same normalization the local handler's own strconv.ParseBool +
+		// "0"/"1" rewrite does) — purely presentational (buttons.go reads it
+		// fresh on every render), so no live re-derive is needed here.
+		b, err := strconv.ParseBool(value)
+		if err != nil {
+			return "", fmt.Errorf("%s must be a boolean", key)
+		}
+		value = "0"
+		if b {
+			value = "1"
+		}
+	case data.SaleDisplayNoSchemeKey:
+		// Mirrors /api/settings/order-no-scheme: must be one of the two
+		// schemes. NextDisplayNo (pos_repo.go) reads this key fresh from the
+		// DB on every call, so no live re-derive is needed here either.
+		if value != data.DisplayNoSchemeTradingPeriodReset && value != data.DisplayNoSchemeLifetimeNoReset {
+			return "", fmt.Errorf("%s must be one of trading_period_reset, lifetime_no_reset", key)
+		}
 	default:
 		// Unreachable while this switch covers every whitelisted key — and
 		// that is exactly the point (review of ut-docs#2289). A key added
@@ -142,6 +182,9 @@ func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(cont
 	}
 	if err := d.Settings.Set(ctx, key, value); err != nil {
 		return "", err
+	}
+	if key == data.OrderTypePromptModeKey {
+		httpx.InitOrderTypePromptMode(value)
 	}
 	if rederive != nil {
 		rederive(ctx)

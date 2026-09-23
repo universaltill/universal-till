@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -769,6 +772,13 @@ func TestCloudSetTillSetting_WhitelistedKeysWrite(t *testing.T) {
 		{keyReceiptHeader3, "", ""}, // blank clears a line, same as the local designer
 		{keyReceiptFooter, "Thank you!", "Thank you!"},
 		{common.KeyKioskIdleReset, "90", "90"},
+		{data.OrderTypePromptModeKey, data.OrderTypePromptModeBeforeItem, data.OrderTypePromptModeBeforeItem},
+		{data.SellScreenCategoriesTabKey, "true", "1"},  // strconv.ParseBool spellings normalize to "1"/"0", same as the local form
+		{data.SellScreenCategoriesTabKey, "False", "0"}, // case-insensitive too
+		{data.SellScreenCategoriesTabKey, "1", "1"},     // the till's own wire format, verbatim
+		{data.SellScreenCategoriesTabKey, "0", "0"},
+		{data.SellScreenCategoriesTabKey, "t", "1"}, // every other strconv.ParseBool spelling, not just true/false
+		{data.SaleDisplayNoSchemeKey, data.DisplayNoSchemeLifetimeNoReset, data.DisplayNoSchemeLifetimeNoReset},
 	}
 	covered := map[string]bool{}
 	for _, c := range cases {
@@ -835,6 +845,12 @@ func TestCloudSetTillSetting_ValidatesValuesLikeTheLocalForms(t *testing.T) {
 		{common.KeyKioskIdleReset, "-1"},
 		{common.KeyKioskIdleReset, "601"}, // /api/settings/kiosk-idle-reset's own 0..600 bound
 		{common.KeyKioskIdleReset, "ninety"},
+		{data.OrderTypePromptModeKey, "sometime"},
+		{data.OrderTypePromptModeKey, ""},
+		{data.SellScreenCategoriesTabKey, "maybe"},
+		{data.SellScreenCategoriesTabKey, ""},
+		{data.SaleDisplayNoSchemeKey, "monthly"},
+		{data.SaleDisplayNoSchemeKey, ""},
 	} {
 		if _, err := cloudSetTillSetting(ctx, dp, nil, c.key, c.value); err == nil {
 			t.Fatalf("%s=%q: want a validation error, got nil", c.key, c.value)
@@ -892,6 +908,48 @@ func TestCloudSetTillSetting_RederivesState(t *testing.T) {
 	}
 	if rederived != 1 {
 		t.Fatalf("rederive after a refused write: %d, want still 1", rederived)
+	}
+}
+
+// order_type_prompt lives OUTSIDE RuntimeState (same ut-docs#2121 class of
+// gap as display.mode, settings_page.go's generic /api/settings door
+// already documents) — the generic rederive callback above never touches
+// it, so cloudSetTillSetting's own case must make the identical
+// httpx.InitOrderTypePromptMode call the dedicated
+// /api/settings/order-type-prompt handler makes, or a remote directive
+// leaves the sale screen showing the OLD placement until the till
+// restarts. Same render-and-check-the-attribute shape as
+// TestOrderTypePromptModeReachesThePage.
+func TestCloudSetTillSetting_OrderTypePromptModeLiveRepublishes(t *testing.T) {
+	chdirRoot(t)
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+
+	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+	if err != nil {
+		t.Fatalf("i18n: %v", err)
+	}
+	httpx.InitI18n(i18n, "en")
+	httpx.InitOrderTypePromptMode("top")
+	t.Cleanup(func() { httpx.InitOrderTypePromptMode("top") })
+
+	cfg := &config.Config{Theme: "default"}
+	dp := &common.Deps{Cfg: cfg, Db: db, State: common.LoadState(t.Context(), settings.NewStore(db), cfg),
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(db)}
+	mux := http.NewServeMux()
+	registerHelp(mux, dp)
+	get := func() string {
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/help", nil))
+		return rec.Body.String()
+	}
+
+	if _, err := cloudSetTillSetting(t.Context(), dp, nil, data.OrderTypePromptModeKey, data.OrderTypePromptModeAtPay); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if !strings.Contains(get(), `data-order-type-prompt-mode="at_pay"`) {
+		t.Fatal("cloud directive did not live-republish the prompt mode")
 	}
 }
 
