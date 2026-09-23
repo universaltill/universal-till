@@ -625,6 +625,60 @@ LIMIT 1
 	return id, name, true, nil
 }
 
+// HasActiveLayoutRole reports whether pluginID's persisted registration has
+// an active `layout` entry whose config_json carries "role": role — the
+// enable-time analogue of HasActiveHook for ADR-0106's role:"preset"
+// convention (ut-docs#1905), when only the DB row exists and the manifest
+// is gone. The JSON1 lookup is guarded by json_valid so a malformed
+// config_json (which cannot normally reach the table — PersistManifest
+// parses it first) reads as "no role" rather than erroring the query.
+func (r *PluginRepo) HasActiveLayoutRole(ctx context.Context, pluginID, role string) (bool, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM plugin_entries pe
+WHERE pe.plugin_id = ?
+  AND pe.type = 'layout'
+  AND pe.is_active = 1
+  AND CASE WHEN json_valid(pe.config_json) THEN json_extract(pe.config_json, '$.role') END = ?
+`, pluginID, role).Scan(&count)
+	if err != nil {
+		return false, pluginObs.wrap("has_active_layout_role", err)
+	}
+	return count > 0, nil
+}
+
+// ActiveLayoutRoleOwner returns the id and display name of an ACTIVE plugin
+// other than excludePluginID holding an active `layout` entry whose
+// config_json carries "role": role — ActiveHookOwner's twin for ADR-0106
+// Decision C's preset exclusivity (ut-docs#1905): setPluginActiveHandler
+// refuses to enable a second preset while this owner is active, and
+// PersistManifest refuses an install/update whose manifest declares the
+// role (pass the install transaction as tx so the check sees a consistent
+// snapshot; nil outside one). found=false means the role is unowned, or
+// owned only by the excluded plugin itself (a re-enable or a self-update).
+// A DB error is returned as-is for the caller to fail CLOSED on.
+func (r *PluginRepo) ActiveLayoutRoleOwner(ctx context.Context, tx *sql.Tx, role, excludePluginID string) (id, name string, found bool, err error) {
+	err = r.executor(tx).QueryRowContext(ctx, `
+SELECT p.id, COALESCE(p.name, p.id)
+FROM plugins p
+JOIN plugin_entries pe ON pe.plugin_id = p.id
+WHERE p.is_active = 1
+  AND pe.is_active = 1
+  AND pe.type = 'layout'
+  AND CASE WHEN json_valid(pe.config_json) THEN json_extract(pe.config_json, '$.role') END = ?
+  AND p.id <> ?
+LIMIT 1
+`, role, excludePluginID).Scan(&id, &name)
+	if err == sql.ErrNoRows {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, pluginObs.wrap("active_layout_role_owner", err)
+	}
+	return id, name, true, nil
+}
+
 // SetPluginState toggles active flag and install state for a specific version.
 func (r *PluginRepo) SetPluginState(ctx context.Context, pluginID, version, installState string, active bool) error {
 	val := 0

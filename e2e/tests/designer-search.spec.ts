@@ -101,7 +101,12 @@ test('Designer search result tap-to-add works from a touch context (ut-docs#1170
   const assertClean = watchConsole(page);
 
   await page.goto('/designer');
-  const tiles = page.locator('#buttons-grid-admin .tile-name', { hasText: 'Sparkling Water' });
+  // ut-docs#2174: the retired flat admin grid (#buttons-grid-admin) is gone;
+  // the Designer's tiles are its live sale-screen replica's inert
+  // [data-testid="designer-tile"] buttons, fetched after page load — wait
+  // for the replica to render before taking the "before" count.
+  await expect(page.locator('[data-testid="designer-categories"]')).toBeVisible();
+  const tiles = page.locator('[data-testid="designer-tile"] .tile-name', { hasText: 'Sparkling Water' });
   // Count-based, not visibility-based: the shared dev till server persists
   // added tiles across repeated local runs (reuseExistingServer), so a
   // previous run may have already added this item — assert the tap adds

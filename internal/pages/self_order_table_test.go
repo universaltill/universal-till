@@ -283,7 +283,7 @@ func TestSelfOrder_DifferentTable_GetsOwnIndependentSession(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /self-order?table=<tableB>: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), "This table already has an order in progress") {
+	if strings.Contains(rec.Body.String(), "This table is already in use") {
 		t.Fatalf("a different table must get its own session, never the busy screen: %s", rec.Body.String())
 	}
 	if b.engine(dp) == nil || b.engine(dp) == a.engine(dp) {
@@ -310,6 +310,133 @@ func TestSelfOrder_DifferentTable_GetsOwnIndependentSession(t *testing.T) {
 	}
 }
 
+// A guest who moves seats and scans a DIFFERENT table's QR while their
+// current session still holds items must keep those items — the same
+// rebind-in-place ADR-0054's table picker already does for the cashier,
+// not a fresh empty basket (ut-docs#2433, ADR-0103 review finding N2: this
+// used to silently discard the guest's in-progress basket).
+func TestSelfOrder_SameGuestScansDifferentTable_PreservesBasket(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	tableA := createSelfOrderTable(t, dp, "T1", 100)
+	tableB := createSelfOrderTable(t, dp, "T2", 200)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+	seedStock(t, d, "itm-coffee", 10)
+
+	mux := http.NewServeMux()
+	registerSelfOrder(mux, dp)
+	registerSelfOrderShop(mux, dp)
+
+	g := newSelfOrderGuest(t, mux)
+	g.get("/self-order?table=" + tableA)
+	g.post("/api/self-order/scan", "code=5000001")
+	firstSvc := g.engine(dp)
+	if n := len(firstSvc.Lines()); n != 1 {
+		t.Fatalf("precondition: guest's basket has %d lines, want 1", n)
+	}
+	firstToken := g.sessionToken()
+
+	// The guest moves to table B (same browser/cookie) before checking out.
+	rec := g.get("/self-order?table=" + tableB)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /self-order?table=<tableB>: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "This table is already in use") {
+		t.Fatalf("moving to an unheld table must never show busy: %s", rec.Body.String())
+	}
+
+	svc := g.engine(dp)
+	if svc == nil {
+		t.Fatal("guest must still resolve to a live session after moving tables")
+	}
+	if n := len(svc.Lines()); n != 1 {
+		t.Fatalf("basket has %d lines after moving tables, want 1 (must be preserved, not discarded)", n)
+	}
+	if got := svc.TableID(); got != tableB {
+		t.Fatalf("TableID() after move = %q, want new table %q", got, tableB)
+	}
+	if got := svc.TableLabel(); got != "T2" {
+		t.Fatalf("TableLabel() after move = %q, want %q", got, "T2")
+	}
+	// Same session, rebound in place — not a fresh session replacing it.
+	if svc != firstSvc {
+		t.Fatal("moving tables must rebind the SAME session, not mint a new one (that's how the basket was lost)")
+	}
+	if got := g.sessionToken(); got != firstToken {
+		t.Fatalf("session cookie changed across a table move: got %q, want unchanged %q", got, firstToken)
+	}
+	if n := dp.SelfOrderSessions.Len(); n != 1 {
+		t.Fatalf("live sessions = %d, want 1 (no orphaned session left behind for the old table)", n)
+	}
+
+	// Table A is immediately free for a new scan by someone else.
+	other := newSelfOrderGuest(t, mux)
+	rec2 := other.get("/self-order?table=" + tableA)
+	if strings.Contains(rec2.Body.String(), "This table is already in use") {
+		t.Fatal("the vacated table must not still show busy after the guest moved off it")
+	}
+	if other.engine(dp) == nil || other.engine(dp) == svc {
+		t.Fatal("a new scan of the vacated table must get its own independent session")
+	}
+}
+
+// A guest with items on table A who scans table B while B is already held
+// by a DIFFERENT, non-empty, recently-active session must see the busy
+// screen — the move must not bypass ADR-0103 Decision 4's busy guard. The
+// mover keeps their own table A session and basket untouched, and the
+// incumbent on table B is undisturbed (ut-docs#2433 review, S2: the busy
+// guard is checked before the move rebinds, but that interaction had no
+// direct test).
+func TestSelfOrder_MovingOntoBusyTable_ShowsBusyAndKeepsMoverOnOriginalTable(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	tableA := createSelfOrderTable(t, dp, "T1", 100)
+	tableB := createSelfOrderTable(t, dp, "T2", 200)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+	seedStock(t, d, "itm-coffee", 10)
+
+	mux := http.NewServeMux()
+	registerSelfOrder(mux, dp)
+	registerSelfOrderShop(mux, dp)
+
+	// The incumbent already holds table B with a non-empty basket.
+	incumbent := newSelfOrderGuest(t, mux)
+	incumbent.get("/self-order?table=" + tableB)
+	incumbent.post("/api/self-order/scan", "code=5000001")
+	incumbentSvc := incumbent.engine(dp)
+
+	// The mover has their own items on table A, then scans table B.
+	mover := newSelfOrderGuest(t, mux)
+	mover.get("/self-order?table=" + tableA)
+	mover.post("/api/self-order/scan", "code=5000001")
+	moverSvc := mover.engine(dp)
+	moverToken := mover.sessionToken()
+
+	rec := mover.get("/self-order?table=" + tableB)
+	if !strings.Contains(rec.Body.String(), "This table is already in use") {
+		t.Fatalf("expected the busy screen when moving onto a held table, got: %s", rec.Body.String())
+	}
+	if got := mover.sessionToken(); got != moverToken {
+		t.Fatalf("mover's session cookie changed on a busy-blocked move: got %q, want unchanged %q", got, moverToken)
+	}
+	if got := mover.engine(dp); got != moverSvc {
+		t.Fatal("mover must still resolve to their own original session, not the incumbent's")
+	}
+	if got := moverSvc.TableID(); got != tableA {
+		t.Fatalf("mover's TableID() after a busy-blocked move = %q, want unchanged original table %q", got, tableA)
+	}
+	if n := len(moverSvc.Lines()); n != 1 {
+		t.Fatalf("mover's basket has %d lines after a busy-blocked move, want unchanged 1", n)
+	}
+	if got := incumbentSvc.TableID(); got != tableB {
+		t.Fatalf("incumbent's TableID() = %q, want unchanged %q", got, tableB)
+	}
+	if n := len(incumbentSvc.Lines()); n != 1 {
+		t.Fatalf("incumbent's basket has %d lines, want unchanged 1", n)
+	}
+	if n := dp.SelfOrderSessions.Len(); n != 2 {
+		t.Fatalf("live sessions = %d, want 2 (mover on A, incumbent on B)", n)
+	}
+}
+
 // Re-scanning your OWN table's code (the idle-reset bounce, or a deliberate
 // re-open) is never "busy" — it's the same guest, and it RESUMES their
 // session: same token, same table, basket kept (ADR-0103 Decision 2).
@@ -332,7 +459,7 @@ func TestSelfOrder_SameTableRescan_NeverBusy(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /self-order?table=<same table>: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), "This table already has an order in progress") {
+	if strings.Contains(rec.Body.String(), "This table is already in use") {
 		t.Fatalf("re-scanning the same table must never show the busy screen, got: %s", rec.Body.String())
 	}
 	if got := g.sessionToken(); got != token {
@@ -349,11 +476,18 @@ func TestSelfOrder_SameTableRescan_NeverBusy(t *testing.T) {
 	}
 }
 
-// An EMPTY table-bound session (guest scanned in but never added anything)
-// has nothing to lose — a second phone scanning the same table gets its own
-// session normally, not a "busy" screen (the narrowed guard is non-empty
-// sessions only, same threshold the old cross-table guard used).
-func TestSelfOrder_SameTableEmptySession_NotBusy(t *testing.T) {
+// ut-docs#2434 (ADR-0103 review finding N3, correction landed in the ADR
+// itself): an EMPTY table-bound session still HOLDS its table. The busy
+// guard used to require len(owner.Lines()) > 0, which let two phones
+// scanning the same table before either added an item both bind — two
+// independent, uncoordinated baskets for one physical table, and two
+// kiosk_counter_orders rows at checkout. Dropping the item-count exception
+// closes that: a second phone now sees busy the moment ANY other session
+// (empty or not) is bound to the table within selfOrderTableBusyMaxIdle —
+// exactly the same recency window as the non-empty case, so an abandoned
+// EMPTY session still frees the table after that window
+// (TestSelfOrder_StaleSessionNoLongerBlocksBusyGuard covers that half).
+func TestSelfOrder_SameTableEmptySession_ShowsBusy(t *testing.T) {
 	dp, _ := setupSelfOrderShopDeps(t)
 	tableA := createSelfOrderTable(t, dp, "T1", 100)
 
@@ -362,20 +496,32 @@ func TestSelfOrder_SameTableEmptySession_NotBusy(t *testing.T) {
 
 	first := newSelfOrderGuest(t, mux)
 	first.get("/self-order?table=" + tableA)
+	firstToken := first.sessionToken()
+	firstSvc := first.engine(dp)
 
 	second := newSelfOrderGuest(t, mux)
 	rec := second.get("/self-order?table=" + tableA)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /self-order?table=<tableA> from a second phone: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), "This table already has an order in progress") {
-		t.Fatalf("an empty table-bound session has nothing to lose — must not show busy, got: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "This table is already in use") {
+		t.Fatalf("an empty table-bound session still holds the table — must show busy, got: %s", rec.Body.String())
 	}
-	if second.engine(dp) == nil || second.engine(dp).TableID() != tableA {
-		t.Fatal("the second phone must get its own live session bound to the table")
+	if second.sessionToken() != "" {
+		t.Fatal("a busy-blocked scan must not mint a session cookie")
 	}
-	if first.engine(dp) == nil || first.engine(dp) == second.engine(dp) {
-		t.Fatal("the first phone's session must survive, distinct from the second's")
+	if n := dp.SelfOrderSessions.Len(); n != 1 {
+		t.Fatalf("live sessions = %d, want 1 (only the first phone's, empty)", n)
+	}
+	if got := first.sessionToken(); got != firstToken {
+		t.Fatalf("first phone's token changed to %q", got)
+	}
+	if got := first.engine(dp); got != firstSvc {
+		t.Fatal("the first phone's session must be unaffected by the second phone's blocked scan")
+	}
+	// The first phone's own re-scan of their own table is still never busy.
+	if rec := first.get("/self-order?table=" + tableA); strings.Contains(rec.Body.String(), "This table is already in use") {
+		t.Fatal("the owning guest must never be blocked from their own (empty) table")
 	}
 }
 
@@ -405,7 +551,7 @@ func TestSelfOrder_SameTableHeldByAnotherSession_ShowsBusy(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /self-order?table=<held table>: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "This table already has an order in progress") {
+	if !strings.Contains(rec.Body.String(), "This table is already in use") {
 		t.Fatalf("expected the busy screen for a table another session holds with items, got: %s", rec.Body.String())
 	}
 	if other.sessionToken() != "" {
@@ -416,7 +562,7 @@ func TestSelfOrder_SameTableHeldByAnotherSession_ShowsBusy(t *testing.T) {
 	// cookies) is the same case.
 	raw := httptest.NewRecorder()
 	mux.ServeHTTP(raw, httptest.NewRequest(http.MethodGet, "/self-order?table="+tableA, nil))
-	if !strings.Contains(raw.Body.String(), "This table already has an order in progress") {
+	if !strings.Contains(raw.Body.String(), "This table is already in use") {
 		t.Fatalf("a cookieless scan of a held table must see the busy screen, got: %s", raw.Body.String())
 	}
 
@@ -430,7 +576,7 @@ func TestSelfOrder_SameTableHeldByAnotherSession_ShowsBusy(t *testing.T) {
 		t.Fatalf("owner's basket has %d lines, want unchanged 1", n)
 	}
 	// The owner is still not busy on their own re-scan.
-	if rec := owner.get("/self-order?table=" + tableA); strings.Contains(rec.Body.String(), "This table already has an order in progress") {
+	if rec := owner.get("/self-order?table=" + tableA); strings.Contains(rec.Body.String(), "This table is already in use") {
 		t.Fatal("the owning guest must never be blocked from their own table")
 	}
 }
@@ -655,6 +801,109 @@ func TestSelfOrder_StaleSessionNoLongerBlocksBusyGuard(t *testing.T) {
 	}
 }
 
+// ut-docs#2444 (review finding S3 of ut-docs#2434's own record). Real
+// scenario this reproduces: a guest scans the table QR from an in-app
+// browser (a separate cookie jar — Android Google Lens / Instagram /
+// WhatsApp WebView are common sources), then taps "open in Chrome" before
+// adding anything. Chrome carries no cookie for the session the in-app
+// browser minted, so it's a fresh scan of the guest's OWN still-empty
+// session — which, before this card, self-locked them out for the full
+// selfOrderTableBusyMaxIdle (10 minutes). An EMPTY session must instead
+// free its table after the much shorter selfOrderTableBusyMaxIdleEmpty,
+// unlike TestSelfOrder_StaleSessionNoLongerBlocksBusyGuard's non-empty
+// case above, which still needs the full window.
+func TestSelfOrder_StaleEmptySessionNoLongerBlocksBusyGuardAfterShortWindow(t *testing.T) {
+	dp, _ := setupSelfOrderShopDeps(t)
+	tableA := createSelfOrderTable(t, dp, "T1", 100)
+
+	mux := http.NewServeMux()
+	registerSelfOrder(mux, dp)
+
+	// The in-app-browser scan: table-bound, but the guest never adds an
+	// item before switching browsers.
+	inAppBrowser := newSelfOrderGuest(t, mux)
+	inAppBrowser.get("/self-order?table=" + tableA)
+	inAppToken := inAppBrowser.sessionToken()
+
+	// Right now, a second, cookieless browser scanning the same table is
+	// still busy — the immediate-collision guarantee is unchanged by this
+	// card (TestSelfOrder_SameTableEmptySession_ShowsBusy's own baseline,
+	// re-asserted here for this scenario).
+	reqNow := httptest.NewRequest(http.MethodGet, "/self-order?table="+tableA, nil)
+	if bound, busy := bindSelfOrderTableSession(httptest.NewRecorder(), reqNow, dp, tableA, time.Now(), nil); bound || !busy {
+		t.Fatalf("right after the in-app-browser's scan: want busy (not bound), got bound=%v busy=%v", bound, busy)
+	}
+
+	// selfOrderTableBusyMaxIdleEmpty later — well short of the full
+	// selfOrderTableBusyMaxIdle — Chrome's own scan (no cookie at all) must
+	// no longer be blocked.
+	future := time.Now().Add(selfOrderTableBusyMaxIdleEmpty + time.Second)
+	if future.Sub(time.Now()) >= selfOrderTableBusyMaxIdle {
+		t.Fatal("test setup bug: selfOrderTableBusyMaxIdleEmpty must be shorter than selfOrderTableBusyMaxIdle for this test to prove anything")
+	}
+	reqLater := httptest.NewRequest(http.MethodGet, "/self-order?table="+tableA, nil)
+	bound, busy := bindSelfOrderTableSession(httptest.NewRecorder(), reqLater, dp, tableA, future)
+	if busy {
+		t.Fatal("an EMPTY session idle past selfOrderTableBusyMaxIdleEmpty must not block a new scan of its table, even though selfOrderTableBusyMaxIdle hasn't elapsed")
+	}
+	if !bound {
+		t.Fatal("the new scan should have bound a fresh session once the empty one aged out of the shorter busy-guard window")
+	}
+
+	// The in-app browser's own abandoned session is untouched — still live,
+	// still resumable by its own cookie.
+	if _, ok := dp.SelfOrderSessions.Get(inAppToken); !ok {
+		t.Fatal("the in-app browser's own abandoned session must still be live (not evicted — only de-prioritized for the busy guard)")
+	}
+}
+
+// The other half of the ut-docs#2444 split, driven through the real
+// production constants and wiring (ut-docs#2444 review finding N3): a
+// NON-EMPTY session must still block a competing scan once idle past
+// selfOrderTableBusyMaxIdleEmpty — it only frees after the full,
+// much-longer selfOrderTableBusyMaxIdle, exactly like before this card.
+// Guards specifically against the two production constants being passed
+// to BindTable in the wrong order (empirically confirmed during review:
+// swapping them makes this test fail while the immediate-collision tests
+// above stay green).
+func TestSelfOrder_NonEmptySessionStillBlocksPastEmptyMaxIdleWindow(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	tableA := createSelfOrderTable(t, dp, "T1", 100)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+	seedStock(t, d, "itm-coffee", 10)
+
+	mux := http.NewServeMux()
+	registerSelfOrder(mux, dp)
+	registerSelfOrderShop(mux, dp)
+
+	owner := newSelfOrderGuest(t, mux)
+	owner.get("/self-order?table=" + tableA)
+	owner.post("/api/self-order/scan", "code=5000001")
+	ownerToken := owner.sessionToken()
+
+	if selfOrderTableBusyMaxIdleEmpty >= selfOrderTableBusyMaxIdle {
+		t.Fatal("test setup bug: selfOrderTableBusyMaxIdleEmpty must be shorter than selfOrderTableBusyMaxIdle for this test to prove anything")
+	}
+	pastEmptyStillWithinMaxIdle := time.Now().Add(selfOrderTableBusyMaxIdleEmpty + time.Second)
+	reqLater := httptest.NewRequest(http.MethodGet, "/self-order?table="+tableA, nil)
+	if bound, busy := bindSelfOrderTableSession(httptest.NewRecorder(), reqLater, dp, tableA, pastEmptyStillWithinMaxIdle, nil); bound || !busy {
+		t.Fatalf("a NON-EMPTY session idle past selfOrderTableBusyMaxIdleEmpty (but still within selfOrderTableBusyMaxIdle) must still block a competing scan, got bound=%v busy=%v", bound, busy)
+	}
+
+	pastMaxIdle := time.Now().Add(selfOrderTableBusyMaxIdle + time.Second)
+	reqEvenLater := httptest.NewRequest(http.MethodGet, "/self-order?table="+tableA, nil)
+	bound, busy := bindSelfOrderTableSession(httptest.NewRecorder(), reqEvenLater, dp, tableA, pastMaxIdle, nil)
+	if busy {
+		t.Fatal("a NON-EMPTY session idle past the full selfOrderTableBusyMaxIdle must eventually free its table too")
+	}
+	if !bound {
+		t.Fatal("the new scan should have bound a fresh session once the non-empty one aged out")
+	}
+	if _, ok := dp.SelfOrderSessions.Get(ownerToken); !ok {
+		t.Fatal("the owner's own abandoned session must still be live (not evicted — only de-prioritized for the busy guard)")
+	}
+}
+
 // The HTTP-level version of the concurrency guarantee (the lower-level one is
 // TestSessionBasketManager_ConcurrentSessionsDoNotInterfere in internal/pos):
 // two tables' guests, driven through the real handlers with independent
@@ -762,7 +1011,7 @@ func TestSelfOrder_CheckoutCompletionRemovesSession(t *testing.T) {
 	stale.AddCookie(&http.Cookie{Name: selfOrderSessionCookie, Value: oldToken})
 	staleRec := httptest.NewRecorder()
 	mux.ServeHTTP(staleRec, stale)
-	if strings.Contains(staleRec.Body.String(), "This table already has an order in progress") {
+	if strings.Contains(staleRec.Body.String(), "This table is already in use") {
 		t.Fatal("a stale token must not see busy on a freed table")
 	}
 	newToken := ""
@@ -810,7 +1059,7 @@ func TestSelfOrder_IdleSweepEvictsStaleSession(t *testing.T) {
 	// The phone still carries the old cookie; the table is free, so the
 	// scan mints a new session rather than resuming or blocking.
 	rec := g.get("/self-order?table=" + tableA)
-	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "This table already has an order in progress") {
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "This table is already in use") {
 		t.Fatalf("scan after sweep: want 200, not busy; got %d: %s", rec.Code, rec.Body.String())
 	}
 	if got := g.sessionToken(); got == "" || got == oldToken {

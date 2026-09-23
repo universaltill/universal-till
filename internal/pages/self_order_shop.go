@@ -56,20 +56,62 @@ func loadShopItems(ctx context.Context, d *common.Deps) ([]shopItem, error) {
 	for _, it := range items {
 		ids = append(ids, it.ID)
 	}
-	hasMods, _ := data.NewModifierRepo(d.Db).ItemIDsWithModifiers(ctx, ids)
-	hasVariants, variantsErr := repo.ItemIDsWithVariants(ctx, ids)
-	if variantsErr != nil {
-		// Same reasoning as ButtonStore.Load's own guard (ut-docs#2209
-		// review, finding 5): on this error every kiosk tile reverts to
-		// adding the PARENT base price, so it must never fail silently.
-		logging.L().Warnf("kiosk: load items-with-variants failed, every tile falls back to parent-price add (ut-docs#2209): %v", variantsErr)
+
+	// The next three lookups are chunked (ut-docs#2451, mirroring
+	// ui.ButtonStore.LoadAllActive's ut-docs#2318 fix): SQLite's
+	// bind-variable ceiling (32766) is well within plausible active-catalog
+	// sizes when called unchunked with the WHOLE id set — ItemIDsWithModifiers
+	// alone binds 2 args per id, so it starts failing past ~16,383 active
+	// items. Chunking keeps every call comfortably under the ceiling
+	// regardless of catalog size, and merging per-chunk results means a
+	// failure now degrades only the chunk that failed, not the whole kiosk
+	// grid.
+	idChunks := data.ChunkStrings(ids, data.IDChunkSize)
+	modifierRepo := data.NewModifierRepo(d.Db)
+	// Unsized, like LoadAllActive's own hasMods/hasVariants (buttons.go):
+	// on a typical catalog only a handful of items actually have
+	// modifiers/variants, so pre-sizing to len(ids) would over-allocate on
+	// every kiosk grid load, including on the Pi-class hardware this page
+	// targets.
+	hasMods := map[string]bool{}
+	for _, chunk := range idChunks {
+		m, err := modifierRepo.ItemIDsWithModifiers(ctx, chunk)
+		if err != nil {
+			// Previously silently discarded (`_`) — now logged like the
+			// other two lookups below, since silence is exactly the failure
+			// mode ut-docs#2451 exists to remove: without it, a tile that
+			// needs a modifier prompt would add straight to the cart with
+			// no prompt at all, and no error anywhere would say why.
+			logging.L().Warnf("kiosk: load items-with-modifiers failed for a batch of %d item(s), those tiles fall back to plain add-to-basket: %v", len(chunk), err)
+			continue
+		}
+		data.MergeMapInto(hasMods, m)
 	}
-	currentPrices, pricesErr := repo.ItemCurrentPrices(ctx, ids)
-	if pricesErr != nil {
-		// Same non-fatal-but-loud treatment as hasVariants above
-		// (ut-docs#2258): on this error every kiosk tile falls back to the
-		// STALE configured base_price it.BasePrice already carries below.
-		logging.L().Warnf("kiosk: load item current prices failed, every tile falls back to raw base_price (ut-docs#2258): %v", pricesErr)
+	hasVariants := map[string]bool{}
+	for _, chunk := range idChunks {
+		m, err := repo.ItemIDsWithVariants(ctx, chunk)
+		if err != nil {
+			// Same reasoning as ButtonStore.Load's own guard (ut-docs#2209
+			// review, finding 5): on this error every kiosk tile in the
+			// failed batch reverts to adding the PARENT base price, so it
+			// must never fail silently.
+			logging.L().Warnf("kiosk: load items-with-variants failed for a batch of %d item(s), those tiles fall back to parent-price add (ut-docs#2209): %v", len(chunk), err)
+			continue
+		}
+		data.MergeMapInto(hasVariants, m)
+	}
+	currentPrices := make(map[string]int64, len(ids))
+	for _, chunk := range idChunks {
+		p, err := repo.ItemCurrentPrices(ctx, chunk)
+		if err != nil {
+			// Same non-fatal-but-loud treatment as hasVariants above
+			// (ut-docs#2258): on this error every kiosk tile in the failed
+			// batch falls back to the STALE configured base_price
+			// it.BasePrice already carries below.
+			logging.L().Warnf("kiosk: load item current prices failed for a batch of %d item(s), those tiles fall back to raw base_price (ut-docs#2258): %v", len(chunk), err)
+			continue
+		}
+		data.MergeMapInto(currentPrices, p)
 	}
 	thumbnails, _ := repo.ItemThumbnails(ctx) // best-effort: a read error just means every tile falls back to no-image, same as a missing row
 

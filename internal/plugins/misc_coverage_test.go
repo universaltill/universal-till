@@ -44,6 +44,15 @@ func TestVerifyArtifact(t *testing.T) {
 	if err := mv.VerifyArtifact(filepath.Join(t.TempDir(), "missing"), "x"); err == nil || !strings.Contains(err.Error(), "failed to open") {
 		t.Fatalf("missing artifact accepted: %v", err)
 	}
+	// A path that opens fine but can't be read as a file (a directory) must
+	// surface VerifyArtifact's own "failed to hash" wording, not "failed to
+	// open" — ut-docs#2398: VerifyArtifact now delegates hashing to
+	// ComputeSHA256, and re-derives which of the two failures it was via a
+	// fresh os.Stat rather than its own os.Open, so this distinction is
+	// pinned here rather than assumed to still hold.
+	if err := mv.VerifyArtifact(t.TempDir(), "x"); err == nil || !strings.Contains(err.Error(), "failed to hash") {
+		t.Fatalf("directory path did not surface a hash failure: %v", err)
+	}
 	// Fail closed on an EMPTY expected checksum. Now that installBundleFile
 	// calls this on every marketplace install (ut-docs#2241), an empty
 	// spec.Checksum — a staged download whose metadata JSON was tampered

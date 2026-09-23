@@ -321,7 +321,20 @@ test.describe('sale-screen category strip: search expand/collapse (ut-docs#2173)
   });
 });
 
-test.describe('sale-screen category strip: scrolling + RTL mirroring (ut-docs#2173)', () => {
+// ut-docs#2307 SUPERSEDED this describe block's original premise: the strip
+// used to scroll horizontally once too many categories were seeded (a real
+// scrollWidth > clientWidth, plus the ::before/::after scroll-shadow this
+// block used to assert on), which is exactly the behaviour the product
+// owner's card removed — see sale-screen-category-strip-overflow-2307
+// .spec.ts for the full "never scrolls, shows a trailing '...' instead"
+// coverage (fit measurement, the sheet, promotion, keyboard). What's left
+// genuinely worth pinning HERE, in this search-strip-focused file, is the
+// one invariant these two tests both still care about that #2307 doesn't
+// already cover: the strip's height/row-count and the search-mode back
+// arrow's LTR/RTL mirroring stay correct even with a large category count
+// sitting behind it (never mind whether some of them overflow into the
+// sheet).
+test.describe('sale-screen category strip: no horizontal scroll, even with many categories (ut-docs#2173, ut-docs#2307)', () => {
   let items: OverflowItem[] = [];
   test.afterEach(async ({ page }) => {
     if (items.length) await cleanupOverflowItems(page, items);
@@ -329,7 +342,7 @@ test.describe('sale-screen category strip: scrolling + RTL mirroring (ut-docs#21
     await page.request.post('/api/pos/reset');
   });
 
-  test('LTR: with many categories the strip scrolls horizontally, and the back arrow is NOT mirrored', async ({ page }) => {
+  test('LTR: with many categories the strip stays one row and never scrolls, and the back arrow is NOT mirrored', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.setViewportSize({ width: 1024, height: 600 });
     items = overflowItems('Ltr', '76');
@@ -337,47 +350,26 @@ test.describe('sale-screen category strip: scrolling + RTL mirroring (ut-docs#21
 
     await page.goto('/');
     const tabBar = page.locator('.products .tab-bar');
+    // The DOM still holds every tab (a CSS class locator matches a hidden
+    // one just as well as a visible one) — only how many of them are
+    // actually SHOWN is what ut-docs#2307 changed; that count is covered
+    // by sale-screen-category-strip-overflow-2307.spec.ts, not repeated
+    // here.
     await expect(tabBar.locator('.tab')).toHaveCount(CATEGORY_COUNT + 3, { timeout: 10_000 }); // + seeded Food/Drinks + ut-docs#2212's All tab
 
-    const { scrollWidth, clientWidth } = await tabBar.evaluate((el) => ({
-      scrollWidth: el.scrollWidth,
-      clientWidth: el.clientWidth,
-    }));
-    expect(scrollWidth, `strip should overflow horizontally with ${CATEGORY_COUNT + 3} tabs (scrollWidth ${scrollWidth}, clientWidth ${clientWidth})`).toBeGreaterThan(clientWidth);
+    // ut-docs#2307: never overflows its own box any more — there is
+    // nothing left to scroll to.
+    const overflowPx = await tabBar.evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(overflowPx, `tab-bar must not overflow (scrollWidth vs clientWidth), got ${overflowPx}px`).toBeLessThanOrEqual(1);
 
-    // ut-docs#2173 / ut-docs#2024: the scroll-shadow is the ONLY thing on
-    // screen saying more categories exist past the edge — without it a shop
-    // with 12 categories sees two tabs and no hint there are ten more, which
-    // is the exact gap #2024 was filed for on the catalog strip. app.css
-    // ports that recipe here and index.html wires window.utTabBarFade to
-    // drive it; assert the user-visible outcome (the ::after pseudo-element's
-    // computed opacity), not just the class, so a broken class-to-pseudo
-    // wiring fails too. Polled, because the fade cross-fades over app.css's
-    // own `transition: opacity .15s ease` and an immediate read can legitimately
-    // catch it mid-transition.
-    await expect
-      .poll(async () => tabBar.evaluate((el) => getComputedStyle(el, '::after').opacity), {
-        message: 'end-fade must show while tabs sit off the trailing edge',
-      })
-      .toBe('1');
-    await expect
-      .poll(async () => tabBar.evaluate((el) => getComputedStyle(el, '::before').opacity), {
-        message: 'no start-fade while the strip is scrolled to the true start',
-      })
-      .toBe('0');
-
-    // Scroll to the far end: the fades must swap over.
-    await tabBar.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
-    await expect
-      .poll(async () => tabBar.evaluate((el) => getComputedStyle(el, '::before').opacity), {
-        message: 'start-fade must appear once scrolled away from the start',
-      })
-      .toBe('1');
-    await expect
-      .poll(async () => tabBar.evaluate((el) => getComputedStyle(el, '::after').opacity), {
-        message: 'no end-fade at the true end',
-      })
-      .toBe('0');
+    // ut-docs#993's own single-row requirement still holds — measured
+    // against only the tabs actually on screen (a hidden/display:none tab
+    // reads an all-zero rect, which would otherwise read as a second
+    // "row" at top:0 and falsely fail this).
+    const tops = await tabBar.locator('.tab:not([hidden])').evaluateAll((els) =>
+      els.map((el) => Math.round((el as HTMLElement).getBoundingClientRect().top)),
+    );
+    expect(new Set(tops).size, `every visible tab should share one row, saw tops: ${JSON.stringify(tops)}`).toBe(1);
 
     await page.locator('.products-strip-search').click();
     // Wait for the back button to actually be visible (Alpine's x-show DOM
@@ -392,7 +384,7 @@ test.describe('sale-screen category strip: scrolling + RTL mirroring (ut-docs#21
     assertClean();
   });
 
-  test('RTL (fa): the strip still scrolls, and the back arrow is mirrored', async ({ page }) => {
+  test('RTL (fa): the strip still never scrolls, the "..." button sits at the logical (leading) end, and the back arrow is mirrored', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.setViewportSize({ width: 1024, height: 600 });
     items = overflowItems('Rtl', '77');
@@ -404,20 +396,24 @@ test.describe('sale-screen category strip: scrolling + RTL mirroring (ut-docs#21
     const tabBar = page.locator('.products .tab-bar');
     await expect(tabBar.locator('.tab')).toHaveCount(CATEGORY_COUNT + 3, { timeout: 10_000 }); // + seeded Food/Drinks + ut-docs#2212's All tab
 
-    const { scrollWidth, clientWidth } = await tabBar.evaluate((el) => ({
-      scrollWidth: el.scrollWidth,
-      clientWidth: el.clientWidth,
-    }));
-    expect(scrollWidth, `strip should overflow horizontally under RTL too (scrollWidth ${scrollWidth}, clientWidth ${clientWidth})`).toBeGreaterThan(clientWidth);
+    const overflowPx = await tabBar.evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(overflowPx, `tab-bar must not overflow under RTL either, got ${overflowPx}px`).toBeLessThanOrEqual(1);
 
-    // RTL's scrollLeft convention (0 → negative) — same Math.abs() handling
-    // window.utTabBarFade/app.css rely on elsewhere; scroll to the reading
-    // end and confirm it actually moved.
-    const scrolledLeft = await tabBar.evaluate((el) => {
-      el.scrollLeft = -(el.scrollWidth - el.clientWidth);
-      return el.scrollLeft;
-    });
-    expect(scrolledLeft, 'RTL scrollLeft must actually go negative here').toBeLessThan(0);
+    // ut-docs#2307 requirement 7: the "..." trigger is positioned with
+    // margin-inline-start (never margin-left/right), so under RTL it must
+    // render at the visually-LEADING (screen-LEFT) end of the strip — the
+    // logical "end of the row" — not pinned to the physical right the way
+    // a left/right rule would leave it. Compare against the tab bar's own
+    // box: RTL's leading edge is the box's own LEFT edge.
+    const more = page.locator('#cat-tab-more');
+    await expect(more).toBeVisible();
+    const [barBox, moreBox] = await Promise.all([tabBar.boundingBox(), more.boundingBox()]);
+    expect(barBox).toBeTruthy();
+    expect(moreBox).toBeTruthy();
+    expect(
+      moreBox!.x,
+      `"..." should sit near the tab bar's own leading (left, under RTL) edge — bar: ${JSON.stringify(barBox)}, more: ${JSON.stringify(moreBox)}`,
+    ).toBeLessThan(barBox!.x + barBox!.width / 2);
 
     await page.locator('.products-strip-search').click();
     // Same "wait for the real DOM write" reasoning as the LTR test above.

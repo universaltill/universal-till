@@ -171,21 +171,19 @@ func ParseManifest(r io.Reader) (*Manifest, error) {
 
 // ComputeSHA256 calculates the SHA256 checksum of a file.
 //
-// No production caller: the two shipped paths that produce a bundle hash
-// compute it inline while streaming the bytes they already have in hand
+// The two shipped paths that produce a bundle hash on the way in compute it
+// inline while streaming the bytes they already have in hand
 // (DownloadManager.Download hashes as it writes the .part file, Exporter
-// hashes the tar.gz as it writes it), and the one shipped path that DOES
-// re-hash a finished file on disk — ManifestVerifier.VerifyArtifact
+// hashes the tar.gz as it writes it). The one shipped path that re-hashes a
+// finished file on disk — ManifestVerifier.VerifyArtifact
 // (manifest_verifier.go), wired into installBundleFile by ut-docs#2241 to
-// re-check a staged bundle right before extraction — carries its own
-// inline copy of this same open/io.Copy/sha256/hex loop rather than
-// calling this. Kept as a declared test helper (ut-docs#1566): it is the
-// independent "hash the file on disk" oracle the streaming hashes are
-// checked against (exporter_test.go, and internal/pages'
-// plugins_store_api_test.go across the package boundary), plus its own
-// TestComputeSHA256* cases, which ut-docs' pos-acceptance-matrix.md cites.
-// Folding VerifyArtifact's duplicate loop onto this function is a
-// consolidation question, not a mechanical cleanup, so it is not done here.
+// re-check a staged bundle right before extraction — calls this directly
+// (ut-docs#2398; it used to carry its own duplicate open/io.Copy/sha256/hex
+// loop). It is also the independent "hash the file on disk" oracle the
+// streaming hashes are checked against (exporter_test.go, and
+// internal/pages' plugins_store_api_test.go across the package boundary),
+// plus its own TestComputeSHA256* cases, which ut-docs'
+// pos-acceptance-matrix.md cites.
 func ComputeSHA256(filePath string) (string, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -686,6 +684,76 @@ func validateExclusiveHookOwnership(ctx context.Context, repo *data.PluginRepo, 
 	return nil
 }
 
+// DeclaredLayoutPresetEntry reports the key of the first `layout` entry
+// whose Config carries uislot.RoleField = uislot.PresetRole (ADR-0106
+// Decision B, ut-docs#1905), or ("", false) when the manifest declares no
+// preset. The pre-persist counterpart of data.PluginRepo.HasActiveLayoutRole:
+// at PersistManifest time no row exists yet, so the manifest's own Config
+// map is what there is to read — the same two-callsite split as
+// DeclaredFiscalSignExclusiveEvent (manifest) vs HasActiveHook (row).
+// entryConfigJSON persists Config verbatim, so what is read here is exactly
+// what the enable-time query reads back later.
+func DeclaredLayoutPresetEntry(entries []ManifestEntry) (string, bool) {
+	for _, e := range entries {
+		if e.Type != "layout" {
+			continue
+		}
+		if role, _ := e.Config[uislot.RoleField].(string); role == uislot.PresetRole {
+			return e.Key, true
+		}
+	}
+	return "", false
+}
+
+// LayoutPresetOwner reports the ACTIVE plugin other than pluginID currently
+// holding an active role:"preset" layout entry — FiscalSignExclusiveOwner's
+// twin for ADR-0106's second, independent exclusivity group (unrelated
+// domains get their own grouping, not a shared constant list — ADR-0106
+// Decision C). tx is the install transaction when called from
+// PersistManifest, nil from the enable handler. found=false means no
+// preset is active, or only pluginID's own is (a re-enable or a self-update
+// never conflicts with its own registration). A DB error is returned as-is
+// for the caller to fail CLOSED on.
+func LayoutPresetOwner(ctx context.Context, repo *data.PluginRepo, tx *sql.Tx, pluginID string) (ownerID, ownerName string, found bool, err error) {
+	return repo.ActiveLayoutRoleOwner(ctx, tx, uislot.PresetRole, pluginID)
+}
+
+// validateLayoutPresetExclusivity enforces ADR-0106 Decision C at
+// manifest-persist time, mirroring validateExclusiveHookOwnership above for
+// the same reason: PersistManifest activates the plugin unconditionally, so
+// a fresh install of a second preset — or an update of an already-active
+// layout plugin whose new version starts declaring role:"preset" — would
+// silently create two active presets without ever passing through
+// POST /api/plugins/{id}/enable. Two presets simultaneously active is
+// incoherent (their amendments would race for the same keys or silently
+// interleave), so it is refused HERE, inside the transaction, before
+// anything is written — the refusal rolls the whole install back.
+//
+// Only preset-vs-preset is exclusive: a vertical-flavoured layout plugin
+// (plugins/layout-salon) never sets the role and is unaffected, and a
+// preset coexists with any number of them (ADR-0088's slots stay shared;
+// Decision F still refuses same-key restructuring separately). The
+// plugin's own prior registration is excluded, so a preset updating or
+// re-installing ITSELF never conflicts with itself. A DB error fails
+// CLOSED: "couldn't verify ownership" must never degrade to "allowed" on a
+// shop-visible structural change — the same posture as the fiscal-sign
+// check and the enable-time check in internal/pages.
+func validateLayoutPresetExclusivity(ctx context.Context, repo *data.PluginRepo, tx *sql.Tx, pluginID string, entries []ManifestEntry) error {
+	declared, ok := DeclaredLayoutPresetEntry(entries)
+	if !ok {
+		return nil
+	}
+	ownerID, ownerName, found, err := LayoutPresetOwner(ctx, repo, tx, pluginID)
+	if err != nil {
+		return fmt.Errorf("check layout preset exclusivity: %w", err)
+	}
+	if found {
+		return fmt.Errorf("%s (%s) is already the active layout preset — layout entry %q declares role:%q, and only one preset can be active at a time (ADR-0106); disable or uninstall it before installing %s",
+			ownerName, ownerID, declared, uislot.PresetRole, pluginID)
+	}
+	return nil
+}
+
 func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallOptions) error {
 	repo := data.NewPluginRepo(db)
 	tx, err := db.BeginTx(ctx, nil)
@@ -727,6 +795,16 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 	// it through would mint a second active answerer with no /enable ever
 	// involved (review of ut-docs#675, B2).
 	if err := validateExclusiveHookOwnership(ctx, repo, tx, m.ID, m.Hooks); err != nil {
+		return err
+	}
+
+	// 0g. A role:"preset" layout entry is mutually exclusive with any OTHER
+	// active preset (ADR-0106 Decision C): same shape and same reasoning as
+	// 0d — this persist activates the plugin, so letting a second preset
+	// through would mint two active arrangements with no /enable involved.
+	// Runs before 0f so a DB error here is unambiguously this check's (its
+	// query reads the same plugin_entries table 0f reads).
+	if err := validateLayoutPresetExclusivity(ctx, repo, tx, m.ID, m.Entries); err != nil {
 		return err
 	}
 

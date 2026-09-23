@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
@@ -588,6 +591,22 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			"AuthOff":              authOff,
 			"fiscalOverrideActive": fiscalOverrideActive,
 			"fiscalOverrideUntil":  fiscalOverrideUntil,
+			// RefundAttemptID (ut-docs#2415): a stable id for this ONE
+			// rendered form, minted fresh per page load and carried by the
+			// hidden refund_attempt_id field -- POST /api/refund folds it
+			// into the payment.<key>.refund event id so a retried submit of
+			// THIS SAME form (the operator re-tapping Refund after a
+			// timeout) asks the plugin the same question, mirroring
+			// completeTender's own TenderAttemptID (pos_api.go, ut-docs#1762).
+			// A fresh page load mints a new one, but that alone is NOT what
+			// invalidates it after a completed refund -- this page carries
+			// no Cache-Control: no-store, so a bfcache'd back-navigation can
+			// resubmit this exact stale form (independent review finding).
+			// The real invalidation is server-side: the POST handler folds
+			// guard.returnedQtyByLine into the requestID's hash, which
+			// changes the instant ANY refund against this sale commits --
+			// see that handler's own comment for the full reasoning.
+			"RefundAttemptID": uuid.NewString(),
 		})(w, r)
 	})
 
@@ -806,13 +825,77 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// must actually send the money back (e.g. refund the Stripe charge),
 		// and a failed provider refund must stop the return. No subscriber =
 		// no gate (cash and hook-less methods behave as before).
-		refundResp, blocked := blockingPaymentEventWithResponse(r.Context(), d, method, "refund", map[string]any{
+		//
+		// ut-docs#2415: requestID anchors this refund's idempotency identity
+		// the same way completeTender's attemptID does for a tender
+		// (pos_api.go, ut-docs#1762) — refundAttemptID (the hidden field the
+		// GET handler minted for THIS rendered form, above) is stable across
+		// the operator re-tapping Refund on the SAME form, and a hash of the
+		// actual refund payload is folded in too so a changed amount/line
+		// still mints a distinct key even on that same attempt (mirrors
+		// ut-docs#1762's own basket-edit-invalidation review finding). A
+		// missing refundAttemptID (an old cached page, or a non-browser
+		// caller) falls back to requestID="", i.e. the pre-fix fresh-id-
+		// per-call behaviour — no regression, just no retry-safety.
+		//
+		// Independent review finding (blocker): unlike the tender side,
+		// where engine.Reset() clears attemptID the instant a sale commits,
+		// refundAttemptID lives entirely in a client-held hidden field —
+		// nothing server-side invalidates it once THIS refund completes.
+		// The page carries no Cache-Control: no-store, so a bfcache'd back-
+		// navigation can resubmit the exact same (stale) form: two
+		// SEPARATE, sequentially COMMITTED refunds of the same sale/method/
+		// amount would then share one requestID, and the device would
+		// replay the FIRST refund's iade fişi evidence for the second — a
+		// real double-refund/single-receipt fiscal bug, reproduced against
+		// this handler in review. guard.returnedQtyByLine (loaded above,
+		// per original sale line) changes the instant ANY refund against
+		// this sale commits, so folding it into the hash restores exactly
+		// the invalidation Reset() gives the tender side: a genuine retry
+		// (nothing committed in between) keeps the same guard snapshot and
+		// so the same key; any refund that has since committed shifts the
+		// snapshot and mints a fresh key, forcing the device to print its
+		// own receipt instead of replaying a stale one.
+		refundAttemptID := strings.TrimSpace(r.Form.Get("refund_attempt_id"))
+		// Bound the client-supplied token: it's unauthenticated form input
+		// used verbatim as (part of) the device-facing request_id, and a
+		// genuine one is always a UUID (36 chars). An oversized/malformed
+		// value can't do more than lose this attempt's retry-safety (the
+		// guard-state fold above already confines any collision to
+		// same-sale/same-line/same-amount), but there's no reason to let
+		// arbitrary-length operator input reach the bridge/device's own
+		// `seen` map at all.
+		if len(refundAttemptID) > 128 {
+			refundAttemptID = ""
+		}
+		refundPayload := map[string]any{
 			"method":           method,
 			"amount":           refundTotal.Minor(),
 			"currency":         detail.Currency,
 			"original_sale_id": detail.ID,
 			"original_receipt": detail.ReceiptNo,
-		})
+		}
+		var requestID string
+		if refundAttemptID != "" {
+			// json.Marshal sorts map keys, so this hash is stable regardless
+			// of map iteration/insertion order, same as completeTender's own.
+			// guard.returnedQtyByLine is included alongside the payload
+			// (not merged into it) so it never reaches the plugin/device —
+			// it's purely a key-invalidation input, same shape as
+			// completeTender's own attemptID+payload split.
+			digestInput := struct {
+				Payload  map[string]any     `json:"payload"`
+				Returned map[string]float64 `json:"returned_qty_by_line"`
+			}{refundPayload, guard.returnedQtyByLine}
+			digestBytes, err := json.Marshal(digestInput)
+			if err != nil {
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", err)
+				return
+			}
+			digest := sha256.Sum256(digestBytes)
+			requestID = fmt.Sprintf("%s:%x", refundAttemptID, digest[:8])
+		}
+		refundResp, blocked := blockingPaymentEventWithResponseAndID(r.Context(), d, method, "refund", requestID, refundPayload)
 		if blocked != nil {
 			// ut-docs#950: `blocked` is a plugin-originated error -- whatever
 			// text a third-party payment plugin's payment.<key>.refund hook
@@ -971,39 +1054,39 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	})
 }
 
-// blockingPaymentEventWithResponse publishes `payment.<key>.<suffix>` for
-// the method's owning payment plugin and BLOCKS on the result: (nil, nil)
-// when the method has no payment entry or no subscriber (cash stays cash),
-// the plugin's raw response when it approves, and a non-nil error when it
-// declines OR the payment-entries lookup itself failed (ut-docs#2278) — the
-// caller must treat either case as a decline and stop the sale/refund (fail
-// closed), never as "nothing to report", since on a lookup failure this
-// gate can no longer tell whether the method WOULD have been vetoed. This
-// is the refund gate's blocking leg of the payment-provider contract; the
-// tender authorize gate, the other blocking leg, uses
-// blockingPaymentEventWithResponseAndID below because it needs the SAME
-// event id across a retry, while this form mints a fresh id per call. The
-// response is what lets a gate read back plugin-reported data (e.g. a
-// reader-captured tip amount) alongside the approve/decline verdict.
+// blockingPaymentEventWithResponseAndID publishes `payment.<key>.<suffix>`
+// for the method's owning payment plugin and BLOCKS on the result: (nil,
+// nil) when the method has no payment entry or no subscriber (cash stays
+// cash), the plugin's raw response when it approves, and a non-nil error
+// when it declines OR the payment-entries lookup itself failed
+// (ut-docs#2278) — the caller must treat either case as a decline and stop
+// the sale/refund (fail closed), never as "nothing to report", since on a
+// lookup failure this gate can no longer tell whether the method WOULD have
+// been vetoed. The response is what lets a gate read back plugin-reported
+// data (e.g. a reader-captured tip amount) alongside the approve/decline
+// verdict.
 //
-// ut-docs#1566: the former err-only wrapper blockingPaymentEvent was
-// deleted here — both gates had already moved to the response-returning
-// forms, leaving it with zero production callers; its tests now call this
-// function directly and discard the response.
-func blockingPaymentEventWithResponse(ctx context.Context, d *common.Deps, method, suffix string, payload map[string]any) (json.RawMessage, error) {
-	return blockingPaymentEventWithResponseAndID(ctx, d, method, suffix, "", payload)
-}
-
-// blockingPaymentEventWithResponseAndID behaves exactly like
-// blockingPaymentEventWithResponse, except a non-empty requestID is used as
-// the published event's id instead of a freshly minted one (ut-docs#1762).
-// The tender authorize gate passes a stable per-tender-attempt id so a
+// requestID, when non-empty, is used as the published event's id instead of
+// a freshly minted one (ut-docs#1762). The tender authorize gate
+// (pos_api.go's completeTender) passes a stable per-tender-attempt id so a
 // retried tender (the operator re-tapping Pay after a decline/timeout on
 // the SAME basket) asks the plugin the SAME question — letting a
 // fiscal-device or payment-gateway plugin recognise the repeat and answer
-// once, instead of charging/printing again. An empty requestID keeps the
-// original fresh-id-per-call behaviour (blockingPaymentEventWithResponse's
-// contract, used by the refund gate).
+// once, instead of charging/printing again. The refund gate (POST
+// /api/refund above) does the same (ut-docs#2415) with a per-refund-attempt
+// id, invalidated by any refund of the same sale that has since committed.
+// An empty requestID (the refund gate's own fallback when the request
+// carries no usable refund_attempt_id) mints a fresh id per call — the
+// original behaviour, and the shape every non-attempt-scoped caller (e.g.
+// this file's own tests) still wants.
+//
+// ut-docs#1566: the former err-only wrapper blockingPaymentEvent was
+// deleted here — both gates had already moved to the response-returning
+// forms, leaving it with zero production callers. ut-docs#2415 later
+// deleted its own thin requestID="" wrapper, blockingPaymentEventWithResponse,
+// for the identical reason once the refund gate started calling this
+// function directly; payment_event_test.go now calls this function
+// directly too, passing requestID="".
 func blockingPaymentEventWithResponseAndID(ctx context.Context, d *common.Deps, method, suffix, requestID string, payload map[string]any) (json.RawMessage, error) {
 	entries, err := data.NewPluginRepo(d.Db).ListPaymentEntries(ctx)
 	if err != nil {

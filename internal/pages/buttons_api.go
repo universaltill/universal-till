@@ -82,13 +82,51 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		// real elevation prompt, instead of only discovering it needs a
 		// PIN after acting.
 		granted := canPerform(d, r, "catalog_management")
+		// ut-docs#2174: ?mode=edit is the Quick Buttons Designer's live
+		// replica of this very fragment (designer.html's placeholder sends
+		// it via hx-vals, so its hx-get stays exactly "/ui/buttons" — the
+		// literal app.js's utTileJiggle unsaved-drag guard matches). It
+		// renders category-management controls, so it's gated on the same
+		// catalog_management the Designer page itself is (designer_page.go,
+		// ut-docs#2357): a cashier fetching it by hand gets a plain 403, the
+		// sale screen's own render is untouched. The All tab is off in edit
+		// mode — it lists every catalog item, not quick buttons, and isn't
+		// something the Designer arranges.
+		editMode := r.URL.Query().Get("mode") == "edit"
+		if editMode && !granted {
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			return
+		}
 		btnHTTP := &ui.ButtonsHTTP{
 			Store:      *d.BtnStore,
 			View:       renderer,
-			HideAllTab: !d.CurrentState().ShowAllTabOnSellScreen,
+			HideAllTab: !d.CurrentState().ShowAllTabOnSellScreen || editMode,
 			Granted:    granted,
+			EditMode:   editMode,
 		}
 		btnHTTP.List(w, r)
+	})
+
+	// Sell screen All-tab "load more" (ut-docs#2319): the next page of
+	// ButtonStore.LoadAllActive beyond the first AllTabPageSize items GET
+	// /ui/buttons itself already inlined — see ui.ButtonsHTTP.AllMore's own
+	// doc comment. Mirrors /api/buttons/search's offset-query-param shape
+	// below, applied to the sale screen's own grid instead of the
+	// Designer's shortcut search.
+	mux.HandleFunc("/ui/buttons/all/more", func(w http.ResponseWriter, r *http.Request) {
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		renderer, err := ui.NewRenderer(
+			filepath.Join("web", "ui", "layouts", "base.html"),
+			filepath.Join("web", "ui", "pages", "index.html"),
+			filepath.Join("web", "ui", "partials", "buttons.html"),
+			funcs,
+		)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
+			return
+		}
+		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore, View: renderer}
+		btnHTTP.AllMore(w, r)
 	})
 
 	// Sell-screen live search (ut-docs#2294): every active catalog item
@@ -185,7 +223,11 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		imageURL := r.Form.Get("imageUrl")
 		elev := checkOrElevate(d, r, "catalog_management", r.Form.Get("override_pin"))
 		if elev.Outcome == needsElevation {
-			renderElevationPrompt(w, r, "/api/buttons/add", "#buttons-grid-wrap",
+			// ut-docs#2174: the retry target is the Designer's own
+			// #buttons-add-error region (where its search-result button
+			// lands this route's response too) — the retired flat admin
+			// grid's #buttons-grid-wrap wrapper no longer exists.
+			renderElevationPrompt(w, r, "/api/buttons/add", "#buttons-add-error",
 				fmt.Sprintf(httpx.T(httpx.ResolveLocale(w, r), "elevation.summary.buttons_add"), label),
 				[]elevationHiddenField{
 					{Name: "label", Value: label},
@@ -195,18 +237,10 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 				}, elev)
 			return
 		}
-		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-		renderer, err := ui.NewRenderer(
-			filepath.Join("web", "ui", "layouts", "base.html"),
-			filepath.Join("web", "ui", "pages", "index.html"),
-			filepath.Join("web", "ui", "partials", "buttons_admin.html"),
-			funcs,
-		)
-		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
-			return
-		}
-		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore, View: renderer}
+		// ut-docs#2174: no renderer — Add answers an empty 200 + HX-Trigger
+		// now (see ui.ButtonsHTTP.Add), the Designer's live replica
+		// re-fetches itself off that header.
+		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore}
 		// ut-docs#2358: ButtonsHTTP.Add now reports success/failure back to
 		// this closure, so the dual-attribution audit that reorder/move
 		// already write can fire symmetrically here too -- only on an
@@ -225,44 +259,30 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		// idempotent ParseForm call below) so the elevation check has the
 		// code to mirror as a hidden field on the dialog's retry.
 		//
-		// This route is reached from TWO different surfaces with different
-		// hx-target/hx-swap of their own -- the Designer's grid
-		// (buttons_admin.html, "#buttons-grid-wrap"/innerHTML) and the sell
-		// screen's jiggle-mode remove badge (buttons.html's
-		// .tile-badge-remove, hx-swap="none", ut-docs#2339). "#buttons-grid-wrap"
-		// is used as the elevation retry target unconditionally either way:
-		// on the Designer it's exactly the original target; from the jiggle
-		// badge that id doesn't exist in the DOM at all, so the retry's own
-		// response there is silently unswapped by htmx (same as any
-		// unmatched hx-target) -- but the SALE SCREEN grid still updates
-		// correctly regardless, because HX-Trigger: buttons-changed
-		// (ButtonsHTTP.Remove's own header, unconditional on success) fires
-		// independently of target resolution and is what buttons.html's
-		// root actually listens for, AND the elevation dialog itself renders
-		// regardless of hx-swap="none" -- it's OOB-swapped into the shared
-		// #elevation-modal placeholder (elevation_prompt.html), a swap htmx
-		// processes independently of the triggering element's own hx-swap.
+		// This route is reached from the jiggle-mode remove badge
+		// (buttons.html's .tile-badge-remove, hx-swap="none", ut-docs#2339)
+		// on BOTH the sale screen and, since ut-docs#2174, the Designer's
+		// live replica of it (GET /ui/buttons?mode=edit) -- the Designer's
+		// own flat admin grid and its "#buttons-grid-wrap" wrapper are gone.
+		// The elevation retry target below is "#buttons-add-error": on the
+		// Designer that region exists (the same one /api/buttons/add's own
+		// retry lands in); on the sale screen it doesn't, and a cashier's
+		// retry from the jiggle badge therefore finds no target -- which was
+		// ALREADY the case with the old "#buttons-grid-wrap" (that id never
+		// existed on the sale screen either; pre-existing, unchanged here,
+		// noted in ut-docs#2174's review record). Managers (the only
+		// operators who reach the Designer) never see the prompt at all.
 		_ = r.ParseForm()
 		code := r.Form.Get("code")
 		elev := checkOrElevate(d, r, "catalog_management", r.Form.Get("override_pin"))
 		if elev.Outcome == needsElevation {
-			renderElevationPrompt(w, r, "/api/buttons/remove", "#buttons-grid-wrap",
+			renderElevationPrompt(w, r, "/api/buttons/remove", "#buttons-add-error",
 				fmt.Sprintf(httpx.T(httpx.ResolveLocale(w, r), "elevation.summary.buttons_remove"), code),
 				[]elevationHiddenField{{Name: "code", Value: code}}, elev)
 			return
 		}
-		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-		renderer, err := ui.NewRenderer(
-			filepath.Join("web", "ui", "layouts", "base.html"),
-			filepath.Join("web", "ui", "pages", "index.html"),
-			filepath.Join("web", "ui", "partials", "buttons_admin.html"),
-			funcs,
-		)
-		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
-			return
-		}
-		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore, View: renderer}
+		// ut-docs#2174: no renderer -- same as /api/buttons/add above.
+		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore}
 		// ut-docs#2358: same rationale as /api/buttons/add above -- audit
 		// only on an actual persisted removal, elevated case only.
 		if ok := btnHTTP.Remove(w, r); ok && elev.Outcome == elevated {

@@ -676,6 +676,11 @@ func classifyTenderError(err error) string {
 		return "pos.toast.voucher_insufficient"
 	case errors.Is(err, data.ErrVoucherNotFound), errors.Is(err, data.ErrVoucherNotActive):
 		return "pos.toast.voucher_invalid"
+	// ut-docs#1037: a single-purpose voucher tendered as payment — the
+	// double-tax guard's refusal gets its own wording, because the fix is
+	// a different action (Redeem, in the same panel), not a different code.
+	case errors.Is(err, data.ErrVoucherNotMultiPurpose):
+		return "pos.toast.voucher_single_purpose_tender"
 	case errors.Is(err, pos.ErrVoucherOvertender):
 		return "pos.toast.voucher_overtender"
 	// ut-docs#1832: with the "Sell a voucher" UI an operator types a
@@ -935,6 +940,17 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				}
 			}
 			switch {
+			case found && v.Purpose == data.VoucherPurposeSingle:
+				// ut-docs#1037: a single-purpose voucher is never tender
+				// (its VAT was declared at issue — the double-tax guard in
+				// data.DebitVoucherForRedemption would refuse it at
+				// checkout anyway), so it is not offered as a pay-grid
+				// option; the toast points the cashier at the Split tab's
+				// Check balance → Redeem hand-over instead.
+				b := d.Engine.Basket()
+				b.ToastMessage = httpx.T(locale, "pos.toast.voucher_single_purpose_tender")
+				b.ToastLevel = "error"
+				render(&b)
 			case found && v.Status == "active" && v.BalanceMinor > 0:
 				// Stash the pending voucher on the engine (internal/pos)
 				// so the sale screen can offer its balance as a pay-grid
@@ -1330,7 +1346,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				// is the cheap, held_sales-aware pre-check; losing here
 				// means a concurrent claim landed in between -- same
 				// "occupied" answer, no 500.
-				claimed, err = claimTableWriteThrough(ctx, d, repo, tableID)
+				claimed, err = claimTableWriteThrough(ctx, d, repo, tableID, false)
 			}
 			if err != nil {
 				log.Printf("table claim: %s: %v", tableID, err)
@@ -1401,10 +1417,15 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			// (web/public/app.js initSplitTender, ut-docs#1832) on the
 			// same POST as the payments — sent as an empty list when
 			// nothing is pending.
+			// Purpose / VATRateBP (ut-docs#1037): "" or "multi_purpose"
+			// is today's 0% liability; "single_purpose" is taxed at issue
+			// at vat_rate_bp (0..10000) and never becomes a liability.
 			IssueVouchers []struct {
 				Amount      int64  `json:"amount"`
 				Code        string `json:"code,omitempty"`
 				HolderLabel string `json:"holder_label,omitempty"`
+				Purpose     string `json:"purpose,omitempty"`
+				VATRateBP   int    `json:"vat_rate_bp,omitempty"`
 			} `json:"issue_vouchers,omitempty"`
 			Discount      int64  `json:"discount,omitempty"`
 			RegisterID    string `json:"registerId,omitempty"`
@@ -1474,17 +1495,55 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		var voucherIssues []pos.VoucherIssueInput
+		// voucherIssueTotal is the MULTI-PURPOSE face value only — the 0%
+		// liability that rides on top of the taxed total after the clamp.
+		// A single-purpose issue (ut-docs#1037) is a taxable supply at
+		// issue instead, so it goes into singlePurposeIssues and is folded
+		// into the taxed base below, exactly as pos.computeSaleTotals does.
+		// Keeping it in voucherIssueTotal demanded its face value with NO
+		// tax, so under EXCLUSIVE pricing this quick-tender total came out
+		// short by the voucher's VAT and CompleteSale rejected the sale
+		// outright ("Amount received does not cover the sale total").
 		var voucherIssueTotal money.Money
+		var singlePurposeIssues []pos.ChargeTaxLine
 		for _, v := range in.IssueVouchers {
 			if v.Amount <= 0 || money.FromMinor(v.Amount) > pos.MaxVoucherIssueAmount || len(v.Code) > 64 || len(v.HolderLabel) > 200 {
 				http.Error(w, "invalid voucher issue", http.StatusBadRequest)
 				return
 			}
+			// ut-docs#1037: purpose is a closed vocabulary and the rate a
+			// bounded range — computeSaleTotals re-checks both, but fail
+			// here first, before the basket-total pass, same reasoning as
+			// the count cap above.
+			switch v.Purpose {
+			case "", data.VoucherPurposeMulti:
+				if v.VATRateBP != 0 {
+					http.Error(w, "invalid voucher issue", http.StatusBadRequest)
+					return
+				}
+			case data.VoucherPurposeSingle:
+				if v.VATRateBP < 0 || v.VATRateBP > 10000 {
+					http.Error(w, "invalid voucher issue", http.StatusBadRequest)
+					return
+				}
+			default:
+				http.Error(w, "invalid voucher issue", http.StatusBadRequest)
+				return
+			}
 			voucherIssues = append(voucherIssues, pos.VoucherIssueInput{
-				VoucherID:   v.Code,
-				HolderLabel: v.HolderLabel,
-				Amount:      money.FromMinor(v.Amount),
+				VoucherID:          v.Code,
+				HolderLabel:        v.HolderLabel,
+				Amount:             money.FromMinor(v.Amount),
+				Purpose:            v.Purpose,
+				VATRateBasisPoints: v.VATRateBP,
 			})
+			if v.Purpose == data.VoucherPurposeSingle {
+				singlePurposeIssues = append(singlePurposeIssues, pos.ChargeTaxLine{
+					RateBP: v.VATRateBP,
+					Net:    money.FromMinor(v.Amount),
+				})
+				continue
+			}
 			voucherIssueTotal = voucherIssueTotal.Add(money.FromMinor(v.Amount))
 		}
 
@@ -1729,7 +1788,22 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 			chargeTaxBasisBP = policy.ServiceChargeTaxBasisBP
 		}
-		chargeTax := pos.ServiceChargeTax(serviceCharge, pos.ChargeTaxLinesFromSale(saleLines), d.CurrentState().TaxInclusive, chargeTaxBasisBP)
+		// ut-docs#1037: a single-purpose voucher is taxed at issue, so it is
+		// part of BOTH the service charge's rate-band apportionment and the
+		// taxed base — mirroring pos.computeSaleTotals, which is what
+		// CompleteSale enforces against this demanded total. Folded in AFTER
+		// serviceCharge itself is computed, deliberately: the charge's own
+		// base stays the lines-only, post-discount subtotal the basket
+		// engine quotes on screen (internal/pos/service.go recomputeTotals),
+		// so screen and demand still agree.
+		chargeLines := pos.ChargeTaxLinesFromSale(saleLines)
+		chargeLines = append(chargeLines, singlePurposeIssues...)
+		for _, sp := range singlePurposeIssues {
+			spTax, _ := pos.ComputeTaxBasisPoints(sp.Net, sp.RateBP, d.CurrentState().TaxInclusive)
+			subtotal = subtotal.Add(sp.Net)
+			taxTotal = taxTotal.Add(spTax)
+		}
+		chargeTax := pos.ServiceChargeTax(serviceCharge, chargeLines, d.CurrentState().TaxInclusive, chargeTaxBasisBP)
 		total := subtotal.Sub(discount).Add(serviceCharge)
 		if !d.CurrentState().TaxInclusive {
 			// Exclusive pricing: the charge's tax rides on top exactly like

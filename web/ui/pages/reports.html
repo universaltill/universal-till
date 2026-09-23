@@ -83,6 +83,15 @@
   <button id="report-tab-forecast" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/forecast?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" hx-on:click="{{ $tabActivate }}">{{ T "reports.tab.forecast" }}</button>
   <button id="report-tab-payments" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/payments?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" hx-on:click="{{ $tabActivate }}">{{ T "reports.tab.payments" }}</button>
   <button id="report-tab-tips" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/tips?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" hx-on:click="{{ $tabActivate }}">{{ T "reports.tab.tips" }}</button>
+  {{/* ut-docs#988: "yüzde usulü" is a Türkiye-only obligation (İş Kanunu
+       4857 art. 51), so this tab is gated on the shop's configured country
+       (ShowYuzdeUsulu) rather than on a permission -- same shape as the
+       IsManager/CanViewShrinkage gates around it. The permission gate for
+       recording lives inside the tab, on `worker_allocation`, shared with
+       the Tips tab. */}}
+  {{ if .ShowYuzdeUsulu }}
+  <button id="report-tab-yuzde-usulu" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/yuzde-usulu?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" hx-on:click="{{ $tabActivate }}">{{ T "reports.tab.yuzde_usulu" }}</button>
+  {{ end }}
   {{ if .IsManager }}
   <button id="report-tab-eod" class="btn secondary" role="tab" aria-selected="false" aria-controls="report-tab-panel" hx-get="/ui/reports/tab/eod?{{ $qs }}" hx-target="#report-tab-panel" hx-swap="innerHTML" hx-on:click="{{ $tabActivate }}">{{ T "reports.tab.eod" }}</button>
   {{ end }}

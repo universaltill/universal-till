@@ -629,50 +629,15 @@
         }
         document.body.addEventListener('htmx:afterSwap', refresh);
       })();
-      // ut-docs#2173: sale-screen category strip scroll-fade wiring — the
-      // same window.utTabBarFade recipe catalog.html's item-form tab strip
-      // already uses (ut-docs#2024), shared via app.js so its subtle
-      // LTR/RTL scroll-origin handling isn't duplicated (see app.js's own
-      // comment). Unlike catalog.html's IIFE, which lives INSIDE the
-      // fragment htmx re-renders (so it re-runs its own listener-attach
-      // logic on every swap and only guards the WINDOW-level resize
-      // listener against re-registration), this is the page's own
-      // top-level <script>: it parses and runs exactly once per page load,
-      // never inside the /ui/buttons fragment itself. The
-      // .products-finder .tab-bar element does not exist yet at that
-      // point — /ui/buttons's hx-trigger="load" hx-swap="outerHTML" (see
-      // the .products div above) inserts it asynchronously, and the same
-      // swap can happen again later (e.g. an htmx-boosted return to this
-      // page) — so the scroll listener is (re)attached from an
-      // htmx:afterSwap handler registered once here, rather than assumed
-      // present at DOMContentLoaded. wire()'s own per-element flag stops a
-      // second attach if the bar is still the same node next time
-      // afterSwap fires for something unrelated (e.g. #basket).
-      (function () {
-        function liveTabBar() { return document.querySelector('.products-finder .tab-bar'); }
-        function wire(bar) {
-          if (!bar || bar.__utFadeWired) return;
-          bar.__utFadeWired = true;
-          bar.addEventListener('scroll', function () { window.utTabBarFade(bar); }, { passive: true });
-          window.utTabBarFade(bar);
-        }
-        document.body.addEventListener('htmx:afterSwap', function () { wire(liveTabBar()); });
-        UT.ready(function () { wire(liveTabBar()); });
-        // ut-docs#2032's own cross-breakpoint gap (catalog.html): scroll
-        // alone misses a viewport resize/rotation while nothing scrolls.
-        // The once-only flag lives on the #ut-page element, not on window:
-        // under the persistent shell (ADR-0098) the shell drops this page's
-        // window listeners when the page is swapped away, so a window flag
-        // would leave the SECOND visit with no listener at all (independent
-        // review, 2026-09-17). Same shape as catalog.html's guard.
-        var pageEl = document.getElementById('ut-page') || document.body;
-        if (!pageEl.__saleTabBarFadeResizeWired) {
-          pageEl.__saleTabBarFadeResizeWired = true;
-          var recompute = function () { window.utTabBarFade(liveTabBar()); };
-          window.addEventListener('resize', recompute);
-          window.addEventListener('orientationchange', recompute);
-        }
-      })();
+      // ut-docs#2307 SUPERSEDED the sale-screen category strip's
+      // scroll-fade wiring that used to live here (ut-docs#2173): the
+      // strip no longer scrolls at all — buttons.html's own
+      // applyCategoryOverflow() now hides whichever category tabs don't
+      // fit and reveals a trailing "..." button instead, so there is no
+      // scrollLeft/scrollWidth left to fade against. Removed rather than
+      // left dead: window.utTabBarFade (app.js) is still live for
+      // catalog.html's own item-form tab strip (ut-docs#2024), which is
+      // unaffected by this card and keeps its own wiring untouched.
       // ut-docs#2308: basket/products divider drag. Touch-and-hold (~300ms)
       // then drag (mouse: plain drag, no hold) resizes the basket column
       // live via the `--basket-col-width` custom property app.css's
@@ -887,7 +852,11 @@
          data-msg-voucher-added="{{ T "tender.status.voucher_added" }}"
          data-msg-voucher-removed="{{ T "tender.status.voucher_removed" }}"
          data-msg-voucher-auto-code="{{ T "tender.issue_voucher.auto_code" }}"
-         data-msg-no-pending-vouchers="{{ T "tender.issue_voucher.no_pending" }}">
+         data-msg-no-pending-vouchers="{{ T "tender.issue_voucher.no_pending" }}"
+         data-msg-voucher-single-purpose="{{ T "tender.issue_voucher.purpose_single" }}"
+         data-msg-voucher-vat-rate-invalid="{{ T "tender.status.voucher_vat_rate_invalid" }}"
+         data-msg-voucher-redeemed-single="{{ T "pos.toast.voucher_redeemed_single" }}"
+         data-tax-inclusive="{{ if .taxInclusive }}1{{ else }}0{{ end }}">
       <form class="split-tender-form" id="split-tender-form" autocomplete="off">
         {{ $default := .paymentMethodDefault }}
         <div class="split-grid">
@@ -928,6 +897,23 @@
               <input type="text" name="voucher_id" placeholder="{{ T "tender.voucher_id_placeholder" }}" maxlength="64" autocapitalize="characters" spellcheck="false">
             </label>
             <button class="btn secondary" type="button" id="split-tender-voucher-check">{{ T "tender.voucher_check" }}</button>
+          </div>
+          <!-- ut-docs#1037: single-purpose ("specific item") voucher
+               hand-over. app.js reveals this row — instead of pre-filling
+               the Amount box — when Check balance finds a voucher whose
+               purpose is single_purpose: such a voucher was taxed when it
+               was sold, so it is never tender (the server refuses it as a
+               payment). Redeem is a deliberate second tap after Check —
+               it POSTs /api/vouchers/{id}/redeem and is irreversible
+               (balance goes to 0 at once), unlike a pending payment row
+               that can still be removed before Complete Sale. The label
+               shows the voucher's value and holder so the cashier sees
+               what they are committing to. Same .btn.secondary sizing as
+               every other action in this panel. Same wrapper reasoning as
+               the two hidden fields around it. -->
+          <div id="split-tender-voucher-redeem" class="split-voucher-redeem" hidden>
+            <span id="split-tender-voucher-redeem-info" class="split-voucher-redeem-info"></span>
+            <button class="btn secondary" type="button" id="split-tender-voucher-redeem-btn">{{ T "tender.redeem_voucher" }}</button>
           </div>
           <!-- Same wrapper reasoning: a voucher redemption can't give change
                (sales.go rejects it), so app.js hides this field and forces
@@ -990,6 +976,28 @@
             <label>{{ T "tender.issue_voucher.holder_label" }}
               <input type="text" name="holder_label" maxlength="200">
             </label>
+            <!-- ut-docs#1037: voucher purpose. A radio pair, each inside
+                 its own <label> (ux-specified): the German wording for the
+                 single-purpose option ("Bestimmter Artikel (jetzt
+                 versteuert)") is long and must be allowed to wrap, which a
+                 fixed-width segmented button would truncate. "Any use" is
+                 checked by default — today's multi-purpose behaviour,
+                 unchanged. The VAT-rate field below starts hidden and
+                 app.js reveals it only for the single-purpose choice, the
+                 same hidden-attribute + JS-toggle mechanism
+                 #split-tender-voucher-field / #split-tender-change-field
+                 use above. The rate is typed as a percentage (19, 7) and
+                 sent as basis points on issue_vouchers[].vat_rate_bp. -->
+            <fieldset class="split-issue-purpose">
+              <legend>{{ T "tender.issue_voucher.purpose" }}</legend>
+              <label><input type="radio" name="purpose" value="multi_purpose" checked> <span>{{ T "tender.issue_voucher.purpose_multi" }}</span></label>
+              <label><input type="radio" name="purpose" value="single_purpose"> <span>{{ T "tender.issue_voucher.purpose_single" }}</span></label>
+            </fieldset>
+            <div id="split-tender-issue-vat-field" class="split-issue-vat-field" hidden>
+              <label>{{ T "tender.issue_voucher.vat_rate" }}
+                <input type="text" inputmode="decimal" name="vat_rate" placeholder="19" maxlength="6">
+              </label>
+            </div>
           </div>
           <div class="split-controls">
             <button class="btn" type="button" id="split-tender-issue-add">{{ T "tender.issue_voucher.add" }}</button>

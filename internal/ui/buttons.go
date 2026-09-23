@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -97,6 +98,17 @@ type ButtonVM struct {
 	// the pure-CSS-toggle jiggle mode (ut-docs#2339) never carried
 	// forward. Visual only: the badges stay fully clickable either way.
 	Locked bool `json:"-"`
+	// Editing (ut-docs#2174) is true when this tile renders inside the
+	// Designer's live replica of the sale screen (GET /ui/buttons?mode=edit)
+	// rather than on the sale screen itself. product-tile (buttons.html)
+	// then renders the tile INERT — no /api/pos/scan or modifier-picker
+	// wiring, so a tap on the Designer can never add to the cashier's live
+	// basket — while keeping data-code/data-pos and the .tile-cell/badge
+	// markup app.js's utTileJiggle keys off, so long-press/drag/arrow-key
+	// reorder works there unchanged; the edit badge's return URL points back
+	// at /designer instead of /. Per-request like Locked, stamped on by List
+	// via stampEditing for the same reason (no per-button source).
+	Editing bool `json:"-"`
 }
 
 func ToVM(b []Button) []ButtonVM {
@@ -291,6 +303,56 @@ func stampLocked(groups []*CategoryGroup, granted bool) {
 	}
 }
 
+// stampEditing (ut-docs#2174) is stampLocked's twin for ButtonVM.Editing —
+// see that field's doc comment. A separate pass for the same reason
+// stampLocked is one: the existing BuildCategoryGroups call sites (and their
+// tests) know nothing about the Designer and keep compiling unchanged.
+func stampEditing(groups []*CategoryGroup, editing bool) {
+	for _, g := range groups {
+		for i := range g.Buttons {
+			g.Buttons[i].Editing = editing
+		}
+		stampEditing(g.Children, editing)
+	}
+}
+
+// countButtonsPerCategory (ut-docs#2174) walks the tree BuildCategoryGroups
+// returned and reports how many quick buttons each real category (by ID;
+// the synthetic uncategorized bucket has none) directly holds — what the
+// Designer's category-management list shows next to each name, so a manager
+// can see at a glance which categories are actually on the sale screen (a
+// category with zero buttons is pruned from the strip entirely).
+func countButtonsPerCategory(groups []*CategoryGroup) map[string]int {
+	counts := map[string]int{}
+	var walk func([]*CategoryGroup)
+	walk = func(gs []*CategoryGroup) {
+		for _, g := range gs {
+			if g.ID != "" {
+				counts[g.ID] += len(g.Buttons)
+			}
+			walk(g.Children)
+		}
+	}
+	walk(groups)
+	return counts
+}
+
+// DesignerCategoryVM (ut-docs#2174) is one row of the Designer's
+// category-management list (buttons.html's "designer-categories" section,
+// edit mode only): EVERY category — active or not, with or without quick
+// buttons — unlike CategoryGroup, which only ever carries the active
+// categories that have at least one button (the sale screen's own view).
+// Color is the STORED colour ("" when none is set; the picker's "no colour"
+// radio), not the auto-resolved swatch the strip falls back to.
+type DesignerCategoryVM struct {
+	ID          string
+	Name        string
+	Color       string
+	IsActive    bool
+	ItemCount   int // active catalog items in this category (blocks deactivation)
+	ButtonCount int // quick buttons currently on the sale screen for it
+}
+
 // pruneEmptyCategoryGroup drops child branches with no buttons anywhere in
 // their subtree and reports whether g itself still has any left.
 func pruneEmptyCategoryGroup(g *CategoryGroup) bool {
@@ -345,6 +407,16 @@ func (s *ButtonStore) CategoriesTabEnabled(ctx context.Context) (bool, error) {
 // itself as a sale-screen tab.
 func (s *ButtonStore) LoadCategories(ctx context.Context) ([]data.CategoryNode, error) {
 	return s.catalogRepo.ListActiveCategories(ctx)
+}
+
+// LoadCategoriesForAdmin (ut-docs#2174) is the Designer edit mode's
+// counterpart to LoadCategories: every category, active AND inactive, with
+// its active-item count — the same one query /categories renders its own
+// admin list from (CatalogRepo.ListCategoriesForAdmin), so a category with
+// no buttons (pruned from the sale-screen strip) or a deactivated one (which
+// LoadCategories deliberately omits, ut-docs#1898) can still be managed.
+func (s *ButtonStore) LoadCategoriesForAdmin(ctx context.Context) ([]data.CategoryAdminRow, error) {
+	return s.catalogRepo.ListCategoriesForAdmin(ctx)
 }
 
 type SearchResult struct {
@@ -445,25 +517,59 @@ func (s *ButtonStore) LoadAllActive(ctx context.Context) ([]Button, error) {
 	if err != nil {
 		logging.L().Warnf("ui: load all-active items thumbnails failed, tiles fall back to no image: %v", err)
 	}
+	// The next three lookups are chunked (ut-docs#2318): SQLite's bind-
+	// variable ceiling (32766) is well within plausible active-catalog
+	// sizes when called unchunked with the WHOLE id set —
+	// ItemIDsWithModifiers alone binds 2 args per id, so it starts failing
+	// past ~16,383 active items. Each of the three functions treated its
+	// own failure as non-fatal already (a warn + per-tile fallback), which
+	// is safe for Load's small quick-button input but was silently
+	// dangerous here: a modifier prompt, a variant prompt or a promotional
+	// price could vanish with no visible sign anything went wrong. Chunking
+	// keeps every call comfortably under the ceiling regardless of catalog
+	// size, and merging per-chunk results means a failure now degrades only
+	// the chunk that failed, not the whole active catalog.
+	idChunks := data.ChunkStrings(itemIDs, data.IDChunkSize)
 	var hasMods map[string]bool
 	if s.modRepo != nil {
-		hasMods, _ = s.modRepo.ItemIDsWithModifiers(ctx, itemIDs)
+		hasMods = map[string]bool{}
+		for _, chunk := range idChunks {
+			m, err := s.modRepo.ItemIDsWithModifiers(ctx, chunk)
+			if err != nil {
+				// Previously silently discarded (`_`) — now logged like the
+				// other two lookups below, since silence is exactly the
+				// failure mode this fix exists to remove.
+				logging.L().Warnf("ui: load all-active items-with-modifiers failed for a batch of %d item(s), those tiles fall back to plain add-to-basket: %v", len(chunk), err)
+				continue
+			}
+			data.MergeMapInto(hasMods, m)
+		}
 	}
 	var hasVariants map[string]bool
 	var currentPrices map[string]int64
 	if s.catalogRepo != nil {
-		hasVariants, err = s.catalogRepo.ItemIDsWithVariants(ctx, itemIDs)
-		if err != nil {
-			// Same money-correctness-affecting non-fatal-but-loud treatment
-			// as Load's own hasVariants error handling (ut-docs#2209 review
-			// finding 5): on this error every tile falls back to
-			// straight-to-basket at the parent's base price.
-			logging.L().Warnf("ui: load all-active items-with-variants failed, every tile falls back to parent-price add (ut-docs#2209): %v", err)
+		hasVariants = map[string]bool{}
+		for _, chunk := range idChunks {
+			m, err := s.catalogRepo.ItemIDsWithVariants(ctx, chunk)
+			if err != nil {
+				// Same money-correctness-affecting non-fatal-but-loud treatment
+				// as Load's own hasVariants error handling (ut-docs#2209 review
+				// finding 5): on this error every tile in the failed batch falls
+				// back to straight-to-basket at the parent's base price.
+				logging.L().Warnf("ui: load all-active items-with-variants failed for a batch of %d item(s), those tiles fall back to parent-price add (ut-docs#2209): %v", len(chunk), err)
+				continue
+			}
+			data.MergeMapInto(hasVariants, m)
 		}
-		currentPrices, err = s.catalogRepo.ItemCurrentPrices(ctx, itemIDs)
-		if err != nil {
-			// Same as Load's own currentPrices error handling (ut-docs#2258).
-			logging.L().Warnf("ui: load all-active current prices failed, every tile falls back to raw base_price (ut-docs#2258): %v", err)
+		currentPrices = map[string]int64{}
+		for _, chunk := range idChunks {
+			p, err := s.catalogRepo.ItemCurrentPrices(ctx, chunk)
+			if err != nil {
+				// Same as Load's own currentPrices error handling (ut-docs#2258).
+				logging.L().Warnf("ui: load all-active current prices failed for a batch of %d item(s), those tiles fall back to raw base_price (ut-docs#2258): %v", len(chunk), err)
+				continue
+			}
+			data.MergeMapInto(currentPrices, p)
 		}
 	}
 	out := make([]Button, 0, len(items))
@@ -522,7 +628,14 @@ func (s *ButtonStore) SearchSellable(ctx context.Context, q string, limit int) (
 	}
 	var hasMods map[string]bool
 	if s.modRepo != nil {
-		hasMods, _ = s.modRepo.ItemIDsWithModifiers(ctx, itemIDs)
+		hasMods, err = s.modRepo.ItemIDsWithModifiers(ctx, itemIDs)
+		if err != nil {
+			// Previously silently discarded (`_`) — same non-fatal-but-loud
+			// treatment as the hasVariants/currentPrices lookups just below
+			// (ut-docs#2454; mirrors ut-docs#2318/#2451's identical fix
+			// elsewhere in this file).
+			logging.L().Warnf("ui: search-sellable items-with-modifiers failed, every result falls back to plain add-to-basket: %v", err)
+		}
 	}
 	var hasVariants map[string]bool
 	var currentPrices map[string]int64
@@ -577,7 +690,15 @@ func (s *ButtonStore) Load() ([]Button, error) {
 	}
 	var hasMods map[string]bool
 	if s.modRepo != nil {
-		hasMods, _ = s.modRepo.ItemIDsWithModifiers(ctx, itemIDs)
+		var err error
+		hasMods, err = s.modRepo.ItemIDsWithModifiers(ctx, itemIDs)
+		if err != nil {
+			// Previously silently discarded (`_`) — same non-fatal-but-loud
+			// treatment as the hasVariants/currentPrices lookups just below
+			// (ut-docs#2454; mirrors ut-docs#2318/#2451's identical fix
+			// elsewhere in this file).
+			logging.L().Warnf("ui: load items-with-modifiers failed, every tile falls back to plain add-to-basket: %v", err)
+		}
 	}
 	var hasVariants map[string]bool
 	var currentPrices map[string]int64
@@ -770,6 +891,44 @@ type ButtonsHTTP struct {
 	// default and matches none of those tests' assertions touching the
 	// jiggle-mode lock affordance either way.
 	Granted bool
+	// EditMode (ut-docs#2174): render the Designer's live replica of the
+	// sale screen instead of the sale screen itself — same "buttons"
+	// template, with the category-management section added and the
+	// sale-only affordances (search, All tab, plugin action strip, live
+	// scan tiles) removed. Set by registerButtonsAPI's /ui/buttons handler
+	// from ?mode=edit, which it only honours for a catalog_management
+	// session (a cashier gets a 403, never this UI). Zero value = the sale
+	// screen, so every existing ButtonsHTTP literal renders exactly as
+	// before.
+	EditMode bool
+}
+
+// AllTabPageSize bounds how many of the sell screen's All-tab items
+// (ButtonStore.LoadAllActive) any single response ships (ut-docs#2319):
+// GET /ui/buttons used to inline EVERY active item into the All grid every
+// time it rendered — including on the "modifiers-changed"/"buttons-changed"
+// whole-document refetch buttons.html's root wires up on every modifier/
+// button-config change — so a 2000-item catalog shipped ~1MB of HTML on
+// each such edit. 200 matches ut-docs#2294's own "usable with a 200+ item
+// catalog" acceptance bar: a catalog at or under that size still renders in
+// one response exactly as before (no load-more button appears at all), so
+// this only starts bounding cost once a catalog crosses the size #2294
+// already committed to supporting without complaint.
+const AllTabPageSize = 200
+
+// pageButtons slices all starting at offset, returning at most
+// AllTabPageSize items and whether more remain beyond this page. offset
+// past the end of all returns an empty page with hasMore false, never a
+// panic — a stale/hand-edited offset query param is untrusted input.
+func pageButtons(all []Button, offset int) (page []Button, hasMore bool) {
+	if offset < 0 || offset >= len(all) {
+		return nil, false
+	}
+	end := offset + AllTabPageSize
+	if end >= len(all) {
+		return all[offset:], false
+	}
+	return all[offset:end], true
 }
 
 func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
@@ -788,12 +947,18 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 	// -- never on a basket mutation), not re-queried per basket change.
 	// Skipped entirely when the setting is off, so a till that never wants
 	// the tab pays nothing for it.
-	var allBtns []Button
+	var allPage []Button
+	var allHasMore bool
 	if !h.HideAllTab {
-		allBtns, err = h.Store.LoadAllActive(r.Context())
+		allBtns, err := h.Store.LoadAllActive(r.Context())
 		if err != nil {
 			logging.L().Errorf("buttons list: load all-active items: %v", err)
 		}
+		// ut-docs#2319: only the first page ships on the initial render (and
+		// on every modifiers-changed/buttons-changed whole-document
+		// refetch) — see AllTabPageSize's own doc comment. The rest loads
+		// on demand via the "load more" button AllMore serves below.
+		allPage, allHasMore = pageButtons(allBtns, 0)
 	}
 	categoriesTabEnabled, err := h.Store.CategoriesTabEnabled(r.Context())
 	if err != nil {
@@ -804,11 +969,77 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 	}
 	groups := BuildCategoryGroups(btns, cats)
 	stampLocked(groups, h.Granted)
+	stampEditing(groups, h.EditMode)
+	// ut-docs#2174: the Designer's category-management list. Only loaded
+	// in edit mode, so the sale screen pays nothing for it. The optional
+	// Categories tab (ut-docs#2283) is forced off here: its tiles open
+	// index.html's #category-items-modal, which the Designer page doesn't
+	// have, and it isn't a quick-button surface to arrange anyway.
+	var adminCats []DesignerCategoryVM
+	var palette []catalogtypes.ItemColor
+	if h.EditMode {
+		rows, err := h.Store.LoadCategoriesForAdmin(r.Context())
+		if err != nil {
+			// Same non-fatal-but-loud shape as the categories load above:
+			// the replica still renders, just without the management list.
+			logging.L().Errorf("buttons list: load categories for admin: %v", err)
+		}
+		counts := countButtonsPerCategory(groups)
+		adminCats = make([]DesignerCategoryVM, 0, len(rows))
+		for _, c := range rows {
+			adminCats = append(adminCats, DesignerCategoryVM{
+				ID:          c.ID,
+				Name:        c.Name,
+				Color:       c.Color,
+				IsActive:    c.IsActive,
+				ItemCount:   c.ItemCount,
+				ButtonCount: counts[c.ID],
+			})
+		}
+		palette = catalogtypes.ItemColors()
+		categoriesTabEnabled = false
+	}
 	_ = h.View.Render(w, "buttons", map[string]any{
 		"Groups":               groups,
-		"AllButtons":           ToVM(allBtns),
+		"AllButtons":           ToVM(allPage),
+		"AllHasMore":           allHasMore,
+		"AllNextOffset":        len(allPage),
 		"ShowAllTab":           !h.HideAllTab,
 		"CategoriesTabEnabled": categoriesTabEnabled,
+		"EditMode":             h.EditMode,
+		"AdminCategories":      adminCats,
+		"ItemColors":           palette,
+	})
+}
+
+// AllMore renders the next page of the sell screen's All tab (ut-docs#2319)
+// — the same offset-paginated "load more" shape
+// internal/pages/buttons_api.go's /api/buttons/search already uses for the
+// Designer's own item search, applied here to bound GET /ui/buttons's
+// response size instead. Reloads the full active set via LoadAllActive on
+// every call rather than caching a page cursor server-side: this is a
+// deliberate simplification (the card's own "lean on search/page it"
+// options are a fix for response SIZE, not for LoadAllActive's own query
+// cost, which #2318's chunking already bounds against SQLite's bind
+// ceiling regardless of catalog size) — a follow-up card can revisit
+// per-request caching if the extra query load ever proves to matter in
+// practice.
+func (h *ButtonsHTTP) AllMore(w http.ResponseWriter, r *http.Request) {
+	offset := 0
+	if off := r.URL.Query().Get("offset"); off != "" {
+		if v, err := strconv.Atoi(off); err == nil && v >= 0 {
+			offset = v
+		}
+	}
+	all, err := h.Store.LoadAllActive(r.Context())
+	if err != nil {
+		logging.L().Errorf("buttons all-more: load all-active items: %v", err)
+	}
+	page, hasMore := pageButtons(all, offset)
+	_ = h.View.Render(w, "all-more-fragment", map[string]any{
+		"Buttons":    ToVM(page),
+		"HasMore":    hasMore,
+		"NextOffset": offset + len(page),
 	})
 }
 
@@ -885,11 +1116,16 @@ func (h *ButtonsHTTP) Add(w http.ResponseWriter, r *http.Request) bool {
 	// button set changed => buttons-changed", with no per-route exceptions
 	// for a future caller to trip over.
 	w.Header().Set("HX-Trigger", "buttons-changed")
-	// Re-render admin grid so htmx swaps only the grid in designer
-	btns, _ := h.Store.Load()
-	_ = h.View.Render(w, "buttons_admin_grid", map[string]any{
-		"Buttons": ToVM(btns),
-	})
+	// ut-docs#2174: nothing to render. This used to re-render the
+	// Designer's own flat admin grid (buttons_admin.html's
+	// "buttons_admin_grid") for htmx to swap in; the Designer is now a live
+	// replica of the sale screen (GET /ui/buttons?mode=edit) that refreshes
+	// itself off the HX-Trigger above, exactly as the sale screen does, so
+	// the retired grid is gone and an empty 200 is the whole success
+	// response. (The Designer's search-result button targets
+	// #buttons-add-error with innerHTML, so this empty body also clears any
+	// earlier refusal shown there.)
+	w.WriteHeader(http.StatusOK)
 	return true
 }
 
@@ -925,10 +1161,9 @@ func (h *ButtonsHTTP) Remove(w http.ResponseWriter, r *http.Request) bool {
 	// posts to this same route, and this header is what makes the grid
 	// drop the tile without a reload.
 	w.Header().Set("HX-Trigger", "buttons-changed")
-	btns, _ := h.Store.Load()
-	_ = h.View.Render(w, "buttons_admin_grid", map[string]any{
-		"Buttons": ToVM(btns),
-	})
+	// ut-docs#2174: empty 200, same reasoning as Add above — the retired
+	// flat admin grid this used to re-render no longer exists anywhere.
+	w.WriteHeader(http.StatusOK)
 	return true
 }
 

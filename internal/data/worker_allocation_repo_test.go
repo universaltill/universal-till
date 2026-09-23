@@ -173,9 +173,14 @@ func TestWorkerAllocationsSummary_Tip(t *testing.T) {
 
 // TestWorkerAllocationsSummary_YuzdeUsuluPool proves the "yuzde_usulu_pool"
 // path — the same query path as "tip" above, serving a source_type with no
-// underlying payments row, per ADR-0063 Decision 3: received matches
-// allocated by construction (the ledger is its own evidence until #965's
-// own collection-side mechanism lands). Per independent review, also
+// underlying payments row. Since ut-docs#988 the received side reads the
+// independent yuzde_usulu_pool_collections record (#965's collection-side
+// mechanism, which ADR-0063 Decision 3 had deferred) rather than re-summing
+// the allocation rows themselves, so this test seeds a real collection to
+// compare against instead of relying on the old tautology; the case where
+// the two sides legitimately differ is
+// TestWorkerAllocationsSummary_YuzdeUsuluPoolReceivedCanDifferFromAllocated
+// (yuzde_usulu_pool_repo_test.go). Per independent review, this also
 // proves the source_type and date-range filters actually separate this
 // from a same-day 'tip' row and an out-of-range pool row, rather than the
 // two source_types happening to pass in isolation.
@@ -205,6 +210,15 @@ func TestWorkerAllocationsSummary_YuzdeUsuluPool(t *testing.T) {
 	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa4", "yuzde_usulu_pool", "pool-batch-0", "user1", 555555, "2026-01-01T20:00:00Z", "old pool"); err != nil {
 		t.Fatal(err)
 	}
+	// The collection this pool payout came out of (ut-docs#988) — the
+	// received side's own independent record, fully distributed here, plus
+	// an out-of-range collection that must not leak into the total either.
+	if err := dbx.repo.InsertYuzdeUsuluPoolCollection(ctx, tx, "pc1", "mgr1", 1000, "2026-08-25T09:30:00Z", "kitchen 30% / floor 70%"); err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.InsertYuzdeUsuluPoolCollection(ctx, tx, "pc0", "mgr1", 555555, "2026-01-01T09:30:00Z", "old pool"); err != nil {
+		t.Fatal(err)
+	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +233,7 @@ func TestWorkerAllocationsSummary_YuzdeUsuluPool(t *testing.T) {
 		t.Fatalf("WorkerAllocationsSummary: %v", err)
 	}
 	if summary.ReceivedMinor != 1000 || summary.AllocatedMinor != 1000 {
-		t.Errorf("expected received=allocated=1000 (tip/out-of-range excluded), got received=%d allocated=%d", summary.ReceivedMinor, summary.AllocatedMinor)
+		t.Errorf("expected received=1000 (the collection record) and allocated=1000 (tip/out-of-range excluded), got received=%d allocated=%d", summary.ReceivedMinor, summary.AllocatedMinor)
 	}
 
 	// Scoped to one cashier: allocated narrows, received (whole-pool) does not.
@@ -231,7 +245,7 @@ func TestWorkerAllocationsSummary_YuzdeUsuluPool(t *testing.T) {
 		t.Errorf("expected AllocatedMinor 300 for user1, got %d", scoped.AllocatedMinor)
 	}
 	if scoped.ReceivedMinor != 1000 {
-		t.Errorf("expected ReceivedMinor 1000 (whole pool), got %d", scoped.ReceivedMinor)
+		t.Errorf("expected ReceivedMinor 1000 (the whole pool as collected — a collection has no per-worker scope), got %d", scoped.ReceivedMinor)
 	}
 }
 

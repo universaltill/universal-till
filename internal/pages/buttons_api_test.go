@@ -237,9 +237,14 @@ func TestButtonsAddValidatesPersistsAndNormalizesImage(t *testing.T) {
 	if image != "/public/images/apple.png" {
 		t.Fatalf("image_path = %q, want /public/images/apple.png", image)
 	}
-	// The response is the re-rendered admin grid containing the new tile.
-	if !strings.Contains(rec.Body.String(), "Apple") {
-		t.Fatalf("admin grid response missing added button: %s", rec.Body.String())
+	// ut-docs#2174: the response used to be the re-rendered flat admin grid;
+	// the Designer is a live replica of the sale screen now and refreshes
+	// off the HX-Trigger header instead, so the success body is empty.
+	if got := rec.Header().Get("HX-Trigger"); got != "buttons-changed" {
+		t.Fatalf("add HX-Trigger = %q, want buttons-changed", got)
+	}
+	if strings.TrimSpace(rec.Body.String()) != "" {
+		t.Fatalf("add success body should be empty (no admin grid to re-render), got: %s", rec.Body.String())
 	}
 
 	// An absolute URL is stored untouched.

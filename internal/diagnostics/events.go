@@ -85,15 +85,29 @@ const (
 // came from the per-generation cache, how long it took, and the OUTCOME
 // CATEGORY — never the payload or the response bytes.
 //
-// CorrelationID is unique per emitted event today — a fresh id generated
-// for this one ask attempt, not (yet) a stable id threaded across
-// retries of what a viewer would consider "the same logical ask." A
-// caller that retries an ask (e.g. pos.recomputeTotals' optimistic retry
-// on lock contention) currently produces two unrelated PluginAsk events
-// with two unrelated correlation ids, which a live-tail viewer cannot
-// join back together (review finding, ut-docs#2169) — tracked as a
-// follow-up, since fixing it means threading a stable id down from the
-// retry loop in internal/pos, not a change local to this package.
+// CorrelationID is unique per emitted event, by decision and not by
+// omission: a fresh uuid per ask ATTEMPT (internal/pages/tax_hook.go's
+// emitAsk), never a stable id threaded across retries of what a viewer
+// would consider "the same logical ask." A caller that retries an ask
+// (pos.recomputeTotals' optimistic retry on lock contention) therefore
+// produces two unrelated PluginAsk events with two unrelated correlation
+// ids, which a live-tail viewer cannot join back together — raised as a
+// review finding on ut-docs#2169 and CLOSED as won't-do on ut-docs#2234;
+// ADR-0092's Amendment (2026-09-20) records the decision.
+//
+// Why not: threading a stable id down from that retry loop means changing
+// pos.TaxRateAsker (AskTaxRateBP(l BasketLine, orderType string)) — an
+// interface called from computeTotals' per-line loop and implemented by
+// every test double — inside internal/pos/service.go, which documents
+// itself as sanctioned-exception-only territory around its own
+// non-reentrant locking (see that file's "One sanctioned exception"
+// comment, ut-docs#1317: recomputeTotals RELEASES and re-acquires s.mu
+// around exactly these plugin asks). That is a money-path locking
+// contract, and the whole benefit on offer is a nicer join in a
+// diagnostics viewer — never user-facing, never money-correctness. Not
+// worth the risk. If a future change reopens that interface for its own
+// reasons, carrying a correlation id through it is cheap to add then;
+// until then this is settled, not pending.
 type PluginAsk struct {
 	Event         string `json:"event" diag:"id"`
 	PluginID      string `json:"plugin_id" diag:"id"`

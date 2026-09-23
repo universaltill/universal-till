@@ -66,8 +66,14 @@ func TestButtonsHTTPAdd_NormalizesImageAndRendersGrid(t *testing.T) {
 		if rec.Code != 200 {
 			t.Fatalf("Add(%q) = %d (%s)", tc.in, rec.Code, rec.Body.String())
 		}
-		if !strings.Contains(rec.Body.String(), "buttons-grid-admin") {
-			t.Fatalf("Add did not re-render admin grid: %s", rec.Body.String())
+		// ut-docs#2174: no admin grid to re-render any more — the Designer's
+		// live replica refreshes off HX-Trigger, so the success body is
+		// empty and the header is the whole contract.
+		if got := rec.Header().Get("HX-Trigger"); got != "buttons-changed" {
+			t.Fatalf("Add HX-Trigger = %q, want buttons-changed", got)
+		}
+		if strings.TrimSpace(rec.Body.String()) != "" {
+			t.Fatalf("Add success body should be empty (the retired admin grid is gone), got: %s", rec.Body.String())
 		}
 	}
 	btns, err := store.Load()

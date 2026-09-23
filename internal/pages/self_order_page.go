@@ -23,6 +23,19 @@ import (
 // as "holding" the table for a DIFFERENT phone's scan.
 const selfOrderTableBusyMaxIdle = 10 * time.Minute
 
+// selfOrderTableBusyMaxIdleEmpty is BindTable's busy-recency window for a
+// table-bound session that has never added an item (ut-docs#2444, review
+// finding S3 of ut-docs#2434's own record). The race BindTable's atomic
+// bind exists to close only needs a window of milliseconds-to-seconds, so
+// this is deliberately far shorter than selfOrderTableBusyMaxIdle: without
+// it, a guest who scans from an in-app-browser (Android Google Lens /
+// Instagram / WhatsApp WebView — a separate cookie jar) then taps "open in
+// Chrome" (common) re-scans their OWN still-empty session from a browser
+// that carries no cookie for it, and used to self-lock for the full 10
+// minutes with no staff-facing way to release it early. A session holding
+// at least one line still uses selfOrderTableBusyMaxIdle, unaffected.
+const selfOrderTableBusyMaxIdleEmpty = 90 * time.Second
+
 // selfOrderSessionCookie carries a table-bound guest's session token
 // (ADR-0103 Decision 2, ut-docs#2261) — the key into
 // common.Deps.SelfOrderSessions. Minted only by GET /self-order?table=<id>,
@@ -185,73 +198,104 @@ func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 //     (stale/reprinted/tampered QR) — nothing minted, no cookie; the caller
 //     falls through to the plain walk-up path, exactly today's "leaves the
 //     basket with no table, never errors the page out" behaviour.
-//   - busy=true: the table already has a live, NON-empty, RECENTLY-ACTIVE
-//     session owned by a different browser (two phones at one table).
+//   - busy=true: the table already has a live, RECENTLY-ACTIVE session
+//     owned by a different browser (two phones at one table) — EMPTY or
+//     not (ut-docs#2434, ADR-0103 review finding N3, corrected in the ADR
+//     itself: an empty session still holds its table, closing the race two
+//     staggered scans before either added an item used to slip through).
 //     Nothing minted; the caller renders the existing "till busy" screen
 //     (ut-docs#815's own template, copy revised by ut-docs#2261 review
-//     finding B2 for the narrowed trigger). An EMPTY session has nothing to
-//     lose, so it never blocks, same threshold the old guard used. A
-//     session idle past selfOrderTableBusyMaxIdle also never blocks — see
-//     TableOwnerActive's own doc comment (ut-docs#2261 review finding B1):
-//     an abandoned cart must not hold a table hostage for the full 2h
-//     memory-bound sweep window.
+//     finding B2 for the narrowed trigger). A session idle past its own
+//     recency window never blocks — see BindTable's own doc comment
+//     (ut-docs#2261 review finding B1, ut-docs#2444 review finding S3): an
+//     abandoned cart must not hold a table hostage, and an EMPTY one uses a
+//     far shorter window (selfOrderTableBusyMaxIdleEmpty) than a non-empty
+//     one (selfOrderTableBusyMaxIdle) so a guest can't self-lock their own
+//     table for minutes just by re-scanning from a second cookie jar.
 //   - bound=true: this request now has a live session bound to the table —
 //     resumed (this browser already held one for that table: the idle-reset
 //     bounce, or a deliberate re-open — nothing reset, nothing re-minted,
 //     the guest keeps their order) or freshly minted, with the cookie set.
 //   - busy=true is also what a refused mint reports (ut-docs#2432): either
 //     limiter (too many new-session mints from this source, recently) or
-//     d.SelfOrderSessions.Create() itself (the manager is at
-//     pos.MaxLiveSelfOrderSessions live sessions) refusing the request.
-//     Neither is distinguished from a genuinely busy table at the page
-//     layer — all three reuse the existing "till busy" screen and cost no
-//     new UI state or i18n key. Only a request that would actually MINT a
-//     session is ever subject to either check; resuming your own session
-//     (the branch just above) and the table-owner busy check are both
-//     unaffected.
+//     BindTable's own session-count cap (the manager is at
+//     pos.MaxLiveSelfOrderSessions *real, item-holding* sessions — see its
+//     own doc comment for the evict-oldest-empty step that keeps an
+//     empty-session flood from ever reaching this refusal for a real
+//     guest) refusing the request. Neither is distinguished from a
+//     genuinely busy table at the page layer — all three reuse the
+//     existing "till busy" screen and cost no new UI state or i18n key
+//     (deferred follow-up: ut-docs#2490). Only a request that would
+//     actually MINT a session is ever subject to either check — mover ==
+//     nil, i.e. no existing cookie at all; resuming your own session or
+//     moving it to a different table (the branch just above) and the
+//     table-owner busy check are both unaffected.
+//
+// The resume case is NOT special-cased ahead of the busy check (fixed
+// ut-docs#2434, independent review of this same card, finding S4): a
+// browser whose own cookie already names this table still goes through
+// BindTable below, because a resume can itself be the stale side of a
+// race — this session went idle past selfOrderTableBusyMaxIdle, a
+// DIFFERENT phone's scan (correctly) no longer saw it as busy and bound
+// its own session to the table, and only then did this browser wake up
+// and re-request its own table. Without this, that sequence produced two
+// live, recently-active sessions on one table (two kiosk_counter_orders
+// rows at checkout) — the exact bug this card exists to close, just
+// reached via the resume path instead of two concurrent mints. BindTable
+// excludes the caller's own token from its busy scan, so an UNCONTESTED
+// resume (the normal case — nobody else has touched this table) is still
+// never busy, same guarantee as before.
 //
 // Table binding rides on the SAME TableID/TableLabel fields ADR-0054/
 // ut-docs#820 gave every pos.Service (SetTable/TableID/TableLabel) — not a
-// new mechanism. SetTable is a no-op unless the (fresh, empty) basket's
-// order-type default is dine-in, which it always is here, so it always
-// takes effect.
+// new mechanism. SetTable is a no-op when the basket has no dine-in line and
+// the order type is Takeaway (ut-docs#1355) — true for the mint path below
+// (a fresh, empty basket whose default is always dine-in here), and ALSO
+// true for the move path's already-live basket, but for a different, less
+// local reason: self_order_shop.go's completeCounterOrderCheckout /
+// order-type toggle clamps a table-bound session's order type to "" once it
+// holds a table, specifically so it can never flip to Takeaway
+// (TestSelfOrderShop_TableCheckout_TakeawayToggleCannotUnbindTable pins
+// this). If that clamp is ever relaxed, SetTable below would silently no-op
+// and strand the moved guest's basket with no table.
 //
 // A browser whose cookie names a live session for a DIFFERENT table (a
-// phone that moved tables and scanned the new one) gets a fresh session for
-// the new table, and its old one is removed: the cookie is about to be
-// overwritten, so that old session could never be reached again — leaving
-// it would only keep the old table "busy" for everyone else until the idle
-// sweep.
+// phone that moved tables and scanned the new one) keeps that SAME session
+// — just rebound to the new table via SetTable, exactly how the cashier's
+// own table picker moves a sale between tables (ADR-0054, ut-docs#820) —
+// rather than being discarded for a fresh, empty one (ut-docs#2433, ADR-0103
+// review finding N2: silently losing whatever the guest had already added
+// was never an ADR-mandated behavior, just an unhandled gap). The old table
+// is freed automatically: TableID() now reports the new table, so
+// TableOwnerActive no longer finds this session there.
+//
+// limiter, if non-nil, caps new-session MINTING per source IP (ut-docs#2432):
+// only consulted when mover is nil (no existing cookie at all — the
+// cookieless-scan-loop attack shape) — never for a resume or a
+// table-to-table move, neither of which grows the manager's live-session
+// count. BindTable's own session-count cap is the same mint-only shape, one
+// layer down. Both refusals reuse the existing "till busy" screen at the
+// page layer — see this function's own busy=true bullet above.
 func bindSelfOrderTableSession(w http.ResponseWriter, r *http.Request, d *common.Deps, tableID string, now time.Time, limiter *pairRateLimiter) (bound, busy bool) {
 	t, found, err := data.NewPOSRepo(d.Db).GetTable(r.Context(), tableID)
 	if err != nil || !found || !t.Enabled {
 		return false, false
 	}
 	current, currentToken := selfOrderSession(d, r)
-	if currentToken != "" && current.TableID() == t.ID {
-		return true, false // resume
-	}
-	if ownerToken, owner, ok := d.SelfOrderSessions.TableOwnerActive(t.ID, selfOrderTableBusyMaxIdle, now); ok && ownerToken != currentToken && len(owner.Lines()) > 0 {
-		return false, true
-	}
-	// ut-docs#2432: both checks below only ever gate an actual mint attempt
-	// (never the resume/busy branches above). The old session is removed
-	// only AFTER Create succeeds (independent review of this same card's
-	// first fix: removing it first, then finding out Create refused, would
-	// have cost a table-switching guest their old session for nothing) — a
-	// browser switching tables must never lose its old session without
-	// successfully getting a new one.
-	if limiter != nil && !limiter.allow(sourceOf(r)) {
-		return false, true
-	}
-	token, svc, ok := d.SelfOrderSessions.Create()
-	if !ok {
-		return false, true
-	}
+	var mover *pos.Service
 	if currentToken != "" {
-		d.SelfOrderSessions.Remove(currentToken)
+		mover = current
 	}
-	svc.SetTable(t.ID, t.Label)
+	if mover == nil && limiter != nil && !limiter.allow(sourceOf(r)) {
+		return false, true
+	}
+	token, svc, busy := d.SelfOrderSessions.BindTable(t.ID, t.Label, currentToken, mover, selfOrderTableBusyMaxIdle, selfOrderTableBusyMaxIdleEmpty, now)
+	if busy {
+		return false, true
+	}
+	if svc == mover {
+		return true, false // resumed (own table unchanged) or moved (basket kept), cookie unchanged
+	}
 	setSelfOrderSessionCookie(w, token, 0)
 	return true, false
 }

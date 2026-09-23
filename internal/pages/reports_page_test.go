@@ -1418,8 +1418,9 @@ func TestReportsPage_RecordWorkerAllocation_ValidPayoutPersistsAndRefreshesTab(t
 
 // Each of these is rejected with 400 and writes nothing — a future date (a
 // payout record documents money already paid, never a promise), an unknown
-// cashier_id, a source_type outside the UK-scoped tip/service_charge subset,
-// and a non-positive amount.
+// cashier_id, a source_type outside the accepted set, a pool distribution
+// with a missing or unknown pool_id (ut-docs#988), and a non-positive
+// amount.
 func TestReportsPage_RecordWorkerAllocation_InvalidInputsRejectedAndWriteNothing(t *testing.T) {
 	t.Setenv("UT_AUTH", "on")
 	mux, dp := newReportsPageTestDeps(t)
@@ -1439,7 +1440,13 @@ func TestReportsPage_RecordWorkerAllocation_InvalidInputsRejectedAndWriteNothing
 	}{
 		{"future date", url.Values{"date": {tomorrow}, "cashier_id": {"worker1"}, "source_type": {"tip"}, "amount": {"100"}}},
 		{"unknown cashier", url.Values{"date": {today}, "cashier_id": {"does-not-exist"}, "source_type": {"tip"}, "amount": {"100"}}},
-		{"bad source_type", url.Values{"date": {today}, "cashier_id": {"worker1"}, "source_type": {"yuzde_usulu_pool"}, "amount": {"100"}}},
+		{"bad source_type", url.Values{"date": {today}, "cashier_id": {"worker1"}, "source_type": {"gift"}, "amount": {"100"}}},
+		// ut-docs#988: "yuzde_usulu_pool" is now an ACCEPTED source_type
+		// (this case used to prove it was rejected outright), but only
+		// with a pool_id naming a real recorded collection — a
+		// distribution must never point at a pool that doesn't exist.
+		{"pool distribution with no pool_id", url.Values{"date": {today}, "cashier_id": {"worker1"}, "source_type": {"yuzde_usulu_pool"}, "amount": {"100"}}},
+		{"pool distribution with unknown pool_id", url.Values{"date": {today}, "cashier_id": {"worker1"}, "source_type": {"yuzde_usulu_pool"}, "amount": {"100"}, "pool_id": {"does-not-exist"}}},
 		{"zero amount", url.Values{"date": {today}, "cashier_id": {"worker1"}, "source_type": {"tip"}, "amount": {"0"}}},
 		{"negative amount", url.Values{"date": {today}, "cashier_id": {"worker1"}, "source_type": {"tip"}, "amount": {"-50"}}},
 	}
@@ -1719,5 +1726,325 @@ func TestReportsPage_WorkerAllocationExport_EscapesFormulaInjection(t *testing.T
 	}
 	if !strings.Contains(body, `'+SUM(A1:A9)`) {
 		t.Fatalf("expected the note defused with a leading apostrophe, got: %s", body)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Türkiye "yüzde usulü" pool tab (ut-docs#988, ADR-0063 step 2/2)
+// ---------------------------------------------------------------------------
+
+func yuzdeUsuluCollectionCount(t *testing.T, dp *common.Deps) int {
+	t.Helper()
+	var n int
+	if err := dp.Db.QueryRowContext(t.Context(), `SELECT count(*) FROM yuzde_usulu_pool_collections`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// setReportsCountry points the shop at one country and reloads the runtime
+// state the page reads it from — the same two-step
+// settings.Set + common.LoadState other page tests use
+// (admin_page_test.go's own TR case).
+func setReportsCountry(t *testing.T, dp *common.Deps, code string) {
+	t.Helper()
+	if err := settings.NewStore(dp.Db).Set(t.Context(), "store.country", code); err != nil {
+		t.Fatalf("set store.country: %v", err)
+	}
+	dp.State = common.LoadState(t.Context(), settings.NewStore(dp.Db), dp.Cfg)
+}
+
+// The whole point of this card: a pool COLLECTION and the DISTRIBUTIONS
+// made out of it are two independent records, so the tab can show a pool
+// that has been collected but not yet fully paid out. Records one of each
+// through the real endpoints and asserts both persist, that the
+// distribution carries the pool's id as its source_id (ADR-0063 Decision
+// 3's pool-batch link, now a real row), and that the refreshed fragment
+// shows Collected ≠ Distributed.
+func TestReportsPage_YuzdeUsulu_RecordCollectionThenDistributionPersistBoth(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+	setReportsCountry(t, dp, "TR")
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,role,is_active) VALUES('worker1','worker1','Worker One','cashier',1)`); err != nil {
+		t.Fatal(err)
+	}
+	manager := &auth.User{ID: "mgr1", Role: "manager"}
+	today := time.Now().Format("2006-01-02")
+
+	rec := postForm(mux, "/api/reports/worker-allocations/pool-collections", url.Values{
+		"date":       {today},
+		"amount":     {"1000"},
+		"basis_note": {"kitchen 30% / floor 70%"},
+	}, manager)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("collection POST: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if n := yuzdeUsuluCollectionCount(t, dp); n != 1 {
+		t.Fatalf("expected 1 yuzde_usulu_pool_collections row, got %d", n)
+	}
+
+	var poolID, basisNote, recordedBy string
+	var collectedMinor int64
+	if err := dp.Db.QueryRowContext(ctx, `SELECT id, amount_minor, basis_note, recorded_by FROM yuzde_usulu_pool_collections`).
+		Scan(&poolID, &collectedMinor, &basisNote, &recordedBy); err != nil {
+		t.Fatal(err)
+	}
+	if collectedMinor != 1000 || basisNote != "kitchen 30% / floor 70%" || recordedBy != "mgr1" {
+		t.Fatalf("unexpected collection row: amount=%d basis=%q recorded_by=%q", collectedMinor, basisNote, recordedBy)
+	}
+	// A collection with no bill line is still a statutory record — it must
+	// be audited, same as a payout is.
+	var auditCount int
+	if err := dp.Db.QueryRowContext(ctx, `SELECT count(*) FROM audit_log WHERE action = 'yuzde_usulu_pool_collection_recorded'`).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 1 {
+		t.Fatalf("expected 1 yuzde_usulu_pool_collection_recorded audit entry, got %d", auditCount)
+	}
+
+	// Distribute only part of the pool, through the EXISTING endpoint.
+	rec = postForm(mux, "/api/reports/worker-allocations", url.Values{
+		"date":        {today},
+		"cashier_id":  {"worker1"},
+		"source_type": {"yuzde_usulu_pool"},
+		"pool_id":     {poolID},
+		"amount":      {"600"},
+		"note":        {"floor share"},
+	}, manager)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("distribution POST: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if n := workerAllocationCount(t, dp); n != 1 {
+		t.Fatalf("expected 1 worker_allocations row, got %d", n)
+	}
+	var sourceType, sourceID string
+	var allocated int64
+	if err := dp.Db.QueryRowContext(ctx, `SELECT source_type, source_id, amount_minor FROM worker_allocations`).
+		Scan(&sourceType, &sourceID, &allocated); err != nil {
+		t.Fatal(err)
+	}
+	if sourceType != "yuzde_usulu_pool" || allocated != 600 {
+		t.Fatalf("unexpected allocation row: type=%s amount=%d", sourceType, allocated)
+	}
+	if sourceID != poolID {
+		t.Fatalf("expected source_id to carry the pool id %q (ADR-0063 Decision 3), got %q", poolID, sourceID)
+	}
+
+	// The re-rendered fragment is the yuzde-usulu tab (not the tips tab)
+	// and shows both sides — £10.00 collected against £6.00 distributed,
+	// the received-vs-allocated difference that was impossible to express
+	// before this card.
+	body := rec.Body.String()
+	if !strings.Contains(body, "/api/reports/worker-allocations/pool-collections") {
+		t.Fatalf("expected the yuzde-usulu tab re-rendered after a pool distribution, got: %s", body)
+	}
+	if !strings.Contains(body, "£10.00") || !strings.Contains(body, "£6.00") {
+		t.Fatalf("expected Collected £10.00 and Distributed £6.00 in the refreshed tab, got: %s", body)
+	}
+}
+
+// The summary the tab renders must read Received from the collection
+// record and Allocated from the ledger — a distribution recorded with NO
+// collection behind it shows zero collected, which the old tautological
+// query could not express (it would have echoed the allocation back).
+func TestReportsPage_YuzdeUsuluTab_ReceivedComesFromCollectionsNotAllocations(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	setReportsCountry(t, dp, "TR")
+
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note,local_date) VALUES('wa1','yuzde_usulu_pool','','worker1',4242,datetime('now'),'',date('now','localtime'))`); err != nil {
+		t.Fatal(err)
+	}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/reports/tab/yuzde-usulu", nil), auth.User{ID: "mgr1", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "£42.42") {
+		t.Fatalf("expected the distributed total (£42.42), got: %s", body)
+	}
+	if !strings.Contains(body, "£0.00") {
+		t.Fatalf("expected Collected £0.00 with no collection record behind the distribution, got: %s", body)
+	}
+}
+
+// Same CanView/CanRecord split as the Tips tab, on the SAME
+// `worker_allocation` permission (ADR-0063 Decision 2: one ledger, two
+// filtered views): a `reports`-only session sees the totals but neither
+// form nor the export link.
+func TestReportsPage_YuzdeUsuluTab_RecordFormsGatedOnWorkerAllocationPermission(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+	setReportsCountry(t, dp, "TR")
+	authRepo := data.NewAuthRepo(dp.Db)
+
+	if err := authRepo.SetRolePermission(ctx, nil, "cashier", "reports", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO yuzde_usulu_pool_collections(id,amount_minor,collected_at,basis_note,recorded_by,local_date) VALUES('pc1',1000,datetime('now'),'kitchen 30%','mgr1',date('now','localtime'))`); err != nil {
+		t.Fatal(err)
+	}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/reports/tab/yuzde-usulu", nil), auth.User{ID: "u1", Role: "cashier"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "£10.00") {
+		t.Fatalf("expected the collected total visible under `reports` alone, got: %s", body)
+	}
+	if strings.Contains(body, `hx-post="/api/reports/worker-allocations/pool-collections"`) {
+		t.Fatalf("expected the record-collection form hidden without worker_allocation, got: %s", body)
+	}
+	if strings.Contains(body, `hx-post="/api/reports/worker-allocations"`) {
+		t.Fatalf("expected the record-distribution form hidden without worker_allocation, got: %s", body)
+	}
+	if strings.Contains(body, "/api/reports/worker-allocations/export") {
+		t.Fatalf("expected the export link hidden without worker_allocation, got: %s", body)
+	}
+
+	req = auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/reports/tab/yuzde-usulu", nil), auth.User{ID: "mgr1", Role: "manager"})
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	body = rec.Body.String()
+	if !strings.Contains(body, `hx-post="/api/reports/worker-allocations/pool-collections"`) {
+		t.Fatalf("expected the record-collection form visible for a manager, got: %s", body)
+	}
+	if !strings.Contains(body, `hx-post="/api/reports/worker-allocations"`) {
+		t.Fatalf("expected the record-distribution form visible for a manager, got: %s", body)
+	}
+	if !strings.Contains(body, "/api/reports/worker-allocations/export") {
+		t.Fatalf("expected the export link visible for a manager, got: %s", body)
+	}
+	// The pool picker must be populated from the period's own collections
+	// — without it there is nothing to distribute from.
+	if !strings.Contains(body, `<option value="pc1">`) {
+		t.Fatalf("expected the pool picker populated with the period's collections, got: %s", body)
+	}
+}
+
+// The collection endpoint is gated on the same `worker_allocation`
+// permission as the payout endpoint, and a forbidden request writes
+// nothing (mirrors TestReportsPage_WorkerAllocation_ForbiddenWithoutPermission).
+func TestReportsPage_YuzdeUsuluPoolCollection_ForbiddenWithoutPermission(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	setReportsCountry(t, dp, "TR")
+
+	today := time.Now().Format("2006-01-02")
+	rec := postForm(mux, "/api/reports/worker-allocations/pool-collections",
+		url.Values{"date": {today}, "amount": {"1000"}}, &auth.User{ID: "u1", Role: "cashier"})
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if n := yuzdeUsuluCollectionCount(t, dp); n != 0 {
+		t.Fatalf("expected no row written by a forbidden POST, got %d", n)
+	}
+}
+
+// Invalid input is rejected with 400 and writes nothing — a future date (a
+// collection records money already taken), a non-positive amount, and a
+// malformed date.
+func TestReportsPage_YuzdeUsuluPoolCollection_InvalidInputsRejected(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	setReportsCountry(t, dp, "TR")
+
+	today := time.Now().Format("2006-01-02")
+	tomorrow := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
+	manager := &auth.User{ID: "mgr1", Role: "manager"}
+
+	cases := []struct {
+		name string
+		form url.Values
+	}{
+		{"future date", url.Values{"date": {tomorrow}, "amount": {"1000"}}},
+		{"malformed date", url.Values{"date": {"25-08-2026"}, "amount": {"1000"}}},
+		{"zero amount", url.Values{"date": {today}, "amount": {"0"}}},
+		{"negative amount", url.Values{"date": {today}, "amount": {"-50"}}},
+		{"non-numeric amount", url.Values{"date": {today}, "amount": {"lots"}}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rec := postForm(mux, "/api/reports/worker-allocations/pool-collections", c.form, manager)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+	if n := yuzdeUsuluCollectionCount(t, dp); n != 0 {
+		t.Fatalf("expected no rows written by any rejected request, got %d", n)
+	}
+}
+
+// The tab BUTTON is Türkiye-only: a GB shop must not be offered a tab for
+// an obligation that does not apply to it (the tab fragment itself stays
+// permission-gated, not country-gated, so this is about what's offered).
+func TestReportsPage_YuzdeUsuluTabButtonOnlyForTurkey(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+
+	setReportsCountry(t, dp, "GB")
+	body := getReportsPage(t, mux, "").Body.String()
+	if strings.Contains(body, `id="report-tab-yuzde-usulu"`) {
+		t.Fatalf("expected no yüzde usulü tab button for a GB shop, got: %s", body)
+	}
+
+	setReportsCountry(t, dp, "TR")
+	body = getReportsPage(t, mux, "").Body.String()
+	if !strings.Contains(body, `id="report-tab-yuzde-usulu"`) {
+		t.Fatalf("expected the yüzde usulü tab button for a TR shop, got: %s", body)
+	}
+	if !strings.Contains(body, `hx-get="/ui/reports/tab/yuzde-usulu?`) {
+		t.Fatalf("expected the tab button to load the yuzde-usulu fragment, got: %s", body)
+	}
+}
+
+// The existing export is the single export for this ledger (ADR-0063
+// Decision 2), so it must now also carry yuzde_usulu_pool rows alongside
+// tip/service_charge ones — merged and sorted together, not a separate
+// endpoint.
+func TestReportsPage_WorkerAllocationExport_IncludesYuzdeUsuluPoolRows(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,role,is_active) VALUES('worker1','worker1','Worker One','cashier',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note,local_date) VALUES('wa1','tip','','worker1',1234,'2026-08-25T10:00:00Z','shift payout',date('2026-08-25T10:00:00Z','localtime'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note,local_date) VALUES('wa2','yuzde_usulu_pool','pc1','worker1',600,'2026-08-25T11:00:00Z','floor share',date('2026-08-25T11:00:00Z','localtime'))`); err != nil {
+		t.Fatal(err)
+	}
+
+	from := "2026-08-25"
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/api/reports/worker-allocations/export?from="+from+"&to="+from, nil), auth.User{ID: "mgr1", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "yuzde_usulu_pool") || !strings.Contains(body, "floor share") {
+		t.Fatalf("expected the pool distribution row in the export, got: %s", body)
+	}
+	// The tip row (existing behavior) must still be there, unchanged.
+	if !strings.Contains(body, "shift payout") {
+		t.Fatalf("expected the tip row still in the export, got: %s", body)
+	}
+	// Merged into one sorted feed, most recent first — the pool row
+	// (11:00Z) before the tip row (10:00Z).
+	if strings.Index(body, "floor share") > strings.Index(body, "shift payout") {
+		t.Fatalf("expected rows merged and sorted by date DESC across source types, got: %s", body)
 	}
 }

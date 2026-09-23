@@ -324,6 +324,72 @@ func TestSessionBasketManager_SetConfigReachesEveryLiveSession(t *testing.T) {
 	}
 }
 
+// ut-docs#2435 (same lock-scope class as ut-docs#2443/#2449): SetConfig used
+// to call Service.SetConfig on every live session while still holding m.mu.
+// Service.SetConfig triggers recomputeTotals, which — on a session with a
+// charge-policy asker installed — can perform a blocking plugin round-trip.
+// Held under m.mu, a stuck ask on ANY one session would serialize every
+// OTHER live session's own manager operation (Get, here) behind it for the
+// ask's duration. This proves the fix: a concurrent Get on an unrelated
+// session must complete immediately while SetConfig is stuck in one
+// session's ask, and SetConfig itself must still reach every session once
+// released.
+func TestSessionBasketManager_SetConfig_DoesNotBlockOtherSessions(t *testing.T) {
+	m, _ := newTestSessionManager(t)
+
+	_, stuck := m.Create()
+	asker := newSlowChargeAsker()
+	t.Cleanup(asker.releaseNow)
+	stuck.SetChargePolicyAsker(asker)
+
+	otherToken, other := m.Create()
+
+	cfg := Config{TaxRateBasisPoints: 1000, TaxInclusive: false}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		m.SetConfig(cfg)
+	}()
+
+	select {
+	case <-asker.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("SetConfig never reached the stuck session's charge-policy ask")
+	}
+
+	// SetConfig is now stuck inside one session's ask. A Get on a completely
+	// unrelated session must complete immediately — if it's still waiting on
+	// m.mu, that mu is being held across the ask, which is exactly the
+	// regression this card fixes.
+	getDone := make(chan struct{})
+	go func() {
+		defer close(getDone)
+		if _, ok := m.Get(otherToken); !ok {
+			t.Error("Get on an unrelated session failed while SetConfig was stuck in another session's ask")
+		}
+	}()
+
+	select {
+	case <-getDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Get is still blocked behind SetConfig's in-flight charge-policy ask — m.mu is being held across it")
+	}
+
+	asker.releaseNow()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("SetConfig never returned after its ask was released")
+	}
+
+	if other.Config() != cfg {
+		t.Fatalf("other session's Config() = %+v after SetConfig, want %+v", other.Config(), cfg)
+	}
+	if stuck.Config() != cfg {
+		t.Fatalf("stuck session's Config() = %+v after SetConfig, want %+v", stuck.Config(), cfg)
+	}
+}
+
 func TestSessionBasketManager_HasItems(t *testing.T) {
 	m, _ := newTestSessionManager(t)
 	if m.HasItems() {
@@ -337,6 +403,40 @@ func TestSessionBasketManager_HasItems(t *testing.T) {
 	a.AddLineWithModifiers(BasketLine{SKU: "A", Name: "Coffee", ItemID: "ia", PriceCents: 320}, 1, nil)
 	if !m.HasItems() {
 		t.Fatal("a session holding a line must report items")
+	}
+}
+
+// ut-docs#2449 (follow-up from the ut-docs#2444 review, same lock-scope class
+// as ut-docs#2443/#2444): HasItems used to decide "does this session hold an
+// item" via svc.Basket().ItemCount() > 0, all under m.mu. Basket() always
+// calls recomputeTotals(), which — on any session with a tax/charge-policy
+// asker installed (any country plugin, ADR-0061) — can perform a blocking
+// plugin round-trip. HasItems runs under the manager's own lock, so a stuck
+// ask on ANY live session would serialize every other manager operation (and
+// every other session's request) behind it for the ask's duration. This
+// proves the fix: HasItems must not invoke the charge-policy asker at all.
+func TestSessionBasketManager_HasItems_DoesNotBlockOnChargePolicyAsk(t *testing.T) {
+	m, _ := newTestSessionManager(t)
+
+	_, svc := m.Create()
+	asker := newSlowChargeAsker()
+	t.Cleanup(asker.releaseNow)
+	svc.SetChargePolicyAsker(asker)
+
+	done := make(chan struct{})
+	var got bool
+	go func() {
+		defer close(done)
+		got = m.HasItems()
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("HasItems blocked on a plugin charge-policy ask — same lock-scope class as ut-docs#2443/#2444")
+	}
+	if got {
+		t.Fatal("HasItems() = true for a session with no lines, want false")
 	}
 }
 
@@ -449,5 +549,435 @@ func TestSessionBasketManager_ConcurrentSessionsDoNotInterfere(t *testing.T) {
 	rm.Wait()
 	if m.Len() != 0 {
 		t.Fatalf("Len() after concurrent Remove = %d, want 0", m.Len())
+	}
+}
+
+// ut-docs#2434 (ADR-0103 review finding N3): the busy-check and the bind
+// used to be two separate manager.mu critical sections
+// (TableOwnerActive, then Create+SetTable), so two goroutines could both
+// observe "not busy" before either bound — a real check-then-act race, not
+// just a threshold gap. BindTable collapses both into one critical
+// section; proven here with many goroutines racing to bind the identical
+// table: exactly one must succeed, every other must see busy and mint
+// nothing.
+//
+// Run under an OUTER loop, fresh manager per trial (ut-docs#2434
+// independent-review finding S2): `go test -race` alone does NOT prove
+// this — the old two-call implementation has no data race at all (both
+// halves were individually mutex-guarded), only a logic race, so `-race`
+// stays silent against a reverted fix. The only signal a single trial
+// gives is `bound != 1`, and that's PROBABILISTIC: re-running the old
+// racy implementation against this test's exact shape (32 goroutines, one
+// start gate) let two goroutines both win in 5/20 trials under `-race`
+// and 2/20 without — a revert would pass this test most of the time on a
+// single run. Looping drives a false pass down to effectively zero at
+// negligible cost (each trial is sub-millisecond).
+func TestSessionBasketManager_BindTable_ConcurrentSameTableBindsExactlyOnce(t *testing.T) {
+	const trials = 30
+	const guests = 32
+	for trial := 0; trial < trials; trial++ {
+		m := NewSessionBasketManager(func() *Service {
+			return NewServiceWithResolver(Config{TaxRateBasisPoints: 2000}, nil)
+		})
+
+		var wg sync.WaitGroup
+		var start sync.WaitGroup
+		start.Add(1)
+		var resMu sync.Mutex
+		bound, busy := 0, 0
+		var boundToken string
+		var boundSvc *Service
+		for g := 0; g < guests; g++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				start.Wait()
+				tok, svc, isBusy := m.BindTable("table-A", "T1", "", nil, time.Hour, time.Hour, time.Now())
+				resMu.Lock()
+				defer resMu.Unlock()
+				if isBusy {
+					busy++
+					if tok != "" || svc != nil {
+						t.Errorf("trial %d: busy result must return no token/service, got (%q, %p)", trial, tok, svc)
+					}
+					return
+				}
+				bound++
+				boundToken, boundSvc = tok, svc
+			}()
+		}
+		start.Done()
+		wg.Wait()
+
+		if bound != 1 {
+			t.Fatalf("trial %d: bound = %d, want exactly 1 — a real concurrent race must never let two mints win", trial, bound)
+		}
+		if busy != guests-1 {
+			t.Fatalf("trial %d: busy = %d, want %d", trial, busy, guests-1)
+		}
+		if n := m.Len(); n != 1 {
+			t.Fatalf("trial %d: live sessions after the race = %d, want 1", trial, n)
+		}
+		svc, ok := m.Get(boundToken)
+		if !ok || svc != boundSvc {
+			t.Fatalf("trial %d: the one winning bind's token must resolve back to its own service", trial)
+		}
+		if got := svc.TableID(); got != "table-A" {
+			t.Fatalf("trial %d: winning session's TableID() = %q, want %q", trial, got, "table-A")
+		}
+	}
+}
+
+// The mover case (an existing session's own table changes) is atomic the
+// same way: a live session moving onto a table another live session
+// already holds must see busy and stay on its original table, never lose
+// its own binding or basket.
+func TestSessionBasketManager_BindTable_MoverBlockedByBusyTableKeepsOwnBinding(t *testing.T) {
+	m, now := newTestSessionManager(t)
+
+	// Bind both fixtures through BindTable itself, not a direct
+	// svc.SetTable call — the manager's own busy-check now scans its own
+	// sessionBasket.tableID record (ut-docs#2443), which only BindTable
+	// keeps in sync; a direct SetTable bypasses it entirely.
+	incumbentToken, incumbent := m.Create()
+	if _, _, busy := m.BindTable("table-B", "T2", incumbentToken, incumbent, time.Hour, time.Hour, *now); busy {
+		t.Fatal("setup: incumbent's own bind to table-B must not itself report busy")
+	}
+
+	moverToken, mover := m.Create()
+	if _, _, busy := m.BindTable("table-A", "T1", moverToken, mover, time.Hour, time.Hour, *now); busy {
+		t.Fatal("setup: mover's own bind to table-A must not itself report busy")
+	}
+	mover.AddLineWithModifiers(BasketLine{SKU: "x", ItemID: "x", Name: "line", PriceCents: 100}, 1, nil)
+
+	tok, svc, busy := m.BindTable("table-B", "T2", moverToken, mover, time.Hour, time.Hour, *now)
+	if !busy {
+		t.Fatal("moving onto a table another live session already holds must report busy")
+	}
+	if tok != "" || svc != nil {
+		t.Fatalf("busy result must return no token/service, got (%q, %p)", tok, svc)
+	}
+	if got := mover.TableID(); got != "table-A" {
+		t.Fatalf("mover's TableID() after a busy-blocked move = %q, want unchanged %q", got, "table-A")
+	}
+	if n := len(mover.Lines()); n != 1 {
+		t.Fatalf("mover's basket has %d lines after a busy-blocked move, want unchanged 1", n)
+	}
+	if got := incumbent.TableID(); got != "table-B" {
+		t.Fatalf("incumbent's TableID() = %q, want unchanged %q", got, "table-B")
+	}
+}
+
+// ut-docs#2434 independent-review finding N4: the B1 idle-recovery
+// guarantee is now load-bearing for an EMPTY session too (dropping the
+// item-count exception means an empty session blocks exactly like a
+// non-empty one while active), but nothing previously asserted that an
+// EMPTY session actually frees its table via BindTable once idle past its
+// own recency window — every existing idle-recovery test seeds a
+// non-empty session.
+//
+// ut-docs#2444 (review finding S3 of ut-docs#2434's own record) split that
+// single window into two: an EMPTY session now frees after the much
+// shorter emptyMaxIdle, not the long maxIdle a non-empty session still
+// uses — this test exercises the empty side of that split. The non-empty
+// side (a session holding an item must NOT free early just because it's
+// past emptyMaxIdle) is
+// TestSessionBasketManager_BindTable_NonEmptySessionOutlastsEmptyMaxIdle,
+// right below.
+func TestSessionBasketManager_BindTable_EmptySessionFreesTableAfterEmptyMaxIdle(t *testing.T) {
+	m, now := newTestSessionManager(t)
+	const maxIdle = 10 * time.Minute
+	const emptyMaxIdle = 90 * time.Second
+
+	// Bind through BindTable itself (ut-docs#2443) — a direct svc.SetTable
+	// call would leave the manager's own sessionBasket.tableID record at
+	// "", invisible to BindTable's busy-check.
+	firstToken, first := m.Create()
+	if _, _, busy := m.BindTable("table-A", "T1", firstToken, first, maxIdle, emptyMaxIdle, *now); busy {
+		t.Fatal("setup: first's own bind to table-A must not itself report busy")
+	} // bound, zero lines
+
+	if _, _, busy := m.BindTable("table-A", "T1", "", nil, maxIdle, emptyMaxIdle, *now); !busy {
+		t.Fatal("right after binding: a second, unrelated scan of the same table must see busy, even though the first session is empty")
+	}
+
+	later := now.Add(emptyMaxIdle + time.Second)
+	tok, svc, busy := m.BindTable("table-A", "T1", "", nil, maxIdle, emptyMaxIdle, later)
+	if busy {
+		t.Fatal("an EMPTY session idle past emptyMaxIdle must not block a new scan of its table, even though maxIdle (the non-empty window) hasn't elapsed")
+	}
+	if svc == nil || svc == first {
+		t.Fatal("the new scan should have bound a fresh session, not the aged-out empty one")
+	}
+	if got := svc.TableID(); got != "table-A" {
+		t.Fatalf("new session's TableID() = %q, want %q", got, "table-A")
+	}
+	if got, ok := m.Get(tok); !ok || got != svc {
+		t.Fatal("the new token must resolve back to the new session")
+	}
+}
+
+// The other half of the ut-docs#2444 split: a session holding at least one
+// line must keep blocking a competing scan past emptyMaxIdle — only an
+// EMPTY session gets the shorter window. On its own this test alone would
+// also pass against a no-op mutation that never shortens anything (see
+// TestSessionBasketManager_BindTable_EmptySessionFreesTableAfterEmptyMaxIdle
+// right above for the half that actually proves the window was
+// shortened) — together the two prove the differentiation is keyed on
+// item count, not a blanket shortening of the busy guard.
+func TestSessionBasketManager_BindTable_NonEmptySessionOutlastsEmptyMaxIdle(t *testing.T) {
+	m, now := newTestSessionManager(t)
+	const maxIdle = 10 * time.Minute
+	const emptyMaxIdle = 90 * time.Second
+
+	// Bind through BindTable itself (ut-docs#2443) — a direct svc.SetTable
+	// call would leave the manager's own sessionBasket.tableID record at
+	// "", invisible to BindTable's busy-check.
+	firstToken, first := m.Create()
+	if _, _, busy := m.BindTable("table-A", "T1", firstToken, first, maxIdle, emptyMaxIdle, *now); busy {
+		t.Fatal("setup: first's own bind to table-A must not itself report busy")
+	}
+	first.AddLineWithModifiers(BasketLine{SKU: "x", ItemID: "x", Name: "line", PriceCents: 100}, 1, nil)
+
+	pastEmptyStillWithinMaxIdle := now.Add(emptyMaxIdle + time.Second)
+	if _, _, busy := m.BindTable("table-A", "T1", "", nil, maxIdle, emptyMaxIdle, pastEmptyStillWithinMaxIdle); !busy {
+		t.Fatal("a NON-EMPTY session past emptyMaxIdle (but still within maxIdle) must still block a competing scan")
+	}
+
+	pastMaxIdle := now.Add(maxIdle + time.Second)
+	tok, svc, busy := m.BindTable("table-A", "T1", "", nil, maxIdle, emptyMaxIdle, pastMaxIdle)
+	if busy {
+		t.Fatal("a NON-EMPTY session idle past maxIdle must eventually free its table too")
+	}
+	if svc == nil || svc == first {
+		t.Fatal("the new scan should have bound a fresh session, not the aged-out non-empty one")
+	}
+	if got, ok := m.Get(tok); !ok || got != svc {
+		t.Fatal("the new token must resolve back to the new session")
+	}
+}
+
+// ut-docs#2434 independent-review finding S4: bindSelfOrderTableSession
+// used to special-case "resume my own current table" BEFORE the busy
+// check, unconditionally. That's a gap, not just a simplification: A
+// binds table T (non-empty), goes idle past maxIdle with no further
+// activity, a DIFFERENT phone (B) correctly sees A as stale and legitimately
+// binds T, and only THEN does A's phone wake and resume its own stale
+// cookie for T — the old early-return let A resume unconditionally,
+// producing two live, recently-active sessions on one table (two
+// kiosk_counter_orders rows at checkout), the exact class of bug this
+// card exists to close, just reached via the resume path instead of two
+// concurrent mints. Fixed by routing the resume case through the SAME
+// BindTable call as mint/move — this proves BindTable itself correctly
+// reports busy when a stale session's own token+service (the "mover" a
+// resume caller now always passes) contests a table another, currently
+// more-recently-active session already holds.
+func TestSessionBasketManager_BindTable_StaleResumeAfterCompetingBindSeesBusy(t *testing.T) {
+	m, now := newTestSessionManager(t)
+
+	aToken, aSvc := m.Create() // lastSeen stamped at *now via m.clock()
+	// Bind through BindTable itself (ut-docs#2443) — a direct SetTable call
+	// would leave the manager's own sessionBasket.tableID record at "",
+	// so A would never register as busy below regardless of staleness.
+	if _, _, busy := m.BindTable("table-A", "T1", aToken, aSvc, 10*time.Minute, 10*time.Minute, *now); busy {
+		t.Fatal("setup: A's own bind to table-A must not itself report busy")
+	}
+	aSvc.AddLineWithModifiers(BasketLine{SKU: "x", ItemID: "x", Name: "line", PriceCents: 100}, 1, nil)
+
+	// Advance the fake clock past maxIdle with no further touch of A's
+	// session, then bind B — B's own lastSeen is stamped at this later
+	// time via the same m.clock() mechanism A's was stamped at originally.
+	*now = now.Add(10*time.Minute + time.Second)
+	bToken, bSvc, busy := m.BindTable("table-A", "T1", "", nil, 10*time.Minute, 10*time.Minute, *now)
+	if busy || bSvc == nil {
+		t.Fatalf("B's fresh scan after A went stale: busy=%v svc=%v, want busy=false, a bound session", busy, bSvc)
+	}
+	if bToken == aToken {
+		t.Fatal("B must get its OWN token, not A's")
+	}
+
+	// A's phone wakes and "resumes" a moment later — the exact call
+	// bindSelfOrderTableSession now makes unconditionally, passing A's own
+	// live *Service as mover.
+	*now = now.Add(time.Second)
+	tok, svc, aBusy := m.BindTable("table-A", "T1", aToken, aSvc, 10*time.Minute, 10*time.Minute, *now)
+	if !aBusy {
+		t.Fatal("A's stale resume after B's legitimate bind must see busy=true")
+	}
+	if tok != "" || svc != nil {
+		t.Fatalf("busy result must return no token/service, got (%q, %p)", tok, svc)
+	}
+	// B's own binding is untouched by A's blocked resume attempt.
+	if got, ok := m.Get(bToken); !ok || got != bSvc || got.TableID() != "table-A" {
+		t.Fatal("B's session must be unaffected by A's blocked resume")
+	}
+}
+
+// slowChargeAsker blocks in AskChargePolicy until release is closed, so a
+// test can hold a Service's SetTable call open for as long as it needs to
+// prove some other manager operation is (or isn't) blocked behind it. The
+// FIRST call is let through immediately: SetChargePolicyAsker itself
+// synchronously triggers one recomputeTotals (and so one AskChargePolicy
+// call) as part of installing the asker, before the test's real BindTable
+// call is even made — blocking that first, setup-only call would deadlock
+// the test itself rather than the thing under test.
+type slowChargeAsker struct {
+	mu        sync.Mutex
+	calls     int
+	startOnce sync.Once
+	released  sync.Once
+	started   chan struct{}
+	release   chan struct{}
+}
+
+func newSlowChargeAsker() *slowChargeAsker {
+	return &slowChargeAsker{started: make(chan struct{}), release: make(chan struct{})}
+}
+
+// releaseNow unblocks every current and future AskChargePolicy call stuck
+// in this asker, exactly once. Idempotent so a test can call it both
+// explicitly (once its own assertions are done) and via a t.Cleanup
+// safety net (in case a t.Fatal fires first) without a double-close panic.
+func (a *slowChargeAsker) releaseNow() {
+	a.released.Do(func() { close(a.release) })
+}
+
+func (a *slowChargeAsker) AskChargePolicy() (ChargePolicy, bool) {
+	a.mu.Lock()
+	a.calls++
+	isSetupCall := a.calls == 1
+	a.mu.Unlock()
+	if isSetupCall {
+		return ChargePolicy{}, false
+	}
+	a.startOnce.Do(func() { close(a.started) })
+	<-a.release
+	return ChargePolicy{}, false
+}
+
+// ut-docs#2443 (review finding S1 on ut-docs#2434): BindTable used to call
+// mover.SetTable/svc.SetTable INSIDE the manager's m.mu critical section,
+// so a slow plugin charge-policy ask triggered by one guest's bind
+// serialized every OTHER table's concurrent BindTable behind it for the
+// ask's duration. This proves the fix: a deliberately-stuck ask on
+// table-A's bind must not stop a concurrent bind on table-B from
+// completing immediately.
+func TestSessionBasketManager_BindTable_SlowChargePolicyAskDoesNotBlockOtherTables(t *testing.T) {
+	m, now := newTestSessionManager(t)
+
+	moverToken, mover := m.Create()
+	asker := newSlowChargeAsker()
+	// Safety net: if an assertion below t.Fatal's before the explicit
+	// releaseNow() call further down runs, this still unblocks the
+	// goroutine parked in AskChargePolicy instead of leaking it for the
+	// life of the test binary (ut-docs#2443 N5).
+	t.Cleanup(asker.releaseNow)
+	mover.SetChargePolicyAsker(asker)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		m.BindTable("table-A", "T1", moverToken, mover, time.Hour, time.Hour, *now)
+	}()
+
+	select {
+	case <-asker.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("mover's SetTable never reached the slow charge-policy ask")
+	}
+
+	// Table-A's bind is now stuck inside the ask. A concurrent bind on a
+	// completely different table must complete immediately — if it's
+	// still waiting on m.mu, that mu is being held across the ask, which
+	// is exactly the regression this card fixes.
+	otherDone := make(chan struct{})
+	go func() {
+		defer close(otherDone)
+		tok, svc, busy := m.BindTable("table-B", "T2", "", nil, time.Hour, time.Hour, *now)
+		if busy || svc == nil || tok == "" {
+			t.Errorf("table-B bind while table-A's ask is stuck: busy=%v svc=%v tok=%q, want a clean bind", busy, svc, tok)
+		}
+	}()
+
+	select {
+	case <-otherDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("table-B's BindTable is still blocked behind table-A's in-flight charge-policy ask — m.mu is being held across the ask")
+	}
+
+	asker.releaseNow()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("table-A's BindTable never returned after its ask was released")
+	}
+
+	if got := mover.TableID(); got != "table-A" {
+		t.Fatalf("mover's TableID() after its bind completed = %q, want %q", got, "table-A")
+	}
+}
+
+// ut-docs#2443 M1: the test above only exercises the MOVER path, where
+// BindTable never calls m.factory() at all. The mint path (mover == nil,
+// the common first-ever-scan case in production) has its own blocking-ask
+// source — m.factory() itself installs tax/charge-policy askers, and that
+// installation synchronously triggers one AskChargePolicy call — which a
+// first cut of this fix left running INSIDE m.mu, defeating the card's
+// point for its most common path. This proves the actual fix (building the
+// fresh Service before m.mu.Lock() when mover is nil): a still-in-flight,
+// deliberately-stuck ask from one mint's OWN factory call must not stop a
+// concurrent, unrelated manager operation (Get, here — it only ever needs
+// m.mu briefly) from completing immediately.
+func TestSessionBasketManager_BindTable_MintPathFactoryAskDoesNotHoldLock(t *testing.T) {
+	asker := newSlowChargeAsker()
+	t.Cleanup(asker.releaseNow)
+	m := NewSessionBasketManager(func() *Service {
+		s := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000}, nil)
+		s.SetChargePolicyAsker(asker) // installing it synchronously recomputes once
+		return s
+	})
+	now := time.Now()
+
+	// A pre-existing, unrelated session: Create()'s own factory call is
+	// AskChargePolicy's call #1 (the setup call slowChargeAsker always
+	// lets through immediately), so this session is minted synchronously,
+	// before table-A's mint below makes call #2 — the one that blocks.
+	existingToken, _ := m.Create()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		m.BindTable("table-A", "T1", "", nil, time.Hour, time.Hour, now)
+	}()
+
+	select {
+	case <-asker.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("table-A's mint never reached its factory's charge-policy ask")
+	}
+
+	// Table-A's mint is now stuck inside its OWN factory's ask. A Get on a
+	// completely unrelated, already-live session must complete
+	// immediately — if it's still waiting on m.mu, that mu is being held
+	// across m.factory() itself, not just across the later SetTable call.
+	getDone := make(chan struct{})
+	go func() {
+		defer close(getDone)
+		if _, ok := m.Get(existingToken); !ok {
+			t.Error("Get on an unrelated, already-live session failed while table-A's mint was stuck in its own factory's ask")
+		}
+	}()
+
+	select {
+	case <-getDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Get() on an unrelated session is still blocked behind table-A's in-flight factory charge-policy ask — m.factory() is being called under m.mu")
+	}
+
+	asker.releaseNow()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("table-A's BindTable never returned after its ask was released")
 	}
 }

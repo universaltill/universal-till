@@ -5,7 +5,7 @@ section: Den Betrieb führen
 order: 210
 summary: Umsatzsummen nach Tag, Abteilung und Zahlungsart; Bestseller und Ladenhüter; tote Ware; umsatzstärkste Tage und Stunden; Margen; Steuerübersicht; Jahresvergleich — plus der Tagesabschlussbericht (Z) zum Kassieren.
 routes: [/reports, /journal, /journal/{receipt}, /shifts, /audit]
-keywords: [z-bericht, tagesabschluss, tageseinnahmen, journal, kassenjournal, schicht, prüfprotokoll, trinkgeld, tronc, servicegebühr, mitarbeiterzuweisung]
+keywords: [z-bericht, tagesabschluss, tageseinnahmen, journal, kassenjournal, schicht, prüfprotokoll, trinkgeld, tronc, servicegebühr, mitarbeiterzuweisung, yüzde usulü, trinkgeld-pool]
 ---
 
 # Berichte & Tagesabschluss
@@ -369,6 +369,48 @@ Software erkennt oder bewegt kein Geld von sich aus.
   nur für den Mitarbeiter erfasste Trinkgelder zählt (der Standardfall) —
   die beiden weichen erwartungsgemäß voneinander ab, sobald ein Trinkgeld
   stattdessen für das Geschäft erfasst wird.
+
+## Yüzde-usulü-Poolverteilung (Türkei)
+
+Der Reiter **Yüzde usulü** ist für Geschäfte in der Türkei, die einen
+*yüzde usulü*-Pool führen (İş Kanunu 4857 Art. 51): ein Prozentsatz, der
+eingenommen und unter den Mitarbeitern aufgeteilt wird. Er erscheint nur,
+wenn als Land des Geschäfts die Türkei eingestellt ist. Wie der Reiter
+Trinkgeld erfasst er, was eine Führungskraft ihm mitteilt — die Software
+erkennt, berechnet oder bewegt von sich aus kein Geld und entscheidet
+nicht, ob Ihr Geschäft einen Pool führt oder zu welchem Prozentsatz.
+
+- **Keine Zeile auf dem Kundenbeleg** — eine türkische Servicegebühr-Zeile
+  fügt diese Kasse einem Beleg nicht hinzu; eine Pool-Einnahme wird daher
+  separat von einer Führungskraft erfasst und erscheint nie auf einem Beleg.
+- **Eine Einnahme erfassen** — eine Führungskraft (Berechtigung
+  Mitarbeiterauszahlungen) wählt das Datum der Einnahme, den Betrag und
+  optional eine Notiz zur Aufteilungsgrundlage („Küche 30 % / Service
+  70 %“) und sendet ab. Das Datum darf nicht in der Zukunft liegen — erfasst
+  wird bereits vereinnahmtes Geld.
+- **Eine Verteilung erfassen** — wählen Sie die Einnahme, aus der das Geld
+  stammt, den Mitarbeiter, das Datum der tatsächlichen Auszahlung, den
+  Betrag und optional eine Notiz. Jede Verteilung ist der Anteil eines
+  Mitarbeiters an einer Einnahme; ein an vier Personen ausgezahlter Pool
+  ergibt also vier Einträge.
+- **Eingenommen und verteilt** — zwei Summen für den gewählten Zeitraum:
+  was in den Pool eingenommen wurde und was davon als an namentlich
+  genannte Mitarbeiter ausgezahlt erfasst ist. Das sind zwei getrennte
+  Aufzeichnungen, sie können also voneinander abweichen — ein heute
+  eingenommener und erst am Wochenende ausgezahlter Pool gilt bis zur
+  Erfassung dieser Auszahlungen als eingenommen, aber noch nicht verteilt.
+  Eine Abweichung ist für sich genommen kein Problem; prüfen Sie über einen
+  Zeitraum, der beides abdeckt.
+- **Die eigenen Aufzeichnungen einer Person** — schränken Sie die
+  Verteilungsliste mit dem Mitarbeiterfilter auf eine Person ein, etwa um
+  ihr zu zeigen, was als an sie ausgezahlt erfasst ist.
+- **Export** — derselbe CSV-Export wie im Reiter Trinkgeld; er enthält
+  Pool-Verteilungen neben Trinkgeld- und Servicegebühr-Einträgen, zur
+  Weitergabe an Mitarbeitende, an die Buchhaltung oder an alle, die die
+  zugrundeliegenden Aufzeichnungen benötigen.
+- Pool-Aufzeichnungen werden zusammen mit den übrigen Finanzunterlagen des
+  Geschäfts aufbewahrt und nicht vorzeitig gelöscht — dieselbe Aufbewahrung
+  wie für alles andere auf dieser Seite (siehe Berichtsaufbewahrung oben).
 
 ## Eine Kartenzahlung abgleichen (Belegdetail)
 

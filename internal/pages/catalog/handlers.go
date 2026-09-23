@@ -803,7 +803,22 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		for i, itm := range items {
 			itemIDs[i] = itm.ID
 		}
-		currentPrices, _ := repo.ItemCurrentPrices(r.Context(), itemIDs)
+		// ut-docs#2452: previously called unchunked with the error discarded
+		// (`_`) — same bug family as #2318/#2451 (SQLite's bind-variable
+		// ceiling, reachable here past ~32,766 items since ItemCurrentPrices
+		// binds 1 arg/id). Chunking keeps this call comfortably under the
+		// ceiling regardless of catalog size; a chunk failure now degrades
+		// only that chunk's rows to base_price (buildCatalogRows' own
+		// fallback) instead of silently losing every promotional price.
+		currentPrices := map[string]int64{}
+		for _, chunk := range data.ChunkStrings(itemIDs, data.IDChunkSize) {
+			p, err := repo.ItemCurrentPrices(r.Context(), chunk)
+			if err != nil {
+				log.Printf("[catalog] current prices failed for a batch of %d item(s), those rows fall back to base_price: %v", len(chunk), err)
+				continue
+			}
+			data.MergeMapInto(currentPrices, p)
+		}
 		// ut-docs#2090: whether this render is an /items-shell fragment
 		// swap (true) or a bare/standalone page (false) — catalog.html's
 		// own Modifiers/Option-sets top-action buttons and their

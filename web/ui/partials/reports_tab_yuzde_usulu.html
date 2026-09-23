@@ -1,0 +1,218 @@
+{{/* ut-docs#988 (ADR-0063 step 2/2): Türkiye "yüzde usulü" pool tab.
+     Structure mirrors reports_tab_tips.html deliberately — same CanView/
+     CanRecord split on the SAME `worker_allocation` permission, since
+     ADR-0063 Decision 2 makes these two filtered views of one ledger.
+     What differs is the pair of records on show: a pool COLLECTION (money
+     in, with no bill line of its own — a Türkiye service-charge line is
+     forbidden, ut-docs#962) and the DISTRIBUTIONS made out of it. */}}
+{{ if .CanView }}
+<div class="card">
+  <p class="muted">{{ T "reports.yuzde_usulu.place_of_business" }}: <strong>{{ .StoreName }}</strong></p>
+</div>
+
+{{ $qs := printf "days=%d" .Days }}
+{{ if .Period }}{{ $qs = printf "period=%s&anchor=%s" .Period .Anchor }}{{ end }}
+{{/* Worker filter: shown only to a CanRecord session, exactly as on the
+     Tips tab — its value is ignored server-side otherwise, so rendering it
+     to a view-only session would be a control that silently does nothing. */}}
+{{ if .CanRecord }}
+<div class="card" style="margin-top:1rem">
+  <form hx-get="/ui/reports/tab/yuzde-usulu" hx-target="#report-tab-panel" hx-swap="innerHTML" hx-trigger="change">
+    {{ if .Period }}
+    <input type="hidden" name="period" value="{{ .Period }}">
+    <input type="hidden" name="anchor" value="{{ .Anchor }}">
+    {{ else }}
+    <input type="hidden" name="days" value="{{ .Days }}">
+    {{ end }}
+    <label>{{ T "reports.yuzde_usulu.filter_worker" }}
+      <select name="cashier">
+        <option value="" {{ if not .CashierFilter }}selected{{ end }}>{{ T "reports.yuzde_usulu.filter_all_workers" }}</option>
+        {{ $selected := .CashierFilter }}
+        {{ range .Workers }}
+        <option value="{{ .ID }}" {{ if eq .ID $selected }}selected{{ end }}>{{ if .DisplayName }}{{ .DisplayName }}{{ else }}{{ .Username }}{{ end }}</option>
+        {{ end }}
+      </select>
+    </label>
+  </form>
+</div>
+{{ end }}
+
+<div class="report-cards" style="margin-top:1rem">
+  <div class="card kpi">
+    <div class="kpi-label">{{ T "reports.yuzde_usulu.collected" }}</div>
+    <div class="kpi-value">{{ money .Collected }}</div>
+    <div class="muted" style="font-size:.8rem">{{ T "reports.yuzde_usulu.collected_hint" }}</div>
+  </div>
+  <div class="card kpi">
+    <div class="kpi-label">{{ T "reports.yuzde_usulu.distributed" }}</div>
+    <div class="kpi-value">{{ money .Distributed }}</div>
+    <div class="muted" style="font-size:.8rem">{{ T "reports.yuzde_usulu.distributed_hint" }}</div>
+  </div>
+</div>
+
+{{ if .CanRecord }}
+<div class="card" style="margin-top:1rem">
+  <h2>{{ T "reports.yuzde_usulu.collections_title" }}</h2>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>{{ T "reports.yuzde_usulu.col_date" }}</th>
+        <th>{{ T "reports.yuzde_usulu.col_amount" }}</th>
+        <th>{{ T "reports.yuzde_usulu.col_basis" }}</th>
+        <th>{{ T "reports.yuzde_usulu.col_recorded_by" }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Collections }}
+      <tr>
+        <td>{{ datetime .CollectedAt }}</td>
+        <td style="text-align:end">{{ money .AmountMinor }}</td>
+        <td class="muted">{{ .BasisNote }}</td>
+        <td>{{ .RecordedBy }}</td>
+      </tr>
+      {{ else }}
+      <tr><td class="empty" colspan="4">{{ T "reports.none" }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>
+
+<div class="card" style="margin-top:1rem">
+  <h2>{{ T "reports.yuzde_usulu.record_collection_title" }}</h2>
+  <p class="muted">{{ T "reports.yuzde_usulu.record_collection_hint" }}</p>
+  <form id="yuzde-collection-form" hx-post="/api/reports/worker-allocations/pool-collections" hx-target="#report-tab-panel" hx-swap="innerHTML">
+    {{ if .Period }}
+    <input type="hidden" name="period" value="{{ .Period }}">
+    <input type="hidden" name="anchor" value="{{ .Anchor }}">
+    {{ else }}
+    <input type="hidden" name="days" value="{{ .Days }}">
+    {{ end }}
+    {{ if .CashierFilter }}<input type="hidden" name="cashier" value="{{ .CashierFilter }}">{{ end }}
+    <label>{{ T "reports.yuzde_usulu.form_date" }}
+      <input type="date" name="date" value="{{ .Today }}" max="{{ .Today }}" required>
+    </label>
+    <input type="hidden" name="amount" id="yuzde-collection-amount-minor">
+    {{/* Same money-input pattern as reports_tab_tips.html's amount field
+         (ut-docs#1272/#1249): text + inputmode="decimal" + oninput, so
+         osk.js's input-only keystrokes register and a momentarily-invalid
+         decimal string isn't silently reset; window.utCurrency.toMinor()
+         instead of a hardcoded *100, which is wrong by 100x on any
+         0-decimal currency. */}}
+    <label>{{ T "reports.yuzde_usulu.form_amount" }} ({{ currency.Display }})
+      <input type="text" id="yuzde-collection-amount" inputmode="decimal" {{ moneypattern currency.Decimals false }} required {{ moneyplaceholder currency.Decimals 0 }}
+             oninput="document.getElementById('yuzde-collection-amount-minor').value = window.utCurrency.toMinor(this.value)">
+    </label>
+    <label>{{ T "reports.yuzde_usulu.form_basis" }}
+      <input type="text" name="basis_note" placeholder="{{ T "reports.yuzde_usulu.form_basis_hint" }}">
+    </label>
+    <button type="submit" class="btn primary">{{ T "reports.yuzde_usulu.form_collection_submit" }}</button>
+    <div id="yuzde-collection-result" class="muted" aria-live="polite" style="min-height:1.3rem; margin-top:.4rem"></div>
+  </form>
+</div>
+
+<div class="card" style="margin-top:1rem">
+  <h2>{{ T "reports.yuzde_usulu.distributions_title" }}</h2>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>{{ T "reports.yuzde_usulu.col_date" }}</th>
+        <th>{{ T "reports.yuzde_usulu.col_worker" }}</th>
+        <th>{{ T "reports.yuzde_usulu.col_amount" }}</th>
+        <th>{{ T "reports.yuzde_usulu.col_note" }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Detail }}
+      <tr>
+        <td>{{ datetime .AllocatedAt }}</td>
+        <td>{{ .Worker }}</td>
+        <td style="text-align:end">{{ money .AmountMinor }}</td>
+        <td class="muted">{{ .Note }}</td>
+      </tr>
+      {{ else }}
+      <tr><td class="empty" colspan="4">{{ T "reports.none" }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>
+
+<div class="card" style="margin-top:1rem">
+  <h2>{{ T "reports.yuzde_usulu.record_distribution_title" }}</h2>
+  <p class="muted">{{ T "reports.yuzde_usulu.record_distribution_hint" }}</p>
+  {{/* Posts to the EXISTING worker-allocations endpoint with
+       source_type=yuzde_usulu_pool — one ledger, two filtered views
+       (ADR-0063 Decision 2), not a second write path. */}}
+  <form id="yuzde-distribution-form" hx-post="/api/reports/worker-allocations" hx-target="#report-tab-panel" hx-swap="innerHTML">
+    {{ if .Period }}
+    <input type="hidden" name="period" value="{{ .Period }}">
+    <input type="hidden" name="anchor" value="{{ .Anchor }}">
+    {{ else }}
+    <input type="hidden" name="days" value="{{ .Days }}">
+    {{ end }}
+    {{ if .CashierFilter }}<input type="hidden" name="cashier" value="{{ .CashierFilter }}">{{ end }}
+    <input type="hidden" name="source_type" value="yuzde_usulu_pool">
+    <label>{{ T "reports.yuzde_usulu.form_date" }}
+      <input type="date" name="date" value="{{ .Today }}" max="{{ .Today }}" required>
+    </label>
+    <label>{{ T "reports.yuzde_usulu.form_pool" }}
+      <select name="pool_id" required>
+        <option value="" disabled selected>{{ T "reports.yuzde_usulu.form_pool_pick" }}</option>
+        {{ range .Collections }}
+        <option value="{{ .ID }}">{{ date .CollectedAt }} — {{ money .AmountMinor }}</option>
+        {{ end }}
+      </select>
+    </label>
+    <label>{{ T "reports.yuzde_usulu.form_worker" }}
+      <select name="cashier_id" required>
+        <option value="" disabled selected>{{ T "reports.yuzde_usulu.form_worker_pick" }}</option>
+        {{ range .Workers }}
+        <option value="{{ .ID }}">{{ if .DisplayName }}{{ .DisplayName }}{{ else }}{{ .Username }}{{ end }}</option>
+        {{ end }}
+      </select>
+    </label>
+    <input type="hidden" name="amount" id="yuzde-distribution-amount-minor">
+    <label>{{ T "reports.yuzde_usulu.form_amount" }} ({{ currency.Display }})
+      <input type="text" id="yuzde-distribution-amount" inputmode="decimal" {{ moneypattern currency.Decimals false }} required {{ moneyplaceholder currency.Decimals 0 }}
+             oninput="document.getElementById('yuzde-distribution-amount-minor').value = window.utCurrency.toMinor(this.value)">
+    </label>
+    <label>{{ T "reports.yuzde_usulu.form_note" }}
+      <input type="text" name="note" placeholder="{{ T "reports.yuzde_usulu.form_note_hint" }}">
+    </label>
+    <button type="submit" class="btn primary">{{ T "reports.yuzde_usulu.form_distribution_submit" }}</button>
+    <div id="yuzde-distribution-result" class="muted" aria-live="polite" style="min-height:1.3rem; margin-top:.4rem"></div>
+  </form>
+</div>
+
+<script>
+// Both forms above target #report-tab-panel (a full re-render of this tab
+// on success), so htmx's default "never swap a non-2xx response" would
+// otherwise drop every validation/save error into that big target instead
+// of showing it — the button would look dead. Same fix, and same reasoning
+// for binding on the form elements themselves rather than document.body,
+// as reports_tab_tips.html (ut-docs#1273): this whole partial is torn down
+// and re-created on every tab swap, so a fresh listener on the fresh node
+// replaces the old one instead of accumulating.
+(function () {
+  // ut-docs#1287: a network-level failure never reaches htmx:responseError
+  // (there is no response at all) — htmx fires htmx:sendError instead.
+  var T = { serverError: "{{ T "designer.error.server" }}" };
+  [['yuzde-collection-form', 'yuzde-collection-result'],
+   ['yuzde-distribution-form', 'yuzde-distribution-result']].forEach(function (pair) {
+    var form = document.getElementById(pair[0]);
+    var msg = document.getElementById(pair[1]);
+    if (!form || !msg) return;
+    form.addEventListener('htmx:responseError', function (ev) {
+      msg.textContent = '✗ ' + (ev.detail.xhr.responseText || '');
+    });
+    form.addEventListener('htmx:sendError', function () {
+      msg.textContent = '✗ ' + T.serverError;
+    });
+  });
+})();
+</script>
+
+<div class="card" style="margin-top:1rem">
+  <a class="btn secondary" hx-boost="false" href="/api/reports/worker-allocations/export?from={{ .From }}&amp;to={{ .To }}{{ if .CashierFilter }}&amp;cashier={{ .CashierFilter }}{{ end }}">{{ T "reports.yuzde_usulu.export_btn" }}</a>
+</div>
+{{ end }}
+{{ end }}
