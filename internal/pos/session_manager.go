@@ -29,17 +29,17 @@ import (
 // single-lock convention (see the Service struct's doc comment) — every
 // exported method except BindTable takes it exactly once at its own top
 // and calls only unexported helpers that assume it is held. Lock order is
-// manager.mu -> Service.mu (TableOwner/HasItems/SetConfig call Service
-// methods while holding mu). SetConfig in particular still has the SAME
-// blocking-ask exposure BindTable used to (its Service.SetConfig call can
-// itself trigger a blocking plugin tax/charge-policy ask via
-// recomputeTotals, serializing every OTHER live session's own request
-// behind it for the ask's duration) — untouched by ut-docs#2443, which is
-// scoped to BindTable alone, and not fixed by ut-docs#2449 either, which is
-// scoped to HasItems alone; not yet filed as its own follow-up. HasItems
-// itself no longer has this exposure (ut-docs#2449): it reads
-// Service.Lines(), a lock/copy/unlock with no recompute and no plugin call —
-// the same fix BindTable's own busy-check path took in ut-docs#2444.
+// manager.mu -> Service.mu (TableOwner/HasItems call Service methods while
+// holding mu, but only ever TableID()/Lines() — cheap lock/copy/unlock reads
+// with no recompute and no plugin call, so this is a narrow exception, not a
+// violation, of "no Service call under m.mu"). SetConfig used to be the one
+// exception that mattered: its Service.SetConfig call triggers
+// recomputeTotals, which can itself invoke a blocking plugin tax/
+// charge-policy ask — the same lock-scope class BindTable (ut-docs#2443) and
+// HasItems (ut-docs#2449) were already fixed for. Fixed for SetConfig too
+// (ut-docs#2435): it snapshots the live *Service list under mu, then calls
+// each one's SetConfig after releasing it, so no manager method still holds
+// mu across a plugin round-trip.
 //
 // BindTable is the one exception, and takes mu up to three times (ut-docs#2443,
 // review finding S1 on ut-docs#2434, and the round-2 review of that first
@@ -445,14 +445,28 @@ func (m *SessionBasketManager) Sweep(maxIdle time.Duration, now time.Time) int {
 // settings handler already does after a store-settings save, so a guest
 // mid-order sees the same rates a kiosk checkout would after a settings
 // change, never a stale boot-time config.
+//
+// Snapshots the live *Service list under m.mu, then calls each snapshotted
+// Service's SetConfig AFTER releasing the lock (ut-docs#2435, same
+// lock-scope class as ut-docs#2443/#2449): Service.SetConfig runs
+// recomputeTotals under Service.mu, which can invoke a blocking plugin
+// tax/charge-policy ask — holding m.mu across that call would serialize
+// every other live session's Get/BindTable/etc. (all of which need m.mu)
+// behind however long that ask takes. A session created after the snapshot
+// is taken simply doesn't receive this particular SetConfig call, same as
+// any other snapshot-then-call race in this file.
 func (m *SessionBasketManager) SetConfig(cfg Config) {
 	if m == nil {
 		return
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	svcs := make([]*Service, 0, len(m.sessions))
 	for _, sb := range m.sessions {
-		sb.svc.SetConfig(cfg)
+		svcs = append(svcs, sb.svc)
+	}
+	m.mu.Unlock()
+	for _, svc := range svcs {
+		svc.SetConfig(cfg)
 	}
 }
 
