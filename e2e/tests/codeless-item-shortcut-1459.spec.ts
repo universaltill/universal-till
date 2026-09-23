@@ -50,7 +50,11 @@ test('a catalog item with neither barcode nor SKU can be added as a button and r
   const result = page.locator('#search-results .result', { hasText: name });
   await expect(result).toBeVisible({ timeout: 5000 });
 
-  const tilesBefore = page.locator('#buttons-grid-admin .tile-name', { hasText: name });
+  // ut-docs#2174: the Designer's tiles are its live sale-screen replica's
+  // inert [data-testid="designer-tile"] buttons (the flat #buttons-grid-admin
+  // grid is retired); wait for the replica's first render before counting.
+  await expect(page.locator('[data-testid="designer-categories"]')).toBeVisible();
+  const tilesBefore = page.locator('[data-testid="designer-tile"] .tile-name', { hasText: name });
   const before = await tilesBefore.count();
   await result.click();
 
@@ -59,7 +63,7 @@ test('a catalog item with neither barcode nor SKU can be added as a button and r
   // appeared, not merely that no error was thrown.
   await expect(tilesBefore).toHaveCount(before + 1, { timeout: 5000 });
 
-  const adminTile = page.locator('.reorderable-tile', { hasText: name });
+  const adminTile = page.locator('[data-testid="designer-tile"]', { hasText: name });
   const code = await adminTile.getAttribute('data-code');
   expect(code, 'added button must carry a real, non-empty code').toBeTruthy();
   expect(code).not.toBe('');

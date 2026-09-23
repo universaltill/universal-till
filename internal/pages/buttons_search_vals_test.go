@@ -101,8 +101,16 @@ func TestButtonsSearchHxValsFallsBackToSKUForBarcodeLessItem(t *testing.T) {
 	if addRec.Code != 200 {
 		t.Fatalf("add SKU-only item = %d, want 200 (%s)", addRec.Code, addRec.Body.String())
 	}
-	if !strings.Contains(addRec.Body.String(), "Loose Screw") {
-		t.Fatalf("admin grid response missing added SKU-only tile: %s", addRec.Body.String())
+	// ut-docs#2174: the add response no longer re-renders a flat admin grid
+	// (the Designer is a live replica of the sale screen that refreshes
+	// off HX-Trigger), so "the tile appears" is pinned on the persisted row
+	// plus the trigger header rather than on the response body.
+	if got := addRec.Header().Get("HX-Trigger"); got != "buttons-changed" {
+		t.Fatalf("add HX-Trigger = %q, want buttons-changed", got)
+	}
+	var label string
+	if err := d.Db.QueryRow(`SELECT label FROM shortcut_buttons WHERE barcode='SKU-ONLY-1'`).Scan(&label); err != nil || label != "Loose Screw" {
+		t.Fatalf("added SKU-only tile missing from shortcut_buttons: label=%q err=%v", label, err)
 	}
 }
 
