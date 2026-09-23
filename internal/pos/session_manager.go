@@ -132,17 +132,83 @@ func newSessionToken() string {
 	return hex.EncodeToString(raw)
 }
 
-// Create mints a new session and returns its token and fresh *Service.
-func (m *SessionBasketManager) Create() (string, *Service) {
+// MaxLiveSelfOrderSessions bounds the manager's total live-session count
+// (ut-docs#2432). The map is keyed by anonymous, LAN-reachable requests —
+// GET /self-order?table=<id> mints a new session on every cookieless hit
+// that isn't blocked by the busy guard — so nothing but this cap and the
+// idle Sweep (up to 2h away, see self_order_session_sweep.go) bounds its
+// size; a tight request loop against one table's QR can exhaust memory on
+// a Pi-class till long before Sweep ever runs. A real shop's simultaneous
+// table/guest-device count realistically tops out in the dozens to low
+// hundreds; 500 is generous headroom above that while still bounding
+// worst-case memory to a small, fixed number of lightweight *Service
+// instances (no DB connections, no goroutines per session).
+const MaxLiveSelfOrderSessions = 500
+
+// Create mints a new session and returns its token and fresh *Service, or
+// ok=false once the manager is at MaxLiveSelfOrderSessions live sessions AND
+// every one of them already holds real order items — the caller must treat
+// a false ok as "nothing was created" and never use the zero-value
+// token/Service returned alongside it.
+//
+// At the cap, Create first evicts the least-recently-seen EMPTY session
+// (independent review of ut-docs#2432's first fix: capping the map alone
+// let one source hold the whole shop's ordering hostage — mint 20
+// cookieless, itemless sessions a minute, well under the 2h idle-sweep
+// window, and every table's guests see "busy" forever). An empty session
+// has never had an item added to it, so evicting one loses nothing a guest
+// would notice — the same "nothing to lose" logic the busy guard already
+// applies to an abandoned cart (bindSelfOrderTableSession's
+// TableOwnerActive check). Only when EVERY live session actually holds
+// items — the shop is genuinely at MaxLiveSelfOrderSessions real
+// concurrent orders — does Create refuse, which is the true memory bound
+// this cap exists to enforce.
+func (m *SessionBasketManager) Create() (string, *Service, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if len(m.sessions) >= MaxLiveSelfOrderSessions && !m.evictOldestEmptyLocked() {
+		return "", nil, false
+	}
 	svc := m.factory()
 	token := newSessionToken()
 	for _, taken := m.sessions[token]; taken; _, taken = m.sessions[token] {
 		token = newSessionToken() // 2^128 space — practically unreachable, but never overwrite a live session
 	}
 	m.sessions[token] = &sessionBasket{svc: svc, lastSeen: m.clock()}
-	return token, svc
+	return token, svc, true
+}
+
+// evictOldestEmptyLocked removes the least-recently-seen session whose
+// basket holds no items, freeing one slot for Create/BindTable at the cap.
+// Reports whether it found one to evict; mu must already be held. O(n) over
+// live sessions — n is capped at MaxLiveSelfOrderSessions, so this is
+// bounded work, not unbounded scan growth.
+//
+// The empty check is len(sb.svc.Lines()) == 0, deliberately NOT
+// sb.svc.Basket().ItemCount() == 0 — same reasoning as BindTable's own
+// empty check (see its doc comment, ut-docs#2444 review finding S1):
+// Basket() calls recomputeTotals(), which can perform a blocking plugin
+// ask, and this runs under m.mu (BindTable's fresh-mint path calls this
+// with its own lock already held) — the exact class of bug ut-docs#2443
+// closed elsewhere in this file. Lines() is a lock/copy/unlock with no
+// recompute, so this scan never blocks on a plugin round-trip.
+func (m *SessionBasketManager) evictOldestEmptyLocked() bool {
+	var oldestToken string
+	var oldestSeen time.Time
+	found := false
+	for token, sb := range m.sessions {
+		if len(sb.svc.Lines()) > 0 {
+			continue
+		}
+		if !found || sb.lastSeen.Before(oldestSeen) {
+			oldestToken, oldestSeen, found = token, sb.lastSeen, true
+		}
+	}
+	if !found {
+		return false
+	}
+	delete(m.sessions, oldestToken)
+	return true
 }
 
 // Get returns the live session for token, refreshing its idle clock on a
@@ -396,6 +462,19 @@ func (m *SessionBasketManager) BindTable(tableID, tableLabel, ownToken string, m
 		// still live), not the common mint path ut-docs#2443's fix is
 		// actually about.
 		freshSvc = m.factory()
+	}
+	// ut-docs#2432: the session-count cap applies only to this fresh-mint
+	// path — never the mover branch just above, which reuses an existing
+	// session and never grows len(m.sessions). Reached under the SAME m.mu
+	// held continuously since the busy-check loop at the top, so this is
+	// one atomic "is there room, and if not can I make room" step, not a
+	// separate lock/unlock. See Create's doc comment for why evicting the
+	// oldest EMPTY session first (rather than refusing outright) is what
+	// stops one source flooding the map with empty sessions from locking
+	// out every real guest at every table.
+	if len(m.sessions) >= MaxLiveSelfOrderSessions && !m.evictOldestEmptyLocked() {
+		m.mu.Unlock()
+		return "", nil, true
 	}
 	svc = freshSvc
 	token = newSessionToken()
