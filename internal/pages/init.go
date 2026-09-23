@@ -510,6 +510,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerPluginAPI(mux, dp)
 	registerPluginPages(mux, dp)
 	registerButtonsAPI(mux, dp)
+	registerDesignerCategoriesAPI(mux, dp) // Designer category CRUD (ut-docs#2174)
 	registerPOSAPI(mux, dp)
 	registerVoucherAPI(mux, dp)      // voucher liability balance query (ut-docs#1008)
 	registerFiscalAPI(mux, dp)       // German TSE hard-gate owner override (ADR-0048)

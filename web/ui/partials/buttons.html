@@ -38,7 +38,23 @@
      see ut-docs#2294's own query-count test for why that distinction is
      load-bearing: the All grid must re-fetch on either of these, but never
      on a basket/scan event. */}}
-<div class="products" hx-get="/ui/buttons" hx-trigger="modifiers-changed from:body, buttons-changed from:body" hx-swap="outerHTML">
+{{/* ut-docs#2174: .EditMode is the Quick Buttons Designer's live replica of
+     this exact panel (designer.html's placeholder, GET /ui/buttons?mode=edit,
+     catalog_management-gated in buttons_api.go). ONE template, two modes:
+     edit mode adds the "designer-categories" management section (bottom of
+     the "buttons" define) and renders every product-tile inert (see that
+     define), and drops the sale-only affordances -- the sale-screen search,
+     the link to /designer, the All tab (buttons_api.go turns it off) and
+     the plugin action strip. The mode rides on hx-vals, which htmx appends
+     to a GET as ?mode=edit, so hx-get stays the literal "/ui/buttons":
+     app.js's utTileJiggle unsaved-drag guard matches
+     `.products[hx-get="/ui/buttons"]` verbatim, and that guard is what
+     keeps a half-dragged reorder from being lost when a category change
+     below re-fetches this root -- jiggle mode itself is untouched and works
+     on the Designer for free because the markup is the same. A constant
+     hx-vals literal, not {{ "jsonVals" }}: nothing interpolated (guard-i18n
+     check 4 only flags a literal with a template action inside it). */}}
+<div class="products" hx-get="/ui/buttons"{{ if .EditMode }} hx-vals='{"mode":"edit"}'{{ end }} hx-trigger="modifiers-changed from:body, buttons-changed from:body" hx-swap="outerHTML">
   {{/* ut-docs#2294: $showAllTab (settings.sale.show_all_tab, .ShowAllTab,
        default true, ANDed with there being at least one active item to
        show) is computed up here, ahead of the empty-state branch below,
@@ -54,7 +70,12 @@
        "off" is supposed to restore -- not render a silently blank screen
        with nothing sellable and no CTA telling the operator why. */}}
   {{ $showAllTab := and .ShowAllTab .AllButtons }}
-  {{ if and (not .Groups) (not $showAllTab) }}
+  {{/* ut-docs#2174: never the empty state in edit mode -- the Designer
+       needs its category-management section (and the strip/grid scaffold
+       jiggle mode expects) even before the first quick button exists; the
+       grid itself says "No products yet." there instead (see the final
+       else branch below). */}}
+  {{ if and (not .Groups) (not $showAllTab) (not .EditMode) }}
   <div class="products-header">
     <h2>{{ T "products.title" }}</h2>
     <!-- 2026-08-30 (product owner, live on the tablet, comparing against a
@@ -278,7 +299,12 @@
           const tabStillExists = st.tab === '__all__' ? !!document.getElementById('cat-tab-all')
             : !!document.getElementById('cat-tab-' + (st.tab || 'uncategorized'));
           if (typeof st.tab === 'string' && tabStillExists) this.tab = st.tab;
-          if (st.q) { this.q = st.q; this.searching = true; }
+          {{/* ut-docs#2174 review: never in edit mode -- utSaleGridState is
+               a window global that survives the shell's boosted navigation,
+               so a search typed on the sale screen would otherwise be
+               restored into the Designer's replica, hiding its grid behind
+               an empty results view it has no search box to clear. */}}
+          {{ if not .EditMode }}if (st.q) { this.q = st.q; this.searching = true; }{{ end }}
         }
         this.$watch('tab', v => { window.utSaleGridState = Object.assign({}, window.utSaleGridState, { tab: v }); });
         this.$watch('q', v => { window.utSaleGridState = Object.assign({}, window.utSaleGridState, { q: v }); });
@@ -741,6 +767,14 @@
              running this feature's own e2e coverage for real for the
              first time (ut-docs#2294's dev session had no Chromium) --
              see sale-screen-category-tabs-search-418.spec.ts. */}}
+        {{/* ut-docs#2174: no sale-screen search and no link to /designer
+             in edit mode -- the Designer IS /designer, and it has its own
+             "add as a shortcut" search above the replica (buttons_admin.html);
+             this search returns live, sellable result tiles (product-tile-
+             result), which have no place on an editing surface. openSearch/
+             closeSearch already null-check their $refs, so their absence is
+             inert. */}}
+        {{ if not .EditMode }}
         <input type="search" id="products-search" name="q" x-model="q" x-ref="search"
                x-show="searching" x-cloak
                hx-get="/ui/buttons/search" hx-target="#search-results" hx-swap="innerHTML" hx-trigger="input changed delay:300ms" hx-params="*"
@@ -757,6 +791,7 @@
            aria-label="{{ T "products.edit" }}" title="{{ T "products.edit" }}">
           <span class="btn-ico" aria-hidden="true">{{ icon "pencil" }}</span>
         </a>
+        {{ end }}
       </div>
       {{/* ut-docs#2294: search results are a SEPARATE view from the tabs/
            grid below, not a filter layered on top of them — while q is
@@ -767,7 +802,11 @@
            tab" falls out of for free. hx-target of the search input
            above. No x-cloak: q starts '' (search closed) on every fresh
            load, so this is never visible pre-hydration regardless. */}}
-      <div id="search-results" class="category-groups" x-show="q"></div>
+      {{/* ut-docs#2174 review: not in edit mode -- the replica has no
+           sale-screen search input to fill it, and /designer already has
+           its own #search-results (buttons_admin.html's add-a-button
+           dropdown); a second one was a duplicate id on the page. */}}
+      {{ if not .EditMode }}<div id="search-results" class="category-groups" x-show="q"></div>{{ end }}
       {{/* ut-docs#2339: the jiggle edit mode's Done bar. Hidden at rest;
            app.js's utTileJiggle unhides it (and adds .jiggle-mode to
            #buttons-grid below) after a long-press/right-click on a tile,
@@ -925,14 +964,180 @@
              branch's own message uses one level up against
              .products-tab-panel. */}}
         {{ range .Groups }}{{ template "category-group" . }}{{ end }}
+        {{/* ut-docs#2174: the Designer with no quick buttons yet lands in
+             this branch (the empty state above is skipped in edit mode);
+             the message the retired flat grid used to show, so the search
+             box above it still has a clear "add your first one" cue. */}}
+        {{ if and .EditMode (not .Groups) }}<p class="empty" data-testid="designer-empty">{{ T "designer.empty" }}</p>{{ end }}
         <p class="empty" x-show="!sectionHasMatch($el.parentElement)">{{ T "products.no_matches" }}</p>
         {{ end }}
       </div>
+      {{ if .EditMode }}{{ template "designer-categories" . }}{{ end }}
     </section>
   {{ end }}
+  {{/* ut-docs#2174: plugin-contributed action buttons are not quick
+       buttons -- nothing to arrange -- so the Designer's replica omits the
+       strip. */}}
+  {{ if not .EditMode }}
   <!-- Action buttons contributed by installed plugins -->
   <div hx-get="/ui/plugin-buttons" hx-trigger="load" hx-swap="outerHTML"></div>
+  {{ end }}
 </div>
+{{ end }}
+
+{{/* ut-docs#2174: the Designer's category-management section, edit mode
+     only -- rendered INSIDE the self-refreshing .products root (so every
+     successful change re-renders it from the server's truth via the same
+     buttons-changed trigger the tile grid uses) but OUTSIDE #buttons-grid
+     (so a pointerdown on any control here is "outside the grid" to app.js's
+     utTileJiggle and cleanly exits/persists an open jiggle session first).
+
+     Lists EVERY category (.AdminCategories, ui.DesignerCategoryVM: active
+     and inactive, with or without quick buttons), where the strip above
+     only ever shows the active ones that have a button -- so the two
+     deliberately differ, and each row says how many buttons it has on the
+     sale screen so the gap is explained rather than surprising.
+
+     Every pointer action has a keyboard path (ut-docs#826): the move
+     controls are real <button>s with the same move-earlier/move-later
+     pattern the retired admin grid and /categories use (a single mechanism
+     that already works by tap, click and Tab+Enter/Space, no gesture code
+     -- ut-docs#1221); edit/new are plain buttons toggling an Alpine-shown
+     inline form (aria-expanded/aria-controls); deactivate/activate are
+     real submit buttons. Nothing here is a div with a click handler.
+
+     Rename/recolour and create post hx-boost-free forms straight to the
+     Designer's own routes (designer_categories_api.go) with hx-swap=
+     "innerHTML" into a per-row aria-live message: a success is a 204 (no
+     swap) whose HX-Trigger re-renders this whole root, a refusal is a
+     text/html non-2xx fragment app.js's global htmx:beforeSwap force-swaps
+     into that message. Reorder is the one control driven by the page's
+     own script (designer.html: computes the new id order from the DOM and
+     posts it via htmx.ajax, same 204/HX-Trigger contract) because the body
+     shape -- every id in display order -- can't come from a single button's
+     own form.
+
+     Deactivating a category that still has active items is REFUSED by the
+     repo (CatalogRepo.SetCategoryActive, ErrCategoryHasItems), so the row
+     says so up front (data-testid="designer-cat-blocked-<id>", wired to the
+     button via aria-describedby) rather than letting the operator confirm
+     an action that will only ever be rejected; only an empty category gets
+     the hx-confirm, whose copy explains what happens to the strip. The
+     server's refusal message still lands in the row's message region if
+     the state changed underneath.
+
+     The colour picker is a radio group inside <label>s styled as the same
+     .item-color-tile swatches catalog.html/categories.html use: radios
+     carry their own arrow-key roving focus natively, so no picker script
+     is needed here (categories.html's buttons+hidden-input picker needs
+     one because <button>s aren't a group). The native radio stays visible
+     inside the tile so selection is never conveyed by colour alone. */}}
+{{ define "designer-categories" }}
+<section class="designer-categories" aria-labelledby="designer-categories-title" data-testid="designer-categories">
+  <div class="designer-categories-head">
+    <h3 id="designer-categories-title">{{ T "categories.title" }}</h3>
+    <p class="muted designer-categories-help">{{ T "designer.categories.help" }}</p>
+  </div>
+  <div id="designer-categories-msg" class="designer-cat-msg" role="status" aria-live="polite"></div>
+  {{/* No arithmetic funcs in the template set: find the last row's id with
+       a pre-pass so its move-later button can render disabled. */}}
+  {{ $last := "" }}{{ range .AdminCategories }}{{ $last = .ID }}{{ end }}
+  <ol class="designer-cat-list">
+    {{ range $i, $c := .AdminCategories }}
+    <li class="designer-cat{{ if not $c.IsActive }} designer-cat-inactive{{ end }}" data-cat-id="{{ $c.ID }}" x-data="{ editing: false }">
+      <span class="designer-cat-swatch" {{ if $c.Color }}style="--swatch: {{ $c.Color }}"{{ end }} aria-hidden="true"></span>
+      <span class="designer-cat-text">
+        <span class="designer-cat-name">{{ $c.Name }}</span>
+        <span class="muted designer-cat-meta">{{ printf (T "products.category_button_count") $c.ButtonCount }} · {{ printf (T "categories.item_count") $c.ItemCount }}{{ if not $c.IsActive }} · {{ T "categories.inactive" }}{{ end }}</span>
+      </span>
+      <div class="list-actions designer-cat-actions">
+        {{/* Edge rows render their dead-end move button disabled here, on
+             the server, which knows the order -- not fixed up client-side
+             after the fact as the retired admin grid did. */}}
+        <button type="button" class="btn secondary btn-icon" id="designer-cat-up-{{ $c.ID }}" data-cat-move="-1"{{ if eq $i 0 }} disabled{{ end }} aria-label="{{ T "designer.move_up" }}" title="{{ T "designer.move_up" }}">
+          <span class="btn-ico" aria-hidden="true">{{ icon "chevron-up" }}</span>
+        </button>
+        <button type="button" class="btn secondary btn-icon" id="designer-cat-down-{{ $c.ID }}" data-cat-move="1"{{ if eq $c.ID $last }} disabled{{ end }} aria-label="{{ T "designer.move_down" }}" title="{{ T "designer.move_down" }}">
+          <span class="btn-ico" aria-hidden="true">{{ icon "chevron-down" }}</span>
+        </button>
+        <button type="button" class="btn secondary btn-icon" id="designer-cat-edit-{{ $c.ID }}" data-cat-edit
+                :aria-expanded="editing" aria-controls="designer-cat-form-{{ $c.ID }}" @click="editing = !editing"
+                aria-label="{{ T "categories.edit" }}" title="{{ T "categories.edit" }}">
+          <span class="btn-ico" aria-hidden="true">{{ icon "pencil" }}</span>
+        </button>
+        {{ if $c.IsActive }}
+        <form hx-post="/api/designer/categories/{{ $c.ID }}/active" hx-target="#designer-cat-msg-{{ $c.ID }}" hx-swap="innerHTML"
+              {{ if eq $c.ItemCount 0 }}hx-confirm="{{ printf (T "designer.category.deactivate_confirm") $c.Name }}"{{ end }}>
+          <input type="hidden" name="active" value="0">
+          <button type="submit" class="btn secondary btn-icon btn-icon-danger" id="designer-cat-active-{{ $c.ID }}"
+                  {{ if gt $c.ItemCount 0 }}aria-describedby="designer-cat-blocked-{{ $c.ID }}"{{ end }}
+                  aria-label="{{ T "categories.deactivate" }}" title="{{ T "categories.deactivate" }}">
+            <span class="btn-ico" aria-hidden="true">{{ icon "trash-2" }}</span>
+          </button>
+        </form>
+        {{ else }}
+        <form hx-post="/api/designer/categories/{{ $c.ID }}/active" hx-target="#designer-cat-msg-{{ $c.ID }}" hx-swap="innerHTML">
+          <input type="hidden" name="active" value="1">
+          <button type="submit" class="btn secondary compact" id="designer-cat-active-{{ $c.ID }}">{{ T "categories.activate" }}</button>
+        </form>
+        {{ end }}
+      </div>
+      {{ if and $c.IsActive (gt $c.ItemCount 0) }}
+      <p class="muted designer-cat-blocked" id="designer-cat-blocked-{{ $c.ID }}" data-testid="designer-cat-blocked-{{ $c.ID }}">{{ printf (T "designer.category.deactivate_blocked_hint") $c.ItemCount }}</p>
+      {{ end }}
+      <p class="designer-cat-msg" id="designer-cat-msg-{{ $c.ID }}" role="status" aria-live="polite"></p>
+      <form class="designer-cat-form" id="designer-cat-form-{{ $c.ID }}" x-show="editing" x-cloak
+            hx-post="/api/designer/categories/{{ $c.ID }}" hx-target="#designer-cat-msg-{{ $c.ID }}" hx-swap="innerHTML" autocomplete="off">
+        <label class="designer-cat-field">{{ T "categories.col.name" }}
+          <input type="text" name="name" value="{{ $c.Name }}" required placeholder="{{ T "categories.create_placeholder" }}">
+        </label>
+        {{ template "designer-category-colors" (dict "Colors" $.ItemColors "Selected" $c.Color) }}
+        <div class="designer-cat-form-actions">
+          <button type="submit" class="btn primary compact" id="designer-cat-save-{{ $c.ID }}">{{ T "common.save" }}</button>
+          <button type="button" class="btn secondary compact" @click="editing = false">{{ T "common.cancel" }}</button>
+        </div>
+      </form>
+    </li>
+    {{ else }}
+    <li class="muted designer-cat-none">{{ T "categories.empty" }}</li>
+    {{ end }}
+  </ol>
+  <div class="designer-cat-new" x-data="{ creating: false }">
+    <button type="button" class="btn primary compact" id="designer-cat-new" :aria-expanded="creating" aria-controls="designer-cat-form-new" @click="creating = !creating">+ {{ T "categories.new" }}</button>
+    <form class="designer-cat-form" id="designer-cat-form-new" x-show="creating" x-cloak
+          hx-post="/api/designer/categories" hx-target="#designer-categories-msg" hx-swap="innerHTML" autocomplete="off">
+      <label class="designer-cat-field">{{ T "categories.col.name" }}
+        <input type="text" name="name" required placeholder="{{ T "categories.create_placeholder" }}">
+      </label>
+      {{ template "designer-category-colors" (dict "Colors" .ItemColors "Selected" "") }}
+      <div class="designer-cat-form-actions">
+        <button type="submit" class="btn primary compact" id="designer-cat-new-submit">{{ T "categories.create" }}</button>
+        <button type="button" class="btn secondary compact" @click="creating = false">{{ T "common.cancel" }}</button>
+      </div>
+    </form>
+  </div>
+</section>
+{{ end }}
+
+{{/* The radio swatch picker shared by every category form above. --swatch
+     is a raw hex from catalogtypes.ItemColors() (a fixed allowlist, also
+     enforced server-side), the one place it reaches CSS here. */}}
+{{ define "designer-category-colors" }}
+<fieldset class="designer-cat-colors">
+  <legend>{{ T "catalog.color" }}</legend>
+  {{ $sel := .Selected }}
+  {{ range .Colors }}
+  <label class="picker-tile item-color-tile" style="--swatch: {{ .Hex }}">
+    <input type="radio" name="color" value="{{ .Hex }}"{{ if eq .Hex $sel }} checked{{ end }}>
+    <span class="swatch-dot" aria-hidden="true"></span>
+    <span>{{ T .I18nKey }}</span>
+  </label>
+  {{ end }}
+  <label class="picker-tile item-color-tile">
+    <input type="radio" name="color" value=""{{ if not $sel }} checked{{ end }}>
+    <span>{{ T "catalog.color.none" }}</span>
+  </label>
+</fieldset>
 {{ end }}
 
 {{/* A top-level tab's own content: its own buttons (if any), then its
@@ -1068,7 +1273,26 @@
 {{ define "product-tile" }}
   {{ $colored := and (not .ImageURL) .Color }}
   <div class="tile-cell" data-name="{{ .Label }}" x-show="matches($el)">
-  {{ if or .HasModifiers .HasVariants }}
+  {{/* ut-docs#2174: on the Designer's live replica (.Editing, see
+       ui.ButtonVM.Editing) the tile is INERT -- same class, data-code/
+       data-item-id/data-pos and body as a live tile (so utTileJiggle's
+       long-press/drag/arrow-key reorder and the two badges work
+       unchanged), but no hx-post="/api/pos/scan" and no modifier-picker
+       hx-get: there is no basket on the Designer, and a tap here must
+       never reach the cashier's live one. */}}
+  {{ if .Editing }}
+  <button
+    type="button"
+    class="btn-tile{{ if $colored }} tile-colored{{ end }}"
+    data-name="{{ .Label }}"
+    data-code="{{ .Code }}" data-item-id="{{ .ItemID }}" data-pos="{{ .Pos }}"
+    data-testid="designer-tile"
+    {{ if $colored }}style="--tile-color: {{ .Color }}"{{ end }}>
+    {{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}
+    <span class="tile-name">{{ .Label }}</span>
+    {{ if .Price }}<span class="tile-price">{{ money .Price }}</span>{{ end }}
+  </button>
+  {{ else if or .HasModifiers .HasVariants }}
   <button
     class="btn-tile{{ if $colored }} tile-colored{{ end }}"
     data-name="{{ .Label }}"
@@ -1112,7 +1336,10 @@
          way -- a granted manager+ session renders with .Locked false,
          which skips every branch below back to the pre-#2361 markup. */}}
     <span class="tile-badges" role="group" aria-label="{{ T "tile_sheet.aria" }}">
-      <a class="tile-badge tile-badge-edit{{ if .Locked }} locked{{ end }}" data-testid="tile-badge-edit" href="/catalog?item={{ .ItemID }}&return=/"
+      {{/* ut-docs#2174: return to wherever this tile was rendered -- the
+           Designer's replica sends the operator back to /designer, not
+           to the sale screen. */}}
+      <a class="tile-badge tile-badge-edit{{ if .Locked }} locked{{ end }}" data-testid="tile-badge-edit" href="/catalog?item={{ .ItemID }}&return={{ if .Editing }}/designer{{ else }}/{{ end }}"
          aria-label="{{ if .Locked }}{{ T "tile_sheet.edit" }} — {{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.edit" }}{{ end }}"
          title="{{ if .Locked }}{{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.edit" }}{{ end }}">
         <span class="tile-badge-dot" aria-hidden="true">{{ icon "pencil" }}</span>

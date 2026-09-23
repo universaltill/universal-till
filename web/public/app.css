@@ -703,20 +703,6 @@ body.sale-screen .session-admin-link { display: none; }
 .field-invalid { border-color: var(--danger); }
 .field-error-msg { color: var(--danger); font-size: .85rem;
                    margin-block: .2rem 0; margin-inline: 0; }
-/* ut-docs#1221: the Designer's reorder tiles used to be HTML5
-   draggable="true" elements, which needed a `-webkit-user-drag: element`
-   workaround here (WebKitGTK can suppress HTML5 DnD on a user-select:none
-   draggable element) -- moot now that reordering is done via the
-   move-up/move-down buttons in buttons_admin.html instead of a drag
-   gesture, so there is nothing left to opt back into native dragging for. */
-/* Review finding (2026-08-30): .btn-actions .btn's own `min-height: 0`
-   (below, "Buttons") shrinks these to ~33px with ~4px gaps -- under this
-   product's own 46px touch-target floor (.btn-touch), on the one card whose
-   entire point is making reordering work by touch. Scoped here rather than
-   widening .btn-actions .btn generally, which is deliberately compact for
-   dense rows (e.g. the sale-screen tender panel) this change doesn't touch. */
-.reorderable-tile .btn-actions .btn { min-height: 46px; min-width: 46px; }
-.reorderable-tile .btn-actions { gap: .5rem; }
 .journal-row { cursor: pointer; }
 .journal-row:hover td { background: var(--surface-2); }
 /* .catalog-form-head: see the .item-form-modal block below (ut-docs#1956
@@ -2091,19 +2077,6 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
    weight, since `.btn.compact`'s two-class selector always outranks this
    single-class one. */
 .all-more-btn { grid-column: 1 / -1; }
-/* ut-docs#1354: the Designer's reorder tiles (#buttons-grid-admin) share
-   .grid with the sale-screen product grid above, but #1221's three
-   touch-target-sized (46px) move-up/move-down/remove buttons — plus their
-   two .5rem gaps — need ~154px of content width (46*3 + 8*2). At the
-   7rem (112px) column floor tuned for sale-screen product density, that's
-   about 60px more than a tile has, so .btn-actions (a plain flex row with
-   no wrap) overflows the tile's right edge into its neighbor. Scoped by ID
-   so the sale-screen grid's own density (app.css:1034's own comment,
-   product-owner-driven) is untouched — this widens ONLY the admin grid's
-   column floor, not tile height/thumb size/anything else .grid sets. 11rem
-   (176px) clears the ~154px content need with margin for the
-   border-inline-start/padding asymmetry .btn-tile adds below. */
-#buttons-grid-admin { grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); }
 /* user-select/touch-action unconditional here too (ut-docs#1170) — same
    reasoning as .btn above, previously gated behind body.kiosk only. */
 .btn-tile {
@@ -4905,3 +4878,68 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .category-filter .chip-check, .filter-chips .chip-check { display: none; flex: none; inline-size: 1rem; block-size: 1rem; }
 .category-filter .chip-check svg, .filter-chips .chip-check svg { inline-size: 1rem; block-size: 1rem; }
 .category-filter .chip[aria-pressed="true"] .chip-check, .filter-chips .chip[aria-pressed="true"] .chip-check { display: inline-flex; }
+
+/* ut-docs#2174: Quick Buttons Designer — the live replica of the sale
+   screen's product panel plus its category-management section
+   (buttons.html's "designer-categories", edit mode only). The replica itself
+   reuses every .products-finder/.tab-bar/.grid/.tile-cell rule unchanged
+   (same markup, same jiggle mode); these rules only lay out the page
+   sections around it and the management list beneath it. Logical
+   properties only — /designer renders RTL for fa/ar. */
+.designer { display: flex; flex-direction: column; gap: 1.25rem; }
+.designer-preview > h2 { margin-block-end: .15rem; }
+.designer-preview > .muted { margin-block: 0 .6rem; font-size: .85rem; }
+.designer-categories { margin-block-start: 1rem; padding-block-start: .85rem; border-block-start: 1px solid var(--border); display: flex; flex-direction: column; gap: .6rem; }
+.designer-categories-head { display: flex; flex-direction: column; gap: .2rem; }
+.designer-categories-head h3 { margin: 0; }
+.designer-categories-help { margin: 0; font-size: .85rem; }
+.designer-cat-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .45rem; }
+.designer-cat {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "swatch text actions"; gap: .3rem .6rem; align-items: center;
+  padding: .45rem .65rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+}
+.designer-cat-swatch { grid-area: swatch; inline-size: 1rem; block-size: 1rem; border-radius: 50%; background: var(--swatch, transparent); border: 1px solid rgba(15, 23, 42, .18); }
+.designer-cat-text { grid-area: text; display: flex; flex-direction: column; min-inline-size: 0; }
+.designer-cat-name { font-weight: 600; overflow-wrap: anywhere; }
+.designer-cat-inactive .designer-cat-name { color: var(--muted); }
+.designer-cat-meta { font-size: .8rem; }
+.designer-cat-actions { grid-area: actions; }
+/* ut-docs#2174 (Tester finding): at a real kiosk/phone-portrait width the
+   3-column row's `auto`-sized actions column (4 icon buttons) claims its
+   full intrinsic width before the `minmax(0, 1fr)` text column gets
+   anything, squeezing the category name down to a several-pixel sliver
+   and wrapping it mid-word — confirmed with a real 360px screenshot, not
+   guessed. Below 480px (this file's own established narrow-viewport
+   breakpoint, e.g. .scan-row above) the actions move to their own full-
+   width row under the swatch+text row instead of competing for the same
+   line; .list-actions' own gap/sizing is untouched, so the four buttons
+   still meet the real 3rem touch-target floor (ut-docs#2218) — they just
+   have the whole row's width to lay out in rather than a squeezed third. */
+@media (max-width: 480px) {
+  .designer-cat { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "swatch text" "actions actions"; }
+  .designer-cat-actions { justify-content: flex-start; }
+}
+/* Everything below the row's first line spans the full width. */
+.designer-cat-blocked, .designer-cat-msg, .designer-cat-form { grid-column: 1 / -1; }
+.designer-cat-blocked { margin: 0; font-size: .8rem; }
+.designer-cat-msg { margin: 0; font-size: .85rem; }
+.designer-cat-msg:empty { display: none; }
+.designer-cat-msg .error { color: var(--danger); }
+.designer-cat-none { padding: .45rem .65rem; }
+.designer-cat-form { display: flex; flex-direction: column; gap: .55rem; margin-block-start: .35rem; padding-block-start: .55rem; border-block-start: 1px dashed var(--border); }
+.designer-cat-field { display: flex; flex-direction: column; gap: .25rem; font-size: .85rem; }
+.designer-cat-field input[type="text"] { inline-size: min(100%, 22rem); }
+.designer-cat-form-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+/* The colour picker: the same .item-color-tile swatches catalog.html uses,
+   as <label>s around a native radio (native arrow-key roving focus, no
+   picker script). The radio stays visible so selection is never colour-
+   only; :has() is a progressive enhancement that mirrors the pressed look
+   of .picker-tile[aria-pressed="true"] on browsers that support it. */
+.designer-cat-colors { display: flex; flex-wrap: wrap; gap: .4rem; border: 0; padding: 0; margin: 0; min-inline-size: 0; }
+.designer-cat-colors legend { font-size: .85rem; padding: 0; margin-block-end: .3rem; }
+.designer-cat-colors .item-color-tile { flex-direction: row; gap: .4rem; min-block-size: 2.6rem; min-inline-size: 6rem; padding: .35rem .6rem; }
+.designer-cat-colors .item-color-tile input[type="radio"] { margin: 0; flex: none; }
+.designer-cat-colors .item-color-tile:has(input:checked) { border-color: var(--accent); background: var(--surface-2); box-shadow: inset 0 0 0 2px var(--accent); }
+.designer-cat-colors .item-color-tile:has(input:focus-visible) { outline: 2px solid rgba(37, 99, 235, .35); outline-offset: 1px; }
+.designer-cat-new { display: flex; flex-direction: column; gap: .5rem; align-items: flex-start; }
+.designer-cat-new .designer-cat-form { inline-size: 100%; border-block-start: 0; padding-block-start: 0; }

@@ -2,9 +2,10 @@
 <div class="page-head">
   <h1>{{ T "designer.title" }}</h1>
   <span class="muted">{{ T "designer.reorder_hint" }}</span>
-  <!-- ut-docs#2285: discoverability for the sell-screen's own long-press
-       sheet, which offers the same reorder (plus Remove/Edit) with no
-       visible affordance of its own on a tile. -->
+  <!-- ut-docs#2174 (was ut-docs#2285's stale tile-sheet copy): the
+       long-press / right-click gesture below is app.js's utTileJiggle
+       (ut-docs#2339), which works on this page's replica exactly as on the
+       sale screen -- same markup. -->
   <span class="muted">{{ T "designer.long_press_hint" }}</span>
 </div>
 
@@ -13,5 +14,121 @@
     <h2>{{ T "designer.add_button" }}</h2>
     {{ template "buttons_admin" . }}
   </section>
+
+  {{/* ut-docs#2174: the live, in-place-edited replica of the sale screen's
+       real product panel -- the SAME placeholder index.html renders
+       (class, hx-get, hx-trigger, hx-swap), fetching the SAME buttons.html
+       fragment, plus one thing: hx-vals sends ?mode=edit, which buttons_api.
+       go honours only for a catalog_management session (this page's own
+       gate). hx-get stays the literal "/ui/buttons" on purpose -- app.js's
+       utTileJiggle guard matches `.products[hx-get="/ui/buttons"]` verbatim,
+       and that guard is what saves a half-dragged reorder when a category
+       change re-fetches the root. See buttons.html's root comment for what
+       edit mode adds and removes. A constant hx-vals literal (nothing
+       interpolated) is exactly what guard-i18n check 4 allows. */}}
+  <section class="designer-preview" aria-labelledby="designer-preview-title">
+    <h2 id="designer-preview-title">{{ T "designer.preview_title" }}</h2>
+    <p class="muted">{{ T "designer.preview_hint" }}</p>
+    <div class="products" hx-get="/ui/buttons" hx-vals='{"mode":"edit"}' hx-trigger="load" hx-swap="outerHTML"></div>
+  </section>
 </div>
+
+<script>
+(function () {
+  'use strict';
+  // ut-docs#2174: the two pieces of behaviour the replica's category
+  // management needs that a per-row htmx form can't express on its own.
+  // Page-scoped listeners on body: base.html records any window/document/
+  // body listener a script inside #ut-page adds and drops it when this page
+  // is swapped away, so re-running this on every arrival never stacks
+  // handlers. Delegated on body, not bound to the fragment, because the
+  // whole .products root is outerHTML-swapped on every buttons-changed.
+  //
+  // 1. Reorder. The move-earlier/move-later buttons (data-cat-move) post
+  //    EVERY category id in its new display order -- the body shape
+  //    /api/designer/categories/reorder shares with /api/categories/reorder
+  //    and /api/buttons/reorder -- computed from the list's current DOM
+  //    order with the two neighbours swapped. No DOM reordering here: the
+  //    204's HX-Trigger: buttons-changed re-renders the whole root from the
+  //    server's truth (strip AND list), which is the point of a live
+  //    replica. htmx.ajax rather than fetch so that HX-Trigger header is
+  //    processed exactly as it is for the forms, and a non-2xx text/html
+  //    refusal lands in #designer-categories-msg through app.js's global
+  //    beforeSwap force-swap, same as theirs.
+  //
+  // 2. Focus. That full re-render replaces the control the operator just
+  //    activated, which would drop keyboard focus to <body> after every
+  //    move/save/deactivate (the retired admin grid kept focus on the
+  //    moved tile's own button for exactly this reason -- ut-docs#826's
+  //    lesson). Remember the activated control's id on the way out and put
+  //    focus back on its freshly rendered twin (ids are stable per
+  //    category: designer-cat-<action>-<id>) once the root has settled --
+  //    or, if that twin is now disabled (moved to an edge) or hidden (the
+  //    edit form collapsed after a save), on the nearest sensible control
+  //    in the same row.
+  var pendingFocus = null;
+
+  function focusable(el) {
+    return !!(el && !el.disabled && el.getClientRects().length > 0);
+  }
+
+  function restoreFocus() {
+    var id = pendingFocus;
+    pendingFocus = null;
+    if (!id) return;
+    var el = document.getElementById(id);
+    if (focusable(el)) { el.focus(); return; }
+    var row = el && el.closest ? el.closest('[data-cat-id]') : null;
+    var candidates = [];
+    if (row) {
+      Array.prototype.push.apply(candidates, row.querySelectorAll('[data-cat-move], [data-cat-edit]'));
+    }
+    candidates.push(document.getElementById('designer-cat-new'));
+    for (var i = 0; i < candidates.length; i++) {
+      if (focusable(candidates[i])) { candidates[i].focus(); return; }
+    }
+  }
+
+  document.body.addEventListener('click', function (ev) {
+    var btn = ev.target.closest ? ev.target.closest('.designer-categories [data-cat-move]') : null;
+    if (!btn || btn.disabled || !window.htmx) return;
+    var list = btn.closest('.designer-categories');
+    var row = btn.closest('[data-cat-id]');
+    if (!list || !row) return;
+    var ids = Array.prototype.map.call(list.querySelectorAll('[data-cat-id]'), function (el) { return el.dataset.catId; });
+    var i = ids.indexOf(row.dataset.catId);
+    var j = i + parseInt(btn.dataset.catMove, 10);
+    if (i < 0 || j < 0 || j >= ids.length) return;
+    ids[i] = ids[j];
+    ids[j] = row.dataset.catId;
+    pendingFocus = btn.id;
+    window.htmx.ajax('POST', '/api/designer/categories/reorder', {
+      source: btn,
+      target: '#designer-categories-msg',
+      swap: 'innerHTML',
+      values: { ids: ids.join(',') }
+    });
+  });
+
+  // A form submit (save / create / deactivate / activate): remember the
+  // submit button that had focus. Only when nothing is pending already --
+  // the reorder click above set its own id before its request started.
+  document.body.addEventListener('htmx:beforeRequest', function (ev) {
+    var elt = ev.detail && ev.detail.elt;
+    if (pendingFocus || !elt || !elt.closest || !elt.closest('.designer-categories')) return;
+    var a = document.activeElement;
+    if (a && a.id && a.closest && a.closest('.designer-categories')) pendingFocus = a.id;
+  });
+
+  // Only the root's own re-render settles the new controls into place;
+  // the mutation's own (target: message region) settle fires first and
+  // must not consume the pending id.
+  document.body.addEventListener('htmx:afterSettle', function (ev) {
+    var info = ev.detail && ev.detail.pathInfo;
+    var path = (info && (info.finalRequestPath || info.requestPath)) || '';
+    if (path.indexOf('/ui/buttons') !== 0) return;
+    restoreFocus();
+  });
+})();
+</script>
 {{ end }}
