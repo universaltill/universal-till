@@ -58,6 +58,24 @@ const RailSlot = "rail"
 // first slice, not an oversight.
 const SettingsSlot = "settings"
 
+// RoleField is the one top-level field a layout entry's config may carry
+// besides "slot" and "amendments" (ADR-0106 Decision B, ut-docs#1905). It
+// is a plugin-authoring convention, not part of the amendment grammar: this
+// package only accepts it (exactly PresetRole) and leaves the amendments untouched;
+// internal/plugins reads it at install/enable time to enforce PresetRole's
+// exclusivity. internal/data queries the same field by name out of the
+// persisted config_json ('$.role'), so the three sides share this constant
+// rather than three spellings of "role".
+const RoleField = "role"
+
+// PresetRole is the RoleField value marking a layout plugin as a complete
+// named arrangement, mutually exclusive with any other ACTIVE preset
+// (ADR-0106 Decision C). It is the only value RoleField accepts. Leaving
+// RoleField out gives an ordinary ADR-0088 amendment (shared, composable,
+// unchanged behaviour). Any other value is refused by the parser, so a
+// typo can't silently turn a preset into an ordinary amendment.
+const PresetRole = "preset"
+
 // PluginPagesOrder is the Order at which plugin `page` entries (ADR-0037)
 // are placed when the menu slot is assembled: after every core InNav entry
 // and before /help — exactly where they rendered before ADR-0088. The i-th
@@ -849,8 +867,19 @@ func parseSlotAmendments(pluginID string, spec slotSpec, config map[string]any) 
 		return nil, nil
 	}
 	for k := range config {
-		if k != "slot" && k != "amendments" {
-			return nil, fmt.Errorf("layout entry config has unknown field %q (allowed: slot, amendments)", k)
+		if k != "slot" && k != "amendments" && k != RoleField {
+			return nil, fmt.Errorf("layout entry config has unknown field %q (allowed: slot, amendments, %s)", k, RoleField)
+		}
+	}
+	// ADR-0106 B: when present, role must be exactly PresetRole. Any other
+	// value ("perset", "Preset", "", 5) is refused here, the same way an
+	// unknown field or an unknown slot is. If other strings were accepted as
+	// ordinary shared amendments, a typo would quietly drop the plugin out of
+	// preset exclusivity and nothing would report it. A future role gets its
+	// own ADR and is added to this check then.
+	if raw, ok := config[RoleField]; ok {
+		if role, isStr := raw.(string); !isStr || role != PresetRole {
+			return nil, fmt.Errorf("layout entry field %s has unsupported value %#v (supported: %q, ADR-0106; omit %s for an ordinary shared amendment)", RoleField, raw, PresetRole, RoleField)
 		}
 	}
 	if raw, ok := config["slot"]; ok {

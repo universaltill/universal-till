@@ -1003,3 +1003,56 @@ func TestResolve_ZeroAmendmentsAllocatesNothing_Settings(t *testing.T) {
 		t.Fatal("zero amendments must return CoreSettings itself")
 	}
 }
+
+// --- ADR-0106 Decision B: the top-level `role` field -------------------------
+
+// A `layout` entry's config MAY carry "role": "preset" at the top level of
+// the amendment document (ut-docs#1905). The value is a plugin-authoring
+// convention read by internal/plugins' exclusivity check, not by this
+// parser: here it must simply be ACCEPTED (not refused as an unknown field)
+// on every slot, and leave the amendments themselves untouched.
+func TestParseAmendmentsJSON_RoleFieldIsAcceptedOnEverySlot(t *testing.T) {
+	for slot, key := range map[string]string{MenuSlot: "/tables", ItemsSlot: "/catalog", RailSlot: "/orders", SettingsSlot: "settings-theme"} {
+		t.Run(slot, func(t *testing.T) {
+			got, err := ParseAmendmentsJSON("p", `{"slot":"`+slot+`","role":"preset","amendments":[{"key":"`+key+`","order":5}]}`)
+			if err != nil {
+				t.Fatalf("role:\"preset\" must be accepted on the %s slot, got: %v", slot, err)
+			}
+			if len(got) != 1 || got[0].Key != key || got[0].Order == nil || *got[0].Order != 5 || got[0].Slot != slot {
+				t.Fatalf("amendments must parse unchanged alongside role, got %+v", got)
+			}
+		})
+	}
+	// Absent role is an ordinary ADR-0088 amendment.
+	if _, err := ParseAmendmentsJSON("p", `{"amendments":[{"key":"/tables","hide":true}]}`); err != nil {
+		t.Fatalf("a layout entry without role is an ordinary amendment, got: %v", err)
+	}
+}
+
+// Only "preset" is a valid role (ADR-0106 B). Any other value is refused
+// and the error names the field: a typo like "perset" must not silently
+// become an ordinary shared amendment and lose preset exclusivity. Same
+// posture as an unknown field or an unknown slot.
+func TestParseAmendmentsJSON_RoleMustBePreset(t *testing.T) {
+	for name, role := range map[string]string{
+		"typo":       `"perset"`,
+		"wrong case": `"Preset"`,
+		"other word": `"vertical"`,
+		"empty":      `""`,
+		"not string": `5`,
+		"null":       `null`,
+		"padded":     `" preset"`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ParseAmendmentsJSON("p", `{"role":`+role+`,"amendments":[{"key":"/tables","hide":true}]}`)
+			if err == nil || !strings.Contains(err.Error(), "role") || !strings.Contains(err.Error(), `"preset"`) {
+				t.Fatalf("role %s must be refused naming the field and the supported value, got: %v", role, err)
+			}
+		})
+	}
+	// ...and a misspelled field name is still an unknown field.
+	_, err := ParseAmendmentsJSON("p", `{"rol":"preset","amendments":[{"key":"/tables","hide":true}]}`)
+	if err == nil || !strings.Contains(err.Error(), "rol") {
+		t.Fatalf("a misspelled role field must still be refused as unknown, got: %v", err)
+	}
+}
