@@ -337,12 +337,12 @@ func TestSessionBasketManager_SetConfigReachesEveryLiveSession(t *testing.T) {
 func TestSessionBasketManager_SetConfig_DoesNotBlockOtherSessions(t *testing.T) {
 	m, _ := newTestSessionManager(t)
 
-	_, stuck := m.Create()
+	_, stuck, _ := m.Create()
 	asker := newSlowChargeAsker()
 	t.Cleanup(asker.releaseNow)
 	stuck.SetChargePolicyAsker(asker)
 
-	otherToken, other := m.Create()
+	otherToken, other, _ := m.Create()
 
 	cfg := Config{TaxRateBasisPoints: 1000, TaxInclusive: false}
 	done := make(chan struct{})
@@ -418,7 +418,7 @@ func TestSessionBasketManager_HasItems(t *testing.T) {
 func TestSessionBasketManager_HasItems_DoesNotBlockOnChargePolicyAsk(t *testing.T) {
 	m, _ := newTestSessionManager(t)
 
-	_, svc := m.Create()
+	_, svc, _ := m.Create()
 	asker := newSlowChargeAsker()
 	t.Cleanup(asker.releaseNow)
 	svc.SetChargePolicyAsker(asker)
@@ -639,12 +639,12 @@ func TestSessionBasketManager_BindTable_MoverBlockedByBusyTableKeepsOwnBinding(t
 	// svc.SetTable call — the manager's own busy-check now scans its own
 	// sessionBasket.tableID record (ut-docs#2443), which only BindTable
 	// keeps in sync; a direct SetTable bypasses it entirely.
-	incumbentToken, incumbent := m.Create()
+	incumbentToken, incumbent, _ := m.Create()
 	if _, _, busy := m.BindTable("table-B", "T2", incumbentToken, incumbent, time.Hour, time.Hour, *now); busy {
 		t.Fatal("setup: incumbent's own bind to table-B must not itself report busy")
 	}
 
-	moverToken, mover := m.Create()
+	moverToken, mover, _ := m.Create()
 	if _, _, busy := m.BindTable("table-A", "T1", moverToken, mover, time.Hour, time.Hour, *now); busy {
 		t.Fatal("setup: mover's own bind to table-A must not itself report busy")
 	}
@@ -692,7 +692,7 @@ func TestSessionBasketManager_BindTable_EmptySessionFreesTableAfterEmptyMaxIdle(
 	// Bind through BindTable itself (ut-docs#2443) — a direct svc.SetTable
 	// call would leave the manager's own sessionBasket.tableID record at
 	// "", invisible to BindTable's busy-check.
-	firstToken, first := m.Create()
+	firstToken, first, _ := m.Create()
 	if _, _, busy := m.BindTable("table-A", "T1", firstToken, first, maxIdle, emptyMaxIdle, *now); busy {
 		t.Fatal("setup: first's own bind to table-A must not itself report busy")
 	} // bound, zero lines
@@ -733,7 +733,7 @@ func TestSessionBasketManager_BindTable_NonEmptySessionOutlastsEmptyMaxIdle(t *t
 	// Bind through BindTable itself (ut-docs#2443) — a direct svc.SetTable
 	// call would leave the manager's own sessionBasket.tableID record at
 	// "", invisible to BindTable's busy-check.
-	firstToken, first := m.Create()
+	firstToken, first, _ := m.Create()
 	if _, _, busy := m.BindTable("table-A", "T1", firstToken, first, maxIdle, emptyMaxIdle, *now); busy {
 		t.Fatal("setup: first's own bind to table-A must not itself report busy")
 	}
@@ -775,7 +775,7 @@ func TestSessionBasketManager_BindTable_NonEmptySessionOutlastsEmptyMaxIdle(t *t
 func TestSessionBasketManager_BindTable_StaleResumeAfterCompetingBindSeesBusy(t *testing.T) {
 	m, now := newTestSessionManager(t)
 
-	aToken, aSvc := m.Create() // lastSeen stamped at *now via m.clock()
+	aToken, aSvc, _ := m.Create() // lastSeen stamped at *now via m.clock()
 	// Bind through BindTable itself (ut-docs#2443) — a direct SetTable call
 	// would leave the manager's own sessionBasket.tableID record at "",
 	// so A would never register as busy below regardless of staleness.
@@ -865,7 +865,7 @@ func (a *slowChargeAsker) AskChargePolicy() (ChargePolicy, bool) {
 func TestSessionBasketManager_BindTable_SlowChargePolicyAskDoesNotBlockOtherTables(t *testing.T) {
 	m, now := newTestSessionManager(t)
 
-	moverToken, mover := m.Create()
+	moverToken, mover, _ := m.Create()
 	asker := newSlowChargeAsker()
 	// Safety net: if an assertion below t.Fatal's before the explicit
 	// releaseNow() call further down runs, this still unblocks the
@@ -942,7 +942,7 @@ func TestSessionBasketManager_BindTable_MintPathFactoryAskDoesNotHoldLock(t *tes
 	// AskChargePolicy's call #1 (the setup call slowChargeAsker always
 	// lets through immediately), so this session is minted synchronously,
 	// before table-A's mint below makes call #2 — the one that blocks.
-	existingToken, _ := m.Create()
+	existingToken, _, _ := m.Create()
 
 	done := make(chan struct{})
 	go func() {

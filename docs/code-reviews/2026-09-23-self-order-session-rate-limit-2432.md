@@ -95,11 +95,72 @@ will owe one when it lands).
   `go test ./internal/pos/... ./internal/pages/...` (targeted + `-race`)
   all green, `guard-kiosk-engine.sh` / `guard-data-access.sh` green.
 
+## Merge with `main` (re-integration, not a mechanical resolve)
+
+`main` had moved 66 commits since this branch's point, including three
+cards on this exact code (`ut-docs#2433` table-move-preserves-basket,
+`ut-docs#2434` table-bind-race, `ut-docs#2444` empty-session-short-busy-
+window) that replaced `bindSelfOrderTableSession`'s old
+Create-then-Remove-then-SetTable dance with `SessionBasketManager.BindTable`
+— a single atomic critical section doing the busy check, the mint-or-move,
+and the map insert all under one `m.mu` hold. **`Create()` is no longer
+called anywhere in production** (grepped: only `BindTable`'s own inline
+mint path and this package's tests still call it) — my mint-time
+protections were dead code on the production path after a textually-clean
+auto-merge. Re-integrated for real, not just resolved:
+
+- The per-source rate limiter moved from an unconditional check to one
+  gated on `mover == nil` (no existing cookie at all) in
+  `bindSelfOrderTableSession` — under `BindTable`'s new design, a
+  table-to-table move (`ut-docs#2433`) reuses the existing session and
+  never grows `len(m.sessions)`, so it was never the mint the limiter
+  needs to gate; rate-limiting it would have been a new, unintended
+  regression on a legitimate flow this same branch's original fix predates.
+- The session-count cap (with its evict-oldest-empty step) moved from
+  `Create` into `BindTable`'s own fresh-mint branch, reusing the `m.mu`
+  already held continuously since `BindTable`'s busy-check loop — one
+  atomic step, not a second lock/unlock.
+- **Caught before it shipped, re-reviewing my own integration**:
+  `evictOldestEmptyLocked` classified a session as empty via
+  `sb.svc.Basket().ItemCount() > 0`. `Basket()` calls `recomputeTotals()`,
+  which can invoke a blocking plugin tax/charge-policy ask — and this now
+  runs under `m.mu` from inside `BindTable`, the exact lock-scope hazard
+  `ut-docs#2443`/`#2444`/`#2449`/`#2435` each fixed elsewhere in this same
+  file (serializing every other table's concurrent request behind one
+  plugin round-trip). Changed to `len(sb.svc.Lines()) == 0` — a
+  lock/copy/unlock with no recompute, matching `BindTable`'s own empty
+  check and `HasItems`'s established fix for the identical class of bug.
+- Fixed 10 other call sites across `internal/pos/session_manager_test.go`
+  that `main` had added against the old 2-return-value `Create()` signature
+  (`ut-docs#2443`/`#2444`'s own new tests), and 4 in
+  `internal/pages/self_order_table_test.go` calling
+  `bindSelfOrderTableSession` without the now-required `limiter` param
+  (passed `nil` — none of those tests exercise rate-limiting).
+  `go vet ./...` caught all of these; none were a silent behavior change,
+  all were compile failures.
+- Updated this branch's own busy-screen string assertions
+  (`"This table already has an order in progress"`) to the copy `main`
+  had since revised (`"This table is already in use"`, `ut-docs#2434`
+  review finding B2-successor) — 4 stale assertions would have false-passed
+  by testing for a string no longer in the template rather than failing
+  outright, since `strings.Contains` on a wrong-but-present busy screen
+  still returns true for "busy", just not for the *reason* the test names.
+
+Full gate re-run after the merge: `gofmt -l .` clean, `go build ./...`
+clean, `go vet ./...` clean, `golangci-lint run ./internal/pages/...
+./internal/pos/...` 0 issues, `go test ./internal/pos/... -race` and
+`go test ./internal/pages/... -run SelfOrder -race` both green (all
+tests, including the pre-existing `ut-docs#2433`/`#2434`/`#2444` coverage
+for the newer `BindTable` behavior — table moves, atomic bind, the
+empty-session short busy window), `guard-kiosk-engine.sh` /
+`guard-data-access.sh` green.
+
 ## Verdict
 
-**Safe to merge** with finding 1 and 3 fixed as above. Finding 2 (the
-rate-limited/capped guest seeing busy-table copy instead of a distinct
-message) is real but not a blocker — it's a UX/i18n-scoped follow-up, not
-a security or correctness gap, and needs its own locale-key change across
-`web/locales/*.json` plus a lang-pack follow-up; filed as ut-docs#2490
-rather than widening this PR.
+**Safe to merge** with finding 1 and 3 fixed as above, and the
+`BindTable` re-integration verified for real (not just made to compile).
+Finding 2 (the rate-limited/capped guest seeing busy-table copy instead
+of a distinct message) is real but not a blocker — it's a UX/i18n-scoped
+follow-up, not a security or correctness gap, and needs its own
+locale-key change across `web/locales/*.json` plus a lang-pack follow-up;
+filed as ut-docs#2490 rather than widening this PR.
