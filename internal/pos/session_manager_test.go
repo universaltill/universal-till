@@ -217,6 +217,72 @@ func TestSessionBasketManager_SetConfigReachesEveryLiveSession(t *testing.T) {
 	}
 }
 
+// ut-docs#2435 (same lock-scope class as ut-docs#2443/#2449): SetConfig used
+// to call Service.SetConfig on every live session while still holding m.mu.
+// Service.SetConfig triggers recomputeTotals, which — on a session with a
+// charge-policy asker installed — can perform a blocking plugin round-trip.
+// Held under m.mu, a stuck ask on ANY one session would serialize every
+// OTHER live session's own manager operation (Get, here) behind it for the
+// ask's duration. This proves the fix: a concurrent Get on an unrelated
+// session must complete immediately while SetConfig is stuck in one
+// session's ask, and SetConfig itself must still reach every session once
+// released.
+func TestSessionBasketManager_SetConfig_DoesNotBlockOtherSessions(t *testing.T) {
+	m, _ := newTestSessionManager(t)
+
+	_, stuck := m.Create()
+	asker := newSlowChargeAsker()
+	t.Cleanup(asker.releaseNow)
+	stuck.SetChargePolicyAsker(asker)
+
+	otherToken, other := m.Create()
+
+	cfg := Config{TaxRateBasisPoints: 1000, TaxInclusive: false}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		m.SetConfig(cfg)
+	}()
+
+	select {
+	case <-asker.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("SetConfig never reached the stuck session's charge-policy ask")
+	}
+
+	// SetConfig is now stuck inside one session's ask. A Get on a completely
+	// unrelated session must complete immediately — if it's still waiting on
+	// m.mu, that mu is being held across the ask, which is exactly the
+	// regression this card fixes.
+	getDone := make(chan struct{})
+	go func() {
+		defer close(getDone)
+		if _, ok := m.Get(otherToken); !ok {
+			t.Error("Get on an unrelated session failed while SetConfig was stuck in another session's ask")
+		}
+	}()
+
+	select {
+	case <-getDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Get is still blocked behind SetConfig's in-flight charge-policy ask — m.mu is being held across it")
+	}
+
+	asker.releaseNow()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("SetConfig never returned after its ask was released")
+	}
+
+	if other.Config() != cfg {
+		t.Fatalf("other session's Config() = %+v after SetConfig, want %+v", other.Config(), cfg)
+	}
+	if stuck.Config() != cfg {
+		t.Fatalf("stuck session's Config() = %+v after SetConfig, want %+v", stuck.Config(), cfg)
+	}
+}
+
 func TestSessionBasketManager_HasItems(t *testing.T) {
 	m, _ := newTestSessionManager(t)
 	if m.HasItems() {
