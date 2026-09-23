@@ -56,13 +56,17 @@ func TestSessionBasketManager_CreateGetRemoveRoundTrip(t *testing.T) {
 	m.Remove(token) // idempotent: removing twice must not panic
 }
 
-// ut-docs#2432: Create refuses once the manager already holds
-// MaxLiveSelfOrderSessions live sessions — the cap that bounds the
-// unbounded-mint resource-exhaustion path found in the ut-docs#2261
-// review (finding N1). A caller must treat ok=false as "nothing was
-// created," and the manager must un-refuse the moment a session frees a
-// slot back under the cap.
-func TestSessionBasketManager_CreateRefusesAtCap(t *testing.T) {
+// ut-docs#2432, revised after independent review: Create's cap only ever
+// refuses once the manager holds MaxLiveSelfOrderSessions live sessions
+// AND every one of them already has real order items — filling the map
+// with EMPTY sessions (TestSessionBasketManager_CreateAtCapEvictsOldestEmptySession,
+// below) must never be able to lock out a real guest. This test fills the
+// cap with non-empty sessions (a live order in each), so eviction has
+// nothing to reclaim and Create must genuinely refuse — the true memory
+// bound the cap exists to enforce. A caller must treat ok=false as
+// "nothing was created," and the manager must un-refuse the moment a
+// session frees a slot back under the cap.
+func TestSessionBasketManager_CreateRefusesOnlyWhenEveryLiveSessionHasItems(t *testing.T) {
 	m, _ := newTestSessionManager(t)
 	var last string
 	for i := 0; i < MaxLiveSelfOrderSessions; i++ {
@@ -73,6 +77,7 @@ func TestSessionBasketManager_CreateRefusesAtCap(t *testing.T) {
 		if svc == nil || tok == "" {
 			t.Fatalf("Create ok=true but returned zero-value token/Service at i=%d", i)
 		}
+		svc.AddLineWithModifiers(BasketLine{SKU: "A", Name: "Coffee", ItemID: "ia", PriceCents: 1000}, 1, nil)
 		last = tok
 	}
 	if n := m.Len(); n != MaxLiveSelfOrderSessions {
@@ -81,7 +86,7 @@ func TestSessionBasketManager_CreateRefusesAtCap(t *testing.T) {
 
 	tok, svc, ok := m.Create()
 	if ok {
-		t.Fatal("Create at the cap must refuse (ok=false)")
+		t.Fatal("Create at the cap must refuse (ok=false) when every live session holds items")
 	}
 	if tok != "" || svc != nil {
 		t.Fatalf("a refused Create must return zero values, got token=%q svc=%p", tok, svc)
@@ -97,6 +102,64 @@ func TestSessionBasketManager_CreateRefusesAtCap(t *testing.T) {
 	}
 	if n := m.Len(); n != MaxLiveSelfOrderSessions {
 		t.Fatalf("Len() = %d after remove+create, want back at the cap %d", n, MaxLiveSelfOrderSessions)
+	}
+}
+
+// ut-docs#2432 (independent review finding 1, HIGH): the ORIGINAL cap fix
+// let one source hold the whole shop's ordering hostage — mint
+// MaxLiveSelfOrderSessions cookieless, itemless sessions (well within the
+// per-source rate limiter's allowance over enough time) and every table's
+// guests would see "busy" until the 2h idle sweep, with no real order
+// behind any of it. Create must instead evict the least-recently-seen
+// EMPTY session to make room, so an attacker filling the map with nothing
+// but empty sessions can never stop a real guest from minting one — the
+// attacker's own sessions are exactly what keeps getting evicted.
+func TestSessionBasketManager_CreateAtCapEvictsOldestEmptySession(t *testing.T) {
+	m, now := newTestSessionManager(t)
+
+	// The first session ever created is the oldest by lastSeen once nothing
+	// else touches it — it must be the one evicted, not an arbitrary one.
+	oldestTok, _, ok := m.Create()
+	if !ok {
+		t.Fatal("precondition: first Create must succeed")
+	}
+	*now = now.Add(time.Second)
+	for i := 1; i < MaxLiveSelfOrderSessions; i++ {
+		if _, _, ok := m.Create(); !ok {
+			t.Fatalf("Create refused at %d live sessions, want it to succeed up to the cap", i)
+		}
+		*now = now.Add(time.Second)
+	}
+	if n := m.Len(); n != MaxLiveSelfOrderSessions {
+		t.Fatalf("Len() = %d, want %d after filling to the cap with empty sessions", n, MaxLiveSelfOrderSessions)
+	}
+
+	// Every session so far is empty — one more Create must still succeed by
+	// evicting the oldest, not refuse.
+	newTok, newSvc, ok := m.Create()
+	if !ok {
+		t.Fatal("Create at the cap must still succeed when every live session is empty (evict-oldest-empty)")
+	}
+	if newSvc == nil || newTok == "" {
+		t.Fatal("Create ok=true but returned a zero-value token/Service")
+	}
+	if n := m.Len(); n != MaxLiveSelfOrderSessions {
+		t.Fatalf("Len() = %d after an eviction-backed Create, want unchanged at the cap %d", n, MaxLiveSelfOrderSessions)
+	}
+	if _, ok := m.Get(oldestTok); ok {
+		t.Fatal("the oldest (least-recently-seen) empty session must have been evicted")
+	}
+
+	// Repeating this MaxLiveSelfOrderSessions more times (an attacker
+	// looping past the cap) must keep succeeding forever, never refuse —
+	// this is the actual regression the review's finding 1 describes.
+	for i := 0; i < MaxLiveSelfOrderSessions; i++ {
+		if _, _, ok := m.Create(); !ok {
+			t.Fatalf("Create refused on attacker loop iteration %d — an all-empty map must never lock out new sessions", i)
+		}
+	}
+	if n := m.Len(); n != MaxLiveSelfOrderSessions {
+		t.Fatalf("Len() = %d after the attacker loop, want steady at the cap %d", n, MaxLiveSelfOrderSessions)
 	}
 }
 

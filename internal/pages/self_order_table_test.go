@@ -522,11 +522,17 @@ func TestSelfOrder_SessionCapAlone_ShowsBusyNotPanic(t *testing.T) {
 	tableA := createSelfOrderTable(t, dp, "T1", 100)
 
 	// Fill the manager directly to the cap — isolates the cap from the
-	// per-source rate limiter, which these calls never go through.
+	// per-source rate limiter, which these calls never go through. Each
+	// prefilled session holds a real item: an EMPTY one would just be
+	// evicted by Create's evict-oldest-empty step (independent review
+	// finding 1), so genuine refusal at the cap can only be exercised when
+	// every live session actually has an order in it.
 	for i := 0; i < pos.MaxLiveSelfOrderSessions; i++ {
-		if _, _, ok := dp.SelfOrderSessions.Create(); !ok {
+		_, svc, ok := dp.SelfOrderSessions.Create()
+		if !ok {
 			t.Fatalf("prefill Create refused at i=%d, want it to succeed up to the cap", i)
 		}
+		svc.AddLineWithModifiers(pos.BasketLine{SKU: "A", Name: "Coffee", ItemID: "ia", PriceCents: 1000}, 1, nil)
 	}
 
 	mux := http.NewServeMux()
@@ -545,6 +551,49 @@ func TestSelfOrder_SessionCapAlone_ShowsBusyNotPanic(t *testing.T) {
 	}
 	if n := dp.SelfOrderSessions.Len(); n != pos.MaxLiveSelfOrderSessions {
 		t.Fatalf("live sessions = %d, want unchanged at the cap %d (a refused mint must not grow the map)", n, pos.MaxLiveSelfOrderSessions)
+	}
+}
+
+// ut-docs#2432, independent review finding 1 (HIGH): the ORIGINAL cap fix
+// let one source hold the whole shop's ordering hostage by filling the map
+// with cookieless, itemless mints — every OTHER table's guest would then
+// see the busy screen too, with no real order behind any of it, until the
+// 2h idle sweep. This drives the real HTTP handler end to end: fill the
+// manager to the cap with sessions indistinguishable from that attack
+// (never touched again after minting, exactly what a cookieless GET loop
+// produces), then prove a brand-new guest at a DIFFERENT, never-before-seen
+// table still gets served, not the busy screen.
+func TestSelfOrder_MapFullOfEmptySessions_NewGuestAtDifferentTableStillServed(t *testing.T) {
+	dp, _ := setupSelfOrderShopDeps(t)
+	victimTable := createSelfOrderTable(t, dp, "T-victim", 100)
+
+	for i := 0; i < pos.MaxLiveSelfOrderSessions; i++ {
+		if _, _, ok := dp.SelfOrderSessions.Create(); !ok {
+			t.Fatalf("prefill Create refused at i=%d, want it to succeed up to the cap", i)
+		}
+	}
+	if n := dp.SelfOrderSessions.Len(); n != pos.MaxLiveSelfOrderSessions {
+		t.Fatalf("live sessions = %d, want %d after prefill", n, pos.MaxLiveSelfOrderSessions)
+	}
+
+	mux := http.NewServeMux()
+	registerSelfOrder(mux, dp)
+
+	req := httptest.NewRequest(http.MethodGet, "/self-order?table="+victimTable, nil)
+	req.RemoteAddr = "203.0.113.55:9999" // a source with no rate-limiter history at all
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "This table already has an order in progress") {
+		t.Fatal("a map full of EMPTY sessions must never show a real guest at a fresh table the busy screen — evict-oldest-empty must have made room")
+	}
+	if rec.Result().Cookies() == nil {
+		t.Fatal("expected a session cookie to be set — the guest must have actually been bound, not just avoided the busy screen by accident")
+	}
+	if n := dp.SelfOrderSessions.Len(); n != pos.MaxLiveSelfOrderSessions {
+		t.Fatalf("live sessions = %d, want steady at the cap %d (the new session replaced an evicted empty one)", n, pos.MaxLiveSelfOrderSessions)
 	}
 }
 

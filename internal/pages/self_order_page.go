@@ -235,18 +235,21 @@ func bindSelfOrderTableSession(w http.ResponseWriter, r *http.Request, d *common
 		return false, true
 	}
 	// ut-docs#2432: both checks below only ever gate an actual mint attempt
-	// (never the resume/busy branches above), and both run BEFORE the old
-	// session is removed just below — a browser switching tables must never
-	// lose its old session without successfully getting a new one.
+	// (never the resume/busy branches above). The old session is removed
+	// only AFTER Create succeeds (independent review of this same card's
+	// first fix: removing it first, then finding out Create refused, would
+	// have cost a table-switching guest their old session for nothing) — a
+	// browser switching tables must never lose its old session without
+	// successfully getting a new one.
 	if limiter != nil && !limiter.allow(sourceOf(r)) {
 		return false, true
-	}
-	if currentToken != "" {
-		d.SelfOrderSessions.Remove(currentToken)
 	}
 	token, svc, ok := d.SelfOrderSessions.Create()
 	if !ok {
 		return false, true
+	}
+	if currentToken != "" {
+		d.SelfOrderSessions.Remove(currentToken)
 	}
 	svc.SetTable(t.ID, t.Label)
 	setSelfOrderSessionCookie(w, token, 0)
