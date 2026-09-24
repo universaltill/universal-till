@@ -61,6 +61,9 @@ type fakeCloud struct {
 	snapshots  []map[string]any
 	tracking   []map[string]any
 	aggregates []map[string]any
+	// entitlement, when non-nil, is sent verbatim as the sync response's
+	// data.entitlement (ADR-0060 §3); nil = an old cloud that omits it.
+	entitlement json.RawMessage
 }
 
 func (f *fakeCloud) handler() http.Handler {
@@ -76,10 +79,13 @@ func (f *fakeCloud) handler() http.Handler {
 		f.syncBodies = append(f.syncBodies, body)
 		dirs := f.directives
 		f.directives = nil // deliver once, like the real cloud resolves them
+		ent := f.entitlement
 		f.mu.Unlock()
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"data": map[string]any{"directives": dirs},
-		})
+		respData := map[string]any{"directives": dirs}
+		if ent != nil {
+			respData["entitlement"] = ent
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": respData})
 	})
 	mux.HandleFunc("/v1/stores/catalog-snapshot", func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
