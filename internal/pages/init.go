@@ -520,6 +520,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerPrintAPI(mux, dp)
 	registerKitchenPrintAPI(mux, dp)
 	registerBackupAPI(mux, dp)
+	registerEntitlementAPI(mux, dp) // ADR-0060 read surface: cached plan + effective plan (ut-docs#2547)
 	registerDataAPI(mux, dp)
 	registerEODAPI(mux, dp)
 	registerReportArchiveAPI(mux, dp) // ADR-0040 card 1: report retention mode + archive export
