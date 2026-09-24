@@ -2266,9 +2266,10 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
    Replaces the ut-docs#2285 per-tile long-press sheet (.tile-sheet, gone)
    with an iOS-springboard-style edit mode over the WHOLE grid: app.js's
    utTileJiggle adds .jiggle-mode to #buttons-grid after a ~500ms hold (or
-   a right-click) on a tile; every tile then wobbles in place, grows two
-   corner badges (edit / remove), and can be dragged to reorder. Nothing
-   overlays the screen, so the nav rail's status/lock/exit stay reachable
+   a right-click) on a tile; every tile then wobbles in place, grows three
+   corner badges (edit / delete / hide, ut-docs#2541), and can be dragged to
+   reorder. Nothing overlays the screen, so the nav rail's status/lock/exit
+   stay reachable
    throughout (universal-till/CLAUDE.md's standing rule).
 
    .tile-cell (buttons.html's product-tile) wraps each tile + its badges.
@@ -2311,6 +2312,16 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
 }
 .tile-badge-edit { inset-inline-start: -8px; }
 .tile-badge-remove { inset-inline-end: -8px; }
+/* ut-docs#2541: the Hide badge sits at the inline-END BOTTOM corner --
+   `inset-block-start: -8px` above is overridden with `auto` so this one
+   anchors off `inset-block-end` instead (the shared `.tile-badge` rule sets
+   block-start, not block-end, so both must be set explicitly here or the
+   two would stack at the same corner). Logical properties only, same as
+   every other badge in this file, so it mirrors under RTL for free. It sits
+   a full 44px hit-area's worth below the top-corner badges (top corner's
+   own -8px offset + its 44px box), so the two never overlap even on the
+   smallest tile this grid ever renders (checked at 1024x600 and 360px). */
+.tile-badge-hide { inset-block-start: auto; inset-block-end: -8px; inset-inline-end: -8px; }
 .tile-badge-dot {
   position: relative;
   display: flex; align-items: center; justify-content: center;
@@ -4962,6 +4973,17 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .designer-cat-msg:empty { display: none; }
 .designer-cat-msg .error { color: var(--danger); }
 .designer-cat-none { padding: .45rem .65rem; }
+/* ut-docs#2541: "Hidden from sell screen" section -- same block rhythm as
+   .designer-categories just above (border-block-start rule, gap), a
+   simpler flat row (name + one Unhide button, no swatch/move/edit) since
+   there's nothing else to arrange here. */
+.designer-hidden { margin-block-start: 1rem; padding-block-start: .85rem; border-block-start: 1px solid var(--border); display: flex; flex-direction: column; gap: .6rem; }
+.designer-hidden-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .45rem; }
+.designer-hidden-item {
+  display: flex; align-items: center; justify-content: space-between; gap: .6rem;
+  padding: .45rem .65rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
+}
+.designer-hidden-name { font-weight: 600; overflow-wrap: anywhere; }
 .designer-cat-form { display: flex; flex-direction: column; gap: .55rem; margin-block-start: .35rem; padding-block-start: .55rem; border-block-start: 1px dashed var(--border); }
 .designer-cat-field { display: flex; flex-direction: column; gap: .25rem; font-size: .85rem; }
 .designer-cat-field input[type="text"] { inline-size: min(100%, 22rem); }

@@ -627,6 +627,27 @@ func TestDeactivateItem_CascadesToVariants(t *testing.T) {
 	}
 }
 
+// TestDeactivateItem_UnknownOrAlreadyInactiveReturnsErrItemNotFound
+// (ut-docs#2541 review finding 4): the jiggle-mode trash badge's
+// delete-item route used to accept an unknown or already-inactive item id
+// silently (the UPDATE touched zero rows, returned no error) -- answering
+// 200 and writing an audit row for an action that never did anything.
+func TestDeactivateItem_UnknownOrAlreadyInactiveReturnsErrItemNotFound(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	if err := repo.DeactivateItem(ctx, "does-not-exist"); !errors.Is(err, data.ErrItemNotFound) {
+		t.Fatalf("unknown item: err = %v, want ErrItemNotFound", err)
+	}
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i2", SKU: "S2", Name: "Already Gone", BasePrice: 100, IsActive: false})
+	if err := repo.DeactivateItem(ctx, "i2"); !errors.Is(err, data.ErrItemNotFound) {
+		t.Fatalf("already-inactive item: err = %v, want ErrItemNotFound", err)
+	}
+}
+
 func TestDeactivateVariant(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
 	defer db.Close()

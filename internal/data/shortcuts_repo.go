@@ -50,12 +50,27 @@ func (r *ShortcutsRepo) LoadButtons(ctx context.Context) ([]ShortcutButton, erro
 	// did nothing, since POSRepo.ResolveShortcutLineDecoded already filters
 	// i.is_active = 1 when actually resolving the tap. This makes
 	// LoadButtons agree with that resolver.
+	// ut-docs#2541: i.sell_screen_hidden = 0 -- a hidden item's explicit row
+	// (normally deleted by CatalogRepo.SetSellScreenHidden the moment the
+	// item is hidden) must never resurface as a tile even if a row somehow
+	// still exists for it (e.g. hidden by a future direct DB write that
+	// skips that method) -- defense in depth alongside the delete, not a
+	// substitute for it.
+	// ut-docs#2541 review finding 1: COALESCE(NULLIF(sb.label,''), i.name) --
+	// ButtonStore.UpdateOrder materializes an implicit tile with an
+	// intentionally EMPTY label (see ShortcutsRepo.MaterializeAndReorder)
+	// rather than freezing the item's name as it was at drag time, so a
+	// later rename in the catalog still shows on the tile. NULLIF turns
+	// that empty string back into NULL so COALESCE falls through to the
+	// item's own (live) name — an explicitly-labelled row (Add/SaveButtons,
+	// a real operator-chosen label) is untouched, since its label is never
+	// empty in the first place (ButtonStore.Add rejects a blank label).
 	rows, err := r.db.QueryContext(ctx, `
-SELECT sb.label, sb.barcode, sb.item_id,
+SELECT COALESCE(NULLIF(sb.label, ''), i.name), sb.barcode, sb.item_id,
        COALESCE(sb.image_path, (SELECT path FROM item_images img WHERE img.item_id = sb.item_id AND img.role = 'thumbnail' LIMIT 1)),
        COALESCE(i.base_price, 0), COALESCE(i.category_id, ''), COALESCE(i.color, '')
 FROM shortcut_buttons sb
-JOIN items i ON i.id = sb.item_id AND i.is_active = 1
+JOIN items i ON i.id = sb.item_id AND i.is_active = 1 AND i.sell_screen_hidden = 0
 ORDER BY sb.sort_order, sb.label`)
 	if err != nil {
 		return nil, shortcutsObs.wrap("load_buttons", err)
@@ -143,6 +158,70 @@ func (r *ShortcutsRepo) UpdateOrder(ctx context.Context, codes []string) error {
 	return nil
 }
 
+// MaterializeAndReorder inserts a real shortcut_buttons row for every
+// IMPLICIT tile a drag touched (materialize -- see ButtonStore.UpdateOrder
+// for how that set is computed) and rewrites sort_order for the whole
+// posted order, all in ONE transaction (ut-docs#2541 review finding 1).
+// Before this, UpdateOrder ran one AddButton call (its own transaction) PER
+// implicit tile, then a separate UpdateOrder transaction — a drag touching
+// many implicit tiles cost 2N+1 round trips/transactions; this costs one.
+// materialize rows are inserted with ON CONFLICT DO NOTHING (not AddButton's
+// own upsert): the caller already filtered out codes with an existing row
+// (ExistingBarcodes), so a conflict here means a race, and doing nothing is
+// safer than clobbering a row that appeared concurrently. Every materialize
+// row's Label is expected to be "" (see LoadButtons' own COALESCE(NULLIF(...),
+// i.name) fallback) so a materialized tile always shows the item's LIVE
+// name, never one frozen at drag time.
+func (r *ShortcutsRepo) MaterializeAndReorder(ctx context.Context, materialize []ShortcutButton, codes []string) error {
+	var err error
+	done := shortcutsObs.trace("materialize_and_reorder")
+	defer func() { done(err) }()
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		err = shortcutsObs.wrap("materialize_and_reorder", err)
+		return err
+	}
+	if len(materialize) > 0 {
+		insertStmt, ierr := tx.PrepareContext(ctx, `INSERT INTO shortcut_buttons(barcode,label,item_id,image_path,sort_order)
+VALUES(?,?,?,?, (SELECT COALESCE(MAX(sort_order)+1, 0) FROM shortcut_buttons))
+ON CONFLICT(barcode) DO NOTHING`)
+		if ierr != nil {
+			tx.Rollback()
+			err = shortcutsObs.wrap("materialize_and_reorder", ierr)
+			return err
+		}
+		for _, b := range materialize {
+			if _, ierr := insertStmt.ExecContext(ctx, b.Barcode, b.Label, b.ItemID, nullIfEmptyButton(b.ImageURL)); ierr != nil {
+				insertStmt.Close()
+				tx.Rollback()
+				err = shortcutsObs.wrap("materialize_and_reorder", ierr)
+				return err
+			}
+		}
+		insertStmt.Close()
+	}
+	orderStmt, oerr := tx.PrepareContext(ctx, `UPDATE shortcut_buttons SET sort_order = ? WHERE barcode = ?`)
+	if oerr != nil {
+		tx.Rollback()
+		err = shortcutsObs.wrap("materialize_and_reorder", oerr)
+		return err
+	}
+	for i, code := range codes {
+		if _, oerr := orderStmt.ExecContext(ctx, i, code); oerr != nil {
+			orderStmt.Close()
+			tx.Rollback()
+			err = shortcutsObs.wrap("materialize_and_reorder", oerr)
+			return err
+		}
+	}
+	orderStmt.Close()
+	if err = tx.Commit(); err != nil {
+		err = shortcutsObs.wrap("materialize_and_reorder", err)
+		return err
+	}
+	return nil
+}
+
 func (r *ShortcutsRepo) AddButton(ctx context.Context, b ShortcutButton) error {
 	var err error
 	done := shortcutsObs.trace("add_button")
@@ -178,6 +257,60 @@ func (r *ShortcutsRepo) RemoveButton(ctx context.Context, code string) error {
 	_, err = r.db.ExecContext(ctx, `DELETE FROM shortcut_buttons WHERE barcode=?`, strings.TrimSpace(code))
 	err = shortcutsObs.wrap("remove_button", err)
 	return err
+}
+
+// ItemIDForBarcode looks up the item a shortcut_buttons row's own code
+// points at (ut-docs#2541) -- used by ButtonStore.Remove/Hide when the
+// caller only has the tile's code (a legacy hx-vals payload, e.g.
+// buttons_admin.html's search-result form) and not the item id directly.
+// ok is false both when the code has no row and on a genuine query error --
+// callers of this narrow lookup only ever need to know "resolved or not".
+func (r *ShortcutsRepo) ItemIDForBarcode(ctx context.Context, code string) (itemID string, ok bool) {
+	err := r.db.QueryRowContext(ctx, `SELECT item_id FROM shortcut_buttons WHERE barcode = ?`, strings.TrimSpace(code)).Scan(&itemID)
+	if err != nil {
+		return "", false
+	}
+	return itemID, true
+}
+
+// ExistingBarcodes reports which of codes already have a shortcut_buttons
+// row, keyed by code (ut-docs#2541) -- ButtonStore.UpdateOrder uses this to
+// tell an IMPLICIT tile (every active, non-hidden item with no row of its
+// own -- see ButtonStore.Load) apart from an explicit one before a drag:
+// only the implicit ones need a fresh row materialised so their new
+// position actually has something to persist onto.
+func (r *ShortcutsRepo) ExistingBarcodes(ctx context.Context, codes []string) (map[string]bool, error) {
+	out := make(map[string]bool, len(codes))
+	if len(codes) == 0 {
+		return out, nil
+	}
+	for _, chunk := range ChunkStrings(codes, IDChunkSize) {
+		placeholders := make([]string, len(chunk))
+		args := make([]any, len(chunk))
+		for i, c := range chunk {
+			placeholders[i] = "?"
+			args[i] = c
+		}
+		rows, err := r.db.QueryContext(ctx, `SELECT barcode FROM shortcut_buttons WHERE barcode IN (`+strings.Join(placeholders, ",")+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		scanErr := func() error {
+			defer rows.Close()
+			for rows.Next() {
+				var b string
+				if err := rows.Scan(&b); err != nil {
+					return err
+				}
+				out[b] = true
+			}
+			return rows.Err()
+		}()
+		if scanErr != nil {
+			return nil, scanErr
+		}
+	}
+	return out, nil
 }
 
 func nullIfEmptyButton(s string) any {

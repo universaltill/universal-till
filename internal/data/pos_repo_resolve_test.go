@@ -139,6 +139,48 @@ func TestResolveShortcutLine_ShortcutBarcodeUsesButtonLabel(t *testing.T) {
 	}
 }
 
+// TestResolveShortcutLine_MaterializedRowFallsBackToLiveItemName
+// (ut-docs#2541 review finding 1): ButtonStore.UpdateOrder materializes an
+// implicit tile with an intentionally EMPTY label (see
+// ShortcutsRepo.MaterializeAndReorder) so a tile shows the item's LIVE
+// name/thumbnail rather than freezing them at drag time. The scan/basket
+// resolver (this method, via resolveShortcut) must fall back to the item's
+// own name for such a row too -- not resolve to a blank name, which would
+// print an empty line on the receipt/journal.
+func TestResolveShortcutLine_MaterializedRowFallsBackToLiveItemName(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	repo := data.NewPOSRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Apple", BasePrice: 200, IsActive: true})
+	// A materialized row: empty label, exactly what MaterializeAndReorder
+	// inserts.
+	if _, err := db.Exec(`INSERT INTO shortcut_buttons(barcode, item_id, label) VALUES('S1','i1','')`); err != nil {
+		t.Fatal(err)
+	}
+
+	line, ok := repo.ResolveShortcutLine(ctx, "S1")
+	if !ok {
+		t.Fatal("expected a resolved line")
+	}
+	if line.Name != "Apple" {
+		t.Fatalf("expected the item's own (live) name as the fallback for an empty shortcut label, got %q", line.Name)
+	}
+
+	// Rename the item -- the resolved line must follow, proving the name
+	// isn't frozen anywhere along this path either.
+	if _, err := db.Exec(`UPDATE items SET name = 'Granny Smith Apple' WHERE id = 'i1'`); err != nil {
+		t.Fatal(err)
+	}
+	line, ok = repo.ResolveShortcutLine(ctx, "S1")
+	if !ok {
+		t.Fatal("expected a resolved line")
+	}
+	if line.Name != "Granny Smith Apple" {
+		t.Fatalf("expected the RENAMED item name, got %q", line.Name)
+	}
+}
+
 func TestResolveShortcutLine_ExactSKUFallback(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
 	repo := data.NewPOSRepo(db)

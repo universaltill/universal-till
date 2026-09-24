@@ -584,3 +584,21 @@ export async function scanAtScannerSpeed(page: Page, barcode: string, setup: () 
     await page.request.post('/api/pos/reset');
   }
 }
+
+// ut-docs#2541: every active item is a sell-screen tile by default, so any
+// uncategorized item another spec left behind on the shared per-worker
+// till now forms a synthetic "uncategorized" tab. Specs that assert an
+// exact category-tab count call this first to hide those strays from the
+// sell screen (hide only — the items stay in the catalog, and a later spec
+// looking them up by name still finds them).
+export async function hideUncategorizedStrays(page: Page): Promise<void> {
+  await page.goto('/catalog');
+  const ids = await page
+    .locator('.catalog-row')
+    .evaluateAll((rows) =>
+      rows.filter((r) => !(r.getAttribute('data-category') || '').trim()).map((r) => r.getAttribute('data-id') || ''),
+    );
+  for (const id of ids.filter(Boolean)) {
+    await page.request.post('/api/buttons/hide', { form: { itemId: id } });
+  }
+}
