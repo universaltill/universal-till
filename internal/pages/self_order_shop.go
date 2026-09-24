@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/barcode"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -115,11 +116,21 @@ func loadShopItems(ctx context.Context, d *common.Deps) ([]shopItem, error) {
 	}
 	thumbnails, _ := repo.ItemThumbnails(ctx) // best-effort: a read error just means every tile falls back to no-image, same as a missing row
 
+	// ut-docs#2497: same round-trip-with-the-scan-resolver requirement as
+	// ui.ButtonStore.LoadAllActive/SearchSellable (see their comment for
+	// the full rationale) — /api/self-order/scan resolves through the same
+	// POSRepo.ResolveShortcutLineDecoded, whose raw-barcode tier only
+	// matches a code that decodes under the shop's CURRENTLY ENABLED
+	// symbologies. Fetched once, shop-wide, above the loop.
+	enabledIDs, _ := data.NewSettingsRepo(d.Db).EnabledBarcodeSymbologies(ctx)
+
 	out := make([]shopItem, 0, len(items))
 	for _, it := range items {
 		code := it.SKU
 		if bcs := barcodes[it.ID]; len(bcs) > 0 {
-			code = bcs[0] // primary first, per CatalogRepo.ItemBarcodes ordering
+			if _, ok := barcode.Default().Match(enabledIDs, bcs[0]); ok {
+				code = bcs[0] // primary first, per CatalogRepo.ItemBarcodes ordering
+			}
 		}
 		if code == "" {
 			continue // nothing to scan/resolve this item by — can't be added to a cart
