@@ -70,6 +70,9 @@ as `CODE128` so internal PLU/keypad codes remain supported.
 - `sale_discounts`
 - `payments`
 - `sale_links`
+- `sales_aggregate_uploads` — which daily per-till sales rollups the cloud
+  has accepted (content-hash ledger for the ADR-0111 upload,
+  ut-docs#2535; migration 038)
 
 ### 5. Shifts & audit
 

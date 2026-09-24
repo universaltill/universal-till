@@ -228,6 +228,13 @@ func Tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) erro
 		if err := pushOrderTrackingIfChanged(ctx, cfg, db); err != nil {
 			logging.L().Warnf("cloudsync: order tracking push failed (will retry): %v", err)
 		}
+		// Daily sales rollups (ADR-0111, ut-docs#2535) ride the same
+		// primary-only gate: the primary holds the shop's full sales journal
+		// (a replica's sales are journaled onto it, keyed by their till_id),
+		// so it alone uploads every till's rollup — a replica pushing too
+		// would double-report its own sales. Throttled and self-logging;
+		// never fails the tick.
+		pushSalesAggregates(ctx, cfg, db)
 	}
 	for _, d := range dirs {
 		status, msg := apply(ctx, d, hooks)
@@ -868,9 +875,22 @@ func post(ctx context.Context, cfg *config.Config, path string, payload []byte) 
 	buf := new(bytes.Buffer)
 	_, _ = buf.ReadFrom(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("cloudsync: %s returned %d", path, resp.StatusCode)
+		return nil, &statusError{Path: path, StatusCode: resp.StatusCode}
 	}
 	return buf.Bytes(), nil
+}
+
+// statusError is post's non-200 failure. Its message is exactly the
+// fmt.Errorf text post has always returned, so existing callers see no
+// change; a caller that must branch on the code (the sales-aggregate
+// upload's 402 subscription_inactive, ut-docs#2535) uses errors.As.
+type statusError struct {
+	Path       string
+	StatusCode int
+}
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("cloudsync: %s returned %d", e.Path, e.StatusCode)
 }
 
 // Start runs the sync loop: first tick shortly after boot (give enrolment a
