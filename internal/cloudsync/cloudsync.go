@@ -28,6 +28,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/enroll"
+	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -705,12 +706,41 @@ func pushSync(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) 
 	var resp struct {
 		Data struct {
 			Directives []directive `json:"directives"`
+			// Entitlement is ADR-0060 §3's optional current-value block. Kept
+			// raw so a malformed block can never fail the decode of the
+			// directives riding beside it.
+			Entitlement json.RawMessage `json:"entitlement"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("cloudsync: decode sync response: %w", err)
 	}
+	cacheEntitlement(ctx, settings, resp.Data.Entitlement, time.Now())
 	return resp.Data.Directives, nil
+}
+
+// cacheEntitlement records the sync response's entitlement block in the
+// settings KV (ADR-0060 §4, ut-docs#2547). Best-effort by design: an absent
+// block (older cloud) touches nothing; a malformed one is ignored whole and
+// the previous cache kept; a write failure is logged. None of it ever fails
+// the sync tick or its directive handling.
+func cacheEntitlement(ctx context.Context, settings *data.SettingsRepo, raw json.RawMessage, now time.Time) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return
+	}
+	var b entitlement.Block
+	if err := json.Unmarshal(raw, &b); err != nil {
+		logging.L().Warnf("cloudsync: ignoring malformed entitlement block (cache kept): %v", err)
+		return
+	}
+	kv, err := b.Values(now)
+	if err != nil {
+		logging.L().Warnf("cloudsync: ignoring invalid entitlement block (cache kept): %v", err)
+		return
+	}
+	if err := settings.SetMany(ctx, kv); err != nil {
+		logging.L().Warnf("cloudsync: entitlement cache not updated (will retry next tick): %v", err)
+	}
 }
 
 // pushSnapshotIfChanged uploads the catalog + on-hand stock when it differs
