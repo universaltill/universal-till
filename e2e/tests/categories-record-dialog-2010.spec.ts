@@ -204,6 +204,7 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
     // carries for a different deliberate case.
     const assertClean = watchConsole(page, /Failed to load resource:.*400/);
     const catName = 'HasItems Probe ' + Date.now();
+    const itemName = 'Item in ' + catName;
     await page.goto('/categories');
     await createCategory(page, catName);
 
@@ -212,45 +213,66 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
     await page.goto('/catalog');
     await openNewItemForm(page);
     await page.locator('#item-category').selectOption({ label: catName });
-    await page.locator('#item-name').fill('Item in ' + catName);
+    await page.locator('#item-name').fill(itemName);
     await page.locator('#item-price').fill('1.00');
     await page.locator('#item-form-submit').click();
     await expect(page.locator('#item-form-msg .pos-notice.success')).toBeVisible();
     await closeItemForm(page);
 
-    await page.goto('/categories');
-    await row(page, catName).locator('td').first().click();
-    const dlg = page.locator(DIALOG);
-    await expect(dlg).toBeVisible();
-    const renamedTo = catName + ' renamed but never saved';
-    await page.locator(NAME).fill(renamedTo);
+    try {
+      await page.goto('/categories');
+      await row(page, catName).locator('td').first().click();
+      const dlg = page.locator(DIALOG);
+      await expect(dlg).toBeVisible();
+      const renamedTo = catName + ' renamed but never saved';
+      await page.locator(NAME).fill(renamedTo);
 
-    // The deactivate confirm() (categories.deactivate_confirm) — accept it,
-    // same as (b3)'s clean-deactivate case, so the actual refusal is what's
-    // under test here, not the confirm step.
-    page.once('dialog', (d) => d.accept());
-    await Promise.all([
-      page.waitForResponse((res) => res.url().includes('/active') && res.status() === 400),
-      page.locator(`${DIALOG} form[data-record-when="active=1"] button`).click(),
-    ]);
+      // The deactivate confirm() (categories.deactivate_confirm) — accept
+      // it, same as (b3)'s clean-deactivate case, so the actual refusal is
+      // what's under test here, not the confirm step.
+      page.once('dialog', (d) => d.accept());
+      await Promise.all([
+        page.waitForResponse((res) => res.url().includes('/active') && res.status() === 400),
+        page.locator(`${DIALOG} form[data-record-when="active=1"] button`).click(),
+      ]);
 
-    // Refused: no navigation happened at all (unlike the success path,
-    // which real dialog.close() would follow via a real page load), the
-    // dialog is still the one the operator was editing, the rename typed
-    // into the UNRELATED field is still there, and the reason renders in
-    // the dialog's own message region — not the page-level banner (AC4:
-    // the two must not both fire for the same failure).
-    await expect(dlg).toBeVisible();
-    await expect(page.locator(NAME)).toHaveValue(renamedTo);
-    const msg = page.locator('#category-dialog-msg');
-    await expect(msg).toBeVisible();
-    await expect(msg).toContainText(/active item/i);
-    await expect(page.locator('.login-error')).toHaveCount(0);
+      // Refused: no navigation happened at all (unlike the success path,
+      // which real dialog.close() would follow via a real page load), the
+      // dialog is still the one the operator was editing, the rename typed
+      // into the UNRELATED field is still there, and the reason renders in
+      // the dialog's own message region — not the page-level banner (AC4:
+      // the two must not both fire for the same failure).
+      await expect(dlg).toBeVisible();
+      await expect(page.locator(NAME)).toHaveValue(renamedTo);
+      const msg = page.locator('#category-dialog-msg');
+      await expect(msg).toBeVisible();
+      await expect(msg).toContainText(/active item/i);
+      await expect(page.locator('.login-error')).toHaveCount(0);
 
-    // The row itself: still active, name unchanged — the refused mutation
-    // truly changed nothing server-side either.
-    await expect(row(page, catName)).toBeVisible();
-    await expect(row(page, catName)).toContainText('active');
+      // The row itself: still active, name unchanged — the refused mutation
+      // truly changed nothing server-side either.
+      await expect(row(page, catName)).toBeVisible();
+      await expect(row(page, catName)).toContainText('active');
+    } finally {
+      // The whole point of this test is a category that keeps a
+      // permanently ACTIVE item (that's what makes the deactivate genuinely
+      // refuse) — since ut-docs#2498, BuildCategoryGroups shows any
+      // category with an active item as a sell-screen tab even without a
+      // quick button, so leaving this one active would leak a stray
+      // "HasItems Probe …" tab into every other spec sharing this worker's
+      // till for the rest of the run (reproduced live: it is exactly what
+      // made sale-screen-category-strip-overflow-2307.spec.ts's demo-only
+      // tab-count assertion and sale-screen-search-strip-2173.spec.ts's
+      // CATEGORY_COUNT+5 assertion both fail intermittently in CI). Clean
+      // up unconditionally, even if an assertion above throws.
+      await page.goto('/catalog');
+      const row2 = page.locator(`.catalog-row[data-name="${itemName}"]`);
+      if ((await row2.count()) > 0) {
+        const id = await row2.first().getAttribute('data-id');
+        if (id) await page.request.post('/api/catalog/item/deactivate', { form: { id } });
+      }
+    }
+
     assertClean();
   });
 
