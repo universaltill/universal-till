@@ -26,6 +26,22 @@
 
 ---
 
+## 📸 Screenshots
+
+Real screens from v0.21.4, running on the demo catalogue (no real shop data).
+
+| Sell screen | Taking payment |
+|---|---|
+| ![Sell screen: basket on the left, category tabs and quick buttons with product photos on the right](docs/images/till-sell.webp) | ![Tender panel with Cash and Card over the sell screen, with "customers also buy" suggestions under the basket](docs/images/till-pay.webp) |
+| **Reports** | **Your language, right-to-left too** |
+| ![Reports: revenue, sales count, average sale and tax tiles above a top-items list](docs/images/till-reports.webp) | ![The same sell screen in Persian, mirrored right-to-left](docs/images/till-sell-fa.webp) |
+
+Owners manage the shop from any browser at
+[my.universaltill.com](https://my.universaltill.com). More screens are on
+[universaltill.com](https://universaltill.com/en-gb#tour).
+
+---
+
 ## 🎯 Perfect For
 
 - 🛒 Retail stores (clothing, electronics, convenience, etc.)
