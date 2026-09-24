@@ -103,6 +103,15 @@ type Hooks struct {
 	// attachment are deliberately out of scope here (need the read-side
 	// StoreSnapshot extension ADR-0095 Decision 2 hasn't shipped yet).
 	UpsertCategory func(ctx context.Context, id, name, color string) (string, error)
+	// UpdateCategory handles the "update_category" directive (ut-docs#2354):
+	// a partial edit of an EXISTING category from the cloud's category
+	// editor, which picks from the categories/groups/stations the till last
+	// reported (#2472). A nil argument means "keep"; a non-nil one sets the
+	// field (color "" clears it; an empty list clears that link set). A
+	// separate type rather than new upsert_category keys so an older till
+	// fails it visibly ("unknown directive type") instead of ignoring the
+	// links and reading an absent colour as "clear".
+	UpdateCategory func(ctx context.Context, id string, name, color *string, groupIDs, stationIDs *[]string) (string, error)
 	// UpdateItemDetails handles the "update_item_details" directive
 	// (ut-docs#2324, ADR-0095 Decision 1) — a partial update of an existing
 	// item's sku/description/unit/colour/is_weighed/stock_untracked, through
@@ -241,6 +250,12 @@ func Tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) erro
 	pullIssueReportStatuses(ctx, cfg, db)
 	return nil
 }
+
+// maxCategoryLinkIDs bounds update_category's id lists: each id costs a
+// lookup + insert inside the till's single write transaction, so an
+// unbounded list from the cloud could hold the write lock long enough to
+// fail sale-side writes. Matches the cloud's own queue-time cap.
+const maxCategoryLinkIDs = 200
 
 // apply routes one directive to its hook. Unknown types and nil hooks fail
 // cleanly so the cloud shows WHY nothing happened.
@@ -429,6 +444,67 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", "missing name"
 		}
 		msg, err = hooks.UpsertCategory(ctx, str("id"), name, str("color"))
+	case "update_category":
+		if hooks.UpdateCategory == nil {
+			return "failed", "update_category is not supported on this till"
+		}
+		id := str("id")
+		if id == "" {
+			return "failed", "missing id"
+		}
+		// Presence-aware: absent → nil (keep), present → value. A present
+		// field of the wrong shape fails rather than being read as absent,
+		// which would turn a bad edit into a silent partial one.
+		optStr := func(k string) (*string, bool) {
+			v, present := d.Payload[k]
+			if !present {
+				return nil, true
+			}
+			s, ok := v.(string)
+			if !ok {
+				return nil, false
+			}
+			s = strings.TrimSpace(s)
+			return &s, true
+		}
+		optIDs := func(k string) (*[]string, bool) {
+			v, present := d.Payload[k]
+			if !present {
+				return nil, true
+			}
+			raw, ok := v.(string)
+			if !ok {
+				return nil, false
+			}
+			var arr []string
+			if err := json.Unmarshal([]byte(raw), &arr); err != nil || arr == nil || len(arr) > maxCategoryLinkIDs {
+				return nil, false
+			}
+			for i := range arr {
+				arr[i] = strings.TrimSpace(arr[i])
+			}
+			return &arr, true
+		}
+		name, ok := optStr("name")
+		if !ok {
+			return "failed", "bad name"
+		}
+		color, ok := optStr("color")
+		if !ok {
+			return "failed", "bad color"
+		}
+		groupIDs, ok := optIDs("modifier_group_ids")
+		if !ok {
+			return "failed", "bad modifier_group_ids"
+		}
+		stationIDs, ok := optIDs("station_ids")
+		if !ok {
+			return "failed", "bad station_ids"
+		}
+		if name == nil && color == nil && groupIDs == nil && stationIDs == nil {
+			return "failed", "nothing to update"
+		}
+		msg, err = hooks.UpdateCategory(ctx, id, name, color, groupIDs, stationIDs)
 	case "update_item_details":
 		if hooks.UpdateItemDetails == nil {
 			return "failed", "update_item_details is not supported on this till"

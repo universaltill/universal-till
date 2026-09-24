@@ -1506,6 +1506,190 @@ func (r *CatalogRepo) UpdateCategory(ctx context.Context, id, name, color string
 	return nil
 }
 
+// ErrModifierGroupNotFound / ErrKitchenStationNotFound: UpdateCategoryPartial
+// was handed a link to a group or station this till doesn't have.
+var (
+	ErrModifierGroupNotFound  = errors.New("modifier group not found")
+	ErrKitchenStationNotFound = errors.New("kitchen station not found")
+)
+
+// CategoryPatchResult is what UpdateCategoryPartial actually left in place:
+// the category's name and, for each link set the patch touched, the
+// effective ids written (nil when that set was left alone) — inactive links
+// the repo kept included, so an audit row records the real outcome.
+type CategoryPatchResult struct {
+	Name       string
+	GroupIDs   []string
+	StationIDs []string
+}
+
+// CategoryPatch is a partial category edit: a nil field is left untouched,
+// a non-nil one is set. Color "" clears the colour; an empty (non-nil) id
+// list clears that link set. The id lists replace the whole set, in order.
+type CategoryPatch struct {
+	Name       *string
+	Color      *string
+	GroupIDs   *[]string
+	StationIDs *[]string
+}
+
+// UpdateCategoryPartial applies a CategoryPatch to an existing category —
+// the row and both link sets (category_modifier_group_links,
+// category_station_routes) — in one transaction, and returns what it left in
+// place (ut-docs#2354, the cloud's update_category directive). The tx is
+// BEGIN IMMEDIATE via the DSN (_txlock=immediate), so the read-modify-write
+// of name/colour can't lose a concurrent local edit, as in UpdateItemPartial.
+// Everything is validated before anything is written: a missing category,
+// a blank name, any unknown station id, or a group id that is unknown or
+// inactive refuses the whole edit — the local dialog only offers active
+// groups and refuses a tampered inactive one (categories_page.go), and so
+// does this path.
+// Blank and repeated ids are dropped. Links to groups that are inactive and
+// not in the submitted list are kept, the same rule the local dialog's
+// saveCategoryLinks applies (ut-docs#2284): a picker of active groups can't
+// express them, so a replace-all must not silently drop them. Colour
+// palette validation is the caller's (catalogtypes.ValidItemColor).
+func (r *CatalogRepo) UpdateCategoryPartial(ctx context.Context, id string, p CategoryPatch) (CategoryPatchResult, error) {
+	var res CategoryPatchResult
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return res, fmt.Errorf("update category partial: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var name, color string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT name, COALESCE(color, '') FROM categories WHERE id = ?`, id).Scan(&name, &color); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return res, ErrCategoryNotFound
+		}
+		return res, fmt.Errorf("update category partial: load: %w", err)
+	}
+	if p.Name != nil {
+		name = strings.TrimSpace(*p.Name)
+		if name == "" {
+			return res, ErrCategoryNameRequired
+		}
+	}
+	if p.Color != nil {
+		color = strings.TrimSpace(*p.Color)
+	}
+
+	var groupIDs, stationIDs []string
+	if p.GroupIDs != nil {
+		groupIDs = dedupeIDs(*p.GroupIDs)
+		for _, gid := range groupIDs {
+			if ok, err := rowExists(ctx, tx, `SELECT 1 FROM item_modifier_groups WHERE id = ? AND is_active = 1`, gid); err != nil {
+				return res, fmt.Errorf("update category partial: check group: %w", err)
+			} else if !ok {
+				return res, fmt.Errorf("%w: %s", ErrModifierGroupNotFound, gid)
+			}
+		}
+		submitted := make(map[string]bool, len(groupIDs))
+		for _, gid := range groupIDs {
+			submitted[gid] = true
+		}
+		rows, err := tx.QueryContext(ctx, `
+SELECT l.group_id FROM category_modifier_group_links l
+JOIN item_modifier_groups g ON g.id = l.group_id
+WHERE l.category_id = ? AND g.is_active = 0
+ORDER BY l.sort_order, g.name`, id)
+		if err != nil {
+			return res, fmt.Errorf("update category partial: inactive links: %w", err)
+		}
+		var keep []string
+		for rows.Next() {
+			var gid string
+			if err := rows.Scan(&gid); err != nil {
+				rows.Close()
+				return res, fmt.Errorf("update category partial: inactive links: %w", err)
+			}
+			if !submitted[gid] {
+				keep = append(keep, gid)
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return res, fmt.Errorf("update category partial: inactive links: %w", err)
+		}
+		groupIDs = append(groupIDs, keep...)
+	}
+	if p.StationIDs != nil {
+		stationIDs = dedupeIDs(*p.StationIDs)
+		for _, sid := range stationIDs {
+			if ok, err := rowExists(ctx, tx, `SELECT 1 FROM kitchen_stations WHERE id = ?`, sid); err != nil {
+				return res, fmt.Errorf("update category partial: check station: %w", err)
+			} else if !ok {
+				return res, fmt.Errorf("%w: %s", ErrKitchenStationNotFound, sid)
+			}
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, `UPDATE categories SET name = ?, color = ? WHERE id = ?`,
+		name, nullableString(color), id); err != nil {
+		return res, fmt.Errorf("update category partial: row: %w", err)
+	}
+	if p.GroupIDs != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM category_modifier_group_links WHERE category_id = ?`, id); err != nil {
+			return res, fmt.Errorf("update category partial: clear groups: %w", err)
+		}
+		for i, gid := range groupIDs {
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO category_modifier_group_links (category_id, group_id, sort_order) VALUES (?, ?, ?)`,
+				id, gid, i); err != nil {
+				return res, fmt.Errorf("update category partial: link group: %w", err)
+			}
+		}
+	}
+	if p.StationIDs != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM category_station_routes WHERE category_id = ?`, id); err != nil {
+			return res, fmt.Errorf("update category partial: clear stations: %w", err)
+		}
+		for _, sid := range stationIDs {
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO category_station_routes (category_id, station_id) VALUES (?, ?)`, id, sid); err != nil {
+				return res, fmt.Errorf("update category partial: route station: %w", err)
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return res, fmt.Errorf("update category partial: commit: %w", err)
+	}
+	res.Name = name
+	if p.GroupIDs != nil {
+		res.GroupIDs = append([]string{}, groupIDs...)
+	}
+	if p.StationIDs != nil {
+		res.StationIDs = append([]string{}, stationIDs...)
+	}
+	return res, nil
+}
+
+// dedupeIDs trims ids and drops blanks and repeats, keeping first-seen order.
+func dedupeIDs(ids []string) []string {
+	out := make([]string, 0, len(ids))
+	seen := make(map[string]bool, len(ids))
+	for _, s := range ids {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
+}
+
+// rowExists reports whether query (a SELECT 1 … WHERE id = ?) finds a row.
+func rowExists(ctx context.Context, tx *sql.Tx, query, arg string) (bool, error) {
+	var one int
+	err := tx.QueryRowContext(ctx, query, arg).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // activeItemCountForCategory counts currently-active items pointing at
 // categoryID — shared by SetCategoryActive's deactivate guard.
 func (r *CatalogRepo) activeItemCountForCategory(ctx context.Context, categoryID string) (int, error) {
