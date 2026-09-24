@@ -153,6 +153,10 @@ jobs:
         run: bash scripts/ci/guard-android-external-links.sh
       - name: Android external-link hand-off guard regression test
         run: bash scripts/ci/guard-android-external-links_test.sh
+      - name: README local link/image guard
+        run: bash scripts/ci/guard-readme-local-links.sh
+      - name: README local link/image guard regression test
+        run: bash scripts/ci/guard-readme-local-links_test.sh
       - name: Android manifest implied-feature guard
         run: bash scripts/ci/guard-android-manifest-features.sh
       - name: Android manifest implied-feature guard regression test
