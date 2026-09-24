@@ -2860,3 +2860,89 @@ func TestRemoteConfigReport_OverBudgetOmits(t *testing.T) {
 		t.Fatal("the rest of the heartbeat must still be sent")
 	}
 }
+
+// --- update_category (ut-docs#2354) ---
+
+// The wired hook edits partially (absent = keep), checks the palette,
+// writes links, refuses on a replica and audits — the same gates
+// cloudUpsertCategory has.
+func TestCloudUpdateCategory_PartialEditLinksAuditAndGates(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	hooks := buildCloudHooks(dp, nil)
+	if hooks.UpdateCategory == nil {
+		t.Fatalf("UpdateCategory hook not wired")
+	}
+	if _, err := cloudUpsertCategory(ctx, dp, "", "Drinks", "#0f172a"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	row, _ := findCategoryByName(t, dp, "Drinks")
+	st, err := data.NewPOSRepo(dp.Db).CreateKitchenStation(ctx, "Bar", "printer", "")
+	if err != nil {
+		t.Fatalf("station: %v", err)
+	}
+	s := func(v string) *string { return &v }
+	ids := func(v ...string) *[]string { return &v }
+
+	// Off-palette colour: refused, nothing written.
+	if _, err := hooks.UpdateCategory(ctx, row.ID, s("Hot"), s("#123456"), nil, nil); err == nil {
+		t.Fatalf("off-palette colour must be refused")
+	}
+	if got, _ := findCategoryByName(t, dp, "Drinks"); got.ID != row.ID || got.Color != "#0f172a" {
+		t.Fatalf("refused edit wrote: %+v", got)
+	}
+
+	// Rename only: colour kept; station link written.
+	msg, err := hooks.UpdateCategory(ctx, row.ID, s("Hot drinks"), nil, nil, ids(st))
+	if err != nil || msg != "updated category Hot drinks" {
+		t.Fatalf("update: msg=%q err=%v", msg, err)
+	}
+	got, _ := findCategoryByName(t, dp, "Hot drinks")
+	if got.ID != row.ID || got.Color != "#0f172a" {
+		t.Fatalf("after rename = %+v, colour must be kept", got)
+	}
+	routes, _ := data.NewPOSRepo(dp.Db).CategoryStationRoutes(ctx, row.ID)
+	if len(routes) != 1 || routes[0] != st {
+		t.Fatalf("station routes = %v", routes)
+	}
+
+	// Group link: written, and the audit records the effective set.
+	if _, err := data.NewModifierRepo(dp.Db).CreateGroup(ctx, "grp-wire", "Milk", false, 0, 1, 0); err != nil {
+		t.Fatalf("group: %v", err)
+	}
+	if _, err := hooks.UpdateCategory(ctx, row.ID, nil, nil, ids(" grp-wire ", "grp-wire"), nil); err != nil {
+		t.Fatalf("link group: %v", err)
+	}
+	var detail string
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT COALESCE(data_json, '') FROM audit_log WHERE entity_type = 'category' AND entity_id = ? AND action = 'cloud_category_updated' ORDER BY rowid DESC LIMIT 1`,
+		row.ID).Scan(&detail); err != nil {
+		t.Fatalf("audit detail: %v", err)
+	}
+	if !strings.Contains(detail, `"modifier_group_ids":["grp-wire"]`) {
+		t.Fatalf("audit detail = %s, want the effective (trimmed, deduped) group set", detail)
+	}
+
+	// Unknown group: refused.
+	if _, err := hooks.UpdateCategory(ctx, row.ID, nil, nil, ids("no-such-group"), nil); err == nil {
+		t.Fatalf("unknown group must be refused")
+	}
+
+	var n int
+	if err := dp.Db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM audit_log WHERE entity_type = 'category' AND entity_id = ? AND action = 'cloud_category_updated' AND actor_id = 'system'`,
+		row.ID).Scan(&n); err != nil || n != 2 {
+		t.Fatalf("audit rows = %d err=%v, want exactly 2 (refused edits don't audit)", n, err)
+	}
+
+	// Replica: refused, nothing written.
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed sync.primary_url: %v", err)
+	}
+	if _, err := hooks.UpdateCategory(ctx, row.ID, s("On replica"), nil, nil, nil); err == nil {
+		t.Fatalf("replica must refuse")
+	}
+	if got, _ := findCategoryByName(t, dp, "On replica"); got.ID != "" {
+		t.Fatalf("replica wrote the rename")
+	}
+}
