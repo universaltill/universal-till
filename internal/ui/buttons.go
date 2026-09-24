@@ -51,6 +51,12 @@ type Button struct {
 	CategoryID  string `json:"categoryId,omitempty"` // the item's category, empty when uncategorized
 	// Color is the item's tile swatch (ut-docs#1901) — empty when unset.
 	Color string `json:"color,omitempty"`
+	// QuickButton marks an explicit shortcut_buttons row (set by LoadWith),
+	// as opposed to an implicit tile derived from the active catalog. Only
+	// an explicit quick button survives its category being hidden from the
+	// sale screen (manage-shop catalog contract §3.2) — see
+	// BuildCategoryGroups. Never on the wire.
+	QuickButton bool `json:"-"`
 }
 
 // ButtonVM is the view-model passed to templates.
@@ -267,23 +273,25 @@ func BuildCategoryGroups(buttons []Button, cats []data.CategoryNode, itemCounts 
 		roots = append(roots, g)
 	}
 
+	// Manage-shop catalog contract §3.2: a category whose
+	// show_on_sale_screen is off leaves the strip/tabs/overflow with its
+	// whole subtree, but its items stay sellable by search, scan AND quick
+	// buttons. So an explicit quick button (Button.QuickButton) anywhere in
+	// a hidden subtree moves to the uncategorised bucket — never off the
+	// sale screen, All tab on or off — while an implicit catalog tile leaves
+	// with its category (the item is still in the All grid, search, scan).
 	var uncategorized []ButtonVM
 	for i, b := range buttons {
 		vm := toButtonVM(b)
 		vm.Pos = i // global sort index — see ButtonVM.Pos
 		g, ok := byID[b.CategoryID]
-		if b.CategoryID == "" || !ok {
+		if b.CategoryID == "" || !ok || (b.QuickButton && inHiddenCategorySubtree(b.CategoryID, nodeByID)) {
 			uncategorized = append(uncategorized, vm)
 			continue
 		}
 		g.Buttons = append(g.Buttons, vm)
 	}
 
-	// Manage-shop catalog contract §3.2: a category whose
-	// show_on_sale_screen is off leaves the strip/tabs/overflow with its
-	// whole subtree. Its buttons were already attached to it above, so they
-	// leave with it rather than falling into the uncategorised bucket; its
-	// items stay sellable from the All grid, search and scan.
 	roots = dropHiddenGroups(roots, nodeByID)
 
 	kept := roots[:0]
@@ -302,6 +310,25 @@ func BuildCategoryGroups(buttons []Button, cats []data.CategoryNode, itemCounts 
 		roots = append(roots, &CategoryGroup{Color: uncategorizedColor, Buttons: uncategorized})
 	}
 	return roots
+}
+
+// inHiddenCategorySubtree reports whether catID or one of its ancestors is
+// sell-screen hidden. A seen-set bounds the walk on malformed (cyclic)
+// data, like isCategoryAncestor.
+func inHiddenCategorySubtree(catID string, nodes map[string]data.CategoryNode) bool {
+	seen := map[string]bool{}
+	for cur := catID; cur != "" && !seen[cur]; {
+		seen[cur] = true
+		n, ok := nodes[cur]
+		if !ok {
+			return false
+		}
+		if n.SellScreenHidden {
+			return true
+		}
+		cur = n.ParentID
+	}
+	return false
 }
 
 // dropHiddenGroups removes every group whose category is sell-screen
@@ -1003,6 +1030,7 @@ func (s *ButtonStore) LoadWith(ctx context.Context, allActive []Button) ([]Butto
 			HasVariants:  hasVariants[b.ItemID],
 			CategoryID:   b.CategoryID,
 			Color:        b.Color,
+			QuickButton:  true,
 		})
 		if b.ItemID != "" {
 			seen[b.ItemID] = true

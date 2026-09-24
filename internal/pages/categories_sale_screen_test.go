@@ -59,3 +59,40 @@ func TestCategoryDialog_ShowOnSaleScreenToggleAndBadge(t *testing.T) {
 		t.Fatalf("tick: code=%d hidden=%d", rec.Code, hidden(id))
 	}
 }
+
+// Review finding 6: the "Show on the sale screen" flag is written in the
+// same statement as the create/update, so a failure writing it leaves
+// nothing half-saved (no new row, no renamed category). A trigger that
+// refuses sell_screen_hidden = 1 forces that failure.
+func TestCategoryDialog_HiddenFlagFailureLeavesNothingHalfSaved(t *testing.T) {
+	mux, d := newCategoriesTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	if _, err := d.Db.Exec(`INSERT INTO categories (id, name, sort_order, is_active) VALUES ('cat-keep', 'Keep', 0, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []string{
+		`CREATE TRIGGER t_refuse_hidden_ins BEFORE INSERT ON categories WHEN NEW.sell_screen_hidden = 1 BEGIN SELECT RAISE(ABORT, 'forced'); END`,
+		`CREATE TRIGGER t_refuse_hidden_upd BEFORE UPDATE ON categories WHEN NEW.sell_screen_hidden = 1 BEGIN SELECT RAISE(ABORT, 'forced'); END`,
+	} {
+		if _, err := d.Db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count := func(q string, args ...any) int {
+		t.Helper()
+		var n int
+		if err := d.Db.QueryRow(q, args...).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	postCategoryMultipart(t, mux, "/api/categories", []catPart{{"name", "Specials"}, {"show_on_sale_screen_field", "1"}}, nil, manager)
+	if n := count(`SELECT COUNT(*) FROM categories WHERE name = 'Specials'`); n != 0 {
+		t.Fatal("a create whose hidden flag failed left the category behind")
+	}
+	postCategoryMultipart(t, mux, "/api/categories/cat-keep", []catPart{{"name", "Renamed"}, {"show_on_sale_screen_field", "1"}}, nil, manager)
+	if n := count(`SELECT COUNT(*) FROM categories WHERE id = 'cat-keep' AND name = 'Keep'`); n != 1 {
+		t.Fatal("an update whose hidden flag failed still renamed the category")
+	}
+}

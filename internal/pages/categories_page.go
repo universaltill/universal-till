@@ -562,7 +562,9 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 			renderCategoryDialogError(w, r, errKey, 0)
 			return
 		}
-		id, err := catRepo.CreateCategoryWithColor(r.Context(), f.name, f.color)
+		// The hidden flag rides in the create's own INSERT (review finding
+		// 6): nothing half-saved if it fails.
+		id, err := catRepo.CreateCategoryWithColorHidden(r.Context(), f.name, f.color, f.hidden != nil && *f.hidden)
 		if err != nil {
 			key := "categories.error.create"
 			if err == data.ErrCategoryNameRequired {
@@ -577,12 +579,6 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		imageAudit, ok := saveCategoryImage(w, r, id, f)
 		if !ok {
 			return
-		}
-		if f.hidden != nil {
-			if err := catRepo.SetCategorySellScreenHidden(r.Context(), id, *f.hidden); err != nil {
-				renderCategoryDialogError(w, r, "categories.error.update", 0)
-				return
-			}
 		}
 		auditImage(r, actor.ID, id, "category_create", imageAudit)
 		redirectCategories(w, r, "/categories")
@@ -609,7 +605,8 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 			renderCategoryDialogError(w, r, errKey, 0)
 			return
 		}
-		if err := catRepo.UpdateCategory(r.Context(), id, f.name, f.color); err != nil {
+		// The hidden flag rides in the same UPDATE (review finding 6).
+		if err := catRepo.UpdateCategoryWithHidden(r.Context(), id, f.name, f.color, f.hidden); err != nil {
 			key := "categories.error.rename"
 			switch err {
 			case data.ErrCategoryNameRequired:
@@ -626,12 +623,6 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		imageAudit, ok := saveCategoryImage(w, r, id, f)
 		if !ok {
 			return
-		}
-		if f.hidden != nil {
-			if err := catRepo.SetCategorySellScreenHidden(r.Context(), id, *f.hidden); err != nil {
-				renderCategoryDialogError(w, r, "categories.error.update", 0)
-				return
-			}
 		}
 		// "category_update", not "category_rename" — this same handler now
 		// also writes colour, the modifier-group/kitchen-station links

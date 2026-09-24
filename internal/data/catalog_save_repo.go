@@ -29,6 +29,9 @@ const (
 	maxItemBarcodes       = 20
 	maxBarcodeLen         = 64
 	maxItemModifierGroups = 50
+	// maxItemPriceMinor is the save_item price ceiling, the same bound as
+	// a modifier option's price delta (maxOptionPriceDeltaMinor).
+	maxItemPriceMinor = 999_999_999
 	// MaxCategoryDepth is how many levels a category tree may have (a
 	// top-level category is level 1). Contract §6 R2: one constant on each
 	// side, the product owner can change it.
@@ -111,6 +114,9 @@ func (r *CatalogRepo) SaveItem(ctx context.Context, p ItemPatch) (ItemSaveResult
 	}
 	if p.PriceMinor != nil && *p.PriceMinor < 0 {
 		return res, errors.New("the price must not be negative")
+	}
+	if p.PriceMinor != nil && *p.PriceMinor > maxItemPriceMinor {
+		return res, fmt.Errorf("the price must be at most %d in minor units", maxItemPriceMinor)
 	}
 	if p.SKU != nil {
 		s := strings.TrimSpace(*p.SKU)
@@ -206,7 +212,14 @@ func (r *CatalogRepo) SaveItem(ctx context.Context, p ItemPatch) (ItemSaveResult
 		res.Created = true
 		p.SKU = nil // already written
 	} else if p.SKU != nil && *p.SKU == "" {
-		return res, errors.New("the sku must not be blank")
+		if p.Create {
+			// A re-served create (its result post was lost): blank means
+			// "generate one" on create, and the item already has its SKU,
+			// so the field reads as absent (contract §3.1).
+			p.SKU = nil
+		} else {
+			return res, errors.New("the sku must not be blank")
+		}
 	}
 
 	// Scalar fields, then one row write through the same updateItemExec
@@ -712,20 +725,5 @@ func (r *CatalogRepo) DeleteCategoryMoving(ctx context.Context, id, moveItemsTo 
 	return res, nil
 }
 
-// runeLen is utf8.RuneCountInString, named for the validation below.
+// runeLen is utf8.RuneCountInString, named for the save validations.
 func runeLen(s string) int { return utf8.RuneCountInString(s) }
-
-// SetCategorySellScreenHidden sets categories.sell_screen_hidden — the
-// local category editor's "Show on the sale screen" box (the till-side
-// twin of save_category's show_on_sale_screen). Unknown id →
-// ErrCategoryNotFound; nothing else on the row is touched.
-func (r *CatalogRepo) SetCategorySellScreenHidden(ctx context.Context, id string, hidden bool) error {
-	res, err := r.db.ExecContext(ctx, `UPDATE categories SET sell_screen_hidden = ? WHERE id = ?`, boolToInt(hidden), id)
-	if err != nil {
-		return fmt.Errorf("set category sell screen hidden: %w", err)
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrCategoryNotFound
-	}
-	return nil
-}

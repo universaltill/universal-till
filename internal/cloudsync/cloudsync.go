@@ -13,6 +13,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -286,7 +287,11 @@ func Tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) erro
 			// Contract §3: a satellite till leaves these pending for the
 			// main till — no apply, and no result post that would resolve
 			// them as failed.
-			logging.L().Infof("cloudsync: directive %s (%s) skipped: main till only", d.ID, d.Type)
+			// Logged once per directive id (review finding 5), not on
+			// every tick while it waits for the main till.
+			if firstSatelliteSkip(d.ID) {
+				logging.L().Infof("cloudsync: directive %s (%s) skipped: main till only", d.ID, d.Type)
+			}
 			continue
 		}
 		status, msg := apply(ctx, d, hooks)
@@ -960,9 +965,34 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 	if prev, _, _ := settings.Get(ctx, "cloudsync.snapshot_hash"); prev == hash {
 		return nil // unchanged since the last successful push
 	}
+	// Size guard (review finding 3): over the cloud's 16 MiB schema-2 cap
+	// the post would only be refused, so don't send it. Logged once at
+	// warn level, which also puts it in the heartbeat's problems digest.
+	if len(payload) > maxSnapshotBytes {
+		if snapshotOversize() {
+			logging.L().Warnf("cloudsync: catalog snapshot is too large to upload (%d bytes, limit %d); not sent until the catalog shrinks", len(payload), maxSnapshotBytes)
+		}
+		return nil
+	}
+	if snapshotInBackoff() {
+		return nil // the cloud refused the last attempt; wait it out
+	}
 	if _, err := post(ctx, cfg, "/v1/stores/catalog-snapshot", payload); err != nil {
+		var se *statusError
+		if errors.As(err, &se) && rejectedRollup(se.StatusCode) {
+			// The cloud refused the body itself (413 from an older cloud's
+			// 4 MiB cap, 400/422…): the same bytes get the same answer, so
+			// back off exponentially instead of re-uploading the whole
+			// catalog every tick, and log each distinct refusal once.
+			wait, first := snapshotRefused(fmt.Sprintf("status %d", se.StatusCode))
+			if first {
+				logging.L().Warnf("cloudsync: catalog snapshot refused by the cloud (%d, %d bytes); retrying with backoff, next in %s", se.StatusCode, len(payload), wait)
+			}
+			return nil
+		}
 		return err
 	}
+	snapshotSucceeded()
 	logging.L().Infof("cloudsync: catalog snapshot pushed (schema %d, %d items, %d bytes)", snapshotSchema, len(rows), len(payload))
 	return settings.Set(ctx, "cloudsync.snapshot_hash", hash)
 }

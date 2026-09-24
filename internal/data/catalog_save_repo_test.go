@@ -132,6 +132,42 @@ func TestSaveItem_CreateBlankSKUGeneratesOne(t *testing.T) {
 	}
 }
 
+// Review finding 1: a re-served create (its result post was lost) that
+// carried sku:"" must apply as an update and keep the generated SKU, not
+// fail "the sku must not be blank" (contract §3.1).
+func TestSaveItem_ReplayCreateBlankSKUKeepsGenerated(t *testing.T) {
+	f := newSaveFixture(t)
+	ctx := context.Background()
+	p := data.ItemPatch{ID: "it-new", Create: true, Name: strp("Scone"), PriceMinor: i64p(250), SKU: strp("")}
+	if _, err := f.catalog.SaveItem(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	first := f.str(t, `SELECT COALESCE(sku, '') FROM items WHERE id = 'it-new'`)
+	res, err := f.catalog.SaveItem(ctx, p)
+	if err != nil {
+		t.Fatalf("replayed create failed: %v", err)
+	}
+	if res.Created {
+		t.Fatal("a replayed create must report an update")
+	}
+	if sku := f.str(t, `SELECT COALESCE(sku, '') FROM items WHERE id = 'it-new'`); sku != first {
+		t.Fatalf("sku changed on replay: %q -> %q", first, sku)
+	}
+}
+
+// Review finding 4: price_minor has the same upper bound as a modifier
+// option's price delta.
+func TestSaveItem_PriceUpperBound(t *testing.T) {
+	f := newSaveFixture(t)
+	ctx := context.Background()
+	if _, err := f.catalog.SaveItem(ctx, data.ItemPatch{ID: "itm1", PriceMinor: i64p(1_000_000_000)}); err == nil || !strings.Contains(err.Error(), "price") {
+		t.Fatalf("err = %v, want a price bound error", err)
+	}
+	if _, err := f.catalog.SaveItem(ctx, data.ItemPatch{ID: "itm1", PriceMinor: i64p(999_999_999)}); err != nil {
+		t.Fatalf("the maximum price must be accepted: %v", err)
+	}
+}
+
 func TestSaveItem_Validation(t *testing.T) {
 	f := newSaveFixture(t)
 	ctx := context.Background()

@@ -10,8 +10,9 @@ import (
 // Manage-shop catalog contract §3.2 (migration 041): a category with
 // show_on_sale_screen off (sell_screen_hidden = 1) is left out of the sale
 // screen's category strip, tabs and overflow — with its subtree — while its
-// items stay sellable (All tab, search, scan). Its buttons never fall into
-// the uncategorised bucket instead.
+// items stay sellable by search, scan AND quick buttons: a quick button
+// attached to a hidden category (or to one of its subcategories) moves to
+// the uncategorised bucket, never off the sale screen (review finding 2).
 func TestBuildCategoryGroups_HiddenCategoryLeftOut(t *testing.T) {
 	cats := []data.CategoryNode{
 		{ID: "food", Name: "Food"},
@@ -25,12 +26,27 @@ func TestBuildCategoryGroups_HiddenCategoryLeftOut(t *testing.T) {
 		{Label: "Cola", Code: "C", ItemID: "i3", CategoryID: "drink"},
 		{Label: "Tea", Code: "T", ItemID: "i4", CategoryID: "hot"},
 	}
-	groups := BuildCategoryGroups(buttons, cats, nil)
-	if len(groups) != 1 || groups[0].ID != "food" {
-		t.Fatalf("groups = %+v, want only Food (Drinks and its subtree hidden, no uncategorised bucket)", groups)
+	// The same catalog as explicit quick buttons, plus an implicit tile
+	// (Juice) in the hidden Drinks: only the quick buttons move.
+	var quick []Button
+	for _, b := range buttons {
+		b.QuickButton = true
+		quick = append(quick, b)
+	}
+	quick = append(quick, Button{Label: "Juice", Code: "J", ItemID: "i5", CategoryID: "drink"})
+	groups := BuildCategoryGroups(quick, cats, nil)
+	if len(groups) != 2 || groups[0].ID != "food" || groups[1].ID != "" {
+		t.Fatalf("groups = %+v, want Food then the uncategorised bucket (Drinks and its subtree hidden)", groups)
 	}
 	if len(groups[0].Children) != 0 {
 		t.Fatalf("Food children = %+v, want the hidden Dairy left out", groups[0].Children)
+	}
+	var moved []string
+	for _, b := range groups[1].Buttons {
+		moved = append(moved, b.Label)
+	}
+	if strings.Join(moved, ",") != "Butter,Cola,Tea" {
+		t.Fatalf("uncategorised bucket = %v, want the hidden categories' quick buttons in their global order and no implicit tile", moved)
 	}
 	tiles := BuildCategoryTiles(buttons, cats)
 	if len(tiles) != 1 || tiles[0].ID != "food" || tiles[0].ItemCount != 1 {
@@ -85,5 +101,26 @@ func TestButtonsHTTPList_HiddenCategoryHasNoTabButItemsStayInAll(t *testing.T) {
 	body = renderList(t, h)
 	if strings.Contains(body, "Drinks") {
 		t.Fatalf("category_tabs still offers the hidden Drinks tile")
+	}
+}
+
+// Review finding 2: with the All tab off, a quick button whose category is
+// hidden must still be on the sale screen (in the uncategorised bucket).
+func TestButtonsHTTPList_HiddenCategoryQuickButtonStaysReachable(t *testing.T) {
+	db, _, h := newBrowsingModeTestHTTP(t)
+	mustExec(t, db, `UPDATE categories SET sell_screen_hidden = 1 WHERE id = 'cat_drink'`)
+	h.BrowsingMode = "strip_overflow"
+	for _, hideAll := range []bool{false, true} {
+		h.HideAllTab = hideAll
+		body := renderList(t, h)
+		if strings.Contains(body, `id="cat-tab-cat_drink"`) {
+			t.Fatalf("HideAllTab=%v: the hidden Drinks category still has a strip tab", hideAll)
+		}
+		if !strings.Contains(body, `data-code="C_COLA"`) {
+			t.Fatalf("HideAllTab=%v: the Cola quick button of the hidden Drinks category left the sale screen", hideAll)
+		}
+		if !strings.Contains(body, `id="cat-tab-uncategorized"`) {
+			t.Fatalf("HideAllTab=%v: want the uncategorised tab carrying the moved quick button", hideAll)
+		}
 	}
 }
