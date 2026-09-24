@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, setBrowsingMode } from './helpers';
 
 // ut-docs#418: the till sale screen gets category tabs + search.
 //
@@ -45,6 +45,16 @@ import { watchConsole } from './helpers';
 // convention sale-screen-213.spec.ts and rtl.spec.ts already rely on for
 // this shared server.
 test.describe('sale screen category tabs + search (ut-docs#418)', () => {
+  // ut-docs#2499: the category strip (and its "..." overflow) is now ONE of
+  // three selectable sell-screen browsing modes (Settings -> Sell screen,
+  // sale.browsing_mode) and no longer the unconditional default (that is
+  // category tiles) -- this file is about the strip, so it picks
+  // strip_overflow explicitly rather than assuming it. worker-till.ts
+  // already boots every worker till in this mode; this is what makes the
+  // dependency visible in the spec itself.
+  test.beforeEach(async ({ page }) => {
+    await setBrowsingMode(page, 'strip_overflow');
+  });
   test.afterEach(async ({ page }) => {
     await page.request.post('/api/pos/reset');
   });

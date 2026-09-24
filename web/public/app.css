@@ -2020,9 +2020,40 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
 }
 /* Wider than the base .modifier-modal (28rem/90vw) — this holds a full
    item grid, not a handful of buttons — same "widen the dialog, not the
-   content" call .barcode-backfill-modal made for its own wide table. */
-.category-items-modal { max-width: 44rem; width: 94vw; }
+   content" call .barcode-backfill-modal made for its own wide table.
+   position: fixed + z-index (not the dialog UA stylesheet's own absolute/
+   margin:auto centering) -- same explicit-geometry recipe as #hold-modal/
+   #pfand-modal/#elevation-modal/#table-add-modal/.category-overflow-dialog
+   above: this dialog is opened with .show(), never .showModal() (the till's
+   own on-screen keyboard must stay reachable for the popup's search box --
+   buttons.html's own comment), so it gets none of showModal()'s free
+   top-layer stacking. Tester finding (ut-docs#2499): without this it fell
+   back to the UA default (position: absolute, z-index: auto) and rendered
+   BEHIND ordinary page content once the layout collapsed to one column --
+   confirmed live at 360x800, the sell screen's own "Add items to pay"
+   button painted on top of an item tile inside the open popup. z-index:
+   500 matches that same family. */
+.category-items-modal {
+  position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500;
+  max-width: 44rem; width: 94vw;
+}
 .category-items-modal-body { max-height: 60vh; overflow-y: auto; margin-block: .5rem; }
+/* ut-docs#2499: the category_tabs mode's tile grid and popup, and the
+   all_filter_chips mode's chip row (buttons.html). The tile's item count
+   shares .category-overflow-count's look (below) — same small muted line,
+   different number (items, not quick buttons). The popup's own search box
+   sits above its grid; each tile is wrapped in a display: contents cell
+   (same idiom as .tile-cell at rest) so the popup's x-show filter hides a
+   whole cell without leaving an empty grid slot. The chip row reuses the
+   shared .filter-chips pattern (touch floor, wrap-never-clip, checkmark +
+   aria-pressed, focus ring — see that block further down); the only
+   override is a slightly shorter chip so a 12+ category row at 1024x600
+   wraps to fewer rows while staying at/above the 44px (2.75rem) floor. */
+.category-tile-count { font-size: .78rem; color: var(--muted); }
+.category-items-search { inline-size: 100%; margin-block-end: .5rem; }
+.category-items-cell { display: contents; }
+.products-cat-chips { margin-block-end: .35rem; }
+.products-cat-chips .chip { min-block-size: 2.75rem; padding-inline: .8rem; }
 
 /* ut-docs#2307: the category strip's trailing "..." sheet — every
    category, once, as a large touch target (product owner's own card

@@ -709,67 +709,52 @@
   });
 })();
 </script>
-<!-- ut-docs#2294: the sell screen's All tab (every active catalog item, not
-     just quick buttons) is on by default so an existing shop keeps the tab
-     ut-docs#2212 already gave it; this lets a shop turn it off and fall
-     back to the pre-#2212 behavior (no All tab, first category tab
-     default-selected). Same single-checkbox hx-post/revert-on-failure,
-     manager-gated, elevation-wired pattern as the cards above/below it. -->
+<!-- ut-docs#2499: how the sell screen browses items — one closed-enum
+     setting (sale.browsing_mode) that replaced the two booleans that used to
+     live here (ut-docs#2294's "Show an All tab" and ut-docs#2283's
+     "Categories tab" cards, both retired outright). Same hardcoded-<option>
+     <select> + Apply idiom as the window-mode form above (a closed enum, not
+     the theme card's open list), elevation-wired so it renders for every
+     role and the server decides. The per-mode helper line under the select
+     (UX gate on ut-docs#2499): all three render server-side, one visible at
+     a time, swapped by the select's own change handler below — a bare
+     three-way enum means nothing to a shop owner until it's described. -->
 <div class="card" id="settings-sell-screen">
   <h2>{{ T "settings.sell_screen.title" }} {{ helpLink "sell" }}</h2>
-  <label style="display:block; margin:.35rem 0">
-    <input type="checkbox" id="show-all-tab-cb" name="enabled"
-           hx-post="/api/settings/show-all-tab" hx-trigger="change" hx-swap="none"
-           hx-vals="js:{enabled: document.getElementById('show-all-tab-cb').checked}"
-           hx-on::before-request="document.getElementById('show-all-tab-msg').textContent=''"
-           hx-on::after-request="if(!event.detail.successful){this.checked=!this.checked;document.getElementById('settings-save-error').hidden=false}"
-           {{ if .settings.ShowAllTabOnSellScreen }}checked{{ end }}>
-    {{ T "settings.sell_screen.show_all_tab_label" }}
-  </label>
-  <p class="muted">{{ T "settings.sell_screen.show_all_tab_hint" }}</p>
-  <div id="show-all-tab-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
+  <form id="browsing-mode-form" hx-post="/api/settings/browsing-mode" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}" class="set-gap">
+    {{ $bm := .browsingMode }}
+    <label class="set-row">{{ T "settings.sell_screen.browsing_mode_label" }}
+      <select name="mode" id="browsing-mode-select">
+        <option value="category_tabs"    {{ if eq $bm "category_tabs" }}selected{{ end }}>{{ T "settings.sell_screen.browsing_mode_category_tabs" }}</option>
+        <option value="all_filter_chips" {{ if eq $bm "all_filter_chips" }}selected{{ end }}>{{ T "settings.sell_screen.browsing_mode_all_filter_chips" }}</option>
+        <option value="strip_overflow"   {{ if eq $bm "strip_overflow" }}selected{{ end }}>{{ T "settings.sell_screen.browsing_mode_strip_overflow" }}</option>
+      </select>
+      <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
+    </label>
+    <p class="muted" data-browsing-mode-hint="category_tabs"{{ if ne $bm "category_tabs" }} hidden{{ end }}>{{ T "settings.sell_screen.browsing_mode_category_tabs_hint" }}</p>
+    <p class="muted" data-browsing-mode-hint="all_filter_chips"{{ if ne $bm "all_filter_chips" }} hidden{{ end }}>{{ T "settings.sell_screen.browsing_mode_all_filter_chips_hint" }}</p>
+    <p class="muted" data-browsing-mode-hint="strip_overflow"{{ if ne $bm "strip_overflow" }} hidden{{ end }}>{{ T "settings.sell_screen.browsing_mode_strip_overflow_hint" }}</p>
+    <div id="browsing-mode-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
+  </form>
 </div>
 <script>
 (function () {
-  var cb = document.getElementById('show-all-tab-cb');
-  if (!cb) return;
-  var msg = document.getElementById('show-all-tab-msg');
+  var form = document.getElementById('browsing-mode-form');
+  if (!form) return;
+  var select = document.getElementById('browsing-mode-select');
+  var msg = document.getElementById('browsing-mode-msg');
   var T = { saved: "{{ T "settings.display.change_saved" }}" };
-  cb.addEventListener('htmx:afterRequest', function (ev) {
-    var ct = ev.detail.xhr.getResponseHeader('Content-Type') || '';
-    if (ev.detail.successful && ct.indexOf('text/html') === -1) { renderNotice(msg, 'success', T.saved); }
-  });
-})();
-</script>
-<!-- ut-docs#2283: optional "Categories" tab on the sell screen (a grid of
-     category tiles, each opening an item-picker modal) — OFF by default,
-     so a till that never opens this toggle keeps today's tab bar (All +
-     one tab per category) unchanged. Same single-checkbox
-     hx-post/revert-on-failure/elevation-gated shape as the card just
-     above; internal/ui/buttons.go's ButtonsHTTP.List reads this same
-     settings key fresh on every /ui/buttons render, so flipping it takes
-     effect on the sale screen's very next render, no restart needed. -->
-<div class="card" id="settings-categories-tab">
-  <h2>{{ T "settings.categories_tab.title" }} {{ helpLink "sell" }}</h2>
-  <label style="display:block; margin:.35rem 0">
-    <input type="checkbox" id="categories-tab-cb" name="enabled"
-           hx-post="/api/settings/categories-tab" hx-trigger="change" hx-swap="none"
-           hx-vals="js:{enabled: document.getElementById('categories-tab-cb').checked}"
-           hx-on::before-request="document.getElementById('categories-tab-msg').textContent=''"
-           hx-on::after-request="if(!event.detail.successful){this.checked=!this.checked;document.getElementById('settings-save-error').hidden=false}"
-           {{ if eq (index .settingsMap "sell_screen_categories_tab_enabled") "1" }}checked{{ end }}>
-    {{ T "settings.categories_tab.label" }}
-  </label>
-  <p class="muted">{{ T "settings.categories_tab.hint" }}</p>
-  <div id="categories-tab-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
-</div>
-<script>
-(function () {
-  var cb = document.getElementById('categories-tab-cb');
-  if (!cb) return;
-  var msg = document.getElementById('categories-tab-msg');
-  var T = { saved: "{{ T "settings.display.change_saved" }}" };
-  cb.addEventListener('htmx:afterRequest', function (ev) {
+  // The helper line follows the CURRENTLY PICKED option, before Apply is
+  // ever pressed — the whole point is to explain a choice before it's made.
+  function showHint() {
+    form.querySelectorAll('[data-browsing-mode-hint]').forEach(function (p) {
+      p.hidden = p.getAttribute('data-browsing-mode-hint') !== select.value;
+    });
+  }
+  select.addEventListener('change', showHint);
+  // Same Content-Type guard as window-mode-form above (ut-docs#865): a 200
+  // elevation prompt is htmx "successful" too and must not flash "Saved".
+  form.addEventListener('htmx:afterRequest', function (ev) {
     var ct = ev.detail.xhr.getResponseHeader('Content-Type') || '';
     if (ev.detail.successful && ct.indexOf('text/html') === -1) { renderNotice(msg, 'success', T.saved); }
   });

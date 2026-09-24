@@ -28,6 +28,14 @@ func newDesignerTestDeps(t *testing.T) *common.Deps {
 	if err != nil {
 		t.Fatalf("init plugins: %v", err)
 	}
+	// ut-docs#2499: this file's plain-sale-screen assertions (a live scan
+	// tile next to the Designer's inert replica) are about the quick-button
+	// strip, so the till under test browses in strip mode explicitly —
+	// through the real setting, not a hand-set State, so LoadState's own
+	// clamp is what this helper exercises.
+	if err := settings.NewStore(d).Set(t.Context(), common.KeyBrowsingMode, common.BrowsingModeStripOverflow); err != nil {
+		t.Fatalf("seed browsing mode: %v", err)
+	}
 	state := common.LoadState(t.Context(), settings.NewStore(d), cfg)
 	return &common.Deps{
 		Cfg:      cfg,

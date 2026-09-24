@@ -40,7 +40,15 @@ func newButtonsMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
-	d := &common.Deps{Db: db, BtnStore: ui.NewButtonStore(db), Settings: settings.NewStore(db)}
+	// ut-docs#2499: every test built on this helper predates the browsing-
+	// mode setting and asserts on the quick-button STRIP (tabs, tiles that
+	// post /api/pos/scan, the jiggle markup) — so it says so explicitly
+	// here rather than inheriting whatever the setting's default happens
+	// to be (category tiles, since #2499). TestButtonsUIFragment_
+	// DefaultBrowsingModeIsCategoryTiles below is the one test that leaves
+	// State bare on purpose.
+	d := &common.Deps{Db: db, BtnStore: ui.NewButtonStore(db), Settings: settings.NewStore(db),
+		State: common.RuntimeState{BrowsingMode: common.BrowsingModeStripOverflow}}
 	mux := http.NewServeMux()
 	registerButtonsAPI(mux, d)
 	return mux, d
@@ -66,8 +74,9 @@ func newButtonsAndCatalogMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 		Db:       db,
 		BtnStore: ui.NewButtonStore(db),
 		Settings: settings.NewStore(db),
-		State:    common.RuntimeState{Theme: "default", Currency: "GBP"},
-		Menu:     []common.MenuItem{},
+		// BrowsingMode: same reasoning as newButtonsMux above (ut-docs#2499).
+		State: common.RuntimeState{Theme: "default", Currency: "GBP", BrowsingMode: common.BrowsingModeStripOverflow},
+		Menu:  []common.MenuItem{},
 	}
 	mux := http.NewServeMux()
 	registerButtonsAPI(mux, d)
@@ -75,11 +84,83 @@ func newButtonsAndCatalogMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	return mux, d
 }
 
+// TestButtonsUIFragment_DefaultBrowsingModeIsCategoryTiles (ut-docs#2499):
+// a Deps whose State was never populated (or a shop that never opened the
+// setting) renders the real default — category tiles — NOT the strip that
+// internal/ui's own zero-value convention keeps for its package-local
+// tests: /ui/buttons is the one production path and must always clamp the
+// live value. Also pins the wiring of the tile popup route.
+func TestButtonsUIFragment_DefaultBrowsingModeIsCategoryTiles(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	chdirRoot(t)
+	initPagesI18n(t)
+	db := openPagesTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	seedForPages(t, db)
+	d := &common.Deps{Db: db, BtnStore: ui.NewButtonStore(db), Settings: settings.NewStore(db)}
+	mux := http.NewServeMux()
+	registerButtonsAPI(mux, d)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/buttons", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/ui/buttons = %d (%s)", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `id="browsing-category-tiles"`) {
+		t.Fatalf("bare Deps must render the default (category tiles), got: %s", body)
+	}
+	if strings.Contains(body, `class="tab-bar"`) || strings.Contains(body, `id="browsing-category-chips"`) {
+		t.Fatalf("default mode must not render the strip or the chip row: %s", body)
+	}
+	// The popup route is wired and lists the seeded item (itm1 'Apple' has
+	// no category — the uncategorized bucket, id="").
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/buttons/category?id=", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `data-name="Apple"`) {
+		t.Fatalf("/ui/buttons/category?id= = %d, want 200 listing Apple: %s", rec.Code, rec.Body.String())
+	}
+	// And the chip filter on the All-grid route.
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/buttons/all/more?offset=0&category=", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `data-name="Apple"`) {
+		t.Fatalf("/ui/buttons/all/more?category= = %d, want 200 listing Apple: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// The three browsing-mode literals internal/ui spells for itself (it cannot
+// import internal/pages/common) must be exactly common's — a drift would
+// silently render the strip for a mode the settings page happily saves.
+func TestBrowsingModeLiteralsMatchAcrossPackages(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	chdirRoot(t)
+	initPagesI18n(t)
+	db := openPagesTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	seedForPages(t, db)
+	d := &common.Deps{Db: db, BtnStore: ui.NewButtonStore(db), Settings: settings.NewStore(db)}
+	mux := http.NewServeMux()
+	registerButtonsAPI(mux, d)
+	for mode, marker := range map[string]string{
+		common.BrowsingModeCategoryTabs:   `id="browsing-category-tiles"`,
+		common.BrowsingModeAllFilterChips: `id="browsing-category-chips"`,
+		common.BrowsingModeStripOverflow:  `id="cat-tab-more"`,
+	} {
+		d.SetState(common.RuntimeState{BrowsingMode: mode})
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/buttons", nil))
+		if !strings.Contains(rec.Body.String(), marker) {
+			t.Fatalf("mode %q: expected %q in /ui/buttons, got: %s", mode, marker, rec.Body.String())
+		}
+	}
+}
+
 // assertTileOpensModifiers checks, robustly against attribute/param
 // reordering, that body's tile for itemID/code routes a tap to the
 // customization picker rather than a straight scan.
 func assertTileOpensModifiers(t *testing.T, body, itemID, code string) {
 	t.Helper()
+	body = withoutAllGrid(t, body)
 	if !strings.Contains(body, `hx-get="/ui/pos/modifiers?`) {
 		t.Fatalf("expected a tile opening the customization picker (hx-get=\"/ui/pos/modifiers?...\"), got: %.1200s", body)
 	}
@@ -94,12 +175,44 @@ func assertTileOpensModifiers(t *testing.T, body, itemID, code string) {
 // must post straight to /api/pos/scan and must NOT open the picker at all.
 func assertTileScansDirectly(t *testing.T, body string) {
 	t.Helper()
+	body = withoutAllGrid(t, body)
 	if !strings.Contains(body, `hx-post="/api/pos/scan"`) {
 		t.Fatalf("expected a tile scanning straight to the basket (hx-post=\"/api/pos/scan\"), got: %.1200s", body)
 	}
 	if strings.Contains(body, "/ui/pos/modifiers") {
 		t.Fatalf("tile must not offer the customization picker, got: %.1200s", body)
 	}
+}
+
+// withoutAllGrid returns a /ui/buttons strip-mode render with the All grid
+// (#buttons-grid-all — EVERY active catalog item, ut-docs#2294) cut out, so
+// an assertion about the QUICK-BUTTON grid keeps meaning what it says.
+// Until ut-docs#2499 these tests never saw that grid at all, by accident:
+// their bare Deps left settings.sale.show_all_tab at the Go zero value,
+// which ButtonsHTTP read as "off". #2499 retired that boolean — the strip's
+// All tab is unconditional now, exactly as on a real till — so the grid's
+// own copies of the seeded items (itm1 with its ut-docs#744 variant among
+// them) are in every body these tests render. The All grid renders first
+// inside #buttons-grid, followed by the per-category panels (or, with no
+// quick buttons at all, the tabbed branch's no-matches message), which is
+// what bounds the cut; a body with no All grid is returned unchanged.
+func withoutAllGrid(t *testing.T, body string) string {
+	t.Helper()
+	start := strings.Index(body, `<div id="buttons-grid-all"`)
+	if start < 0 {
+		return body
+	}
+	rest := body[start:]
+	end := len(rest)
+	for _, marker := range []string{`<div id="cat-panel-`, `<p class="empty" x-show="!sectionHasMatch`} {
+		if i := strings.Index(rest, marker); i >= 0 && i < end {
+			end = i
+		}
+	}
+	if end == len(rest) {
+		t.Fatalf("withoutAllGrid: found the All grid but nothing after it to bound the cut: %.800s", rest)
+	}
+	return body[:start] + rest[end:]
 }
 
 // seedPlainItem inserts a catalog item with NO variants and NO modifier
@@ -167,7 +280,10 @@ func TestButtonsUIFragment_HxValsSurvivesQuotedCode(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/ui/buttons = %d (%s)", rec.Code, rec.Body.String())
 	}
-	body := rec.Body.String()
+	// The All grid's own tile for itm_novar carries the item's SKU as its
+	// code, not the quick button's — cut it out so the first plain tile
+	// found below is the quick button this test seeded.
+	body := withoutAllGrid(t, rec.Body.String())
 
 	idx := strings.Index(body, `hx-post="/api/pos/scan"`)
 	if idx == -1 {
@@ -820,7 +936,7 @@ func TestButtonsPartial_JiggleModeMarkup(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/ui/buttons = %d (%s)", rec.Code, rec.Body.String())
 	}
-	body := rec.Body.String()
+	body := withoutAllGrid(t, rec.Body.String())
 	for _, want := range []string{
 		`data-code="J1" data-item-id="itm1" data-pos="0"`,
 		`data-code="J2" data-item-id="itm1" data-pos="1"`,

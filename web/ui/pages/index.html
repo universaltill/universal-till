@@ -165,16 +165,20 @@
     </div>
   </dialog>
 
-  <!-- ut-docs#2283: the Categories tab's item-picker modal — same shell as
-       #parked-orders-modal just above (.modifier-modal frame, non-modal
-       .show(), OSK stays reachable), populated client-side by
-       buttons.html's openCategoryPicker() (cloned already-rendered tiles,
-       never a fetch) instead of an hx-get body like parked-orders-modal's
-       own. The title is two parts: a translated, visually-hidden prefix
-       (this dialog can hold ANY category, so one static heading can't name
-       it) plus the tapped category's own name — merchant data, not a
-       translation concern, set as plain text via .textContent, never
-       innerHTML. -->
+  <!-- ut-docs#2283/#2499: the category-tiles browsing mode's item popup —
+       same shell as #parked-orders-modal just above (.modifier-modal frame,
+       non-modal .show(), OSK stays reachable for the popup's own search
+       box). Its body is fetched by the tapped category tile's own hx-get
+       (GET /ui/buttons/category?id=..., buttons.html's
+       "category-items-fragment": every active item in that category, quick
+       buttons first, plus a search input) and shown by buttons.html's
+       openCategoryPopup(); ut-docs#2499 replaced #2283's clone-the-
+       quick-button-panel filling (ut-docs#2372: an item with no quick
+       button never appeared). The title is two parts: a translated,
+       visually-hidden prefix (this dialog can hold ANY category, so one
+       static heading can't name it) plus the tapped category's own name —
+       merchant data, not a translation concern, set as plain text via
+       .textContent, never innerHTML. -->
   <dialog id="category-items-modal" class="modifier-modal category-items-modal"
           aria-labelledby="category-items-modal-title">
     <h3 id="category-items-modal-title">

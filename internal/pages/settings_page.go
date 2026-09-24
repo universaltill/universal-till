@@ -711,7 +711,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"resetBatches":           resetBatches,
 			"sampleCount":            sampleCount,
 			"windowMode":             st.WindowMode,
-			"launchOnStartup":        st.LaunchOnStartup,
+			// ut-docs#2499: clamped here (not the raw field) so a Deps whose
+			// State was never populated by LoadState still pre-selects the
+			// real default in the Sell screen card's <select>.
+			"browsingMode":    common.ClampBrowsingMode(st.BrowsingMode),
+			"launchOnStartup": st.LaunchOnStartup,
 			// shellAttached + piKioskAppliance (ADR-0064, ut-docs#1039;
 			// finding 8 of its review): which of the three window-control
 			// topologies this till is actually in, so the Display card can
@@ -1328,46 +1332,6 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		settingsRespondSaved(w, r, elev)
 	})
 
-	// ut-docs#2283: whether the sell screen shows the optional "Categories"
-	// tab (a grid of category tiles, each opening an item-picker modal for
-	// that category) — same manager-gated, elevation-wired, persist-a-bool,
-	// no-RuntimeState-field shape as catalog-import-barcode-default just
-	// above: internal/ui/buttons.go's ButtonsHTTP.List reads this same key
-	// fresh on every /ui/buttons render, so it's purely presentational
-	// (which tab renders), never behaviour a sale itself depends on — a
-	// shop that never opens this toggle keeps today's tab bar exactly as
-	// it is, no seeded row required.
-	mux.HandleFunc("POST /api/settings/categories-tab", func(w http.ResponseWriter, r *http.Request) {
-		locale := httpx.ResolveLocale(w, r)
-		_ = r.ParseForm()
-		b, err := strconv.ParseBool(strings.TrimSpace(r.Form.Get("enabled")))
-		if err != nil {
-			http.Error(w, "enabled must be a boolean", http.StatusBadRequest)
-			return
-		}
-		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
-		if elev.Outcome == needsElevation {
-			summaryKey := "elevation.summary.categories_tab_off"
-			if b {
-				summaryKey = "elevation.summary.categories_tab_on"
-			}
-			renderElevationPrompt(w, r, "/api/settings/categories-tab", "#categories-tab-msg",
-				httpx.T(locale, summaryKey),
-				[]elevationHiddenField{{Name: "enabled", Value: r.Form.Get("enabled")}}, elev)
-			return
-		}
-		val := "0"
-		if b {
-			val = "1"
-		}
-		if err := d.Settings.Set(r.Context(), data.SellScreenCategoriesTabKey, val); err != nil {
-			http.Error(w, "could not save", http.StatusInternalServerError)
-			return
-		}
-		settingsAudit(r, posRepo, elev, "settings", data.SellScreenCategoriesTabKey, "categories_tab_changed", map[string]any{"enabled": b})
-		settingsRespondSaved(w, r, elev)
-	})
-
 	// "Sell items without tracking stock" (ut-docs#1843). Same manager-
 	// gated, elevation-wired, persist-a-bool shape as launch-on-startup
 	// above, but this one changes what the till DOES, not just what it
@@ -1413,39 +1377,45 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		settingsRespondSaved(w, r, elev)
 	})
 
-	// "Show an All tab on the sell screen" (ut-docs#2294). Same
-	// manager-gated, elevation-wired, persist-a-bool, SaveState-then-
-	// SetState shape as allow-negative-inventory just above — this one
-	// changes whether the sell screen's All tab (every active catalog
-	// item, not just quick buttons) renders at all, default on so an
-	// existing shop keeps the tab it already has (ut-docs#2212).
-	mux.HandleFunc("POST /api/settings/show-all-tab", func(w http.ResponseWriter, r *http.Request) {
+	// Sell-screen browsing mode (ut-docs#2499): sale.browsing_mode, a
+	// closed enum — category_tabs (a grid of category tiles, each opening a
+	// popup of that category's every active item with its own search),
+	// all_filter_chips (the All grid with category filter chips above it)
+	// or strip_overflow (the quick-button category strip with the
+	// ut-docs#2307 "…" overflow). Same manager-gated, elevation-wired,
+	// 400-on-bad-value, SaveState-then-SetState shape as window-mode above,
+	// minus its WindowCtl apply step: internal/ui's ButtonsHTTP.List reads
+	// the live RuntimeState on every /ui/buttons render, so the sell
+	// screen's next paint picks the new mode up with no restart. This one
+	// handler replaced BOTH POST /api/settings/show-all-tab (ut-docs#2294)
+	// and POST /api/settings/categories-tab (ut-docs#2283) — their keys are
+	// retired outright (see common.KeyBrowsingMode), not kept live beside
+	// this.
+	mux.HandleFunc("POST /api/settings/browsing-mode", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		_ = r.ParseForm()
-		b, err := strconv.ParseBool(strings.TrimSpace(r.Form.Get("enabled")))
-		if err != nil {
-			http.Error(w, "enabled must be a boolean", http.StatusBadRequest)
+		mode := strings.TrimSpace(r.Form.Get("mode"))
+		switch mode {
+		case common.BrowsingModeCategoryTabs, common.BrowsingModeAllFilterChips, common.BrowsingModeStripOverflow:
+		default:
+			http.Error(w, "mode must be one of category_tabs, all_filter_chips, strip_overflow", http.StatusBadRequest)
 			return
 		}
 		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
 		if elev.Outcome == needsElevation {
-			summaryKey := "elevation.summary.show_all_tab_off"
-			if b {
-				summaryKey = "elevation.summary.show_all_tab_on"
-			}
-			renderElevationPrompt(w, r, "/api/settings/show-all-tab", "#show-all-tab-msg",
-				httpx.T(locale, summaryKey),
-				[]elevationHiddenField{{Name: "enabled", Value: r.Form.Get("enabled")}}, elev)
+			renderElevationPrompt(w, r, "/api/settings/browsing-mode", "#browsing-mode-msg",
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.browsing_mode"), httpx.T(locale, "settings.sell_screen.browsing_mode_"+mode)),
+				[]elevationHiddenField{{Name: "mode", Value: mode}}, elev)
 			return
 		}
 		st := d.CurrentState()
-		st.ShowAllTabOnSellScreen = b
+		st.BrowsingMode = mode
 		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
 		d.SetState(st)
-		settingsAudit(r, posRepo, elev, "settings", common.KeyShowAllTabOnSellScreen, "show_all_tab_changed", map[string]any{"enabled": b})
+		settingsAudit(r, posRepo, elev, "settings", common.KeyBrowsingMode, "browsing_mode_changed", map[string]any{"mode": mode})
 		settingsRespondSaved(w, r, elev)
 	})
 
@@ -2641,6 +2611,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 		}
+		// ut-docs#2499: same validate-before-persisting reasoning as the
+		// service-charge rate above. An out-of-enum browsing mode would be
+		// clamped to the default on the very next LoadState, so the DB row
+		// and what the sell screen actually renders would silently disagree
+		// — refuse it with the same message the dedicated handler gives.
+		if key == common.KeyBrowsingMode && common.ClampBrowsingMode(value) != value {
+			http.Error(w, "mode must be one of category_tabs, all_filter_chips, strip_overflow", http.StatusBadRequest)
+			return
+		}
 		// ADR-0083 (ut-docs#1767): the two signing-device posture keys are
 		// stored per country, but the form field / cloud directive still
 		// sends their flat logical names. Resolve once, up front: every
@@ -2851,8 +2830,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				}
 			case common.KeyAllowNegativeInventory:
 				s.AllowNegativeInventory = truthy(value)
-			case common.KeyShowAllTabOnSellScreen:
-				s.ShowAllTabOnSellScreen = truthy(value)
+			case common.KeyBrowsingMode:
+				// Already validated above (a bad value is a 400, never a
+				// silent clamp); the clamp here is defensive only.
+				s.BrowsingMode = common.ClampBrowsingMode(value)
 			}
 		})
 		switch key {

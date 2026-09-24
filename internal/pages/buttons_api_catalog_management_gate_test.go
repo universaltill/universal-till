@@ -35,6 +35,9 @@ func newButtonsMuxRealSession(t *testing.T) (*http.ServeMux, *common.Deps) {
 		BtnStore: ui.NewButtonStore(db),
 		Settings: settings.NewStore(db),
 		AuthSvc:  auth.NewService(db),
+		// ut-docs#2499: these tests are about the quick-button strip's
+		// jiggle badges — same explicit-mode reasoning as newButtonsMux.
+		State: common.RuntimeState{BrowsingMode: common.BrowsingModeStripOverflow},
 	}
 	mux := http.NewServeMux()
 	registerButtonsAPI(mux, d)
@@ -96,7 +99,9 @@ func TestButtonsPartial_JiggleModeLockAffordance(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("cashier /ui/buttons = %d: %s", rec.Code, rec.Body.String())
 	}
-	body := rec.Body.String()
+	// withoutAllGrid: the lock affordance is a quick-button-grid concern —
+	// see that helper's own comment in buttons_api_test.go.
+	body := withoutAllGrid(t, rec.Body.String())
 	for _, want := range []string{
 		`class="tile-badge tile-badge-edit locked"`,
 		`class="tile-badge tile-badge-remove locked"`,
@@ -120,7 +125,7 @@ func TestButtonsPartial_JiggleModeLockAffordance(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s /ui/buttons = %d: %s", role, rec.Code, rec.Body.String())
 		}
-		body := rec.Body.String()
+		body := withoutAllGrid(t, rec.Body.String())
 		for _, unwanted := range []string{
 			`tile-badge-edit locked`,
 			`tile-badge-remove locked`,
