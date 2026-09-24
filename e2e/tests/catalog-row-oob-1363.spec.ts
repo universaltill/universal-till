@@ -19,7 +19,22 @@ import { watchConsole, openNewItemForm, closeItemForm } from './helpers';
 // fail these tests on its own; the real protocol assertions below are
 // what pin insert/update/delete correctness).
 test.describe('catalog row-level OOB swaps (ut-docs#1363)', () => {
+  // ut-docs#2541: every active item is a sell-screen tile by default now, so
+  // an uncategorized item left behind here adds an extra "uncategorized"
+  // tab to the SHARED per-worker till and breaks tab-count specs that run
+  // later on the same worker. Deactivate everything this file creates.
+  const created: string[] = [];
+  test.afterEach(async ({ page }) => {
+    if (created.length === 0) return;
+    await page.goto('/catalog');
+    for (const name of created.splice(0)) {
+      const id = await page.locator(`.catalog-row[data-name="${name}"]`).first().getAttribute('data-id', { timeout: 2000 }).catch(() => null);
+      if (id) await page.request.post('/api/catalog/item/deactivate', { form: { id } });
+    }
+  });
+
   async function createItem(page: import('@playwright/test').Page, name: string) {
+    created.push(name);
     await openNewItemForm(page);
     await page.locator('#item-name').fill(name);
     await page.locator('#item-price').fill('1.00');

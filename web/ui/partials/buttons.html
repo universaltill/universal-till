@@ -643,7 +643,7 @@
                Categories/All tabs above, which the card's own requirement
                keeps always visible -- without having to duplicate the
                '__categories__'/'__all__' sentinel checks in JS. */}}
-          <button type="button" id="cat-tab-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" class="tab" role="tab" data-cat-tab style="--cat-color: {{ .Color }}" :class="tab === '{{ .ID }}' && 'active'" :aria-selected="tab === '{{ .ID }}'" :tabindex="tab === '{{ .ID }}' ? 0 : -1" aria-controls="cat-panel-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" @click="tab = '{{ .ID }}'">{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</button>
+          <button type="button" id="cat-tab-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" class="tab" role="tab" data-cat-tab style="--cat-color: {{ .Color }}" :class="tab === '{{ .ID }}' && 'active'" :aria-selected="tab === '{{ .ID }}'" :tabindex="tab === '{{ .ID }}' ? 0 : -1" aria-controls="cat-panel-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" @click="tab = '{{ .ID }}'">{{ if .ImageURL }}<img class="tab-cat-img" src="{{ imgv .ImageURL }}" alt="" loading="lazy">{{ end }}{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</button>
           {{ end }}
           {{/* ut-docs#2307: the trailing "more categories" button --
                card's own literal ask ("a ... button at the right; when
@@ -708,6 +708,7 @@
             <button type="button" class="category-overflow-tile" style="--cat-color: {{ $g.Color }}"
                     :class="tab === '{{ $g.ID }}' && 'active'" :aria-current="tab === '{{ $g.ID }}' ? 'true' : null"
                     @click="selectCategoryFromOverflow('{{ $g.ID }}')">
+              {{ if $g.ImageURL }}<img class="category-tile-img" src="{{ imgv $g.ImageURL }}" alt="" loading="lazy">{{ end }}
               <span class="category-tile-name">{{ if $g.ID }}{{ $g.Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</span>
               <span class="category-overflow-count">{{ printf (T "products.category_button_count") (len $g.Buttons) }}</span>
             </button>
@@ -833,6 +834,7 @@
                   hx-on::response-error="document.getElementById('category-items-modal-body').textContent = this.dataset.errorText"
                   hx-on::send-error="document.getElementById('category-items-modal-body').textContent = this.dataset.errorText"
                   @click="openCategoryPopup($el)">
+            {{ if .ImageURL }}<img class="category-tile-img" src="{{ imgv .ImageURL }}" alt="" loading="lazy">{{ end }}
             <span class="category-tile-name">{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</span>
             <span class="category-tile-count">{{ printf (T "categories.item_count") .ItemCount }}</span>
           </button>
@@ -988,7 +990,7 @@
         <p class="empty" x-show="!sectionHasMatch($el.parentElement)">{{ T "products.no_matches" }}</p>
         {{ end }}
       </div>
-      {{ if .EditMode }}{{ template "designer-categories" . }}{{ end }}
+      {{ if .EditMode }}{{ template "designer-categories" . }}{{ template "designer-hidden" . }}{{ end }}
     </section>
   {{ end }}
   {{/* ut-docs#2174: plugin-contributed action buttons are not quick
@@ -1132,6 +1134,45 @@
       </div>
     </form>
   </div>
+</section>
+{{ end }}
+
+{{/* ut-docs#2541: the Designer's "Hidden from sell screen" section, edit
+     mode only -- same placement/rationale as "designer-categories" just
+     above (inside the self-refreshing .products root, outside
+     #buttons-grid so a pointerdown here is "outside the grid" to app.js's
+     utTileJiggle). .HiddenItems (ButtonStore.ListHidden ->
+     data.CatalogRepo.ListSellScreenHidden) lists every ACTIVE item with
+     items.sell_screen_hidden set -- an item hidden via a tile's own Hide
+     badge (product-tile, above) or /api/buttons/hide directly. Unhide
+     posts straight to /api/buttons/unhide with hx-swap="none": like the
+     tile badges, its HX-Trigger: buttons-changed re-fetches the whole
+     .products root (this section included) from the server's truth, so
+     there's no separate fragment to target. No confirm -- unhiding is
+     never destructive. */}}
+{{ define "designer-hidden" }}
+<section class="designer-hidden" aria-labelledby="designer-hidden-title" data-testid="designer-hidden">
+  <div class="designer-categories-head">
+    <h3 id="designer-hidden-title">{{ printf (T "designer.hidden.title") (len .HiddenItems) }}</h3>
+  </div>
+  {{ if .HiddenItems }}
+  <ul class="designer-hidden-list">
+    {{ range .HiddenItems }}
+    <li class="designer-hidden-item" data-testid="designer-hidden-item-{{ .ItemID }}">
+      <span class="designer-hidden-name">{{ .Name }}</span>
+      {{/* ut-docs#2541: plain `.btn` (min-height 3rem/48px), not `.btn.
+           compact` (2.5rem/40px) -- the card's own "≥44px targets"
+           requirement. */}}
+      <button type="button" class="btn secondary" data-testid="designer-hidden-unhide-{{ .ItemID }}"
+              hx-post="/api/buttons/unhide" hx-vals='{{ jsonVals "itemId" .ItemID }}' hx-swap="none">
+        {{ T "designer.hidden.unhide" }}
+      </button>
+    </li>
+    {{ end }}
+  </ul>
+  {{ else }}
+  <p class="muted" data-testid="designer-hidden-empty">{{ T "designer.hidden.empty" }}</p>
+  {{ end }}
 </section>
 {{ end }}
 
@@ -1438,8 +1479,17 @@
         <span class="tile-badge-dot" aria-hidden="true">{{ icon "pencil" }}</span>
         {{ if .Locked }}<span class="tile-badge-dot tile-badge-lock" data-testid="tile-badge-lock-edit" aria-hidden="true">{{ icon "lock" }}</span>{{ end }}
       </a>
+      {{/* ut-docs#2541: this badge now DELETES the item itself (soft-
+           deactivate, the same pos.DeactivateItem the catalog page's own
+           "Delete item" uses) rather than just removing its quick-button
+           row -- every active item is a quick button by default now, so a
+           plain row delete would let the tile silently reappear on the
+           very next render. Kept the same data-testid/class/corner
+           (existing geometry/gate tests key off "tile-badge-remove") since
+           it's still visually the trash badge in the same spot -- only its
+           target route, confirm wording and accessible name changed. */}}
       <button type="button" class="tile-badge tile-badge-remove{{ if .Locked }} locked{{ end }}" data-testid="tile-badge-remove"
-              hx-post="/api/buttons/remove" hx-vals='{{ jsonVals "code" .Code }}'
+              hx-post="/api/buttons/delete-item" hx-vals='{{ jsonVals "itemId" .ItemID }}'
               {{/* ut-docs#2361, same reasoning as tile_sheet.html's own
                    remove button: no hx-confirm when Locked -- a
                    non-granted operator's tap must reach the server and
@@ -1447,12 +1497,28 @@
                    confirm() dialog that would only ever precede the SAME
                    eventual elevation either way. The confirm still guards
                    the real, granted delete path unchanged. */}}
-              {{ if not .Locked }}hx-confirm="{{ printf (T "tile_sheet.remove_confirm") .Label }}"{{ end }}
+              {{ if not .Locked }}hx-confirm="{{ printf (T "tile_sheet.delete_item_confirm") .Label }}"{{ end }}
               hx-swap="none"
-              aria-label="{{ if .Locked }}{{ T "tile_sheet.remove" }} — {{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.remove" }}{{ end }}"
-              title="{{ if .Locked }}{{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.remove" }}{{ end }}">
+              aria-label="{{ if .Locked }}{{ T "tile_sheet.delete_item" }} — {{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.delete_item" }}{{ end }}"
+              title="{{ if .Locked }}{{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.delete_item" }}{{ end }}">
         <span class="tile-badge-dot" aria-hidden="true">{{ icon "trash-2" }}</span>
         {{ if .Locked }}<span class="tile-badge-dot tile-badge-lock" data-testid="tile-badge-lock-remove" aria-hidden="true">{{ icon "lock" }}</span>{{ end }}
+      </button>
+      {{/* ut-docs#2541: third badge, inline-END BOTTOM corner (logical CSS
+           properties -- app.css's .tile-badge-hide sets inset-inline-end/
+           inset-block-end, never left/right/bottom, so it mirrors correctly
+           under RTL same as every other badge in this file) -- hides the
+           item from the sell screen grid/All tab without touching the
+           catalog item itself; reversible (Designer's "Hidden from sell
+           screen" section, Unhide), so no confirm at all, granted or
+           Locked alike. */}}
+      <button type="button" class="tile-badge tile-badge-hide{{ if .Locked }} locked{{ end }}" data-testid="tile-badge-hide"
+              hx-post="/api/buttons/hide" hx-vals='{{ jsonVals "itemId" .ItemID }}'
+              hx-swap="none"
+              aria-label="{{ if .Locked }}{{ T "tile_sheet.hide" }} — {{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.hide" }}{{ end }}"
+              title="{{ if .Locked }}{{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.hide" }}{{ end }}">
+        <span class="tile-badge-dot" aria-hidden="true">{{ icon "eye-off" }}</span>
+        {{ if .Locked }}<span class="tile-badge-dot tile-badge-lock" data-testid="tile-badge-lock-hide" aria-hidden="true">{{ icon "lock" }}</span>{{ end }}
       </button>
     </span>
   </div>

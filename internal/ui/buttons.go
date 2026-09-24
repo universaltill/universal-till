@@ -145,6 +145,11 @@ type CategoryGroup struct {
 	Buttons  []ButtonVM
 	Children []*CategoryGroup
 
+	// ImageURL (ut-docs#2500) is the category's image for its strip tab
+	// and overflow tile, already through categoryImageURL — "" means
+	// render no <img> at all.
+	ImageURL string
+
 	// AncestorName is the top-level root's Name for a NESTED subcategory —
 	// empty for a root itself (a root has no ancestor to disambiguate
 	// against). ut-docs#2198: two subcategories sharing a name under
@@ -198,6 +203,28 @@ func resolveCategoryColor(c data.CategoryNode) string {
 	return categoryPalette[h.Sum32()%uint32(len(categoryPalette))]
 }
 
+// categoryImageURL (ut-docs#2500) turns a stored categories.image_path into
+// what the sell screen may render: the path is kept only when it resolves
+// to a file this till can actually serve (httpx.AssetExists — the data
+// dir, the release tree, or the binary's embedded web/ assets). A built-in
+// icon (/public/assets/category-icons/..., shipped with every binary)
+// therefore always renders; an uploaded photo
+// (/public/assets/categories/<id>/thumb.png) renders only where the file
+// is — the column rides the admin sync bundle but the file does not (the
+// D2 limit), so on a satellite the category shows name-only instead of a
+// broken <img>. The same check covers a built-in key a newer primary knows
+// and this older satellite doesn't ship yet. Anything not under /public/
+// is dropped outright: the column arrives over sync, so it is untrusted.
+func categoryImageURL(path string) string {
+	if path == "" || !strings.HasPrefix(path, "/public/") || strings.Contains(path, "..") {
+		return ""
+	}
+	if !httpx.AssetExists(path) {
+		return ""
+	}
+	return path
+}
+
 // BuildCategoryGroups nests buttons under their item's category (following
 // each category's ParentID to build the tree cats itself doesn't carry
 // nesting for) — "deep category trees, not a flat product list." Branches
@@ -216,7 +243,7 @@ func BuildCategoryGroups(buttons []Button, cats []data.CategoryNode, itemCounts 
 	byID := make(map[string]*CategoryGroup, len(cats))
 	nodeByID := make(map[string]data.CategoryNode, len(cats))
 	for _, c := range cats {
-		byID[c.ID] = &CategoryGroup{ID: c.ID, Name: c.Name, Color: resolveCategoryColor(c)}
+		byID[c.ID] = &CategoryGroup{ID: c.ID, Name: c.Name, Color: resolveCategoryColor(c), ImageURL: categoryImageURL(c.ImagePath)}
 		nodeByID[c.ID] = c
 	}
 
@@ -412,6 +439,12 @@ type ButtonStore struct {
 	modRepo      *data.ModifierRepo
 	catalogRepo  *data.CatalogRepo
 	settingsRepo *data.SettingsRepo
+	// db backs DeleteItem's pos.DeactivateItem call (ut-docs#2541) -- the
+	// same package-level helper the catalog's own "Delete item" route uses
+	// (internal/pages/catalog/handlers.go's /api/catalog/item/deactivate),
+	// so the jiggle-mode trash badge deactivates an item exactly the same
+	// way the catalog page's own delete does, not a second reimplementation.
+	db *sql.DB
 }
 
 func NewButtonStore(db *sql.DB) *ButtonStore {
@@ -421,6 +454,7 @@ func NewButtonStore(db *sql.DB) *ButtonStore {
 		modRepo:      data.NewModifierRepo(db),
 		catalogRepo:  data.NewCatalogRepo(db),
 		settingsRepo: data.NewSettingsRepo(db),
+		db:           db,
 	}
 }
 
@@ -436,6 +470,7 @@ type CategoryTileVM struct {
 	Name      string
 	Color     string
 	ItemCount int
+	ImageURL  string // ut-docs#2500: see CategoryGroup.ImageURL
 }
 
 // BuildCategoryTiles derives the category_tabs/all_filter_chips category
@@ -451,7 +486,7 @@ func BuildCategoryTiles(allActive []Button, cats []data.CategoryNode) []Category
 	groups := BuildCategoryGroups(allActive, cats, nil)
 	out := make([]CategoryTileVM, 0, len(groups))
 	for _, g := range groups {
-		out = append(out, CategoryTileVM{ID: g.ID, Name: g.Name, Color: g.Color, ItemCount: countSubtreeButtons(g)})
+		out = append(out, CategoryTileVM{ID: g.ID, Name: g.Name, Color: g.Color, ItemCount: countSubtreeButtons(g), ImageURL: g.ImageURL})
 	}
 	return out
 }
@@ -623,6 +658,30 @@ func (s *ButtonStore) LoadAllActive(ctx context.Context) ([]Button, error) {
 	items, err := s.catalogRepo.ListItems(ctx)
 	if err != nil {
 		return nil, err
+	}
+	// ut-docs#2541: an item hidden from the sell screen (items.
+	// sell_screen_hidden) is left out of the All tab and every implicit
+	// quick-button slot Load derives from this same method -- it still
+	// sells via barcode scan/live search (SearchSellable, the scan
+	// resolver), which don't call LoadAllActive and stay unfiltered. A
+	// lookup error is non-fatal-but-loud, same treatment as every other
+	// batched lookup below: on error every item falls back to VISIBLE
+	// (fails open, matching ListItems' own "every consumer that isn't the
+	// sell screen must keep seeing hidden items unfiltered" contract) rather
+	// than the render silently failing outright.
+	hiddenIDs, err := s.catalogRepo.SellScreenHiddenItemIDs(ctx)
+	if err != nil {
+		logging.L().Warnf("ui: load all-active items hidden-flag lookup failed, every item falls back to visible: %v", err)
+		hiddenIDs = nil
+	}
+	if len(hiddenIDs) > 0 {
+		kept := items[:0]
+		for _, it := range items {
+			if !hiddenIDs[it.ID] {
+				kept = append(kept, it)
+			}
+		}
+		items = kept
 	}
 	itemIDs := make([]string, 0, len(items))
 	for _, it := range items {
@@ -809,8 +868,38 @@ func (s *ButtonStore) SearchSellable(ctx context.Context, q string, limit int) (
 	return out, nil
 }
 
+// Load is LoadWith with a freshly-fetched LoadAllActive result -- the
+// convenience most callers want. ButtonsHTTP.List needs the SAME
+// LoadAllActive result a second time (for the All tab), so it calls
+// LoadAllActive itself and passes it to LoadWith directly rather than going
+// through Load, which would otherwise run that batched, chunked query a
+// second time on every single render (ut-docs#2541 review finding 2).
 func (s *ButtonStore) Load() ([]Button, error) {
 	ctx := context.Background()
+	allActive, err := s.LoadAllActive(ctx)
+	if err != nil {
+		// Non-fatal-but-loud, same shape LoadWith's own doc comment
+		// describes for this same lookup: the explicit rows still render,
+		// the sell screen just loses every implicit tile until the next
+		// successful Load.
+		logging.L().Warnf("ui: load all-active items for implicit quick buttons failed, sell screen falls back to explicit shortcut_buttons rows only: %v", err)
+		allActive = nil
+	}
+	return s.LoadWith(ctx, allActive)
+}
+
+// LoadWith is Load's own logic, taking an ALREADY-FETCHED LoadAllActive
+// result (ut-docs#2541 review finding 2) instead of calling LoadAllActive
+// itself -- ButtonsHTTP.List needs that same result again for the All tab,
+// and before this the render called LoadAllActive twice: once inside Load's
+// old body, once directly for the tab. Both are now the SAME batched,
+// chunked query set (ItemBarcodes/ItemThumbnails/ItemIDsWithModifiers/
+// ItemIDsWithVariants/ItemCurrentPrices, all sized to the WHOLE active
+// catalog), so a large catalog paid for it twice on every render. allActive
+// may be nil (a caller's own LoadAllActive failed and already logged it) --
+// Load() above still returns explicit rows only in that case, matching the
+// old behavior exactly.
+func (s *ButtonStore) LoadWith(ctx context.Context, allActive []Button) ([]Button, error) {
 	rows, err := s.repo.LoadButtons(ctx)
 	if err != nil {
 		return nil, err
@@ -859,6 +948,7 @@ func (s *ButtonStore) Load() ([]Button, error) {
 		}
 	}
 	var out []Button
+	seen := make(map[string]bool, len(rows))
 	for _, b := range rows {
 		// ut-docs#2258: prefer the batched price_history-aware price;
 		// b.Price (raw base_price from LoadButtons) is the fallback for an
@@ -879,6 +969,26 @@ func (s *ButtonStore) Load() ([]Button, error) {
 			CategoryID:   b.CategoryID,
 			Color:        b.Color,
 		})
+		if b.ItemID != "" {
+			seen[b.ItemID] = true
+		}
+	}
+	// ut-docs#2541: every other active, not-hidden catalog item is a quick
+	// button too, by default — appended after the explicit shortcut_buttons
+	// rows above (which keep their own sort_order), in LoadAllActive's own
+	// order (by name), and reusing its exact code/price/thumbnail/mods/
+	// variants logic rather than a second implementation of it. An explicit
+	// row always wins for an item that has one (deduped via seen, built
+	// above) — LoadAllActive already excludes hidden items itself, so this
+	// loop never needs its own hidden check. allActive is the caller's own
+	// already-fetched result (see this method's own doc comment) — a nil
+	// slice (the caller's LoadAllActive failed, already logged there) simply
+	// contributes nothing, same fallback shape the old inline call had.
+	for _, b := range allActive {
+		if seen[b.ItemID] {
+			continue
+		}
+		out = append(out, b)
 	}
 	return out, nil
 }
@@ -897,8 +1007,82 @@ func (s *ButtonStore) Save(list []Button) error {
 }
 
 // UpdateOrder persists a new tile order (codes in display order).
+//
+// ut-docs#2541: since every active, non-hidden item is now an IMPLICIT
+// quick button (Load, above) even with no shortcut_buttons row of its own,
+// a drag can reorder one of those tiles too — but ShortcutsRepo.UpdateOrder
+// only ever UPDATEs an existing row's sort_order, so an implicit tile's new
+// position would silently not persist. Any code in codes with no row yet
+// AND at or before lastTouchedIndex (below) is materialised first.
+//
+// ut-docs#2541 review finding 1: the client (app.js's utTileJiggle) always
+// posts the FULL global code list on every drag, not just the tiles that
+// moved — materializing every implicit code in that list, unconditionally,
+// would turn the very first drag on a large catalog into a real
+// shortcut_buttons row for EVERY implicit item, most of which the operator
+// never touched (thousands of inserts, frozen labels/images, and a bloated
+// cloud heartbeat report — remoteQuickButtonsReport reads LoadButtons).
+// lastTouchedIndex is the LAST position where codes differs from Load()'s
+// CURRENT order; only codes at or before it are candidates for
+// materializing — a trailing run of tiles the drag never actually reordered
+// (same code, same position, both before and after) stays implicit. The
+// existence check (ExistingBarcodes) and every insert/order-update run in
+// ONE transaction (ShortcutsRepo.MaterializeAndReorder) rather than one
+// transaction per implicit tile plus a separate reorder transaction.
 func (s *ButtonStore) UpdateOrder(ctx context.Context, codes []string) error {
-	return s.repo.UpdateOrder(ctx, codes)
+	current, err := s.Load()
+	if err != nil {
+		return err
+	}
+	lastTouchedIndex := -1
+	for i, code := range codes {
+		var currentCode string
+		if i < len(current) {
+			currentCode = current[i].Code
+		}
+		if code != currentCode {
+			lastTouchedIndex = i
+		}
+	}
+
+	existing, err := s.repo.ExistingBarcodes(ctx, codes)
+	if err != nil {
+		return err
+	}
+	var materialize []data.ShortcutButton
+	for i, code := range codes {
+		if i > lastTouchedIndex {
+			// Trailing run of tiles the drag never touched (same code, same
+			// position, before and after) -- leave any implicit one among
+			// them implicit; only the reorder UPDATE below still runs for
+			// it (a no-op UPDATE, since its position didn't change either).
+			break
+		}
+		if existing[code] {
+			continue
+		}
+		line, _, ok := s.posRepo.ResolveShortcutLineDecoded(ctx, code)
+		if !ok || line.ItemID == "" {
+			// An unresolvable code (stale/tampered client state) simply has
+			// nothing to materialise -- the UPDATE below finds no row to set
+			// sort_order on for it either, the same silent no-op this route
+			// already had for an unknown code before this card.
+			continue
+		}
+		// Label is deliberately left EMPTY, not line.Label/line.Name: a
+		// materialized row must show the item's LIVE name (and thumbnail),
+		// never one frozen at drag time — see LoadButtons' own
+		// COALESCE(NULLIF(sb.label,''), i.name) fallback, and
+		// MaterializeAndReorder's own doc comment. ImageURL is left empty
+		// for the same reason: LoadButtons already falls a NULL image_path
+		// back to the item's own catalog thumbnail.
+		materialize = append(materialize, data.ShortcutButton{
+			Label:   "",
+			Barcode: code,
+			ItemID:  line.ItemID,
+		})
+	}
+	return s.repo.MaterializeAndReorder(ctx, materialize, codes)
 }
 
 // synthesizedButtonCodePrefix marks a shortcut-button code that ButtonStore.Add
@@ -962,16 +1146,95 @@ func (s *ButtonStore) Add(btn Button) error {
 		// the same row rather than creating a duplicate.
 		btn.Code = synthesizedButtonCodePrefix + btn.ItemID
 	}
-	return s.repo.AddButton(context.Background(), data.ShortcutButton{
+	ctx := context.Background()
+	if err := s.repo.AddButton(ctx, data.ShortcutButton{
 		Label:    btn.Label,
 		Barcode:  btn.Code,
 		ItemID:   btn.ItemID,
 		ImageURL: btn.ImageURL,
-	})
+	}); err != nil {
+		return err
+	}
+	// ut-docs#2541: explicitly adding a shortcut for an item that was
+	// hidden un-hides it -- the operator just configured a tile for it, so
+	// a stale hidden flag from before must not keep it off the grid. Best
+	// effort: the button row above is already persisted (the operator's
+	// primary intent succeeded), so a failure here is logged, not returned
+	// -- the item stays hidden and the Designer's own Unhide button remains
+	// available as a fallback.
+	if err := s.catalogRepo.SetSellScreenHidden(ctx, btn.ItemID, false); err != nil {
+		logging.L().Warnf("ui: add button: clear sell-screen-hidden flag for item %q failed: %v", btn.ItemID, err)
+	}
+	return nil
 }
 
-func (s *ButtonStore) Remove(code string) error {
-	return s.repo.RemoveButton(context.Background(), code)
+// Remove hides the item behind code (ut-docs#2541): every active item is a
+// quick button by default now, so deleting just the shortcut_buttons row
+// would let the tile silently reappear as an implicit one on the very next
+// render. itemID, when the caller already has it (buttons.html's badge
+// form posts itemId directly), is used as-is; otherwise it's resolved from
+// code's own shortcut_buttons row, so a caller with only the legacy code
+// payload (buttons_admin.html's search flow, an external API caller) still
+// works.
+func (s *ButtonStore) Remove(code, itemID string) error {
+	ctx := context.Background()
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" {
+		code = strings.TrimSpace(code)
+		if code == "" {
+			return errors.New("code or itemId is required")
+		}
+		resolved, ok := s.repo.ItemIDForBarcode(ctx, code)
+		if !ok {
+			return errors.New("item not found for code")
+		}
+		itemID = resolved
+	}
+	return s.catalogRepo.SetSellScreenHidden(ctx, itemID, true)
+}
+
+// Hide takes an item off the sell-screen quick-button grid/All tab
+// (ut-docs#2541) — see CatalogRepo.SetSellScreenHidden for the full
+// contract (still sells via scan/search; deletes any explicit tile row).
+func (s *ButtonStore) Hide(ctx context.Context, itemID string) error {
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" {
+		return errors.New("itemId is required")
+	}
+	return s.catalogRepo.SetSellScreenHidden(ctx, itemID, true)
+}
+
+// Unhide puts a previously hidden item back on the sell-screen grid
+// (ut-docs#2541) — it returns as an IMPLICIT tile (Load, above), not as a
+// re-materialized shortcut_buttons row, unless the operator adds it back
+// explicitly via the Designer's own search/add.
+func (s *ButtonStore) Unhide(ctx context.Context, itemID string) error {
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" {
+		return errors.New("itemId is required")
+	}
+	return s.catalogRepo.SetSellScreenHidden(ctx, itemID, false)
+}
+
+// ListHidden returns every item currently hidden from the sell screen — the
+// Designer's "Hidden from sell screen" section (ut-docs#2541).
+func (s *ButtonStore) ListHidden(ctx context.Context) ([]data.HiddenItem, error) {
+	return s.catalogRepo.ListSellScreenHidden(ctx)
+}
+
+// DeleteItem soft-deactivates the item itself, the same
+// pos.DeactivateItem the catalog page's own "Delete item" uses
+// (ut-docs#2541): the jiggle-mode trash badge used to delete just the
+// shortcut_buttons row, but every active item is a quick button by default
+// now, so that would no longer actually remove the tile — this route
+// removes the underlying item from the catalog instead, which also takes
+// its tile (and every other reference to it) off the sell screen.
+func (s *ButtonStore) DeleteItem(ctx context.Context, itemID string) error {
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" {
+		return errors.New("itemId is required")
+	}
+	return pos.DeactivateItem(ctx, s.db, itemID)
 }
 
 /* ----------------- HTTP handlers (htmx-friendly) ----------------- */
@@ -1113,7 +1376,24 @@ func pageButtons(all []Button, offset int) (page []Button, hasMore bool) {
 }
 
 func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
-	btns, _ := h.Store.Load()
+	// ut-docs#2541 review finding 2: LoadAllActive is fetched exactly ONCE
+	// per render and reused for both Load's implicit-tile merge AND the All
+	// tab below, via LoadWith -- before this fix, Store.Load() ran its own
+	// internal LoadAllActive call AND this handler ran a second, separate
+	// one for the All tab, doubling the cost of LoadAllActive's own batched/
+	// chunked queries (ItemBarcodes, ItemThumbnails, ItemIDsWithModifiers,
+	// ItemIDsWithVariants, ItemCurrentPrices — all sized to the whole active
+	// catalog) on every single /ui/buttons render, All tab shown or not
+	// (Load's own implicit merge always needs the full active-item set,
+	// regardless of h.HideAllTab).
+	allBtns, err := h.Store.LoadAllActive(r.Context())
+	if err != nil {
+		logging.L().Errorf("buttons list: load all-active items: %v", err)
+	}
+	btns, err := h.Store.LoadWith(r.Context(), allBtns)
+	if err != nil {
+		logging.L().Errorf("buttons list: load buttons: %v", err)
+	}
 	cats, err := h.Store.LoadCategories(r.Context())
 	if err != nil {
 		// Not fatal to the render — every button still shows, just
@@ -1136,18 +1416,10 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 	// render (this handler is only ever fetched on page load and on
 	// "modifiers-changed from:body" -- see buttons.html's own top comment
 	// -- never on a basket mutation), not re-queried per basket change.
-	// Skipped entirely when nothing on this render needs it (the strip
-	// with its All tab off, i.e. the Designer), so that render pays
-	// nothing for it. ut-docs#2499: the tile and chip modes derive their
-	// category list from this same load (BuildCategoryTiles), so it is
-	// still ONE query however the shop browses.
-	var allBtns []Button
-	if mode != browsingModeStripOverflow || !h.HideAllTab {
-		allBtns, err = h.Store.LoadAllActive(r.Context())
-		if err != nil {
-			logging.L().Errorf("buttons list: load all-active items: %v", err)
-		}
-	}
+	// ut-docs#2541: allBtns is loaded unconditionally at the top of this
+	// handler (Load's implicit-tile merge always needs it), so every mode
+	// below — the All grid and ut-docs#2499's BuildCategoryTiles — reuses
+	// that ONE load rather than querying again.
 	var allPage []Button
 	var allHasMore bool
 	var categoryTiles []CategoryTileVM
@@ -1183,9 +1455,15 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 		// in edit mode, without the management list.
 		logging.L().Errorf("buttons list: load categories for admin: %v", err)
 	}
+	// ut-docs#2541 review finding 5: VisibleItemCount, not ItemCount — a
+	// category whose active items are ALL hidden from the sell screen must
+	// not keep surviving BuildCategoryGroups' pruning with an empty group.
+	// DesignerCategoryVM below still shows the admin the unfiltered
+	// ItemCount (a manager managing categories needs to see hidden items
+	// too), so only THIS map, which exists purely to drive pruning, changes.
 	itemCounts := make(map[string]int, len(adminRows))
 	for _, c := range adminRows {
-		itemCounts[c.ID] = c.ItemCount
+		itemCounts[c.ID] = c.VisibleItemCount
 	}
 	groups := BuildCategoryGroups(btns, cats, itemCounts)
 	stampLocked(groups, h.Granted)
@@ -1194,6 +1472,10 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 	// in edit mode, so the sale screen pays nothing for it.
 	var adminCats []DesignerCategoryVM
 	var palette []catalogtypes.ItemColor
+	// ut-docs#2541: the Designer's "Hidden from sell screen" section — only
+	// built in EditMode, same reasoning as adminCats/palette just above: the
+	// sale screen itself has no use for the list and pays nothing for it.
+	var hidden []data.HiddenItem
 	if h.EditMode {
 		counts := countButtonsPerCategory(groups)
 		adminCats = make([]DesignerCategoryVM, 0, len(adminRows))
@@ -1208,6 +1490,14 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 		palette = catalogtypes.ItemColors()
+		hidden, err = h.Store.ListHidden(r.Context())
+		if err != nil {
+			// Non-fatal-but-loud, same shape as the lookups above: the
+			// Designer still renders, just with an empty (rather than
+			// possibly-stale) hidden-items section until the next successful
+			// render.
+			logging.L().Errorf("buttons list: load hidden items: %v", err)
+		}
 	}
 	_ = h.View.Render(w, "buttons", map[string]any{
 		"Groups":          groups,
@@ -1220,6 +1510,7 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 		"EditMode":        h.EditMode,
 		"AdminCategories": adminCats,
 		"ItemColors":      palette,
+		"HiddenItems":     hidden,
 	})
 }
 
@@ -1403,15 +1694,18 @@ func (h *ButtonsHTTP) Add(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-// Remove returns whether the button was actually deleted -- ut-docs#2358,
+// Remove returns whether the item was actually hidden -- ut-docs#2358,
 // same rationale as Add's own doc comment above: false on every
 // early-return, true only once Store.Remove has actually succeeded.
+// ut-docs#2541: this route now HIDES the item (see ButtonStore.Remove) --
+// deleting just the shortcut_buttons row would let the tile silently
+// reappear the moment every active item became a quick button by default.
 func (h *ButtonsHTTP) Remove(w http.ResponseWriter, r *http.Request) bool {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return false
 	}
-	if err := h.Store.Remove(r.Form.Get("code")); err != nil {
+	if err := h.Store.Remove(r.Form.Get("code"), r.Form.Get("itemId")); err != nil {
 		// ut-docs#1697: this raw http.Error(w, err.Error(), 400) used to be
 		// harmless -- htmx discards a non-2xx body from hx-target by
 		// default, so it went nowhere -- but buttons_admin.html's
@@ -1437,6 +1731,87 @@ func (h *ButtonsHTTP) Remove(w http.ResponseWriter, r *http.Request) bool {
 	w.Header().Set("HX-Trigger", "buttons-changed")
 	// ut-docs#2174: empty 200, same reasoning as Add above — the retired
 	// flat admin grid this used to re-render no longer exists anywhere.
+	w.WriteHeader(http.StatusOK)
+	return true
+}
+
+// buttonsItemIDForm parses the request and returns the trimmed "itemId"
+// form value, writing a localized 400 fragment (same shape as Add/Remove's
+// own store-error response above) and returning ok=false for a missing
+// value or a form-parse failure — Hide/Unhide/DeleteItem below share this
+// exact validation, unlike Add/Remove which each need their own.
+func buttonsItemIDForm(w http.ResponseWriter, r *http.Request) (itemID string, ok bool) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return "", false
+	}
+	itemID = strings.TrimSpace(r.Form.Get("itemId"))
+	if itemID == "" {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`<div class="error">` + html.EscapeString(httpx.T(locale, designerErrorServerKey)) + `</div>`))
+		return "", false
+	}
+	return itemID, true
+}
+
+// Hide returns whether the item was actually hidden -- ut-docs#2358/#2541,
+// same false-only-on-failure/true-on-success contract as Add/Remove.
+func (h *ButtonsHTTP) Hide(w http.ResponseWriter, r *http.Request) bool {
+	itemID, ok := buttonsItemIDForm(w, r)
+	if !ok {
+		return false
+	}
+	if err := h.Store.Hide(r.Context(), itemID); err != nil {
+		logging.L().Infof("[buttons] hide: %v", err)
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`<div class="error">` + html.EscapeString(httpx.T(locale, designerErrorServerKey)) + `</div>`))
+		return false
+	}
+	w.Header().Set("HX-Trigger", "buttons-changed")
+	w.WriteHeader(http.StatusOK)
+	return true
+}
+
+// Unhide returns whether the item was actually unhidden -- ut-docs#2358/#2541.
+func (h *ButtonsHTTP) Unhide(w http.ResponseWriter, r *http.Request) bool {
+	itemID, ok := buttonsItemIDForm(w, r)
+	if !ok {
+		return false
+	}
+	if err := h.Store.Unhide(r.Context(), itemID); err != nil {
+		logging.L().Infof("[buttons] unhide: %v", err)
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`<div class="error">` + html.EscapeString(httpx.T(locale, designerErrorServerKey)) + `</div>`))
+		return false
+	}
+	w.Header().Set("HX-Trigger", "buttons-changed")
+	w.WriteHeader(http.StatusOK)
+	return true
+}
+
+// DeleteItem returns whether the item was actually deactivated --
+// ut-docs#2358/#2541: the jiggle-mode trash badge's target, now the item
+// itself rather than just its shortcut_buttons row (see ButtonStore.DeleteItem).
+func (h *ButtonsHTTP) DeleteItem(w http.ResponseWriter, r *http.Request) bool {
+	itemID, ok := buttonsItemIDForm(w, r)
+	if !ok {
+		return false
+	}
+	if err := h.Store.DeleteItem(r.Context(), itemID); err != nil {
+		logging.L().Infof("[buttons] delete-item: %v", err)
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`<div class="error">` + html.EscapeString(httpx.T(locale, designerErrorServerKey)) + `</div>`))
+		return false
+	}
+	w.Header().Set("HX-Trigger", "buttons-changed")
 	w.WriteHeader(http.StatusOK)
 	return true
 }

@@ -82,5 +82,11 @@ test('backfilling barcodes from SKU previews then assigns a derived barcode to a
   await expect(refreshedRow).toContainText('Barcodes:');
   await expect(refreshedRow).toContainText(sku);
 
+  // ut-docs#2541: every active item is a sell-screen tile by default now —
+  // deactivate the probe so it doesn't add an "uncategorized" tab to the
+  // shared per-worker till for tab-count specs that run after this one.
+  const id = await refreshedRow.first().getAttribute('data-id');
+  if (id) await page.request.post('/api/catalog/item/deactivate', { form: { id } });
+
   assertClean();
 });

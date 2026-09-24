@@ -1,0 +1,13 @@
+-- 039_category_image.sql — universaltill/ut-docs#2500: a category's image
+-- on the sell screen's category tiles, strip tabs and overflow sheet.
+--
+-- One nullable column holding a /public/... path, the same convention as
+-- item_images.path: a built-in icon is stored as its
+-- /public/assets/category-icons/<key>.svg path (catimport.IconPath), an
+-- uploaded photo as /public/assets/categories/<id>/thumb.png. NULL = no
+-- image. categories is an admin-synced table (sync_admin_repo.go,
+-- whole-row SELECT *) and trg_sync_admin_version_categories_upd (023)
+-- bumps the version on any UPDATE, so the column reaches satellites with
+-- no sync change. The uploaded FILE does not travel (the D2 limit): the
+-- sell screen treats a path whose file is missing as no image.
+ALTER TABLE categories ADD COLUMN image_path TEXT;

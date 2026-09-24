@@ -1,0 +1,19 @@
+-- 038_items_sell_screen_hidden.sql — universaltill/ut-docs#2541 ("every
+-- active item is a sell-screen quick button by default"): once an item with
+-- no shortcut_buttons row renders as an implicit tile (ButtonStore.Load,
+-- internal/ui/buttons.go), a shop needs a way to keep ONE specific item off
+-- the grid without deactivating it outright (it must still ring up via
+-- barcode scan and live search — deactivating would kill that too). This
+-- column is that per-item opt-out.
+--
+-- A column on items, not a separate table: it travels with the item
+-- wherever the item goes (admin sync to satellites, backup/export,
+-- restore) with zero extra plumbing — the same reasoning items.color
+-- (ut-docs#1901) and items.stock_untracked already followed.
+--
+-- INTEGER 0/1 (SQLite has no BOOLEAN), same convention as every other
+-- items flag column (is_active, is_weighed, stock_untracked, ...).
+-- NOT NULL DEFAULT 0: every existing item on an upgrading till starts
+-- visible (unhidden) — hiding is an explicit, later operator action, never
+-- an upgrade side effect.
+ALTER TABLE items ADD COLUMN sell_screen_hidden INTEGER NOT NULL DEFAULT 0;

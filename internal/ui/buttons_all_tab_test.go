@@ -307,17 +307,24 @@ func TestButtonsHTTPList_AllTabRendersEvenWithNoQuickButtonCategories(t *testing
 	}
 }
 
-// TestButtonsHTTPList_EmptyStateStillFiresWithSettingOffAndNoQuickButtons
-// (ut-docs#2294 regression): a till with ZERO quick buttons configured and
-// the All-tab setting OFF must still fall back to the pre-#2212 empty
-// state (the "add some in Quick Buttons" CTA) — even though the catalog
-// itself has an active item. An earlier draft of this card gated the empty
-// state on raw AllButtons non-emptiness rather than on $showAllTab (which
-// also factors in the setting), which would have rendered a silently
-// blank screen with nothing sellable and no CTA whenever an operator
-// turned the setting off on a till that had never set up any quick
-// buttons.
-func TestButtonsHTTPList_EmptyStateStillFiresWithSettingOffAndNoQuickButtons(t *testing.T) {
+// TestButtonsHTTPList_EmptyStateStillFiresWithSettingOffAndNoActiveItems
+// (ut-docs#2294 regression, rewritten for ut-docs#2541): a till with ZERO
+// active catalog items and the All-tab setting OFF must still fall back to
+// the pre-#2212 empty state (the "add some in Quick Buttons" CTA). An
+// earlier draft of this card gated the empty state on raw AllButtons
+// non-emptiness rather than on $showAllTab (which also factors in the
+// setting), which would have rendered a silently blank screen with nothing
+// sellable and no CTA whenever an operator turned the setting off on a
+// till that had never set up any quick buttons.
+//
+// ut-docs#2541 renamed and rewrote this test: it used to seed one ACTIVE
+// item with no shortcut_buttons row and assert the empty state fired
+// anyway ("no quick buttons configured" was the bar) — but every active
+// item is a quick button by default now (ButtonStore.Load's implicit
+// merge), so that item would render as an uncategorized tile and the empty
+// state would correctly NOT fire. The empty state's real trigger is now
+// "zero active items at all", which is what this rewrite seeds.
+func TestButtonsHTTPList_EmptyStateStillFiresWithSettingOffAndNoActiveItems(t *testing.T) {
 	db := setupFullTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	store := NewButtonStore(db)
@@ -332,8 +339,33 @@ func TestButtonsHTTPList_EmptyStateStillFiresWithSettingOffAndNoQuickButtons(t *
 	}
 	h := &ButtonsHTTP{Store: *store, View: renderer, HideAllTab: true}
 
-	// An active item, but no quick button and no category — Groups ends
-	// up empty (BuildCategoryGroups has nothing to bucket).
+	// No items at all (active or otherwise) — Groups ends up empty
+	// (BuildCategoryGroups has nothing to bucket, and Load's implicit merge
+	// has nothing to add either).
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest("GET", "/ui/buttons", nil))
+	if rec.Code != 200 {
+		t.Fatalf("List = %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	if !strings.Contains(body, "products.empty<") {
+		t.Fatalf("expected the empty-state CTA to fire (zero active items, All off), got: %s", body)
+	}
+}
+
+// TestButtonsHTTPList_ActiveItemWithNoButtonRendersAsImplicitTile
+// (ut-docs#2541): the card's whole point at the ButtonsHTTP.List level — an
+// active item with NO shortcut_buttons row of its own is not invisible
+// (the pre-#2541 behavior TestButtonsHTTPList_EmptyStateStillFires...
+// above used to pin) and is not merely "still counted for the category to
+// survive pruning" (ut-docs#2498's own item-count path) — it renders as a
+// real tile, even with the All tab off and even with no quick buttons
+// configured at all.
+func TestButtonsHTTPList_ActiveItemWithNoButtonRendersAsImplicitTile(t *testing.T) {
+	h, db := newButtonsHTTPWithDB(t, "buttons.html")
+	h.HideAllTab = true
+
 	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('i1','S1','Loose Sweet', 10, 1)`)
 
 	rec := httptest.NewRecorder()
@@ -343,11 +375,11 @@ func TestButtonsHTTPList_EmptyStateStillFiresWithSettingOffAndNoQuickButtons(t *
 	}
 	body := rec.Body.String()
 
-	if !strings.Contains(body, "products.empty<") {
-		t.Fatalf("expected the empty-state CTA to fire (no quick buttons, All off), got: %s", body)
+	if strings.Contains(body, "products.empty<") {
+		t.Fatalf("expected the empty state NOT to fire (there is an active item, now an implicit quick button), got: %s", body)
 	}
-	if strings.Contains(body, "Loose Sweet") {
-		t.Fatalf("expected no stray tile rendering in the empty state, got: %s", body)
+	if !strings.Contains(body, "Loose Sweet") {
+		t.Fatalf("expected the button-less active item to render as an implicit tile, got: %s", body)
 	}
 }
 
@@ -551,8 +583,9 @@ func seedQCAllTabFixture(t *testing.T, db *sql.DB, n int) {
 	t.Helper()
 	stmts := []string{
 		`PRAGMA foreign_keys = ON;`,
-		`CREATE TABLE items (id TEXT PRIMARY KEY, sku TEXT, name TEXT, description TEXT, base_price INTEGER NOT NULL, tax_code_id TEXT, category_id TEXT, brand_id TEXT, unit TEXT NOT NULL DEFAULT 'each', color TEXT, is_active INTEGER NOT NULL DEFAULT 1, is_weighed INTEGER NOT NULL DEFAULT 0, is_sample_data INTEGER NOT NULL DEFAULT 0, stock_untracked INTEGER NOT NULL DEFAULT 0);`,
-		`CREATE TABLE categories (id TEXT PRIMARY KEY, name TEXT NOT NULL, parent_id TEXT, sort_order INTEGER NOT NULL DEFAULT 0, color TEXT, is_active INTEGER NOT NULL DEFAULT 1);`,
+		`CREATE TABLE items (id TEXT PRIMARY KEY, sku TEXT, name TEXT, description TEXT, base_price INTEGER NOT NULL, tax_code_id TEXT, category_id TEXT, brand_id TEXT, unit TEXT NOT NULL DEFAULT 'each', color TEXT, is_active INTEGER NOT NULL DEFAULT 1, is_weighed INTEGER NOT NULL DEFAULT 0, is_sample_data INTEGER NOT NULL DEFAULT 0, stock_untracked INTEGER NOT NULL DEFAULT 0, sell_screen_hidden INTEGER NOT NULL DEFAULT 0);`,
+		`CREATE TABLE categories (id TEXT PRIMARY KEY, name TEXT NOT NULL, parent_id TEXT, sort_order INTEGER NOT NULL DEFAULT 0, color TEXT, is_active INTEGER NOT NULL DEFAULT 1, image_path TEXT);`,
+		`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);`,
 		`CREATE TABLE item_images (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, role TEXT NOT NULL, path TEXT NOT NULL);`,
 		`CREATE TABLE price_history (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, price INTEGER NOT NULL, starts_at TEXT NOT NULL, ends_at TEXT);`,
 		`CREATE TABLE item_barcodes (barcode TEXT PRIMARY KEY, item_id TEXT NOT NULL, is_primary INTEGER DEFAULT 0);`,

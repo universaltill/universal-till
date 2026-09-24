@@ -1267,6 +1267,11 @@ type CategoryNode struct {
 	SortOrder int
 	Color     string // empty when no explicit color is set
 	IsActive  bool
+	// ImagePath (ut-docs#2500) is the category's image as a /public/...
+	// path — a built-in icon (catimport.IconPath) or an uploaded photo —
+	// or "" for none. Whether an uploaded file is actually present on
+	// THIS till is the renderer's question, not the repo's.
+	ImagePath string
 }
 
 // ListCategories returns every category (active AND inactive, flat,
@@ -1281,7 +1286,7 @@ type CategoryNode struct {
 // and existing ordering unchanged for whatever else still relies on it.
 func (r *CatalogRepo) ListCategories(ctx context.Context) ([]CategoryNode, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, COALESCE(parent_id, ''), sort_order, COALESCE(color, ''), is_active
+SELECT id, name, COALESCE(parent_id, ''), sort_order, COALESCE(color, ''), is_active, COALESCE(image_path, '')
 FROM categories
 ORDER BY sort_order, name`)
 	if err != nil {
@@ -1292,7 +1297,7 @@ ORDER BY sort_order, name`)
 	for rows.Next() {
 		var c CategoryNode
 		var active int
-		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color, &active); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color, &active, &c.ImagePath); err != nil {
 			return nil, fmt.Errorf("list categories: %w", err)
 		}
 		c.IsActive = active == 1
@@ -1315,7 +1320,7 @@ ORDER BY sort_order, name`)
 // see that var's comment for why).
 func (r *CatalogRepo) ListActiveCategories(ctx context.Context) ([]CategoryNode, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, COALESCE(parent_id, ''), sort_order, COALESCE(color, '')
+SELECT id, name, COALESCE(parent_id, ''), sort_order, COALESCE(color, ''), COALESCE(image_path, '')
 FROM categories
 WHERE is_active = 1
 ORDER BY sort_order, name`)
@@ -1326,7 +1331,7 @@ ORDER BY sort_order, name`)
 	var out []CategoryNode
 	for rows.Next() {
 		var c CategoryNode
-		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color, &c.ImagePath); err != nil {
 			return nil, fmt.Errorf("list active categories: %w", err)
 		}
 		c.IsActive = true
@@ -1378,6 +1383,18 @@ type CategoryAdminRow struct {
 	Color     string
 	IsActive  bool
 	ItemCount int
+	// VisibleItemCount (ut-docs#2541 review finding 5) is ItemCount minus
+	// any item currently hidden from the sell screen (items.
+	// sell_screen_hidden) — the count ButtonsHTTP.List feeds into
+	// BuildCategoryGroups' pruning (a category whose active items are ALL
+	// hidden has nothing to show on the sale screen and must not survive
+	// pruning with an empty group). ItemCount itself is left unchanged and
+	// keeps counting hidden items too: it's what the Designer's own
+	// category-management list shows an admin (DesignerCategoryVM.
+	// ItemCount) — an operator managing categories still needs to see that
+	// a category has real items in it, hidden or not.
+	VisibleItemCount int
+	ImagePath        string // ut-docs#2500, see CategoryNode.ImagePath
 }
 
 // ListCategoriesForAdmin returns every category (active and inactive, so a
@@ -1387,7 +1404,9 @@ type CategoryAdminRow struct {
 func (r *CatalogRepo) ListCategoriesForAdmin(ctx context.Context) ([]CategoryAdminRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT c.id, c.name, COALESCE(c.parent_id, ''), c.sort_order, COALESCE(c.color, ''), c.is_active,
-       COUNT(i.id) AS item_count
+       COUNT(i.id) AS item_count,
+       COUNT(CASE WHEN i.sell_screen_hidden = 0 THEN i.id END) AS visible_item_count,
+       COALESCE(c.image_path, '')
 FROM categories c
 LEFT JOIN items i ON i.category_id = c.id AND i.is_active = 1
 GROUP BY c.id
@@ -1400,7 +1419,7 @@ ORDER BY c.sort_order, c.name`)
 	for rows.Next() {
 		var c CategoryAdminRow
 		var active int
-		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color, &active, &c.ItemCount); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color, &active, &c.ItemCount, &c.VisibleItemCount, &c.ImagePath); err != nil {
 			return nil, fmt.Errorf("list categories for admin: %w", err)
 		}
 		c.IsActive = active == 1
@@ -1499,6 +1518,24 @@ func (r *CatalogRepo) UpdateCategory(ctx context.Context, id, name, color string
 		name, nullableString(strings.TrimSpace(color)), id)
 	if err != nil {
 		return fmt.Errorf("update category: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrCategoryNotFound
+	}
+	return nil
+}
+
+// SetCategoryImage (ut-docs#2500) stores a category's image path — a
+// built-in icon's /public/assets/category-icons/... path or an uploaded
+// photo's /public/assets/categories/<id>/thumb.png — or clears it ("" →
+// NULL). Unknown id → ErrCategoryNotFound. Validating the path (an
+// IconPath key, a written upload) is the handler's job; nothing else on
+// the row is touched.
+func (r *CatalogRepo) SetCategoryImage(ctx context.Context, id, path string) error {
+	res, err := r.db.ExecContext(ctx, `UPDATE categories SET image_path = ? WHERE id = ?`,
+		nullableString(strings.TrimSpace(path)), id)
+	if err != nil {
+		return fmt.Errorf("set category image: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrCategoryNotFound
@@ -1891,13 +1928,136 @@ func (r *CatalogRepo) DeactivateItem(ctx context.Context, itemID string) error {
 	if itemID == "" {
 		return errors.New("itemID required")
 	}
-	if _, err := r.db.ExecContext(ctx, `UPDATE items SET is_active = 0 WHERE id = ?`, itemID); err != nil {
+	// ut-docs#2541 review finding 4: AND is_active = 1 plus a RowsAffected
+	// check -- an unknown id or one that's already inactive must refuse
+	// with ErrItemNotFound, not silently no-op (its own doc comment has the
+	// full rationale; this is the jiggle-mode trash badge's own repo call).
+	res, err := r.db.ExecContext(ctx, `UPDATE items SET is_active = 0 WHERE id = ? AND is_active = 1`, itemID)
+	if err != nil {
 		return fmt.Errorf("deactivate item: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("deactivate item: %w", err)
+	} else if n == 0 {
+		return ErrItemNotFound
 	}
 	if _, err := r.db.ExecContext(ctx, `UPDATE item_variants SET is_active = 0 WHERE item_id = ?`, itemID); err != nil {
 		return fmt.Errorf("deactivate item variants: %w", err)
 	}
 	return nil
+}
+
+// ErrItemNotFound reports that SetSellScreenHidden/DeactivateItem's itemID
+// matches no ACTIVE item (ut-docs#2541 review finding 4) -- an unknown id,
+// or one whose item is already inactive/deleted. Before this, both methods
+// silently no-opped (their UPDATE touched zero rows, no error), so the
+// hide/unhide/delete-item routes answered 200 and wrote an audit row for an
+// action that never actually did anything.
+var ErrItemNotFound = errors.New("item not found")
+
+// HiddenItem is one row of ListSellScreenHidden — the Designer's "Hidden
+// from sell screen" section (ut-docs#2541).
+type HiddenItem struct {
+	ItemID string
+	Name   string
+}
+
+// SetSellScreenHidden sets or clears items.sell_screen_hidden for itemID
+// (ut-docs#2541) — hiding an item takes it off the sell-screen quick-button
+// grid and the All tab (ButtonStore.Load/LoadAllActive both read the flag),
+// while barcode scan and live search stay unfiltered (SearchSellable, the
+// scan resolver) so a hidden item still rings up. Hiding also deletes any
+// explicit shortcut_buttons row for the item — same reasoning
+// ShortcutsRepo.LoadButtons' own hidden filter has: without this, a
+// Designer-configured explicit tile would keep resolving as a real row even
+// though its item is meant to be off the grid, purely by accident of
+// ordering between the two writes. Both run in one transaction so a hide
+// can never persist the flag without also clearing the stale row (or vice
+// versa) on a mid-write failure.
+func (r *CatalogRepo) SetSellScreenHidden(ctx context.Context, itemID string, hidden bool) error {
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" {
+		return errors.New("itemID required")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("set sell screen hidden: %w", err)
+	}
+	v := 0
+	if hidden {
+		v = 1
+	}
+	// ut-docs#2541 review finding 4: AND is_active = 1 -- an unknown id or
+	// an already-inactive item's id must refuse, not silently no-op (see
+	// ErrItemNotFound's own doc comment).
+	res, err := tx.ExecContext(ctx, `UPDATE items SET sell_screen_hidden = ? WHERE id = ? AND is_active = 1`, v, itemID)
+	if err != nil {
+		tx.Rollback()
+		return fmt.Errorf("set sell screen hidden: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("set sell screen hidden: %w", err)
+	} else if n == 0 {
+		tx.Rollback()
+		return ErrItemNotFound
+	}
+	if hidden {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM shortcut_buttons WHERE item_id = ?`, itemID); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("set sell screen hidden: clear shortcut rows: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("set sell screen hidden: %w", err)
+	}
+	return nil
+}
+
+// ListSellScreenHidden returns every ACTIVE item currently hidden from the
+// sell screen (ut-docs#2541) — a deactivated item is never listed here even
+// if it was hidden before deactivation: the Designer's "Hidden from sell
+// screen" section is about items an operator could otherwise see and add
+// back, not the catalog's own inactive/deleted items (those are the
+// catalog page's concern).
+func (r *CatalogRepo) ListSellScreenHidden(ctx context.Context) ([]HiddenItem, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id, name FROM items WHERE is_active = 1 AND sell_screen_hidden = 1 ORDER BY name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []HiddenItem
+	for rows.Next() {
+		var h HiddenItem
+		if err := rows.Scan(&h.ItemID, &h.Name); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
+// SellScreenHiddenItemIDs returns the set of item ids currently hidden from
+// the sell screen (ut-docs#2541) — used to filter ButtonStore.LoadAllActive's
+// implicit tile set (the All tab + every active item that isn't an explicit
+// shortcut_buttons row). No is_active filter: callers already intersect
+// this against an already-active item list (ListItems), so an inactive
+// item's hidden flag, if any, is simply never looked up.
+func (r *CatalogRepo) SellScreenHiddenItemIDs(ctx context.Context) (map[string]bool, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id FROM items WHERE sell_screen_hidden = 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
 }
 
 func (r *CatalogRepo) DeactivateVariant(ctx context.Context, variantID string) error {

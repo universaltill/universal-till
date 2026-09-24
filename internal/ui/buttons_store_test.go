@@ -223,7 +223,6 @@ func TestButtonStoreSave_ReplacesAllAndPersistsOrder(t *testing.T) {
 	// otherwise-unused placeholder items.
 	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('i1','S1','One', 100, 1)`)
 	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('i2','S2','Two', 100, 1)`)
-	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('i3','S3','Three', 100, 1)`)
 
 	if err := store.Save([]Button{
 		{Label: "B", Code: "B1", ItemID: "i1"},
@@ -239,7 +238,15 @@ func TestButtonStoreSave_ReplacesAllAndPersistsOrder(t *testing.T) {
 		t.Fatalf("list order not persisted: %+v", btns)
 	}
 
-	// Second Save fully replaces, never merges.
+	// Second Save fully replaces, never merges. ut-docs#2541: once the
+	// second Save drops i1/i2's own explicit rows, Load() would otherwise
+	// bring them straight back as IMPLICIT tiles (every active,
+	// non-hidden item is a quick button by default now) — hidden here so
+	// this assertion stays about Save's replace-all contract, which is what
+	// it's actually testing; the implicit-merge behavior itself has its own
+	// dedicated tests below.
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('i3','S3','Three', 100, 1)`)
+	mustExec(t, db, `UPDATE items SET sell_screen_hidden = 1 WHERE id IN ('i1','i2')`)
 	if err := store.Save([]Button{{Label: "C", Code: "C1", ItemID: "i3"}}); err != nil {
 		t.Fatalf("Save replace: %v", err)
 	}
@@ -274,7 +281,10 @@ func TestButtonStoreUpdateOrderAndRemove(t *testing.T) {
 		t.Fatalf("reorder not applied: %+v", btns)
 	}
 
-	if err := store.Remove("B2"); err != nil {
+	// ut-docs#2541: Remove now HIDES the item (see ButtonStore.Remove) --
+	// still asserts the same outcome (B2's tile is gone), just via a
+	// different underlying mechanism than a plain row delete.
+	if err := store.Remove("B2", "i2"); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
 	btns, _ = store.Load()
