@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/universaltill/universal-till/internal/barcode"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -572,18 +573,30 @@ func (s *ButtonStore) LoadAllActive(ctx context.Context) ([]Button, error) {
 			data.MergeMapInto(currentPrices, p)
 		}
 	}
+	// ut-docs#2497: a tile's Code must round-trip through the exact same
+	// /api/pos/scan resolver a tap posts it to. A raw barcode only
+	// resolves there if it decodes under the shop's CURRENTLY ENABLED
+	// symbologies (internal/data's enabledBarcodeSymbologies) — a barcode
+	// stored under a symbology the shop has since disabled (or never
+	// enabled) matches none of the resolver's tiers and taps fail with
+	// "item not found" even though the item is active and listed right
+	// here. Fetched once, shop-wide, above the loop (not per item) — same
+	// swallow-the-error-and-default-safe treatment as
+	// POSRepo.enabledBarcodeSymbologies: a settings read must never fail
+	// this render (ADR-0003 offline-first). On error,
+	// EnabledBarcodeSymbologies itself already returns
+	// DefaultEnabledBarcodeSymbologyIDs() alongside the error, which is
+	// exactly the set the resolver falls back to on the same error — so
+	// the ignored error here still keeps this check consistent with what
+	// a tap will actually resolve against.
+	enabledIDs, _ := s.settingsRepo.EnabledBarcodeSymbologies(ctx)
 	out := make([]Button, 0, len(items))
 	for _, it := range items {
-		code := ""
+		rawBarcode := ""
 		if bcs := barcodes[it.ID]; len(bcs) > 0 {
-			code = bcs[0] // ItemBarcodes orders primary first
+			rawBarcode = bcs[0] // ItemBarcodes orders primary first
 		}
-		if code == "" {
-			code = it.SKU
-		}
-		if code == "" {
-			code = synthesizedButtonCodePrefix + it.ID
-		}
+		code := resolvableTileCode(rawBarcode, it.SKU, it.ID, enabledIDs)
 		price := it.BasePrice
 		if p, ok := currentPrices[it.ID]; ok {
 			price = p
@@ -649,15 +662,13 @@ func (s *ButtonStore) SearchSellable(ctx context.Context, q string, limit int) (
 			logging.L().Warnf("ui: search-sellable current prices failed, every result falls back to raw base_price (ut-docs#2258): %v", err)
 		}
 	}
+	// ut-docs#2497: same round-trip-with-the-scan-resolver requirement as
+	// LoadAllActive above — see its comment for the full rationale. Fetched
+	// once, shop-wide, above the loop.
+	enabledIDs, _ := s.settingsRepo.EnabledBarcodeSymbologies(ctx)
 	out := make([]Button, 0, len(results))
 	for _, r := range results {
-		code := r.Barcode
-		if code == "" {
-			code = r.SKU
-		}
-		if code == "" {
-			code = synthesizedButtonCodePrefix + r.ItemID
-		}
+		code := resolvableTileCode(r.Barcode, r.SKU, r.ItemID, enabledIDs)
 		price := r.BasePrice
 		if p, ok := currentPrices[r.ItemID]; ok {
 			price = p
@@ -775,6 +786,36 @@ func (s *ButtonStore) UpdateOrder(ctx context.Context, codes []string) error {
 // one (PriceResolverAdapter.resolve blanks it off the basket line's SKU
 // rather than let a raw item UUID reach a receipt or the journal).
 const synthesizedButtonCodePrefix = "item:"
+
+// resolvableTileCode picks the Code a sell-screen tile (LoadAllActive /
+// SearchSellable) should carry so that tapping it always round-trips
+// through /api/pos/scan → POSRepo.ResolveShortcutLineDecoded (ut-docs#2497).
+// rawBarcode is used ONLY when it actually decodes under the shop's
+// currently-enabled barcode symbologies (enabledIDs) — the exact same test
+// ResolveScanLine applies via barcode.Default().Match. A barcode stored
+// under a symbology the shop doesn't currently have enabled (catalog
+// import predates a settings change, etc.) resolves under NONE of the
+// scan resolver's tiers, so it must be treated exactly like "no barcode at
+// all" and fall through to the SKU tier, then to the synthesized
+// itemIDCodePrefix ("item:"+id) tier. Both fall-through tiers resolve
+// regardless of symbology settings — the itemIDCodePrefix tier
+// unconditionally so; the SKU tier ordinarily too, though (unchanged by
+// this fix, and pre-existing for any item with no barcode at all) a SKU
+// happens to collide with a customer/loyalty/voucher code prefix the scan
+// handler intercepts first, or with another item's own resolvable
+// barcode, it can resolve to something other than this item. Both tiers
+// are already covered by existing tests.
+func resolvableTileCode(rawBarcode, sku, itemID string, enabledIDs []string) string {
+	if rawBarcode != "" {
+		if _, ok := barcode.Default().Match(enabledIDs, rawBarcode); ok {
+			return rawBarcode
+		}
+	}
+	if sku != "" {
+		return sku
+	}
+	return synthesizedButtonCodePrefix + itemID
+}
 
 func (s *ButtonStore) Add(btn Button) error {
 	btn.Label = strings.TrimSpace(btn.Label)
