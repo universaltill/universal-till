@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole } from './helpers';
+import { watchConsole, hideUncategorizedStrays } from './helpers';
 
 // ut-docs#2173 (closes ut-docs#993): the sale screen's category tab bar and
 // its search input used to occupy two separate full-height rows
@@ -343,6 +343,8 @@ test.describe('sale-screen category strip: no horizontal scroll, even with many 
   });
 
   test('LTR: with many categories the strip stays one row and never scrolls, and the back arrow is NOT mirrored', async ({ page }) => {
+    // ut-docs#2541: strays from other specs would add an "uncategorized" tab.
+    await hideUncategorizedStrays(page);
     const assertClean = watchConsole(page);
     await page.setViewportSize({ width: 1024, height: 600 });
     items = overflowItems('Ltr', '76');
@@ -385,6 +387,8 @@ test.describe('sale-screen category strip: no horizontal scroll, even with many 
   });
 
   test('RTL (fa): the strip still never scrolls, the "..." button sits at the logical (leading) end, and the back arrow is mirrored', async ({ page }) => {
+    // ut-docs#2541: strays from other specs would add an "uncategorized" tab.
+    await hideUncategorizedStrays(page);
     const assertClean = watchConsole(page);
     await page.setViewportSize({ width: 1024, height: 600 });
     items = overflowItems('Rtl', '77');

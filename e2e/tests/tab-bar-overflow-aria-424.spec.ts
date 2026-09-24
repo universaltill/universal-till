@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole, waitForStableLayout } from './helpers';
+import { watchConsole, waitForStableLayout, hideUncategorizedStrays } from './helpers';
 
 // ut-docs#424: both `.tab-bar` instances (tender Pay/Split, sale-screen
 // category tabs) get overflow handling for many tabs plus the full
@@ -100,6 +100,8 @@ test.describe('tab-bar overflow + ARIA tabs pattern (ut-docs#424)', () => {
     });
 
     test('12+ categories stay on ONE row and never scroll, leaving product tiles visible (ut-docs#2173/#993, ut-docs#2307)', async ({ page }) => {
+      // ut-docs#2541: strays from other specs would add an "uncategorized" tab.
+      await hideUncategorizedStrays(page);
       // ut-docs#424 originally required this exact tab bar to WRAP onto
       // multiple rows for a large category count (flex-wrap: wrap) — see
       // git history for that version of this test. ut-docs#2173 reversed

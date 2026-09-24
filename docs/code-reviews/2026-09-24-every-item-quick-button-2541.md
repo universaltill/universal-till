@@ -83,10 +83,20 @@ The reviewer re-checked the TDD claims by reverting the code in a worktree:
   - the 1024×600 sell screen with a category tab open (at that width the
     tabs collapse into the #2307 "…" menu);
   - real touch hardware or WebKitGTK.
-- Full e2e `default` project run. Two tab-count specs failed on a shared
-  worker because uncategorized items left behind by
-  `catalog-row-oob-1363` / `catalog-barcode-backfill-1356` are now tiles and
-  form an extra group. Both specs now deactivate what they create.
+- Full e2e `default` project (595 tests), run twice. Each run had 2
+  exact-tab-count failures (`sale-screen-category-strip-overflow-2307` (b),
+  `sale-screen-search-strip-2173` LTR, `tab-bar-overflow-aria-424`). The
+  cause is stray uncategorized "probe" items that many catalog specs leave
+  on the shared per-worker till. Those items are now tiles and form a
+  synthetic "uncategorized" tab. Fix:
+  - New helper `hideUncategorizedStrays` (e2e/tests/helpers.ts), called by
+    the tab-count tests.
+  - `catalog-row-oob-1363` and `catalog-barcode-backfill-1356` now
+    deactivate what they create.
+  - Checked on one worker, with polluters `catalog-category-brand-select-1430`
+    and `catalog-item-form-1956` running first:
+    - without the helper: 1 failed, 32 passed;
+    - with the helper: 33 passed.
 
 ## Risk / deferred
 

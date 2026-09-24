@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole } from './helpers';
+import { watchConsole, hideUncategorizedStrays } from './helpers';
 
 // ut-docs#2307: the sell-screen category strip must never scroll any more
 // (product owner, direct: "I prefer to have a ... button at the right;
@@ -112,6 +112,8 @@ test.describe('sale screen category strip overflow (ut-docs#2307)', () => {
   }
 
   test('(b) only the demo categories (Food, Drinks, Household, Produce): no "..." — identical to before this card (regression)', async ({ page }) => {
+    // ut-docs#2541: strays from other specs would add an "uncategorized" tab.
+    await hideUncategorizedStrays(page);
     const assertClean = watchConsole(page);
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto('/');
