@@ -74,15 +74,18 @@ var iconSVGFor = map[string]string{
 // A plugin CAN now declare its own default icon NAME for a type:"page" entry
 // (ut-docs#1734, closing the gap this comment used to describe): a `page`
 // entry's manifest.ManifestEntry.IconName, validated at install time against
-// uislot.KnownIconNames, flows through data.MenuEntryRow ->
+// uislot.IsKnownIconName's closed set, flows through data.MenuEntryRow ->
 // plugins.MenuPlugin.Icon -> common.MenuItem.Icon -> menuSlotEntries below,
 // same as a file-path icon never can be here (that's IconPath, button-only —
 // plugin_icons.go's traversal-guarded route is the prior art for that
-// separate case). A `layout` plugin's Decision H re-icon amendment for that
-// same tile still wins over the plugin's own default: uislot.Resolve amends
-// whatever Icon value menuSlotEntries hands it and preserves that value as
-// IconFallback, regardless of where the pre-amendment value came from. An
-// unknown/unset name at any point in the chain falls back to this one.
+// separate case). A `layout` plugin's Decision H re-icon amendment cannot
+// reach a plugin tile today (amendment keys are restricted to core
+// destinations at install); if that ever changes, uislot.Resolve already
+// lets the amendment win and keeps the plugin's default as IconFallback
+// (TestMenuPage_LayoutAmendmentStillWinsOverPluginDeclaredIcon pins that
+// ordering). An unknown/unset name at any point in the chain — including a
+// legacy file path left in icon_path by a pre-#1734 install — falls back to
+// this one, because httpx.Icon is a bounded lookup.
 const genericFallbackIcon = "puzzle"
 
 // menuVisibility evaluates a core entry's VisibleIf predicate, memoized per

@@ -120,7 +120,7 @@ type MenuPlugin struct {
 	Menu     string `json:"menu"`
 	// Icon is the plugin's own declared default menu-tile icon name
 	// (ut-docs#1734), "" if none was declared. A name in
-	// uislot.KnownIconNames, validated at install time
+	// uislot.IsKnownIconName's closed set, validated at install time
 	// (validatePageEntryIcon) — never a file path.
 	Icon string `json:"icon,omitempty"`
 }

@@ -10,7 +10,7 @@ import (
 
 // Install-time guard for ut-docs#1734 (follow-up from #1722): a type:"page"
 // entry's own declared default menu-tile icon (IconName) must be one of
-// uislot.KnownIconNames — the same closed set httpx.IconNames() draws SVGs
+// uislot.IsKnownIconName's closed set — the same closed set httpx.IconNames() draws SVGs
 // from. Same two call sites as every other page-entry validator in this
 // package (PersistManifest, Rollback), but a pure static enum check, not a
 // DB collision check.

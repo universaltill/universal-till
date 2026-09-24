@@ -1,13 +1,13 @@
 package uislot
 
-// KnownIconNames is the closed drawn-icon-name set Decision H's "a NAME in
+// knownIconNames is the closed drawn-icon-name set Decision H's "a NAME in
 // core's built-in icon set (internal/httpx/icons.go)" refers to. The actual
 // SVG bodies stay in httpx (only the render path needs them, and httpx
 // already imports internal/plugins for its self-update badge helpers, so
 // internal/plugins can never import internal/httpx back without a cycle).
 // This package's own doc comment above already commits to depending on
 // nothing else in the product specifically so both sides of a mechanism can
-// import it — httpx's icons_test.go (TestIconNamesMirrorsUislotKnownIconNames)
+// import it — icon_names_test.go (TestKnownIconNamesMirrorsHttpxIconNames)
 // pins that this set and httpx's railIcons keys never drift apart, the same
 // same-repo "must mirror" + guard-test shape ut-cloud's
 // internal/signing.CanonicalManifest / internal/claims.CategoryColors use
@@ -20,7 +20,11 @@ package uislot
 // amended name safe by construction, falling back through IconFallback then
 // genericFallbackIcon); a plugin's own declared page-entry default fails
 // loudly at install instead.
-var KnownIconNames = map[string]bool{
+//
+// Unexported (review of ut-docs#1734): it gates install-time validation, so
+// no other package may mutate it at runtime — read it through
+// IsKnownIconName.
+var knownIconNames = map[string]bool{
 	"receipt": true, "menu": true, "package": true, "bell": true, "help": true,
 	"pulse": true, "bug": true, "users": true, "tag": true, "percent": true,
 	"globe": true, "user": true, "lock": true, "sync": true, "fiscal": true,
@@ -38,4 +42,4 @@ var KnownIconNames = map[string]bool{
 }
 
 // IsKnownIconName reports whether name is in the closed icon-name set.
-func IsKnownIconName(name string) bool { return KnownIconNames[name] }
+func IsKnownIconName(name string) bool { return knownIconNames[name] }

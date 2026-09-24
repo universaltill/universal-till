@@ -66,10 +66,15 @@ type ManifestEntry struct {
 	// declared default menu-tile icon for a type:"page" entry, which must be
 	// one of httpx.IconNames() — validated at install time by
 	// validatePageEntryIcon. Never a file path (that's IconPath, button-only,
-	// above). A `layout` plugin's own Decision H re-icon amendment for this
-	// same tile still wins over this default — uislot.Resolve amends
-	// whatever Icon value it is handed regardless of where that value came
-	// from, and preserves the prior value as IconFallback.
+	// above). A `layout` plugin cannot re-icon this tile today: Decision H
+	// amendments may only key core menu destinations
+	// (uislot.ParseAmendmentsJSON refuses any other key at install), and a
+	// page whose route collides with a core key renders as that core entry.
+	// Should plugin tiles ever become amendable, uislot.Resolve already lets
+	// the amendment win and keeps this default as IconFallback.
+	//
+	// ut-cloud's internal/signing.CanonicalEntry must mirror this field
+	// (same position, same tag) or the marketplace signer strips it.
 	IconName      string                 `json:"icon_name,omitempty"`
 	SortOrder     int                    `json:"sort_order,omitempty"`
 	ParentPageKey string                 `json:"parent_page_key,omitempty"` // for buttons/popups
@@ -487,10 +492,10 @@ func validatePageEntryRoutes(ctx context.Context, repo *data.PluginRepo, tx *sql
 // validatePageEntryIcon enforces the install-time half of ut-docs#1734
 // (follow-up from #1722): a type:"page" entry's IconName is the plugin's own
 // declared default menu-tile icon, and it must be one of
-// uislot.KnownIconNames (the same closed set httpx.IconNames() draws SVGs
+// uislot.IsKnownIconName's closed set (the same closed set httpx.IconNames() draws SVGs
 // from — internal/plugins cannot import internal/httpx directly, since
 // httpx already imports internal/plugins for its self-update badge helpers;
-// uislot.KnownIconNames is the mirror httpx/icons_test.go pins so the two
+// uislot/icon_names_test.go pins that mirror so the two
 // never drift apart). Unlike a `layout` plugin's Decision H re-icon
 // amendment (uislot.ParseAmendmentsJSON, deliberately unchecked at parse
 // time because httpx.Icon's bounded lookup already makes an unknown amended
@@ -852,7 +857,7 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 	}
 
 	// 0h. A page entry's own declared icon_name must be one of
-	// uislot.KnownIconNames — a typo'd/invalid name is rejected here,
+	// uislot.IsKnownIconName's closed set — a typo'd/invalid name is rejected here,
 	// loudly, instead of silently degrading to genericFallbackIcon at
 	// render time (ut-docs#1734).
 	if err := validatePageEntryIcon(m.Entries); err != nil {

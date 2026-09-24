@@ -1358,9 +1358,13 @@ type MenuEntryRow struct {
 	GrantedFlags        sql.NullString
 	// IconName is plugin_entries.icon_path for a type:"page" row — a page
 	// entry's own declared default menu-tile icon name (ut-docs#1734), "" if
-	// the plugin declared none. Despite the column name, this is never a
-	// file path for a page entry — see plugins.ManifestEntry.IconName's doc
-	// comment.
+	// the plugin declared none. Despite the column name, a page row written
+	// since #1734 never holds a file path here — see
+	// plugins.ManifestEntry.IconName's doc comment. A page row installed
+	// BEFORE #1734 may still carry a manifest's old icon_path file path
+	// verbatim; it is treated as untrusted and only ever used as a lookup
+	// key into httpx's bounded icon map (menu_page.go's menuIcon), where an
+	// unknown value renders the generic fallback.
 	IconName string
 }
 
