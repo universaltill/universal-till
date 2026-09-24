@@ -158,6 +158,16 @@ type CategoryGroup struct {
 	// shallow label avoids a second breadcrumb-truncation problem this
 	// card never scoped.
 	AncestorName string
+
+	// HasButtons (ut-docs#2498) is true when this group OR ANY descendant
+	// has at least one manually-configured quick button — the OLD survival
+	// test pruneEmptyCategoryGroup used before this card, kept as its own
+	// field because a group can now survive pruning a second way (active
+	// catalog items with zero quick buttons anywhere in its subtree). The
+	// template uses this, not "survived pruning," to decide whether to
+	// render the button grid or an empty-state message: a group that is
+	// present ONLY because of item counts has nothing to grid.
+	HasButtons bool
 }
 
 var hexColorRE = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
@@ -191,11 +201,18 @@ func resolveCategoryColor(c data.CategoryNode) string {
 // BuildCategoryGroups nests buttons under their item's category (following
 // each category's ParentID to build the tree cats itself doesn't carry
 // nesting for) — "deep category trees, not a flat product list." Branches
-// with no buttons anywhere in their subtree are pruned so an unused
-// imported category never shows as an empty header on the till. Buttons
-// with no category, or a category_id that no longer resolves, land in a
-// trailing synthetic bucket (ID == ""), included only when non-empty.
-func BuildCategoryGroups(buttons []Button, cats []data.CategoryNode) []*CategoryGroup {
+// with no buttons AND no active catalog items anywhere in their subtree are
+// pruned so an unused imported category never shows as an empty header on
+// the till (ut-docs#2498: a category with active items but zero quick
+// buttons must still surface — see pruneEmptyCategoryGroup and
+// CategoryGroup.HasButtons for how the two survival paths are told apart).
+// itemCounts maps a category ID to its own DIRECT active-item count (e.g.
+// data.CategoryAdminRow.ItemCount); nil/missing entries are treated as
+// zero, which is a safe default for callers that don't care about this
+// axis (existing tests, mainly). Buttons with no category, or a
+// category_id that no longer resolves, land in a trailing synthetic
+// bucket (ID == ""), included only when non-empty.
+func BuildCategoryGroups(buttons []Button, cats []data.CategoryNode, itemCounts map[string]int) []*CategoryGroup {
 	byID := make(map[string]*CategoryGroup, len(cats))
 	nodeByID := make(map[string]data.CategoryNode, len(cats))
 	for _, c := range cats {
@@ -236,7 +253,7 @@ func BuildCategoryGroups(buttons []Button, cats []data.CategoryNode) []*Category
 
 	kept := roots[:0]
 	for _, g := range roots {
-		if pruneEmptyCategoryGroup(g) {
+		if pruneEmptyCategoryGroup(g, itemCounts) {
 			kept = append(kept, g)
 		}
 	}
@@ -321,8 +338,11 @@ func stampEditing(groups []*CategoryGroup, editing bool) {
 // returned and reports how many quick buttons each real category (by ID;
 // the synthetic uncategorized bucket has none) directly holds — what the
 // Designer's category-management list shows next to each name, so a manager
-// can see at a glance which categories are actually on the sale screen (a
-// category with zero buttons is pruned from the strip entirely).
+// can see at a glance which categories currently have quick buttons on the
+// sale screen. Since ut-docs#2498, zero here does NOT imply the category is
+// absent from the strip — it may still appear (with the buttons.html
+// empty-state message) via an active-item count instead; a category is
+// pruned from the strip entirely only when it has neither.
 func countButtonsPerCategory(groups []*CategoryGroup) map[string]int {
 	counts := map[string]int{}
 	var walk func([]*CategoryGroup)
@@ -354,15 +374,31 @@ type DesignerCategoryVM struct {
 	ButtonCount int // quick buttons currently on the sale screen for it
 }
 
-// pruneEmptyCategoryGroup drops child branches with no buttons anywhere in
-// their subtree and reports whether g itself still has any left.
-func pruneEmptyCategoryGroup(g *CategoryGroup) bool {
+// pruneEmptyCategoryGroup drops child branches with no buttons AND no
+// active catalog items anywhere in their subtree (ut-docs#2498), and
+// reports whether g itself still has any of either left. itemCounts[g.ID]
+// is g's own DIRECT active-item count (a nil map, or an ID with no entry,
+// reads as zero — Go's zero-value-on-missing-key rule — which is exactly
+// "no items" and never panics). Also computes g.HasButtons: true when g
+// OR ANY kept descendant has at least one quick button — seeded from g's
+// own leaf check (len(g.Buttons) > 0) and OR'd with every child's already-
+// computed HasButtons as the recursion unwinds, so it reflects the WHOLE
+// kept subtree, not just g's own direct buttons. This is deliberately a
+// different predicate from the survival test itself (hasAny): a group can
+// now survive via itemCounts alone with zero buttons anywhere underneath,
+// and the template needs to tell that case apart to render an empty-state
+// message instead of an empty grid.
+func pruneEmptyCategoryGroup(g *CategoryGroup, itemCounts map[string]int) bool {
 	kept := g.Children[:0]
-	hasAny := len(g.Buttons) > 0
+	hasAny := len(g.Buttons) > 0 || itemCounts[g.ID] > 0
+	g.HasButtons = len(g.Buttons) > 0
 	for _, c := range g.Children {
-		if pruneEmptyCategoryGroup(c) {
+		if pruneEmptyCategoryGroup(c, itemCounts) {
 			kept = append(kept, c)
 			hasAny = true
+			if c.HasButtons {
+				g.HasButtons = true
+			}
 		}
 	}
 	g.Children = kept
@@ -1008,26 +1044,42 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 		// tab stays off this render, not that the whole sale screen fails.
 		logging.L().Warnf("buttons list: load categories-tab setting: %v", err)
 	}
-	groups := BuildCategoryGroups(btns, cats)
+	// ut-docs#2498: LoadCategoriesForAdmin is the one query that carries a
+	// per-category ACTIVE ITEM count (data.CategoryAdminRow.ItemCount) —
+	// BuildCategoryGroups needs it too now, to keep a category with real
+	// items but zero quick buttons from being pruned off the sale screen
+	// entirely (previously it only ever survived pruning by having a
+	// button somewhere in its subtree). Hoisted out of the `if h.EditMode`
+	// block below (which used to be its only caller) to run unconditionally,
+	// ONE query either way — the EditMode branch reuses these same rows to
+	// build adminCats exactly as before, rather than querying twice.
+	adminRows, err := h.Store.LoadCategoriesForAdmin(r.Context())
+	if err != nil {
+		// Same non-fatal-but-loud shape as the categories load above: the
+		// render still proceeds, just with an empty item-count map (no
+		// category survives pruning via item count alone this render) and,
+		// in edit mode, without the management list.
+		logging.L().Errorf("buttons list: load categories for admin: %v", err)
+	}
+	itemCounts := make(map[string]int, len(adminRows))
+	for _, c := range adminRows {
+		itemCounts[c.ID] = c.ItemCount
+	}
+	groups := BuildCategoryGroups(btns, cats, itemCounts)
 	stampLocked(groups, h.Granted)
 	stampEditing(groups, h.EditMode)
-	// ut-docs#2174: the Designer's category-management list. Only loaded
-	// in edit mode, so the sale screen pays nothing for it. The optional
-	// Categories tab (ut-docs#2283) is forced off here: its tiles open
-	// index.html's #category-items-modal, which the Designer page doesn't
-	// have, and it isn't a quick-button surface to arrange anyway.
+	// ut-docs#2174: the Designer's category-management list. Only built in
+	// edit mode (from adminRows, already loaded above), so the sale screen
+	// pays nothing extra for it. The optional Categories tab (ut-docs#2283)
+	// is forced off here: its tiles open index.html's #category-items-modal,
+	// which the Designer page doesn't have, and it isn't a quick-button
+	// surface to arrange anyway.
 	var adminCats []DesignerCategoryVM
 	var palette []catalogtypes.ItemColor
 	if h.EditMode {
-		rows, err := h.Store.LoadCategoriesForAdmin(r.Context())
-		if err != nil {
-			// Same non-fatal-but-loud shape as the categories load above:
-			// the replica still renders, just without the management list.
-			logging.L().Errorf("buttons list: load categories for admin: %v", err)
-		}
 		counts := countButtonsPerCategory(groups)
-		adminCats = make([]DesignerCategoryVM, 0, len(rows))
-		for _, c := range rows {
+		adminCats = make([]DesignerCategoryVM, 0, len(adminRows))
+		for _, c := range adminRows {
 			adminCats = append(adminCats, DesignerCategoryVM{
 				ID:          c.ID,
 				Name:        c.Name,

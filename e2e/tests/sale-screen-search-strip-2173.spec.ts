@@ -355,7 +355,7 @@ test.describe('sale-screen category strip: no horizontal scroll, even with many 
     // actually SHOWN is what ut-docs#2307 changed; that count is covered
     // by sale-screen-category-strip-overflow-2307.spec.ts, not repeated
     // here.
-    await expect(tabBar.locator('.tab')).toHaveCount(CATEGORY_COUNT + 3, { timeout: 10_000 }); // + seeded Food/Drinks + ut-docs#2212's All tab
+    await expect(tabBar.locator('.tab')).toHaveCount(CATEGORY_COUNT + 5, { timeout: 10_000 }); // + seeded Food/Drinks/Household/Produce (ut-docs#2498: items-only categories now show) + ut-docs#2212's All tab
 
     // ut-docs#2307: never overflows its own box any more — there is
     // nothing left to scroll to.
@@ -394,7 +394,7 @@ test.describe('sale-screen category strip: no horizontal scroll, even with many 
     await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
 
     const tabBar = page.locator('.products .tab-bar');
-    await expect(tabBar.locator('.tab')).toHaveCount(CATEGORY_COUNT + 3, { timeout: 10_000 }); // + seeded Food/Drinks + ut-docs#2212's All tab
+    await expect(tabBar.locator('.tab')).toHaveCount(CATEGORY_COUNT + 5, { timeout: 10_000 }); // + seeded Food/Drinks/Household/Produce (ut-docs#2498: items-only categories now show) + ut-docs#2212's All tab
 
     const overflowPx = await tabBar.evaluate((el) => el.scrollWidth - el.clientWidth);
     expect(overflowPx, `tab-bar must not overflow under RTL either, got ${overflowPx}px`).toBeLessThanOrEqual(1);

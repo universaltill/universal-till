@@ -111,11 +111,25 @@
          setting off, per the card's own requirement. Indexing .Groups 0
          here is only reached when $showAllTab is false, and by
          construction $hasTabs was only true via `gt (len .Groups) 1` in
-         that case, so the index is always safe (len >= 2). */}}
+         that case, so the index is always safe (len >= 2).
+
+         ut-docs#2498: among those candidates, prefer the first group that
+         actually HasButtons over a plain "first in .Groups" pick -- a
+         group can now survive pruning with zero quick buttons anywhere in
+         its subtree (kept only because it has active catalog items), and
+         landing there by default would greet the operator with the
+         empty-state message instead of real quick buttons on first paint.
+         Falls back to Groups[0] (the exact old behavior) when NOTHING in
+         .Groups has a button yet -- a shop that hasn't configured any
+         quick buttons at all is unaffected by this preference. */}}
     {{ $hasTabs := or $showAllTab (gt (len .Groups) 1) }}
     {{ $flat := and (not $hasTabs) (eq (len .Groups) 1) (eq (index .Groups 0).ID "") }}
     {{ $defaultTab := "__all__" }}
-    {{ if not $showAllTab }}{{ if $hasTabs }}{{ $defaultTab = (index .Groups 0).ID }}{{ end }}{{ end }}
+    {{ if not $showAllTab }}{{ if $hasTabs }}
+      {{ $defaultTab = (index .Groups 0).ID }}
+      {{ $pickedButtons := false }}
+      {{ range .Groups }}{{ if and (not $pickedButtons) .HasButtons }}{{ $defaultTab = .ID }}{{ $pickedButtons = true }}{{ end }}{{ end }}
+    {{ end }}{{ end }}
     {{/* .ID is interpolated raw into an Alpine JS string literal below
          (x-data, :class, @click) — html/template auto-escapes this as a
          plain HTML attribute (a literal ' survives as &#39;, which the
@@ -355,7 +369,18 @@
           clone.hidden = false;
           grid.appendChild(clone);
         });
-        body.appendChild(grid);
+        // ut-docs#2498: a tile can now open a category whose subtree has
+        // active items but zero quick buttons -- the loop above then found
+        // nothing to clone. Show an explicit empty state instead of an
+        // empty grid div with no explanation.
+        if (grid.children.length === 0) {
+          const empty = document.createElement('p');
+          empty.className = 'empty';
+          empty.textContent = tileEl.dataset.emptyText || '';
+          body.appendChild(empty);
+        } else {
+          body.appendChild(grid);
+        }
         if (window.htmx) { window.htmx.process(body); }
         const modal = document.getElementById('category-items-modal');
         if (modal) modal.show();
@@ -864,6 +889,7 @@
             <button type="button" class="category-tile" style="--cat-color: {{ $g.Color }}"
                     data-cat-panel="cat-panel-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}"
                     data-cat-name="{{ if $g.ID }}{{ $g.Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}"
+                    data-empty-text="{{ T "products.category_no_buttons" }}"
                     @click="openCategoryPicker($el)">
               <span class="category-tile-name">{{ if $g.ID }}{{ $g.Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</span>
             </button>
@@ -1164,6 +1190,27 @@
       {{ range .Buttons }}{{ template "product-tile" . }}{{ end }}
     </div>
   </section>
+  {{ else if and (not .HasButtons) (not .Children) }}
+  {{/* ut-docs#2498: this group survived BuildCategoryGroups' pruning with
+       ZERO quick buttons anywhere in its own subtree — only possible now
+       that a category can also survive via an active-item count. Before
+       this card such a group was always pruned entirely, so this branch
+       could never fire; it exists so "has real items but no quick
+       buttons" reads as an explicit, translated empty state rather than a
+       silent blank panel.
+
+       Gated on "(not .Children)" too (review finding): a TOP-LEVEL group
+       with nested children carries no header of its own here (the
+       `if .Buttons` branch above is the only place this template ever
+       renders an `<h3>`) — so a bare, unlabeled message at this level,
+       immediately followed by each child's own headed "category-group"
+       section (which repeats the exact same message under a real name),
+       read as a confusing duplicate with no category attached. When
+       there ARE children, skip straight to rendering them instead: each
+       one that also has no buttons shows this same message under its own
+       "category-group" header (below), which already handles the
+       childless case correctly on its own. */}}
+  <p class="empty" data-testid="category-empty-state">{{ T "products.category_no_buttons" }}</p>
   {{ end }}
   {{ range .Children }}{{ template "category-group" . }}{{ end }}
 {{ end }}
@@ -1202,6 +1249,11 @@
   <div class="grid">
     {{ range .Buttons }}{{ template "product-tile" . }}{{ end }}
   </div>
+  {{ else if not .HasButtons }}
+  {{/* ut-docs#2498: same empty-state case as "category-group-body-tabbed"
+       above, for a NESTED subcategory rendered via this recursive
+       template instead. */}}
+  <p class="empty" data-testid="category-empty-state">{{ T "products.category_no_buttons" }}</p>
   {{ end }}
   {{ range .Children }}{{ template "category-group" . }}{{ end }}
 </section>
