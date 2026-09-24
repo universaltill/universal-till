@@ -203,3 +203,160 @@ func TestRemoveButton(t *testing.T) {
 		t.Fatalf("expected no error removing an unknown barcode, got %v", err)
 	}
 }
+
+// TestLoadButtons_ExcludesHiddenItems (ut-docs#2541): an explicit
+// shortcut_buttons row must never resolve as a tile once its item is
+// hidden from the sell screen -- defense in depth alongside
+// CatalogRepo.SetSellScreenHidden's own row delete (a row could in
+// principle still exist if something set the flag directly, e.g. a future
+// caller that bypasses that method). Uses CatalogRepo.SetSellScreenHidden
+// itself would also delete the row, defeating the point of this test, so a
+// direct UPDATE against the DB (not newShortcutsTestDB's repo-only handle)
+// simulates that "flag set, row somehow still there" state instead.
+func TestLoadButtons_ExcludesHiddenItems(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "shortcuts-hidden.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	ctx := context.Background()
+	if _, err := d.DB.ExecContext(ctx,
+		`INSERT INTO items (id, sku, name, base_price, is_active, is_weighed, unit) VALUES ('item-a','SKU-A','Latte',320,1,0,'each')`); err != nil {
+		t.Fatalf("seed item-a: %v", err)
+	}
+	if _, err := d.DB.ExecContext(ctx, `DELETE FROM shortcut_buttons`); err != nil {
+		t.Fatalf("clear seeded shortcut buttons: %v", err)
+	}
+	repo := data.NewShortcutsRepo(d.DB)
+
+	if err := repo.AddButton(ctx, data.ShortcutButton{Label: "Latte", Barcode: "B1", ItemID: "item-a"}); err != nil {
+		t.Fatal(err)
+	}
+	btns, err := repo.LoadButtons(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(btns) != 1 {
+		t.Fatalf("expected the button before hiding, got %+v", btns)
+	}
+
+	if _, err := d.DB.ExecContext(ctx, `UPDATE items SET sell_screen_hidden = 1 WHERE id = 'item-a'`); err != nil {
+		t.Fatal(err)
+	}
+	btns, err = repo.LoadButtons(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(btns) != 0 {
+		t.Fatalf("expected the hidden item's row excluded, got %+v", btns)
+	}
+}
+
+// TestExistingBarcodes_ReportsWhichCodesHaveARow (ut-docs#2541):
+// ButtonStore.UpdateOrder's own materialization step relies on this to
+// tell an implicit tile (no row) apart from an explicit one.
+func TestExistingBarcodes_ReportsWhichCodesHaveARow(t *testing.T) {
+	repo := newShortcutsTestDB(t)
+	ctx := context.Background()
+
+	if err := repo.AddButton(ctx, data.ShortcutButton{Label: "Latte", Barcode: "B1", ItemID: "item-a"}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.ExistingBarcodes(ctx, []string{"B1", "item:item-a", "does-not-exist"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got["B1"] || got["item:item-a"] || got["does-not-exist"] {
+		t.Fatalf("unexpected result: %+v", got)
+	}
+
+	empty, err := repo.ExistingBarcodes(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("expected an empty map for no codes, got %+v", empty)
+	}
+}
+
+// TestMaterializeAndReorder_InsertsAndOrdersInOneTransaction (ut-docs#2541
+// review finding 1): ButtonStore.UpdateOrder's repo-layer counterpart --
+// batched existence check happens above this call (ExistingBarcodes), and
+// this single call does every materializing INSERT plus every sort_order
+// UPDATE in ONE transaction, rather than the pre-fix shape of one
+// transaction per AddButton call (one per implicit tile) followed by a
+// SEPARATE UpdateOrder transaction.
+func TestMaterializeAndReorder_InsertsAndOrdersInOneTransaction(t *testing.T) {
+	repo := newShortcutsTestDB(t)
+	ctx := context.Background()
+
+	if err := repo.AddButton(ctx, data.ShortcutButton{Label: "Existing", Barcode: "B1", ItemID: "item-a"}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := repo.MaterializeAndReorder(ctx, []data.ShortcutButton{
+		{Label: "", Barcode: "NEW1", ItemID: "item-a"},
+	}, []string{"NEW1", "B1"})
+	if err != nil {
+		t.Fatalf("MaterializeAndReorder: %v", err)
+	}
+
+	btns, err := repo.LoadButtons(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(btns) != 2 {
+		t.Fatalf("expected 2 buttons (1 existing + 1 newly materialized), got %d: %+v", len(btns), btns)
+	}
+	// sort_order follows the posted codes order: NEW1 first, B1 second.
+	if btns[0].Barcode != "NEW1" || btns[1].Barcode != "B1" {
+		t.Fatalf("expected order NEW1,B1 — got %+v", btns)
+	}
+}
+
+// TestMaterializeAndReorder_EmptyMaterializeListOnlyReorders: a reorder with
+// no implicit tiles to materialize (every code already has a row) still
+// updates sort_order for all of them -- the materialize half being a no-op
+// must not skip the reorder half.
+func TestMaterializeAndReorder_EmptyMaterializeListOnlyReorders(t *testing.T) {
+	repo := newShortcutsTestDB(t)
+	ctx := context.Background()
+
+	if err := repo.SaveButtons(ctx, []data.ShortcutButton{
+		{Barcode: "B1", Label: "Alpha", ItemID: "item-a"},
+		{Barcode: "B2", Label: "Beta", ItemID: "item-a"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.MaterializeAndReorder(ctx, nil, []string{"B2", "B1"}); err != nil {
+		t.Fatalf("MaterializeAndReorder: %v", err)
+	}
+	btns, err := repo.LoadButtons(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(btns) != 2 || btns[0].Label != "Beta" || btns[1].Label != "Alpha" {
+		t.Fatalf("expected reversed order Beta,Alpha — got %+v", btns)
+	}
+}
+
+// TestItemIDForBarcode_ResolvesOrReportsMiss (ut-docs#2541):
+// ButtonStore.Remove's fallback path when only a code, not an itemId, is
+// available (buttons_admin.html's legacy search flow).
+func TestItemIDForBarcode_ResolvesOrReportsMiss(t *testing.T) {
+	repo := newShortcutsTestDB(t)
+	ctx := context.Background()
+
+	if err := repo.AddButton(ctx, data.ShortcutButton{Label: "Latte", Barcode: "B1", ItemID: "item-a"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if id, ok := repo.ItemIDForBarcode(ctx, "B1"); !ok || id != "item-a" {
+		t.Fatalf("ItemIDForBarcode(B1) = %q, %v, want item-a, true", id, ok)
+	}
+	if _, ok := repo.ItemIDForBarcode(ctx, "never-existed"); ok {
+		t.Fatal("expected ok=false for an unknown code")
+	}
+}

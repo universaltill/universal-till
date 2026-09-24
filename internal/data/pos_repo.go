@@ -8043,9 +8043,18 @@ LIMIT 1
 	return res, true
 }
 
+// resolveShortcut's ItemName comes straight from i.name, the item's own
+// LIVE name (ut-docs#2541 review finding 1) -- not from sb.label, which is
+// deliberately left "" for a materialized implicit tile (see
+// ShortcutsRepo.MaterializeAndReorder) so a rename in the catalog is
+// reflected here too instead of freezing the name at drag/materialize time.
+// Label is still scanned/returned separately: ResolveShortcutLineDecoded's
+// own caller-side check (`if row.Label.Valid && row.Label.String != ""`)
+// overrides ItemName with it for a row that DOES carry a real,
+// operator-chosen label (Add/SaveButtons) -- unchanged by this fix.
 func (r *POSRepo) resolveShortcut(ctx context.Context, code string) (shortcutPriceRow, bool) {
 	row := r.db.QueryRowContext(ctx, `
-SELECT sb.item_id, sb.label, i.base_price, i.is_weighed,
+SELECT sb.item_id, sb.label, i.name, i.base_price, i.is_weighed,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
        COALESCE(t.rate_basis_points, 0), i.tax_code_id
 FROM shortcut_buttons sb
@@ -8056,10 +8065,9 @@ WHERE sb.barcode = ?
 LIMIT 1
 `, code)
 	var res shortcutPriceRow
-	if err := row.Scan(&res.ItemID, &res.Label, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
+	if err := row.Scan(&res.ItemID, &res.Label, &res.ItemName, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
 		return shortcutPriceRow{}, false
 	}
-	res.ItemName = res.Label.String
 	return res, true
 }
 

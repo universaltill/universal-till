@@ -232,6 +232,24 @@ func seedPlainItem(t *testing.T, db *sql.DB, id string) {
 	}
 }
 
+// hideSeedForPagesVariantItem (ut-docs#2541) hides seedForPages' own itm1
+// (a real active variant, 'var1' — see seedForPages' comment), which is
+// otherwise unrelated background fixture data for these modifier-group
+// tests. Since every active, non-hidden item is now an IMPLICIT quick
+// button by default (ButtonStore.Load), itm1 would render its own tile
+// with the modifier/variant picker wired up (HasVariants) on every
+// /ui/buttons fetch these tests make — which broke assertTileScansDirectly's
+// whole-body "no /ui/pos/modifiers anywhere" check for a page that ALSO
+// has itm1 sitting there unrelated to the item actually under test
+// (itm-plain). Hiding it keeps the assertion scoped to what these tests
+// mean to prove.
+func hideSeedForPagesVariantItem(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec(`UPDATE items SET sell_screen_hidden = 1 WHERE id = 'itm1'`); err != nil {
+		t.Fatalf("hide itm1: %v", err)
+	}
+}
+
 func TestButtonsUIFragmentRendersSeededButtons(t *testing.T) {
 	mux, d := newButtonsMux(t)
 	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id) VALUES ('ABC','Apple Tile','itm1')`); err != nil {
@@ -584,6 +602,7 @@ func TestButtonsAPI_MutationsRefusedOnReplica(t *testing.T) {
 func TestButtonsUIFragment_ReflectsModifierGroupAttachedAfterButtonExisted(t *testing.T) {
 	mux, d := newButtonsMux(t)
 	seedPlainItem(t, d.Db, "itm-plain")
+	hideSeedForPagesVariantItem(t, d.Db)
 
 	// The quick button is created FIRST, while the item has no customization
 	// at all -- exactly the reported order of events (button already on the
@@ -689,11 +708,18 @@ func TestButtonsUIFragment_HasVariantsAloneKeepsPickerAcrossModifierGroupChanges
 func TestButtonsUIFragment_ReflectsModifierGroupAttachedViaRealAttachHandler(t *testing.T) {
 	mux, d := newButtonsAndCatalogMux(t)
 	seedPlainItem(t, d.Db, "itm-plain")
+	hideSeedForPagesVariantItem(t, d.Db)
 
 	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id) VALUES ('BTN1','Apple Tile','itm-plain')`); err != nil {
 		t.Fatalf("seed button: %v", err)
 	}
-	if _, err := d.Db.Exec(`INSERT INTO items(id,sku,name,base_price,is_active) VALUES('itm-decoy','DECOY','Decoy',100,1)`); err != nil {
+	// ut-docs#2541: hidden from the sell screen -- itm-decoy exists only so
+	// ListAttachableModifierGroups has an existing group to offer for the
+	// REAL attach below; it must never itself render a tile (with the
+	// picker wired up, once the group links to it a few lines down), or
+	// assertTileScansDirectly's whole-page check would fail on ITS tile,
+	// not itm-plain's.
+	if _, err := d.Db.Exec(`INSERT INTO items(id,sku,name,base_price,is_active,sell_screen_hidden) VALUES('itm-decoy','DECOY','Decoy',100,1,1)`); err != nil {
 		t.Fatalf("seed decoy item: %v", err)
 	}
 	modRepo := data.NewModifierRepo(d.Db)
@@ -737,6 +763,7 @@ func TestButtonsUIFragment_ReflectsModifierGroupAttachedViaRealAttachHandler(t *
 func TestButtonsUIFragment_ReflectsModifierGroupActiveToggleViaRealHandler(t *testing.T) {
 	mux, d := newButtonsAndCatalogMux(t)
 	seedPlainItem(t, d.Db, "itm-plain")
+	hideSeedForPagesVariantItem(t, d.Db)
 
 	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id) VALUES ('BTN1','Apple Tile','itm-plain')`); err != nil {
 		t.Fatalf("seed button: %v", err)
@@ -944,8 +971,12 @@ func TestButtonsPartial_JiggleModeMarkup(t *testing.T) {
 		`class="tile-badge tile-badge-edit"`,
 		`href="/catalog?item=itm1&return=/"`,
 		`class="tile-badge tile-badge-remove"`,
-		`hx-post="/api/buttons/remove"`,
-		`hx-confirm="Remove “First” from the quick buttons? The item stays in the catalog."`,
+		// ut-docs#2541: the trash badge now deletes the item itself.
+		`hx-post="/api/buttons/delete-item"`,
+		`hx-confirm="Delete “First” from the catalog? This removes it everywhere, not just from the sell screen."`,
+		// ut-docs#2541: the new third, bottom-corner Hide badge.
+		`class="tile-badge tile-badge-hide"`,
+		`hx-post="/api/buttons/hide"`,
 		`data-testid="jiggle-done"`,
 	} {
 		if !strings.Contains(body, want) {
@@ -986,9 +1017,11 @@ func TestButtonsPartial_JiggleModeMarkup(t *testing.T) {
 			}
 		}
 	}
+	// ut-docs#2541: a third badge (Hide) joins edit/remove(delete) per tile.
 	badges := append(nodesWithClass(doc, "tile-badge-edit"), nodesWithClass(doc, "tile-badge-remove")...)
-	if len(badges) != 4 {
-		t.Fatalf("want 4 badges (2 tiles x edit+remove), got %d", len(badges))
+	badges = append(badges, nodesWithClass(doc, "tile-badge-hide")...)
+	if len(badges) != 6 {
+		t.Fatalf("want 6 badges (2 tiles x edit+remove+hide), got %d", len(badges))
 	}
 	for _, b := range badges {
 		if isDescendantOfClass(b, "btn-tile") {

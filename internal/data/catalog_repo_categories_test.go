@@ -358,6 +358,62 @@ func TestListCategoriesForAdmin(t *testing.T) {
 	}
 }
 
+// TestListCategoriesForAdmin_VisibleItemCountExcludesHidden (ut-docs#2541
+// review finding 5): ItemCount (shown to the admin on the Designer's
+// category-management list) must keep counting every active item,
+// including hidden ones -- an operator managing categories still needs to
+// know a category has real items in it. VisibleItemCount is the SEPARATE
+// field ButtonsHTTP.List feeds into BuildCategoryGroups' pruning instead,
+// and it must exclude sell_screen_hidden items -- a category whose active
+// items are ALL hidden has nothing to show on the sale screen and must not
+// keep surviving pruning with an empty group.
+func TestListCategoriesForAdmin_VisibleItemCountExcludesHidden(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	allHidden, err := repo.CreateCategory(ctx, "AllHidden")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mixed, err := repo.CreateCategory(ctx, "Mixed")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "One", BasePrice: 100, IsActive: true})
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i2", SKU: "S2", Name: "Two", BasePrice: 100, IsActive: true})
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i3", SKU: "S3", Name: "Three", BasePrice: 100, IsActive: true})
+	if _, err := db.Exec(`UPDATE items SET category_id = ? WHERE id = 'i1'`, allHidden); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE items SET category_id = ? WHERE id IN ('i2','i3')`, mixed); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetSellScreenHidden(ctx, "i1", true); err != nil {
+		t.Fatalf("hide i1: %v", err)
+	}
+	if err := repo.SetSellScreenHidden(ctx, "i2", true); err != nil {
+		t.Fatalf("hide i2: %v", err)
+	}
+
+	rows, err := repo.ListCategoriesForAdmin(ctx)
+	if err != nil {
+		t.Fatalf("ListCategoriesForAdmin: %v", err)
+	}
+	byID := map[string]data.CategoryAdminRow{}
+	for _, r := range rows {
+		byID[r.ID] = r
+	}
+	if got := byID[allHidden]; got.ItemCount != 1 || got.VisibleItemCount != 0 {
+		t.Errorf("AllHidden = %+v, want ItemCount=1 (still shown to admins) VisibleItemCount=0 (all hidden)", got)
+	}
+	if got := byID[mixed]; got.ItemCount != 2 || got.VisibleItemCount != 1 {
+		t.Errorf("Mixed = %+v, want ItemCount=2 VisibleItemCount=1 (i3 only)", got)
+	}
+}
+
 // ut-docs#2284: the category editor gains a colour swatch — the column has
 // existed since 001 and every reader already carries it (CategoryAdminRow.
 // Color, CategoryNode.Color), but nothing wrote it. UpdateCategory writes
