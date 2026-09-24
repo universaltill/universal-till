@@ -1889,28 +1889,15 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			common.LocalizedError(w, r, http.StatusBadRequest, "catalog.error.image_invalid")
 			return
 		}
-		img, err := imaging.Decode(raw)
+		// ut-docs#2500: decode/downscale/write is imaging.PrepareThumb +
+		// WriteThumbPNG, shared with the variant photo below and the
+		// category image (categories_page.go).
+		img, err := imaging.PrepareThumb(raw)
 		if err != nil {
-			if errors.Is(err, imaging.ErrTooManyPixels) {
-				common.LocalizedError(w, r, http.StatusBadRequest, "catalog.error.image_too_large")
-				return
-			}
-			common.LocalizedError(w, r, http.StatusBadRequest, "catalog.error.image_invalid")
+			common.LocalizedError(w, r, http.StatusBadRequest, ThumbErrorKey(err))
 			return
 		}
-		img = imaging.DownscaleMaxEdge(img, imaging.MaxThumbEdge)
-		dir := paths.Data("public", "assets", "items", itemID)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
-			return
-		}
-		out, err := os.Create(filepath.Join(dir, "thumb.png"))
-		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
-			return
-		}
-		defer out.Close()
-		if err := png.Encode(out, img); err != nil {
+		if err := imaging.WriteThumbPNG(img, filepath.Join(paths.Data("public", "assets", "items", itemID), "thumb.png")); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
 			return
 		}
@@ -2081,28 +2068,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			common.LocalizedError(w, r, http.StatusBadRequest, "catalog.error.image_invalid")
 			return
 		}
-		img, err := imaging.Decode(raw)
+		img, err := imaging.PrepareThumb(raw)
 		if err != nil {
-			if errors.Is(err, imaging.ErrTooManyPixels) {
-				common.LocalizedError(w, r, http.StatusBadRequest, "catalog.error.image_too_large")
-				return
-			}
-			common.LocalizedError(w, r, http.StatusBadRequest, "catalog.error.image_invalid")
+			common.LocalizedError(w, r, http.StatusBadRequest, ThumbErrorKey(err))
 			return
 		}
-		img = imaging.DownscaleMaxEdge(img, imaging.MaxThumbEdge)
-		dir := paths.Data("public", "assets", "items", itemID, "variants", variantID)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
-			return
-		}
-		out, err := os.Create(filepath.Join(dir, "thumb.png"))
-		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
-			return
-		}
-		defer out.Close()
-		if err := png.Encode(out, img); err != nil {
+		if err := imaging.WriteThumbPNG(img, filepath.Join(paths.Data("public", "assets", "items", itemID, "variants", variantID), "thumb.png")); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
 			return
 		}
@@ -2447,6 +2418,17 @@ func saveLookupImage(ctx context.Context, c *productlookup.Client, itemID, imgUR
 	}
 	defer out.Close()
 	return png.Encode(out, img)
+}
+
+// ThumbErrorKey maps an imaging.PrepareThumb error to the operator-facing
+// locale key: a pixel bomb / oversized photo gets its own "too large"
+// message, anything else is "not a valid PNG/JPEG" (ut-docs#1416). Shared
+// with the category image upload (ut-docs#2500) so both say the same thing.
+func ThumbErrorKey(err error) string {
+	if errors.Is(err, imaging.ErrTooManyPixels) {
+		return "catalog.error.image_too_large"
+	}
+	return "catalog.error.image_invalid"
 }
 
 // removeUploadedThumbnail deletes an item's uploaded thumbnail file, if one

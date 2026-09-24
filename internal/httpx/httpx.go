@@ -935,6 +935,13 @@ func imgExists(url string) bool {
 	return false
 }
 
+// AssetExists is imgExists for Go callers: whether a /public/... URL
+// resolves to a file the /public/ static handler would serve. The sell
+// screen's category image resolver (internal/ui, ut-docs#2500) uses it to
+// drop an uploaded photo whose file never reached this till (a satellite:
+// the path syncs, the file does not).
+func AssetExists(url string) bool { return imgExists(url) }
+
 // FuncsFor builds template funcs for a specific request/locale.
 func FuncsFor(locale string) template.FuncMap {
 	funcs := template.FuncMap{}
