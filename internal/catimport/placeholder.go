@@ -31,36 +31,159 @@ import (
 var keywordIcons = []struct {
 	keyword, icon string
 }{
+	// ut-docs#2506 grew the library from 5 tiles to ~70; the rows below
+	// keep "specific before broad" ordering: a multi-word item name
+	// resolves to its first-listed keyword. Coffee words stay first so
+	// "Chai Latte" still resolves to coffee (latte) while plain "Chai"
+	// or "Green Tea" gets the teapot.
+	// Two-word keywords match as adjacent whole words and sit first,
+	// ahead of the single words they contain ("Hot Chocolate" is a drink,
+	// not a chocolate bar; "Ginger Beer" is a soft drink).
+	{"hot chocolate", "hot-chocolate"},
+	{"hot dog", "hot-dog"},
+	{"hot drinks", "coffee"},
+	{"hot drink", "coffee"},
+	{"ginger ale", "can"},
+	{"ginger beer", "can"},
+	{"root beer", "can"},
+	{"cinnamon roll", "pastry"},
+	{"ice cream", "ice-cream"},
+	{"hotdog", "hot-dog"},
+	{"prawn", "seafood"},
 	{"coffee", "coffee"},
 	{"cappuccino", "coffee"},
 	{"latte", "coffee"},
-	{"espresso", "coffee"},
-	{"chai", "coffee"},
-	{"mocha", "coffee"},
 	{"americano", "coffee"},
-	{"tea", "coffee"},
-	{"bagel", "pastry"},
-	{"croissant", "pastry"},
-	{"muffin", "pastry"},
+	{"mocha", "coffee"},
+	{"espresso", "espresso"},
+	{"macchiato", "espresso"},
+	{"cortado", "espresso"},
+	{"boba", "bubble-tea"},
+	{"chai", "tea"},
+	{"tea", "tea"},
+	{"cocoa", "hot-chocolate"},
+	{"smoothie", "smoothie"},
+	{"milkshake", "smoothie"},
+	{"shake", "smoothie"},
+	{"juice", "juice"},
+	{"water", "water"},
+	{"milk", "milk"},
+	{"beer", "beer"},
+	{"lager", "beer"},
+	{"ale", "beer"},
+	{"pint", "beer"},
+	{"prosecco", "champagne"},
+	{"champagne", "champagne"},
+	{"cava", "champagne"},
+	{"sekt", "champagne"},
+	{"wine", "wine"},
+	{"cocktail", "cocktail"},
+	{"mojito", "cocktail"},
+	{"martini", "cocktail"},
+	{"margarita", "cocktail"},
+	{"spritz", "cocktail"},
+	{"whisky", "spirits"},
+	{"whiskey", "spirits"},
+	{"gin", "spirits"},
+	{"vodka", "spirits"},
+	{"rum", "spirits"},
+	{"shot", "spirits"},
+	{"cola", "can"},
+	{"lemonade", "can"},
+	{"soda", "drink"},
+	{"drink", "drink"},
+	{"drinks", "drink"},
+	{"beverages", "drink"},
+	{"beverage", "drink"},
+	{"croissant", "croissant"},
+	{"cupcake", "cupcake"},
+	{"muffin", "cupcake"},
+	{"cheesecake", "cake-slice"},
+	{"cake", "cake"},
+	{"cookie", "cookie"},
+	{"biscuit", "cookie"},
+	{"donut", "donut"},
+	{"doughnut", "donut"},
+	{"baguette", "baguette"},
+	{"pretzel", "baguette"},
+	{"bagel", "bread"},
+	{"bread", "bread"},
+	{"loaf", "bread"},
+	{"toast", "bread"},
 	{"pastry", "pastry"},
-	{"cake", "pastry"},
-	{"donut", "pastry"},
-	{"doughnut", "pastry"},
-	{"cookie", "pastry"},
+	{"danish", "pastry"},
 	{"bakery", "pastry"},
 	{"sandwich", "sandwich"},
 	{"panini", "sandwich"},
-	{"baguette", "sandwich"},
+	{"toastie", "sandwich"},
 	{"wrap", "sandwich"},
-	{"burger", "sandwich"},
-	{"cola", "drink"},
-	{"soda", "drink"},
-	{"juice", "drink"},
-	{"water", "drink"},
-	{"lemonade", "drink"},
-	{"smoothie", "drink"},
-	{"drink", "drink"},
-	{"beverage", "drink"},
+	{"burger", "burger"},
+	{"cheeseburger", "burger"},
+	{"pizza", "pizza"},
+	{"sausage", "hot-dog"},
+	{"bratwurst", "hot-dog"},
+	{"currywurst", "hot-dog"},
+	{"salad", "salad"},
+	{"soup", "soup"},
+	{"noodles", "noodles"},
+	{"ramen", "noodles"},
+	{"sushi", "noodles"},
+	{"rice", "noodles"},
+	{"pasta", "bowl"},
+	{"porridge", "bowl"},
+	{"breakfast", "breakfast"},
+	{"egg", "breakfast"},
+	{"eggs", "breakfast"},
+	{"omelette", "breakfast"},
+	{"cheese", "cheese"},
+	{"chicken", "chicken"},
+	{"wings", "chicken"},
+	{"steak", "meat"},
+	{"beef", "meat"},
+	{"meat", "meat"},
+	{"ham", "ham"},
+	{"bacon", "ham"},
+	{"salmon", "fish"},
+	{"fish", "fish"},
+	{"prawns", "seafood"},
+	{"shrimp", "seafood"},
+	{"seafood", "seafood"},
+	{"popcorn", "popcorn"},
+	{"apple", "apple"},
+	{"apples", "apple"},
+	{"banana", "banana"},
+	{"bananas", "banana"},
+	{"orange", "citrus"},
+	{"oranges", "citrus"},
+	{"lemon", "citrus"},
+	{"strawberries", "berries"},
+	{"berries", "berries"},
+	{"cherries", "berries"},
+	{"grapes", "grapes"},
+	{"melon", "melon"},
+	{"watermelon", "melon"},
+	{"avocado", "avocado"},
+	{"carrot", "carrot"},
+	{"carrots", "carrot"},
+	{"vegetables", "carrot"},
+	{"lettuce", "greens"},
+	{"spinach", "greens"},
+	{"pepper", "pepper"},
+	{"peppers", "pepper"},
+	{"mushroom", "mushroom"},
+	{"mushrooms", "mushroom"},
+	{"nuts", "nuts"},
+	{"gelato", "ice-cream"},
+	{"sundae", "sundae"},
+	{"lolly", "ice-lolly"},
+	{"popsicle", "ice-lolly"},
+	{"ice", "ice-cream"},
+	{"lollipop", "lollipop"},
+	{"chocolate", "chocolate"},
+	{"candy", "candy"},
+	{"sweets", "candy"},
+	{"gift", "gift"},
+	{"voucher", "gift"},
 }
 
 // PlaceholderIcon picks an icon key for an item with no source image,
@@ -86,12 +209,31 @@ func matchKeyword(s string) (string, bool) {
 		return "", false
 	}
 	words := tokenize(s)
+	// joined is the name's words in order, space-separated and padded, so
+	// a two-word keyword ("hot dog") matches only as whole adjacent words
+	// (ut-docs#2506 review): never "hot" and "dog" apart, never a substring.
+	joined := " " + strings.Join(orderedWords(s), " ") + " "
 	for _, ki := range keywordIcons {
-		if words[ki.keyword] {
+		if strings.Contains(ki.keyword, " ") {
+			if strings.Contains(joined, " "+ki.keyword+" ") {
+				return ki.icon, true
+			}
+			continue
+		}
+		// A plural is the same thing ("Sandwiches", "Cakes"): accept the
+		// keyword with an "s"/"es" suffix, still whole-word only.
+		if words[ki.keyword] || words[ki.keyword+"s"] || words[ki.keyword+"es"] {
 			return ki.icon, true
 		}
 	}
 	return "", false
+}
+
+// orderedWords is tokenize's split, kept in order (duplicates and all).
+func orderedWords(s string) []string {
+	return strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
 }
 
 // tokenize lowercases s and splits it into whole words (a maximal run of
@@ -126,12 +268,10 @@ func tokenize(s string) map[string]bool {
 // from a POST body) must check it rather than trust an empty path is a
 // deliberate "no icon" answer.
 func IconPath(icon string) (path string, ok bool) {
-	switch icon {
-	case "coffee", "pastry", "sandwich", "drink", "generic":
-		return "/public/assets/category-icons/" + icon + ".svg", true
-	default:
+	if _, known := iconByKey[icon]; !known {
 		return "", false
 	}
+	return categoryIconPublicDir + icon + ".svg", true
 }
 
 // PlaceholderIconPath is PlaceholderIcon plus IconPath in one call — what
@@ -150,24 +290,28 @@ func PlaceholderIconPath(name, category string) string {
 // filename and what IconPath/PlaceholderIcon return), Path its public
 // asset path, and I18nKey the locale key for its display label — the
 // picker template renders {{ T .I18nKey }}, never a hardcoded label
-// (universal-till/CLAUDE.md's i18n rule).
+// (universal-till/CLAUDE.md's i18n rule). Group is its picker section
+// and Keywords its space-separated English search terms for the picker's
+// filter box (ut-docs#2506).
 type BuiltinIcon struct {
-	Key, Path, I18nKey string
+	Key, Path, I18nKey, Group, Keywords string
 }
 
-// BuiltinIcons returns every built-in category icon in a fixed display
-// order, for a UI picker to enumerate. The set intentionally matches
-// IconPath's known keys exactly (TestBuiltinIcons_MatchesIconPath pins
-// this) — adding an icon here with no IconPath case, or vice versa, is a
-// bug, not a style choice.
+// BuiltinIcons returns every built-in category icon in registry order
+// (icons.go), for a UI picker to enumerate. The set matches IconPath's
+// known keys exactly (TestBuiltinIcons_MatchesIconPath pins this).
 func BuiltinIcons() []BuiltinIcon {
-	return []BuiltinIcon{
-		{Key: "coffee", Path: mustIconPath("coffee"), I18nKey: "catalog.builtin_icon.coffee"},
-		{Key: "drink", Path: mustIconPath("drink"), I18nKey: "catalog.builtin_icon.drink"},
-		{Key: "sandwich", Path: mustIconPath("sandwich"), I18nKey: "catalog.builtin_icon.sandwich"},
-		{Key: "pastry", Path: mustIconPath("pastry"), I18nKey: "catalog.builtin_icon.pastry"},
-		{Key: "generic", Path: mustIconPath("generic"), I18nKey: "catalog.builtin_icon.generic"},
+	out := make([]BuiltinIcon, 0, len(iconDefs))
+	for _, d := range iconDefs {
+		out = append(out, BuiltinIcon{
+			Key:      d.Key,
+			Path:     mustIconPath(d.Key),
+			I18nKey:  "catalog.builtin_icon." + d.Key,
+			Group:    d.Group,
+			Keywords: strings.Join(d.Keywords, " "),
+		})
 	}
+	return out
 }
 
 // mustIconPath is BuiltinIcons()'s own literal list resolving its paths

@@ -20,7 +20,7 @@ func TestImport_ImagelessItemsGetPlaceholderThumbnail(t *testing.T) {
 
 	csv := "Name,SKU,Price,Category\n" +
 		"Cappuccino,C1,2.50,Hot Drinks\n" +
-		"Bananas,B1,0.89,Produce\n"
+		"Scone,B1,0.89,Counter\n"
 	body, ct := multipartCSV(t, csv, map[string]string{"commit": "1"})
 	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
 	req.Header.Set("Content-Type", ct)
@@ -59,14 +59,15 @@ WHERE i.sku IN ('C1', 'B1')`)
 	}
 
 	// Keyword-matched icons, not just "some non-empty string": Cappuccino
-	// (name+category both say coffee) gets the coffee icon; Bananas (no
-	// keyword match on either name or category) falls back to generic —
+	// (name+category both say coffee) gets the coffee icon; Scone (no
+	// keyword match on either name or category — ut-docs#2506 gave
+	// "Bananas" its own icon) falls back to generic —
 	// both are bundled assets, never a blank tile either way.
 	if got["C1"] != "/public/assets/category-icons/coffee.svg" {
 		t.Errorf("Cappuccino thumbnail = %q, want the coffee icon", got["C1"])
 	}
 	if got["B1"] != "/public/assets/category-icons/generic.svg" {
-		t.Errorf("Bananas thumbnail = %q, want the generic icon", got["B1"])
+		t.Errorf("Scone thumbnail = %q, want the generic icon", got["B1"])
 	}
 }
 

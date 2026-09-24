@@ -1,6 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Drink">
-  <rect width="64" height="64" fill="#E4F1F7"/>
-  <path d="M20 16h24l-3 34a4 4 0 0 1-4 4H27a4 4 0 0 1-4-4z" fill="#5BA3C6"/>
-  <rect x="18" y="12" width="28" height="6" rx="2" fill="#2E6C8E"/>
-  <path d="M23 24h18" stroke="#E4F1F7" stroke-width="2"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- lucide:cup-soda, generated from internal/catimport/icons.go (ut-docs#2506). Licence: internal/catimport/iconsrc/lucide/LICENSE -->
+  <rect width="64" height="64" fill="#E0F2FE"/>
+  <g transform="translate(12 12) scale(1.6667)" fill="none" stroke="#075985" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="m6 8 1.75 12.28a2 2 0 0 0 2 1.72h4.54a2 2 0 0 0 2-1.72L18 8"/>
+    <path d="M5 8h14"/>
+    <path d="M7 15a6.47 6.47 0 0 1 5 0 6.47 6.47 0 0 0 5 0"/>
+    <path d="m12 8 1-6h2"/>
+  </g>
 </svg>

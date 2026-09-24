@@ -305,10 +305,10 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 			"stations":   stations,
 			"itemColors": catalogtypes.ItemColors(),
 			// ut-docs#2500: the dialog's image picker offers the SAME
-			// built-in set as the item editor (#1862/#2506 grow it there).
-			"builtinIcons": catimport.BuiltinIcons(),
-			"errKey":       errKey,
-			"errCount":     errCount,
+			// built-in set as the item editor, grouped (ut-docs#2506).
+			"builtinIconGroups": catimport.BuiltinIconGroups(),
+			"errKey":            errKey,
+			"errCount":          errCount,
 		}
 		// ut-docs#1950: /categories is one of the /items rail's five section
 		// destinations — an htmx request from that panel (NOT a stale history
