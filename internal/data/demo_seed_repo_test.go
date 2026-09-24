@@ -37,9 +37,9 @@ func TestSeedDemoCatalogue(t *testing.T) {
 	}
 
 	for table, want := range map[string]int{
-		"items": 50, "categories": 10, "brands": 8, "item_variants": 12,
+		"items": 52, "categories": 10, "brands": 8, "item_variants": 12,
 		"item_barcodes": 50, "variant_barcodes": 12, "inventory": 62,
-		"price_history": 62, "shortcut_buttons": 10,
+		"price_history": 64, "shortcut_buttons": 10,
 	} {
 		var n int
 		if err := d.DB.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&n); err != nil {
@@ -57,8 +57,8 @@ func TestSeedDemoCatalogue(t *testing.T) {
 	if unflagged != 0 {
 		t.Errorf("%d seeded items are not flagged is_sample_data = 1", unflagged)
 	}
-	if n, err := repo.SampleItemCount(ctx); err != nil || n != 50 {
-		t.Fatalf("SampleItemCount after seed = %d, %v; want 50, nil", n, err)
+	if n, err := repo.SampleItemCount(ctx); err != nil || n != 52 {
+		t.Fatalf("SampleItemCount after seed = %d, %v; want 52, nil", n, err)
 	}
 
 	// Idempotent: seeding again must neither fail nor duplicate.
@@ -69,8 +69,8 @@ func TestSeedDemoCatalogue(t *testing.T) {
 	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	if n != 50 {
-		t.Errorf("after re-seed: items = %d, want 50 (INSERT OR IGNORE must not duplicate)", n)
+	if n != 52 {
+		t.Errorf("after re-seed: items = %d, want 52 (INSERT OR IGNORE must not duplicate)", n)
 	}
 }
 
@@ -104,8 +104,8 @@ func TestRemoveDemoCatalogue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoveDemoCatalogue: %v", err)
 	}
-	if removed != 48 || len(kept) != 2 {
-		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 48, 2", removed, len(kept))
+	if removed != 50 || len(kept) != 2 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 50, 2", removed, len(kept))
 	}
 
 	var n int
@@ -191,8 +191,8 @@ func TestRemoveDemoCatalogueRemovesEditedItemsWhenTillHasNoRealHistory(t *testin
 	if err != nil {
 		t.Fatalf("RemoveDemoCatalogue: %v", err)
 	}
-	if removed != 50 || len(kept) != 0 {
-		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 50, 0 (edited items are removable when the till has never traded for real)", removed, len(kept))
+	if removed != 52 || len(kept) != 0 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 52, 0 (edited items are removable when the till has never traded for real)", removed, len(kept))
 	}
 	for _, id := range []string{"itm001", "itm002", "itm003", "itm004"} {
 		var n int
@@ -232,8 +232,8 @@ func TestRemoveDemoCatalogueKeepsEditedItemWhenTillHasRealHistory(t *testing.T) 
 	if err != nil {
 		t.Fatalf("RemoveDemoCatalogue: %v", err)
 	}
-	if removed != 49 || len(kept) != 1 {
-		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1 (a till with real trading history keeps an edited item)", removed, len(kept))
+	if removed != 51 || len(kept) != 1 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 51, 1 (a till with real trading history keeps an edited item)", removed, len(kept))
 	}
 	if kept[0].ID != "itm001" || kept[0].Reason != KeptReasonEdited {
 		t.Fatalf("kept[0] = %+v; want itm001/edited", kept[0])
@@ -677,8 +677,8 @@ func TestRemoveDemoCatalogueLeavesOwnItemsAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if removed != 50 || len(kept) != 0 {
-		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 50, 0", removed, len(kept))
+	if removed != 52 || len(kept) != 0 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 52, 0", removed, len(kept))
 	}
 	var n int
 	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'own-1'`).Scan(&n); err != nil {
@@ -713,9 +713,9 @@ func TestRemoveDemoCatalogueKeepsHeldSaleItem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoveDemoCatalogue: %v", err)
 	}
-	// Kept: itm003 (held sale). Removed: the other 49 items.
-	if removed != 49 || len(kept) != 1 {
-		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, len(kept))
+	// Kept: itm003 (held sale). Removed: the other 51 items.
+	if removed != 51 || len(kept) != 1 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 51, 1", removed, len(kept))
 	}
 	// ut-docs#1840 review finding F4: the reported reason, not just the
 	// count, must be "held" — this is what routes the Settings page to
@@ -758,9 +758,9 @@ func TestRemoveDemoCatalogueKeepsHeldSaleVariantItem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoveDemoCatalogue: %v", err)
 	}
-	// Kept: itm041 (held sale, via its variant). Removed: the other 49.
-	if removed != 49 || len(kept) != 1 {
-		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, len(kept))
+	// Kept: itm041 (held sale, via its variant). Removed: the other 51.
+	if removed != 51 || len(kept) != 1 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 51, 1", removed, len(kept))
 	}
 	var n int
 	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm041'`).Scan(&n); err != nil {
@@ -795,9 +795,9 @@ func TestRemoveDemoCatalogueKeepsSaleArchiveItem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoveDemoCatalogue: %v", err)
 	}
-	// Kept: itm003 (archived sale line). Removed: the other 49 items.
-	if removed != 49 || len(kept) != 1 {
-		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, len(kept))
+	// Kept: itm003 (archived sale line). Removed: the other 51 items.
+	if removed != 51 || len(kept) != 1 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 51, 1", removed, len(kept))
 	}
 	var n int
 	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm003'`).Scan(&n); err != nil {
@@ -825,8 +825,8 @@ func TestRemoveDemoCatalogueKeepsSaleArchiveVariantItem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoveDemoCatalogue: %v", err)
 	}
-	if removed != 49 || len(kept) != 1 {
-		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, len(kept))
+	if removed != 51 || len(kept) != 1 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 51, 1", removed, len(kept))
 	}
 	var n int
 	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm041'`).Scan(&n); err != nil {
@@ -858,8 +858,8 @@ func TestRemoveDemoCatalogueKeepsStockArchiveItem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoveDemoCatalogue: %v", err)
 	}
-	if removed != 49 || len(kept) != 1 {
-		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, len(kept))
+	if removed != 51 || len(kept) != 1 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 51, 1", removed, len(kept))
 	}
 	var n int
 	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm003'`).Scan(&n); err != nil {
@@ -897,8 +897,8 @@ func TestRemoveDemoCatalogueKeepsHeldSaleArchiveItem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoveDemoCatalogue: %v", err)
 	}
-	if removed != 49 || len(kept) != 1 {
-		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, len(kept))
+	if removed != 51 || len(kept) != 1 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 51, 1", removed, len(kept))
 	}
 	var n int
 	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm003'`).Scan(&n); err != nil {
@@ -1083,8 +1083,8 @@ func TestKeepDemoItemAsOwn(t *testing.T) {
 	// itm001 is no longer sample data at all, so it's neither removed nor
 	// kept-and-reported — it's simply outside this method's scope now,
 	// exactly like any other operator-owned item.
-	if removed != 49 || len(kept) != 0 {
-		t.Fatalf("RemoveDemoCatalogue after KeepDemoItemAsOwn = removed %d, kept %d; want 49, 0", removed, len(kept))
+	if removed != 51 || len(kept) != 0 {
+		t.Fatalf("RemoveDemoCatalogue after KeepDemoItemAsOwn = removed %d, kept %d; want 51, 0", removed, len(kept))
 	}
 	var n int
 	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm001'`).Scan(&n); err != nil {

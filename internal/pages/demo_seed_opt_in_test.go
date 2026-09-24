@@ -188,8 +188,8 @@ func TestSetupWizardShopTypeAndDemoOptIn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SampleItemCount: %v", err)
 	}
-	if n != 50 {
-		t.Fatalf("sample items after opt-in setup = %d, want 50", n)
+	if n != 52 {
+		t.Fatalf("sample items after opt-in setup = %d, want 52", n)
 	}
 	// ut-docs#567: the same checkbox also seeds the demo customers/promos.
 	custPromo, err := seedRepo.SampleCustomerPromoCount(t.Context())
@@ -338,7 +338,7 @@ func TestSettingsRemoveDemoCatalogueEndpoint(t *testing.T) {
 
 	// Cashier: forbidden, nothing removed.
 	rec := postForm(mux, "/api/settings/remove-demo-catalogue", url.Values{}, &cashUser)
-	if n, _ := repo.SampleItemCount(t.Context()); n != 50 {
+	if n, _ := repo.SampleItemCount(t.Context()); n != 52 {
 		t.Fatalf("cashier attempt removed sample data (count=%d, code=%d)", n, rec.Code)
 	}
 
@@ -349,16 +349,16 @@ func TestSettingsRemoveDemoCatalogueEndpoint(t *testing.T) {
 	}
 	body := rec.Body.String()
 	// Tight on purpose (ut-docs#539 review, N4): a bare Contains(body, "1")
-	// is trivially satisfied by the "1" inside "49" and asserts nothing.
+	// is trivially satisfied by the "1" inside "51" and asserts nothing.
 	// "sample record" not "sample item" since ut-docs#567: the copy covers
 	// customers/promo codes too now, not just catalogue items — this test's
 	// DB only seeded the catalogue, so the removed total is still exactly
-	// the catalogue's own 49. ut-docs#1840: the single "N could not be
+	// the catalogue's own 51. ut-docs#1840: the single "N could not be
 	// removed" line is now a per-item list, named-and-reasoned — itm001 was
 	// genuinely sold, so it's kept with the "history" reason, not the old
 	// blanket "already in use" text.
-	if !strings.Contains(body, "Removed 49 sample record") {
-		t.Errorf("removal response %q does not report removed=49", body)
+	if !strings.Contains(body, "Removed 51 sample record") {
+		t.Errorf("removal response %q does not report removed=51", body)
 	}
 	if !strings.Contains(body, "could not be removed automatically") || !strings.Contains(body, "Coca-Cola Can 330ml") ||
 		!strings.Contains(body, "real trading history") {
@@ -441,8 +441,8 @@ func TestSettingsRemoveDemoCatalogueEndpoint_BlocksWhileDemoItemInLiveBasket(t *
 	if !strings.Contains(rec.Body.String(), "current basket") {
 		t.Fatalf("removal response %q does not explain the live-basket block", rec.Body.String())
 	}
-	if n, _ := repo.SampleItemCount(t.Context()); n != 50 {
-		t.Fatalf("sample items after blocked removal = %d, want 50 (removal must not have run)", n)
+	if n, _ := repo.SampleItemCount(t.Context()); n != 52 {
+		t.Fatalf("sample items after blocked removal = %d, want 52 (removal must not have run)", n)
 	}
 }
 
@@ -495,8 +495,8 @@ func TestSettingsRemoveDemoCatalogueEndpoint_BlocksWhileDemoItemInKioskLiveBaske
 	if strings.Contains(body, "current basket") {
 		t.Fatalf("removal response %q reads as the cashier message, not the kiosk-specific one", body)
 	}
-	if n, _ := repo.SampleItemCount(t.Context()); n != 50 {
-		t.Fatalf("sample items after blocked removal = %d, want 50 (removal must not have run)", n)
+	if n, _ := repo.SampleItemCount(t.Context()); n != 52 {
+		t.Fatalf("sample items after blocked removal = %d, want 52 (removal must not have run)", n)
 	}
 }
 

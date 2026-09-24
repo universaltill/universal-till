@@ -1954,6 +1954,28 @@ func reconcileTaxDeTakeawayOverridesIfActivated(ctx context.Context, db *sql.DB,
 	}
 }
 
+// reconcileTaxDeTakeawayOverridesIfActive runs the same add-only reconcile
+// for a path that pins takeaway rates on tax codes while the German tax
+// plugin may ALREADY be active — the setup wizard's demo seed (ut-docs#167):
+// the wizard installs the country's base plugins before it seeds, so a
+// synchronous tax-de install has already reconciled without the demo café
+// code. Installed-but-disabled or not installed: nothing to do now — the
+// activation reconcile covers the code when the plugin is enabled or
+// installed later. Best-effort: logs, never fails the caller.
+func reconcileTaxDeTakeawayOverridesIfActive(ctx context.Context, db *sql.DB) {
+	active, err := data.NewPluginRepo(db).PluginActive(ctx, taxDePluginID)
+	if err != nil {
+		log.Printf("[plugins] check %s active for takeaway_rate_overrides reconcile: %v", taxDePluginID, err)
+		return
+	}
+	if !active {
+		return
+	}
+	if _, failed := reconcileTaxDeTakeawayOverridesOnActivate(ctx, db); failed {
+		log.Printf("[plugins] reconcile takeaway_rate_overrides for %s: failed, see prior log line", taxDePluginID)
+	}
+}
+
 // zipMagic is the local-file-header signature every non-empty ZIP (a .bkp
 // backup included) starts with; zipEmptyMagic is the end-of-central-
 // directory signature an entirely empty ZIP starts with instead — sniffed

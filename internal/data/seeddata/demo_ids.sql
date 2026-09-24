@@ -68,7 +68,9 @@ INSERT INTO demo_seed_items (id, sku, name, base_price) VALUES
   ('itm047', 'SKU-0047', 'Protein Bar 60g', 210),
   ('itm048', 'SKU-0048', 'Instant Coffee 200g', 460),
   ('itm049', 'SKU-0049', 'Tea Bags x80', 295),
-  ('itm050', 'SKU-0050', 'Sugar 1kg', 135);
+  ('itm050', 'SKU-0050', 'Sugar 1kg', 135),
+  ('itm051', 'SKU-0051', 'Caffè Latte', 320),
+  ('itm052', 'SKU-0052', 'Ham & Cheese Sandwich', 450);
 
 DROP TABLE IF EXISTS temp.demo_seed_categories;
 CREATE TEMP TABLE demo_seed_categories (id TEXT PRIMARY KEY);
@@ -81,3 +83,13 @@ CREATE TEMP TABLE demo_seed_brands (id TEXT PRIMARY KEY);
 INSERT INTO demo_seed_brands (id) VALUES
   ('br_coca'), ('br_generic'), ('br_heinz'), ('br_kell'),
   ('br_nestle'), ('br_pepsi'), ('br_unilev'), ('br_walk');
+
+-- The demo tax code (ut-docs#167) with its seeded values — removal drops it
+-- only while it is still pristine (an operator who renamed it or changed a
+-- rate made it their own tax configuration) and no item uses it. Guarded
+-- against demo_catalogue.sql by TestDemoSeedTaxCodesPristineValuesMatchCatalogue
+-- (internal/db/demo_seed_test.go).
+DROP TABLE IF EXISTS temp.demo_seed_tax_codes;
+CREATE TEMP TABLE demo_seed_tax_codes (id TEXT PRIMARY KEY, name TEXT, rate_basis_points INTEGER, takeaway_rate_basis_points INTEGER);
+INSERT INTO demo_seed_tax_codes (id, name, rate_basis_points, takeaway_rate_basis_points) VALUES
+  ('tax_demo_cafe', 'Café dine-in 20% / takeaway 5%', 2000, 500);

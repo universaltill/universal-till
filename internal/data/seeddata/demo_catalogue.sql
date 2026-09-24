@@ -12,7 +12,10 @@
 --
 -- Structural defaults (tax_codes tax_std/tax_red/tax_zero, stock_locations
 -- loc_main/loc_back/loc_wh, payment methods) are NOT part of the demo
--- catalogue and are deliberately absent here.
+-- catalogue and are deliberately absent here. The one demo tax code below
+-- (tax_demo_cafe, ut-docs#167) is not structural: it exists only so the
+-- café items can show a dine-in vs takeaway VAT difference, and "Remove
+-- sample data" takes it with them once nothing uses it.
 --
 -- INSERT OR IGNORE throughout: re-seeding over a partially-removed or
 -- already-seeded catalogue must be idempotent, and a clash with an
@@ -43,6 +46,17 @@ INSERT OR IGNORE INTO brands (id, name) VALUES
   ('br_pepsi', 'PepsiCo'),
   ('br_unilev', 'Unilever'),
   ('br_walk', 'Walkers');
+
+-- demo tax code (ut-docs#167): a dine-in/takeaway pair on one code — the
+-- same model a catalog import uses for a café's split rates (ut-docs#512).
+-- Core itself never switches the rate; an installed tax plugin does
+-- (pos.TaxRateAsker). With the German tax plugin active, the pinned
+-- takeaway rate becomes an active takeaway_rate_overrides entry
+-- (reconcileTaxDeTakeawayOverridesOnActivate, ut-docs#1370). Rates are the
+-- till's generic standard/reduced pair (tax_std 20%, tax_red 5%), like the
+-- rest of this catalogue. Keep id/name/rates in sync with demo_ids.sql.
+INSERT OR IGNORE INTO tax_codes (id, name, rate_basis_points, is_active, takeaway_rate_basis_points) VALUES
+  ('tax_demo_cafe', 'Café dine-in 20% / takeaway 5%', 2000, 1, 500);
 
 -- items
 INSERT OR IGNORE INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, cost_price, tax_code_id, is_active, is_weighed, is_sample_data) VALUES
@@ -96,6 +110,19 @@ INSERT OR IGNORE INTO items (id, sku, name, description, category_id, brand_id, 
   ('itm048', 'SKU-0048', 'Instant Coffee 200g', 'Freeze dried coffee', 'cat_drink', 'br_nestle', 'each', 460, 310, 'tax_zero', 1, 0, 1),
   ('itm049', 'SKU-0049', 'Tea Bags x80', 'Black tea', 'cat_drink', 'br_generic', 'each', 295, 180, 'tax_zero', 1, 0, 1),
   ('itm050', 'SKU-0050', 'Sugar 1kg', 'Granulated sugar', 'cat_food', 'br_generic', 'each', 135, 75, 'tax_zero', 1, 0, 1);
+
+-- café items (ut-docs#167) on the dine-in/takeaway demo tax code. Made to
+-- order: no barcode, image, stock or variant rows, and stock_untracked = 1
+-- (ut-docs#1850) so a sale is never refused for "not enough stock". tax_codes.name is
+-- UNIQUE: if an operator's own code already has the demo code's name, the
+-- tax-code INSERT above is ignored and these fall back to tax_std rather
+-- than FK-failing (and rolling back) the whole catalogue.
+INSERT OR IGNORE INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, cost_price, tax_code_id, is_active, is_weighed, is_sample_data, stock_untracked)
+SELECT column1, column2, column3, column4, column5, column6, column7, column8, column9,
+       COALESCE((SELECT t.id FROM tax_codes t WHERE t.id = column10), 'tax_std'), column11, column12, column13, column14
+FROM (VALUES
+  ('itm051', 'SKU-0051', 'Caffè Latte', 'Espresso with steamed milk', 'cat_drink', 'br_generic', 'each', 320, 90, 'tax_demo_cafe', 1, 0, 1, 1),
+  ('itm052', 'SKU-0052', 'Ham & Cheese Sandwich', 'Freshly made sandwich', 'cat_food', 'br_generic', 'each', 450, 180, 'tax_demo_cafe', 1, 0, 1, 1));
 
 -- item_barcodes
 INSERT OR IGNORE INTO item_barcodes (barcode, item_id, barcode_type, is_primary) VALUES
@@ -376,6 +403,15 @@ INSERT OR IGNORE INTO price_history (id, item_id, variant_id, price, starts_at, 
   ('ph060', NULL, 'var010', 210, '2025-01-01', NULL),
   ('ph061', NULL, 'var011', 310, '2025-01-01', NULL),
   ('ph062', NULL, 'var012', 540, '2025-01-01', NULL);
+-- café items' price history (ut-docs#167): only for an item that actually
+-- landed — an operator's own SKU-0051/0052 makes the item INSERT OR IGNORE
+-- a no-op, and a row for the missing item would FK-fail the whole seed.
+INSERT OR IGNORE INTO price_history (id, item_id, variant_id, price, starts_at, ends_at)
+SELECT column1, column2, column3, column4, column5, column6
+FROM (VALUES
+  ('ph063', 'itm051', NULL, 320, '2025-01-01', NULL),
+  ('ph064', 'itm052', NULL, 450, '2025-01-01', NULL))
+WHERE EXISTS (SELECT 1 FROM items i WHERE i.id = column2);
 
 -- shortcut_buttons
 INSERT OR IGNORE INTO shortcut_buttons (barcode, item_id, label, image_path) VALUES

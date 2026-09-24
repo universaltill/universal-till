@@ -739,13 +739,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// sample seed must never block wizard completion, so log and
 		// continue rather than erroring after setup already succeeded.
 		if r.Form.Get("demo_data") == "on" {
-			seedRepo := data.NewDemoSeedRepo(d.Db)
-			if err := seedRepo.SeedDemoCatalogue(r.Context()); err != nil {
-				logging.L().Errorf("setup wizard: seed demo catalogue: %v", err)
-			}
-			if err := seedRepo.SeedDemoCustomersPromos(r.Context()); err != nil {
-				logging.L().Errorf("setup wizard: seed demo customers/promos: %v", err)
-			}
+			seedDemoDataForSetup(r.Context(), d.Db)
 		}
 		// ut-docs#617/#1168: "csv/excel" lands the new operator straight in
 		// the catalog importer instead of home — no detour through
@@ -816,4 +810,22 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		http.Redirect(w, r, redirectTo, http.StatusSeeOther)
 	})
+}
+
+// seedDemoDataForSetup is the setup wizard's sample-data opt-in: the demo
+// catalogue plus the demo customers/promo codes, best-effort (logs, never
+// fails the wizard). After a successful catalogue seed it re-runs the
+// German tax plugin's takeaway reconcile (ut-docs#167): the café items'
+// dine-in/takeaway tax code lands AFTER installBasePluginsForSetup, which
+// may already have activated — and reconciled — that plugin.
+func seedDemoDataForSetup(ctx context.Context, db *sql.DB) {
+	seedRepo := data.NewDemoSeedRepo(db)
+	if err := seedRepo.SeedDemoCatalogue(ctx); err != nil {
+		logging.L().Errorf("setup wizard: seed demo catalogue: %v", err)
+	} else {
+		reconcileTaxDeTakeawayOverridesIfActive(ctx, db)
+	}
+	if err := seedRepo.SeedDemoCustomersPromos(ctx); err != nil {
+		logging.L().Errorf("setup wizard: seed demo customers/promos: %v", err)
+	}
 }

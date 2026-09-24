@@ -280,11 +280,11 @@ func TestSettingsRemoveDemo_ElevationFlow(t *testing.T) {
 	mgrID, cashierID := seedElevationUsers(t, d)
 	cashier := auth.User{ID: cashierID, Role: "cashier"}
 
-	// Deny, no PIN: prompt, all 50 sample items intact.
+	// Deny, no PIN: prompt, all 52 sample items intact.
 	rec := postForm(mux, "/api/settings/remove-demo-catalogue", url.Values{}, &cashier)
 	assertElevationPrompt(t, "no pin", rec.Code, rec.Body.String())
-	if n, _ := repo.SampleItemCount(t.Context()); n != 50 {
-		t.Fatalf("denied removal ran anyway: %d sample items left, want 50", n)
+	if n, _ := repo.SampleItemCount(t.Context()); n != 52 {
+		t.Fatalf("denied removal ran anyway: %d sample items left, want 52", n)
 	}
 
 	// Deny, wrong PIN: re-prompt with the inline error, still intact.
@@ -293,13 +293,13 @@ func TestSettingsRemoveDemo_ElevationFlow(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "login-error") {
 		t.Fatalf("failed PIN attempt must render the inline error: %s", rec.Body.String())
 	}
-	if n, _ := repo.SampleItemCount(t.Context()); n != 50 {
-		t.Fatalf("wrong-PIN removal ran anyway: %d sample items left, want 50", n)
+	if n, _ := repo.SampleItemCount(t.Context()); n != 52 {
+		t.Fatalf("wrong-PIN removal ran anyway: %d sample items left, want 52", n)
 	}
 
 	// Valid approver PIN: the removal really runs.
 	rec = postForm(mux, "/api/settings/remove-demo-catalogue", url.Values{"override_pin": {"555222"}}, &cashier)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Removed 50 sample record") {
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Removed 52 sample record") {
 		t.Fatalf("elevated removal = %d body=%s, want the removed-count report", rec.Code, rec.Body.String())
 	}
 	if n, _ := repo.SampleItemCount(t.Context()); n != 0 {
@@ -312,8 +312,8 @@ func TestSettingsRemoveDemo_ElevationFlow(t *testing.T) {
 	if err := d.Db.QueryRow(`SELECT data_json FROM audit_log WHERE action='demo_data_removed'`).Scan(&payload); err != nil {
 		t.Fatalf("read audit payload: %v", err)
 	}
-	if !strings.Contains(payload, `"removed":50`) || !strings.Contains(payload, `"kept":0`) {
-		t.Fatalf("audit payload %s does not record removed=50 kept=0", payload)
+	if !strings.Contains(payload, `"removed":52`) || !strings.Contains(payload, `"kept":0`) {
+		t.Fatalf("audit payload %s does not record removed=52 kept=0", payload)
 	}
 }
 
