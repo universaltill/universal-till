@@ -228,14 +228,25 @@ jobs:
   # already published, and every downstream job was skipped). It only needs
   # the release and the windows zip to exist, so it downloads the archive from
   # the release rather than sharing goreleaser's workspace.
+  #
+  # Code signing (ut-docs#2480): the .exe files inside the installer and the
+  # installer itself are signed as TASK RUNNER TECHNOLOGY LTD with Azure
+  # Artifact Signing, via jsign on Linux (no Windows runner). CI signs in with
+  # GitHub OIDC as `unitill-release-signer` — no secret; that identity can only
+  # sign with this one certificate profile, and only from a job in the
+  # `release-signing` environment (main + v* tags). Identity: ut-infra
+  # unitill-infra/release-signing/. The portable windows zip stays unsigned
+  # for now (re-zipping would break goreleaser's checksums.txt).
   windows-installer:
     needs: [prepare, goreleaser]
     if: ${{ !cancelled() && needs.prepare.result == 'success' }}
     runs-on: ubuntu-latest
+    environment: release-signing
     permissions:
       contents: write
+      id-token: write # OIDC for azure/login; job-scoped, so this job's actions are SHA-pinned
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.prepare.outputs.tag }}
       - name: Wait for the GitHub release to exist
@@ -250,24 +261,75 @@ jobs:
           done
           echo "::error::release $TAG does not exist — goreleaser failed before creating it; re-run goreleaser first"
           exit 1
-      - name: Build & attach Windows installer (NSIS)
+      - name: Azure login (OIDC, signing identity)
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2
+        with:
+          client-id: ${{ vars.AZURE_SIGNER_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Build, sign & attach Windows installer (NSIS)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.prepare.outputs.version }}
           TAG: ${{ needs.prepare.outputs.tag }}
+          JSIGN_VERSION: "7.5"
+          JSIGN_SHA256: 602a51c3545a6dc4fb99bd2ea7152b26d1345916d0c93ddfbd5936cb735af91c
+          SIGN_ENDPOINT: neu.codesigning.azure.net # account unitillcodesign is in North Europe
+          SIGN_ALIAS: unitillcodesign/unitillreleasespt
+          SIGN_PUBLISHER: TASK RUNNER TECHNOLOGY LTD
+          # Artifact Signing certificates chain to this Microsoft root, which is
+          # not in Ubuntu's CA bundle; pinned by its SHA-256 (valid to 2045).
+          MS_ROOT_URL: https://www.microsoft.com/pkiops/certs/Microsoft%20Identity%20Verification%20Root%20Certificate%20Authority%202020.crt
+          MS_ROOT_SHA256: 5367f20c7ade0e2bca790915056d086b720c33c1fa2a2661acf787e3292e1270
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y nsis
+          sudo apt-get install -y nsis osslsigncode
+
+          curl -fsSL -o /tmp/jsign.jar "https://github.com/ebourg/jsign/releases/download/${JSIGN_VERSION}/jsign-${JSIGN_VERSION}.jar"
+          echo "${JSIGN_SHA256}  /tmp/jsign.jar" | sha256sum -c -
+          curl -fsSL -o /tmp/msroot.crt "${MS_ROOT_URL}"
+          echo "${MS_ROOT_SHA256}  /tmp/msroot.crt" | sha256sum -c -
+          { cat /etc/ssl/certs/ca-certificates.crt; openssl x509 -inform DER -in /tmp/msroot.crt; } > /tmp/ca-bundle.pem
+
+          # Short-lived (~1h) token for the signing service: masked, and passed
+          # to jsign through the environment (env:), never on its command line.
+          SIGN_TOKEN="$(az account get-access-token --resource https://codesigning.azure.net --query accessToken -o tsv)"
+          echo "::add-mask::${SIGN_TOKEN}"
+          export SIGN_TOKEN
+          sign() {
+            java -jar /tmp/jsign.jar --storetype TRUSTEDSIGNING \
+              --keystore "${SIGN_ENDPOINT}" --storepass env:SIGN_TOKEN --alias "${SIGN_ALIAS}" \
+              --tsaurl http://timestamp.acs.microsoft.com --tsmode RFC3161 \
+              --replace "$1"
+          }
+          # Fail closed: a file is uploaded only if its signature and its
+          # timestamp both verify against the pinned root, and the signer is us.
+          check_signed() {
+            local out
+            if ! out="$(osslsigncode verify -CAfile /tmp/ca-bundle.pem -TSA-CAfile /tmp/ca-bundle.pem -in "$1" 2>&1)"; then
+              echo "::error::$1: signature does not verify"; echo "$out"; exit 1
+            fi
+            grep -qiF "${SIGN_PUBLISHER}" <<<"$out" || { echo "::error::$1 is not signed by ${SIGN_PUBLISHER}"; echo "$out"; exit 1; }
+            grep -qF "Timestamp Server Signature verification: ok" <<<"$out" || { echo "::error::$1: timestamp does not verify"; echo "$out"; exit 1; }
+            echo "signed OK: $(basename "$1")"
+          }
+
           gh release download "${TAG}" --pattern "unitill-pos_${VERSION}_windows_amd64.zip" --dir dist
           STAGE="$(mktemp -d)"
           unzip -q "dist/unitill-pos_${VERSION}_windows_amd64.zip" -d "$STAGE"
+          # Sign what the installer installs, before packaging it.
+          mapfile -t INNER < <(find "$STAGE" -iname '*.exe')
+          test "${#INNER[@]}" -gt 0
+          for f in "${INNER[@]}"; do sign "$f"; check_signed "$f"; done
+
           makensis -DVERSION="${VERSION}" -DSRCDIR="$STAGE" packaging/windows/installer.nsi
           # NSIS writes OutFile relative to the script dir, so locate it rather
           # than assume the repo root.
           EXE="$(find "$PWD" -name "unitill-pos-setup-${VERSION}.exe" -print -quit)"
           echo "built installer: $EXE"
           test -n "$EXE" && test -f "$EXE"
+          sign "$EXE"; check_signed "$EXE"
           gh release upload "${TAG}" "$EXE" --clobber
 
   # A real macOS .app (embedded WebView, no Terminal) packaged as a .dmg. Needs
