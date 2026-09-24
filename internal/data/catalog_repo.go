@@ -40,6 +40,9 @@ var ErrBarcodeNoSymbologyMatch = errors.New("barcode matches no enabled symbolog
 type BarcodeConflictError struct {
 	TargetType string // "item" or "variant"
 	TargetID   string
+	// Barcode is the code as submitted, when the caller set it (SaveItem
+	// does, so a directive's failure text can name the code). May be "".
+	Barcode string
 }
 
 func (e *BarcodeConflictError) Error() string {

@@ -2655,7 +2655,7 @@ func TestRemoteConfigReport_CategoriesGroupsStationsLinked(t *testing.T) {
 	decodeReport(t, decoded, "categories", &catObjs)
 	for i, o := range catObjs {
 		assertExactKeys(t, fmt.Sprintf("categories[%d]", i), o,
-			"id", "name", "parent_id", "color", "sort_order", "active", "modifier_group_ids", "station_ids")
+			"id", "name", "parent_id", "color", "icon", "show_on_sale_screen", "sort_order", "active", "modifier_group_ids", "station_ids")
 	}
 	byID := map[string]configReportCategory{}
 	for _, c := range cats {

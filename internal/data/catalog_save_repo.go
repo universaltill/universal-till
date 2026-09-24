@@ -349,6 +349,10 @@ func replaceItemBarcodesTx(ctx context.Context, tx *sql.Tx, itemID string, want 
 	for _, b := range want {
 		keep[b.key] = true
 		if err := ensureBarcodeAvailable(ctx, tx, b.key, "item", itemID); err != nil {
+			var conflict *BarcodeConflictError
+			if errors.As(err, &conflict) {
+				conflict.Barcode = b.raw
+			}
 			return fmt.Errorf("barcode %s: %w", b.raw, err)
 		}
 	}
