@@ -38,7 +38,7 @@ var knownIconNames = map[string]bool{
 	"arrow-up": true, "sparkles": true, "upload": true, "download": true,
 	"landmark": true, "scan-barcode": true, "log-out": true, "filter": true,
 	"arrow-left": true, "chevron-left": true, "chevron-right": true,
-	"rotate-ccw": true, "eye": true, "ellipsis": true,
+	"rotate-ccw": true, "eye": true, "ellipsis": true, "eye-off": true,
 }
 
 // IsKnownIconName reports whether name is in the closed icon-name set.
