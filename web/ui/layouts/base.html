@@ -75,6 +75,30 @@
          `types` API -- belt and braces, both cheap. -->
     <script>
       (function () {
+        // ut-docs#2496: the one "a transition must never hold the screen"
+        // watchdog, shared by the cross-document (pagereveal, below) and
+        // same-document (boosted #ut-page swap, shell script) paths. The
+        // 600ms budget starts when the MOTION starts (vt.ready), never when
+        // the transition is created: a same-document transition is created
+        // BEFORE htmx swaps the page in, and on the pilot tablet that swap
+        // alone can take most of 600ms, so a creation-time timer cut the
+        // 200ms slide short or skipped it outright -- the "not like Apple
+        // anymore" regression (reproduced at 4x/8x CPU throttle). A 2s
+        // backstop from creation still covers an engine whose ready never
+        // settles (a swap that itself runs past 2s trips it just before
+        // ready and skips a slide that was about to play -- harmless: the
+        // swap held the screen, not the transition). Defined before the
+        // feature check below so the shell script can always find it.
+        var UT = window.UT = window.UT || {};
+        UT.vtWatchdog = function (vt) {
+          if (!vt || !vt.skipTransition) return;
+          var guard = null;
+          function skip() { vt.skipTransition(); }
+          function clear() { clearTimeout(backstop); clearTimeout(guard); }
+          var backstop = setTimeout(skip, 2000);
+          if (vt.ready && vt.ready.then) vt.ready.then(function () { clearTimeout(backstop); guard = setTimeout(skip, 600); }, clear);
+          if (vt.finished && vt.finished.then) vt.finished.then(clear, clear);
+        };
         if (!('navigation' in window) || !window.CSS || !CSS.supports('view-transition-name: x')) return;
         function depth(u) {
           var p = new URL(u, location.href).pathname.replace(/\/+$/, '') || '/';
@@ -129,8 +153,7 @@
           // engine (CI's Linux headless Chromium never revealed the new
           // document at all, ut-docs#2223) -- skip it so the live page
           // takes input. Cleared as soon as the transition finishes.
-          var guard = setTimeout(function () { if (vt.skipTransition) vt.skipTransition(); }, 600);
-          if (vt.finished && vt.finished.then) vt.finished.then(function () { clearTimeout(guard); }, function () { clearTimeout(guard); });
+          UT.vtWatchdog(vt);
         });
       })();
     </script>
@@ -233,16 +256,15 @@
         var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
         // Belt and braces from ADR-0097, kept for the same-document case: a
         // skipped/aborted transition rejects its promises (a console error per
-        // skip otherwise), and nothing may ever hold the screen -- 600 ms
-        // watchdog, cleared on finish.
+        // skip otherwise), and nothing may ever hold the screen -- the shared
+        // UT.vtWatchdog (600 ms from when the motion starts, ut-docs#2496).
         if (document.startViewTransition) {
           var orig = document.startViewTransition;
           document.startViewTransition = function () {
             var vt = orig.apply(document, arguments);
             try {
               ['ready', 'updateCallbackDone', 'finished'].forEach(function (k) { if (vt[k] && vt[k].catch) vt[k].catch(function () {}); });
-              var guard = setTimeout(function () { if (vt.skipTransition) vt.skipTransition(); }, 600);
-              if (vt.finished && vt.finished.then) vt.finished.then(function () { clearTimeout(guard); }, function () { clearTimeout(guard); });
+              UT.vtWatchdog(vt);
             } catch (e) { /* engine without the promise trio: nothing to quiet */ }
             return vt;
           };
