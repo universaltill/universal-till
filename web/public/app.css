@@ -1967,33 +1967,24 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
   border-inline-start: 4px solid var(--cat-color, var(--accent));
 }
 
-/* ---------- Categories tab (ut-docs#2283) ----------
+/* ---------- Category tiles (ut-docs#2283, compacted by ut-docs#2500) ----------
    .category-tile reuses the .grid it sits in (buttons.html) — same
    auto-fill/7rem column floor the product-tile grid already uses, so the
-   two densities stay visually consistent when an operator flips between
-   the Categories tab and any per-category tab. min-height is bumped past
-   .btn-tile's own 6.5rem (not just matched) — the card's own "at least as
-   large as product-tile" floor, and a plain name-only tile has far less
-   content than a tile with a thumbnail/price, so a little extra height
-   keeps it from reading as a visually lighter, easier-to-mis-tap target
-   next to the item tiles it sits beside once a category is open. Same
-   --cat-color-accent/border-inline-start recipe as .btn-tile (ut-docs#1325)
-   -- one color per category, carried on the tile itself since (unlike a
-   category panel) this view has no ancestor already carrying it.
+   two densities stay visually consistent. Same --cat-color-accent/
+   border-inline-start recipe as .btn-tile (ut-docs#1325) — one colour per
+   category, carried on the tile itself.
 
-   min-height measured, not guessed: a .btn-tile with a two-line-clamped
-   name AND a price line (no thumbnail) renders at ~140px in a real
-   browser at the 7rem grid-column floor both share — noticeably taller
-   than the 6.5rem/104px number .btn-tile's own CSS states as ITS floor,
-   because that number is only ever the floor for a short one-line name
-   with no price growth. .category-tile has no price line to grow past its
-   own name, so matching .btn-tile's stated floor is not enough once a
-   real (especially a longer, translated) category name wraps to two
-   lines — confirmed live by e2e/tests/sell-screen-categories-tab-2283
-   .spec.ts's geometry case, which is what caught this the first time
-   (measured 119px against a real 140.75px product tile, both two-line
-   names, neither one hand-picked to make a point). 9.5rem/152px clears
-   that measured case with margin. */
+   Height: ut-docs#2283 once set min-height: 9.5rem (152px) so a name-only
+   tile would never read lighter than the ~140px item tile beside it. The
+   product owner reversed that on the real tablet (ut-docs#2500,
+   2026-09-24): ~170px tiles fit only three rows at 1280x800. The tile is
+   now compact — about an item tile's height or less, image on top, name
+   (2-line clamp) and count below — the 1.75rem image and .9rem name are
+   sized so even an image + two-line-name tile stays within an item
+   tile's height — with min-height 3.5rem (56px) keeping
+   it above the 44px touch floor even for a one-line, imageless tile; the
+   content sets the rest. e2e/tests/category-image-2500.spec.ts measures
+   it against a real item tile at 1024x600 and 360x800. */
 /* ut-docs#2307: .category-overflow-tile (the category-strip overflow
    sheet's own tiles) shares this whole ruleset by SELECTOR, not by class
    name on the markup — it deliberately does NOT also carry the literal
@@ -2004,7 +1995,7 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
    click behaviour, a real collision, not just cosmetic. */
 .category-tile, .category-overflow-tile {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: .3rem; padding: .6rem .5rem; min-height: 9.5rem; border: 1px solid var(--border);
+  gap: .15rem; padding: .4rem .4rem; min-height: 3.5rem; border: 1px solid var(--border);
   border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow);
   font: inherit; color: var(--text); cursor: pointer; text-align: center;
   transition: border-color .12s ease, box-shadow .12s ease, transform .05s ease;
@@ -2013,8 +2004,15 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
 }
 .category-tile:hover, .category-overflow-tile:hover { border-color: #cbd5e1; box-shadow: 0 3px 8px rgba(15, 23, 42, .12); }
 .category-tile:active, .category-overflow-tile:active { transform: scale(.97); }
+/* ut-docs#2500: the category's image (built-in icon or uploaded photo),
+   above the name. contain, not cover — a built-in icon is a glyph on a
+   transparent field and must never be cropped. */
+.category-tile-img { inline-size: 1.75rem; block-size: 1.75rem; object-fit: contain; flex: none; }
+/* ut-docs#2500: the strip tab's small inline-start image. A fixed box, so
+   applyCategoryOverflow()'s width measurement is right before it loads. */
+.tab-cat-img { inline-size: 1.25rem; block-size: 1.25rem; object-fit: contain; margin-inline-end: .3rem; vertical-align: middle; }
 .category-tile-name {
-  font-weight: 600; font-size: .95rem; line-height: 1.25;
+  font-weight: 600; font-size: .9rem; line-height: 1.2;
   overflow-wrap: anywhere;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
@@ -4161,6 +4159,13 @@ body.login-screen {
 .category-dialog-label { font-size: .82rem; margin-block-end: .25rem; }
 .category-dialog-help { font-size: .82rem; margin-block: 0 .4rem; }
 .category-dialog-checks { flex-wrap: wrap; gap: .5rem 1rem; }
+/* ut-docs#2500: the category dialog's image picker — the current uploaded
+   photo's preview line, and breathing room between the upload buttons and
+   the built-in icon grid. [hidden] must win over the flex display. */
+.category-image-current { display: flex; align-items: center; gap: .5rem; margin-block-end: .4rem; }
+.category-image-current[hidden] { display: none; }
+.category-image-current img { inline-size: 2.5rem; block-size: 2.5rem; object-fit: contain; border-radius: var(--radius); }
+#category-icon-grid { margin-block-start: .4rem; }
 /* Item editor: inherited-group rows in the nested customization dialog and
    the kitchen-routing section under the Variants tab (ut-docs#2284). The
    inherited row reuses .modifier-admin-group-row's flex layout, with the

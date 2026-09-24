@@ -1267,6 +1267,11 @@ type CategoryNode struct {
 	SortOrder int
 	Color     string // empty when no explicit color is set
 	IsActive  bool
+	// ImagePath (ut-docs#2500) is the category's image as a /public/...
+	// path — a built-in icon (catimport.IconPath) or an uploaded photo —
+	// or "" for none. Whether an uploaded file is actually present on
+	// THIS till is the renderer's question, not the repo's.
+	ImagePath string
 }
 
 // ListCategories returns every category (active AND inactive, flat,
@@ -1281,7 +1286,7 @@ type CategoryNode struct {
 // and existing ordering unchanged for whatever else still relies on it.
 func (r *CatalogRepo) ListCategories(ctx context.Context) ([]CategoryNode, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, COALESCE(parent_id, ''), sort_order, COALESCE(color, ''), is_active
+SELECT id, name, COALESCE(parent_id, ''), sort_order, COALESCE(color, ''), is_active, COALESCE(image_path, '')
 FROM categories
 ORDER BY sort_order, name`)
 	if err != nil {
@@ -1292,7 +1297,7 @@ ORDER BY sort_order, name`)
 	for rows.Next() {
 		var c CategoryNode
 		var active int
-		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color, &active); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color, &active, &c.ImagePath); err != nil {
 			return nil, fmt.Errorf("list categories: %w", err)
 		}
 		c.IsActive = active == 1
@@ -1315,7 +1320,7 @@ ORDER BY sort_order, name`)
 // see that var's comment for why).
 func (r *CatalogRepo) ListActiveCategories(ctx context.Context) ([]CategoryNode, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, COALESCE(parent_id, ''), sort_order, COALESCE(color, '')
+SELECT id, name, COALESCE(parent_id, ''), sort_order, COALESCE(color, ''), COALESCE(image_path, '')
 FROM categories
 WHERE is_active = 1
 ORDER BY sort_order, name`)
@@ -1326,7 +1331,7 @@ ORDER BY sort_order, name`)
 	var out []CategoryNode
 	for rows.Next() {
 		var c CategoryNode
-		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color, &c.ImagePath); err != nil {
 			return nil, fmt.Errorf("list active categories: %w", err)
 		}
 		c.IsActive = true
@@ -1378,6 +1383,7 @@ type CategoryAdminRow struct {
 	Color     string
 	IsActive  bool
 	ItemCount int
+	ImagePath string // ut-docs#2500, see CategoryNode.ImagePath
 }
 
 // ListCategoriesForAdmin returns every category (active and inactive, so a
@@ -1387,7 +1393,7 @@ type CategoryAdminRow struct {
 func (r *CatalogRepo) ListCategoriesForAdmin(ctx context.Context) ([]CategoryAdminRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT c.id, c.name, COALESCE(c.parent_id, ''), c.sort_order, COALESCE(c.color, ''), c.is_active,
-       COUNT(i.id) AS item_count
+       COUNT(i.id) AS item_count, COALESCE(c.image_path, '')
 FROM categories c
 LEFT JOIN items i ON i.category_id = c.id AND i.is_active = 1
 GROUP BY c.id
@@ -1400,7 +1406,7 @@ ORDER BY c.sort_order, c.name`)
 	for rows.Next() {
 		var c CategoryAdminRow
 		var active int
-		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color, &active, &c.ItemCount); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color, &active, &c.ItemCount, &c.ImagePath); err != nil {
 			return nil, fmt.Errorf("list categories for admin: %w", err)
 		}
 		c.IsActive = active == 1
@@ -1499,6 +1505,24 @@ func (r *CatalogRepo) UpdateCategory(ctx context.Context, id, name, color string
 		name, nullableString(strings.TrimSpace(color)), id)
 	if err != nil {
 		return fmt.Errorf("update category: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrCategoryNotFound
+	}
+	return nil
+}
+
+// SetCategoryImage (ut-docs#2500) stores a category's image path — a
+// built-in icon's /public/assets/category-icons/... path or an uploaded
+// photo's /public/assets/categories/<id>/thumb.png — or clears it ("" →
+// NULL). Unknown id → ErrCategoryNotFound. Validating the path (an
+// IconPath key, a written upload) is the handler's job; nothing else on
+// the row is touched.
+func (r *CatalogRepo) SetCategoryImage(ctx context.Context, id, path string) error {
+	res, err := r.db.ExecContext(ctx, `UPDATE categories SET image_path = ? WHERE id = ?`,
+		nullableString(strings.TrimSpace(path)), id)
+	if err != nil {
+		return fmt.Errorf("set category image: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrCategoryNotFound
