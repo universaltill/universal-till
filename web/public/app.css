@@ -4138,6 +4138,21 @@ body.login-screen {
   font-size: .78rem; font-weight: 500;
 }
 .builtin-icon-tile img { display: block; }
+/* ut-docs#2506: ~70 icons in sections. The grid scrolls inside its own
+   box (touch-scrollable, no nested page jump) so the dialog's Save stays
+   reachable at the 1024×600 floor; the section headings span the whole
+   row; the search box sits above at full width. */
+.builtin-icon-grid {
+  grid-template-columns: repeat(auto-fill, minmax(4.6rem, 1fr));
+  max-block-size: 18rem; overflow-y: auto; overscroll-behavior: contain;
+  padding: .15rem;
+}
+.builtin-icon-group-label {
+  grid-column: 1 / -1; margin-block-start: .35rem;
+  font-size: .8rem; font-weight: 600; color: var(--muted); text-align: start;
+}
+.builtin-icon-group-label[hidden], .builtin-icon-tile[hidden] { display: none; }
+.builtin-icon-search { display: block; inline-size: 100%; margin-block: .35rem; }
 /* Review finding F5: .picker-tile:focus-visible's own outline (above) and
    a plain `outline` here have identical specificity, so whichever rule
    comes later in source wins regardless of focus state — a suggested tile

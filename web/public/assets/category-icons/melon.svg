@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- tabler:melon, generated from internal/catimport/icons.go (ut-docs#2506). Licence: internal/catimport/iconsrc/tabler/LICENSE -->
+  <rect width="64" height="64" fill="#DCFCE7"/>
+  <g transform="translate(12 12) scale(1.6667)" fill="none" stroke="#166534" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 10c0 5.523 -4.477 10 -10 10a9.967 9.967 0 0 1 -6.984 -2.842l4.343 -4.153a4 4 0 0 0 5.76 -5.51l4.342 -4.153a9.963 9.963 0 0 1 2.539 6.658"/>
+  </g>
+</svg>
