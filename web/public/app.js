@@ -1055,7 +1055,7 @@ document.addEventListener('htmx:afterSwap', function (evt) {
   try { document.title = decodeURIComponent(encoded); } catch (_) {}
 });
 
-// ut-docs#2319: the All tab's "load more" button (buttons.html's
+// ut-docs#2319: the All grid's "load more" button (buttons.html's
 // all-more-button, hx-swap="outerHTML" on itself) drops keyboard focus to
 // <body> once it retires itself, the same class of bug utTileJiggle's
 // exit() already guards against for a different control (this file's own
@@ -1685,22 +1685,19 @@ function initOfflineOverride(updateFn){
 
   function grid() { return document.getElementById('buttons-grid'); }
   function bar() { return document.querySelector('.products-finder .jiggle-bar'); }
-  // ut-docs#2294 fallout: #buttons-grid-all (the All tab's own dedicated
-  // grid, every active catalog item -- not just quick buttons) renders
-  // INSIDE #buttons-grid, so a plain '#buttons-grid .btn-tile[data-code]'
-  // match also catches every All-tab tile. All is the strip's DEFAULT tab
-  // (and the whole grid in the all_filter_chips browsing mode,
-  // ut-docs#2499 -- same #buttons-grid-all id on purpose, so this one
-  // guard covers both), so without this exclusion
-  // a long-press/right-click on the very first screen an operator sees
+  // ut-docs#2294 fallout: #buttons-grid-all (the All grid, every active
+  // catalog item -- not just quick buttons) renders INSIDE #buttons-grid,
+  // so a plain '#buttons-grid .btn-tile[data-code]' match also catches
+  // every All-grid tile. Since ut-docs#2613 the strip has no All tab, so
+  // the All grid exists only as the whole grid of the all_filter_chips
+  // browsing mode (ut-docs#2499), where it is the very first screen an
+  // operator sees: without this exclusion a long-press/right-click there
   // would wobble/badge the WHOLE catalogue and let a drag "reorder" items
   // that were never quick buttons -- sort_order has no meaning for the
   // All grid's fixed alphabetical listing. inAllGrid() gates every entry
   // point (tileFor/badgeFor) so the mode simply never arms from there, and
   // the code-gathering helpers below (orderedCodes/refreshPositions) skip
-  // any tile under #buttons-grid-all even when jiggle mode was entered
-  // legitimately from a real category panel elsewhere in the same
-  // #buttons-grid subtree (x-show hides it, it never leaves the DOM).
+  // any tile under #buttons-grid-all as defence in depth.
   function inAllGrid(el) { return !!(el && el.closest && el.closest('#buttons-grid-all')); }
   function tileFor(el) {
     var t = el && el.closest ? el.closest('#buttons-grid .btn-tile[data-code]') : null;
@@ -1735,11 +1732,9 @@ function initOfflineOverride(updateFn){
       // Done itself is about to be display:none'd; keep keyboard focus on
       // the screen rather than letting it fall to <body>.
       if (b.contains(document.activeElement) && g) {
-        // #buttons-grid-all renders first inside #buttons-grid (ut-docs#2294),
-        // so an unscoped query here can resolve to one of its hidden tiles
-        // instead of a real, visible tile in the active category panel --
-        // exclude it the same way tileFor/badgeFor already do. That alone
-        // isn't enough, though: every OTHER category's panel is also
+        // Exclude any #buttons-grid-all tile (all_filter_chips' All grid,
+        // ut-docs#2294/#2499) the same way tileFor/badgeFor already do. That
+        // alone isn't enough, though: every OTHER category's panel is also
         // present-but-hidden (x-show, only the active tab's panel actually
         // renders), so its own tiles come first in DOM order whenever they
         // precede the active panel -- require real visibility too, the same

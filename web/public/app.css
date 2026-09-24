@@ -2096,7 +2096,7 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
    overflow-wrap, verified against a realistic long name before shipping,
    not asserted without checking. */
 .grid { display: grid; gap: .5rem; grid-template-columns: repeat(auto-fill, minmax(7rem, 1fr)); }
-/* ut-docs#2319: the All tab's "load more" button (buttons.html's
+/* ut-docs#2319: the All grid's "load more" button (buttons.html's
    all-more-button) sits inside the same .grid as the product tiles it
    loads more of — span the full row instead of sizing to one tile column.
    Its touch target comes from the `.compact` class already on the element

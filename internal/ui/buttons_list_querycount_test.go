@@ -19,8 +19,8 @@ import (
 // review finding 2 regression: ButtonsHTTP.List used to call
 // Store.LoadAllActive TWICE per render -- once indirectly, inside the old
 // Store.Load()'s own body (the implicit-tile merge always needs every
-// active item, All tab shown or not), and a second time directly for the
-// All tab's own grid. LoadAllActive's own query (CatalogRepo.ListItems --
+// active item, in every mode), and a second time directly for the
+// All grid. LoadAllActive's own query (CatalogRepo.ListItems --
 // the one unconditionally run at its top, before any of its batched/
 // chunked follow-up lookups) is the cheapest reliable fingerprint for "did
 // LoadAllActive run:" it has a distinctive, stable SQL fragment
@@ -29,8 +29,10 @@ import (
 // `categories`). A plain correctness test can't see this doubling at all --
 // both the old and new code paths render an identical body -- so this counts
 // how many times that exact fragment is prepared during ONE List() call and
-// asserts it's exactly 1, with the All tab on (the doubling case) and off
-// (LoadAllActive still has to run once, for Load's own implicit merge).
+// asserts it's exactly 1 in every browsing mode: all_filter_chips (the one
+// mode that still renders an All grid — the doubling case) and the strip,
+// which since ut-docs#2613 has no All grid (LoadAllActive still has to run
+// once, for Load's own implicit merge), plus category_tabs' tiles.
 func TestButtonsHTTPList_LoadAllActiveRunsOnceNotTwice(t *testing.T) {
 	// The distinctive fragment from CatalogRepo.ListItems' own query --
 	// see internal/data/catalog_repo.go's ListItems. Kept as a literal here
@@ -40,7 +42,7 @@ func TestButtonsHTTPList_LoadAllActiveRunsOnceNotTwice(t *testing.T) {
 	// still catches a harness that silently stopped counting.
 	const listItemsFragment = "FROM items WHERE is_active = 1 ORDER BY name"
 
-	runOnce := func(t *testing.T, hideAllTab bool) int64 {
+	runOnce := func(t *testing.T, mode string) int64 {
 		t.Helper()
 		path := filepath.Join(t.TempDir(), "buttons_list_querycount.db")
 		counter := new(int64)
@@ -57,7 +59,7 @@ func TestButtonsHTTPList_LoadAllActiveRunsOnceNotTwice(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewRenderer: %v", err)
 		}
-		h := &ButtonsHTTP{Store: *store, View: renderer, HideAllTab: hideAllTab}
+		h := &ButtonsHTTP{Store: *store, View: renderer, BrowsingMode: mode}
 
 		atomic.StoreInt64(counter, 0)
 		rec := httptest.NewRecorder()
@@ -68,11 +70,10 @@ func TestButtonsHTTPList_LoadAllActiveRunsOnceNotTwice(t *testing.T) {
 		return atomic.LoadInt64(counter)
 	}
 
-	if got := runOnce(t, false); got != 1 {
-		t.Fatalf("All tab ON: LoadAllActive's own query ran %d times in one List() render, want exactly 1 (it must be fetched once and reused for both the implicit-tile merge and the All tab)", got)
-	}
-	if got := runOnce(t, true); got != 1 {
-		t.Fatalf("All tab OFF (HideAllTab): LoadAllActive's own query ran %d times, want exactly 1 (Load's own implicit-tile merge always needs it, All tab or not)", got)
+	for _, mode := range []string{browsingModeAllFilterChips, browsingModeStripOverflow, browsingModeCategoryTabs} {
+		if got := runOnce(t, mode); got != 1 {
+			t.Fatalf("%s: LoadAllActive's own query ran %d times in one List() render, want exactly 1 (it must be fetched once and reused for the implicit-tile merge and the mode's own view)", mode, got)
+		}
 	}
 }
 

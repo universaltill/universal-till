@@ -41,9 +41,9 @@ test.describe('scan while focus is in another sale-screen field (ut-docs#423)', 
     // query — a barcode matches no product NAME, so every tile would stay
     // hidden and the panel would look empty from the next scan onwards.
     await expect(search).toHaveValue('');
-    // ut-docs#2294: Butter 250g's tile exists twice now (its own category
-    // panel, hidden since All is the default tab, and the All tab's own
-    // dedicated grid) -- disambiguate to the one actually shown.
+    // Butter 250g's tile lives in the default (first, Food) category
+    // panel; ":visible" pins the assertion to the instance actually shown
+    // (hidden panels and search results stay in the DOM).
     await expect(page.locator('.btn-tile:visible', { hasText: 'Butter 250g' })).toBeVisible();
 
     assertClean();
@@ -80,7 +80,7 @@ test.describe('scan while focus is in another sale-screen field (ut-docs#423)', 
     await page.goto('/');
 
     // Search spans every category regardless of which tab is active
-    // (ut-docs#2181; ut-docs#2212 made All, not Food, the default tab) —
+    // (ut-docs#2181) —
     // "Butter" (Food > Dairy) is just as findable as a Drinks item here.
     // ut-docs#2173: open the strip's search first — see the first test's
     // own comment above.
@@ -90,7 +90,7 @@ test.describe('scan while focus is in another sale-screen field (ut-docs#423)', 
     await page.keyboard.type('Butter', { delay: 120 }); // human-speed, not scanner-speed
     // ut-docs#2294: search is now a real (debounced) server round trip into
     // its own #search-results grid, which sits alongside -- not instead
-    // of -- the tab/All-grid tiles Alpine leaves in the DOM (hidden while
+    // of -- the tab-panel tiles Alpine leaves in the DOM (hidden while
     // q is set). Every tile name below now potentially matches more than
     // one DOM node at once; ":visible" keeps this pinned to the one the
     // operator actually sees.

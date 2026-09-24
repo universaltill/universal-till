@@ -182,29 +182,53 @@ func TestButtonsHTTPList_AllFilterChipsModeRendersChipsOverAllGrid(t *testing.T)
 	}
 }
 
-// strip_overflow: today's sell screen, byte-for-byte in spirit — the All
-// tab first and default-selected, one tab per quick-button category, the
-// ut-docs#2307 "…" button, no chips, no tiles, and no trace of the retired
-// Categories tab.
-func TestButtonsHTTPList_StripOverflowModeIsTodaysStrip(t *testing.T) {
+// strip_overflow (ut-docs#2613): the category strip with NO All tab —
+// one tab per quick-button category (plus, since ut-docs#2498, a category
+// with active items but no quick button), the ut-docs#2307 "…" button, no
+// chips, no tiles, no All grid, and no trace of the retired Categories tab.
+// The first tab — and the default-selected one — is a real category:
+// $defaultTab's #2498 pick (first group that HasButtons), here Food.
+func TestButtonsHTTPList_StripOverflowModeHasNoAllTab(t *testing.T) {
 	_, _, h := newBrowsingModeTestHTTP(t)
 	h.BrowsingMode = "strip_overflow"
 	body := renderList(t, h)
 
 	mustContainAll(t, body,
-		`tab: '__all__',`, `id="cat-tab-all"`, `id="cat-tab-cat_food"`, `id="cat-tab-cat_drink"`,
-		`id="cat-tab-more"`, `id="category-overflow-dialog"`, `id="buttons-grid-all"`,
+		`tab: 'cat_food',`, `id="cat-tab-cat_food"`, `id="cat-tab-cat_drink"`,
+		`id="cat-tab-more"`, `id="category-overflow-dialog"`,
 		`id="cat-panel-cat_food"`,
 		// Household has active items but no quick button: since
-		// ut-docs#2498 (merged to main alongside this card) the strip keeps
-		// such a category as its own tab with an empty-state message rather
-		// than pruning it.
+		// ut-docs#2498 the strip keeps such a category as its own tab with
+		// an empty-state message rather than pruning it.
 		`id="cat-tab-cat_house"`,
 	)
 	mustContainNone(t, body,
+		`id="cat-tab-all"`, `id="buttons-grid-all"`, `data-testid="all-more-btn"`, `'__all__'`,
 		`id="browsing-category-chips"`, `id="browsing-category-tiles"`, `class="category-tile"`,
 		`id="cat-tab-categories"`, `id="cat-panel-categories"`,
 	)
+	// The first tab in the tablist is a real category tab, not a
+	// synthetic one.
+	bar := body[strings.Index(body, `class="tab-bar"`):]
+	first := bar[strings.Index(bar, `<button`):]
+	if !strings.HasPrefix(first, `<button type="button" id="cat-tab-cat_food"`) {
+		t.Fatalf("first strip tab must be the Food category tab, got: %.200s", first)
+	}
+}
+
+// Nothing to tile in strip mode (ut-docs#2613): with the All grid gone the
+// strip's empty state keys off .Groups alone, so a till with no quick
+// buttons — explicit or, since ut-docs#2541, implicit (every active,
+// non-hidden item) — shows the existing empty state with its "+ add" link.
+// The inactive Old Mop must not keep it from firing.
+func TestButtonsHTTPList_StripOverflowNoQuickButtonsIsEmptyState(t *testing.T) {
+	db, _, h := newBrowsingModeTestHTTP(t)
+	mustExec(t, db, `DELETE FROM shortcut_buttons`)
+	mustExec(t, db, `UPDATE items SET is_active = 0`)
+	h.BrowsingMode = "strip_overflow"
+	body := renderList(t, h)
+	mustContainAll(t, body, "products.empty<", `data-testid="products-add-link"`)
+	mustContainNone(t, body, `class="tab-bar"`, `id="cat-tab-all"`, `id="buttons-grid-all"`, `data-name="Bread"`)
 }
 
 // The Designer's live replica (EditMode) always renders the quick-button
@@ -216,7 +240,6 @@ func TestButtonsHTTPList_EditModeAlwaysRendersStrip(t *testing.T) {
 		_, _, h := newBrowsingModeTestHTTP(t)
 		h.BrowsingMode = mode
 		h.EditMode = true
-		h.HideAllTab = true
 		body := renderList(t, h)
 		mustContainAll(t, body, `id="cat-tab-cat_food"`, `id="cat-tab-cat_drink"`, `data-testid="designer-categories"`)
 		mustContainNone(t, body, `id="browsing-category-chips"`, `id="browsing-category-tiles"`, `id="buttons-grid-all"`)
@@ -225,15 +248,14 @@ func TestButtonsHTTPList_EditModeAlwaysRendersStrip(t *testing.T) {
 
 // A ButtonsHTTP literal that never sets BrowsingMode (every pre-#2499 test
 // in this package, and the AllMore/Search/CategoryItems fragment handlers,
-// none of which render the strip) renders the strip — the same "the Go
-// zero value keeps the historical shape" convention HideAllTab's inverted
-// naming documents. internal/pages/buttons_api.go is the one production
-// caller and always passes the clamped live mode.
+// none of which render the strip) renders the strip — the "the Go zero
+// value keeps the historical shape" convention. internal/pages/buttons_api.go
+// is the one production caller and always passes the clamped live mode.
 func TestButtonsHTTPList_ZeroValueBrowsingModeRendersStrip(t *testing.T) {
 	_, _, h := newBrowsingModeTestHTTP(t)
 	body := renderList(t, h)
-	mustContainAll(t, body, `id="cat-tab-all"`, `id="cat-tab-more"`)
-	mustContainNone(t, body, `id="browsing-category-chips"`, `id="browsing-category-tiles"`)
+	mustContainAll(t, body, `id="cat-tab-cat_food"`, `id="cat-tab-more"`)
+	mustContainNone(t, body, `id="cat-tab-all"`, `id="browsing-category-chips"`, `id="browsing-category-tiles"`)
 }
 
 // The popup body (ut-docs#2372, absorbed): EVERY active item in the

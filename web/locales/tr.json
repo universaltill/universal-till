@@ -2104,7 +2104,7 @@
   "settings.sell_screen.browsing_mode_category_tabs_hint": "Her kategori için bir kutucuk gösterir; birine dokununca o kategorideki tüm ürünler ve bir arama kutusu açılır.",
   "settings.sell_screen.browsing_mode_label": "Ürünlere göz atma biçimi",
   "settings.sell_screen.browsing_mode_strip_overflow": "Hızlı düğmeli kategori şeridi",
-  "settings.sell_screen.browsing_mode_strip_overflow_hint": "Hızlı düğmelerinizi bir sıra kategori sekmesinin altında gösterir — önce Tümü sekmesi, sığmayan kategoriler için sonda bir … düğmesi.",
+  "settings.sell_screen.browsing_mode_strip_overflow_hint": "Hızlı düğmelerinizi bir sıra kategori sekmesinin altında gösterir; sığmayan kategoriler için sonda bir … düğmesi bulunur.",
   "settings.sell_screen.title": "Satış ekranı",
   "settings.service_charge.invalid_rate": "Servis ücretini sıfır veya daha büyük bir yüzde olarak girin, örneğin 12,5.",
   "settings.service_charge.tr_forbidden": "Türk hukuku, adisyonda servis ücreti, masa ücreti veya kuver alınmasını yasaklar (Fiyat Etiketi Yönetmeliği, 30 Ocak 2026'dan beri yürürlükte). Bunun yerine bu tutarı menü fiyatlarına dahil edin.",

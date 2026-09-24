@@ -18,28 +18,21 @@ import { watchConsole, setBrowsingMode } from './helpers';
 // whole catalogue, not the active category, so that is now this pipeline's
 // behaviour too.
 //
-// ut-docs#2294 SUPERSEDED both the "All reuses every category panel"
-// mechanic ut-docs#2212 gave the All tab AND the "search is a client-side
-// filter over already-rendered tiles" mechanic ut-docs#2181 gave search —
-// see web/ui/partials/buttons.html's own panelVisible()/showAllGrid()
-// comments (around its "products-finder" x-data block) for the exact
-// reasoning this file's tests below are now written against:
-//   - All has its OWN dedicated, flat grid (#buttons-grid-all — every
-//     ACTIVE catalog item, not just quick-button ones, A-Z, no per-category
-//     grouping/headers), and a category's own panel is hidden the whole
-//     time All is selected — never both an All-grid copy AND a
-//     category-panel copy of the same item visible at once.
+// ut-docs#2294 SUPERSEDED the "search is a client-side filter over
+// already-rendered tiles" mechanic ut-docs#2181 gave search, and
+// ut-docs#2613 retired the strip's All tab (ut-docs#2212/#2294) outright —
+// the strip is category tabs plus the "…" button only, the first category
+// tab selected by default:
 //   - Search is a real, debounced server round trip (GET /ui/buttons/search)
 //     into its OWN #search-results grid — not a filter toggled over the
-//     tab/All-grid tiles already in the DOM. While a query is active,
-//     #buttons-grid (every tab AND the All grid alike) hides in its
-//     entirety; Alpine never removes it from the DOM (x-show only), so a
+//     tab tiles already in the DOM. While a query is active, #buttons-grid
+//     (every tab panel) hides in its entirety; Alpine never removes it from the DOM (x-show only), so a
 //     plain by-name tile locator now matches more than one node at once —
 //     tests below scope to the one container that's actually meant to be
 //     showing, rather than disambiguating with ":visible" everywhere.
 //
 // Drives the real demo-seeded catalog (001_init.sql) rather than importing
-// fixture data — Food (default-active tab pre-#2294, nests a "Dairy"
+// fixture data — Food (nests a "Dairy"
 // subcategory with Butter 250g among others) and Drinks (Coca-Cola 330ml
 // among others) already exist as real category-grouped shortcut tiles, same
 // convention sale-screen-213.spec.ts and rtl.spec.ts already rely on for
@@ -66,37 +59,24 @@ test.describe('sale screen category tabs + search (ut-docs#418)', () => {
     const tabBar = page.locator('.products .tab-bar');
     await expect(tabBar).toBeVisible();
 
-    const allGrid = page.locator('#buttons-grid-all');
-    const butterInAll = allGrid.locator('.btn-tile', { hasText: 'Butter 250g' }); // Food > Dairy
-    const colaInAll = allGrid.locator('.btn-tile', { hasText: 'Coca-Cola Can 330ml' }); // Drinks, direct
     const butterInFoodPanel = page.locator('#cat-panel-cat_food .btn-tile', { hasText: 'Butter 250g' });
     const colaInDrinksPanel = page.locator('#cat-panel-cat_drink .btn-tile', { hasText: 'Coca-Cola 330ml' });
 
-    const allTab = tabBar.getByRole('tab', { name: 'All' });
     const foodTab = tabBar.getByRole('tab', { name: 'Food' });
     const drinksTab = tabBar.getByRole('tab', { name: 'Drinks' });
 
-    // ut-docs#2212: "All" is the first tab and is selected by default, with
-    // no query and no prior tap. ut-docs#2294: unlike the original #2212
-    // mechanic (every category panel visible at once), All now shows its
-    // own dedicated grid — every category's own panel stays hidden the
-    // whole time.
-    await expect(tabBar.locator('.tab').first()).toHaveId('cat-tab-all');
-    await expect(allTab).toHaveClass(/active/);
+    // ut-docs#2613: no All tab and no All grid — the first tab is a real
+    // category tab and it is the one selected by default, with no query
+    // and no prior tap.
+    await expect(page.locator('#cat-tab-all')).toHaveCount(0);
+    await expect(page.locator('#buttons-grid-all')).toHaveCount(0);
+    await expect(tabBar.locator('.tab').first()).toHaveAttribute('data-cat-tab', '');
+    await expect(tabBar.locator('.tab').first()).toHaveClass(/active/);
     await expect(tabBar.locator('.tab.active')).toHaveCount(1);
-    await expect(allGrid).toBeVisible();
-    await expect(butterInAll).toBeVisible();
-    await expect(colaInAll).toBeVisible();
-    await expect(page.locator('#cat-panel-cat_food')).toBeHidden();
-    await expect(page.locator('#cat-panel-cat_drink')).toBeHidden();
 
-    // Selecting a real category tab still narrows to just that category —
-    // the pre-#2212 behavior, now reached by an explicit tap on the tab
-    // rather than being the default. The All grid hides entirely; the
-    // selected category's own panel copy takes over.
+    // Selecting a category tab narrows to just that category's own panel.
     await foodTab.click();
     await expect(foodTab).toHaveClass(/active/);
-    await expect(allGrid).toBeHidden();
     await expect(butterInFoodPanel).toBeVisible();
     await expect(colaInDrinksPanel).toBeHidden();
 
@@ -111,7 +91,7 @@ test.describe('sale screen category tabs + search (ut-docs#418)', () => {
     // query spans every category, so Butter is findable without leaving
     // the Drinks tab — ut-docs#2294 moved the mechanism to a real server
     // round trip into #search-results (not a client-side filter over the
-    // tab/All-grid tiles, which stay hidden — and in the DOM, unmatched —
+    // tab tiles, which stay hidden — and in the DOM, unmatched —
     // the whole time a query is active).
     const searchResults = page.locator('#search-results');
     await page.locator('.products-strip-search').click();
@@ -148,52 +128,38 @@ test.describe('sale screen category tabs + search (ut-docs#418)', () => {
     assertClean();
   });
 
-  test('the All tab shows a flat grid of every active item in its own dedicated grid, without growing the strip row (ut-docs#2294)', async ({ page }) => {
+  test('the strip has no All tab: switching between category tabs never grows the strip row (ut-docs#2613)', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.goto('/');
 
     const tabBar = page.locator('.products .tab-bar');
     const strip = page.locator('.products-strip');
-    const allTab = tabBar.getByRole('tab', { name: 'All' });
     const foodTab = tabBar.getByRole('tab', { name: 'Food' });
-    const allGrid = page.locator('#buttons-grid-all');
-    const butterInAll = allGrid.locator('.btn-tile', { hasText: 'Butter 250g' }); // Food > Dairy
-    const colaInAll = allGrid.locator('.btn-tile', { hasText: 'Coca-Cola Can 330ml' }); // Drinks, direct
+    const drinksTab = tabBar.getByRole('tab', { name: 'Drinks' });
+    await expect(tabBar).toBeVisible();
+    await expect(tabBar.getByRole('tab', { name: 'All', exact: true })).toHaveCount(0);
 
     // ut-docs#2173's own invariant (same row, same height, never a second
-    // row) must still hold once a tab is ADDED to the strip, not just when
-    // search toggles within it.
+    // row) must hold across tab switches.
     const beforeBox = await strip.boundingBox();
     expect(beforeBox, 'strip must have a measurable box on first paint').toBeTruthy();
 
-    // Navigate away from the default (Food), then back to All — proving
-    // selection, not just the initial default, restores the whole-catalogue
-    // view.
     await foodTab.click();
-    await expect(allGrid).toBeHidden();
-    await allTab.click();
-    await expect(allTab).toHaveClass(/active/);
-    await expect(tabBar.locator('.tab.active')).toHaveCount(1);
-
-    // ut-docs#2294 SUPERSEDES the original ut-docs#2212 mechanic this test
-    // used to pin ("every category panel visible at once, each labelled"):
-    // All now has its own dedicated, flat grid — every ACTIVE catalog item
-    // (not just quick-button ones), A-Z, with NO per-category
-    // grouping/headers at all (unlike the old reused-panels view, or the
-    // cross-category search view, both of which showed a category header
-    // per section) — and every category's own panel stays hidden the whole
-    // time, never showing the same item twice at once.
-    await expect(butterInAll).toBeVisible();
-    await expect(colaInAll).toBeVisible();
-    await expect(page.locator('#cat-panel-cat_food')).toBeHidden();
+    await expect(foodTab).toHaveClass(/active/);
+    // Every active Food item is still on the strip (ut-docs#2541 implicit
+    // tiles), nested Dairy included, with no All grid to fall back on.
+    await expect(page.locator('#cat-panel-cat_food .btn-tile', { hasText: 'Butter 250g' })).toBeVisible();
     await expect(page.locator('#cat-panel-cat_drink')).toBeHidden();
-    await expect(allGrid.locator('.category-header')).toHaveCount(0);
+    await drinksTab.click();
+    await expect(drinksTab).toHaveClass(/active/);
+    await expect(tabBar.locator('.tab.active')).toHaveCount(1);
+    await expect(page.locator('#cat-panel-cat_food')).toBeHidden();
 
     const afterBox = await strip.boundingBox();
-    expect(afterBox, 'strip must have a measurable box with All selected').toBeTruthy();
+    expect(afterBox, 'strip must have a measurable box after switching tabs').toBeTruthy();
     expect(
       Math.abs(afterBox!.height - beforeBox!.height),
-      `strip height must not change when All is selected (before ${beforeBox!.height}px, after ${afterBox!.height}px)`,
+      `strip height must not change across tab switches (before ${beforeBox!.height}px, after ${afterBox!.height}px)`,
     ).toBeLessThan(1);
 
     assertClean();
@@ -248,6 +214,11 @@ test.describe('sale screen category tabs + search (ut-docs#418)', () => {
 
     const tabBar = page.locator('.products .tab-bar');
     await expect(tabBar).toBeVisible();
+    // ut-docs#2613: no All tab — pick Food (before opening search, which
+    // hides the tab bar) so Butter's tile is on screen.
+    const foodTab = tabBar.getByRole('tab', { name: 'Food' });
+    await foodTab.click();
+    await expect(foodTab).toHaveClass(/active/);
     // ut-docs#2173: the search box is no longer always on screen — its
     // trigger icon is, and opening it still reveals the same input, RTL
     // included. sale-screen-search-strip-2173.spec.ts covers the
@@ -257,12 +228,11 @@ test.describe('sale screen category tabs + search (ut-docs#418)', () => {
     await page.locator('.products-strip-search').click();
     await expect(page.locator('#products-search')).toBeVisible();
 
-    // Exactly one tab is active by default (All, ut-docs#2294), and its
-    // own dedicated grid's tile is a real, clickable hit target — logical
-    // CSS properties must not have pushed it out of frame or behind
-    // another element under RTL.
+    // Exactly one tab is active, and its panel's tile is a real, clickable
+    // hit target — logical CSS properties must not have pushed it out of
+    // frame or behind another element under RTL.
     await expect(tabBar.locator('.tab.active')).toHaveCount(1);
-    const butterTile = page.locator('#buttons-grid-all .btn-tile', { hasText: 'Butter' });
+    const butterTile = page.locator('#cat-panel-cat_food .btn-tile', { hasText: 'Butter 250g' });
     await expect(butterTile).toBeVisible();
     await Promise.all([
       page.waitForResponse((r) => r.url().includes('/api/pos/scan')),

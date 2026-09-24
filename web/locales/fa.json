@@ -2104,7 +2104,7 @@
   "settings.sell_screen.browsing_mode_category_tabs_hint": "برای هر دسته یک کاشی نشان می‌دهد؛ روی یکی بزنید تا پنجره‌ای با همهٔ کالاهای آن و یک کادر جستجو باز شود.",
   "settings.sell_screen.browsing_mode_label": "روش مرور کالاها",
   "settings.sell_screen.browsing_mode_strip_overflow": "نوار دسته‌بندی با دکمه‌های سریع",
-  "settings.sell_screen.browsing_mode_strip_overflow_hint": "دکمه‌های سریع شما را زیر یک ردیف زبانهٔ دسته‌بندی نشان می‌دهد — ابتدا زبانهٔ همه، و وقتی دسته‌ها بیش از جا باشند، دکمهٔ … در انتها.",
+  "settings.sell_screen.browsing_mode_strip_overflow_hint": "دکمه‌های سریع شما را زیر یک ردیف زبانهٔ دسته‌بندی نشان می‌دهد، و وقتی دسته‌ها بیش از جا باشند، یک دکمهٔ … در انتها می‌گذارد.",
   "settings.sell_screen.title": "صفحه فروش",
   "settings.service_charge.invalid_rate": "هزینه سرویس را به صورت درصدی صفر یا بیشتر وارد کنید، برای مثال ۱۲٫۵.",
   "settings.service_charge.tr_forbidden": "قانون ترکیه افزودن هزینه سرویس، هزینه میز یا کاور به صورت‌حساب را ممنوع کرده است (آیین‌نامه برچسب قیمت، از ۳۰ ژانویه ۲۰۲۶ لازم‌الاجرا). به‌جای آن این مبلغ را در قیمت منو لحاظ کنید.",

@@ -2089,7 +2089,7 @@
   "settings.sell_screen.browsing_mode_category_tabs_hint": "Shows a tile for each category; tap one to open a popup with every item in it and a search box.",
   "settings.sell_screen.browsing_mode_label": "How items are browsed",
   "settings.sell_screen.browsing_mode_strip_overflow": "Category strip with quick buttons",
-  "settings.sell_screen.browsing_mode_strip_overflow_hint": "Shows your quick buttons under a row of category tabs — an All tab first, and a … button at the end when there are more categories than fit.",
+  "settings.sell_screen.browsing_mode_strip_overflow_hint": "Shows your quick buttons under a row of category tabs, with a … button at the end when there are more categories than fit.",
   "settings.sell_screen.title": "Sell screen",
   "settings.service_charge.invalid_rate": "Enter the service charge as a percentage of zero or more, for example 12.5.",
   "settings.service_charge.tr_forbidden": "Turkish law bans a service charge, table fee or cover on the bill (Fiyat Etiketi Yönetmeliği, in force since 30 Jan 2026). Price it into your menu items instead.",

@@ -104,20 +104,12 @@ test.describe('catalog price edit updates price_history (ut-docs#2314)', () => {
       // ties directly to the item this test just edited, sidestepping that
       // label/name mismatch entirely (same attribute
       // sell-tile-long-press-2285.spec.ts already keys off).
-      // ut-docs#2294: All (not Drinks) is the default tab now, and this
-      // item's shortcut tile exists TWICE in the DOM at once -- once in its
-      // own (now hidden, since it isn't the default tab) category panel,
-      // once in the All tab's own dedicated grid. These are NOT
-      // interchangeable for this test: the All-tab copy is built straight
-      // from the catalog item (ButtonStore.LoadAllActive) and carries the
-      // item's own PRIMARY barcode and raw Name ("Coca-Cola Can 330ml"),
-      // while the quick-button copy carries the shortcut's own distinct
-      // barcode/label ("Coca-Cola 330ml", TILE_LABEL below) -- confirmed
-      // live: clicking the All-grid copy rings up a basket line labelled
-      // "Coca-Cola Can 330ml", not TILE_LABEL. This test is specifically
-      // about the quick-button/basket-line label path (see TILE_LABEL's own
-      // comment above), so it selects the item's own category tab first and
-      // scopes to `.products-tab-panel`, which only that copy lives inside.
+      // Drinks isn't necessarily the default tab (the strip's first
+      // category is), so select it first and scope to
+      // `.products-tab-panel`: this test is specifically about the
+      // quick-button/basket-line label path (see TILE_LABEL's own comment
+      // above), whose tile carries the shortcut's own barcode/label
+      // ("Coca-Cola 330ml"), not the catalog item's raw Name.
       await page.getByRole('tab', { name: 'Drinks' }).click();
       const tile = page.locator(`.products-tab-panel .btn-tile[data-item-id="${itemId}"]`);
       await expect(tile).toBeVisible();

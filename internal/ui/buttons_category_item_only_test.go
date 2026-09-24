@@ -90,9 +90,14 @@ func TestButtonsHTTPList_CategoryWithOnlyHiddenItemsIsPruned(t *testing.T) {
 	if strings.Contains(body, `id="cat-tab-cat_drink"`) {
 		t.Fatalf("expected NO Drinks tab -- its only item is hidden, got: %s", body)
 	}
-	foodPanel := panelSlice(t, body, "cat_food")
-	if strings.Contains(foodPanel, `data-testid="category-empty-state"`) {
-		t.Fatalf("expected no empty-state marker in Food's panel (it has a quick button), got: %s", foodPanel)
+	// ut-docs#2613: with Drinks pruned and no All tab any more, Food is the
+	// only group left — the single-category branch (Food's own headed
+	// group, no tab bar), not a tabbed panel.
+	if strings.Contains(body, `class="tab-bar"`) {
+		t.Fatalf("expected no tab bar with a single surviving category, got: %s", body)
+	}
+	if !strings.Contains(body, `data-name="Bread"`) || strings.Contains(body, `data-testid="category-empty-state"`) {
+		t.Fatalf("expected Food's Bread tile and no empty-state marker (it has a quick button), got: %s", body)
 	}
 }
 
@@ -135,14 +140,13 @@ func TestButtonsHTTPList_ItemOnlyCategoryShowsImplicitTile(t *testing.T) {
 
 // TestButtonsHTTPList_DefaultTabPrefersGroupWithButtons (ut-docs#2498;
 // ut-docs#2541 review finding 5): a category whose only item is hidden is
-// pruned outright, so with the All tab off the landing tab is Food (the
+// pruned outright, so the landing tab is Food (the
 // first surviving group; Drinks, an implicit-tile-only group, follows). The template's "skip to the first HasButtons
 // group" pick itself stays covered by buttons_category_groups_test.go,
 // which builds itemCounts by hand — a surviving zero-button group can no
 // longer be built through the HTTP layer.
 func TestButtonsHTTPList_DefaultTabPrefersGroupWithButtons(t *testing.T) {
 	db, store, h := newItemOnlyStripTestHTTP(t)
-	h.HideAllTab = true
 
 	mustExec(t, db, `INSERT INTO categories(id, name, parent_id, sort_order) VALUES
 		('cat_household', 'Household', NULL, 1),

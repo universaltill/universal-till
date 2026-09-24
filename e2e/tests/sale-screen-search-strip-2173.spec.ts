@@ -162,11 +162,11 @@ test.describe('sale-screen category strip: search expand/collapse (ut-docs#2173)
     const assertClean = watchConsole(page);
     await page.goto('/');
 
-    // Whichever tab is active (ut-docs#2212: All by default — see
+    // Whichever tab is active (the first category by default — see
     // sale-screen-category-tabs-search-418.spec.ts), search spans every
     // category (ut-docs#2181), so which tab is active doesn't matter here.
     // ut-docs#2294: search is now a real server round trip into its own
-    // #search-results grid, alongside (not instead of) the tab/All-grid
+    // #search-results grid, alongside (not instead of) the tab-panel
     // copies Alpine leaves hidden in the DOM -- ":visible" pins each
     // assertion to the one instance actually on screen.
     await page.locator('.products-strip-search').click();
@@ -377,7 +377,7 @@ test.describe('sale-screen category strip: no horizontal scroll, even with many 
     // actually SHOWN is what ut-docs#2307 changed; that count is covered
     // by sale-screen-category-strip-overflow-2307.spec.ts, not repeated
     // here.
-    await expect(tabBar.locator('.tab')).toHaveCount(CATEGORY_COUNT + 5, { timeout: 10_000 }); // + seeded Food/Drinks/Household/Produce (ut-docs#2498: items-only categories now show) + ut-docs#2212's All tab
+    await expect(tabBar.locator('.tab')).toHaveCount(CATEGORY_COUNT + 4, { timeout: 10_000 }); // + seeded Food/Drinks/Household/Produce (ut-docs#2498: items-only categories now show); no All tab since ut-docs#2613
 
     // ut-docs#2307: never overflows its own box any more — there is
     // nothing left to scroll to.
@@ -418,7 +418,7 @@ test.describe('sale-screen category strip: no horizontal scroll, even with many 
     await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
 
     const tabBar = page.locator('.products .tab-bar');
-    await expect(tabBar.locator('.tab')).toHaveCount(CATEGORY_COUNT + 5, { timeout: 10_000 }); // + seeded Food/Drinks/Household/Produce (ut-docs#2498: items-only categories now show) + ut-docs#2212's All tab
+    await expect(tabBar.locator('.tab')).toHaveCount(CATEGORY_COUNT + 4, { timeout: 10_000 }); // + seeded Food/Drinks/Household/Produce (ut-docs#2498: items-only categories now show); no All tab since ut-docs#2613
 
     const overflowPx = await tabBar.evaluate((el) => el.scrollWidth - el.clientWidth);
     expect(overflowPx, `tab-bar must not overflow under RTL either, got ${overflowPx}px`).toBeLessThanOrEqual(1);
