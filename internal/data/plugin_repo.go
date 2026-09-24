@@ -1356,6 +1356,12 @@ type MenuEntryRow struct {
 	MenuGroup           string
 	RequiredPermissions sql.NullString
 	GrantedFlags        sql.NullString
+	// IconName is plugin_entries.icon_path for a type:"page" row — a page
+	// entry's own declared default menu-tile icon name (ut-docs#1734), "" if
+	// the plugin declared none. Despite the column name, this is never a
+	// file path for a page entry — see plugins.ManifestEntry.IconName's doc
+	// comment.
+	IconName string
 }
 
 // ReceiptTemplateRow represents receipt template metadata stored in plugin entries.
@@ -1566,19 +1572,20 @@ ORDER BY id
 
 func (r *PluginRepo) ListMenuEntries(ctx context.Context) ([]MenuEntryRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT 
-    pe.plugin_id, 
-    pe.key, 
-    pe.route, 
-    pe.label, 
+SELECT
+    pe.plugin_id,
+    pe.key,
+    pe.route,
+    pe.label,
     pe.menu_group,
+    COALESCE(pe.icon_path, ''),
     GROUP_CONCAT(pp.permission) as required_permissions,
     GROUP_CONCAT(pp.granted) as granted_flags
 FROM plugin_entries pe
 JOIN plugins p ON p.id = pe.plugin_id
 LEFT JOIN plugin_permissions pp ON pp.plugin_id = pe.plugin_id
 WHERE pe.type = 'page' AND pe.is_active = 1 AND p.is_active = 1
-GROUP BY pe.plugin_id, pe.key, pe.route, pe.label, pe.menu_group
+GROUP BY pe.plugin_id, pe.key, pe.route, pe.label, pe.menu_group, pe.icon_path
 ORDER BY pe.sort_order, pe.label
 `)
 	if err != nil {
@@ -1588,7 +1595,7 @@ ORDER BY pe.sort_order, pe.label
 	var res []MenuEntryRow
 	for rows.Next() {
 		var row MenuEntryRow
-		if err := rows.Scan(&row.PluginID, &row.Key, &row.Route, &row.Label, &row.MenuGroup, &row.RequiredPermissions, &row.GrantedFlags); err != nil {
+		if err := rows.Scan(&row.PluginID, &row.Key, &row.Route, &row.Label, &row.MenuGroup, &row.IconName, &row.RequiredPermissions, &row.GrantedFlags); err != nil {
 			return nil, pluginObs.wrap("list_menu_entries", err)
 		}
 		res = append(res, row)

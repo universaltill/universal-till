@@ -118,6 +118,11 @@ type MenuPlugin struct {
 	Route    string `json:"route"`
 	Label    string `json:"label"`
 	Menu     string `json:"menu"`
+	// Icon is the plugin's own declared default menu-tile icon name
+	// (ut-docs#1734), "" if none was declared. A name in
+	// uislot.KnownIconNames, validated at install time
+	// (validatePageEntryIcon) — never a file path.
+	Icon string `json:"icon,omitempty"`
 }
 
 // DocsEntryKey is the reserved page-entry key (ADR-0037) a plugin uses to
@@ -302,6 +307,7 @@ func (m *Manager) loadMenuEntries(ctx context.Context, repo *data.PluginRepo) er
 			Route:    row.Route,
 			Label:    row.Label,
 			Menu:     row.MenuGroup,
+			Icon:     row.IconName,
 		}
 		permsStr := row.RequiredPermissions
 		grantedStr := row.GrantedFlags

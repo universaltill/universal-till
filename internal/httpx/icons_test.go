@@ -40,6 +40,26 @@ func TestIconHTMLUnknownRendersNothing(t *testing.T) {
 	}
 }
 
+// TestIconNamesMirrorsUislotKnownIconNames pins ut-docs#1734's cross-package
+// mirror: internal/plugins.validatePageEntryIcon validates a plugin's
+// declared page-entry icon name against uislot.KnownIconNames rather than
+// this package's own IconNames() — internal/plugins cannot import
+// internal/httpx (this package already imports internal/plugins for its
+// self-update badge helpers, so the reverse import would cycle). If this
+// test goes red, uislot.KnownIconNames (internal/uislot/icon_names.go) has
+// drifted from railIcons' keys and must be updated to match.
+func TestIconNamesMirrorsUislotKnownIconNames(t *testing.T) {
+	want := IconNames()
+	if len(want) != len(uislot.KnownIconNames) {
+		t.Fatalf("uislot.KnownIconNames has %d entries, httpx.IconNames() has %d — keep them in sync", len(uislot.KnownIconNames), len(want))
+	}
+	for _, name := range want {
+		if !uislot.IsKnownIconName(name) {
+			t.Errorf("httpx icon %q is missing from uislot.KnownIconNames", name)
+		}
+	}
+}
+
 // Every {{ icon "x" }} in the UI templates must resolve, and the rail
 // partials must not have slid back to emoji.
 func TestRailIconsReferencedByTemplatesExist(t *testing.T) {

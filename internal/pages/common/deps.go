@@ -354,6 +354,10 @@ func (d *Deps) SetState(st RuntimeState) {
 type MenuItem struct {
 	Href  string
 	Label string
+	// Icon is a plugin page entry's own declared default menu-tile icon
+	// name (ut-docs#1734), "" for a core item (core tiles carry their icon
+	// on uislot.CoreMenu instead) or a plugin entry with no declared icon.
+	Icon string
 }
 
 // SyncPrimaryURL returns the primary's URL when this till is a replica

@@ -66,17 +66,23 @@ var iconSVGFor = map[string]string{
 }
 
 // genericFallbackIcon is the deliberate generic glyph a menu tile falls
-// back to when neither its entry nor iconSVGFor names one — replacing the
-// old "▪️" fallback (ut-docs#1722), which read as a rendering failure (the
-// exact way it was reported, ut-docs#1371) rather than a deliberate icon.
+// back to when neither its entry nor iconSVGFor/its own declared icon names
+// one — replacing the old "▪️" fallback (ut-docs#1722), which read as a
+// rendering failure (the exact way it was reported, ut-docs#1371) rather
+// than a deliberate icon.
 //
-// A plugin still cannot supply its own icon FILE here (ut-docs#1734 owns
-// that: ListMenuEntries' SQL never selects icon_path, so data.MenuEntryRow
-// has no IconPath to read; the button-icon path — plugin_icons.go's
-// traversal-guarded route — is the prior art it should reuse). What a
-// `layout` plugin CAN do since ADR-0088 Decision H is name an icon from
-// core's own set for a core tile; an unknown name falls back to the core
-// entry's icon, then to this one.
+// A plugin CAN now declare its own default icon NAME for a type:"page" entry
+// (ut-docs#1734, closing the gap this comment used to describe): a `page`
+// entry's manifest.ManifestEntry.IconName, validated at install time against
+// uislot.KnownIconNames, flows through data.MenuEntryRow ->
+// plugins.MenuPlugin.Icon -> common.MenuItem.Icon -> menuSlotEntries below,
+// same as a file-path icon never can be here (that's IconPath, button-only —
+// plugin_icons.go's traversal-guarded route is the prior art for that
+// separate case). A `layout` plugin's Decision H re-icon amendment for that
+// same tile still wins over the plugin's own default: uislot.Resolve amends
+// whatever Icon value menuSlotEntries hands it and preserves that value as
+// IconFallback, regardless of where the pre-amendment value came from. An
+// unknown/unset name at any point in the chain falls back to this one.
 const genericFallbackIcon = "puzzle"
 
 // menuVisibility evaluates a core entry's VisibleIf predicate, memoized per
@@ -284,11 +290,20 @@ func menuSlotEntries(snapshot []common.MenuItem) []uislot.Entry {
 			entries = append(entries, e)
 			continue
 		}
+		// iconSVGFor stays authoritative for any core route reaching this
+		// path (it only ever covers core routes — see its own doc comment);
+		// a plugin's own declared default (ut-docs#1734) is the fallback for
+		// everything else, "" if it declared none, in which case menuIcon's
+		// own fallback chain reaches genericFallbackIcon as before.
+		icon := iconSVGFor[m.Href]
+		if icon == "" {
+			icon = m.Icon
+		}
 		entries = append(entries, uislot.Entry{
 			Key:      m.Href,
 			Href:     m.Href,
 			LabelKey: m.Label,
-			Icon:     iconSVGFor[m.Href],
+			Icon:     icon,
 			Order:    uislot.PluginPagesOrder + pages,
 		})
 		pages++

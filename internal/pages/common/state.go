@@ -564,7 +564,7 @@ func BuildMenu(base []MenuItem, pm *plugins.Manager) []MenuItem {
 	items := append([]MenuItem{}, base...)
 	for _, p := range pm.MenuPlugins {
 		if p.Route != "" && p.Label != "" {
-			items = append(items, MenuItem{Href: p.Route, Label: p.Label})
+			items = append(items, MenuItem{Href: p.Route, Label: p.Label, Icon: p.Icon})
 		}
 	}
 	return items
