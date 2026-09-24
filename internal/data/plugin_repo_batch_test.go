@@ -3,11 +3,11 @@ package data
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // Regression tests for ut-docs#1323 (performance audit section G): four
@@ -19,7 +19,7 @@ import (
 
 func newBatchTestDB(t *testing.T) (*db.DB, string) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "batch.db")
+	path := testsupport.MigratedDBFile(t, "batch.db")
 	d, err := db.Open(path)
 	if err != nil {
 		t.Fatal(err)

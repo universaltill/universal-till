@@ -2,11 +2,11 @@ package data
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // Coverage batch 8 — POSRepo lookups/ensure/payment/pricing group:
@@ -17,7 +17,7 @@ import (
 
 func newBatch8DB(t *testing.T, name string) *db.DB {
 	t.Helper()
-	dbo, err := db.Open(filepath.Join(t.TempDir(), name))
+	dbo, err := db.Open(testsupport.MigratedDBFile(t, name))
 	if err != nil {
 		t.Fatal(err)
 	}

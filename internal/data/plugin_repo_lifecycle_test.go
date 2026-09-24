@@ -2,11 +2,11 @@ package data
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // newPluginLifecycleTestDB opens a DB via the real migrations (plugins has
@@ -15,7 +15,7 @@ import (
 // plugin rows for a clean slate.
 func newPluginLifecycleTestDB(t *testing.T) (*db.DB, *PluginRepo) {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), "plugin_lifecycle.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "plugin_lifecycle.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

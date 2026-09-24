@@ -3,12 +3,12 @@ package data_test
 import (
 	"context"
 	"database/sql"
-	"path/filepath"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // ut-docs#1900: the manual add-variant row's SKU field has always promised
@@ -17,7 +17,7 @@ import (
 // every generated variant carrying a real SKU, so the fix lands here, on the
 // shared insert path, and covers the manual row too.
 func TestCreateVariant_BlankSKUGetsGeneratedSKU(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "autosku.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "autosku.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

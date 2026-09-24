@@ -3,20 +3,20 @@ package data_test
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"sync"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // TestEnsureDefaultThumbnail_SetsPathForImagelessItem is the ut-docs#1189
 // Phase 1 regression: an item with no thumbnail gets one item_images row
 // (role=thumbnail) pointing at the given placeholder path.
 func TestEnsureDefaultThumbnail_SetsPathForImagelessItem(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cat.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestEnsureDefaultThumbnail_SetsPathForImagelessItem(t *testing.T) {
 // placeholder-if-absent operation, not a set-unconditionally one — an
 // item that already has a real (operator-uploaded) thumbnail must keep it.
 func TestEnsureDefaultThumbnail_NeverOverwritesARealImage(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cat.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestEnsureDefaultThumbnail_NeverOverwritesARealImage(t *testing.T) {
 // TestSetItemThumbnail_InsertsWhenNoneExists is SetItemThumbnail's insert
 // branch: an item with no thumbnail row yet gets one.
 func TestSetItemThumbnail_InsertsWhenNoneExists(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cat.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestSetItemThumbnail_InsertsWhenNoneExists(t *testing.T) {
 // leave the placeholder showing forever on the surfaces that read
 // item_images (POS grid, basket, self-order, suggestions).
 func TestSetItemThumbnail_OverwritesAPlaceholder(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cat.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestSetItemThumbnail_OverwritesAPlaceholder(t *testing.T) {
 // role=thumbnail), keyed by item id — not a guessed <id>/thumb.png file
 // path. An item with no row simply has no entry in the map.
 func TestItemThumbnails_ReturnsPathsForItemsThatHaveOne(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cat.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestItemThumbnails_ReturnsPathsForItemsThatHaveOne(t *testing.T) {
 // counterpart: writeCatalogRowOOB needs one item's thumbnail path without
 // paying for the whole-table map.
 func TestItemThumbnailFor_EmptyWhenNone(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cat.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +253,7 @@ func TestItemThumbnailFor_EmptyWhenNone(t *testing.T) {
 // rounds, same reasoning as TestUpdateItemReturningWasActiveConcurrentRace
 // in catalog_repo_update_item_race_test.go.
 func TestSetItemThumbnailConcurrentRace(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cat.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +308,7 @@ func TestSetItemThumbnailConcurrentRace(t *testing.T) {
 // instead of a silent duplicate — so this must keep working (still no
 // error, still exactly one row) after the index lands.
 func TestEnsureDefaultThumbnailConcurrentRace(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cat.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +363,7 @@ func TestEnsureDefaultThumbnailConcurrentRace(t *testing.T) {
 // has a thumbnail must see what it currently is, not just whether one
 // exists.
 func TestItemThumbnailPath_ReturnsCurrentPath(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cat.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +392,7 @@ func TestItemThumbnailPath_ReturnsCurrentPath(t *testing.T) {
 // current image", not as an empty-string path — the picker uses this to
 // decide whether to show "none selected" vs. a real (if oddly empty) one.
 func TestItemThumbnailPath_NoneSetReturnsNotOK(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cat.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,7 +419,7 @@ func TestItemThumbnailPath_NoneSetReturnsNotOK(t *testing.T) {
 // reader of item_images (POS grid, basket, self-order) would still try to
 // resolve as an image URL.
 func TestClearItemThumbnail_RemovesTheRow(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cat.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,7 +451,7 @@ func TestClearItemThumbnail_RemovesTheRow(t *testing.T) {
 // TestClearItemThumbnail_NoRowIsNotAnError: clearing an already-clear item
 // (double-click, a stale picker state) must be a no-op, not an error.
 func TestClearItemThumbnail_NoRowIsNotAnError(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cat.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

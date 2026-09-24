@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // GetSaleDetail must surface each line's chosen modifiers (ADR-0020) — the
@@ -21,7 +22,7 @@ func TestPOSRepo_GetSaleDetail_IncludesLineModifiers(t *testing.T) {
 	if err := os.Chdir(root); err != nil {
 		t.Fatal(err)
 	}
-	d, err := db.Open(filepath.Join(t.TempDir(), "sale_detail.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "sale_detail.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

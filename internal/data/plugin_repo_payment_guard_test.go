@@ -2,10 +2,10 @@ package data
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // Regression tests for the plugin payment-key hijack found by coverage
@@ -54,7 +54,7 @@ func pgMethod(t *testing.T, d *db.DB, id string) (paymentMethodState, bool) {
 
 func pgOpenDB(t *testing.T, name string) *db.DB {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), name))
+	d, err := db.Open(testsupport.MigratedDBFile(t, name))
 	if err != nil {
 		t.Fatal(err)
 	}

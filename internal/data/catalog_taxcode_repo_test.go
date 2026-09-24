@@ -3,11 +3,11 @@ package data_test
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // FindOrCreateTaxCode underpins catalog import's tax grouping (ut-docs#512):
@@ -18,7 +18,7 @@ import (
 // distinct 19% groups from ut-docs#512's real café distribution: (19%, takeaway
 // 7%) needs a tax.rate.ask override, (19%, no override) doesn't.
 func TestFindOrCreateTaxCode_IdempotentByPair(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "tax.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "tax.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestFindOrCreateTaxCode_IdempotentByPair(t *testing.T) {
 // different — must surface as an error (the UNIQUE name constraint), not a
 // crash, and must not silently return the wrong-rate code.
 func TestFindOrCreateTaxCode_NameCollisionWithDifferentPairErrors(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "taxcollide.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "taxcollide.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestFindOrCreateTaxCode_NameCollisionWithDifferentPairErrors(t *testing.T) 
 // creating a new code by hand, distinct from FindOrCreateTaxCode's
 // import-driven (rate, takeaway) pair matching above -- this always inserts.
 func TestCreateTaxCode(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "taxcreate.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "taxcreate.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +177,7 @@ func TestCreateTaxCode(t *testing.T) {
 // tax_codes.name is UNIQUE -- CreateTaxCode must surface that conflict as a
 // distinguishable error (ErrTaxCodeNameExists), not a raw 500-shaped one.
 func TestCreateTaxCode_DuplicateNameConflict(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "taxcreatedup.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "taxcreatedup.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ func TestCreateTaxCode_DuplicateNameConflict(t *testing.T) {
 // endpoint the activate/deactivate toggle uses (ut-docs#259: no separate
 // delete path, tax_codes.id is FK-referenced by items.tax_code_id).
 func TestUpdateTaxCode(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "taxupdate.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "taxupdate.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestUpdateTaxCode(t *testing.T) {
 }
 
 func TestUpdateTaxCode_NotFound(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "taxupdatenf.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "taxupdatenf.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +245,7 @@ func TestUpdateTaxCode_NotFound(t *testing.T) {
 }
 
 func TestUpdateTaxCode_DuplicateNameConflict(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "taxupdatedup.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "taxupdatedup.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ func TestUpdateTaxCode_DuplicateNameConflict(t *testing.T) {
 // GetTaxCode's not-found path wraps sql.ErrNoRows into ErrTaxCodeNotFound so
 // the handler can respond 404 cleanly.
 func TestGetTaxCode_NotFound(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "taxgetnf.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "taxgetnf.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

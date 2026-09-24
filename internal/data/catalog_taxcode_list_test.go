@@ -2,11 +2,11 @@ package data_test
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // ListTaxCodes backs the takeaway-rate-overrides settings UI (ut-docs#190):
@@ -15,7 +15,7 @@ import (
 // code. Only active codes are relevant to a shop owner picking overrides;
 // inactive/retired codes must not clutter the editor.
 func TestListTaxCodes(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "taxlist.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "taxlist.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestListTaxCodes(t *testing.T) {
 // must show both active and inactive codes, unlike ListTaxCodes above, so a
 // manager can find and reactivate a retired one.
 func TestListAllTaxCodes_IncludesInactive(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "taxlistall.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "taxlistall.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

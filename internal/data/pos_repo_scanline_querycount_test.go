@@ -2,12 +2,12 @@ package data
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/barcode"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // ean13tQC appends the GS1 mod-10 check digit to a 12-digit body — a
@@ -39,7 +39,7 @@ func ean13tQC(t *testing.T, body string) string {
 // with sample data.
 func newScanLineQueryCountTestDB(t *testing.T) (*db.DB, string) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "pos_scanline_querycount.db")
+	path := testsupport.MigratedDBFile(t, "pos_scanline_querycount.db")
 	d, err := db.Open(path)
 	if err != nil {
 		t.Fatal(err)

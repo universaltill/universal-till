@@ -2,7 +2,6 @@ package data_test
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/catalogtypes"
@@ -41,7 +40,7 @@ func TestCreateItem_SucceedsWithoutStockLocationsTable(t *testing.T) {
 // up fine in the catalog list. Confirmed live 2026-07-29: an item added
 // through the catalog form was "only in catalog," missing from Inventory.
 func TestCreateItem_CreatesInventoryRow(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cat.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +90,7 @@ func TestCreateItem_CreatesInventoryRow(t *testing.T) {
 }
 
 func TestCreateVariant_CreatesInventoryRow(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cat.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

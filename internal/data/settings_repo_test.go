@@ -4,13 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"path/filepath"
 	"sync"
 	"testing"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 func TestSettingsRepo_SetAndGet(t *testing.T) {
@@ -255,7 +255,7 @@ func TestSettingsRepo_GetOrCreate_ReturnsExistingWithoutOverwriting(t *testing.T
 // TestAddBarcodeConcurrentRace's comment, ut-docs#304), so it can't
 // exercise real multi-connection contention at all.
 func TestSettingsRepo_GetOrCreate_ConcurrentCallersConverge(t *testing.T) {
-	dbh, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	dbh, err := db.Open(testsupport.MigratedDBFile(t, "test.db"))
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

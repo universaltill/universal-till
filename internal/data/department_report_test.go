@@ -2,12 +2,12 @@ package data_test
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // win30 is the [from, to) window equivalent to the old days=30 rolling
@@ -26,7 +26,7 @@ func win30() (time.Time, time.Time) {
 // department), so a subcategory's sales count toward its parent department, and
 // items with no category fall under "" (rendered as Uncategorized).
 func TestSalesByDepartment_RollsSubcategoriesToDepartment(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "dept.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "dept.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +108,7 @@ func TestSalesByDepartment_RollsSubcategoriesToDepartment(t *testing.T) {
 // SalesByTill groups completed sales by register; the primary till's blank
 // till_id rolls up under "" (UI: "This till"), named replicas by their id.
 func TestSalesByTill_GroupsByRegister(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "till.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "till.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

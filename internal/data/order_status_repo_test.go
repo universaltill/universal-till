@@ -2,11 +2,11 @@ package data
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // Harness matches pos_repo_sale_detail_test.go: real SQLite in a TempDir,
@@ -17,7 +17,7 @@ import (
 // cwd-relative migration glob (repairMigrationPath).
 func openOrderStatusDB(t *testing.T, name string) *db.DB {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), name))
+	d, err := db.Open(testsupport.MigratedDBFile(t, name))
 	if err != nil {
 		t.Fatal(err)
 	}

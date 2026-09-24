@@ -5,13 +5,14 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 
-	"github.com/universaltill/universal-till/internal/db"
 	sqlited "modernc.org/sqlite"
+
+	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // TestSalesForExport_ConstantQueryCount is the ut-docs#229 regression:
@@ -24,7 +25,7 @@ import (
 // the query count is independent of the number of matched sales, not just
 // checking a single fixed number.
 func TestSalesForExport_ConstantQueryCount(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "pos_querycount.db")
+	path := testsupport.MigratedDBFile(t, "pos_querycount.db")
 	d, err := db.Open(path)
 	if err != nil {
 		t.Fatal(err)

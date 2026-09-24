@@ -2,12 +2,12 @@ package data_test
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // eod1012OpenDB mirrors department_report_test.go's own db.Open + seed-
@@ -16,7 +16,7 @@ import (
 // FK'd tables like sales/sale_lines/categories).
 func eod1012OpenDB(t *testing.T) (*db.DB, func(string, ...any)) {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), "eod1012.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "eod1012.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

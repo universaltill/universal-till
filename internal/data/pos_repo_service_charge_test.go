@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // InsertSale/GetSaleDetail must round-trip service_charge_amount end to end
@@ -23,7 +24,7 @@ func TestPOSRepo_ServiceCharge_RoundTrips(t *testing.T) {
 	if err := os.Chdir(root); err != nil {
 		t.Fatal(err)
 	}
-	d, err := db.Open(filepath.Join(t.TempDir(), "service_charge.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "service_charge.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +72,7 @@ func TestPOSRepo_ServiceCharge_DefaultsToZero(t *testing.T) {
 	if err := os.Chdir(root); err != nil {
 		t.Fatal(err)
 	}
-	d, err := db.Open(filepath.Join(t.TempDir(), "service_charge_zero.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "service_charge_zero.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

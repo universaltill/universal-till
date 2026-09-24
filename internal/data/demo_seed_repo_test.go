@@ -3,16 +3,16 @@ package data
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // openDemoSeedTestDB opens a real migrated DB (post-036: no demo rows).
 func openDemoSeedTestDB(t *testing.T) *db.DB {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), "demo-seed.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "demo-seed.db"))
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

@@ -2,10 +2,10 @@ package data
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // Coverage batch 7's straggler gaps: the last zero-coverage functions in
@@ -13,7 +13,7 @@ import (
 // POSRepo sale-line-modifier writer that Phase-5 kitchen tickets read back.
 
 func TestInvoiceRepo_BySaleAndByDisplayNo(t *testing.T) {
-	dbo, err := db.Open(filepath.Join(t.TempDir(), "invoices.db"))
+	dbo, err := db.Open(testsupport.MigratedDBFile(t, "invoices.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ VALUES('sale1', 'R1', 'completed', 'sale', 'GBP', 100, 0, 20, 120, '2026-01-01T1
 }
 
 func TestInstallStatusRepo_Get(t *testing.T) {
-	dbo, err := db.Open(filepath.Join(t.TempDir(), "install.db"))
+	dbo, err := db.Open(testsupport.MigratedDBFile(t, "install.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestInstallStatusRepo_Get(t *testing.T) {
 // plugin from a replica again. Identity fields, once learned, must survive a
 // partial update; a non-blank incoming value still overwrites normally.
 func TestInstallStatusRepo_UpsertBlankIdentityDoesNotClobber(t *testing.T) {
-	dbo, err := db.Open(filepath.Join(t.TempDir(), "install-identity.db"))
+	dbo, err := db.Open(testsupport.MigratedDBFile(t, "install-identity.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestInstallStatusRepo_UpsertBlankIdentityDoesNotClobber(t *testing.T) {
 }
 
 func TestSettingsRepo_All(t *testing.T) {
-	dbo, err := db.Open(filepath.Join(t.TempDir(), "settings.db"))
+	dbo, err := db.Open(testsupport.MigratedDBFile(t, "settings.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestSettingsRepo_All(t *testing.T) {
 }
 
 func TestInvoiceRepo_Create_SeriesNumberingAndDuplicateGuard(t *testing.T) {
-	dbo, err := db.Open(filepath.Join(t.TempDir(), "invoices2.db"))
+	dbo, err := db.Open(testsupport.MigratedDBFile(t, "invoices2.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ VALUES(?, 'R-'||?, 'completed', 'sale', 'GBP', 100, 0, 0, 100, '2026-01-01T10:00
 }
 
 func TestModifierRepo_ItemIDsWithModifiers(t *testing.T) {
-	dbo, err := db.Open(filepath.Join(t.TempDir(), "mods.db"))
+	dbo, err := db.Open(testsupport.MigratedDBFile(t, "mods.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +323,7 @@ func TestModifierRepo_ItemIDsWithModifiers(t *testing.T) {
 }
 
 func TestPOSRepo_InsertSaleLineModifiers(t *testing.T) {
-	dbo, err := db.Open(filepath.Join(t.TempDir(), "slm.db"))
+	dbo, err := db.Open(testsupport.MigratedDBFile(t, "slm.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

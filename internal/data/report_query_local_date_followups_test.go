@@ -13,15 +13,15 @@ package data
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 func TestReportQueryLocalDateFollowups_ConvertedQueriesFindRealWriterSeededSale(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "m1664-writer-roundtrip.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "m1664-writer-roundtrip.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

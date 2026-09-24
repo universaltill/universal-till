@@ -3,7 +3,6 @@ package data_test
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -11,6 +10,7 @@ import (
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // TestAddBarcodeConcurrentRace exercises the check-then-insert race in
@@ -24,7 +24,7 @@ import (
 // connection its own isolated database, which cannot exercise
 // multi-connection locking at all.
 func TestAddBarcodeConcurrentRace(t *testing.T) {
-	dbh, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	dbh, err := db.Open(testsupport.MigratedDBFile(t, "test.db"))
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

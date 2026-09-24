@@ -3,11 +3,11 @@ package data
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // findAdminTable returns the adminTables entry for name, failing the test if
@@ -223,7 +223,7 @@ func TestAdminApplyINSERTCountDoesNotGrowLinearlyWithRowCount(t *testing.T) {
 
 	countFor := func(n int) int64 {
 		primary := openMigratedDB(t, "primary.db")
-		replicaPath := filepath.Join(t.TempDir(), "replica.db")
+		replicaPath := testsupport.MigratedDBFile(t, "replica.db")
 		replica, err := db.Open(replicaPath)
 		if err != nil {
 			t.Fatalf("open replica: %v", err)

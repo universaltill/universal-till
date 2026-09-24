@@ -3,10 +3,10 @@ package data
 import (
 	"context"
 	"database/sql"
-	"path/filepath"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // This file covers the remaining zero-coverage functions across several
@@ -545,7 +545,7 @@ func TestInstallStatusRepo_DeleteForPlugin(t *testing.T) {
 }
 
 func TestModifierRepo_DeleteOption(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "mod.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "mod.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -682,7 +682,7 @@ func TestSettingsRepo_DeleteAndClearReplicaIdentity(t *testing.T) {
 }
 
 func TestInvoiceRepo_List(t *testing.T) {
-	dbo, err := db.Open(filepath.Join(t.TempDir(), "invoices.db"))
+	dbo, err := db.Open(testsupport.MigratedDBFile(t, "invoices.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -740,7 +740,7 @@ VALUES('sale1', 'R1', 'completed', 'sale', 'GBP', 100, 0, 20, 120, '2026-01-01T1
 // result set — same sign convention, same range semantics (invoiceRangeBound),
 // checked directly against the numbers a hand-rolled sum would produce.
 func TestInvoiceRepo_Totals(t *testing.T) {
-	dbo, err := db.Open(filepath.Join(t.TempDir(), "invoice_totals.db"))
+	dbo, err := db.Open(testsupport.MigratedDBFile(t, "invoice_totals.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

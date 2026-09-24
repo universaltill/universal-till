@@ -3,11 +3,11 @@ package data_test
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // ut-docs#2541: items.sell_screen_hidden (migration 040) — an item hidden
@@ -18,7 +18,7 @@ import (
 // consumption of the flag.
 func newCatalogHiddenTestDB(t *testing.T) (*data.CatalogRepo, *db.DB) {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), "catalog-hidden.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "catalog-hidden.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

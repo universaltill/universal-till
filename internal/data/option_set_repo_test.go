@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -12,11 +11,12 @@ import (
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 func openOptionSetTestDB(t *testing.T) *db.DB {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), "optset.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "optset.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

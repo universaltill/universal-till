@@ -2,12 +2,12 @@ package data_test
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // EnsureCategoryUnder underpins enterprise import: a department is a top-level
@@ -15,7 +15,7 @@ import (
 // resolve to the same rows (idempotent), and a category name reused under two
 // departments must produce two distinct rows (parent-scoped).
 func TestEnsureCategoryUnder_DepartmentNestingIsIdempotent(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cat.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestEnsureCategoryUnder_DepartmentNestingIsIdempotent(t *testing.T) {
 // effects) and scoped by (name, department, category) so two genuinely
 // distinct items sharing a name in different categories stay distinguishable.
 func TestItemExistsByNameAndCategory(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cat.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
