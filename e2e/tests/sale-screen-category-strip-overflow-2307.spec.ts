@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole } from './helpers';
+import { watchConsole, setBrowsingMode } from './helpers';
 
 // ut-docs#2307: the sell-screen category strip must never scroll any more
 // (product owner, direct: "I prefer to have a ... button at the right;
@@ -39,6 +39,16 @@ import { watchConsole } from './helpers';
 // worker next — this card's own strip is the one thing a LOT of other
 // specs assume renders a short, unsurprising tab set.
 test.describe('sale screen category strip overflow (ut-docs#2307)', () => {
+  // ut-docs#2499: the category strip (and its "..." overflow) is now ONE of
+  // three selectable sell-screen browsing modes (Settings -> Sell screen,
+  // sale.browsing_mode) and no longer the unconditional default (that is
+  // category tiles) -- this file is about the strip, so it picks
+  // strip_overflow explicitly rather than assuming it. worker-till.ts
+  // already boots every worker till in this mode; this is what makes the
+  // dependency visible in the spec itself.
+  test.beforeEach(async ({ page }) => {
+    await setBrowsingMode(page, 'strip_overflow');
+  });
   test.afterEach(async ({ page }) => {
     await page.request.post('/api/pos/reset');
   });

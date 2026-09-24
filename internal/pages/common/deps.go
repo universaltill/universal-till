@@ -293,13 +293,17 @@ type RuntimeState struct {
 	// zero value), which is exactly "I'm not touching this field."
 	WindowModeChanged      bool
 	LaunchOnStartupChanged bool
-	// ShowAllTabOnSellScreen (ut-docs#2294) — settings.sale.show_all_tab —
-	// whether the sell screen's All tab (every active catalog item,
-	// distinct from the quick-button-only per-category tabs) renders at
-	// all. Default true (LoadState) so an existing shop keeps the tab it
-	// already has; off restores the pre-ut-docs#2212 behavior (no All tab,
-	// first category tab default-selected).
-	ShowAllTabOnSellScreen bool
+	// BrowsingMode (ut-docs#2499) — sale.browsing_mode — how the sell
+	// screen lets a cashier browse the catalog: category tiles + popup,
+	// the All grid + filter chips, or the quick-button strip with "…"
+	// overflow. Always one of the three common.BrowsingMode* values
+	// (LoadState/SaveState clamp via ClampBrowsingMode; see state.go), so
+	// a reader can switch on it without a default arm — except that a
+	// hand-built RuntimeState (tests, bare Deps) carries the zero value
+	// "", which every reader must clamp first. Replaced the retired
+	// ShowAllTabOnSellScreen bool (and the data-package Categories-tab
+	// key) outright — see KeyBrowsingMode's own doc comment.
+	BrowsingMode string
 }
 
 // CurrentState returns a consistent copy of the runtime state for rendering.

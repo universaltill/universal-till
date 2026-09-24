@@ -77,19 +77,25 @@ func rejectRemoteFiscalPostureWrite(d *common.Deps, key string) error {
 // Never on this list, by decision: printer addresses/device paths,
 // payment-terminal pairing, fiscal/TSE credentials or posture, PINs, network
 // or sync topology, store.country (its fiscal side-effects are
-// SetSetting's job). order-type prompt placement, the Categories-tab toggle
-// and the order-number scheme (ut-docs#2473) round out the ut-docs#2289
-// slice — every setting that design named is now on this list.
+// SetSetting's job). order-type prompt placement, the sell-screen browsing
+// mode and the order-number scheme (ut-docs#2473) round out the
+// ut-docs#2289 slice — every setting that design named is now on this
+// list. ut-docs#2499: common.KeyBrowsingMode took the slot the retired
+// Categories-tab toggle (sell_screen_categories_tab_enabled) held — the
+// portal side (ut-cloud's claims.AllowedTillSettingKeys) needs the same
+// swap in its own PR; until it lands, the portal can neither queue the new
+// key (its own filter drops it) nor the old one (refused here), which is
+// the fail-closed direction.
 var allowedRemoteTillSettingKeys = map[string]bool{
-	keyPrinterReceiptPolicy:         true,
-	keyReceiptHeader1:               true,
-	keyReceiptHeader2:               true,
-	keyReceiptHeader3:               true,
-	keyReceiptFooter:                true,
-	common.KeyKioskIdleReset:        true,
-	data.OrderTypePromptModeKey:     true,
-	data.SellScreenCategoriesTabKey: true,
-	data.SaleDisplayNoSchemeKey:     true,
+	keyPrinterReceiptPolicy:     true,
+	keyReceiptHeader1:           true,
+	keyReceiptHeader2:           true,
+	keyReceiptHeader3:           true,
+	keyReceiptFooter:            true,
+	common.KeyKioskIdleReset:    true,
+	data.OrderTypePromptModeKey: true,
+	common.KeyBrowsingMode:      true,
+	data.SaleDisplayNoSchemeKey: true,
 }
 
 // cloudSetTillSetting is the set_till_setting hook: whitelist check, then the
@@ -148,19 +154,16 @@ func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(cont
 		if value != data.OrderTypePromptModeTop && value != data.OrderTypePromptModeBeforeItem && value != data.OrderTypePromptModeAtPay {
 			return "", fmt.Errorf("%s must be one of top, before_item, at_pay", key)
 		}
-	case data.SellScreenCategoriesTabKey:
-		// Mirrors /api/settings/categories-tab: boolean, normalized to the
-		// "1"/"0" strings ButtonStore.CategoriesTabEnabled compares against
-		// (same normalization the local handler's own strconv.ParseBool +
-		// "0"/"1" rewrite does) — purely presentational (buttons.go reads it
-		// fresh on every render), so no live re-derive is needed here.
-		b, err := strconv.ParseBool(value)
-		if err != nil {
-			return "", fmt.Errorf("%s must be a boolean", key)
-		}
-		value = "0"
-		if b {
-			value = "1"
+	case common.KeyBrowsingMode:
+		// Mirrors /api/settings/browsing-mode (settings_page.go): must be
+		// one of the three modes, refused (not clamped) otherwise — a remote
+		// result column should say why nothing changed. The mode lives in
+		// RuntimeState (internal/ui reads d.CurrentState() on every
+		// /ui/buttons render), so the generic `rederive` below is what makes
+		// the sell screen's next paint pick it up — same reason
+		// kiosk.idle_reset_seconds needs it.
+		if common.ClampBrowsingMode(value) != value {
+			return "", fmt.Errorf("%s must be one of category_tabs, all_filter_chips, strip_overflow", key)
 		}
 	case data.SaleDisplayNoSchemeKey:
 		// Mirrors /api/settings/order-no-scheme: must be one of the two

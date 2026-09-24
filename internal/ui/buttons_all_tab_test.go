@@ -227,7 +227,7 @@ func TestButtonsHTTPList_AllTabShowsItemWithNoQuickButton(t *testing.T) {
 	// invisible everywhere, not just absent from All). The panel now
 	// renders, but empty of quick-button tiles — see
 	// TestButtonsHTTPList_CategoryWithActiveItemButNoButtonStillAppears
-	// in buttons_categories_tab_test.go for the dedicated empty-state
+	// in buttons_category_item_only_test.go for the dedicated empty-state
 	// coverage.
 	if !strings.Contains(body, `id="cat-panel-cat_drink"`) {
 		t.Fatalf("expected a Drinks category panel (has an active item, Cola) even with no quick button in it, got: %s", body)
