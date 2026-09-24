@@ -22,8 +22,31 @@ const RUN = Date.now().toString(36).toUpperCase();
 const ITEM = { name: `Jiggle2417 Item ${RUN}`, sku: `JIG2417${RUN}` };
 
 async function seedTile(page: import('@playwright/test').Page): Promise<void> {
+  // categoryId: 'cat_food' (the demo seed's fixed, stable id -- see
+  // internal/data/seeddata/demo_catalogue.sql) -- deliberately NOT left
+  // uncategorized. An uncategorized quick button lands in
+  // BuildCategoryGroups' synthetic "Uncategorized" bucket, which renders
+  // LAST among the category tabs and carries no guaranteed room of its
+  // own: since ut-docs#2498 the strip also shows Household/Produce (real
+  // demo categories with items but no quick buttons, previously pruned
+  // entirely), so at this test's default (unset) viewport the tab count
+  // went from 4 (All/Food/Drinks/Uncategorized) to 6, tipping the strip's
+  // own fit calculation (ut-docs#2307's applyCategoryOverflow(),
+  // web/ui/partials/buttons.html) into overflow and hiding Uncategorized's
+  // own tab button behind "...". Reproduced live: entering/exiting
+  // jiggle-mode on a tile whose category's own .tab element is in that
+  // hidden state made the test's own POST /api/buttons/remove cleanup
+  // below hang for the full test timeout (never reaching the server --
+  // confirmed by a concurrent curl to the same route succeeding in
+  // milliseconds) -- a genuine but narrow browser-side interaction this
+  // test has no reason to exercise. "Food" is one of the four demo
+  // categories the strip always has comfortable room for (verified via
+  // sale-screen-category-strip-overflow-2307.spec.ts's own case (b)), so
+  // switching to it keeps this test's actual point (a real, visible
+  // category-panel tile, as opposed to the hidden All-grid copy -- see
+  // below) while no longer depending on the one bucket the strip can hide.
   const createResp = await page.request.post('/api/catalog/item', {
-    form: { name: ITEM.name, price: '150', sku: ITEM.sku },
+    form: { name: ITEM.name, price: '150', sku: ITEM.sku, categoryId: 'cat_food' },
   });
   expect(createResp.ok(), 'create catalog item').toBe(true);
 
@@ -64,8 +87,9 @@ test.describe('Jiggle-mode Done focus fallback never falls to <body> (ut-docs#24
       // genuinely visible, not just DOM-present. This is exactly the setup
       // the bug needs: #buttons-grid-all still renders first inside
       // #buttons-grid regardless of which tab is active, which is why the
-      // unscoped query kept resolving to it even here.
-      await page.getByRole('tab', { name: 'Uncategorized' }).click();
+      // unscoped query kept resolving to it even here. "Food", not
+      // Uncategorized -- see seedTile's own comment above.
+      await page.getByRole('tab', { name: 'Food' }).click();
       const tile = page.locator(`.products-tab-panel .btn-tile[data-name="${ITEM.name}"]`);
       await expect(tile).toBeVisible();
 

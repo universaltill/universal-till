@@ -218,15 +218,19 @@ func TestButtonsHTTPList_AllTabShowsItemWithNoQuickButton(t *testing.T) {
 		t.Fatalf("expected the NO-quick-button item to be in the All grid — this is the card's whole point, got: %s", allGrid)
 	}
 
-	// Drinks (Cola's category) never gets a quick-button-driven tab/panel
-	// at all here — BuildCategoryGroups prunes any branch with no buttons
-	// anywhere in its subtree, and Cola is Drinks' only item, with no
-	// quick button — exactly the pre-existing, UNCHANGED pruning behavior
-	// (requirement: "category tabs keep showing the quick buttons as
-	// today", this card doesn't touch that). The category-tab experience
-	// for Cola stays "invisible", even though it's now findable via All.
-	if strings.Contains(body, `id="cat-panel-cat_drink"`) {
-		t.Fatalf("expected no Drinks category panel (no quick button in it), got: %s", body)
+	// Drinks (Cola's category) DOES now get its own category tab/panel
+	// (ut-docs#2498): BuildCategoryGroups no longer prunes a branch purely
+	// for having no quick buttons — it also survives via an active-item
+	// count, and Cola is an active item in Drinks with no quick button.
+	// This test predates #2498 and used to assert the opposite (the bug
+	// the card fixed: a category with real items but no quick buttons was
+	// invisible everywhere, not just absent from All). The panel now
+	// renders, but empty of quick-button tiles — see
+	// TestButtonsHTTPList_CategoryWithActiveItemButNoButtonStillAppears
+	// in buttons_categories_tab_test.go for the dedicated empty-state
+	// coverage.
+	if !strings.Contains(body, `id="cat-panel-cat_drink"`) {
+		t.Fatalf("expected a Drinks category panel (has an active item, Cola) even with no quick button in it, got: %s", body)
 	}
 }
 

@@ -134,7 +134,7 @@ test.describe('tab-bar overflow + ARIA tabs pattern (ut-docs#424)', () => {
       // (see ut-docs#2307's own coverage for the fit/overflow split
       // itself) — a plain CSS class locator matches a hidden tab just as
       // well as a visible one, so this count is unaffected by that card.
-      await expect(tabBar.locator('.tab')).toHaveCount(CATEGORY_COUNT + 3, { timeout: 10_000 }); // + seeded Food/Drinks + ut-docs#2212's All tab
+      await expect(tabBar.locator('.tab')).toHaveCount(CATEGORY_COUNT + 5, { timeout: 10_000 }); // + seeded Food/Drinks/Household/Produce (ut-docs#2498: items-only categories now show) + ut-docs#2212's All tab
       await waitForStableLayout(page, '.products .tab-bar, .products .tab-bar .tab');
 
       // ut-docs#2307: never overflows its own box — nothing left to

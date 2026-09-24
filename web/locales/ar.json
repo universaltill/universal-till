@@ -1434,6 +1434,7 @@
   "products.categories": "الفئات",
   "products.categories_modal_title": "عناصر الفئة",
   "products.category_button_count": "%d زر",
+  "products.category_no_buttons": "لم يتم إعداد أي أزرار سريعة لهذا القسم بعد.",
   "products.edit": "تعديل الأزرار السريعة",
   "products.empty": "لا توجد منتجات بعد. أضِف بعضها في الأزرار السريعة.",
   "products.load_more": "تحميل المزيد",

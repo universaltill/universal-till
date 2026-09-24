@@ -1434,6 +1434,7 @@
   "products.categories": "دسته‌بندی‌ها",
   "products.categories_modal_title": "کالاهای دسته",
   "products.category_button_count": "%d دکمه",
+  "products.category_no_buttons": "هنوز هیچ دکمه سریعی برای این دسته تنظیم نشده است.",
   "products.edit": "ویرایش دکمه‌های سریع",
   "products.empty": "هنوز محصولی نیست. از صفحه دکمه‌های سریع اضافه کنید.",
   "products.load_more": "بارگذاری بیشتر",

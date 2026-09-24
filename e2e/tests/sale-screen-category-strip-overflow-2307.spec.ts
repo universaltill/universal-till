@@ -14,16 +14,15 @@ import { watchConsole } from './helpers';
 // The demo catalogue (seeded fresh into every worker's own till —
 // worker-till.ts's `go run ./e2e/seed_demo`) ships four top-level
 // categories (Food/Drinks/Household/Produce — see
-// internal/data/seeddata/demo_catalogue.sql's own parent_id column), but
-// only TWO of them own a quick button anywhere in their own subtree —
-// Drinks (direct) and Food (via its nested Dairy child) — the only ones
-// shortcut_buttons actually seeds (same "Food"/"Drinks" pair
-// sale-screen-category-tabs-search-418.spec.ts's own comment already
-// documents); Household/Produce have real catalog items but no quick
-// buttons, so BuildCategoryGroups (internal/ui/buttons.go) prunes them
-// out of the sale-screen tab strip entirely — same pruning this file's
-// own cleanup below relies on. That is this card's own small-shop
-// regression case for free, with nothing to add or clean up.
+// internal/data/seeddata/demo_catalogue.sql's own parent_id column). Only
+// Drinks and Food own a quick button, but since ut-docs#2498
+// BuildCategoryGroups (internal/ui/buttons.go) also keeps a category with
+// active items and no quick buttons, so Household/Produce show as tabs
+// too — all FOUR render. A category with neither is still pruned — the
+// pruning this file's own cleanup below relies on (deactivating the
+// created items drops each created category's active-item count to 0).
+// That is this card's own small-shop regression case for free, with
+// nothing to add or clean up.
 //
 // The "many categories" cases below create their OWN categories (each
 // with one active item as its quick button — BuildCategoryGroups,
@@ -112,7 +111,7 @@ test.describe('sale screen category strip overflow (ut-docs#2307)', () => {
     }
   }
 
-  test('(b) only the demo categories (Food, Drinks): no "..." — identical to before this card (regression)', async ({ page }) => {
+  test('(b) only the demo categories (Food, Drinks, Household, Produce): no "..." — identical to before this card (regression)', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto('/');
@@ -130,7 +129,7 @@ test.describe('sale screen category strip overflow (ut-docs#2307)', () => {
     const overflowPx = await tabBar.evaluate((el) => el.scrollWidth - el.clientWidth);
     expect(overflowPx, 'tab-bar must not overflow its own box').toBeLessThanOrEqual(1);
     const catTabs = tabBar.locator('.tab[data-cat-tab]');
-    await expect(catTabs).toHaveCount(2); // Food, Drinks (see this file's own top comment)
+    await expect(catTabs).toHaveCount(4); // Food, Drinks, Household, Produce (see this file's own top comment)
     for (const t of await catTabs.all()) {
       expect(await t.isHidden(), 'no demo category tab should be hidden at 1280px').toBe(false);
     }

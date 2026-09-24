@@ -21,7 +21,7 @@ func TestBuildCategoryGroups_NestsByParentID(t *testing.T) {
 		{Label: "Latte", Code: "L1", ItemID: "i1", CategoryID: "hot-drinks"},
 	}
 
-	groups := BuildCategoryGroups(buttons, cats)
+	groups := BuildCategoryGroups(buttons, cats, nil)
 	if len(groups) != 1 {
 		t.Fatalf("len(groups) = %d, want 1 root: %+v", len(groups), groups)
 	}
@@ -61,7 +61,7 @@ func TestStampLocked_RecursesIntoNestedCategoriesAndUncategorized(t *testing.T) 
 	}
 
 	for _, granted := range []bool{true, false} {
-		groups := BuildCategoryGroups(buttons, cats)
+		groups := BuildCategoryGroups(buttons, cats, nil)
 		stampLocked(groups, granted)
 
 		nested := groups[0].Children[0].Buttons[0]
@@ -89,7 +89,7 @@ func TestBuildCategoryGroups_PrunesEmptyBranches(t *testing.T) {
 		{Label: "Cola", Code: "C1", ItemID: "i1", CategoryID: "drinks"},
 	}
 
-	groups := BuildCategoryGroups(buttons, cats)
+	groups := BuildCategoryGroups(buttons, cats, nil)
 	if len(groups) != 1 || groups[0].ID != "drinks" {
 		t.Fatalf("expected only Drinks to survive pruning, got %+v", groups)
 	}
@@ -106,7 +106,7 @@ func TestBuildCategoryGroups_UncategorizedBucket(t *testing.T) {
 		{Label: "Stale Ref", Code: "S2", ItemID: "i3", CategoryID: "deleted-category"},
 	}
 
-	groups := BuildCategoryGroups(buttons, cats)
+	groups := BuildCategoryGroups(buttons, cats, nil)
 	if len(groups) != 2 {
 		t.Fatalf("len(groups) = %d, want 2 (Drinks + uncategorized): %+v", len(groups), groups)
 	}
@@ -119,7 +119,7 @@ func TestBuildCategoryGroups_UncategorizedBucket(t *testing.T) {
 	}
 
 	// No uncategorized buttons at all -> no synthetic group appears.
-	groups = BuildCategoryGroups(buttons[:1], cats)
+	groups = BuildCategoryGroups(buttons[:1], cats, nil)
 	if len(groups) != 1 {
 		t.Fatalf("expected no uncategorized group when nothing is uncategorized, got %+v", groups)
 	}
@@ -135,7 +135,7 @@ func TestBuildCategoryGroups_SelfParentCycleDoesNotDropButtons(t *testing.T) {
 	cats := []data.CategoryNode{{ID: "a", Name: "A", ParentID: "a"}}
 	buttons := []Button{{Label: "Latte", Code: "L1", ItemID: "i1", CategoryID: "a"}}
 
-	groups := BuildCategoryGroups(buttons, cats)
+	groups := BuildCategoryGroups(buttons, cats, nil)
 	if len(groups) != 1 || groups[0].ID != "a" {
 		t.Fatalf("expected the self-parented category to surface as a root, got %+v", groups)
 	}
@@ -158,7 +158,7 @@ func TestBuildCategoryGroups_TwoNodeCycleDoesNotDropButtons(t *testing.T) {
 		{Label: "Bun", Code: "B1", ItemID: "i2", CategoryID: "b"},
 	}
 
-	groups := BuildCategoryGroups(buttons, cats)
+	groups := BuildCategoryGroups(buttons, cats, nil)
 	total := 0
 	var walk func([]*CategoryGroup)
 	walk = func(gs []*CategoryGroup) {
@@ -194,7 +194,7 @@ func TestBuildCategoryGroups_AncestorNameLabelsDescendantsNotRoots(t *testing.T)
 		{Label: "C", Code: "C1", ItemID: "i3", CategoryID: "food-specials-sub"},
 	}
 
-	groups := BuildCategoryGroups(buttons, cats)
+	groups := BuildCategoryGroups(buttons, cats, nil)
 	byID := map[string]*CategoryGroup{}
 	var walk func([]*CategoryGroup)
 	walk = func(gs []*CategoryGroup) {
@@ -219,6 +219,74 @@ func TestBuildCategoryGroups_AncestorNameLabelsDescendantsNotRoots(t *testing.T)
 	}
 	if got := byID["food-specials-sub"].AncestorName; got != "Food" {
 		t.Fatalf("expected a grandchild to still carry its top-level root's name (Food), got %q", got)
+	}
+}
+
+// TestBuildCategoryGroups_ItemCountAloneSurvivesPruning (ut-docs#2498): a
+// category with zero quick buttons anywhere in its subtree but a non-zero
+// itemCounts entry must survive pruning — the exact bug this card fixes
+// (previously only a quick button, never an active-item count, could save a
+// branch from being pruned).
+func TestBuildCategoryGroups_ItemCountAloneSurvivesPruning(t *testing.T) {
+	cats := []data.CategoryNode{
+		{ID: "drinks", Name: "Drinks"},
+		{ID: "snacks", Name: "Snacks"},
+	}
+	var buttons []Button // no quick buttons anywhere
+	itemCounts := map[string]int{"drinks": 3, "snacks": 0}
+
+	groups := BuildCategoryGroups(buttons, cats, itemCounts)
+	if len(groups) != 1 || groups[0].ID != "drinks" {
+		t.Fatalf("expected only Drinks (has active items) to survive pruning, got %+v", groups)
+	}
+	if groups[0].HasButtons {
+		t.Fatalf("expected HasButtons=false: Drinks survived via item count alone with zero quick buttons, got %+v", groups[0])
+	}
+}
+
+// TestBuildCategoryGroups_HasButtonsPropagatesFromDescendant: a parent with
+// no OWN buttons but a child that does have one must still report
+// HasButtons=true — the "kept child keeps its parent" OR that already
+// governs plain pruning survival must extend to this field too.
+func TestBuildCategoryGroups_HasButtonsPropagatesFromDescendant(t *testing.T) {
+	cats := []data.CategoryNode{
+		{ID: "food", Name: "Food"},
+		{ID: "food-specials", Name: "Specials", ParentID: "food"},
+	}
+	buttons := []Button{{Label: "Pie", Code: "P1", ItemID: "i1", CategoryID: "food-specials"}}
+
+	groups := BuildCategoryGroups(buttons, cats, nil)
+	if len(groups) != 1 || groups[0].ID != "food" {
+		t.Fatalf("expected Food to survive (via its child's button), got %+v", groups)
+	}
+	if !groups[0].HasButtons {
+		t.Fatalf("expected Food.HasButtons=true (propagated from its Specials child), got %+v", groups[0])
+	}
+	if len(groups[0].Children) != 1 || !groups[0].Children[0].HasButtons {
+		t.Fatalf("expected Specials.HasButtons=true (has its own button), got %+v", groups[0].Children)
+	}
+}
+
+// TestBuildCategoryGroups_HasButtonsFalseWhenSurvivingViaItemCountOnly
+// mirrors the propagation test above for the all-item-count, zero-buttons
+// case, two levels deep — HasButtons must read false all the way up, so the
+// template shows the empty state at every level that needs it.
+func TestBuildCategoryGroups_HasButtonsFalseWhenSurvivingViaItemCountOnly(t *testing.T) {
+	cats := []data.CategoryNode{
+		{ID: "food", Name: "Food"},
+		{ID: "food-specials", Name: "Specials", ParentID: "food"},
+	}
+	itemCounts := map[string]int{"food-specials": 1}
+
+	groups := BuildCategoryGroups(nil, cats, itemCounts)
+	if len(groups) != 1 || groups[0].ID != "food" {
+		t.Fatalf("expected Food to survive (via its child's item count), got %+v", groups)
+	}
+	if groups[0].HasButtons {
+		t.Fatalf("expected Food.HasButtons=false, got %+v", groups[0])
+	}
+	if len(groups[0].Children) != 1 || groups[0].Children[0].HasButtons {
+		t.Fatalf("expected Specials.HasButtons=false too, got %+v", groups[0].Children)
 	}
 }
 
@@ -269,7 +337,7 @@ func TestBuildCategoryGroups_PosIsGlobalSortIndex(t *testing.T) {
 		{Label: "C", Code: "C", ItemID: "iC", CategoryID: "cat1"},
 		{Label: "U", Code: "U", ItemID: "iU"}, // uncategorized bucket
 	}
-	groups := BuildCategoryGroups(buttons, cats)
+	groups := BuildCategoryGroups(buttons, cats, nil)
 	got := map[string]int{}
 	var walk func(g *CategoryGroup)
 	walk = func(g *CategoryGroup) {

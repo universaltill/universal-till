@@ -50,74 +50,87 @@ test.describe('modifier groups are shop-wide (ut-docs#2399)', () => {
     const itemId = await itemRow.getAttribute('data-id');
     expect(itemId, 'the probe item must carry its id on its catalog row').toBeTruthy();
 
-    // /modifiers: the create form has NO item search input at all.
-    await page.goto('/modifiers');
-    const createForm = page.locator('.modifiers-new-group-card form');
-    await expect(createForm).toBeVisible();
-    await expect(createForm.locator('input[list="modifiers-items-list"]')).toHaveCount(0);
-    await expect(createForm.locator('input[name="itemId"]')).toHaveCount(0);
+    try {
+      // /modifiers: the create form has NO item search input at all.
+      await page.goto('/modifiers');
+      const createForm = page.locator('.modifiers-new-group-card form');
+      await expect(createForm).toBeVisible();
+      await expect(createForm.locator('input[list="modifiers-items-list"]')).toHaveCount(0);
+      await expect(createForm.locator('input[name="itemId"]')).toHaveCount(0);
 
-    // Create a group with just a name and rules.
-    const groupName = 'Sauces ' + stamp;
-    await createForm.locator('input[name="name"]').fill(groupName);
-    await Promise.all([
-      page.waitForResponse((r) => r.url().endsWith('/api/catalog/modifier-group') && r.request().method() === 'POST'),
-      createForm.locator('button[type="submit"]').click(),
-    ]);
-    // The group's name is the card's <input value="…">, not text content,
-    // so locate the card by that input rather than by hasText.
-    const cardFor = (name: string) => page.locator(`.modifier-card:has(input[name="name"][value="${name}"])`);
-    const card = cardFor(groupName);
-    await expect(card).toBeVisible();
-    await expect(card, 'a brand-new group is listed as unassigned').toContainText('Not assigned to any category or item yet');
+      // Create a group with just a name and rules.
+      const groupName = 'Sauces ' + stamp;
+      await createForm.locator('input[name="name"]').fill(groupName);
+      await Promise.all([
+        page.waitForResponse((r) => r.url().endsWith('/api/catalog/modifier-group') && r.request().method() === 'POST'),
+        createForm.locator('button[type="submit"]').click(),
+      ]);
+      // The group's name is the card's <input value="…">, not text content,
+      // so locate the card by that input rather than by hasText.
+      const cardFor = (name: string) => page.locator(`.modifier-card:has(input[name="name"][value="${name}"])`);
+      const card = cardFor(groupName);
+      await expect(card).toBeVisible();
+      await expect(card, 'a brand-new group is listed as unassigned').toContainText('Not assigned to any category or item yet');
 
-    // Add an option from the card.
-    const addOption = card.locator('form.modifier-admin-option-row').last();
-    await addOption.locator('input[name="name"]').fill('Ketchup');
-    await addOption.locator('input[name="priceDeltaMajor"]').fill('0.20');
-    await Promise.all([
-      page.waitForResponse((r) => r.url().endsWith('/api/catalog/modifier-option') && r.request().method() === 'POST'),
-      addOption.locator('button[type="submit"]').click(),
-    ]);
-    await expect(cardFor(groupName).locator('input[name="name"][value="Ketchup"]')).toBeVisible();
+      // Add an option from the card.
+      const addOption = card.locator('form.modifier-admin-option-row').last();
+      await addOption.locator('input[name="name"]').fill('Ketchup');
+      await addOption.locator('input[name="priceDeltaMajor"]').fill('0.20');
+      await Promise.all([
+        page.waitForResponse((r) => r.url().endsWith('/api/catalog/modifier-option') && r.request().method() === 'POST'),
+        addOption.locator('button[type="submit"]').click(),
+      ]);
+      await expect(cardFor(groupName).locator('input[name="name"][value="Ketchup"]')).toBeVisible();
 
-    // Not offered at checkout yet: nothing links the group to anything.
-    const before = await request.get(`/ui/pos/modifiers?item=${encodeURIComponent(itemId)}&code=${encodeURIComponent(sku)}`);
-    expect(before.status()).toBe(200);
-    expect(await before.text(), 'an unassigned group must not be offered at checkout').not.toContain(groupName);
+      // Not offered at checkout yet: nothing links the group to anything.
+      const before = await request.get(`/ui/pos/modifiers?item=${encodeURIComponent(itemId)}&code=${encodeURIComponent(sku)}`);
+      expect(before.status()).toBe(200);
+      expect(await before.text(), 'an unassigned group must not be offered at checkout').not.toContain(groupName);
 
-    // Assign to the category by ticking its checkbox on the card.
-    const catBox = cardFor(groupName)
-      .locator('label.modifier-assign-cat', { hasText: categoryName })
-      .locator('input[type="checkbox"]');
-    await expect(catBox).not.toBeChecked();
-    await Promise.all([
-      page.waitForResponse((r) => r.url().endsWith('/api/catalog/modifier-group/attach-category') && r.request().method() === 'POST'),
-      catBox.check(),
-    ]);
-    await expect(cardFor(groupName)
-      .locator('label.modifier-assign-cat', { hasText: categoryName })
-      .locator('input[type="checkbox"]')).toBeChecked();
-    await expect(cardFor(groupName)).not.toContainText('Not assigned to any category or item yet');
+      // Assign to the category by ticking its checkbox on the card.
+      const catBox = cardFor(groupName)
+        .locator('label.modifier-assign-cat', { hasText: categoryName })
+        .locator('input[type="checkbox"]');
+      await expect(catBox).not.toBeChecked();
+      await Promise.all([
+        page.waitForResponse((r) => r.url().endsWith('/api/catalog/modifier-group/attach-category') && r.request().method() === 'POST'),
+        catBox.check(),
+      ]);
+      await expect(cardFor(groupName)
+        .locator('label.modifier-assign-cat', { hasText: categoryName })
+        .locator('input[type="checkbox"]')).toBeChecked();
+      await expect(cardFor(groupName)).not.toContainText('Not assigned to any category or item yet');
 
-    // The sale-screen picker now offers the group for an item in that
-    // category — resolved through the category link, no item link at all.
-    const after = await request.get(`/ui/pos/modifiers?item=${encodeURIComponent(itemId)}&code=${encodeURIComponent(sku)}`);
-    expect(after.status()).toBe(200);
-    const pickerHtml = await after.text();
-    expect(pickerHtml).toContain(groupName);
-    expect(pickerHtml).toContain('Ketchup');
+      // The sale-screen picker now offers the group for an item in that
+      // category — resolved through the category link, no item link at all.
+      const after = await request.get(`/ui/pos/modifiers?item=${encodeURIComponent(itemId)}&code=${encodeURIComponent(sku)}`);
+      expect(after.status()).toBe(200);
+      const pickerHtml = await after.text();
+      expect(pickerHtml).toContain(groupName);
+      expect(pickerHtml).toContain('Ketchup');
 
-    // Tidy: delete the group everywhere from its card (confirm dialog
-    // accepted), and the picker no longer offers it.
-    page.once('dialog', (d) => d.accept());
-    await Promise.all([
-      page.waitForResponse((r) => r.url().endsWith('/api/catalog/modifier-group/delete') && r.request().method() === 'POST'),
-      cardFor(groupName).locator('.modifier-delete-btn').click(),
-    ]);
-    await expect(cardFor(groupName)).toHaveCount(0);
-    const gone = await request.get(`/ui/pos/modifiers?item=${encodeURIComponent(itemId)}&code=${encodeURIComponent(sku)}`);
-    expect(await gone.text()).not.toContain(groupName);
+      // Tidy: delete the group everywhere from its card (confirm dialog
+      // accepted), and the picker no longer offers it.
+      page.once('dialog', (d) => d.accept());
+      await Promise.all([
+        page.waitForResponse((r) => r.url().endsWith('/api/catalog/modifier-group/delete') && r.request().method() === 'POST'),
+        cardFor(groupName).locator('.modifier-delete-btn').click(),
+      ]);
+      await expect(cardFor(groupName)).toHaveCount(0);
+      const gone = await request.get(`/ui/pos/modifiers?item=${encodeURIComponent(itemId)}&code=${encodeURIComponent(sku)}`);
+      expect(await gone.text()).not.toContain(groupName);
+    } finally {
+      // The probe item/category are otherwise never cleaned up. Since
+      // ut-docs#2498, BuildCategoryGroups shows any category with an
+      // active item as a sell-screen tab even without a quick button, so
+      // leaving "Modifier Probe …" active would leak a stray "Modifier Cat
+      // …" tab into every other spec sharing this worker's till for the
+      // rest of the run (same leak shape confirmed live via
+      // categories-record-dialog-2010.spec.ts's own (g) test — see its
+      // comment). Deactivate unconditionally, even if an assertion above
+      // throws.
+      if (itemId) await page.request.post('/api/catalog/item/deactivate', { form: { id: itemId } });
+    }
     assertClean();
   });
 
