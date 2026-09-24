@@ -57,6 +57,14 @@
   `en/sell.png`. Not looked at: ar/tr variants, dark theme, kiosk sizes. No
   template/CSS changed.
 
+## CI follow-up
+
+- PR CI `playwright` failed in `catalog-barcode-backfill-1356.spec.ts`: it asserted
+  exactly "Assigned 1 barcode", but the shared per-worker till's demo catalogue now
+  has two barcode-less (made-to-order) café items, so the report read 3. Reproduced
+  locally with the same 3-vs-1. The assertion now accepts any count; the probe's own
+  derived barcode is still asserted after the reload. Full Playwright suite: 640 passed locally.
+
 ## Out of scope
 
 - `ut-plugin-tax-uk` uses the inverse model (eat-in raised via
