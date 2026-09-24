@@ -117,15 +117,3 @@ func firstSatelliteSkip(id string) bool {
 	satelliteSkipLog.seen[id] = struct{}{}
 	return true
 }
-
-func resetSatelliteSkipLog() {
-	satelliteSkipLog.mu.Lock()
-	defer satelliteSkipLog.mu.Unlock()
-	satelliteSkipLog.seen = nil
-}
-
-func satelliteSkipLoggedLen() int {
-	satelliteSkipLog.mu.Lock()
-	defer satelliteSkipLog.mu.Unlock()
-	return len(satelliteSkipLog.seen)
-}

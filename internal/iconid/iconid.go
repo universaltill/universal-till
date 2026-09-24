@@ -15,7 +15,6 @@ package iconid
 
 import (
 	"regexp"
-	"sort"
 )
 
 // MaxLen is the longest id accepted, in bytes (contract §0.12).
@@ -43,22 +42,6 @@ var registry = map[string]string{
 	"lucide:croissant": "/public/assets/category-icons/pastry.svg",
 	"lucide:sandwich":  "/public/assets/category-icons/sandwich.svg",
 	"lucide:tag":       "/public/assets/category-icons/generic.svg",
-}
-
-// Registered reports whether this till has artwork for id.
-func Registered(id string) bool {
-	_, ok := registry[id]
-	return ok
-}
-
-// Known lists every registered id, sorted.
-func Known() []string {
-	out := make([]string, 0, len(registry))
-	for id := range registry {
-		out = append(out, id)
-	}
-	sort.Strings(out)
-	return out
 }
 
 // AssetPath returns the /public/... asset to render for a stored icon id:
