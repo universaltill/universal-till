@@ -2,17 +2,17 @@ package data_test
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // The catalog page shows each item's barcodes and variants (each variant can
 // carry its own barcode). This guards the queries that feed that display.
 func TestItemBarcodesAndVariants(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cat.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

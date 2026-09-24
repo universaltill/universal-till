@@ -2,16 +2,16 @@ package data_test
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 func openModifierTestDB(t *testing.T) *db.DB {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), "mod.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "mod.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

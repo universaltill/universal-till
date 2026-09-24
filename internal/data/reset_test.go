@@ -4,17 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // resetTestDB opens a real migrated DB and returns it with seed/count helpers.
 func resetTestDB(t *testing.T, name string) (*db.DB, func(q string, args ...any), func(tbl string) int) {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), name))
+	d, err := db.Open(testsupport.MigratedDBFile(t, name))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -811,7 +811,7 @@ func TestRestoreNonexistentBatchReturnsNotFound(t *testing.T) {
 }
 
 func TestEraseCustomer(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "erase.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "erase.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -853,7 +853,7 @@ func TestEraseCustomer(t *testing.T) {
 }
 
 func TestCleanupObsoleteItems(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "cleanup.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cleanup.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -910,7 +910,7 @@ func TestCleanupObsoleteItems(t *testing.T) {
 // catalog before go-live; everything with real sale/stock history stays
 // untouched in EITHER mode.
 func TestCleanupObsoleteItems_IncludeActiveMode(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "cleanup-active.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cleanup-active.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -982,7 +982,7 @@ func TestCleanupObsoleteItems_IncludeActiveMode(t *testing.T) {
 // item. Mirrors demoItemReasonCaseSQL's own held_sales/held_sales_archive
 // payload-LIKE check (demo_seed_repo.go).
 func TestCleanupObsoleteItems_ExcludesHeldSaleReference(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "cleanup-held.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cleanup-held.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1028,7 +1028,7 @@ func TestCleanupObsoleteItems_ExcludesHeldSaleReference(t *testing.T) {
 // gives both routing tables ON DELETE CASCADE — without it this reproduces
 // a raw "FOREIGN KEY constraint failed" for the whole batch.
 func TestCleanupObsoleteItems_ItemWithKitchenStationRouteCascades(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "cleanup-station.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cleanup-station.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1239,7 +1239,7 @@ func TestResetThenRestoreRoundTrip_ShiftNewFloatCountProtocol(t *testing.T) {
 // promise "remove 200 products" and then delete all 250 here — understating
 // a destructive action in the exact sentence that exists to prevent one.
 func TestCountObsoleteItems_NotCappedLikeList(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "count-obsolete.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "count-obsolete.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

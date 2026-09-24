@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // InsertPayment/GetSaleDetail must round-trip the card-present reconciliation
@@ -23,7 +24,7 @@ func TestPOSRepo_CardPresentFields_RoundTrip(t *testing.T) {
 	if err := os.Chdir(root); err != nil {
 		t.Fatal(err)
 	}
-	d, err := db.Open(filepath.Join(t.TempDir(), "card_present.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "card_present.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +82,7 @@ func TestPOSRepo_CardPresentFields_DefaultEmpty(t *testing.T) {
 	if err := os.Chdir(root); err != nil {
 		t.Fatal(err)
 	}
-	d, err := db.Open(filepath.Join(t.TempDir(), "card_present_empty.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "card_present_empty.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

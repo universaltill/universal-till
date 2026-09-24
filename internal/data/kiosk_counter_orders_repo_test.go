@@ -2,16 +2,16 @@ package data
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 func openKioskCounterOrdersDB(t *testing.T, name string) *db.DB {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), name))
+	d, err := db.Open(testsupport.MigratedDBFile(t, name))
 	if err != nil {
 		t.Fatal(err)
 	}

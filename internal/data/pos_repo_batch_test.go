@@ -9,8 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/universaltill/universal-till/internal/db"
 	_ "modernc.org/sqlite"
+
+	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // ut-docs#1318: CompleteSale's per-line writes are batched into multi-row
@@ -20,7 +22,7 @@ import (
 
 func openBatchDB(t *testing.T) *db.DB {
 	t.Helper()
-	dbo, err := db.Open(filepath.Join(t.TempDir(), "batch.db"))
+	dbo, err := db.Open(testsupport.MigratedDBFile(t, "batch.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,11 +3,11 @@ package data
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // Coverage batch 8: the owner-intelligence/report group in POSRepo —
@@ -18,7 +18,7 @@ import (
 // b8OpenDB opens a fresh migrated DB in a temp dir.
 func b8OpenDB(t *testing.T, name string) *db.DB {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), name))
+	d, err := db.Open(testsupport.MigratedDBFile(t, name))
 	if err != nil {
 		t.Fatal(err)
 	}

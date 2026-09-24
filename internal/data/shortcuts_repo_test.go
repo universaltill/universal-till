@@ -2,11 +2,11 @@ package data_test
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // A shortcut button (sale-screen product tile) has its own, separate
@@ -16,7 +16,7 @@ import (
 // catalog list but never on its actual sale-screen tile. Confirmed live
 // 2026-07-29.
 func TestLoadButtons_FallsBackToCatalogImage(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "shortcuts.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "shortcuts.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestLoadButtons_FallsBackToCatalogImage(t *testing.T) {
 // under their category. An item with no category must come back with an
 // empty CategoryID, not error or a synthetic value.
 func TestLoadButtons_CarriesItemCategoryID(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "shortcuts.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "shortcuts.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestLoadButtons_CarriesItemCategoryID(t *testing.T) {
 // ui/data packages' hand-rolled test schemas, so this also guards that
 // migration 017 actually adds items.color.
 func TestLoadButtons_CarriesItemColor(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "shortcuts.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "shortcuts.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestLoadButtons_CarriesItemColor(t *testing.T) {
 // CASCADE ordinarily removes it with the item; this forces the dangling
 // row directly to pin the join's own defensive behavior too).
 func TestLoadButtons_ExcludesInactiveOrMissingItems(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "shortcuts.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "shortcuts.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

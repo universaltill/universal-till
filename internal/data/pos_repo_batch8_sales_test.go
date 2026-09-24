@@ -6,12 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // Coverage batch 8: the POSRepo sale-lifecycle group — receipt sequencing,
@@ -20,7 +20,7 @@ import (
 
 func openBatch8DB(t *testing.T, name string) *db.DB {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), name))
+	d, err := db.Open(testsupport.MigratedDBFile(t, name))
 	if err != nil {
 		t.Fatalf("open %s: %v", name, err)
 	}

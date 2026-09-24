@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -60,7 +59,7 @@ func TestCreateItemTx_DuplicateSKUIsErrSKUExists(t *testing.T) {
 // gives each pooled connection its own isolated database and can't
 // exercise real multi-connection locking.
 func TestCreateItemTxConcurrentSKURace(t *testing.T) {
-	dbh, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	dbh, err := db.Open(testsupport.MigratedDBFile(t, "test.db"))
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

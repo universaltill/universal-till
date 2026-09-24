@@ -9,15 +9,15 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"path/filepath"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 func openRegTestDB(t *testing.T) (*db.DB, *POSRepo) {
 	t.Helper()
-	dbo, err := db.Open(filepath.Join(t.TempDir(), "reg.db"))
+	dbo, err := db.Open(testsupport.MigratedDBFile(t, "reg.db"))
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

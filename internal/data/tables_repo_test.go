@@ -16,16 +16,16 @@ package data
 import (
 	"context"
 	"database/sql"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 func openTablesTestDB(t *testing.T) (*db.DB, *POSRepo) {
 	t.Helper()
-	dbo, err := db.Open(filepath.Join(t.TempDir(), "tables.db"))
+	dbo, err := db.Open(testsupport.MigratedDBFile(t, "tables.db"))
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

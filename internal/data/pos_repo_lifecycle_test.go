@@ -4,12 +4,12 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // newPOSLifecycleTestDB opens a fresh DB via the real migrations (shifts,
@@ -19,7 +19,7 @@ import (
 // so each test starts from a known, empty state.
 func newPOSLifecycleTestDB(t *testing.T) *posTestDB {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), "pos_lifecycle.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "pos_lifecycle.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

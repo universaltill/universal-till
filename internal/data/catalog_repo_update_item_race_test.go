@@ -2,13 +2,13 @@ package data_test
 
 import (
 	"context"
-	"path/filepath"
 	"sync"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // TestUpdateItemReturningWasActiveConcurrentRace exercises the read-then-write
@@ -28,7 +28,7 @@ import (
 // reasoning as TestAddBarcodeConcurrentRace in
 // catalog_repo_concurrency_test.go.
 func TestUpdateItemReturningWasActiveConcurrentRace(t *testing.T) {
-	dbh, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	dbh, err := db.Open(testsupport.MigratedDBFile(t, "test.db"))
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestUpdateItemReturningWasActiveConcurrentRace(t *testing.T) {
 // what the OOB-mode decision is derived from. Each case must match what the
 // pre-fix handler (a GetItem read followed by a separate UpdateItem) did.
 func TestUpdateItemReturningWasActiveSemantics(t *testing.T) {
-	dbh, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	dbh, err := db.Open(testsupport.MigratedDBFile(t, "test.db"))
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

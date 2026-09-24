@@ -2,13 +2,13 @@ package data_test
 
 import (
 	"context"
-	"path/filepath"
 	"sync"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // TestUpdateItemPartialConcurrentRace is the regression test for ut-docs#2324
@@ -28,7 +28,7 @@ import (
 // in catalog_repo_update_item_race_test.go, which this test otherwise
 // mirrors.
 func TestUpdateItemPartialConcurrentRace(t *testing.T) {
-	dbh, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	dbh, err := db.Open(testsupport.MigratedDBFile(t, "test.db"))
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

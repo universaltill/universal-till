@@ -3,16 +3,16 @@ package data
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 func openIssueReportsTestDB(t *testing.T) *db.DB {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), "issuereports.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "issuereports.db"))
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

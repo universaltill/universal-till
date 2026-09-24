@@ -2,10 +2,10 @@ package data
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // ut-docs#2209: the sale-screen variant picker needs the same batch
@@ -15,7 +15,7 @@ import (
 // itself is proven here, mirroring TestModifierRepo_ItemIDsWithModifiers
 // (batch7_stragglers_test.go) exactly.
 func TestCatalogRepo_ItemIDsWithVariants(t *testing.T) {
-	dbo, err := db.Open(filepath.Join(t.TempDir(), "variants-batch.db"))
+	dbo, err := db.Open(testsupport.MigratedDBFile(t, "variants-batch.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestCatalogRepo_ItemIDsWithVariants(t *testing.T) {
 // when it is the ONLY variant an item has (regression for a query that
 // forgot the is_active filter entirely).
 func TestCatalogRepo_ItemIDsWithVariants_NoActiveVariantAtAllIsAbsent(t *testing.T) {
-	dbo, err := db.Open(filepath.Join(t.TempDir(), "variants-batch2.db"))
+	dbo, err := db.Open(testsupport.MigratedDBFile(t, "variants-batch2.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestCatalogRepo_ItemIDsWithVariants_NoActiveVariantAtAllIsAbsent(t *testing
 // a whitespace-only sku and no barcode must NOT be flagged as having a
 // sellable variant — same as one whose sku is genuinely NULL/blank.
 func TestCatalogRepo_ItemIDsWithVariants_WhitespaceOnlySKUIsNotResolvable(t *testing.T) {
-	dbo, err := db.Open(filepath.Join(t.TempDir(), "variants-whitespace.db"))
+	dbo, err := db.Open(testsupport.MigratedDBFile(t, "variants-whitespace.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

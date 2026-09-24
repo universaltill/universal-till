@@ -14,16 +14,16 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 func openB8InvDB(t *testing.T) (*db.DB, *POSRepo) {
 	t.Helper()
-	dbo, err := db.Open(filepath.Join(t.TempDir(), "batch8.db"))
+	dbo, err := db.Open(testsupport.MigratedDBFile(t, "batch8.db"))
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}

@@ -2,7 +2,6 @@ package data_test
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/catalogtypes"
@@ -15,7 +14,7 @@ import (
 // like CreateItem once the caller commits: the item lands with its
 // zero-quantity inventory row (ut-docs#310).
 func TestCreateItemTx_CommitsItemAndInventoryRow(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cat.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +52,7 @@ func TestCreateItemTx_CommitsItemAndInventoryRow(t *testing.T) {
 // step in the same row failed unexpectedly), the item must not have landed
 // either — no half-built row survives the rollback.
 func TestCreateItemTx_RollbackDiscardsItem(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "cat.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

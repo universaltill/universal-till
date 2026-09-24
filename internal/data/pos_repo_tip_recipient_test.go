@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // InsertPayment/GetSaleDetail must round-trip tip_recipient end to end
@@ -21,7 +22,7 @@ func TestPOSRepo_TipRecipient_RoundTrips(t *testing.T) {
 	if err := os.Chdir(root); err != nil {
 		t.Fatal(err)
 	}
-	d, err := db.Open(filepath.Join(t.TempDir(), "tip_recipient.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "tip_recipient.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +70,7 @@ func TestPOSRepo_TipRecipient_DefaultsToEmployee(t *testing.T) {
 	if err := os.Chdir(root); err != nil {
 		t.Fatal(err)
 	}
-	d, err := db.Open(filepath.Join(t.TempDir(), "tip_recipient_default.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "tip_recipient_default.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

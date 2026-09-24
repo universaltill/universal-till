@@ -2,16 +2,16 @@ package data_test
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 func newShortcutsTestDB(t *testing.T) *data.ShortcutsRepo {
 	t.Helper()
-	d, err := db.Open(filepath.Join(t.TempDir(), "shortcuts.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "shortcuts.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestRemoveButton(t *testing.T) {
 // direct UPDATE against the DB (not newShortcutsTestDB's repo-only handle)
 // simulates that "flag set, row somehow still there" state instead.
 func TestLoadButtons_ExcludesHiddenItems(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "shortcuts-hidden.db"))
+	d, err := db.Open(testsupport.MigratedDBFile(t, "shortcuts-hidden.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
