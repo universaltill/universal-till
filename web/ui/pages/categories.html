@@ -61,7 +61,13 @@
           data-field-color="{{ .Color }}"
           data-groups="{{ .Groups }}"
           data-stations="{{ .Stations }}"
+          data-image="{{ .ImagePath }}"
+          data-image-url="{{ if imgExists .ImagePath }}{{ imgv .ImagePath }}{{ end }}"
           data-field-active="{{ if .IsActive }}1{{ else }}0{{ end }}">
+        {{/* ut-docs#2500: data-image/data-image-url are NOT data-field-* —
+             the form's "image" field is a file input, which record-
+             dialog.js's generic prefill must never write a path into; the
+             page script paints the image picker from them on open. */}}
         {{/* ut-docs#2284: data-field-color is a plain hidden-input prefill
              record-dialog.js handles itself; data-groups/data-stations are
              deliberately NOT data-field-* — a set of same-named checkboxes
@@ -253,8 +259,119 @@
     });
   }
 
+  // ut-docs#2500: the image picker. The pressed icon tile shows what the
+  // category has NOW (from the row's data-image), or what the operator
+  // just picked; an uploaded photo presses no tile and shows its preview
+  // instead. Roving tabindex like the colour grid (one Tab stop).
+  var iconGrid = document.getElementById('category-icon-grid');
+  var iconInput = document.getElementById('category-icon');
+  var imageFile = document.getElementById('category-image-file');
+  var imageCamera = document.getElementById('category-image-camera');
+  var imageName = document.getElementById('category-image-name');
+  var imageFileName = document.getElementById('category-image-file-name');
+  var imageCurrent = document.getElementById('category-image-current');
+  var imagePreview = document.getElementById('category-image-preview');
+  var currentImage = '';
+
+  function paintIcons(pressedKey) {
+    if (!iconGrid) return;
+    var tiles = iconGrid.querySelectorAll('.builtin-icon-tile');
+    var anyPressed = false;
+    tiles.forEach(function (btn) {
+      var pressed = pressedKey !== null && btn.dataset.icon === pressedKey;
+      if (pressed) anyPressed = true;
+      btn.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+      btn.setAttribute('tabindex', pressed ? '0' : '-1');
+    });
+    if (!anyPressed && tiles.length) tiles[0].setAttribute('tabindex', '0');
+  }
+
+  // Which tile a stored path corresponds to: a built-in icon's key, "none"
+  // for no image, or null for an uploaded photo (no tile pressed).
+  function keyForPath(path) {
+    if (!path) return 'none';
+    var match = null;
+    if (iconGrid) {
+      iconGrid.querySelectorAll('.builtin-icon-tile[data-icon-path]').forEach(function (btn) {
+        if (btn.dataset.iconPath === path) match = btn.dataset.icon;
+      });
+    }
+    return match;
+  }
+
+  function clearPickedFile() {
+    if (imageFile) imageFile.value = '';
+    if (imageCamera) imageCamera.value = '';
+    if (imageName) imageName.value = '';
+    if (imageFileName) imageFileName.textContent = '';
+  }
+
+  function filePicked(file) {
+    if (!file) return;
+    if (iconInput) iconInput.value = '';
+    if (imageName) imageName.value = file.name;
+    if (imageFileName) imageFileName.textContent = file.name;
+    paintIcons(null);
+  }
+
+  if (iconGrid) {
+    iconGrid.addEventListener('click', function (ev) {
+      var btn = ev.target.closest ? ev.target.closest('.builtin-icon-tile') : null;
+      if (!btn || !iconInput) return;
+      iconInput.value = btn.dataset.icon || '';
+      clearPickedFile();
+      if (imageCurrent) imageCurrent.hidden = true;
+      paintIcons(btn.dataset.icon);
+      btn.focus();
+    });
+    iconGrid.addEventListener('keydown', function (ev) {
+      var rtl = document.documentElement.getAttribute('dir') === 'rtl';
+      var horizontalStep = rtl ? -1 : 1;
+      var step = (ev.key === 'ArrowRight') ? horizontalStep
+               : (ev.key === 'ArrowLeft') ? -horizontalStep
+               : (ev.key === 'ArrowDown') ? 1
+               : (ev.key === 'ArrowUp') ? -1 : 0;
+      if (!step) return;
+      var tiles = Array.prototype.slice.call(iconGrid.querySelectorAll('.builtin-icon-tile'));
+      var i = tiles.indexOf(document.activeElement);
+      if (i < 0) return;
+      ev.preventDefault();
+      tiles[(i + step + tiles.length) % tiles.length].focus();
+    });
+  }
+  var chooseBtn = document.getElementById('category-image-choose-btn');
+  var cameraBtn = document.getElementById('category-image-camera-btn');
+  if (chooseBtn && imageFile) chooseBtn.addEventListener('click', function () { imageFile.click(); });
+  if (cameraBtn && imageCamera) cameraBtn.addEventListener('click', function () { imageCamera.click(); });
+  if (imageFile) imageFile.addEventListener('change', function () { filePicked(imageFile.files && imageFile.files[0]); });
+  if (imageCamera && imageFile) {
+    imageCamera.addEventListener('change', function () {
+      var f = imageCamera.files && imageCamera.files[0];
+      if (!f) return;
+      // One named "image" part: copy the camera pick into the real input
+      // (catalog.html's ut-docs#1326 pattern).
+      try {
+        var dt = new DataTransfer();
+        dt.items.add(f);
+        imageFile.files = dt.files;
+      } catch (e) { return; }
+      filePicked(f);
+    });
+  }
+
   dialog.addEventListener('record-dialog:open', function (ev) {
     var row = ev.detail && ev.detail.row;
+    currentImage = row ? (row.getAttribute('data-image') || '') : '';
+    clearPickedFile();
+    if (iconInput) iconInput.value = '';
+    var key = keyForPath(currentImage);
+    paintIcons(key);
+    if (imageCurrent && imagePreview) {
+      var url = row ? (row.getAttribute('data-image-url') || '') : '';
+      var isUpload = key === null && url !== '';
+      imageCurrent.hidden = !isUpload;
+      if (isUpload) imagePreview.setAttribute('src', url); else imagePreview.removeAttribute('src');
+    }
     paintColor();
     tick('group_id', row ? row.getAttribute('data-groups') : '');
     tick('station_id', row ? row.getAttribute('data-stations') : '');
@@ -285,6 +402,7 @@
      record_dialog.html's own comment). */}}
 {{ define "record_dialog_fields" }}
 <form id="category-form" method="post" action="/api/categories" autocomplete="off"
+      enctype="multipart/form-data" hx-encoding="multipart/form-data"
       hx-boost="true" hx-target="#category-dialog-msg" hx-swap="innerHTML">
   <label>{{ T "categories.col.name" }}
     <input type="text" name="name" required placeholder="{{ T "categories.create_placeholder" }}" />
@@ -311,6 +429,47 @@
       <button type="button" class="picker-tile item-color-tile" data-color="" aria-pressed="true">{{ T "catalog.color.none" }}</button>
     </div>
     <input type="hidden" name="color" id="category-color">
+  </div>
+
+  {{/* ut-docs#2500: the category's image — an uploaded photo OR a built-in
+       icon, the same set and .picker-grid/.picker-tile markup as the item
+       editor's #builtin-icon-grid (catalog.html). Sent with the one Save,
+       so the form is multipart (categories_page.go's parseCategoryForm
+       reads it with ParseMultipartForm — the ut-docs#2018 trap). Two
+       triggers for the one named file input, the catalog.html pattern:
+       Take photo opens the OS camera capture (no in-page viewfinder in
+       this slice) and its pick is copied into #category-image-file.
+       #category-icon is the submitted choice: "" keeps the current image,
+       "none" clears it, a key picks that icon. Picking a file un-presses
+       the icons and vice versa. #category-image-name only mirrors the
+       picked file's name so record-dialog.js's discard guard (which
+       serialises the form as text and cannot see a File) notices a pick. */}}
+  <div class="category-dialog-section">
+    <div class="category-dialog-label">{{ T "categories.image.title" }}</div>
+    <p class="muted category-dialog-help">{{ T "categories.image.help" }}</p>
+    <div id="category-image-current" class="category-image-current" hidden>
+      <img id="category-image-preview" src="" alt="" width="40" height="40">
+      <span class="muted">{{ T "catalog.builtin_icon.custom_active" }}</span>
+    </div>
+    <div class="muted">{{ T "catalog.image_types" }}</div>
+    <div class="field-pair">
+      <button type="button" class="btn secondary" id="category-image-camera-btn">{{ T "catalog.take_photo" }}</button>
+      <button type="button" class="btn secondary" id="category-image-choose-btn">{{ T "catalog.choose_file" }}</button>
+    </div>
+    <input type="file" id="category-image-camera" accept="image/*" capture="environment" hidden>
+    <input type="file" name="image" id="category-image-file" accept="image/png,image/jpeg" hidden>
+    <input type="hidden" name="image_name" id="category-image-name">
+    <div id="category-image-file-name" class="muted" aria-live="polite"></div>
+    <div id="category-icon-grid" class="picker-grid" role="group" aria-label="{{ T "catalog.builtin_icon.hint" }}">
+      {{ range .root.builtinIcons }}
+      <button type="button" class="picker-tile builtin-icon-tile" data-icon="{{ .Key }}" data-icon-path="{{ .Path }}" aria-pressed="false" title="{{ T .I18nKey }}">
+        <img src="{{ .Path }}" alt="" width="28" height="28">
+        <span>{{ T .I18nKey }}</span>
+      </button>
+      {{ end }}
+      <button type="button" class="picker-tile builtin-icon-tile" data-icon="none" aria-pressed="false">{{ T "catalog.builtin_icon.none" }}</button>
+    </div>
+    <input type="hidden" name="icon" id="category-icon">
   </div>
 
   {{/* ut-docs#2284 (b): category-level modifier groups (ADR-0094). Every

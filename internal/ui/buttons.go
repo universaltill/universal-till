@@ -145,6 +145,11 @@ type CategoryGroup struct {
 	Buttons  []ButtonVM
 	Children []*CategoryGroup
 
+	// ImageURL (ut-docs#2500) is the category's image for its strip tab
+	// and overflow tile, already through categoryImageURL — "" means
+	// render no <img> at all.
+	ImageURL string
+
 	// AncestorName is the top-level root's Name for a NESTED subcategory —
 	// empty for a root itself (a root has no ancestor to disambiguate
 	// against). ut-docs#2198: two subcategories sharing a name under
@@ -198,6 +203,28 @@ func resolveCategoryColor(c data.CategoryNode) string {
 	return categoryPalette[h.Sum32()%uint32(len(categoryPalette))]
 }
 
+// categoryImageURL (ut-docs#2500) turns a stored categories.image_path into
+// what the sell screen may render: the path is kept only when it resolves
+// to a file this till can actually serve (httpx.AssetExists — the data
+// dir, the release tree, or the binary's embedded web/ assets). A built-in
+// icon (/public/assets/category-icons/..., shipped with every binary)
+// therefore always renders; an uploaded photo
+// (/public/assets/categories/<id>/thumb.png) renders only where the file
+// is — the column rides the admin sync bundle but the file does not (the
+// D2 limit), so on a satellite the category shows name-only instead of a
+// broken <img>. The same check covers a built-in key a newer primary knows
+// and this older satellite doesn't ship yet. Anything not under /public/
+// is dropped outright: the column arrives over sync, so it is untrusted.
+func categoryImageURL(path string) string {
+	if path == "" || !strings.HasPrefix(path, "/public/") || strings.Contains(path, "..") {
+		return ""
+	}
+	if !httpx.AssetExists(path) {
+		return ""
+	}
+	return path
+}
+
 // BuildCategoryGroups nests buttons under their item's category (following
 // each category's ParentID to build the tree cats itself doesn't carry
 // nesting for) — "deep category trees, not a flat product list." Branches
@@ -216,7 +243,7 @@ func BuildCategoryGroups(buttons []Button, cats []data.CategoryNode, itemCounts 
 	byID := make(map[string]*CategoryGroup, len(cats))
 	nodeByID := make(map[string]data.CategoryNode, len(cats))
 	for _, c := range cats {
-		byID[c.ID] = &CategoryGroup{ID: c.ID, Name: c.Name, Color: resolveCategoryColor(c)}
+		byID[c.ID] = &CategoryGroup{ID: c.ID, Name: c.Name, Color: resolveCategoryColor(c), ImageURL: categoryImageURL(c.ImagePath)}
 		nodeByID[c.ID] = c
 	}
 
@@ -443,6 +470,7 @@ type CategoryTileVM struct {
 	Name      string
 	Color     string
 	ItemCount int
+	ImageURL  string // ut-docs#2500: see CategoryGroup.ImageURL
 }
 
 // BuildCategoryTiles derives the category_tabs/all_filter_chips category
@@ -458,7 +486,7 @@ func BuildCategoryTiles(allActive []Button, cats []data.CategoryNode) []Category
 	groups := BuildCategoryGroups(allActive, cats, nil)
 	out := make([]CategoryTileVM, 0, len(groups))
 	for _, g := range groups {
-		out = append(out, CategoryTileVM{ID: g.ID, Name: g.Name, Color: g.Color, ItemCount: countSubtreeButtons(g)})
+		out = append(out, CategoryTileVM{ID: g.ID, Name: g.Name, Color: g.Color, ItemCount: countSubtreeButtons(g), ImageURL: g.ImageURL})
 	}
 	return out
 }

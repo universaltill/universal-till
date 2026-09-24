@@ -27,7 +27,7 @@ func TestNewCatalogTestDB_ClosesOnCleanup(t *testing.T) {
 }
 
 // TestNewCatalogTestDB_HasSellScreenHiddenColumn (ut-docs#2541 review): the
-// real schema (migration 039) added items.sell_screen_hidden -- this
+// real schema (migration 040) added items.sell_screen_hidden -- this
 // fixture had drifted from it, the same fixture-drift class as
 // ut-docs#2209/#625 elsewhere in this helper, so any repo call that reads
 // or writes the column (CatalogRepo.SellScreenHiddenItemIDs/

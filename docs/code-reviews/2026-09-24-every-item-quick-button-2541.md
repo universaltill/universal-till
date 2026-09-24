@@ -11,7 +11,7 @@ dev subagent, reviewed by an independent Opus subagent (lane:cloud-54).
   code/price/thumbnail logic. Nothing is backfilled, so items from every
   creation path are covered: till create, CSV/backup import, cloud directives,
   demo seed and admin sync. Deleted or deactivated items drop off on their own.
-- **Migration 039** (renumbered from 038 after #2535 took it) adds `items.sell_screen_hidden` (NOT NULL DEFAULT 0), with
+- **Migration 040** (renumbered twice: #2535 took 038, #2500 took 039) adds `items.sell_screen_hidden` (NOT NULL DEFAULT 0), with
   its checksum pinned. Admin sync copies `SELECT *`, so the flag reaches
   satellites. No items upsert path resets it.
 - **Tile actions (jiggle edit mode only).**

@@ -1,19 +1,60 @@
 package pages
 
 import (
+	"errors"
 	"fmt"
+	"image"
+	"io"
+	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
+	"github.com/universaltill/universal-till/internal/catimport"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/imaging"
+	"github.com/universaltill/universal-till/internal/pages/catalog"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pages/itemsnav"
+	"github.com/universaltill/universal-till/internal/paths"
 )
+
+// categoryUploadMaxBytes bounds the category dialog's whole multipart body
+// (ut-docs#2500): the same 10MB photo cap the catalog item upload uses,
+// plus headroom for the dialog's plain fields.
+const categoryUploadMaxBytes = 11 << 20
+
+// categoryThumbURL / categoryThumbFile are where an uploaded category photo
+// lives (ut-docs#2500): the stored image_path and its file under the
+// stable data dir (paths.Data, so it survives a self-update), the same
+// shape as an item's /public/assets/items/<id>/thumb.png.
+func categoryThumbURL(id string) string { return "/public/assets/categories/" + id + "/thumb.png" }
+
+func categoryThumbFile(id string) string {
+	return filepath.Join(paths.Data("public", "assets", "categories", id), "thumb.png")
+}
+
+// safeCategoryID refuses an id that could escape the categories asset
+// directory before it is ever joined into a filesystem path — the same
+// guard the item/variant upload handlers apply to their ids.
+func safeCategoryID(id string) bool {
+	return id != "" && !strings.ContainsAny(id, "/\\.")
+}
+
+// removeCategoryUpload deletes a category's uploaded photo once it is
+// superseded (a built-in icon picked, or "No image"). Best-effort: a
+// missing file is the normal case.
+func removeCategoryUpload(id string) {
+	if err := os.Remove(categoryThumbFile(id)); err != nil && !os.IsNotExist(err) {
+		log.Printf("[categories] remove superseded upload for %s: %v", id, err)
+	}
+}
 
 // isHtmxDialogRequest reports whether r came from the record dialog's own
 // hx-boosted forms (ut-docs#2020) rather than a plain browser submission.
@@ -193,6 +234,17 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		now := time.Now().UTC().Format(time.RFC3339)
 		_ = posRepo.InsertAudit(r.Context(), nil, actorID, "category", targetID, action, nil, now, "")
 	}
+	// auditImage is audit plus the image outcome (ut-docs#2500) — "icon:
+	// <key>", "upload", "none" or "" (unchanged) — so the log records what
+	// a Save did to the category's picture, not just that it happened.
+	auditImage := func(r *http.Request, actorID, targetID, action, image string) {
+		now := time.Now().UTC().Format(time.RFC3339)
+		var payload any
+		if image != "" {
+			payload = map[string]any{"image": image}
+		}
+		_ = posRepo.InsertAudit(r.Context(), nil, actorID, "category", targetID, action, payload, now, "")
+	}
 
 	// categoryRow is one list row: the admin read plus the comma-joined
 	// modifier-group and kitchen-station ids the row's data-groups/
@@ -252,8 +304,11 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 			"groups":     groups,
 			"stations":   stations,
 			"itemColors": catalogtypes.ItemColors(),
-			"errKey":     errKey,
-			"errCount":   errCount,
+			// ut-docs#2500: the dialog's image picker offers the SAME
+			// built-in set as the item editor (#1862/#2506 grow it there).
+			"builtinIcons": catimport.BuiltinIcons(),
+			"errKey":       errKey,
+			"errCount":     errCount,
 		}
 		// ut-docs#1950: /categories is one of the /items rail's five section
 		// destinations — an htmx request from that panel (NOT a stale history
@@ -291,6 +346,14 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		color      string
 		groupIDs   []string
 		stationIDs []string
+		// ut-docs#2500: the image choice. icon is "" (keep whatever is
+		// there), "none" (clear) or a built-in key already resolved to
+		// iconPath. photo is a decoded, downscaled upload — validated
+		// here, BEFORE any row is written, and written to disk only after
+		// the row is saved. A photo wins over an icon key.
+		icon     string
+		iconPath string
+		photo    image.Image
 	}
 
 	// parseCategoryForm reads and validates the dialog's form. The colour
@@ -303,7 +366,17 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 	// group or an unknown station — and refused as a whole so nothing
 	// half-saves.
 	parseCategoryForm := func(r *http.Request) (categoryForm, string) {
-		_ = r.ParseForm()
+		// ut-docs#2500: the dialog form is multipart (it carries the image
+		// file). ParseForm alone silently ignores a multipart body, so
+		// every field — group_id/station_id included — would arrive empty
+		// (the ut-docs#2018 trap). A urlencoded post (an older page, a
+		// test, a curl) still parses the plain way.
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			if !errors.Is(err, http.ErrNotMultipart) {
+				return categoryForm{}, "common.error.invalid_upload"
+			}
+			_ = r.ParseForm()
+		}
 		f := categoryForm{
 			name:  strings.TrimSpace(r.PostFormValue("name")),
 			color: strings.TrimSpace(r.PostFormValue("color")),
@@ -313,6 +386,36 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		}
 		if !catalogtypes.ValidItemColor(f.color) {
 			return f, "categories.error.color_invalid"
+		}
+		f.icon = strings.TrimSpace(r.PostFormValue("icon"))
+		if f.icon != "" && f.icon != "none" {
+			p, ok := catimport.IconPath(f.icon)
+			if !ok {
+				return f, "categories.error.image_icon_invalid"
+			}
+			f.iconPath = p
+		}
+		if r.MultipartForm != nil {
+			if file, hdr, err := r.FormFile("image"); err == nil {
+				defer file.Close()
+				if hdr.Size > 10<<20 {
+					// Review finding: a 10–11 MB photo would be silently
+					// truncated by the LimitReader below and reported as
+					// "not a valid image"; say "too large" instead.
+					return f, "catalog.error.image_too_large"
+				}
+				if hdr.Size > 0 {
+					raw, readErr := io.ReadAll(io.LimitReader(file, 10<<20))
+					if readErr != nil {
+						return f, "catalog.error.image_invalid"
+					}
+					img, err := imaging.PrepareThumb(raw)
+					if err != nil {
+						return f, catalog.ThumbErrorKey(err)
+					}
+					f.photo = img
+				}
+			}
 		}
 		for _, id := range r.PostForm["group_id"] {
 			if id = strings.TrimSpace(id); id != "" {
@@ -400,6 +503,42 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		return true
 	}
 
+	// saveCategoryImage applies the dialog's image choice after the row
+	// itself is saved (ut-docs#2500). An upload and a built-in icon are
+	// mutually exclusive, same as an item's: writing one removes the
+	// other's file. Returns the audit label ("" = unchanged) and false
+	// after answering the request itself.
+	saveCategoryImage := func(w http.ResponseWriter, r *http.Request, id string, f categoryForm) (string, bool) {
+		switch {
+		case f.photo != nil:
+			if err := imaging.WriteThumbPNG(f.photo, categoryThumbFile(id)); err != nil {
+				log.Printf("[categories] write thumb for %s: %v", id, err)
+				renderCategoryDialogError(w, r, "categories.error.update", 0)
+				return "", false
+			}
+			if err := catRepo.SetCategoryImage(r.Context(), id, categoryThumbURL(id)); err != nil {
+				renderCategoryDialogError(w, r, "categories.error.update", 0)
+				return "", false
+			}
+			return "upload", true
+		case f.icon == "none":
+			if err := catRepo.SetCategoryImage(r.Context(), id, ""); err != nil {
+				renderCategoryDialogError(w, r, "categories.error.update", 0)
+				return "", false
+			}
+			removeCategoryUpload(id)
+			return "none", true
+		case f.iconPath != "":
+			if err := catRepo.SetCategoryImage(r.Context(), id, f.iconPath); err != nil {
+				renderCategoryDialogError(w, r, "categories.error.update", 0)
+				return "", false
+			}
+			removeCategoryUpload(id)
+			return "icon:" + f.icon, true
+		}
+		return "", true
+	}
+
 	mux.HandleFunc("POST /api/categories", func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := requireManager(w, r)
 		if !ok {
@@ -408,6 +547,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		if !requirePrimary(w, r) {
 			return
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, categoryUploadMaxBytes)
 		f, errKey := parseCategoryForm(r)
 		if errKey != "" {
 			renderCategoryDialogError(w, r, errKey, 0)
@@ -425,7 +565,11 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		if !saveCategoryLinks(w, r, id, f) {
 			return
 		}
-		audit(r, actor.ID, id, "category_create")
+		imageAudit, ok := saveCategoryImage(w, r, id, f)
+		if !ok {
+			return
+		}
+		auditImage(r, actor.ID, id, "category_create", imageAudit)
 		redirectCategories(w, r, "/categories")
 	})
 
@@ -438,6 +582,13 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		id := r.PathValue("id")
+		// ut-docs#2500: id now reaches a filesystem path (the uploaded
+		// photo), so refuse a traversal-shaped one before anything else.
+		if !safeCategoryID(id) {
+			renderCategoryDialogError(w, r, "categories.error.not_found", 0)
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, categoryUploadMaxBytes)
 		f, errKey := parseCategoryForm(r)
 		if errKey != "" {
 			renderCategoryDialogError(w, r, errKey, 0)
@@ -457,10 +608,14 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		if !saveCategoryLinks(w, r, id, f) {
 			return
 		}
+		imageAudit, ok := saveCategoryImage(w, r, id, f)
+		if !ok {
+			return
+		}
 		// "category_update", not "category_rename" — this same handler now
-		// also writes colour and the modifier-group/kitchen-station links
-		// (ut-docs#2284), not just the name.
-		audit(r, actor.ID, id, "category_update")
+		// also writes colour, the modifier-group/kitchen-station links
+		// (ut-docs#2284) and the image (ut-docs#2500), not just the name.
+		auditImage(r, actor.ID, id, "category_update", imageAudit)
 		redirectCategories(w, r, "/categories")
 	})
 
