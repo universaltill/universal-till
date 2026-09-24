@@ -11,7 +11,7 @@ dev subagent, reviewed by an independent Opus subagent (lane:cloud-54).
   code/price/thumbnail logic. Nothing is backfilled, so items from every
   creation path are covered: till create, CSV/backup import, cloud directives,
   demo seed and admin sync. Deleted or deactivated items drop off on their own.
-- **Migration 038** adds `items.sell_screen_hidden` (NOT NULL DEFAULT 0), with
+- **Migration 039** (renumbered from 038 after #2535 took it) adds `items.sell_screen_hidden` (NOT NULL DEFAULT 0), with
   its checksum pinned. Admin sync copies `SELECT *`, so the flag reaches
   satellites. No items upsert path resets it.
 - **Tile actions (jiggle edit mode only).**
@@ -108,3 +108,27 @@ The reviewer re-checked the TDD claims by reverting the code in a worktree:
 ## Verdict
 
 Safe to merge once the full gate is green.
+
+## Merge with main (ut-docs#2499, #2535)
+
+`main` gained two changes while this branch was open:
+- **#2499's browsing mode.** `ButtonsHTTP.List` now keeps #2499's
+  mode switch. It uses this branch's single `LoadAllActive` (always needed
+  for the implicit-tile merge), so every mode still runs one catalog load.
+- **#2535's migration 038.** This branch's migration is renumbered to
+  **039**, and both checksums are pinned.
+
+#2499 retired `buttons_categories_tab_test.go`. Its strip-mode #2498 tests
+now live in `buttons_category_item_only_test.go`, ported to the hidden-item
+pruning semantics (review finding 5):
+- `…CategoryWithOnlyHiddenItemsIsPruned`
+- `…ItemOnlyCategoryShowsImplicitTile`
+- `…DefaultTabPrefersGroupWithButtons`, now with three categories so tabs
+  exist.
+
+Re-ran after the merge, all green except the two environment-only checks
+(shellcheck binary, `retry-with-backoff` usage):
+- `go test ./...`, golangci-lint and every CI guard;
+- docs-shots regenerated;
+- the affected e2e subset: 36 passed, including
+  `sell-screen-browsing-mode-2499`.

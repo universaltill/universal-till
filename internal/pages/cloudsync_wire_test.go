@@ -773,11 +773,9 @@ func TestCloudSetTillSetting_WhitelistedKeysWrite(t *testing.T) {
 		{keyReceiptFooter, "Thank you!", "Thank you!"},
 		{common.KeyKioskIdleReset, "90", "90"},
 		{data.OrderTypePromptModeKey, data.OrderTypePromptModeBeforeItem, data.OrderTypePromptModeBeforeItem},
-		{data.SellScreenCategoriesTabKey, "true", "1"},  // strconv.ParseBool spellings normalize to "1"/"0", same as the local form
-		{data.SellScreenCategoriesTabKey, "False", "0"}, // case-insensitive too
-		{data.SellScreenCategoriesTabKey, "1", "1"},     // the till's own wire format, verbatim
-		{data.SellScreenCategoriesTabKey, "0", "0"},
-		{data.SellScreenCategoriesTabKey, "t", "1"}, // every other strconv.ParseBool spelling, not just true/false
+		{common.KeyBrowsingMode, common.BrowsingModeStripOverflow, common.BrowsingModeStripOverflow}, // ut-docs#2499: verbatim, one of the three modes
+		{common.KeyBrowsingMode, common.BrowsingModeAllFilterChips, common.BrowsingModeAllFilterChips},
+		{common.KeyBrowsingMode, common.BrowsingModeCategoryTabs, common.BrowsingModeCategoryTabs},
 		{data.SaleDisplayNoSchemeKey, data.DisplayNoSchemeLifetimeNoReset, data.DisplayNoSchemeLifetimeNoReset},
 	}
 	covered := map[string]bool{}
@@ -847,8 +845,9 @@ func TestCloudSetTillSetting_ValidatesValuesLikeTheLocalForms(t *testing.T) {
 		{common.KeyKioskIdleReset, "ninety"},
 		{data.OrderTypePromptModeKey, "sometime"},
 		{data.OrderTypePromptModeKey, ""},
-		{data.SellScreenCategoriesTabKey, "maybe"},
-		{data.SellScreenCategoriesTabKey, ""},
+		{common.KeyBrowsingMode, "maybe"},
+		{common.KeyBrowsingMode, ""},
+		{common.KeyBrowsingMode, "CATEGORY_TABS"}, // refused, never case-folded or clamped — a remote result column should say why
 		{data.SaleDisplayNoSchemeKey, "monthly"},
 		{data.SaleDisplayNoSchemeKey, ""},
 	} {

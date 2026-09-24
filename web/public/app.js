@@ -1666,9 +1666,11 @@ function initOfflineOverride(updateFn){
 //
 // Scoped to the sale screen by the #buttons-grid ancestor in every
 // selector: the Designer's admin tiles (#buttons-grid-admin) and the
-// Categories-tab item picker's cloned tiles (#category-items-modal,
-// outside #buttons-grid) never match, and the plugin-contributed
-// #plugin-buttons strip is a sibling of the grid, not inside it.
+// category-tiles mode's popup tiles (#category-items-modal, outside
+// #buttons-grid, ut-docs#2499) never match, and the plugin-contributed
+// #plugin-buttons strip is a sibling of the grid, not inside it. The
+// category tiles themselves (#browsing-category-tiles, ut-docs#2499) are
+// not .btn-tile[data-code] either, so that mode never arms this at all.
 (function () {
   var HOLD_MS = 500;
   var MOVE_CANCEL_PX = 10;
@@ -1686,8 +1688,10 @@ function initOfflineOverride(updateFn){
   // ut-docs#2294 fallout: #buttons-grid-all (the All tab's own dedicated
   // grid, every active catalog item -- not just quick buttons) renders
   // INSIDE #buttons-grid, so a plain '#buttons-grid .btn-tile[data-code]'
-  // match also catches every All-tab tile. All is the DEFAULT tab
-  // (settings.sale.show_all_tab, on by default), so without this exclusion
+  // match also catches every All-tab tile. All is the strip's DEFAULT tab
+  // (and the whole grid in the all_filter_chips browsing mode,
+  // ut-docs#2499 -- same #buttons-grid-all id on purpose, so this one
+  // guard covers both), so without this exclusion
   // a long-press/right-click on the very first screen an operator sees
   // would wobble/badge the WHOLE catalogue and let a drag "reorder" items
   // that were never quick buttons -- sort_order has no meaning for the
@@ -2575,7 +2579,7 @@ window.utTabBarFade = function (el) {
   // modifier_picker.html, suggestions.html) -- PLUS (ut-docs#2371) a
   // modifier/variant tile's OWN hx-get that opens the picker in the first
   // place (buttons.html's "product-tile" define, ~line 658; the same
-  // clone inside the Categories-tab picker's #category-items-modal body,
+  // tile inside the category-tiles popup's #category-items-modal body,
   // and any other surface, are covered for free since this listener is
   // delegated on document.body). Before ut-docs#2371 the prompt only ever
   // fired on the picker's own "Add to basket" submit (scan-with-modifiers

@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page, Locator, Request } from '@playwright/test';
-import { watchConsole } from './helpers';
+import { watchConsole, setBrowsingMode } from './helpers';
 
 // ut-docs#2339: a long-press (~500ms hold, cancelled by >10px movement) or
 // a right-click on a sell-screen tile puts the WHOLE quick-button grid into
@@ -146,6 +146,16 @@ const codesInOrder = (page: Page, run: string) =>
     .evaluateAll((els) => els.map((el) => (el as HTMLElement).dataset.code));
 
 test.describe('Sell-screen jiggle edit mode (ut-docs#2339)', () => {
+  // ut-docs#2499: the category strip (and its "..." overflow) is now ONE of
+  // three selectable sell-screen browsing modes (Settings -> Sell screen,
+  // sale.browsing_mode) and no longer the unconditional default (that is
+  // category tiles) -- this file is about the strip, so it picks
+  // strip_overflow explicitly rather than assuming it. worker-till.ts
+  // already boots every worker till in this mode; this is what makes the
+  // dependency visible in the spec itself.
+  test.beforeEach(async ({ page }) => {
+    await setBrowsingMode(page, 'strip_overflow');
+  });
   test('long-press enters, drag reorders, Done persists once, badges edit/remove', async ({ page }) => {
     const assertClean = watchConsole(page);
     const { run: RUN1, A: ITEM_A, B: ITEM_B, C: ITEM_C } = fixture('1');

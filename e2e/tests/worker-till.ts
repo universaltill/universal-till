@@ -54,6 +54,29 @@ export async function isHealthy(baseURL: string, timeoutMs = 1_000): Promise<boo
   }
 }
 
+// ut-docs#2499: the shared worker till browses in strip_overflow — the
+// quick-button strip every pre-#2499 sell-screen spec taps tiles on. The
+// setting's real default (category_tabs) renders category tiles on /, with
+// no product tile until one is tapped, so without this every spec that
+// clicks a .btn-tile on the sale screen would break at once. Set through
+// the till's own endpoint, after boot (UT_AUTH=off, so no elevation), not
+// baked into seed_demo: run-till.sh / docs-shots reuse that seed and the
+// manual's screenshots should show the real default. Specs that want
+// another mode switch it explicitly (helpers.ts's setBrowsingMode) and
+// restore this one afterwards.
+export const WORKER_TILL_BROWSING_MODE = 'strip_overflow';
+async function applyWorkerTillDefaults(baseURL: string): Promise<void> {
+  const res = await fetch(`${baseURL}/api/settings/browsing-mode`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ mode: WORKER_TILL_BROWSING_MODE }),
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!res.ok) {
+    throw new Error(`worker till ${baseURL}: could not set browsing mode ${WORKER_TILL_BROWSING_MODE}: HTTP ${res.status}`);
+  }
+}
+
 export type WorkerTill = {
   url: string;
   // Resolves once the server is gone and its data dir removed. A no-op
@@ -91,6 +114,7 @@ export async function startWorkerTill(parallelIndex: number): Promise<WorkerTill
     if (process.env.CI) {
       throw new Error(`${tag} something is already listening on ${url} in CI — a leaked till from an earlier worker?`);
     }
+    await applyWorkerTillDefaults(url);
     return { url, stop: async () => {} };
   }
 
@@ -160,6 +184,7 @@ export async function startWorkerTill(parallelIndex: number): Promise<WorkerTill
       }
       await sleep(250);
     }
+    await applyWorkerTillDefaults(url);
 
     const proc = child;
     const removeExitHook = onExit;

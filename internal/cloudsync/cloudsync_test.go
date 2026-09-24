@@ -60,6 +60,7 @@ type fakeCloud struct {
 	directives []map[string]any
 	snapshots  []map[string]any
 	tracking   []map[string]any
+	aggregates []map[string]any
 }
 
 func (f *fakeCloud) handler() http.Handler {
@@ -93,6 +94,14 @@ func (f *fakeCloud) handler() http.Handler {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		f.mu.Lock()
 		f.tracking = append(f.tracking, body)
+		f.mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"ok": true}})
+	})
+	mux.HandleFunc("/v1/stores/sales-aggregates", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.mu.Lock()
+		f.aggregates = append(f.aggregates, body)
 		f.mu.Unlock()
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"ok": true}})
 	})

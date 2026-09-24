@@ -56,13 +56,21 @@ const (
 	// anything at all until this is turned on, because an item with no
 	// inventory row reads as quantity 0.
 	KeyAllowNegativeInventory = "pos.allow_negative_inventory"
-	// KeyShowAllTabOnSellScreen is "Show an All tab on the sell screen"
-	// (ut-docs#2294, settings.sale.show_all_tab): the sell screen's All
-	// tab lists every active catalog item (not just quick buttons) and is
-	// on by default so an existing shop keeps the tab ut-docs#2212 already
-	// gave it; turning it off restores the pre-#2212 behavior (no All tab,
-	// first category tab default-selected).
-	KeyShowAllTabOnSellScreen = "sale.show_all_tab"
+	// KeyBrowsingMode is the sell screen's browsing layout (ut-docs#2499,
+	// settings.sell_screen.browsing_mode): one of BrowsingModeCategoryTabs
+	// (a grid of category tiles, each opening a popup of that category's
+	// every active item with its own search — the ut-docs#2283 Categories
+	// tab, promoted to the whole view, plus ut-docs#2372's "all items, not
+	// just quick buttons"), BrowsingModeAllFilterChips (the All grid —
+	// every active item — with a row of category filter chips above it) or
+	// BrowsingModeStripOverflow (the quick-button category strip with the
+	// ut-docs#2307 "…" overflow button, exactly today's sell screen). This
+	// one enum retired the two booleans that used to shape the strip —
+	// "sale.show_all_tab" (ut-docs#2294) and
+	// "sell_screen_categories_tab_enabled" (ut-docs#2283): neither is read
+	// or written anywhere any more, by decision (dead-flag rule), so a
+	// stale row under either key is simply ignored.
+	KeyBrowsingMode = "sale.browsing_mode"
 	// KeyShopType holds the ADR-0026 shop-type taxonomy value chosen in the
 	// setup wizard (cafe|retail|service|hospitality|market_stall|other) —
 	// ut-docs#539. Optional: empty/missing is fine.
@@ -197,6 +205,38 @@ var validWindowModes = map[string]bool{
 	"normal":     true,
 }
 
+// The three sale.browsing_mode values (ut-docs#2499) — see KeyBrowsingMode.
+const (
+	BrowsingModeCategoryTabs   = "category_tabs"
+	BrowsingModeAllFilterChips = "all_filter_chips"
+	BrowsingModeStripOverflow  = "strip_overflow"
+)
+
+// DefaultBrowsingMode is what a till whose KeyBrowsingMode row is missing
+// or unrecognised browses with: category tiles (BA decision on
+// ut-docs#2499 — the category-first default the researched competitor
+// tills share).
+const DefaultBrowsingMode = BrowsingModeCategoryTabs
+
+// validBrowsingModes is the closed enum KeyBrowsingMode is allowed to hold
+// — same defensive-clamp shape as validWindowModes above.
+var validBrowsingModes = map[string]bool{
+	BrowsingModeCategoryTabs:   true,
+	BrowsingModeAllFilterChips: true,
+	BrowsingModeStripOverflow:  true,
+}
+
+// ClampBrowsingMode returns mode unchanged if it's one of the three valid
+// values, else DefaultBrowsingMode — used on load (defense against a
+// corrupt/hand-edited row) and on save (defense in depth; the HTTP handler
+// already validates, mirrors ClampWindowMode below).
+func ClampBrowsingMode(mode string) string {
+	if validBrowsingModes[mode] {
+		return mode
+	}
+	return DefaultBrowsingMode
+}
+
 // ClampWindowMode returns mode unchanged if it's one of the four valid
 // values, else DefaultWindowMode — used when loading (defense against
 // corrupt/old stored data), when saving (defense in depth: the HTTP handler
@@ -321,7 +361,6 @@ func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) R
 		TaxRatePct:             cfg.Locales.TaxRate,
 		TaxInclusive:           cfg.Locales.TaxInclusive,
 		AllowNegativeInventory: false,
-		ShowAllTabOnSellScreen: true,
 	}
 
 	if v := get(KeyTaxInclusive, strconv.FormatBool(cfg.Locales.TaxInclusive)); v != "" {
@@ -354,11 +393,7 @@ func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) R
 			st.AllowNegativeInventory = b
 		}
 	}
-	if v := get(KeyShowAllTabOnSellScreen, strconv.FormatBool(st.ShowAllTabOnSellScreen)); v != "" {
-		if b, err := strconv.ParseBool(v); err == nil {
-			st.ShowAllTabOnSellScreen = b
-		}
-	}
+	st.BrowsingMode = ClampBrowsingMode(get(KeyBrowsingMode, DefaultBrowsingMode))
 	st.IdleLockMinutes = DefaultIdleLockMinutes
 	if v := get(KeyIdleLock, ""); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
@@ -524,7 +559,7 @@ func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) erro
 		KeyTaxRate:                strconv.Itoa(st.TaxRatePct),
 		KeyServiceChargeRate:      FormatServiceChargeRatePercent(st.ServiceChargeRateBasisPoints),
 		KeyAllowNegativeInventory: strconv.FormatBool(st.AllowNegativeInventory),
-		KeyShowAllTabOnSellScreen: strconv.FormatBool(st.ShowAllTabOnSellScreen),
+		KeyBrowsingMode:           ClampBrowsingMode(st.BrowsingMode),
 		KeyIdleLock:               strconv.Itoa(st.IdleLockMinutes),
 		KeyKioskIdleReset:         strconv.Itoa(st.KioskIdleResetSeconds),
 		KeyKioskPaymentMode:       ClampKioskPaymentMode(st.KioskPaymentMode),

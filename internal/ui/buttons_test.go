@@ -20,7 +20,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 		// selects the real 001_init.sql/013_items_stock_untracked.sql column
 		// set — this fixture had drifted from it the same way ut-docs#2209's
 		// own sku/variant fixture drift did (see setupFullTestDB's comment).
-		// sell_screen_hidden (migration 038, ut-docs#2541): ButtonStore.Add/
+		// sell_screen_hidden (migration 039, ut-docs#2541): ButtonStore.Add/
 		// Remove/Hide/Unhide/LoadAllActive all read or write this column now.
 		`CREATE TABLE items (id TEXT PRIMARY KEY, sku TEXT, name TEXT, description TEXT, base_price INTEGER NOT NULL, tax_code_id TEXT, category_id TEXT, brand_id TEXT, unit TEXT NOT NULL DEFAULT 'each', color TEXT, is_active INTEGER NOT NULL DEFAULT 1, is_weighed INTEGER NOT NULL DEFAULT 0, is_sample_data INTEGER NOT NULL DEFAULT 0, stock_untracked INTEGER NOT NULL DEFAULT 0, sell_screen_hidden INTEGER NOT NULL DEFAULT 0);`,
 		`CREATE TABLE categories (id TEXT PRIMARY KEY, name TEXT NOT NULL, parent_id TEXT, sort_order INTEGER NOT NULL DEFAULT 0, color TEXT, is_active INTEGER NOT NULL DEFAULT 1);`,

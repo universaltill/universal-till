@@ -10,7 +10,7 @@ import (
 	"github.com/universaltill/universal-till/internal/db"
 )
 
-// ut-docs#2541: items.sell_screen_hidden (migration 038) — an item hidden
+// ut-docs#2541: items.sell_screen_hidden (migration 039) — an item hidden
 // from the sell screen still sells via barcode scan/live search, but is
 // left out of the quick-button grid and All tab. These tests cover the
 // CatalogRepo layer directly (SetSellScreenHidden/ListSellScreenHidden/

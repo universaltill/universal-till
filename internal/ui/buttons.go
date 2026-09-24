@@ -431,18 +431,104 @@ func NewButtonStore(db *sql.DB) *ButtonStore {
 	}
 }
 
-// CategoriesTabEnabled reports whether ut-docs#2283's optional "Categories"
-// tab should render on the sell screen — settings-gated
-// (data.SellScreenCategoriesTabKey), default off. A read error is treated
-// as "off" by the caller (ButtonsHTTP.List), the same non-fatal-but-logged
-// shape LoadCategories already uses for its own error: losing this ONE
-// optional tab is much better than failing the whole sale-screen render.
-func (s *ButtonStore) CategoriesTabEnabled(ctx context.Context) (bool, error) {
-	v, _, err := s.settingsRepo.Get(ctx, data.SellScreenCategoriesTabKey)
-	if err != nil {
-		return false, err
+// CategoryTileVM (ut-docs#2499) is one tile of the category_tabs mode's
+// grid, or one chip of the all_filter_chips mode's row: a top-level
+// category with at least one ACTIVE catalog item anywhere in its subtree —
+// quick button or not, which is what sets it apart from CategoryGroup (a
+// quick-button surface). The synthetic uncategorized bucket has ID == "",
+// same convention as CategoryGroup. ItemCount is the active-item count of
+// the whole subtree, i.e. exactly what that tile's popup will list.
+type CategoryTileVM struct {
+	ID        string
+	Name      string
+	Color     string
+	ItemCount int
+}
+
+// BuildCategoryTiles derives the category_tabs/all_filter_chips category
+// list from the SAME two inputs ButtonsHTTP.List already has in hand — the
+// all-active item list (LoadAllActive) and the active category tree
+// (LoadCategories) — by running them through BuildCategoryGroups: its
+// pruning ("no active item anywhere in the subtree → no group"), its
+// top-level-only roots, its resolved colours and its uncategorized bucket
+// are precisely the rules these tiles need, so reusing it means the tile
+// grid can never disagree with the strip about what a category is. No
+// second query.
+func BuildCategoryTiles(allActive []Button, cats []data.CategoryNode) []CategoryTileVM {
+	groups := BuildCategoryGroups(allActive, cats, nil)
+	out := make([]CategoryTileVM, 0, len(groups))
+	for _, g := range groups {
+		out = append(out, CategoryTileVM{ID: g.ID, Name: g.Name, Color: g.Color, ItemCount: countSubtreeButtons(g)})
 	}
-	return v == "1", nil
+	return out
+}
+
+func countSubtreeButtons(g *CategoryGroup) int {
+	n := len(g.Buttons)
+	for _, c := range g.Children {
+		n += countSubtreeButtons(c)
+	}
+	return n
+}
+
+// filterButtonsInCategory keeps the buttons whose item sits in catID's
+// subtree (catID itself or any descendant, walking each item's category up
+// through the ACTIVE category tree the same way BuildCategoryGroups
+// nests). catID == "" is the uncategorized bucket: an item with no
+// category, or whose category no longer resolves in cats (an inactive or
+// deleted one) — again exactly the bucket BuildCategoryGroups would put it
+// in, so a tile/chip and its popup/grid always agree. Order is preserved.
+func filterButtonsInCategory(buttons []Button, cats []data.CategoryNode, catID string) []Button {
+	nodeByID := make(map[string]data.CategoryNode, len(cats))
+	for _, c := range cats {
+		nodeByID[c.ID] = c
+	}
+	inBucket := func(b Button) bool {
+		_, resolves := nodeByID[b.CategoryID]
+		if catID == "" {
+			return b.CategoryID == "" || !resolves
+		}
+		if !resolves {
+			return false
+		}
+		return b.CategoryID == catID || isCategoryAncestor(catID, b.CategoryID, nodeByID)
+	}
+	var out []Button
+	for _, b := range buttons {
+		if inBucket(b) {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// quickButtonsFirst orders a category's popup (ut-docs#2372's own
+// acceptance wording): the category's quick buttons first, in their
+// Designer order, then every remaining active item A–Z (allActive is
+// already name-sorted by LoadAllActive). Matched by item id, so a quick
+// button and its catalog row never render twice; a quick button whose
+// item isn't in allActive (deactivated since) is dropped rather than shown
+// unsellable.
+func quickButtonsFirst(quick, allActive []Button) []Button {
+	inAll := make(map[string]bool, len(allActive))
+	for _, b := range allActive {
+		inAll[b.ItemID] = true
+	}
+	out := make([]Button, 0, len(allActive))
+	seen := make(map[string]bool, len(quick))
+	for _, q := range quick {
+		if q.ItemID == "" || seen[q.ItemID] || !inAll[q.ItemID] {
+			continue
+		}
+		seen[q.ItemID] = true
+		out = append(out, q)
+	}
+	for _, b := range allActive {
+		if !seen[b.ItemID] {
+			out = append(out, b)
+		}
+	}
+	return out
 }
 
 // LoadCategories returns the flat category list the sale-screen grid nests
@@ -1183,15 +1269,33 @@ func (r *Renderer) Render(w http.ResponseWriter, name string, data any) error {
 type ButtonsHTTP struct {
 	Store ButtonStore
 	View  TplRenderer
-	// HideAllTab (ut-docs#2294) turns off the sell screen's All tab —
-	// settings.sale.show_all_tab, default ON. Named in the INVERTED sense
-	// (like catalogtypes.ItemInput.StockUntracked) so the Go zero value
-	// (false) means "show it": every existing &ButtonsHTTP{Store: ...,
-	// View: ...} literal in this package's own test suite (and in
-	// internal/pages/buttons_api.go before this card) leaves this field
-	// unset, and the actual settings default is ALSO "on" — a
-	// straight-named ShowAllTab field would have silently flipped every
-	// one of those to "off" instead.
+	// BrowsingMode (ut-docs#2499) is the shop's sale.browsing_mode — one
+	// of common.BrowsingModeCategoryTabs/AllFilterChips/StripOverflow,
+	// passed already clamped by internal/pages/buttons_api.go (internal/ui
+	// can't import internal/pages/common — Deps.BtnStore is a *ButtonStore,
+	// so that would be a cycle — which is why the string literals below
+	// are repeated here rather than referenced; buttons_browsing_mode_test.go
+	// pins all three). The Go zero value "" renders the strip: every
+	// pre-#2499 &ButtonsHTTP{Store: ..., View: ...} literal in this
+	// package's tests was written against the strip, and the fragment
+	// handlers (AllMore/Search/CategoryItems) never render a mode at all —
+	// same "zero value keeps the historical shape" convention HideAllTab's
+	// inverted naming below documents. NOT the setting's own default (that
+	// is category_tabs, common.DefaultBrowsingMode): the one production
+	// caller always passes the live clamped value, so the zero value is
+	// only ever reachable from code that never wanted a mode.
+	BrowsingMode string
+	// HideAllTab turns off the sell screen's All tab. Since ut-docs#2499
+	// retired settings.sale.show_all_tab (ut-docs#2294) it has exactly one
+	// production setter — EditMode, the Designer's replica, which lists
+	// quick buttons only — but it stays a separate field so the tests
+	// that pin the no-All-tab strip shapes keep meaning what they say.
+	// Named in the INVERTED sense (like catalogtypes.ItemInput.
+	// StockUntracked) so the Go zero value (false) means "show it": every
+	// existing &ButtonsHTTP{Store: ..., View: ...} literal in this
+	// package's own test suite leaves this field unset, and the strip's
+	// own default is ALSO "on" — a straight-named ShowAllTab field would
+	// have silently flipped every one of those to "off" instead.
 	HideAllTab bool
 	// Granted (ut-docs#2361) is this request's catalog_management
 	// permission check result, resolved by the caller (registerButtonsAPI,
@@ -1270,28 +1374,41 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 		// loses category grouping/coloring with no visible sign why.
 		logging.L().Errorf("buttons list: load categories: %v", err)
 	}
-	// ut-docs#2294: the All grid is loaded once per /ui/buttons render
-	// (this handler is only ever fetched on page load and on
+	// ut-docs#2499: which of the three sell-screen shapes to render. The
+	// Designer's replica (EditMode) is always the quick-button strip — it
+	// exists to arrange quick buttons, and neither the category popup
+	// (index.html's modal, which the Designer page doesn't have) nor the
+	// All grid is a quick-button surface. The zero value "" is the strip
+	// too — see the field's own doc comment.
+	mode := h.BrowsingMode
+	if h.EditMode || mode == "" {
+		mode = browsingModeStripOverflow
+	}
+	// ut-docs#2294: the all-active item list is loaded once per /ui/buttons
+	// render (this handler is only ever fetched on page load and on
 	// "modifiers-changed from:body" -- see buttons.html's own top comment
 	// -- never on a basket mutation), not re-queried per basket change.
-	// Skipped entirely when the setting is off, so a till that never wants
-	// the tab pays nothing extra for it beyond the LoadAllActive call above,
-	// which always runs anyway for Load's own implicit-tile merge.
+	// ut-docs#2541: allBtns is loaded unconditionally at the top of this
+	// handler (Load's implicit-tile merge always needs it), so every mode
+	// below — the All grid and ut-docs#2499's BuildCategoryTiles — reuses
+	// that ONE load rather than querying again.
 	var allPage []Button
 	var allHasMore bool
-	if !h.HideAllTab {
-		// ut-docs#2319: only the first page ships on the initial render (and
-		// on every modifiers-changed/buttons-changed whole-document
-		// refetch) — see AllTabPageSize's own doc comment. The rest loads
-		// on demand via the "load more" button AllMore serves below.
+	var categoryTiles []CategoryTileVM
+	switch mode {
+	case browsingModeCategoryTabs:
+		categoryTiles = BuildCategoryTiles(allBtns, cats)
+	case browsingModeAllFilterChips:
+		categoryTiles = BuildCategoryTiles(allBtns, cats)
 		allPage, allHasMore = pageButtons(allBtns, 0)
-	}
-	categoriesTabEnabled, err := h.Store.CategoriesTabEnabled(r.Context())
-	if err != nil {
-		// Same non-fatal-but-logged shape as the categories load above
-		// (ut-docs#2283) — a settings-read error just means the optional
-		// tab stays off this render, not that the whole sale screen fails.
-		logging.L().Warnf("buttons list: load categories-tab setting: %v", err)
+	default:
+		if !h.HideAllTab {
+			// ut-docs#2319: only the first page ships on the initial render
+			// (and on every modifiers-changed/buttons-changed whole-document
+			// refetch) — see AllTabPageSize's own doc comment. The rest loads
+			// on demand via the "load more" button AllMore serves below.
+			allPage, allHasMore = pageButtons(allBtns, 0)
+		}
 	}
 	// ut-docs#2498: LoadCategoriesForAdmin is the one query that carries a
 	// per-category ACTIVE ITEM count (data.CategoryAdminRow.ItemCount) —
@@ -1323,12 +1440,8 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 	groups := BuildCategoryGroups(btns, cats, itemCounts)
 	stampLocked(groups, h.Granted)
 	stampEditing(groups, h.EditMode)
-	// ut-docs#2174: the Designer's category-management list. Only built in
-	// edit mode (from adminRows, already loaded above), so the sale screen
-	// pays nothing extra for it. The optional Categories tab (ut-docs#2283)
-	// is forced off here: its tiles open index.html's #category-items-modal,
-	// which the Designer page doesn't have, and it isn't a quick-button
-	// surface to arrange anyway.
+	// ut-docs#2174: the Designer's category-management list. Only loaded
+	// in edit mode, so the sale screen pays nothing for it.
 	var adminCats []DesignerCategoryVM
 	var palette []catalogtypes.ItemColor
 	// ut-docs#2541: the Designer's "Hidden from sell screen" section — only
@@ -1349,7 +1462,6 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 		palette = catalogtypes.ItemColors()
-		categoriesTabEnabled = false
 		hidden, err = h.Store.ListHidden(r.Context())
 		if err != nil {
 			// Non-fatal-but-loud, same shape as the lookups above: the
@@ -1360,20 +1472,32 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	_ = h.View.Render(w, "buttons", map[string]any{
-		"Groups":               groups,
-		"AllButtons":           ToVM(allPage),
-		"AllHasMore":           allHasMore,
-		"AllNextOffset":        len(allPage),
-		"ShowAllTab":           !h.HideAllTab,
-		"CategoriesTabEnabled": categoriesTabEnabled,
-		"EditMode":             h.EditMode,
-		"AdminCategories":      adminCats,
-		"ItemColors":           palette,
-		"HiddenItems":          hidden,
+		"Groups":          groups,
+		"AllButtons":      ToVM(allPage),
+		"AllHasMore":      allHasMore,
+		"AllNextOffset":   len(allPage),
+		"ShowAllTab":      !h.HideAllTab,
+		"BrowsingMode":    mode,
+		"CategoryTiles":   categoryTiles,
+		"EditMode":        h.EditMode,
+		"AdminCategories": adminCats,
+		"ItemColors":      palette,
+		"HiddenItems":     hidden,
 	})
 }
 
-// AllMore renders the next page of the sell screen's All tab (ut-docs#2319)
+// The three sale.browsing_mode values, as this package must spell them
+// (see ButtonsHTTP.BrowsingMode for why they aren't referenced from
+// internal/pages/common). buttons_browsing_mode_test.go and
+// internal/pages/buttons_api_test.go together pin that these three literals
+// and common.BrowsingMode* never drift apart.
+const (
+	browsingModeCategoryTabs   = "category_tabs"
+	browsingModeAllFilterChips = "all_filter_chips"
+	browsingModeStripOverflow  = "strip_overflow"
+)
+
+// AllMore renders the next page of the sell screen's All grid (ut-docs#2319)
 // — the same offset-paginated "load more" shape
 // internal/pages/buttons_api.go's /api/buttons/search already uses for the
 // Designer's own item search, applied here to bound GET /ui/buttons's
@@ -1385,6 +1509,13 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 // ceiling regardless of catalog size) — a follow-up card can revisit
 // per-request caching if the extra query load ever proves to matter in
 // practice.
+//
+// ut-docs#2499: the all_filter_chips mode's chips call this same route
+// with ?category=<id>&offset=0 to swap the grid to that category's subtree
+// (filterButtonsInCategory — nested categories fold into their top-level
+// chip, "" is the uncategorized bucket), and the page's own load-more
+// button carries the category along so paging stays inside the filter. No
+// ?category, or ?category=all, is the whole catalog exactly as before.
 func (h *ButtonsHTTP) AllMore(w http.ResponseWriter, r *http.Request) {
 	offset := 0
 	if off := r.URL.Query().Get("offset"); off != "" {
@@ -1396,11 +1527,56 @@ func (h *ButtonsHTTP) AllMore(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		logging.L().Errorf("buttons all-more: load all-active items: %v", err)
 	}
+	category, filtered := r.URL.Query().Get("category"), false
+	if _, has := r.URL.Query()["category"]; has && category != "all" {
+		cats, err := h.Store.LoadCategories(r.Context())
+		if err != nil {
+			logging.L().Errorf("buttons all-more: load categories: %v", err)
+		}
+		all = filterButtonsInCategory(all, cats, category)
+		filtered = true
+	}
 	page, hasMore := pageButtons(all, offset)
 	_ = h.View.Render(w, "all-more-fragment", map[string]any{
 		"Buttons":    ToVM(page),
 		"HasMore":    hasMore,
 		"NextOffset": offset + len(page),
+		"Category":   category,
+		"Filtered":   filtered,
+	})
+}
+
+// CategoryItems renders the category_tabs mode's popup body (ut-docs#2499,
+// absorbing ut-docs#2372): EVERY active item in the category's subtree —
+// the category's quick buttons first, in their Designer order, then the
+// rest A–Z (quickButtonsFirst) — as the same sellable tile a search result
+// uses, plus the popup's own client-side search box (buttons.html's
+// "category-items-fragment"). ?id= is the category (""/absent = the
+// uncategorized bucket, same convention as BuildCategoryGroups); an id that
+// no longer resolves renders an empty popup, never an error. Rendered on
+// open, per tap — the tiles are never a second always-present copy in the
+// DOM (#2372's strict-mode-locator requirement, and why the ut-docs#2283
+// clone-the-panel picker was retired with the Categories tab itself).
+func (h *ButtonsHTTP) CategoryItems(w http.ResponseWriter, r *http.Request) {
+	catID := r.URL.Query().Get("id")
+	all, err := h.Store.LoadAllActive(r.Context())
+	if err != nil {
+		logging.L().Errorf("buttons category items: load all-active items: %v", err)
+	}
+	cats, err := h.Store.LoadCategories(r.Context())
+	if err != nil {
+		logging.L().Errorf("buttons category items: load categories: %v", err)
+	}
+	quick, err := h.Store.Load()
+	if err != nil {
+		logging.L().Errorf("buttons category items: load quick buttons: %v", err)
+	}
+	items := quickButtonsFirst(
+		filterButtonsInCategory(quick, cats, catID),
+		filterButtonsInCategory(all, cats, catID),
+	)
+	_ = h.View.Render(w, "category-items-fragment", map[string]any{
+		"Buttons": ToVM(items),
 	})
 }
 

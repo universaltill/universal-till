@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole, hideUncategorizedStrays } from './helpers';
+import { watchConsole, setBrowsingMode, hideUncategorizedStrays } from './helpers';
 
 // ut-docs#2173 (closes ut-docs#993): the sale screen's category tab bar and
 // its search input used to occupy two separate full-height rows
@@ -78,6 +78,16 @@ async function cleanupOverflowItems(page: Page, items: OverflowItem[]) {
 }
 
 test.describe('sale-screen category strip: search expand/collapse (ut-docs#2173)', () => {
+  // ut-docs#2499: the category strip (and its "..." overflow) is now ONE of
+  // three selectable sell-screen browsing modes (Settings -> Sell screen,
+  // sale.browsing_mode) and no longer the unconditional default (that is
+  // category tiles) -- this file is about the strip, so it picks
+  // strip_overflow explicitly rather than assuming it. worker-till.ts
+  // already boots every worker till in this mode; this is what makes the
+  // dependency visible in the spec itself.
+  test.beforeEach(async ({ page }) => {
+    await setBrowsingMode(page, 'strip_overflow');
+  });
   test.afterEach(async ({ page }) => {
     await page.request.post('/api/pos/reset');
   });
@@ -335,6 +345,16 @@ test.describe('sale-screen category strip: search expand/collapse (ut-docs#2173)
 // sitting behind it (never mind whether some of them overflow into the
 // sheet).
 test.describe('sale-screen category strip: no horizontal scroll, even with many categories (ut-docs#2173, ut-docs#2307)', () => {
+  // ut-docs#2499: the category strip (and its "..." overflow) is now ONE of
+  // three selectable sell-screen browsing modes (Settings -> Sell screen,
+  // sale.browsing_mode) and no longer the unconditional default (that is
+  // category tiles) -- this file is about the strip, so it picks
+  // strip_overflow explicitly rather than assuming it. worker-till.ts
+  // already boots every worker till in this mode; this is what makes the
+  // dependency visible in the spec itself.
+  test.beforeEach(async ({ page }) => {
+    await setBrowsingMode(page, 'strip_overflow');
+  });
   let items: OverflowItem[] = [];
   test.afterEach(async ({ page }) => {
     if (items.length) await cleanupOverflowItems(page, items);

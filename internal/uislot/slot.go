@@ -524,7 +524,6 @@ var CoreSettings = []Entry{
 	{Key: "settings-barcode", Href: "#settings-barcode", LabelKey: "settings.barcode.symbologies_title", Order: 900},
 	{Key: "settings-catalog-import-barcode-default", Href: "#settings-catalog-import-barcode-default", LabelKey: "settings.catalog_import_barcode_default.title", Order: 1000},
 	{Key: "settings-sell-screen", Href: "#settings-sell-screen", LabelKey: "settings.sell_screen.title", Order: 1050},
-	{Key: "settings-categories-tab", Href: "#settings-categories-tab", LabelKey: "settings.categories_tab.title", Order: 1060},
 	{Key: "settings-stock-tracking", Href: "#settings-stock-tracking", LabelKey: "settings.stock_tracking.title", Order: 1100},
 	{Key: "settings-backup", Href: "#settings-backup", LabelKey: "settings.backup.title", Order: 1200},
 	{Key: "settings-data", Href: "#settings-data", LabelKey: "settings.data.title", Order: 1300},

@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page, Locator } from '@playwright/test';
-import { ensureOperator, ADMIN_PIN } from './helpers';
+import { ensureOperator, ADMIN_PIN, setBrowsingMode } from './helpers';
 
 // ut-docs#2312: the sell-screen quick-button grid's jiggle edit mode
 // (ut-docs#2339, replacing the retired #2285 long-press sheet) exposes a
@@ -103,6 +103,12 @@ async function loginAsCashier(page: Page): Promise<void> {
 test.describe('Jiggle-mode edit gated by catalog_management for a cashier (ut-docs#2312)', () => {
   test('remove badge and reorder both land on the real manager-PIN prompt, never a silent no-op', async ({ page }) => {
     await ensureOperator(page); // admin — first-boot wizard or PIN re-login
+    // ut-docs#2499: this spec is about the quick-button strip's jiggle
+    // mode. It runs against the static AUTH till (not a worker till, which
+    // boots in strip mode by itself — see worker-till.ts), so it picks the
+    // strip explicitly, as the admin session that can (a cashier would get
+    // the elevation prompt).
+    await setBrowsingMode(page, 'strip_overflow');
     await seedTiles(page);
     await createCashier(page);
     await loginAsCashier(page);

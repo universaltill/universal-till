@@ -113,14 +113,42 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
+		// ut-docs#2499: the clamped live browsing mode — ClampBrowsingMode
+		// here rather than trusting RuntimeState verbatim, because a bare
+		// Deps (tests, helpers) carries the zero value "" and the sell
+		// screen must still render the real default, not a fourth shape.
 		btnHTTP := &ui.ButtonsHTTP{
-			Store:      *d.BtnStore,
-			View:       renderer,
-			HideAllTab: !d.CurrentState().ShowAllTabOnSellScreen || editMode,
-			Granted:    granted,
-			EditMode:   editMode,
+			Store:        *d.BtnStore,
+			View:         renderer,
+			BrowsingMode: common.ClampBrowsingMode(d.CurrentState().BrowsingMode),
+			HideAllTab:   editMode,
+			Granted:      granted,
+			EditMode:     editMode,
 		}
 		btnHTTP.List(w, r)
+	})
+
+	// ut-docs#2499 (absorbing ut-docs#2372): the category-tiles mode's popup
+	// body — EVERY active item in one category (its subtree included), quick
+	// buttons first in their Designer order then the rest A–Z, plus the
+	// popup's own search box. Rendered on open (an htmx GET from the tile),
+	// never a second always-present copy of the tiles in the DOM — #2372's
+	// own strict-mode-locator requirement, and the reason the ut-docs#2283
+	// clone-the-panel approach was retired with the Categories tab itself.
+	mux.HandleFunc("/ui/buttons/category", func(w http.ResponseWriter, r *http.Request) {
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		renderer, err := ui.NewRenderer(
+			filepath.Join("web", "ui", "layouts", "base.html"),
+			filepath.Join("web", "ui", "pages", "index.html"),
+			filepath.Join("web", "ui", "partials", "buttons.html"),
+			funcs,
+		)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
+			return
+		}
+		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore, View: renderer}
+		btnHTTP.CategoryItems(w, r)
 	})
 
 	// Sell screen All-tab "load more" (ut-docs#2319): the next page of

@@ -17,7 +17,7 @@ func NewCatalogTestDB(t *testing.T) *sql.DB {
 	t.Cleanup(func() { db.Close() })
 	stmts := []string{
 		`PRAGMA foreign_keys = ON;`,
-		// sell_screen_hidden (migration 038, ut-docs#2541): items hidden from
+		// sell_screen_hidden (migration 039, ut-docs#2541): items hidden from
 		// the sell-screen quick-button grid/All tab -- CatalogRepo.
 		// SellScreenHiddenItemIDs/SetSellScreenHidden/ListSellScreenHidden and
 		// ButtonStore.LoadAllActive all read or write this column.

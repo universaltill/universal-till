@@ -271,6 +271,20 @@ export async function setOrderTypePromptMode(page: Page, mode: 'top' | 'before_i
   ]);
 }
 
+// ut-docs#2499: the sell screen's browsing mode (Settings → Sell screen).
+// Persisted till state, not per-test state — a spec that switches it must
+// switch it back (worker-till.ts boots every worker till in strip_overflow,
+// the shape every pre-#2499 sell-screen spec was written against, since the
+// setting's real default — category_tabs — shows category tiles, not
+// product tiles, on /). Plain API call rather than driving the <select>:
+// UT_AUTH=off on the worker tills, so no elevation prompt; the settings
+// page's own control is covered by sell-screen-browsing-mode-2499.spec.ts.
+export type BrowsingMode = 'category_tabs' | 'all_filter_chips' | 'strip_overflow';
+export async function setBrowsingMode(page: Page, mode: BrowsingMode) {
+  const resp = await page.request.post('/api/settings/browsing-mode', { form: { mode } });
+  expect(resp.ok(), `set browsing mode=${mode} (status ${resp.status()})`).toBe(true);
+}
+
 // Same PIN tests-docs/docs-shots.spec.ts sets during its own first-boot
 // wizard completion, so a shared AUTH-project server (8092) already set up
 // by one spec file in this run still logs in for another.
