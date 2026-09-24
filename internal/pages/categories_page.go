@@ -354,6 +354,11 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		icon     string
 		iconPath string
 		photo    image.Image
+		// hidden (manage-shop catalog contract §7.2(5)) is the "Show on
+		// the sale screen" box, inverted: nil when the post carried no
+		// show_on_sale_screen_field marker (an older page), so an absent
+		// checkbox is never read as "hide".
+		hidden *bool
 	}
 
 	// parseCategoryForm reads and validates the dialog's form. The colour
@@ -386,6 +391,10 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		}
 		if !catalogtypes.ValidItemColor(f.color) {
 			return f, "categories.error.color_invalid"
+		}
+		if r.PostFormValue("show_on_sale_screen_field") == "1" {
+			h := r.PostFormValue("show_on_sale_screen") != "1"
+			f.hidden = &h
 		}
 		f.icon = strings.TrimSpace(r.PostFormValue("icon"))
 		if f.icon != "" && f.icon != "none" {
@@ -569,6 +578,12 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		if !ok {
 			return
 		}
+		if f.hidden != nil {
+			if err := catRepo.SetCategorySellScreenHidden(r.Context(), id, *f.hidden); err != nil {
+				renderCategoryDialogError(w, r, "categories.error.update", 0)
+				return
+			}
+		}
 		auditImage(r, actor.ID, id, "category_create", imageAudit)
 		redirectCategories(w, r, "/categories")
 	})
@@ -611,6 +626,12 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		imageAudit, ok := saveCategoryImage(w, r, id, f)
 		if !ok {
 			return
+		}
+		if f.hidden != nil {
+			if err := catRepo.SetCategorySellScreenHidden(r.Context(), id, *f.hidden); err != nil {
+				renderCategoryDialogError(w, r, "categories.error.update", 0)
+				return
+			}
 		}
 		// "category_update", not "category_rename" — this same handler now
 		// also writes colour, the modifier-group/kitchen-station links

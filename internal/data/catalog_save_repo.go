@@ -709,3 +709,18 @@ func (r *CatalogRepo) DeleteCategoryMoving(ctx context.Context, id, moveItemsTo 
 
 // runeLen is utf8.RuneCountInString, named for the validation below.
 func runeLen(s string) int { return utf8.RuneCountInString(s) }
+
+// SetCategorySellScreenHidden sets categories.sell_screen_hidden — the
+// local category editor's "Show on the sale screen" box (the till-side
+// twin of save_category's show_on_sale_screen). Unknown id →
+// ErrCategoryNotFound; nothing else on the row is touched.
+func (r *CatalogRepo) SetCategorySellScreenHidden(ctx context.Context, id string, hidden bool) error {
+	res, err := r.db.ExecContext(ctx, `UPDATE categories SET sell_screen_hidden = ? WHERE id = ?`, boolToInt(hidden), id)
+	if err != nil {
+		return fmt.Errorf("set category sell screen hidden: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrCategoryNotFound
+	}
+	return nil
+}

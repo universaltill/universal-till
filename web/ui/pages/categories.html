@@ -63,6 +63,7 @@
           data-stations="{{ .Stations }}"
           data-image="{{ .ImagePath }}"
           data-image-url="{{ if imgExists .ImagePath }}{{ imgv .ImagePath }}{{ end }}"
+          data-field-show_on_sale_screen="{{ if .SellScreenHidden }}0{{ else }}1{{ end }}"
           data-field-active="{{ if .IsActive }}1{{ else }}0{{ end }}">
         {{/* ut-docs#2500: data-image/data-image-url are NOT data-field-* —
              the form's "image" field is a file input, which record-
@@ -73,7 +74,7 @@
              deliberately NOT data-field-* — a set of same-named checkboxes
              is not a single form control, so the page's own script ticks
              them from these on record-dialog:open (see the script below). */}}
-        <td>{{ if .Color }}<span class="swatch-dot category-swatch" style="--swatch: {{ .Color }}" aria-hidden="true"></span> {{ end }}{{ .Name }}</td>
+        <td>{{ if .Color }}<span class="swatch-dot category-swatch" style="--swatch: {{ .Color }}" aria-hidden="true"></span> {{ end }}{{ .Name }}{{ if .SellScreenHidden }} <span class="chip category-hidden-badge">{{ T "categories.hidden_badge" }}</span>{{ end }}</td>
         <td>{{ printf (T "categories.item_count") .ItemCount }}</td>
         <td>{{ if .IsActive }}{{ T "categories.active" }}{{ else }}<span class="muted">{{ T "categories.inactive" }}</span>{{ end }}</td>
         <td class="list-actions">
@@ -407,6 +408,18 @@
   <label>{{ T "categories.col.name" }}
     <input type="text" name="name" required placeholder="{{ T "categories.create_placeholder" }}" />
   </label>
+
+  {{/* Manage-shop catalog contract §7.2(5): the till-side twin of the
+       cloud's show_on_sale_screen. The hidden marker tells the handler the
+       box was on the page, so an unticked box means "hide" and a post
+       without the marker leaves the flag alone. checked is the create-mode
+       default (form.reset() restores it); the row's
+       data-field-show_on_sale_screen prefills it on edit. */}}
+  <div class="category-dialog-section">
+    <input type="hidden" name="show_on_sale_screen_field" value="1">
+    <label class="field-check"><input type="checkbox" name="show_on_sale_screen" value="1" checked> {{ T "categories.show_on_sale_screen" }}</label>
+    <p class="muted category-dialog-help">{{ T "categories.show_on_sale_screen.help" }}</p>
+  </div>
 
   {{/* ut-docs#2284 (a): the category's tab/tile colour — the SAME fixed
        swatch palette and picker markup as catalog.html's #item-color-grid
