@@ -1552,18 +1552,54 @@ func (r *CatalogRepo) SetCategoryActive(ctx context.Context, id string, active b
 // (internal/data/shortcuts_repo.go), the repo-side counterpart of
 // buttons_api.go's move-up/move-down reorder endpoint this card's own
 // reorder route is modelled on.
+//
+// A category orderedIDs leaves out still gets a slot, appended after the
+// posted ones in its own existing relative order, instead of keeping its
+// old sort_order — which could otherwise tie with a renumbered posted id
+// (ut-docs#2482). Both current callers (designer_categories_api.go's and
+// categories_page.go's reorder routes) already send every category, active
+// and inactive, so this only ever fires for a future or hand-crafted
+// partial post; it's defence in depth, not a live-observed gap.
 func (r *CatalogRepo) SetCategorySortOrder(ctx context.Context, orderedIDs []string) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("set category sort order: %w", err)
 	}
 	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM categories ORDER BY sort_order, name`)
+	if err != nil {
+		return fmt.Errorf("set category sort order: %w", err)
+	}
+	posted := make(map[string]bool, len(orderedIDs))
+	for _, id := range orderedIDs {
+		posted[id] = true
+	}
+	var missing []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("set category sort order: %w", err)
+		}
+		if !posted[id] {
+			missing = append(missing, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("set category sort order: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("set category sort order: %w", err)
+	}
+	full := append(append(make([]string, 0, len(orderedIDs)+len(missing)), orderedIDs...), missing...)
+
 	stmt, err := tx.PrepareContext(ctx, `UPDATE categories SET sort_order = ? WHERE id = ?`)
 	if err != nil {
 		return fmt.Errorf("set category sort order: %w", err)
 	}
 	defer stmt.Close()
-	for i, id := range orderedIDs {
+	for i, id := range full {
 		if _, err := stmt.ExecContext(ctx, i, id); err != nil {
 			return fmt.Errorf("set category sort order: %w", err)
 		}

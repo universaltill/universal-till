@@ -200,6 +200,67 @@ func TestSetCategorySortOrder(t *testing.T) {
 	}
 }
 
+// TestSetCategorySortOrder_OmittedRowGetsAppendedNotTied is ut-docs#2482:
+// a caller that reorders only the categories its own view shows (e.g. the
+// active ones, with inactive ones hidden from that view) must not leave an
+// omitted category tied with a renumbered one.
+//
+// The omitted rows are deliberately the FIRST two created (sort_order 0 and
+// 1), so their stale values fall inside the 0..len(posted)-1 range the
+// posted ids get renumbered into. Omitting the last-created row instead
+// cannot tie (its stale value is already >= len(posted)) and would pass
+// against the unfixed implementation.
+func TestSetCategorySortOrder_OmittedRowGetsAppendedNotTied(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	var ids []string
+	for _, name := range []string{"Drinks", "Snacks", "Bakery", "Sweets"} { // sort_order 0..3
+		id, err := repo.CreateCategory(ctx, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	drinks, snacks, bakery, sweets := ids[0], ids[1], ids[2], ids[3]
+	for _, id := range []string{drinks, snacks} {
+		if err := repo.SetCategoryActive(ctx, id, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Only the two active ids are posted, swapped. Unfixed, this writes
+	// Sweets=0, Bakery=1 and leaves Drinks=0, Snacks=1: two ties.
+	if err := repo.SetCategorySortOrder(ctx, []string{sweets, bakery}); err != nil {
+		t.Fatalf("SetCategorySortOrder: %v", err)
+	}
+
+	cats, err := repo.ListCategories(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cats) != 4 {
+		t.Fatalf("want 4 categories, got %d: %+v", len(cats), cats)
+	}
+	seen := make(map[int]string, len(cats))
+	for _, c := range cats {
+		if other, dup := seen[c.SortOrder]; dup {
+			t.Fatalf("sort_order %d tied between %s and %s: %+v", c.SortOrder, other, c.ID, cats)
+		}
+		seen[c.SortOrder] = c.ID
+	}
+	// Posted ids first in the posted order, then the omitted ones appended
+	// in their existing relative order (Drinks was before Snacks).
+	want := []string{sweets, bakery, drinks, snacks}
+	for i, c := range cats {
+		if c.ID != want[i] || c.SortOrder != i {
+			t.Fatalf("cats[%d] = {ID:%s SortOrder:%d}, want {ID:%s SortOrder:%d}: %+v", i, c.ID, c.SortOrder, want[i], i, cats)
+		}
+	}
+}
+
 func TestListActiveCategories(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
 	defer db.Close()
