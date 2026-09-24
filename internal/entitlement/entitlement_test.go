@@ -182,3 +182,16 @@ func TestBlockValuesUnparsableExpiresIsDropped(t *testing.T) {
 		t.Fatalf("Values = %v, want plan shop, status active, empty expires_at", got)
 	}
 }
+
+func TestCapabilitiesListsEveryCapability(t *testing.T) {
+	want := []Capability{CapBrowserCatalog, CapCentralCatalog, CapCloudBackup, CapCloudSync, CapConsolidatedReporting, CapManagedTSE}
+	got := Capabilities()
+	if len(got) != len(want) {
+		t.Fatalf("Capabilities() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("Capabilities() = %v, want %v (sorted)", got, want)
+		}
+	}
+}

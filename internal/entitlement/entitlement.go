@@ -19,6 +19,7 @@ package entitlement
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -92,6 +93,18 @@ var minTier = map[Capability]Plan{
 	CapManagedTSE:            PlanShop,
 	CapCentralCatalog:        PlanChain,
 	CapConsolidatedReporting: PlanChain,
+}
+
+// Capabilities returns every known capability, sorted, so a caller that
+// reports the full capability set (GET /api/entitlement) cannot drift from
+// minTier when a capability is added.
+func Capabilities() []Capability {
+	out := make([]Capability, 0, len(minTier))
+	for c := range minTier {
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
 }
 
 // Allows reports whether plan includes capability c. Unknown plan or

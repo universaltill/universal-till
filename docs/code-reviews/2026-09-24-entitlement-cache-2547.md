@@ -28,6 +28,9 @@
 - Gate after fixes: `gofmt -l .` empty, `go build`, `go vet`, full `go test ./...` green, `golangci-lint` 0 issues, `guard-data-access.sh`, `guard-i18n.sh`; author ran the other build-job guards (58/59; `guard-shellcheck-version.sh` needs shellcheck, not installed here — CI runs it).
 - No visual surface touched.
 
+## Round 2 — CI `desktop-shell` (deadcode guard)
+CI failed: `guard-deadcode-baseline.sh` flagged `EffectivePlan`/`Allows` as unreachable (tests were the only callers). Not baselined — gave them their genuine consumer instead: manager-gated read-only `GET /api/entitlement` (`internal/pages/entitlement_api.go`; `canPerform(d, r, "settings")`, existing i18n keys, `{data,error}`), the read surface ut-docs#2569's UI builds on. Independent Fable review of the delta: no blockers/majors; auth middleware 401s anonymous callers and the kiosk exemption can't reach it. Minor taken: `TestEntitlementAPIIsNotExempt` pins it outside `exempt()`/`optionalAuth()`. Nits accepted (7 settings reads per call, off the sale path; `slices.Sort`). Handler tests (no session/cashier 403, fresh shop, stale → local, no keys → local) seen failing first.
+
 ## Verdict
 Safe to merge after ut-cloud#185 (either order is wire-safe per ADR-0060 §3).
 
