@@ -18,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/iconid"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/money"
 	pos "github.com/universaltill/universal-till/internal/pos"
@@ -243,7 +244,7 @@ func BuildCategoryGroups(buttons []Button, cats []data.CategoryNode, itemCounts 
 	byID := make(map[string]*CategoryGroup, len(cats))
 	nodeByID := make(map[string]data.CategoryNode, len(cats))
 	for _, c := range cats {
-		byID[c.ID] = &CategoryGroup{ID: c.ID, Name: c.Name, Color: resolveCategoryColor(c), ImageURL: categoryImageURL(c.ImagePath)}
+		byID[c.ID] = &CategoryGroup{ID: c.ID, Name: c.Name, Color: resolveCategoryColor(c), ImageURL: categoryPicture(c)}
 		nodeByID[c.ID] = c
 	}
 
@@ -278,6 +279,13 @@ func BuildCategoryGroups(buttons []Button, cats []data.CategoryNode, itemCounts 
 		g.Buttons = append(g.Buttons, vm)
 	}
 
+	// Manage-shop catalog contract §3.2: a category whose
+	// show_on_sale_screen is off leaves the strip/tabs/overflow with its
+	// whole subtree. Its buttons were already attached to it above, so they
+	// leave with it rather than falling into the uncategorised bucket; its
+	// items stay sellable from the All grid, search and scan.
+	roots = dropHiddenGroups(roots, nodeByID)
+
 	kept := roots[:0]
 	for _, g := range roots {
 		if pruneEmptyCategoryGroup(g, itemCounts) {
@@ -294,6 +302,33 @@ func BuildCategoryGroups(buttons []Button, cats []data.CategoryNode, itemCounts 
 		roots = append(roots, &CategoryGroup{Color: uncategorizedColor, Buttons: uncategorized})
 	}
 	return roots
+}
+
+// dropHiddenGroups removes every group whose category is sell-screen
+// hidden, recursively (a hidden group's subtree goes with it).
+func dropHiddenGroups(groups []*CategoryGroup, nodes map[string]data.CategoryNode) []*CategoryGroup {
+	kept := groups[:0]
+	for _, g := range groups {
+		if nodes[g.ID].SellScreenHidden {
+			continue
+		}
+		g.Children = dropHiddenGroups(g.Children, nodes)
+		kept = append(kept, g)
+	}
+	return kept
+}
+
+// categoryPicture is what a category shows on the sale screen: its image
+// (categories.image_path, ut-docs#2500) when it has one this till can
+// serve, else its icon id (manage-shop catalog contract §0.12) drawn
+// through the till's icon registry — an id the registry doesn't know, or a
+// malformed value that arrived over sync, draws the neutral fallback glyph
+// and never reaches the page as-is — else nothing.
+func categoryPicture(c data.CategoryNode) string {
+	if img := categoryImageURL(c.ImagePath); img != "" {
+		return img
+	}
+	return categoryImageURL(iconid.AssetPath(c.Icon))
 }
 
 // isCategoryAncestor reports whether id is an ancestor of candidateID,
