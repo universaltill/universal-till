@@ -381,15 +381,45 @@ func TestBaseHTMLPageRevealSkipsReloads(t *testing.T) {
 
 // TestBaseHTMLPageRevealHasASkipWatchdog: the motion is 200ms; a transition
 // still running long after that is jank or a stuck engine, and while it
-// runs the live page takes no input. The script must arm a timer that
-// skips the transition (~600ms) and clear it on finish.
+// runs the live page takes no input. Both transition paths (pagereveal and
+// the boosted same-document swap) must hand the transition to the one
+// shared watchdog, which skips it ~600ms after the MOTION starts and clears
+// on finish.
+//
+// ut-docs#2496: the 600ms timer must be armed on vt.ready, never at
+// creation. A same-document transition is created before htmx swaps the
+// page in; on the pilot tablet that swap ate most of a creation-time 600ms
+// budget and the slide was cut short or skipped ("not like Apple anymore").
+// A 2s backstop from creation covers an engine whose ready never settles.
 func TestBaseHTMLPageRevealHasASkipWatchdog(t *testing.T) {
 	html := readBaseHTML(t)
-	if !strings.Contains(html, "var guard = setTimeout(function () { if (vt.skipTransition) vt.skipTransition(); }, 600);") {
-		t.Fatalf("base.html's pagereveal script must arm a 600ms skipTransition watchdog")
+	for _, want := range []string{
+		"UT.vtWatchdog = function (vt) {",
+		"var backstop = setTimeout(skip, 2000);",
+		"vt.ready.then(function () { clearTimeout(backstop); guard = setTimeout(skip, 600); }, clear);",
+		"vt.finished.then(clear, clear);",
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("base.html's shared transition watchdog must contain %q", want)
+		}
 	}
-	if !strings.Contains(html, "vt.finished.then(function () { clearTimeout(guard); }") {
-		t.Fatalf("the watchdog must be cleared when the transition finishes")
+	// Both call sites: the pagereveal listener and the startViewTransition
+	// wrapper the boosted swap goes through.
+	if n := strings.Count(html, "UT.vtWatchdog(vt);"); n != 2 {
+		t.Fatalf("UT.vtWatchdog(vt) must be called from both the pagereveal listener and the startViewTransition wrapper, found %d call(s)", n)
+	}
+	// The helper must be defined BEFORE the pagereveal script's feature-check
+	// early return, or an engine without the Navigation API would leave the
+	// shell's startViewTransition wrapper calling an undefined function.
+	def := strings.Index(html, "UT.vtWatchdog = function (vt) {")
+	check := strings.Index(html, "if (!('navigation' in window) || !window.CSS || !CSS.supports('view-transition-name: x')) return;")
+	if def < 0 || check < 0 || def > check {
+		t.Fatalf("UT.vtWatchdog must be defined before the pagereveal script's feature-check return")
+	}
+	// The regression shape itself: a skip timer armed right where the
+	// transition is created.
+	if strings.Contains(html, "var guard = setTimeout(function () { if (vt.skipTransition) vt.skipTransition(); }, 600);") {
+		t.Fatalf("a 600ms skip timer armed at transition creation is back (ut-docs#2496); arm it on vt.ready via UT.vtWatchdog")
 	}
 }
 
