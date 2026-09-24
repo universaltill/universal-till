@@ -64,7 +64,7 @@
 ## Deferred
 
 - 11 test files in other packages still use `db.Open(filepath.Join(t.TempDir(), …))`,
-  outside this card's `internal/data` scope. Filed as a Backlog card.
+  outside this card's `internal/data` scope: ut-docs#2586 (Backlog).
 - The `-timeout 60m` in `make test-race-data` stays (per the card).
 
 ## Verdict
