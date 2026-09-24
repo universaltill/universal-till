@@ -2,10 +2,8 @@ package pages
 
 import (
 	"context"
-	"sort"
 
 	"github.com/universaltill/universal-till/internal/data"
-	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
@@ -80,34 +78,10 @@ func computeEODTaxBands(ctx context.Context, repo *data.POSRepo, from, to string
 // silently breaking the row-sum reconciliation identity this package's own
 // tests otherwise treat as exact "always".
 func computeEODTaxBandsFromSales(sales []data.EODTaxBandSale) []data.TaxBand {
-	agg := map[int]*data.TaxBand{}
-	for _, s := range sales {
-		inclusive := pos.InferTaxInclusive(s.Subtotal, s.DiscountTotal, s.TaxTotal, s.Total, s.ServiceCharge, s.VoucherIssueTotal)
-		lines := eodVATLinesForSale(s, inclusive)
-		sign := int64(1)
-		if s.SaleType == "return" {
-			sign = -1
-		}
-		for _, b := range pos.VATBandsForSale(lines, s.DiscountTotal, inclusive, s.ServiceCharge, s.ServiceChargeTaxBasisBP) {
-			e, ok := agg[b.RateBP]
-			if !ok {
-				e = &data.TaxBand{RateBP: b.RateBP}
-				agg[b.RateBP] = e
-			}
-			e.Net += sign * b.Net
-			e.Tax += sign * b.Tax
-			e.Gross += sign * b.Gross
-		}
-	}
-	out := make([]data.TaxBand, 0, len(agg))
-	for _, b := range agg {
-		out = append(out, *b)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].RateBP < out[j].RateBP })
-	if len(out) == 0 {
-		return nil
-	}
-	return out
+	// The aggregation itself lives in internal/pos (ut-docs#2535) so
+	// internal/cloudsync's per-till sales-aggregate upload bands with the
+	// identical math; this wrapper keeps every pages caller unchanged.
+	return pos.EODTaxBandsFromSales(sales)
 }
 
 // eodVATLinesForSale is the ONE adapter from a data.EODTaxBandSale to the
@@ -123,14 +97,7 @@ func computeEODTaxBandsFromSales(sales []data.EODTaxBandSale) []data.TaxBand {
 // figure the engine persisted. Multi-purpose issues are not in the read at
 // all (see data.EODTaxBandSale.SinglePurposeVoucherIssues).
 func eodVATLinesForSale(s data.EODTaxBandSale, inclusive bool) []pos.VATLine {
-	lines := make([]pos.VATLine, 0, len(s.Lines)+len(s.SinglePurposeVoucherIssues))
-	for _, l := range s.Lines {
-		lines = append(lines, pos.VATLine{RateBP: l.RateBP, LineTotal: l.LineTotal, TaxAmount: l.TaxAmount})
-	}
-	for _, vi := range s.SinglePurposeVoucherIssues {
-		lines = append(lines, singlePurposeVoucherVATLine(vi.RateBP, vi.Amount, inclusive))
-	}
-	return lines
+	return pos.EODVATLinesForSale(s, inclusive)
 }
 
 // singlePurposeVoucherVATLine is a single-purpose voucher issue as the
@@ -139,8 +106,7 @@ func eodVATLinesForSale(s data.EODTaxBandSale, inclusive bool) []pos.VATLine {
 // computeSaleTotals passed), so the returned gross+tax match the engine's.
 // Shared by the day-close adapter above and the invoice's vatBreakdown.
 func singlePurposeVoucherVATLine(rateBP int, amount int64, inclusive bool) pos.VATLine {
-	tax, gross := pos.ComputeTaxBasisPoints(money.FromMinor(amount), rateBP, inclusive)
-	return pos.VATLine{RateBP: rateBP, LineTotal: gross.Minor(), TaxAmount: tax.Minor()}
+	return pos.SinglePurposeVoucherVATLine(rateBP, amount, inclusive)
 }
 
 // attachEODTaxBands fills rep.TaxBands for a report EndOfDay/EndOfDayRange

@@ -3310,12 +3310,20 @@ ORDER BY vt.sale_id, vt.rowid`, args...)
 // queries regardless of sale count (no N+1); lines and payments are
 // grouped per sale in Go.
 func (r *POSRepo) SalesForTaxBands(ctx context.Context, from, to string) ([]EODTaxBandSale, error) {
+	return r.salesForTaxBandsWhere(ctx, `s.local_date BETWEEN date(?) AND date(?)`, from, to)
+}
+
+// salesForTaxBandsWhere is SalesForTaxBands' body over an arbitrary
+// completed-sale window predicate on alias `s` (ut-docs#2535 split it out so
+// SalesForTaxBandsForTill scopes the SAME four reads to one till instead of
+// copying them). Every query below ANDs `s.status = 'completed'` itself.
+func (r *POSRepo) salesForTaxBandsWhere(ctx context.Context, salesWhere string, args ...any) ([]EODTaxBandSale, error) {
 	saleRows, err := r.db.QueryContext(ctx, `
-SELECT id, sale_type, subtotal, discount_total, tax_total, total,
-       service_charge_amount, service_charge_tax_basis_bp, voucher_issue_total
-FROM sales
-WHERE status = 'completed' AND local_date BETWEEN date(?) AND date(?)
-ORDER BY created_at, id`, from, to)
+SELECT s.id, s.sale_type, s.subtotal, s.discount_total, s.tax_total, s.total,
+       s.service_charge_amount, s.service_charge_tax_basis_bp, s.voucher_issue_total
+FROM sales s
+WHERE s.status = 'completed' AND `+salesWhere+`
+ORDER BY s.created_at, s.id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("eod band sales: %w", err)
 	}
@@ -3339,9 +3347,9 @@ ORDER BY created_at, id`, from, to)
 SELECT sl.sale_id, COALESCE(sl.tax_rate_bp, 0), sl.tax_amount, sl.total_after_tax
 FROM sale_lines sl
 JOIN sales s ON s.id = sl.sale_id
-WHERE s.status = 'completed' AND s.local_date BETWEEN date(?) AND date(?)
+WHERE s.status = 'completed' AND `+salesWhere+`
   AND (sl.total_before_tax != 0 OR sl.total_after_tax != 0)
-ORDER BY sl.sale_id, sl.line_no`, from, to)
+ORDER BY sl.sale_id, sl.line_no`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("eod band lines: %w", err)
 	}
@@ -3359,7 +3367,7 @@ ORDER BY sl.sale_id, sl.line_no`, from, to)
 	if err := lineRows.Err(); err != nil {
 		return nil, err
 	}
-	if err := r.attachSinglePurposeVoucherIssues(ctx, out, idx, `s.local_date BETWEEN date(?) AND date(?)`, from, to); err != nil {
+	if err := r.attachSinglePurposeVoucherIssues(ctx, out, idx, salesWhere, args...); err != nil {
 		return nil, err
 	}
 
@@ -3373,8 +3381,8 @@ ORDER BY sl.sale_id, sl.line_no`, from, to)
 SELECT p.sale_id, p.method_id, COALESCE(SUM(p.amount - p.change_given - p.tip_amount), 0)
 FROM payments p
 JOIN sales s ON s.id = p.sale_id
-WHERE s.status = 'completed' AND s.local_date BETWEEN date(?) AND date(?)
-GROUP BY p.sale_id, p.method_id ORDER BY p.sale_id, p.method_id`, from, to)
+WHERE s.status = 'completed' AND `+salesWhere+`
+GROUP BY p.sale_id, p.method_id ORDER BY p.sale_id, p.method_id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("eod band payments: %w", err)
 	}
