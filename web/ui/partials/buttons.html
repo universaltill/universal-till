@@ -643,7 +643,7 @@
                Categories/All tabs above, which the card's own requirement
                keeps always visible -- without having to duplicate the
                '__categories__'/'__all__' sentinel checks in JS. */}}
-          <button type="button" id="cat-tab-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" class="tab" role="tab" data-cat-tab style="--cat-color: {{ .Color }}" :class="tab === '{{ .ID }}' && 'active'" :aria-selected="tab === '{{ .ID }}'" :tabindex="tab === '{{ .ID }}' ? 0 : -1" aria-controls="cat-panel-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" @click="tab = '{{ .ID }}'">{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</button>
+          <button type="button" id="cat-tab-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" class="tab" role="tab" data-cat-tab style="--cat-color: {{ .Color }}" :class="tab === '{{ .ID }}' && 'active'" :aria-selected="tab === '{{ .ID }}'" :tabindex="tab === '{{ .ID }}' ? 0 : -1" aria-controls="cat-panel-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" @click="tab = '{{ .ID }}'">{{ if .ImageURL }}<img class="tab-cat-img" src="{{ imgv .ImageURL }}" alt="" loading="lazy">{{ end }}{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</button>
           {{ end }}
           {{/* ut-docs#2307: the trailing "more categories" button --
                card's own literal ask ("a ... button at the right; when
@@ -708,6 +708,7 @@
             <button type="button" class="category-overflow-tile" style="--cat-color: {{ $g.Color }}"
                     :class="tab === '{{ $g.ID }}' && 'active'" :aria-current="tab === '{{ $g.ID }}' ? 'true' : null"
                     @click="selectCategoryFromOverflow('{{ $g.ID }}')">
+              {{ if $g.ImageURL }}<img class="category-tile-img" src="{{ imgv $g.ImageURL }}" alt="" loading="lazy">{{ end }}
               <span class="category-tile-name">{{ if $g.ID }}{{ $g.Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</span>
               <span class="category-overflow-count">{{ printf (T "products.category_button_count") (len $g.Buttons) }}</span>
             </button>
@@ -833,6 +834,7 @@
                   hx-on::response-error="document.getElementById('category-items-modal-body').textContent = this.dataset.errorText"
                   hx-on::send-error="document.getElementById('category-items-modal-body').textContent = this.dataset.errorText"
                   @click="openCategoryPopup($el)">
+            {{ if .ImageURL }}<img class="category-tile-img" src="{{ imgv .ImageURL }}" alt="" loading="lazy">{{ end }}
             <span class="category-tile-name">{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</span>
             <span class="category-tile-count">{{ printf (T "categories.item_count") .ItemCount }}</span>
           </button>
