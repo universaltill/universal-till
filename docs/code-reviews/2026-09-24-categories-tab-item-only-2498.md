@@ -123,16 +123,51 @@ session; the count/text changes were verified by hand against the real
 running app instead, per above, which exercises the identical DOM shape
 those specs assert on).
 
+## CI round 2 — real e2e suite failures (not just hand-edited assertions)
+
+Pushing surfaced three genuine `playwright` job failures against the full
+e2e suite (not merely the four hand-updated spec files' own new
+assertions, which were only reasoned about, not run, before the first
+push — a gap this round closed):
+
+1. **`categories-record-dialog-2010.spec.ts` test (g)** and
+   **`modifiers-shop-wide-2399.spec.ts`** each create a category with a
+   permanently-active item and never deactivate it — harmless before this
+   card (a quick-button-only category never showed), but now the leaked
+   category renders as a real extra sell-screen tab for the rest of that
+   worker's run, intermittently pushing
+   `sale-screen-category-strip-overflow-2307.spec.ts`'s demo-tab-count
+   assertion and `sale-screen-search-strip-2173.spec.ts`'s
+   `CATEGORY_COUNT+5` assertion into overflow. Fixed: both now deactivate
+   their probe item in a `finally` block. Root-caused by deterministically
+   reproducing the leak (running the leaking test immediately before the
+   failing one in one worker) and confirmed fixed across 180+ repeated
+   runs — not a viewport/formula tweak, both were correct as written.
+2. **`sell-tile-jiggle-done-focus-2417.spec.ts`** left its probe item
+   uncategorized (the synthetic "Uncategorized" bucket, always last among
+   tabs); with two more real category tabs now in the demo seed, that
+   bucket sometimes fell into the tab strip's own overflow-hidden state,
+   which hung the test's cleanup POST client-side (confirmed via a
+   concurrent `curl` to the same route succeeding in milliseconds — the
+   request never left the browser). Fixed: the probe item now uses the
+   stable demo "Food" category, which the strip always has comfortable
+   room for.
+
+None of these three are bugs in the #2498 fix itself — all are
+pre-existing test-isolation gaps this card's change was the first to make
+visible, since it's the first thing to turn "a category with an active
+item" into "a real, always-rendered sell-screen tab."
+
 ## Deferred / follow-up
 
-- New `en.json` key `products.category_no_buttons` needs matching PRs in
-  `ut-plugin-language-{de,es}` (core doesn't ship those locales directly)
-  — tracked as a same-cycle follow-up per `scrum-master/SKILL.md`'s
-  "work with no card" rule, not left silent.
-- `make docs-shots` screenshots of the sell screen are now stale (2 extra
-  category tabs visible in the demo data) — flagged for whoever next
-  regenerates docs screenshots; not blocking this fix, no shipped
-  screenshot in `web/help` currently depicts the category tab count.
+- New `en.json` key `products.category_no_buttons`: matching PRs merged in
+  `ut-plugin-language-de` (#305) and `ut-plugin-language-es` (#305) in this
+  same cycle, per `scrum-master/SKILL.md`'s "work with no card" rule —
+  landed before this PR merged, since `locale-render-audit` renders live
+  German pages and fails on the untranslated string otherwise.
+- `make docs-shots` regenerated and committed (sell + till-designer, all 4
+  locales) — was NOT just deferred; `guard-docs-shots` is a real build-job
+  check and would have failed merge otherwise.
 
 ## Verdict
 
