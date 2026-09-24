@@ -388,6 +388,34 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 	})
 
+	// Unhide every hidden item at once -- the Designer's "Show all N on the
+	// sell screen" in its "Hidden from sell screen" section (ut-docs#2614).
+	// Same gating/elevation/audit pattern as unhide above; no form input
+	// (so no hidden fields to mirror on the elevation retry). POST only:
+	// with nothing to validate, a GET (link prefetch, an <img src>) would
+	// otherwise be a one-request shop-wide change.
+	mux.HandleFunc("/api/buttons/unhide-all", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if !requirePrimary(w, r) {
+			return
+		}
+		_ = r.ParseForm()
+		elev := checkOrElevate(d, r, "catalog_management", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/buttons/unhide-all", "#buttons-add-error",
+				httpx.T(httpx.ResolveLocale(w, r), "elevation.summary.buttons_unhide_all"), nil, elev)
+			return
+		}
+		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore}
+		if n, ok := btnHTTP.UnhideAll(w, r); ok && elev.Outcome == elevated {
+			auditButtonsElevated(r, elev.ApproverID, elev.ActorID, "all", "buttons_unhide_all", map[string]any{"count": n})
+		}
+	})
+
 	// Delete the item itself from the jiggle-mode trash badge (ut-docs#2541)
 	// -- same gating/elevation/audit pattern as remove/hide above, plus the
 	// same underlying deactivate the catalog page's own

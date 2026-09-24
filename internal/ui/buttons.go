@@ -1216,6 +1216,14 @@ func (s *ButtonStore) Unhide(ctx context.Context, itemID string) error {
 	return s.catalogRepo.SetSellScreenHidden(ctx, itemID, false)
 }
 
+// UnhideAll puts every hidden active item back on the sell-screen grid in
+// one step (ut-docs#2614 — the Designer's "Show all N on the sell screen")
+// and returns how many it unhid. Like Unhide, each comes back as an
+// IMPLICIT tile — no shortcut_buttons rows are written.
+func (s *ButtonStore) UnhideAll(ctx context.Context) (int, error) {
+	return s.catalogRepo.UnhideAllSellScreen(ctx)
+}
+
 // ListHidden returns every item currently hidden from the sell screen — the
 // Designer's "Hidden from sell screen" section (ut-docs#2541).
 func (s *ButtonStore) ListHidden(ctx context.Context) ([]data.HiddenItem, error) {
@@ -1793,6 +1801,24 @@ func (h *ButtonsHTTP) Unhide(w http.ResponseWriter, r *http.Request) bool {
 	w.Header().Set("HX-Trigger", "buttons-changed")
 	w.WriteHeader(http.StatusOK)
 	return true
+}
+
+// UnhideAll returns how many items it unhid and whether it succeeded --
+// ut-docs#2614. Same false-only-on-failure contract as Unhide; the count is
+// for the caller's audit row. It takes no form input.
+func (h *ButtonsHTTP) UnhideAll(w http.ResponseWriter, r *http.Request) (int, bool) {
+	n, err := h.Store.UnhideAll(r.Context())
+	if err != nil {
+		logging.L().Infof("[buttons] unhide-all: %v", err)
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`<div class="error">` + html.EscapeString(httpx.T(locale, designerErrorServerKey)) + `</div>`))
+		return 0, false
+	}
+	w.Header().Set("HX-Trigger", "buttons-changed")
+	w.WriteHeader(http.StatusOK)
+	return n, true
 }
 
 // DeleteItem returns whether the item was actually deactivated --

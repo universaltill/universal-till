@@ -4,6 +4,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/web/locales"
 )
 
 // ut-docs#2541: the Designer's "Hidden from sell screen (N)" section
@@ -72,5 +76,56 @@ func TestButtonsHTTPList_SaleScreenOmitsHiddenSection(t *testing.T) {
 	body := rec.Body.String()
 	if strings.Contains(body, `data-testid="designer-hidden"`) {
 		t.Fatalf("expected no hidden section on the sale screen, got: %s", body)
+	}
+}
+
+// TestButtonsHTTPList_HiddenSectionUnhideAllButton (ut-docs#2614): the
+// hidden section's one-click "Show all N on the sell screen" renders only
+// when something is hidden, labelled with the count, posting to
+// /api/buttons/unhide-all.
+func TestButtonsHTTPList_HiddenSectionUnhideAllButton(t *testing.T) {
+	// This package's tests otherwise run with no translator wired (T falls
+	// back to the key); load the real embedded locales so the printf'd
+	// label is checked end to end, and restore the key fallback after.
+	i18n, err := config.NewI18nFS(locales.FS, "en")
+	if err != nil {
+		t.Fatalf("load i18n: %v", err)
+	}
+	httpx.InitI18n(i18n, "en")
+	t.Cleanup(func() { httpx.InitI18n(nil, "en") })
+
+	h, db := newButtonsHTTPWithDB(t, "buttons.html")
+	h.Granted = true
+	h.EditMode = true
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('i1','S1','Apple', 100, 1)`)
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('i2','S2','Bread', 200, 1)`)
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest("GET", "/ui/buttons?mode=edit", nil))
+	if strings.Contains(rec.Body.String(), `data-testid="designer-hidden-unhide-all"`) {
+		t.Fatalf("expected no unhide-all button with nothing hidden, got: %s", rec.Body.String())
+	}
+
+	for _, id := range []string{"i1", "i2"} {
+		if err := h.Store.Hide(t.Context(), id); err != nil {
+			t.Fatalf("Hide %s: %v", id, err)
+		}
+	}
+	rec = httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest("GET", "/ui/buttons?mode=edit", nil))
+	body := rec.Body.String()
+	start := strings.Index(body, `data-testid="designer-hidden-unhide-all"`)
+	if start < 0 {
+		t.Fatalf("expected the unhide-all button with 2 hidden items, got: %s", body)
+	}
+	btn := body[strings.LastIndex(body[:start], "<button"):]
+	btn = btn[:strings.Index(btn, "</button>")]
+	for _, want := range []string{`hx-post="/api/buttons/unhide-all"`, `hx-swap="none"`, `class="btn secondary designer-hidden-unhide-all"`, "Show all 2 on the sell screen"} {
+		if !strings.Contains(btn, want) {
+			t.Fatalf("unhide-all button missing %q: %s", want, btn)
+		}
+	}
+	if strings.Contains(btn, "hx-confirm") {
+		t.Fatalf("unhide-all is non-destructive and must not confirm: %s", btn)
 	}
 }

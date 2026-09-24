@@ -1148,12 +1148,22 @@
      posts straight to /api/buttons/unhide with hx-swap="none": like the
      tile badges, its HX-Trigger: buttons-changed re-fetches the whole
      .products root (this section included) from the server's truth, so
-     there's no separate fragment to target. No confirm -- unhiding is
-     never destructive. */}}
+     there's no separate fragment to target. ut-docs#2614: when anything
+     is hidden, the head also carries a one-click "Show all N on the sell
+     screen" posting to /api/buttons/unhide-all (same hx-swap="none" +
+     buttons-changed refresh). No confirm on either -- unhiding is never
+     destructive (it only puts tiles back; nothing is deleted or moved). */}}
 {{ define "designer-hidden" }}
 <section class="designer-hidden" aria-labelledby="designer-hidden-title" data-testid="designer-hidden">
   <div class="designer-categories-head">
     <h3 id="designer-hidden-title">{{ printf (T "designer.hidden.title") (len .HiddenItems) }}</h3>
+    {{ if .HiddenItems }}
+    {{/* Plain `.btn` (≥44px target), same as the per-item Unhide below. */}}
+    <button type="button" class="btn secondary designer-hidden-unhide-all" data-testid="designer-hidden-unhide-all"
+            hx-post="/api/buttons/unhide-all" hx-swap="none">
+      {{ printf (T "designer.hidden.unhide_all") (len .HiddenItems) }}
+    </button>
+    {{ end }}
   </div>
   {{ if .HiddenItems }}
   <ul class="designer-hidden-list">
