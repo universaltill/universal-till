@@ -246,6 +246,15 @@ var railIcons = map[string]string{
 	// glyph, growing this registry the same way "filter"/"landmark"/
 	// "scan-barcode" already did. Lucide's "eye" path, unmodified.
 	"eye": `<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/>`,
+	// ut-docs#2541: the jiggle edit mode's Hide badge (product-tile,
+	// buttons.html) -- "eye" (immediately above) already reads as "view",
+	// not "take off the sell screen", and this registry's own "trash-2"
+	// (never-erase, #1956) is now spoken for by the same tile's Delete
+	// badge, which genuinely deactivates the item -- Hide needed its own,
+	// distinct glyph, the same "growing this registry" precedent
+	// "filter"/"landmark"/"eye" above already established. Lucide's
+	// "eye-off" path, unmodified.
+	"eye-off": `<path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/>`,
 	// ut-docs#2307: the sale-screen category strip's trailing "more
 	// categories" button — three dots, the standard "overflow menu"
 	// affordance (same read as the product owner's own "…" request on the

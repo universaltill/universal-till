@@ -1,6 +1,11 @@
 package testsupport
 
-import "testing"
+import (
+	"context"
+	"testing"
+
+	"github.com/universaltill/universal-till/internal/data"
+)
 
 // ut-docs#2180: NewCatalogTestDB opened its *sql.DB with no t.Cleanup/Close
 // anywhere in the file, so every one of its 26+ call sites that didn't
@@ -18,5 +23,25 @@ func TestNewCatalogTestDB_ClosesOnCleanup(t *testing.T) {
 	})
 	if err := db.Ping(); err == nil {
 		t.Fatal("expected NewCatalogTestDB's db to be closed once its test finished, but Ping still succeeded")
+	}
+}
+
+// TestNewCatalogTestDB_HasSellScreenHiddenColumn (ut-docs#2541 review): the
+// real schema (migration 038) added items.sell_screen_hidden -- this
+// fixture had drifted from it, the same fixture-drift class as
+// ut-docs#2209/#625 elsewhere in this helper, so any repo call that reads
+// or writes the column (CatalogRepo.SellScreenHiddenItemIDs/
+// SetSellScreenHidden, ButtonStore.LoadAllActive) failed with "no such
+// column" against a db built from this helper.
+func TestNewCatalogTestDB_HasSellScreenHiddenColumn(t *testing.T) {
+	db := NewCatalogTestDB(t)
+	SeedItem(t, db, ItemSeed{ID: "i1", SKU: "S1", Name: "Apple", BasePrice: 100, IsActive: true})
+
+	repo := data.NewCatalogRepo(db)
+	if _, err := repo.SellScreenHiddenItemIDs(context.Background()); err != nil {
+		t.Fatalf("SellScreenHiddenItemIDs: %v (items table is missing sell_screen_hidden)", err)
+	}
+	if err := repo.SetSellScreenHidden(context.Background(), "i1", true); err != nil {
+		t.Fatalf("SetSellScreenHidden: %v", err)
 	}
 }

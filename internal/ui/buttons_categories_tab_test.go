@@ -327,7 +327,20 @@ func panelSlice(t *testing.T, body, catID string) string {
 // ONLY on "has a quick button somewhere in the subtree"). Its panel/section
 // must render the new translated empty-state message rather than an empty
 // grid, since there is nothing to grid.
-func TestButtonsHTTPList_CategoryWithActiveItemButNoButtonStillAppears(t *testing.T) {
+//
+// ut-docs#2541 review finding 5: a category whose only active item(s) are
+// ALL hidden from the sell screen must not keep surviving
+// BuildCategoryGroups' pruning with an empty group — CatalogRepo.
+// ListCategoriesForAdmin's VisibleItemCount (unlike its admin-facing
+// ItemCount) excludes hidden items, so a category like Drinks below, whose
+// one item is hidden, is now pruned from the strip entirely: no tab, no
+// tile, nothing to show an empty-state message for.
+//
+// Before this fix (previous name:
+// TestButtonsHTTPList_CategoryWithActiveItemButNoButtonStillAppears): this
+// same setup asserted the OPPOSITE — that Drinks kept showing with an
+// empty-state message — which was itself the bug this finding fixes.
+func TestButtonsHTTPList_CategoryWithOnlyHiddenItemsIsPruned(t *testing.T) {
 	db, store, h := newCategoriesTabTestHTTP(t)
 
 	mustExec(t, db, `INSERT INTO categories(id, name, parent_id, sort_order) VALUES
@@ -336,10 +349,13 @@ func TestButtonsHTTPList_CategoryWithActiveItemButNoButtonStillAppears(t *testin
 	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, category_id, is_active) VALUES
 		('i1', 'S1', 'Bread', 140, 'cat_food', 1),
 		('i2', 'S2', 'Cola', 120, 'cat_drink', 1)`)
-	// Only Food ever gets a quick button. Drinks has a real active item
-	// (Cola) but NO quick button at all -- exactly the card's bug scenario.
+	// Only Food ever gets a quick button. Drinks' one item (Cola) is
+	// hidden, so Drinks has neither a button nor a VISIBLE item.
 	if err := store.Add(Button{Label: "Bread", Code: "C1", ItemID: "i1"}); err != nil {
 		t.Fatalf("Add: %v", err)
+	}
+	if err := store.Hide(t.Context(), "i2"); err != nil {
+		t.Fatalf("Hide: %v", err)
 	}
 	if err := data.NewSettingsRepo(db).Set(t.Context(), data.SellScreenCategoriesTabKey, "1"); err != nil {
 		t.Fatalf("enable categories tab setting: %v", err)
@@ -352,48 +368,30 @@ func TestButtonsHTTPList_CategoryWithActiveItemButNoButtonStillAppears(t *testin
 	}
 	body := rec.Body.String()
 
-	// Classic per-category tab bar: Drinks gets its own tab even with zero
-	// quick buttons, because it has an active item.
-	if !strings.Contains(body, `id="cat-tab-cat_drink"`) {
-		t.Fatalf("expected a Drinks tab (has an active item, Cola) even though it has no quick button, got: %s", body)
+	if strings.Contains(body, `id="cat-tab-cat_drink"`) {
+		t.Fatalf("expected NO Drinks tab -- its only item is hidden, so it has neither a button nor a visible item, got: %s", body)
 	}
-	// Categories tab tile grid: same category, via a tile this time.
-	if !strings.Contains(body, `data-cat-name="Drinks"`) {
-		t.Fatalf("expected a Drinks tile in the Categories tab, got: %s", body)
+	if strings.Contains(body, `data-cat-name="Drinks"`) {
+		t.Fatalf("expected no Drinks tile in the Categories tab either, got: %s", body)
 	}
-	if got := strings.Count(body, `class="category-tile"`); got != 2 {
-		t.Fatalf("expected exactly 2 category tiles (Food, Drinks), got %d: %s", got, body)
+	if got := strings.Count(body, `class="category-tile"`); got != 1 {
+		t.Fatalf("expected exactly 1 category tile (Food only, Drinks pruned), got %d: %s", got, body)
 	}
-
-	// Drinks' own panel has zero buttons -- it must render the translated
-	// empty-state message instead of an empty grid.
-	drinksPanel := panelSlice(t, body, "cat_drink")
-	if !strings.Contains(drinksPanel, `data-testid="category-empty-state"`) {
-		t.Fatalf("expected the Drinks panel to render the empty-state marker, got: %s", drinksPanel)
-	}
-	// i18n: goes through T, not a hardcoded literal (no InitI18n call in
-	// this package's tests, so T falls back to the raw key — same
-	// convention TestButtonsHTTPList_CategoriesTabRendersFirst already
-	// uses for products.categories above).
-	if !strings.Contains(drinksPanel, "products.category_no_buttons<") {
-		t.Fatalf("expected the products.category_no_buttons key to render in the Drinks panel, got: %s", drinksPanel)
-	}
-	// Food's panel DOES have a button -- no empty-state marker there.
+	// Food's panel DOES have a button -- unaffected by the fix.
 	foodPanel := panelSlice(t, body, "cat_food")
 	if strings.Contains(foodPanel, `data-testid="category-empty-state"`) {
 		t.Fatalf("expected no empty-state marker in Food's panel (it has a quick button), got: %s", foodPanel)
 	}
 }
 
-// TestButtonsHTTPList_CategoriesTabFlattensNestedSubcategoryWithNoButtons
-// (ut-docs#2498): extends
-// TestButtonsHTTPList_CategoriesTabFlattensNestedSubcategories' shape to the
-// zero-buttons-anywhere case — a nested subcategory whose only item has NO
-// quick button at all must still keep its top-level ancestor reachable (via
-// the ancestor's active-item count propagating up through the subcategory),
-// exactly as before but through the NEW survival path this card adds, and
-// the ancestor's own panel must show the empty-state message.
-func TestButtonsHTTPList_CategoriesTabFlattensNestedSubcategoryWithNoButtons(t *testing.T) {
+// TestButtonsHTTPList_CategoriesTabFlattensNestedSubcategoryPrunedWhenHidden
+// (ut-docs#2541 review finding 5, replaces the old
+// TestButtonsHTTPList_CategoriesTabFlattensNestedSubcategoryWithNoButtons):
+// a nested subcategory whose only item is HIDDEN has neither a button nor a
+// visible item, so it (and its now-childless, item-less parent) must be
+// pruned entirely — not kept around to show an empty-state message, which
+// was the pre-fix (buggy) behaviour this test used to pin.
+func TestButtonsHTTPList_CategoriesTabFlattensNestedSubcategoryPrunedWhenHidden(t *testing.T) {
 	db, store, h := newCategoriesTabTestHTTP(t)
 
 	mustExec(t, db, `INSERT INTO categories(id, name, parent_id, sort_order) VALUES
@@ -405,9 +403,13 @@ func TestButtonsHTTPList_CategoriesTabFlattensNestedSubcategoryWithNoButtons(t *
 		('i2', 'S2', 'Cola', 120, 'cat_drink', 1)`)
 	// Cola gets a quick button (needed so Drinks survives as a second
 	// top-level group alongside Food, same as the sibling flatten test);
-	// Pie (Food's only item, nested under Specials) never gets one at all.
+	// Pie (Food's only item, nested under Specials) is hidden, so it has
+	// zero buttons anywhere.
 	if err := store.Add(Button{Label: "Cola", Code: "C2", ItemID: "i2"}); err != nil {
 		t.Fatalf("Add: %v", err)
+	}
+	if err := store.Hide(t.Context(), "i1"); err != nil {
+		t.Fatalf("Hide: %v", err)
 	}
 	if err := data.NewSettingsRepo(db).Set(t.Context(), data.SellScreenCategoriesTabKey, "1"); err != nil {
 		t.Fatalf("enable categories tab setting: %v", err)
@@ -420,50 +422,51 @@ func TestButtonsHTTPList_CategoriesTabFlattensNestedSubcategoryWithNoButtons(t *
 	}
 	body := rec.Body.String()
 
-	if !strings.Contains(body, `data-cat-name="Food"`) {
-		t.Fatalf("expected a Food tile (has an active item via its subcategory, even with zero quick buttons anywhere), got: %s", body)
+	// Pie (Specials' only item) is hidden -> Specials has neither a button
+	// nor a visible item -> pruned; Food then has no children and no direct
+	// items of its own either -> pruned too. Only Drinks (Cola, a real
+	// button) survives.
+	if strings.Contains(body, `data-cat-name="Food"`) {
+		t.Fatalf("expected no Food tile -- its only content (Specials/Pie) is hidden, got: %s", body)
 	}
 	if strings.Contains(body, `data-cat-name="Specials"`) {
-		t.Fatalf("expected no separate tile for the nested Specials subcategory, got: %s", body)
+		t.Fatalf("expected no Specials tile either, got: %s", body)
 	}
-	if got := strings.Count(body, `class="category-tile"`); got != 2 {
-		t.Fatalf("expected exactly 2 top-level tiles (Food, Drinks), got %d: %s", got, body)
-	}
-
-	foodPanel := panelSlice(t, body, "cat_food")
-	if !strings.Contains(foodPanel, `data-testid="category-empty-state"`) {
-		t.Fatalf("expected Food's panel to render the empty-state marker (zero buttons anywhere in its subtree), got: %s", foodPanel)
-	}
-	// Review finding (ut-docs#2498): Food itself has no direct buttons or
-	// items -- only its nested Specials child does -- so Food's OWN
-	// top-level section (category-group-body-tabbed) must NOT also emit a
-	// second, headerless copy of the empty-state message; only Specials'
-	// own headed "category-group" section should show it. Before this fix
-	// the message rendered twice: once bare (Food's own branch, which has
-	// no <h3> outside search/All) and once under Specials' real header --
-	// confusing, since the bare copy names no category at all.
-	if got := strings.Count(foodPanel, `data-testid="category-empty-state"`); got != 1 {
-		t.Fatalf("expected exactly 1 empty-state message in Food's panel (Specials' own, not a duplicate bare one from Food itself), got %d: %s", got, foodPanel)
+	if got := strings.Count(body, `class="category-tile"`); got != 1 {
+		t.Fatalf("expected exactly 1 top-level tile (Drinks only), got %d: %s", got, body)
 	}
 }
 
 // TestButtonsHTTPList_DefaultTabPrefersGroupWithButtons (ut-docs#2498, review
 // finding): with the All tab off, the sale screen's default landing tab used
 // to be simply Groups[0] -- fine when every surviving group has buttons, but
-// since this card a group can survive with zero buttons anywhere (kept via
-// an active-item count alone). Landing there by default would greet the
-// operator with the empty-state message instead of real quick buttons on
-// first paint, even though a perfectly usable category sits right next to
-// it. The default must skip to the first group that HasButtons, falling
-// back to Groups[0] only if none do.
+// a group could survive with zero buttons anywhere (kept via an active-item
+// count alone), and landing there by default would greet the operator with
+// the empty-state message instead of real quick buttons on first paint. The
+// template's default-tab pick (buttons.html) must skip to the first group
+// that HasButtons, falling back to Groups[0] only if none do.
+//
+// ut-docs#2541 review finding 5 retired this test's own ORIGINAL two-group
+// scenario: it used to make Household "survive with zero buttons" by hiding
+// its only item (Sponge) while Food kept a real button, so the template had
+// two groups to pick between. That is now exactly the case finding 5 fixed
+// -- VisibleItemCount excludes hidden items, so Household is pruned outright
+// rather than surviving empty, leaving only Food -- so a real, hidden-item-
+// based two-group "first group has no buttons" state can no longer be
+// constructed through the HTTP layer at all (every active, VISIBLE item is
+// always an implicit quick button of its own now, so any surviving group
+// always HasButtons=true). The underlying template selection logic (skip to
+// the first HasButtons group) stays covered directly, independent of real
+// hidden-item plumbing, by TestBuildCategoryGroups_HasButtonsPropagatesFromDescendant
+// and its neighbours in buttons_category_groups_test.go, which build
+// itemCounts by hand. This test now only pins that Household, once pruned,
+// plays no part in the render and Food's tile still shows.
 func TestButtonsHTTPList_DefaultTabPrefersGroupWithButtons(t *testing.T) {
 	db, store, h := newCategoriesTabTestHTTP(t)
 	h.HideAllTab = true
 
-	// Household sorts first but has an active item and NO quick button;
-	// Food sorts second and has a real quick button. Category sort_order
-	// (not alphabetical) is what .Groups is ordered by, so Household really
-	// is Groups[0] here.
+	// Household sorts first but its only item is hidden (pruned entirely);
+	// Food sorts second and has a real quick button.
 	mustExec(t, db, `INSERT INTO categories(id, name, parent_id, sort_order) VALUES
 		('cat_household', 'Household', NULL, 1),
 		('cat_food', 'Food', NULL, 2)`)
@@ -473,6 +476,9 @@ func TestButtonsHTTPList_DefaultTabPrefersGroupWithButtons(t *testing.T) {
 	if err := store.Add(Button{Label: "Bread", Code: "C1", ItemID: "i2"}); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
+	if err := store.Hide(t.Context(), "i1"); err != nil {
+		t.Fatalf("Hide: %v", err)
+	}
 
 	rec := httptest.NewRecorder()
 	h.List(rec, httptest.NewRequest("GET", "/ui/buttons", nil))
@@ -481,7 +487,10 @@ func TestButtonsHTTPList_DefaultTabPrefersGroupWithButtons(t *testing.T) {
 	}
 	body := rec.Body.String()
 
-	if !strings.Contains(body, `tab: 'cat_food'`) {
-		t.Fatalf("expected the default tab to be Food (has a quick button), not Household (items-only, sorts first), got: %s", body)
+	if strings.Contains(body, "Household") || strings.Contains(body, "Sponge") {
+		t.Fatalf("expected Household pruned entirely (its only item is hidden), got: %s", body)
+	}
+	if !strings.Contains(body, "Bread") {
+		t.Fatalf("expected Food's own tile (Bread) to still render, got: %s", body)
 	}
 }

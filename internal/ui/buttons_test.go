@@ -20,7 +20,9 @@ func setupTestDB(t *testing.T) *sql.DB {
 		// selects the real 001_init.sql/013_items_stock_untracked.sql column
 		// set — this fixture had drifted from it the same way ut-docs#2209's
 		// own sku/variant fixture drift did (see setupFullTestDB's comment).
-		`CREATE TABLE items (id TEXT PRIMARY KEY, sku TEXT, name TEXT, description TEXT, base_price INTEGER NOT NULL, tax_code_id TEXT, category_id TEXT, brand_id TEXT, unit TEXT NOT NULL DEFAULT 'each', color TEXT, is_active INTEGER NOT NULL DEFAULT 1, is_weighed INTEGER NOT NULL DEFAULT 0, is_sample_data INTEGER NOT NULL DEFAULT 0, stock_untracked INTEGER NOT NULL DEFAULT 0);`,
+		// sell_screen_hidden (migration 038, ut-docs#2541): ButtonStore.Add/
+		// Remove/Hide/Unhide/LoadAllActive all read or write this column now.
+		`CREATE TABLE items (id TEXT PRIMARY KEY, sku TEXT, name TEXT, description TEXT, base_price INTEGER NOT NULL, tax_code_id TEXT, category_id TEXT, brand_id TEXT, unit TEXT NOT NULL DEFAULT 'each', color TEXT, is_active INTEGER NOT NULL DEFAULT 1, is_weighed INTEGER NOT NULL DEFAULT 0, is_sample_data INTEGER NOT NULL DEFAULT 0, stock_untracked INTEGER NOT NULL DEFAULT 0, sell_screen_hidden INTEGER NOT NULL DEFAULT 0);`,
 		`CREATE TABLE categories (id TEXT PRIMARY KEY, name TEXT NOT NULL, parent_id TEXT, sort_order INTEGER NOT NULL DEFAULT 0, color TEXT, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE item_images (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, role TEXT NOT NULL, path TEXT NOT NULL);`,
 		`CREATE TABLE price_history (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, price INTEGER NOT NULL, starts_at TEXT NOT NULL, ends_at TEXT);`,
@@ -149,13 +151,14 @@ func TestButtonStoreAdd_SynthesizesCodeWhenNeitherBarcodeNorSKU(t *testing.T) {
 		t.Fatalf("SKU = %q, want blank (synthesized code must not leak as a SKU)", line.SKU)
 	}
 
-	// Removing it leaves no orphan row.
-	if err := store.Remove(btns[0].Code); err != nil {
+	// Removing it (ut-docs#2541: Remove now HIDES the item -- see
+	// ButtonStore.Remove) leaves no orphan row and no implicit tile either.
+	if err := store.Remove(btns[0].Code, btns[0].ItemID); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
 	btns, _ = store.Load()
 	if len(btns) != 0 {
-		t.Fatalf("Remove left an orphan row: %+v", btns)
+		t.Fatalf("Remove left an orphan row or implicit tile: %+v", btns)
 	}
 }
 

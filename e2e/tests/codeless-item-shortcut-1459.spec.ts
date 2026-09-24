@@ -55,13 +55,17 @@ test('a catalog item with neither barcode nor SKU can be added as a button and r
   // grid is retired); wait for the replica's first render before counting.
   await expect(page.locator('[data-testid="designer-categories"]')).toBeVisible();
   const tilesBefore = page.locator('[data-testid="designer-tile"] .tile-name', { hasText: name });
-  const before = await tilesBefore.count();
+  // ut-docs#2541: every active item is a quick button by default, so the
+  // imported codeless item is ALREADY a tile before anyone adds it -- the
+  // card's "a new or imported item appears with no manual step" acceptance.
+  await expect(tilesBefore).toHaveCount(1, { timeout: 5000 });
   await result.click();
 
-  // Pre-fix this 400'd and the dropdown just closed with no tile added
-  // (ut-docs#1220's own review finding) -- assert the tile actually
-  // appeared, not merely that no error was thrown.
-  await expect(tilesBefore).toHaveCount(before + 1, { timeout: 5000 });
+  // Adding it explicitly (the ut-docs#1459 flow, pre-fix a 400) must
+  // succeed and must not duplicate the tile: the explicit shortcut row
+  // replaces the implicit one (dedupe by item id in ButtonStore.Load).
+  await expect(page.locator('#buttons-add-error .error')).toHaveCount(0);
+  await expect(tilesBefore).toHaveCount(1, { timeout: 5000 });
 
   const adminTile = page.locator('[data-testid="designer-tile"]', { hasText: name });
   const code = await adminTile.getAttribute('data-code');

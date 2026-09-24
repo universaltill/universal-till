@@ -5,11 +5,22 @@ import { watchConsole } from './helpers';
 // ut-docs#2339: a long-press (~500ms hold, cancelled by >10px movement) or
 // a right-click on a sell-screen tile puts the WHOLE quick-button grid into
 // an iOS-springboard-style edit mode (#buttons-grid.jiggle-mode): every
-// tile wobbles, shows an edit badge (leading corner) and a remove badge
-// (trailing corner), and can be dragged to reorder; Done / Escape / a tap
-// outside the grid exits and persists the new order with ONE POST to
+// tile wobbles, shows an edit badge (leading top corner) and a trash badge
+// (trailing top corner), and can be dragged to reorder; Done / Escape / a
+// tap outside the grid exits and persists the new order with ONE POST to
 // /api/buttons/reorder. This replaced the ut-docs#2285 per-tile sheet
 // (sell-tile-long-press-2285.spec.ts, retired with it).
+//
+// ut-docs#2541: since every active, non-hidden catalog item is a quick
+// button by default now, the trash badge's OWN meaning changed — it no
+// longer just removes a shortcut_buttons row (the tile would just come
+// back), it deletes the ITEM itself (POST /api/buttons/delete-item, the
+// same soft-deactivate the catalog page's own "Delete item" uses). A third
+// badge (trailing BOTTOM corner, eye-off icon) now hides a tile from the
+// sell screen without touching the catalog — this file's own "Remove
+// badge" step below is rewritten into a "Hide badge" step for that reason;
+// destructive delete-item coverage lives in the Go-level handler tests
+// (internal/pages/buttons_hide_api_test.go), not here.
 //
 // HONESTY NOTE (per the `ux` skill's touch-sensitive-change rule, same
 // convention as designer-reorder-1221.spec.ts's own note): every gesture
@@ -81,6 +92,9 @@ async function seedItems(page: Page, items: Item[]) {
 }
 
 async function cleanupItems(page: Page, items: Item[]) {
+  // ut-docs#2541: /api/buttons/remove now HIDES the item rather than just
+  // deleting its shortcut_buttons row — harmless here, since the very next
+  // step deactivates the item outright anyway.
   for (const it of items) {
     await page.request.post('/api/buttons/remove', { form: { code: it.barcode } });
   }
@@ -352,34 +366,33 @@ test.describe('Sell-screen jiggle edit mode (ut-docs#2339)', () => {
       await page.reload();
       await page.getByRole('tab', { name: ITEM_A.category }).click();
 
-      // (6) Remove badge — LAST, and only on this spec's OWN fixture tile:
-      // its hx-confirm asks first; accepting POSTs /api/buttons/remove; the
-      // grid refreshes WITHOUT the tile and stays in edit mode (iOS keeps
-      // jiggling after a delete); Done then has nothing to save.
-      // Done first via a fresh entry so the count is taken at rest.
+      // (6) Hide badge — LAST, and only on this spec's OWN fixture tile
+      // (ut-docs#2541): no confirm dialog (reversible); POSTs
+      // /api/buttons/hide; the grid refreshes WITHOUT the tile and stays in
+      // edit mode (iOS keeps jiggling after a hide); Done then has nothing
+      // to save. Done first via a fresh entry so the count is taken at rest.
       const beforeCount = await page.locator('.products-tab-panel .btn-tile[data-code]').count();
       const tileC2 = page.locator(`.products-tab-panel .btn-tile[data-code="${ITEM_C.barcode}"]`);
-      const removedItemId = await tileC2.getAttribute('data-item-id');
+      const hiddenItemId = await tileC2.getAttribute('data-item-id');
       await longPress(tileC2);
       await expect(grid(page)).toHaveClass(/jiggle-mode/);
-      let confirmText = '';
-      page.once('dialog', (d) => { confirmText = d.message(); d.accept(); });
-      const removeResponse = page.waitForResponse((r) => r.url().includes('/api/buttons/remove'));
-      await tileC2.locator('xpath=..').locator('[data-testid="tile-badge-remove"]').click();
-      await removeResponse;
-      expect(confirmText).toContain(ITEM_C.name);
+      const hideResponse = page.waitForResponse((r) => r.url().includes('/api/buttons/hide'));
+      await tileC2.locator('xpath=..').locator('[data-testid="tile-badge-hide"]').click();
+      await hideResponse;
       await expect(page.locator('.products-tab-panel .btn-tile[data-code]')).toHaveCount(beforeCount - 1);
       await expect(grid(page)).toHaveClass(/jiggle-mode/);
       buttonCalls.length = 0;
       await page.locator('[data-testid="jiggle-done"]').click();
       await expect(grid(page)).not.toHaveClass(/jiggle-mode/);
       await page.waitForTimeout(200);
-      expect(buttonCalls.filter((r) => r.url().includes('/api/buttons/reorder')), 'nothing to save after a remove').toHaveLength(0);
+      expect(buttonCalls.filter((r) => r.url().includes('/api/buttons/reorder')), 'nothing to save after a hide').toHaveLength(0);
 
-      const readd = await page.request.post('/api/buttons/add', {
-        form: { itemId: removedItemId ?? '', label: ITEM_C.name, code: ITEM_C.barcode },
+      // Unhide restores it as an implicit tile (ut-docs#2541) — no re-add
+      // needed, unlike the retired remove-badge behavior this replaces.
+      const unhide = await page.request.post('/api/buttons/unhide', {
+        form: { itemId: hiddenItemId ?? '' },
       });
-      expect(readd.ok(), 're-add the removed tile').toBe(true);
+      expect(unhide.ok(), 'unhide the hidden tile').toBe(true);
 
       assertClean();
     } finally {
