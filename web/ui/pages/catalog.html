@@ -462,21 +462,29 @@
                to store an image against an item that doesn't exist yet). -->
           <div class="builtin-icon-section">
             <div class="muted">{{ T "catalog.builtin_icon.hint" }}</div>
-            <div id="builtin-icon-grid" class="picker-grid" role="group" aria-label="{{ T "catalog.builtin_icon.hint" }}">
-              {{ range .BuiltinIcons }}
+            <!-- ut-docs#2506: ~70 icons in sections, so a search box
+                 (web/public/icon-picker-filter.js) and a scroll box; "No
+                 image" sits first so it never scrolls out of reach. -->
+            <input type="search" class="builtin-icon-search" data-icon-filter="builtin-icon-grid" placeholder="{{ T "catalog.builtin_icon.search" }}" aria-label="{{ T "catalog.builtin_icon.search" }}" autocomplete="off">
+            <div id="builtin-icon-grid" class="picker-grid builtin-icon-grid" role="group" aria-label="{{ T "catalog.builtin_icon.hint" }}">
+              <button type="button" class="picker-tile builtin-icon-tile" data-icon="none" aria-pressed="false">{{ T "catalog.builtin_icon.none" }}</button>
+              {{ range .BuiltinIconGroups }}
+              <div class="builtin-icon-group-label">{{ T .I18nKey }}</div>
+              {{ range .Icons }}
               <!-- Review finding F6 (ut-docs#1844): the label is visible text,
                    not a hover-only title — this is a touchscreen till
                    (reference/ux-guidelines.md), nothing here can depend on
                    hover to be understood. `title` stays as a bonus tooltip for
                    a mouse/desktop session; the alt text and this span carry
                    the same identical string so neither is the "real" one. -->
-              <button type="button" class="picker-tile builtin-icon-tile" data-icon="{{ .Key }}" aria-pressed="false" title="{{ T .I18nKey }}">
+              <button type="button" class="picker-tile builtin-icon-tile" data-icon="{{ .Key }}" data-keywords="{{ .Keywords }}" aria-pressed="false" title="{{ T .I18nKey }}">
                 <img src="{{ .Path }}" alt="" width="28" height="28">
                 <span>{{ T .I18nKey }}</span>
               </button>
               {{ end }}
-              <button type="button" class="picker-tile builtin-icon-tile" data-icon="none" aria-pressed="false">{{ T "catalog.builtin_icon.none" }}</button>
+              {{ end }}
             </div>
+            <div class="muted" data-icon-filter-empty="builtin-icon-grid" hidden>{{ T "catalog.builtin_icon.no_match" }}</div>
             <div id="builtin-icon-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
           </div>
         </div>
@@ -1550,6 +1558,9 @@
   // clicked previously.
   function refreshBuiltinIconState(itemId, preserveMsg) {
     if (!builtinIconGrid) return;
+    // ut-docs#2506: a new item selected → drop the previous item's search,
+    // or its suggested/current tile could be the one the filter hid.
+    if (!preserveMsg && window.clearIconFilter) window.clearIconFilter('builtin-icon-grid');
     if (!itemId) { setBuiltinIconTiles('', '', false, preserveMsg); return; }
     fetch('/api/catalog/item/icon-state?item_id=' + encodeURIComponent(itemId))
       .then(function (res) { return res.json(); })

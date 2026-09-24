@@ -16,12 +16,49 @@ func TestPlaceholderIcon_KeywordMatch(t *testing.T) {
 	}{
 		{"Cappuccino", "Hot Drinks", "coffee"},
 		{"Chai Latte", "", "coffee"},
-		{"Bagel", "", "pastry"},
-		{"Croissant", "Bakery", "pastry"},
+		{"Bagel", "", "bread"},
+		{"Croissant", "Bakery", "croissant"},
+		{"Danish", "Bakery", "pastry"},
 		{"Club Sandwich", "Food", "sandwich"},
-		{"Coca-Cola 330ml", "Drinks", "drink"},
-		{"Bananas", "Produce", "generic"},
+		{"Coca-Cola 330ml", "Drinks", "can"},
+		{"Sprite", "Soft drinks", "drink"},
+		{"Bananas", "Produce", "banana"},
 		{"", "", "generic"},
+		// ut-docs#2506: the first-cut library gives these their own icons
+		// instead of a recoloured cup.
+		{"Chai", "", "tea"},
+		{"Green Tea", "Hot Drinks", "tea"},
+		{"Espresso", "", "espresso"},
+		{"Pint of Lager", "", "beer"},
+		{"Red Wine 175ml", "", "wine"},
+		{"Aperol Spritz", "Cocktails", "cocktail"},
+		{"Prosecco", "", "champagne"},
+		{"Whisky", "Spirits", "spirits"},
+		{"Chocolate Cake", "", "cake"},
+		{"Blueberry Muffin", "", "cupcake"},
+		{"Margherita Pizza", "", "pizza"},
+		{"Currywurst", "", "hot-dog"},
+		{"Chicken Salad", "", "salad"},
+		{"Ice Cream", "", "ice-cream"},
+		{"Ice Lolly", "", "ice-lolly"},
+		{"Iced Coffee", "", "coffee"},
+		// Review round 1 (ut-docs#2506): two-word names and plurals.
+		{"Hot Dog", "", "hot-dog"},
+		{"Hotdog", "", "hot-dog"},
+		{"Hot Chocolate", "", "hot-chocolate"},
+		{"House Blend No. 4", "Hot Drinks", "coffee"},
+		{"Tiramisu", "Cakes", "cake"},
+		{"BLT", "Sandwiches", "sandwich"},
+		{"Oat & Raisin", "Cookies", "cookie"},
+		{"Smash", "Burgers", "burger"},
+		{"Prawn Cocktail", "", "seafood"},
+		{"Ginger Beer", "", "can"},
+		{"Ginger Ale", "", "can"},
+		{"Cinnamon Roll", "", "pastry"},
+		{"Beans on Toast", "", "bread"},
+		{"Toast", "", "bread"},
+		{"Ice Cream Sundae", "", "ice-cream"},
+		{"Hot Sauce", "", "generic"}, // "hot" alone is no keyword
 	}
 	for _, c := range cases {
 		if got := PlaceholderIcon(c.name, c.category); got != c.want {
@@ -39,8 +76,12 @@ func TestPlaceholderIcon_WholeWordOnly(t *testing.T) {
 		name, category, want string
 	}{
 		{"Steak Sandwich", "", "sandwich"}, // "tea" inside "Steak" must not win
-		{"Steak Bake", "", "generic"},      // no whole-word keyword match at all
-		{"Chocolate Bar", "", "generic"},   // "cola" inside "Chocolate" must not win
+		{"Steak Bake", "", "meat"},         // "tea" inside "Steak" must not win
+		{"Chocolate Bar", "", "chocolate"}, // "cola" inside "Chocolate" must not win
+		{"Oatcake", "", "generic"},         // "cake" inside "Oatcake" must not win
+		{"Dog Treats", "", "generic"},      // "dog" alone must not match "hot dog"
+		{"Teaspoon", "", "generic"},        // "tea"+suffix only as a whole plural
+		{"Scone with Jam", "", "generic"},  // no whole-word keyword match at all
 	}
 	for _, c := range cases {
 		if got := PlaceholderIcon(c.name, c.category); got != c.want {

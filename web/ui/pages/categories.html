@@ -333,7 +333,7 @@
                : (ev.key === 'ArrowDown') ? 1
                : (ev.key === 'ArrowUp') ? -1 : 0;
       if (!step) return;
-      var tiles = Array.prototype.slice.call(iconGrid.querySelectorAll('.builtin-icon-tile'));
+      var tiles = Array.prototype.slice.call(iconGrid.querySelectorAll('.builtin-icon-tile:not([hidden])'));
       var i = tiles.indexOf(document.activeElement);
       if (i < 0) return;
       ev.preventDefault();
@@ -365,6 +365,9 @@
     currentImage = row ? (row.getAttribute('data-image') || '') : '';
     clearPickedFile();
     if (iconInput) iconInput.value = '';
+    // ut-docs#2506: a search left over from the previous record would
+    // hide this record's own icon (form.reset() fires no "input").
+    if (window.clearIconFilter) window.clearIconFilter('category-icon-grid');
     var key = keyForPath(currentImage);
     paintIcons(key);
     if (imageCurrent && imagePreview) {
@@ -473,15 +476,22 @@
     <input type="file" name="image" id="category-image-file" accept="image/png,image/jpeg" hidden>
     <input type="hidden" name="image_name" id="category-image-name">
     <div id="category-image-file-name" class="muted" aria-live="polite"></div>
-    <div id="category-icon-grid" class="picker-grid" role="group" aria-label="{{ T "catalog.builtin_icon.hint" }}">
-      {{ range .root.builtinIcons }}
-      <button type="button" class="picker-tile builtin-icon-tile" data-icon="{{ .Key }}" data-icon-path="{{ .Path }}" aria-pressed="false" title="{{ T .I18nKey }}">
+    {{/* ut-docs#2506: ~70 icons in sections — search box
+         (web/public/icon-picker-filter.js), scroll box, "No image" first. */}}
+    <input type="search" class="builtin-icon-search" data-icon-filter="category-icon-grid" placeholder="{{ T "catalog.builtin_icon.search" }}" aria-label="{{ T "catalog.builtin_icon.search" }}" autocomplete="off">
+    <div id="category-icon-grid" class="picker-grid builtin-icon-grid" role="group" aria-label="{{ T "catalog.builtin_icon.hint" }}">
+      <button type="button" class="picker-tile builtin-icon-tile" data-icon="none" aria-pressed="false">{{ T "catalog.builtin_icon.none" }}</button>
+      {{ range .root.builtinIconGroups }}
+      <div class="builtin-icon-group-label">{{ T .I18nKey }}</div>
+      {{ range .Icons }}
+      <button type="button" class="picker-tile builtin-icon-tile" data-icon="{{ .Key }}" data-icon-path="{{ .Path }}" data-keywords="{{ .Keywords }}" aria-pressed="false" title="{{ T .I18nKey }}">
         <img src="{{ .Path }}" alt="" width="28" height="28">
         <span>{{ T .I18nKey }}</span>
       </button>
       {{ end }}
-      <button type="button" class="picker-tile builtin-icon-tile" data-icon="none" aria-pressed="false">{{ T "catalog.builtin_icon.none" }}</button>
+      {{ end }}
     </div>
+    <div class="muted" data-icon-filter-empty="category-icon-grid" hidden>{{ T "catalog.builtin_icon.no_match" }}</div>
     <input type="hidden" name="icon" id="category-icon">
   </div>
 

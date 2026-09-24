@@ -24,7 +24,8 @@ var HeadAssets = []string{
 	"public/input-heartbeat.js",
 	"public/record-dialog.js",
 	"public/category-filter.js",
-	"public/bugreport-draft.js", // ut-docs#2342: the bug-report draft store
+	"public/icon-picker-filter.js", // ut-docs#2506: built-in icon picker search
+	"public/bugreport-draft.js",    // ut-docs#2342: the bug-report draft store
 }
 
 // headAssetVersion is assetVersion, indirected so a test can prove the
