@@ -116,6 +116,13 @@ type fiscalSignAskPayment struct {
 	Method string `json:"method"`
 	Amount int64  `json:"amount"`
 	Tip    int64  `json:"tip_amount"`
+	// TipRecipient (ut-docs#833, contract 1.9.0) is whose money a tip is —
+	// pos.TipRecipientEmployee or pos.TipRecipientBusiness (ADR-0061 D3).
+	// A German signer needs it to place the tip on the signed Beleg: an
+	// employee's tip is not the business's turnover (DSFinV-K TrinkgeldAN),
+	// a tip the business keeps is (TrinkgeldAG). Sent only on a tipped
+	// payment; omitted otherwise.
+	TipRecipient string `json:"tip_recipient,omitempty"`
 }
 
 type fiscalSignAskVATLine struct {
@@ -569,6 +576,20 @@ func askFiscalSign(ctx context.Context, bus *plugins.EventBus, payload fiscalSig
 // input, mirroring the tender handler's own totals math (pos.AmountForQuantity
 // / pos.ComputeTaxBasisPoints over the same lines) so what the signer signs
 // is what CompleteSale records.
+// fiscalTipRecipient is the tip_recipient a payment is signed with: empty
+// for an untipped payment, else its recipient — an unset one defaulting to
+// employee exactly as CompleteSale persists it, so the signed record and
+// the stored payment row agree.
+func fiscalTipRecipient(p pos.PaymentInput) string {
+	if !p.TipAmount.IsPositive() {
+		return ""
+	}
+	if p.TipRecipient == "" {
+		return pos.TipRecipientEmployee
+	}
+	return p.TipRecipient
+}
+
 func buildFiscalSignPayload(in *pos.SaleInput, now time.Time) fiscalSignAskPayload {
 	subtotal, taxTotal := money.Zero, money.Zero
 	perRate := map[int]*fiscalSignAskVATLine{}
@@ -626,8 +647,9 @@ func buildFiscalSignPayload(in *pos.SaleInput, now time.Time) fiscalSignAskPaylo
 			// sufficiency check) and renderReceipt already compute. The
 			// gross tender would corrupt the irreversible signed record's
 			// payment-type breakdown.
-			Amount: p.Amount.Sub(p.ChangeGiven).Minor(),
-			Tip:    p.TipAmount.Minor(),
+			Amount:       p.Amount.Sub(p.ChangeGiven).Minor(),
+			Tip:          p.TipAmount.Minor(),
+			TipRecipient: fiscalTipRecipient(p),
 		})
 	}
 	return fiscalSignAskPayload{

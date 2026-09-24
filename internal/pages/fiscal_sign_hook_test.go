@@ -730,6 +730,49 @@ func TestFiscalSignPayload_PaymentAmountNetsChangeGiven(t *testing.T) {
 	}
 }
 
+// ut-docs#833 (contract 1.9.0): a tipped payment carries whose money the
+// tip is (ADR-0061 D3). A TSE signer needs it to put the tip on the signed
+// Beleg correctly — an employee's tip is not the business's turnover
+// (DSFinV-K TrinkgeldAN, not taxable), a tip the business keeps is
+// (TrinkgeldAG). An empty recipient on a tipped payment is sent as
+// "employee", the same default CompleteSale persists, so the signed record
+// and the stored payment can never disagree. An untipped payment omits it.
+func TestFiscalSignPayload_TipRecipientOnTippedPayments(t *testing.T) {
+	in := &pos.SaleInput{
+		SaleID:   "sale-tips",
+		Currency: "EUR",
+		Lines: []pos.SaleLineInput{
+			{Name: "Thing", Qty: 1, UnitPrice: money.FromMinor(1290), TaxRateBasisPoints: 1900},
+		},
+		Payments: []pos.PaymentInput{
+			{MethodID: "card", Amount: money.FromMinor(700), TipAmount: money.FromMinor(60), TipRecipient: pos.TipRecipientBusiness},
+			{MethodID: "card", Amount: money.FromMinor(390), TipAmount: money.FromMinor(50)},
+			{MethodID: "cash", Amount: money.FromMinor(200)},
+		},
+	}
+	payload := buildFiscalSignPayload(in, time.Date(2026, 9, 24, 10, 0, 0, 0, time.UTC))
+	want := []string{pos.TipRecipientBusiness, pos.TipRecipientEmployee, ""}
+	for i, w := range want {
+		if got := payload.Payments[i].TipRecipient; got != w {
+			t.Fatalf("payment %d tip_recipient = %q, want %q", i, got, w)
+		}
+	}
+	raw, err := json.Marshal(payload.Payments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire []map[string]any
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if wire[0]["tip_recipient"] != "business" || wire[1]["tip_recipient"] != "employee" {
+		t.Fatalf("tip_recipient must be on the wire for tipped payments, got %s", raw)
+	}
+	if _, ok := wire[2]["tip_recipient"]; ok {
+		t.Fatalf("an untipped payment must omit tip_recipient, got %s", raw)
+	}
+}
+
 // ut-docs#834 (contract 1.2.0): the payload must carry an explicit
 // tax_inclusive flag rather than leaving a signer to infer the pricing mode
 // by testing which reading of net/tax reconciles with Total.
