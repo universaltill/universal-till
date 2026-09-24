@@ -488,3 +488,15 @@ func TestDeleteGroupIfExists(t *testing.T) {
 		t.Fatalf("replay: found=%v err=%v, want not found (already deleted)", found, err)
 	}
 }
+
+// A stock-untracked item created from the cloud never gets the inventory
+// placeholder row a tracked one does (ut-docs#1850's rule for CreateItem).
+func TestSaveItem_CreateUntrackedHasNoInventoryRow(t *testing.T) {
+	f := newSaveFixture(t)
+	if _, err := f.catalog.SaveItem(context.Background(), data.ItemPatch{ID: "it-u", Create: true, Name: strp("Service"), PriceMinor: i64p(500), StockUntracked: boolp(true)}); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.str(t, `SELECT COUNT(*) FROM inventory WHERE item_id = 'it-u'`); n != "0" {
+		t.Fatalf("inventory rows = %s, want 0 for a stock-untracked item", n)
+	}
+}

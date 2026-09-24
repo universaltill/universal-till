@@ -178,6 +178,11 @@ func (r *CatalogRepo) SaveItem(ctx context.Context, p ItemPatch) (ItemSaveResult
 		if p.SKU != nil {
 			in.SKU = *p.SKU
 		}
+		if p.StockUntracked != nil {
+			// Decided at insert time: CreateItemTx skips the inventory
+			// placeholder row for an untracked item (ut-docs#1850).
+			in.StockUntracked = *p.StockUntracked
+		}
 		autoSKU := in.SKU == ""
 		for attempt := 0; ; attempt++ {
 			if autoSKU {
