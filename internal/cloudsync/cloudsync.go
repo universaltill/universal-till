@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"runtime"
@@ -34,7 +35,13 @@ import (
 )
 
 var (
-	httpClient = &http.Client{Timeout: 30 * time.Second}
+	// httpClient is shared by every /v1/stores/* call this package makes:
+	// post() and postJSON() (diagnostics.go) both use it, plus the two
+	// direct httpClient.Do call sites in issue_reports.go. Its Transport is
+	// a DEDICATED clone of http.DefaultTransport (ut-docs#2588), not the
+	// default transport itself — see newHTTPTransport's own doc comment for
+	// why the default's pooling knobs were the wrong fit here.
+	httpClient = &http.Client{Timeout: 30 * time.Second, Transport: newHTTPTransport()}
 	started    = time.Now()
 	// tickIntervalNS/firstDelayNS back the two interval knobs below.
 	// atomic.Int64 (nanoseconds), not plain vars: Start()'s loop reads them
@@ -57,6 +64,29 @@ func init() {
 
 func tickInterval() time.Duration { return time.Duration(tickIntervalNS.Load()) }
 func firstDelay() time.Duration   { return time.Duration(firstDelayNS.Load()) }
+
+// newHTTPTransport builds cloudsync's dedicated transport (ut-docs#2588). A
+// jittered normal tick ranges up to tickInterval()*1.2 — 144s in
+// production — which already exceeds http.DefaultTransport's 90s
+// IdleConnTimeout, so sharing that transport meant every routine tick
+// reopened a fresh connection (and, against an https cloud endpoint, a
+// fresh TLS handshake) instead of reusing the one pooled from the tick
+// before. Cloned from DefaultTransport (not built from scratch) to keep its
+// proxy-from-env, dial timeouts, TLS handshake timeout and
+// ForceAttemptHTTP2 — only the idle-pool knobs below change.
+// MaxIdleConns/MaxIdleConnsPerHost stay small: this is one till talking to
+// one cloud host, never a fan-out client.
+// Reuse ACROSS ticks also needs the server side to keep the connection idle
+// that long; ingress-nginx's 75s default keep-alive closes it first, which
+// is tracked as ut-docs#2607. Reuse within a tick (sync,
+// snapshot, results, issue reports) works regardless.
+func newHTTPTransport() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.IdleConnTimeout = 5 * time.Minute // > the slowest jittered normal tick (144s), with headroom
+	t.MaxIdleConns = 4
+	t.MaxIdleConnsPerHost = 2
+	return t
+}
 
 // Hooks are the till-local actions a directive may trigger. Each returns a
 // short human message for the cloud's result column. A nil hook marks the
@@ -905,9 +935,26 @@ func post(ctx context.Context, cfg *config.Config, path string, payload []byte) 
 	buf := new(bytes.Buffer)
 	_, _ = buf.ReadFrom(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return nil, &statusError{Path: path, StatusCode: resp.StatusCode}
+		return nil, &statusError{
+			Path:       path,
+			StatusCode: resp.StatusCode,
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After"), time.Now()),
+		}
 	}
 	return buf.Bytes(), nil
+}
+
+// drainBody discards up to a bounded amount of an HTTP response body before
+// its caller closes it (ut-docs#2588): Go's Transport only returns a
+// connection to httpClient's idle pool once the body has been read to EOF
+// (or drained far enough) before Close — a caller that inspects only the
+// status code and closes right away forces a fresh connection on every
+// following request to the same host. Bounded the same as
+// decodeCloudError's own read (diagnostics.go): an error body is at most a
+// few hundred bytes; never buffer an unbounded one from a misbehaving
+// endpoint.
+func drainBody(resp *http.Response) {
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, cloudErrorMaxBytes))
 }
 
 // statusError is post's non-200 failure. Its message is exactly the
@@ -917,21 +964,64 @@ func post(ctx context.Context, cfg *config.Config, path string, payload []byte) 
 type statusError struct {
 	Path       string
 	StatusCode int
+	// RetryAfter is the response's Retry-After header, parsed by
+	// parseRetryAfter (0 when absent/invalid/past) — ut-docs#2588. Captured
+	// for every non-200 status; Start's scheduler only ACTS on it for
+	// 429/503 (see retryAfterHint), so a caller never has to guess whether
+	// parsing was worth doing for this particular status.
+	RetryAfter time.Duration
 }
 
 func (e *statusError) Error() string {
 	return fmt.Sprintf("cloudsync: %s returned %d", e.Path, e.StatusCode)
 }
 
+// parseRetryAfter parses a Retry-After header value (RFC 9110 §10.2.3):
+// either a delta-seconds integer or an HTTP-date. now is the reference time
+// an HTTP-date is measured against — injectable so tests don't depend on
+// the wall clock. Anything that doesn't yield a positive future duration
+// (empty, non-numeric garbage, a zero/negative delta, a date at or before
+// now) returns 0 — "no hint", never an error: a caller simply falls back to
+// its own backoff. Values past retryAfterClamp saturate at it, so a huge
+// delta-seconds can't overflow time.Duration into a tiny wait.
+func parseRetryAfter(h string, now time.Time) time.Duration {
+	h = strings.TrimSpace(h)
+	if h == "" {
+		return 0
+	}
+	if strings.Trim(h, "0123456789") == "" {
+		// delta-seconds (digits only, per the RFC grammar). Saturate at
+		// retryAfterClamp BEFORE multiplying: a huge value would overflow
+		// time.Duration and wrap to a tiny or negative wait.
+		secs, err := strconv.ParseInt(h, 10, 64)
+		if err != nil || secs >= int64(retryAfterClamp/time.Second) {
+			return retryAfterClamp
+		}
+		return time.Duration(secs) * time.Second
+	}
+	if t, err := http.ParseTime(h); err == nil {
+		if d := t.Sub(now); d > 0 {
+			return min(d, retryAfterClamp)
+		}
+	}
+	return 0
+}
+
 // Start runs the sync loop: first tick shortly after boot (give enrolment a
-// moment), then every few minutes. Ctx-cancelled with the server. The
+// moment), then every few minutes, jittered, with exponential backoff (full
+// jitter, optionally raised by a Retry-After hint) after a run of failures
+// (ut-docs#2588) — see schedule.go's scheduler for the delay math. Without
+// this, a cloud outage or a shop opening (every till powering on within the
+// same minute) had every till retrying on the exact same fixed grid,
+// hitting the cloud in the same second. Ctx-cancelled with the server. The
 // goroutine registers on wg so app.Run's shutdown drain can prove it exited
 // before the database closes (same join shape as updates/alerts/enroll).
 func Start(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks, wg *sync.WaitGroup) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		first := time.NewTimer(firstDelay())
+		sched := newSchedulerFn()
+		first := time.NewTimer(sched.firstWait())
 		defer first.Stop()
 		select {
 		case <-ctx.Done():
@@ -939,13 +1029,16 @@ func Start(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks, wg 
 		case <-first.C:
 		}
 		for {
-			if err := Tick(ctx, cfg, db, hooks); err != nil {
+			err := Tick(ctx, cfg, db, hooks)
+			if err != nil {
 				logging.L().Warnf("cloudsync: tick failed (will retry): %v", err)
 			}
+			timer := time.NewTimer(sched.next(err))
 			select {
 			case <-ctx.Done():
+				timer.Stop()
 				return
-			case <-time.After(tickInterval()):
+			case <-timer.C:
 			}
 		}
 	}()

@@ -259,6 +259,11 @@ func pullIssueReportStatusesPage(ctx context.Context, cfg *config.Config, db *sq
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		// ut-docs#2588: this branch used to return without reading any of
+		// the body at all, which stops the connection going back to
+		// httpClient's idle pool — drain it first (see drainBody's own doc
+		// comment).
+		drainBody(resp)
 		logPullFailure(fmt.Sprintf("issue-report status pull returned %d", resp.StatusCode))
 		return 0, 0, fmt.Errorf("issue-report status pull returned %d", resp.StatusCode)
 	}
@@ -378,6 +383,11 @@ func uploadIssueReport(ctx context.Context, cfg *config.Config, b issuereport.Bu
 		return err
 	}
 	defer resp.Body.Close()
+	// ut-docs#2588: this call returned on EITHER outcome (success or
+	// failure) without ever reading the body, which stops the connection
+	// going back to httpClient's idle pool — drain it before deciding what
+	// to return (see drainBody's own doc comment).
+	drainBody(resp)
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("issue-reports upload returned %d", resp.StatusCode)
 	}
