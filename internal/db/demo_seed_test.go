@@ -117,6 +117,31 @@ func TestDemoSeedItemsPristineValuesMatchCatalogue(t *testing.T) {
 	}
 }
 
+// ut-docs#167: same drift guard as the items' pristine values above, for
+// the demo tax code — demo_ids.sql's demo_seed_tax_codes row is what
+// remove_demo*.sql compares the live code against, so a drift would either
+// strand an untouched demo code or (worse) delete one the operator edited.
+func TestDemoSeedTaxCodesPristineValuesMatchCatalogue(t *testing.T) {
+	row := regexp.MustCompile(`(?m)^\s*\('(tax_[a-z_]+)',\s*'((?:[^']|'')*)',\s*(\d+),\s*(?:1,\s*)?(\d+)\)`)
+	parse := func(src string) map[string]string {
+		out := map[string]string{}
+		for _, m := range row.FindAllStringSubmatch(src, -1) {
+			out[m[1]] = m[2] + "|" + m[3] + "|" + m[4]
+		}
+		return out
+	}
+	catalogue, seeded := parse(seeddata.DemoCatalogueSQL), parse(seeddata.DemoIDsSQL)
+	if len(catalogue) != len(seeddata.TaxCodeIDs) || len(seeded) != len(seeddata.TaxCodeIDs) {
+		t.Fatalf("parsed %d tax-code rows from demo_catalogue.sql and %d from demo_ids.sql, want %d each — regex drifted from the files' shape",
+			len(catalogue), len(seeded), len(seeddata.TaxCodeIDs))
+	}
+	for _, id := range seeddata.TaxCodeIDs {
+		if catalogue[id] == "" || catalogue[id] != seeded[id] {
+			t.Errorf("%s pristine values drifted: demo_catalogue.sql %q, demo_ids.sql %q", id, catalogue[id], seeded[id])
+		}
+	}
+}
+
 // ut-docs#1425 review finding F4: the migration-specific cross-check this
 // replaces (TestMigration038MatchesSeedData) read migration 038's SQL text
 // directly and was deleted along with it in the ADR-0074 squash — but the

@@ -64,7 +64,11 @@ test('backfilling barcodes from SKU previews then assigns a derived barcode to a
   // report, review finding ut-docs#1356). So the report must be readable
   // here, before anything reloads.
   await dialog.getByRole('button', { name: /Assign these barcodes/i }).click();
-  await expect(dialog).toContainText('Assigned 1 barcode');
+  // Not an exact count: the shared per-worker till's demo catalogue has its
+  // own barcode-less items (the made-to-order café items, ut-docs#167), so
+  // the probe is one of N. The probe's own derived barcode is asserted
+  // after the reload below.
+  await expect(dialog).toContainText(/Assigned \d+ barcode/);
 
   // Only the operator's own "Close" click reloads the page (same
   // close-then-reload shape as plugin_install_modal.html) — wait for that

@@ -96,10 +96,10 @@ var RemoveDemoCustomersPromosSQL string
 //go:embed remove_demo_customers_promos_relaxed.sql
 var RemoveDemoCustomersPromosRelaxedSQL string
 
-// ItemIDs / CategoryIDs / BrandIDs / VariantIDs mirror the SQL assets for
+// ItemIDs / CategoryIDs / BrandIDs / VariantIDs / TaxCodeIDs mirror the SQL assets for
 // Go-side callers and cross-checking tests.
 var (
-	ItemIDs = idRange("itm%03d", 50)
+	ItemIDs = idRange("itm%03d", 52)
 
 	CategoryIDs = []string{
 		"cat_bakery", "cat_clean", "cat_dairy", "cat_drink", "cat_food",
@@ -112,6 +112,10 @@ var (
 	}
 
 	VariantIDs = idRange("var%03d", 12)
+
+	// TaxCodeIDs is the one demo tax code (ut-docs#167) the café items use —
+	// a dine-in/takeaway pair, removed with the catalogue once unused.
+	TaxCodeIDs = []string{"tax_demo_cafe"}
 
 	// DemoCustomerIDs / DemoPromoCodes (ut-docs#567) mirror
 	// demo_customers_promos_ids.sql for Go-side callers and cross-checking

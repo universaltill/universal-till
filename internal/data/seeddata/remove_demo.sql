@@ -113,9 +113,28 @@ DELETE FROM brands
  WHERE id IN (SELECT id FROM demo_seed_brands)
    AND NOT EXISTS (SELECT 1 FROM items i WHERE i.brand_id = brands.id);
 
+-- The demo tax code (ut-docs#167) goes only when no remaining item — a
+-- kept demo item or an operator's own — uses it (items.tax_code_id is a
+-- live FK), and only while still pristine. The pristine rule is NOT
+-- relaxed in the relaxed variant: a changed rate is shop tax configuration,
+-- not a sample row. A leftover takeaway_rate_overrides entry in the German
+-- tax plugin's settings for a removed code is inert (it keys a code no
+-- item has) and shows as an orphan row in that plugin's editor.
+-- A single-item "Remove anyway" (DemoSeedRepo.RemoveDemoItem) does not
+-- sweep it, same as it leaves demo categories/brands; the next bulk
+-- removal does.
+DELETE FROM tax_codes
+ WHERE EXISTS (SELECT 1 FROM demo_seed_tax_codes d
+               WHERE d.id = tax_codes.id
+                 AND d.name = tax_codes.name
+                 AND d.rate_basis_points = tax_codes.rate_basis_points
+                 AND d.takeaway_rate_basis_points IS tax_codes.takeaway_rate_basis_points)
+   AND NOT EXISTS (SELECT 1 FROM items i WHERE i.tax_code_id = tax_codes.id);
+
 -- TEMP tables are per-connection: drop them so a later run on the same
 -- pooled connection starts clean.
 DROP TABLE IF EXISTS temp.demo_seed_removable;
 DROP TABLE IF EXISTS temp.demo_seed_items;
 DROP TABLE IF EXISTS temp.demo_seed_categories;
 DROP TABLE IF EXISTS temp.demo_seed_brands;
+DROP TABLE IF EXISTS temp.demo_seed_tax_codes;
