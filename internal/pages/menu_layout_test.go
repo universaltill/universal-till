@@ -218,6 +218,150 @@ func TestMenuPage_IconNameResolvesOrFallsBack(t *testing.T) {
 	}
 }
 
+// TestMenuPage_PluginPageDeclaredIconRendersOnTile pins ut-docs#1734: a
+// plugin page entry with a declared icon name (installed through
+// PersistManifest, not injected as a fixture) renders that icon on its
+// /menu tile with no layout plugin installed. Its sibling entry with no
+// declared icon still falls back to genericFallbackIcon exactly as before
+// (must not regress TestMenuPage_GoldenZeroPluginTileOrder's shape for a
+// plugin tile with no icon).
+func TestMenuPage_PluginPageDeclaredIconRendersOnTile(t *testing.T) {
+	mux, dp := newMenuPageTestDeps(t, baseMenu)
+	t.Setenv("UT_AUTH", "off")
+	ctx := t.Context()
+
+	m := &plugins.Manifest{
+		ID: "com.example.iconplugin", Name: "Icon Plugin", Version: "1.0.0", Entrypoint: "./main.wasm",
+		Entries: []plugins.ManifestEntry{
+			{Type: "page", Key: "iconed", Label: "Iconed Page", Route: "/plugin/iconed", IconName: "scissors"},
+			{Type: "page", Key: "unironed", Label: "Unironed Page", Route: "/plugin/unironed"},
+		},
+	}
+	if err := plugins.PersistManifest(ctx, dp.Db, m, plugins.InstallOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.ReloadPlugins(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	body := getMenu(t, mux)
+	if got := tileIconInBody(t, body, "/plugin/iconed"); got != "scissors" {
+		t.Errorf("plugin's declared icon name must render on its tile: got %q, want %q", got, "scissors")
+	}
+	if got := tileIconInBody(t, body, "/plugin/unironed"); got != genericFallbackIcon {
+		t.Errorf("a plugin page entry with no declared icon must still fall back to the generic icon: got %q", got)
+	}
+}
+
+// TestMenuPage_LayoutAmendmentStillWinsOverPluginDeclaredIcon pins the
+// render-time ordering ut-docs#1734 calls out: were a `layout` plugin's
+// Decision H re-icon amendment to target a plugin tile, it must win over
+// that tile's OWN declared default icon, and the plugin's own default
+// becomes the amendment's fallback (not genericFallbackIcon) if the
+// amendment's icon name is unknown.
+//
+// Defensive, not a reachable production path today: the amendment below is
+// injected directly into dp.MenuAmendments, bypassing install, because
+// uislot.ParseAmendmentsJSON refuses any key that is not a core menu
+// destination — so no installed layout plugin can currently key
+// "/plugin/…". This guards the ordering if plugin tiles ever become
+// amendable.
+func TestMenuPage_LayoutAmendmentStillWinsOverPluginDeclaredIcon(t *testing.T) {
+	mux, dp := newMenuPageTestDeps(t, baseMenu)
+	t.Setenv("UT_AUTH", "off")
+	ctx := t.Context()
+
+	m := &plugins.Manifest{
+		ID: "com.example.iconplugin2", Name: "Icon Plugin 2", Version: "1.0.0", Entrypoint: "./main.wasm",
+		Entries: []plugins.ManifestEntry{
+			{Type: "page", Key: "iconed2", Label: "Iconed Page 2", Route: "/plugin/iconed2", IconName: "scissors"},
+		},
+	}
+	if err := plugins.PersistManifest(ctx, dp.Db, m, plugins.InstallOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.ReloadPlugins(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// A layout amendment re-icons the same route: it must win over the
+	// plugin's own declared "scissors" default.
+	dp.MenuAmendments = []uislot.Amendment{{PluginID: "com.example.layout", Key: "/plugin/iconed2", Icon: "tag"}}
+	body := getMenu(t, mux)
+	if got := tileIconInBody(t, body, "/plugin/iconed2"); got != "tag" {
+		t.Errorf("a layout amendment must still win over the plugin's own declared icon: got %q, want %q", got, "tag")
+	}
+
+	// An unknown amendment icon name must fall back to the plugin's own
+	// declared default ("scissors"), not straight to genericFallbackIcon —
+	// IconFallback carries whatever Icon held before the amendment, which is
+	// now the plugin's own default rather than "" as it would be for a core
+	// tile with no plugin icon.
+	dp.MenuAmendments = []uislot.Amendment{{PluginID: "com.example.layout", Key: "/plugin/iconed2", Icon: "no-such-icon"}}
+	body = getMenu(t, mux)
+	if got := tileIconInBody(t, body, "/plugin/iconed2"); got != "scissors" {
+		t.Errorf("an unknown amendment icon must fall back to the plugin's own declared icon, not the generic one: got %q, want %q", got, "scissors")
+	}
+}
+
+// TestMenuPage_LegacyPageIconPathFallsBackToGeneric pins the upgrade path
+// for ut-docs#1734: before it, PersistManifest wrote a page entry's
+// icon_path (a file path, never read for pages) verbatim into
+// plugin_entries.icon_path — the same column ListMenuEntries now reads as
+// the tile's icon NAME. Such a legacy row must not render anything from the
+// stored string; it is only a bounded-map lookup key, so the tile falls
+// back to genericFallbackIcon.
+func TestMenuPage_LegacyPageIconPathFallsBackToGeneric(t *testing.T) {
+	mux, dp := newMenuPageTestDeps(t, baseMenu)
+	t.Setenv("UT_AUTH", "off")
+	ctx := t.Context()
+
+	m := &plugins.Manifest{
+		ID: "com.example.legacyicon", Name: "Legacy Icon", Version: "1.0.0", Entrypoint: "./main.wasm",
+		Entries: []plugins.ManifestEntry{
+			{Type: "page", Key: "legacy", Label: "Legacy Page", Route: "/plugin/legacy"},
+		},
+	}
+	if err := plugins.PersistManifest(ctx, dp.Db, m, plugins.InstallOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a pre-#1734 install that persisted a file path for a page.
+	if _, err := dp.Db.ExecContext(ctx, `UPDATE plugin_entries SET icon_path = ? WHERE plugin_id = ? AND key = 'legacy'`,
+		`../../assets/icon.png"><script>x</script>`, m.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.ReloadPlugins(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	body := getMenu(t, mux)
+	if strings.Contains(body, "<script>x</script>") || strings.Contains(body, "assets/icon.png") {
+		t.Fatalf("legacy icon_path value leaked into the /menu page")
+	}
+	if got := tileIconInBody(t, body, "/plugin/legacy"); got != genericFallbackIcon {
+		t.Errorf("legacy page icon_path must fall back to the generic icon: got %q, want %q", got, genericFallbackIcon)
+	}
+}
+
+// tileIconInBody extracts the data-icon attribute of the tile whose href is
+// exactly href, failing the test if no such tile exists.
+func tileIconInBody(t *testing.T, body, href string) string {
+	t.Helper()
+	start := strings.Index(body, `href="`+href+`"`)
+	if start < 0 {
+		t.Fatalf("no tile for %s in: %s", href, body)
+	}
+	tile := body[start:]
+	if end := strings.Index(tile, "</a>"); end >= 0 {
+		tile = tile[:end]
+	}
+	m := regexp.MustCompile(`data-icon="([^"]+)"`).FindStringSubmatch(tile)
+	if m == nil {
+		t.Fatalf("no icon on %s tile: %s", href, tile)
+	}
+	return m[1]
+}
+
 func TestMenuPage_ReorderAndGroupHeading(t *testing.T) {
 	// ut-docs#2312: /items now carries VisibleIf "catalog_management" --
 	// this test is about reorder/group-heading placement, not permissions,

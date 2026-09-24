@@ -52,10 +52,30 @@ type Manifest struct {
 
 // ManifestEntry represents a UI/integration entry
 type ManifestEntry struct {
-	Type          string                 `json:"type"`  // page|button|popup|payment|device|etc.
-	Key           string                 `json:"key"`   // unique within plugin
-	Label         string                 `json:"label"` // display name
-	IconPath      string                 `json:"icon_path,omitempty"`
+	Type  string `json:"type"`  // page|button|popup|payment|device|etc.
+	Key   string `json:"key"`   // unique within plugin
+	Label string `json:"label"` // display name
+	// IconPath is BUTTON-ONLY: a real on-disk file path served by
+	// internal/pages/plugin_icons.go's traversal-guarded route (from
+	// data.ButtonEntryRow.IconPath). type:"page" entries never read this
+	// field — they use IconName below. Kept distinct on purpose (ut-docs#1734)
+	// so one field never means "file path" for one entry type and
+	// "closed-set name" for another.
+	IconPath string `json:"icon_path,omitempty"`
+	// IconName is PAGE-ONLY (ut-docs#1734, follow-up from #1722): a plugin's
+	// declared default menu-tile icon for a type:"page" entry, which must be
+	// one of httpx.IconNames() — validated at install time by
+	// validatePageEntryIcon. Never a file path (that's IconPath, button-only,
+	// above). A `layout` plugin cannot re-icon this tile today: Decision H
+	// amendments may only key core menu destinations
+	// (uislot.ParseAmendmentsJSON refuses any other key at install), and a
+	// page whose route collides with a core key renders as that core entry.
+	// Should plugin tiles ever become amendable, uislot.Resolve already lets
+	// the amendment win and keeps this default as IconFallback.
+	//
+	// ut-cloud's internal/signing.CanonicalEntry must mirror this field
+	// (same position, same tag) or the marketplace signer strips it.
+	IconName      string                 `json:"icon_name,omitempty"`
 	SortOrder     int                    `json:"sort_order,omitempty"`
 	ParentPageKey string                 `json:"parent_page_key,omitempty"` // for buttons/popups
 	MenuGroup     string                 `json:"menu_group,omitempty"`      // for pages
@@ -102,6 +122,21 @@ func entryConfigJSON(e ManifestEntry) string {
 	}
 	b, _ := json.Marshal(m)
 	return string(b)
+}
+
+// entryIconColumn resolves what goes into plugin_entries.icon_path for one
+// manifest entry (ut-docs#1734): that column is generic TEXT already, and
+// rather than a schema change, a type:"page" entry's closed-set IconName is
+// persisted there, while every other entry type keeps persisting its
+// file-path IconPath verbatim (unaffected by the new page-only field). Used
+// by both PersistManifest and Rollback so their two independent
+// ManifestEntry -> data.PluginEntryRow conversion loops cannot drift on this
+// field the way entryConfigJSON above prevents drift on Config.
+func entryIconColumn(e ManifestEntry) string {
+	if e.Type == "page" {
+		return e.IconName
+	}
+	return e.IconPath
 }
 
 // ManifestSetting represents a configuration key
@@ -454,6 +489,39 @@ func validatePageEntryRoutes(ctx context.Context, repo *data.PluginRepo, tx *sql
 	return fmt.Errorf("page entry route %q is already provided by plugin %s — pick a different route", c.Route, c.Owner)
 }
 
+// validatePageEntryIcon enforces the install-time half of ut-docs#1734
+// (follow-up from #1722): a type:"page" entry's IconName is the plugin's own
+// declared default menu-tile icon, and it must be one of
+// uislot.IsKnownIconName's closed set (the same closed set httpx.IconNames() draws SVGs
+// from — internal/plugins cannot import internal/httpx directly, since
+// httpx already imports internal/plugins for its self-update badge helpers;
+// uislot/icon_names_test.go pins that mirror so the two
+// never drift apart). Unlike a `layout` plugin's Decision H re-icon
+// amendment (uislot.ParseAmendmentsJSON, deliberately unchecked at parse
+// time because httpx.Icon's bounded lookup already makes an unknown amended
+// name safe by construction at render), a plugin's OWN declared default is
+// rejected loudly here rather than silently degrading to
+// genericFallbackIcon — the same "fail here, not at render" posture as
+// validatePageEntryKeys/validatePageEntryRoutes above.
+//
+// A pure static check: no DB/tx read is needed (an icon name has no
+// collision to check, only membership in a fixed enum), unlike the
+// key/route validators it sits beside. Only type:"page" entries are
+// checked — IconName is documented as page-only, and a button entry's
+// IconPath (a file path) is a completely different field never touched
+// here.
+func validatePageEntryIcon(entries []ManifestEntry) error {
+	for _, e := range entries {
+		if e.Type != "page" || e.IconName == "" {
+			continue
+		}
+		if !uislot.IsKnownIconName(e.IconName) {
+			return fmt.Errorf("page entry %q declares icon_name %q, which is not in the drawn-icon set (see httpx.IconNames())", e.Key, e.IconName)
+		}
+	}
+	return nil
+}
+
 // validateLayoutEntries is ADR-0088's install-time half for every path that
 // writes plugin_entries type='layout' (PersistManifest AND Rollback, the
 // same two sites as validatePageEntryKeys). Each layout entry's config is
@@ -788,6 +856,14 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 		return err
 	}
 
+	// 0h. A page entry's own declared icon_name must be one of
+	// uislot.IsKnownIconName's closed set — a typo'd/invalid name is rejected here,
+	// loudly, instead of silently degrading to genericFallbackIcon at
+	// render time (ut-docs#1734).
+	if err := validatePageEntryIcon(m.Entries); err != nil {
+		return err
+	}
+
 	// 0d. fiscal.sign.ask is an `exclusive` extension point (ADR-0041
 	// Decision B): a manifest declaring it while a DIFFERENT active plugin
 	// already holds the point must be rejected here, loudly, on BOTH
@@ -879,7 +955,7 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 			Type:          e.Type,
 			Key:           e.Key,
 			Label:         e.Label,
-			IconPath:      e.IconPath,
+			IconPath:      entryIconColumn(e),
 			SortOrder:     e.SortOrder,
 			ParentPageKey: e.ParentPageKey,
 			MenuGroup:     e.MenuGroup,

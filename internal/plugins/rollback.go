@@ -177,6 +177,14 @@ func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion
 		return fmt.Errorf("rollback to %s rejected: %w", targetVersion, err)
 	}
 
+	// Same protection for a page entry's own declared icon_name (ut-docs#1734)
+	// — a legacy on-disk manifest can carry an icon_name that predates this
+	// validation, or one that was valid at the time but has since been
+	// retired from the closed set.
+	if err := validatePageEntryIcon(manifest.Entries); err != nil {
+		return fmt.Errorf("rollback to %s rejected: %w", targetVersion, err)
+	}
+
 	// Same protection for a role:"preset" layout entry (ADR-0106 C) — the
 	// rollback target may have been a preset while the current version is
 	// not, and another plugin's preset may have become active since; a
@@ -206,7 +214,7 @@ func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion
 			Type:          e.Type,
 			Key:           e.Key,
 			Label:         e.Label,
-			IconPath:      e.IconPath,
+			IconPath:      entryIconColumn(e),
 			SortOrder:     e.SortOrder,
 			ParentPageKey: e.ParentPageKey,
 			MenuGroup:     e.MenuGroup,

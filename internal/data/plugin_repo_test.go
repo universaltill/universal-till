@@ -77,6 +77,49 @@ func TestPluginRepo_ListMenuEntries_FiltersUngranted(t *testing.T) {
 	}
 }
 
+// TestPluginRepo_ListMenuEntries_ReturnsIconName pins ut-docs#1734: a page
+// entry's own declared default icon name (persisted into the icon_path
+// column, ManifestEntry.IconName's home) must round-trip back through
+// ListMenuEntries so plugins.loadMenuEntries can plumb it onto the tile — an
+// entry with none declared gets "" (COALESCE over NULL), not a scan error.
+func TestPluginRepo_ListMenuEntries_ReturnsIconName(t *testing.T) {
+	ctx := context.Background()
+	db := newPluginRepoTestDB(t)
+	repo := NewPluginRepo(db)
+
+	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('p1','Plugin One','1.0',1)`); err != nil {
+		t.Fatalf("seed plugin: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,route,label,menu_group,icon_path,sort_order,is_active) VALUES('pe1','p1','page','withicon','/withicon','With Icon','main','tag',1,1)`); err != nil {
+		t.Fatalf("seed entry with icon: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,route,label,menu_group,sort_order,is_active) VALUES('pe2','p1','page','noicon','/noicon','No Icon','main',2,1)`); err != nil {
+		t.Fatalf("seed entry without icon: %v", err)
+	}
+
+	rows, err := repo.ListMenuEntries(ctx)
+	if err != nil {
+		t.Fatalf("ListMenuEntries: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 menu entries, got %d", len(rows))
+	}
+	for _, row := range rows {
+		switch row.Key {
+		case "withicon":
+			if row.IconName != "tag" {
+				t.Errorf("expected icon name %q for %q, got %q", "tag", row.Key, row.IconName)
+			}
+		case "noicon":
+			if row.IconName != "" {
+				t.Errorf("expected empty icon name for %q, got %q", row.Key, row.IconName)
+			}
+		default:
+			t.Fatalf("unexpected row key %q", row.Key)
+		}
+	}
+}
+
 func TestPluginRepo_ListInstalledPlugins_ActiveOnly(t *testing.T) {
 	ctx := context.Background()
 	db := newPluginRepoTestDB(t)
