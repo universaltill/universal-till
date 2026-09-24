@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -542,6 +543,72 @@ func TestApplyUpsertCategory(t *testing.T) {
 	status, msg = apply(context.Background(), directive{Type: "upsert_category", Payload: map[string]any{"id": "nope", "name": "x"}}, hooks)
 	if status != "failed" || msg != "category not found" {
 		t.Fatalf("hook error: status=%q msg=%q", status, msg)
+	}
+}
+
+// update_category (ut-docs#2354): id required, everything else optional and
+// presence-aware — absent reaches the hook as nil, present as a value (even
+// "" / an empty list). A present-but-malformed id list is a failure, never
+// silently read as "absent".
+func TestApplyUpdateCategory(t *testing.T) {
+	status, msg := apply(context.Background(), directive{Type: "update_category", Payload: map[string]any{"id": "c1", "name": "x"}}, Hooks{})
+	if status != "failed" || msg != "update_category is not supported on this till" {
+		t.Fatalf("nil hook: status=%q msg=%q", status, msg)
+	}
+
+	var calls int
+	var gotID string
+	var gotName, gotColor *string
+	var gotGroups, gotStations *[]string
+	hooks := Hooks{
+		UpdateCategory: func(ctx context.Context, id string, name, color *string, groupIDs, stationIDs *[]string) (string, error) {
+			calls++
+			gotID, gotName, gotColor, gotGroups, gotStations = id, name, color, groupIDs, stationIDs
+			return "updated category", nil
+		},
+	}
+
+	many := make([]string, maxCategoryLinkIDs+1)
+	for i := range many {
+		many[i] = fmt.Sprintf("s%d", i)
+	}
+	tooManyRaw, _ := json.Marshal(many)
+	tooManyIDs := string(tooManyRaw)
+	for _, c := range []struct {
+		payload map[string]any
+		want    string
+	}{
+		{map[string]any{"name": "x"}, "missing id"},
+		{map[string]any{"id": "  "}, "missing id"},
+		{map[string]any{"id": "c1"}, "nothing to update"},
+		{map[string]any{"id": "c1", "modifier_group_ids": "not json"}, "bad modifier_group_ids"},
+		{map[string]any{"id": "c1", "station_ids": 7.0}, "bad station_ids"},
+		{map[string]any{"id": "c1", "name": 3.0}, "bad name"},
+		{map[string]any{"id": "c1", "color": true}, "bad color"},
+		{map[string]any{"id": "c1", "station_ids": tooManyIDs}, "bad station_ids"},
+	} {
+		status, msg = apply(context.Background(), directive{Type: "update_category", Payload: c.payload}, hooks)
+		if status != "failed" || msg != c.want {
+			t.Fatalf("%v: status=%q msg=%q, want failed %q", c.payload, status, msg, c.want)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("hook ran %d times for refused payloads", calls)
+	}
+
+	// Name only: every other field nil.
+	status, _ = apply(context.Background(), directive{Type: "update_category", Payload: map[string]any{"id": " c1 ", "name": " Hot "}}, hooks)
+	if status != "applied" || gotID != "c1" || gotName == nil || *gotName != "Hot" || gotColor != nil || gotGroups != nil || gotStations != nil {
+		t.Fatalf("name only: status=%q id=%q name=%v color=%v groups=%v stations=%v", status, gotID, gotName, gotColor, gotGroups, gotStations)
+	}
+
+	// Colour "" and empty lists are present values, not absent.
+	status, _ = apply(context.Background(), directive{Type: "update_category", Payload: map[string]any{
+		"id": "c1", "color": "", "modifier_group_ids": "[]", "station_ids": `[" s1 ", "s2"]`,
+	}}, hooks)
+	if status != "applied" || gotName != nil || gotColor == nil || *gotColor != "" ||
+		gotGroups == nil || len(*gotGroups) != 0 || gotStations == nil || len(*gotStations) != 2 || (*gotStations)[0] != "s1" {
+		t.Fatalf("clear: status=%q name=%v color=%v groups=%v stations=%v", status, gotName, gotColor, gotGroups, gotStations)
 	}
 }
 

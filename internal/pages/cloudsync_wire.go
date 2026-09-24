@@ -610,6 +610,12 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		UpsertCategory: func(ctx context.Context, id, name, color string) (string, error) {
 			return cloudUpsertCategory(ctx, d, id, name, color)
 		},
+		// update_category (ut-docs#2354): partial edit of an existing
+		// category + its modifier-group and kitchen-station links, picked
+		// from what the till last reported (#2472). See cloudUpdateCategory.
+		UpdateCategory: func(ctx context.Context, id string, name, color *string, groupIDs, stationIDs *[]string) (string, error) {
+			return cloudUpdateCategory(ctx, d, id, name, color, groupIDs, stationIDs)
+		},
 		// update_item_details (ut-docs#2324, ADR-0095 Decision 1): the cloud
 		// panel's item "More…" disclosure form — a partial update of sku/
 		// description/unit/colour/is_weighed/stock_untracked. See
@@ -1201,6 +1207,43 @@ func cloudUpsertCategory(ctx context.Context, d *common.Deps, id, name, color st
 	}
 	auditCloudDirective(ctx, d, "category", id, "cloud_category_updated", map[string]any{"name": name, "color": color})
 	return "updated category " + name, nil
+}
+
+// cloudUpdateCategory is the update_category hook (ut-docs#2354): a partial
+// edit of an existing category — nil keeps a field, non-nil sets it — via
+// CatalogRepo.UpdateCategoryPartial, which writes the row and both link sets
+// in one transaction and refuses the whole edit on an unknown category,
+// group or station. Same palette allowlist as cloudUpsertCategory (checked
+// before anything is written), same primary-only gate and audit trail
+// (requirePrimaryDirective/auditCloudDirective, ut-docs#2353). Retries are
+// idempotent: the same patch applied twice leaves the same state.
+func cloudUpdateCategory(ctx context.Context, d *common.Deps, id string, name, color *string, groupIDs, stationIDs *[]string) (string, error) {
+	if color != nil && !catalogtypes.ValidItemColor(strings.TrimSpace(*color)) {
+		return "", fmt.Errorf("colour %q is not one of the category palette colours", *color)
+	}
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	res, err := data.NewCatalogRepo(d.Db).UpdateCategoryPartial(ctx, id, data.CategoryPatch{
+		Name: name, Color: color, GroupIDs: groupIDs, StationIDs: stationIDs,
+	})
+	if err != nil {
+		return "", err
+	}
+	// The audit records the effective outcome (deduped ids, plus inactive
+	// group links the repo kept), not the raw submitted lists.
+	detail := map[string]any{"name": res.Name}
+	if color != nil {
+		detail["color"] = strings.TrimSpace(*color)
+	}
+	if res.GroupIDs != nil {
+		detail["modifier_group_ids"] = res.GroupIDs
+	}
+	if res.StationIDs != nil {
+		detail["station_ids"] = res.StationIDs
+	}
+	auditCloudDirective(ctx, d, "category", id, "cloud_category_updated", detail)
+	return "updated category " + res.Name, nil
 }
 
 // cloudUpdateItemDetails is the update_item_details hook (ut-docs#2324,
