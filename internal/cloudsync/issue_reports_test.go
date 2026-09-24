@@ -1065,6 +1065,124 @@ func TestPullIssueReportStatusesSafetyCapStopsAfter10Pages(t *testing.T) {
 	}
 }
 
+func resetPullFailureTracking(t *testing.T) {
+	t.Helper()
+	pullFailureMu.Lock()
+	lastPullFailure = ""
+	pullFailureMu.Unlock()
+	t.Cleanup(func() {
+		pullFailureMu.Lock()
+		lastPullFailure = ""
+		pullFailureMu.Unlock()
+	})
+}
+
+// ut-docs#2471: a sustained cloud outage (a single-replica cloud restarting
+// mid-deploy, or a DNS failure) makes every 2-minute tick fail identically
+// for as long as it lasts. logging.Recent() only remembers Warn+ (ADR-0018's
+// Problems feed), so a steady WARN count of 1 across repeated identical
+// failures proves the quiet-backoff actually downgraded ticks 2-5 to Debug,
+// not merely that the assertion didn't look for more.
+func TestPullIssueReportStatusesRepeatedIdenticalFailureLogsWarnOnceThenQuiet(t *testing.T) {
+	resetPullFailureTracking(t)
+	d := openMigratedDB(t, "issue_reports_pull_repeated_504.db")
+	logging.ResetRecent()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusGatewayTimeout)
+	}))
+	defer srv.Close()
+
+	for i := 0; i < 5; i++ {
+		pullIssueReportStatuses(context.Background(), registeredCfg(srv.URL), d.DB)
+	}
+
+	var warnCount int
+	for _, p := range logging.Recent() {
+		if p.Level == "WARN" && strings.Contains(p.Msg, "issue-report status pull returned 504") {
+			warnCount++
+		}
+	}
+	if warnCount != 1 {
+		t.Fatalf("WARN count for the repeated 504 = %d, want exactly 1 (ticks 2-5 must log quietly)", warnCount)
+	}
+}
+
+// A successful pull between two failure episodes must reset the
+// quiet-backoff, so the next new failure warns again rather than being
+// mistaken for a continuation of the earlier outage.
+func TestPullIssueReportStatusesWarnsAgainAfterRecoveryThenNewFailure(t *testing.T) {
+	resetPullFailureTracking(t)
+	d := openMigratedDB(t, "issue_reports_pull_recovery.db")
+	logging.ResetRecent()
+
+	var status atomic.Int32
+	status.Store(http.StatusGatewayTimeout)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		code := int(status.Load())
+		if code == http.StatusOK {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data":  map[string]any{"store_id": "store-1", "reports": []any{}, "total": 0},
+				"error": nil,
+			})
+			return
+		}
+		w.WriteHeader(code)
+	}))
+	defer srv.Close()
+
+	pullIssueReportStatuses(context.Background(), registeredCfg(srv.URL), d.DB) // fails, warns
+	status.Store(http.StatusOK)
+	pullIssueReportStatuses(context.Background(), registeredCfg(srv.URL), d.DB) // recovers, clears state
+	status.Store(http.StatusGatewayTimeout)
+	pullIssueReportStatuses(context.Background(), registeredCfg(srv.URL), d.DB) // fails again, must warn again
+
+	var warnCount int
+	for _, p := range logging.Recent() {
+		if p.Level == "WARN" && strings.Contains(p.Msg, "issue-report status pull returned 504") {
+			warnCount++
+		}
+	}
+	if warnCount != 2 {
+		t.Fatalf("WARN count across two separate failure episodes = %d, want 2 (a successful pull between them must reset the quiet-backoff)", warnCount)
+	}
+}
+
+// A change in failure symptom (502 then 504) must always warn, even with no
+// successful pull in between — only an IDENTICAL repeat goes quiet.
+func TestPullIssueReportStatusesDifferentFailureAlwaysWarns(t *testing.T) {
+	resetPullFailureTracking(t)
+	d := openMigratedDB(t, "issue_reports_pull_diff_failure.db")
+	logging.ResetRecent()
+
+	var status atomic.Int32
+	status.Store(http.StatusBadGateway)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(int(status.Load()))
+	}))
+	defer srv.Close()
+
+	pullIssueReportStatuses(context.Background(), registeredCfg(srv.URL), d.DB) // 502
+	status.Store(http.StatusGatewayTimeout)
+	pullIssueReportStatuses(context.Background(), registeredCfg(srv.URL), d.DB) // 504 - different symptom
+
+	var warn502, warn504 int
+	for _, p := range logging.Recent() {
+		if p.Level != "WARN" {
+			continue
+		}
+		if strings.Contains(p.Msg, "issue-report status pull returned 502") {
+			warn502++
+		}
+		if strings.Contains(p.Msg, "issue-report status pull returned 504") {
+			warn504++
+		}
+	}
+	if warn502 != 1 || warn504 != 1 {
+		t.Fatalf("warn502=%d warn504=%d, want 1 and 1 (a change in failure symptom must always warn)", warn502, warn504)
+	}
+}
+
 func TestAttachFileMultipartFormWritesRealBytes(t *testing.T) {
 	withTempPendingDir(t)
 	if _, err := issuereport.Save("note", "", []byte("hello-bytes"), nil, nil); err != nil {

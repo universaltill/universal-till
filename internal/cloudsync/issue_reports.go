@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
@@ -49,6 +50,36 @@ const (
 	pullStatusPageLimit = 200
 	pullStatusMaxPages  = 10
 )
+
+// pullFailureMu/lastPullFailure remember the last logged status-pull
+// failure (ut-docs#2471): a single-replica cloud restarting mid-deploy, or a
+// DNS outage, makes every 2-minute tick fail identically for as long as it
+// lasts. Logging every tick at Warn buries the till's logs and the shop's
+// Problems feed (ADR-0018, which only remembers Warn+) in one repeated line.
+// The first occurrence of a failure — and any change in symptom — still
+// logs at Warn; identical repeats log at Debug instead. A successful pull
+// clears it, so the next new failure warns again.
+var (
+	pullFailureMu   sync.Mutex
+	lastPullFailure string
+)
+
+func logPullFailure(msg string) {
+	pullFailureMu.Lock()
+	defer pullFailureMu.Unlock()
+	if msg == lastPullFailure {
+		logging.L().Debugf("cloudsync: %s", msg)
+		return
+	}
+	lastPullFailure = msg
+	logging.L().Warnf("cloudsync: %s", msg)
+}
+
+func clearPullFailure() {
+	pullFailureMu.Lock()
+	defer pullFailureMu.Unlock()
+	lastPullFailure = ""
+}
 
 // uploadPendingIssueReports pushes any locally-saved, not-yet-uploaded
 // bug-report bundles (ADR-0022) to the cloud. Best-effort: a bundle that
@@ -223,12 +254,12 @@ func pullIssueReportStatusesPage(ctx context.Context, cfg *config.Config, db *sq
 	req.Header.Set("Authorization", "Bearer "+m.MerchantToken)
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		logging.L().Warnf("cloudsync: issue-report status pull: %v", err)
+		logPullFailure(fmt.Sprintf("issue-report status pull: %v", err))
 		return 0, 0, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		logging.L().Warnf("cloudsync: issue-report status pull returned %d", resp.StatusCode)
+		logPullFailure(fmt.Sprintf("issue-report status pull returned %d", resp.StatusCode))
 		return 0, 0, fmt.Errorf("issue-report status pull returned %d", resp.StatusCode)
 	}
 	var out struct {
@@ -264,6 +295,7 @@ func pullIssueReportStatusesPage(ctx context.Context, cfg *config.Config, db *sq
 			logging.L().Warnf("cloudsync: issue report %s status not applied: %v", item.ID, err)
 		}
 	}
+	clearPullFailure()
 	return len(out.Data.Reports), out.Data.Total, nil
 }
 
