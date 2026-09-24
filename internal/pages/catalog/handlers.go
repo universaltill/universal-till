@@ -841,7 +841,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"Brands":                brands,
 			"TaxCodes":              taxCodes,
 			"SyncPrimary":           d.SyncPrimaryURL(r.Context()),
-			"BuiltinIcons":          catimport.BuiltinIcons(),
+			"BuiltinIconGroups":     catimport.BuiltinIconGroups(),
 			"ItemColors":            catalogtypes.ItemColors(),
 			"InItemsShell":          httpx.IsFragmentSwap(w, r),
 		}
@@ -1916,7 +1916,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	// Built-in icon picker (ut-docs#1844): a bundled category icon
-	// (catimport.BuiltinIcons — the same 5 assets PlaceholderIcon already
+	// (catimport.BuiltinIcons — the same library PlaceholderIcon already
 	// picks from for imageless imports) is a valid alternative to an
 	// uploaded photo, stored through the identical item_images/thumbnail
 	// row so every existing reader (POS grid, basket, self-order,

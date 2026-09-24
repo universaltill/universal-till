@@ -402,6 +402,10 @@
          a no-op on any page without that markup, same pattern as
          record-dialog.js above. -->
     <script defer src="/public/category-filter.js?v={{ assetv "public/category-filter.js" }}"></script>
+    <!-- ut-docs#2506: the built-in icon pickers' search box (catalog item
+         image, category editor) — attribute-driven off data-icon-filter, a
+         no-op on any page without that markup, same pattern as above. -->
+    <script defer src="/public/icon-picker-filter.js?v={{ assetv "public/icon-picker-filter.js" }}"></script>
     <!-- ut-docs#2342: the bug-report panel's draft store (sessionStorage +
          IndexedDB) so an open report survives a full document load. Deferred
          like the rest; the panel reads it from UT.ready on. -->

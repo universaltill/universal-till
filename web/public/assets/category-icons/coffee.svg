@@ -1,7 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Coffee cup">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- lucide:coffee, generated from internal/catimport/icons.go (ut-docs#2506). Licence: internal/catimport/iconsrc/lucide/LICENSE -->
   <rect width="64" height="64" fill="#F2E8DD"/>
-  <path d="M14 26h30v16a10 10 0 0 1-10 10H24a10 10 0 0 1-10-10V26z" fill="#6F4E37"/>
-  <path d="M44 30h4a6 6 0 0 1 0 12h-4" fill="none" stroke="#6F4E37" stroke-width="3"/>
-  <path d="M20 20c0-3 3-3 3-6s-3-3-3-6" fill="none" stroke="#B08968" stroke-width="2" stroke-linecap="round"/>
-  <path d="M30 20c0-3 3-3 3-6s-3-3-3-6" fill="none" stroke="#B08968" stroke-width="2" stroke-linecap="round"/>
+  <g transform="translate(12 12) scale(1.6667)" fill="none" stroke="#6F4E37" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10 2v2"/>
+    <path d="M14 2v2"/>
+    <path d="M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1"/>
+    <path d="M6 2v2"/>
+  </g>
 </svg>

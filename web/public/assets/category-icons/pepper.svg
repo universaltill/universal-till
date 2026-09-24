@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- tabler:pepper, generated from internal/catimport/icons.go (ut-docs#2506). Licence: internal/catimport/iconsrc/tabler/LICENSE -->
+  <rect width="64" height="64" fill="#DCFCE7"/>
+  <g transform="translate(12 12) scale(1.6667)" fill="none" stroke="#166534" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M13 11c0 2.21 -2.239 4 -5 4s-5 -1.79 -5 -4a8 8 0 1 0 16 0a3 3 0 0 0 -6 0"/>
+    <path d="M16 8c0 -2 2 -4 4 -4"/>
+  </g>
+</svg>

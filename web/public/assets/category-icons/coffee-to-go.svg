@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- tabler:cup, generated from internal/catimport/icons.go (ut-docs#2506). Licence: internal/catimport/iconsrc/tabler/LICENSE -->
+  <rect width="64" height="64" fill="#F2E8DD"/>
+  <g transform="translate(12 12) scale(1.6667)" fill="none" stroke="#6F4E37" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 11h14v-3h-14l0 3"/>
+    <path d="M17.5 11l-1.5 10h-8l-1.5 -10"/>
+    <path d="M6 8v-1a2 2 0 0 1 2 -2h8a2 2 0 0 1 2 2v1"/>
+    <path d="M15 5v-2"/>
+  </g>
+</svg>
