@@ -598,7 +598,23 @@
            code"). Persistent, non-dismissible, same treatment as sb-update/
            sb-power above — a real link to /plugins, never a modal, so it
            never blocks the kiosk sale flow. -->
+      {{ if pluginupdatesfrommain }}
+      <!-- ut-docs#2783: a joined till follows the main till's plugin
+           versions (ut-docs#460) and can't install an update itself, so the
+           chip says where updates come from instead of offering them. It
+           links to the main till's own Plugins page only where a link to
+           another device is recoverable (crossdevicelinkactionable — never
+           on a unix kiosk, which has no way back); otherwise to this till's
+           Tills page, which names the main till. The "sync" glyph is the
+           one every "follows the main till" link to /tills already uses. -->
+      {{ if crossdevicelinkactionable }}
+      <a class="sb-item sb-plugin-update" href="{{ maintillurl }}/plugins" target="_blank" rel="noopener" hx-boost="false" data-testid="sb-plugin-update"><span class="btn-ico" aria-hidden="true">{{ icon "sync" }}</span> {{ T "status.plugin_updates_from_main" }}&nbsp;({{ pluginupdatescount }})</a>
+      {{ else }}
+      <a class="sb-item sb-plugin-update" href="/tills" data-testid="sb-plugin-update"><span class="btn-ico" aria-hidden="true">{{ icon "sync" }}</span> {{ T "status.plugin_updates_from_main" }}&nbsp;({{ pluginupdatescount }})</a>
+      {{ end }}
+      {{ else }}
       <a class="sb-item sb-plugin-update" href="/plugins" data-testid="sb-plugin-update"><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ T "status.plugin_updates_available" }}&nbsp;({{ pluginupdatescount }})</a>
+      {{ end }}
       {{ end }}
       {{ if languagepackupdateavailable }}
       <!-- ut-docs#2299: a language pack normally auto-applies silently and

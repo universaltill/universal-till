@@ -110,7 +110,8 @@ func pluginUpdateCheckTick(ctx context.Context, d *common.Deps) {
 	// them. Still worth counting what's pending so a status chip can point
 	// the operator at the primary, so only the auto-apply step below is
 	// skipped for a replica, not the whole tick.
-	isReplica := d.SyncPrimaryURL(ctx) != ""
+	mainTillURL := d.SyncPrimaryURL(ctx)
+	isReplica := mainTillURL != ""
 
 	locale, deviceArch := marketplace.TillCatalogKey(d.Cfg.DefaultLocale)
 	checker := plugins.NewUpdateChecker(d.Db, d.CatalogRepo, locale, deviceArch)
@@ -144,5 +145,8 @@ func pluginUpdateCheckTick(ctx context.Context, d *common.Deps) {
 		}
 		log.Infof("[PluginUpdateScheduler] auto-applied %s %s -> %s", u.PluginID, u.InstalledVersion, u.AvailableVersion)
 	}
-	plugins.SetPendingUpdates(pending, languagePending)
+	// ut-docs#2783: a joined till publishes the main till's address with
+	// the count, so the status-bar chip says updates come from the main till
+	// (and links there) instead of offering updates it can't install.
+	plugins.PublishPendingUpdates(plugins.PendingUpdateStatus{Count: pending, LanguagePending: languagePending, MainTillURL: mainTillURL})
 }

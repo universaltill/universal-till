@@ -3,6 +3,7 @@ package pages
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -143,5 +144,42 @@ func TestIndexPage_RendersThemeSyncPollAndCSSLink(t *testing.T) {
 	}
 	if !strings.Contains(body, "htmx:oobAfterSwap") {
 		t.Fatalf("base.html is missing the listener that actually applies a theme-sync update to #theme-css: %s", body)
+	}
+}
+
+// ut-docs#2783: whatever a background admin pull or cloud directive does to
+// the live theme, the poll's client half must never reload or navigate the
+// page, and must only touch #theme-css when the reported theme differs from
+// what it already shows — so a settled page never re-applies the stylesheet,
+// and no combination of pull + poll can turn into a reload loop. Reads the
+// listener straight from base.html (the only place it lives).
+func TestThemeSyncListener_NeverReloadsAndOnlyAppliesARealChange(t *testing.T) {
+	chdirRoot(t)
+	raw, err := os.ReadFile(filepath.Join("web", "ui", "layouts", "base.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(raw)
+	start := strings.Index(src, `<div id="theme-sync-poll"`)
+	if start < 0 {
+		t.Fatal("base.html has no #theme-sync-poll")
+	}
+	rest := src[start:]
+	open := strings.Index(rest, "<script>")
+	end := strings.Index(rest, "</script>")
+	if open < 0 || end < open {
+		t.Fatal("no listener <script> after #theme-sync-poll")
+	}
+	js := rest[open:end]
+	if !strings.Contains(js, "htmx:oobAfterSwap") {
+		t.Fatalf("the script after #theme-sync-poll is not the theme-sync listener: %s", js)
+	}
+	for _, banned := range []string{"location.reload", "location.assign", "location.href", "location.replace", "htmx.ajax"} {
+		if strings.Contains(js, banned) {
+			t.Fatalf("theme-sync listener must never reload/navigate/re-request (%s): %s", banned, js)
+		}
+	}
+	if !strings.Contains(js, "live === (link.dataset.theme || '')) return;") {
+		t.Fatalf("theme-sync listener lost its no-change early return — a settled page would re-apply #theme-css on every poll: %s", js)
 	}
 }
