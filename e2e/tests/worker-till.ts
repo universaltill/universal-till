@@ -119,7 +119,15 @@ export async function startWorkerTill(parallelIndex: number): Promise<WorkerTill
   }
 
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ut-e2e-worker-'));
-  const env = { ...process.env, UT_DATA_DIR: dataDir, UT_AUTH: 'off', UT_LISTEN_ADDR: `127.0.0.1:${port}` };
+  // ut-docs#2704: the till opens the OS default browser on boot unless told
+  // not to -- every worker would pop a real tab on the developer's desktop.
+  const env = {
+    ...process.env,
+    UT_OPEN_BROWSER: process.env.UT_OPEN_BROWSER ?? '0',
+    UT_DATA_DIR: dataDir,
+    UT_AUTH: 'off',
+    UT_LISTEN_ADDR: `127.0.0.1:${port}`,
+  };
   const goOpts: ExecFileSyncOptions = { cwd: REPO_ROOT, env, stdio: ['ignore', 'ignore', 'inherit'] };
 
   let child: ChildProcess | undefined;
