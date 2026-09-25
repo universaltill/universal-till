@@ -512,6 +512,7 @@
   "countrysettings.tax.inclusive": "الضريبة مشمولة في السعر",
   "countrysettings.title": "إعدادات الدولة",
   "countrysettings.unknown_country": "دولة متجرك المُعدَّة غير موجودة في هذه القائمة — يتم عرض كل الدول حتى يتم تصحيحها.",
+  "demo.not_available": "غير متاح في النسخة التجريبية.",
   "designer.add": "إضافة",
   "designer.add_button": "إضافة زر",
   "designer.buttons": "الأزرار",

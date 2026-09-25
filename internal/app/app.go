@@ -159,6 +159,13 @@ func Run(ctx context.Context) error {
 			break
 		}
 
+		// A demo till fails closed (ADR-0113 §1.2): recovery mode's own
+		// unauthenticated server would sit outside the demo middleware, and
+		// the broker simply replaces a till that will not start.
+		if cfg.Demo {
+			return fmt.Errorf("boot failed in demo mode — refusing boot-failure recovery mode (ADR-0113): %w", attemptErr)
+		}
+
 		failure, recoverable := recovery.Classify(attemptErr)
 		if !recoverable {
 			return attemptErr
@@ -175,6 +182,17 @@ func Run(ctx context.Context) error {
 		// result == recovery.Retry: loop back and re-attempt.
 	}
 	defer database.Close()
+
+	// Public-demo start gate (ADR-0113 §1.2, ut-docs#2687): after the
+	// database is open and migrated, before anything else touches it or
+	// serves. Returned directly — outside the recovery loop above — so a
+	// refusal is always a hard exit, never a recovery-mode server.
+	if err := enforceDemoGate(ctx, cfg, database.DB); err != nil {
+		return err
+	}
+	if cfg.Demo {
+		log.Warnf("demo mode (ADR-0113): public try-the-till demo instance")
+	}
 
 	if applied, err := db.ApplyReplicaIdentity(database.DB, cfg.DBPath); err != nil {
 		return err

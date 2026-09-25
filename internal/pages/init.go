@@ -184,7 +184,9 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 			}
 		}
 	}
-	authDisabled := auth.Disabled(os.Getenv("UT_AUTH"))
+	// UT_AUTH is read once by config.Init (the demo start gate refuses
+	// Demo with it off — ADR-0113 §1.9 — and must see the same value).
+	authDisabled := cfg.AuthDisabled
 	// Every settings-derived process global (currency, theme, locale,
 	// display/self-order mode, dine-in/takeaway prompt, idle lock, ...) is
 	// published by ONE function, shared with the post-sync re-derive, so a
@@ -611,13 +613,20 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// Boosted navigation (ADR-0098) is addressed per response, innermost so
 	// auth's own HX-Redirect for an expired session is untouched.
 	boosted := httpx.BoostedNavigation(mux)
+	// Public demo mode (ADR-0113, ut-docs#2687): the demo middleware is the
+	// outermost handler inside recoverMiddleware, installed only in demo
+	// mode — with demo off the chain is exactly what it always was.
+	demoWrap := func(h http.Handler) http.Handler { return h }
+	if cfg.Demo {
+		demoWrap = func(h http.Handler) http.Handler { return newDemoMiddleware(h, mux, cfg.DemoToken) }
+	}
 	if authDisabled {
 		log.Warnf("UT_AUTH=off — operator login disabled")
-		return recoverMiddleware(boosted), dp
+		return recoverMiddleware(demoWrap(boosted)), dp
 	}
 	// recoverMiddleware wraps auth.Middleware itself (ut-docs#1271), not just
 	// mux, so a panic anywhere in the chain gets a clean response.
-	return recoverMiddleware(auth.Middleware(boosted, authSvc)), dp
+	return recoverMiddleware(demoWrap(auth.Middleware(boosted, authSvc))), dp
 }
 
 // newRederiveSettings builds the shared settings re-derive: everything

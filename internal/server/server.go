@@ -263,7 +263,7 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 	// second till on the same machine, or another app on :8080) so a busy port
 	// never blocks startup. cfg.ListenAddr is updated to what we actually bound
 	// so the browser-open below points at the right place.
-	ln, actualAddr, err := listenWithFallback(cfg.ListenAddr)
+	ln, actualAddr, err := bindListener(cfg.ListenAddr, cfg.Demo)
 	if err != nil {
 		return err
 	}
@@ -308,7 +308,7 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 	// Convenience: open the setup/sale page in the operator's browser once the
 	// server accepts connections. Skipped on kiosk tills (they launch their own
 	// browser) and when UT_OPEN_BROWSER is set falsy.
-	if shouldOpenBrowser() {
+	if openBrowserFor(cfg.Demo) {
 		go openSetupPage(cfg.ListenAddr)
 	}
 
@@ -339,6 +339,28 @@ func runDailyBackup(db *sql.DB, dbPath string) {
 	}
 	log.Printf("[Backup] daily snapshot: %s", path)
 	_ = dbpkg.PruneBackups(dbPath, 14)
+}
+
+// bindListener is Start's bind: listenWithFallback normally, but a demo
+// till (ADR-0113 §1.8, ut-docs#2687) binds exactly addr or fails — the demo
+// broker proxies to the address it chose, so a till quietly listening on a
+// nearby port would receive (or leave another process receiving) the wrong
+// visitor's traffic.
+func bindListener(addr string, demo bool) (net.Listener, string, error) {
+	if !demo {
+		return listenWithFallback(addr)
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, "", fmt.Errorf("demo mode binds exactly %s: %w", addr, err)
+	}
+	return ln, ln.Addr().String(), nil
+}
+
+// openBrowserFor is shouldOpenBrowser, except a demo till never opens a
+// browser on its host (ADR-0113).
+func openBrowserFor(demo bool) bool {
+	return !demo && shouldOpenBrowser()
 }
 
 // listenWithFallback binds addr, or the next free port when addr's port is

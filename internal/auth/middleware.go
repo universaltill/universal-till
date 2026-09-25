@@ -10,7 +10,8 @@ import (
 type ctxKey struct{}
 
 // Disabled reports whether the middleware is off (UT_AUTH=off escape hatch
-// for CI/dev tooling); read once at startup by pages.Init.
+// for CI/dev tooling); read once at startup by config.Init into
+// Config.AuthDisabled, which pages.Init and the demo start gate use.
 func Disabled(env string) bool {
 	return strings.EqualFold(strings.TrimSpace(env), "off")
 }
