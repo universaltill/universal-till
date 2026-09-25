@@ -977,10 +977,11 @@ func cloudRemovePlugin(ctx context.Context, d *common.Deps, pluginID string) (st
 	return "uninstalled " + pluginID, nil
 }
 
-// problemReportMaxAge is how long a warn/error line with no repeat stays in
-// the heartbeat's problems digest (ut-docs#2798): long enough that the owner
-// sees yesterday evening's trouble the next morning, short enough that a
-// till which got over it stops showing "Attention needed".
+// problemReportMaxAge is how long an unkeyed warn/error line with no repeat
+// stays in the heartbeat's problems digest (ut-docs#2798): long enough that
+// the owner sees yesterday evening's trouble the next morning, short enough
+// that a till which got over it stops showing "Attention needed". Keyed
+// problems (logging.WarnProblemf) stay until resolved, whatever their age.
 const problemReportMaxAge = 24 * time.Hour
 
 // collectProblems builds the heartbeat's problems digest: recent warn/error

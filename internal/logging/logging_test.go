@@ -150,9 +150,11 @@ func TestOpenProblems_ResolvedAndAgedOutAreNotOpen(t *testing.T) {
 		t.Fatalf("Recent() = %+v, want all three lines kept as history", Recent())
 	}
 
-	// Two hours later with a one-hour window: nothing repeated, all aged out.
-	if later := OpenProblems(now.Add(2*time.Hour), time.Hour); len(later) != 0 {
-		t.Fatalf("aged-out problems still open: %+v", later)
+	// Two hours later with a one-hour window: the unkeyed line aged out; the
+	// keyed one is logged once per condition and stays open until resolved,
+	// however long the condition lasts.
+	if later := OpenProblems(now.Add(2*time.Hour), time.Hour); len(later) != 1 || later[0].Msg != "other condition" {
+		t.Fatalf("after the age window: open = %+v, want only the unresolved keyed problem", later)
 	}
 	// maxAge <= 0 disables the age cut.
 	if all := OpenProblems(now.Add(48*time.Hour), 0); len(all) != 2 {

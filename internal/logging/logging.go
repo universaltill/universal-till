@@ -147,17 +147,20 @@ func ResetRecent() {
 }
 
 // OpenProblems returns the newest-first Problems that are still open: not
-// resolved (ResolveProblems) and no older than maxAge before now. A problem
-// that hasn't repeated within maxAge has aged out — the cloud's "Attention
-// needed" must not keep showing a condition the till got over hours ago
-// (ut-docs#2798). maxAge <= 0 disables the age cut.
+// resolved (ResolveProblems) and, for an unkeyed line, no older than maxAge
+// before now. An unkeyed problem that hasn't repeated within maxAge has aged
+// out — the cloud's "Attention needed" must not keep showing a condition the
+// till got over hours ago (ut-docs#2798). A keyed one never ages out: it is
+// logged once per condition and stays open until ResolveProblems says the
+// condition is over — a main till down since Friday is still down on
+// Sunday. maxAge <= 0 disables the age cut.
 func OpenProblems(now time.Time, maxAge time.Duration) []Problem {
 	var out []Problem
 	for _, p := range Recent() {
 		if p.Resolved {
 			continue
 		}
-		if maxAge > 0 && now.Sub(p.At) > maxAge {
+		if maxAge > 0 && p.Key == "" && now.Sub(p.At) > maxAge {
 			continue
 		}
 		out = append(out, p)
