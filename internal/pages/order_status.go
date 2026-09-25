@@ -13,6 +13,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
+	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -267,6 +268,7 @@ func applyOrderStatusCore(ctx context.Context, d *common.Deps, receiptNo, next, 
 		if d.OrderStatus != nil {
 			d.OrderStatus.Publish(pos.OrderStatusChanged{ReceiptNo: receiptNo, Status: next, ActorID: actorID, At: now})
 		}
+		d.NudgeLink(fleetlink.ScopeOrders) // ADR-0114 §2: the orders board changed
 	}
 	out := orderStatusOutcome{Found: true, Applied: applied}
 	ev, ok, err := repo.LatestOrderStatus(ctx, receiptNo)

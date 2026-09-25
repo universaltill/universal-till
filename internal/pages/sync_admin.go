@@ -119,7 +119,9 @@ func SecretsKeyFetcher(settingsReader SyncSettingsReader, client *http.Client) f
 	}
 }
 
-func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
+// registerSyncAdmin returns its SyncAdminRepo so the main-till link
+// (sync_link.go) shares the one generation-keyed bundle cache.
+func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) *data.SyncAdminRepo {
 	tills := data.NewTillsRepo(d.Db)
 	adminRepo := data.NewSyncAdminRepo(d.Db)
 	posRepo := data.NewPOSRepo(d.Db)
@@ -332,6 +334,7 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
 			"quarantined": quarantined,
 		})(w, r)
 	})
+	return adminRepo
 }
 
 // withinLast reports whether an RFC3339 timestamp is fresher than d.

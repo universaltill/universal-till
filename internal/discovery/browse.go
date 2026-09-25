@@ -23,6 +23,9 @@ type Candidate struct {
 	// the existing QR flow's own "http://"+r.Host default in sync_api.go's
 	// enrol-token handler; this isn't a new assumption, just matching it.
 	BaseURL string `json:"base_url"`
+	// Link is the main-till link level the till advertises ("link=" TXT,
+	// ADR-0114 §11); 0 = none (an older main till) — poll only.
+	Link int `json:"link"`
 }
 
 // PrinterServiceName is the standard Bonjour/mDNS service type for raw
@@ -270,6 +273,7 @@ func scanOnce[T any](ctx context.Context, timeout time.Duration, serviceName str
 // to send POST /api/sync/pair-request to (ut-docs#185).
 func candidateFromEntry(e *mdns.ServiceEntry) (Candidate, bool) {
 	var name, id string
+	link := 0
 	for _, field := range e.InfoFields {
 		k, v, ok := strings.Cut(field, "=")
 		if !ok {
@@ -280,6 +284,10 @@ func candidateFromEntry(e *mdns.ServiceEntry) (Candidate, bool) {
 			name = v
 		case "id":
 			id = v
+		case "link":
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				link = n
+			}
 		}
 	}
 	if id == "" {
@@ -293,7 +301,7 @@ func candidateFromEntry(e *mdns.ServiceEntry) (Candidate, bool) {
 		return Candidate{}, false
 	}
 	baseURL := "http://" + net.JoinHostPort(ip.String(), strconv.Itoa(e.Port))
-	return Candidate{Name: name, TillID: id, BaseURL: baseURL}, true
+	return Candidate{Name: name, TillID: id, BaseURL: baseURL, Link: link}, true
 }
 
 // printerCandidateFromEntry extracts a PrinterCandidate from an mDNS

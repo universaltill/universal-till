@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -587,6 +588,11 @@ func registerSyncSales(mux *http.ServeMux, d *common.Deps) {
 			default:
 				skipped++
 			}
+		}
+		if applied > 0 {
+			// Another till's sales moved the shop-wide stock and the
+			// orders board every linked till reads (ADR-0114 §2).
+			d.NudgeLink(fleetlink.ScopeStock, fleetlink.ScopeOrders)
 		}
 		if applied > 0 || quarantined > 0 {
 			_ = posRepo.InsertAudit(r.Context(), nil, "system", "till", till.ID, "sales_synced",

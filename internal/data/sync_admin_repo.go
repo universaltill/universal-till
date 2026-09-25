@@ -686,6 +686,15 @@ func (r *SyncAdminRepo) ensureCached(ctx context.Context) (fp string, bundle Adm
 	return fp, bundle, nil
 }
 
+// AdminGeneration is the cheap change marker on its own (one single-row
+// SELECT): the main-till link (ADR-0114 §2) polls it to nudge linked tills
+// the moment any admin table — users, roles and PINs included (#2731) —
+// changes, however it was written. tracked is false when the counter row is
+// missing.
+func (r *SyncAdminRepo) AdminGeneration(ctx context.Context) (gen int64, tracked bool) {
+	return r.adminGeneration(ctx)
+}
+
 // adminGeneration reads the cheap change marker. tracked is false when the
 // row is missing, which callers treat as "always rescan" — never an error,
 // so a damaged counter can't take the whole sync path down.

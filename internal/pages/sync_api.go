@@ -434,7 +434,9 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"data":  map[string]string{"till_id": till.ID, "shop_name": storeNameOrDefault(r.Context(), d)},
+			// link: this main till serves GET /api/sync/link at this level
+			// (ADR-0114 §11) — a replica dials only when advertised.
+			"data":  map[string]any{"till_id": till.ID, "shop_name": storeNameOrDefault(r.Context(), d), "link": 1},
 			"error": nil,
 		})
 	})
@@ -462,6 +464,11 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		if err := repo.DeleteTill(r.Context(), id); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
+		}
+		// ADR-0114 §1: a revoked till loses its link at once, not at its
+		// next reconnect (its bearer no longer authenticates either).
+		if d.Link != nil {
+			d.Link.Disconnect(id)
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "till", id, "till_revoked",
 			nil, time.Now().UTC().Format(time.RFC3339), "")

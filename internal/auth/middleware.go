@@ -64,6 +64,10 @@ func exempt(path string) bool {
 		// unlisted /api/sync/orders/<x> route is ever exempted by accident).
 		// TestSyncPullPathsAreExempt pins this entry.
 		"/api/sync/orders/stream",
+		// ADR-0114 (ut-docs#2734): the main-till link WebSocket upgrade,
+		// syncTill-authed in the handler like every entry here. Missing,
+		// every replica's link would be 401'd before its bearer was read.
+		"/api/sync/link",
 		// ut-docs#1392: the primary-side READ-ONLY cross-till table-occupancy
 		// endpoint a replica's tablesWithStateForDisplay (tables_sync_proxy.go)
 		// proxies to — syncTill-authed in the handler exactly like
