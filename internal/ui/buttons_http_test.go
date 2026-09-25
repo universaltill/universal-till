@@ -519,3 +519,41 @@ func TestNewRenderer_ErrorOnMissingTemplate(t *testing.T) {
 		t.Fatalf("expected error for missing template")
 	}
 }
+
+// TestButtonsHTTPUnhideAll (ut-docs#2614): success answers 200 with the
+// same HX-Trigger the per-item Unhide sends and reports the count; a store
+// failure answers the localized 400 fragment, never raw SQL text.
+func TestButtonsHTTPUnhideAll(t *testing.T) {
+	h, db := newButtonsHTTPWithDB(t, "buttons_admin.html")
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active, sell_screen_hidden) VALUES('i1','S1','Apple', 100, 1, 1)`)
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active, sell_screen_hidden) VALUES('i2','S2','Bread', 200, 1, 1)`)
+
+	req := httptest.NewRequest("POST", "/api/buttons/unhide-all", nil)
+	rec := httptest.NewRecorder()
+	n, ok := h.UnhideAll(rec, req)
+	if !ok || n != 2 {
+		t.Fatalf("UnhideAll = (%d, %v), want (2, true)", n, ok)
+	}
+	if rec.Code != 200 {
+		t.Fatalf("UnhideAll status = %d, want 200", rec.Code)
+	}
+	if got := rec.Header().Get("HX-Trigger"); got != "buttons-changed" {
+		t.Fatalf("HX-Trigger = %q, want buttons-changed", got)
+	}
+
+	db.Close() // store update will fail
+	rec = httptest.NewRecorder()
+	if _, ok := h.UnhideAll(rec, httptest.NewRequest("POST", "/api/buttons/unhide-all", nil)); ok {
+		t.Fatal("UnhideAll with failing store returned ok=true")
+	}
+	if rec.Code != 400 {
+		t.Fatalf("UnhideAll with failing store = %d, want 400", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "database is closed") {
+		t.Fatalf("raw SQL error leaked: %s", body)
+	}
+	if want := httpx.T("en", designerErrorServerKey); !strings.Contains(body, want) {
+		t.Fatalf("error body = %q, want localized %q", body, want)
+	}
+}

@@ -4999,6 +4999,8 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   padding: .45rem .65rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
 }
 .designer-hidden-name { font-weight: 600; overflow-wrap: anywhere; }
+/* ut-docs#2614: natural width, start-aligned (the head is a column flexbox). */
+.designer-hidden-unhide-all { align-self: flex-start; }
 .designer-cat-form { display: flex; flex-direction: column; gap: .55rem; margin-block-start: .35rem; padding-block-start: .55rem; border-block-start: 1px dashed var(--border); }
 .designer-cat-field { display: flex; flex-direction: column; gap: .25rem; font-size: .85rem; }
 .designer-cat-field input[type="text"] { inline-size: min(100%, 22rem); }
