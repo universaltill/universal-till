@@ -59,7 +59,7 @@ func catalogServer(t *testing.T) (*httptest.Server, chan string) {
 	t.Helper()
 	archSeen := make(chan string, 16)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		archSeen <- r.URL.Query().Get("arch")
+		archSeen <- r.URL.Query().Get("device_arch")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"plugins": []any{}})
 	}))

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/plugins/oauth"
 )
@@ -278,6 +279,9 @@ func DeviceIDFromConfig(cfg *config.MarketplaceConfig) string {
 type ListPluginsRequest struct {
 	Locale     string `json:"locale,omitempty"`
 	DeviceArch string `json:"device_arch,omitempty"`
+	// HostVersion is the till version asking, sent as given; empty → the
+	// running release (hostVersion), omitted entirely on a dev build.
+	HostVersion string `json:"host_version,omitempty"`
 	// Capability filters by canonical plugin_type (ADR-0002 taxonomy,
 	// e.g. "payment", "report") — NOT a device/runtime capability
 	// filter. That's a distinct concept, see PluginSummary.Capabilities
@@ -303,12 +307,14 @@ type PluginSummary struct {
 	PriceFlag     string   `json:"price_flag,omitempty"`
 	Architectures []string `json:"architectures,omitempty"`
 	DeviceArch    string   `json:"device_arch"` // For backward compatibility
-	IconURL       string   `json:"icon_url,omitempty"`
-	Rating        float64  `json:"rating,omitempty"`
-	ReviewCount   int      `json:"review_count,omitempty"`
-	DownloadCount int      `json:"download_count,omitempty"`
-	ArtifactURL   string   `json:"artifact_url"`  // For backward compatibility
-	ArtifactHash  string   `json:"artifact_hash"` // For backward compatibility
+	// MinHostVersion is the oldest till version the listing runs on.
+	MinHostVersion string  `json:"min_host_version,omitempty"`
+	IconURL        string  `json:"icon_url,omitempty"`
+	Rating         float64 `json:"rating,omitempty"`
+	ReviewCount    int     `json:"review_count,omitempty"`
+	DownloadCount  int     `json:"download_count,omitempty"`
+	ArtifactURL    string  `json:"artifact_url"`  // For backward compatibility
+	ArtifactHash   string  `json:"artifact_hash"` // For backward compatibility
 	// AvailableLocales is the per-listing locale list (wire key
 	// availableLocales in the live protojson schema) — a listing can serve
 	// multiple locales, so this is an array, never a single value.
@@ -340,6 +346,7 @@ func (p *PluginSummary) UnmarshalJSON(data []byte) error {
 		Capabilities          []string `json:"capabilities"`
 		Permissions           []string `json:"permissions"`
 		MinHostVersion        string   `json:"minHostVersion"`
+		MinHostVersionSnake   string   `json:"min_host_version"`
 		PriceFlag             string   `json:"price_flag"`
 		PaidListing           bool     `json:"paidListing"`
 		PaidListingSnake      bool     `json:"paid_listing"`
@@ -376,6 +383,7 @@ func (p *PluginSummary) UnmarshalJSON(data []byte) error {
 	p.PaidListing = w.PaidListing || w.PaidListingSnake
 	p.Architectures = w.Architectures
 	p.DeviceArch = w.DeviceArch
+	p.MinHostVersion = firstNonEmptyStr(w.MinHostVersion, w.MinHostVersionSnake)
 	p.IconURL = firstNonEmptyStr(w.IconURL, w.IconURLCamel)
 	p.Rating = w.Rating
 	p.ReviewCount = w.ReviewCount
@@ -508,6 +516,87 @@ type Pagination struct {
 	HasPrevious bool `json:"has_previous"`
 }
 
+// releaseVersion returns v (minus a leading "v") when it is a plain dotted
+// release number like "0.9.4", else "" — a dev or pre-release build has no
+// version the cloud can compare, so it sends none and filters nothing.
+func releaseVersion(v string) string {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	if v == "" {
+		return ""
+	}
+	for _, seg := range strings.Split(v, ".") {
+		if seg == "" {
+			return ""
+		}
+		if _, err := strconv.Atoi(seg); err != nil {
+			return ""
+		}
+	}
+	return v
+}
+
+// versionParts parses the leading number of each dot segment ("v1.2.0-beta"
+// → [1 2 0]); ok is false when no segment starts with a digit.
+func versionParts(v string) (parts []int, ok bool) {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	for _, seg := range strings.Split(v, ".") {
+		end := 0
+		for end < len(seg) && seg[end] >= '0' && seg[end] <= '9' {
+			end++
+		}
+		n, err := strconv.Atoi(seg[:end])
+		if err == nil {
+			ok = true
+		}
+		parts = append(parts, n)
+	}
+	return parts, ok
+}
+
+// hostTooOld reports whether a listing needing minHost can't run on host
+// (both non-empty; an unparseable minHost is left to the cloud).
+func hostTooOld(minHost, host string) bool {
+	req, okR := versionParts(minHost)
+	have, okH := versionParts(host)
+	if !okR || !okH {
+		return false
+	}
+	for i := 0; i < max(len(req), len(have)); i++ {
+		var r, h int
+		if i < len(req) {
+			r = req[i]
+		}
+		if i < len(have) {
+			h = have[i]
+		}
+		if r != h {
+			return r > h
+		}
+	}
+	return false
+}
+
+// dropIncompatibleHost filters out listings whose MinHostVersion is newer
+// than host; an empty host (dev build) keeps everything.
+func dropIncompatibleHost(plugins []PluginSummary, host string) []PluginSummary {
+	if host == "" {
+		return plugins
+	}
+	kept := plugins[:0]
+	for _, p := range plugins {
+		if p.MinHostVersion != "" && hostTooOld(p.MinHostVersion, host) {
+			log.Printf("[DEBUG] catalog: hiding %s %s — needs till %s, running %s", p.ID, p.Version, p.MinHostVersion, host)
+			continue
+		}
+		kept = append(kept, p)
+	}
+	return kept
+}
+
+// hostVersion is the running till version sent as host_version; a var so
+// tests can pin it.
+var hostVersion = func() string { return buildinfo.Version }
+
 // ListPlugins fetches the marketplace catalog with optional filters.
 func (c *Client) ListPlugins(ctx context.Context, req *ListPluginsRequest) (*ListPluginsResponse, error) {
 	// Build query parameters (matches OpenAPI spec)
@@ -516,8 +605,17 @@ func (c *Client) ListPlugins(ctx context.Context, req *ListPluginsRequest) (*Lis
 		params.Set("locale", req.Locale)
 	}
 	if req.DeviceArch != "" {
-		// Map to 'arch' parameter as per OpenAPI
-		params.Set("arch", req.DeviceArch)
+		// The gateway's field is device_arch; grpc-gateway silently drops
+		// unknown keys, so the old "arch" left the catalog unfiltered
+		// (ut-docs#2673).
+		params.Set("device_arch", req.DeviceArch)
+	}
+	host := strings.TrimSpace(req.HostVersion)
+	if host == "" {
+		host = releaseVersion(hostVersion())
+	}
+	if host != "" {
+		params.Set("host_version", host)
 	}
 	for _, cap := range req.Capability {
 		// Map to 'capability' parameter as per OpenAPI
@@ -577,6 +675,9 @@ func (c *Client) ListPlugins(ctx context.Context, req *ListPluginsRequest) (*Lis
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode catalog response: %w", err)
 	}
+	// Defence in depth: an older cloud may ignore host_version, so drop
+	// listings that need a newer till here too.
+	result.Plugins = dropIncompatibleHost(result.Plugins, host)
 
 	return &result, nil
 }

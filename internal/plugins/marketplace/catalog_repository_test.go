@@ -811,7 +811,7 @@ func TestCatalogRepository_Fetch_ConcurrentDifferentParamsEachCallerGetsOwnResul
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		locale := r.URL.Query().Get("locale")
-		arch := r.URL.Query().Get("arch")
+		arch := r.URL.Query().Get("device_arch")
 		var name string
 		switch {
 		case locale == "en-US" && arch == "linux/amd64":
