@@ -94,8 +94,13 @@ func TestClient_StatusRecordsWhenAnEstablishedLinkWasLost(t *testing.T) {
 	startClient(t, c)
 
 	waitFor(t, "hello from the silent main till", func() bool { n, _, _, _ := rec.get(); return n >= 1 })
-	waitFor(t, "outage recorded", func() bool { return !c.Status().LostAt.IsZero() })
-	s := c.Status()
+	// No second link: a redial that got a fresh hello would be real contact
+	// and rightly restart the outage later than the one captured below (#2846).
+	refuse.Store(true)
+	// One snapshot: a second read can land in runLink's defer between
+	// setLinked(false) and markLinkLost, and see no outage at all (#2846).
+	var s ClientStatus
+	waitFor(t, "outage recorded", func() bool { s = c.Status(); return !s.LostAt.IsZero() })
 	if s.Linked {
 		t.Fatalf("still linked %v after the main till went silent", time.Since(s.LostAt))
 	}
@@ -110,7 +115,6 @@ func TestClient_StatusRecordsWhenAnEstablishedLinkWasLost(t *testing.T) {
 	// outage start does not move: the chip's "since" is when the main till
 	// was last heard.
 	silent.Store(false)
-	refuse.Store(true)
 	before := h.dials.Load()
 	waitFor(t, "failed redials", func() bool { return h.dials.Load() >= before+3 })
 	if got := c.Status().LostAt; !got.Equal(lost) {
