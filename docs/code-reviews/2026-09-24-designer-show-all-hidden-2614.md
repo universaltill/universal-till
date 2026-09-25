@@ -90,3 +90,11 @@ pages gate, pages audit).
   "Göster".
 
 Verdict: safe to merge.
+
+## Follow-up (2026-09-25): German help label
+
+The de pack's `designer.hidden.unhide_all` landed via
+ut-plugin-language-de#313 as "Alle %d im Verkaufsbildschirm einblenden",
+which matches its neighbours' "einblenden". That supersedes this cycle's own
+pack PR. The German help now uses the same word, so the manual names the
+button exactly as it appears on screen (the same class of issue as review finding 1).
