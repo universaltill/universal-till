@@ -4,7 +4,7 @@ title: Wiederherstellungsbildschirm
 section: Den Betrieb führen
 order: 255
 summary: Was Sie sehen, wenn die Kasse nicht startet, und was jede Aktion auf diesem Bildschirm bewirkt.
-keywords: [wiederherstellung, fehler, startet nicht, absturz, erneut versuchen, sicherer modus, beschädigt]
+keywords: [wiederherstellung, fehler, startet nicht, absturz, erneut versuchen, sicherer modus, beschädigt, protokoll, logdatei, fehlersuche]
 ---
 
 # Wiederherstellungsbildschirm
@@ -40,6 +40,17 @@ Referenzcode. Je nach Ursache kann die Lösung ein weiteres Software-Update
 oder das Wiederherstellen der letzten automatischen Sicherung der Kasse sein
 (siehe das Thema „Datensicherungen“) — der Support teilt Ihnen mit, welches
 davon.
+
+## Wo das Protokoll der Kasse liegt
+
+Die Kasse schreibt ein technisches Protokoll, nach dem der Support fragen kann:
+
+- **Windows:** `%LOCALAPPDATA%\UniversalTill\logs` — fügen Sie das in die Adressleiste des Datei-Explorers ein.
+- **Mac:** `~/Library/Application Support/UniversalTill/logs`
+- **Linux-Desktop:** `~/.local/share/universal-till/logs`
+- **Linux-Kasse, als Dienst installiert:** `/opt/unitill/data/logs`
+
+`till.log` ist die neueste Datei, `till.log.1` bis `till.log.4` sind ältere, und `desktop.log` ist das Protokoll des App-Fensters selbst. Passwörter und Tokens werden entfernt, bevor irgendetwas geschrieben wird, und der Ordner wird nie größer als etwa 25 MB. Solange die Kasse läuft, findet ein Manager den Ordner auch unter Einstellungen → Diagnosemodus → **Protokolldateien**, mit Schaltflächen zum Kopieren des Pfads und einer Diagnose-Zusammenfassung für den Support. Die Android-App schreibt diese Dateien nicht.
 
 ## Auf einer Android-Kasse: eine einzelne Seite lädt nicht
 

@@ -47,6 +47,14 @@ func Plugins(parts ...string) string {
 	return filepath.Join(append([]string{DataDir(), "plugins"}, parts...)...)
 }
 
+// Logs joins parts onto the till's log folder, <data root>/logs
+// (ut-docs#2720) — e.g. %LOCALAPPDATA%\UniversalTill\logs on Windows. It
+// lives beside the database so it survives self-updates like everything
+// else under the data root.
+func Logs(parts ...string) string {
+	return filepath.Join(append([]string{DataDir(), "logs"}, parts...)...)
+}
+
 // MigrateLegacyData brings an old cwd-relative ./data tree into the resolved
 // data directory: the database (first run only) and any installed plugin
 // bundles that are missing from the stable location. Plugin migration is
@@ -195,21 +203,27 @@ func migrateLegacyPlugins() {
 // the UT_DATA_DIR default. Falls back to ./data when a home dir can't be found
 // (keeps the app working in odd environments).
 func Default() string {
+	return defaultFor(runtime.GOOS, os.Getenv, os.UserHomeDir)
+}
+
+// defaultFor is Default with the OS and environment injected, so every
+// platform's branch is testable on any host (ut-docs#2720).
+func defaultFor(goos string, getenv func(string) string, homeDir func() (string, error)) string {
 	const appWin, appNix = "UniversalTill", "universal-till"
-	switch runtime.GOOS {
+	switch goos {
 	case "windows":
-		if d := os.Getenv("LOCALAPPDATA"); d != "" {
+		if d := getenv("LOCALAPPDATA"); d != "" {
 			return filepath.Join(d, appWin)
 		}
 	case "darwin":
-		if home, err := os.UserHomeDir(); err == nil {
+		if home, err := homeDir(); err == nil {
 			return filepath.Join(home, "Library", "Application Support", appWin)
 		}
 	default: // linux, bsd, …
-		if d := os.Getenv("XDG_DATA_HOME"); d != "" {
+		if d := getenv("XDG_DATA_HOME"); d != "" {
 			return filepath.Join(d, appNix)
 		}
-		if home, err := os.UserHomeDir(); err == nil {
+		if home, err := homeDir(); err == nil {
 			return filepath.Join(home, ".local", "share", appNix)
 		}
 	}

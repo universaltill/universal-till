@@ -4,7 +4,7 @@ title: Recovery screen
 section: Running the business
 order: 255
 summary: What you see if the till fails to start, and what each action on that screen does.
-keywords: [recovery, error, won't start, crash, retry, safe mode, corrupt]
+keywords: [recovery, error, won't start, crash, retry, safe mode, corrupt, log, log file, troubleshooting]
 ---
 
 # Recovery screen
@@ -38,6 +38,17 @@ Contact support with the reference code shown on screen. Depending on the
 cause, the fix may be a further software update, or restoring the till's
 last automatic backup (see the Backups topic) — support will tell you
 which.
+
+## Where the till's log is
+
+The till writes a technical log that support may ask for:
+
+- **Windows:** `%LOCALAPPDATA%\UniversalTill\logs` — paste that into the File Explorer address bar.
+- **Mac:** `~/Library/Application Support/UniversalTill/logs`
+- **Linux desktop:** `~/.local/share/universal-till/logs`
+- **Linux till installed as a service:** `/opt/unitill/data/logs`
+
+`till.log` is the newest file, `till.log.1` to `till.log.4` are older ones, and `desktop.log` is the app window's own log. Passwords and tokens are removed before anything is written, and the folder never grows past about 25 MB. While the till is running, a manager can also find the folder under Settings → Diagnostic mode → **Log files**, with buttons to copy its path and a diagnostics summary to send to support. The Android app does not write these files.
 
 ## On an Android till: a single page fails to load
 

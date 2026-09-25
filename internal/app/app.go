@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -71,7 +72,17 @@ func Run(ctx context.Context) error {
 	if envFile == "" {
 		envFile = "pos.env"
 	}
-	_ = godotenv.Load(envFile)
+	// envFileUsed is the absolute path of the pos.env actually loaded, ""
+	// when none was — logged in the startup line (ut-docs#2720): "which
+	// pos.env did this till read, if any?" is the first question for a
+	// till that talks to the wrong cloud (or none).
+	envFileUsed := ""
+	if err := godotenv.Load(envFile); err == nil {
+		envFileUsed = envFile
+		if abs, err := filepath.Abs(envFile); err == nil {
+			envFileUsed = abs
+		}
+	}
 
 	logging.Init()
 	log := logging.L()
@@ -81,6 +92,19 @@ func Run(ctx context.Context) error {
 	cfg, err := config.Init()
 	if err != nil {
 		return err
+	}
+
+	// Rotating, redacted log file under <data dir>/logs (ut-docs#2720): a
+	// Windows GUI launch discards stdout, so without this a field till
+	// leaves no trace at all. On for desktop/server OSes, off on
+	// Android/iOS; UT_LOG_FILE=0 disables, UT_LOG_FILE=<path> relocates.
+	// Best-effort — a till whose log folder can't be created still sells.
+	if logPath, on := logging.ResolveFile(os.Getenv("UT_LOG_FILE"), cfg.DataDir, runtime.GOOS, "till.log"); on {
+		if err := logging.AttachFile(logPath); err != nil {
+			log.Warnf("log file unavailable (logging to stdout only): %v", err)
+		} else {
+			defer logging.DetachFile()
+		}
 	}
 
 	// Exclusive lock on the data directory (ut-docs#1097): must be acquired
@@ -269,6 +293,12 @@ func Run(ctx context.Context) error {
 	}()
 
 	enroll.Init(bgCtx, cfg, settingsStore, &wg)
+
+	// The one line that makes a field report diagnosable (ut-docs#2720):
+	// version, OS, data dir, pos.env used, cloud host, enrolment, role.
+	startupInfo := pages.TillStartupInfo(ctx, cfg, settingsStore, envFileUsed)
+	logging.RememberStartup(startupInfo)
+	log.Infof("%s", startupInfo.Line())
 
 	// Plugin-settings encryption key (ADR-0082, ut-docs#1739): register the
 	// process-wide store BEFORE plugins.Init and pagesInit — the repository

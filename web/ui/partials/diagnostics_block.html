@@ -63,5 +63,27 @@
     <button class="btn" type="submit" data-testid="diagnostics-activate">{{ T "settings.diagnostics.activate_btn" }}</button>
   </form>
   {{ end }}
+  <!-- Log file (ut-docs#2720): where the till's rotating log lives, plus the
+       startup summary support asks for first. Copy buttons are wired by
+       app.js's [data-copy-target] handler; the path is also selectable. -->
+  <div class="set-gap" data-testid="diagnostics-log">
+    <h3>{{ T "settings.diagnostics.log_heading" }}</h3>
+    {{ if .LogFolder }}
+    <p class="muted">{{ T "settings.diagnostics.log_intro" }}</p>
+    <div class="set-row">
+      <code id="diagnostics-log-folder" data-testid="diagnostics-log-folder">{{ .LogFolder }}</code>
+      <button class="btn secondary" type="button" data-copy-target="#diagnostics-log-folder" data-copied-label="{{ T "settings.diagnostics.copied" }}" data-testid="diagnostics-copy-log-folder">{{ T "settings.diagnostics.copy_path" }}</button>
+    </div>
+    {{ else }}
+    <p class="muted" data-testid="diagnostics-log-off">{{ T "settings.diagnostics.log_off" }}</p>
+    {{ end }}
+    {{ if .Summary }}
+    <details>
+      <summary>{{ T "settings.diagnostics.summary_show" }}</summary>
+      <pre id="diagnostics-summary" data-testid="diagnostics-summary">{{ .Summary }}</pre>
+    </details>
+    <button class="btn secondary" type="button" data-copy-target="#diagnostics-summary" data-copied-label="{{ T "settings.diagnostics.copied" }}" data-testid="diagnostics-copy-summary">{{ T "settings.diagnostics.copy_summary" }}</button>
+    {{ end }}
+  </div>
   {{ end }}
 </div>

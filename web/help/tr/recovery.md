@@ -4,7 +4,7 @@ title: Kurtarma ekranı
 section: İşi yürütme
 order: 255
 summary: Kasa başlatılamazsa ne görürsünüz ve o ekrandaki her eylem ne işe yarar.
-keywords: [kurtarma, hata, başlamıyor, çökme, yeniden dene, güvenli mod, bozuk]
+keywords: [kurtarma, hata, başlamıyor, çökme, yeniden dene, güvenli mod, bozuk, günlük, günlük dosyası, sorun giderme]
 ---
 
 # Kurtarma ekranı
@@ -37,6 +37,17 @@ Ekranda gösterilen referans koduyla destek ile iletişime geçin. Nedene
 bağlı olarak çözüm başka bir yazılım güncellemesi ya da kasanın son otomatik
 yedeğinin geri yüklenmesi olabilir (Yedekler konusuna bakın) — hangisi
 olduğunu destek size söyleyecektir.
+
+## Kasanın günlüğü nerede
+
+Kasa, desteğin isteyebileceği teknik bir günlük yazar:
+
+- **Windows:** `%LOCALAPPDATA%\UniversalTill\logs` — bunu Dosya Gezgini'nin adres çubuğuna yapıştırın.
+- **Mac:** `~/Library/Application Support/UniversalTill/logs`
+- **Linux masaüstü:** `~/.local/share/universal-till/logs`
+- **Hizmet olarak kurulmuş Linux kasa:** `/opt/unitill/data/logs`
+
+`till.log` en yeni dosyadır, `till.log.1` ile `till.log.4` arası daha eskileridir ve `desktop.log` uygulama penceresinin kendi günlüğüdür. Herhangi bir şey yazılmadan önce parolalar ve belirteçler çıkarılır ve klasör hiçbir zaman yaklaşık 25 MB'ı aşmaz. Kasa çalışırken bir yönetici klasörü Ayarlar → Tanılama modu → **Günlük dosyaları** altında da bulabilir; orada yolu ve desteğe gönderilecek bir tanılama özetini kopyalama düğmeleri vardır. Android uygulaması bu dosyaları yazmaz.
 
 ## Android kasada: tek bir sayfa yüklenmiyor
 
