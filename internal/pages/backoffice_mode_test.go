@@ -10,6 +10,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/settings"
 )
@@ -73,6 +74,20 @@ func TestBackofficeModeRedirectsHome(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Fatalf("dashboard missing %q", want)
 		}
+	}
+
+	// ut-docs#2798: a resolved problem (its condition recovered) leaves the
+	// panel; an open one stays.
+	logging.ResetRecent()
+	t.Cleanup(logging.ResetRecent)
+	logging.L().WarnProblemf("test.backoffice-outage", "backoffice-test: outage now over")
+	logging.L().Warnf("backoffice-test: printer still offline")
+	logging.ResolveProblems("test.backoffice-outage")
+	dashRec = httptest.NewRecorder()
+	mux.ServeHTTP(dashRec, httptest.NewRequest(http.MethodGet, "/backoffice", nil))
+	body = dashRec.Body.String()
+	if strings.Contains(body, "outage now over") || !strings.Contains(body, "printer still offline") {
+		t.Fatalf("problems panel: want the open problem only, got:\n%s", body)
 	}
 
 	// Back to register: the sale screen returns.

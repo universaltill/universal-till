@@ -44,6 +44,12 @@ import (
 // never overwrite it (data.PerTillSettingPrefixes).
 const PrimaryTillIDSettingKey = "sync.primary_till_id"
 
+// MainTillProblemKey tags the Problems entries (logging.WarnProblemf) of a
+// main-till outage — "main till unreachable" and a refused proof — so the
+// first successful contact afterwards resolves them and the cloud stops
+// showing "Attention needed" for an outage that is over (ut-docs#2798).
+const MainTillProblemKey = "sync.main_till_contact"
+
 // UnreachableThreshold is how many consecutive failed contacts (30s pull
 // ticks) make the main till "unreachable": 3 ticks = 90s, the same window
 // the rail sync chip already uses for its offline state.
@@ -316,7 +322,7 @@ func (w *PrimaryWatch) rediscover(ctx context.Context) (oldURL, newURL string, e
 				// Claims to be our main till but can't prove it: a stale
 				// record, a re-installed main till (new pairing needed) — or
 				// a spoof. Never switch; say so where an operator can see it.
-				logging.L().Warnf("sync: %s advertises this shop's main till id but did not prove it holds this till's pairing (%v) — not switching", c.BaseURL, perr)
+				logging.L().WarnProblemf(MainTillProblemKey, "sync: %s advertises this shop's main till id but did not prove it holds this till's pairing (%v) — not switching", c.BaseURL, perr)
 			}
 			continue
 		}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
@@ -33,10 +34,9 @@ func mustExec(t *testing.T, d *db.DB, q string, args ...any) {
 }
 
 // warnfContaining reports whether logging.Recent() holds a WARN entry whose
-// message contains substr — used to assert deleteMissing's satellite-
-// divergence Warnf fired (or didn't), per ut-docs#1592. Callers must
-// logging.ResetRecent() before the action under test, since Recent() is a
-// process-global ring buffer shared by every test in this binary.
+// message contains substr. Callers must logging.ResetRecent() (captureLogs
+// does) before the action under test, since Recent() is a process-global
+// ring buffer shared by every test in this binary.
 func warnfContaining(substr string) bool {
 	for _, p := range logging.Recent() {
 		if p.Level == "WARN" && strings.Contains(p.Msg, substr) {
@@ -44,6 +44,55 @@ func warnfContaining(substr string) bool {
 		}
 	}
 	return false
+}
+
+// logCapture collects every log line (any level) while installed.
+type logCapture struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (c *logCapture) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.b.Write(p)
+}
+
+// infoContaining reports whether an INFO line containing every substr was
+// logged since captureLogs.
+func (c *logCapture) infoContaining(substrs ...string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, line := range strings.Split(c.b.String(), "\n") {
+		if !strings.HasPrefix(line, "[INFO] ") {
+			continue
+		}
+		all := true
+		for _, sub := range substrs {
+			all = all && strings.Contains(line, sub)
+		}
+		if all {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *logCapture) String() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.b.String()
+}
+
+// captureLogs resets the Problems ring and captures log lines at every
+// level until the test ends — deleteMissing's satellite-divergence prune
+// note is INFO (ut-docs#2798), which the Problems ring never holds.
+func captureLogs(t *testing.T) *logCapture {
+	t.Helper()
+	logging.ResetRecent()
+	c := &logCapture{}
+	t.Cleanup(logging.CaptureForTest(c))
+	return c
 }
 
 // wireTrip simulates the HTTP hop: numbers become float64, like on a replica.
@@ -1360,7 +1409,7 @@ func TestAdminApply_RegisterRetiredInPlaceWhenFKBlockedBySatelliteShiftHistory(t
 	if err != nil {
 		t.Fatalf("second dump: %v", err)
 	}
-	logging.ResetRecent()
+	logs := captureLogs(t)
 	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle2); err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
@@ -1404,8 +1453,8 @@ func TestAdminApply_RegisterRetiredInPlaceWhenFKBlockedBySatelliteShiftHistory(t
 	// ut-docs#1592: retiring a pre-existing satellite-local register must
 	// warn, naming the table, row and action, so a shop owner can connect a
 	// "my till lost its register" report to this one-time reconciliation.
-	if !warnfContaining("pruned pre-existing satellite-local registers row") || !warnfContaining("retired in place") {
-		t.Errorf("expected a Warnf naming registers + retired-in-place for reg-1, got: %+v", logging.Recent())
+	if !logs.infoContaining("pruned pre-existing satellite-local registers row", "retired in place") || warnfContaining("pruned pre-existing satellite-local") {
+		t.Errorf("expected an INFO line (not a WARN problem, ut-docs#2798) naming registers + retired-in-place for reg-1, got log: %s, problems: %+v", logs, logging.Recent())
 	}
 }
 
@@ -1435,7 +1484,7 @@ func TestAdminApply_StockLocationRetiredInPlaceWhenFKBlockedBySatelliteInventory
 	if err != nil {
 		t.Fatalf("second dump: %v", err)
 	}
-	logging.ResetRecent()
+	logs := captureLogs(t)
 	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle2); err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
@@ -1494,8 +1543,8 @@ func TestAdminApply_StockLocationRetiredInPlaceWhenFKBlockedBySatelliteInventory
 	}
 
 	// ut-docs#1592: same warning requirement as the register case above.
-	if !warnfContaining("pruned pre-existing satellite-local stock_locations row") || !warnfContaining("retired in place") {
-		t.Errorf("expected a Warnf naming stock_locations + retired-in-place for loc-1, got: %+v", logging.Recent())
+	if !logs.infoContaining("pruned pre-existing satellite-local stock_locations row", "retired in place") || warnfContaining("pruned pre-existing satellite-local") {
+		t.Errorf("expected an INFO line (not a WARN problem, ut-docs#2798) naming stock_locations + retired-in-place for loc-1, got log: %s, problems: %+v", logs, logging.Recent())
 	}
 }
 
@@ -1520,7 +1569,7 @@ func TestAdminApply_RegisterHardDeletedPreExistingLogsWarning(t *testing.T) {
 	// against it yet.
 	mustExec(t, replica, `INSERT INTO registers (id, name, is_active) VALUES ('reg-orphan', 'Satellite Local', 1)`)
 
-	logging.ResetRecent()
+	logs := captureLogs(t)
 	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -1529,8 +1578,8 @@ func TestAdminApply_RegisterHardDeletedPreExistingLogsWarning(t *testing.T) {
 	if err := replica.QueryRow(`SELECT COUNT(*) FROM registers WHERE id='reg-orphan'`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("expected reg-orphan to be hard-deleted (no history to FK-block it): n=%d err=%v", n, err)
 	}
-	if !warnfContaining("pruned pre-existing satellite-local registers row") || !warnfContaining("hard-deleted") {
-		t.Errorf("expected a Warnf naming registers + hard-deleted for reg-orphan, got: %+v", logging.Recent())
+	if !logs.infoContaining("pruned pre-existing satellite-local registers row", "hard-deleted") || warnfContaining("pruned pre-existing satellite-local") {
+		t.Errorf("expected an INFO line (not a WARN problem, ut-docs#2798) naming registers + hard-deleted for reg-orphan, got log: %s, problems: %+v", logs, logging.Recent())
 	}
 }
 
@@ -1547,7 +1596,7 @@ func TestAdminApply_StockLocationHardDeletedPreExistingLogsWarning(t *testing.T)
 	}
 	mustExec(t, replica, `INSERT INTO stock_locations (id, name, is_active) VALUES ('loc-orphan', 'Satellite Local', 1)`)
 
-	logging.ResetRecent()
+	logs := captureLogs(t)
 	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -1556,8 +1605,8 @@ func TestAdminApply_StockLocationHardDeletedPreExistingLogsWarning(t *testing.T)
 	if err := replica.QueryRow(`SELECT COUNT(*) FROM stock_locations WHERE id='loc-orphan'`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("expected loc-orphan to be hard-deleted (no history to FK-block it): n=%d err=%v", n, err)
 	}
-	if !warnfContaining("pruned pre-existing satellite-local stock_locations row") || !warnfContaining("hard-deleted") {
-		t.Errorf("expected a Warnf naming stock_locations + hard-deleted for loc-orphan, got: %+v", logging.Recent())
+	if !logs.infoContaining("pruned pre-existing satellite-local stock_locations row", "hard-deleted") || warnfContaining("pruned pre-existing satellite-local") {
+		t.Errorf("expected an INFO line (not a WARN problem, ut-docs#2798) naming stock_locations + hard-deleted for loc-orphan, got log: %s, problems: %+v", logs, logging.Recent())
 	}
 }
 
@@ -1585,7 +1634,7 @@ func TestAdminApply_ItemModifierGroupHardDeletedPreExistingLogsWarning(t *testin
 	mustExec(t, replica, `INSERT INTO items (id, name, base_price) VALUES ('itm1', 'Flat White', 320)`)
 	mustExec(t, replica, `INSERT INTO item_modifier_groups (id, name, required, min_select, max_select, sort_order, is_active) VALUES ('grp-orphan', 'Satellite Local', 0, 0, 1, 0, 1)`)
 
-	logging.ResetRecent()
+	logs := captureLogs(t)
 	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -1594,8 +1643,8 @@ func TestAdminApply_ItemModifierGroupHardDeletedPreExistingLogsWarning(t *testin
 	if err := replica.QueryRow(`SELECT COUNT(*) FROM item_modifier_groups WHERE id='grp-orphan'`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("expected grp-orphan to be hard-deleted (no FK to block it): n=%d err=%v", n, err)
 	}
-	if !warnfContaining("pruned pre-existing satellite-local item_modifier_groups row") || !warnfContaining("hard-deleted") {
-		t.Errorf("expected a Warnf naming item_modifier_groups + hard-deleted for grp-orphan, got: %+v", logging.Recent())
+	if !logs.infoContaining("pruned pre-existing satellite-local item_modifier_groups row", "hard-deleted") || warnfContaining("pruned pre-existing satellite-local") {
+		t.Errorf("expected an INFO line (not a WARN problem, ut-docs#2798) naming item_modifier_groups + hard-deleted for grp-orphan, got log: %s, problems: %+v", logs, logging.Recent())
 	}
 }
 
@@ -1619,7 +1668,7 @@ func TestAdminApply_OrdinaryTablePruneDoesNotLogSatelliteDivergenceWarning(t *te
 	}
 	mustExec(t, replica, `INSERT INTO tax_codes (id, name, rate_basis_points, is_active) VALUES ('tax-orphan', 'Local Rate', 0, 1)`)
 
-	logging.ResetRecent()
+	logs := captureLogs(t)
 	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
 		t.Fatalf("apply: %v", err)
 	}
@@ -1628,8 +1677,8 @@ func TestAdminApply_OrdinaryTablePruneDoesNotLogSatelliteDivergenceWarning(t *te
 	if err := replica.QueryRow(`SELECT COUNT(*) FROM tax_codes WHERE id='tax-orphan'`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("expected tax-orphan to be hard-deleted: n=%d err=%v", n, err)
 	}
-	if warnfContaining("pruned pre-existing satellite-local") {
-		t.Errorf("tax_codes is not registers/stock_locations — must not fire the satellite-divergence Warnf, got: %+v", logging.Recent())
+	if strings.Contains(logs.String(), "pruned pre-existing satellite-local") {
+		t.Errorf("tax_codes is not registers/stock_locations — must not log the satellite-divergence prune note, got: %s", logs)
 	}
 }
 

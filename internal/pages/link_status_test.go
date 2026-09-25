@@ -13,6 +13,7 @@ import (
 	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
 // ut-docs#2742 (ADR-0114 §10): one truthful connectivity indicator on a
@@ -224,6 +225,35 @@ func TestLinkChip_FollowsTheRealLinkAndWarnsOncePerOutage(t *testing.T) {
 	if warns != 1 {
 		t.Fatalf("%d WARNs for one outage, want exactly 1: %+v", warns, logging.Recent())
 	}
+	if !heartbeatReportsProblem(t, replica, "main till unreachable") {
+		t.Fatalf("an ongoing outage is missing from the heartbeat's problems: %+v", collectProblems(t.Context(), replica))
+	}
+
+	// ut-docs#2798: the main till answers again — the next heartbeat no
+	// longer reports the outage (my.'s "Attention needed" clears), though
+	// the line stays in the log history.
+	proxy.frozen.Store(false)
+	syncPullTick(t.Context(), replica, client, func(context.Context) {})
+	if heartbeatReportsProblem(t, replica, "main till unreachable") {
+		t.Fatalf("a recovered outage is still reported as a problem: %+v", collectProblems(t.Context(), replica))
+	}
+	kept := false
+	for _, p := range logging.Recent() {
+		kept = kept || (strings.Contains(p.Msg, "main till unreachable") && p.Resolved)
+	}
+	if !kept {
+		t.Fatalf("the resolved outage line left the log history: %+v", logging.Recent())
+	}
+}
+
+func heartbeatReportsProblem(t *testing.T, d *common.Deps, substr string) bool {
+	t.Helper()
+	for _, p := range collectProblems(t.Context(), d) {
+		if msg, _ := p["msg"].(string); strings.Contains(msg, substr) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestLinkChip_EmptyOnAMainTill(t *testing.T) {

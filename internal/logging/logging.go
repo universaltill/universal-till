@@ -102,10 +102,17 @@ func L() *Logger {
 // Problem is one recent warn/error line, kept in memory so the cloud sync
 // heartbeat can report the shop's problems (ADR-0018 problems feed). The
 // buffer is process-local and small — it is a digest, not a log store.
+//
+// Key, when set (WarnProblemf), names a condition that has a paired
+// recovery; ResolveProblems(key) marks every entry for it Resolved once the
+// condition clears, so the heartbeat stops reporting it as open while the
+// line stays in the ring for bug-report bundles (ut-docs#2798).
 type Problem struct {
-	At    time.Time
-	Level string
-	Msg   string
+	At       time.Time
+	Level    string
+	Msg      string
+	Key      string
+	Resolved bool
 }
 
 const recentCap = 50
@@ -139,7 +146,48 @@ func ResetRecent() {
 	recentBuf = nil
 }
 
-func remember(level Level, msg string) {
+// OpenProblems returns the newest-first Problems that are still open: not
+// resolved (ResolveProblems) and, for an unkeyed line, no older than maxAge
+// before now. An unkeyed problem that hasn't repeated within maxAge has aged
+// out — the cloud's "Attention needed" must not keep showing a condition the
+// till got over hours ago (ut-docs#2798). A keyed one never ages out: it is
+// logged once per condition and stays open until ResolveProblems says the
+// condition is over — a main till down since Friday is still down on
+// Sunday. maxAge <= 0 disables the age cut.
+func OpenProblems(now time.Time, maxAge time.Duration) []Problem {
+	var out []Problem
+	for _, p := range Recent() {
+		if p.Resolved {
+			continue
+		}
+		if maxAge > 0 && p.Key == "" && now.Sub(p.At) > maxAge {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// ResolveProblems marks every open Problem logged under key resolved and
+// reports how many it closed; the caller logs the recovery (at INFO) when
+// that is non-zero. An empty key resolves nothing.
+func ResolveProblems(key string) int {
+	if key == "" {
+		return 0
+	}
+	recentMu.Lock()
+	defer recentMu.Unlock()
+	n := 0
+	for i := range recentBuf {
+		if recentBuf[i].Key == key && !recentBuf[i].Resolved {
+			recentBuf[i].Resolved = true
+			n++
+		}
+	}
+	return n
+}
+
+func remember(level Level, key, msg string) {
 	if level < Warn {
 		return
 	}
@@ -148,7 +196,7 @@ func remember(level Level, msg string) {
 	// clock.Now (not time.Now) so the back-office "recent problems" panel's
 	// rendered timestamps are byte-stable under `make docs-shots` (ut-docs#930).
 	// Outside the docs-shots harness clock.Now IS time.Now — real log time.
-	recentBuf = append(recentBuf, Problem{At: clock.Now().UTC(), Level: level.String(), Msg: msg})
+	recentBuf = append(recentBuf, Problem{At: clock.Now().UTC(), Level: level.String(), Msg: msg, Key: key})
 	if len(recentBuf) > recentCap {
 		recentBuf = recentBuf[len(recentBuf)-recentCap:]
 	}
@@ -156,6 +204,11 @@ func remember(level Level, msg string) {
 
 // logf is the internal helper.
 func (l *Logger) logf(level Level, format string, args ...any) {
+	l.logKeyf(level, "", format, args...)
+}
+
+// logKeyf is logf with a Problem key (see Problem.Key).
+func (l *Logger) logKeyf(level Level, key, format string, args ...any) {
 	if l == nil {
 		return
 	}
@@ -169,7 +222,7 @@ func (l *Logger) logf(level Level, format string, args ...any) {
 	ts := time.Now().Format(time.RFC3339)
 	// Format: 2025-01-01T12:00:00Z [INFO] message
 	msg := fmt.Sprintf(format, args...)
-	remember(level, msg)
+	remember(level, key, msg)
 	l.log.Printf("%s [%s] %s", ts, level.String(), msg)
 }
 
@@ -185,6 +238,13 @@ func (l *Logger) Infof(format string, args ...any) {
 
 func (l *Logger) Warnf(format string, args ...any) {
 	l.logf(Warn, format, args...)
+}
+
+// WarnProblemf logs at WARN like Warnf, tagging the Problems entry with key:
+// a condition with a paired recovery that calls ResolveProblems(key) when it
+// clears (ut-docs#2798). Plain Warnf is for problems with no such recovery.
+func (l *Logger) WarnProblemf(key, format string, args ...any) {
+	l.logKeyf(Warn, key, format, args...)
 }
 
 func (l *Logger) Errorf(format string, args ...any) {
