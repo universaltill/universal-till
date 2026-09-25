@@ -52,7 +52,7 @@ func postPanel(t *testing.T, mux *http.ServeMux, path, form, hxTarget string) *h
 	return rec
 }
 
-// The nested "Manage customization groups" panel lists the groups the item
+// The item editor's Modifiers tab (ut-docs#2211) lists the groups the item
 // inherits from its category, labelled as such, each with a skip/use-again
 // toggle — while the item's OWN directly-linked groups keep rendering
 // exactly as before (regression: the per-item link path is unchanged).
@@ -115,12 +115,12 @@ func TestItemModifierGroupsPanel_InheritedGroupsWithOptOutToggle(t *testing.T) {
 
 	// Opt out of Milk from the panel: 200, re-rendered panel now offers
 	// "use again" for it, and the sale-time resolver drops it.
-	rec = postPanel(t, mux, "/api/catalog/modifier-group/opt-out", "itemId=itm1&groupId=gMilk&panelItem=itm1", "modifier-groups-modal-list")
+	rec = postPanel(t, mux, "/api/catalog/modifier-group/opt-out", "itemId=itm1&groupId=gMilk&panelItem=itm1", "item-modifiers-list")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("opt-out: %d %s", rec.Code, rec.Body.String())
 	}
 	body = rec.Body.String()
-	if !strings.Contains(body, `id="modifier-groups-modal-list"`) {
+	if !strings.Contains(body, `id="item-modifiers-list"`) {
 		t.Fatalf("opt-out must answer with the item panel fragment:\n%s", body)
 	}
 	if !strings.Contains(body, `hx-post="/api/catalog/modifier-group/opt-in"`) {
@@ -143,7 +143,7 @@ func TestItemModifierGroupsPanel_InheritedGroupsWithOptOutToggle(t *testing.T) {
 
 	// Opting out of gBoth (directly linked too) must NOT remove the direct
 	// link: the item still resolves it as its own copy.
-	rec = postPanel(t, mux, "/api/catalog/modifier-group/opt-out", "itemId=itm1&groupId=gBoth&panelItem=itm1", "modifier-groups-modal-list")
+	rec = postPanel(t, mux, "/api/catalog/modifier-group/opt-out", "itemId=itm1&groupId=gBoth&panelItem=itm1", "item-modifiers-list")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("opt-out gBoth: %d", rec.Code)
 	}
@@ -163,7 +163,7 @@ func TestItemModifierGroupsPanel_InheritedGroupsWithOptOutToggle(t *testing.T) {
 	}
 
 	// Opt back in: the row is gone and Milk is offered again.
-	rec = postPanel(t, mux, "/api/catalog/modifier-group/opt-in", "itemId=itm1&groupId=gMilk&panelItem=itm1", "modifier-groups-modal-list")
+	rec = postPanel(t, mux, "/api/catalog/modifier-group/opt-in", "itemId=itm1&groupId=gMilk&panelItem=itm1", "item-modifiers-list")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("opt-in: %d %s", rec.Code, rec.Body.String())
 	}
@@ -182,33 +182,9 @@ func TestItemModifierGroupsPanel_InheritedGroupsWithOptOutToggle(t *testing.T) {
 	}
 }
 
-// The item's Variants-tab summary line names inherited groups too (marked
-// "from category"), so the compact panel doesn't claim "no customization
-// groups yet" for an item that inherits three.
-func TestCatalogVariantsPanel_SummaryNamesInheritedGroups(t *testing.T) {
-	mux, dbase := setupInheritDeps(t)
-	ctx := context.Background()
-	modRepo := data.NewModifierRepo(dbase.DB)
-	if _, err := modRepo.CreateGroup(ctx, "gMilk", "Milk", false, 0, 1, 0); err != nil {
-		t.Fatal(err)
-	}
-	if err := modRepo.SetCategoryModifierGroups(ctx, "cat1", []string{"gMilk"}); err != nil {
-		t.Fatal(err)
-	}
-	req := httptest.NewRequest(http.MethodGet, "/api/catalog/item-variants?item_id=itm1", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("panel: %d %s", rec.Code, rec.Body.String())
-	}
-	body := rec.Body.String()
-	if !strings.Contains(body, "Milk (from category)") {
-		t.Fatalf("summary must name the inherited group as from category:\n%s", body)
-	}
-	if strings.Contains(body, "No Modifiers yet.") { // ut-docs#2211 rename
-		t.Fatalf("summary must not claim no groups when the category adds one:\n%s", body)
-	}
-}
+// (ut-docs#2211 removed the Variants-tab summary line this file used to pin
+// here — inherited groups are listed in the Modifiers tab itself, covered by
+// the panel tests above and item_modifiers_tab_2211_test.go.)
 
 // Kitchen routing on the item editor: the Variants panel shows what the
 // item's category routes to, lets the item override it with its own

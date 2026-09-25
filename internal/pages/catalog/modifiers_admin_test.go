@@ -51,11 +51,9 @@ func TestCatalogModifiersPanel_OptionPrice_RespectsZeroDecimalCurrency(t *testin
 	}
 }
 
-// The item-detail panel shows a compact, read-only modifiers summary plus a
-// "Manage customization groups" control (ut-docs#1957 — the CRUD itself
-// moved to /modifiers and the nested dialog that control opens); creating a
-// group elsewhere is still reflected in that summary once the panel
-// re-renders, and directly in the DB either way.
+// The Variants panel carries no modifier UI at all (ut-docs#2211 — the item
+// editor's own Modifiers tab does; the CRUD itself lives on /modifiers since
+// ut-docs#1957); creating a group still lands in the DB.
 func TestCatalogModifiersPanel_CreateGroup(t *testing.T) {
 	chdirToRepoRoot(t)
 	db := setupCatalogPageDB(t)
@@ -65,16 +63,14 @@ func TestCatalogModifiersPanel_CreateGroup(t *testing.T) {
 	mux := http.NewServeMux()
 	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}})
 
-	// Panel loads with the "no customization groups yet" summary and the
-	// "Manage customization groups" button that opens the nested dialog —
-	// NOT the CRUD forms themselves, which moved off this panel entirely.
+	// Variants panel: no Manage button, no CRUD forms (ut-docs#1957/#2211).
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/catalog/item-variants?item_id=itm1", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("panel: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `id="manage-modifiers-btn"`) {
-		t.Fatal("panel missing the Manage customization groups button")
+	if strings.Contains(rec.Body.String(), `id="manage-modifiers-btn"`) {
+		t.Fatal("Variants panel must not carry a Manage Modifiers button any more (ut-docs#2211)")
 	}
 	if strings.Contains(rec.Body.String(), `name="minSelect"`) {
 		t.Fatal("panel must not embed the group CRUD form directly any more (ut-docs#1957)")
@@ -231,13 +227,13 @@ func TestCatalogModifiersPanel_CreateAndUpdateOption(t *testing.T) {
 	optForm := "panelItem=itm1&itemId=itm1&groupId=" + groupID + "&name=Extra+shot&priceDeltaMajor=0.50&isActive=1"
 	req2 := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-option", strings.NewReader(optForm))
 	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req2.Header.Set("Hx-Target", "modifier-groups-modal-list")
+	req2.Header.Set("Hx-Target", "item-modifiers-list")
 	rec2 := httptest.NewRecorder()
 	mux.ServeHTTP(rec2, req2)
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("create option: want 200, got %d: %s", rec2.Code, rec2.Body.String())
 	}
-	if !strings.Contains(rec2.Body.String(), `id="modifier-groups-modal-list"`) {
+	if !strings.Contains(rec2.Body.String(), `id="item-modifiers-list"`) {
 		t.Fatal("expected the item-scoped modal fragment, not the old #catalog-variants panel")
 	}
 	if !strings.Contains(rec2.Body.String(), "Extra shot") {
@@ -304,9 +300,8 @@ func TestCatalogModifiersPanel_CreateAndUpdateOption(t *testing.T) {
 // manager can reactivate it) even though it's hidden from the sale-time
 // picker — this is the whole reason ListAllGroupsForItem exists, distinct
 // from ListGroupsForItem. ut-docs#1957 moved that admin surface off the
-// item-detail panel (which now only shows a compact ACTIVE-only summary,
-// checked below) onto the nested "Manage customization groups" dialog's own
-// GET /api/catalog/modifier-groups-panel fragment.
+// Variants panel onto the item editor's Modifiers tab (a nested dialog
+// until ut-docs#2211) — GET /api/catalog/modifier-groups-panel.
 func TestCatalogModifiersPanel_ShowsDeactivatedGroupsForReactivation(t *testing.T) {
 	chdirToRepoRoot(t)
 	db := setupCatalogPageDB(t)
@@ -317,28 +312,27 @@ func TestCatalogModifiersPanel_ShowsDeactivatedGroupsForReactivation(t *testing.
 	mux := http.NewServeMux()
 	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}})
 
-	// The item-detail panel's compact summary is active-only — a retired
-	// group has no visible way to be reactivated from here any more.
+	// The Variants panel names no groups at all (ut-docs#2211).
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/catalog/item-variants?item_id=itm1", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	if strings.Contains(rec.Body.String(), "Retired") {
-		t.Fatal("the compact item-detail summary must not list a deactivated group by name")
+		t.Fatal("the Variants panel must not list a modifier group by name")
 	}
 
-	// The nested dialog's own fragment is where reactivation now happens.
+	// The Modifiers tab's own fragment lists it.
 	rec2 := httptest.NewRecorder()
 	mux.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/api/catalog/modifier-groups-panel?item_id=itm1", nil))
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d: %s", rec2.Code, rec2.Body.String())
 	}
 	if !strings.Contains(rec2.Body.String(), "Retired") {
-		t.Fatal("the Manage customization groups panel must show a deactivated group so it can be reactivated")
+		t.Fatal("the Modifiers tab must show a deactivated group so it can be reactivated")
 	}
-	if !strings.Contains(rec2.Body.String(), `id="modifier-groups-modal-list"`) {
-		t.Fatal("expected the item-scoped modal fragment container")
+	if !strings.Contains(rec2.Body.String(), `id="item-modifiers-list"`) {
+		t.Fatal("expected the Modifiers tab fragment container")
 	}
 }
 
@@ -470,7 +464,7 @@ func TestModifierGroupAttach_LinksExistingGroupToSecondItem(t *testing.T) {
 	form := "panelItem=itm-b&itemId=itm-b&groupId=g-milk"
 	req := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group/attach", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Hx-Target", "modifier-groups-modal-list")
+	req.Header.Set("Hx-Target", "item-modifiers-list")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -525,7 +519,7 @@ func TestModifierGroupDetach_RemovesOnlyThisItemsLink(t *testing.T) {
 	form := "panelItem=itm-b&itemId=itm-b&groupId=g-milk"
 	req := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group/detach", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Hx-Target", "modifier-groups-modal-list")
+	req.Header.Set("Hx-Target", "item-modifiers-list")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -578,7 +572,7 @@ func TestModifierGroupDetach_LastLinkLeavesGroupUnassigned(t *testing.T) {
 	form := "panelItem=itm-a&itemId=itm-a&groupId=g-milk"
 	req := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group/detach", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Hx-Target", "modifier-groups-modal-list")
+	req.Header.Set("Hx-Target", "item-modifiers-list")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

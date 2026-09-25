@@ -196,9 +196,10 @@
           <div class="modifier-assign-row">
             {{ range .Items }}
             {{/* ut-docs#1914: the item name links back to /catalog with its
-                 detail panel pre-opened (openCatalogRow's ?item= deep link). */}}
+                 detail panel pre-opened (openCatalogRow's ?item= deep link),
+                 on its Modifiers tab since ut-docs#2211 (&tab=modifiers). */}}
             <span class="tag modifier-assign-item{{ if not .IsActive }} vg-inactive{{ end }}" data-item-id="{{ .ID }}">
-              <a href="/catalog?item={{ .ID }}">{{ .Name }}</a>
+              <a href="/catalog?item={{ .ID }}&tab=modifiers">{{ .Name }}</a>
               <button type="button" class="modifier-chip-remove"
                       hx-post="/api/catalog/modifier-group/detach"
                       hx-vals='{{ jsonVals "itemId" .ID "groupId" $group.ID }}'
