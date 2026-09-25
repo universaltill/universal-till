@@ -228,6 +228,25 @@ func registerPOSModifiersAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		base, ok := d.Engine.ResolveBase(code)
+		if !ok && itemID != "" && r.URL.Query().Get("src") == "tile" {
+			// ut-docs#2525: a stale modifier/variant tile (its item was
+			// deactivated or recoded elsewhere while the sale screen stayed
+			// open). Same answer as /api/pos/scan's stale-tile branch: the
+			// basket says the buttons were out of date and the grid
+			// re-fetches. Retargeted onto #basket like the #2227 picker
+			// redirect, so the tile's after-request sees a non-modal target
+			// and leaves the picker shut.
+			locale := httpx.ResolveLocale(w, r)
+			basketView, _ := ui.NewBasketView(httpx.FuncsFor(locale))
+			w.Header().Set("HX-Retarget", "#basket")
+			w.Header().Set("HX-Reswap", "outerHTML")
+			w.Header().Set("HX-Trigger", "buttons-changed")
+			b := d.Engine.Basket()
+			b.ToastMessage = httpx.T(locale, "pos.toast.tile_stale_refreshed")
+			b.ToastLevel = "info"
+			_ = basketView.Render(w, &b)
+			return
+		}
 		if !ok || itemID == "" {
 			http.Error(w, "item not found", http.StatusNotFound)
 			return

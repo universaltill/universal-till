@@ -91,7 +91,7 @@ func TestButtonsHTTPList_VariantOnlyItemOpensPickerNotStraightToBasket(t *testin
 		t.Fatalf("List = %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `hx-get="/ui/pos/modifiers?item=i1&code=C1"`) {
+	if !strings.Contains(body, `hx-get="/ui/pos/modifiers?item=i1&code=C1&src=tile"`) {
 		t.Fatalf("expected the variant-only tile to open the picker via hx-get: %s", body)
 	}
 	if strings.Contains(body, `hx-post="/api/pos/scan"`) {
@@ -128,6 +128,11 @@ func TestButtonsHTTPList_PlainItemStillScansStraightToBasket(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, `hx-post="/api/pos/scan"`) {
 		t.Fatalf("a plain item's tile must still scan straight to the basket: %s", body)
+	}
+	// ut-docs#2525: the tile marks its scan so a stale code refreshes the
+	// grid instead of ending in a bare "Item not found".
+	if !strings.Contains(body, `&#34;src&#34;:&#34;tile&#34;`) && !strings.Contains(body, `"src":"tile"`) {
+		t.Fatalf("a plain tile's hx-vals must carry src=tile: %s", body)
 	}
 	if strings.Contains(body, "/ui/pos/modifiers") {
 		t.Fatalf("a plain item's tile must not open any picker: %s", body)

@@ -2677,6 +2677,11 @@ window.utTabBarFade = function (el) {
       // exact GET the tile itself would have issued, then open the
       // picker exactly the way its own hx-on::after-request does.
       showOrderTypePromptModal(function () {
+        // ut-docs#2525: a stale tile's GET is retargeted onto #basket, which
+        // leaves the (closed) picker holding the PREVIOUS item's markup --
+        // empty it first so the innerHTML check below can't open that.
+        var prev = document.getElementById('modifier-modal');
+        if (prev && !prev.open) prev.innerHTML = '';
         htmx.ajax('get', path, { target: '#modifier-modal', swap: 'innerHTML' }).then(function () {
           // htmx 1.9 resolves this promise even when a 4xx swapped nothing
           // -- don't open an empty picker on it (the tile's own after-request

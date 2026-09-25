@@ -1504,6 +1504,7 @@
   "pos.toast.tax_unavailable": "Cannot complete the sale: the tax rate for \"%s\" is unavailable while its tax plugin is being repaired. Remove the item or try again in a moment.",
   "pos.toast.tax_unavailable_all": "Checkout is unavailable — the tax plugin is being repaired. Try again shortly.",
   "pos.toast.tender_failed": "Sale could not be completed — try again or ask an administrator for help",
+  "pos.toast.tile_stale_refreshed": "That quick button was out of date — the buttons have been refreshed.",
   "pos.toast.voucher_code_exists": "That voucher code is already in use — check the code on the card and try again",
   "pos.toast.voucher_insufficient": "Voucher balance does not cover this payment",
   "pos.toast.voucher_invalid": "Voucher not found or no longer active",

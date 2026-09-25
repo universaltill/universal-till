@@ -788,6 +788,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			Code       string  `json:"code"`
 			Qty        float64 `json:"qty"`
 			CustomerID string  `json:"customerId,omitempty"`
+			// Src is "tile" when a sale-screen tile posted this scan
+			// (buttons.html's product-tile), see the item-not-found
+			// fall-through at the end of this handler (ut-docs#2525).
+			Src string `json:"src,omitempty"`
 		}{Qty: 1}
 
 		if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
@@ -796,6 +800,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			_ = r.ParseForm()
 			in.Code = r.Form.Get("code")
 			in.CustomerID = r.Form.Get("customerId")
+			in.Src = r.Form.Get("src")
 			if q := r.Form.Get("qty"); q != "" {
 				if v, err := strconv.ParseFloat(q, 64); err == nil && v > 0 {
 					in.Qty = v
@@ -1053,6 +1058,20 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		b := d.Engine.Basket()
+		if in.Src == "tile" {
+			// ut-docs#2525: a tile is a snapshot of the catalog from when
+			// the grid last rendered. A tile code that no longer resolves
+			// means the catalog changed elsewhere while this screen stayed
+			// open (another tab or device, a my. push, a main-till sync), so
+			// every retry would fail the same way. Say so, and re-fetch the
+			// grid via the same buttons-changed trigger its hx-trigger
+			// already listens for.
+			w.Header().Set("HX-Trigger", "buttons-changed")
+			b.ToastMessage = httpx.T(locale, "pos.toast.tile_stale_refreshed")
+			b.ToastLevel = "info"
+			render(&b)
+			return
+		}
 		b.ToastMessage = httpx.T(locale, "pos.toast.item_not_found")
 		b.ToastLevel = "error"
 		render(&b)
