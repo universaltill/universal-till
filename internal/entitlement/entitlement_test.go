@@ -195,3 +195,64 @@ func TestCapabilitiesListsEveryCapability(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#2792: a replica with no cloud token of its own gets the main
+// till's cache relayed over the LAN, verbatim — last_confirmed_at included,
+// so the grace window stays anchored to the main till's last real
+// confirmation and a replica can never keep a lapsed main's plan alive.
+func TestReadCachedRoundTripsThroughRelayValues(t *testing.T) {
+	src := mapReader{
+		KeyPlan:               "pro",
+		KeySubscriptionStatus: StatusActive,
+		KeyExpiresAt:          "2026-12-31T00:00:00Z",
+		KeyLastConfirmedAt:    "2026-09-20T10:00:00Z",
+	}
+	c, ok := ReadCached(context.Background(), src)
+	if !ok {
+		t.Fatal("a complete cache read back as absent")
+	}
+	kv, err := c.RelayValues()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k, want := range src {
+		if kv[k] != want {
+			t.Errorf("%s = %q, want %q (verbatim)", k, kv[k], want)
+		}
+	}
+	if len(kv) != 4 {
+		t.Errorf("relay writes %d keys, want the 4 entitlement keys", len(kv))
+	}
+}
+
+func TestReadCachedAbsentWithoutConfirmation(t *testing.T) {
+	if _, ok := ReadCached(context.Background(), mapReader{KeyPlan: "shop", KeySubscriptionStatus: StatusActive}); ok {
+		t.Fatal("a cache never confirmed by the cloud must not be relayed")
+	}
+	if _, ok := ReadCached(context.Background(), errReader{}); ok {
+		t.Fatal("an unreadable cache must not be relayed")
+	}
+}
+
+// The replica validates what its main till sends: an unknown plan/status or
+// an unparsable confirmation time is refused whole (the replica keeps its
+// cache); an unparsable expires_at is display-only and dropped.
+func TestCachedRelayValuesValidation(t *testing.T) {
+	good := Cached{Plan: "shop", SubscriptionStatus: StatusActive, LastConfirmedAt: "2026-09-20T10:00:00Z"}
+	for name, c := range map[string]Cached{
+		"unknown plan":     {Plan: "platinum", SubscriptionStatus: StatusActive, LastConfirmedAt: good.LastConfirmedAt},
+		"unknown status":   {Plan: "shop", SubscriptionStatus: "trial", LastConfirmedAt: good.LastConfirmedAt},
+		"bad confirmed_at": {Plan: "shop", SubscriptionStatus: StatusActive, LastConfirmedAt: "yesterday"},
+		"empty confirmed":  {Plan: "shop", SubscriptionStatus: StatusActive},
+	} {
+		if _, err := c.RelayValues(); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	bad := good
+	bad.ExpiresAt = "soon"
+	kv, err := bad.RelayValues()
+	if err != nil || kv[KeyExpiresAt] != "" {
+		t.Fatalf("unparsable expires_at: kv=%v err=%v, want it stored empty", kv, err)
+	}
+}

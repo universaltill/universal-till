@@ -211,3 +211,72 @@ func (b Block) Values(now time.Time) (map[string]string, error) {
 		KeyLastConfirmedAt:    now.UTC().Format(time.RFC3339),
 	}, nil
 }
+
+// Cached is this till's entitlement cache as the main till relays it to a
+// replica over the authenticated LAN sync channel (ut-docs#2792): the vouch
+// answer of POST /api/sync/cloud-device. entitlement.* is per-till in the
+// admin sync (it is rewritten on every cloud tick and would move the admin
+// cursor each time), and a replica without its own store token (ut-docs#2730)
+// cannot ask the cloud itself — so the main till passes its cache on.
+// Relayed verbatim, LastConfirmedAt included: the replica's grace window
+// stays anchored to the main till's last real confirmation, so a replica can
+// never keep a plan alive that its main till has stopped confirming.
+type Cached struct {
+	Plan               string `json:"plan"`
+	SubscriptionStatus string `json:"subscription_status"`
+	ExpiresAt          string `json:"expires_at"`
+	LastConfirmedAt    string `json:"last_confirmed_at"`
+}
+
+// ReadCached reads the four settings rows. ok is false when the cache was
+// never confirmed by the cloud (no last_confirmed_at) or is unreadable —
+// nothing worth relaying.
+func ReadCached(ctx context.Context, r Reader) (c Cached, ok bool) {
+	get := func(k string) (string, error) {
+		v, _, err := r.Get(ctx, k)
+		return strings.TrimSpace(v), err
+	}
+	var err error
+	if c.LastConfirmedAt, err = get(KeyLastConfirmedAt); err != nil || c.LastConfirmedAt == "" {
+		return Cached{}, false
+	}
+	for _, f := range []struct {
+		key string
+		dst *string
+	}{{KeyPlan, &c.Plan}, {KeySubscriptionStatus, &c.SubscriptionStatus}, {KeyExpiresAt, &c.ExpiresAt}} {
+		if *f.dst, err = get(f.key); err != nil {
+			return Cached{}, false
+		}
+	}
+	return c, true
+}
+
+// RelayValues validates a relayed cache and returns the four settings rows
+// to write, verbatim (normalised to UTC RFC3339). Same fail-closed rules as
+// Block.Values: an unknown plan or status, or a missing/unparsable
+// confirmation time, is an error and the caller keeps its own cache; an
+// unparsable expires_at is display-only and stored empty.
+func (c Cached) RelayValues() (map[string]string, error) {
+	plan := Plan(strings.TrimSpace(c.Plan))
+	if !plan.Valid() {
+		return nil, fmt.Errorf("entitlement: unknown relayed plan %q", c.Plan)
+	}
+	status := strings.TrimSpace(c.SubscriptionStatus)
+	if !validStatus(status) {
+		return nil, fmt.Errorf("entitlement: unknown relayed subscription_status %q", c.SubscriptionStatus)
+	}
+	confirmed, err := time.Parse(time.RFC3339, strings.TrimSpace(c.LastConfirmedAt))
+	if err != nil {
+		return nil, fmt.Errorf("entitlement: relayed last_confirmed_at %q: %w", c.LastConfirmedAt, err)
+	}
+	expires := ""
+	if t, err := time.Parse(time.RFC3339, strings.TrimSpace(c.ExpiresAt)); err == nil {
+		expires = t.UTC().Format(time.RFC3339)
+	}
+	return map[string]string{
+		KeyPlan:               string(plan),
+		KeySubscriptionStatus: status,
+		KeyExpiresAt:          expires,
+		KeyLastConfirmedAt:    confirmed.UTC().Format(time.RFC3339),
+	}, nil
+}
