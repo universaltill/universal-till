@@ -204,40 +204,6 @@ type kitchenSendFailure struct {
 	Err     error
 }
 
-// buildKitchenTargets resolves station routing for a sale (ut-docs#516) and
-// groups its lines into one ticket per destination:
-//
-//   - a line whose item resolves to stations (item routes override category
-//     routes — data.POSRepo.ResolveKitchenStations owns that precedence)
-//     appears on each of those stations' tickets — a line routed to two
-//     stations is deliberately duplicated on both;
-//   - a line that resolves to no station falls into ONE shared default
-//     bucket: Station "KITCHEN", sent to the legacy printer.kitchen_addr —
-//     with zero stations configured this is the entire sale, byte-identical
-//     to the pre-#516 single ticket.
-//
-// Station tickets come first (sorted by name, deterministic), the default
-// bucket last. Only stations that print (destination 'printer' or 'both' —
-// data.KitchenStation.PrintsTickets) receive tickets; a 'display'-only
-// station (ut-docs#544) shows its orders on a kitchen screen instead, so a
-// line whose every resolved station is display-only joins the default
-// bucket rather than silently vanishing — exactly as it did before the
-// display type had a UI.
-//
-// stationID, when non-empty, scopes the result to that ONE station's own
-// ticket (ut-docs#2098): a line that resolves to a real station but not
-// THIS one is dropped entirely — it still counts as "routed" so it never
-// leaks into the default bucket, it just isn't this station's business.
-// The default bucket itself is never returned under a station filter: it
-// has no real KitchenStation.ID to match, and a per-station board (the
-// only caller that ever passes one) never wants "everything unrouted"
-// mixed into its own resend. Empty stationID keeps the original
-// unfiltered, every-destination behavior used by the shop-wide /orders
-// board and by the automatic post-sale print.
-func buildKitchenTargets(ctx context.Context, d *common.Deps, receiptNo, stationID string) ([]kitchenTarget, error) {
-	return buildKitchenTargetsFiltered(ctx, d, receiptNo, stationID, nil)
-}
-
 // kitchenLineFilter (ut-docs#2703) narrows which sale lines -- and how much
 // of each -- a kitchen print sends. i is the line's position in the sale
 // (line_no order). It returns the line to print (Qty possibly reduced) and
@@ -280,10 +246,41 @@ func kitchenDeltaFilter(lines []pos.BasketLine) kitchenLineFilter {
 	}
 }
 
-// buildKitchenTargetsFiltered is buildKitchenTargets with an optional line
-// filter (ut-docs#2703) applied before routing, so a delta print goes
-// through exactly the same station routing as a full one.
-func buildKitchenTargetsFiltered(ctx context.Context, d *common.Deps, receiptNo, stationID string, filter kitchenLineFilter) ([]kitchenTarget, error) {
+// buildKitchenTargets resolves station routing for a sale (ut-docs#516) and
+// groups its lines into one ticket per destination:
+//
+//   - a line whose item resolves to stations (item routes override category
+//     routes — data.POSRepo.ResolveKitchenStations owns that precedence)
+//     appears on each of those stations' tickets — a line routed to two
+//     stations is deliberately duplicated on both;
+//   - a line that resolves to no station falls into ONE shared default
+//     bucket: Station "KITCHEN", sent to the legacy printer.kitchen_addr —
+//     with zero stations configured this is the entire sale, byte-identical
+//     to the pre-#516 single ticket.
+//
+// Station tickets come first (sorted by name, deterministic), the default
+// bucket last. Only stations that print (destination 'printer' or 'both' —
+// data.KitchenStation.PrintsTickets) receive tickets; a 'display'-only
+// station (ut-docs#544) shows its orders on a kitchen screen instead, so a
+// line whose every resolved station is display-only joins the default
+// bucket rather than silently vanishing — exactly as it did before the
+// display type had a UI.
+//
+// stationID, when non-empty, scopes the result to that ONE station's own
+// ticket (ut-docs#2098): a line that resolves to a real station but not
+// THIS one is dropped entirely — it still counts as "routed" so it never
+// leaks into the default bucket, it just isn't this station's business.
+// The default bucket itself is never returned under a station filter: it
+// has no real KitchenStation.ID to match, and a per-station board (the
+// only caller that ever passes one) never wants "everything unrouted"
+// mixed into its own resend. Empty stationID keeps the original
+// unfiltered, every-destination behavior used by the shop-wide /orders
+// board and by the automatic post-sale print.
+//
+// filter (ut-docs#2703) optionally narrows which lines -- and how much of
+// each -- are sent, applied before routing so a delta print goes through
+// exactly the same station routing as a full one; nil = every line in full.
+func buildKitchenTargets(ctx context.Context, d *common.Deps, receiptNo, stationID string, filter kitchenLineFilter) ([]kitchenTarget, error) {
 	repo := data.NewPOSRepo(d.Db)
 	detail, ok, err := repo.GetSaleDetail(ctx, receiptNo)
 	if err != nil {
@@ -417,7 +414,7 @@ func printKitchen(ctx context.Context, d *common.Deps, receiptNo, actorID, stati
 // printKitchenFiltered is printKitchen with an optional line filter
 // (ut-docs#2703, see kitchenLineFilter).
 func printKitchenFiltered(ctx context.Context, d *common.Deps, receiptNo, actorID, stationID string, filter kitchenLineFilter) (total int, failures []kitchenSendFailure, err error) {
-	targets, err := buildKitchenTargetsFiltered(ctx, d, receiptNo, stationID, filter)
+	targets, err := buildKitchenTargets(ctx, d, receiptNo, stationID, filter)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -499,14 +496,11 @@ func kitchenPrintingEnabledChecked(ctx context.Context, d *common.Deps) (bool, e
 // "no attempt" (kitchen printing off everywhere, or nothing resolved to
 // send) must neither overwrite a real prior failure nor falsely clear one.
 // Tracked on d.AsyncWork (ut-docs#425), same reasoning as printReceiptAsync.
-func printKitchenAsync(d *common.Deps, receiptNo string, actorID string) {
-	printKitchenAsyncFiltered(d, receiptNo, actorID, nil)
-}
-
-// printKitchenAsyncFiltered is printKitchenAsync with an optional line
+//
 // filter (ut-docs#2703): the tender path passes kitchenDeltaFilter so a
-// recalled table order prints only what the kitchen does not have yet.
-func printKitchenAsyncFiltered(d *common.Deps, receiptNo string, actorID string, filter kitchenLineFilter) {
+// recalled table order prints only what the kitchen does not have yet; nil
+// prints every line.
+func printKitchenAsync(d *common.Deps, receiptNo string, actorID string, filter kitchenLineFilter) {
 	d.AsyncWork.Add(1)
 	go func() {
 		defer d.AsyncWork.Done()

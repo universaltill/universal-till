@@ -659,7 +659,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// Kitchen ticket to the separate kitchen printer, if one is
 	// configured (docs: arch/restaurant-phone-orders.md) — also async
 	// and best-effort; a no-op when no kitchen printer is set.
-	printKitchenAsyncFiltered(d, receiptNo, actorID, kitchenFilter)
+	printKitchenAsync(d, receiptNo, actorID, kitchenFilter)
 
 	return saleID, nil
 }
