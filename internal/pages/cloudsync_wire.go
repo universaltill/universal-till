@@ -147,11 +147,10 @@ func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(cont
 		// validation), this hook fails closed like every other case here —
 		// a remote result column should say why nothing changed, not silently
 		// coerce an unrecognised value to "top". The prompt mode lives
-		// OUTSIDE RuntimeState (same ut-docs#2121-class gap display.mode's
-		// own re-derive documents), so the generic `rederive` callback below
-		// never reaches it — this hook must make the identical live-republish
-		// call the dedicated handler does, or the sale screen keeps showing
-		// the OLD placement until the till restarts.
+		// OUTSIDE RuntimeState; the generic `rederive` below republishes it
+		// too since ut-docs#2790 (publishCachedSettings), and the explicit
+		// live-republish after the Set stays so a nil rederive still takes
+		// effect.
 		if value != data.OrderTypePromptModeTop && value != data.OrderTypePromptModeBeforeItem && value != data.OrderTypePromptModeAtPay {
 			return "", fmt.Errorf("%s must be one of top, before_item, at_pay", key)
 		}

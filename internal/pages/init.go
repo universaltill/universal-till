@@ -144,9 +144,6 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		log.Fatalf("failed to load locales: %v", err)
 	}
 	httpx.InitI18n(i18n, state.Locale)
-	// ut-docs#2135: republish the persisted locale generation, so per-browser
-	// ut_lang overrides retired before this restart stay retired.
-	loadLocaleGeneration(ctx, setStore)
 	// UT_TEST_I18N_OVERLAY_DIR (test/e2e harness only -- never a production
 	// plugin-install path, never signature-verified, never documented to a
 	// shop owner): loads every *.json file in the named directory as I18n
@@ -175,13 +172,6 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	if overrides, err := data.NewTranslationRepo(db).ListOverrides(ctx); err == nil {
 		i18n.SetShopOverrides(overrides)
 	}
-	httpx.InitCurrency(state.Currency)
-	// ut-docs#2362: same "RenderError has no *common.Deps to read fresh
-	// from" reasoning as InitCurrency above — publish the boot-time theme
-	// so the very first error page a themed till renders already carries
-	// the right stylesheet/shell signature, not just after the first
-	// settings write that happens to touch theme.
-	httpx.InitTheme(state.Theme)
 	// Dedicated till: larger touch targets, no text selection (UT_KIOSK=1).
 	httpx.InitKiosk(os.Getenv("UT_KIOSK") == "1")
 	// Interface scale: the saved setting wins; UT_UI_SCALE env is the
@@ -194,34 +184,13 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 			}
 		}
 	}
-	httpx.InitUIScale(state.UIScale)
-	httpx.InitOSKMode(state.OSKMode)
-	// ut-docs#2099: publish this till's self-order kiosk status (ADR-0020,
-	// display.mode="self_order") so record_dialog.html's "selforder" check
-	// (coding-standards.md §10 — status/lock/exit-to-OS must be withheld on
-	// a kiosk device, customer containment) is correct from the very first
-	// request, not just after the first POST /api/settings/display-mode.
-	// Not part of RuntimeState (see common.LoadState) — read straight from
-	// the store here, same as authSvc.SetAnonymousRootRedirect below.
-	if mode, _, _ := setStore.Get(ctx, "display.mode"); mode == "self_order" {
-		httpx.InitSelfOrderMode(true)
-		httpx.InitDisplayMode(mode)
-	} else {
-		httpx.InitSelfOrderMode(false)
-		// ut-docs#2154: error_page.html's "Back to sale" link needs the
-		// full mode value (not just the self-order bool) to distinguish
-		// backoffice from register -- see httpx.InitDisplayMode's own doc
-		// comment.
-		httpx.InitDisplayMode(mode)
-	}
-
-	// ut-docs#2282: publish the dine-in/takeaway prompt-placement setting so
-	// the sale screen's own JS (base.html's data-order-type-prompt-mode)
-	// knows from the very first request whether it owes the cashier an
-	// intercept modal before an item-add/Pay action, same "read straight
-	// from the store, not part of RuntimeState" shape as display.mode above.
-	promptMode, _, _ := setStore.Get(ctx, data.OrderTypePromptModeKey)
-	httpx.InitOrderTypePromptMode(promptMode) // "" (unset) falls back to top
+	authDisabled := auth.Disabled(os.Getenv("UT_AUTH"))
+	// Every settings-derived process global (currency, theme, locale,
+	// display/self-order mode, dine-in/takeaway prompt, idle lock, ...) is
+	// published by ONE function, shared with the post-sync re-derive, so a
+	// setting pulled from the main till can't stay stale here until a
+	// restart (ut-docs#2790).
+	publishCachedSettings(ctx, setStore, state, authDisabled)
 
 	// Boot sweep: drop THIS till's own live-basket table claims
 	// (ut-docs#1390). The engine constructed just below always starts with an
@@ -308,7 +277,6 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// One auth service for the whole till: login, sessions AND manager-PIN
 	// approvals share a single device-wide lockout.
 	authSvc := auth.NewService(db)
-	authDisabled := auth.Disabled(os.Getenv("UT_AUTH"))
 	// Idle auto-lock (docs: pos-auth.md): server-side check + audit hook.
 	// The cosmetic client timer (data-idle-lock) is only published when the
 	// middleware actually enforces sessions.
@@ -318,9 +286,6 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		_ = idleAuditRepo.InsertAudit(ctx, nil, userID, "user", userID, "idle_lock", nil,
 			time.Now().UTC().Format(time.RFC3339), "")
 	})
-	if !authDisabled {
-		httpx.InitIdleLock(state.IdleLockMinutes)
-	}
 	// ut-docs#1259: an anonymous "/" on a self-order-mode till goes to the
 	// kiosk landing, not the login keypad — see auth.Middleware's own
 	// comment for why this matters (every kiosk launcher opens "/", and a
@@ -675,12 +640,11 @@ func newRederiveSettings(dp *common.Deps, authDisabled bool, i18n *config.I18n) 
 			}
 			*s = st
 		})
-		httpx.InitCurrency(applied.Currency)
-		// ut-docs#2362: same reasoning as InitCurrency above — a cloud
-		// set_setting theme directive (ADR-0018) or the replica-drift loop
-		// must republish RenderError's cached theme too, or a themed till
-		// keeps showing its error pages unthemed until the next restart.
-		httpx.InitTheme(applied.Theme)
+		// ut-docs#2790: every cached process global, through the same
+		// publisher boot uses — a replica drift pull or a cloud directive
+		// must reach them all, not just the ones someone remembered to add
+		// here (sale.order_type_prompt and the default locale were missed).
+		publishCachedSettings(c, dp.Settings, applied, authDisabled)
 		// In-place tax swap: replacing the engine (as the settings
 		// handlers do) would empty the basket of a sale in progress.
 		// Both engines: the kiosk's separate instance (ut-docs#449) must
@@ -695,25 +659,7 @@ func newRederiveSettings(dp *common.Deps, authDisabled bool, i18n *config.I18n) 
 			dp.KioskEngine.SetConfig(newCfg)
 			dp.SelfOrderSessions.SetConfig(newCfg) // every live table-QR session too (ADR-0103)
 		}
-		// ut-docs#2099 review finding B1: display.mode is deliberately NOT
-		// part of RuntimeState (see the boot-time InitSelfOrderMode call
-		// above), so it gets no free ride from `*s = st` and needs its own
-		// re-derive here — the same shape as the window-mode push below.
-		// Without this, a cloud set_setting display.mode=self_order
-		// directive (ADR-0018) leaves the till's "selforder" template flag
-		// stale until the next process restart: record_dialog.html keeps
-		// rendering lock/status/exit-to-OS to a device an admin just
-		// declared customer-facing (coding-standards.md §10's containment
-		// requirement), or the reverse — a till taken OUT of kiosk mode
-		// keeps withholding those controls on an ordinary register.
-		if mode, _, err := dp.Settings.Get(c, "display.mode"); err == nil {
-			httpx.InitSelfOrderMode(mode == "self_order")
-			httpx.InitDisplayMode(mode) // ut-docs#2154, same re-derive
-		}
 		dp.AuthSvc.SetIdleLockMinutes(applied.IdleLockMinutes)
-		if !authDisabled {
-			httpx.InitIdleLock(applied.IdleLockMinutes)
-		}
 		if overrides, err := data.NewTranslationRepo(dp.Db).ListOverrides(c); err == nil {
 			i18n.SetShopOverrides(overrides)
 		}
@@ -737,6 +683,54 @@ func newRederiveSettings(dp *common.Deps, authDisabled bool, i18n *config.I18n) 
 		// reload — cached ".ask" answers must not survive that
 		// (ut-docs#222 review finding).
 		plugins.SharedBus(dp.Db).BumpGeneration()
+	}
+}
+
+// publishCachedSettings republishes every process global derived from a
+// settings row — the httpx template/RenderError caches that have no
+// *common.Deps to read fresh from. Called by BOTH pages.Init at boot and
+// newRederiveSettings after a LAN admin pull or cloud directive, so the two
+// can't drift (ut-docs#2790: the re-derive once missed the order-type
+// prompt and the default locale, leaving an additional till on its
+// boot-time values until restart). TestCachedSettingsGlobals_AllPublishedByOneHelper
+// fails if an httpx Init*/Set* global is added without landing here.
+//
+// display.mode and sale.order_type_prompt are deliberately NOT part of
+// RuntimeState, so they are read straight from the store; a read error
+// leaves the published value as it was rather than resetting it.
+func publishCachedSettings(ctx context.Context, store *settings.Store, st common.RuntimeState, authDisabled bool) {
+	httpx.InitCurrency(st.Currency)
+	// ut-docs#2362: RenderError's cached theme — a themed till must render
+	// its error pages themed from the first request and after a theme sync.
+	httpx.InitTheme(st.Theme)
+	// ut-docs#861: the shop's default locale (store.locale). No-op on "".
+	httpx.SetDefaultLocale(st.Locale)
+	// ut-docs#2135: the persisted locale generation, so per-browser ut_lang
+	// overrides retired on the main till stay retired here too.
+	loadLocaleGeneration(ctx, store)
+	// Per-till display.* values: re-publishing them from this till's own
+	// store is a no-op after a sync (they never sync), but keeps one path.
+	httpx.InitUIScale(st.UIScale)
+	httpx.InitOSKMode(st.OSKMode)
+	// ut-docs#2099/#2154: self-order kiosk containment flag + the full
+	// display mode error_page.html's "Back to sale" link needs.
+	if mode, _, err := store.Get(ctx, "display.mode"); err == nil {
+		httpx.InitSelfOrderMode(mode == "self_order")
+		httpx.InitDisplayMode(mode)
+	} else {
+		logging.L().Warnf("settings: read display.mode: %v", err)
+	}
+	// ut-docs#2282: the dine-in/takeaway prompt placement the sale screen's
+	// JS reads (data-order-type-prompt-mode); "" (unset) falls back to top.
+	if mode, _, err := store.Get(ctx, data.OrderTypePromptModeKey); err == nil {
+		httpx.InitOrderTypePromptMode(mode)
+	} else {
+		logging.L().Warnf("settings: read %s: %v", data.OrderTypePromptModeKey, err)
+	}
+	// The cosmetic client idle timer is only published when the auth
+	// middleware actually enforces sessions.
+	if !authDisabled {
+		httpx.InitIdleLock(st.IdleLockMinutes)
 	}
 }
 
