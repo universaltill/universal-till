@@ -2,6 +2,9 @@ package plugins
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -24,8 +27,14 @@ func seededCatalogRepo(t *testing.T, plugins []marketplace.PluginSummary) *marke
 	if err != nil {
 		t.Fatalf("NewCatalogRepository: %v", err)
 	}
-	if err := repo.SeedSnapshot(&snapshot); err != nil {
-		t.Fatalf("seed snapshot: %v", err)
+	// Written as the pre-ut-docs#2674 single file, which the repository
+	// still serves for the (Locale, DeviceArch) key recorded in it.
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatalf("marshal snapshot: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "catalog-snapshot.json"), raw, 0o644); err != nil {
+		t.Fatalf("write snapshot: %v", err)
 	}
 	return repo
 }

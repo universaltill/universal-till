@@ -111,8 +111,8 @@ func TestCatalogRepository_StalePerKeyCacheServedOffline(t *testing.T) {
 		{Plugins: []PluginSummary{{Name: "store-plugin"}}, FetchedAt: old, Locale: "en-US", DeviceArch: "linux/arm64"},
 		{Plugins: []PluginSummary{{Name: "page-plugin"}}, FetchedAt: old, Locale: "fa", DeviceArch: ""},
 	} {
-		if err := repo.SeedSnapshot(s); err != nil {
-			t.Fatalf("SeedSnapshot: %v", err)
+		if err := repo.saveSnapshot(s); err != nil {
+			t.Fatalf("saveSnapshot: %v", err)
 		}
 	}
 
@@ -193,9 +193,6 @@ func TestCatalogRepository_RejectsUnsafeKeys(t *testing.T) {
 		}
 		if _, _, err := repo.Get(k[0], k[1]); err == nil {
 			t.Errorf("Get(%q, %q): want an error", k[0], k[1])
-		}
-		if err := repo.SeedSnapshot(&CatalogSnapshot{Locale: k[0], DeviceArch: k[1]}); err == nil {
-			t.Errorf("SeedSnapshot(%q, %q): want an error", k[0], k[1])
 		}
 	}
 	entries, err := os.ReadDir(dir)

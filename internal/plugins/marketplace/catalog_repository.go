@@ -453,16 +453,6 @@ func (cr *CatalogRepository) Filter(locale, deviceArch, pluginType, developer, t
 	return filtered, nil
 }
 
-// SeedSnapshot writes snapshot to disk under its own (Locale, DeviceArch)
-// key without touching the in-memory cache, exactly as if an earlier run had
-// fetched it. For tests and fixtures that need a catalog with no network.
-func (cr *CatalogRepository) SeedSnapshot(snapshot *CatalogSnapshot) error {
-	if _, err := catalogKey(snapshot.Locale, snapshot.DeviceArch); err != nil {
-		return err
-	}
-	return cr.saveSnapshot(snapshot)
-}
-
 // saveSnapshot writes the snapshot to its per-key file on disk
 func (cr *CatalogRepository) saveSnapshot(snapshot *CatalogSnapshot) error {
 	data, err := json.MarshalIndent(snapshot, "", "  ")

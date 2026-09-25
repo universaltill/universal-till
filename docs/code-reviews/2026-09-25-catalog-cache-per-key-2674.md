@@ -38,8 +38,6 @@ last.
 - **Upgrade path, offline-first:** the old `catalog-snapshot.json` is still
   read but never written. It is used as a fallback only for the key it
   records, so a till upgraded while offline keeps serving its catalog.
-- `SeedSnapshot` writes a snapshot to disk under its own key, for fixtures.
-  It never touches the memory map, so the monotonic-clock invariant holds.
 - `web/help/img/manifest.json` has a refreshed surface hash. The
   `internal/pages` edits change which cache key is read, and no rendered
   pixel changed.
@@ -59,9 +57,10 @@ last.
   cross-key symptoms the card describes. After restoring the fix they pass.
 - `TestPluginsPage_ReadsTillCatalogKeyNotUILocale`: `GET /plugins?lang=fa`
   requests and caches only the till key.
-- I updated the existing seeds to write under the key their reader uses
-  (`SeedSnapshot`). `server_test.go`'s `plantSnapshot` still writes the
-  legacy file on purpose, and a comment now says so.
+- The existing seeds now record the key their reader uses. Tests outside
+  the package write the legacy `catalog-snapshot.json`, which the repository
+  still serves for its recorded key. `server_test.go`'s `plantSnapshot` does
+  the same, and a comment now says so.
 
 ## Findings (Fable review)
 
@@ -73,6 +72,14 @@ last.
 | 4 | nit | Per-key file trusted without checking its recorded key (a case-insensitive filesystem maps `en-US` and `en-us` to one file) | **Fixed:** per-key and legacy reads both check the key recorded in the file |
 | 5 | nit | `plantSnapshot` silently exercises the legacy path | **Fixed:** added a comment |
 | 6 | nit | The legacy file is never deleted and is re-parsed on a cold miss | **Accepted:** it's small, read only on a cold per-key miss, and deleting it would drop the offline fallback for a till that hasn't fetched yet |
+
+**CI finding (after push):** `guard-deadcode-baseline.sh` (in the
+`desktop-shell` job) flagged a `SeedSnapshot` helper that only tests called.
+**Fixed:** I removed it. Marketplace tests use the internal `saveSnapshot`,
+and tests elsewhere write the legacy file. I re-ran the guard locally: it
+passes. I also ran the guards from the non-`build` jobs this time.
+`guard-gobind-skip.sh` needs a `gobind` binary this container lacks, and it
+fails the same way on `main`.
 
 The reviewer also checked and found sound: map access under `cr.mu`, the
 per-key monotonic guard and its invariant, no traversal or collision,
