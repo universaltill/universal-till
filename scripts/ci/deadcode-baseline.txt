@@ -23,6 +23,7 @@ internal/httpx/httpx.go: unreachable func: NewRenderer
 internal/httpx/httpx.go: unreachable func: Renderer.Render
 internal/httpx/icons.go: unreachable func: IconNames
 internal/httpx/tplcache.go: unreachable func: ResetCacheForTests
+internal/logging/capture.go: unreachable func: CaptureForTest
 internal/logging/logging.go: unreachable func: ResetRecent
 internal/manual/manual.go: unreachable func: Library.IDs
 internal/manual/manual.go: unreachable func: Library.Locales
@@ -47,12 +48,12 @@ internal/plugins/plugins.go: unreachable func: Manager.CatalogList
 internal/plugins/revocation.go: unreachable func: RevocationChecker.GetRevokedPlugins
 internal/plugins/rollback.go: unreachable func: RollbackManager.GetVersionHistory
 internal/pos/order_status.go: unreachable func: OrderStatusBroadcaster.SubscriberCount
-internal/pos/session_manager.go: unreachable func: SessionBasketManager.Create
-internal/pos/session_manager.go: unreachable func: SessionBasketManager.TableOwner
-internal/pos/session_manager.go: unreachable func: SessionBasketManager.TableOwnerActive
 internal/pos/service.go: unreachable func: Service.ScanQty
 internal/pos/service.go: unreachable func: Service.SetLineOrderType
 internal/pos/service.go: unreachable func: Service.Tender
+internal/pos/session_manager.go: unreachable func: SessionBasketManager.Create
+internal/pos/session_manager.go: unreachable func: SessionBasketManager.TableOwner
+internal/pos/session_manager.go: unreachable func: SessionBasketManager.TableOwnerActive
 internal/print/kitchen.go: unreachable func: RenderKitchenTicketText
 internal/secrets/keystore.go: unreachable func: KeyStore.Exists
 internal/secrets/keystore.go: unreachable func: KeyStore.Path

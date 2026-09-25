@@ -60,13 +60,7 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	// managers only cashiers. actor is the RESOLVED acting user (see
 	// resolveActingUser below), not necessarily the session user.
 	canManage := func(actor auth.User, target data.UserRow) bool {
-		if target.ID == "system" {
-			return false
-		}
-		if actor.Role == "admin" || actor.Role == "super_admin" {
-			return true
-		}
-		return target.Role == "cashier"
+		return canManageUser(actor.Role, target) // user_rules.go, shared with the main till
 	}
 
 	// resolveActingUser resolves the user whose ROLE governs canManage and
@@ -161,7 +155,7 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		username, display, role := r.PostFormValue("username"), r.PostFormValue("display_name"), r.PostFormValue("role")
-		if role != "cashier" && role != "manager" && role != "admin" && role != "super_admin" {
+		if !isAssignableUserRole(role) {
 			usersRespondError(w, r, "users.error.role")
 			return
 		}
@@ -216,6 +210,24 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				http.Error(w, "only admins create managers or admins", http.StatusForbidden)
 				return
 			}
+		}
+		// ADR-0115 §1: on a till that follows a main till the main till
+		// creates the user (and assigns its id); the answered row is
+		// mirrored locally. Any failure refuses with no local write.
+		if tillFollowsMain(r.Context(), d) {
+			u, err := userWriteThrough(r.Context(), d, repo, syncUserApplyRequest{Op: "create", Username: username, DisplayName: display, Role: role, ActorID: actorID})
+			if err != nil {
+				respondUserSyncError(w, r, err)
+				return
+			}
+			if elev.Outcome == elevated {
+				auditElevated(r, actorID, elev.ActorID, u.ID, "user_create")
+				usersRespondOK(w, r, "elevation.approved")
+				return
+			}
+			audit(r, actorID, u.ID, "user_create")
+			usersRespondOK(w, r, "users.saved")
+			return
 		}
 		id, err := repo.CreateUser(r.Context(), username, display, role)
 		if err != nil {
@@ -290,7 +302,15 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			usersRespondError(w, r, "auth.error.pin_format")
 			return
 		}
-		if err := repo.SetUserPIN(r.Context(), target.ID, hash); err != nil {
+		// ADR-0115 §1: on a till that follows a main till only the hash
+		// goes to the main till, and the local row is mirrored from its
+		// answer. Any failure refuses with no local write.
+		if tillFollowsMain(r.Context(), d) {
+			if _, err := userWriteThrough(r.Context(), d, repo, syncUserApplyRequest{Op: "set_pin", UserID: target.ID, PinHash: hash, ActorID: actorID}); err != nil {
+				respondUserSyncError(w, r, err)
+				return
+			}
+		} else if err := repo.SetUserPIN(r.Context(), target.ID, hash); err != nil {
 			http.Error(w, "failed to set pin", http.StatusInternalServerError)
 			return
 		}
@@ -338,25 +358,20 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if elev.Outcome == elevated {
 			actorID = elev.ApproverID
 		}
-		if !activate && target.Role == "admin" {
-			others, err := repo.CountOtherActiveAdminsWithPIN(r.Context(), target.ID)
-			if err != nil || others == 0 {
-				usersRespondError(w, r, "users.error.last_admin")
+		// Last active admin / super_admin with a PIN (ut-docs#761 review
+		// finding 4) -- shared with the main till's write-through endpoint.
+		if key := lastPrivilegedUserGuard(r.Context(), repo, target, target.Role, activate); key != "" {
+			usersRespondError(w, r, key)
+			return
+		}
+		// ADR-0115 §1: write through to the main till when this till
+		// follows one; any failure refuses with no local write.
+		if tillFollowsMain(r.Context(), d) {
+			if _, err := userWriteThrough(r.Context(), d, repo, syncUserApplyRequest{Op: "set_active", UserID: target.ID, Active: &activate, ActorID: actorID}); err != nil {
+				respondUserSyncError(w, r, err)
 				return
 			}
-		}
-		// Same guard, super_admin side (ut-docs#761 review finding 4):
-		// deactivating the only super_admin would strand the till with
-		// nobody able to reach the permission matrix, audit page or
-		// backoffice.
-		if !activate && target.Role == "super_admin" {
-			others, err := repo.CountOtherActiveSuperAdminsWithPIN(r.Context(), target.ID)
-			if err != nil || others == 0 {
-				usersRespondError(w, r, "users.error.last_super_admin")
-				return
-			}
-		}
-		if err := repo.SetUserActive(r.Context(), target.ID, activate); err != nil {
+		} else if err := repo.SetUserActive(r.Context(), target.ID, activate); err != nil {
 			http.Error(w, "failed to update user", http.StatusInternalServerError)
 			return
 		}
@@ -413,6 +428,28 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		if target.Role == "super_admin" {
 			// Already there — a no-op, not an error.
+			http.Redirect(w, r, "/users", http.StatusSeeOther)
+			return
+		}
+
+		// ADR-0115 §1: on a till that follows a main till the main till
+		// applies the promotion (re-checking its own guards); the local row
+		// is mirrored from its answer and the local audit row written after.
+		// Any failure refuses with no local write.
+		if tillFollowsMain(r.Context(), d) {
+			if _, err := userWriteThrough(r.Context(), d, repo, syncUserApplyRequest{Op: "set_role", UserID: target.ID, Role: "super_admin", ActorID: actorID}); err != nil {
+				if userSyncForbidden(err) {
+					http.Error(w, "forbidden by the main till", http.StatusForbidden)
+					return
+				}
+				http.Redirect(w, r, "/users?err="+userSyncErrorKey(err), http.StatusSeeOther)
+				return
+			}
+			if err := posRepo.InsertAudit(r.Context(), nil, actorID, "user", target.ID, "user_role_changed",
+				map[string]any{"from": target.Role, "to": "super_admin", "via": "in-app"}, time.Now().UTC().Format(time.RFC3339), ""); err != nil {
+				logging.L().Errorf("promote user %s: local audit write after main-till write-through: %v", target.ID, err)
+			}
+			_ = repo.RevokeUserSessions(r.Context(), target.ID)
 			http.Redirect(w, r, "/users", http.StatusSeeOther)
 			return
 		}
@@ -478,7 +515,7 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		_ = r.ParseForm()
 		newRole := r.PostFormValue("role")
-		if newRole != "cashier" && newRole != "manager" && newRole != "admin" && newRole != "super_admin" {
+		if !isAssignableUserRole(newRole) {
 			usersRespondError(w, r, "users.error.role")
 			return
 		}
@@ -535,22 +572,41 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		// Last-active-with-a-PIN guards: changing the last admin or the
 		// last super_admin *away* from that role would strand the till the
-		// same way deactivating them would (the /active handler above
-		// already guards exactly this for deactivation) — reusing both
-		// counters rather than inventing a third guard shape.
-		if target.Role == "admin" && newRole != "admin" {
-			others, err := repo.CountOtherActiveAdminsWithPIN(r.Context(), target.ID)
-			if err != nil || others == 0 {
-				usersRespondError(w, r, "users.error.last_admin")
-				return
-			}
+		// same way deactivating them would — the same shared guard the
+		// /active handler and the main till's write-through endpoint use.
+		if key := lastPrivilegedUserGuard(r.Context(), repo, target, newRole, true); key != "" {
+			usersRespondError(w, r, key)
+			return
 		}
-		if target.Role == "super_admin" && newRole != "super_admin" {
-			others, err := repo.CountOtherActiveSuperAdminsWithPIN(r.Context(), target.ID)
-			if err != nil || others == 0 {
-				usersRespondError(w, r, "users.error.last_super_admin")
+
+		// ADR-0115 §1: on a till that follows a main till the main till
+		// applies the change (re-checking the same guards against the
+		// shop's real state) and the local row is mirrored from its answer;
+		// the local audit row follows. Any failure refuses with no local
+		// write.
+		if tillFollowsMain(r.Context(), d) {
+			if _, err := userWriteThrough(r.Context(), d, repo, syncUserApplyRequest{Op: "set_role", UserID: target.ID, Role: newRole, ActorID: actorID}); err != nil {
+				respondUserSyncError(w, r, err)
 				return
 			}
+			now := time.Now().UTC().Format(time.RFC3339)
+			payload := map[string]any{"from": target.Role, "to": newRole, "via": "in-app"}
+			var auditErr error
+			if elev.Outcome == elevated {
+				auditErr = posRepo.InsertAuditElevated(r.Context(), nil, actorID, elev.ActorID, "user", target.ID, "user_role_changed", payload, now, "")
+			} else {
+				auditErr = posRepo.InsertAudit(r.Context(), nil, actorID, "user", target.ID, "user_role_changed", payload, now, "")
+			}
+			if auditErr != nil {
+				logging.L().Errorf("role change %s->%s for user %s: local audit write after main-till write-through: %v", target.Role, newRole, target.ID, auditErr)
+			}
+			_ = repo.RevokeUserSessions(r.Context(), target.ID)
+			if elev.Outcome == elevated {
+				usersRespondOK(w, r, "elevation.approved")
+				return
+			}
+			usersRespondOK(w, r, "users.saved")
+			return
 		}
 
 		// The four branches below are unambiguous infrastructure failures

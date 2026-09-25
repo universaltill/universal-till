@@ -159,6 +159,9 @@ func (l *Logger) logf(level Level, format string, args ...any) {
 	if l == nil {
 		return
 	}
+	if capture.Load() != nil {
+		teeCapture(level, fmt.Sprintf(format, args...))
+	}
 	if level < l.level {
 		return
 	}

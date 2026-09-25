@@ -58,27 +58,67 @@ func HashPIN(pin string) (string, error) {
 		base64.RawStdEncoding.EncodeToString(key)), nil
 }
 
-// VerifyPIN checks a PIN against a stored hash. Unknown formats fail closed.
-func VerifyPIN(pin, stored string) bool {
+// ErrBadPINHash is returned by ValidatePINHash for anything that is not a
+// well-formed HashPIN string.
+var ErrBadPINHash = errors.New("pin hash is not a valid pbkdf2$sha256 hash")
+
+// maxPINIterations caps the iteration count a stored hash may carry. PIN
+// login verifies the entered PIN against EVERY active user's hash, so one
+// hash with an absurd count would stall every sign-in on the till.
+const maxPINIterations = 10 * pinIterations
+
+// parsedPINHash is a decoded pbkdf2$sha256$<iter>$<salt>$<hash> string.
+type parsedPINHash struct {
+	iter int
+	salt []byte
+	key  []byte
+}
+
+// parsePINHash decodes a stored hash. ok=false for any unknown or malformed
+// format (fail closed).
+func parsePINHash(stored string) (parsedPINHash, bool) {
 	parts := strings.Split(stored, "$")
 	if len(parts) != 5 || parts[0] != "pbkdf2" || parts[1] != "sha256" {
-		return false
+		return parsedPINHash{}, false
 	}
 	iter, err := strconv.Atoi(parts[2])
 	if err != nil || iter < 1 {
-		return false
+		return parsedPINHash{}, false
 	}
 	salt, err := base64.RawStdEncoding.DecodeString(parts[3])
 	if err != nil {
+		return parsedPINHash{}, false
+	}
+	key, err := base64.RawStdEncoding.DecodeString(parts[4])
+	if err != nil || len(key) == 0 {
+		return parsedPINHash{}, false
+	}
+	return parsedPINHash{iter: iter, salt: salt, key: key}, true
+}
+
+// ValidatePINHash reports whether stored is a hash this till can store for
+// an operator: the HashPIN format, a sane iteration count, a non-trivial
+// salt and a full-length key. The main till applies it to a hash an
+// additional till writes through (ADR-0115 §1) -- it stores exactly what
+// it receives, so a malformed value would lock that operator out of every
+// till. The value is never included in the error.
+func ValidatePINHash(stored string) error {
+	p, ok := parsePINHash(stored)
+	if !ok || p.iter > maxPINIterations || len(p.salt) < 8 || len(p.key) != pinKeyBytes {
+		return ErrBadPINHash
+	}
+	return nil
+}
+
+// VerifyPIN checks a PIN against a stored hash. Unknown formats fail closed.
+func VerifyPIN(pin, stored string) bool {
+	p, ok := parsePINHash(stored)
+	if !ok {
 		return false
 	}
-	want, err := base64.RawStdEncoding.DecodeString(parts[4])
-	if err != nil || len(want) == 0 {
-		return false
-	}
-	got, err := pbkdf2.Key(sha256.New, pin, salt, iter, len(want))
+	got, err := pbkdf2.Key(sha256.New, pin, p.salt, p.iter, len(p.key))
 	if err != nil {
 		return false
 	}
-	return subtle.ConstantTimeCompare(got, want) == 1
+	return subtle.ConstantTimeCompare(got, p.key) == 1
 }

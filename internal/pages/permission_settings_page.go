@@ -86,6 +86,21 @@ func registerPermissionSettings(mux *http.ServeMux, d *common.Deps) {
 		granted := grantedRaw == "1"
 		locale := httpx.ResolveLocale(w, r)
 
+		// ADR-0115 §1: the matrix is shop-wide configuration the main till
+		// owns (role_permissions rides the admin bundle, main-till-wins), so
+		// a change on a till that follows a main till would be reverted by
+		// its next pull -- refuse it up front, before any elevation prompt,
+		// the catalog pages' requirePrimary stance. 409 with a text/html
+		// fragment: app.js's htmx:beforeSwap force-swaps a non-2xx HTML body
+		// into #perm-msg (ut-docs#916), so the operator sees this message,
+		// not the generic server-error banner.
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusConflict)
+			fmt.Fprintf(w, `<span class="login-error">%s</span>`, httpx.T(locale, "users.error.replica_use_primary"))
+			return
+		}
+
 		// Validate the request body BEFORE ever checking elevation
 		// (ut-docs#557 review finding): burning a manager's PIN entry on a
 		// request that was always going to 400 anyway is a needless cost.
