@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -470,12 +471,37 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		renderKioskPaymentPicker(w, r, eng, methods, "")
 	})
 
+	// Spam guard for checkout (ut-docs#2714). This route is anonymous and
+	// auth-exempt (ADR-0020), and one checkout can hand out a C-number,
+	// print a kitchen ticket, park a held sale (pushed to the main till on a
+	// replica) or call a card terminal. checkoutLimiter caps each source at
+	// 20 POSTs a minute -- the same pairRateLimiter+sourceOf shape as the
+	// table-session mint limiter (registerSelfOrder) -- checked before any
+	// work. checkoutInFlight lets only one checkout per basket run at a
+	// time, so a double tap (or a retry racing the first request) gets 409
+	// instead of a second order for the same basket. Both are per mux, like
+	// every other limiter here.
+	checkoutLimiter := newPairRateLimiter(time.Minute, 20)
+	checkoutInFlight := newSelfOrderCheckoutInFlight()
 	mux.HandleFunc("POST /api/self-order/checkout", func(w http.ResponseWriter, r *http.Request) {
+		if !checkoutLimiter.allow(sourceOf(r)) {
+			refuseKioskCheckout(w, http.StatusTooManyRequests)
+			return
+		}
 		_ = r.ParseForm()
 		// eng is this request's basket; token is non-empty only when it is
 		// a table-QR guest session (ADR-0103), which a completed checkout
 		// must remove rather than reset (releaseSelfOrderSession).
 		eng, token := selfOrderSession(d, r)
+		basketKey := selfOrderWalkUpCheckoutKey
+		if token != "" {
+			basketKey = token
+		}
+		if !checkoutInFlight.acquire(basketKey) {
+			refuseKioskCheckout(w, http.StatusConflict)
+			return
+		}
+		defer checkoutInFlight.release(basketKey)
 		// ut-docs#582/#815: counter-order checkout is a COMPLETELY separate
 		// path -- checked before any method/ListActiveNonCashPaymentMethods
 		// code runs -- because it creates no sale/payment at all. Kiosk
@@ -670,6 +696,38 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 	})
 }
 
+// selfOrderWalkUpCheckoutKey is the in-flight key of the shared walk-up
+// kiosk basket (ut-docs#2714); a table-QR session uses its own token. The
+// NUL byte keeps it from ever equalling a real (random, printable) token.
+const selfOrderWalkUpCheckoutKey = "\x00walk-up"
+
+// selfOrderCheckoutInFlight is the set of baskets with a checkout currently
+// running (ut-docs#2714): acquire reports false when key is already in it.
+type selfOrderCheckoutInFlight struct {
+	mu   sync.Mutex
+	keys map[string]struct{}
+}
+
+func newSelfOrderCheckoutInFlight() *selfOrderCheckoutInFlight {
+	return &selfOrderCheckoutInFlight{keys: map[string]struct{}{}}
+}
+
+func (g *selfOrderCheckoutInFlight) acquire(key string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if _, busy := g.keys[key]; busy {
+		return false
+	}
+	g.keys[key] = struct{}{}
+	return true
+}
+
+func (g *selfOrderCheckoutInFlight) release(key string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.keys, key)
+}
+
 // selfOrderForcesCounterCheckout reports whether THIS basket must check out
 // as a kiosk_counter_orders row (ut-docs#582's "pay at counter" path)
 // rather than attempting a sale/card payment. True whenever the till's
@@ -694,6 +752,19 @@ func renderKioskCounterConfirmPicker(w http.ResponseWriter, r *http.Request, eng
 	httpx.RenderPartial("ui/partials/self_order_counter_confirm.html", map[string]any{
 		"Total": eng.Basket().Total,
 	})(w, r)
+}
+
+// refuseKioskCheckout answers a checkout the spam guards refused
+// (ut-docs#2714) with an empty body and HX-Reswap: none. The kiosk page
+// force-swaps every /api/self-order/* 4xx into its modal
+// (self_order_shop.html), so a text body would show untranslated English
+// to the customer, and a 409 that lands after the first request's
+// confirmation would wipe that confirmation. Painting nothing leaves the
+// first request's result on screen; a customer tapping 20+ times a
+// minute from one address just sees their tap do nothing.
+func refuseKioskCheckout(w http.ResponseWriter, status int) {
+	w.Header().Set("HX-Reswap", "none")
+	w.WriteHeader(status)
 }
 
 // counterOrderModifierNames flattens a basket line's chosen modifiers to
@@ -753,7 +824,9 @@ func counterOrderTicketFromSnapshot(snap *pos.BasketSnapshot) ([]data.KioskCount
 // A kiosk_counter_orders row is still written (status "held"):
 // the "C-" order number sequence lives there, and it records what was
 // ordered. It is not the payable object and never shows on the legacy
-// staff board.
+// staff board. If the order cannot be parked, that row is deleted again
+// (ut-docs#2714), so a retry reuses the number; the POST handler lets only
+// one checkout per basket run at a time and rate-limits each source.
 //
 // The snapshot carries the order number (BasketSnapshot.DisplayNo) so the
 // paid sale's display_no, receipt and kitchen ticket show the number the
@@ -791,7 +864,8 @@ func completeCounterOrderCheckout(w http.ResponseWriter, r *http.Request, d *com
 	// a uuid rather than hold-<nanos> because several table-QR sessions
 	// can check out at the same instant.
 	heldID := "hold-" + uuid.NewString()
-	order, err := data.NewKioskCounterOrdersRepo(d.Db).Create(ctx, data.KioskCounterOrder{
+	counterRepo := data.NewKioskCounterOrdersRepo(d.Db)
+	order, err := counterRepo.Create(ctx, data.KioskCounterOrder{
 		ID:        heldID,
 		Status:    data.KioskCounterOrderStatusHeld,
 		OrderType: eng.OrderType(),
@@ -817,7 +891,9 @@ func completeCounterOrderCheckout(w http.ResponseWriter, r *http.Request, d *com
 	// counterOrderTicketTimeout on a dead printer. Known edge: if parking
 	// then fails, the kitchen has a ticket for an order the guest is told
 	// failed -- a local DB write failure, and a duplicate/stray ticket is
-	// recoverable where a lost one is not.
+	// recoverable where a lost one is not. The failed order's row is removed
+	// (ut-docs#2714), so the guest's retry carries the same C-number as that
+	// stray ticket.
 	sentToKitchen := false
 	if tableBound {
 		sent, perr := printCounterOrderTicket(ctx, d, order)
@@ -831,6 +907,10 @@ func completeCounterOrderCheckout(w http.ResponseWriter, r *http.Request, d *com
 	}
 	payload, err := json.Marshal(snap)
 	if err != nil {
+		// Same cleanup as a failed park below (ut-docs#2714).
+		if derr := counterRepo.DeleteHeld(context.WithoutCancel(ctx), order.ID); derr != nil {
+			logging.L().Errorf("self-order counter checkout: remove unparked order %s: %v", order.DisplayNo, derr)
+		}
 		http.Error(w, "failed to place order", http.StatusInternalServerError)
 		return
 	}
@@ -846,12 +926,23 @@ func completeCounterOrderCheckout(w http.ResponseWriter, r *http.Request, d *com
 	// (so it is listed and payable there, like any parked order); any
 	// failure reaching it keeps the row local -- the checkout never waits
 	// on the network beyond the proxy's own short budget.
-	if _, err := heldSaleWriteThrough(ctx, d, data.NewHeldSalesRepo(d.Db), held); err != nil {
-		// The kiosk_counter_orders row above stays behind in "held" status
-		// with no held sale: invisible everywhere, it only burns one C-
-		// number. The customer is told the order failed, so nothing is
-		// promised that the till cannot find.
+	if outcome, err := heldSaleWriteThrough(ctx, d, data.NewHeldSalesRepo(d.Db), held); err != nil {
+		// ut-docs#2714: delete the "held" counter row created above, so no
+		// orphan is left that nothing lists or ever cleans up; since it held
+		// the max, the customer's retry gets the same C-number. (If that
+		// delete fails too, Create prunes the row once it is stale.) The
+		// customer is told the order failed, so nothing is promised that the
+		// till cannot find. Not when the main till refused the push: that
+		// refusal proves it already holds this order under this number, so
+		// freeing the number would let the retry mint a second order with
+		// it. The delete runs detached from the request so a guest closing
+		// the page cannot cancel it.
 		logging.L().Errorf("self-order counter checkout: park order %s as held sale: %v", order.DisplayNo, err)
+		if outcome != heldSaleSyncRefused {
+			if derr := counterRepo.DeleteHeld(context.WithoutCancel(ctx), order.ID); derr != nil {
+				logging.L().Errorf("self-order counter checkout: remove unparked order %s: %v", order.DisplayNo, derr)
+			}
+		}
 		http.Error(w, "failed to place order", http.StatusInternalServerError)
 		return
 	}

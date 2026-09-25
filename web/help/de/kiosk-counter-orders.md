@@ -22,7 +22,7 @@ Wenn der Selbstbedienungs-Kiosk auf den Modus **An der Kasse bezahlen** eingeste
 ## Hinweise
 
 - Bestellungen über den QR-Code eines Tisches sind Vor-Ort-Bestellungen: Ihr Küchenbon wird gedruckt, sobald der Gast bestellt. Beim Bezahlen werden nur die Artikel gedruckt, die Sie an der Kasse hinzugefügt haben — nichts, was die Küche schon hat, wird doppelt gedruckt. War der Küchendrucker bei der Bestellung nicht erreichbar, wird stattdessen die ganze Bestellung beim Bezahlen gedruckt, und der Bildschirm des Gastes sagt das auch. Entfernen Sie einen Artikel, den die Küche schon hat, erfährt die Küche davon nichts, und fügen Sie ihn wieder hinzu, wird er erneut gedruckt.
-- In einem Geschäft mit mehreren Kassen beginnt die Nummer mit dem Belegpräfix der Kasse (zum Beispiel **C-T2-12**), damit Bestellungen verschiedener Kassen nie dieselbe Nummer haben.
+- In einem Geschäft mit mehreren Kassen beginnt die Nummer mit dem Belegpräfix der Kasse (zum Beispiel **C-T2-12**) — oder, auf einer Kasse, die nicht die Hauptkasse ist und kein Belegpräfix hat, mit den ersten Zeichen ihrer Kassen-ID —, damit Bestellungen verschiedener Kassen nie dieselbe Nummer haben.
 - Wenn Sie alle Artikel einer aufgerufenen Bestellung stornieren, ist es nicht mehr diese Bestellung: Sie verliert ihre C-Nummer, und was Sie danach bonieren, ist ein neuer Verkauf mit einer normalen Nummer.
 - Wenn Sie eine aufgerufene Bestellung erneut halten, kehrt sie unter demselben Namen zu den Offenen Bestellungen zurück.
 - Funktioniert vollständig offline, wie die restliche Kasse. In einem Geschäft mit mehreren Kassen erscheint die Bestellung auf jeder Kasse, solange die Hauptkasse erreichbar ist — genau wie jeder gehaltene Verkauf.
