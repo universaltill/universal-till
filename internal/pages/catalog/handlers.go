@@ -38,7 +38,8 @@ import (
 // its groups (active or not — ListAllGroupsForItem's shape) plus Target,
 // the container id (without a leading #) every one of the rendered forms'
 // hx-target/hx-swap points back at. Since ADR-0101 (ut-docs#2399) this
-// backs ONLY the item-scoped nested dialog (attach-only); the shop-wide
+// backs ONLY the item editor's own Modifiers tab (attach-only; a nested
+// dialog until ut-docs#2211); the shop-wide
 // /modifiers page renders data.ModifierGroupAdmin rows of its own (see
 // renderModifiersList) and no longer groups anything per item.
 type modifierAdminItem struct {
@@ -262,40 +263,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				}
 				leadTimeDays, _ := repo.ItemLeadTimeDays(r.Context(), itemID)
 				reorderLevel, _ := repo.ItemReorderLevel(r.Context(), itemID)
-				// ADR-0020: shows deactivated groups/options too (unlike the
-				// sale-time ListGroupsForItem) so a manager can reactivate one.
-				modGroups, _ := data.NewModifierRepo(d.Db).ListAllGroupsForItem(r.Context(), itemID)
-				// ut-docs#1957: this panel only shows a compact, read-only
-				// summary of the item's ACTIVE group names now — the CRUD
-				// itself moved to /modifiers and the nested "Manage
-				// customization groups" dialog (renderItemModifierGroupsPanel
-				// below). A deactivated group is deliberately left out of
-				// this summary (it isn't offered at sale time either); it's
-				// still reachable for reactivation from the two admin
-				// surfaces above, both driven by modGroups' full ListAll
-				// fetch, unchanged.
-				var activeModGroupNames []string
-				for _, g := range modGroups {
-					if g.IsActive {
-						activeModGroupNames = append(activeModGroupNames, g.Name)
-					}
-				}
-				// ut-docs#2284: the groups the item inherits from its category
-				// (ADR-0094), minus its opt-outs and minus any it also links
-				// directly (the summary names that one once, as its own) —
-				// so an item whose customization comes entirely from its
-				// category never reads "no customization groups yet".
-				ownIDs := make(map[string]bool, len(modGroups))
-				for _, g := range modGroups {
-					ownIDs[g.ID] = true
-				}
-				inheritedGroups, _ := data.NewModifierRepo(d.Db).ListInheritedGroupsForItem(r.Context(), itemID)
-				var inheritedNames []string
-				for _, g := range inheritedGroups {
-					if !g.OptedOut && !ownIDs[g.ID] {
-						inheritedNames = append(inheritedNames, g.Name)
-					}
-				}
+				// ut-docs#2211: no modifier data here — the item's groups
+				// (own, attachable, category-inherited) are the item editor's
+				// Modifiers tab, rendered by renderItemModifierGroupsPanel.
 				// ut-docs#2284: kitchen-printer routing from the item's side —
 				// what its category routes to, and the item's own override
 				// (item_station_routes, which ResolveKitchenStations lets win
@@ -340,9 +310,6 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 					"CostMajor":            costMajor,
 					"LeadTimeDays":         leadTimeDays,
 					"ReorderLevel":         reorderLevel,
-					"ModifierGroups":       modGroups,
-					"ModifierGroupNames":   strings.Join(activeModGroupNames, ", "),
-					"InheritedGroupNames":  strings.Join(inheritedNames, ", "),
 					"Stations":             stationChecks,
 					"CategoryStationNames": categoryStationNames,
 					"HasItemRoutes":        hasItemRoutes,
@@ -487,13 +454,13 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		httpx.RenderWith(modifierGroupAdminFiles, funcs)("modifiers_list", pageData)(w, r)
 	}
 
-	// renderItemModifierGroupsPanel answers with the nested "Manage
-	// customization groups" dialog's own re-render target
-	// (#modifier-groups-modal-list, outerHTML swap) — ONE item's groups,
-	// active or not, same ListAllGroupsForItem shape the panel above has
-	// always used. Used both by the dialog's own lazy-load GET (opened from
-	// catalog_variants.html) and for a mutation whose originating form
-	// targets #modifier-groups-modal-list.
+	// renderItemModifierGroupsPanel answers with the item editor Modifiers
+	// tab's own re-render target (#item-modifiers-list, outerHTML swap,
+	// ut-docs#2211 — a nested dialog opened from the Variants tab before
+	// that) — ONE item's groups, active or not (ListAllGroupsForItem). Used
+	// both by the tab's own lazy-load GET (catalog.html's
+	// loadItemModifiers) and for a mutation whose originating form targets
+	// #item-modifiers-list.
 	renderItemModifierGroupsPanel := func(w http.ResponseWriter, r *http.Request, itemID string, notice string) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		groups, err := modRepo.ListAllGroupsForItem(r.Context(), itemID)
@@ -532,7 +499,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			ModifierGroups:   groups,
 			AttachableGroups: attachable,
 			InheritedGroups:  visibleInherited,
-			Target:           "modifier-groups-modal-list",
+			Target:           "item-modifiers-list",
 			Notice:           notice,
 		})(w, r)
 	}
@@ -545,9 +512,10 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// Hx-Target header the request's own originating form set as its
 	// hx-target (see modifier_group_admin.html's forms and this file's
 	// modifierGroupAdminFiles-based renderers above). A request carrying
-	// neither of the two new container ids — including every pre-existing
-	// caller that predates this card, and any non-htmx caller — falls back
-	// to the original #catalog-variants re-render, unchanged.
+	// neither container id (a non-htmx caller) gets the item's own
+	// modifier list — since ut-docs#2211 the Variants panel carries no
+	// modifier UI, so re-rendering it would answer a modifier mutation with
+	// a fragment that doesn't show the change.
 	//
 	// status/notice (ut-docs#2046, independent-review finding): a refused
 	// mutation (e.g. a stale attach picker's 409) must still surface to
@@ -585,18 +553,16 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		switch strings.TrimSpace(r.Header.Get("Hx-Target")) {
 		case "modifiers-list":
 			renderModifiersList(w, r, notice)
-		case "modifier-groups-modal-list":
+		default: // "item-modifiers-list", or no Hx-Target at all
 			renderItemModifierGroupsPanel(w, r, itemID, notice)
-		default:
-			renderVariantsPanel(w, r, itemID, false)
 		}
 	}
 
-	// The nested "Manage customization groups" dialog's own lazy-load GET
-	// (ut-docs#1957) — opened from the compact summary button in
-	// catalog_variants.html, kept as a real, bookmarkable-by-nothing GET
+	// The item editor Modifiers tab's own lazy-load GET (ut-docs#1957 for a
+	// nested dialog, the tab itself since ut-docs#2211 — catalog.html's
+	// loadItemModifiers), kept as a real, bookmarkable-by-nothing GET
 	// fragment endpoint rather than piggy-backing on item-variants, since
-	// its container/shape is its own (#modifier-groups-modal-list, not
+	// its container/shape is its own (#item-modifiers-list, not
 	// #catalog-variants).
 	mux.HandleFunc("GET /api/catalog/modifier-groups-panel", func(w http.ResponseWriter, r *http.Request) {
 		if !requireCatalogManagement(w, r) {

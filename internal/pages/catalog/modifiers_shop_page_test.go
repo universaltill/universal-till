@@ -173,8 +173,9 @@ func TestModifiersPage_AssignedItemLinksBackToCatalogItem(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `<a href="/catalog?item=itm1">Flat White</a>`) {
-		t.Errorf("expected the assigned item chip to link to /catalog?item=itm1, got: %s", rec.Body.String())
+	// ut-docs#2211: lands on the item editor's Modifiers tab.
+	if !strings.Contains(rec.Body.String(), `<a href="/catalog?item=itm1&tab=modifiers">Flat White</a>`) {
+		t.Errorf("expected the assigned item chip to link to /catalog?item=itm1&tab=modifiers, got: %s", rec.Body.String())
 	}
 }
 

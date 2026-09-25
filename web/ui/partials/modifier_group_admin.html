@@ -1,9 +1,11 @@
 {{/* ut-docs#1957: the per-item modifier-group assignment surface, extracted
      out of catalog_variants.html's old embedded div.catalog-detail-modifiers
-     for the "Manage customization groups" nested <dialog> opened from an
-     item's own edit panel (one instance, scoped to that single item) —
-     see this same file's "modifier_groups_item_panel" wrapper template
-     for the call site.
+     for the item editor (one instance, scoped to that single item). Since
+     ut-docs#2211 it renders inline in the editor's own Modifiers tab
+     (catalog.html, #item-form-panel-modifiers) — it used to sit in a nested
+     "Manage customization groups" <dialog> opened from the Variants tab.
+     See this same file's "modifier_groups_item_panel" wrapper template for
+     the call site.
 
      ATTACH-ONLY since ut-docs#2330 (product-owner request, 2026-09-16: the
      item editor's own surface is a multi-select of EXISTING groups, never
@@ -18,7 +20,7 @@
      shape), .AttachableGroups (every other active shop group not yet
      linked here, ListAttachableModifierGroups), and .Target — the
      container id (WITHOUT the leading #) every form's hx-target/hx-swap
-     points back at after a mutation: #modifier-groups-modal-list — see
+     points back at after a mutation: #item-modifiers-list — see
      handlers.go's renderModifierMutationResult, which reads the mutation
      request's own Hx-Target header right back to decide which fragment to
      re-render, so this partial and that dispatch can never drift apart. */}}
@@ -35,7 +37,7 @@
   <div class="modifier-admin-group{{ if not .IsActive }} vg-inactive{{ end }}" data-group-id="{{ .ID }}">
     {{/* Same visual shape as InheritedGroups' read-only rows further down
          this same file, for consistency between the two read-only group
-         listings this dialog shows. */}}
+         listings this panel shows. */}}
     <div class="modifier-admin-group-row">
       <span class="modifier-admin-group-name">{{ .Name }}</span>
       {{/* ut-docs#2330, independent-review finding: ListAllGroupsForItem
@@ -91,19 +93,19 @@
 </div>
 {{ end }}
 
-{{/* Wraps a single item's modifier_group_admin in the nested "Manage
-     customization groups" dialog's own re-render container
-     (#modifier-groups-modal-list). Expects the same data shape (.ItemID,
+{{/* Wraps a single item's modifier_group_admin in the item editor
+     Modifiers tab's own re-render container (#item-modifiers-list,
+     ut-docs#2211). Expects the same data shape (.ItemID,
      .ModifierGroups, .AttachableGroups, .InheritedGroups) with .Target
-     already set to "modifier-groups-modal-list" by the caller (handlers.go's
+     already set to "item-modifiers-list" by the caller (handlers.go's
      renderItemModifierGroupsPanel), so this template only owns the
      wrapping id, not the target value itself. */}}
 {{ define "modifier_groups_item_panel" }}
-<div id="modifier-groups-modal-list">
+<div id="item-modifiers-list">
   {{/* ut-docs#2046, independent-review finding: a refused mutation (e.g. a
        stale attach picker's 409) answers through this SAME fragment with
        .Notice set — app.js's htmx:beforeSwap never force-swaps a
-       non-text/html error response, and this dialog has no #pos-alert
+       non-text/html error response, and this panel has no #pos-alert
        fallback to fall through to. */}}
   {{ if .Notice }}<p class="field-error-msg" role="alert">{{ .Notice }}</p>{{ end }}
   {{ template "modifier_group_admin" . }}
@@ -154,7 +156,7 @@
        operator has already seen there is genuinely nothing here — direct,
        attachable or inherited — before being offered the way out. Same-tab
        navigation only (utCatalogGoToModifiers, catalog.html's inline
-       script) — never target="_blank"/window.open, per this dialog's own
+       script) — never target="_blank"/window.open, per the item editor's own
        standing kiosk-chromeless constraint (catalog_variants.html's header
        comment) — guarded against silently discarding the item form's own
        unsaved edits underneath. */}}

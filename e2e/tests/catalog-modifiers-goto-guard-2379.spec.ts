@@ -1,6 +1,7 @@
 import { test, expect } from './fixtures';
 
-// ut-docs#2379: the item-editor's nested "Manage Modifiers" dialog gets a
+// ut-docs#2379: the item-editor's modifiers surface (a nested dialog then,
+// the Modifiers tab since ut-docs#2211) gets a
 // "Go to Modifiers" control when the shop has zero modifier groups
 // anywhere (proven server-side, deterministically, by the Go handler tests
 // — modifiers_zero_groups_2379_test.go — since this suite runs several
