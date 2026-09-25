@@ -12,6 +12,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
+	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -91,11 +92,17 @@ func postTableClaimOnPrimary(ctx context.Context, d *common.Deps, client *http.C
 // malformed body — and the caller falls back to the local claim. When ok,
 // claimed is the primary's authoritative answer: false means another till
 // holds the table.
-func claimTableOnPrimary(ctx context.Context, d *common.Deps, client *http.Client, tableID string) (ok, claimed bool) {
+func claimTableOnPrimary(ctx context.Context, d *common.Deps, client *http.Client, tableID string, periodic bool) (ok, claimed bool) {
 	var out struct {
 		Data *syncTableClaimResult `json:"data"`
 	}
-	if !postTableClaimOnPrimary(ctx, d, client, "claim", url.Values{"table_id": {tableID}}, &out) || out.Data == nil {
+	form := url.Values{"table_id": {tableID}}
+	if periodic {
+		// ADR-0114 §2: a re-affirm only refreshes a claim that already
+		// holds, so the main till must not nudge its linked tills for it.
+		form.Set("periodic", "1")
+	}
+	if !postTableClaimOnPrimary(ctx, d, client, "claim", form, &out) || out.Data == nil {
 		return false, false
 	}
 	return true, out.Data.Claimed
@@ -177,7 +184,15 @@ func releaseAllTableClaimsOnPrimary(ctx context.Context, d *common.Deps, client 
 // work itself — every branch below runs identically either way — and only
 // narrows the DIAGNOSTIC side effect; see emitTableClaim (ut-docs#2234).
 func claimTableWriteThrough(ctx context.Context, d *common.Deps, repo *data.POSRepo, tableID string, periodic bool) (claimed bool, err error) {
-	ok, claimed := claimTableOnPrimary(ctx, d, tableClaimProxyClient, tableID)
+	// ADR-0114 §2: an operator's claim changes table occupancy; nudge
+	// linked tills (no-op on a replica). The periodic re-affirm only
+	// refreshes a claim that already holds and stays silent — otherwise
+	// every held table would nudge every linked till each 30 s tick, the
+	// poll cadence the link exists to retire.
+	if !periodic {
+		defer d.NudgeLink(fleetlink.ScopeTables)
+	}
+	ok, claimed := claimTableOnPrimary(ctx, d, tableClaimProxyClient, tableID, periodic)
 	if !ok {
 		claimed, err := repo.ClaimTableForTill(ctx, tableID, "", time.Now().Add(-tillClaimTTL))
 		if err == nil {
@@ -370,6 +385,9 @@ func releaseTableClaimWriteThrough(ctx context.Context, d *common.Deps, repo *da
 	if tableID == "" {
 		return false
 	}
+	// ADR-0114 §2: table occupancy changed; nudge linked tills (no-op on
+	// a replica).
+	defer d.NudgeLink(fleetlink.ScopeTables)
 	primaryReleased = releaseTableClaimOnPrimary(ctx, d, tableClaimProxyClient, tableID)
 	if err := repo.ReleaseTableClaim(ctx, tableID); err != nil {
 		log.Printf("table claim: release %s failed: %v", tableID, err)

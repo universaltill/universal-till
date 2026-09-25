@@ -103,6 +103,19 @@ FROM tills WHERE bearer_hash = ?`, bearerHash).
 	return t, true, nil
 }
 
+// TouchLastSeen refreshes a till's last_seen_at without a bearer lookup —
+// the main-till link (ADR-0114) calls it for a linked till's frames, so
+// table-claim TTLs keep treating a linked till as alive. last_seen_at is a
+// redactCol, so this never bumps sync_admin_version (migration 023).
+func (r *TillsRepo) TouchLastSeen(ctx context.Context, id string) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE tills SET last_seen_at = ? WHERE id = ?`,
+		time.Now().UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return fmt.Errorf("touch till last seen: %w", err)
+	}
+	return nil
+}
+
 // DeleteTill revokes a replica's enrolment.
 func (r *TillsRepo) DeleteTill(ctx context.Context, id string) error {
 	_, err := r.db.ExecContext(ctx, `DELETE FROM tills WHERE id = ?`, id)

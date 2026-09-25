@@ -271,7 +271,7 @@ func TestClaimTableOnPrimary_Contract(t *testing.T) {
 	ctx := context.Background()
 
 	// Not a replica.
-	if ok, _ := claimTableOnPrimary(ctx, dp, tableClaimProxyClient, "x"); ok {
+	if ok, _ := claimTableOnPrimary(ctx, dp, tableClaimProxyClient, "x", false); ok {
 		t.Fatal("not a replica must report ok=false")
 	}
 	if ok := releaseTableClaimOnPrimary(ctx, dp, tableClaimProxyClient, "x"); ok {
@@ -280,7 +280,7 @@ func TestClaimTableOnPrimary_Contract(t *testing.T) {
 
 	primary := newClaimProxyPrimary(t, false)
 	setReplicaSettings(t, dp.Settings, primary.srv.URL, "b-123")
-	ok, claimed := claimTableOnPrimary(ctx, dp, tableClaimProxyClient, "x")
+	ok, claimed := claimTableOnPrimary(ctx, dp, tableClaimProxyClient, "x", false)
 	if !ok || claimed {
 		t.Fatalf("a refusing primary must report ok=true claimed=false, got ok=%v claimed=%v", ok, claimed)
 	}
@@ -295,7 +295,7 @@ func TestClaimTableOnPrimary_Contract(t *testing.T) {
 	}))
 	defer bad.Close()
 	setReplicaSettings(t, dp.Settings, bad.URL, "b-123")
-	if ok, _ := claimTableOnPrimary(ctx, dp, tableClaimProxyClient, "x"); ok {
+	if ok, _ := claimTableOnPrimary(ctx, dp, tableClaimProxyClient, "x", false); ok {
 		t.Fatal("a 200 with a null data object must report ok=false")
 	}
 }
@@ -468,5 +468,31 @@ func TestClaimTableWriteThrough_LocalBranchStillClaimsWhenReconcileFails(t *test
 	}
 	if claimCount != 1 {
 		t.Fatal("the fallback must actually have written the local claim row")
+	}
+}
+
+// ADR-0114 §2 (review of ut-docs#2734): the periodic re-affirm marks its
+// proxied claim periodic=1 so the main till does not nudge every linked till
+// for a claim that already holds; an operator's claim carries no flag.
+func TestClaimTableOnPrimary_PeriodicFlagTravels(t *testing.T) {
+	_, dp := newPOSTestDeps(t)
+	ctx := context.Background()
+	var seen []string
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		seen = append(seen, r.Form.Get("periodic"))
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"data":{"claimed":true},"error":null}`)
+	}))
+	defer primary.Close()
+	setReplicaSettings(t, dp.Settings, primary.URL, "b-123")
+	if ok, claimed := claimTableOnPrimary(ctx, dp, tableClaimProxyClient, "x", true); !ok || !claimed {
+		t.Fatalf("periodic claim: ok=%v claimed=%v", ok, claimed)
+	}
+	if ok, claimed := claimTableOnPrimary(ctx, dp, tableClaimProxyClient, "x", false); !ok || !claimed {
+		t.Fatalf("operator claim: ok=%v claimed=%v", ok, claimed)
+	}
+	if len(seen) != 2 || seen[0] != "1" || seen[1] != "" {
+		t.Fatalf("periodic form values = %q, want [\"1\" \"\"]", seen)
 	}
 }

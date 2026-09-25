@@ -17,6 +17,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/discovery"
+	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/issuereport"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -542,14 +543,20 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSyncVouchers(mux, dp)    // cross-till voucher lookup + redemption write-through, primary side (ut-docs#1668)
 	registerSyncHeldSales(mux, dp)   // cross-till held-sale (open order) write-through + list, primary side (ADR-0093, ut-docs#1920)
 	registerSyncUsers(mux, dp)       // additional-till user/PIN write-through, main-till side (ADR-0115 §1, ut-docs#2755)
-	registerSyncAdmin(mux, dp)
+	syncAdminRepo := registerSyncAdmin(mux, dp)
+	// ADR-0114 (ut-docs#2734): the main-till link. Set before the server
+	// accepts requests; the revoke handler and every NudgeLink change point
+	// read dp.Link at request time.
+	dp.Link = newSyncLinkHub(dp, fleetlink.DefaultConfig(), syncAdminRepo)
+	registerSyncLink(mux, dp)
 	registerSyncCloudDevice(mux, dp) // replica's own cloud device identity, main-till side (ut-docs#2730)
 	registerSyncAssets(mux, dp)
 	registerSyncQuarantinePage(mux, dp) // ut-docs#1133: quarantined LAN-sync journal entries, primary-only admin panel (ADR-0065 follow-up)
 	registerPrimaryProof(mux, dp)       // main till answers a moved-till challenge (ut-docs#2722)
 	registerMainTillStatus(mux, dp)     // replica's "main till not reachable" status chip (ut-docs#2722)
 	dp.PrimaryWatch = discovery.NewPrimaryWatch(dp.Settings, discovery.Browse)
-	StartSyncPush(bgCtx, dp, wg) // replica journal loop (ADR-0011 D3); joined by app.Run's drain
+	StartSyncPush(bgCtx, dp, wg)                // replica journal loop (ADR-0011 D3); joined by app.Run's drain
+	StartSyncLink(bgCtx, dp, wg, syncAdminRepo) // main-till link: admin-change watch + bye on shutdown (ADR-0114); joined by app.Run's drain
 	rederiveSettings := newRederiveSettings(dp, authDisabled, i18n)
 	StartSyncPull(bgCtx, dp, rederiveSettings, wg)          // joined by app.Run's drain
 	StartHeldOrderClaimReaffirm(bgCtx, dp, wg)              // periodic held-order table-claim re-affirm (ut-docs#1724); joined by app.Run's drain
