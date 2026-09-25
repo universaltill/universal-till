@@ -22,7 +22,7 @@ When the self-order kiosk is set to **pay at counter** mode (Settings → Kiosk 
 ## Notes
 
 - Orders placed from a table's QR code are dine-in: their kitchen ticket prints as soon as the guest orders. When the order is paid, only items you added at the till print — nothing the kitchen already has is printed twice. If the kitchen printer could not be reached when the guest ordered, the whole order prints when it is paid instead, and the guest's screen says so. Removing an item the kitchen already has does not tell the kitchen, and adding it again prints it again.
-- In a shop with several tills, the number starts with the till's receipt prefix (for example **C-T2-12**), so orders from different tills never share a number.
+- In a shop with several tills, the number starts with the till's receipt prefix (for example **C-T2-12**) — or, on a till other than the main till with no receipt prefix set, with the first characters of its till ID — so orders from different tills never share a number.
 - If you void every item of an order you brought up, it stops being that order: it loses its C-number, and whatever you ring up next is a new sale with a normal number.
 - If you hold an order again after bringing it up, it goes back to Open orders under the same name.
 - Works fully offline, like the rest of the till. In a shop with several tills, the order shows on every till while the main till is reachable, just like any held sale.

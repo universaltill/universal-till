@@ -37,6 +37,21 @@ import (
 // to mistake one for the other at the counter.
 const counterOrderDisplayNoPrefix = "C-"
 
+// counterOrderHeldRetention (ut-docs#2714) is how long a "held" row is kept.
+// A held row is only the C-number record of an order whose payable object
+// is the held sale; once the order is paid or abandoned it serves no one,
+// and nothing else ever removes it. 90 days comfortably outlives any real
+// parked order (and any "what number did I have?" question) while keeping
+// the table bounded. Create prunes past it; open/collected rows (the
+// legacy staff-board lifecycle) are never pruned.
+const counterOrderHeldRetention = 90 * 24 * time.Hour
+
+// counterOrderTillIDPrefixLen (ut-docs#2714) is how many alphanumeric
+// characters of sync.till_id a replica with no sync.receipt_prefix uses to
+// namespace its C-numbers -- short enough to call out at the counter, long
+// enough that two replicas' generated ids practically never collide.
+const counterOrderTillIDPrefixLen = 6
+
 // KioskCounterOrderStatusOpen/Collected are the only two states this table
 // tracks — a plain two-state lifecycle, unlike the sales-order status
 // ladder (pos.OrderStatus*), since a counter order has no kitchen-progress
@@ -159,22 +174,22 @@ func NewKioskCounterOrdersRepo(db *sql.DB) *KioskCounterOrdersRepo {
 	return &KioskCounterOrdersRepo{db: db}
 }
 
-// Create inserts a new open counter order and returns it with ID and
-// DisplayNo filled in — order.ID, if empty, is generated; order.DisplayNo
-// is always (re)generated here — the caller never supplies one — as the
-// next free "C-"-prefixed reference, read and inserted inside the same
-// transaction to keep the race window as small as the equivalent
-// NextDisplayNo/NextReceiptNo pattern (internal/data/pos_repo.go) accepts
-// elsewhere: a crash between read and insert leaves a gap, never a
-// collision that corrupts data — display_no carries no unique constraint
-// (mirrors sales.display_no, 014_sale_display_no.sql), so even a genuine
-// race only costs a duplicated-looking label, never a lost or broken row.
-// order.Status/CreatedAt are set here, not trusted from the caller, so
-// every row this method creates starts open (or "held", the one status a
-// caller may ask for, ut-docs#2703) and honestly timed. Returns
-// the filled-in order (rather than just an error) because the caller — the
+// Create inserts a new counter order and returns it with ID and DisplayNo
+// filled in — order.ID, if empty, is generated; order.DisplayNo is always
+// (re)generated here — the caller never supplies one — as the next free
+// "C-"-prefixed reference, read and inserted inside ONE transaction. The DSN
+// opens every tx with BEGIN IMMEDIATE (internal/db/db.go, _txlock), so the
+// read-MAX + insert is serialised against every other writer on this till,
+// and migration 044's unique index on display_no (ut-docs#2714) turns any
+// remaining collision into a failed insert rather than two customers holding
+// the same number. order.Status/CreatedAt are set here, not trusted from the
+// caller, so every row starts open (or "held", the one status a caller may
+// ask for, ut-docs#2703) and honestly timed. In the same tx, after the
+// insert, "held" rows older than counterOrderHeldRetention are pruned
+// (ut-docs#2714) — the new row already holds the max, so the sequence never
+// goes down. Returns the filled-in order because the caller — the
 // counter-mode checkout handler — needs the generated DisplayNo to render
-// the confirmation screen; re-querying it back out would be pure overhead.
+// the confirmation screen.
 func (r *KioskCounterOrdersRepo) Create(ctx context.Context, order KioskCounterOrder) (KioskCounterOrder, error) {
 	// ut-docs#2703: the one caller-chosen status is "held" -- a
 	// pay-at-counter order whose payable basket was parked as a held sale
@@ -193,7 +208,8 @@ func (r *KioskCounterOrdersRepo) Create(ctx context.Context, order KioskCounterO
 	if err != nil {
 		return KioskCounterOrder{}, fmt.Errorf("marshal counter order lines: %w", err)
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	nowT := time.Now().UTC()
+	now := nowT.Format(time.RFC3339)
 
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -207,11 +223,24 @@ func (r *KioskCounterOrdersRepo) Create(ctx context.Context, order KioskCounterO
 	// into sales.display_no. The till's sync.receipt_prefix namespaces it,
 	// read exactly as POSRepo.NextDisplayNo reads it (in the same tx, a
 	// missing row meaning no prefix): "C-<prefix><n>", or the plain "C-<n>"
-	// on a till with no prefix. NextDisplayNo still never counts these: a
-	// "C-..." value either fails its LIKE '<prefix>%' or CASTs to 0.
-	var tillPrefix string
+	// on the main till with no prefix. ut-docs#2714: a REPLICA
+	// (sync.primary_url set) with a blank prefix would still collide with
+	// the main till, so it derives one from sync.till_id instead
+	// (counterOrderPrefixFromTillID); with no till id either it stays plain.
+	// NextDisplayNo still never counts these: a "C-..." value either fails
+	// its LIKE '<prefix>%' or CASTs to 0.
+	var tillPrefix, primaryURL, tillID string
 	_ = tx.QueryRowContext(ctx,
 		`SELECT value FROM settings WHERE key = 'sync.receipt_prefix'`).Scan(&tillPrefix)
+	if strings.TrimSpace(tillPrefix) == "" {
+		_ = tx.QueryRowContext(ctx,
+			`SELECT value FROM settings WHERE key = 'sync.primary_url'`).Scan(&primaryURL)
+		if strings.TrimSpace(primaryURL) != "" {
+			_ = tx.QueryRowContext(ctx,
+				`SELECT value FROM settings WHERE key = 'sync.till_id'`).Scan(&tillID)
+			tillPrefix = counterOrderPrefixFromTillID(tillID)
+		}
+	}
 	seqPrefix := counterOrderDisplayNoPrefix + tillPrefix
 	var maxVal sql.NullInt64
 	if err := tx.QueryRowContext(ctx, `
@@ -232,6 +261,12 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		id, displayNo, order.OrderType, string(linesJSON), status, now, nullIfEmpty(order.TableID)); err != nil {
 		return KioskCounterOrder{}, fmt.Errorf("insert counter order: %w", err)
 	}
+	cutoff := nowT.Add(-counterOrderHeldRetention).Format(time.RFC3339)
+	if _, err := tx.ExecContext(ctx, `
+DELETE FROM kiosk_counter_orders WHERE status = ? AND created_at < ?`,
+		KioskCounterOrderStatusHeld, cutoff); err != nil {
+		return KioskCounterOrder{}, fmt.Errorf("prune stale held counter orders: %w", err)
+	}
 	if err := tx.Commit(); err != nil {
 		return KioskCounterOrder{}, fmt.Errorf("commit counter order create: %w", err)
 	}
@@ -240,6 +275,43 @@ VALUES (?, ?, ?, ?, ?, ?, ?)`,
 	order.Status = status
 	order.CreatedAt = now
 	return order, nil
+}
+
+// counterOrderPrefixFromTillID derives a replica's C-number namespace from
+// its sync.till_id (ut-docs#2714): the first counterOrderTillIDPrefixLen
+// ASCII letters/digits, upper-cased, plus "-" ("7b-2e_91ff…" -> "7B2E91-").
+// "" when the id has none, which keeps the plain "C-<n>".
+func counterOrderPrefixFromTillID(tillID string) string {
+	var b strings.Builder
+	for _, c := range tillID {
+		if b.Len() == counterOrderTillIDPrefixLen {
+			break
+		}
+		switch {
+		case c >= '0' && c <= '9', c >= 'A' && c <= 'Z':
+			b.WriteRune(c)
+		case c >= 'a' && c <= 'z':
+			b.WriteRune(c - 'a' + 'A')
+		}
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	return b.String() + "-"
+}
+
+// DeleteHeld removes the "held" counter row id (ut-docs#2714): the
+// pay-at-counter checkout calls it when parking the order as a held sale
+// failed, so no orphan row is left that nothing lists or ever cleans up —
+// and since the row held the max, the retry reuses the same C-number. Only
+// a "held" row is ever deleted (an open/collected row is real history); an
+// unknown id is a silent no-op.
+func (r *KioskCounterOrdersRepo) DeleteHeld(ctx context.Context, id string) error {
+	if _, err := r.db.ExecContext(ctx, `
+DELETE FROM kiosk_counter_orders WHERE id = ? AND status = ?`, id, KioskCounterOrderStatusHeld); err != nil {
+		return fmt.Errorf("delete held counter order: %w", err)
+	}
+	return nil
 }
 
 // ListOpen returns every open counter order, oldest first — the natural
