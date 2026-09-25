@@ -24,6 +24,7 @@ import (
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/catimport"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/imaging"
 	productlookup "github.com/universaltill/universal-till/internal/lookup"
@@ -1097,12 +1098,19 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if imgURL := strings.TrimSpace(r.Form.Get("imageUrl")); imgURL != "" {
 			if err := saveLookupImage(r.Context(), lookupClient, itemID, imgURL); err != nil {
 				log.Printf("[catalog] lookup image for item %s skipped: %v", itemID, err)
-			} else if err := repo.SetItemThumbnail(r.Context(), itemID, "/public/assets/items/"+itemID+"/thumb.png"); err != nil {
-				// Same review-F2 reasoning as the manual upload handler
-				// above: the photo is safely on disk regardless, this only
-				// keeps item_images (POS grid/basket/self-order/
-				// suggestions) in sync with what the admin table shows.
-				log.Printf("[catalog] record item_images thumbnail for %s: %v", itemID, err)
+			} else {
+				if err := repo.SetItemThumbnail(r.Context(), itemID, "/public/assets/items/"+itemID+"/thumb.png"); err != nil {
+					// Same review-F2 reasoning as the manual upload handler
+					// above: the photo is safely on disk regardless, this only
+					// keeps item_images (POS grid/basket/self-order/
+					// suggestions) in sync with what the admin table shows.
+					log.Printf("[catalog] record item_images thumbnail for %s: %v", itemID, err)
+				}
+				// The row insert above already nudged admin through its
+				// trigger, but the photo landed after it (an internet
+				// fetch): nudge again so a pull that ran in between
+				// catches the file (ADR-0114 §2).
+				d.NudgeLink(fleetlink.ScopeAdmin)
 			}
 		}
 		writeRowOOB(w, r, itemID, true)
@@ -1878,6 +1886,10 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if err := repo.SetItemThumbnail(r.Context(), itemID, "/public/assets/items/"+itemID+"/thumb.png"); err != nil {
 			log.Printf("[catalog] record item_images thumbnail for %s: %v", itemID, err)
 		}
+		// The photo is a file on /api/sync/assets, not an admin-table row:
+		// no trigger moves for it, so tell linked tills to pull now
+		// (ADR-0114 §2) instead of at their 5-min floor.
+		d.NudgeLink(fleetlink.ScopeAdmin)
 		writeRowOOB(w, r, itemID, false)
 	})
 
@@ -2043,6 +2055,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
 			return
 		}
+		d.NudgeLink(fleetlink.ScopeAdmin) // a file, not a row: see the item photo above
 		renderVariantsPanel(w, r, itemID, false)
 	})
 

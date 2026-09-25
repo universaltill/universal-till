@@ -18,6 +18,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/ai"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/imaging"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -243,6 +244,10 @@ func registerAIAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		pruneAIRefs(dir)
+		// Reference images live under the items asset tree, so linked
+		// tills sync them on their pull: nudge (ADR-0114 §2), as for a
+		// photo — a file moves no admin-table trigger.
+		d.NudgeLink(fleetlink.ScopeAdmin)
 
 		now := time.Now().UTC().Format(time.RFC3339)
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "ai", itemID, "ai_identify_confirmed",

@@ -94,11 +94,34 @@ func withDefaults(c Config) Config {
 	return c
 }
 
-func (h *Hub) onFrameEvery() time.Duration {
-	if h.opts.OnFrameEvery > 0 {
-		return h.opts.OnFrameEvery
+// Hub's peerHost side.
+
+func (h *Hub) onFrame() (func(string), time.Duration) {
+	every := h.opts.OnFrameEvery
+	if every <= 0 {
+		every = 30 * time.Second
 	}
-	return 30 * time.Second
+	return h.opts.OnFrame, every
+}
+
+func (h *Hub) helloFor(ctx context.Context, tillID string) Hello {
+	hello := Hello{Role: "main"}
+	if f := h.opts.Hello; f != nil {
+		hello = f(ctx, tillID)
+	}
+	hello.PeerTillID = tillID
+	return hello
+}
+
+func (h *Hub) gotHello(*Peer, Hello) {}
+
+func (h *Hub) gotMessage(p *Peer, env Envelope) {
+	if env.Type != TypeReport {
+		return // sync/fleet/pairing are main → peer only; a peer sending them is ignored
+	}
+	if r, ok := decodeReport(env.Payload); ok {
+		h.storeReportFrom(p, r)
+	}
 }
 
 // Handle registers the handler for inbound requests of type typ (e.g. the
@@ -161,7 +184,7 @@ func (h *Hub) ServeConn(tillID string, conn Conn) {
 		conn.Close(CloseTryAgain, "too many till links")
 		return
 	}
-	p := newPeer(h, tillID, conn)
+	p := newPeer(h, h.cfg, "m", tillID, conn)
 	h.peers[tillID] = p
 	h.wg.Add(1)
 	h.mu.Unlock()

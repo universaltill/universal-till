@@ -151,6 +151,19 @@ type Deps struct {
 	// pages.Init before the server accepts requests; nil in bare-Deps tests.
 	Link *fleetlink.Hub
 
+	// LinkClient is this till's side of the main-till link when it is an
+	// additional till (ADR-0114 §2–§4, ut-docs#2735): it dials the main
+	// till only when advertised, kicks SyncPullNow on every `sync` nudge
+	// and sets the pull loop's polling floor. Built once in pages.Init
+	// (it idles on a main or standalone till); nil in bare-Deps tests.
+	LinkClient *fleetlink.Client
+
+	// SyncPullNow, when non-nil, asks the replica admin-pull loop
+	// (pages.StartSyncPull) for one pull now — the link's nudge. Set once
+	// by StartSyncPull at boot; capacity 1, so any number of nudges before
+	// the loop drains it coalesce into one pull.
+	SyncPullNow chan struct{}
+
 	// AsyncWork tracks best-effort, fire-and-forget goroutines started
 	// after a request already responded — printReceiptAsync (ut-docs#425)
 	// is the first user: checkout must never block on a slow/absent
@@ -539,6 +552,19 @@ func (d *Deps) RequestSyncPush() {
 	}
 	select {
 	case d.SyncPushNow <- struct{}{}:
+	default:
+	}
+}
+
+// RequestSyncPull asks the replica admin-pull loop for one pull now.
+// Non-blocking and coalesced (a full buffer means a pull is already
+// pending); a no-op with no loop running.
+func (d *Deps) RequestSyncPull() {
+	if d.SyncPullNow == nil {
+		return
+	}
+	select {
+	case d.SyncPullNow <- struct{}{}:
 	default:
 	}
 }

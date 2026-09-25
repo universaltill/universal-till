@@ -649,9 +649,12 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// on either (ADR-0003).
 	if d.SyncPrimaryURL(ctx) == "" {
 		warnIfStockNegative(ctx, repo, saleInput, "sale "+receiptNo)
-	} else {
-		d.RequestSyncPush()
 	}
+	// On a main till this is the `stock` nudge to its linked tills
+	// (ADR-0114 §2; the push kick is a no-op there) — never gated on
+	// being a replica, or the main till's own sales reach the others only
+	// at their 5-min floor.
+	d.RequestSyncPush()
 
 	// Silent receipt print (docs: receipt-printing.md) — fired async,
 	// never blocks or fails the tender.

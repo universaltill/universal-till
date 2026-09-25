@@ -1038,10 +1038,9 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// A replica's refund is a journaled sale like any other (ADR-0011
 		// D3) — nudge the push loop the same way a tender does (ut-docs#404,
 		// ADR-0036) so the primary hears about the restock in seconds, not
-		// the next 30s tick. No-op on a primary/single till.
-		if d.SyncPrimaryURL(r.Context()) != "" {
-			d.RequestSyncPush()
-		}
+		// the next 30s tick. On a main till it is the `stock` nudge to its
+		// linked tills instead (ADR-0114 §2), so it is never gated.
+		d.RequestSyncPush()
 		newReceipt, _, _, _, _ := repo.SaleTotals(r.Context(), saleID)
 		_ = repo.InsertAudit(r.Context(), nil, actorID, "sale", newReceipt, "refund",
 			map[string]any{"original": detail.ReceiptNo, "amount": refundTotal.Minor(), "method": method},

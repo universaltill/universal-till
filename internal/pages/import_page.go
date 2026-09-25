@@ -24,6 +24,7 @@ import (
 	"github.com/universaltill/universal-till/internal/catimport"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
+	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/imaging"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -1405,6 +1406,12 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					// confirmed till committing as normal).
 					"currency": httpx.ActiveCurrency().Code, "currency_confirmed_this_import": justConfirmedCurrency},
 				time.Now().UTC().Format(time.RFC3339), "")
+			// Every row insert above nudged admin through its trigger, but
+			// the photos written beside them are files: one more nudge once
+			// the last file is on disk, so a pull that ran mid-import
+			// catches the rest (ADR-0114 §2). Opening stock rows are not
+			// trigger-covered either.
+			d.NudgeLink(fleetlink.ScopeAdmin, fleetlink.ScopeStock)
 		}
 
 		var b strings.Builder
