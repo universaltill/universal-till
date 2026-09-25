@@ -1929,3 +1929,91 @@ func TestAdminApply_InvalidatesStaleOpenPriceHistory(t *testing.T) {
 		t.Errorf("already-closed row was touched: ends_at %q, want untouched %q", got, closedEndsAt)
 	}
 }
+
+// ut-docs#2730: the marketplace (cloud) identity is per-till. Before this
+// fix every marketplace.* key rode the admin bundle, so every replica
+// checked in to the cloud as the MAIN till's device, carrying the main
+// till's token. The device identity, the credential and the pinned signing
+// key must never leave a till in either direction; the store-level values
+// (which store the shop is, the owner's telemetry choice) still sync.
+func TestAdminDumpApplyRoundTrip_MarketplaceIdentityNeverSyncs(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	perTill := map[string][2]string{ // key -> {primary value, replica value}
+		"marketplace.device_id":         {"till-main", "till-replica"},
+		"marketplace.device_registered": {"till-main", "till-replica"},
+		"marketplace.device_till_id":    {"", "till-2"},
+		"marketplace.token":             {"store-secret", "device-secret"},
+		"marketplace.token_kind":        {"", "device"},
+		"marketplace.enrolled_at":       {"2026-09-03T17:16:22Z", "2026-09-25T10:00:00Z"},
+		"marketplace.public_key":        {"aa", "bb"},
+	}
+	for k, v := range perTill {
+		mustExec(t, primary, `INSERT INTO settings (key, value) VALUES (?, ?)`, k, v[0])
+		mustExec(t, replica, `INSERT INTO settings (key, value) VALUES (?, ?)`, k, v[1])
+	}
+	storeLevel := map[string]string{
+		"marketplace.store_id":         "store-abc",
+		"marketplace.merchant_id":      "store-abc",
+		"marketplace.telemetry_opt_in": "true",
+	}
+	for k, v := range storeLevel {
+		mustExec(t, primary, `INSERT INTO settings (key, value) VALUES (?, ?)`, k, v)
+	}
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	dumped := map[string]bool{}
+	for _, rec := range bundle.Tables["settings"] {
+		dumped[fmt.Sprint(rec["key"])] = true
+	}
+	for k := range perTill {
+		if dumped[k] {
+			t.Errorf("%s leaked into the admin dump", k)
+		}
+	}
+	for k := range storeLevel {
+		if !dumped[k] {
+			t.Errorf("store-level %s missing from the admin dump", k)
+		}
+	}
+
+	// Apply side, defense in depth: a pre-fix main till still sends its
+	// marketplace identity; the replica must ignore it.
+	legacy := wireTrip(t, bundle)
+	for k, v := range perTill {
+		legacy.Tables["settings"] = append(legacy.Tables["settings"], map[string]any{"key": k, "value": v[0]})
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, legacy); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	for k, v := range perTill {
+		var got string
+		if err := replica.QueryRow(`SELECT value FROM settings WHERE key = ?`, k).Scan(&got); err != nil || got != v[1] {
+			t.Errorf("replica's own %s clobbered by the main till's admin bundle: got %q, want %q (err=%v)", k, got, v[1], err)
+		}
+	}
+	for k, v := range storeLevel {
+		var got string
+		if err := replica.QueryRow(`SELECT value FROM settings WHERE key = ?`, k).Scan(&got); err != nil || got != v {
+			t.Errorf("store-level %s not applied on the replica: got %q, want %q (err=%v)", k, got, v, err)
+		}
+	}
+}
+
+// ut-docs#2730: the admin bundle's per-till list must cover every prefix the
+// join snapshot redacts (db.TillCloudIdentityPrefixes) — the two LAN paths a
+// till's cloud credential could otherwise leave by.
+func TestPerTillSettingsCoverTillCloudIdentity(t *testing.T) {
+	for _, p := range db.TillCloudIdentityPrefixes {
+		for _, k := range []string{p, p + "x"} {
+			if !perTillSetting(k) {
+				t.Errorf("%s (cloud identity prefix %q) is not per-till: the admin sync would carry it", k, p)
+			}
+		}
+	}
+}

@@ -56,8 +56,9 @@ func RedactedJoinSnapshot(db *sql.DB, dbPath string) (string, func(), error) {
 	// file, never a per-table export — a joining replica must inherit
 	// retained fiscal data (reset-archive tables) the same way it inherits
 	// everything else. Redaction below stays limited to one column on one
-	// table for the same reason: anything more selective here risks quietly
-	// dropping data a future migration adds.
+	// table plus a fixed, named set of settings rows (TillCloudIdentityPrefixes,
+	// ut-docs#2730) for the same reason: anything more selective here risks
+	// quietly dropping data a future migration adds.
 	_, copyErr := io.Copy(tmp, src)
 	src.Close()
 	if closeErr := tmp.Close(); copyErr == nil {
@@ -102,6 +103,14 @@ func RedactedJoinSnapshot(db *sql.DB, dbPath string) (string, func(), error) {
 		return "", nil, fmt.Errorf("open join snapshot copy: %w", err)
 	}
 	_, execErr := cdb.Exec(`UPDATE tills SET bearer_hash = NULL`)
+	if execErr == nil {
+		// ut-docs#2730: nor this till's own cloud identity — above all its
+		// store token. The joining replica gets its own device id at
+		// ApplyReplicaIdentity and the main till registers it in the cloud
+		// (internal/enroll); no credential ever crosses the LAN. The same
+		// secure_delete(1) guarantee applies: the token's bytes are zeroed.
+		execErr = DeleteTillCloudIdentity(cdb)
+	}
 	if closeErr := cdb.Close(); execErr == nil {
 		execErr = closeErr
 	}
@@ -110,6 +119,31 @@ func RedactedJoinSnapshot(db *sql.DB, dbPath string) (string, func(), error) {
 		return "", nil, fmt.Errorf("redact tills in join snapshot: %w", execErr)
 	}
 	return copyPath, cleanup, nil
+}
+
+// TillCloudIdentityPrefixes are the settings that make up ONE till's cloud
+// identity: its device id and registration markers (marketplace.device_*),
+// its cloud credential (marketplace.token*) and when it enrolled. They never
+// leave a till over the LAN — not in the join snapshot (RedactedJoinSnapshot)
+// and not in the admin bundle (data.PerTillSettingPrefixes, which covers
+// these; TestPerTillSettingsCoverTillCloudIdentity) — ut-docs#2730. The
+// store-level marketplace keys (store_id, merchant_id, …) still travel.
+var TillCloudIdentityPrefixes = []string{"marketplace.device_", "marketplace.token", "marketplace.enrolled_at"}
+
+// DeleteTillCloudIdentity removes every TillCloudIdentityPrefixes row from
+// the settings table behind exec: the join-snapshot copy served to a joining
+// replica and, as defence at the sink, the replica's restored DB
+// (ApplyReplicaIdentity). A prefix match via substr, not LIKE: '_' in
+// "device_" is a LIKE wildcard.
+func DeleteTillCloudIdentity(exec interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}) error {
+	for _, p := range TillCloudIdentityPrefixes {
+		if _, err := exec.Exec(`DELETE FROM settings WHERE substr(key, 1, length(?)) = ?`, p, p); err != nil {
+			return fmt.Errorf("delete %s* settings: %w", p, err)
+		}
+	}
+	return nil
 }
 
 // joinSnapshotOrphanAge is how long a join-snapshot-*.db file may sit in the

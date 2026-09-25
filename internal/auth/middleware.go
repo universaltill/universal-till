@@ -124,6 +124,13 @@ func exempt(path string) bool {
 		// switch's own comment documents. TestSyncPullPathsAreExempt pins
 		// this entry.
 		"/api/sync/secrets-key",
+		// ut-docs#2730: a replica's request that the main till register its
+		// own cloud device (internal/pages/sync_cloud_device.go) — the main
+		// till vouches for it in the cloud. syncTill-authed in the handler
+		// exactly like /api/sync/secrets-key. Omitting it here would 401
+		// every replica and leave it without its own cloud identity.
+		// TestSyncPullPathsAreExempt pins this entry.
+		"/api/sync/cloud-device",
 		"/api/setup/join",
 		"/api/setup/discover-primaries", "/api/setup/pair-start", "/api/setup/pair-status",
 		// ut-docs#1550: the wizard's "joined — restarting" trigger, the

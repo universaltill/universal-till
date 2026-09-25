@@ -28,10 +28,10 @@ type ReplicaIdentity struct {
 	Bearer        string `json:"bearer"`
 	ReceiptPrefix string `json:"receipt_prefix"`
 	TillName      string `json:"till_name"`
-	// DeviceID is a fresh marketplace device id for this replica. The snapshot
-	// carried the primary's device id; overwriting it here keeps the shared
-	// store identity (id/token/key) but gives each till its OWN device — so the
-	// store's fleet lists distinct devices (ADR-0013 two-tier enrolment).
+	// DeviceID is a fresh marketplace device id for this replica, so the
+	// store's fleet lists distinct devices (ADR-0013 two-tier enrolment). The
+	// shared store id travels; the primary's device identity and store token
+	// do not (ut-docs#2730, TillCloudIdentityPrefixes).
 	DeviceID string `json:"device_id"`
 	// RegisterID is the register the primary auto-provisioned for this till
 	// during enrolment (ut-docs#894). Empty when joining an older primary
@@ -121,15 +121,24 @@ ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, val)
 	// THIS run is registered later in startup (internal/app.Run) —
 	// independent-review finding, ut-docs#1745.
 	secrets.SetDefault(nil)
-	// Give this replica its own marketplace device id (the snapshot carried the
-	// primary's), so it registers as a distinct device under the shared store.
-	// Clear the "already registered" marker so enrolment re-registers it.
+	// Give this replica its own marketplace device id (the snapshot may have
+	// carried the primary's), so it registers as a distinct device under the
+	// shared store. ut-docs#2730: drop ALL of the primary's cloud identity
+	// first — above all its store token — in case a pre-fix primary's
+	// snapshot still carried it (a current primary strips it at source,
+	// RedactedJoinSnapshot). The main till registers this replica's device
+	// in the cloud (internal/enroll); no credential crosses the LAN.
+	if err := DeleteTillCloudIdentity(sqlDB); err != nil {
+		return false, fmt.Errorf("clear inherited cloud identity: %w", err)
+	}
 	if id.DeviceID != "" {
 		if err := set("marketplace.device_id", id.DeviceID); err != nil {
 			return false, fmt.Errorf("apply identity device: %w", err)
 		}
-		if _, err := sqlDB.Exec(`DELETE FROM settings WHERE key = 'marketplace.device_registered'`); err != nil {
-			return false, fmt.Errorf("clear device_registered: %w", err)
+		// Recorded as minted for THIS till, so the enrolment repair
+		// (internal/enroll.repairCopiedIdentity) keeps it.
+		if err := set("marketplace.device_till_id", id.TillID); err != nil {
+			return false, fmt.Errorf("apply identity device till: %w", err)
 		}
 	}
 	// Sales before the join came in the snapshot — push only what THIS

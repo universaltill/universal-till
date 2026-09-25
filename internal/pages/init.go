@@ -541,6 +541,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSyncVouchers(mux, dp)    // cross-till voucher lookup + redemption write-through, primary side (ut-docs#1668)
 	registerSyncHeldSales(mux, dp)   // cross-till held-sale (open order) write-through + list, primary side (ADR-0093, ut-docs#1920)
 	registerSyncAdmin(mux, dp)
+	registerSyncCloudDevice(mux, dp) // replica's own cloud device identity, main-till side (ut-docs#2730)
 	registerSyncAssets(mux, dp)
 	registerSyncQuarantinePage(mux, dp) // ut-docs#1133: quarantined LAN-sync journal entries, primary-only admin panel (ADR-0065 follow-up)
 	StartSyncPush(bgCtx, dp, wg)        // replica journal loop (ADR-0011 D3); joined by app.Run's drain

@@ -346,3 +346,58 @@ func TestSweepOrphanedJoinSnapshots_NeverTouchesRealBackups(t *testing.T) {
 		t.Errorf("real backup %s removed by join-snapshot sweep: stat err = %v", realBackup, err)
 	}
 }
+
+// ut-docs#2730: the join snapshot must not carry the main till's cloud
+// identity — above all its store token — to a joining replica. The rows
+// are deleted on the COPY (and not physically recoverable from its bytes);
+// the store-level marketplace keys (which store the shop is) still travel,
+// and the live DB and the real backup keep everything.
+func TestRedactedJoinSnapshot_StripsTillCloudIdentity(t *testing.T) {
+	path := testDBPath(t)
+	d := openTest(t, path)
+	const token = "store-token-9f8e7d6c5b4a39281706f5e4d3c2b1a0"
+	for k, v := range map[string]string{
+		"marketplace.token":             token,
+		"marketplace.device_id":         "till-main",
+		"marketplace.device_registered": "till-main",
+		"marketplace.enrolled_at":       "2026-09-03T17:16:22Z",
+		"marketplace.store_id":          "store-shared",
+	} {
+		if _, err := d.Exec(`INSERT INTO settings (key, value) VALUES (?, ?)`, k, v); err != nil {
+			t.Fatalf("seed %s: %v", k, err)
+		}
+	}
+
+	copyPath, cleanup, err := RedactedJoinSnapshot(d.DB, path)
+	if err != nil {
+		t.Fatalf("RedactedJoinSnapshot: %v", err)
+	}
+	defer cleanup()
+
+	cdb, err := sql.Open("sqlite", copyPath)
+	if err != nil {
+		t.Fatalf("open copy: %v", err)
+	}
+	defer cdb.Close()
+	for _, k := range []string{"marketplace.token", "marketplace.device_id", "marketplace.device_registered", "marketplace.enrolled_at"} {
+		var n int
+		if err := cdb.QueryRow(`SELECT COUNT(*) FROM settings WHERE key = ?`, k).Scan(&n); err != nil || n != 0 {
+			t.Errorf("%s still in the join snapshot (rows=%d err=%v)", k, n, err)
+		}
+	}
+	var store string
+	if err := cdb.QueryRow(`SELECT value FROM settings WHERE key = 'marketplace.store_id'`).Scan(&store); err != nil || store != "store-shared" {
+		t.Errorf("store_id = %q (err %v), want the shared store-shared", store, err)
+	}
+	raw, err := os.ReadFile(copyPath)
+	if err != nil {
+		t.Fatalf("read copy: %v", err)
+	}
+	if bytes.Contains(raw, []byte(token)) {
+		t.Error("the store token is recoverable from the served file's raw bytes")
+	}
+	var live string
+	if err := d.QueryRow(`SELECT value FROM settings WHERE key = 'marketplace.token'`).Scan(&live); err != nil || live != token {
+		t.Errorf("LIVE DB token mutated: %q (err %v)", live, err)
+	}
+}

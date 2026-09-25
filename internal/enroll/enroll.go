@@ -200,7 +200,14 @@ func RegisterNow(ctx context.Context, cfg *config.Config, kv Settings) (Status, 
 	defer releaseAttempt()
 	var firstErr error
 	if s := CurrentStatus(); !s.Registered {
-		if err := register(ctx, m, cfg.StoreName, kv); err != nil {
+		// A replica never creates its own anonymous store — that would split
+		// the shop in the cloud; its credential comes from the main till
+		// (ut-docs#2730).
+		registerFn := func() error { return register(ctx, m, cfg.StoreName, kv) }
+		if isReplica(ctx, kv) {
+			registerFn = func() error { return registerOnReplica(ctx, kv) }
+		}
+		if err := registerFn(); err != nil {
 			firstErr = err
 		}
 	}
@@ -238,6 +245,13 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 		}
 		return v
 	}
+	// ut-docs#2730: a replica whose device id was copied from another till
+	// mints its own before anything below reads it. Operator-pinned
+	// identities (env) are left alone.
+	if cfg.Marketplace.DeviceID == "" && !clientIDExplicit {
+		repairCopiedIdentity(ctx, kv, get)
+	}
+	replica := strings.TrimSpace(get(keySyncPrimaryURL)) != ""
 	id := identity{
 		DeviceID:   get(keyDeviceID),
 		StoreID:    get(keyStoreID),
@@ -294,8 +308,18 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 	// registers this device under the shared store (one store, many
 	// devices).
 	needKey := m.PublicKey == ""
-	needDevice := !clientIDExplicit && m.StoreID != "" && m.MerchantToken != "" && get(keyDeviceRegistered) != id.DeviceID
+	// A replica's device registration goes through its main till
+	// (replicaLoop, ut-docs#2730); only a main/standalone till registers its
+	// own device under the store here.
+	needDevice := !replica && !clientIDExplicit && m.StoreID != "" && m.MerchantToken != "" && get(keyDeviceRegistered) != id.DeviceID
 	deviceName := get("sync.till_name")
+	if replica && !clientIDExplicit {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			replicaLoop(ctx, *m, kv)
+		}()
+	}
 	if !needKey && !needDevice {
 		return
 	}
@@ -657,6 +681,23 @@ func registerDevice(ctx context.Context, m config.MarketplaceConfig, deviceName 
 	mu.RLock()
 	deviceID := cur.DeviceID
 	mu.RUnlock()
+	tillID, _, _ := kv.Get(ctx, keySyncTillID)
+	if err := registerDeviceID(ctx, m, deviceID, deviceName, buildinfo.Version, tillID); err != nil {
+		return err
+	}
+	if err := kv.Set(ctx, keyDeviceRegistered, deviceID); err != nil {
+		logging.L().Warnf("enrolment: persist device_registered: %v", err)
+	}
+	return nil
+}
+
+// registerDeviceID is the /v1/stores/devices/register call for any device id
+// — this till's own (registerDevice) or a replica's the main till vouches for
+// (VouchForReplica). tillID is the till's LAN sync id (sync.till_id), sent
+// when known as the stable machine key the cloud can use to merge or retire
+// a physical till's older device rows (ut-docs#2730); today's cloud ignores
+// it.
+func registerDeviceID(ctx context.Context, m config.MarketplaceConfig, deviceID, deviceName, version, tillID string) error {
 	storeID, token := m.StoreID, m.MerchantToken
 	if storeID == "" || token == "" {
 		return fmt.Errorf("no store identity yet")
@@ -664,9 +705,13 @@ func registerDevice(ctx context.Context, m config.MarketplaceConfig, deviceName 
 	if deviceName == "" {
 		deviceName = "Till"
 	}
-	payload, err := json.Marshal(map[string]string{
-		"store_id": storeID, "device_id": deviceID, "device_name": deviceName, "version": buildinfo.Version,
-	})
+	body := map[string]string{
+		"store_id": storeID, "device_id": deviceID, "device_name": deviceName, "version": version,
+	}
+	if tillID = strings.TrimSpace(tillID); tillID != "" {
+		body["till_id"] = tillID
+	}
+	payload, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
@@ -685,9 +730,6 @@ func registerDevice(ctx context.Context, m config.MarketplaceConfig, deviceName 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("device register returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	if err := kv.Set(ctx, keyDeviceRegistered, deviceID); err != nil {
-		logging.L().Warnf("enrolment: persist device_registered: %v", err)
 	}
 	logging.L().Infof("enrolment: till registered as device %s under store %s", deviceID, storeID)
 	return nil
