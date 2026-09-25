@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The problems digest keeps only warn/error lines, newest first, capped.
@@ -112,5 +113,55 @@ func TestFatalfExitsProcess(t *testing.T) {
 	}
 	if strings.Contains(string(out), "unreachable") {
 		t.Fatalf("Fatalf returned instead of exiting: %s", out)
+	}
+}
+
+// ut-docs#2798: a keyed problem closes when its condition recovers, and an
+// unrepeated one ages out — both leave OpenProblems, while Recent (the
+// bug-report bundle's log history) keeps every line.
+func TestOpenProblems_ResolvedAndAgedOutAreNotOpen(t *testing.T) {
+	ResetRecent()
+	t.Cleanup(ResetRecent)
+	l := L()
+	l.WarnProblemf("test.outage", "outage started")
+	l.WarnProblemf("test.other", "other condition")
+	l.Warnf("printer offline")
+
+	if n := ResolveProblems("test.outage"); n != 1 {
+		t.Fatalf("ResolveProblems closed %d, want 1", n)
+	}
+	if n := ResolveProblems("test.outage"); n != 0 {
+		t.Fatalf("second ResolveProblems closed %d, want 0 (already resolved)", n)
+	}
+	if n := ResolveProblems(""); n != 0 {
+		t.Fatalf("empty key resolved %d, want 0 (unkeyed Warnf lines never resolve)", n)
+	}
+
+	now := time.Now().UTC()
+	open := OpenProblems(now, time.Hour)
+	var msgs []string
+	for _, p := range open {
+		msgs = append(msgs, p.Msg)
+	}
+	if strings.Join(msgs, "|") != "printer offline|other condition" {
+		t.Fatalf("open problems = %q, want the unresolved two, newest first", msgs)
+	}
+	if len(Recent()) != 3 {
+		t.Fatalf("Recent() = %+v, want all three lines kept as history", Recent())
+	}
+
+	// Two hours later with a one-hour window: nothing repeated, all aged out.
+	if later := OpenProblems(now.Add(2*time.Hour), time.Hour); len(later) != 0 {
+		t.Fatalf("aged-out problems still open: %+v", later)
+	}
+	// maxAge <= 0 disables the age cut.
+	if all := OpenProblems(now.Add(48*time.Hour), 0); len(all) != 2 {
+		t.Fatalf("OpenProblems(maxAge 0) = %+v, want the two unresolved", all)
+	}
+
+	// The same condition recurring after a recovery is open again.
+	l.WarnProblemf("test.outage", "outage again")
+	if open := OpenProblems(now, time.Hour); len(open) != 3 || open[0].Msg != "outage again" {
+		t.Fatalf("recurrence not open: %+v", open)
 	}
 }

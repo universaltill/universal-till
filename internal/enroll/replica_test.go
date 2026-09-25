@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // ut-docs#2730: before the fix the admin sync copied the main till's
@@ -105,8 +106,17 @@ func TestInitReplicaWithCopiedIdentityMintsOwnDevice(t *testing.T) {
 	kv := newFakeKV()
 	seedCopiedReplica(kv, "http://127.0.0.1:1") // nothing listens: offline main till
 	cfg := &config.Config{}                     // no marketplace endpoint: no network at all
+	logging.ResetRecent()
 
 	Init(context.Background(), cfg, kv, &sync.WaitGroup{})
+
+	// ut-docs#2798: a successful self-repair is not a problem — it must not
+	// reach the heartbeat's Problems ring (my.'s "Attention needed").
+	for _, p := range logging.Recent() {
+		if strings.Contains(p.Msg, "carried another till's cloud device identity") {
+			t.Fatalf("self-repair logged as a problem: %+v", p)
+		}
+	}
 
 	got := kv.get(keyDeviceID)
 	if got == mainDeviceID || !strings.HasPrefix(got, "till-") {

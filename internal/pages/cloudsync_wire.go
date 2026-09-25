@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/universaltill/universal-till/internal/catalogtypes"
+	"github.com/universaltill/universal-till/internal/clock"
 	"github.com/universaltill/universal-till/internal/cloudsync"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
@@ -976,13 +977,22 @@ func cloudRemovePlugin(ctx context.Context, d *common.Deps, pluginID string) (st
 	return "uninstalled " + pluginID, nil
 }
 
+// problemReportMaxAge is how long a warn/error line with no repeat stays in
+// the heartbeat's problems digest (ut-docs#2798): long enough that the owner
+// sees yesterday evening's trouble the next morning, short enough that a
+// till which got over it stops showing "Attention needed".
+const problemReportMaxAge = 24 * time.Hour
+
 // collectProblems builds the heartbeat's problems digest: recent warn/error
 // log lines from this process plus any failed plugin installs. Newest first,
 // capped — it is a digest for the cloud's Problems feed, not a log shipper.
 func collectProblems(ctx context.Context, d *common.Deps) []map[string]any {
 	const maxProblems = 20
 	out := []map[string]any{}
-	for _, p := range logging.Recent() {
+	// Open problems only (ut-docs#2798): a resolved one (its condition
+	// recovered — logging.ResolveProblems) or one that hasn't repeated for
+	// problemReportMaxAge is history, not something the owner must act on.
+	for _, p := range logging.OpenProblems(clock.Now().UTC(), problemReportMaxAge) {
 		if len(out) >= maxProblems {
 			break
 		}
