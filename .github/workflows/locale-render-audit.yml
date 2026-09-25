@@ -28,6 +28,16 @@ name: locale-render-audit
 # push — do not "fix" it to force-green on PRs the way lang-pack-drift.yml
 # does; that would defeat the point of the card.
 #
+# ONE carve-out, pull_request only (ut-docs#2805): a finding whose text is
+# the en.json value of a key NEW in this PR (absent from the base branch's
+# en.json) is printed as a ::notice::, not failed. The de pack can't lead —
+# its check-key-drift.sh fails a key core doesn't have yet (orphan) — so
+# without this, every PR adding a visible key deadlocked. The pack PR
+# follows right after merge (ut-docs#1857), and push to main stays strict,
+# so a pack still lagging after merge is still caught. Hardcoded English
+# and pre-existing keys still fail on PRs too. Rule + reasons:
+# e2e/tests-i18n-audit/lib/new-keys.js.
+#
 # Note (reviewer, 2026-09-18) that this job is therefore hard-failing end to
 # end, including on the pack checkout: UT_LOCALE_AUDIT_STRICT=1 below turns
 # audit-locale-render.sh's dev-machine-friendly "pack not on disk, skip"
@@ -92,6 +102,20 @@ jobs:
           path: ut-plugin-language-de
           persist-credentials: false
 
+      # pull_request only (ut-docs#2805): the base branch's en.json, so the
+      # audit can tell which keys this PR adds. A sparse checkout of that
+      # one file — same contents: read token, no credential persisted, no
+      # new permission; works for fork PRs since it reads the base repo.
+      - name: Checkout base branch en.json
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.base_ref }}
+          path: .locale-audit-base
+          sparse-checkout: web/locales/en.json
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -115,8 +139,18 @@ jobs:
           # step, copied verbatim from e2e.yml.
           npx playwright install --with-deps chromium
 
+      # The PR carve-out's filter (ut-docs#2805), unit-tested with plain
+      # node before the audit trusts it — no npm deps needed.
+      - name: New-key filter unit tests
+        run: node --test e2e/tests-i18n-audit/lib/new-keys_test.js
+
       - name: German (de) render audit
         env:
+          # Set on pull_request only (empty otherwise => strict): the base
+          # branch's en.json checked out above, read by
+          # audit-locale-render.spec.ts to defer findings for keys this PR
+          # adds (ut-docs#2805).
+          AUDIT_BASE_EN_JSON: ${{ github.event_name == 'pull_request' && format('{0}/.locale-audit-base/web/locales/en.json', github.workspace) || '' }}
           # Where the step above put the pack: workspace-relative, resolved
           # against the repo root by the script.
           UT_DE_PACK_DIR: ut-plugin-language-de
