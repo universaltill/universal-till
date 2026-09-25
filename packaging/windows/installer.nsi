@@ -2,7 +2,7 @@
 ; Built in CI after goreleaser: the Windows zip is extracted to a staging dir
 ; and this script packages it into a guided Setup.exe with a wizard.
 ;
-;   makensis -DVERSION=<x.y.z> -DSRCDIR=<staging> installer.nsi
+;   makensis -DVERSION=<x.y.z> -DSRCDIR=<staging> [-DUNINST_SIGN_CMD=<signer>] installer.nsi
 ;
 ; Per-user install (no admin, and the app can write its ./data next to the
 ; binary — Program Files would be read-only and break the DB).
@@ -27,6 +27,14 @@ Unicode true
 
 Name "${APPNAME}"
 OutFile "unitill-pos-setup-${VERSION}.exe"
+
+; Sign the uninstaller that WriteUninstaller embeds (ut-docs#2610). release.yml
+; passes -DUNINST_SIGN_CMD=<path to packaging/windows/sign-exe.sh>; makensis
+; runs it on the generated uninstall.exe before packing it and aborts the
+; build if it exits non-zero (NSIS >= 3.08). Unset = local unsigned build.
+!ifdef UNINST_SIGN_CMD
+  !uninstfinalize '"${UNINST_SIGN_CMD}" "%1"' = 0
+!endif
 ; Per-user install location (writable — the till stores its database here).
 InstallDir "$LOCALAPPDATA\Programs\Universal Till"
 InstallDirRegKey HKCU "Software\UniversalTill" "InstallDir"

@@ -25,6 +25,13 @@ builds:
     ldflags: ["-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}}"]
     goos: [windows]
     goarch: [amd64]
+    hooks:
+      post:
+        # Code-sign the Windows binaries before they are archived, so the
+        # portable zip and checksums.txt carry the signed files (ut-docs#2610).
+        # Only release.yml's goreleaser job sets UT_WINDOWS_SIGN=1 (after
+        # packaging/windows/setup-signing.sh); local snapshots stay unsigned.
+        - cmd: sh -c 'if [ "${UT_WINDOWS_SIGN:-}" = 1 ]; then packaging/windows/sign-exe.sh "{{ .Path }}"; fi'
   # Windows desktop shell (Edge WebView2 window, like the mac app): needs CGO
   # + mingw-w64 (release.yml installs it); -H windowsgui = no console window.
   - id: desktop-windows
@@ -38,6 +45,10 @@ builds:
     ldflags: ["-s -w -H windowsgui -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}}"]
     goos: [windows]
     goarch: [amd64]
+    hooks:
+      post:
+        # Same signing hook as the windows build above (ut-docs#2610).
+        - cmd: sh -c 'if [ "${UT_WINDOWS_SIGN:-}" = 1 ]; then packaging/windows/sign-exe.sh "{{ .Path }}"; fi'
   - id: darwin
     binary: unitill-pos
     main: .
