@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -231,6 +232,61 @@ func TestSyncLink_AdminChangeNudgesAdmin(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitSync(t, c, fleetlink.ScopeAdmin)
+}
+
+// ut-docs#2792: a per-till settings write (the entitlement refresh on every
+// cloud tick, a printer, a sync cursor) bumps sync_admin_version through the
+// settings trigger, but the bundle a replica pulls is unchanged — so it must
+// not nudge every linked till into a full admin re-pull.
+func TestSyncLink_PerTillSettingWriteDoesNotNudge(t *testing.T) {
+	f := newSyncLinkFixture(t)
+	f.enrol(t, "Till 2", "bearer-t2")
+	c, _, err := f.dial(t, "bearer-t2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := nextLinkFrame(t, c); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	runLinkAdminWatch(ctx, f.dp, &wg, 20*time.Millisecond, data.NewSyncAdminRepo(f.dp.Db))
+	t.Cleanup(func() { cancel(); wg.Wait() })
+	time.Sleep(60 * time.Millisecond) // let the watch take its baseline
+
+	for i := 0; i < 3; i++ {
+		if err := f.dp.Settings.Set(context.Background(), "entitlement.last_confirmed_at", fmt.Sprintf("2026-09-25T14:0%d:00Z", i)); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.dp.Settings.Set(context.Background(), "printer.host", fmt.Sprintf("10.0.0.%d", i)); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(60 * time.Millisecond) // several watch ticks per write
+	}
+	// A real admin change still nudges — and must be the first sync frame.
+	if err := f.dp.Settings.Set(context.Background(), "store.name", "Changed shop"); err != nil {
+		t.Fatal(err)
+	}
+	e, err := nextLinkFrame(t, c)
+	if err != nil {
+		t.Fatalf("waiting for the admin nudge: %v", err)
+	}
+	if e.Type != fleetlink.TypeSync {
+		t.Fatalf("first frame after the writes = %s, want the store.name sync nudge", e.Type)
+	}
+	// Anything already queued before store.name was a spurious nudge; the
+	// fixture has no other writer, so exactly one admin nudge is expected.
+	readCtx, readCancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer readCancel()
+	for {
+		_, b, err := c.Read(readCtx)
+		if err != nil {
+			break
+		}
+		if extra, derr := fleetlink.Decode(b); derr == nil && extra.Type == fleetlink.TypeSync {
+			t.Fatalf("a second sync nudge arrived: per-till settings writes nudged the linked till (%s)", b)
+		}
+	}
 }
 
 func TestSyncLink_ChangePointsNudgeTheirScopes(t *testing.T) {

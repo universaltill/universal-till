@@ -56,6 +56,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
@@ -100,6 +101,11 @@ var (
 type Vouch struct {
 	StoreID  string `json:"store_id"`
 	DeviceID string `json:"device_id"`
+	// Entitlement is the main till's own cached cloud entitlement
+	// (ut-docs#2792), set by the handler when it has one. Not a credential:
+	// it only drives paid cloud surfaces, never a sale (ADR-0060 §5), and a
+	// main till already decides every other admin setting a replica runs on.
+	Entitlement *entitlement.Cached `json:"entitlement,omitempty"`
 }
 
 // ReplicaRequest is what the main till knows about the asking replica. TillID
@@ -163,7 +169,7 @@ func repairCopiedIdentity(ctx context.Context, kv Settings, get func(string) str
 // applyVouch records that the main till registered THIS till's device. Only
 // the registration marker is persisted — never anything credential-like, and
 // never the store id (store-level, it arrives with the admin sync).
-func applyVouch(ctx context.Context, kv Settings, v Vouch) error {
+func applyVouch(ctx context.Context, m config.MarketplaceConfig, kv Settings, v Vouch) error {
 	mu.RLock()
 	deviceID := cur.DeviceID
 	mu.RUnlock()
@@ -178,7 +184,42 @@ func applyVouch(ctx context.Context, kv Settings, v Vouch) error {
 			logging.L().Warnf("enrolment: persist enrolled_at: %v", err)
 		}
 	}
+	_, token := currentStoreAuth(m)
+	applyRelayedEntitlement(ctx, kv, v.Entitlement, token != "")
 	return nil
+}
+
+// applyRelayedEntitlement stores the main till's entitlement cache on a
+// replica with no cloud token of its own (ut-docs#2792). A replica that
+// holds a store token (a pre-#2730 copy, or one from the environment) runs
+// its own cloud sync, which is the fresher source — the relay would fight
+// it, so it is skipped. Best-effort: an invalid block keeps the replica's
+// cache, as does a relayed confirmation older than the one already held (two
+// vouch answers landing out of order, or a re-pointed replica); a failed
+// write is logged and retried on the next vouch. last_confirmed_at is written
+// last so a partial write never looks freshly confirmed.
+func applyRelayedEntitlement(ctx context.Context, kv Settings, c *entitlement.Cached, ownToken bool) {
+	if c == nil || ownToken {
+		return
+	}
+	vals, err := c.RelayValues()
+	if err != nil {
+		logging.L().Warnf("enrolment: ignoring the main till's entitlement (cache kept): %v", err)
+		return
+	}
+	if held, _, _ := kv.Get(ctx, entitlement.KeyLastConfirmedAt); held != "" {
+		heldAt, herr := time.Parse(time.RFC3339, strings.TrimSpace(held))
+		relayedAt, _ := time.Parse(time.RFC3339, vals[entitlement.KeyLastConfirmedAt])
+		if herr == nil && heldAt.After(relayedAt) {
+			return
+		}
+	}
+	for _, k := range []string{entitlement.KeyPlan, entitlement.KeySubscriptionStatus, entitlement.KeyExpiresAt, entitlement.KeyLastConfirmedAt} {
+		if err := kv.Set(ctx, k, vals[k]); err != nil {
+			logging.L().Warnf("enrolment: persist relayed %s: %v (will retry on the next vouch)", k, err)
+			return
+		}
+	}
 }
 
 // replicaLoop keeps this replica's device registered in the cloud through
@@ -212,7 +253,7 @@ func replicaAttempt(ctx context.Context, m config.MarketplaceConfig, kv Settings
 	v, err := src.RequestVouch(ctx, deviceID, buildinfo.Version)
 	switch {
 	case err == nil:
-		if aerr := applyVouch(ctx, kv, v); aerr != nil {
+		if aerr := applyVouch(ctx, m, kv, v); aerr != nil {
 			log.Infof("enrolment: record main till's vouch failed (will retry): %v", aerr)
 			return backoff, false
 		}
@@ -250,7 +291,7 @@ func deviceName(ctx context.Context, kv Settings) string {
 // registerOnReplica is RegisterNow's replica branch: a replica never creates
 // its own anonymous store (it would split the shop in the cloud); it asks the
 // main till to vouch for it, once, synchronously.
-func registerOnReplica(ctx context.Context, kv Settings) error {
+func registerOnReplica(ctx context.Context, m config.MarketplaceConfig, kv Settings) error {
 	mu.RLock()
 	deviceID := cur.DeviceID
 	mu.RUnlock()
@@ -258,7 +299,7 @@ func registerOnReplica(ctx context.Context, kv Settings) error {
 	if err != nil {
 		return fmt.Errorf("replica: register through the main till: %w", err)
 	}
-	return applyVouch(ctx, kv, v)
+	return applyVouch(ctx, m, kv, v)
 }
 
 // primarySource asks this replica's main till, reading sync.primary_url and

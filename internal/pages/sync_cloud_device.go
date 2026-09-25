@@ -9,6 +9,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
+	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -87,6 +88,11 @@ func registerSyncCloudDevice(mux *http.ServeMux, d *common.Deps) {
 			logging.L().Warnf("cloud device registration for replica till %s: %v", till.ID, err)
 			fail(w, http.StatusBadGateway, "cloud_unavailable")
 			return
+		}
+		// ut-docs#2792: entitlement.* is per-till in the admin sync, and
+		// a replica with no store token can't ask the cloud — relay ours.
+		if c, ok := entitlement.ReadCached(r.Context(), d.Settings); ok {
+			vouch.Entitlement = &c
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")

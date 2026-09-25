@@ -235,3 +235,46 @@ func TestSyncCloudDevice_MainTillNotRegistered(t *testing.T) {
 		t.Fatalf("unregistered main till: status %d, want 409: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// ut-docs#2792: the vouch answer relays the main till's cached entitlement
+// (entitlement.* no longer rides the admin sync) — verbatim, and still with
+// no credential in it.
+func TestSyncCloudDevice_RelaysMainTillsEntitlement(t *testing.T) {
+	dp := newMigratedSyncDeps(t, "primary.db")
+	if _, err := data.NewTillsRepo(dp.Db).InsertTill(t.Context(), "Back office", hashBearer("token-abc")); err != nil {
+		t.Fatalf("enrol till: %v", err)
+	}
+	cloud, _ := fakeCloud(t)
+	dp.Cfg = enrolMainTill(t, cloud.URL)
+	mux := http.NewServeMux()
+	registerSyncCloudDevice(mux, dp)
+
+	// Never confirmed by the cloud: nothing to relay.
+	rec := postCloudDevice(t, mux, "token-abc", "till-replica")
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "entitlement") {
+		t.Fatalf("unconfirmed cache relayed (status %d): %s", rec.Code, rec.Body.String())
+	}
+
+	if err := dp.Settings.SetMany(t.Context(), map[string]string{
+		"entitlement.plan": "pro", "entitlement.subscription_status": "active",
+		"entitlement.expires_at": "", "entitlement.last_confirmed_at": "2026-09-20T10:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec = postCloudDevice(t, mux, "token-abc", "till-replica")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Data enroll.Vouch `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if e := out.Data.Entitlement; e == nil || e.Plan != "pro" || e.SubscriptionStatus != "active" || e.LastConfirmedAt != "2026-09-20T10:00:00Z" {
+		t.Fatalf("relayed entitlement = %+v, want the main till's cache verbatim", out.Data.Entitlement)
+	}
+	if strings.Contains(strings.ToLower(rec.Body.String()), "token") {
+		t.Fatalf("answer carries a credential: %s", rec.Body.String())
+	}
+}
