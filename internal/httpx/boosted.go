@@ -7,7 +7,8 @@ import (
 
 // BoostedSwap is how a boosted navigation's response replaces the live
 // #ut-page: the response's own region, outerHTML, scrolled to the top,
-// under a same-document View Transition (ADR-0097's motion, ADR-0098).
+// under a same-document View Transition (ADR-0097's motion as amended by
+// ADR-0118, ADR-0098).
 const BoostedSwap = "outerHTML show:window:top transition:true"
 
 // BoostedNavigation tells htmx, per response, where a boosted navigation

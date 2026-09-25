@@ -244,3 +244,56 @@ func TestPersistentShell_NonPageLinksOptOutOfBoost(t *testing.T) {
 		t.Errorf("non-page link(s) inside the boosted shell without hx-boost=\"false\":\n  %s", strings.Join(bad, "\n  "))
 	}
 }
+
+// ut-docs#2496 (reopened) / ADR-0118: snapshot first, then mutate. The
+// shell's htmx:beforeSwap listener runs BEFORE htmx calls
+// document.startViewTransition, i.e. before the outgoing page's snapshot is
+// captured. When it synced <html lang/dir/--ui-scale> and the <body> class
+// list there, Sell -> Menu dropped body.sale-screen (height:100dvh) under
+// the OLD page and it collapsed/grew (600px -> 2043px at 1024x600) before
+// its snapshot — the "lower part disappears, the page goes down" report.
+// beforeSwap may only DECIDE (signature gate, shouldSwap, history purge,
+// data-nav-dir — no layout effect, needed before the transition starts)
+// and queue the sync; the sync is applied at the start of the transition's
+// update callback, or on htmx:afterSwap when no transition runs. The
+// browser half is e2e/tests/page-snapshot-no-jump-2496.spec.ts.
+func TestPersistentShell_BeforeSwapDefersTheShellSync(t *testing.T) {
+	src := readBaseHTML(t)
+	body := extractBlock(t, src, "document.addEventListener('htmx:beforeSwap', function (e) {")
+	for _, forbidden := range []string{
+		"document.body.classList",
+		"document.body.setAttribute",
+		"document.body.removeAttribute",
+		"document.documentElement.style",
+		"document.documentElement.removeAttribute",
+		"openTag(html",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("the shell htmx:beforeSwap listener must not mutate <html>/<body> directly (found %q) — queue it in pendingSync so it runs after the old snapshot (ADR-0118)", forbidden)
+		}
+	}
+	// Only the two layout-neutral attributes may be written on <html> here.
+	for _, m := range regexp.MustCompile(`document\.documentElement\.setAttribute\('([^']+)'`).FindAllStringSubmatch(body, -1) {
+		if m[1] != "data-nav-dir" && m[1] != "data-shell-fallback" {
+			t.Errorf("htmx:beforeSwap sets <html %s> — only data-nav-dir/data-shell-fallback may be set before the snapshot", m[1])
+		}
+	}
+	if !strings.Contains(body, "pendingSync = function () { syncShell(html); };") {
+		t.Errorf("htmx:beforeSwap must queue the shell sync (pendingSync = function () { syncShell(html); };)")
+	}
+	// The sync itself lives in syncShell, and is flushed from exactly the
+	// two places that run after the snapshot / with the swap.
+	sync := extractBlock(t, src, "function syncShell(html) {")
+	for _, want := range []string{"document.body.classList.add(c)", "document.documentElement.style.setProperty('--ui-scale'", "document.documentElement.setAttribute(a, v)"} {
+		if !strings.Contains(sync, want) {
+			t.Errorf("syncShell must carry the <html>/<body> sync (%q)", want)
+		}
+	}
+	if !strings.Contains(src, "args[0] = function () { flushShellSync(); return arg.apply(this, arguments); };") ||
+		!strings.Contains(src, "opts.update = function () { flushShellSync(); return upd.apply(this, arguments); };") {
+		t.Errorf("the startViewTransition wrapper must flush the pending shell sync at the start of the update callback (both call forms)")
+	}
+	if !strings.Contains(src, "if (pendingSync && (e.detail || {}).xhr === pendingXhr) flushShellSync();") {
+		t.Errorf("htmx:afterSwap must flush the pending shell sync for the no-transition path (reduced motion / no View Transitions)")
+	}
+}
