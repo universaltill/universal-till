@@ -306,7 +306,7 @@ func TestPluginsPage_ReadsTillCatalogKeyNotUILocale(t *testing.T) {
 	var seen []string
 	mp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
-		seen = append(seen, r.URL.Query().Get("locale")+"|"+r.URL.Query().Get("arch"))
+		seen = append(seen, r.URL.Query().Get("locale")+"|"+r.URL.Query().Get("device_arch"))
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"plugins":[]}`))

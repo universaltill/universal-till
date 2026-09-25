@@ -55,6 +55,9 @@ func TestCloudListPluginsResponseDecodes(t *testing.T) {
 	if got, want := p.Version, "1.1.17"; got != want {
 		t.Errorf("Version = %q, want %q", got, want)
 	}
+	if got, want := p.MinHostVersion, "0.1.0"; got != want {
+		t.Errorf("MinHostVersion = %q, want %q (the local host-version filter depends on it — ut-docs#2673)", got, want)
+	}
 	if got, want := p.Vendor, "universaltill"; got != want {
 		t.Errorf("Vendor = %q, want %q", got, want)
 	}

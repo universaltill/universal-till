@@ -27,7 +27,7 @@ func localeEchoServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		name := "plugin-" + q.Get("locale") + "-" + q.Get("arch")
+		name := "plugin-" + q.Get("locale") + "-" + q.Get("device_arch")
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"plugins": []map[string]any{{
 			"listing_id":     name,
