@@ -493,13 +493,15 @@ func TestLink_HeartbeatPingsAndPeerGoneAfterSilence(t *testing.T) {
 	cfg := fastConfig()
 	cfg.PeerTimeout = 150 * time.Millisecond
 	h := newWSHarness(t, cfg)
+	// Before the dial: the hub's silence clock starts when it accepts, which
+	// is before dial returns (#2852).
+	start := time.Now()
 	c, _, err := h.dial(t, "good-till-2")
 	if err != nil {
 		t.Fatal(err)
 	}
 	// We never send a frame. We must see app-level pings, then be dropped.
 	pings := 0
-	start := time.Now()
 	var closeErr error
 	for {
 		e, err := readEnvErr(c, 2*time.Second)
