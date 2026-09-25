@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/universaltill/universal-till/internal/iconid"
 )
 
 func catimportRepoRoot(t *testing.T) string {
@@ -216,6 +218,25 @@ func TestBuiltinIcons_LocaleKeysExist(t *testing.T) {
 		check(g.I18nKey)
 		for _, ic := range g.Icons {
 			check(ic.I18nKey)
+		}
+	}
+}
+
+// ut-docs#2664: one registry. Every library tile drawn from an upstream
+// glyph has a registered icon id, and that id draws exactly this tile —
+// so an icon my. stores and a tile the till's own picker offers are the
+// same thing.
+func TestIconRegistry_EveryTileHasARegisteredID(t *testing.T) {
+	for _, ic := range BuiltinIcons() {
+		d := iconByKey[ic.Key]
+		if d.Src == "" {
+			continue // the hand-drawn generic tile (TestIconRegistry_Consistent)
+		}
+		if ic.ID != d.Src {
+			t.Errorf("%q: BuiltinIcon.ID = %q, want its upstream id %q", ic.Key, ic.ID, d.Src)
+		}
+		if got := iconid.AssetPath(d.Src); got != ic.Path {
+			t.Errorf("%q: iconid.AssetPath(%q) = %q, want the tile %q", ic.Key, d.Src, got, ic.Path)
 		}
 	}
 }

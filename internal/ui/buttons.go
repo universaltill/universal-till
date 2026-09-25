@@ -411,12 +411,14 @@ func dropHiddenGroups(groups []*CategoryGroup, nodes map[string]data.CategoryNod
 	return kept
 }
 
-// categoryPicture is what a category shows on the sale screen: its image
-// (categories.image_path, ut-docs#2500) when it has one this till can
-// serve, else its icon id (manage-shop catalog contract §0.12) drawn
-// through the till's icon registry — an id the registry doesn't know, or a
-// malformed value that arrived over sync, draws the neutral fallback glyph
-// and never reaches the page as-is — else nothing.
+// categoryPicture is what a category shows on the sale screen — one
+// picture per category (ut-docs#2717, iconid.Resolve): an uploaded photo
+// this till can serve, else its icon id (manage-shop catalog contract
+// §0.12) drawn through the till's icon registry — a set icon beats a
+// library tile an older till stored in image_path, and such a tile reads
+// as its own icon id. An id the registry doesn't know, or a malformed
+// value that arrived over sync, draws the neutral fallback glyph and never
+// reaches the page as-is. Else nothing.
 func categoryPicture(c data.CategoryNode) string {
 	return CategoryThumb(c.ImagePath, c.Icon)
 }
@@ -428,10 +430,11 @@ func categoryPicture(c data.CategoryNode) string {
 // reaches the page through iconid.AssetPath; "" means "no picture" and the
 // caller falls back to the colour swatch, then a placeholder.
 func CategoryThumb(imagePath, icon string) string {
-	if img := categoryImageURL(imagePath); img != "" {
+	path, id := iconid.Resolve(imagePath, icon)
+	if img := categoryImageURL(path); img != "" {
 		return img
 	}
-	return categoryImageURL(iconid.AssetPath(icon))
+	return categoryImageURL(iconid.AssetPath(id))
 }
 
 // isCategoryAncestor reports whether id is an ancestor of candidateID,

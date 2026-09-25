@@ -292,9 +292,11 @@ func PlaceholderIconPath(name, category string) string {
 // picker template renders {{ T .I18nKey }}, never a hardcoded label
 // (universal-till/CLAUDE.md's i18n rule). Group is its picker section
 // and Keywords its space-separated English search terms for the picker's
-// filter box (ut-docs#2506).
+// filter box (ut-docs#2506). ID is its category icon id ("lucide:beer",
+// manage-shop catalog contract §0.12) — what a category pick stores since
+// ut-docs#2717 — or "" for the hand-drawn generic tile, which has none.
 type BuiltinIcon struct {
-	Key, Path, I18nKey, Group, Keywords string
+	Key, ID, Path, I18nKey, Group, Keywords string
 }
 
 // BuiltinIcons returns every built-in category icon in registry order
@@ -305,6 +307,7 @@ func BuiltinIcons() []BuiltinIcon {
 	for _, d := range iconDefs {
 		out = append(out, BuiltinIcon{
 			Key:      d.Key,
+			ID:       d.Src,
 			Path:     mustIconPath(d.Key),
 			I18nKey:  "catalog.builtin_icon." + d.Key,
 			Group:    d.Group,

@@ -43,7 +43,7 @@ func TestAssetPath(t *testing.T) {
 	if got := AssetPath("lucide:coffee"); got != "/public/assets/category-icons/coffee.svg" {
 		t.Fatalf("lucide:coffee → %q", got)
 	}
-	for _, id := range []string{"tabler:unknown-thing", "lucide:soup", "not an id", "<svg onload=x>", "../../etc"} {
+	for _, id := range []string{"tabler:unknown-thing", "lucide:not-in-the-library", "not an id", "<svg onload=x>", "../../etc"} {
 		if got := AssetPath(id); got != fallback {
 			t.Errorf("AssetPath(%q) = %q, want the fallback %q", id, got, fallback)
 		}

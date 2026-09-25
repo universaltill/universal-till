@@ -18,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/catimport"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/iconid"
 	"github.com/universaltill/universal-till/internal/imaging"
 	"github.com/universaltill/universal-till/internal/pages/catalog"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -39,6 +40,15 @@ func categoryThumbURL(id string) string { return "/public/assets/categories/" + 
 
 func categoryThumbFile(id string) string {
 	return filepath.Join(paths.Data("public", "assets", "categories", id), "thumb.png")
+}
+
+// categoryRowIconID is a category's icon column as the /categories row may
+// carry it (data-icon-id): the id when well-formed, else "".
+func categoryRowIconID(icon string) string {
+	if iconid.ValidFormat(icon) {
+		return icon
+	}
+	return ""
 }
 
 // safeCategoryID refuses an id that could escape the categories asset
@@ -260,6 +270,10 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		// the sale screen draws (ui.CategoryThumb) — "" falls back to the
 		// colour swatch, then a placeholder, in the template.
 		Thumb string
+		// IconID (ut-docs#2717) is the stored icon id for the dialog's
+		// picker to press its tile — only when well-formed: the column
+		// arrives from my. and over LAN sync, so it is untrusted.
+		IconID string
 	}
 
 	renderCategories := func(w http.ResponseWriter, r *http.Request, errKey string, errCount int) {
@@ -300,6 +314,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 				Groups:           strings.Join(groupLinks[c.ID], ","),
 				Stations:         strings.Join(stationRoutes[c.ID], ","),
 				Thumb:            ui.CategoryThumb(c.ImagePath, c.Icon),
+				IconID:           categoryRowIconID(c.Icon),
 			})
 		}
 		categoriesData := map[string]any{
@@ -353,11 +368,14 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		groupIDs   []string
 		stationIDs []string
 		// ut-docs#2500: the image choice. icon is "" (keep whatever is
-		// there), "none" (clear) or a built-in key already resolved to
-		// iconPath. photo is a decoded, downscaled upload — validated
+		// there), "none" (clear) or a built-in key, resolved to the
+		// picture it stores: its icon id (iconID, ut-docs#2717 — the same
+		// id my. stores), or for the id-less generic tile its path
+		// (iconPath). photo is a decoded, downscaled upload — validated
 		// here, BEFORE any row is written, and written to disk only after
 		// the row is saved. A photo wins over an icon key.
 		icon     string
+		iconID   string
 		iconPath string
 		photo    image.Image
 		// hidden (manage-shop catalog contract §7.2(5)) is the "Show on
@@ -408,7 +426,9 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 			if !ok {
 				return f, "categories.error.image_icon_invalid"
 			}
-			f.iconPath = p
+			if f.iconID = iconid.IDForAssetPath(p); f.iconID == "" {
+				f.iconPath = p
+			}
 		}
 		if r.MultipartForm != nil {
 			if file, hdr, err := r.FormFile("image"); err == nil {
@@ -519,10 +539,13 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 	}
 
 	// saveCategoryImage applies the dialog's image choice after the row
-	// itself is saved (ut-docs#2500). An upload and a built-in icon are
-	// mutually exclusive, same as an item's: writing one removes the
-	// other's file. Returns the audit label ("" = unchanged) and false
-	// after answering the request itself.
+	// itself is saved (ut-docs#2500). One picture per category, last
+	// writer wins (ut-docs#2717): an upload stores its path and clears the
+	// icon id, a library pick stores its icon id and clears the path (and
+	// the superseded upload's file), "No image" clears both — so neither
+	// this editor nor a save_category directive from my. can leave a
+	// picture hidden behind the other. Returns the audit label ("" =
+	// unchanged) and false after answering the request itself.
 	saveCategoryImage := func(w http.ResponseWriter, r *http.Request, id string, f categoryForm) (string, bool) {
 		switch {
 		case f.photo != nil:
@@ -531,20 +554,20 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 				renderCategoryDialogError(w, r, "categories.error.update", 0)
 				return "", false
 			}
-			if err := catRepo.SetCategoryImage(r.Context(), id, categoryThumbURL(id)); err != nil {
+			if err := catRepo.SetCategoryPicture(r.Context(), id, categoryThumbURL(id), ""); err != nil {
 				renderCategoryDialogError(w, r, "categories.error.update", 0)
 				return "", false
 			}
 			return "upload", true
 		case f.icon == "none":
-			if err := catRepo.SetCategoryImage(r.Context(), id, ""); err != nil {
+			if err := catRepo.SetCategoryPicture(r.Context(), id, "", ""); err != nil {
 				renderCategoryDialogError(w, r, "categories.error.update", 0)
 				return "", false
 			}
 			removeCategoryUpload(id)
 			return "none", true
-		case f.iconPath != "":
-			if err := catRepo.SetCategoryImage(r.Context(), id, f.iconPath); err != nil {
+		case f.iconID != "" || f.iconPath != "":
+			if err := catRepo.SetCategoryPicture(r.Context(), id, f.iconPath, f.iconID); err != nil {
 				renderCategoryDialogError(w, r, "categories.error.update", 0)
 				return "", false
 			}
