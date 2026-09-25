@@ -10,11 +10,13 @@ import { watchConsole, setBrowsingMode } from './helpers';
 //                      own search box;
 //   all_filter_chips — the All grid with a row of category filter chips;
 //   strip_overflow   — the quick-button category strip with the "…"
-//                      overflow (ut-docs#2307's own spec covers it deeply;
+//                      overflow and, since ut-docs#2613, no All tab
+//                      (ut-docs#2307's own spec covers it deeply;
 //                      this file only pins that it is now reached via the
 //                      setting).
 // Search works in every mode; the strip's jiggle edit (ut-docs#2339) is
-// untouched, and the All grid still never arms it (app.js's inAllGrid()).
+// untouched, and the chip mode's All grid still never arms it (app.js's
+// inAllGrid()).
 //
 // This file replaced sell-screen-categories-tab-2283.spec.ts: the settings-
 // gated Categories TAB it covered is gone — the category_tabs mode IS that
@@ -438,13 +440,19 @@ test.describe('Sell screen browsing mode (ut-docs#2499)', () => {
     assertClean();
   });
 
-  test('strip_overflow: selecting it explicitly renders the quick-button strip (All tab first, no chips, no tiles)', async ({ page }) => {
+  test('strip_overflow: selecting it explicitly renders the quick-button strip (category tabs only — no All tab, no chips, no tiles)', async ({ page }) => {
     const assertClean = watchConsole(page);
     await setBrowsingMode(page, 'strip_overflow');
     await page.goto('/');
     const tabBar = page.locator('.products .tab-bar');
     await expect(tabBar).toBeVisible();
-    await expect(tabBar.locator('.tab').first()).toHaveId('cat-tab-all');
+    // ut-docs#2613: the strip has no All tab — the first tab is a real
+    // category tab (data-cat-tab), and it is the selected one.
+    const first = tabBar.locator('.tab').first();
+    await expect(first).toHaveAttribute('data-cat-tab', '');
+    await expect(first).toHaveAttribute('aria-selected', 'true');
+    await expect(page.locator('#cat-tab-all')).toHaveCount(0);
+    await expect(page.locator('#buttons-grid-all')).toHaveCount(0);
     await expect(page.locator('#cat-tab-more')).toHaveCount(1); // hidden while everything fits — see the 2307 spec
     await expect(page.locator('#browsing-category-chips')).toHaveCount(0);
     await expect(page.locator('#browsing-category-tiles')).toHaveCount(0);

@@ -138,6 +138,18 @@ func TestBrowsingModeLiteralsMatchAcrossPackages(t *testing.T) {
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
+	// Two categories with an active item each, so the strip has a tab bar
+	// (and its "…" marker) to render — since ut-docs#2613 there is no All
+	// tab to give a single-item catalog one.
+	for _, stmt := range []string{
+		`INSERT INTO categories(id,name,sort_order) VALUES ('cat-a','Fruit',0),('cat-b','Veg',1)`,
+		`UPDATE items SET category_id='cat-a' WHERE id='itm1'`,
+		`INSERT INTO items(id,sku,name,base_price,tax_code_id,is_active,category_id) VALUES('itm-veg','VEG','Leek',90,'tax_std',1,'cat-b')`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
 	d := &common.Deps{Db: db, BtnStore: ui.NewButtonStore(db), Settings: settings.NewStore(db)}
 	mux := http.NewServeMux()
 	registerButtonsAPI(mux, d)
@@ -160,7 +172,6 @@ func TestBrowsingModeLiteralsMatchAcrossPackages(t *testing.T) {
 // customization picker rather than a straight scan.
 func assertTileOpensModifiers(t *testing.T, body, itemID, code string) {
 	t.Helper()
-	body = withoutAllGrid(t, body)
 	if !strings.Contains(body, `hx-get="/ui/pos/modifiers?`) {
 		t.Fatalf("expected a tile opening the customization picker (hx-get=\"/ui/pos/modifiers?...\"), got: %.1200s", body)
 	}
@@ -175,44 +186,12 @@ func assertTileOpensModifiers(t *testing.T, body, itemID, code string) {
 // must post straight to /api/pos/scan and must NOT open the picker at all.
 func assertTileScansDirectly(t *testing.T, body string) {
 	t.Helper()
-	body = withoutAllGrid(t, body)
 	if !strings.Contains(body, `hx-post="/api/pos/scan"`) {
 		t.Fatalf("expected a tile scanning straight to the basket (hx-post=\"/api/pos/scan\"), got: %.1200s", body)
 	}
 	if strings.Contains(body, "/ui/pos/modifiers") {
 		t.Fatalf("tile must not offer the customization picker, got: %.1200s", body)
 	}
-}
-
-// withoutAllGrid returns a /ui/buttons strip-mode render with the All grid
-// (#buttons-grid-all — EVERY active catalog item, ut-docs#2294) cut out, so
-// an assertion about the QUICK-BUTTON grid keeps meaning what it says.
-// Until ut-docs#2499 these tests never saw that grid at all, by accident:
-// their bare Deps left settings.sale.show_all_tab at the Go zero value,
-// which ButtonsHTTP read as "off". #2499 retired that boolean — the strip's
-// All tab is unconditional now, exactly as on a real till — so the grid's
-// own copies of the seeded items (itm1 with its ut-docs#744 variant among
-// them) are in every body these tests render. The All grid renders first
-// inside #buttons-grid, followed by the per-category panels (or, with no
-// quick buttons at all, the tabbed branch's no-matches message), which is
-// what bounds the cut; a body with no All grid is returned unchanged.
-func withoutAllGrid(t *testing.T, body string) string {
-	t.Helper()
-	start := strings.Index(body, `<div id="buttons-grid-all"`)
-	if start < 0 {
-		return body
-	}
-	rest := body[start:]
-	end := len(rest)
-	for _, marker := range []string{`<div id="cat-panel-`, `<p class="empty" x-show="!sectionHasMatch`} {
-		if i := strings.Index(rest, marker); i >= 0 && i < end {
-			end = i
-		}
-	}
-	if end == len(rest) {
-		t.Fatalf("withoutAllGrid: found the All grid but nothing after it to bound the cut: %.800s", rest)
-	}
-	return body[:start] + rest[end:]
 }
 
 // seedPlainItem inserts a catalog item with NO variants and NO modifier
@@ -298,10 +277,7 @@ func TestButtonsUIFragment_HxValsSurvivesQuotedCode(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/ui/buttons = %d (%s)", rec.Code, rec.Body.String())
 	}
-	// The All grid's own tile for itm_novar carries the item's SKU as its
-	// code, not the quick button's — cut it out so the first plain tile
-	// found below is the quick button this test seeded.
-	body := withoutAllGrid(t, rec.Body.String())
+	body := rec.Body.String()
 
 	idx := strings.Index(body, `hx-post="/api/pos/scan"`)
 	if idx == -1 {
@@ -963,7 +939,7 @@ func TestButtonsPartial_JiggleModeMarkup(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("/ui/buttons = %d (%s)", rec.Code, rec.Body.String())
 	}
-	body := withoutAllGrid(t, rec.Body.String())
+	body := rec.Body.String()
 	for _, want := range []string{
 		`data-code="J1" data-item-id="itm1" data-pos="0"`,
 		`data-code="J2" data-item-id="itm1" data-pos="1"`,

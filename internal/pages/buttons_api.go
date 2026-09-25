@@ -105,9 +105,9 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		// renders category-management controls, so it's gated on the same
 		// catalog_management the Designer page itself is (designer_page.go,
 		// ut-docs#2357): a cashier fetching it by hand gets a plain 403, the
-		// sale screen's own render is untouched. The All tab is off in edit
-		// mode — it lists every catalog item, not quick buttons, and isn't
-		// something the Designer arranges.
+		// sale screen's own render is untouched. Edit mode always renders
+		// the quick-button strip (ui.ButtonsHTTP.List), which has no All
+		// tab since ut-docs#2613.
 		editMode := r.URL.Query().Get("mode") == "edit"
 		if editMode && !granted {
 			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
@@ -121,7 +121,6 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			Store:        *d.BtnStore,
 			View:         renderer,
 			BrowsingMode: common.ClampBrowsingMode(d.CurrentState().BrowsingMode),
-			HideAllTab:   editMode,
 			Granted:      granted,
 			EditMode:     editMode,
 		}
@@ -151,7 +150,8 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		btnHTTP.CategoryItems(w, r)
 	})
 
-	// Sell screen All-tab "load more" (ut-docs#2319): the next page of
+	// Sell screen All-grid "load more" (ut-docs#2319; since ut-docs#2613
+	// only the all_filter_chips mode has an All grid): the next page of
 	// ButtonStore.LoadAllActive beyond the first AllTabPageSize items GET
 	// /ui/buttons itself already inlined — see ui.ButtonsHTTP.AllMore's own
 	// doc comment. Mirrors /api/buttons/search's offset-query-param shape

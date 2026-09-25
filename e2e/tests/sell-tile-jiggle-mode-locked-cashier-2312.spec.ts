@@ -114,14 +114,19 @@ test.describe('Jiggle-mode edit gated by catalog_management for a cashier (ut-do
     await loginAsCashier(page);
 
     await page.goto('/');
-    // ut-docs#2294: All (not this item's own "Uncategorized" bucket) is
-    // the default tab now, and its own dedicated #buttons-grid-all grid
-    // renders a SECOND copy of this same quick-button tile -- select the
-    // item's own category tab so `.products-tab-panel` (the reorderable
-    // instance jiggle mode actually operates on, see app.js's inAllGrid())
-    // is the one that's genuinely visible, not merely DOM-present.
-    await page.getByRole('tab', { name: 'Uncategorized' }).click();
-    const tile = page.locator(`.products-tab-panel .btn-tile[data-name="${ITEM.name}"]`);
+    // This item is uncategorized. The auth till is shared with sibling
+    // auth specs, so whether it has any categories depends on run order:
+    // with none, the strip renders the flat, tab-less grid (since
+    // ut-docs#2613 retired the All tab — the only reason a single-bucket
+    // till used to get a tab bar); with some, select the item's own
+    // "Uncategorized" tab so its panel is the visible one. Scope to
+    // #buttons-grid (never a search result) either way.
+    await expect(page.locator('#buttons-grid')).toBeVisible();
+    const uncategorizedTab = page.getByRole('tab', { name: 'Uncategorized' });
+    if ((await page.locator('.products .tab-bar').count()) > 0) {
+      await uncategorizedTab.click();
+    }
+    const tile = page.locator(`#buttons-grid .btn-tile[data-name="${ITEM.name}"]`);
     await expect(tile).toBeVisible();
 
     await longPress(tile);
@@ -153,7 +158,7 @@ test.describe('Jiggle-mode edit gated by catalog_management for a cashier (ut-do
     await expect(grid).not.toHaveClass(/jiggle-mode/);
 
     // Re-enter edit mode and exercise the remove badge the same way.
-    const tileAgain = page.locator(`.products-tab-panel .btn-tile[data-name="${ITEM.name}"]`);
+    const tileAgain = page.locator(`#buttons-grid .btn-tile[data-name="${ITEM.name}"]`);
     await longPress(tileAgain);
     await expect(grid).toHaveClass(/jiggle-mode/);
     const removeBadge = tileAgain
@@ -169,6 +174,6 @@ test.describe('Jiggle-mode edit gated by catalog_management for a cashier (ut-do
     // silently applying anyway.
     await page.locator('#elevation-modal').getByRole('button', { name: /cancel/i }).click();
     await expect(page.locator('#elevation-modal')).toBeHidden();
-    await expect(page.locator(`.products-tab-panel .btn-tile[data-name="${ITEM.name}"]`)).toBeVisible();
+    await expect(page.locator(`#buttons-grid .btn-tile[data-name="${ITEM.name}"]`)).toBeVisible();
   });
 });

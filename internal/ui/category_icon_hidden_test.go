@@ -95,7 +95,7 @@ func TestButtonsHTTPList_HiddenCategoryHasNoTabButItemsStayInAll(t *testing.T) {
 		t.Fatal("a visible category lost its tab")
 	}
 	if !strings.Contains(body, "Cola") {
-		t.Fatal("an item of a hidden category must stay sellable from the All grid")
+		t.Fatal("a quick button of a hidden category must stay on the strip (uncategorised tab)")
 	}
 	h.BrowsingMode = "category_tabs"
 	body = renderList(t, h)
@@ -104,23 +104,21 @@ func TestButtonsHTTPList_HiddenCategoryHasNoTabButItemsStayInAll(t *testing.T) {
 	}
 }
 
-// Review finding 2: with the All tab off, a quick button whose category is
-// hidden must still be on the sale screen (in the uncategorised bucket).
+// Review finding 2: the strip has no All tab (ut-docs#2613), so a quick
+// button whose category is hidden must still be on the sale screen (in the
+// uncategorised bucket).
 func TestButtonsHTTPList_HiddenCategoryQuickButtonStaysReachable(t *testing.T) {
 	db, _, h := newBrowsingModeTestHTTP(t)
 	mustExec(t, db, `UPDATE categories SET sell_screen_hidden = 1 WHERE id = 'cat_drink'`)
 	h.BrowsingMode = "strip_overflow"
-	for _, hideAll := range []bool{false, true} {
-		h.HideAllTab = hideAll
-		body := renderList(t, h)
-		if strings.Contains(body, `id="cat-tab-cat_drink"`) {
-			t.Fatalf("HideAllTab=%v: the hidden Drinks category still has a strip tab", hideAll)
-		}
-		if !strings.Contains(body, `data-code="C_COLA"`) {
-			t.Fatalf("HideAllTab=%v: the Cola quick button of the hidden Drinks category left the sale screen", hideAll)
-		}
-		if !strings.Contains(body, `id="cat-tab-uncategorized"`) {
-			t.Fatalf("HideAllTab=%v: want the uncategorised tab carrying the moved quick button", hideAll)
-		}
+	body := renderList(t, h)
+	if strings.Contains(body, `id="cat-tab-cat_drink"`) {
+		t.Fatal("the hidden Drinks category still has a strip tab")
+	}
+	if !strings.Contains(body, `data-code="C_COLA"`) {
+		t.Fatal("the Cola quick button of the hidden Drinks category left the sale screen")
+	}
+	if !strings.Contains(body, `id="cat-tab-uncategorized"`) {
+		t.Fatal("want the uncategorised tab carrying the moved quick button")
 	}
 }

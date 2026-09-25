@@ -133,7 +133,7 @@ func TestButtonStoreLoad_ExcludesHiddenItems(t *testing.T) {
 		t.Fatalf("LoadAllActive: %v", err)
 	}
 	if len(all) != 1 || all[0].Label != "Bread" {
-		t.Fatalf("expected LoadAllActive (the All tab) to exclude the hidden item too, got %+v", all)
+		t.Fatalf("expected LoadAllActive (the All grid) to exclude the hidden item too, got %+v", all)
 	}
 }
 
