@@ -98,6 +98,146 @@ type Client struct {
 
 	mu         sync.Mutex
 	revokedFor *Target // dialling stopped for this pairing
+
+	// Status (ADR-0114 §10, ut-docs#2742): what the connectivity chip
+	// reads. mode is a LinkMode; cur is the open link, if any; the rest
+	// under smu.
+	mode        atomic.Int32
+	cur         atomic.Pointer[Peer]
+	smu         sync.Mutex
+	mainVersion string
+	linkedSince time.Time
+	lostAt      time.Time
+	lostSeen    time.Time
+	failedAt    time.Time
+}
+
+// LinkMode is what the client is doing about its main till.
+type LinkMode int32
+
+const (
+	// ModeIdle: this till has no main till (it is one, or is unpaired).
+	ModeIdle LinkMode = iota
+	// ModeConnecting: dialling, or backing off after a failed attempt.
+	ModeConnecting
+	// ModePolling: the main till does not offer the link (an older build,
+	// §11); this till polls it as before.
+	ModePolling
+	// ModeLinked: a link is open and the main till's hello arrived.
+	ModeLinked
+	// ModeRevoked: the main till refused this till's pairing.
+	ModeRevoked
+)
+
+// ClientStatus is a snapshot of the link for the status chip. Linked is
+// ADR-0114 §4's presence: the main till's hello arrived and a frame came
+// within PeerTimeout (12 s) — it turns false the moment the frames stop,
+// before the heartbeat check closes the link.
+type ClientStatus struct {
+	Mode   LinkMode
+	Linked bool
+	// MainVersion is the version in the main till's last hello (kept
+	// after the link drops; "" until the first hello).
+	MainVersion string
+	// LinkedSince is when the current link came up (zero when not linked).
+	LinkedSince time.Time
+	// LostAt is when the main till was last heard before an established
+	// link was lost without a bye; zero while linked, or when the last
+	// link ended with a bye (a restart or an update is not an outage).
+	LostAt time.Time
+	// LostSeen is when this till noticed the loss (the heartbeat check or
+	// the socket closing, up to PeerTimeout after LostAt). A contact with
+	// the main till only ends the outage if it came after this — a pull
+	// that was already in flight when the frames stopped proves nothing.
+	LostSeen time.Time
+	// FailedAt is when attempts to reach the main till started failing
+	// without an answer (a probe or dial that got no HTTP response); zero
+	// once the main till answers anything. A replica restarted while its
+	// main till is down has no LostAt — this is what its chip goes on.
+	FailedAt time.Time
+}
+
+// Status returns the link's current state. Safe for concurrent use.
+func (c *Client) Status() ClientStatus { return c.statusAt(time.Now()) }
+
+func (c *Client) statusAt(now time.Time) ClientStatus {
+	c.smu.Lock()
+	s := ClientStatus{
+		Mode:        LinkMode(c.mode.Load()),
+		MainVersion: c.mainVersion,
+		LinkedSince: c.linkedSince,
+		LostAt:      c.lostAt,
+		LostSeen:    c.lostSeen,
+		FailedAt:    c.failedAt,
+	}
+	c.smu.Unlock()
+	s.Linked = c.linked.Load()
+	if s.Linked {
+		if p := c.cur.Load(); p != nil {
+			last := time.Unix(0, p.lastFrame.Load())
+			if now.Sub(last) > c.cfg.PeerTimeout {
+				s.Linked = false
+				s.LostAt, s.LostSeen = last, now
+			}
+		}
+	}
+	if !s.Linked {
+		s.LinkedSince = time.Time{}
+	}
+	return s
+}
+
+func (c *Client) setMode(m LinkMode) { c.mode.Store(int32(m)) }
+
+// markLinkUp records the main till's hello: the link is up, any outage over.
+func (c *Client) markLinkUp(h Hello) {
+	c.smu.Lock()
+	c.mainVersion = h.Version
+	c.linkedSince = time.Now()
+	c.lostAt, c.lostSeen = time.Time{}, time.Time{}
+	c.failedAt = time.Time{}
+	c.smu.Unlock()
+	c.setMode(ModeLinked)
+}
+
+// markAttemptFailed records that the main till gave no answer (the first
+// such failure since it last answered).
+func (c *Client) markAttemptFailed() {
+	c.smu.Lock()
+	if c.failedAt.IsZero() {
+		c.failedAt = time.Now()
+	}
+	c.smu.Unlock()
+}
+
+// markAnswered forgets failed attempts: the main till answered something
+// (any HTTP status), so it is reachable even if no link came of it.
+func (c *Client) markAnswered() {
+	c.smu.Lock()
+	c.failedAt = time.Time{}
+	c.smu.Unlock()
+}
+
+// markLinkLost records an outage starting at last (the last frame heard),
+// unless one is already running: "since" is when the main till was last
+// reachable, not the latest failed attempt.
+func (c *Client) markLinkLost(last time.Time) {
+	c.smu.Lock()
+	if c.lostAt.IsZero() {
+		c.lostAt, c.lostSeen = last, time.Now()
+	}
+	c.linkedSince = time.Time{}
+	c.smu.Unlock()
+}
+
+// clearOutage forgets a running outage: the link ended with a bye (the
+// main till restarting or updating), or this till has no main till.
+func (c *Client) clearOutage() {
+	c.smu.Lock()
+	c.lostAt, c.lostSeen = time.Time{}, time.Time{}
+	c.linkedSince = time.Time{}
+	c.failedAt = time.Time{}
+	c.smu.Unlock()
 }
 
 // NewClient builds a Client; call Run to start it.
@@ -204,6 +344,7 @@ func (c *Client) isRevoked(t Target) bool {
 }
 
 func (c *Client) markRevoked(ctx context.Context, t Target) {
+	c.setMode(ModeRevoked)
 	c.mu.Lock()
 	first := c.revokedFor == nil || *c.revokedFor != t
 	c.revokedFor = &t
@@ -220,7 +361,12 @@ func (c *Client) Run(ctx context.Context) {
 		var delay time.Duration
 		t, ok := c.opts.Target(ctx)
 		switch {
-		case !ok || t.BaseURL == "" || t.Bearer == "" || c.isRevoked(t):
+		case !ok || t.BaseURL == "" || t.Bearer == "":
+			c.setMode(ModeIdle)
+			c.clearOutage()
+			delay = c.opts.RecheckEvery
+		case c.isRevoked(t):
+			c.setMode(ModeRevoked)
 			delay = c.opts.RecheckEvery
 		default:
 			delay, attempt = c.attempt(ctx, t, attempt)
@@ -251,10 +397,18 @@ func (c *Client) attempt(ctx context.Context, t Target, attempt int) (time.Durat
 		c.markRevoked(ctx, t)
 		return c.opts.RecheckEvery, 0
 	case err != nil:
+		c.setMode(ModeConnecting)
+		c.markAttemptFailed()
 		attempt++
 		return c.backoff(attempt), attempt
 	case level < 1:
+		c.setMode(ModePolling)
+		c.clearOutage()               // it answered: reachable, whatever it offers
 		return c.opts.RecheckEvery, 0 // an older main till: poll as today (§11)
+	}
+	c.markAnswered()
+	if LinkMode(c.mode.Load()) != ModeLinked {
+		c.setMode(ModeConnecting)
 	}
 
 	dctx, cancel := context.WithTimeout(ctx, c.opts.DialTimeout)
@@ -263,6 +417,9 @@ func (c *Client) attempt(ctx context.Context, t Target, attempt int) (time.Durat
 	if err != nil {
 		attempt++
 		var de *DialError
+		if !errors.As(err, &de) || de.Status == 0 {
+			c.markAttemptFailed() // no HTTP answer at all
+		}
 		if errors.As(err, &de) {
 			switch de.Status {
 			case http.StatusUnauthorized, http.StatusForbidden:
@@ -330,12 +487,25 @@ func (c *Client) runLink(ctx context.Context, t Target, conn Conn) (end linkEnd,
 	c.syncMask.Store(0)
 
 	p := newPeer(c, c.cfg, "r", "main", conn)
+	c.cur.Store(p)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		p.run()
 	}()
-	defer c.setLinked(false)
+	defer func() {
+		c.cur.CompareAndSwap(p, nil)
+		c.setLinked(false)
+		switch {
+		case end == endLost && established:
+			c.markLinkLost(time.Unix(0, p.lastFrame.Load()))
+		case end == endBye:
+			c.clearOutage()
+		}
+		if LinkMode(c.mode.Load()) == ModeLinked {
+			c.setMode(ModeConnecting)
+		}
+	}()
 
 	report := time.NewTicker(c.opts.ReportEvery)
 	defer report.Stop()
@@ -381,6 +551,7 @@ func (c *Client) runLink(ctx context.Context, t Target, conn Conn) (end linkEnd,
 				continue
 			}
 			established = true
+			c.markLinkUp(h)
 			c.setLinked(true)
 			if c.opts.OnHello != nil {
 				c.opts.OnHello(ctx, h)

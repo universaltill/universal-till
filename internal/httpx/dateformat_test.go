@@ -83,3 +83,18 @@ func TestFormatDateTimeLatin(t *testing.T) {
 		t.Errorf("FormatDateTimeLatin fa = %q, want Latin digits", got)
 	}
 }
+
+// ut-docs#2742: the status-bar chip says "since 14:05" for an outage that
+// started today, and the full date only when it began on another day.
+func TestFormatShortDateTime(t *testing.T) {
+	now := time.Date(2026, 9, 25, 16, 0, 0, 0, time.UTC)
+	if got := FormatShortDateTime(time.Date(2026, 9, 25, 14, 5, 0, 0, time.UTC), now, "en-GB"); got != "14:05" {
+		t.Errorf("today = %q, want 14:05", got)
+	}
+	if got := FormatShortDateTime(time.Date(2026, 9, 24, 23, 55, 0, 0, time.UTC), now, "de-DE"); got != "24.09.2026 23:55" {
+		t.Errorf("yesterday = %q, want the full date", got)
+	}
+	if got := FormatShortDateTime(time.Date(2026, 9, 25, 14, 5, 0, 0, time.UTC), now, "fa"); got != LocalizeDigits("14:05", "fa") {
+		t.Errorf("fa today = %q, want localized digits", got)
+	}
+}

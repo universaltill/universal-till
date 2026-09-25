@@ -1061,8 +1061,8 @@ func FuncsFor(locale string) template.FuncMap {
 		case time.Time:
 			return FormatDateTime(t.Local(), locale)
 		case string:
-			parsed, err := time.Parse(time.RFC3339, t)
-			if err != nil {
+			parsed, ok := ParseStoredTime(t)
+			if !ok {
 				return t
 			}
 			return FormatDateTime(parsed.Local(), locale)
@@ -1070,11 +1070,30 @@ func FuncsFor(locale string) template.FuncMap {
 			return ""
 		}
 	}
+	// {{ shortdatetime .Since }}: FormatShortDateTime in LOCAL time — a
+	// bare clock for today, the full date otherwise (ut-docs#2742's
+	// status-bar chip). Same accepted values as `datetime`.
+	funcs["shortdatetime"] = func(v any) string {
+		var t time.Time
+		switch x := v.(type) {
+		case time.Time:
+			t = x
+		case string:
+			parsed, ok := ParseStoredTime(x)
+			if !ok {
+				return x
+			}
+			t = parsed
+		default:
+			return ""
+		}
+		return FormatShortDateTime(t.Local(), time.Now(), locale)
+	}
 	// {{ datetimeUTC .CreatedAt }}: `datetime`'s convention WITHOUT the
 	// Local() conversion — same reasoning as `dateUTC` above.
 	funcs["datetimeUTC"] = func(v string) string {
-		parsed, err := time.Parse(time.RFC3339, v)
-		if err != nil {
+		parsed, ok := ParseStoredTime(v)
+		if !ok {
 			return v
 		}
 		return FormatDateTime(parsed, locale)
@@ -1265,6 +1284,9 @@ var renderFiles = []string{
 	// own htmx poll response AND settings.html's page render both need this
 	// exact markup, so it's a partial riding along here too.
 	"ui/partials/window_mode_status.html",
+	// ut-docs#2742: same reasoning — GET /ui/tills/roster's 10 s poll and
+	// tills.html's own page render both need this exact roster markup.
+	"ui/partials/tills_roster.html",
 	// ut-docs#1950: items.html's own content template includes this by its
 	// {{ define "items_rail" }} name (same as help_topic.html/help_nav.html
 	// above) — riding along here is what lets that work through the plain

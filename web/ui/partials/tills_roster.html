@@ -1,0 +1,77 @@
+{{/* The Tills page's roster (tills.html includes it; GET /ui/tills/roster
+     re-renders it standalone every 10 s on a main till — tills_roster.go).
+     ut-docs#2742 (ADR-0114 §10): on a main till each enrolled till shows
+     its live link — Linked / Not linked as words (never colour alone), its
+     role, version against this till's, update state, sales waiting to
+     send and whether its TLS pin is in place — from the link hub's hellos
+     and reports. A replica has no hub to ask, so .LinkInfo is false there
+     and the link columns are not rendered at all. */}}
+{{ if or .PrimaryTillName .Tills }}
+<table class="table tills-roster">
+  <thead><tr>
+    <th>{{ T "tills.col_name" }}</th>
+    {{ if .LinkInfo }}<th>{{ T "tills.col_link" }}</th><th>{{ T "tills.col_version" }}</th>{{ end }}
+    <th>{{ T "tills.col_enrolled" }}</th><th>{{ T "tills.col_seen" }}</th><th></th>
+  </tr></thead>
+  <tbody>
+    {{ if .PrimaryTillName }}
+    <tr>
+      {{/* ut-docs#405: PrimaryTillName is always populated (till.name syncs
+           down like any other setting), so this row renders on a replica
+           too — there it's the PRIMARY's row, not "this till". */}}
+      {{ if .SyncPrimary }}
+      <td>{{ .PrimaryTillName }} <span class="muted">({{ T "tills.the_primary" }})</span></td>
+      {{ else }}
+      <td>{{ .PrimaryTillName }} <span class="muted">({{ T "tills.this_till" }})</span></td>
+      {{ end }}
+      {{ if .LinkInfo }}<td>—</td><td>{{ .MainVersion }}</td>{{ end }}
+      <td>—</td>
+      {{/* ut-docs#2722: on a replica, when THIS till last reached the main
+           till (sync.last_contact_at) — the same column a main till fills
+           for each replica from its side. */}}
+      <td>{{ if and .SyncPrimary .PrimaryLastContact }}{{ datetime .PrimaryLastContact }}{{ else }}—{{ end }}</td>
+      <td></td>
+    </tr>
+    {{ end }}
+    {{ range .Tills }}
+    <tr data-till-id="{{ .ID }}"{{ with .Link }} data-link="{{ if .Linked }}up{{ else }}down{{ end }}"{{ end }}>
+      <td>{{ .Name }}{{ if eq .ID $.ThisTillID }} <span class="muted">({{ T "tills.this_till" }})</span>{{ end }}
+        {{ with .Link }}{{ if eq .Role "replica" }}<br><small class="muted">{{ T "tills.role.replica" }}</small>{{ else if eq .Role "satellite" }}<br><small class="muted">{{ T "tills.role.satellite" }}</small>{{ end }}{{ end }}</td>
+      {{ with .Link }}
+      <td>
+        {{ if .Linked }}<span class="tag ok">{{ T "tills.link.up" }}</span>{{ else }}<span class="tag">{{ T "tills.link.down" }}</span>{{ end }}
+        {{ if .HasReport }}
+        <br><small class="muted">{{ if eq .QueueDepth 1 }}{{ printf (T "tills.queue_one") .QueueDepth }}{{ else }}{{ printf (T "tills.queue_other") .QueueDepth }}{{ end }}
+          · {{ if .TLSPinned }}{{ T "tills.tls.pinned" }}{{ else }}{{ T "tills.tls.not_pinned" }}{{ end }}</small>
+        {{ end }}
+      </td>
+      <td>
+        {{ if .Version }}<bdi>{{ .Version }}</bdi>{{ else }}—{{ end }}
+        {{ if eq .VersionCmp "older" }}<br><small class="muted">{{ T "tills.version.older" }}</small>
+        {{ else if eq .VersionCmp "newer" }}<br><small class="muted">{{ T "tills.version.newer" }}</small>
+        {{ else if eq .VersionCmp "same" }}<br><small class="muted">{{ T "tills.version.same" }}</small>{{ end }}
+        {{ if eq .UpdateState "waiting-safe-moment" }}<br><small class="muted">{{ T "tills.update.waiting_safe_moment" }}</small>
+        {{ else if eq .UpdateState "downloading" }}<br><small class="muted">{{ T "tills.update.downloading" }}</small>
+        {{ else if eq .UpdateState "failed" }}<br><span class="tag warn">{{ printf (T "tills.update.failed") .UpdateCode }}</span>{{ end }}
+      </td>
+      {{ end }}
+      <td>{{ datetime .EnrolledAt }}</td>
+      <td>{{ if .LastSeenAt }}{{ datetime .LastSeenAt }}{{ else }}—{{ end }}</td>
+      <td>
+      {{/* ut-docs#405: revoke is a primary-authoritative write (ADR-0011
+           §2) — .Tills syncs to every replica too, so this button must not
+           render there: a replica's local DELETE would revert on the next
+           admin-bundle pull. The handler enforces this independently. */}}
+      {{ if not $.SyncPrimary }}
+      <button class="btn secondary" hx-post="/api/sync/tills/{{ .ID }}/revoke"
+                  hx-confirm="{{ T "tills.revoke_confirm" }}">{{ T "tills.revoke" }}</button>
+      {{ end }}
+      </td>
+    </tr>
+    {{ end }}
+  </tbody>
+</table>
+{{ if .LinkInfo }}<p class="muted"><small>{{ T "tills.link_help" }}</small></p>{{ end }}
+{{ else }}
+<p class="muted">{{ T "tills.none" }}</p>
+{{ end }}

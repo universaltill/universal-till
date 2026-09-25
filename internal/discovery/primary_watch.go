@@ -52,6 +52,13 @@ const UnreachableThreshold = 3
 // tickInterval is the replica pull loop's cadence (runSyncLoop, 30s).
 const tickInterval = 30 * time.Second
 
+// UnreachableWindow is how long without a successful contact the main till
+// counts as gone once any contact has failed — the "already unreachable at
+// launch" rule below, shared with the link client's status chip
+// (ut-docs#2742): a replica restarted while its main till is down must not
+// read "polling" until the pull loop's ticks have failed three times over.
+const UnreachableWindow = UnreachableThreshold * tickInterval
+
 // MinBrowseInterval rate-limits the mDNS browse: a stranded replica looks
 // for its main till at most once per this interval, never every tick.
 const MinBrowseInterval = 5 * time.Minute
@@ -260,7 +267,7 @@ func (w *PrimaryWatch) unreachableLocked(ctx context.Context) bool {
 		return false
 	}
 	last, err := time.Parse(time.RFC3339, w.get(ctx, "sync.last_contact_at"))
-	return err != nil || w.now().Sub(last) >= UnreachableThreshold*tickInterval
+	return err != nil || w.now().Sub(last) >= UnreachableWindow
 }
 
 var errNoMatch = errors.New("no till advertising this shop's main till id proved it holds this till's pairing")

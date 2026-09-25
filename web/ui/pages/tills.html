@@ -130,59 +130,16 @@
 
   <div class="card">
     <h3>{{ T "tills.enrolled" }}</h3>
-    {{ if or .PrimaryTillName .Tills }}
-    <table class="table">
-      <thead><tr><th>{{ T "tills.col_name" }}</th><th>{{ T "tills.col_enrolled" }}</th><th>{{ T "tills.col_seen" }}</th><th></th></tr></thead>
-      <tbody>
-        {{ if .PrimaryTillName }}
-        <tr>
-          {{/* ut-docs#405: PrimaryTillName is now always populated (till.name
-               syncs down like any other setting), so this row renders on a
-               replica too — there it's the PRIMARY's row, not "this till",
-               so the tag must not claim it is one. */}}
-          {{ if .SyncPrimary }}
-          <td>{{ .PrimaryTillName }} <span class="muted">({{ T "tills.the_primary" }})</span></td>
-          {{ else }}
-          <td>{{ .PrimaryTillName }} <span class="muted">({{ T "tills.this_till" }})</span></td>
-          {{ end }}
-          <td>—</td>
-          {{/* ut-docs#2722: on a replica, when THIS till last reached the
-               main till (sync.last_contact_at) — the same column a main
-               till fills for each replica from its side. */}}
-          <td>{{ if and .SyncPrimary .PrimaryLastContact }}{{ datetime .PrimaryLastContact }}{{ else }}—{{ end }}</td>
-          <td></td>
-        </tr>
-        {{ end }}
-        {{ range .Tills }}
-        <tr>
-          {{ if eq .ID $.ThisTillID }}
-          <td>{{ .Name }} <span class="muted">({{ T "tills.this_till" }})</span></td>
-          {{ else }}
-          <td>{{ .Name }}</td>
-          {{ end }}
-          <td>{{ datetime .EnrolledAt }}</td>
-          <td>{{ if .LastSeenAt }}{{ datetime .LastSeenAt }}{{ else }}—{{ end }}</td>
-          <td>
-          {{/* ut-docs#405: revoke is a primary-authoritative write (same
-               rule as catalog/settings, ADR-0011 §2) — .Tills now syncs to
-               every replica too, so this button must not render there: a
-               replica's own local DELETE looks like it worked but reverts
-               on the next admin-bundle pull, since the shop-wide roster
-               only really changes on the primary. The handler enforces
-               this independently; hiding it here is just not offering an
-               action that would silently no-op. */}}
-          {{ if not $.SyncPrimary }}
-          <button class="btn secondary" hx-post="/api/sync/tills/{{ .ID }}/revoke"
-                      hx-confirm="{{ T "tills.revoke_confirm" }}">{{ T "tills.revoke" }}</button>
-          {{ end }}
-          </td>
-        </tr>
-        {{ end }}
-      </tbody>
-    </table>
-    {{ else }}
-    <p class="muted">{{ T "tills.none" }}</p>
-    {{ end }}
+    {{/* ut-docs#2742: live on a main till — the roster re-renders itself
+         every 10 s (GET /ui/tills/roster swaps only this block, innerHTML;
+         no hx-preserve, nothing here OOB-swaps). A replica has nothing
+         live to show, so it doesn't poll. The tick is skipped while the
+         operator's focus is inside the table (a keyboard user on Revoke
+         would lose it to the swap — same shape as tables.html's
+         [!window.tablesEditing] filter). */}}
+    <div id="tills-roster"{{ if .LinkInfo }} hx-get="/ui/tills/roster" hx-trigger="every 10s [!document.activeElement || !document.getElementById('tills-roster').contains(document.activeElement)]" hx-swap="innerHTML"{{ end }}>
+      {{ template "tills_roster.html" . }}
+    </div>
   </div>
 </div>
 

@@ -1,16 +1,30 @@
-{{/* ut-docs#2722: a replica whose main till has stopped answering (it moved
-     to a new address, is switched off, or left the network). Rendered by
-     GET /ui/main-till-status (sync_primary_watch.go) into the status bar's
-     #sb-main-till-mount on every page, the sale screen included — a
-     persistent chip, never a modal: the till keeps selling offline and
-     looks for the main till on the network by itself. A real link to
-     /tills (this till's own local page, never the main till's origin),
-     because a title="" tooltip has no hover on a touchscreen till. Plugin
-     updates on a replica follow the main till (ADR-0011 §7), so pending
-     ones are named here too — the owner saw "update available" and could
-     not apply it, with nothing saying why. */}}
-<a class="sb-item sb-main-till" href="/tills" data-testid="sb-main-till"
+{{/* ut-docs#2742 (ADR-0114 §10): an additional till's ONE connectivity
+     indicator for its main till, rendered by GET /ui/main-till-status
+     (link_status.go) into the status bar's #sb-main-till-mount on every
+     page, the sale screen included. It replaces the browser's "Online"
+     light on a replica: that light only knew a network interface was up
+     and stayed green while this chip said the main till was gone.
+       linked      — live link (hello + a frame within 12 s): green dot
+       polling     — no live link (older main till / still connecting):
+                     sync still works every 30 s; neutral hollow dot
+       unreachable — the main till is gone: amber pill, "since <time> —
+                     selling offline" (ut-docs#2722's chip, kept)
+     Each state is words first (never colour alone) and a real link to
+     /tills — a title="" tooltip has no hover on a touchscreen till, so
+     the explanation lives on that page. data-link-state is what base.html's
+     announcer compares so a screen reader hears a CHANGE, not every poll.
+     Plugin updates on a replica follow the main till (ADR-0011 §7), so the
+     unreachable chip names pending ones too. */}}
+{{ if eq .state "unreachable" -}}
+<a class="sb-item sb-link is-unreachable sb-main-till" href="/tills" data-testid="sb-link" data-link-state="unreachable"
    title="{{ T "sync.main_till_unreachable_hint" }}">
   <span class="btn-ico" aria-hidden="true">{{ icon "sync" }}</span>
-  {{ if .since }}{{ printf (T "sync.main_till_unreachable_since") (datetime .since) }}{{ else }}{{ T "sync.main_till_unreachable" }}{{ end }}{{ if .pluginsWaiting }} · {{ T "sync.main_till_unreachable_plugins" }}{{ end }}
+  <span class="sb-link-text">{{ if .since }}{{ printf (T "sync.main_till_unreachable_since") (shortdatetime .since) }}{{ else }}{{ T "sync.main_till_unreachable" }}{{ end }}{{ if .pluginsWaiting }} · {{ T "sync.main_till_unreachable_plugins" }}{{ end }}</span>
 </a>
+{{- else -}}
+<a class="sb-item sb-link is-{{ .state }}" href="/tills" data-testid="sb-link" data-link-state="{{ .state }}"
+   title="{{ if eq .state "linked" }}{{ T "sync.link.linked_hint" }}{{ else }}{{ T "sync.link.polling_hint" }}{{ end }}">
+  <span class="sb-dot" aria-hidden="true"></span>
+  <span class="sb-link-text">{{ if eq .state "linked" }}{{ T "sync.link.linked" }}{{ else }}{{ T "sync.link.polling" }}{{ end }}{{ if eq .update "update_waiting" }} · {{ T "sync.link.update_waiting" }}{{ else if eq .update "main_update_waiting" }} · {{ T "sync.link.main_update_waiting" }}{{ end }}</span>
+</a>
+{{- end }}
