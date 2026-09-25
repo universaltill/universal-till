@@ -1120,6 +1120,8 @@ func FuncsFor(locale string) template.FuncMap {
 	// <input>, so a future 3-decimal currency (KWD/BHD/OMR) doesn't need
 	// every call site's own hardcoded {1,2} updated (ut-docs#1274).
 	funcs["moneypattern"] = MoneyPatternAttr
+	// ut-docs#2815: comma-or-dot variant for fields converted by utCurrency.toMinor.
+	funcs["moneypatternlocal"] = MoneyPatternLocalAttr
 	funcs["moneyplaceholder"] = MoneyPlaceholderAttr
 	funcs["toJson"] = toJSON
 	funcs["assetv"] = assetVersion

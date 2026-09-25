@@ -1,6 +1,9 @@
 package httpx
 
-import "testing"
+import (
+	"regexp"
+	"testing"
+)
 
 func TestFormatMoney(t *testing.T) {
 	cases := []struct {
@@ -168,6 +171,36 @@ func TestMoneyPatternAttr(t *testing.T) {
 	for _, c := range cases {
 		if got := string(MoneyPatternAttr(c.decimals, c.signed)); got != c.want {
 			t.Errorf("MoneyPatternAttr(%d, %v) = %q, want %q", c.decimals, c.signed, got, c.want)
+		}
+	}
+}
+
+// ut-docs#2815: fields whose value is converted client-side by
+// window.utCurrency.toMinor (the item editor's variant price/cost grid)
+// accept either decimal separator, so a German/Turkish keyboard's "3,50"
+// passes native validation instead of blocking the Save.
+func TestMoneyPatternLocalAttr(t *testing.T) {
+	cases := []struct {
+		decimals int
+		want     string
+	}{
+		{0, `pattern="[0-9]+"`},
+		{2, `pattern="[0-9]+([.,][0-9]{1,2})?"`},
+	}
+	for _, c := range cases {
+		if got := string(MoneyPatternLocalAttr(c.decimals)); got != c.want {
+			t.Errorf("MoneyPatternLocalAttr(%d) = %q, want %q", c.decimals, got, c.want)
+		}
+	}
+	re := regexp.MustCompile(`^(?:` + MoneyPatternLocal(2) + `)$`)
+	for _, ok := range []string{"3", "3.50", "3,50", "3,5"} {
+		if !re.MatchString(ok) {
+			t.Errorf("%q should match", ok)
+		}
+	}
+	for _, bad := range []string{"3,500", "3.5.0", "1,234.50", "", "abc"} {
+		if re.MatchString(bad) {
+			t.Errorf("%q should not match", bad)
 		}
 	}
 }

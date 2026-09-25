@@ -486,6 +486,25 @@ func MoneyPatternAttr(decimals int, signed bool) template.HTMLAttr {
 	return template.HTMLAttr(`pattern="` + p + `"`)
 }
 
+// MoneyPatternLocal is MoneyPattern with either '.' or ',' as the decimal
+// separator. Only for fields whose value never reaches the server raw but
+// goes through window.utCurrency.toMinor (web/public/app.js), which accepts
+// both -- the item editor's variant price/cost grid (ut-docs#2815: a German
+// tablet keyboard types "3,50", which the dot-only pattern refused). A field
+// parsed server-side with strconv.ParseFloat must keep MoneyPattern.
+func MoneyPatternLocal(decimals int) string {
+	if decimals <= 0 {
+		return `[0-9]+`
+	}
+	return fmt.Sprintf(`[0-9]+([.,][0-9]{1,%d})?`, decimals)
+}
+
+// MoneyPatternLocalAttr is the whole-attribute form of MoneyPatternLocal
+// (see MoneyPatternAttr for why the whole attribute).
+func MoneyPatternLocalAttr(decimals int) template.HTMLAttr {
+	return template.HTMLAttr(`pattern="` + MoneyPatternLocal(decimals) + `"`)
+}
+
 // MoneyPlaceholderAttr renders the whole `placeholder="…"` HTML attribute
 // for an example major-unit amount (may be negative) -- see
 // MoneyPlaceholder. Same template.HTMLAttr reasoning as MoneyPatternAttr

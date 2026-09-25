@@ -285,8 +285,13 @@
                  full explanation). The submit handler below already reads
                  item-price's raw .value and converts via
                  window.utCurrency.toMinor() into the hidden item-price-minor
-                 field, so no JS change is needed. -->
-            <label>{{ T "catalog.col.price" }} ({{ currency.Display }}) <input type="text" inputmode="decimal" id="item-price" {{ moneypattern currency.Decimals false }} {{ moneyplaceholder currency.Decimals 0 }} required></label>
+                 field, so no JS change is needed.
+                 ut-docs#2815: moneypatternlocal, not moneypattern — a German
+                 keyboard's "5,50" failed the dot-only pattern, the browser
+                 blocked the submit, and Android WebView shows no validation
+                 bubble, so Save silently did nothing. toMinor reads the
+                 comma. -->
+            <label>{{ T "catalog.col.price" }} ({{ currency.Display }}) <input type="text" inputmode="decimal" id="item-price" {{ moneypatternlocal currency.Decimals }} {{ moneyplaceholder currency.Decimals 0 }} required></label>
             <label>{{ T "catalog.col.sku" }} <input type="text" name="sku" id="item-sku" placeholder="{{ T "catalog.auto_if_blank" }}"></label>
           </div>
           <label>{{ T "catalog.description" }} <input type="text" name="description" id="item-description"></label>
@@ -1322,15 +1327,45 @@
   // submit (the visible input has no name, so only `price` goes on the wire).
   // Grid rows associate their inputs to a hidden form via the form=""
   // attribute, so the input may live outside the form element itself.
+  // ut-docs#2815: resolve those inputs through form.elements (which includes
+  // form=""-associated controls), NEVER through `f.id`: an existing
+  // variant's form has its own <input name="id">, and a form's named
+  // controls shadow its properties, so `f.id` was that INPUT, the
+  // [form="…"] lookup matched nothing, and the stale hidden `price` (the
+  // original price) was posted — the "Save reverts the price" bug.
+  // Unreadable input is sent as typed so the server refuses it with a
+  // visible message, instead of being saved as 0.
+  // ut-docs#2815: a field failing native validation (required/pattern)
+  // blocks the submit before any request is made, and Android WebView — the
+  // tablet till — shows NO validation bubble, so Save looked like it did
+  // nothing and the old price came back on close. Mirror the browser's own
+  // (already localized) validationMessage into the dialog's notice area.
+  // `invalid` doesn't bubble, hence the capture listener on the dialog.
+  modal.addEventListener('invalid', function (ev) {
+    var el = ev.target;
+    if (!el || !el.validationMessage) return;
+    renderNotice(msg, 'error', el.validationMessage);
+  }, true);
+  function variantField(f, cls) {
+    var els = f.elements || [];
+    for (var i = 0; i < els.length; i++) {
+      if (els[i].classList && els[i].classList.contains(cls)) return els[i];
+    }
+    return null;
+  }
   document.body.addEventListener('htmx:configRequest', function (ev) {
     var f = ev.detail.elt;
-    if (!f || !f.querySelector) return;
-    var major = f.querySelector('.variant-price-major') ||
-      (f.id && document.querySelector('.variant-price-major[form="' + f.id + '"]'));
-    if (major) ev.detail.parameters.price = window.utCurrency.toMinor(major.value || '0');
-    var cost = f.querySelector('.variant-cost-major') ||
-      (f.id && document.querySelector('.variant-cost-major[form="' + f.id + '"]'));
-    if (cost && cost.value !== '') ev.detail.parameters.costPrice = window.utCurrency.toMinor(cost.value);
+    if (!f || f.tagName !== 'FORM') return;
+    var major = variantField(f, 'variant-price-major');
+    if (major) {
+      var p = window.utCurrency.parseMinor(major.value);
+      ev.detail.parameters.price = isNaN(p) ? major.value : p;
+    }
+    var cost = variantField(f, 'variant-cost-major');
+    if (cost && cost.value.trim() !== '') {
+      var c = window.utCurrency.parseMinor(cost.value);
+      ev.detail.parameters.costPrice = isNaN(c) ? cost.value : c;
+    }
   });
 
   // ut-docs#1363: the upload now goes through htmx's own request pipeline

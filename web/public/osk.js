@@ -530,6 +530,15 @@
     // must not reset the layer/shift or re-trigger the smooth scroll.
     if (current === el && osk && osk.classList.contains('osk-open')) return;
     current = el;
+    // ut-docs#2815: the first tap on a filled numeric field selects it, so
+    // the first key REPLACES the amount. Inserting at the tap's caret made
+    // "5.00" + 6 = "5.006", which the price pattern refuses — Save then did
+    // nothing and the old price stayed. A re-tap (the return above) still
+    // places the caret for a partial edit. Not type=number: insert() appends
+    // there (no selection API), so a highlight would promise a replace.
+    if (isNumeric(el) && el.value && el.type !== 'number') {
+      try { el.select(); } catch (e) { /* not selectable: keep the caret */ }
+    }
     if (!osk) build();
     shift = false;
     shiftLatched = false;

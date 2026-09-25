@@ -26,11 +26,26 @@ window.utCurrency = (function(){
     if (neg) num = '-' + num;
     return suffix ? num + ' ' + display : display + num;
   }
+  var commaDecimal = decimals > 0 ? new RegExp('^-?[0-9]+,[0-9]{1,' + decimals + '}$') : null;
+  function parseMinor(v){
+    var text = String(v == null ? '' : v).trim();
+    if (text === '') return NaN;
+    if (commaDecimal && commaDecimal.test(text)) text = text.replace(',', '.');
+    var num = Number(text);
+    return isFinite(num) ? Math.round(num * factor) : NaN;
+  }
   return {
     decimals: decimals, factor: factor, display: display, suffix: suffix,
+    // ut-docs#2815: a decimal COMMA ("3,50" -- German/Turkish keyboards,
+    // the de/tr OSK) is a decimal separator, not garbage: it used to parse
+    // as NaN and silently become 0. Only a single comma followed by at most
+    // `decimals` digits is read that way, so an en-style thousands "1,234"
+    // is still refused rather than misread as 1.234. parseMinor returns NaN
+    // for anything unreadable, so a caller can refuse it instead of saving 0.
+    parseMinor: parseMinor,
     toMinor: function(v){
-      var num = Number(String(v == null ? '' : v).trim());
-      return isNaN(num) ? 0 : Math.round(num * factor);
+      var n = parseMinor(v);
+      return isNaN(n) ? 0 : n;
     },
     toMajor: function(units){ return (units / factor).toFixed(decimals); },
     format: formatMinor
