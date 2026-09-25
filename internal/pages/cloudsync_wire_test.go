@@ -1608,6 +1608,43 @@ func TestBuildCloudHooks_WiresQuickButtonLayout(t *testing.T) {
 	}
 }
 
+// Each reported quick button carries the item it points at and that item's
+// tile colour (ut-docs#2368): a tile's colour IS its item's items.color, so
+// the cloud panel needs item_id to queue an update_item_details recolour and
+// color to show the applied swatch after the till reports back.
+func TestRemoteQuickButtonsReport_CarriesItemIDAndColor(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+	teal := catalogtypes.ItemColors()[2].Hex
+	if _, err := dp.Db.Exec(`UPDATE items SET color = ? WHERE id = 'itm1'`, teal); err != nil {
+		t.Fatalf("seed item colour: %v", err)
+	}
+
+	qb := remoteQuickButtonsReport(ctx, dp)
+	if len(qb) != 3 {
+		t.Fatalf("quick_buttons length = %d, want 3", len(qb))
+	}
+	for i, b := range qb {
+		if b["item_id"] != "itm1" {
+			t.Fatalf("quick_buttons[%d][\"item_id\"] = %#v, want %q", i, b["item_id"], "itm1")
+		}
+		if b["color"] != teal {
+			t.Fatalf("quick_buttons[%d][\"color\"] = %#v, want %q", i, b["color"], teal)
+		}
+	}
+
+	// An uncoloured item reports "" (not absent), so the panel can tell "no
+	// colour" from "an older till that doesn't report colour at all".
+	if _, err := dp.Db.Exec(`UPDATE items SET color = NULL WHERE id = 'itm1'`); err != nil {
+		t.Fatalf("clear item colour: %v", err)
+	}
+	qb = remoteQuickButtonsReport(ctx, dp)
+	if c, present := qb[0]["color"]; !present || c != "" {
+		t.Fatalf("uncoloured item: quick_buttons[0][\"color\"] = %#v (present=%v), want \"\"", c, present)
+	}
+}
+
 // --- cloudUpdateItemDetails ---
 
 // seedFullDetailItem creates one category and one brand row (satisfying the
