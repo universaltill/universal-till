@@ -311,7 +311,15 @@
       </div>
     {{ end }}
     <div>{{ T "basket.tax" }}: {{ money .Tax }}</div>
-    <div class="total" data-minor="{{ .Total.Minor }}">{{ T "basket.total" }}: {{ money .Total }}</div>
+    <!-- data-label (ut-docs#2649): the exact server-formatted, locale-digit
+         amount -- the same "money" template func this element's own text
+         uses -- so index.html's Payment button refresh IIFE can read it
+         after every #basket swap instead of reformatting the total itself
+         via window.utCurrency.format (web/public/app.js), which has no
+         digit-shape substitution. Same data-attribute-bridge pattern
+         data-minor already established for the fee-hint/pay-voucher
+         scripts. -->
+    <div class="total" data-minor="{{ .Total.Minor }}" data-label="{{ money .Total }}">{{ T "basket.total" }}: {{ money .Total }}</div>
   </div>
   <!-- "Customers also buy" — reloads with every basket swap (local data only) -->
   <div id="suggest-strip" hx-get="/ui/suggestions" hx-trigger="load" hx-swap="outerHTML"></div>
