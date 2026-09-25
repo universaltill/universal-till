@@ -205,3 +205,21 @@ func TestAvailableListsLocalesWithRealTranslations(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#2501: a cache of rendered HTML keys on Generation, so it must move
+// on both post-boot ways translated text changes — a language-pack overlay
+// resync and a shop translation edit — or a cached sell screen would keep
+// the old wording.
+func TestI18nGeneration_MovesOnOverlaysAndShopOverrides(t *testing.T) {
+	i := newTestI18n(t)
+	g0 := i.Generation()
+	i.SetOverlays(map[string]map[string]string{"de": {"basket.total": "Summe"}})
+	g1 := i.Generation()
+	if g1 == g0 {
+		t.Fatalf("SetOverlays did not move Generation (%d)", g1)
+	}
+	i.SetShopOverrides(map[string]map[string]string{"en": {"basket.total": "Sum"}})
+	if g2 := i.Generation(); g2 == g1 {
+		t.Fatalf("SetShopOverrides did not move Generation (%d)", g2)
+	}
+}
