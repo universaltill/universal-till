@@ -13,7 +13,7 @@ keywords: [zweite kasse, kopplung, sync, lan, primär, register, quarantäne]
 
 # Mehrere Kassen (ein Geschäft)
 
-Betreiben Sie mehrere Kassen im selben Geschäftsnetzwerk: eine ist die Hauptkasse, die anderen treten ihr bei und teilen sich automatisch Katalog, Preise, Einstellungen und Bestand.
+Betreiben Sie mehrere Kassen im selben Geschäftsnetzwerk: eine ist die Hauptkasse, die anderen treten ihr bei und teilen sich automatisch Katalog, Preise, Einstellungen und Bestand. Fotos, die Sie an der Hauptkasse für Artikel und Kategorien hochladen, folgen innerhalb etwa einer halben Minute, sodass jede Kasse dieselben Bilder zeigt.
 
 ## Verwendung
 
