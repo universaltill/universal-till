@@ -1,5 +1,5 @@
 <h2>{{ T "inventory.stock_levels" }}
-  {{ if .RunningOut }}<span class="chip chip-warn">⚠ {{ .RunningOut }} {{ T "inventory.running_out" }}</span>{{ end }}</h2>
+  {{ if .RunningOut }}<span class="chip chip-warn">⚠ {{ .RunningOut }} {{ if eq .RunningOut 1 }}{{ T "inventory.running_out_one" }}{{ else }}{{ T "inventory.running_out_other" }}{{ end }}</span>{{ end }}</h2>
 <table class="table" id="stock-table">
   <thead><tr><th>{{ T "basket.col.item" }}</th><th>{{ T "catalog.col.sku" }}</th><th>{{ T "inventory.location" }}</th><th>{{ T "basket.col.qty" }}</th><th>{{ T "inventory.reorder_at" }}</th><th>{{ T "inventory.days_left" }}</th></tr></thead>
   <tbody>

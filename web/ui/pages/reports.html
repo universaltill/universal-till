@@ -2,7 +2,7 @@
 {{ $period := .Period }}
 <div class="page-head">
   <h1>{{ T "reports.title" }}
-    {{ if .RunningOut }}<a class="chip chip-warn" href="/inventory" style="text-decoration:none">⚠ {{ .RunningOut }} {{ T "inventory.running_out" }}</a>{{ end }}</h1>
+    {{ if .RunningOut }}<a class="chip chip-warn" href="/inventory">⚠ {{ .RunningOut }} {{ if eq .RunningOut 1 }}{{ T "inventory.running_out_one" }}{{ else }}{{ T "inventory.running_out_other" }}{{ end }}</a>{{ end }}</h1>
 </div>
 <div class="report-window">
   {{/* ut-docs#1976: one chip row for the common windows. Each chip is a

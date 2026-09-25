@@ -133,6 +133,50 @@ func TestReportsPage_GrandTotalsSumDailySales(t *testing.T) {
 	}
 }
 
+// TestReportsPage_RunningOutChipSingularWording is ut-docs#2648's Reports-page
+// counterpart to inventory_prediction_test.go's singular/plural assertions:
+// the header chip shares the exact same LowStockItem.IsRunningOut decision
+// as /inventory (reports_page.go's own comment above runningOut says so), so
+// with exactly one fast-selling, low-stock item it must read
+// "1 item predicted to run out within a week", never the old un-pluralized
+// "item(s)" wording.
+func TestReportsPage_RunningOutChipSingularWording(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := dp.Db.ExecContext(ctx, q, args...); err != nil {
+			t.Fatalf("exec: %v (%s)", err, q)
+		}
+	}
+	// Same fixture shape as inventory_prediction_test.go's "Fast Cola": 2/day
+	// over the 28-day sell-rate window with only 6 in stock (~3 days' cover).
+	mustExec(`INSERT INTO items (id, name, sku, base_price, is_active) VALUES ('it-cola','Fast Cola','COLA',100,1)`)
+	mustExec(`INSERT INTO inventory (id, item_id, location_id, quantity) VALUES ('inv-cola','it-cola','loc_main',6)`)
+	for i := 0; i < 14; i++ {
+		saleID := "s-run-" + string(rune('a'+i))
+		mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at)
+		          VALUES (?, ?, 'completed', 'sale', 400, 0, 400, datetime('now', ?))`,
+			saleID, "R-"+saleID, "-"+string(rune('0'+i%9))+" days")
+		mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+		          VALUES (?, ?, 1, 'it-cola', 'Fast Cola', 4, 100, 0, 0, 0, 400, 400)`, "l-"+saleID, saleID)
+	}
+
+	rec := getReportsPage(t, mux, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "1 item predicted to run out within a week") {
+		t.Fatalf("expected singular wording for exactly one running-out item, got: %s", body)
+	}
+	if strings.Contains(body, "item(s)") {
+		t.Fatal("running-out chip must not render the old un-pluralized \"item(s)\" wording")
+	}
+}
+
 func TestReportsPage_AvgSaleKPI(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newReportsPageTestDeps(t)
