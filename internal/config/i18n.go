@@ -22,6 +22,19 @@ type I18n struct {
 	overlays map[string]map[string]string // locale -> key -> message (language-pack plugins)
 	shop     map[string]map[string]string // locale -> key -> message (manager edits; win over everything)
 	fallback string
+	// gen (ut-docs#2501) moves on every SetShopOverrides/SetOverlays — the
+	// two ways translated text changes after boot — so a cache of rendered
+	// HTML (internal/ui's SellScreenCache) can key on it instead of serving
+	// the old wording until its max age. Guarded by mu.
+	gen uint64
+}
+
+// Generation reports how many times the overlay/shop-override layers have
+// been replaced since this translator was built (ut-docs#2501).
+func (i *I18n) Generation() uint64 {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return i.gen
 }
 
 // NewI18n loads base locale files from a plain OS directory. Kept for
@@ -151,6 +164,7 @@ func (i *I18n) SetShopOverrides(shop map[string]map[string]string) {
 		shop = map[string]map[string]string{}
 	}
 	i.shop = shop
+	i.gen++
 }
 
 // TranslationEntry is one row of the translation editor: the key, its
@@ -238,6 +252,7 @@ func (i *I18n) SetOverlays(overlays map[string]map[string]string) {
 		overlays = map[string]map[string]string{}
 	}
 	i.overlays = overlays
+	i.gen++
 }
 
 // Available returns the sorted locale codes with any translations.

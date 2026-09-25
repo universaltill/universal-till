@@ -24,8 +24,6 @@
   <div>
     {{ if .EntitledFiltered }}
     <span class="muted">{{ T "plugins.store.filtered_note" }}</span>
-    {{ else }}
-    <span class="muted">{{ T "plugins.store.unfiltered_note" }}</span>
     {{ end }}
     {{ if .CatalogError }}
     <span style="color:#b91c1c"> — {{ T "plugins.store.catalog_error" }}</span>

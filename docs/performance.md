@@ -24,6 +24,52 @@ go test ./internal/pos -run TestMicroInteractionLatency
 UT_BENCHMARK_INTERACT_FAIL_MS=250 go test ./internal/pos -run TestMicroInteractionLatency
 ```
 
+## Sell-screen tile cache (ut-docs#2501)
+The cashier sell screen's tile fragments — `GET /ui/buttons` (outside the
+Designer's `?mode=edit`) and the category popup `GET /ui/buttons/category?id=`
+— are served from an in-memory cache of the rendered bytes
+(`internal/ui/sellscreen_cache.go`, one cache per `registerButtonsAPI` mux).
+A hit costs one single-row SELECT instead of the whole catalog read + template
+execution. Nothing else on any page has to know about it: every change is
+picked up through the database's own counters.
+
+- **Key**: route + its parameter (category id), request locale, the active
+  currency code, `httpx.TranslationsVersion()` (a counter bumped on every
+  translator swap + how often language-pack overlays / shop translation
+  overrides were replaced),
+  the session's `catalog_management` grant (lock badges), the browsing mode
+  and the All-tab toggle.
+- **Invalidation** — an entry is served only while all of these hold:
+  1. `sync_admin_version.generation` (migration 023: triggers on every admin
+     table — items, categories, shortcut_buttons, settings, modifiers,
+     variants, barcodes, translation overrides, …) **and**
+     `sell_screen_version.generation` (migration 042: triggers on
+     `price_history` and `item_images`, which 023 does not cover) are
+     unchanged. Both are read in one query (`data.SellScreenRepo.
+     SellScreenVersion`) *before* rendering, so a write racing a render
+     leaves the entry on the older version (one extra miss), never stale.
+  2. The next `price_history` `starts_at`/`ends_at` (`NextPriceBoundary`,
+     read *before* rendering, right after a cache miss) has not passed — a
+     scheduled price goes live with no write.
+  3. The entry is younger than 5 minutes — the safety net for inputs outside
+     the database (an uploaded category/item image file arriving on disk).
+- **Never cached** (still rendered and served, just not stored): edit mode,
+  search, `/ui/buttons/all/more`, non-200 responses, a render where any
+  catalog load or the template failed, a *degraded* render — any inner
+  lookup of `LoadAllActive`/`LoadWith` that falls back instead of failing
+  (hidden flags, barcodes, thumbnails, modifiers, variants, current prices,
+  enabled barcode symbologies) — any request whose next-price-boundary read
+  failed or whose boundary passed while it rendered, and any request where
+  either counter row is missing or unreadable.
+- **Memory bounds**: 4 MiB byte budget and 64 entries, LRU-evicted; an entry
+  larger than the budget is never stored; on Linux, when `MemAvailable`
+  (`/proc/meminfo`, re-read at most every 5 s) is below 64 MiB nothing is
+  stored and the cache is emptied. Elsewhere the budget alone bounds it.
+- A new sell-screen input must be covered by one of the two counters (a
+  trigger in a new migration), by the key, or by the max age — otherwise
+  tiles go stale. Benchmark:
+  `go test ./internal/ui -run '^$' -bench 'BenchmarkButtonsList_'`.
+
 ## Offline smoke (sale flow)
 ```bash
 go run ./scripts/smoke-offline-sale/main.go               # uses ./data/smoke-offline-sale.db

@@ -43,12 +43,17 @@ type storeItem struct {
 // trustTierOf maps a plugin to its visible trust badge: first-party
 // Universal Till plugins are OFFICIAL (the golden badge), marketplace-marked
 // verified/trusted publishers are VERIFIED, everything else is UNVERIFIED —
-// and unverified installs ask the operator for consent first.
+// and unverified installs ask the operator for consent first. The live
+// catalog sends the listing UUID as the id, never the com.universaltill.*
+// slug, and says first-party itself with trust level "official"
+// (ut-docs#2647); the id prefix stays for catalogs that send the slug.
 func trustTierOf(pluginID, trustTier string) string {
 	if strings.HasPrefix(pluginID, "com.universaltill.") {
 		return "official"
 	}
 	switch strings.ToLower(strings.TrimSpace(trustTier)) {
+	case "official":
+		return "official"
 	case "verified", "trusted":
 		return "verified"
 	}

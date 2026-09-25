@@ -43,6 +43,11 @@ func buttonsElevationItemName(ctx context.Context, d *common.Deps, itemID string
 
 func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
+	// ut-docs#2501: the sell screen's rendered tile fragments (/ui/buttons
+	// outside edit mode, /ui/buttons/category), shared by every request this
+	// mux serves and invalidated by the database's own change counters — see
+	// internal/ui/sellscreen_cache.go.
+	sellCache := ui.NewSellScreenCache()
 
 	// auditButtonsElevated records a manager-PIN-approved shortcut-button
 	// mutation with dual attribution (ut-docs#2312, mechanism ut-docs#557)
@@ -79,7 +84,8 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 
 	// UI fragment
 	mux.HandleFunc("/ui/buttons", func(w http.ResponseWriter, r *http.Request) {
-		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		locale := httpx.ResolveLocale(w, r)
+		funcs := httpx.FuncsFor(locale)
 		renderer, err := ui.NewRenderer(
 			filepath.Join("web", "ui", "layouts", "base.html"),
 			filepath.Join("web", "ui", "pages", "index.html"),
@@ -123,6 +129,8 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			BrowsingMode: common.ClampBrowsingMode(d.CurrentState().BrowsingMode),
 			Granted:      granted,
 			EditMode:     editMode,
+			Cache:        sellCache,
+			Locale:       locale,
 		}
 		btnHTTP.List(w, r)
 	})
@@ -135,7 +143,8 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 	// own strict-mode-locator requirement, and the reason the ut-docs#2283
 	// clone-the-panel approach was retired with the Categories tab itself.
 	mux.HandleFunc("/ui/buttons/category", func(w http.ResponseWriter, r *http.Request) {
-		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		locale := httpx.ResolveLocale(w, r)
+		funcs := httpx.FuncsFor(locale)
 		renderer, err := ui.NewRenderer(
 			filepath.Join("web", "ui", "layouts", "base.html"),
 			filepath.Join("web", "ui", "pages", "index.html"),
@@ -146,7 +155,7 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
 			return
 		}
-		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore, View: renderer}
+		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore, View: renderer, Cache: sellCache, Locale: locale}
 		btnHTTP.CategoryItems(w, r)
 	})
 

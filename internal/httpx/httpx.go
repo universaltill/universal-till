@@ -325,7 +325,10 @@ func RenderWith(files []string, funcs template.FuncMap) func(name string, data a
 }
 
 var (
-	i18nRef       atomic.Value // *common.I18n
+	i18nRef atomic.Value // *wiredTranslator
+	// i18nEpoch counts InitI18n calls (ut-docs#2501): the monotonic half of
+	// TranslationsVersion, so it never depends on a translator's address.
+	i18nEpoch     atomic.Uint64
 	defaultLocale atomic.Value // string
 	currencyCode  atomic.Value // string
 )
@@ -408,7 +411,9 @@ func jsonVals(pairs ...any) (string, error) {
 
 // InitI18n wires a translator and default locale into the template layer.
 func InitI18n(t *config.I18n, fallback string) {
-	i18nRef.Store(t)
+	// The translator and its epoch are published together, so a reader can
+	// never pair one wiring's translator with another wiring's epoch.
+	i18nRef.Store(&wiredTranslator{t: t, epoch: i18nEpoch.Add(1)})
 	defaultLocale.Store(fallback)
 }
 
@@ -560,8 +565,35 @@ func NativeLanguageName(code string) string {
 // InitI18n(nil, ...) stores a typed nil *config.I18n, which an interface
 // nil-check alone would treat as present and then panic on method call.
 func translator() *config.I18n {
-	t, _ := i18nRef.Load().(*config.I18n)
-	return t
+	w, _ := i18nRef.Load().(*wiredTranslator)
+	if w == nil {
+		return nil
+	}
+	return w.t
+}
+
+// wiredTranslator is one InitI18n wiring: the translator (possibly nil) and
+// that call's sequence number.
+type wiredTranslator struct {
+	t     *config.I18n
+	epoch uint64
+}
+
+// TranslationsVersion identifies the translated text templates currently
+// render (ut-docs#2501): which InitI18n wiring is current (a process-wide
+// counter bumped on every call — never the translator's address, which a
+// later translator can reuse) and how many times its language-pack overlays
+// / shop overrides have been replaced since. A cache of rendered HTML keys on it so a language-pack
+// install or a translation edit is never served in the old wording.
+func TranslationsVersion() string {
+	w, _ := i18nRef.Load().(*wiredTranslator)
+	if w == nil {
+		return "none"
+	}
+	if w.t == nil {
+		return strconv.FormatUint(w.epoch, 10) + ".none"
+	}
+	return strconv.FormatUint(w.epoch, 10) + "." + strconv.FormatUint(w.t.Generation(), 10)
 }
 
 // T translates a key for a locale outside templates (handlers building toasts

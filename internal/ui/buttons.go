@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/barcode"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
@@ -508,6 +509,10 @@ type ButtonStore struct {
 	// so the jiggle-mode trash badge deactivates an item exactly the same
 	// way the catalog page's own delete does, not a second reimplementation.
 	db *sql.DB
+	// sellRepo backs the sell-screen tile cache's version and price-boundary
+	// reads (ut-docs#2501, sellscreen_cache.go). nil (a hand-built
+	// ButtonStore literal) = never cache.
+	sellRepo *data.SellScreenRepo
 }
 
 func NewButtonStore(db *sql.DB) *ButtonStore {
@@ -518,7 +523,27 @@ func NewButtonStore(db *sql.DB) *ButtonStore {
 		catalogRepo:  data.NewCatalogRepo(db),
 		settingsRepo: data.NewSettingsRepo(db),
 		db:           db,
+		sellRepo:     data.NewSellScreenRepo(db),
 	}
+}
+
+// SellScreenVersion is the sell-screen tile cache's change marker
+// (ut-docs#2501): ok=false means "don't cache this request".
+func (s *ButtonStore) SellScreenVersion(ctx context.Context) (SellScreenVersion, bool, error) {
+	if s.sellRepo == nil {
+		return SellScreenVersion{}, false, nil
+	}
+	admin, sell, ok, err := s.sellRepo.SellScreenVersion(ctx)
+	return SellScreenVersion{Admin: admin, Sell: sell}, ok, err
+}
+
+// NextPriceBoundary is the next scheduled price_history start/end — when a
+// cached sell screen's prices go stale with no write (ut-docs#2501).
+func (s *ButtonStore) NextPriceBoundary(ctx context.Context) (time.Time, error) {
+	if s.sellRepo == nil {
+		return time.Time{}, errors.New("sell screen repo not configured")
+	}
+	return s.sellRepo.NextPriceBoundary(ctx)
 }
 
 // CategoryTileVM (ut-docs#2499) is one tile of the category_tabs mode's
@@ -720,9 +745,18 @@ func (s *ButtonStore) SearchItems(ctx context.Context, q string, offset, limit i
 // that prefix straight against the items table, not just against a
 // shortcut_buttons row (see internal/data's itemIDCodePrefix).
 func (s *ButtonStore) LoadAllActive(ctx context.Context) ([]Button, error) {
+	out, _, err := s.loadAllActive(ctx)
+	return out, err
+}
+
+// loadAllActive is LoadAllActive, also reporting whether any inner lookup
+// failed and the tiles fell back (degraded) — the result is still returned
+// and still rendered, but the sell-screen tile cache must not store a render
+// built from it (ut-docs#2501 review finding 1).
+func (s *ButtonStore) loadAllActive(ctx context.Context) (_ []Button, degraded bool, _ error) {
 	items, err := s.catalogRepo.ListItems(ctx)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	// ut-docs#2541: an item hidden from the sell screen (items.
 	// sell_screen_hidden) is left out of the All grid and every implicit
@@ -738,6 +772,7 @@ func (s *ButtonStore) LoadAllActive(ctx context.Context) ([]Button, error) {
 	if err != nil {
 		logging.L().Warnf("ui: load all-active items hidden-flag lookup failed, every item falls back to visible: %v", err)
 		hiddenIDs = nil
+		degraded = true
 	}
 	if len(hiddenIDs) > 0 {
 		kept := items[:0]
@@ -759,10 +794,12 @@ func (s *ButtonStore) LoadAllActive(ctx context.Context) ([]Button, error) {
 		// errors below. Every tile falls back to its SKU (or the
 		// synthesized item: code) instead of a real barcode.
 		logging.L().Warnf("ui: load all-active items barcodes failed, tiles fall back to SKU/synthesized code: %v", err)
+		degraded = true
 	}
 	thumbs, err := s.catalogRepo.ItemThumbnails(ctx)
 	if err != nil {
 		logging.L().Warnf("ui: load all-active items thumbnails failed, tiles fall back to no image: %v", err)
+		degraded = true
 	}
 	// The next three lookups are chunked (ut-docs#2318): SQLite's bind-
 	// variable ceiling (32766) is well within plausible active-catalog
@@ -787,6 +824,7 @@ func (s *ButtonStore) LoadAllActive(ctx context.Context) ([]Button, error) {
 				// other two lookups below, since silence is exactly the
 				// failure mode this fix exists to remove.
 				logging.L().Warnf("ui: load all-active items-with-modifiers failed for a batch of %d item(s), those tiles fall back to plain add-to-basket: %v", len(chunk), err)
+				degraded = true
 				continue
 			}
 			data.MergeMapInto(hasMods, m)
@@ -804,6 +842,7 @@ func (s *ButtonStore) LoadAllActive(ctx context.Context) ([]Button, error) {
 				// finding 5): on this error every tile in the failed batch falls
 				// back to straight-to-basket at the parent's base price.
 				logging.L().Warnf("ui: load all-active items-with-variants failed for a batch of %d item(s), those tiles fall back to parent-price add (ut-docs#2209): %v", len(chunk), err)
+				degraded = true
 				continue
 			}
 			data.MergeMapInto(hasVariants, m)
@@ -814,6 +853,7 @@ func (s *ButtonStore) LoadAllActive(ctx context.Context) ([]Button, error) {
 			if err != nil {
 				// Same as Load's own currentPrices error handling (ut-docs#2258).
 				logging.L().Warnf("ui: load all-active current prices failed for a batch of %d item(s), those tiles fall back to raw base_price (ut-docs#2258): %v", len(chunk), err)
+				degraded = true
 				continue
 			}
 			data.MergeMapInto(currentPrices, p)
@@ -833,9 +873,13 @@ func (s *ButtonStore) LoadAllActive(ctx context.Context) ([]Button, error) {
 	// EnabledBarcodeSymbologies itself already returns
 	// DefaultEnabledBarcodeSymbologyIDs() alongside the error, which is
 	// exactly the set the resolver falls back to on the same error — so
-	// the ignored error here still keeps this check consistent with what
-	// a tap will actually resolve against.
-	enabledIDs, _ := s.settingsRepo.EnabledBarcodeSymbologies(ctx)
+	// using those defaults on error still keeps this check consistent with
+	// what a tap will actually resolve against. The error only marks the
+	// result degraded (a render from it is not cached, ut-docs#2501).
+	enabledIDs, err := s.settingsRepo.EnabledBarcodeSymbologies(ctx)
+	if err != nil {
+		degraded = true
+	}
 	out := make([]Button, 0, len(items))
 	for _, it := range items {
 		rawBarcode := ""
@@ -863,7 +907,7 @@ func (s *ButtonStore) LoadAllActive(ctx context.Context) ([]Button, error) {
 			Color:        it.Color,
 		})
 	}
-	return out, nil
+	return out, degraded, nil
 }
 
 // SearchSellable finds every active catalog item matching q — the
@@ -967,9 +1011,16 @@ func (s *ButtonStore) Load() ([]Button, error) {
 // Load() above still returns explicit rows only in that case, matching the
 // old behavior exactly.
 func (s *ButtonStore) LoadWith(ctx context.Context, allActive []Button) ([]Button, error) {
+	out, _, err := s.loadWith(ctx, allActive)
+	return out, err
+}
+
+// loadWith is LoadWith, also reporting whether any of its own lookups failed
+// and the tiles fell back (degraded) — see loadAllActive.
+func (s *ButtonStore) loadWith(ctx context.Context, allActive []Button) (_ []Button, degraded bool, _ error) {
 	rows, err := s.repo.LoadButtons(ctx)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	itemIDs := make([]string, 0, len(rows))
 	for _, b := range rows {
@@ -987,6 +1038,7 @@ func (s *ButtonStore) LoadWith(ctx context.Context, allActive []Button) ([]Butto
 			// (ut-docs#2454; mirrors ut-docs#2318/#2451's identical fix
 			// elsewhere in this file).
 			logging.L().Warnf("ui: load items-with-modifiers failed, every tile falls back to plain add-to-basket: %v", err)
+			degraded = true
 		}
 	}
 	var hasVariants map[string]bool
@@ -1004,6 +1056,7 @@ func (s *ButtonStore) LoadWith(ctx context.Context, allActive []Button) ([]Butto
 			// the same treatment ButtonsHTTP.List gives its own non-fatal
 			// category error.
 			logging.L().Warnf("ui: load items-with-variants failed, every tile falls back to parent-price add (ut-docs#2209): %v", err)
+			degraded = true
 		}
 		currentPrices, err = s.catalogRepo.ItemCurrentPrices(ctx, itemIDs)
 		if err != nil {
@@ -1012,6 +1065,7 @@ func (s *ButtonStore) LoadWith(ctx context.Context, allActive []Button) ([]Butto
 			// STALE configured base_price it already carries in b.Price,
 			// same failure shape as ut-docs#2209's own hasVariants gap.
 			logging.L().Warnf("ui: load item current prices failed, every tile falls back to raw base_price (ut-docs#2258): %v", err)
+			degraded = true
 		}
 	}
 	var out []Button
@@ -1058,7 +1112,7 @@ func (s *ButtonStore) LoadWith(ctx context.Context, allActive []Button) ([]Butto
 		}
 		out = append(out, b)
 	}
-	return out, nil
+	return out, degraded, nil
 }
 
 func (s *ButtonStore) Save(list []Button) error {
@@ -1415,6 +1469,14 @@ type ButtonsHTTP struct {
 	// screen, so every existing ButtonsHTTP literal renders exactly as
 	// before.
 	EditMode bool
+	// Cache (ut-docs#2501) serves List (outside EditMode) and CategoryItems
+	// from rendered bytes while nothing they depend on has changed — see
+	// sellscreen_cache.go for the invalidation contract. nil = no caching:
+	// every existing ButtonsHTTP literal renders exactly as before.
+	Cache *SellScreenCache
+	// Locale is this request's resolved locale — the one the View's funcs
+	// were built for. Only read as part of Cache's key.
+	Locale string
 }
 
 // AllTabPageSize bounds how many of the sell screen's All-grid items
@@ -1446,6 +1508,21 @@ func pageButtons(all []Button, offset int) (page []Button, hasMore bool) {
 }
 
 func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
+	// ut-docs#2501: the Designer's edit mode is never cached — it is a
+	// manager's working surface (hidden-items list, category management),
+	// rendered rarely, and must always show the live state it is editing.
+	if h.EditMode {
+		h.renderList(w, r)
+		return
+	}
+	h.serveSellScreen(w, r, h.sellScreenKey("list", ""), h.renderList)
+}
+
+// renderList is List's render, reporting whether it is clean enough to cache
+// (ut-docs#2501): every load below is non-fatal to the render, but a render
+// that degraded around a failed load must not be served for minutes after.
+func (h *ButtonsHTTP) renderList(w http.ResponseWriter, r *http.Request) bool {
+	clean := true
 	// ut-docs#2541 review finding 2: LoadAllActive is fetched exactly ONCE
 	// per render and reused for both Load's implicit-tile merge AND the
 	// mode-specific views below (all_filter_chips' All grid, the category
@@ -1457,13 +1534,21 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 	// catalog) on every single /ui/buttons render. Load's own implicit merge
 	// always needs the full active-item set, in every mode — including the
 	// strip, which since ut-docs#2613 has no All grid of its own.
-	allBtns, err := h.Store.LoadAllActive(r.Context())
+	// A degraded load (an inner lookup fell back, already logged) still
+	// renders, but is not clean: it must not be cached (review finding 1).
+	allBtns, degraded, err := h.Store.loadAllActive(r.Context())
 	if err != nil {
 		logging.L().Errorf("buttons list: load all-active items: %v", err)
 	}
-	btns, err := h.Store.LoadWith(r.Context(), allBtns)
+	if err != nil || degraded {
+		clean = false
+	}
+	btns, degraded, err := h.Store.loadWith(r.Context(), allBtns)
 	if err != nil {
 		logging.L().Errorf("buttons list: load buttons: %v", err)
+	}
+	if err != nil || degraded {
+		clean = false
 	}
 	cats, err := h.Store.LoadCategories(r.Context())
 	if err != nil {
@@ -1472,6 +1557,7 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 		// — but worth a log line: a till stuck like this permanently
 		// loses category grouping/coloring with no visible sign why.
 		logging.L().Errorf("buttons list: load categories: %v", err)
+		clean = false
 	}
 	// ut-docs#2499: which of the three sell-screen shapes to render. The
 	// Designer's replica (EditMode) is always the quick-button strip — it
@@ -1523,6 +1609,7 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 		// category survives pruning via item count alone this render) and,
 		// in edit mode, without the management list.
 		logging.L().Errorf("buttons list: load categories for admin: %v", err)
+		clean = false
 	}
 	// ut-docs#2541 review finding 5: VisibleItemCount, not ItemCount — a
 	// category whose active items are ALL hidden from the sell screen must
@@ -1566,9 +1653,10 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 			// possibly-stale) hidden-items section until the next successful
 			// render.
 			logging.L().Errorf("buttons list: load hidden items: %v", err)
+			clean = false
 		}
 	}
-	_ = h.View.Render(w, "buttons", map[string]any{
+	if err := h.View.Render(w, "buttons", map[string]any{
 		"Groups":          groups,
 		"AllButtons":      ToVM(allPage),
 		"AllHasMore":      allHasMore,
@@ -1579,7 +1667,11 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 		"AdminCategories": adminCats,
 		"ItemColors":      palette,
 		"HiddenItems":     hidden,
-	})
+	}); err != nil {
+		logging.L().Warnf("buttons list: render: %v", err)
+		clean = false
+	}
+	return clean
 }
 
 // The three sale.browsing_mode values, as this package must spell them
@@ -1655,26 +1747,45 @@ func (h *ButtonsHTTP) AllMore(w http.ResponseWriter, r *http.Request) {
 // open, per tap — the tiles are never a second always-present copy in the
 // DOM (#2372's strict-mode-locator requirement, and why the ut-docs#2283
 // clone-the-panel picker was retired with the Categories tab itself).
+//
+// ut-docs#2501: served from h.Cache (keyed on the category id) while nothing
+// it depends on has changed, and LoadAllActive runs once per render — the
+// quick-button half reuses it via LoadWith, as List does, instead of Load()
+// running its own second LoadAllActive.
 func (h *ButtonsHTTP) CategoryItems(w http.ResponseWriter, r *http.Request) {
 	catID := r.URL.Query().Get("id")
-	all, err := h.Store.LoadAllActive(r.Context())
-	if err != nil {
-		logging.L().Errorf("buttons category items: load all-active items: %v", err)
-	}
-	cats, err := h.Store.LoadCategories(r.Context())
-	if err != nil {
-		logging.L().Errorf("buttons category items: load categories: %v", err)
-	}
-	quick, err := h.Store.Load()
-	if err != nil {
-		logging.L().Errorf("buttons category items: load quick buttons: %v", err)
-	}
-	items := quickButtonsFirst(
-		filterButtonsInCategory(quick, cats, catID),
-		filterButtonsInCategory(all, cats, catID),
-	)
-	_ = h.View.Render(w, "category-items-fragment", map[string]any{
-		"Buttons": ToVM(items),
+	h.serveSellScreen(w, r, h.sellScreenKey("category", catID), func(w http.ResponseWriter, r *http.Request) bool {
+		clean := true
+		all, degraded, err := h.Store.loadAllActive(r.Context())
+		if err != nil {
+			logging.L().Errorf("buttons category items: load all-active items: %v", err)
+		}
+		if err != nil || degraded {
+			clean = false
+		}
+		cats, err := h.Store.LoadCategories(r.Context())
+		if err != nil {
+			logging.L().Errorf("buttons category items: load categories: %v", err)
+			clean = false
+		}
+		quick, degraded, err := h.Store.loadWith(r.Context(), all)
+		if err != nil {
+			logging.L().Errorf("buttons category items: load quick buttons: %v", err)
+		}
+		if err != nil || degraded {
+			clean = false
+		}
+		items := quickButtonsFirst(
+			filterButtonsInCategory(quick, cats, catID),
+			filterButtonsInCategory(all, cats, catID),
+		)
+		if err := h.View.Render(w, "category-items-fragment", map[string]any{
+			"Buttons": ToVM(items),
+		}); err != nil {
+			logging.L().Warnf("buttons category items: render: %v", err)
+			clean = false
+		}
+		return clean
 	})
 }
 
