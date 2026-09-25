@@ -512,6 +512,7 @@
   "countrysettings.tax.inclusive": "tax included in price",
   "countrysettings.title": "Country settings",
   "countrysettings.unknown_country": "Your shop's configured country isn't in this list — showing every country until it's corrected.",
+  "demo.not_available": "Not available in the demo.",
   "designer.add": "Add",
   "designer.add_button": "Add Button",
   "designer.buttons": "Buttons",

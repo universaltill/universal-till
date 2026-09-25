@@ -397,6 +397,7 @@ var nonAdminTables = map[string]string{
 	"held_sales":                           "a parked/suspended sale basket on this till — a primary-wins bundle with deleteMissing pruning would erase a satellite's own genuinely-parked orders on every pull, worse than not syncing (ut-docs#1672); since ADR-0093 (ut-docs#1920) it crosses tills by a live, idempotent write-through to the primary at park/resume time instead (internal/pages/held_sale_sync_proxy.go + sync_held_sales.go), which this exclusion is precisely what leaves room for",
 	"held_sales_archive":                   "archived held_sales rows — same reasoning",
 	"held_sales_tombstones":                "ADR-0093 Amendment B (ut-docs#2712): the primary's own 24h record of held sales it deleted, answering a replica's POST /api/sync/held-sales/claim — only meaningful on the primary that wrote it, per-database, never synced",
+	"demo_instance":                        "ADR-0113 §1.2 (ut-docs#2687): the one-row public-demo template flag the start gate reads — per-database by definition, and syncing it would carry demo mode onto a real till (which then refuses to start), never synced",
 	"sale_lines":                           "sale line items, child of sales — same reasoning",
 	"sale_lines_archive":                   "archived sale_lines — same reasoning",
 	"sale_line_modifiers":                  "modifier selections on a sold line, child of sale_lines — same reasoning",

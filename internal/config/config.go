@@ -1,10 +1,12 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/paths"
 )
 
@@ -90,6 +92,21 @@ type Config struct {
 	// DefaultLocale field above, which is UT_MARKETPLACE_LOCALE — the
 	// marketplace/catalog locale, an unrelated concept (ut-docs#863 review).
 	CompiledDefaultLocale string
+	// Demo is UT_DEMO (ADR-0113 §1.1, ut-docs#2687): the public "try the
+	// till" demo mode. Read here once; nothing else reads UT_DEMO
+	// (scripts/ci/guard-demo-env.sh). On its own it switches nothing on —
+	// internal/app's start gate also needs DemoToken, the paths.Data("demo")
+	// marker file and the database's demo_instance flag, and refuses to
+	// start when any of them is missing.
+	Demo bool
+	// DemoToken is UT_DEMO_TOKEN: the per-till secret the demo broker sends
+	// in X-UT-Demo-Token on every proxied request (ADR-0113 §1.3).
+	DemoToken string
+	// AuthDisabled is UT_AUTH=off (auth.Disabled), the CI/dev escape hatch
+	// that turns the session middleware off. Read here once at boot so
+	// pages.Init and the demo start gate (which refuses Demo with auth off,
+	// ADR-0113 §1.9) see the same value.
+	AuthDisabled bool
 	// add more fields as needed (DB, SB, etc.)
 }
 
@@ -102,6 +119,12 @@ func Init() (*Config, error) {
 	paths.Init(dataDir)
 
 	devMode, _ := strconv.ParseBool(getenv("UT_DEV_MODE", "false"))
+	// Unlike the other flags, an unparseable UT_DEMO is a refusal to start
+	// rather than a silent "false" (ADR-0113 §1.2: demo mode never guesses).
+	demo, err := strconv.ParseBool(getenv("UT_DEMO", "false"))
+	if err != nil {
+		return nil, fmt.Errorf("UT_DEMO=%q is not a boolean: %w", os.Getenv("UT_DEMO"), err)
+	}
 	telemetryOptIn, _ := strconv.ParseBool(getenv("UT_MARKETPLACE_TELEMETRY_OPT_IN", "false"))
 	healthCheckTimeout, _ := strconv.Atoi(getenv("UT_MARKETPLACE_HEALTH_CHECK_TIMEOUT_SEC", "5"))
 	fallbackTimeout, _ := strconv.Atoi(getenv("UT_MARKETPLACE_FALLBACK_TIMEOUT_SEC", "30"))
@@ -110,11 +133,14 @@ func Init() (*Config, error) {
 		StoreName:  getenv("UT_STORE_NAME", "My Store"),
 		ListenAddr: getenv("UT_LISTEN_ADDR", ":8080"),
 		// Env:        getenv("UT_ENV", "local"),
-		DataDir:  dataDir,
-		DBPath:   getenv("UT_DB_PATH", filepath.Join(dataDir, "unitill-pos.db")),
-		LogLevel: getenv("UT_LOG_LEVEL", "info"),
-		Theme:    getenv("UT_THEME", "monarch"),
-		DevMode:  devMode,
+		DataDir:      dataDir,
+		DBPath:       getenv("UT_DB_PATH", filepath.Join(dataDir, "unitill-pos.db")),
+		LogLevel:     getenv("UT_LOG_LEVEL", "info"),
+		Theme:        getenv("UT_THEME", "monarch"),
+		DevMode:      devMode,
+		Demo:         demo,
+		DemoToken:    os.Getenv("UT_DEMO_TOKEN"),
+		AuthDisabled: auth.Disabled(os.Getenv("UT_AUTH")),
 		Marketplace: MarketplaceConfig{
 			EndpointURL:           getenv("UT_MARKETPLACE_ENDPOINT_URL", "http://127.0.0.1:8081/api"),
 			StoreID:               getenv("UT_MARKETPLACE_STORE_ID", getenv("UT_STORE_NAME", "My Store")),

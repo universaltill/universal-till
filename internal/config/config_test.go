@@ -17,6 +17,7 @@ var configEnvKeys = []string{
 	"UT_MARKETPLACE_HEALTH_CHECK_TIMEOUT_SEC", "UT_MARKETPLACE_FALLBACK_TIMEOUT_SEC",
 	"UT_TAX_RATE", "UT_TAX_INCLUSIVE", "UT_CURRENCY",
 	"UT_DEFAULT_LOCALE", "UT_MARKETPLACE_LOCALE",
+	"UT_DEMO", "UT_DEMO_TOKEN",
 }
 
 // unsetForTest clears every key in configEnvKeys for the duration of the

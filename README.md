@@ -358,6 +358,32 @@ UT_AI_API_KEY=                         # Only for the claude/openai providers (c
 # shop's own key and cost, opt-in only (ADR-0085). Env = developer override.
 ```
 
+### Public demo mode (not for shops)
+
+`UT_DEMO` and `UT_DEMO_TOKEN` exist only for the public "try the till" demo
+(ADR-0113 in ut-docs). Never put them in `pos.env`: a packaging test fails if
+any shipped packaging mentions `UT_DEMO`, and setting it on a real till only
+stops the till from starting.
+
+- `UT_DEMO` (bool, read once by `internal/config`; an unparseable value
+  refuses to start) and `UT_DEMO_TOKEN` (the per-till secret). No other Go
+  code may read them (`scripts/ci/guard-demo-env.sh`).
+- **Start gate** (after the database opens and migrates, before serving).
+  Demo mode starts only when all four hold: `UT_DEMO` true, a non-empty
+  `UT_DEMO_TOKEN`, a regular file `demo` in the data directory, and the
+  `demo_instance` flag in the database (migration 046, written only when a
+  demo template is built). If any is missing, the till refuses to start and
+  names what is missing. If `UT_DEMO` is off and the database has the flag,
+  the till also refuses to start. With `UT_DEMO` off and no flag, which is
+  every real till, nothing changes.
+- **In demo mode** every request must carry `X-UT-Demo-Token` equal to
+  `UT_DEMO_TOKEN`. Its route must be on the demo allow-list and not on the
+  always-denied list (`internal/pages/demo_mode.go`; all methods; an
+  unknown route is refused). Its body is capped at 64 KiB, and a multipart
+  upload that carries a file is refused. A refused request gets a localised
+  "Not available in the demo." with status 403. The till binds exactly
+  `UT_LISTEN_ADDR` (no fallback port) and never opens a browser.
+
 ### System Settings
 
 Access `/settings` in the web interface to configure:

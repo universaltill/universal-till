@@ -308,7 +308,9 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// One auth service for the whole till: login, sessions AND manager-PIN
 	// approvals share a single device-wide lockout.
 	authSvc := auth.NewService(db)
-	authDisabled := auth.Disabled(os.Getenv("UT_AUTH"))
+	// UT_AUTH is read once by config.Init (the demo start gate refuses
+	// Demo with it off — ADR-0113 §1.9 — and must see the same value).
+	authDisabled := cfg.AuthDisabled
 	// Idle auto-lock (docs: pos-auth.md): server-side check + audit hook.
 	// The cosmetic client timer (data-idle-lock) is only published when the
 	// middleware actually enforces sessions.
@@ -645,13 +647,20 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// Boosted navigation (ADR-0098) is addressed per response, innermost so
 	// auth's own HX-Redirect for an expired session is untouched.
 	boosted := httpx.BoostedNavigation(mux)
+	// Public demo mode (ADR-0113, ut-docs#2687): the demo middleware is the
+	// outermost handler inside recoverMiddleware, installed only in demo
+	// mode — with demo off the chain is exactly what it always was.
+	demoWrap := func(h http.Handler) http.Handler { return h }
+	if cfg.Demo {
+		demoWrap = func(h http.Handler) http.Handler { return newDemoMiddleware(h, mux, cfg.DemoToken) }
+	}
 	if authDisabled {
 		log.Warnf("UT_AUTH=off — operator login disabled")
-		return recoverMiddleware(boosted), dp
+		return recoverMiddleware(demoWrap(boosted)), dp
 	}
 	// recoverMiddleware wraps auth.Middleware itself (ut-docs#1271), not just
 	// mux, so a panic anywhere in the chain gets a clean response.
-	return recoverMiddleware(auth.Middleware(boosted, authSvc)), dp
+	return recoverMiddleware(demoWrap(auth.Middleware(boosted, authSvc))), dp
 }
 
 // newRederiveSettings builds the shared settings re-derive: everything

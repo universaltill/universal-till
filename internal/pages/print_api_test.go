@@ -270,7 +270,9 @@ func TestInit_ReturnedDepsIsTheSameInstanceAsyncPrintGoroutinesTrack(t *testing.
 	paths.Init(t.TempDir())
 	t.Cleanup(func() { paths.Init("") })
 
-	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+	// AuthDisabled mirrors the UT_AUTH=off above: Init reads it from cfg
+	// (config.Init's single read), request-time handlers from the env.
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}, AuthDisabled: true}
 	// Cancelled on cleanup, same pattern as init_test.go's own Init caller:
 	// Init starts several bgCtx-scoped background loops (StartSyncPush/
 	// StartSyncPull/StartCloudSync/StartEODScheduler/
