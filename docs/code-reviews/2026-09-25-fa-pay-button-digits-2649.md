@@ -45,5 +45,16 @@ kiosk-engine isolation.
   visually:** ar (covered by the e2e spec only), suffix currencies (IRT/IRR),
   very long totals.
 
+## CI follow-up
+The first CI run failed `guard-docs-shots` because `web/ui/**` changed. This
+was not a no-op: htmx `load` swaps inside `#basket` (suggest-strip,
+table-picker) fire the Pay-button refresh, so the manual's fa and ar
+`sell.png` screenshots showed the bug itself (`پرداخت 2.35£`). I ran
+`make docs-shots` and committed the manifest plus `web/help/img/{fa,ar}/sell.png`,
+which now read `پرداخت ۲٫۳۵£` / `ادفع ٢٫٣٥£` (looked at both). I left out the
+other 118 regenerated PNGs because they differ only by this container's font
+rendering and its camera-button detection, not by content; this follows the
+precedent of 0c7db02, which also committed only the affected topic's PNGs.
+
 ## Verdict
 Safe to merge.
