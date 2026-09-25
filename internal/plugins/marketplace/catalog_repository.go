@@ -7,6 +7,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,19 +25,27 @@ type CatalogSnapshot struct {
 	DeviceArch      string          `json:"device_arch"`
 }
 
-// CatalogRepository manages on-disk catalog snapshots with stale markers
+// CatalogRepository manages on-disk catalog snapshots with stale markers.
+//
+// The catalog is filtered server-side by (locale, device arch), so every
+// cached snapshot belongs to exactly one such key (ut-docs#2674): one memory
+// slot and one file per key. A single shared slot let each caller's refresh
+// replace another caller's differently-filtered result — /plugins (UI
+// locale) and /plugins/store (shop default locale) overwrote each other, and
+// the update checker saw whichever wrote last.
 type CatalogRepository struct {
-	client       *Client
-	snapshotPath string
-	mu           sync.RWMutex
-	cached       *CatalogSnapshot
-	staleAfter   time.Duration
+	client     *Client
+	cacheDir   string
+	mu         sync.RWMutex
+	cached     map[string]*CatalogSnapshot
+	staleAfter time.Duration
 	// refreshing guards against duplicate concurrent background refreshes
-	// (ut-docs#2143) — GetOrFetch sets it before spawning a refresh
-	// goroutine and clears it when that goroutine finishes, so a second
-	// caller arriving while one is already in flight just serves the stale
-	// cache too instead of starting its own network round-trip.
-	refreshing bool
+	// (ut-docs#2143) — GetOrFetch sets it (per key) before spawning a
+	// refresh goroutine and clears it when that goroutine finishes, so a
+	// second caller for the same key arriving while one is already in
+	// flight just serves the stale cache too instead of starting its own
+	// network round-trip.
+	refreshing map[string]bool
 	// coldFetch coalesces concurrent GetOrFetch calls made with identical
 	// (locale, deviceArch) parameters while there is NO cache at all yet
 	// (ut-docs#2143 review, Finding 3): several such callers used to each
@@ -77,6 +88,65 @@ const catalogFetchMaxPages = 25
 // the worst case bounded to roughly one page's own timeout instead of 25.
 const catalogFetchTimeout = 30 * time.Second
 
+// legacySnapshotFile is the single cache file every (locale, arch) shared
+// before ut-docs#2674. It is still read — never written — as a fallback for
+// the one key it records, so a till upgraded while offline keeps serving
+// its catalog until the first successful per-key fetch.
+const legacySnapshotFile = "catalog-snapshot.json"
+
+// Key components end up in a file name, and the locale can come from a
+// request (?lang=), so both are validated rather than escaped: a BCP 47-ish
+// locale and an "os/arch" pair, each possibly empty ("no filter").
+var (
+	catalogLocaleRE = regexp.MustCompile(`^[A-Za-z0-9_-]{0,35}$`)
+	catalogArchRE   = regexp.MustCompile(`^([A-Za-z0-9_]{1,32}(/[A-Za-z0-9_]{1,32})?)?$`)
+)
+
+// DeviceArch is the "os/arch" pair this till runs on — the arch every
+// till-scoped catalog read and fetch uses.
+func DeviceArch() string {
+	return runtime.GOOS + "/" + runtime.GOARCH
+}
+
+// defaultCatalogLocale is the locale a till asks the catalog for when the
+// shop has none configured.
+const defaultCatalogLocale = "en-US"
+
+// TillCatalogKey is the (locale, arch) snapshot this till's own reads use —
+// the plugin store, /plugins, the update checker and the scheduler that
+// keeps it fresh all share it, so they can't disagree (ut-docs#2674).
+func TillCatalogKey(defaultLocale string) (locale, deviceArch string) {
+	if defaultLocale == "" {
+		defaultLocale = defaultCatalogLocale
+	}
+	return defaultLocale, DeviceArch()
+}
+
+// catalogKey returns the cache key for (locale, deviceArch), or an error
+// when either component can't safely name a file.
+func catalogKey(locale, deviceArch string) (string, error) {
+	if !catalogLocaleRE.MatchString(locale) {
+		return "", fmt.Errorf("invalid catalog locale %q", locale)
+	}
+	if !catalogArchRE.MatchString(deviceArch) {
+		return "", fmt.Errorf("invalid catalog device arch %q", deviceArch)
+	}
+	return locale + "\x00" + deviceArch, nil
+}
+
+// snapshotFileName is the per-key cache file. '@' marks an empty component
+// and '+' replaces the arch's '/'; neither is allowed inside a validated
+// component, so distinct keys never share a file.
+func snapshotFileName(locale, deviceArch string) string {
+	part := func(v string) string {
+		if v == "" {
+			return "@"
+		}
+		return strings.ReplaceAll(v, "/", "+")
+	}
+	return "catalog-snapshot." + part(locale) + "." + part(deviceArch) + ".json"
+}
+
 // NewCatalogRepository creates a catalog repository
 func NewCatalogRepository(client *Client, cacheDir string) (*CatalogRepository, error) {
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
@@ -84,9 +154,11 @@ func NewCatalogRepository(client *Client, cacheDir string) (*CatalogRepository, 
 	}
 
 	return &CatalogRepository{
-		client:       client,
-		snapshotPath: filepath.Join(cacheDir, "catalog-snapshot.json"),
-		staleAfter:   15 * time.Minute,
+		client:     client,
+		cacheDir:   cacheDir,
+		cached:     map[string]*CatalogSnapshot{},
+		refreshing: map[string]bool{},
+		staleAfter: 15 * time.Minute,
 	}, nil
 }
 
@@ -117,6 +189,10 @@ func NewCatalogRepository(client *Client, cacheDir string) (*CatalogRepository, 
 // window back down to roughly one page's own timeout rather than up to
 // catalogFetchMaxPages of them (independent review finding, ut-docs#2149).
 func (cr *CatalogRepository) Fetch(ctx context.Context, locale, deviceArch string) (*CatalogSnapshot, error) {
+	key, err := catalogKey(locale, deviceArch)
+	if err != nil {
+		return nil, err
+	}
 	if cr.client == nil {
 		// A repo with no configured marketplace client (e.g. a test fixture
 		// that seeds a snapshot directly on disk, ut-docs#2131) can't fetch —
@@ -166,7 +242,7 @@ func (cr *CatalogRepository) Fetch(ctx context.Context, locale, deviceArch strin
 	defer cr.mu.Unlock()
 
 	// Monotonic-write guard (ut-docs#2155): never replace a chronologically
-	// NEWER cached snapshot with an older one. Two independent callers can
+	// NEWER cached snapshot for the same key with an older one. Two independent callers can
 	// both be mid-flight here at once — server.go's scheduler (syncCatalog)
 	// calls Fetch directly and so bypasses GetOrFetch's refreshing/coldFetch
 	// coalescing, while a page handler's GetOrFetch drives its own
@@ -185,15 +261,10 @@ func (cr *CatalogRepository) Fetch(ctx context.Context, locale, deviceArch strin
 	// older on-disk copy over the newer in-memory one.
 	//
 	// The RETURN VALUE is deliberately still this call's own snapshot,
-	// never the cached one: each caller's answer is what its own
-	// (locale, deviceArch) request produced, whether or not it won the
-	// cache slot. Substituting cr.cached here would hand a caller another
-	// locale/arch's filtered result — the exact class of bug server.go's
-	// own comment and coldFetch's per-parameter key both exist to prevent.
-	// (The single cache slot shared across locale/arch is a separate,
-	// deliberately deferred concern, not addressed by this guard.)
+	// never the cached one: each caller's answer is what its own request
+	// produced, whether or not it won the cache slot.
 	//
-	// INVARIANT this comparison depends on: cr.cached is only ever assigned
+	// INVARIANT this comparison depends on: cr.cached[key] is only ever assigned
 	// from an in-process time.Now() (the line at the bottom of this function
 	// is the only production write), so BOTH times carry a monotonic reading
 	// and After() compares monotonically — immune to the wall clock being
@@ -204,7 +275,7 @@ func (cr *CatalogRepository) Fetch(ctx context.Context, locale, deviceArch strin
 	// reading, so a snapshot written with a bad future RTC date would then
 	// compare as permanently newer and freeze the cache until real time
 	// caught up.
-	if cr.cached != nil && !snapshot.FetchedAt.After(cr.cached.FetchedAt) {
+	if prev := cr.cached[key]; prev != nil && !snapshot.FetchedAt.After(prev.FetchedAt) {
 		return snapshot, nil
 	}
 
@@ -213,23 +284,29 @@ func (cr *CatalogRepository) Fetch(ctx context.Context, locale, deviceArch strin
 		return nil, fmt.Errorf("failed to save snapshot: %w", err)
 	}
 
-	cr.cached = snapshot
+	cr.cached[key] = snapshot
 	return snapshot, nil
 }
 
-// Get returns the cached catalog, marking it as stale if expired
-func (cr *CatalogRepository) Get() (*CatalogSnapshot, bool, error) {
+// Get returns the cached catalog for (locale, deviceArch), marking it as
+// stale if expired. It never returns another key's snapshot.
+func (cr *CatalogRepository) Get(locale, deviceArch string) (*CatalogSnapshot, bool, error) {
+	key, err := catalogKey(locale, deviceArch)
+	if err != nil {
+		return nil, false, err
+	}
+
 	cr.mu.RLock()
 	defer cr.mu.RUnlock()
 
 	// Try memory cache first
-	if cr.cached != nil {
-		isStale := time.Since(cr.cached.FetchedAt) > cr.staleAfter
-		return cr.cached, isStale, nil
+	if cached := cr.cached[key]; cached != nil {
+		isStale := time.Since(cached.FetchedAt) > cr.staleAfter
+		return cached, isStale, nil
 	}
 
 	// Load from disk
-	snapshot, err := cr.loadSnapshot()
+	snapshot, err := cr.loadSnapshot(locale, deviceArch)
 	if err != nil {
 		return nil, false, err
 	}
@@ -265,13 +342,18 @@ func (cr *CatalogRepository) Get() (*CatalogSnapshot, bool, error) {
 // NO-cache-at-all case still fetches synchronously, since there is nothing
 // to serve in the meantime.
 func (cr *CatalogRepository) GetOrFetch(ctx context.Context, locale, deviceArch string) (*CatalogSnapshot, bool, error) {
+	key, err := catalogKey(locale, deviceArch)
+	if err != nil {
+		return nil, false, err
+	}
+
 	// Try to get cached first
-	snapshot, isStale, err := cr.Get()
+	snapshot, isStale, err := cr.Get(locale, deviceArch)
 	if err == nil {
 		if !isStale {
 			return snapshot, false, nil
 		}
-		cr.refreshInBackground(locale, deviceArch)
+		cr.refreshInBackground(key, locale, deviceArch)
 		return snapshot, true, nil
 	}
 
@@ -279,7 +361,6 @@ func (cr *CatalogRepository) GetOrFetch(ctx context.Context, locale, deviceArch 
 	// refresh runs, so this path still fetches synchronously. Coalesce
 	// identical concurrent callers via coldFetch (Finding 3 above) rather
 	// than letting each fire its own request.
-	key := locale + "\x00" + deviceArch
 	v, err, _ := cr.coldFetch.Do(key, func() (any, error) {
 		return cr.Fetch(ctx, locale, deviceArch)
 	})
@@ -291,26 +372,26 @@ func (cr *CatalogRepository) GetOrFetch(ctx context.Context, locale, deviceArch 
 }
 
 // refreshInBackground kicks off an async catalog refetch unless one is
-// already in flight (ut-docs#2143) — a second, third, … caller arriving
+// already in flight for the same key (ut-docs#2143) — a second, third, … caller arriving
 // while the cache is stale just serves that same stale snapshot rather than
 // each starting its own network round-trip. Deliberately uses
 // context.Background() rather than the triggering request's context: the
 // request context is cancelled the moment its own HTTP handler returns,
 // which would otherwise abort the refresh before it ever reaches the
 // marketplace (the client's own RequestTimeoutSec still bounds the call).
-func (cr *CatalogRepository) refreshInBackground(locale, deviceArch string) {
+func (cr *CatalogRepository) refreshInBackground(key, locale, deviceArch string) {
 	cr.mu.Lock()
-	if cr.refreshing {
+	if cr.refreshing[key] {
 		cr.mu.Unlock()
 		return
 	}
-	cr.refreshing = true
+	cr.refreshing[key] = true
 	cr.mu.Unlock()
 
 	go func() {
 		defer func() {
 			cr.mu.Lock()
-			cr.refreshing = false
+			delete(cr.refreshing, key)
 			cr.mu.Unlock()
 			// A recover() here keeps the same offline-first promise the
 			// scheduler's own background ticks make (see
@@ -344,8 +425,8 @@ func (cr *CatalogRepository) refreshInBackground(locale, deviceArch string) {
 // to prove a listing beyond page 1 landed in the snapshot); a candidate
 // for deletion together with those two tests if it never grows a
 // production caller.
-func (cr *CatalogRepository) Filter(pluginType, developer, trustTier string) ([]PluginSummary, error) {
-	snapshot, _, err := cr.Get()
+func (cr *CatalogRepository) Filter(locale, deviceArch, pluginType, developer, trustTier string) ([]PluginSummary, error) {
+	snapshot, _, err := cr.Get(locale, deviceArch)
 	if err != nil {
 		return nil, err
 	}
@@ -372,19 +453,41 @@ func (cr *CatalogRepository) Filter(pluginType, developer, trustTier string) ([]
 	return filtered, nil
 }
 
-// saveSnapshot writes the snapshot to disk
+// saveSnapshot writes the snapshot to its per-key file on disk
 func (cr *CatalogRepository) saveSnapshot(snapshot *CatalogSnapshot) error {
 	data, err := json.MarshalIndent(snapshot, "", "  ")
 	if err != nil {
 		return err
 	}
+	if err := os.MkdirAll(cr.cacheDir, 0755); err != nil {
+		return err
+	}
 
-	return os.WriteFile(cr.snapshotPath, data, 0644)
+	return os.WriteFile(filepath.Join(cr.cacheDir, snapshotFileName(snapshot.Locale, snapshot.DeviceArch)), data, 0644)
 }
 
-// loadSnapshot reads the snapshot from disk
-func (cr *CatalogRepository) loadSnapshot() (*CatalogSnapshot, error) {
-	data, err := os.ReadFile(cr.snapshotPath)
+// loadSnapshot reads the (locale, deviceArch) snapshot from disk, falling
+// back to the pre-ut-docs#2674 single file only when that file was written
+// for this same key. (nil, nil) means nothing is cached for the key.
+func (cr *CatalogRepository) loadSnapshot(locale, deviceArch string) (*CatalogSnapshot, error) {
+	// Both files are checked against the key they recorded: the legacy file
+	// serves only its one key, and on a case-insensitive filesystem
+	// "en-US" and "en-us" share a per-key file.
+	for _, name := range []string{snapshotFileName(locale, deviceArch), legacySnapshotFile} {
+		snapshot, err := readSnapshotFile(filepath.Join(cr.cacheDir, name))
+		if err != nil {
+			return nil, err
+		}
+		if snapshot != nil && snapshot.Locale == locale && snapshot.DeviceArch == deviceArch {
+			return snapshot, nil
+		}
+	}
+	return nil, nil
+}
+
+// readSnapshotFile decodes one snapshot file; (nil, nil) when it is absent.
+func readSnapshotFile(path string) (*CatalogSnapshot, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil

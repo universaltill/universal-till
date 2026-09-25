@@ -10,6 +10,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
 
 // registerPluginsPage renders the installed-plugins MANAGER: every plugin on
@@ -62,7 +63,18 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 		}
 		var catalogIdx plugins.CatalogIndex
 		if d.CatalogRepo != nil {
-			if snapshot, _, err := d.CatalogRepo.GetOrFetch(r.Context(), httpx.ResolveLocale(w, r), ""); err == nil && snapshot != nil {
+			// The till's own key, not the UI locale (ut-docs#2674): the
+			// cloud's locale filter is an inclusion filter, so a UI locale a
+			// plugin doesn't ship would hide its update here while the store
+			// and the update checker (same key as this) still see it — and
+			// every new ?lang= would mean its own cache file and a blocking
+			// cold fetch.
+			shopLocale := ""
+			if d.Cfg != nil {
+				shopLocale = d.Cfg.DefaultLocale
+			}
+			locale, deviceArch := marketplace.TillCatalogKey(shopLocale)
+			if snapshot, _, err := d.CatalogRepo.GetOrFetch(r.Context(), locale, deviceArch); err == nil && snapshot != nil {
 				catalogIdx = plugins.IndexCatalog(snapshot)
 			}
 		}

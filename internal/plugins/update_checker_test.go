@@ -23,16 +23,18 @@ func seededCatalogRepo(t *testing.T, plugins []marketplace.PluginSummary) *marke
 		Locale:          "en",
 		DeviceArch:      "any",
 	}
+	repo, err := marketplace.NewCatalogRepository(nil, cacheDir)
+	if err != nil {
+		t.Fatalf("NewCatalogRepository: %v", err)
+	}
+	// Written as the pre-ut-docs#2674 single file, which the repository
+	// still serves for the (Locale, DeviceArch) key recorded in it.
 	raw, err := json.Marshal(snapshot)
 	if err != nil {
 		t.Fatalf("marshal snapshot: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(cacheDir, "catalog-snapshot.json"), raw, 0o644); err != nil {
 		t.Fatalf("write snapshot: %v", err)
-	}
-	repo, err := marketplace.NewCatalogRepository(nil, cacheDir)
-	if err != nil {
-		t.Fatalf("NewCatalogRepository: %v", err)
 	}
 	return repo
 }
@@ -57,7 +59,7 @@ func TestCheckForUpdatesFindsNewerVersion(t *testing.T) {
 		{DeveloperID: "dev-2", Name: "Other", Version: "9.9.9"},
 	})
 
-	uc := NewUpdateChecker(db, repo)
+	uc := NewUpdateChecker(db, repo, "en", "any")
 	updates, err := uc.CheckForUpdates(ctx)
 	if err != nil {
 		t.Fatalf("CheckForUpdates: %v", err)
@@ -94,7 +96,7 @@ func TestCheckForUpdatesCarriesCanonicalType(t *testing.T) {
 		{DeveloperID: "ut", Name: "German Pack", Version: "1.1.0", CanonicalType: "language"},
 	})
 
-	uc := NewUpdateChecker(db, repo)
+	uc := NewUpdateChecker(db, repo, "en", "any")
 	updates, err := uc.CheckForUpdates(ctx)
 	if err != nil {
 		t.Fatalf("CheckForUpdates: %v", err)
@@ -150,7 +152,7 @@ func TestCheckForUpdatesMatchesByInstallStatusListing(t *testing.T) {
 		},
 	})
 
-	updates, err := NewUpdateChecker(db, repo).CheckForUpdates(ctx)
+	updates, err := NewUpdateChecker(db, repo, "en", "any").CheckForUpdates(ctx)
 	if err != nil {
 		t.Fatalf("CheckForUpdates: %v", err)
 	}
@@ -170,7 +172,7 @@ func TestCheckForUpdatesNoInstalledOrCurrent(t *testing.T) {
 	ctx := context.Background()
 
 	// No installed plugins → empty, and the catalog isn't even needed.
-	uc := NewUpdateChecker(db, seededCatalogRepo(t, nil))
+	uc := NewUpdateChecker(db, seededCatalogRepo(t, nil), "en", "any")
 	updates, err := uc.CheckForUpdates(ctx)
 	if err != nil || len(updates) != 0 {
 		t.Fatalf("empty install: %+v, %v", updates, err)
@@ -183,7 +185,7 @@ func TestCheckForUpdatesNoInstalledOrCurrent(t *testing.T) {
 	}
 	uc2 := NewUpdateChecker(db, seededCatalogRepo(t, []marketplace.PluginSummary{
 		{DeveloperID: "dev-1", Name: "Current", Version: "2.0.0"},
-	}))
+	}), "en", "any")
 	updates, err = uc2.CheckForUpdates(ctx)
 	if err != nil || len(updates) != 0 {
 		t.Fatalf("current version offered as update: %+v, %v", updates, err)
