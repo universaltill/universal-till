@@ -312,22 +312,13 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		// idempotent ParseForm call below) so the elevation check has the
 		// code/itemId to mirror as hidden fields on the dialog's retry.
 		//
-		// ut-docs#2541: this route now HIDES the item (ui.ButtonStore.Remove)
-		// rather than just deleting its shortcut_buttons row -- every active
-		// item is a quick button by default now, so a plain row delete would
-		// let the tile silently reappear. Kept at this same path (not
-		// retired in favour of /api/buttons/hide below) because
-		// buttons_admin.html's legacy search flow and any other caller that
-		// only has a code, not an itemId, still needs a route that resolves
-		// one from the other.
-		//
-		// This route is reached from the Designer's live replica of the
-		// sale screen (GET /ui/buttons?mode=edit, ut-docs#2174) -- the sale
-		// screen's own jiggle-mode trash badge posts to
-		// /api/buttons/delete-item instead (ut-docs#2541). The elevation
+		// ut-docs#2698: this legacy route now REMOVES the item from the quick
+		// buttons (ui.ButtonStore.Remove -> the same RemoveFromSellScreen the
+		// trash badge's /api/buttons/remove-from-grid uses); #2541 had made
+		// it a hide. Kept at this path for any caller that only has a code,
+		// not an itemId -- it resolves one from the other. The elevation
 		// retry target below is "#buttons-add-error", which exists on the
-		// Designer; managers (the only operators who reach it) never see
-		// the prompt at all.
+		// Designer.
 		_ = r.ParseForm()
 		code := r.Form.Get("code")
 		itemID := r.Form.Get("itemId")
@@ -425,29 +416,40 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 	})
 
-	// Delete the item itself from the jiggle-mode trash badge (ut-docs#2541)
-	// -- same gating/elevation/audit pattern as remove/hide above, plus the
-	// same underlying deactivate the catalog page's own
-	// /api/catalog/item/deactivate uses (ui.ButtonStore.DeleteItem ->
-	// pos.DeactivateItem).
-	mux.HandleFunc("/api/buttons/delete-item", func(w http.ResponseWriter, r *http.Request) {
-		if !requirePrimary(w, r) {
-			return
+	// Remove an item from the quick buttons -- the jiggle-mode trash badge
+	// (ut-docs#2698): the item stops being a quick button (absent at rest and
+	// in edit mode) but stays ACTIVE in the catalog and keeps selling by
+	// scan/search; adding it from search brings it back. Same gating/
+	// elevation/audit pattern as hide above. It never deactivates the item --
+	// that stays in the catalog editor.
+	//
+	// /api/buttons/delete-item is the #2541 path the trash badge used to post
+	// to (it deactivated the item). It is kept as an alias of this route, not
+	// retired, so a sale screen still showing a page rendered before the
+	// upgrade gets the new, non-destructive behaviour instead of a 404 --
+	// never the old deactivation.
+	removeFromGrid := func(route string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if !requirePrimary(w, r) {
+				return
+			}
+			_ = r.ParseForm()
+			itemID := r.Form.Get("itemId")
+			elev := checkOrElevate(d, r, "catalog_management", r.Form.Get("override_pin"))
+			if elev.Outcome == needsElevation {
+				renderElevationPrompt(w, r, route, "#buttons-add-error",
+					fmt.Sprintf(httpx.T(httpx.ResolveLocale(w, r), "elevation.summary.buttons_remove"), buttonsElevationItemName(r.Context(), d, itemID)),
+					[]elevationHiddenField{{Name: "itemId", Value: itemID}}, elev)
+				return
+			}
+			btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore}
+			if ok := btnHTTP.RemoveFromQuickButtons(w, r); ok && elev.Outcome == elevated {
+				auditButtonsElevated(r, elev.ApproverID, elev.ActorID, itemID, "buttons_remove_from_grid", map[string]any{"item_id": itemID})
+			}
 		}
-		_ = r.ParseForm()
-		itemID := r.Form.Get("itemId")
-		elev := checkOrElevate(d, r, "catalog_management", r.Form.Get("override_pin"))
-		if elev.Outcome == needsElevation {
-			renderElevationPrompt(w, r, "/api/buttons/delete-item", "#buttons-add-error",
-				fmt.Sprintf(httpx.T(httpx.ResolveLocale(w, r), "elevation.summary.buttons_delete_item"), buttonsElevationItemName(r.Context(), d, itemID)),
-				[]elevationHiddenField{{Name: "itemId", Value: itemID}}, elev)
-			return
-		}
-		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore}
-		if ok := btnHTTP.DeleteItem(w, r); ok && elev.Outcome == elevated {
-			auditButtonsElevated(r, elev.ApproverID, elev.ActorID, itemID, "buttons_delete_item", map[string]any{"item_id": itemID})
-		}
-	})
+	}
+	mux.HandleFunc("/api/buttons/remove-from-grid", removeFromGrid("/api/buttons/remove-from-grid"))
+	mux.HandleFunc("/api/buttons/delete-item", removeFromGrid("/api/buttons/delete-item"))
 
 	// Item search for shortcuts (HTMX fragment)
 	mux.HandleFunc("/api/buttons/search", func(w http.ResponseWriter, r *http.Request) {

@@ -58,6 +58,19 @@ type Button struct {
 	// sale screen (manage-shop catalog contract §3.2) — see
 	// BuildCategoryGroups. Never on the wire.
 	QuickButton bool `json:"-"`
+	// Hidden (ut-docs#2698) marks an item hidden from the sell screen
+	// (items.sell_screen_hidden). Only the GRID loads (Load/LoadWith) carry
+	// hidden tiles at all -- in their own spot, so edit mode can show them
+	// greyed with an Unhide badge while CSS keeps them out of sight at rest.
+	// Every at-rest browse surface (LoadAllActive, the All grid, category
+	// tiles and popups) leaves them out. SearchSellable sets it too, to offer
+	// "Add to quick buttons" on the result. Never on the wire.
+	Hidden bool `json:"-"`
+	// Removed (ut-docs#2698) marks an item taken off the quick buttons by
+	// the trash badge (items.sell_screen_removed). Only SearchSellable ever
+	// returns such an item -- every grid/browse load leaves it out. Never on
+	// the wire.
+	Removed bool `json:"-"`
 }
 
 // ButtonVM is the view-model passed to templates.
@@ -118,6 +131,15 @@ type ButtonVM struct {
 	// at /designer instead of /. Per-request like Locked, stamped on by List
 	// via stampEditing for the same reason (no per-button source).
 	Editing bool `json:"-"`
+	// Hidden (ut-docs#2698): see Button.Hidden. product-tile (buttons.html)
+	// renders the tile greyed with an eye-off glyph and an Unhide badge in
+	// place of Hide; on the sale screen (not .Editing) it also gets the
+	// class that keeps it out of sight unless the grid is in jiggle mode.
+	Hidden bool `json:"-"`
+	// NotOnGrid (ut-docs#2698) is true for a sell-screen search result whose
+	// item is not a visible quick button (hidden or removed) -- the result
+	// then carries an "Add to quick buttons" action, shown in edit mode only.
+	NotOnGrid bool `json:"-"`
 }
 
 func ToVM(b []Button) []ButtonVM {
@@ -138,7 +160,22 @@ func toButtonVM(x Button) ButtonVM {
 		HasModifiers: x.HasModifiers,
 		HasVariants:  x.HasVariants,
 		Color:        x.Color,
+		Hidden:       x.Hidden,
+		NotOnGrid:    x.Hidden || x.Removed,
 	}
+}
+
+// visibleOnly (ut-docs#2698) drops hidden tiles, for every at-rest browse
+// surface that has no edit mode of its own (the All grid, category tiles and
+// popups). It returns a new slice; the input is left untouched.
+func visibleOnly(buttons []Button) []Button {
+	out := make([]Button, 0, len(buttons))
+	for _, b := range buttons {
+		if !b.Hidden {
+			out = append(out, b)
+		}
+	}
+	return out
 }
 
 // CategoryGroup is one node of the nested, color-coded sale-screen category
@@ -180,7 +217,29 @@ type CategoryGroup struct {
 	// template uses this, not "survived pruning," to decide whether to
 	// render the button grid or an empty-state message: a group that is
 	// present ONLY because of item counts has nothing to grid.
+	//
+	// ut-docs#2698: only VISIBLE (not hidden) quick buttons count here -- a
+	// group whose tiles are all hidden reads as "no quick buttons" at rest.
 	HasButtons bool
+
+	// HasVisible (ut-docs#2698) is true when this group or any descendant has
+	// something to show AT REST: a visible quick button or an active,
+	// not-hidden catalog item. A group can now survive pruning on hidden
+	// tiles alone (edit mode shows them greyed); with HasVisible false its
+	// tab/overflow tile is marked so CSS keeps it out of sight at rest.
+	HasVisible bool
+}
+
+// VisibleButtons (ut-docs#2698) is how many of the group's OWN buttons are
+// not hidden -- the at-rest count the overflow sheet shows.
+func (g *CategoryGroup) VisibleButtons() int {
+	n := 0
+	for _, b := range g.Buttons {
+		if !b.Hidden {
+			n++
+		}
+	}
+	return n
 }
 
 var hexColorRE = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
@@ -309,7 +368,12 @@ func BuildCategoryGroups(buttons []Button, cats []data.CategoryNode, itemCounts 
 	}
 
 	if len(uncategorized) > 0 {
-		roots = append(roots, &CategoryGroup{Color: uncategorizedColor, Buttons: uncategorized})
+		u := &CategoryGroup{Color: uncategorizedColor, Buttons: uncategorized}
+		// ut-docs#2698: same at-rest flags pruneEmptyCategoryGroup sets on a
+		// real category -- the bucket can hold hidden tiles only.
+		u.HasButtons = u.VisibleButtons() > 0
+		u.HasVisible = u.HasButtons
+		roots = append(roots, u)
 	}
 	return roots
 }
@@ -440,7 +504,9 @@ func countButtonsPerCategory(groups []*CategoryGroup) map[string]int {
 	walk = func(gs []*CategoryGroup) {
 		for _, g := range gs {
 			if g.ID != "" {
-				counts[g.ID] += len(g.Buttons)
+				// ut-docs#2698: visible tiles only -- a hidden tile is in the
+				// render (greyed in edit mode) but not "on the sale screen".
+				counts[g.ID] += g.VisibleButtons()
 			}
 			walk(g.Children)
 		}
@@ -479,16 +545,25 @@ type DesignerCategoryVM struct {
 // now survive via itemCounts alone with zero buttons anywhere underneath,
 // and the template needs to tell that case apart to render an empty-state
 // message instead of an empty grid.
+//
+// ut-docs#2698: hidden tiles still keep a group alive (edit mode shows them
+// greyed), but only visible ones set HasButtons; HasVisible is the at-rest
+// "anything to show" test (a visible button, or itemCounts, which callers
+// already fill with not-hidden item counts).
 func pruneEmptyCategoryGroup(g *CategoryGroup, itemCounts map[string]int) bool {
 	kept := g.Children[:0]
 	hasAny := len(g.Buttons) > 0 || itemCounts[g.ID] > 0
-	g.HasButtons = len(g.Buttons) > 0
+	g.HasButtons = g.VisibleButtons() > 0
+	g.HasVisible = g.HasButtons || itemCounts[g.ID] > 0
 	for _, c := range g.Children {
 		if pruneEmptyCategoryGroup(c, itemCounts) {
 			kept = append(kept, c)
 			hasAny = true
 			if c.HasButtons {
 				g.HasButtons = true
+			}
+			if c.HasVisible {
+				g.HasVisible = true
 			}
 		}
 	}
@@ -503,12 +578,6 @@ type ButtonStore struct {
 	modRepo      *data.ModifierRepo
 	catalogRepo  *data.CatalogRepo
 	settingsRepo *data.SettingsRepo
-	// db backs DeleteItem's pos.DeactivateItem call (ut-docs#2541) -- the
-	// same package-level helper the catalog's own "Delete item" route uses
-	// (internal/pages/catalog/handlers.go's /api/catalog/item/deactivate),
-	// so the jiggle-mode trash badge deactivates an item exactly the same
-	// way the catalog page's own delete does, not a second reimplementation.
-	db *sql.DB
 	// sellRepo backs the sell-screen tile cache's version and price-boundary
 	// reads (ut-docs#2501, sellscreen_cache.go). nil (a hand-built
 	// ButtonStore literal) = never cache.
@@ -522,7 +591,6 @@ func NewButtonStore(db *sql.DB) *ButtonStore {
 		modRepo:      data.NewModifierRepo(db),
 		catalogRepo:  data.NewCatalogRepo(db),
 		settingsRepo: data.NewSettingsRepo(db),
-		db:           db,
 		sellRepo:     data.NewSellScreenRepo(db),
 	}
 }
@@ -744,40 +812,47 @@ func (s *ButtonStore) SearchItems(ctx context.Context, q string, offset, limit i
 // ut-docs#2294 also taught POSRepo.ResolveShortcutLineDecoded to resolve
 // that prefix straight against the items table, not just against a
 // shortcut_buttons row (see internal/data's itemIDCodePrefix).
+//
+// ut-docs#2698: this is the AT-REST set -- hidden and removed items are both
+// left out. The grid's own load (loadAllActive, via Load/LoadWith) keeps the
+// hidden ones, marked, for edit mode.
 func (s *ButtonStore) LoadAllActive(ctx context.Context) ([]Button, error) {
 	out, _, err := s.loadAllActive(ctx)
-	return out, err
+	return visibleOnly(out), err
 }
 
 // loadAllActive is LoadAllActive, also reporting whether any inner lookup
 // failed and the tiles fell back (degraded) — the result is still returned
 // and still rendered, but the sell-screen tile cache must not store a render
-// built from it (ut-docs#2501 review finding 1).
+// built from it (ut-docs#2501 review finding 1). Unlike LoadAllActive it
+// KEEPS hidden items, marked Button.Hidden (ut-docs#2698); removed items are
+// left out here already.
 func (s *ButtonStore) loadAllActive(ctx context.Context) (_ []Button, degraded bool, _ error) {
 	items, err := s.catalogRepo.ListItems(ctx)
 	if err != nil {
 		return nil, false, err
 	}
-	// ut-docs#2541: an item hidden from the sell screen (items.
-	// sell_screen_hidden) is left out of the All grid and every implicit
-	// quick-button slot Load derives from this same method -- it still
-	// sells via barcode scan/live search (SearchSellable, the scan
-	// resolver), which don't call LoadAllActive and stay unfiltered. A
-	// lookup error is non-fatal-but-loud, same treatment as every other
-	// batched lookup below: on error every item falls back to VISIBLE
-	// (fails open, matching ListItems' own "every consumer that isn't the
-	// sell screen must keep seeing hidden items unfiltered" contract) rather
-	// than the render silently failing outright.
-	hiddenIDs, err := s.catalogRepo.SellScreenHiddenItemIDs(ctx)
+	// ut-docs#2541/#2698: an item removed from the quick buttons (items.
+	// sell_screen_removed) is left out here -- no tile at rest or in edit
+	// mode; one hidden from the sell screen (sell_screen_hidden) is KEPT and
+	// marked (below), so the grid can show it greyed in edit mode, and the
+	// at-rest callers drop it (visibleOnly). Both still sell via barcode
+	// scan/live search (SearchSellable, the scan resolver), which don't call
+	// this method. A lookup error is non-fatal-but-loud, same treatment as
+	// every other batched lookup below: on error every item falls back to
+	// VISIBLE (fails open, matching ListItems' own "every consumer that isn't
+	// the sell screen must keep seeing hidden items unfiltered" contract)
+	// rather than the render silently failing outright.
+	hiddenIDs, removedIDs, err := s.catalogRepo.SellScreenStates(ctx)
 	if err != nil {
-		logging.L().Warnf("ui: load all-active items hidden-flag lookup failed, every item falls back to visible: %v", err)
-		hiddenIDs = nil
+		logging.L().Warnf("ui: load all-active items sell-screen-flag lookup failed, every item falls back to visible: %v", err)
+		hiddenIDs, removedIDs = nil, nil
 		degraded = true
 	}
-	if len(hiddenIDs) > 0 {
+	if len(removedIDs) > 0 {
 		kept := items[:0]
 		for _, it := range items {
-			if !hiddenIDs[it.ID] {
+			if !removedIDs[it.ID] {
 				kept = append(kept, it)
 			}
 		}
@@ -905,6 +980,7 @@ func (s *ButtonStore) loadAllActive(ctx context.Context) (_ []Button, degraded b
 			HasVariants:  hasVariants[it.ID],
 			CategoryID:   catID,
 			Color:        it.Color,
+			Hidden:       hiddenIDs[it.ID],
 		})
 	}
 	return out, degraded, nil
@@ -956,6 +1032,16 @@ func (s *ButtonStore) SearchSellable(ctx context.Context, q string, limit int) (
 	// LoadAllActive above — see its comment for the full rationale. Fetched
 	// once, shop-wide, above the loop.
 	enabledIDs, _ := s.settingsRepo.EnabledBarcodeSymbologies(ctx)
+	// ut-docs#2698: which results are not visible quick buttons (hidden or
+	// removed) -- the search then offers "Add to quick buttons" on them in
+	// edit mode. A lookup failure only loses that offer, never a result.
+	var hiddenIDs, removedIDs map[string]bool
+	if s.catalogRepo != nil {
+		hiddenIDs, removedIDs, err = s.catalogRepo.SellScreenStates(ctx)
+		if err != nil {
+			logging.L().Warnf("ui: search-sellable sell-screen-flag lookup failed, no result offers add-to-quick-buttons: %v", err)
+		}
+	}
 	out := make([]Button, 0, len(results))
 	for _, r := range results {
 		code := resolvableTileCode(r.Barcode, r.SKU, r.ItemID, enabledIDs)
@@ -972,6 +1058,8 @@ func (s *ButtonStore) SearchSellable(ctx context.Context, q string, limit int) (
 			HasModifiers: hasMods[r.ItemID],
 			HasVariants:  hasVariants[r.ItemID],
 			Color:        r.Color,
+			Hidden:       hiddenIDs[r.ItemID],
+			Removed:      removedIDs[r.ItemID],
 		})
 	}
 	return out, nil
@@ -984,9 +1072,14 @@ func (s *ButtonStore) SearchSellable(ctx context.Context, q string, limit int) (
 // LoadAllActive itself and passes it to LoadWith directly rather than going
 // through Load, which would otherwise run that batched, chunked query a
 // second time on every single render (ut-docs#2541 review finding 2).
+//
+// ut-docs#2698: the GRID set -- hidden tiles included, marked Button.Hidden,
+// in their own spot. UpdateOrder compares the posted order against this, and
+// the rendered grid (ButtonVM.Pos) is indexed by it, so both must agree on
+// hidden tiles being present.
 func (s *ButtonStore) Load() ([]Button, error) {
 	ctx := context.Background()
-	allActive, err := s.LoadAllActive(ctx)
+	allActive, _, err := s.loadAllActive(ctx)
 	if err != nil {
 		// Non-fatal-but-loud, same shape LoadWith's own doc comment
 		// describes for this same lookup: the explicit rows still render,
@@ -1018,7 +1111,9 @@ func (s *ButtonStore) LoadWith(ctx context.Context, allActive []Button) ([]Butto
 // loadWith is LoadWith, also reporting whether any of its own lookups failed
 // and the tiles fell back (degraded) — see loadAllActive.
 func (s *ButtonStore) loadWith(ctx context.Context, allActive []Button) (_ []Button, degraded bool, _ error) {
-	rows, err := s.repo.LoadButtons(ctx)
+	// ut-docs#2698: LoadGridButtons, not LoadButtons -- a hidden item's
+	// explicit row stays in the grid (marked Hidden) so it keeps its spot.
+	rows, err := s.repo.LoadGridButtons(ctx)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1090,6 +1185,7 @@ func (s *ButtonStore) loadWith(ctx context.Context, allActive []Button) (_ []But
 			CategoryID:   b.CategoryID,
 			Color:        b.Color,
 			QuickButton:  true,
+			Hidden:       b.Hidden,
 		})
 		if b.ItemID != "" {
 			seen[b.ItemID] = true
@@ -1101,8 +1197,9 @@ func (s *ButtonStore) loadWith(ctx context.Context, allActive []Button) (_ []But
 	// order (by name), and reusing its exact code/price/thumbnail/mods/
 	// variants logic rather than a second implementation of it. An explicit
 	// row always wins for an item that has one (deduped via seen, built
-	// above) — LoadAllActive already excludes hidden items itself, so this
-	// loop never needs its own hidden check. allActive is the caller's own
+	// above). ut-docs#2698: allActive comes from loadAllActive, which keeps
+	// hidden items marked Hidden (edit mode shows them greyed, in their
+	// name-ordered spot) and has already dropped removed ones. allActive is the caller's own
 	// already-fetched result (see this method's own doc comment) — a nil
 	// slice (the caller's LoadAllActive failed, already logged there) simply
 	// contributes nothing, same fallback shape the old inline call had.
@@ -1268,6 +1365,9 @@ func (s *ButtonStore) Add(btn Button) error {
 		// the same row rather than creating a duplicate.
 		btn.Code = synthesizedButtonCodePrefix + btn.ItemID
 	}
+	// ut-docs#2541/#2698: AddButton reuses the item's existing row (its
+	// position) when it has one, and clears both sell-screen flags, in one
+	// transaction -- adding a tile for a hidden or removed item puts it back.
 	ctx := context.Background()
 	if err := s.repo.AddButton(ctx, data.ShortcutButton{
 		Label:    btn.Label,
@@ -1277,27 +1377,15 @@ func (s *ButtonStore) Add(btn Button) error {
 	}); err != nil {
 		return err
 	}
-	// ut-docs#2541: explicitly adding a shortcut for an item that was
-	// hidden un-hides it -- the operator just configured a tile for it, so
-	// a stale hidden flag from before must not keep it off the grid. Best
-	// effort: the button row above is already persisted (the operator's
-	// primary intent succeeded), so a failure here is logged, not returned
-	// -- the item stays hidden and the Designer's own Unhide button remains
-	// available as a fallback.
-	if err := s.catalogRepo.SetSellScreenHidden(ctx, btn.ItemID, false); err != nil {
-		logging.L().Warnf("ui: add button: clear sell-screen-hidden flag for item %q failed: %v", btn.ItemID, err)
-	}
 	return nil
 }
 
-// Remove hides the item behind code (ut-docs#2541): every active item is a
-// quick button by default now, so deleting just the shortcut_buttons row
-// would let the tile silently reappear as an implicit one on the very next
-// render. itemID, when the caller already has it (buttons.html's badge
-// form posts itemId directly), is used as-is; otherwise it's resolved from
-// code's own shortcut_buttons row, so a caller with only the legacy code
-// payload (buttons_admin.html's search flow, an external API caller) still
-// works.
+// Remove is the legacy /api/buttons/remove's store call: it removes the item
+// behind code from the quick buttons (ut-docs#2698 -- the same thing the
+// trash badge does, RemoveFromQuickButtons; before, #2541 made it a hide).
+// itemID, when the caller already has it, is used as-is; otherwise it's
+// resolved from code's own shortcut_buttons row, so a caller with only the
+// legacy code payload (an external API caller) still works.
 func (s *ButtonStore) Remove(code, itemID string) error {
 	ctx := context.Background()
 	itemID = strings.TrimSpace(itemID)
@@ -1312,13 +1400,14 @@ func (s *ButtonStore) Remove(code, itemID string) error {
 		}
 		itemID = resolved
 	}
-	return s.catalogRepo.SetSellScreenHidden(ctx, itemID, true)
+	return s.catalogRepo.RemoveFromSellScreen(ctx, itemID)
 }
 
 // Hide takes an item off the sell-screen quick-button grid and the
-// all_filter_chips All grid
-// (ut-docs#2541) — see CatalogRepo.SetSellScreenHidden for the full
-// contract (still sells via scan/search; deletes any explicit tile row).
+// all_filter_chips All grid at rest (ut-docs#2541) — see
+// CatalogRepo.SetSellScreenHidden for the full contract (still sells via
+// scan/search; ut-docs#2698: keeps any explicit tile row, so the tile shows
+// greyed in its own spot while the grid is being edited).
 func (s *ButtonStore) Hide(ctx context.Context, itemID string) error {
 	itemID = strings.TrimSpace(itemID)
 	if itemID == "" {
@@ -1328,9 +1417,9 @@ func (s *ButtonStore) Hide(ctx context.Context, itemID string) error {
 }
 
 // Unhide puts a previously hidden item back on the sell-screen grid
-// (ut-docs#2541) — it returns as an IMPLICIT tile (Load, above), not as a
-// re-materialized shortcut_buttons row, unless the operator adds it back
-// explicitly via the Designer's own search/add.
+// (ut-docs#2541) — in the same spot it was hidden in (ut-docs#2698: its
+// explicit row, if it had one, was kept), or as an IMPLICIT tile if it never
+// had a row. A removed item stays removed (Unhide only clears hidden).
 func (s *ButtonStore) Unhide(ctx context.Context, itemID string) error {
 	itemID = strings.TrimSpace(itemID)
 	if itemID == "" {
@@ -1353,19 +1442,17 @@ func (s *ButtonStore) ListHidden(ctx context.Context) ([]data.HiddenItem, error)
 	return s.catalogRepo.ListSellScreenHidden(ctx)
 }
 
-// DeleteItem soft-deactivates the item itself, the same
-// pos.DeactivateItem the catalog page's own "Delete item" uses
-// (ut-docs#2541): the jiggle-mode trash badge used to delete just the
-// shortcut_buttons row, but every active item is a quick button by default
-// now, so that would no longer actually remove the tile — this route
-// removes the underlying item from the catalog instead, which also takes
-// its tile (and every other reference to it) off the sell screen.
-func (s *ButtonStore) DeleteItem(ctx context.Context, itemID string) error {
+// RemoveFromQuickButtons is the trash badge's store call (ut-docs#2698):
+// the item stops being a quick button -- absent from the grid at rest and in
+// edit mode -- while the catalog item stays active and keeps selling by
+// scan/search; Add (from search) brings it back. It never deactivates the
+// item: that stays in the catalog editor. See CatalogRepo.RemoveFromSellScreen.
+func (s *ButtonStore) RemoveFromQuickButtons(ctx context.Context, itemID string) error {
 	itemID = strings.TrimSpace(itemID)
 	if itemID == "" {
 		return errors.New("itemId is required")
 	}
-	return pos.DeactivateItem(ctx, s.db, itemID)
+	return s.catalogRepo.RemoveFromSellScreen(ctx, itemID)
 }
 
 /* ----------------- HTTP handlers (htmx-friendly) ----------------- */
@@ -1582,16 +1669,20 @@ func (h *ButtonsHTTP) renderList(w http.ResponseWriter, r *http.Request) bool {
 	var allPage []Button
 	var allHasMore bool
 	var categoryTiles []CategoryTileVM
+	// ut-docs#2698: the category tiles and the All grid are at-rest browse
+	// surfaces with no edit mode of their own, so hidden items stay out of
+	// them (allBtns itself keeps them, marked, for the quick-button grid).
 	switch mode {
 	case browsingModeCategoryTabs:
-		categoryTiles = BuildCategoryTiles(allBtns, cats)
+		categoryTiles = BuildCategoryTiles(visibleOnly(allBtns), cats)
 	case browsingModeAllFilterChips:
-		categoryTiles = BuildCategoryTiles(allBtns, cats)
+		visible := visibleOnly(allBtns)
+		categoryTiles = BuildCategoryTiles(visible, cats)
 		// ut-docs#2319: only the first page ships on the initial render
 		// (and on every modifiers-changed/buttons-changed whole-document
 		// refetch) — see AllTabPageSize's own doc comment. The rest loads
 		// on demand via the "load more" button AllMore serves below.
-		allPage, allHasMore = pageButtons(allBtns, 0)
+		allPage, allHasMore = pageButtons(visible, 0)
 	}
 	// ut-docs#2498: LoadCategoriesForAdmin is the one query that carries a
 	// per-category ACTIVE ITEM count (data.CategoryAdminRow.ItemCount) —
@@ -1624,6 +1715,16 @@ func (h *ButtonsHTTP) renderList(w http.ResponseWriter, r *http.Request) bool {
 	groups := BuildCategoryGroups(btns, cats, itemCounts)
 	stampLocked(groups, h.Granted)
 	stampEditing(groups, h.EditMode)
+	// ut-docs#2698: does anything show AT REST? With every quick button
+	// hidden the sale screen renders its empty state (nothing to tap); the
+	// Designer never does (buttons.html).
+	anyVisible := false
+	for _, g := range groups {
+		if g.HasVisible {
+			anyVisible = true
+			break
+		}
+	}
 	// ut-docs#2174: the Designer's category-management list. Only loaded
 	// in edit mode, so the sale screen pays nothing for it.
 	var adminCats []DesignerCategoryVM
@@ -1667,6 +1768,7 @@ func (h *ButtonsHTTP) renderList(w http.ResponseWriter, r *http.Request) bool {
 		"AdminCategories": adminCats,
 		"ItemColors":      palette,
 		"HiddenItems":     hidden,
+		"AnyVisible":      anyVisible,
 	}); err != nil {
 		logging.L().Warnf("buttons list: render: %v", err)
 		clean = false
@@ -1775,9 +1877,11 @@ func (h *ButtonsHTTP) CategoryItems(w http.ResponseWriter, r *http.Request) {
 		if err != nil || degraded {
 			clean = false
 		}
+		// ut-docs#2698: the popup is an at-rest browse surface -- hidden
+		// items (kept, marked, by the grid loads) stay out of it.
 		items := quickButtonsFirst(
-			filterButtonsInCategory(quick, cats, catID),
-			filterButtonsInCategory(all, cats, catID),
+			filterButtonsInCategory(visibleOnly(quick), cats, catID),
+			filterButtonsInCategory(visibleOnly(all), cats, catID),
 		)
 		if err := h.View.Render(w, "category-items-fragment", map[string]any{
 			"Buttons": ToVM(items),
@@ -1875,12 +1979,12 @@ func (h *ButtonsHTTP) Add(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-// Remove returns whether the item was actually hidden -- ut-docs#2358,
-// same rationale as Add's own doc comment above: false on every
-// early-return, true only once Store.Remove has actually succeeded.
-// ut-docs#2541: this route now HIDES the item (see ButtonStore.Remove) --
-// deleting just the shortcut_buttons row would let the tile silently
-// reappear the moment every active item became a quick button by default.
+// Remove returns whether the item was actually removed from the quick
+// buttons -- ut-docs#2358, same rationale as Add's own doc comment above:
+// false on every early-return, true only once Store.Remove has actually
+// succeeded. ut-docs#2698: the legacy route now does what the trash badge
+// does (ButtonStore.Remove -> RemoveFromSellScreen); #2541 had made it a
+// hide.
 func (h *ButtonsHTTP) Remove(w http.ResponseWriter, r *http.Request) bool {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1919,7 +2023,7 @@ func (h *ButtonsHTTP) Remove(w http.ResponseWriter, r *http.Request) bool {
 // buttonsItemIDForm parses the request and returns the trimmed "itemId"
 // form value, writing a localized 400 fragment (same shape as Add/Remove's
 // own store-error response above) and returning ok=false for a missing
-// value or a form-parse failure — Hide/Unhide/DeleteItem below share this
+// value or a form-parse failure — Hide/Unhide/RemoveFromQuickButtons below share this
 // exact validation, unlike Add/Remove which each need their own.
 func buttonsItemIDForm(w http.ResponseWriter, r *http.Request) (itemID string, ok bool) {
 	if err := r.ParseForm(); err != nil {
@@ -1994,16 +2098,16 @@ func (h *ButtonsHTTP) UnhideAll(w http.ResponseWriter, r *http.Request) (int, bo
 	return n, true
 }
 
-// DeleteItem returns whether the item was actually deactivated --
-// ut-docs#2358/#2541: the jiggle-mode trash badge's target, now the item
-// itself rather than just its shortcut_buttons row (see ButtonStore.DeleteItem).
-func (h *ButtonsHTTP) DeleteItem(w http.ResponseWriter, r *http.Request) bool {
+// RemoveFromQuickButtons returns whether the item was actually removed from
+// the quick buttons -- ut-docs#2698: the jiggle-mode trash badge's target
+// (see ButtonStore.RemoveFromQuickButtons). It never deactivates the item.
+func (h *ButtonsHTTP) RemoveFromQuickButtons(w http.ResponseWriter, r *http.Request) bool {
 	itemID, ok := buttonsItemIDForm(w, r)
 	if !ok {
 		return false
 	}
-	if err := h.Store.DeleteItem(r.Context(), itemID); err != nil {
-		logging.L().Infof("[buttons] delete-item: %v", err)
+	if err := h.Store.RemoveFromQuickButtons(r.Context(), itemID); err != nil {
+		logging.L().Infof("[buttons] remove-from-grid: %v", err)
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusBadRequest)

@@ -1,0 +1,22 @@
+-- 043_items_sell_screen_removed.sql — universaltill/ut-docs#2698: two
+-- sell-screen states, one per quick-button action.
+--
+--   * Hide (the eye-off badge) keeps using items.sell_screen_hidden (040):
+--     off the sell screen at rest, but still shown GREYED in the same spot
+--     while the grid is being edited, so it can be unhidden in place.
+--   * Remove (the trash badge) sets THIS column: the item is no longer a
+--     quick button at all — absent at rest AND in edit mode — while the
+--     catalog item itself stays active and keeps selling by scan/search.
+--     Before this card the trash badge deactivated the item (#2541).
+--
+-- Needed as its own column (not a missing shortcut_buttons row) because
+-- every active item is an IMPLICIT quick button by default (#2541): with no
+-- explicit exclusion an item whose row was deleted would come straight
+-- back as an implicit tile on the next render. Adding the item back as a
+-- quick button (ButtonStore.Add, from search) clears it.
+--
+-- Same shape and reasoning as 040: a column on items so it travels with
+-- the item (admin sync, backup/restore); INTEGER 0/1; NOT NULL DEFAULT 0 so
+-- nothing on an upgrading till changes — removal is only ever an explicit
+-- operator action.
+ALTER TABLE items ADD COLUMN sell_screen_removed INTEGER NOT NULL DEFAULT 0;

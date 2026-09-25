@@ -1708,18 +1708,45 @@ function initOfflineOverride(updateFn){
     return (b && !inAllGrid(b)) ? b : null;
   }
   function isRTL(el) { return getComputedStyle(el).direction === 'rtl'; }
+  // ut-docs#2698: controls outside #buttons-grid that are part of editing:
+  // the category tabs and their '...' sheet, and the sale-screen search
+  // (its open/back buttons, input and results). Deliberately NOT the whole
+  // strip: its pencil link navigates to /designer, and leaving through the
+  // normal exit is what persists an unsaved drag first.
+  function stayInEdit(el) {
+    return !!el.closest('.products-finder .tab-bar, #category-overflow-dialog, .products-strip-search, .products-strip-back, #products-search, #search-results');
+  }
   function visibleCells(gridEl) {
     return Array.prototype.filter.call(gridEl.children, function (c) {
       return c.classList.contains('tile-cell') && c.getClientRects().length > 0;
     });
   }
 
+  // ut-docs#2698: .jiggle-active on the .products-finder section mirrors
+  // #buttons-grid's .jiggle-mode for what sits OUTSIDE the grid -- a
+  // category tab whose tiles are all hidden (shown only while editing, so
+  // its greyed tiles can be unhidden) and the search results' "Add to quick
+  // buttons" action. The window event lets buttons.html's strip re-measure
+  // its tab overflow now that such a tab appeared or went away.
+  function markFinder(on) {
+    var g = grid();
+    var f = g && g.closest ? g.closest('.products-finder') : null;
+    if (f) f.classList.toggle('jiggle-active', on);
+    // ut-docs#2698 review F2: buttons.html's restoreGridState reads .jiggle
+    // to keep a hidden-only tab selected across an edit-mode re-render
+    // (the fresh section has no .jiggle-active yet at x-init), and the
+    // event's detail tells it an exit happened, so it can move the
+    // selection off a tab that just vanished.
+    window.utSaleGridState = Object.assign({}, window.utSaleGridState, { jiggle: on });
+    window.dispatchEvent(new CustomEvent('ut-jiggle-change', { detail: { active: on } }));
+  }
   function enter() {
     var g = grid(), b = bar();
     if (!g) return;
     active = true;
     g.classList.add('jiggle-mode');
     if (b) b.hidden = false;
+    markFinder(true);
   }
   function exit() {
     if (!active) return;
@@ -1728,6 +1755,7 @@ function initOfflineOverride(updateFn){
     active = false;
     var g = grid(), b = bar();
     if (g) g.classList.remove('jiggle-mode');
+    markFinder(false);
     if (b) {
       // Done itself is about to be display:none'd; keep keyboard focus on
       // the screen rather than letting it fall to <body>.
@@ -1861,11 +1889,14 @@ function initOfflineOverride(updateFn){
     if (badgeFor(e.target)) return; // a badge tap is that badge's own action, never a hold or a drag
     var tile = tileFor(e.target);
     if (!tile) {
-      // Outside the grid (basket, nav rail, category strip, ...) while
-      // editing: leave the mode -- except the Done bar, whose own button
-      // does that on click. A pointerdown INSIDE the grid but between
-      // tiles (a header, a gap) is neither an exit nor a hold.
-      if (active && !(e.target.closest && (e.target.closest('#buttons-grid') || e.target.closest('.jiggle-bar')))) exit();
+      // Outside the grid (basket, nav rail, ...) while editing: leave the
+      // mode -- except the Done bar, whose own button does that on click. A
+      // pointerdown INSIDE the grid but between tiles (a header, a gap) is
+      // neither an exit nor a hold. ut-docs#2698: nor is anything in
+      // stayInEdit() -- switching category (so another category's greyed
+      // tiles can be reached) and the sale-screen search (so a removed item
+      // can be added back) are part of editing now.
+      if (active && !(e.target.closest && (e.target.closest('#buttons-grid') || e.target.closest('.jiggle-bar') || stayInEdit(e.target)))) exit();
       return;
     }
     if (active) { startDrag(e, tile); return; }
@@ -1908,9 +1939,13 @@ function initOfflineOverride(updateFn){
   // Capture phase, deliberately: must run BEFORE the tile's own bubbling
   // hx-trigger="click" handler sees the same click. Eats the hold's
   // trailing click, taps on jiggling tiles, and keyboard activation alike.
+  // ut-docs#2698: a search RESULT tile too -- while editing, a tap on a
+  // result must not ring it up; its own "Add to quick buttons" action (a
+  // sibling, not a .btn-tile) is how a result is used in edit mode.
   document.addEventListener('click', function (e) {
     if (!active) return;
-    if (!tileFor(e.target)) return;
+    var result = e.target.closest ? e.target.closest('#search-results .btn-tile') : null;
+    if (!tileFor(e.target) && !result) return;
     e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
   }, true);
 
@@ -2029,6 +2064,9 @@ function initOfflineOverride(updateFn){
   // retired sheet offered by keyboard (Move earlier/later) is still there.
   document.addEventListener('keydown', function (e) {
     if (!active) return;
+    // ut-docs#2698: Escape in the search box closes the search (its own
+    // handler), not edit mode as well.
+    if (e.key === 'Escape' && e.target.closest && e.target.closest('#products-search')) return;
     if (e.key === 'Escape') { e.preventDefault(); exit(); return; }
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     var tile = tileFor(e.target);

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -60,11 +61,13 @@ func panelSlice(t *testing.T, body, catID string) string {
 // quick button now, so the #2498 "category with active items but zero
 // buttons" state can only be reached by hiding the category's items — and
 // CatalogRepo.ListCategoriesForAdmin's VisibleItemCount (unlike the admin-
-// facing ItemCount) excludes hidden items, so such a category is pruned
-// from the strip outright instead of surviving with an empty-state message.
-// Previous name: TestButtonsHTTPList_CategoryWithActiveItemButNoButtonStillAppears,
-// which pinned the opposite (the bug finding 5 fixed).
-func TestButtonsHTTPList_CategoryWithOnlyHiddenItemsIsPruned(t *testing.T) {
+// facing ItemCount) excludes hidden items. ut-docs#2698: such a category
+// is no longer pruned -- its hidden tiles are rendered so edit mode can show
+// them greyed -- but its tab is marked tab-hidden-only, so at rest the strip
+// still shows only the categories with something visible.
+// Previous names: TestButtonsHTTPList_CategoryWithActiveItemButNoButtonStillAppears,
+// then ...CategoryWithOnlyHiddenItemsIsPruned (#2541).
+func TestButtonsHTTPList_CategoryWithOnlyHiddenItemsIsHiddenAtRest(t *testing.T) {
 	db, store, h := newItemOnlyStripTestHTTP(t)
 
 	mustExec(t, db, `INSERT INTO categories(id, name, parent_id, sort_order) VALUES
@@ -87,17 +90,22 @@ func TestButtonsHTTPList_CategoryWithOnlyHiddenItemsIsPruned(t *testing.T) {
 	}
 	body := rec.Body.String()
 
-	if strings.Contains(body, `id="cat-tab-cat_drink"`) {
-		t.Fatalf("expected NO Drinks tab -- its only item is hidden, got: %s", body)
+	// ut-docs#2698: Drinks is no longer pruned -- its hidden Cola is
+	// rendered (greyed in edit mode), so the category keeps a tab, but the
+	// tab is marked tab-hidden-only (display:none at rest, app.css) and its
+	// tile carries tile--rest-hidden. At rest the sell screen still shows
+	// Food only.
+	drinkTab := regexp.MustCompile(`<button[^>]*id="cat-tab-cat_drink"[^>]*>`).FindString(body)
+	if drinkTab == "" || !strings.Contains(drinkTab, "tab-hidden-only") {
+		t.Fatalf("expected the Drinks tab marked tab-hidden-only (hidden at rest), got %q in: %s", drinkTab, body)
 	}
-	// ut-docs#2613: with Drinks pruned and no All tab any more, Food is the
-	// only group left — the single-category branch (Food's own headed
-	// group, no tab bar), not a tabbed panel.
-	if strings.Contains(body, `class="tab-bar"`) {
-		t.Fatalf("expected no tab bar with a single surviving category, got: %s", body)
+	if !strings.Contains(tileCell(body, "i2"), "tile--rest-hidden") {
+		t.Fatalf("expected the hidden Cola tile rendered with tile--rest-hidden, got: %s", body)
 	}
-	if !strings.Contains(body, `data-name="Bread"`) || strings.Contains(body, `data-testid="category-empty-state"`) {
-		t.Fatalf("expected Food's Bread tile and no empty-state marker (it has a quick button), got: %s", body)
+	// Drinks' own "no quick buttons" line is the hidden-only variant (shown
+	// at rest in place of its invisible tile); Food has none.
+	if !strings.Contains(body, `data-name="Bread"`) || strings.Contains(body, `<p class="empty" data-testid="category-empty-state">`) {
+		t.Fatalf("expected Food's Bread tile and no plain empty-state marker (it has a quick button), got: %s", body)
 	}
 }
 
@@ -169,8 +177,10 @@ func TestButtonsHTTPList_DefaultTabPrefersGroupWithButtons(t *testing.T) {
 		t.Fatalf("List = %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if strings.Contains(body, `id="cat-tab-cat_household"`) {
-		t.Fatalf("expected Household pruned (its only item is hidden), got: %s", body)
+	// ut-docs#2698: Household keeps a tab (its hidden Sponge shows greyed in
+	// edit mode) but it is hidden-only, so it must not be the landing tab.
+	if tab := regexp.MustCompile(`<button[^>]*id="cat-tab-cat_household"[^>]*>`).FindString(body); !strings.Contains(tab, "tab-hidden-only") {
+		t.Fatalf("expected Household's tab marked tab-hidden-only, got %q", tab)
 	}
 	if !strings.Contains(body, `tab: 'cat_food'`) {
 		t.Fatalf("expected the default tab to be Food, got: %s", body)

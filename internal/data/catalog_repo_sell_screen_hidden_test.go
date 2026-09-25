@@ -14,7 +14,7 @@ import (
 // from the sell screen still sells via barcode scan/live search, but is
 // left out of the quick-button grid and All tab. These tests cover the
 // CatalogRepo layer directly (SetSellScreenHidden/ListSellScreenHidden/
-// SellScreenHiddenItemIDs); internal/ui's own tests cover ButtonStore.Load's
+// SellScreenStates); internal/ui's own tests cover ButtonStore.Load's
 // consumption of the flag.
 func newCatalogHiddenTestDB(t *testing.T) (*data.CatalogRepo, *db.DB) {
 	t.Helper()
@@ -35,7 +35,7 @@ func TestSetSellScreenHidden_RoundTrip(t *testing.T) {
 	repo, _ := newCatalogHiddenTestDB(t)
 	ctx := context.Background()
 
-	hidden, err := repo.SellScreenHiddenItemIDs(ctx)
+	hidden, _, err := repo.SellScreenStates(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestSetSellScreenHidden_RoundTrip(t *testing.T) {
 	if err := repo.SetSellScreenHidden(ctx, "item-a", true); err != nil {
 		t.Fatalf("hide: %v", err)
 	}
-	hidden, err = repo.SellScreenHiddenItemIDs(ctx)
+	hidden, _, err = repo.SellScreenStates(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestSetSellScreenHidden_RoundTrip(t *testing.T) {
 	if err := repo.SetSellScreenHidden(ctx, "item-a", false); err != nil {
 		t.Fatalf("unhide: %v", err)
 	}
-	hidden, err = repo.SellScreenHiddenItemIDs(ctx)
+	hidden, _, err = repo.SellScreenStates(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,15 +94,16 @@ func TestSetSellScreenHidden_UnknownOrInactiveItemReturnsErrItemNotFound(t *test
 	}
 }
 
-// TestSetSellScreenHidden_DeletesShortcutRows pins the design's explicit
-// contract: hiding an item also deletes any shortcut_buttons row for it, so
-// a Designer-configured explicit tile doesn't keep resolving even though
-// its item is meant to be off the grid.
-func TestSetSellScreenHidden_DeletesShortcutRows(t *testing.T) {
+// TestSetSellScreenHidden_KeepsShortcutRow (ut-docs#2698, reversing
+// #2541's delete): hiding keeps the item's shortcut_buttons row, so the tile
+// keeps its position -- it shows greyed in the same spot in edit mode and
+// comes back there when unhidden. LoadButtons (the at-rest/cloud view) still
+// leaves the hidden row out; LoadGridButtons returns it, marked Hidden.
+func TestSetSellScreenHidden_KeepsShortcutRow(t *testing.T) {
 	repo, d := newCatalogHiddenTestDB(t)
 	ctx := context.Background()
 	if _, err := d.DB.ExecContext(ctx,
-		`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('BTN-A','Latte','item-a',0)`); err != nil {
+		`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('BTN-A','Latte','item-a',3)`); err != nil {
 		t.Fatalf("seed shortcut row: %v", err)
 	}
 
@@ -110,25 +111,108 @@ func TestSetSellScreenHidden_DeletesShortcutRows(t *testing.T) {
 		t.Fatalf("hide: %v", err)
 	}
 
-	var n int
-	if err := d.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM shortcut_buttons WHERE item_id = 'item-a'`).Scan(&n); err != nil {
+	var n, sortOrder int
+	if err := d.DB.QueryRowContext(ctx, `SELECT COUNT(*), MAX(sort_order) FROM shortcut_buttons WHERE item_id = 'item-a'`).Scan(&n, &sortOrder); err != nil {
 		t.Fatal(err)
 	}
-	if n != 0 {
-		t.Fatalf("expected hiding to delete the item's shortcut_buttons row(s), got %d left", n)
+	if n != 1 || sortOrder != 3 {
+		t.Fatalf("expected hiding to keep the item's shortcut_buttons row at sort_order 3, got count=%d sort_order=%d", n, sortOrder)
 	}
 
-	// Unhiding does NOT resurrect the deleted row — the item just goes
-	// back to being an IMPLICIT tile (ButtonStore.Load), not a
-	// re-materialized explicit one.
+	shortcuts := data.NewShortcutsRepo(d.DB)
+	rest, err := shortcuts.LoadButtons(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rest) != 0 {
+		t.Fatalf("LoadButtons (at rest) must leave a hidden item's row out, got %+v", rest)
+	}
+	grid, err := shortcuts.LoadGridButtons(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(grid) != 1 || grid[0].ItemID != "item-a" || !grid[0].Hidden {
+		t.Fatalf("LoadGridButtons must return the hidden row marked Hidden, got %+v", grid)
+	}
+
 	if err := repo.SetSellScreenHidden(ctx, "item-a", false); err != nil {
 		t.Fatalf("unhide: %v", err)
 	}
-	if err := d.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM shortcut_buttons WHERE item_id = 'item-a'`).Scan(&n); err != nil {
+	grid, err = shortcuts.LoadGridButtons(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 0 {
-		t.Fatalf("expected unhide not to recreate a shortcut_buttons row, got %d", n)
+	if len(grid) != 1 || grid[0].Hidden {
+		t.Fatalf("after unhide the same row must come back, not hidden, got %+v", grid)
+	}
+}
+
+// TestRemoveFromSellScreen (ut-docs#2698): the trash badge's repo call sets
+// sell_screen_removed, clears sell_screen_hidden (removed wins -- a removed
+// item must not linger in the Designer's Hidden list) and deletes the
+// item's shortcut_buttons row, in one transaction -- and NEVER deactivates
+// the item: it keeps selling by scan/search.
+func TestRemoveFromSellScreen(t *testing.T) {
+	repo, d := newCatalogHiddenTestDB(t)
+	ctx := context.Background()
+	for _, stmt := range []string{
+		`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('BTN-A','Latte','item-a',0)`,
+		`UPDATE items SET sell_screen_hidden = 1 WHERE id = 'item-a'`,
+	} {
+		if _, err := d.DB.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("seed %q: %v", stmt, err)
+		}
+	}
+
+	if err := repo.RemoveFromSellScreen(ctx, "item-a"); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	var active, hidden, removed, rows int
+	if err := d.DB.QueryRowContext(ctx, `SELECT is_active, sell_screen_hidden, sell_screen_removed FROM items WHERE id = 'item-a'`).Scan(&active, &hidden, &removed); err != nil {
+		t.Fatal(err)
+	}
+	if active != 1 {
+		t.Fatalf("remove must never deactivate the item, is_active=%d", active)
+	}
+	if removed != 1 || hidden != 0 {
+		t.Fatalf("expected removed=1 hidden=0, got removed=%d hidden=%d", removed, hidden)
+	}
+	if err := d.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM shortcut_buttons WHERE item_id = 'item-a'`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatalf("expected the shortcut_buttons row deleted, %d left", rows)
+	}
+	hiddenIDs, removedIDs, err := repo.SellScreenStates(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hiddenIDs["item-a"] || !removedIDs["item-a"] {
+		t.Fatalf("SellScreenStates: hidden=%v removed=%v", hiddenIDs, removedIDs)
+	}
+	listed, err := repo.ListSellScreenHidden(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 0 {
+		t.Fatalf("a removed item must not be listed as hidden, got %+v", listed)
+	}
+}
+
+func TestRemoveFromSellScreen_UnknownOrInactiveItem(t *testing.T) {
+	repo, d := newCatalogHiddenTestDB(t)
+	ctx := context.Background()
+	if _, err := d.DB.ExecContext(ctx,
+		`INSERT INTO items (id, sku, name, base_price, is_active, is_weighed, unit) VALUES ('item-off','SKU-OFF','Old',100,0,0,'each')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"never-existed", "item-off"} {
+		if err := repo.RemoveFromSellScreen(ctx, id); !errors.Is(err, data.ErrItemNotFound) {
+			t.Fatalf("RemoveFromSellScreen(%q): want ErrItemNotFound, got %v", id, err)
+		}
+	}
+	if err := repo.RemoveFromSellScreen(ctx, " "); err == nil {
+		t.Fatal("expected an error for a blank itemID")
 	}
 }
 
@@ -189,6 +273,10 @@ func TestUnhideAllSellScreen(t *testing.T) {
 		`INSERT INTO items (id, sku, name, base_price, is_active, is_weighed, unit) VALUES ('item-c','SKU-C','Retired',100,0,0,'each')`,
 		`INSERT INTO items (id, sku, name, base_price, is_active, is_weighed, unit) VALUES ('item-d','SKU-D','Visible',100,1,0,'each')`,
 		`UPDATE items SET sell_screen_hidden = 1 WHERE id IN ('item-a','item-b','item-c')`,
+		// ut-docs#2698: hidden AND removed (a direct write; RemoveFromSellScreen
+		// itself clears hidden) -- removed wins, so it is neither listed as
+		// hidden nor counted by unhide-all.
+		`INSERT INTO items (id, sku, name, base_price, is_active, is_weighed, unit, sell_screen_hidden, sell_screen_removed) VALUES ('item-e','SKU-E','Gone',100,1,0,'each',1,1)`,
 	} {
 		if _, err := d.DB.ExecContext(ctx, stmt); err != nil {
 			t.Fatalf("seed %q: %v", stmt, err)
@@ -206,7 +294,7 @@ func TestUnhideAllSellScreen(t *testing.T) {
 	if n != 2 {
 		t.Fatalf("unhide all: n = %d, want 2 (the two active hidden items)", n)
 	}
-	hidden, err := repo.SellScreenHiddenItemIDs(ctx)
+	hidden, _, err := repo.SellScreenStates(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -224,8 +224,11 @@ func seedPlainItem(t *testing.T, db *sql.DB, id string) {
 // mean to prove.
 func hideSeedForPagesVariantItem(t *testing.T, db *sql.DB) {
 	t.Helper()
-	if _, err := db.Exec(`UPDATE items SET sell_screen_hidden = 1 WHERE id = 'itm1'`); err != nil {
-		t.Fatalf("hide itm1: %v", err)
+	// ut-docs#2698: removed, not hidden -- a hidden item is still rendered
+	// (display:none at rest, greyed in edit mode), so it would still put its
+	// picker wiring in the body.
+	if _, err := db.Exec(`UPDATE items SET sell_screen_removed = 1 WHERE id = 'itm1'`); err != nil {
+		t.Fatalf("remove itm1: %v", err)
 	}
 }
 
@@ -357,11 +360,13 @@ func TestButtonsAddValidatesPersistsAndNormalizesImage(t *testing.T) {
 		t.Fatalf("add success body should be empty (no admin grid to re-render), got: %s", rec.Body.String())
 	}
 
-	// An absolute URL is stored untouched.
+	// An absolute URL is stored untouched. A second item: re-adding itm1
+	// would refresh its existing ABC row (ut-docs#2698 review F1).
+	seedAddableItem(t, d, "itm-pear")
 	rec = postForm(mux, "/api/buttons/add", url.Values{
 		"label":    {"Pear"},
 		"code":     {"DEF"},
-		"itemId":   {"itm1"},
+		"itemId":   {"itm-pear"},
 		"imageUrl": {"https://cdn.example.com/pear.png"},
 	}, nil)
 	if rec.Code != http.StatusOK {
@@ -689,13 +694,14 @@ func TestButtonsUIFragment_ReflectsModifierGroupAttachedViaRealAttachHandler(t *
 	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id) VALUES ('BTN1','Apple Tile','itm-plain')`); err != nil {
 		t.Fatalf("seed button: %v", err)
 	}
-	// ut-docs#2541: hidden from the sell screen -- itm-decoy exists only so
+	// ut-docs#2541/#2698: removed from the quick buttons (a hidden item
+	// would still be rendered) -- itm-decoy exists only so
 	// ListAttachableModifierGroups has an existing group to offer for the
 	// REAL attach below; it must never itself render a tile (with the
 	// picker wired up, once the group links to it a few lines down), or
 	// assertTileScansDirectly's whole-page check would fail on ITS tile,
 	// not itm-plain's.
-	if _, err := d.Db.Exec(`INSERT INTO items(id,sku,name,base_price,is_active,sell_screen_hidden) VALUES('itm-decoy','DECOY','Decoy',100,1,1)`); err != nil {
+	if _, err := d.Db.Exec(`INSERT INTO items(id,sku,name,base_price,is_active,sell_screen_removed) VALUES('itm-decoy','DECOY','Decoy',100,1,1)`); err != nil {
 		t.Fatalf("seed decoy item: %v", err)
 	}
 	modRepo := data.NewModifierRepo(d.Db)
@@ -947,9 +953,10 @@ func TestButtonsPartial_JiggleModeMarkup(t *testing.T) {
 		`class="tile-badge tile-badge-edit"`,
 		`href="/catalog?item=itm1&return=/"`,
 		`class="tile-badge tile-badge-remove"`,
-		// ut-docs#2541: the trash badge now deletes the item itself.
-		`hx-post="/api/buttons/delete-item"`,
-		`hx-confirm="Delete “First” from the catalog? This removes it everywhere, not just from the sell screen."`,
+		// ut-docs#2698: the trash badge removes the item from the quick
+		// buttons only (#2541 had made it delete the item itself).
+		`hx-post="/api/buttons/remove-from-grid"`,
+		`hx-confirm="Remove “First” from the quick buttons? The item stays in the catalog and still sells by scan or search — add it back any time from search."`,
 		// ut-docs#2541: the new third, bottom-corner Hide badge.
 		`class="tile-badge tile-badge-hide"`,
 		`hx-post="/api/buttons/hide"`,

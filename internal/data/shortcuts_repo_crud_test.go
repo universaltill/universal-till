@@ -25,6 +25,10 @@ func newShortcutsTestDB(t *testing.T) *data.ShortcutsRepo {
 		`INSERT INTO items (id, sku, name, base_price, is_active, is_weighed, unit) VALUES ('item-b','SKU-B','Cappuccino',350,0,0,'each')`); err != nil {
 		t.Fatalf("seed item-b (inactive): %v", err)
 	}
+	if _, err := d.DB.ExecContext(ctx,
+		`INSERT INTO items (id, sku, name, base_price, is_active, is_weighed, unit) VALUES ('item-c','SKU-C','Mocha',340,1,0,'each')`); err != nil {
+		t.Fatalf("seed item-c: %v", err)
+	}
 	// db.Open runs the real migrations, which seed demo shortcut buttons for
 	// the sample café/shop catalog — clear them so each test starts from a
 	// deterministic, empty button list rather than asserting against
@@ -168,7 +172,7 @@ func TestAddButton_AppendsAtEndOfSortOrder(t *testing.T) {
 	if err := repo.AddButton(ctx, data.ShortcutButton{Label: "First", Barcode: "B1", ItemID: "item-a"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.AddButton(ctx, data.ShortcutButton{Label: "Second", Barcode: "B2", ItemID: "item-a"}); err != nil {
+	if err := repo.AddButton(ctx, data.ShortcutButton{Label: "Second", Barcode: "B2", ItemID: "item-c"}); err != nil {
 		t.Fatal(err)
 	}
 	btns, err := repo.LoadButtons(ctx)
@@ -177,6 +181,65 @@ func TestAddButton_AppendsAtEndOfSortOrder(t *testing.T) {
 	}
 	if len(btns) != 2 || btns[0].Label != "First" || btns[1].Label != "Second" {
 		t.Fatalf("expected new buttons appended after existing ones, got %+v", btns)
+	}
+}
+
+// TestAddButton_ReusesTheItemsExistingRow (ut-docs#2698 review F1): an item
+// that already has a row keeps that row -- its code and its position -- when
+// added again under a different code (its resolvable tile code changed since
+// the row was written); only the label/image are refreshed. Both
+// sell-screen flags are cleared in the same transaction.
+func TestAddButton_ReusesTheItemsExistingRow(t *testing.T) {
+	d, err := db.Open(testsupport.MigratedDBFile(t, "shortcuts-reuse.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	ctx := context.Background()
+	for _, q := range []string{
+		`DELETE FROM shortcut_buttons`,
+		`INSERT INTO items (id, sku, name, base_price, is_active, is_weighed, unit, sell_screen_hidden, sell_screen_removed) VALUES ('item-a','SKU-A','Latte',320,1,0,'each',1,1)`,
+		`INSERT INTO items (id, sku, name, base_price, is_active, is_weighed, unit) VALUES ('item-c','SKU-C','Mocha',340,1,0,'each')`,
+		`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('SKU-C','Mocha','item-c',0)`,
+		`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('SKU-A','Latte','item-a',1)`,
+	} {
+		if _, err := d.DB.ExecContext(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	repo := data.NewShortcutsRepo(d.DB)
+
+	if err := repo.AddButton(ctx, data.ShortcutButton{Label: "Latte Large", Barcode: "5012345678900", ItemID: "item-a", ImageURL: "/public/images/latte.png"}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := d.DB.QueryContext(ctx, `SELECT barcode, label, sort_order, COALESCE(image_path,'') FROM shortcut_buttons WHERE item_id='item-a'`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	type row struct {
+		code, label string
+		sort        int
+		img         string
+	}
+	var got []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.code, &r.label, &r.sort, &r.img); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, r)
+	}
+	want := row{"SKU-A", "Latte Large", 1, "/public/images/latte.png"}
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("want exactly one kept row %+v, got %+v", want, got)
+	}
+	var hidden, removed int
+	if err := d.DB.QueryRowContext(ctx, `SELECT sell_screen_hidden, sell_screen_removed FROM items WHERE id='item-a'`).Scan(&hidden, &removed); err != nil {
+		t.Fatal(err)
+	}
+	if hidden != 0 || removed != 0 {
+		t.Fatalf("AddButton must clear both sell-screen flags, hidden=%d removed=%d", hidden, removed)
 	}
 }
 

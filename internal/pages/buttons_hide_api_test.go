@@ -54,9 +54,11 @@ func TestButtonsAPI_HideUnhideDeleteItem_CatalogManagementGate(t *testing.T) {
 			if err := d.Db.QueryRow(`SELECT sell_screen_hidden FROM items WHERE id='itm-btn'`).Scan(&hidden); err != nil || hidden != 1 {
 				t.Fatalf("%s hide: item must be hidden, hidden=%d err=%v", role, hidden, err)
 			}
+			// ut-docs#2698: hiding KEEPS the explicit rows -- they hold the
+			// tile's position (greyed in edit mode, same spot on unhide).
 			var buttons int
-			if err := d.Db.QueryRow(`SELECT count(*) FROM shortcut_buttons WHERE item_id='itm-btn'`).Scan(&buttons); err != nil || buttons != 0 {
-				t.Fatalf("%s hide: explicit shortcut_buttons rows must be deleted, got %d", role, buttons)
+			if err := d.Db.QueryRow(`SELECT count(*) FROM shortcut_buttons WHERE item_id='itm-btn'`).Scan(&buttons); err != nil || buttons == 0 {
+				t.Fatalf("%s hide: explicit shortcut_buttons rows must be kept, got %d", role, buttons)
 			}
 		}
 	})
@@ -98,34 +100,43 @@ func TestButtonsAPI_HideUnhideDeleteItem_CatalogManagementGate(t *testing.T) {
 		}
 	})
 
-	t.Run("delete-item", func(t *testing.T) {
-		mux, d := newMux(t)
-		rec := postForm(mux, "/api/buttons/delete-item", url.Values{"itemId": {"itm-btn"}}, &cashier)
-		if !isElevationPrompt(rec) {
-			t.Fatalf("cashier delete-item: want elevation prompt, got %d: %s", rec.Code, rec.Body.String())
-		}
-		var active int
-		if err := d.Db.QueryRow(`SELECT is_active FROM items WHERE id='itm-btn'`).Scan(&active); err != nil || active != 1 {
-			t.Fatalf("cashier delete-item: item must stay active, active=%d err=%v", active, err)
-		}
+	// ut-docs#2698: the trash badge's route, and /api/buttons/delete-item
+	// (the #2541 path, kept as an alias for pages rendered before the
+	// upgrade) -- both REMOVE the item from the quick buttons and never
+	// deactivate it.
+	for _, path := range []string{"/api/buttons/remove-from-grid", "/api/buttons/delete-item"} {
+		t.Run(path, func(t *testing.T) {
+			mux, d := newMux(t)
+			rec := postForm(mux, path, url.Values{"itemId": {"itm-btn"}}, &cashier)
+			if !isElevationPrompt(rec) {
+				t.Fatalf("cashier %s: want elevation prompt, got %d: %s", path, rec.Code, rec.Body.String())
+			}
+			var removed int
+			if err := d.Db.QueryRow(`SELECT sell_screen_removed FROM items WHERE id='itm-btn'`).Scan(&removed); err != nil || removed != 0 {
+				t.Fatalf("cashier %s: item must not be removed, removed=%d err=%v", path, removed, err)
+			}
 
-		mux2, d2 := newMux(t)
-		mgr := auth.User{ID: "u-manager", Role: "manager"}
-		rec2 := postForm(mux2, "/api/buttons/delete-item", url.Values{"itemId": {"itm-btn"}}, &mgr)
-		if isElevationPrompt(rec2) {
-			t.Fatalf("manager delete-item: got elevation prompt, want past the gate: %d %s", rec2.Code, rec2.Body.String())
-		}
-		if rec2.Code != http.StatusOK {
-			t.Fatalf("manager delete-item: code=%d, want 200: %s", rec2.Code, rec2.Body.String())
-		}
-		if got := rec2.Header().Get("HX-Trigger"); got != "buttons-changed" {
-			t.Fatalf("manager delete-item: HX-Trigger = %q, want buttons-changed", got)
-		}
-		var active2 int
-		if err := d2.Db.QueryRow(`SELECT is_active FROM items WHERE id='itm-btn'`).Scan(&active2); err != nil || active2 != 0 {
-			t.Fatalf("manager delete-item: item must be deactivated, active=%d err=%v", active2, err)
-		}
-	})
+			mux2, d2 := newMux(t)
+			mgr := auth.User{ID: "u-manager", Role: "manager"}
+			rec2 := postForm(mux2, path, url.Values{"itemId": {"itm-btn"}}, &mgr)
+			if isElevationPrompt(rec2) {
+				t.Fatalf("manager %s: got elevation prompt, want past the gate: %d %s", path, rec2.Code, rec2.Body.String())
+			}
+			if rec2.Code != http.StatusOK {
+				t.Fatalf("manager %s: code=%d, want 200: %s", path, rec2.Code, rec2.Body.String())
+			}
+			if got := rec2.Header().Get("HX-Trigger"); got != "buttons-changed" {
+				t.Fatalf("manager %s: HX-Trigger = %q, want buttons-changed", path, got)
+			}
+			var active, rows int
+			if err := d2.Db.QueryRow(`SELECT is_active, sell_screen_removed FROM items WHERE id='itm-btn'`).Scan(&active, &removed); err != nil || active != 1 || removed != 1 {
+				t.Fatalf("manager %s: want active=1 removed=1, got active=%d removed=%d err=%v", path, active, removed, err)
+			}
+			if err := d2.Db.QueryRow(`SELECT count(*) FROM shortcut_buttons WHERE item_id='itm-btn'`).Scan(&rows); err != nil || rows != 0 {
+				t.Fatalf("manager %s: shortcut_buttons rows must be deleted, got %d", path, rows)
+			}
+		})
+	}
 }
 
 // TestButtonsAPI_HideUnhideDeleteItem_ElevationSummaryUsesItemName
@@ -149,7 +160,10 @@ func TestButtonsAPI_HideUnhideDeleteItem_ElevationSummaryUsesItemName(t *testing
 	}{
 		{"/api/buttons/hide", "Hide “Button Item” from the sell screen."},
 		{"/api/buttons/unhide", "Show “Button Item” on the sell screen again."},
-		{"/api/buttons/delete-item", "Delete “Button Item” from the catalog. This removes it everywhere, not just the sell screen."},
+		// ut-docs#2698: remove-from-grid (and its delete-item alias) no longer
+		// deletes anything from the catalog -- the prompt says so.
+		{"/api/buttons/remove-from-grid", "Remove quick button Button Item from the sell screen."},
+		{"/api/buttons/delete-item", "Remove quick button Button Item from the sell screen."},
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
@@ -183,7 +197,7 @@ func TestButtonsAPI_HideUnhideDeleteItem_ElevationSummaryUsesItemName(t *testing
 // erroring the whole prompt out.
 func TestButtonsAPI_HideUnhideDeleteItem_ElevationSummaryFallsBackToIDWhenLookupFails(t *testing.T) {
 	cashier := auth.User{ID: "c1", Role: "cashier"}
-	for _, path := range []string{"/api/buttons/hide", "/api/buttons/unhide", "/api/buttons/delete-item"} {
+	for _, path := range []string{"/api/buttons/hide", "/api/buttons/unhide", "/api/buttons/remove-from-grid", "/api/buttons/delete-item"} {
 		t.Run(path, func(t *testing.T) {
 			mux, _ := newButtonsMuxRealSession(t)
 			rec := postForm(mux, path, url.Values{"itemId": {"does-not-exist"}}, &cashier)
@@ -236,10 +250,12 @@ func TestButtonsAPI_HideUnhideDeleteItemRefusedOnReplica(t *testing.T) {
 		t.Errorf("itm1 must stay hidden on a replica: hidden=%d err=%v", hidden, err)
 	}
 
-	assertRefused(t, "delete-item", postForm(mux, "/api/buttons/delete-item", url.Values{"itemId": {"itm1"}}, nil))
-	var active int
-	if err := d.Db.QueryRow(`SELECT is_active FROM items WHERE id='itm1'`).Scan(&active); err != nil || active != 1 {
-		t.Errorf("itm1 must not be deactivated on a replica: active=%d err=%v", active, err)
+	for _, path := range []string{"/api/buttons/remove-from-grid", "/api/buttons/delete-item"} {
+		assertRefused(t, path, postForm(mux, path, url.Values{"itemId": {"itm1"}}, nil))
+		var active, removed int
+		if err := d.Db.QueryRow(`SELECT is_active, sell_screen_removed FROM items WHERE id='itm1'`).Scan(&active, &removed); err != nil || active != 1 || removed != 0 {
+			t.Errorf("%s: itm1 must be untouched on a replica: active=%d removed=%d err=%v", path, active, removed, err)
+		}
 	}
 }
 
@@ -248,7 +264,7 @@ func TestButtonsAPI_HideUnhideDeleteItemRefusedOnReplica(t *testing.T) {
 // an empty itemId is rejected by all three new routes with the same
 // localized-fragment 400 shape /api/buttons/{add,remove} already use.
 func TestButtonsAPI_HideUnhideDeleteItem_EmptyItemIDIs400(t *testing.T) {
-	for _, path := range []string{"/api/buttons/hide", "/api/buttons/unhide", "/api/buttons/delete-item"} {
+	for _, path := range []string{"/api/buttons/hide", "/api/buttons/unhide", "/api/buttons/remove-from-grid", "/api/buttons/delete-item"} {
 		t.Run(path, func(t *testing.T) {
 			t.Setenv("UT_AUTH", "off")
 			chdirRoot(t)
@@ -285,7 +301,7 @@ func TestButtonsAPI_HideUnhideDeleteItem_EmptyItemIDIs400(t *testing.T) {
 func TestButtonsAPI_HideUnhideDeleteItem_UnknownOrInactiveItemIs400(t *testing.T) {
 	manager := auth.User{ID: "u-manager", Role: "manager"}
 
-	for _, path := range []string{"/api/buttons/hide", "/api/buttons/unhide", "/api/buttons/delete-item"} {
+	for _, path := range []string{"/api/buttons/hide", "/api/buttons/unhide", "/api/buttons/remove-from-grid", "/api/buttons/delete-item"} {
 		t.Run(path+"/unknown", func(t *testing.T) {
 			mux, _ := newButtonsMuxRealSession(t)
 			rec := postForm(mux, path, url.Values{"itemId": {"does-not-exist"}}, &manager)

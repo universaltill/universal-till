@@ -53,7 +53,7 @@
      on the Designer for free because the markup is the same. A constant
      hx-vals literal, not {{ "jsonVals" }}: nothing interpolated (guard-i18n
      check 4 only flags a literal with a template action inside it). */}}
-<div class="products" hx-get="/ui/buttons"{{ if .EditMode }} hx-vals='{"mode":"edit"}'{{ end }} hx-trigger="modifiers-changed from:body, buttons-changed from:body" hx-swap="outerHTML">
+<div class="products{{ if .EditMode }} products--edit{{ end }}" hx-get="/ui/buttons"{{ if .EditMode }} hx-vals='{"mode":"edit"}'{{ end }} hx-trigger="modifiers-changed from:body, buttons-changed from:body" hx-swap="outerHTML">
   {{/* ut-docs#2613: the strip has no All tab any more (ut-docs#2212 added
        one, ut-docs#2294 gave it its own grid of every active item, and
        both are retired here) -- it shows only category tabs plus the
@@ -75,7 +75,10 @@
   {{/* $empty: nothing sellable to show for THIS mode -- the strip has no
        category group to show (ut-docs#2613); the tile mode has no category
        with an active item; the chip mode has no active item at all. */}}
-  {{ $empty := not .Groups }}
+  {{/* ut-docs#2698: hidden tiles are in .Groups (edit mode shows them
+       greyed), so "no groups" alone no longer means nothing to show --
+       .AnyVisible is false when every group holds hidden tiles only. */}}
+  {{ $empty := or (not .Groups) (not .AnyVisible) }}
   {{ if eq $mode "category_tabs" }}{{ $empty = not .CategoryTiles }}{{ end }}
   {{ if eq $mode "all_filter_chips" }}{{ $empty = not .AllButtons }}{{ end }}
   {{/* ut-docs#2174: never the empty state in edit mode -- the Designer
@@ -124,6 +127,9 @@
       {{ $defaultTab = (index .Groups 0).ID }}
       {{ $pickedButtons := false }}
       {{ range .Groups }}{{ if and (not $pickedButtons) .HasButtons }}{{ $defaultTab = .ID }}{{ $pickedButtons = true }}{{ end }}{{ end }}
+      {{/* ut-docs#2698: failing that, a group with anything visible at rest
+           -- never a hidden-only one, whose tab CSS keeps out of sight. */}}
+      {{ range .Groups }}{{ if and (not $pickedButtons) .HasVisible }}{{ $defaultTab = .ID }}{{ $pickedButtons = true }}{{ end }}{{ end }}
     {{ end }}
     {{/* .ID is interpolated raw into an Alpine JS string literal below
          (x-data, :class, @click) — html/template auto-escapes this as a
@@ -250,18 +256,57 @@
         return this.q ? this.sectionHasMatch(panelEl) : this.tab === id;
       },
       searching: false,
+      {{/* ut-docs#2698 review F2: a .tab-hidden-only tab (every tile in
+           its category hidden) is display:none at rest (app.css) -- only
+           the jiggle edit mode shows it. tabShown is false only for THAT
+           case: a tab the overflow strip hid (the hidden attribute, still
+           reachable from the More sheet) stays a valid selection. */}}
+      tabShown(el) { return !!el && (!el.classList.contains('tab-hidden-only') || el.getClientRects().length > 0); },
+      {{/* Moves the selection off a tab that is not shown (or gone) onto the
+           first shown category tab; a no-op when the current one is fine. */}}
+      ensureShownTab() {
+        if (this.tab === '' && !this.$el.querySelector('[data-cat-tab]')) return;
+        if (this.tabShown(document.getElementById('cat-tab-' + (this.tab || 'uncategorized')))) return;
+        const tabs = Array.from(this.$el.querySelectorAll('[data-cat-tab]'));
+        const next = tabs.find((t) => t.getClientRects().length > 0) || tabs.find((t) => this.tabShown(t));
+        if (next) this.tab = next.dataset.tabId || '';
+      },
+      {{/* app.js's utTileJiggle fires ut-jiggle-change on enter and exit.
+           On exit a hidden-only tab has just vanished, so a selection left
+           on it would show an empty panel under no visible tab. */}}
+      onJiggleChange(ev) {
+        this.applyCategoryOverflow();
+        if (!(ev && ev.detail && ev.detail.active)) this.ensureShownTab();
+      },
       restoreGridState() {
         const st = window.utSaleGridState;
         if (st) {
-          const tabStillExists = !!document.getElementById('cat-tab-' + (st.tab || 'uncategorized'));
-          if (typeof st.tab === 'string' && tabStillExists) this.tab = st.tab;
+          {{/* ut-docs#2698 review F2: only restore a tab that is shown --
+               except while jiggle mode is on (st.jiggle, kept by app.js),
+               where this render's hidden-only tab is about to be shown again
+               as soon as utTileJiggle re-arms the fresh grid (afterSettle),
+               and the operator must stay on the category they are editing. */}}
+          const tabEl = document.getElementById('cat-tab-' + (st.tab || 'uncategorized'));
+          if (typeof st.tab === 'string' && tabEl && (st.jiggle || this.tabShown(tabEl))) this.tab = st.tab;
           {{/* ut-docs#2174 review: never in edit mode -- utSaleGridState is
                a window global that survives the shell's boosted navigation,
                so a search typed on the sale screen would otherwise be
                restored into the Designer's replica, hiding its grid behind
                an empty results view it has no search box to clear. */}}
-          {{ if not .EditMode }}if (st.q) { this.q = st.q; this.searching = true; }{{ end }}
+          {{/* ut-docs#2698: re-run the restored query -- the fresh render's
+               #search-results is empty, so without this a buttons-changed
+               refresh (e.g. Add to quick buttons from an edit-mode search)
+               left a blank results view under a still-filled search box. A
+               plain Event, not htmx.trigger: x-model takes a CustomEvent's
+               detail as the new value, which would overwrite q. */}}
+          {{ if not .EditMode }}if (st.q) { this.q = st.q; this.searching = true; this.$nextTick(() => { const i = this.$refs.search; if (i) i.dispatchEvent(new Event('input', { bubbles: true })); }); }{{ end }}
         }
+        {{/* Stash the tab now, not only on change: the rendered default tab
+             (never clicked, so the watch never fired) must survive a
+             buttons-changed re-render too -- otherwise hiding the default
+             category's last visible tile while editing re-rendered onto a
+             different default and yanked the operator off it. */}}
+        window.utSaleGridState = Object.assign({}, window.utSaleGridState, { tab: this.tab });
         this.$watch('tab', v => { window.utSaleGridState = Object.assign({}, window.utSaleGridState, { tab: v }); });
         this.$watch('q', v => { window.utSaleGridState = Object.assign({}, window.utSaleGridState, { q: v }); });
       },
@@ -285,7 +330,7 @@
          reaching the tablist without a tab holding focus) rather than
          indexing off document.activeElement's -1 ('not found') result. */
       focusTab(dir) {
-        const tabs = Array.from(this.$el.querySelectorAll('[role=tab]')).filter((t) => !t.hidden);
+        const tabs = Array.from(this.$el.querySelectorAll('[role=tab]')).filter((t) => !t.hidden && t.getClientRects().length > 0);
         if (!tabs.length) return;
         const i = Math.max(0, tabs.indexOf(document.activeElement));
         const next = tabs[(i + dir + tabs.length) % tabs.length];
@@ -524,7 +569,7 @@
           ev.preventDefault(); list[0].focus();
         }
       }
-    }" x-init="restoreGridState(); setupCategoryOverflow()">
+    }" x-init="restoreGridState(); setupCategoryOverflow()" @ut-jiggle-change.window="onJiggleChange($event)">
       <!-- ut-docs#2173 (closes ut-docs#993): the sale screen used to spend
            TWO full rows of height before the first product tile -- this
            .products-header row (title + an always-expanded search input +
@@ -589,7 +634,12 @@
                select exactly the per-category tabs -- never a fixed,
                always-visible tab (none today: ut-docs#2499/#2613 retired
                Categories and All) -- without sentinel checks in JS. */}}
-          <button type="button" id="cat-tab-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" class="tab" role="tab" data-cat-tab style="--cat-color: {{ .Color }}" :class="tab === '{{ .ID }}' && 'active'" :aria-selected="tab === '{{ .ID }}'" :tabindex="tab === '{{ .ID }}' ? 0 : -1" aria-controls="cat-panel-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" @click="tab = '{{ .ID }}'">{{ if .ImageURL }}<img class="tab-cat-img" src="{{ imgv .ImageURL }}" alt="" loading="lazy">{{ end }}{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</button>
+          {{/* ut-docs#2698: tab-hidden-only -- every tile in this category is
+               hidden, so at rest the tab is out of sight (app.css) and it
+               only shows while the grid is in jiggle mode, where its greyed
+               tiles can be unhidden. Never on the Designer, which always
+               shows hidden tiles. */}}
+          <button type="button" id="cat-tab-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" class="tab{{ if and (not .HasVisible) (not $.EditMode) }} tab-hidden-only{{ end }}" role="tab" data-cat-tab data-tab-id="{{ .ID }}" style="--cat-color: {{ .Color }}" :class="tab === '{{ .ID }}' && 'active'" :aria-selected="tab === '{{ .ID }}'" :tabindex="tab === '{{ .ID }}' ? 0 : -1" aria-controls="cat-panel-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" @click="tab = '{{ .ID }}'">{{ if .ImageURL }}<img class="tab-cat-img" src="{{ imgv .ImageURL }}" alt="" loading="lazy">{{ end }}{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</button>
           {{ end }}
           {{/* ut-docs#2307: the trailing "more categories" button --
                card's own literal ask ("a ... button at the right; when
@@ -651,12 +701,12 @@
           </div>
           <div class="grid category-overflow-grid">
             {{ range $g := .Groups }}
-            <button type="button" class="category-overflow-tile" style="--cat-color: {{ $g.Color }}"
+            <button type="button" class="category-overflow-tile{{ if and (not $g.HasVisible) (not $.EditMode) }} tab-hidden-only{{ end }}" style="--cat-color: {{ $g.Color }}"
                     :class="tab === '{{ $g.ID }}' && 'active'" :aria-current="tab === '{{ $g.ID }}' ? 'true' : null"
                     @click="selectCategoryFromOverflow('{{ $g.ID }}')">
               {{ if $g.ImageURL }}<img class="category-tile-img" src="{{ imgv $g.ImageURL }}" alt="" loading="lazy">{{ end }}
               <span class="category-tile-name">{{ if $g.ID }}{{ $g.Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</span>
-              <span class="category-overflow-count">{{ printf (T "products.category_button_count") (len $g.Buttons) }}</span>
+              <span class="category-overflow-count">{{ printf (T "products.category_button_count") $g.VisibleButtons }}</span>
             </button>
             {{ end }}
           </div>
@@ -720,6 +770,26 @@
         </a>
         {{ end }}
       </div>
+      {{/* ut-docs#2339: the jiggle edit mode's Done bar. Hidden at rest;
+           app.js's utTileJiggle unhides it (and adds .jiggle-mode to
+           #buttons-grid below) after a long-press/right-click on a tile,
+           and hides it again on Done / Escape / a tap outside the grid --
+           the one moment the new order is POSTed to /api/buttons/reorder.
+           Sticky at the top of .products' own scroll, so Done is always
+           reachable however far down the grid the drag ended. The label
+           doubles as the live-region announcement of the mode change
+           (aria-live on the bar, role=status: assertive would interrupt
+           the tile's own accessible name mid-read). The Done button is a
+           real <button>, tabbable, so a keyboard user can leave the mode
+           the same way they can move tiles in it (ArrowLeft/ArrowRight on
+           a focused tile -- app.js). common.done is the existing generic
+           key (settings/plugins modals use it too), not a new one.
+           ut-docs#2698: it sits above #search-results, since the search
+           stays usable in edit mode -- Done stays at the top either way. */}}
+      <div class="jiggle-bar" data-testid="jiggle-bar" role="status" aria-live="polite" hidden>
+        <span class="jiggle-bar-title">{{ T "buttons.edit_mode.title" }}</span>
+        <button type="button" class="btn primary compact jiggle-done" data-testid="jiggle-done">{{ T "common.done" }}</button>
+      </div>
       {{/* ut-docs#2294: search results are a SEPARATE view from the tabs/
            grid below, not a filter layered on top of them — while q is
            non-empty, #buttons-grid hides (x-show="!q" below) and this
@@ -734,24 +804,6 @@
            its own #search-results (buttons_admin.html's add-a-button
            dropdown); a second one was a duplicate id on the page. */}}
       {{ if not .EditMode }}<div id="search-results" class="category-groups" x-show="q"></div>{{ end }}
-      {{/* ut-docs#2339: the jiggle edit mode's Done bar. Hidden at rest;
-           app.js's utTileJiggle unhides it (and adds .jiggle-mode to
-           #buttons-grid below) after a long-press/right-click on a tile,
-           and hides it again on Done / Escape / a tap outside the grid --
-           the one moment the new order is POSTed to /api/buttons/reorder.
-           Sticky at the top of .products' own scroll, so Done is always
-           reachable however far down the grid the drag ended. The label
-           doubles as the live-region announcement of the mode change
-           (aria-live on the bar, role=status: assertive would interrupt
-           the tile's own accessible name mid-read). The Done button is a
-           real <button>, tabbable, so a keyboard user can leave the mode
-           the same way they can move tiles in it (ArrowLeft/ArrowRight on
-           a focused tile -- app.js). common.done is the existing generic
-           key (settings/plugins modals use it too), not a new one. */}}
-      <div class="jiggle-bar" data-testid="jiggle-bar" role="status" aria-live="polite" hidden>
-        <span class="jiggle-bar-title">{{ T "buttons.edit_mode.title" }}</span>
-        <button type="button" class="btn primary compact jiggle-done" data-testid="jiggle-done">{{ T "common.done" }}</button>
-      </div>
       <div id="buttons-grid" class="category-groups" x-show="!q">
         {{ if eq $mode "category_tabs" }}
         {{/* ut-docs#2499 category_tabs: a grid of category tiles -- one per
@@ -1150,7 +1202,8 @@
       {{ range .Buttons }}{{ template "product-tile" . }}{{ end }}
     </div>
   </section>
-  {{ else if and (not .HasButtons) (not .Children) }}
+  {{ end }}
+  {{ if and (not .HasButtons) (not .Children) }}
   {{/* ut-docs#2498: this group survived BuildCategoryGroups' pruning with
        ZERO quick buttons anywhere in its own subtree — only possible now
        that a category can also survive via an active-item count. Before
@@ -1170,7 +1223,11 @@
        one that also has no buttons shows this same message under its own
        "category-group" header (below), which already handles the
        childless case correctly on its own. */}}
-  <p class="empty" data-testid="category-empty-state">{{ T "products.category_no_buttons" }}</p>
+  {{/* ut-docs#2698: also reached when this group's tiles are ALL hidden
+       (HasButtons counts visible ones only): at rest the grid above shows
+       nothing, so this says so; in jiggle mode / on the Designer the greyed
+       tiles show instead and --hidden-only (app.css) hides this line. */}}
+  <p class="empty{{ if .Buttons }} category-empty-state--hidden-only{{ end }}" data-testid="category-empty-state">{{ T "products.category_no_buttons" }}</p>
   {{ end }}
   {{ range .Children }}{{ template "category-group" . }}{{ end }}
 {{ end }}
@@ -1209,11 +1266,12 @@
   <div class="grid">
     {{ range .Buttons }}{{ template "product-tile" . }}{{ end }}
   </div>
-  {{ else if not .HasButtons }}
+  {{ end }}
+  {{ if not .HasButtons }}
   {{/* ut-docs#2498: same empty-state case as "category-group-body-tabbed"
        above, for a NESTED subcategory rendered via this recursive
-       template instead. */}}
-  <p class="empty" data-testid="category-empty-state">{{ T "products.category_no_buttons" }}</p>
+       template instead (ut-docs#2698: including its hidden-only case). */}}
+  <p class="empty{{ if .Buttons }} category-empty-state--hidden-only{{ end }}" data-testid="category-empty-state">{{ T "products.category_no_buttons" }}</p>
   {{ end }}
   {{ range .Children }}{{ template "category-group" . }}{{ end }}
 </section>
@@ -1333,9 +1391,22 @@
 </div>
 {{ end }}
 
+{{/* ut-docs#2698: a HIDDEN tile (ui.ButtonVM.Hidden) is rendered in its own
+     spot rather than left out, so edit mode can show it greyed with an
+     Unhide badge -- sale-screen jiggle mode is a client-side class toggle
+     (app.js's utTileJiggle), so the tile has to be in the DOM already.
+     .tile--hidden greys it (app.css: desaturated, faded picture, eye-off
+     glyph -- never colour alone; the name keeps full contrast) and
+     data-hidden marks it; on the sale screen .tile--rest-hidden also keeps
+     it display:none unless #buttons-grid is in .jiggle-mode, so the resting
+     sell screen looks exactly as if it weren't there. The Designer
+     (.Editing) always shows it greyed. A tap on it never sells: jiggle
+     mode eats tile clicks, and the Designer's tiles are inert. */}}
+{{ define "tile-hidden-mark" }}{{ if .Hidden }}<span class="tile-hidden-mark" aria-hidden="true">{{ icon "eye-off" }}</span><span class="visually-hidden">{{ T "tile_sheet.hidden_state" }}</span>{{ end }}{{ end }}
+
 {{ define "product-tile" }}
   {{ $colored := and (not .ImageURL) .Color }}
-  <div class="tile-cell" data-name="{{ .Label }}" x-show="matches($el)">
+  <div class="tile-cell{{ if .Hidden }} tile--hidden{{ if not .Editing }} tile--rest-hidden{{ end }}{{ end }}" data-name="{{ .Label }}" x-show="matches($el)">
   {{/* ut-docs#2174: on the Designer's live replica (.Editing, see
        ui.ButtonVM.Editing) the tile is INERT -- same class, data-code/
        data-item-id/data-pos and body as a live tile (so utTileJiggle's
@@ -1348,18 +1419,19 @@
     type="button"
     class="btn-tile{{ if $colored }} tile-colored{{ end }}"
     data-name="{{ .Label }}"
-    data-code="{{ .Code }}" data-item-id="{{ .ItemID }}" data-pos="{{ .Pos }}"
+    data-code="{{ .Code }}" data-item-id="{{ .ItemID }}" data-pos="{{ .Pos }}"{{ if .Hidden }} data-hidden{{ end }}
     data-testid="designer-tile"
     {{ if $colored }}style="--tile-color: {{ .Color }}"{{ end }}>
     {{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}
     <span class="tile-name">{{ .Label }}</span>
     {{ if .Price }}<span class="tile-price">{{ money .Price }}</span>{{ end }}
+    {{ template "tile-hidden-mark" . }}
   </button>
   {{ else if or .HasModifiers .HasVariants }}
   <button
     class="btn-tile{{ if $colored }} tile-colored{{ end }}"
     data-name="{{ .Label }}"
-    data-code="{{ .Code }}" data-item-id="{{ .ItemID }}" data-pos="{{ .Pos }}"
+    data-code="{{ .Code }}" data-item-id="{{ .ItemID }}" data-pos="{{ .Pos }}"{{ if .Hidden }} data-hidden{{ end }}
     {{ if $colored }}style="--tile-color: {{ .Color }}"{{ end }}
     hx-get="/ui/pos/modifiers?item={{ .ItemID }}&code={{ .Code }}"
     hx-trigger="click"
@@ -1369,12 +1441,13 @@
     {{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}
     <span class="tile-name">{{ .Label }}</span>
     {{ if .Price }}<span class="tile-price">{{ money .Price }}</span>{{ end }}
+    {{ template "tile-hidden-mark" . }}
   </button>
   {{ else }}
   <button
     class="btn-tile{{ if $colored }} tile-colored{{ end }}"
     data-name="{{ .Label }}"
-    data-code="{{ .Code }}" data-item-id="{{ .ItemID }}" data-pos="{{ .Pos }}"
+    data-code="{{ .Code }}" data-item-id="{{ .ItemID }}" data-pos="{{ .Pos }}"{{ if .Hidden }} data-hidden{{ end }}
     {{ if $colored }}style="--tile-color: {{ .Color }}"{{ end }}
     hx-post="/api/pos/scan"
     hx-vals='{{ jsonVals "code" .Code }}'
@@ -1385,6 +1458,7 @@
     {{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}
     <span class="tile-name">{{ .Label }}</span>
     {{ if .Price }}<span class="tile-price">{{ money .Price }}</span>{{ end }}
+    {{ template "tile-hidden-mark" . }}
   </button>
   {{ end }}
     {{/* ut-docs#2361: a non-granted (cashier) session sees a lock dot on
@@ -1408,39 +1482,56 @@
         <span class="tile-badge-dot" aria-hidden="true">{{ icon "pencil" }}</span>
         {{ if .Locked }}<span class="tile-badge-dot tile-badge-lock" data-testid="tile-badge-lock-edit" aria-hidden="true">{{ icon "lock" }}</span>{{ end }}
       </a>
-      {{/* ut-docs#2541: this badge now DELETES the item itself (soft-
-           deactivate, the same pos.DeactivateItem the catalog page's own
-           "Delete item" uses) rather than just removing its quick-button
-           row -- every active item is a quick button by default now, so a
-           plain row delete would let the tile silently reappear on the
-           very next render. Kept the same data-testid/class/corner
-           (existing geometry/gate tests key off "tile-badge-remove") since
-           it's still visually the trash badge in the same spot -- only its
-           target route, confirm wording and accessible name changed. */}}
+      {{/* ut-docs#2698: the trash badge REMOVES the item from the quick
+           buttons -- gone from the grid at rest and in edit mode -- and
+           never touches the catalog item: it stays active and keeps
+           selling by scan/search, and "Add to quick buttons" from the
+           search (edit mode) or the Designer's search brings it back.
+           (#2541 had made this badge deactivate the item; deactivating
+           stays in the catalog editor, the pencil badge.) Same data-testid/
+           class/corner as before -- geometry/gate tests key off
+           "tile-badge-remove". */}}
       <button type="button" class="tile-badge tile-badge-remove{{ if .Locked }} locked{{ end }}" data-testid="tile-badge-remove"
-              hx-post="/api/buttons/delete-item" hx-vals='{{ jsonVals "itemId" .ItemID }}'
+              hx-post="/api/buttons/remove-from-grid" hx-vals='{{ jsonVals "itemId" .ItemID }}'
               {{/* ut-docs#2361, same reasoning as tile_sheet.html's own
                    remove button: no hx-confirm when Locked -- a
                    non-granted operator's tap must reach the server and
                    land on the real elevation prompt, not a client-side
                    confirm() dialog that would only ever precede the SAME
                    eventual elevation either way. The confirm still guards
-                   the real, granted delete path unchanged. */}}
-              {{ if not .Locked }}hx-confirm="{{ printf (T "tile_sheet.delete_item_confirm") .Label }}"{{ end }}
+                   the real, granted path unchanged. */}}
+              {{ if not .Locked }}hx-confirm="{{ printf (T "tile_sheet.remove_from_grid_confirm") .Label }}"{{ end }}
               hx-swap="none"
-              aria-label="{{ if .Locked }}{{ T "tile_sheet.delete_item" }} — {{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.delete_item" }}{{ end }}"
-              title="{{ if .Locked }}{{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.delete_item" }}{{ end }}">
+              aria-label="{{ if .Locked }}{{ T "tile_sheet.remove" }} — {{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.remove" }}{{ end }}"
+              title="{{ if .Locked }}{{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.remove" }}{{ end }}">
         <span class="tile-badge-dot" aria-hidden="true">{{ icon "trash-2" }}</span>
         {{ if .Locked }}<span class="tile-badge-dot tile-badge-lock" data-testid="tile-badge-lock-remove" aria-hidden="true">{{ icon "lock" }}</span>{{ end }}
       </button>
+      {{ if .Hidden }}
+      {{/* ut-docs#2698: a hidden tile's Unhide badge, in the Hide badge's
+           own corner (inline-end bottom, logical properties) -- the same
+           44x44 hit area as every badge, an accent dot so it reads as the
+           way back. Named per tile ("Show on sell screen: <name>") because
+           several greyed tiles can sit side by side. No confirm: unhiding
+           is never destructive. */}}
+      <button type="button" class="tile-badge tile-badge-hide tile-badge-unhide{{ if .Locked }} locked{{ end }}" data-testid="tile-badge-unhide"
+              hx-post="/api/buttons/unhide" hx-vals='{{ jsonVals "itemId" .ItemID }}'
+              hx-swap="none"
+              aria-label="{{ printf (T "tile_sheet.unhide_named") .Label }}{{ if .Locked }} — {{ T "tile_sheet.locked" }}{{ end }}"
+              title="{{ if .Locked }}{{ T "tile_sheet.locked" }}{{ else }}{{ printf (T "tile_sheet.unhide_named") .Label }}{{ end }}">
+        <span class="tile-badge-dot" aria-hidden="true">{{ icon "eye" }}</span>
+        {{ if .Locked }}<span class="tile-badge-dot tile-badge-lock" data-testid="tile-badge-lock-unhide" aria-hidden="true">{{ icon "lock" }}</span>{{ end }}
+      </button>
+      {{ else }}
       {{/* ut-docs#2541: third badge, inline-END BOTTOM corner (logical CSS
            properties -- app.css's .tile-badge-hide sets inset-inline-end/
            inset-block-end, never left/right/bottom, so it mirrors correctly
            under RTL same as every other badge in this file) -- hides the
-           item from the sell screen grid/All grid without touching the
-           catalog item itself; reversible (Designer's "Hidden from sell
-           screen" section, Unhide), so no confirm at all, granted or
-           Locked alike. */}}
+           item from the sell screen at rest without touching the catalog
+           item itself; ut-docs#2698: the tile then stays in its spot,
+           greyed, while the grid is being edited. Reversible (its Unhide
+           badge, or the Designer's "Hidden from sell screen" section), so no
+           confirm at all, granted or Locked alike. */}}
       <button type="button" class="tile-badge tile-badge-hide{{ if .Locked }} locked{{ end }}" data-testid="tile-badge-hide"
               hx-post="/api/buttons/hide" hx-vals='{{ jsonVals "itemId" .ItemID }}'
               hx-swap="none"
@@ -1449,6 +1540,7 @@
         <span class="tile-badge-dot" aria-hidden="true">{{ icon "eye-off" }}</span>
         {{ if .Locked }}<span class="tile-badge-dot tile-badge-lock" data-testid="tile-badge-lock-hide" aria-hidden="true">{{ icon "lock" }}</span>{{ end }}
       </button>
+      {{ end }}
     </span>
   </div>
 {{ end }}
@@ -1461,10 +1553,31 @@
      SearchItemsForShortcuts), so "product-tile"'s own client-side
      x-show="matches($el)" (a NAME-only substring check) would wrongly
      re-hide a tile that matched by barcode/SKU rather than by name. */}}
+{{/* ut-docs#2698: a result whose item is not a visible quick button
+     (.NotOnGrid: hidden, or removed by the trash badge) also carries an
+     "Add to quick buttons" action -- the way back for a removed item from
+     the sale screen itself. Shown only while the grid is in jiggle mode
+     (app.css keys it off .products-finder.jiggle-active, which app.js's
+     utTileJiggle sets); at rest .search-result-cell is display: contents and
+     the result is exactly the sellable tile it always was. It posts the
+     same /api/buttons/add the Designer's search uses (catalog_management,
+     with the elevation prompt for a cashier), which clears both flags; its
+     buttons-changed refresh re-renders the grid with the tile back. */}}
 {{ define "products-search-results" }}
 {{ if .Results }}
 <div class="grid">
-  {{ range .Results }}{{ template "product-tile-result" . }}{{ end }}
+  {{ range .Results }}
+  {{ if .NotOnGrid }}
+  <div class="search-result-cell">
+    {{ template "product-tile-result" . }}
+    <button type="button" class="btn secondary compact search-add-quick" data-testid="search-add-quick-{{ .ItemID }}"
+            hx-post="/api/buttons/add" hx-vals='{{ jsonVals "label" .Label "code" .Code "itemId" .ItemID }}' hx-swap="none"
+            aria-label="{{ printf (T "products.add_to_quick_buttons_named") .Label }}">
+      <span class="btn-ico" aria-hidden="true">{{ icon "plus" }}</span>{{ T "products.add_to_quick_buttons" }}
+    </button>
+  </div>
+  {{ else }}{{ template "product-tile-result" . }}{{ end }}
+  {{ end }}
 </div>
 {{ else if .Query }}
 <p class="empty">{{ T "products.no_matches" }}</p>

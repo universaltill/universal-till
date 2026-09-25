@@ -241,12 +241,14 @@ func TestButtonStoreSave_ReplacesAllAndPersistsOrder(t *testing.T) {
 	// Second Save fully replaces, never merges. ut-docs#2541: once the
 	// second Save drops i1/i2's own explicit rows, Load() would otherwise
 	// bring them straight back as IMPLICIT tiles (every active,
-	// non-hidden item is a quick button by default now) — hidden here so
+	// non-hidden item is a quick button by default now) — removed from the
+	// quick buttons here (ut-docs#2698: a hidden one would still be in the
+	// grid load, marked Hidden) so
 	// this assertion stays about Save's replace-all contract, which is what
 	// it's actually testing; the implicit-merge behavior itself has its own
 	// dedicated tests below.
 	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('i3','S3','Three', 100, 1)`)
-	mustExec(t, db, `UPDATE items SET sell_screen_hidden = 1 WHERE id IN ('i1','i2')`)
+	mustExec(t, db, `UPDATE items SET sell_screen_removed = 1 WHERE id IN ('i1','i2')`)
 	if err := store.Save([]Button{{Label: "C", Code: "C1", ItemID: "i3"}}); err != nil {
 		t.Fatalf("Save replace: %v", err)
 	}

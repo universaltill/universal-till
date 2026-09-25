@@ -60,13 +60,15 @@ test.describe('Designer: show all hidden items on the sell screen (ut-docs#2614)
       const res = await page.request.post('/api/buttons/hide', { form: { itemId: id } });
       expect(res.ok(), `hide ${id}`).toBe(true);
     }
-    // With every item in it hidden, the category drops out of the strip
-    // entirely (hidden items don't count toward showing it).
+    // With every item in it hidden, the category drops out of the strip at
+    // rest (hidden items don't count toward showing it). ut-docs#2698: the
+    // tab and tiles are still rendered -- out of sight at rest, greyed while
+    // editing -- so "not visible", not "absent".
     await page.goto('/');
     await expect(page.locator('.products-tab-panel')).not.toHaveCount(0);
     await expect(page.getByRole('tab', { name: CAT })).toHaveCount(0);
-    await expect(tile(page, A.name)).toHaveCount(0);
-    await expect(tile(page, B.name)).toHaveCount(0);
+    await expect(tile(page, A.name)).toBeHidden();
+    await expect(tile(page, B.name)).toBeHidden();
 
     await page.goto('/designer');
     for (const id of ids) await expect(page.getByTestId(`designer-hidden-item-${id}`)).toBeVisible();

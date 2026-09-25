@@ -2414,6 +2414,62 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
 }
 .jiggle-bar[hidden] { display: none; }
 .jiggle-bar-title { font-size: .85rem; font-weight: 600; color: var(--muted); min-inline-size: 0; }
+/* ---------- Hidden tiles, edit-mode search add (ut-docs#2698) ----------
+   A HIDDEN quick button (buttons.html's product-tile, .tile--hidden) stays
+   in the rendered grid in its own spot, so edit mode can show it greyed
+   with an Unhide badge. On the sale screen it also carries
+   .tile--rest-hidden: display:none at rest, so the resting sell screen
+   looks exactly as if it weren't there, and a normal grid cell again once
+   #buttons-grid is in .jiggle-mode (same `block` the other cells get). The
+   Designer never adds .tile--rest-hidden -- it always shows them greyed.
+
+   Greyed, never by colour alone (WCAG 1.4.1): the tile's surface goes to
+   the neutral well colour with a dashed border and the category accent
+   desaturated; its picture and price fade (opacity + grayscale); and an
+   eye-off glyph sits in the tile. The NAME keeps var(--text) on
+   var(--surface-2) -- the same pair every other well in this file uses --
+   so the label stays well above 4.5:1 in both themes; opacity is never put
+   on the label or on the whole tile for exactly that reason. A colour
+   swatch tile loses its swatch (its white label would otherwise sit on a
+   greyed swatch). */
+.tile-cell.tile--rest-hidden { display: none; }
+.jiggle-mode .tile-cell.tile--rest-hidden { display: block; }
+.tile--hidden > .btn-tile,
+.tile--hidden > .btn-tile.tile-colored {
+  background: var(--surface-2); border-style: dashed; box-shadow: none;
+  border-inline-start-color: var(--border);
+}
+.tile--hidden > .btn-tile .thumb,
+.tile--hidden > .btn-tile .tile-price { opacity: .55; filter: grayscale(1); }
+.tile--hidden > .btn-tile .tile-name,
+.tile--hidden > .btn-tile.tile-colored .tile-name,
+.tile--hidden > .btn-tile.tile-colored .tile-price { color: var(--text); }
+.tile-hidden-mark { display: flex; justify-content: center; color: var(--muted); }
+.tile-hidden-mark svg { inline-size: 18px; block-size: 18px; }
+/* The Unhide badge takes the Hide badge's corner (.tile-badge-hide) and its
+   44x44 hit area (.tile-badge); an accent dot so it reads as the way back. */
+.tile-badge-unhide .tile-badge-dot { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast, #fff); }
+/* A category whose tiles are ALL hidden: its strip tab and overflow tile are
+   out of sight at rest and come back while the grid is in jiggle mode
+   (app.js's utTileJiggle sets .jiggle-active on .products-finder, the
+   tabs' ancestor -- #buttons-grid, which carries .jiggle-mode, is their
+   sibling). The "no quick buttons yet" line under such a category is the
+   at-rest message only: in jiggle mode and on the Designer the greyed tiles
+   show instead. */
+.tab.tab-hidden-only, .category-overflow-tile.tab-hidden-only { display: none; }
+.jiggle-active .tab.tab-hidden-only:not([hidden]) { display: inline-block; }
+.jiggle-active .category-overflow-tile.tab-hidden-only { display: flex; }
+.jiggle-mode .category-empty-state--hidden-only,
+.products--edit .category-empty-state--hidden-only { display: none; }
+/* Sell-screen search in edit mode: a result that isn't a visible quick
+   button carries "Add to quick buttons". At rest the wrapper is
+   display: contents and the action display:none, so the result is the same
+   sellable tile it always was; in jiggle mode the pair stacks in one grid
+   cell. The action is a plain .btn (>= the 44px floor). */
+.search-result-cell { display: contents; }
+.search-add-quick { display: none; }
+.jiggle-active .search-result-cell { display: flex; flex-direction: column; gap: .35rem; min-inline-size: 0; }
+.jiggle-active .search-add-quick { display: inline-flex; justify-content: center; min-block-size: 44px; white-space: normal; }
 /* ut-docs#2095: #tax-codes-modal/#import-modal are .item-form-modal, not
    .modifier-modal (independent review, F1/F2 -- both dialogs hold real
    text inputs, so they need the same OSK-reachable .show()/no-top-layer
