@@ -406,6 +406,45 @@ func TestSemanticTintBorders_MonochromeIsColourless(t *testing.T) {
 	}
 }
 
+// TestChipWarnRule_OverridesMonospaceAndUppercase guards ut-docs#2648: the
+// "⚠ N item(s) predicted to run out" chip on Reports/Inventory used
+// class="chip chip-warn", but .chip itself is the monospace CODE chip
+// (variant/option-set values etc.) and chip-warn had no rule of its own, so
+// the chip rendered in a monospace font and, inside an h2, picked up the
+// global h2 rule's text-transform: uppercase + letter-spacing — words, not
+// codes, must not inherit either. Reads the real embedded app.css via
+// registerStatic, same pattern as the semantic-tint tests above, so an edit
+// to the CSS is what this actually exercises.
+func TestChipWarnRule_OverridesMonospaceAndUppercase(t *testing.T) {
+	mux := http.NewServeMux()
+	registerStatic(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/public/app.css", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /public/app.css = %d, want 200", rec.Code)
+	}
+	css := rec.Body.String()
+
+	idx := strings.Index(css, ".chip-warn {")
+	if idx == -1 {
+		t.Fatal("app.css: missing a .chip-warn rule")
+	}
+	// Only look at the .chip-warn rule itself, not some later unrelated rule
+	// that happens to contain the same substrings.
+	end := strings.Index(css[idx:], "}")
+	if end == -1 {
+		t.Fatal("app.css: .chip-warn rule has no closing brace")
+	}
+	rule := css[idx : idx+end]
+	for _, want := range []string{"font-family: inherit", "text-transform: none", "letter-spacing: normal"} {
+		if !strings.Contains(rule, want) {
+			t.Errorf(".chip-warn rule missing %q; got: %s", want, rule)
+		}
+	}
+}
+
 func TestResolvePluginThemeCSS_RejectsEscapingConfig(t *testing.T) {
 	d, _, _ := themeTestDeps(t)
 	if _, err := d.Db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('com.x.evil','Evil','1.0.0',1)`); err != nil {
