@@ -9,7 +9,8 @@ import (
 // DemoInstanceRepo reads and writes the demo-template flag (migration 046,
 // ADR-0113 §1.2, ut-docs#2687): the single demo_instance row that marks a
 // database as a public-demo template. internal/app's start gate is the
-// reader; the demo template build (and tests) are the only writers.
+// reader. The only writer is the demo template build (ut-docs#2796), which
+// adds its own write path; tests seed the row directly.
 type DemoInstanceRepo struct {
 	db *sql.DB
 }
@@ -30,11 +31,4 @@ func (r *DemoInstanceRepo) IsDemoInstance(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	return true, nil
-}
-
-// MarkDemoInstance sets the demo flag. Idempotent. Never called by a
-// running till: only the demo template build and tests.
-func (r *DemoInstanceRepo) MarkDemoInstance(ctx context.Context) error {
-	_, err := r.db.ExecContext(ctx, `INSERT OR IGNORE INTO demo_instance (id) VALUES (1)`)
-	return err
 }

@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
-	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -160,7 +159,7 @@ func TestRun_DemoOffOnFlaggedDatabaseRefusesToStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed db: %v", err)
 	}
-	if err := data.NewDemoInstanceRepo(seed.DB).MarkDemoInstance(context.Background()); err != nil {
+	if err := markDemoInstance(seed.DB); err != nil {
 		t.Fatalf("mark demo: %v", err)
 	}
 	seed.Close()
@@ -176,7 +175,7 @@ func TestRun_DemoWithAuthOffRefusesToStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed db: %v", err)
 	}
-	if err := data.NewDemoInstanceRepo(seed.DB).MarkDemoInstance(context.Background()); err != nil {
+	if err := markDemoInstance(seed.DB); err != nil {
 		t.Fatalf("mark demo: %v", err)
 	}
 	seed.Close()
@@ -239,4 +238,11 @@ func TestRun_DemoBootFailureExitsInsteadOfRecoveryMode(t *testing.T) {
 		_ = conn.Close()
 		t.Fatalf("something is listening on %s after a refused demo boot", addr)
 	}
+}
+
+// markDemoInstance seeds the demo_instance flag row (migration 046) the way
+// the demo template build will; test-only, so it stays out of internal/data.
+func markDemoInstance(dbh *sql.DB) error {
+	_, err := dbh.ExecContext(context.Background(), `INSERT OR IGNORE INTO demo_instance (id) VALUES (1)`)
+	return err
 }

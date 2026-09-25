@@ -11,7 +11,8 @@ import (
 
 // ADR-0113 §1.2 (ut-docs#2687): the demo flag baked into a demo template
 // database. A freshly migrated database — every real till — never carries
-// it; MarkDemoInstance sets it, idempotently, and it reads back.
+// it; seeding the row (as the template build will) reads back, and the
+// table holds at most that one row.
 func TestDemoInstanceRepo_FlagRoundTrip(t *testing.T) {
 	dbh, err := db.Open(testsupport.MigratedDBFile(t, "test.db"))
 	if err != nil {
@@ -25,8 +26,8 @@ func TestDemoInstanceRepo_FlagRoundTrip(t *testing.T) {
 		t.Fatalf("fresh database: IsDemoInstance = (%v, %v), want (false, nil)", on, err)
 	}
 	for i := 0; i < 2; i++ { // second mark must be a no-op, not a constraint error
-		if err := repo.MarkDemoInstance(ctx); err != nil {
-			t.Fatalf("MarkDemoInstance #%d: %v", i+1, err)
+		if _, err := dbh.DB.ExecContext(ctx, `INSERT OR IGNORE INTO demo_instance (id) VALUES (1)`); err != nil {
+			t.Fatalf("seed demo flag #%d: %v", i+1, err)
 		}
 	}
 	if on, err := repo.IsDemoInstance(ctx); err != nil || !on {
