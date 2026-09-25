@@ -658,6 +658,21 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		id := strings.TrimSpace(r.Form.Get("id"))
 		tableID := strings.TrimSpace(r.Form.Get("table_id"))
+		// ut-docs#2702 review: the held-sales strip this handler used to
+		// re-render is gone from the sale screen; the Move table control
+		// now lives on the Open orders popup's rows, which post
+		// view=parked-orders so the answer is the popup body (same
+		// toast-on-refusal contract, #parked-orders-body swapped). Any
+		// other value keeps the legacy strip fragment.
+		renderHeldStripWithToast := renderHeldStripWithToast
+		if r.Form.Get("view") == "parked-orders" {
+			renderHeldStripWithToast = func(w http.ResponseWriter, r *http.Request, toast, level string) {
+				renderParkedOrdersPopup(w, r, d, repo, posRepo, toast, level)
+			}
+		}
+		renderHeldStrip := func(w http.ResponseWriter, r *http.Request) {
+			renderHeldStripWithToast(w, r, "", "")
+		}
 		if id == "" {
 			renderHeldStrip(w, r)
 			return

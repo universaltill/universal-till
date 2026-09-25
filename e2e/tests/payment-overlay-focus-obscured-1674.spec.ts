@@ -20,50 +20,12 @@ test.describe('remaining covered controls drop out of tab order while the paymen
     await page.request.post('/api/pos/reset');
   });
 
-  test('quick-pay (the more urgent one — activating it charges the sale) gets tabindex=-1 while covered at 1024x600, and stays reachable at 1920x1080 where it is not covered', async ({ page }) => {
-    await page.setViewportSize({ width: 1024, height: 600 });
-    await page.goto('/');
-    await page.waitForSelector('.pos-container');
-    // ut-docs#1984: Payment is now disabled on an empty basket (the server-
-    // global engine, reset above) — scan once; it stays non-empty across
-    // this test's later page.goto() calls (client-side nav only).
-    await page.getByRole('textbox').first().fill('5000000000012');
-    await page.locator('.scan-row button[type=submit]').click();
-    await expect(page.locator('#basket')).toContainText('Coca-Cola');
+  // ut-docs#2702: the quick-pay test that sat here went with the quick-pay
+  // button (its one-tap job moved inside the payment overlay itself, so it
+  // can no longer be covered BY that overlay). The remaining action-row
+  // controls are covered by payment-overlay-focus-sweep-1702.spec.ts.
 
-    const quickPay = page.getByTestId('quick-pay');
-    await expect(quickPay).not.toHaveAttribute('tabindex', '-1');
-
-    await page.getByTestId('payment-open').click();
-    await expect(page.locator('#payment-overlay')).toBeVisible();
-    await expect(quickPay).toHaveAttribute('tabindex', '-1');
-
-    await page.getByTestId('payment-close').click();
-    await expect(page.locator('#payment-overlay')).not.toBeVisible();
-    await expect(quickPay).not.toHaveAttribute('tabindex', '-1');
-
-    // Negative control at a width the review measured quick-pay as NOT
-    // covered (901-1500px is the measured covered range) — must stay
-    // reachable, mirroring #1629's own wide-viewport negative control.
-    await page.setViewportSize({ width: 1920, height: 1080 });
-    await page.goto('/');
-    await page.waitForSelector('.pos-container');
-    const quickPayWide = page.getByTestId('quick-pay');
-    await page.getByTestId('payment-open').click();
-    await expect(page.locator('#payment-overlay')).toBeVisible();
-
-    const isCovered = async () =>
-      quickPayWide.evaluate((el) => {
-        const r = el.getBoundingClientRect();
-        const overlay = document.getElementById('payment-overlay')!;
-        const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-        return !!at && (at === overlay || overlay.contains(at));
-      });
-    expect(await isCovered(), 'quick-pay must not be covered at 1920x1080').toBe(false);
-    await expect(quickPayWide).not.toHaveAttribute('tabindex', '-1');
-  });
-
-  test('the Payment trigger itself gets tabindex=-1 while the overlay it opens covers it (measured covered at every width 901-1920px) — and stays clickable to open the overlay in the first place', async ({ page }) => {
+  test('the Payment trigger itself gets tabindex=-1 while the overlay it opens covers it (1024x600), stays in the tab order where it is not covered (1920x1080, ut-docs#2702) — and stays clickable to open the overlay in the first place', async ({ page }) => {
     await page.setViewportSize({ width: 1024, height: 600 });
     await page.goto('/');
     await page.waitForSelector('.pos-container');
@@ -87,20 +49,24 @@ test.describe('remaining covered controls drop out of tab order while the paymen
     await expect(page.locator('#payment-overlay')).not.toBeVisible();
     await expect(paymentOpen).not.toHaveAttribute('tabindex', '-1');
 
-    // No not-covered negative control at a desktop width: the review's own
-    // coverage sweep measured the Payment trigger as covered at EVERY width
-    // tested, 901-1920px, unconditionally — unlike quick-pay/Hold Sale/New
-    // Sale, there isn't a wide viewport where it escapes the overlay. So
-    // this spec asserts covered-and-tabindex=-1 at a second, wide viewport
-    // too, instead of inventing a negative control that doesn't exist in
-    // the measured range.
+    // ut-docs#2702: Pay now LEADS the action row (inline start), so at a
+    // wide desktop viewport it sits clear of the overlay, which opens over
+    // the end of the right-hand column -- the negative control this test
+    // could not have before: not covered, so it stays in the tab order.
     await page.setViewportSize({ width: 1920, height: 1080 });
     await page.goto('/');
     await page.waitForSelector('.pos-container');
     const paymentOpenWide = page.getByTestId('payment-open');
     await paymentOpenWide.click();
     await expect(page.locator('#payment-overlay')).toBeVisible();
-    await expect(paymentOpenWide).toHaveAttribute('tabindex', '-1');
+    const coveredWide = await paymentOpenWide.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const overlay = document.getElementById('payment-overlay')!;
+      const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return !!at && (at === overlay || overlay.contains(at));
+    });
+    expect(coveredWide, 'Pay leads the row and must not be covered at 1920x1080').toBe(false);
+    await expect(paymentOpenWide).not.toHaveAttribute('tabindex', '-1');
   });
 
   test('the phone-width New Sale duplicate gets tabindex=-1 while covered at 375x667 (overlay goes full-screen), and the existing not-rendered guard still no-ops it at 1024x600 where it is display:none', async ({ page }) => {

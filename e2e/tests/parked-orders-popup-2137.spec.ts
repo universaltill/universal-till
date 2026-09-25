@@ -45,10 +45,9 @@ test('a parked order can be picked back up from the popup beside Card', async ({
   await page.goto('/');
   await parkASale(page, 'Table 9');
 
-  // The trigger is in the quick-pay row, next to Card -- the product owner's
-  // own placement, and the reason this is reachable at all on a 1280x800
-  // tablet where the strip is not.
-  const trigger = page.locator('.tender-quickpay [data-testid="parked-orders-open"]');
+  // The trigger is an icon in the tender panel's one action row
+  // (ut-docs#2702; was beside Card in the quick-pay row, ut-docs#2137).
+  const trigger = page.locator('.tender-default-footer [data-testid="parked-orders-open"]');
   await expect(trigger).toBeVisible();
   await trigger.click();
 
@@ -75,7 +74,7 @@ test('the popup says so when nothing is parked, rather than opening empty', asyn
   await drainParkedOrders(page.request);
   await page.reload();
 
-  await page.locator('.tender-quickpay [data-testid="parked-orders-open"]').click();
+  await page.locator('.tender-default-footer [data-testid="parked-orders-open"]').click();
   const modal = page.locator('#parked-orders-modal');
   await expect(modal).toBeVisible();
   await expect(modal.locator('[data-testid="parked-orders-empty"]')).toBeVisible();
@@ -97,7 +96,7 @@ test('a resume while the basket is busy parks the current sale first, then opens
   await page.locator('.scan-row button[type=submit]').click();
   await expect(page.locator('#basket')).toContainText('Coca-Cola');
 
-  await page.locator('.tender-quickpay [data-testid="parked-orders-open"]').click();
+  await page.locator('.tender-default-footer [data-testid="parked-orders-open"]').click();
   const modal = page.locator('#parked-orders-modal');
   await expect(modal).toBeVisible();
   await modal.locator('.parked-order', { hasText: 'Table 5' }).click();
@@ -111,34 +110,17 @@ test('a resume while the basket is busy parks the current sale first, then opens
   // The sale that WAS live is not lost: it is parked under its own new
   // entry, and "Table 5" itself is gone from the list -- it's the live
   // basket now, not a parked one.
-  await page.locator('.tender-quickpay [data-testid="parked-orders-open"]').click();
+  await page.locator('.tender-default-footer [data-testid="parked-orders-open"]').click();
   await expect(modal).toBeVisible();
   await expect(modal.locator('.parked-order', { hasText: 'Table 5' })).toHaveCount(0);
   await expect(modal.locator('.parked-order')).toHaveCount(1);
 });
 
-// Regression guard for a measured CSS bug this popup shipped with in review:
-// at 38% flex-basis the trigger is 158px at 1024px wide, which fits the
-// English "Open orders" and NOT the German "Offene Vorgänge". The label
-// wrapped, the quick-pay row went 51px -> 66.6px, and the bottom of the Card
-// button was pushed into the tender pane's scroll -- on the 1024x600 kiosk
-// the ut-docs#1336 height budget exists to protect. English alone would never
-// have caught it, so this drives the label directly rather than trusting a
-// locale to be long enough.
-test('a long label does not make the quick-pay row taller', async ({ page }) => {
-  await page.setViewportSize({ width: 1024, height: 600 });
-  await page.goto('/');
-
-  const row = page.locator('.tender-quickpay');
-  const before = (await row.boundingBox())!.height;
-
-  await page.locator('.tender-quickpay [data-testid="parked-orders-open"]')
-    .evaluate((el) => { el.textContent = 'Offene Vorgänge'; });
-
-  const after = (await row.boundingBox())!.height;
-  expect(after, 'the trigger\'s label must not wrap the quick-pay row onto two lines')
-    .toBeCloseTo(before, 0);
-});
+// ut-docs#2702: the "long label does not make the quick-pay row taller"
+// guard that sat here went with the quick-pay row. The trigger is icon-only
+// now (its label is visually hidden), and the one-row/no-wrap invariant for
+// the whole action row -- long Pay label included -- is pinned by
+// compact-tender-panel-2702.spec.ts.
 
 // The whole reason this popup exists: it must work at the resolution where
 // the strip does not. 1280x800 is the pilot tablet.
@@ -147,7 +129,7 @@ test('the trigger and the popup work at the pilot tablet resolution', async ({ p
   await page.goto('/');
   await parkASale(page, 'Table 7');
 
-  const trigger = page.locator('.tender-quickpay [data-testid="parked-orders-open"]');
+  const trigger = page.locator('.tender-default-footer [data-testid="parked-orders-open"]');
   await expect(trigger).toBeInViewport();
 
   await trigger.click();

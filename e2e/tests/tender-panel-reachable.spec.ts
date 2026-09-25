@@ -141,215 +141,35 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
     assertClean();
   });
 
-  // 2026-08-30 (independent review, product-owner UX comparison against a
-  // competitor POS): the default view's Payment button (ut-docs#1252 —
-  // opens the payment overlay the two tests above already drive) has its
-  // OWN clipping failure mode neither of them can see: they both open the
-  // overlay first, so they only ever assert on elements INSIDE it, which
-  // is a <dialog> sized independently of `.pos-container`'s grid rows.
-  // The trigger button itself — Hold Sale + Payment, `.tender-default-
-  // footer` — lives in the always-visible default view and is exactly as
-  // exposed to `.tender`'s own height budget as the pre-#1252 pay-grid
-  // was. Two real regressions were caught live before this test existed:
-  // the button clipped by a few px at 1024x600 even with an empty till,
-  // and a growing held-sales strip (persistent DB state, not a transient)
-  // pushed it further down until it was off-screen entirely at 3 held
-  // sales — worse than the original always-visible-pay-grid bug this
-  // column's whole redesign was meant to fix. Fixed with a `.tender-
-  // scroll` wrapper (the growable part — scan row + held strip — scrolls
-  // in its own region, same split `.basket-scroll`/`.totals` already use)
-  // plus a small `@media (max-height)` row-split adjustment for the
-  // genuine base-case budget shortfall that remained. This test holds
-  // both fixes to account: no scroll, and no held-sales count regresses
-  // it.
-  test('the default-view Payment button is never clipped at 1024x600, with or without held sales', async ({ page }) => {
-    const assertClean = watchConsole(page);
-    await page.setViewportSize({ width: 1024, height: 600 });
-    await page.goto('/');
-    await page.waitForSelector('.pos-container');
-
-    const payBtn = page.getByTestId('payment-open');
-    const quickPayBtn = page.getByTestId('quick-pay');
-    const hitTestEl = (btn: typeof payBtn) =>
-      btn.evaluate((el) => {
-        const r = el.getBoundingClientRect();
-        const x = r.left + r.width / 2;
-        const y = r.bottom - 2;
-        if (y > window.innerHeight || y < 0) return false;
-        const at = document.elementFromPoint(x, y);
-        return !!at && (at === el || el.contains(at));
-      });
-    const hitTest = () => hitTestEl(payBtn);
-    // ut-docs#1336: the quick-pay row sits BELOW the Hold Sale/Payment row,
-    // so it's the new bottom-most (most clip-exposed) element in .tender's
-    // default view — hit-test it with the exact same bottom-edge probe.
-    const hitTestQuickPay = () => hitTestEl(quickPayBtn);
-
-    expect(await hitTest(), 'Payment button must be unclipped with an empty till, no scroll').toBe(true);
-    expect(await hitTestQuickPay(), 'quick-pay button must be unclipped with an empty till, no scroll').toBe(true);
-
-    // Hold three sales in a row — the held-sales strip is persistent DB
-    // state (grows with real use, not a transient edge case) and is what
-    // actually broke this before the fix. Deliberately NOT scrolling or
-    // waiting for anything past each hold to settle, matching how an
-    // operator would actually stack up parked orders.
-    const codes = ['5000000000012', '5000000000029', '5000000000012'];
-    for (let i = 0; i < codes.length; i++) {
-      await page.locator('input[name="code"]').first().fill(codes[i]);
-      await Promise.all([
-        page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
-        page.locator('.scan-row button[type=submit]').click(),
-      ]);
-      await page.locator('.tender-default-footer button', { hasText: 'Hold Sale' }).click();
-      const modal = page.locator('#hold-modal');
-      await expect(modal).toBeVisible();
-      await Promise.all([
-        page.waitForResponse((r) => r.url().includes('/api/pos/hold')),
-        modal.locator('button[type=submit]').click(),
-      ]);
-      await expect(modal).toBeHidden();
-
-      expect(
-        await hitTest(),
-        `Payment button must stay unclipped with ${i + 1} held sale(s), no scroll`,
-      ).toBe(true);
-      expect(
-        await hitTestQuickPay(),
-        `quick-pay button must stay unclipped with ${i + 1} held sale(s), no scroll`,
-      ).toBe(true);
-    }
-    assertClean();
-  });
-
-  // ut-docs#2128: the test above guards the Payment/quick-pay footer against
-  // the held-sales strip pushing it off screen -- but never checked whether
-  // the STRIP ITSELF stays reachable, which is exactly how a real product-
-  // owner report ("held sales not findable") got past this suite. Live
-  // measurement on both the pilot tablet's own resolution (1280x800) and
-  // this file's existing 1024x600 kiosk floor found every `.held-chip`
-  // already NOT a real hit-test target the moment there is even 1 held sale
-  // -- `.tender-scroll`'s `overflow-y: auto` genuinely has content past the
-  // fold there, same class as ut-docs#1313's `.products` overflow, just
-  // never given that pattern's scroll-shadow cue (app.css). This test
-  // guards the one invariant that must hold regardless of whether the chip
-  // needs a scroll to reach: it must be REACHABLE via scroll, never
-  // collapsed to a genuinely zero-height/unreachable state the way
-  // `.tab-panel` once did (this file's own opening comment) -- scrolling a
-  // chip into view and then hit-testing it, not just checking geometry,
-  // catches that class of regression even though this specific fix (the
-  // scroll-shadow affordance) doesn't change reachability itself.
-  for (const vp of [
-    { width: 1280, height: 800, label: '1280x800 (pilot tablet)' },
-    { width: 1024, height: 600, label: '1024x600 (kiosk floor)' },
-  ]) {
-    test(`held-sales chips stay reachable via scroll at ${vp.label}, 1-3 held sales`, async ({ page }) => {
-      const assertClean = watchConsole(page);
-      await page.setViewportSize({ width: vp.width, height: vp.height });
-      await page.goto('/');
-      await page.waitForSelector('.pos-container');
-      // This suite shares one server/DB across every spec, and held sales
-      // are persistent rows, not per-context state `/api/pos/reset` clears
-      // -- start from a genuine 0 so the i+1 count assertions below hold.
-      await clearAllHeldSales(page);
-
-      // try/finally, not a bare trailing call (independent review finding,
-      // ut-docs#2128): a thrown assertion below -- precisely the hit-test
-      // regression this test exists to catch -- would otherwise skip the
-      // cleanup entirely and leave up to 3 held sales behind for every
-      // later spec sharing this server/DB, turning one real failure into a
-      // cascade of unrelated ones.
-      try {
-        const codes = ['5000000000012', '5000000000029', '5000000000012'];
-        for (let i = 0; i < codes.length; i++) {
-          await page.locator('input[name="code"]').first().fill(codes[i]);
-          await Promise.all([
-            page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
-            page.locator('.scan-row button[type=submit]').click(),
-          ]);
-          await page.locator('.tender-default-footer button', { hasText: 'Hold Sale' }).click();
-          const modal = page.locator('#hold-modal');
-          await expect(modal).toBeVisible();
-          await Promise.all([
-            page.waitForResponse((r) => r.url().includes('/api/pos/hold')),
-            modal.locator('button[type=submit]').click(),
-          ]);
-          await expect(modal).toBeHidden();
-
-          // Every chip held so far must be reachable once scrolled into view --
-          // not just the newest one, since an earlier fix could in principle
-          // regress an EARLIER chip while leaving the latest one fine.
-          // ut-docs#2345: #held-sales is NOT part of the /api/pos/hold
-          // response's own #basket swap above -- it refreshes itself via a
-          // SEPARATE `hx-get="/ui/held" hx-trigger="held-changed from:body"`
-          // round trip (internal/pages/hold_api.go), fired off the back of
-          // this same request but not awaited by anything Playwright already
-          // waited on. A bare, one-shot `.count()` right after the modal
-          // closes samples the DOM before that second fetch necessarily
-          // lands -- rare but real under a loaded host (ut-docs#2345's own
-          // 4-worker parallel run hit it live). `toHaveCount` polls instead
-          // of sampling once, so it waits out that second round trip.
-          await expect(page.locator('.held-chip'), `expected ${i + 1} held chip(s) in the DOM`).toHaveCount(i + 1);
-          const chipCount = i + 1;
-          for (let c = 0; c < chipCount; c++) {
-            const chip = page.locator('.held-chip').nth(c);
-            await chip.scrollIntoViewIfNeeded();
-            const hit = await chip.evaluate((el) => {
-              const r = el.getBoundingClientRect();
-              const x = r.left + r.width / 2;
-              const y = r.top + r.height / 2;
-              if (y > window.innerHeight || y < 0 || x < 0 || x > window.innerWidth) return false;
-              const at = document.elementFromPoint(x, y);
-              return !!at && (at === el || el.contains(at));
-            });
-            expect(hit, `held chip ${c} must be a real hit-test target once scrolled into view, with ${i + 1} held sale(s)`).toBe(true);
-          }
-        }
-      } finally {
-        // Leave no held sale behind for the next spec sharing this server/DB,
-        // whether this test passed or threw.
-        await clearAllHeldSales(page);
-      }
-      assertClean();
+  // 2026-08-30 (independent review): the default view's action row has its
+  // OWN clipping failure mode the two tests above can't see -- they open the
+  // overlay first and only assert on elements INSIDE it. The row itself
+  // lives in the always-visible default view, exposed to `.tender`'s own
+  // height budget. Real regressions caught live before this test existed:
+  // the Payment button clipped at 1024x600 with an empty till, and a
+  // growing held-sales strip pushing it off-screen.
+  // ut-docs#2702: the strip and the quick-pay row are gone and the whole
+  // action row is ONE line (Pay + Hold / New sale / Open orders icons), so
+  // every control in it is hit-tested at its bottom edge (the most clip-
+  // exposed point), with 0 and 3 held sales -- held sales now only move
+  // the Open orders badge, and must never move the row.
+  const ACTION_ROW = ['payment-open', 'tender-footer-hold', 'kiosk-checkout-start', 'parked-orders-open'];
+  const bottomEdgeHit = (page: import('@playwright/test').Page, testid: string) =>
+    page.getByTestId(testid).evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const x = r.left + r.width / 2;
+      const y = r.bottom - 2;
+      if (y > window.innerHeight || y < 0 || x < 0 || x > window.innerWidth) return false;
+      const at = document.elementFromPoint(x, y);
+      return !!at && (at === el || el.contains(at));
     });
-  }
-
-  // ut-docs#1327, 2026-08-30: the 900px-width stacked tablet tier (basket/
-  // tender/products in one column — `.pos-container`'s own
-  // `@media (max-width: 900px)` block) clipped the Payment button too,
-  // independently of the 1024x600 kiosk-floor bug the tests above guard —
-  // this one is width-driven, not height-driven (confirmed: broken at
-  // every height from 800px down at this width, before the fix). Fixed as
-  // a side effect of shrinking `.tender-default-footer` (row layout, base
-  // .btn size instead of the old 4.2rem/1.15rem giant) for the product-
-  // owner's compactness pass, not touched deliberately — this test pins
-  // it so it can't silently regress next time this row's sizing changes.
-  test('the default-view Payment button is not clipped at the 900px-width stacked tablet tier (ut-docs#1327)', async ({ page }) => {
-    const assertClean = watchConsole(page);
-    await page.setViewportSize({ width: 850, height: 700 });
-    await page.goto('/');
-    await page.waitForSelector('.pos-container');
-
-    const hitTestEl = (btn: ReturnType<typeof page.getByTestId>) =>
-      btn.evaluate((el) => {
-        const r = el.getBoundingClientRect();
-        const x = r.left + r.width / 2;
-        const y = r.bottom - 2;
-        if (y > window.innerHeight || y < 0) return false;
-        const at = document.elementFromPoint(x, y);
-        return !!at && (at === el || el.contains(at));
-      });
-    const hitTest = () => hitTestEl(page.getByTestId('payment-open'));
-    const hitTestQuickPay = () => hitTestEl(page.getByTestId('quick-pay'));
-
-    expect(await hitTest(), 'Payment button must be unclipped at 850x700 with an empty till').toBe(true);
-    expect(await hitTestQuickPay(), 'quick-pay button must be unclipped at 850x700 with an empty till').toBe(true);
-
-    await page.locator('input[name="code"]').first().fill('5000000000012');
+  const holdOneSale = async (page: import('@playwright/test').Page, code: string) => {
+    await page.locator('input[name="code"]').first().fill(code);
     await Promise.all([
       page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
       page.locator('.scan-row button[type=submit]').click(),
     ]);
-    await page.locator('.tender-default-footer button', { hasText: 'Hold Sale' }).click();
+    await page.getByTestId('tender-footer-hold').click();
     const modal = page.locator('#hold-modal');
     await expect(modal).toBeVisible();
     await Promise.all([
@@ -357,70 +177,50 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
       modal.locator('button[type=submit]').click(),
     ]);
     await expect(modal).toBeHidden();
+  };
 
-    expect(await hitTest(), 'Payment button must stay unclipped at 850x700 with a held sale present').toBe(true);
-    expect(await hitTestQuickPay(), 'quick-pay button must stay unclipped at 850x700 with a held sale present').toBe(true);
-    assertClean();
-  });
-
-  // ut-docs#1336: one-tap quick pay. A second, full-width row below Hold
-  // Sale/Payment charges the shop's preferred/default method directly (same
-  // POST as the overlay's own pay-grid buttons), without opening the
-  // overlay. These tests hold it to the exact same standard the Payment
-  // trigger earned above: real hit-tests (not geometry), and a real tap
-  // that completes a real sale — a zero-height/occluded button passes
-  // isVisible and bounding-box checks, so those would be false-pass tests
-  // (see this file's header comment for the shipped bug that proved it).
-  test('the quick-pay button completes a sale with one tap, without opening the overlay (ut-docs#1336)', async ({ page }) => {
-    const assertClean = watchConsole(page);
-    await page.setViewportSize({ width: 1024, height: 600 });
-    await page.goto('/');
-    await page.waitForSelector('.pos-container');
-
-    await page.locator('input[name="code"]').first().fill('5000000000012');
-    await Promise.all([
-      page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
-      page.locator('.scan-row button[type=submit]').click(),
-    ]);
-    await expect(page.locator('#basket')).toContainText('Coca-Cola');
-
-    // The overlay must NOT be open — this is the whole point of the button.
-    await expect(page.locator('#payment-overlay')).not.toBeVisible();
-
-    const quickPay = page.getByTestId('quick-pay');
-    // Same tender POST the overlay's pay-grid buttons dispatch.
-    await Promise.all([
-      page.waitForResponse((r) => r.url().includes('/api/pos/tender')),
-      quickPay.click(), // no force: must be a genuinely landable click
-    ]);
-    await expect(page.locator('#basket.receipt-view')).toBeVisible();
-    assertClean();
-  });
-
-  test('the quick-pay button is a real hit-test target at 1280x800', async ({ page }) => {
-    const assertClean = watchConsole(page);
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await page.goto('/');
-    await page.waitForSelector('.pos-container');
-
-    const hit = await page.getByTestId('quick-pay').evaluate((el) => {
-      const r = el.getBoundingClientRect();
-      const x = r.left + r.width / 2;
-      const y = r.bottom - 2;
-      if (y > window.innerHeight || y < 0) return false;
-      const at = document.elementFromPoint(x, y);
-      return !!at && (at === el || el.contains(at));
+  for (const vp of [
+    { width: 1024, height: 600, label: '1024x600 (kiosk floor)' },
+    { width: 1280, height: 800, label: '1280x800 (pilot tablet)' },
+    // ut-docs#1327: the 900px-width stacked tablet tier (basket/tender/
+    // products in one column) clipped the Payment button independently of
+    // the height-driven kiosk-floor bug -- width-driven, not height-driven.
+    { width: 850, height: 700, label: '850x700 (stacked tablet tier)' },
+  ]) {
+    test(`the action row is never clipped at ${vp.label}, with or without held sales`, async ({ page }) => {
+      const assertClean = watchConsole(page);
+      await page.setViewportSize({ width: vp.width, height: vp.height });
+      await page.goto('/');
+      await page.waitForSelector('.pos-container');
+      await clearAllHeldSales(page);
+      try {
+        for (const id of ACTION_ROW) {
+          expect(await bottomEdgeHit(page, id), `${id} must be unclipped with no held sales, no scroll`).toBe(true);
+        }
+        const codes = ['5000000000012', '5000000000029', '5000000000012'];
+        for (let i = 0; i < codes.length; i++) {
+          await holdOneSale(page, codes[i]);
+          for (const id of ACTION_ROW) {
+            expect(await bottomEdgeHit(page, id), `${id} must stay unclipped with ${i + 1} held sale(s)`).toBe(true);
+          }
+        }
+        // >= not ==: other specs on this shared server may park orders too.
+        await expect.poll(async () => Number(await page.getByTestId('open-orders-badge').getAttribute('data-count'))).toBeGreaterThanOrEqual(3);
+      } finally {
+        // Held sales are persistent DB rows shared by every spec on this
+        // server -- leave none behind, pass or fail.
+        await clearAllHeldSales(page);
+      }
+      assertClean();
     });
-    expect(hit, 'quick-pay button must be unclipped at 1280x800').toBe(true);
-    assertClean();
-  });
+  }
 
   // 360px phone tier (ut-docs#413's breakpoint): .pos-container is
   // deliberately scrollable at this width ("never invisible, always
   // reachable via scroll"), so the contract here is reachability after a
-  // scroll plus no horizontal overflow — not the no-scroll guarantee the
-  // kiosk-floor tests above hold.
-  test('the quick-pay button is reachable at 360px phone width with no horizontal overflow', async ({ page }) => {
+  // scroll plus no horizontal overflow -- not the no-scroll guarantee the
+  // tests above hold.
+  test('the action row is reachable at 360px phone width with no horizontal overflow', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.setViewportSize({ width: 360, height: 640 });
     await page.goto('/');
@@ -430,75 +230,51 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
       scrollWidth: document.documentElement.scrollWidth,
       clientWidth: document.documentElement.clientWidth,
     }));
-    expect(
-      overflow.scrollWidth,
-      'quick-pay row must not widen the page past the 360px viewport',
-    ).toBeLessThanOrEqual(overflow.clientWidth);
+    expect(overflow.scrollWidth, 'the action row must not widen the page past 360px').toBeLessThanOrEqual(overflow.clientWidth);
 
-    const quickPay = page.getByTestId('quick-pay');
-    await quickPay.scrollIntoViewIfNeeded();
-    const hit = await quickPay.evaluate((el) => {
-      const r = el.getBoundingClientRect();
-      const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-      return !!at && (at === el || el.contains(at));
-    });
-    expect(hit, 'quick-pay button must be a real hit-test target at 360px width').toBe(true);
+    for (const id of ACTION_ROW) {
+      const el = page.getByTestId(id);
+      await el.scrollIntoViewIfNeeded();
+      const hit = await el.evaluate((node) => {
+        const r = node.getBoundingClientRect();
+        const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return !!at && (at === node || node.contains(at));
+      });
+      expect(hit, `${id} must be a real hit-test target at 360px width`).toBe(true);
+    }
     assertClean();
   });
 
-  // RTL (fa): the row is direction-agnostic (full-width, no left/right
-  // literals) — under dir="rtl" it must span the same inline extent as the
-  // Hold Sale/Payment row above it, and still be a real hit-test target.
-  //
-  // The measured subject is the ROW (.tender-quickpay), not the quick-pay
-  // button. Until ut-docs#2137 the button WAS the row's only child, so its
-  // box and the row's box were the same rectangle and asserting on either
-  // was equivalent. #2137 put the parked-orders trigger beside it (the
-  // product owner's own placement), so quick-pay now covers only part of
-  // the row and only the row still carries the full-width invariant this
-  // test exists for. Asserting on the button here would not be a stricter
-  // version of that invariant — it would be a different, now-false claim.
-  //
-  // What the button keeps is a direction assertion the old shape could not
-  // make at all: with two children, correct mirroring is observable, so we
-  // check the parked-orders trigger leads (sits at the row's right edge
-  // under RTL) and quick-pay trails. A stray `left`/`right` literal in the
-  // row's CSS would leave the DOM order unmirrored and fail here — which is
-  // what "mirrors correctly" in this test's name is supposed to mean.
-  test('the quick-pay row mirrors correctly under RTL (fa) and stays a real target', async ({ page }) => {
+  // RTL (fa): the row is DOM-ordered Pay, Hold, New sale, Open orders with
+  // no left/right literals, so under dir="rtl" Pay must take the inline
+  // START (the right edge) and the icons must run leftwards after it. A
+  // stray left/right in the row's CSS would leave it unmirrored and fail.
+  test('the action row mirrors under RTL (fa) and every control stays a real target', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto('/?lang=fa');
     await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
     await page.waitForSelector('.pos-container');
 
-    const geom = await page.evaluate(() => {
+    const geom = await page.evaluate((ids) => {
       const row = document.querySelector('.tender-default-footer')!.getBoundingClientRect();
-      const qpRow = document.querySelector('.tender-quickpay')!.getBoundingClientRect();
-      const qp = document.querySelector('[data-testid="quick-pay"]')!.getBoundingClientRect();
-      const parked = document.querySelector('[data-testid="parked-orders-open"]')!.getBoundingClientRect();
       return {
-        rowLeft: row.left, rowRight: row.right,
-        qpRowLeft: qpRow.left, qpRowRight: qpRow.right,
-        qpLeft: qp.left, qpRight: qp.right,
-        parkedLeft: parked.left, parkedRight: parked.right,
+        rowLeft: row.left,
+        rowRight: row.right,
+        boxes: ids.map((id) => {
+          const r = document.querySelector(`[data-testid="${id}"]`)!.getBoundingClientRect();
+          return { left: r.left, right: r.right };
+        }),
       };
-    });
-    expect(Math.abs(geom.qpRowLeft - geom.rowLeft), 'quick-pay row must start where the footer row starts (RTL)').toBeLessThan(2);
-    expect(Math.abs(geom.qpRowRight - geom.rowRight), 'quick-pay row must end where the footer row ends (RTL)').toBeLessThan(2);
-
-    // Mirrored: first child (parked orders) takes the right-hand end under
-    // RTL, quick-pay sits to its left. Under LTR this ordering is reversed,
-    // so a row that failed to mirror would trip this.
-    expect(Math.abs(geom.parkedRight - geom.rowRight), 'parked-orders trigger must lead at the row start (RTL = right edge)').toBeLessThan(2);
-    expect(geom.qpRight, 'quick-pay must sit inline-after the parked-orders trigger under RTL').toBeLessThanOrEqual(geom.parkedLeft + 2);
-
-    const hit = await page.getByTestId('quick-pay').evaluate((el) => {
-      const r = el.getBoundingClientRect();
-      const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-      return !!at && (at === el || el.contains(at));
-    });
-    expect(hit, 'quick-pay button must be a real hit-test target under RTL').toBe(true);
+    }, ACTION_ROW);
+    expect(Math.abs(geom.boxes[0].right - geom.rowRight), 'Pay must lead at the row start (RTL = right edge)').toBeLessThan(2);
+    expect(Math.abs(geom.boxes[3].left - geom.rowLeft), 'Open orders must end the row (RTL = left edge)').toBeLessThan(2);
+    for (let i = 1; i < geom.boxes.length; i++) {
+      expect(geom.boxes[i].right, `${ACTION_ROW[i]} must sit inline-after ${ACTION_ROW[i - 1]} under RTL`).toBeLessThanOrEqual(geom.boxes[i - 1].left + 1);
+    }
+    for (const id of ACTION_ROW) {
+      expect(await bottomEdgeHit(page, id), `${id} must be a real hit-test target under RTL`).toBe(true);
+    }
     assertClean();
   });
 });

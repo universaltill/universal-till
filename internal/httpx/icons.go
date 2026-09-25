@@ -150,6 +150,13 @@ var railIcons = map[string]string{
 	// (ut-docs#2000) the item form's own pinned Close button, which goes
 	// icon-only at phone width same as "trash-2" above.
 	"x": `<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`,
+	// ut-docs#2702 — the sale screen's compact tender row: Hold (park the
+	// sale) and the scan row's on-screen-keyboard toggle (was a ⌨️ emoji,
+	// the same emoji-font risk ut-docs#1859 removed elsewhere). Icon-only,
+	// so each use site pairs the glyph with a visually-hidden label + title.
+	// Lucide's "pause" and "keyboard" paths, unmodified.
+	"pause":    `<rect x="14" y="3" width="5" height="18" rx="1"/><rect x="5" y="3" width="5" height="18" rx="1"/>`,
+	"keyboard": `<path d="M10 8h.01"/><path d="M12 12h.01"/><path d="M14 8h.01"/><path d="M16 12h.01"/><path d="M18 8h.01"/><path d="M6 8h.01"/><path d="M7 16h10"/><path d="M8 12h.01"/><rect width="20" height="16" x="2" y="4" rx="2"/>`,
 	// Search — the list header's search-field adornment.
 	"search": `<path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/>`,
 	// Reorder move-up / move-down (categories.html; replaces the ▲/▼ text

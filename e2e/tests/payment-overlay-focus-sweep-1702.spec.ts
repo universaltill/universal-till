@@ -189,12 +189,14 @@ test.describe('the payment overlay focus sweep covers every focusable control it
 
   // Covers 4 of the 5 old explicit targets at a desktop-class viewport
   // (kiosk-checkout-start, tender-footer-hold, payment-open, quick-pay).
+  // ut-docs#2702: quick-pay left the sale screen; the Open orders icon
+  // (parked-orders-open) now shares that action row and takes its slot.
   // The 5th, kiosk-checkout-start-phone, only renders at phone width
   // (.kiosk-header.phone-fallback-only is CSS-hidden otherwise) and stays
   // covered by payment-overlay-focus-obscured-1674.spec.ts's own dedicated
   // 375x667 test — no coverage is lost, this test just isn't the one
   // driving it.
-  test('the pre-existing explicit targets (New Sale, Hold Sale, Payment, quick-pay) keep working exactly as before, driven through the same generalized sweep', async ({ page }) => {
+  test('the pre-existing explicit targets (New Sale, Hold Sale, Payment, Open orders) keep working exactly as before, driven through the same generalized sweep', async ({ page }) => {
     await page.setViewportSize({ width: 1024, height: 600 });
     await page.goto('/');
     await page.waitForSelector('.pos-container');
@@ -202,7 +204,7 @@ test.describe('the payment overlay focus sweep covers every focusable control it
     const originalNewSale = page.getByTestId('kiosk-checkout-start');
     const originalHold = page.getByTestId('tender-footer-hold');
     const paymentOpen = page.getByTestId('payment-open');
-    const quickPay = page.getByTestId('quick-pay');
+    const openOrders = page.getByTestId('parked-orders-open');
 
     // ut-docs#1984: scan an item first — Payment is disabled on an empty
     // basket.
@@ -216,7 +218,7 @@ test.describe('the payment overlay focus sweep covers every focusable control it
     await expect(originalNewSale).toHaveAttribute('tabindex', '-1');
     await expect(originalHold).toHaveAttribute('tabindex', '-1');
     await expect(paymentOpen).toHaveAttribute('tabindex', '-1');
-    await expect(quickPay).toHaveAttribute('tabindex', '-1');
+    await expect(openOrders).toHaveAttribute('tabindex', '-1');
 
     await page.getByTestId('payment-close').click();
     await expect(page.locator('#payment-overlay')).not.toBeVisible();
@@ -224,66 +226,13 @@ test.describe('the payment overlay focus sweep covers every focusable control it
     await expect(originalNewSale).not.toHaveAttribute('tabindex', '-1');
     await expect(originalHold).not.toHaveAttribute('tabindex', '-1');
     await expect(paymentOpen).not.toHaveAttribute('tabindex', '-1');
-    await expect(quickPay).not.toHaveAttribute('tabindex', '-1');
+    await expect(openOrders).not.toHaveAttribute('tabindex', '-1');
   });
 
-  // ut-docs#1702's whole reason for a fresh-queried sweep (candidates() run
-  // on every open, never a load-time snapshot) rather than one more static
-  // array is that the sale screen's controls are DYNAMIC — the review's own
-  // "4 product tiles" and held-sales examples. This test proves that
-  // property specifically: a held-sale chip that DID NOT EXIST when the
-  // page first loaded must still be covered/restored correctly the very
-  // first time the overlay opens after it appears. A cached, load-time
-  // candidate list (the wrong implementation this design deliberately
-  // rejected) would pass every other test in this file — none of them
-  // change the DOM between page load and the first overlay-open — and only
-  // this one would catch it.
-  test('a held-sale chip that appears AFTER page load (not present when app.js first ran) is still covered by the sweep the next time the overlay opens', async ({ page }) => {
-    await page.setViewportSize({ width: 1024, height: 600 });
-    await page.goto('/');
-    await page.waitForSelector('.pos-container');
-
-    // Scan an item and hold the sale — this both creates the basket line
-    // and, on success, appends a NEW .held-chip button to #held-sales that
-    // did not exist anywhere in the DOM when this page's app.js IIFE ran.
-    await page.getByRole('textbox').first().fill('5000000000012');
-    await Promise.all([
-      page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
-      page.locator('.scan-row button[type="submit"]').click(),
-    ]);
-    await expect(page.locator('#basket')).toContainText('Coca-Cola');
-
-    await page.getByTestId('tender-footer-hold').click();
-    await expect(page.locator('#hold-modal')).toBeVisible();
-    await Promise.all([
-      page.waitForResponse((r) => r.url().includes('/api/pos/hold')),
-      page.locator('#hold-modal button[type="submit"]').click(),
-    ]);
-    await expect(page.locator('#hold-modal')).toBeHidden();
-
-    const heldChip = page.locator('#held-sales .held-chip').first();
-    await expect(heldChip).toBeVisible();
-    await expect(heldChip).not.toHaveAttribute('tabindex', '-1');
-
-    // ut-docs#1984: holding parked the basket, leaving it empty — Payment
-    // is disabled on an empty basket, so scan a fresh item before opening
-    // it again (this test's own point is the held CHIP's coverage, not
-    // this basket's contents).
-    await page.getByRole('textbox').first().fill('5000000000012');
-    await Promise.all([
-      page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
-      page.locator('.scan-row button[type="submit"]').click(),
-    ]);
-    await expect(page.locator('#basket')).toContainText('Coca-Cola');
-
-    await page.getByTestId('payment-open').click();
-    await expect(page.locator('#payment-overlay')).toBeVisible();
-
-    expect(await isCovered(heldChip), 'expected the held-sale chip to be geometrically covered at 1024x600 (same tender column as the scan-row controls)').toBe(true);
-    await expect(heldChip).toHaveAttribute('tabindex', '-1');
-
-    await page.getByTestId('payment-close').click();
-    await expect(page.locator('#payment-overlay')).not.toBeVisible();
-    await expect(heldChip).not.toHaveAttribute('tabindex', '-1');
-  });
+  // ut-docs#2702: the "held-sale chip that appears AFTER page load" test
+  // that sat here went with the held-sales strip (no longer on the sale
+  // screen). The property it proved -- candidates() is queried fresh on
+  // every open, never a load-time snapshot -- is still exercised above:
+  // products-add-link lives in the /ui/buttons fragment, which htmx loads
+  // (hx-trigger="load") only after app.js's IIFE has already run.
 });

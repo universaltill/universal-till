@@ -25,7 +25,20 @@
      ut-docs#2147: same accessible-name fix as /open-orders' own row
      button -- a visually-hidden "Resume order" span is prepended so the
      concatenated accessible name states the action, not just the order's
-     details. See open_orders.html's own comment for the full reasoning. */}}
+     details. See open_orders.html's own comment for the full reasoning.
+
+     ut-docs#2702 review: each row also carries Move table (ut-docs#820) --
+     the held-sales strip that used to carry it is gone. Only free tables are
+     offered (.MoveTargets, filled by renderParkedOrdersPopup); a takeaway
+     order or a shop with no free table gets no control. Options post
+     view=parked-orders so POST /api/pos/held/table answers with THIS body
+     (new table shown, or the occupied toast on top) and fires held-changed
+     for the badge. No hx-on close here: a move keeps the popup open so the
+     cashier sees where the order went. A native <details>/<summary>, so it
+     is keyboard- and screen-reader-operable with no script; the summary
+     carries the order's label (visually hidden) so several rows' "Move
+     table" controls have distinct accessible names. */}}
+{{ if .toast }}<div class="pos-notice {{ .toastLevel }}" id="parked-orders-toast" role="{{ .toastRole }}"><span class="notice-text">{{ .toast }}</span><button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}">✕</button></div>{{ end }}
 {{ if not .orders }}
 <p class="muted" data-testid="parked-orders-empty">{{ T "open_orders.empty" }}</p>
 {{ else }}
@@ -41,6 +54,20 @@
       {{ if .TableLabel }}<span class="held-chip-table">{{ .TableLabel }}</span>{{ end }}
       <span class="parked-order-meta">{{ .LineCount }} × · {{ money .Total }} · {{ printf (T "open_orders.age_minutes") .AgeMinutes }}</span>
     </button>
+    {{ if .MoveTargets }}
+    {{ $id := .ID }}
+    <details class="parked-move" data-testid="parked-move">
+      <summary class="btn secondary parked-move-toggle" id="parked-move-{{ $id }}">{{ T "basket.table.move" }}<span class="visually-hidden"> · {{ .Label }}</span></summary>
+      <div class="parked-move-options">
+        {{ range .MoveTargets }}
+        <button type="button" class="btn secondary parked-move-option" data-table-id="{{ .ID }}"
+                hx-post="/api/pos/held/table" hx-vals='{{ jsonVals "id" $id "table_id" .ID "view" "parked-orders" }}'
+                hx-target="#parked-orders-body" hx-swap="innerHTML"
+                hx-on::before-request="document.getElementById('parked-orders-body').dataset.focusAfter = 'parked-move-{{ $id }}';">{{ .Label }}</button>
+        {{ end }}
+      </div>
+    </details>
+    {{ end }}
   </li>
   {{ end }}
 </ul>
