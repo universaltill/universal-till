@@ -7,12 +7,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/bluetooth"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/listenport"
 	"github.com/universaltill/universal-till/internal/recovery"
 )
 
@@ -52,6 +54,17 @@ func mobileTestEnv(t *testing.T) string {
 	t.Setenv("UT_AUTH", "off")
 	t.Setenv("UT_ENV_FILE", t.TempDir()+"/does-not-exist.env") // don't pick up a stray local pos.env
 	dataDir := t.TempDir()
+	// ut-docs#2722: Start now prefers a stable port (listenport.DefaultPort,
+	// 8080) instead of an ephemeral one. Point this test's default at a
+	// port that is free right now, so tests never grab 8080 (other tills
+	// and worktrees on this machine use it) and never depend on it.
+	free, err := freePort()
+	if err != nil {
+		t.Fatalf("find a free port: %v", err)
+	}
+	prev := defaultListenPort
+	defaultListenPort, _ = strconv.Atoi(free)
+	t.Cleanup(func() { defaultListenPort = prev })
 	t.Cleanup(Stop)
 	return dataDir
 }
@@ -511,5 +524,63 @@ func TestStart_BootFailureServesRecoveryModeInsteadOfTimingOut(t *testing.T) {
 	Stop()
 	if IsRunning() {
 		t.Fatal("expected IsRunning() to be false after Stop")
+	}
+}
+
+// ut-docs#2722: an Android main till used to pick a fresh ephemeral port on
+// every launch, stranding every paired replica. Start must persist the port
+// it served on and come back on the SAME port next launch.
+func TestStart_PersistsPortAndReusesItNextLaunch(t *testing.T) {
+	dataDir := mobileTestEnv(t)
+
+	addr, err := Start(dataDir)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	_, port, _ := net.SplitHostPort(addr)
+	if want := strconv.Itoa(defaultListenPort); port != want {
+		t.Fatalf("first launch served on %s, want the default %s (free, so no fallback)", port, want)
+	}
+	if got := listenport.Saved(dataDir); strconv.Itoa(got) != port {
+		t.Fatalf("persisted port = %d, want %s", got, port)
+	}
+
+	Stop()
+	// A different default next time proves the second launch reads the
+	// persisted value rather than just recomputing the same default.
+	defaultListenPort++
+	addr2, err := Start(dataDir)
+	if err != nil {
+		t.Fatalf("second Start: %v", err)
+	}
+	if _, port2, _ := net.SplitHostPort(addr2); port2 != port {
+		t.Fatalf("second launch served on %s, want the persisted %s", port2, port)
+	}
+}
+
+func TestStart_PersistedPortBusy_FallsBackAndPersistsTheNewOne(t *testing.T) {
+	dataDir := mobileTestEnv(t)
+	holder, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatalf("hold a port: %v", err)
+	}
+	defer holder.Close()
+	_, heldStr, _ := net.SplitHostPort(holder.Addr().String())
+	held, _ := strconv.Atoi(heldStr)
+	if err := listenport.Save(dataDir, held); err != nil {
+		t.Fatal(err)
+	}
+
+	addr, err := Start(dataDir)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	_, portStr, _ := net.SplitHostPort(addr)
+	port, _ := strconv.Atoi(portStr)
+	if port == held {
+		t.Fatalf("served on the busy port %d", held)
+	}
+	if got := listenport.Saved(dataDir); got != port {
+		t.Fatalf("persisted port = %d, want the fallback %d actually served on", got, port)
 	}
 }

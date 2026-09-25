@@ -531,6 +531,12 @@
         <span class="sb-dot"></span>
         <span class="sb-conn-text">{{ T "status.online" }}</span>
       </span>
+      <!-- ut-docs#2722: "main till not reachable since … — selling offline"
+           on a replica. Placeholder filled by GET /ui/main-till-status on
+           load and every 30s; empty body (the normal case) renders nothing.
+           Same hx-preserve + default innerHTML swap as nav.html's
+           #sync-chip, so a boosted navigation keeps it without a refetch. -->
+      <span id="sb-main-till-mount" hx-preserve hx-get="/ui/main-till-status" hx-trigger="load, every 30s"></span>
       {{ if not enrolled }}
         <!-- ut-docs#1859: was a bare ✦ emoji (platform-color-emoji-font
              risk); .btn-ico's 1em svg sizing already tracks whatever

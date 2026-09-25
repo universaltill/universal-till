@@ -4254,6 +4254,18 @@ body.login-screen {
   margin-inline-start: .5rem;
 }
 .statusbar a.sb-power:hover { filter: brightness(0.92); }
+/* Main till not reachable (ut-docs#2722) — the same amber warning pill as
+   sb-power: the till still sells, but sync and plugin updates wait. Allowed
+   to wrap (unlike other .sb-item) because the sentence carries a date and
+   the longest locales would otherwise push the bar wider than a tablet. */
+.statusbar .sb-main-till {
+  color: #451a03; background: var(--warning, #d97706);
+  text-decoration: none; white-space: normal;
+  padding: .05rem .5rem; border-radius: 999px; font-weight: 700;
+  margin-inline-start: .5rem;
+}
+.statusbar a.sb-main-till:hover { filter: brightness(0.92); }
+#sb-main-till-mount:empty { display: none; }
 /* Installed-plugin update chip (ut-docs#1953) — same green "there's
    something new" pill as sb-update above (not sb-power's amber: a pending
    plugin update is a notice, not a hardware-degrading warning), just its

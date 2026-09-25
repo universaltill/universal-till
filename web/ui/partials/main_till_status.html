@@ -1,0 +1,16 @@
+{{/* ut-docs#2722: a replica whose main till has stopped answering (it moved
+     to a new address, is switched off, or left the network). Rendered by
+     GET /ui/main-till-status (sync_primary_watch.go) into the status bar's
+     #sb-main-till-mount on every page, the sale screen included — a
+     persistent chip, never a modal: the till keeps selling offline and
+     looks for the main till on the network by itself. A real link to
+     /tills (this till's own local page, never the main till's origin),
+     because a title="" tooltip has no hover on a touchscreen till. Plugin
+     updates on a replica follow the main till (ADR-0011 §7), so pending
+     ones are named here too — the owner saw "update available" and could
+     not apply it, with nothing saying why. */}}
+<a class="sb-item sb-main-till" href="/tills" data-testid="sb-main-till"
+   title="{{ T "sync.main_till_unreachable_hint" }}">
+  <span class="btn-ico" aria-hidden="true">{{ icon "sync" }}</span>
+  {{ if .since }}{{ printf (T "sync.main_till_unreachable_since") (datetime .since) }}{{ else }}{{ T "sync.main_till_unreachable" }}{{ end }}{{ if .pluginsWaiting }} · {{ T "sync.main_till_unreachable_plugins" }}{{ end }}
+</a>

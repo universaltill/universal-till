@@ -400,10 +400,21 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 	req.Header.Set("Authorization", "Bearer "+bearer)
 	resp, err := client.Do(req)
 	if err != nil {
-		logging.L().Infof("sync pull: primary unreachable (%v) — will retry", err)
+		// ut-docs#2722: counts toward "main till unreachable" — WARN once
+		// per outage, INFO for repeats, and after UnreachableThreshold
+		// ticks a rate-limited mDNS search for the main till at a new
+		// address (identity-matched and proven; see discovery.PrimaryWatch).
+		primaryContactFailed(ctx, d, err.Error())
 		return
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		// Something answers at the stored address, but it isn't a till's
+		// sync API — the main till's old port now belongs to another
+		// program. Same as unreachable for re-discovery purposes.
+		primaryContactFailed(ctx, d, "the stored address answers but is not a till ("+resp.Status+")")
+		return
+	}
 	if resp.StatusCode != http.StatusOK {
 		logging.L().Errorf("sync pull rejected: %s", resp.Status)
 		return
@@ -447,6 +458,7 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 	// apply above actually succeeded) — see the early return in the failure
 	// branch just above.
 	_ = d.Settings.Set(ctx, "sync.last_contact_at", now)
+	primaryContactOK(ctx, d)
 
 	// ut-docs#460 — the plugin set follows the primary. Best-effort like
 	// everything else in this tick: syncPullPlugins logs and returns on any
