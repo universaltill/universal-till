@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
@@ -64,8 +65,11 @@ type fakePrimary struct {
 	fail      int32
 	failCode  int
 	leakToken bool
-	lastReqMu sync.Mutex
-	lastReq   map[string]string
+	// entitlement, when set, rides in the answer as the main till's
+	// cached entitlement (ut-docs#2792).
+	entitlement map[string]string
+	lastReqMu   sync.Mutex
+	lastReq     map[string]string
 }
 
 func newFakePrimary(t *testing.T, fail int32, failCode int) *fakePrimary {
@@ -87,10 +91,13 @@ func newFakePrimary(t *testing.T, fail int32, failCode int) *fakePrimary {
 		p.lastReqMu.Lock()
 		p.lastReq = req
 		p.lastReqMu.Unlock()
-		data := map[string]string{"store_id": "store-abc", "device_id": req["device_id"]}
+		data := map[string]any{"store_id": "store-abc", "device_id": req["device_id"]}
 		if p.leakToken {
 			data["token"] = "leaked-store-token"
 			data["merchant_token"] = "leaked-store-token"
+		}
+		if p.entitlement != nil {
+			data["entitlement"] = p.entitlement
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
 	})
@@ -439,5 +446,78 @@ func TestVouchForReplicaRefusals(t *testing.T) {
 		if _, err := VouchForReplica(context.Background(), cfg, req); !errors.Is(err, ErrBadDeviceRequest) {
 			t.Fatalf("request %+v: err = %v, want ErrBadDeviceRequest", req, err)
 		}
+	}
+}
+
+// ut-docs#2792: entitlement.* no longer rides the admin sync, and a
+// post-#2730 replica has no store token to ask the cloud itself — so the
+// main till relays its cache on the vouch answer and the replica stores it
+// verbatim, the main till's last_confirmed_at included.
+func TestReplicaWithoutTokenStoresMainTillsEntitlement(t *testing.T) {
+	resetState()
+	fastRetries(t)
+	primary := newFakePrimary(t, 0, 0)
+	primary.entitlement = map[string]string{
+		"plan": "pro", "subscription_status": "active",
+		"expires_at": "2026-12-31T00:00:00Z", "last_confirmed_at": "2026-09-20T10:00:00Z",
+	}
+	kv := newFakeKV()
+	for k, v := range map[string]string{
+		"sync.primary_url": primary.srv.URL,
+		"sync.bearer":      "replica-bearer",
+		"sync.till_id":     "till-row-2",
+		keyPublicKey:       pinnedKey,
+	} {
+		_ = kv.Set(context.Background(), k, v)
+	}
+	cfg := &config.Config{Marketplace: config.MarketplaceConfig{EndpointURL: "http://127.0.0.1:1/api"}}
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	t.Cleanup(func() { cancel(); wg.Wait() })
+
+	Init(ctx, cfg, kv, &wg)
+	waitFor(t, "relayed entitlement", func() bool { return kv.get("entitlement.last_confirmed_at") != "" })
+	for k, want := range map[string]string{
+		"entitlement.plan":                "pro",
+		"entitlement.subscription_status": "active",
+		"entitlement.expires_at":          "2026-12-31T00:00:00Z",
+		"entitlement.last_confirmed_at":   "2026-09-20T10:00:00Z",
+	} {
+		if got := kv.get(k); got != want {
+			t.Errorf("%s = %q, want %q", k, got, want)
+		}
+	}
+}
+
+// The relay's guards, driven directly so a wrong write can't hide behind
+// loop timing: a replica holding a store token (its own cloud sync is the
+// fresher source), an invalid block, and a relayed confirmation older than
+// the one already held all keep the replica's cache.
+func TestApplyRelayedEntitlementKeepsCache(t *testing.T) {
+	valid := &entitlement.Cached{Plan: "pro", SubscriptionStatus: "active", LastConfirmedAt: "2026-09-20T10:00:00Z"}
+	for name, tc := range map[string]struct {
+		c        *entitlement.Cached
+		ownToken bool
+	}{
+		"own token": {valid, true},
+		"invalid":   {&entitlement.Cached{Plan: "platinum", SubscriptionStatus: "active", LastConfirmedAt: "2026-09-20T10:00:00Z"}, false},
+		"older":     {&entitlement.Cached{Plan: "pro", SubscriptionStatus: "active", LastConfirmedAt: "2026-09-19T10:00:00Z"}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			kv := newFakeKV()
+			_ = kv.Set(context.Background(), "entitlement.plan", "shop")
+			_ = kv.Set(context.Background(), "entitlement.last_confirmed_at", "2026-09-19T12:00:00Z")
+			applyRelayedEntitlement(context.Background(), kv, tc.c, tc.ownToken)
+			if got := kv.get("entitlement.plan"); got != "shop" {
+				t.Fatalf("entitlement.plan = %q, want the replica's own cache kept", got)
+			}
+		})
+	}
+	// Control: the same valid, newer block without a token is applied.
+	kv := newFakeKV()
+	_ = kv.Set(context.Background(), "entitlement.last_confirmed_at", "2026-09-19T12:00:00Z")
+	applyRelayedEntitlement(context.Background(), kv, valid, false)
+	if kv.get("entitlement.plan") != "pro" || kv.get("entitlement.last_confirmed_at") != "2026-09-20T10:00:00Z" {
+		t.Fatalf("a valid, newer relay was not applied: plan=%q confirmed=%q", kv.get("entitlement.plan"), kv.get("entitlement.last_confirmed_at"))
 	}
 }

@@ -603,6 +603,15 @@ var PerTillSettingPrefixes = []string{
 	// TestPerTillSettingsCoverTillCloudIdentity keeps them in step.
 	"marketplace.device_", "marketplace.token", "marketplace.enrolled_at",
 	"marketplace.public_key",
+	// ut-docs#2792: this till's own cache of its cloud entitlement (ADR-0060
+	// §4, internal/entitlement's Key* constants), rewritten with a fresh
+	// last_confirmed_at on every cloud sync tick. Synced, that timestamp
+	// moved the main till's admin fingerprint every tick and sent every
+	// replica into a full admin re-pull + plugin check every ~2 min. A till
+	// with its own store token caches from its own cloud sync; a token-less
+	// replica gets the main till's cache on the vouch answer
+	// (enroll.applyRelayedEntitlement, POST /api/sync/cloud-device).
+	"entitlement.",
 }
 
 func perTillSetting(key string) bool {

@@ -117,11 +117,13 @@ func StartSyncLink(ctx context.Context, d *common.Deps, wg *sync.WaitGroup, admi
 	}()
 }
 
-// runLinkAdminWatch nudges `admin` whenever sync_admin_version moves. That
-// counter is bumped by a trigger on every admin-bundle table, so this one
-// watch covers every writer: the back office, a write-through from another
-// till, a my. directive, the admin-bundle apply — users, roles and PINs
-// included (#2731) — without a hook at each call site.
+// runLinkAdminWatch nudges `admin` whenever the admin bundle changes: it
+// watches sync_admin_version, bumped by a trigger on every admin-bundle
+// table, so this one watch covers every writer: the back office, a
+// write-through from another till, a my. directive, the admin-bundle apply —
+// users, roles and PINs included (#2731) — without a hook at each call site.
+// A moved generation is then confirmed against the bundle fingerprint, so a
+// per-till settings write never nudges (ut-docs#2792).
 func runLinkAdminWatch(ctx context.Context, d *common.Deps, wg *sync.WaitGroup, every time.Duration, adminRepo *data.SyncAdminRepo) {
 	wg.Add(1)
 	go func() {
@@ -129,6 +131,8 @@ func runLinkAdminWatch(ctx context.Context, d *common.Deps, wg *sync.WaitGroup, 
 		t := time.NewTicker(every)
 		defer t.Stop()
 		var last int64
+		var lastFP string
+		var lastErrLog time.Time
 		baseline := false
 		for {
 			select {
@@ -144,10 +148,27 @@ func runLinkAdminWatch(ctx context.Context, d *common.Deps, wg *sync.WaitGroup, 
 			if !tracked {
 				continue
 			}
-			if baseline && gen != last {
+			if baseline && gen == last {
+				continue
+			}
+			// The settings trigger also bumps the generation for per-till
+			// keys that never travel (ut-docs#2792): nudge only when the
+			// bundle a replica would pull actually changed. On a moved
+			// generation this is the same one scan the replica's pull
+			// would cost anyway, and it primes the shared cache for it.
+			fp, err := adminRepo.AdminFingerprint(ctx)
+			if err != nil {
+				// Retry next tick; a replica's own poll still converges.
+				if time.Since(lastErrLog) > time.Minute {
+					logging.L().Warnf("sync link: admin fingerprint for the nudge watch: %v", err)
+					lastErrLog = time.Now()
+				}
+				continue
+			}
+			if baseline && fp != lastFP {
 				d.NudgeLink(fleetlink.ScopeAdmin)
 			}
-			last, baseline = gen, true
+			last, lastFP, baseline = gen, fp, true
 		}
 	}()
 }

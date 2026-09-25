@@ -205,7 +205,7 @@ func RegisterNow(ctx context.Context, cfg *config.Config, kv Settings) (Status, 
 		// (ut-docs#2730).
 		registerFn := func() error { return register(ctx, m, cfg.StoreName, kv) }
 		if isReplica(ctx, kv) {
-			registerFn = func() error { return registerOnReplica(ctx, kv) }
+			registerFn = func() error { return registerOnReplica(ctx, m, kv) }
 		}
 		if err := registerFn(); err != nil {
 			firstErr = err
