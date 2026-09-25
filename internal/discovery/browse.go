@@ -23,6 +23,9 @@ type Candidate struct {
 	// the existing QR flow's own "http://"+r.Host default in sync_api.go's
 	// enrol-token handler; this isn't a new assumption, just matching it.
 	BaseURL string `json:"base_url"`
+	// Link is the main-till link level the till advertises ("link=" TXT,
+	// ADR-0114 §11); 0 = none (an older main till) — poll only.
+	Link int `json:"link"`
 }
 
 // PrinterServiceName is the standard Bonjour/mDNS service type for raw
@@ -92,11 +95,13 @@ func detectIPv6Support() bool {
 }
 
 // Browse queries the LAN for tills advertising ServiceName and returns
-// whatever answers within timeout. Bounded and synchronous — meant to be
-// invoked per explicit user action (the Tills page "Find a primary"
-// button), never as a background/ambient browser (ADR-0033 part 1 scope;
-// the click-to-select flow itself is a separate future card, #185 — this
-// only surfaces read-only results).
+// whatever answers within timeout. Bounded and synchronous — invoked per
+// explicit user action (the Tills page "Find a primary" button), never as
+// an ambient browser (ADR-0033 part 1 scope). The one background caller is
+// PrimaryWatch (ut-docs#2722): a replica whose main till stopped answering
+// browses at most once per MinBrowseInterval, only for the till id it was
+// paired with, and switches only after that till proves it holds the
+// pairing — see primary_watch.go.
 //
 // A partial failure is not reported as a total one (ut-docs#538): a real
 // LAN with no usable IPv6 multicast route ("write udp6 …: sendto: no
@@ -268,6 +273,7 @@ func scanOnce[T any](ctx context.Context, timeout time.Duration, serviceName str
 // to send POST /api/sync/pair-request to (ut-docs#185).
 func candidateFromEntry(e *mdns.ServiceEntry) (Candidate, bool) {
 	var name, id string
+	link := 0
 	for _, field := range e.InfoFields {
 		k, v, ok := strings.Cut(field, "=")
 		if !ok {
@@ -278,6 +284,10 @@ func candidateFromEntry(e *mdns.ServiceEntry) (Candidate, bool) {
 			name = v
 		case "id":
 			id = v
+		case "link":
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				link = n
+			}
 		}
 	}
 	if id == "" {
@@ -291,7 +301,7 @@ func candidateFromEntry(e *mdns.ServiceEntry) (Candidate, bool) {
 		return Candidate{}, false
 	}
 	baseURL := "http://" + net.JoinHostPort(ip.String(), strconv.Itoa(e.Port))
-	return Candidate{Name: name, TillID: id, BaseURL: baseURL}, true
+	return Candidate{Name: name, TillID: id, BaseURL: baseURL, Link: link}, true
 }
 
 // printerCandidateFromEntry extracts a PrinterCandidate from an mDNS

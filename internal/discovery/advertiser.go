@@ -21,6 +21,11 @@ const ServiceName = "_unitill-sync._tcp"
 // wire-format bump; no consumer reads it yet.
 const protocolVersion = 1
 
+// linkLevel is the TXT record's "link=" field (ADR-0114 §11): this till
+// serves GET /api/sync/link at this level. A replica dials the link only
+// when it is advertised (here or in GET /api/sync/ping) and polls otherwise.
+const linkLevel = 1
+
 // roleCheckInterval matches internal/pages/sync_admin.go's runSyncLoop
 // cadence — the established ~30s convention this codebase already uses for
 // background polling loops, not a fresh value picked for this feature.
@@ -169,6 +174,7 @@ func txtRecord(shopName, tillID string) []string {
 		"v=" + strconv.Itoa(protocolVersion),
 		"name=" + shopName,
 		"id=" + tillID,
+		"link=" + strconv.Itoa(linkLevel),
 	}
 }
 

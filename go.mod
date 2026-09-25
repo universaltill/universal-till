@@ -23,6 +23,7 @@ require (
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.57.0
+	github.com/coder/websocket v1.8.15
 	github.com/godbus/dbus/v5 v5.2.2
 	github.com/hashicorp/mdns v1.0.5
 	github.com/joho/godotenv v1.5.1

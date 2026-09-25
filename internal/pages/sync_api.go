@@ -193,10 +193,13 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		// below only to tag its own row in .Tills (now populated on a
 		// replica too, ut-docs#405's adminTables addition) as "(this
 		// till)" rather than just another sibling.
-		var thisTillID string
+		var thisTillID, primaryLastContact string
 		if primaryURL != "" {
 			thisTillID, _, _ = d.Settings.Get(r.Context(), "sync.till_id")
+			primaryLastContact, _, _ = d.Settings.Get(r.Context(), "sync.last_contact_at")
 		}
+		// ut-docs#2722: the main till has stopped answering this replica.
+		unreachableSince, mainUnreachable := mainTillUnreachable(r.Context(), d)
 		httpx.Render("ui/pages/tills.html", map[string]any{
 			"title":           httpx.T(httpx.RequestLocale(r), "page.title.tills"),
 			"theme":           d.CurrentState().Theme,
@@ -205,6 +208,10 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			"PrimaryTillName": primaryName,
 			"SyncPrimary":     primaryURL,
 			"ThisTillID":      thisTillID,
+			// ut-docs#2722
+			"PrimaryLastContact":   primaryLastContact,
+			"MainUnreachable":      mainUnreachable,
+			"MainUnreachableSince": unreachableSince,
 		})(w, r)
 	})
 
@@ -427,7 +434,9 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"data":  map[string]string{"till_id": till.ID, "shop_name": storeNameOrDefault(r.Context(), d)},
+			// link: this main till serves GET /api/sync/link at this level
+			// (ADR-0114 §11) — a replica dials only when advertised.
+			"data":  map[string]any{"till_id": till.ID, "shop_name": storeNameOrDefault(r.Context(), d), "link": 1},
 			"error": nil,
 		})
 	})
@@ -455,6 +464,11 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		if err := repo.DeleteTill(r.Context(), id); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
 			return
+		}
+		// ADR-0114 §1: a revoked till loses its link at once, not at its
+		// next reconnect (its bearer no longer authenticates either).
+		if d.Link != nil {
+			d.Link.Disconnect(id)
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "till", id, "till_revoked",
 			nil, time.Now().UTC().Format(time.RFC3339), "")

@@ -64,6 +64,10 @@ func exempt(path string) bool {
 		// unlisted /api/sync/orders/<x> route is ever exempted by accident).
 		// TestSyncPullPathsAreExempt pins this entry.
 		"/api/sync/orders/stream",
+		// ADR-0114 (ut-docs#2734): the main-till link WebSocket upgrade,
+		// syncTill-authed in the handler like every entry here. Missing,
+		// every replica's link would be 401'd before its bearer was read.
+		"/api/sync/link",
 		// ut-docs#1392: the primary-side READ-ONLY cross-till table-occupancy
 		// endpoint a replica's tablesWithStateForDisplay (tables_sync_proxy.go)
 		// proxies to — syncTill-authed in the handler exactly like
@@ -180,7 +184,13 @@ func exempt(path string) bool {
 		// there. The inbound pair request is unauthenticated by design
 		// (ADR-0033 §8; rate-limited + sha256-commitment-gated in the
 		// handler itself).
-		"/api/sync/pair-request":
+		"/api/sync/pair-request",
+		// ut-docs#2722: a replica whose main till moved (new port/IP) finds
+		// it again over mDNS and challenges it here BEFORE sending its
+		// bearer anywhere — so this call carries no session and no bearer
+		// by design. The handler is rate-limited, answers only for an
+		// enrolled till id, and returns an HMAC proof, never a secret.
+		"/api/sync/primary-proof":
 		return true
 	}
 	// /api/settings/exit-to-os (ut-docs#1099): the manager's escape hatch off

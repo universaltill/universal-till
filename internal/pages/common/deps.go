@@ -9,6 +9,8 @@ import (
 	"github.com/universaltill/universal-till/internal/ai"
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/discovery"
+	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -45,9 +47,14 @@ type Deps struct {
 	Pm       *plugins.Manager
 	Db       *sql.DB
 	Settings *settings.Store
-	State    RuntimeState
-	BaseMenu []MenuItem
-	Menu     []MenuItem
+	// PrimaryWatch tracks a replica's contact with its main till and
+	// re-finds a main till that moved to a new address (ut-docs#2722).
+	// Driven by the replica pull loop; read by the main-till status chip.
+	// Nil in tests that don't exercise it — every reader must allow that.
+	PrimaryWatch *discovery.PrimaryWatch
+	State        RuntimeState
+	BaseMenu     []MenuItem
+	Menu         []MenuItem
 	// MenuAmendments are the Menu-slot amendments in force (ADR-0088):
 	// every active `layout` plugin's, minus the entries the merchant
 	// restored from Settings → Hidden menu tiles. Rebuilt beside Menu in
@@ -136,6 +143,13 @@ type Deps struct {
 	// (#516/#517/#528/#527) Subscribe instead of polling the table. Set once
 	// in pages.Init; handlers nil-check it so bare-Deps tests stay valid.
 	OrderStatus *pos.OrderStatusBroadcaster
+
+	// Link is the main-till link hub (ADR-0114, ut-docs#2734): one
+	// WebSocket per linked additional till, served by GET /api/sync/link.
+	// Change points call NudgeLink; the hub coalesces nudges into per-peer
+	// dirty flags, so a call is O(peers) and never blocks. Set once in
+	// pages.Init before the server accepts requests; nil in bare-Deps tests.
+	Link *fleetlink.Hub
 
 	// AsyncWork tracks best-effort, fire-and-forget goroutines started
 	// after a request already responded — printReceiptAsync (ut-docs#425)
@@ -385,6 +399,9 @@ func (d *Deps) SyncPrimaryURL(ctx context.Context) string {
 // is the reload's — the menu is still rebuilt from whatever loaded, matching
 // every call site's historical log-and-continue behavior.
 func (d *Deps) ReloadPlugins(ctx context.Context) error {
+	// Every plugin lifecycle change passes here: tell linked tills to
+	// re-read the plugin registry (ADR-0114 §2).
+	defer d.NudgeLink(fleetlink.ScopePlugins)
 	if d.Pm == nil {
 		return nil
 	}
@@ -513,6 +530,10 @@ func (d *Deps) MenuPluginByKey(key string) (plugins.MenuPlugin, bool) {
 // network (ADR-0003). With no loop running (primary/single till, tests) it
 // is a no-op, and a full buffer means a push is already pending.
 func (d *Deps) RequestSyncPush() {
+	// The same call sites (sale, refund, stock adjustment) change the
+	// stock levels and orders board linked tills pull on a main till
+	// (ADR-0114 §2) — a no-op with no link hub or no linked till.
+	d.NudgeLink(fleetlink.ScopeStock, fleetlink.ScopeOrders)
 	if d.SyncPushNow == nil {
 		return
 	}
@@ -520,4 +541,15 @@ func (d *Deps) RequestSyncPush() {
 	case d.SyncPushNow <- struct{}{}:
 	default:
 	}
+}
+
+// NudgeLink tells every linked till that scopes changed, so it pulls now
+// instead of at its next poll (ADR-0114 §2). Nudges carry no data and
+// coalesce per peer; nil-safe and non-blocking, so any change point —
+// including the checkout path — may call it.
+func (d *Deps) NudgeLink(scopes ...fleetlink.Scope) {
+	if d.Link == nil {
+		return
+	}
+	d.Link.Nudge(scopes...)
 }

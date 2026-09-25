@@ -1,7 +1,7 @@
 import { test, expect } from './fixtures';
 
-// ut-docs#2330: the item-editor's "Manage Modifiers" nested dialog is now
-// attach/detach-only — no inline group/option create/edit/delete reachable
+// ut-docs#2330: the item-editor's modifiers surface (a nested dialog then,
+// the Modifiers tab since ut-docs#2211) is attach/detach-only — no inline group/option create/edit/delete reachable
 // from there (that stays exclusively on /modifiers). This locks in the
 // actual browser-driven behaviour the Go handler tests
 // (modifiers_admin_test.go, category_inherit_2284_test.go) can't see:
@@ -63,15 +63,15 @@ test.describe('ut-docs#2330 item-editor Manage Modifiers is attach/detach-only',
     await page.goto('/catalog');
     await page.locator(`.catalog-row[data-id="${targetItemId}"]`).click();
     await expect(page.locator('#item-form-modal')).toBeVisible();
-    await page.locator('#item-form-tab-variants').click();
-    await expect(page.locator('#item-form-panel-variants')).toBeVisible();
-    await page.locator('#manage-modifiers-btn').click();
-    await expect(page.locator('#modifier-groups-modal')).toBeVisible();
+    // ut-docs#2211: the picker is inline in the item editor's own
+    // Modifiers tab now, not a nested dialog opened from Variants.
+    await page.locator('#item-form-tab-modifiers').click();
+    await expect(page.locator('#item-form-panel-modifiers')).toBeVisible();
 
-    const dialogList = page.locator('#modifier-groups-modal-list');
+    const dialogList = page.locator('#item-form-panel-modifiers #item-modifiers-list');
 
     // No CRUD reachable from here: no "add a new group" form, no editable
-    // group-name input anywhere in this dialog.
+    // group-name input anywhere in this tab.
     await expect(dialogList.locator('.modifier-admin-group-new')).toHaveCount(0);
     await expect(dialogList.locator('input[name="name"]')).toHaveCount(0);
 

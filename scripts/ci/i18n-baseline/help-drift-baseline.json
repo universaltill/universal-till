@@ -61,20 +61,20 @@
       "locale": "ar",
       "topic": "multitill",
       "signature": {
-        "headings": 3,
-        "numbered_steps": 12,
+        "headings": 4,
+        "numbered_steps": 16,
         "sub_bullets": 1,
         "top_bullets": 4,
         "bold_leadins": 1
       },
       "english": {
-        "headings": 3,
-        "numbered_steps": 12,
+        "headings": 4,
+        "numbered_steps": 16,
         "sub_bullets": 3,
         "top_bullets": 4,
         "bold_leadins": 0
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2722: English and every locale gained one section (heading +1, steps +4) on a joined till that cannot reach the main till; the pre-existing sub_bullets/bold_leadins gap is untouched."
     },
     {
       "locale": "ar",
@@ -327,20 +327,20 @@
       "locale": "fa",
       "topic": "multitill",
       "signature": {
-        "headings": 3,
-        "numbered_steps": 12,
+        "headings": 4,
+        "numbered_steps": 16,
         "sub_bullets": 1,
         "top_bullets": 4,
         "bold_leadins": 1
       },
       "english": {
-        "headings": 3,
-        "numbered_steps": 12,
+        "headings": 4,
+        "numbered_steps": 16,
         "sub_bullets": 3,
         "top_bullets": 4,
         "bold_leadins": 0
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2722: English and every locale gained one section (heading +1, steps +4) on a joined till that cannot reach the main till; the pre-existing sub_bullets/bold_leadins gap is untouched."
     },
     {
       "locale": "fa",
@@ -650,20 +650,20 @@
       "locale": "tr",
       "topic": "multitill",
       "signature": {
-        "headings": 3,
-        "numbered_steps": 12,
+        "headings": 4,
+        "numbered_steps": 16,
         "sub_bullets": 1,
         "top_bullets": 4,
         "bold_leadins": 5
       },
       "english": {
-        "headings": 3,
-        "numbered_steps": 12,
+        "headings": 4,
+        "numbered_steps": 16,
         "sub_bullets": 3,
         "top_bullets": 4,
         "bold_leadins": 0
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2722: English and every locale gained one section (heading +1, steps +4) on a joined till that cannot reach the main till; the pre-existing sub_bullets/bold_leadins gap is untouched."
     },
     {
       "locale": "tr",

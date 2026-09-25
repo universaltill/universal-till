@@ -14,6 +14,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -386,6 +387,7 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 			http.Redirect(w, r, "/tables?err=tables.error.release", http.StatusSeeOther)
 			return
 		}
+		d.NudgeLink(fleetlink.ScopeTables) // ADR-0114 §2
 		audit(r, actor.ID, id, "table_release", map[string]any{
 			"claim_released":            result.Released,
 			"held_order_still_attached": result.StillHeld,

@@ -43,15 +43,15 @@ func TestModifierGroupHandler_HxTargetModifiersList_RendersShopWideFragment(t *t
 	if strings.Contains(body, `id="catalog-variants"`) {
 		t.Fatal("must not fall back to the old #catalog-variants panel when Hx-Target names modifiers-list")
 	}
-	if strings.Contains(body, `id="modifier-groups-modal-list"`) {
-		t.Fatal("must not answer with the item-scoped modal fragment when Hx-Target names modifiers-list")
+	if strings.Contains(body, `id="item-modifiers-list"`) {
+		t.Fatal("must not answer with the item-scoped Modifiers-tab fragment when Hx-Target names modifiers-list")
 	}
 	if !strings.Contains(body, "Extras") {
 		t.Fatal("expected the newly created group to appear in the shop-wide fragment")
 	}
 }
 
-// The item-scoped nested-dialog fragment (#modifier-groups-modal-list) must
+// The item-scoped Modifiers-tab fragment (#item-modifiers-list) must
 // show ONLY the mutated item's own groups — not the whole shop's — proving
 // this is genuinely a separate, scoped re-render path and not an accidental
 // alias for the shop-wide one.
@@ -75,15 +75,15 @@ func TestModifierGroupHandler_HxTargetModifierGroupsModalList_ScopedToOneItem(t 
 	form := "panelItem=itm1&itemId=itm1&name=Extras&isActive=1&minSelect=0&maxSelect=2"
 	req := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Hx-Target", "modifier-groups-modal-list")
+	req.Header.Set("Hx-Target", "item-modifiers-list")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `id="modifier-groups-modal-list"`) {
-		t.Fatal("expected the item-scoped modal fragment")
+	if !strings.Contains(body, `id="item-modifiers-list"`) {
+		t.Fatal("expected the item-scoped Modifiers-tab fragment")
 	}
 	if !strings.Contains(body, "Extras") {
 		t.Fatal("expected itm1's own newly created group")
@@ -102,10 +102,10 @@ func TestModifierGroupHandler_HxTargetModifierGroupsModalList_ScopedToOneItem(t 
 	}
 }
 
-// GET /api/catalog/modifier-groups-panel is the nested dialog's own
+// GET /api/catalog/modifier-groups-panel is the Modifiers tab's own
 // lazy-load endpoint (opened from catalog_variants.html's "Manage
 // customization groups" button) — it must answer the same item-scoped
-// fragment shape a mutation targeting #modifier-groups-modal-list does.
+// fragment shape a mutation targeting #item-modifiers-list does.
 func TestModifierGroupsPanel_GET_RendersItemScopedFragment(t *testing.T) {
 	chdirToRepoRoot(t)
 	db := setupCatalogPageDB(t)
@@ -126,19 +126,18 @@ func TestModifierGroupsPanel_GET_RendersItemScopedFragment(t *testing.T) {
 		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `id="modifier-groups-modal-list"`) {
-		t.Fatal("expected the item-scoped modal fragment container")
+	if !strings.Contains(body, `id="item-modifiers-list"`) {
+		t.Fatal("expected the item-scoped Modifiers-tab fragment container")
 	}
 	if !strings.Contains(body, "Extras") {
 		t.Fatal("expected itm1's group to appear")
 	}
 }
 
-// The item-detail panel's compact modifiers summary (ut-docs#1957) shows
-// only ACTIVE group names, comma-separated, and the "Manage customization
-// groups" control — never a target="_blank"/window.open navigation (kiosk
-// chromeless build, see base.html ~line 131).
-func TestCatalogVariantsPanel_ModifierSummaryShowsActiveGroupNamesCommaSeparated(t *testing.T) {
+// The item editor's Modifiers tab (ut-docs#2211; a nested dialog's
+// compact summary before that) lists every one of the item's groups, and
+// never uses page navigation (kiosk chromeless build, see base.html).
+func TestItemModifiersTab_ListsEveryGroupNoNavigation(t *testing.T) {
 	chdirToRepoRoot(t)
 	db := setupCatalogPageDB(t)
 	defer db.Close()
@@ -157,15 +156,17 @@ func TestCatalogVariantsPanel_ModifierSummaryShowsActiveGroupNamesCommaSeparated
 	}
 
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/catalog/item-variants?item_id=itm1", nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/catalog/modifier-groups-panel?item_id=itm1", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Extras, Milk type") {
-		t.Fatalf("expected a comma-separated active group name summary, got: %s", body)
+	for _, name := range []string{"Extras", "Milk type"} {
+		if !strings.Contains(body, `class="modifier-admin-group-name">`+name+`<`) {
+			t.Errorf("Modifiers tab must list the item's group %q", name)
+		}
 	}
 	if strings.Contains(body, `target="_blank"`) || strings.Contains(body, "window.open") {
-		t.Fatal("the Manage customization groups control must never use page navigation (kiosk is chromeless)")
+		t.Fatal("the Modifiers tab must never use page navigation (kiosk is chromeless)")
 	}
 }

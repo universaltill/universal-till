@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -250,6 +251,10 @@ func fetchHeldSalesFromPrimary(ctx context.Context, d *common.Deps, client *http
 // caller-supplied HeldOrigin.CreatedAt is unaffected (non-blank in, echoed
 // back unchanged, ut-docs#1918).
 func heldSaleWriteThrough(ctx context.Context, d *common.Deps, repo *data.HeldSalesRepo, h data.HeldSale) (heldSaleSyncOutcome, error) {
+	// ADR-0114 §2: open orders (and the tables they hold) changed on the
+	// shop's authority; nudge linked tills. A no-op on a replica (no
+	// linked tills there).
+	defer d.NudgeLink(fleetlink.ScopeHeldSales, fleetlink.ScopeTables)
 	ok, applied, primaryUpdatedAt, primaryCreatedAt := upsertHeldSaleOnPrimary(ctx, d, heldSaleProxyClient, h)
 	switch {
 	case !ok:
@@ -355,6 +360,10 @@ func mirrorHeldSaleFromPrimary(ctx context.Context, repo *data.HeldSalesRepo, h 
 // two cases), so a resume that then cannot go through must hand it back
 // (heldSaleGiveBack) rather than lose it; the fallback cases took nothing.
 func heldSaleClaimForResume(ctx context.Context, d *common.Deps, repo *data.HeldSalesRepo, id string) (held data.HeldSale, found, claimed bool) {
+	// ADR-0114 §2: open orders (and the tables they hold) changed on the
+	// shop's authority; nudge linked tills. A no-op on a replica (no
+	// linked tills there).
+	defer d.NudgeLink(fleetlink.ScopeHeldSales, fleetlink.ScopeTables)
 	if _, _, isReplica := replicaSyncTarget(ctx, d); !isReplica {
 		// "" is the primary's own identity on the tombstone: no enrolled
 		// replica ever matches it, so every replica's later claim of an
@@ -442,6 +451,10 @@ func heldSaleGiveBack(ctx context.Context, d *common.Deps, repo *data.HeldSalesR
 //     write-through in this file. Resume never blocks or fails on a
 //     primary that happens to be off (offline-first, ADR-0003).
 func heldSaleForResume(ctx context.Context, d *common.Deps, repo *data.HeldSalesRepo, id string) (data.HeldSale, bool) {
+	// ADR-0114 §2: open orders (and the tables they hold) changed on the
+	// shop's authority; nudge linked tills. A no-op on a replica (no
+	// linked tills there).
+	defer d.NudgeLink(fleetlink.ScopeHeldSales, fleetlink.ScopeTables)
 	rows, primaryAnswered := fetchHeldSalesFromPrimary(ctx, d, heldSaleProxyClient)
 	if primaryAnswered {
 		for _, h := range rows {

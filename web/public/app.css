@@ -789,20 +789,11 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
 
 /* ---------- Item customization admin (ADR-0020) ---------- */
 .catalog-detail-modifiers { margin-block-start: 1rem; }
-/* ut-docs#1957 (independent review): the item-detail panel's block kept
-   this spacing while it held the full CRUD under the class above; the
-   compact summary that replaced it was given a NEW class with no rule at
-   all, so it lost the 1rem and butted straight against the variants grid.
-   Same margin, restated for the summary's own class rather than widening
-   the selector above — that one still styles the real CRUD block, which
-   now renders from modifier_group_admin.html on /modifiers and in the
-   nested dialog. */
-.catalog-detail-modifiers-summary { margin-block-start: 1rem; }
 /* ut-docs#2379 review finding: this button sits right after the inherited
    section above it (modifier_group_admin.html) with no rule of its own —
    same 1rem convention as its siblings above, not a new value. */
 .catalog-detail-modifiers-empty-cta { margin-block-start: 1rem; }
-.catalog-modifiers-summary-line { margin-block: .2rem; }
+.catalog-routing-override { margin-block: .2rem; }
 .modifier-admin-group { border: 1px solid var(--border); border-radius: var(--radius);
                          padding: .6rem .75rem; margin-block-end: .6rem; }
 .modifier-admin-group.vg-inactive { opacity: .55; }
@@ -1025,7 +1016,12 @@ a.chip-warn { text-decoration: none; }
    above-text, not just the two most visually dramatic cases the bug report
    measured. Confirmed live: label:has(#item-active)'s computed
    flex-direction was "column" before this fix. */
-.catalog-form label:not(.catalog-detail label):not(.field-checks):not(.field-checks label) {
+/* ut-docs#2211: also excludes .modifier-attach-option — the attach picker's
+   checkbox rows now render inside the item editor's own Modifiers tab
+   (inside .catalog-form), and this rule's column layout stacked each box
+   above its group name, centred, instead of the row
+   .modifier-attach-option defines. */
+.catalog-form label:not(.catalog-detail label):not(.field-checks):not(.field-checks label):not(.modifier-attach-option) {
   display: flex; flex-direction: column; gap: .2rem;
   font-size: .82rem; margin-bottom: .55rem;
 }
@@ -1033,8 +1029,8 @@ a.chip-warn { text-decoration: none; }
    `auto` (its content size) too, so the stretched control inside each
    column-flex label also needs an explicit zero minimum to follow its
    .field-pair column down at phone width. */
-.catalog-form label:not(.catalog-detail label):not(.field-checks):not(.field-checks label) > input,
-.catalog-form label:not(.catalog-detail label):not(.field-checks):not(.field-checks label) > select { min-inline-size: 0; }
+.catalog-form label:not(.catalog-detail label):not(.field-checks):not(.field-checks label):not(.modifier-attach-option) > input,
+.catalog-form label:not(.catalog-detail label):not(.field-checks):not(.field-checks label):not(.modifier-attach-option) > select { min-inline-size: 0; }
 /* minmax(0, 1fr), not bare 1fr (ut-docs#1956): 1fr is minmax(auto, 1fr),
    and a text <input>'s `auto` minimum is its intrinsic ~20ch width — at
    360px that held the SKU column open 18px past the full-screen item
@@ -1118,25 +1114,10 @@ label.field-checks { display: flex; flex-direction: row; align-items: center; ga
 .catalog-form-head { flex: none; display: flex; flex-direction: column; gap: .4rem;
                      padding: .6rem 1.5rem 0; border-block-end: 1px solid var(--border);
                      background: var(--surface); }
-/* Same properties as .catalog-form-head above, own class name so the two
-   never collide under a strict-mode locator when both dialogs are open at
-   once (ut-docs#1957, 2026-09-10 PR-sweep rebase fix — see catalog.html). */
-.modifier-groups-head { flex: none; display: flex; flex-direction: column; gap: .4rem;
-                        padding: .6rem 1.5rem 0; border-block-end: 1px solid var(--border);
-                        background: var(--surface); }
-/* ut-docs#2330: the dialog's OWN body never had a scroll container before
-   this card (pre-existing gap — `#modifier-groups-modal-list` had no rule
-   at all, unlike `.catalog-form-body`'s documented head/body layering just
-   above). It only got away with that while the attach control was a
-   collapsed <select> and the CRUD forms were the only content; the new
-   always-expanded checkbox list can make this dialog considerably taller on
-   a shop with several modifier groups, which would silently overflow the
-   dialog's own 86vh cap (`.modifier-groups-modal`) with no way to reach the
-   Attach button below the fold. Same flex/overflow shape as
-   .catalog-form-body, own selector since #modifier-groups-modal-list is an
-   id (the hx-swap target), not that class. */
-#modifier-groups-modal-list { flex: 1 1 auto; min-block-size: 0; overflow-y: auto;
-                               overflow-x: hidden; padding: 0 1.5rem 1rem; }
+/* ut-docs#2211: the item's modifiers render inline in the item editor's
+   Modifiers tab, inside .catalog-form-body — the one scroll container — so
+   #item-modifiers-list needs no scroll/flex rules of its own (the nested
+   dialog it replaced did, ut-docs#2330). */
 /* One row at 1024×600 (the kiosk floor), wrapping into two at phone width:
    the title+delete group and the action group each keep their own
    children on one line; only the two GROUPS wrap relative to each other. */
@@ -1280,21 +1261,6 @@ label.field-checks { display: flex; flex-direction: row; align-items: center; ga
    body.osk-padded rule above) instead of the old hardcoded 15.5rem, which
    had drifted short of the keyboard's real height. */
 body.osk-padded .item-form-modal { block-size: calc(100% - var(--osk-reserved-height, 17rem)); }
-/* ut-docs#1957: the "Manage customization groups" nested dialog — same
-   .show()/no-backdrop/fixed-position treatment as .item-form-modal above
-   and for the identical reason (OSK reachability for the group/option name
-   fields inside it), but its own smaller, narrower box and a HIGHER
-   z-index (520, still below #osk's 1000) so it visually stacks on top of
-   the still-open #item-form-modal underneath rather than beside or below
-   it — the whole point of the product-owner-reviewed nested-dialog design,
-   which must never navigate away from the item form. */
-.modifier-groups-modal { z-index: 520; width: 94vw; max-width: 40rem; max-height: 86vh;
-                          inset-block-start: 8vh; /* below item-form-modal's own 4vh, same
-                                                      convention as #hold-modal/#pfand-modal/
-                                                      #elevation-modal/#table-add-modal, which
-                                                      all layer above their own base too */ }
-.modifier-groups-modal:not([open]) { display: none; }
-body.osk-padded .modifier-groups-modal { block-size: calc(100% - var(--osk-reserved-height, 17rem)); }
 .catalog-extra { margin-top: .9rem; border-top: 1px solid var(--border); padding-top: .6rem; }
 .catalog-extra summary { font-weight: 600; cursor: pointer; color: var(--muted);
                          font-size: .85rem; }
@@ -4254,6 +4220,18 @@ body.login-screen {
   margin-inline-start: .5rem;
 }
 .statusbar a.sb-power:hover { filter: brightness(0.92); }
+/* Main till not reachable (ut-docs#2722) — the same amber warning pill as
+   sb-power: the till still sells, but sync and plugin updates wait. Allowed
+   to wrap (unlike other .sb-item) because the sentence carries a date and
+   the longest locales would otherwise push the bar wider than a tablet. */
+.statusbar .sb-main-till {
+  color: #451a03; background: var(--warning, #d97706);
+  text-decoration: none; white-space: normal;
+  padding: .05rem .5rem; border-radius: 999px; font-weight: 700;
+  margin-inline-start: .5rem;
+}
+.statusbar a.sb-main-till:hover { filter: brightness(0.92); }
+#sb-main-till-mount:empty { display: none; }
 /* Installed-plugin update chip (ut-docs#1953) — same green "there's
    something new" pill as sb-update above (not sb-power's amber: a pending
    plugin update is a notice, not a hardware-degrading warning), just its

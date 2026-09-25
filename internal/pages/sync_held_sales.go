@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -215,6 +216,9 @@ func registerSyncHeldSales(mux *http.ServeMux, d *common.Deps) {
 		if !applied {
 			logging.L().Debugf("sync held sale upsert %s from %s: refused, a newer write already holds the row (ADR-0093)", in.ID, till.Name)
 		}
+		if applied {
+			d.NudgeLink(fleetlink.ScopeHeldSales, fleetlink.ScopeTables) // ADR-0114 §2
+		}
 		writeSyncOrdersJSON(w, http.StatusOK, syncHeldSaleUpsertResult{Applied: applied, UpdatedAt: in.UpdatedAt, CreatedAt: in.CreatedAt}, nil)
 	})
 
@@ -243,6 +247,7 @@ func registerSyncHeldSales(mux *http.ServeMux, d *common.Deps) {
 			writeSyncOrdersJSON(w, http.StatusInternalServerError, nil, "server error")
 			return
 		}
+		d.NudgeLink(fleetlink.ScopeHeldSales, fleetlink.ScopeTables) // ADR-0114 §2
 		writeSyncOrdersJSON(w, http.StatusOK, syncHeldSaleDeleteResult{Deleted: true}, nil)
 	})
 
@@ -276,6 +281,9 @@ func registerSyncHeldSales(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		out := syncHeldSaleClaimResult{Claimed: claimed, Known: known}
+		if claimed {
+			d.NudgeLink(fleetlink.ScopeHeldSales, fleetlink.ScopeTables) // ADR-0114 §2
+		}
 		if claimed {
 			row := heldSaleToSyncRow(h)
 			out.Row = &row

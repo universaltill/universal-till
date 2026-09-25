@@ -19,6 +19,19 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- ut-docs#2722: many Android Wi-Fi drivers drop inbound multicast an
+         app hasn't asked for, so without a MulticastLock this till never
+         hears mDNS queries — a replica looking for its main till (after the
+         main till moved to a new address) or a new till looking for a shop
+         to join can't find it. TillService holds the lock while the server
+         runs. A normal (install-time) permission: no prompt, no user data.
+         Android derives a REQUIRED android.hardware.wifi feature from this
+         permission, which would hide the app from Ethernet-only tills and
+         make it uninstallable there — hence required="false" (Wi-Fi is
+         optional; TillService skips the lock without it). -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-feature android:name="android.hardware.wifi" android:required="false" />
+
     <!-- ut-docs#1246: in-app update. The Go core ships as a native library
          inside this APK, so it can never self-swap the way the desktop/Pi
          builds do — only the package installer may replace an app's own code.

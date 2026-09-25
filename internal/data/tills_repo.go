@@ -103,6 +103,19 @@ FROM tills WHERE bearer_hash = ?`, bearerHash).
 	return t, true, nil
 }
 
+// TouchLastSeen refreshes a till's last_seen_at without a bearer lookup —
+// the main-till link (ADR-0114) calls it for a linked till's frames, so
+// table-claim TTLs keep treating a linked till as alive. last_seen_at is a
+// redactCol, so this never bumps sync_admin_version (migration 023).
+func (r *TillsRepo) TouchLastSeen(ctx context.Context, id string) error {
+	_, err := r.db.ExecContext(ctx, `UPDATE tills SET last_seen_at = ? WHERE id = ?`,
+		time.Now().UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return fmt.Errorf("touch till last seen: %w", err)
+	}
+	return nil
+}
+
 // DeleteTill revokes a replica's enrolment.
 func (r *TillsRepo) DeleteTill(ctx context.Context, id string) error {
 	_, err := r.db.ExecContext(ctx, `DELETE FROM tills WHERE id = ?`, id)
@@ -110,4 +123,22 @@ func (r *TillsRepo) DeleteTill(ctx context.Context, id string) error {
 		return fmt.Errorf("delete till: %w", err)
 	}
 	return nil
+}
+
+// BearerHashByID returns an enrolled till's stored bearer hash, for the
+// primary-proof handshake (ut-docs#2722): a replica that re-finds its main
+// till over mDNS asks it to prove it holds this till's pairing record before
+// sending it the bearer. Deliberately does NOT touch last_seen_at — the proof
+// request is unauthenticated, so it must never make a till look alive. A
+// missing or empty hash (a redacted snapshot copy) is "not found".
+func (r *TillsRepo) BearerHashByID(ctx context.Context, id string) (string, bool, error) {
+	var h string
+	err := r.db.QueryRowContext(ctx, `SELECT COALESCE(bearer_hash, '') FROM tills WHERE id = ?`, id).Scan(&h)
+	if err == sql.ErrNoRows || (err == nil && h == "") {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("till bearer hash: %w", err)
+	}
+	return h, true, nil
 }
