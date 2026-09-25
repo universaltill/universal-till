@@ -555,10 +555,14 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerPrimaryProof(mux, dp)       // main till answers a moved-till challenge (ut-docs#2722)
 	registerMainTillStatus(mux, dp)     // replica's "main till not reachable" status chip (ut-docs#2722)
 	dp.PrimaryWatch = discovery.NewPrimaryWatch(dp.Settings, discovery.Browse)
+	// ADR-0114 (ut-docs#2735): this till's side of the main-till link. Built
+	// before StartSyncPull, which reads its link state for the polling floor.
+	dp.LinkClient = newSyncLinkClient(dp, fleetlink.DefaultClientOptions())
 	StartSyncPush(bgCtx, dp, wg)                // replica journal loop (ADR-0011 D3); joined by app.Run's drain
 	StartSyncLink(bgCtx, dp, wg, syncAdminRepo) // main-till link: admin-change watch + bye on shutdown (ADR-0114); joined by app.Run's drain
 	rederiveSettings := newRederiveSettings(dp, authDisabled, i18n)
 	StartSyncPull(bgCtx, dp, rederiveSettings, wg)          // joined by app.Run's drain
+	StartSyncLinkClient(bgCtx, dp, wg)                      // replica side of the main-till link (ADR-0114); joined by app.Run's drain
 	StartHeldOrderClaimReaffirm(bgCtx, dp, wg)              // periodic held-order table-claim re-affirm (ut-docs#1724); joined by app.Run's drain
 	StartSelfOrderSessionSweep(bgCtx, dp, wg)               // evict idle table-QR self-order sessions (ADR-0103 D5, ut-docs#2261); joined by app.Run's drain
 	StartCloudSync(bgCtx, dp, rederiveSettings, wg)         // ADR-0018 cloud heartbeat + directives; joined by app.Run's drain

@@ -371,14 +371,82 @@ func runSyncLoop(ctx context.Context, wg *sync.WaitGroup, kick <-chan struct{}, 
 	}()
 }
 
-// StartSyncPull runs the replica-side drift loop: every 30s fetch the
-// primary's admin bundle and apply it when the fingerprint moved. refresh
-// re-derives in-memory state (theme, tax engine, i18n) after an apply. wg
-// registers the loop with app.Run's shutdown drain (ut-docs#153) — the
-// caller must pass bgCtx (not ctx), same requirement as StartCloudSync.
+// The admin pull's polling floor (ADR-0114 §3): every 30 s as before while
+// unlinked; every 5 min while the main-till link is up, since every change
+// then arrives as a `sync` nudge that kicks a pull at once.
+const (
+	syncPullEvery       = 30 * time.Second
+	syncPullEveryLinked = 5 * time.Minute
+)
+
+// StartSyncPull runs the replica-side drift loop: fetch the primary's admin
+// bundle and apply it when the fingerprint moved — every 30 s, or every
+// 5 min while linked (ADR-0114 §3), and at once on a link nudge
+// (d.SyncPullNow). refresh re-derives in-memory state (theme, tax engine,
+// i18n) after an apply. wg registers the loop with app.Run's shutdown drain
+// (ut-docs#153) — the caller must pass bgCtx (not ctx), same requirement as
+// StartCloudSync. d.LinkClient, when used, must be set before this runs.
 func StartSyncPull(ctx context.Context, d *common.Deps, refresh func(context.Context), wg *sync.WaitGroup) {
 	client := &http.Client{Timeout: 60 * time.Second}
-	runSyncLoop(ctx, wg, nil, func() { syncPullTick(ctx, d, client, refresh) })
+	startSyncPullLoop(ctx, d, wg, syncPullEvery, syncPullEveryLinked, func() { syncPullTick(ctx, d, client, refresh) })
+}
+
+// startSyncPullLoop is StartSyncPull with the intervals and tick injectable
+// for tests.
+func startSyncPullLoop(ctx context.Context, d *common.Deps, wg *sync.WaitGroup, unlinked, linked time.Duration, tick func()) {
+	if d.SyncPullNow == nil {
+		d.SyncPullNow = make(chan struct{}, 1)
+	}
+	var reeval <-chan struct{}
+	if d.LinkClient != nil {
+		reeval = d.LinkClient.LinkChanged()
+	}
+	runPullLoop(ctx, wg, d.SyncPullNow, reeval, syncPullInterval(d, unlinked, linked), tick)
+}
+
+// syncPullInterval picks the polling floor from the link's state.
+func syncPullInterval(d *common.Deps, unlinked, linked time.Duration) func() time.Duration {
+	return func() time.Duration {
+		if d.LinkClient != nil && d.LinkClient.Linked() {
+			return linked
+		}
+		return unlinked
+	}
+}
+
+// runPullLoop is runSyncLoop with a variable interval: tick every
+// interval(), at once on kick, and on reeval re-read interval() — a link
+// that just dropped brings the short interval back measured from the last
+// tick, not after the long one runs out. Same wg join shape as runSyncLoop.
+func runPullLoop(ctx context.Context, wg *sync.WaitGroup, kick, reeval <-chan struct{}, interval func() time.Duration, tick func()) {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		last := time.Now()
+		timer := time.NewTimer(interval())
+		defer timer.Stop()
+		run := func() {
+			tick()
+			last = time.Now()
+			timer.Reset(interval())
+		}
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-timer.C:
+				run()
+			case <-kick:
+				run()
+			case <-reeval:
+				if wait := interval() - time.Since(last); wait > 0 {
+					timer.Reset(wait)
+				} else {
+					run()
+				}
+			}
+		}
+	}()
 }
 
 // syncPullTick is one tick of the replica-side drift loop, extracted from
@@ -459,8 +527,12 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 	}
 	// Reached only when the poll round-tripped AND (nothing changed, or the
 	// apply above actually succeeded) — see the early return in the failure
-	// branch just above.
+	// branch just above. sync.last_pull_ok_at is this fact alone: the link
+	// (ADR-0114) refreshes last_contact_at between its 5-min pulls only
+	// while this is recent (refreshLinkContact), so a link over a stuck
+	// pull cannot keep the chip green.
 	_ = d.Settings.Set(ctx, "sync.last_contact_at", now)
+	_ = d.Settings.Set(ctx, "sync.last_pull_ok_at", now)
 	primaryContactOK(ctx, d)
 
 	// ut-docs#460 — the plugin set follows the primary. Best-effort like

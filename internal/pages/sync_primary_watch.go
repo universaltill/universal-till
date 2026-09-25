@@ -182,6 +182,11 @@ func primaryContactFailed(ctx context.Context, d *common.Deps, cause string) {
 		tillID, _, _ := d.Settings.Get(ctx, "sync.till_id")
 		_ = data.NewPOSRepo(d.Db).InsertAudit(ctx, nil, "system", "till", tillID, "primary_relinked",
 			map[string]any{"from": out.OldURL, "to": out.NewURL}, time.Now().UTC().Format(time.RFC3339), "")
+		// ADR-0114 §4: the link follows the switch — redial the new
+		// address now rather than at its next re-check.
+		if d.LinkClient != nil {
+			d.LinkClient.Redial()
+		}
 		return
 	}
 	if out.Warn {
