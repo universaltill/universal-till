@@ -39,7 +39,7 @@ type counterOrderRow struct {
 // carries no price to put in one. Qty renders with the viewing operator's
 // own locale digit-shape/grouping (ut-docs#2221, mirroring FormatQty
 // everywhere else on-screen) — unlike the kitchen ticket this same stored
-// quantity also feeds (self_order_shop.go's printCounterOrderTicketAsync),
+// quantity also feeds (self_order_shop.go's printCounterOrderTicket),
 // which formats separately and deliberately stays Latin for the printer.
 func counterOrderItemsSummary(lines []data.KioskCounterOrderLine, locale string) string {
 	parts := make([]string, 0, len(lines))

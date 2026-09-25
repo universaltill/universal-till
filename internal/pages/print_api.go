@@ -436,7 +436,7 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 var (
 	printAsyncTimeout = 15 * time.Second
 	printReceiptFn    = printReceipt
-	printKitchenFn    = printKitchen
+	printKitchenFn    = printKitchenFiltered
 )
 
 // recordPrintFailureCtx returns the short-lived context used to WRITE a print
