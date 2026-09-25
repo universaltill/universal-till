@@ -271,7 +271,8 @@ func cloudSetQuickButtonLayout(ctx context.Context, d *common.Deps, barcodes []s
 
 // remoteQuickButtonsReport is the read side for DeviceExtra: the currently
 // applied quick-sale button layout (barcode + label, in the same sort order
-// LoadButtons itself orders by), so the cloud's layout panel shows applied
+// LoadButtons itself orders by, plus the item each tile points at and that
+// item's tile colour — ut-docs#2368), so the cloud's layout panel shows applied
 // state, not just what was queued — same "report what's actually there"
 // pattern as remoteTillSettingsReport above. A read error reports an empty
 // list rather than failing the whole heartbeat.
@@ -289,7 +290,16 @@ func remoteQuickButtonsReport(ctx context.Context, d *common.Deps) []map[string]
 		// self-describing without its slice context (claims.go's own doc
 		// comment on that field), even though the panel today only reads
 		// the report's array order, not this field, to render the list.
-		out = append(out, map[string]any{"barcode": b.Barcode, "label": b.Label, "sort_order": i})
+		// item_id + color (ut-docs#2368): a tile has no colour of its own —
+		// it shows its item's items.color — so the cloud panel recolours a
+		// tile by queueing update_item_details for item_id, and reads color
+		// back as the applied state. color is always present ("" = none) so
+		// the cloud can tell an uncoloured item from an older till that
+		// doesn't report colour at all.
+		out = append(out, map[string]any{
+			"barcode": b.Barcode, "label": b.Label, "sort_order": i,
+			"item_id": b.ItemID, "color": b.Color,
+		})
 	}
 	return out
 }
