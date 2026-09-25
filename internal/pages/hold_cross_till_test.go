@@ -276,18 +276,19 @@ func newSlowHoldCrossTillPrimary(t *testing.T, tillBearer string, delay time.Dur
 }
 
 // TestResumeHeldSale_HotPathBoundedWhenPrimaryIsSlow (ut-docs#2270): a
-// busy-basket resume stacks up to FOUR independent write-through hops
-// (lookup, auto-park, re-claim, delete) on one request -- see
+// busy-basket resume stacks up to THREE independent write-through hops
+// (order claim, auto-park, table re-claim -- four before ADR-0093
+// Amendment B folded the lookup and delete into the claim) on one request -- see
 // crossTillHotPathProxyTimeout's own comment for why the old-table release
 // is deliberately not a fifth hop on this specific branch. Against a
 // primary that answers every call but takes hotPathTestPrimaryDelay --
 // reachable, just slow, not a clean refusal, which fails fast -- the
 // PRE-fix behaviour (each hop bounded only by its 800ms client Timeout,
 // comfortably longer than the delay) would let EVERY hop actually succeed
-// against the primary, ~700ms each, ~2.8s total. The fix bounds each hop
+// against the primary, ~700ms each, ~2.1s total. The fix bounds each hop
 // specifically on this path to crossTillHotPathProxyTimeout (300ms,
 // shorter than the delay), so every hop instead falls back to the local
-// read/write within ~300ms, ~1.2s total -- and, the point this test exists
+// read/write within ~300ms, ~0.9s total -- and, the point this test exists
 // to prove past the timing itself, that local fallback must still SUCCEED
 // rather than erroring on an already-expired context (the bug this card's
 // fix specifically had to avoid, see crossTillHotPathNetCtx's own
@@ -297,7 +298,7 @@ func TestResumeHeldSale_HotPathBoundedWhenPrimaryIsSlow(t *testing.T) {
 		t.Fatalf("test setup: hotPathTestPrimaryDelay (%s) must sit strictly between crossTillHotPathProxyTimeout (%s) and the proxy clients' shared Timeout (%s)",
 			hotPathTestPrimaryDelay, crossTillHotPathProxyTimeout, heldSaleProxyClient.Timeout)
 	}
-	const resumeHotPathHops = 4
+	const resumeHotPathHops = 3
 	primary, primaryRepo := newSlowHoldCrossTillPrimary(t, "b-123", hotPathTestPrimaryDelay)
 	t1, err := primaryRepo.CreateTable(context.Background(), "T1", "", 4, "rect", 100, 100)
 	if err != nil {
@@ -359,11 +360,11 @@ func TestResumeHeldSale_HotPathBoundedWhenPrimaryIsSlow(t *testing.T) {
 		t.Fatalf("resume: expected 200, got %d: %s", resumeRec.Code, resumeRec.Body.String())
 	}
 	// The regression this test guards: unbounded, resumeHotPathHops stacked
-	// hotPathTestPrimaryDelay-long hops would take ~2.8s (4 x 700ms);
-	// bounded to crossTillHotPathProxyTimeout each, ~1.2s (4 x 300ms). The
+	// hotPathTestPrimaryDelay-long hops would take ~2.1s (3 x 700ms);
+	// bounded to crossTillHotPathProxyTimeout each, ~0.9s (3 x 300ms). The
 	// 2x factor is headroom for scheduling jitter, not a magic number --
-	// it still leaves this assertion comfortably below the ~2.8s
-	// regression figure while comfortably above the ~1.2s expected one.
+	// it still leaves this assertion (1.8s) below the ~2.1s regression
+	// figure while comfortably above the ~0.9s expected one.
 	if maxElapsed := time.Duration(resumeHotPathHops) * crossTillHotPathProxyTimeout * 2; elapsed >= maxElapsed {
 		t.Fatalf("resume took %s (want < %s) -- the resume hot path must bound each write-through hop to ~%s, not the full client Timeout (ut-docs#2270)",
 			elapsed, maxElapsed, crossTillHotPathProxyTimeout)
@@ -375,7 +376,7 @@ func TestResumeHeldSale_HotPathBoundedWhenPrimaryIsSlow(t *testing.T) {
 	// context reaching a local repo fallback would surface here as the
 	// resume having done nothing (the read half) or H1's row surviving the
 	// resume it's meant to consume (the write/delete half, checked below --
-	// resumeHeldSale swallows heldSaleDeleteWriteThrough's own error, so
+	// resumeHeldSale swallows its local cleanup delete's own error, so
 	// only the row's actual absence proves this half of the fallback
 	// worked, not just a 200 response).
 	snap := dp.Engine.Snapshot()

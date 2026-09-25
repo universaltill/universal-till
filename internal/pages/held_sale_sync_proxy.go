@@ -17,8 +17,9 @@ import (
 // ut-docs#1920): hold_api.go's park / re-park (parkCurrentBasket) and its
 // table move (POST /api/pos/held/table, Amendment A F3) call
 // heldSaleWriteThrough instead of repo.Insert/Upsert/SetTable directly, and
-// its resume (resumeHeldSale) calls heldSaleDeleteWriteThrough instead of
-// repo.Delete, so on a REPLICA the PRIMARY's held_sales
+// its resume (resumeHeldSale) takes the order through heldSaleClaimForResume
+// (the primary's atomic claim, ADR-0093 Amendment B) instead of a local
+// read-then-delete, so on a REPLICA the PRIMARY's held_sales
 // (sync_held_sales.go) is the shop-wide copy while reachable: a parked
 // order pushed there is visible to -- and resumable from -- every other
 // till reading through the primary, and a primary-applied write is
@@ -84,7 +85,7 @@ const (
 )
 
 // postHeldSaleOnPrimary is the shared bearer-authed JSON POST behind the
-// upsert/delete proxies below. ok=false on ANY failure; a 200 with a
+// upsert/claim proxies below. ok=false on ANY failure; a 200 with a
 // decodable `{"data":{...}}` object is handed back for the caller to read
 // its field. JSON rather than tables_claim_proxy.go's form body, since the
 // row carries the basket snapshot as a JSON payload string.
@@ -145,17 +146,30 @@ func upsertHeldSaleOnPrimary(ctx context.Context, d *common.Deps, client *http.C
 	return true, out.Data.Applied, out.Data.UpdatedAt, out.Data.CreatedAt
 }
 
-// deleteHeldSaleOnPrimary tries POST /api/sync/held-sales/delete on the
-// primary. ok=false on ANY failure, same contract as
-// upsertHeldSaleOnPrimary; callers treat it as fire-and-forget.
-func deleteHeldSaleOnPrimary(ctx context.Context, d *common.Deps, client *http.Client, id string) (ok bool) {
+// claimHeldSaleOnPrimary tries POST /api/sync/held-sales/claim on the
+// primary (ADR-0093 Amendment B, ut-docs#2712). ok=false on ANY failure --
+// not a replica, network error, timeout, non-200, malformed body, or a
+// "claimed" answer with no row to resume -- same contract as
+// upsertHeldSaleOnPrimary, and the caller falls back to its local row. When
+// ok: claimed=true hands back the primary's row, now deleted there and
+// tombstoned, so this till alone owns it; claimed=false with known=true
+// means another till already resolved it (a claim or delete of its own);
+// known=false means nothing there contradicts this till's own copy -- the
+// primary never learned of the id, or the only tombstone is this till's own.
+func claimHeldSaleOnPrimary(ctx context.Context, d *common.Deps, client *http.Client, id string) (ok, claimed, known bool, row data.HeldSale) {
 	var out struct {
-		Data *syncHeldSaleDeleteResult `json:"data"`
+		Data *syncHeldSaleClaimResult `json:"data"`
 	}
-	if !postHeldSaleOnPrimary(ctx, d, client, "delete", syncHeldSaleDeleteRequest{ID: id}, &out) || out.Data == nil {
-		return false
+	if !postHeldSaleOnPrimary(ctx, d, client, "claim", syncHeldSaleClaimRequest{ID: id}, &out) || out.Data == nil {
+		return false, false, false, data.HeldSale{}
 	}
-	return true
+	if out.Data.Claimed {
+		if out.Data.Row == nil {
+			return false, false, false, data.HeldSale{}
+		}
+		return true, true, true, heldSaleFromSyncRow(*out.Data.Row)
+	}
+	return true, false, out.Data.Known, data.HeldSale{}
 }
 
 // fetchHeldSalesFromPrimary tries GET /api/sync/held-sales on the primary.
@@ -311,26 +325,90 @@ func mirrorHeldSaleFromPrimary(ctx context.Context, repo *data.HeldSalesRepo, h 
 	}
 }
 
-// heldSaleDeleteWriteThrough is THE resume delete for hold_api.go's
-// resumeHeldSale: the primary is told to delete the row (fire-and-forget
-// for the caller's purposes -- its answer never blocks or fails the
-// resume, matching releaseTableClaimWriteThrough's stance), and the local
-// row is ALWAYS deleted afterwards regardless, its error returned exactly
-// as repo.Delete's was before.
+// heldSaleClaimForResume is resumeHeldSale's lookup (ADR-0093 Amendment B,
+// ut-docs#2712): it TAKES the order from whichever database is the shop's
+// authority for it, before anything is restored, so no two tills can both
+// restore the same order -- replacing Amendment A's list-then-restore-then-
+// fire-and-forget-delete, which left a window where they could, and which
+// could also hand back a stale copy whose push reply had been lost.
 //
-// primaryDeleted reports whether the primary-side delete is known to have
-// succeeded (false covers "not a replica" and every failure alike -- the
-// caller cannot and must not try to distinguish those). A resume that
-// could not reach the primary leaves the primary's row behind until this
-// till's next successful write-through for that id -- the accepted
-// bounded-outage limitation above.
-func heldSaleDeleteWriteThrough(ctx context.Context, d *common.Deps, repo *data.HeldSalesRepo, id string) (primaryDeleted bool, err error) {
-	primaryDeleted = deleteHeldSaleOnPrimary(ctx, d, heldSaleProxyClient, id)
-	return primaryDeleted, repo.Delete(ctx, id)
+//   - Not a replica (standalone, or the primary till itself): this till's
+//     own held_sales IS the authority -- ClaimAndTombstone locally, the
+//     same transaction a replica's /claim runs, so the primary's own resume
+//     is atomic against a replica's claim and leaves the same tombstone.
+//   - Replica, primary answers claimed: the primary's row is the content
+//     (it is authoritative, Amendment A F1) and it is already gone there.
+//   - Replica, primary answers known (resolved on ANOTHER till): the local
+//     copy is dropped and the resume refused via the existing not-found path.
+//   - Replica, primary answers neither (it never learned of the id, or the
+//     only tombstone is this till's own earlier claim -- its re-park of
+//     that same order fell back to local-only, so this till holds the
+//     newest copy): the local row, under Amendment A's rule unchanged -- a
+//     primary_synced mirror the primary no longer has was resolved there
+//     (F2: drop, refuse; its tombstone may simply have aged out), anything
+//     else is a genuine outage-taken order and resumes locally.
+//   - Replica, primary unreachable (any transport failure): the local row,
+//     unchanged from before -- the accepted bounded-outage limitation, and
+//     resume never blocks on a primary that happens to be off (ADR-0003).
+//
+// claimed reports that the order was taken from the authority (the first
+// two cases), so a resume that then cannot go through must hand it back
+// (heldSaleGiveBack) rather than lose it; the fallback cases took nothing.
+func heldSaleClaimForResume(ctx context.Context, d *common.Deps, repo *data.HeldSalesRepo, id string) (held data.HeldSale, found, claimed bool) {
+	if _, _, isReplica := replicaSyncTarget(ctx, d); !isReplica {
+		// "" is the primary's own identity on the tombstone: no enrolled
+		// replica ever matches it, so every replica's later claim of an
+		// order the primary till itself resumed is refused as resolved.
+		h, took, _, err := repo.ClaimAndTombstone(ctx, id, "")
+		if err != nil || !took {
+			return data.HeldSale{}, false, false
+		}
+		return h, true, true
+	}
+	ok, took, known, row := claimHeldSaleOnPrimary(ctx, d, heldSaleProxyClient, id)
+	if ok && took {
+		return row, true, true
+	}
+	if ok && known {
+		logging.L().Infof("held sale proxy: %s was already resolved on another till — dropping this till's copy and refusing the resume (ADR-0093 Amendment B)", id)
+		if err := repo.Delete(ctx, id); err != nil {
+			logging.L().Debugf("held sale proxy: dropping resolved copy %s failed: %v", id, err)
+		}
+		return data.HeldSale{}, false, false
+	}
+	h, found, err := repo.Get(ctx, id)
+	if err != nil || !found {
+		return data.HeldSale{}, false, false
+	}
+	if ok && h.PrimarySynced {
+		logging.L().Infof("held sale proxy: %s is no longer open on the primary — resolved on another till; dropping this till's mirror and refusing the resume (ADR-0093 Amendment A)", id)
+		if err := repo.Delete(ctx, id); err != nil {
+			logging.L().Debugf("held sale proxy: dropping resolved mirror %s failed: %v", id, err)
+		}
+		return data.HeldSale{}, false, false
+	}
+	return h, true, false
 }
 
-// heldSaleForResume is resumeHeldSale's lookup, and (ADR-0093 Amendment A,
-// F10) the held-table-move handler's: any caller that needs this till's
+// heldSaleGiveBack puts an order heldSaleClaimForResume claimed back where
+// it came from, when the resume that claimed it cannot go through (corrupt
+// payload, auto-park failure, already the live order): the claim is
+// destructive, and before it a failed resume cost nothing. Written through
+// like any re-park -- UpdatedAt blanked so the primary's clock stamps it,
+// created_at kept so the order's age survives; its tombstone is harmless,
+// since a claim only consults one when the row is absent. Best-effort: a
+// failure is logged, never surfaced over the resume's own outcome.
+func heldSaleGiveBack(ctx context.Context, d *common.Deps, repo *data.HeldSalesRepo, h data.HeldSale) {
+	h.UpdatedAt = ""
+	h.PrimarySynced = false
+	if _, err := heldSaleWriteThrough(ctx, d, repo, h); err != nil {
+		logging.L().Errorf("held sale proxy: giving back claimed order %s after a failed resume: %v", h.ID, err)
+	}
+}
+
+// heldSaleForResume was resumeHeldSale's lookup until ADR-0093 Amendment B
+// moved resume onto heldSaleClaimForResume; it remains (Amendment A, F10)
+// the held-table-move handler's, which must stay non-destructive: any caller that needs this till's
 // best current answer for "what does this order actually hold right now,
 // and is it still open at all" wants this, not repo.Get's local-only row
 // -- a caller that mutates the row (a move) and writes the RESULT through

@@ -37,16 +37,25 @@ import (
 //     a silent clobber of a newer edit. Same depth ADR-0084 shipped for a
 //     voucher balance (sync_vouchers.go's /redeem), not a per-line merge
 //     (explicit ADR-0093 non-goal).
-//   - POST /api/sync/held-sales/delete -- {id}, for resume-to-active. A
-//     plain delete: naturally idempotent, so an already-gone row is still
-//     200/deleted=true, same as /api/sync/tables/release.
+//   - POST /api/sync/held-sales/delete -- {id}. A plain delete: naturally
+//     idempotent, so an already-gone row is still 200/deleted=true, same as
+//     /api/sync/tables/release. No longer on the current resume path
+//     (superseded by /claim below) but still served for a replica on the
+//     previous version during a rollout, and since Amendment B it leaves a
+//     tombstone too (HeldSalesRepo.DeleteAndTombstone).
+//   - POST /api/sync/held-sales/claim -- {id}, the resume hand-off (ADR-0093
+//     Amendment B, ut-docs#2712). Delete-and-tombstone in ONE transaction
+//     (HeldSalesRepo.ClaimAndTombstone), so of two tills resuming the same
+//     order exactly one gets the row back; a loser, or a till whose earlier
+//     push reply was lost, is told known=true (resolved elsewhere) instead
+//     of being left to trust its stale local copy and tender it again.
 //   - GET /api/sync/held-sales -- every currently-open held sale on the
 //     primary, for a replica's open_orders_page.go merge.
 //
 // Bearer-authed via syncTill, JSON envelope { "data": …, "error": null },
 // snake_case -- same conventions as every other /api/sync/* endpoint.
-// JSON bodies (not form-encoded like the claim endpoints) because the row
-// carries the basket snapshot as a JSON payload string. All three must
+// JSON bodies (not form-encoded like the table-claim endpoints) because the
+// row carries the basket snapshot as a JSON payload string. All four must
 // stay on internal/auth/middleware.go's exempt list
 // (TestSyncPullPathsAreExempt pins them), or a replica is 401'd before
 // syncTill ever runs and the proxy silently falls back to local-only --
@@ -129,6 +138,27 @@ type syncHeldSaleDeleteResult struct {
 	Deleted bool `json:"deleted"`
 }
 
+// syncHeldSaleClaimRequest is POST .../claim's body.
+type syncHeldSaleClaimRequest struct {
+	ID string `json:"id"`
+}
+
+// syncHeldSaleClaimResult is the wire form of a claim outcome (ADR-0093
+// Amendment B). claimed=true carries the full row the caller now owns --
+// the primary's copy, deleted there in the same transaction, so it is both
+// the authoritative content and the proof nobody else can take it.
+// claimed=false: known=true means a fresh tombstone written by ANOTHER till
+// says the order was resolved elsewhere (refuse the resume); known=false
+// means nothing on the primary contradicts the caller's own copy -- it
+// never learned of the id, or the only tombstone is the caller's own
+// earlier claim (the caller then holds the newest copy: its re-park under
+// the same id fell back to local-only, see HeldSalesRepo.ClaimAndTombstone).
+type syncHeldSaleClaimResult struct {
+	Claimed bool             `json:"claimed"`
+	Known   bool             `json:"known"`
+	Row     *syncHeldSaleRow `json:"row"`
+}
+
 // registerSyncHeldSales mounts the primary-side held-sale endpoints on the
 // bearer-authed /api/sync/* surface, next to registerSyncTablesClaim's.
 func registerSyncHeldSales(mux *http.ServeMux, d *common.Deps) {
@@ -206,12 +236,53 @@ func registerSyncHeldSales(mux *http.ServeMux, d *common.Deps) {
 			writeSyncOrdersJSON(w, http.StatusBadRequest, nil, "id required")
 			return
 		}
-		if err := repo.Delete(r.Context(), in.ID); err != nil {
+		// Amendment B: leaves a tombstone, so a stale replica copy of an order
+		// resolved this way is refused by a later claim like a claimed one.
+		if err := repo.DeleteAndTombstone(r.Context(), in.ID, till.ID); err != nil {
 			logging.L().Errorf("sync held sale delete %s from %s: %v", in.ID, till.Name, err)
 			writeSyncOrdersJSON(w, http.StatusInternalServerError, nil, "server error")
 			return
 		}
 		writeSyncOrdersJSON(w, http.StatusOK, syncHeldSaleDeleteResult{Deleted: true}, nil)
+	})
+
+	// Claim by id (ADR-0093 Amendment B, ut-docs#2712): the atomic resume
+	// hand-off. 200 with claimed=false is the ordinary "not yours" answer --
+	// a business refusal, never an error status, same as upsert's
+	// applied=false.
+	mux.HandleFunc("POST /api/sync/held-sales/claim", func(w http.ResponseWriter, r *http.Request) {
+		till, ok := syncTill(r, tills)
+		if !ok {
+			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")
+			return
+		}
+		var in syncHeldSaleClaimRequest
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			writeSyncOrdersJSON(w, http.StatusBadRequest, nil, "invalid body")
+			return
+		}
+		in.ID = strings.TrimSpace(in.ID)
+		if in.ID == "" {
+			writeSyncOrdersJSON(w, http.StatusBadRequest, nil, "id required")
+			return
+		}
+		// till.ID stamps the tombstone with who resolved the order, so this
+		// same till's own later claim (its offline re-park of the order it
+		// resumed) is never refused by it -- only another till's is.
+		h, claimed, known, err := repo.ClaimAndTombstone(r.Context(), in.ID, till.ID)
+		if err != nil {
+			logging.L().Errorf("sync held sale claim %s from %s: %v", in.ID, till.Name, err)
+			writeSyncOrdersJSON(w, http.StatusInternalServerError, nil, "server error")
+			return
+		}
+		out := syncHeldSaleClaimResult{Claimed: claimed, Known: known}
+		if claimed {
+			row := heldSaleToSyncRow(h)
+			out.Row = &row
+		} else if known {
+			logging.L().Infof("sync held sale claim %s from %s: refused, already resolved on another till (ADR-0093 Amendment B)", in.ID, till.Name)
+		}
+		writeSyncOrdersJSON(w, http.StatusOK, out, nil)
 	})
 
 	// The primary's live open orders -- the same rows its own Open orders

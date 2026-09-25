@@ -203,7 +203,7 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		"/api/sync/tables/release-all",
 		// ADR-0093 (ut-docs#1920): the primary-side held-sale (open order)
 		// write-through trio a replica's heldSaleWriteThrough /
-		// heldSaleDeleteWriteThrough / fetchHeldSalesFromPrimary
+		// (pre-Amendment-B) resume delete / fetchHeldSalesFromPrimary
 		// (held_sale_sync_proxy.go) hit. Bearer-authed in the handler
 		// (syncTill), same as the table-claim entries above — without
 		// these the replica authenticates perfectly and is still 401'd
@@ -213,6 +213,11 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		"/api/sync/held-sales",
 		"/api/sync/held-sales/upsert",
 		"/api/sync/held-sales/delete",
+		// ADR-0093 Amendment B (ut-docs#2712): the atomic claim a replica's
+		// resume (claimHeldSaleOnPrimary) makes before restoring an order.
+		// Missing here, every claim is 401'd, the resume silently falls back
+		// to local-only, and the double-tender this endpoint closes is back.
+		"/api/sync/held-sales/claim",
 		// ut-docs#1668: the primary-side cross-till voucher lookup a
 		// replica's fetchVoucherFromPrimary (voucher_sync_proxy.go) proxies
 		// to. Bearer-authed in the handler (syncTill), same as
