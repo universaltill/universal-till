@@ -943,6 +943,19 @@ body.kiosk .modifier-assign-add-item .modifiers-item-search { min-block-size: 2.
 .chip button { border: 0; background: none; cursor: pointer; padding: 0; line-height: 1;
                color: var(--muted); font-size: .78rem; }
 .chip button:hover { color: #b91c1c; }
+/* ut-docs#2648: the running-out-stock chip ("⚠ N item(s) predicted to run
+   out…") reused .chip + this class, but .chip itself is the monospace CODE
+   chip (variant/option-set values) and chip-warn had no rule of its own —
+   inside an h1/h2 it also inherited the global heading rule's
+   text-transform: uppercase + letter-spacing. Values here are words, not
+   codes, and must not inherit either; a sentence may wrap on a phone.
+   Text stays var(--text): --warning on its own tint is only ~2.6:1 in the
+   light themes (the ⚠ and the tint carry the warning). */
+.chip-warn { font-family: inherit; text-transform: none; letter-spacing: normal;
+             font-weight: 600; background: var(--warning-tint); color: var(--text);
+             border-color: var(--warning-tint-border); vertical-align: middle;
+             white-space: normal; }
+a.chip-warn { text-decoration: none; }
 .chip-add { display: inline-flex; gap: .35rem; align-items: center; margin-block-start: .45rem;
             flex-wrap: wrap; }
 .chip-add input[type="text"] { inline-size: 10rem; min-inline-size: 0; padding: .3rem .5rem; }

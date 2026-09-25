@@ -83,6 +83,15 @@ func TestInventoryPredictsDaysLeft(t *testing.T) {
 	if !strings.Contains(body, "predicted to run out") {
 		t.Fatal("running-out chip missing from the header")
 	}
+	// ut-docs#2648: exactly one running-out item (Fast Cola, seeded above)
+	// must use the singular wording ("1 item predicted to run out"), never
+	// the old un-pluralized "item(s)" placeholder.
+	if !strings.Contains(body, "1 item predicted to run out within a week") {
+		t.Fatal("expected singular wording for exactly one running-out item")
+	}
+	if strings.Contains(body, "item(s)") {
+		t.Fatal("running-out chip must not render the old un-pluralized \"item(s)\" wording")
+	}
 	// Reorder suggestion: 2/day × 14-day cover − 6 on hand ≈ 22.
 	if !strings.Contains(body, "order ~") || !strings.Contains(body, "order ~ 22") {
 		t.Fatal("reorder suggestion missing or wrong quantity")
@@ -98,6 +107,75 @@ func TestInventoryPredictsDaysLeft(t *testing.T) {
 	// CreateReturn's handler at all for a real form submit.
 	if !strings.Contains(body, `id="offline-flag" name="offline" value="0"`) {
 		t.Fatal("return-form is missing its hidden offline-flag input (ut-docs#1493)")
+	}
+}
+
+// TestInventoryRunningOutChip_PluralWording is ut-docs#2648's plural
+// counterpart to TestInventoryPredictsDaysLeft's new singular assertion
+// above: with two fast-sellers both low on stock, the chip must read
+// "2 items predicted to run out within a week" (plural), built from the
+// exact same fixture pattern (2/day over 14 sales, low stock -> ~3 days
+// left) duplicated for a second item.
+func TestInventoryRunningOutChip_PluralWording(t *testing.T) {
+	chdirRoot(t)
+	d := openPagesTestDB(t)
+	defer d.Close()
+
+	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+	if err != nil {
+		t.Fatalf("i18n: %v", err)
+	}
+	httpx.InitI18n(i18n, "en")
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := d.Exec(q, args...); err != nil {
+			t.Fatalf("exec: %v (%s)", err, q)
+		}
+	}
+	mustExec(`INSERT INTO stock_locations (id, name) VALUES ('loc-1','Shop floor')`)
+	for _, it := range []struct{ id, name, sku string }{
+		{"it-cola", "Fast Cola", "COLA"},
+		{"it-soda", "Fast Soda", "SODA"},
+	} {
+		mustExec(`INSERT INTO items (id, name, sku, base_price, is_active) VALUES (?, ?, ?, 100, 1)`, it.id, it.name, it.sku)
+		mustExec(`INSERT INTO inventory (id, item_id, location_id, quantity) VALUES (?, ?, 'loc-1', 6)`, "inv-"+it.id, it.id)
+		for i := 0; i < 14; i++ {
+			saleID := "s-" + it.id + "-" + string(rune('a'+i))
+			mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at)
+			          VALUES (?, ?, 'completed', 'sale', 400, 0, 400, datetime('now', ?))`,
+				saleID, "R-"+saleID, "-"+string(rune('0'+i%9))+" days")
+			mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+			          VALUES (?, ?, 1, ?, ?, 4, 100, 0, 0, 0, 400, 400)`, "l-"+saleID, saleID, it.id, it.name)
+		}
+	}
+
+	state := common.LoadState(context.Background(), settings.NewStore(d), &config.Config{Theme: "default"})
+	dp := &common.Deps{Cfg: &config.Config{Theme: "default"}, Db: d, State: state,
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(d)}
+	mux := http.NewServeMux()
+	registerInventoryPage(mux, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/inventory", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /inventory: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "2 items predicted to run out within a week") {
+		t.Fatalf("expected plural wording for two running-out items; body: %s", body)
+	}
+	// The HTMX refresh partial (stock-updated) renders the same chip.
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/inventory/stock-table", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /ui/inventory/stock-table: %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "2 items predicted to run out within a week") {
+		t.Fatalf("stock-table partial: expected plural wording; body: %s", rec.Body.String())
+	}
+	if strings.Contains(body, "item(s)") {
+		t.Fatal("running-out chip must not render the old un-pluralized \"item(s)\" wording")
 	}
 }
 
