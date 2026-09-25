@@ -30,8 +30,8 @@ func TestPluginStoreShowsCatalogForAnonymousTill(t *testing.T) {
 		case "/v1/catalog/plugins":
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`{"plugins":[
-				{"id":"com.universaltill.integration-ai","name":"AI Assistant","version":"1.0.1","type":"integration","trustLevel":"unverified"},
-				{"id":"com.acme.thirdparty","name":"Buttons Left Theme","version":"1.0.2","type":"theme","vendor":"Acme","trustLevel":"unverified","paidListing":true}
+				{"id":"0b6d3f5e-6a7c-4e0e-9a51-3f1f6c2d9a01","name":"AI Assistant","version":"1.0.1","type":"integration","trustLevel":"official"},
+				{"id":"7c1e2a90-4d3b-4f8a-8b6e-2a5d9c0e1f02","name":"Buttons Left Theme","version":"1.0.2","type":"theme","vendor":"Acme","trustLevel":"unverified","paidListing":true}
 			]}`))
 		case "/ui/api/merchant/entitlements":
 			w.Header().Set("Content-Type", "application/json")
@@ -73,10 +73,21 @@ func TestPluginStoreShowsCatalogForAnonymousTill(t *testing.T) {
 		t.Fatalf("store page HTTP %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	// Trust surfaces: first-party id → official badge; third-party unverified
-	// → unverified badge + consent attributes for the install confirm.
+	// Trust surfaces: the live catalog sends listing UUIDs as ids (never the
+	// com.universaltill.* slug) and marks first-party listings
+	// trustLevel "official" → official badge (ut-docs#2647); third-party
+	// unverified → unverified badge + consent attributes for the install
+	// confirm.
 	if !strings.Contains(body, "trust-official") {
 		t.Error("first-party plugin missing the official badge")
+	}
+	if n := strings.Count(body, `data-tier="unverified"`); n != 1 {
+		t.Errorf("unverified card count = %d, want exactly 1 (only the third-party listing)", n)
+	}
+	// ut-docs#2647: browse shows the whole public catalog by design, so the
+	// "approval filter unavailable" note was wrong on every visit.
+	if strings.Contains(body, "approval filter unavailable") {
+		t.Error("store still shows the stale 'approval filter unavailable' banner")
 	}
 	if !strings.Contains(body, "trust-unverified") {
 		t.Error("third-party plugin missing the unverified badge")
@@ -95,6 +106,26 @@ func TestPluginStoreShowsCatalogForAnonymousTill(t *testing.T) {
 	for _, name := range []string{"AI Assistant", "Buttons Left Theme"} {
 		if !strings.Contains(body, name) {
 			t.Fatalf("store page hid catalog plugin %q (empty-store regression); body:\n%s", name, body)
+		}
+	}
+}
+
+// ut-docs#2647: the badge must follow the catalog's trust level, since the
+// live catalog id is a listing UUID. Only the id prefix or the catalog's
+// "official" level makes a plugin official.
+func TestTrustTierOf(t *testing.T) {
+	cases := []struct{ id, tier, want string }{
+		{"0b6d3f5e-6a7c-4e0e-9a51-3f1f6c2d9a01", "official", "official"},
+		{"0b6d3f5e-6a7c-4e0e-9a51-3f1f6c2d9a01", " Official ", "official"},
+		{"com.universaltill.integration-ai", "unverified", "official"},
+		{"7c1e2a90-4d3b-4f8a-8b6e-2a5d9c0e1f02", "verified", "verified"},
+		{"7c1e2a90-4d3b-4f8a-8b6e-2a5d9c0e1f02", "trusted", "verified"},
+		{"7c1e2a90-4d3b-4f8a-8b6e-2a5d9c0e1f02", "unverified", "unverified"},
+		{"7c1e2a90-4d3b-4f8a-8b6e-2a5d9c0e1f02", "", "unverified"},
+	}
+	for _, c := range cases {
+		if got := trustTierOf(c.id, c.tier); got != c.want {
+			t.Errorf("trustTierOf(%q, %q) = %q, want %q", c.id, c.tier, got, c.want)
 		}
 	}
 }
