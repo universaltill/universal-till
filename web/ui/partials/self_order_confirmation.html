@@ -9,7 +9,13 @@
        promise the kiosk already charged them) -- CounterMode swaps in the
        dedicated pay-at-counter copy instead of touching the existing hint
        key every kiosk-mode confirmation already uses. -->
-  {{ if .CounterMode }}
+  {{ if and .CounterMode .PayFirst }}
+  {{/* ut-docs#2703: a walk-up pay-at-counter order waits on the till as a
+       held sale and reaches the kitchen only once it is paid -- the
+       "on its way to the kitchen" copy below would be untrue for it. A
+       table-QR order (dine-in, ticket printed at checkout) keeps it. */}}
+  <p class="muted">{{ T "selforder.confirm.counter_pay_first_hint" }}</p>
+  {{ else if .CounterMode }}
   <p class="muted">{{ T "selforder.confirm.counter_hint" }}</p>
   {{ else }}
   <p class="muted">{{ T "selforder.confirm.hint" }}</p>

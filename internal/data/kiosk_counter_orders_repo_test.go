@@ -2,8 +2,12 @@ package data
 
 import (
 	"context"
+	"fmt"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/testsupport"
@@ -260,5 +264,298 @@ func TestKioskCounterOrdersRepo_ListOpenNoTableIsEmpty(t *testing.T) {
 	}
 	if open[0].TableID != "" || open[0].TableLabel != "" {
 		t.Fatalf("expected no table on a plain counter order, got TableID=%q TableLabel=%q", open[0].TableID, open[0].TableLabel)
+	}
+}
+
+// ut-docs#2703: a pay-at-counter order is now parked as a held sale; its
+// kiosk_counter_orders row only records the "C-" number and what was
+// ordered. It shares the one C- sequence with legacy rows, never shows on
+// the legacy staff board, and can never be "collected" without payment.
+func TestKioskCounterOrdersRepo_HeldOrderSharesSequenceButIsNotOpen(t *testing.T) {
+	d := openKioskCounterOrdersDB(t, "counter_orders_held.db")
+	ctx := context.Background()
+	repo := NewKioskCounterOrdersRepo(d.DB)
+
+	legacy, err := repo.Create(ctx, KioskCounterOrder{Lines: []KioskCounterOrderLine{{Name: "Tea", Qty: 1}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, err := repo.Create(ctx, KioskCounterOrder{ID: "hold-abc", Status: KioskCounterOrderStatusHeld, Lines: []KioskCounterOrderLine{{Name: "Flat White", Qty: 1}}})
+	if err != nil {
+		t.Fatalf("Create(held): %v", err)
+	}
+	if legacy.DisplayNo != "C-1" || held.DisplayNo != "C-2" {
+		t.Fatalf("display numbers = %q, %q; want C-1, C-2 from one sequence", legacy.DisplayNo, held.DisplayNo)
+	}
+	if held.ID != "hold-abc" || held.Status != KioskCounterOrderStatusHeld {
+		t.Fatalf("Create(held) returned %+v", held)
+	}
+	open, err := repo.ListOpen(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 1 || open[0].ID != legacy.ID {
+		t.Fatalf("ListOpen = %+v, want only the legacy open row", open)
+	}
+	if err := repo.MarkCollected(ctx, held.ID); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	if err := d.DB.QueryRow(`SELECT status FROM kiosk_counter_orders WHERE id = ?`, held.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != KioskCounterOrderStatusHeld {
+		t.Fatalf("MarkCollected moved a held (unpaid) order to %q", status)
+	}
+}
+
+// ut-docs#2703 review F2: every till mints its own C- sequence from its own
+// kiosk_counter_orders table, and a held counter order is pushed to the
+// main till -- so two kiosks on two tills both minted "C-1" onto the main's
+// Open orders and into sales.display_no. The till's sync.receipt_prefix
+// namespaces the sequence exactly as NextDisplayNo does; no prefix keeps
+// the plain "C-n".
+func TestKioskCounterOrdersRepo_DisplayNoCarriesTillPrefix(t *testing.T) {
+	d := openKioskCounterOrdersDB(t, "counter_orders_prefix.db")
+	ctx := context.Background()
+	repo := NewKioskCounterOrdersRepo(d.DB)
+	line := []KioskCounterOrderLine{{Name: "Tea", Qty: 1}}
+
+	plain, err := repo.Create(ctx, KioskCounterOrder{Lines: line})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.DisplayNo != "C-1" {
+		t.Fatalf("no prefix configured: display_no = %q, want C-1", plain.DisplayNo)
+	}
+
+	if _, err := d.DB.Exec(`INSERT INTO settings (key, value) VALUES ('sync.receipt_prefix', 'T2-')`); err != nil {
+		t.Fatal(err)
+	}
+	// A counter number from another till (pushed to this one) must not
+	// bleed into this till's max either.
+	if _, err := d.DB.Exec(`INSERT INTO kiosk_counter_orders (id, display_no, order_type, lines_json, status, created_at) VALUES ('other', 'C-T9-40', '', '[]', 'held', '2026-09-25T10:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	first, err := repo.Create(ctx, KioskCounterOrder{Lines: line})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := repo.Create(ctx, KioskCounterOrder{Status: KioskCounterOrderStatusHeld, Lines: line})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.DisplayNo != "C-T2-1" || second.DisplayNo != "C-T2-2" {
+		t.Fatalf("prefixed display numbers = %q, %q; want C-T2-1, C-T2-2", first.DisplayNo, second.DisplayNo)
+	}
+}
+
+// ...and the sale display-number sequence still ignores every C-number a
+// paid counter order put into sales.display_no, prefixed or not.
+func TestPOSRepo_NextDisplayNo_IgnoresCounterOrderNumbers(t *testing.T) {
+	d := openKioskCounterOrdersDB(t, "counter_orders_nextdisplay.db")
+	ctx := context.Background()
+	pos := NewPOSRepo(d.DB)
+	for i, dn := range []string{"3", "C-9", "C-T2-50", "C-T2-7"} {
+		if _, err := d.DB.Exec(`INSERT INTO sales (id, receipt_no, display_no, status, sale_type, currency, subtotal, total, created_at)
+VALUES (?, ?, ?, 'completed', 'sale', 'GBP', 100, 100, '2026-09-25T10:00:00Z')`, fmt.Sprintf("s%d", i), fmt.Sprintf("R%d", i), dn); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := pos.NextDisplayNo(ctx, nil)
+	if err != nil || got != "4" {
+		t.Fatalf("NextDisplayNo(no prefix) = (%q,%v), want (4,nil): C-numbers must not count", got, err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO settings (key, value) VALUES ('sync.receipt_prefix', 'T2-')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO sales (id, receipt_no, display_no, status, sale_type, currency, subtotal, total, created_at)
+VALUES ('sp', 'T2-1', 'T2-5', 'completed', 'sale', 'GBP', 100, 100, '2026-09-25T10:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	got, err = pos.NextDisplayNo(ctx, nil)
+	if err != nil || got != "T2-6" {
+		t.Fatalf("NextDisplayNo(T2-) = (%q,%v), want (T2-6,nil): C-T2- numbers must not count", got, err)
+	}
+}
+
+// ut-docs#2714: when parking a pay-at-counter order as a held sale fails,
+// the checkout deletes the "held" counter row it just created, so no
+// invisible orphan is left behind (and a retry reuses the same C-number).
+// DeleteHeld must only ever remove a "held" row -- never an open or a
+// collected one -- and an unknown id is a silent no-op.
+func TestKioskCounterOrdersRepo_DeleteHeldOnlyDeletesHeldRows(t *testing.T) {
+	d := openKioskCounterOrdersDB(t, "counter_orders_delete_held.db")
+	ctx := context.Background()
+	repo := NewKioskCounterOrdersRepo(d.DB)
+	line := []KioskCounterOrderLine{{Name: "Tea", Qty: 1}}
+
+	open, err := repo.Create(ctx, KioskCounterOrder{Lines: line})
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, err := repo.Create(ctx, KioskCounterOrder{Status: KioskCounterOrderStatusHeld, Lines: line})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.DeleteHeld(ctx, open.ID); err != nil {
+		t.Fatalf("DeleteHeld(open): %v", err)
+	}
+	if err := repo.DeleteHeld(ctx, held.ID); err != nil {
+		t.Fatalf("DeleteHeld(held): %v", err)
+	}
+	if err := repo.DeleteHeld(ctx, "no-such-id"); err != nil {
+		t.Fatalf("DeleteHeld(unknown): %v", err)
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM kiosk_counter_orders WHERE id = ?`, held.ID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("held row still present after DeleteHeld")
+	}
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM kiosk_counter_orders WHERE id = ?`, open.ID).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("DeleteHeld removed an OPEN row")
+	}
+	// The deleted number is free again: the next order reuses it.
+	next, err := repo.Create(ctx, KioskCounterOrder{Status: KioskCounterOrderStatusHeld, Lines: line})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.DisplayNo != held.DisplayNo {
+		t.Fatalf("next display_no = %q, want the freed %q", next.DisplayNo, held.DisplayNo)
+	}
+}
+
+// ut-docs#2714: "held" rows are only the C-number record of an order whose
+// payable object is a held sale; once they are older than
+// counterOrderHeldRetention they are pruned by Create (same tx, after the
+// insert, so the new row already holds the max and the sequence never goes
+// down). Open and collected rows are never touched.
+func TestKioskCounterOrdersRepo_CreatePrunesStaleHeldRows(t *testing.T) {
+	d := openKioskCounterOrdersDB(t, "counter_orders_prune.db")
+	ctx := context.Background()
+	repo := NewKioskCounterOrdersRepo(d.DB)
+	old := time.Now().UTC().Add(-91 * 24 * time.Hour).Format(time.RFC3339)
+	recent := time.Now().UTC().Add(-89 * 24 * time.Hour).Format(time.RFC3339)
+	for _, row := range []struct{ id, no, status, at string }{
+		{"stale-held", "C-50", KioskCounterOrderStatusHeld, old},
+		{"recent-held", "C-10", KioskCounterOrderStatusHeld, recent},
+		{"old-open", "C-11", KioskCounterOrderStatusOpen, old},
+		{"old-collected", "C-12", KioskCounterOrderStatusCollected, old},
+	} {
+		if _, err := d.DB.Exec(`INSERT INTO kiosk_counter_orders (id, display_no, order_type, lines_json, status, created_at) VALUES (?, ?, '', '[]', ?, ?)`,
+			row.id, row.no, row.status, row.at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	created, err := repo.Create(ctx, KioskCounterOrder{Status: KioskCounterOrderStatusHeld, Lines: []KioskCounterOrderLine{{Name: "Tea", Qty: 1}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.DisplayNo != "C-51" {
+		t.Fatalf("display_no = %q, want C-51 (the stale row still counts toward MAX before it is pruned)", created.DisplayNo)
+	}
+	rows, err := d.DB.Query(`SELECT id FROM kiosk_counter_orders ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	want := []string{created.ID, "old-collected", "old-open", "recent-held"}
+	sort.Strings(ids)
+	sort.Strings(want)
+	if strings.Join(ids, ",") != strings.Join(want, ",") {
+		t.Fatalf("rows after Create = %v, want %v (only the stale held row pruned)", ids, want)
+	}
+	// ...and the sequence never goes down afterwards.
+	again, err := repo.Create(ctx, KioskCounterOrder{Lines: []KioskCounterOrderLine{{Name: "Tea", Qty: 1}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.DisplayNo != "C-52" {
+		t.Fatalf("display_no after prune = %q, want C-52", again.DisplayNo)
+	}
+}
+
+// ut-docs#2714: a replica (sync.primary_url set) with no
+// sync.receipt_prefix used to mint the same plain "C-<n>" as the main till,
+// and both numbers end up on the main's Open orders. Such a till now
+// derives its namespace from sync.till_id; the main till (no primary_url)
+// keeps "C-<n>", and a replica with neither prefix nor till id stays plain.
+func TestKioskCounterOrdersRepo_ReplicaWithoutPrefixDerivesOneFromTillID(t *testing.T) {
+	line := []KioskCounterOrderLine{{Name: "Tea", Qty: 1}}
+	cases := []struct {
+		name     string
+		settings map[string]string
+		want     string
+	}{
+		{"main till keeps C-n", map[string]string{"sync.till_id": "7b2e-91ff"}, "C-1"},
+		{"replica derives from till id", map[string]string{"sync.primary_url": "http://main:8080", "sync.till_id": "7b-2e_91ffab12"}, "C-7B2E91-1"},
+		{"replica short till id", map[string]string{"sync.primary_url": "http://main:8080", "sync.till_id": "t2"}, "C-T2-1"},
+		{"replica without till id stays plain", map[string]string{"sync.primary_url": "http://main:8080"}, "C-1"},
+		{"explicit prefix wins", map[string]string{"sync.primary_url": "http://main:8080", "sync.till_id": "abcdef", "sync.receipt_prefix": "K1-"}, "C-K1-1"},
+		{"blank-space prefix counts as blank", map[string]string{"sync.primary_url": "http://main:8080", "sync.till_id": "abcdef", "sync.receipt_prefix": "  "}, "C-ABCDEF-1"},
+	}
+	for i, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			d := openKioskCounterOrdersDB(t, fmt.Sprintf("counter_orders_replica_%d.db", i))
+			for k, v := range c.settings {
+				if _, err := d.DB.Exec(`INSERT INTO settings (key, value) VALUES (?, ?)`, k, v); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := NewKioskCounterOrdersRepo(d.DB).Create(context.Background(), KioskCounterOrder{Lines: line})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.DisplayNo != c.want {
+				t.Fatalf("display_no = %q, want %q", got.DisplayNo, c.want)
+			}
+		})
+	}
+}
+
+// ut-docs#2714: concurrent Create calls on one real, migrated database never
+// hand out the same C-number twice (the write-locked tx serialises
+// read-MAX + insert; migration 044's unique index makes it a hard rule).
+func TestKioskCounterOrdersRepo_ConcurrentCreateNeverDuplicates(t *testing.T) {
+	d := openKioskCounterOrdersDB(t, "counter_orders_concurrent.db")
+	repo := NewKioskCounterOrdersRepo(d.DB)
+	const workers, each = 8, 10
+	var wg sync.WaitGroup
+	errs := make(chan error, workers*each)
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < each; i++ {
+				if _, err := repo.Create(context.Background(), KioskCounterOrder{Status: KioskCounterOrderStatusHeld, Lines: []KioskCounterOrderLine{{Name: "Tea", Qty: 1}}}); err != nil {
+					errs <- err
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent Create: %v", err)
+	}
+	var total, distinct int
+	if err := d.DB.QueryRow(`SELECT COUNT(*), COUNT(DISTINCT display_no) FROM kiosk_counter_orders`).Scan(&total, &distinct); err != nil {
+		t.Fatal(err)
+	}
+	if total != workers*each || distinct != total {
+		t.Fatalf("rows = %d, distinct display_no = %d; want %d unique numbers", total, distinct, workers*each)
 	}
 }

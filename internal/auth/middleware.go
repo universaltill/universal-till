@@ -45,6 +45,9 @@ func exempt(path string) bool {
 	switch path {
 	case "/api/sync/enroll", "/api/sync/ping", "/api/sync/snapshot", "/api/sync/sales", "/api/sync/admin",
 		"/api/sync/stock", "/api/sync/plugins", "/api/sync/assets", "/api/sync/assets/file",
+		// ut-docs#2566: uploaded category photos, the categories scope of
+		// the same bearer-authed asset surface (sync_assets.go).
+		"/api/sync/assets/categories", "/api/sync/assets/categories/file",
 		// ut-docs#1350: the primary-side cross-till orders board a replica's
 		// /ui/orders polls. Bearer-authed in the handler (syncTill), same as
 		// every other entry on this line — omitting it here would silently

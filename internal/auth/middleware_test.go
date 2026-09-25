@@ -151,6 +151,9 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		"/api/sync/plugins",
 		"/api/sync/assets",
 		"/api/sync/assets/file",
+		// ut-docs#2566: the categories scope of the photo sync surface.
+		"/api/sync/assets/categories",
+		"/api/sync/assets/categories/file",
 		"/api/setup/join",
 		// ut-docs#537: a joining replica has no session on the primary at
 		// all (it's a stranger LAN device, not yet enrolled), so both the

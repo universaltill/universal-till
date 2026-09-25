@@ -155,9 +155,16 @@
        whole sale screen is consistent on this point and a modal here would
        also cover the basket the cashier is resuming into. -->
   <dialog id="parked-orders-modal" class="modifier-modal parked-orders-modal"
-          aria-labelledby="parked-orders-modal-title">
+          aria-labelledby="parked-orders-modal-title"
+          onclose="document.getElementById('parked-orders-body').replaceChildren();">
     <h3 id="parked-orders-modal-title">{{ T "open_orders.title" }}</h3>
-    <div id="parked-orders-body"></div>
+    {{/* #2702 review: the popup's notice has its OWN id (not #toast-message) and the
+         body is emptied on close, so a stale refusal can never be found by the
+         sale screen's #toast-message checks after the popup is gone. After a
+         move re-renders the body, focus returns to that order's Move table
+         control (the clicked option no longer exists). */}}
+    <div id="parked-orders-body"
+         hx-on::after-settle="var id = this.dataset.focusAfter; if (id) { delete this.dataset.focusAfter; var el = document.getElementById(id); if (el) el.focus(); }"></div>
     <div class="modifier-actions">
       <button type="button" class="btn secondary"
               onclick="document.getElementById('parked-orders-modal').close();">
@@ -299,52 +306,58 @@
       next.click(); next.focus();
     }
   }">
-    <!-- 2026-08-30 (independent review): scan-row + held-sales scroll in
-         their own inner region instead of .tender-default-footer below
-         chasing them with margin-top:auto/position:sticky — a held-sales
-         strip that grows (persistent DB state, not a transient) used to
-         push the footer down until it scrolled off with everything else,
-         and a first attempt to pin it with `position: sticky` introduced
-         its own bug (the sticky box's rendered position overlapped the
-         scan-row, making the Add button unclickable — a real, confirmed
-         regression, not hypothetical). Same proven pattern this file
-         already uses for .basket-scroll/.totals: the SCROLLABLE part gets
-         its own flex:1/overflow-y:auto wrapper, so .tender-default-footer
-         is just a plain, un-scrolled sibling after it — always visible,
-         no positioning trick needed at all. -->
-    <div class="tender-scroll">
-      <form class="scan-row" hx-post="/api/pos/scan" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
-        <!-- inputmode="none": keep scanner focus without inviting any IME at
-             load (ut-docs#155) — the OSK/toggle covers deliberate typing.
-             NOT when the OSK is off: a touch till with the OSK disabled would
-             otherwise have no way to type a barcode at all. -->
-        <input type="text" name="code" {{ if ne (oskmode) "off" }}inputmode="none" {{ end }}placeholder="{{ T "tender.scan.barcode" }}" aria-label="{{ T "tender.scan.barcode" }}" autofocus required>
-        <input type="number" name="qty" value="1" min="1" step="1" required title="{{ T "tender.scan.qty" }}" aria-label="{{ T "tender.scan.qty" }}">
-        <button class="btn" type="submit">{{ T "tender.scan.add" }}</button>
-        <button class="btn secondary osk-toggle" type="button" data-osk-toggle hidden
-                title="{{ T "osk.toggle" }}" aria-label="{{ T "osk.toggle" }}">⌨️</button>
-        <!-- Camera barcode/QR scan (ut-docs#548): unhidden by app.js only when
-             the browser has a native BarcodeDetector — feature-detection is
-             client-side-only, so the server always renders it hidden and lets
-             JS decide, unlike ai-identify's server-side (API key + online) gate
-             below. Never steals focus from, or disables, the wedge/HID scanner
-             path (ut-docs#76/#423) — purely additive. -->
-        <button class="btn secondary" type="button" id="barcode-scan-open" hidden
-                title="{{ T "scan.camera.button" }}" aria-label="{{ T "scan.camera.button" }}">🔳</button>
-        {{ if .aiIdentify }}
-        <!-- ut-docs#1859: was a bare 📷 emoji (platform-color-emoji-font
-             risk, guard-emoji-font.sh's class of problem) -- an explicit
-             aria-label is added here (unlike title alone) to match the
-             sibling barcode-scan-open button above, now that the icon
-             itself is aria-hidden and contributes nothing to the name. -->
-        <button class="btn secondary" type="button" id="ai-identify-open" hidden
-                title="{{ T "ai.identify.button" }}" aria-label="{{ T "ai.identify.button" }}">
-          <span class="btn-ico" aria-hidden="true">{{ icon "camera" }}</span></button>
-        {{ end }}
-      </form>
-
-      <div id="held-sales" hx-get="/ui/held" hx-trigger="load" hx-swap="outerHTML"></div>
-    </div>
+    <!-- ut-docs#2702 (product owner, 2026-09-25): compact tender panel —
+         "barcode box can be thinner smaller with its belongings, one row
+         buttons at the bottom of it is enough: one payment button which
+         opens the payment tab and icons for holding and new sell and open
+         orders". So this column is now exactly two rows: the scan row
+         (thin, its controls icon-only) and ONE action row (Pay, then
+         Hold / New sale / Open orders as icons). Everything else moved:
+           - the held-sales strip (/ui/held) is gone from this panel — it was
+             clipped at 1280x800 anyway (ut-docs#2128); the Open orders
+             icon's count badge says orders are parked and its popup
+             (ut-docs#2137) resumes them;
+           - the standalone quick-pay row (ut-docs#1336) is gone — the
+             preferred method leads the payment panel's grid and is
+             highlighted there (.pay-default below), one tap after Pay.
+         The freed height goes to the product grid (app.css .pos-container).
+         Icon buttons carry their name as visually-hidden TEXT (not only
+         aria-label) plus a title tooltip: the accessible name is the same
+         "Hold Sale"/"New Sale"/"Open orders"/"Add" it always was, so
+         getByRole/hasText locators and screen readers see no change. -->
+    <form class="scan-row" hx-post="/api/pos/scan" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
+      <!-- inputmode="none": keep scanner focus without inviting any IME at
+           load (ut-docs#155) — the OSK/toggle covers deliberate typing.
+           NOT when the OSK is off: a touch till with the OSK disabled would
+           otherwise have no way to type a barcode at all. -->
+      <input type="text" name="code" {{ if ne (oskmode) "off" }}inputmode="none" {{ end }}placeholder="{{ T "tender.scan.barcode" }}" aria-label="{{ T "tender.scan.barcode" }}" autofocus required>
+      <input type="number" name="qty" value="1" min="1" step="1" required title="{{ T "tender.scan.qty" }}" aria-label="{{ T "tender.scan.qty" }}">
+      <button class="btn tender-icon-btn" type="submit" title="{{ T "tender.scan.add" }}">
+        <span class="btn-ico" aria-hidden="true">{{ icon "plus" }}</span><span class="visually-hidden">{{ T "tender.scan.add" }}</span></button>
+      <button class="btn secondary osk-toggle tender-icon-btn" type="button" data-osk-toggle hidden
+              title="{{ T "osk.toggle" }}" aria-label="{{ T "osk.toggle" }}">
+        <span class="btn-ico" aria-hidden="true">{{ icon "keyboard" }}</span></button>
+      <!-- Camera barcode/QR scan (ut-docs#548): unhidden by app.js only when
+           the browser has a native BarcodeDetector — feature-detection is
+           client-side-only, so the server always renders it hidden and lets
+           JS decide, unlike ai-identify's server-side (API key + online) gate
+           below. Never steals focus from, or disables, the wedge/HID scanner
+           path (ut-docs#76/#423) — purely additive. Was a 🔳 emoji until
+           ut-docs#2702 (emoji-font risk, same class as ut-docs#1859). -->
+      <button class="btn secondary tender-icon-btn" type="button" id="barcode-scan-open" hidden
+              title="{{ T "scan.camera.button" }}" aria-label="{{ T "scan.camera.button" }}">
+        <span class="btn-ico" aria-hidden="true">{{ icon "scan-barcode" }}</span></button>
+      {{ if .aiIdentify }}
+      <!-- ut-docs#1859: was a bare 📷 emoji (platform-color-emoji-font
+           risk, guard-emoji-font.sh's class of problem) -- an explicit
+           aria-label is added here (unlike title alone) to match the
+           sibling barcode-scan-open button above, now that the icon
+           itself is aria-hidden and contributes nothing to the name. -->
+      <button class="btn secondary tender-icon-btn" type="button" id="ai-identify-open" hidden
+              title="{{ T "ai.identify.button" }}" aria-label="{{ T "ai.identify.button" }}">
+        <span class="btn-ico" aria-hidden="true">{{ icon "camera" }}</span></button>
+      {{ end }}
+    </form>
 
     <!-- Payment overlay (ut-docs#1252): the payment-method grid, split-tender
          card and Hold/New-customer footer used to render inline in this
@@ -378,125 +391,70 @@
          dropping the residual tint is a continuation of that, not a
          regression, matching the other four dialogs (none of which
          replicate dimming either). -->
-    <!-- Hold Sale stays in the default view, NOT inside the payment overlay
+    <!-- The one action row (ut-docs#2702): Pay leads and takes the spare
+         width; Hold, New sale and Open orders follow as icon buttons, in DOM
+         order so the row mirrors under RTL with no left/right anywhere.
+         Hold Sale stays in the default view, NOT inside the payment overlay
          (independent review, ut-docs#1252): a button only reachable inside
          the payment overlay would make "hold this basket for the next
-         customer" cost an unrelated trip through Payment — true regardless
-         of the overlay's modality (ut-docs#1385 changed that; this
-         reachability reasoning didn't).
-         New Customer stays inside the overlay's own footer below — it's
-         duplicated by kiosk-checkout-start (New Sale, right here in this
-         same row) already, so losing a quick path to it while paying
-         isn't a real regression.
-
-         2026-08-30: New Sale moved here, next to Hold Sale and Payment,
-         per the product owner's own live request — was the shared nav
-         rail's own top item (nav.html) until this same session. .btn
-         secondary (not primary): Payment stays the one visually-prominent
-         action in this row; New Sale/Hold Sale are both "before you get
-         there" utility actions. -->
+         customer" cost an unrelated trip through Payment. New Customer stays
+         inside the overlay's own footer — New sale here covers it. -->
     <div class="tender-default-footer">
-      <!-- ut-docs#1386: New Sale resets the live basket (hx-post below) but
-           sits outside #payment-overlay, so a tap here while the overlay is
-           open (real hit target since ut-docs#1385 made it non-modal) left
-           a stale Tender panel showing payment state for a basket that no
-           longer exists. Same after-request close-if-open pattern as the
-           pay-grid/quick-pay buttons above: only close on a genuine success
-           (not a 200 carrying an inline toast error), and only if it's
-           actually open — a no-op the rest of the time. -->
-      <button class="btn secondary" type="button" data-testid="kiosk-checkout-start"
-              hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-              onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus();}, 150)"
-              hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">
-        <span class="btn-ico" aria-hidden="true">{{ icon "shopping-cart" }}</span> {{ T "kiosk.checkout_start" }}</button>
-      <!-- ut-docs#1629: testid added so the payment-overlay focus guard's
-           own e2e spec (payment-overlay-focus-obscured-1629.spec.ts) can
-           address this original directly rather than matching on visible
-           text (locale-dependent) — same reasoning #1542/#1625's testids
-           on the sibling New Sale button already followed. -->
-      <button class="btn secondary" type="button" data-testid="tender-footer-hold"
-              onclick="document.getElementById('hold-modal').show(); document.getElementById('hold-label-input').focus();">
-        {{ T "hold.action" }}</button>
       <!-- ut-docs#1984: rendered from the CURRENT basket at page-load time
            (payItemCount/payTotal, index_page.go) so the empty/non-empty
            label and disabled state are already correct on first paint --
            no flash from a placeholder to the real state. The refresh()
-           script just below keeps it in sync with #basket after every
-           htmx swap, the same data-attribute-bridge pattern the fee-hint
-           and pay-voucher-btn scripts further down already use for an
-           element that lives outside the swapped #basket fragment. -->
-      <!-- ut-docs#2282: the "at Pay" placement needs first refusal on this
+           script further down keeps it in sync with #basket after every
+           htmx swap (it rewrites textContent, so this button stays
+           text-only).
+           ut-docs#2282: the "at Pay" placement needs first refusal on this
            tap (open the intercept modal instead, THEN the overlay once
            answered) -- routed through app.js's posOpenPayment() rather
            than calling .show() directly here so that gate lives in one
-           place. app.js is a deferred, non-module script loaded in
-           base.html's <head> and always finishes running before body
-           content becomes interactive, so this global is guaranteed to
-           exist by the time a real tap could ever reach it; on the "top"/
-           "before_item" placements (or if the cashier already answered
-           this sale) it's a same-tick passthrough to the original
-           .show(). -->
+           place. -->
       <button type="button" class="btn primary payment-trigger" data-testid="payment-open"
               {{ if eq .payItemCount 0 }}disabled{{ end }}
               onclick="posOpenPayment()">
         {{ if eq .payItemCount 0 }}{{ T "tender.pay_empty" }}{{ else }}{{ printf (T "tender.pay_with_total") (money .payTotal) }}{{ end }}</button>
-    </div>
-
-    <!-- ut-docs#1336: one-tap quick pay — a second, full-width row below
-         Hold Sale/Payment that charges the shop's preferred/default method
-         directly (payMethods is preferred-first server-side, ADR-0016), the
-         exact same tender POST as the overlay's pay-grid buttons above,
-         without a trip through the overlay. Its own row, NOT a fourth
-         button inside .tender-default-footer: that row's .btn.compact
-         sizing was justified for buttons that only OPEN things (see
-         app.css's own comment) — this one completes a charge, so it keeps
-         the base .btn floor. The after-request overlay-close handler is
-         copied verbatim from the pay-grid buttons: this button doesn't
-         open the overlay, but the overlay can legitimately be open (e.g.
-         Escape-less kiosks tabbing back), and closing it on success is
-         then exactly right; when it's closed the handler is a no-op.
-         No icon/prefix here (ut-docs#1859): the ⚡ this row and the New
-         Sale button below both used to carry was purely decorative (no
-         semantic content, unlike 🛒's "this is the sell action" meaning),
-         so it was dropped rather than replaced with a Lucide icon --
-         one less icon to maintain for zero information lost. The label
-         itself is live DB data (.Name) run through T (ut-docs#2015: a plugin
-         payment entry's label is a translator key, same as a page/export/
-         report entry's — a built-in's plain-text name like "Cash" passes
-         through T unchanged) or
-         the same tender.cash fallback the pay-grid's own else-branch uses. -->
-    <!-- ut-docs#2137: parked orders, beside Card (product owner's own
-         placement). The sale screen already lists held orders in the On hold
-         strip, but that strip is clipped off-screen at 1280x800
-         (ut-docs#2128) and /open-orders was read-only -- so on the pilot
-         tablet a parked order could not be picked back up at all. A popup
-         needs no vertical budget, which is exactly why it is the fix and the
-         strip's CSS work (measurement-tuned across #1313/#1336) is not a
-         prerequisite.
-         Always rendered rather than hidden when nothing is parked: a control
-         that appears and disappears under the cashier's finger is worse than
-         one that opens and says "nothing parked", and it keeps this row's
-         geometry constant (the #1336 height budget measured this row).
-         Body is fetched on open, never rendered with the page, so it cannot
-         offer an order that was paid or resumed since load. -->
-    <div class="tender-quickpay">
-      <button type="button" class="btn secondary parked-orders-btn" data-testid="parked-orders-open"
+      <!-- ut-docs#1629: testid so the payment-overlay focus guard's e2e
+           specs address this original directly, not by locale text. -->
+      <button class="btn secondary tender-icon-btn" type="button" data-testid="tender-footer-hold"
+              title="{{ T "hold.action" }}"
+              onclick="document.getElementById('hold-modal').show(); document.getElementById('hold-label-input').focus();">
+        <span class="btn-ico" aria-hidden="true">{{ icon "pause" }}</span><span class="visually-hidden">{{ T "hold.action" }}</span></button>
+      <!-- ut-docs#1386: New Sale resets the live basket but sits outside
+           #payment-overlay, so a tap here while the overlay is open would
+           leave a stale payment panel for a basket that no longer exists.
+           Close it on a genuine success only (not a 200 carrying an inline
+           toast error), and only if it's actually open. -->
+      <button class="btn secondary tender-icon-btn" type="button" data-testid="kiosk-checkout-start"
+              title="{{ T "kiosk.checkout_start" }}"
+              hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus();}, 150)"
+              hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">
+        <span class="btn-ico" aria-hidden="true">{{ icon "shopping-cart" }}</span><span class="visually-hidden">{{ T "kiosk.checkout_start" }}</span></button>
+      <!-- ut-docs#2137: the parked-orders popup. Always rendered (a control
+           that appears and disappears under the cashier's finger is worse
+           than one that opens and says "nothing parked"); its body is
+           fetched on open, never with the page, so it cannot offer an order
+           that was paid or resumed since load.
+           ut-docs#2702: the count badge replaces the held-sales strip as
+           the at-a-glance "orders are waiting" cue. Loaded after first
+           paint (the count may need a cross-till hop, which the sale
+           screen's own render must never wait on) and re-fetched on
+           hold_api.go's held-changed event. Held sales only for now —
+           ut-docs#2703 adds pay-at-counter orders to the same count.
+           hx-target="this" on the badge is load-bearing: htmx INHERITS
+           hx-target, so without it the badge's own refresh would inherit
+           this button's #parked-orders-body and outerHTML-replace the
+           popup's body with a badge (caught by e2e). -->
+      <button type="button" class="btn secondary tender-icon-btn parked-orders-btn" data-testid="parked-orders-open"
+              title="{{ T "open_orders.title" }}"
               hx-get="/ui/parked-orders" hx-target="#parked-orders-body" hx-swap="innerHTML"
               onclick="document.getElementById('parked-orders-modal').show()">
-        {{ T "open_orders.title" }}</button>
-      {{ if .defaultPayMethod }}
-      <button class="btn quick-pay-btn" type="button" data-testid="quick-pay" data-method="{{ .defaultPayMethod.ID }}"
-              hx-post="/api/pos/tender"
-              hx-vals='{{ jsonVals "amount" 0 "method" .defaultPayMethod.ID }}' hx-include="#offline-flag"
-              hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-              hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ T .defaultPayMethod.Name }}</button>
-      {{ else }}
-      <button class="btn quick-pay-btn" type="button" data-testid="quick-pay" data-method="cash"
-              hx-post="/api/pos/tender"
-              hx-vals='{"amount":0,"method":"cash"}' hx-include="#offline-flag"
-              hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-              hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ T "tender.cash" }}</button>
-      {{ end }}
+        <span class="btn-ico" aria-hidden="true">{{ icon "clipboard-list" }}</span><span class="visually-hidden">{{ T "open_orders.title" }}</span>
+        <span class="count-badge" data-testid="open-orders-badge" data-count="0" hidden
+              hx-get="/ui/open-orders-badge" hx-trigger="load, held-changed from:body" hx-target="this" hx-swap="outerHTML"></span></button>
     </div>
 
     <dialog id="payment-overlay" class="payment-overlay" aria-labelledby="payment-overlay-title">
@@ -515,14 +473,20 @@
 
         <div class="tab-panel" id="panel-pay" role="tabpanel" aria-labelledby="tab-pay" x-show="tab === 'pay'">
           <input type="hidden" id="offline-flag" name="offline" value="0">
+          <!-- ut-docs#2702: the sale screen's standalone quick-pay button is
+               gone; its job (one tap on the shop's preferred method,
+               payments.default_method) lives here now. payMethods is
+               preferred-first (index_page.go), so the first button IS the
+               preferred method -- marked .pay-default so it reads as the
+               default at a glance and spans the grid's first row. -->
           <div class="pay-grid">
-            {{ range .payMethods }}
-            <button class="btn pay-btn{{ if .PluginID }} pay-plugin{{ end }}" data-method="{{ .ID }}" hx-post="/api/pos/tender"
+            {{ range $i, $m := .payMethods }}
+            <button class="btn pay-btn{{ if .PluginID }} pay-plugin{{ end }}{{ if eq $i 0 }} pay-default{{ end }}"{{ if eq $i 0 }} data-testid="pay-default"{{ end }} data-method="{{ .ID }}" hx-post="/api/pos/tender"
                     hx-vals='{{ jsonVals "amount" 0 "method" .ID }}' hx-include="#offline-flag"
                     hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
                     hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ T .Name }}<span class="fee-hint" data-fee-for="{{ .ID }}"></span></button>
             {{ else }}
-            <button class="btn pay-btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+            <button class="btn pay-btn pay-default" data-testid="pay-default" data-method="cash" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
                     hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ T "tender.cash" }}</button>
             <button class="btn pay-btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"card"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
                     hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ T "tender.card" }}</button>

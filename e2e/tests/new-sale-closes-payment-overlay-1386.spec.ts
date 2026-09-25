@@ -10,6 +10,14 @@ import { test, expect } from './fixtures';
 // Complete Sale against the stale panel is rejected server-side), but a
 // confusing UI state — this drives the real buttons and asserts the overlay
 // actually closes, not just that the endpoints succeed.
+//
+// ut-docs#2702: Hold / New sale are now icons at the action row's inline
+// END, which the open overlay covers at every viewport (their in-overlay
+// footer copies are the reachable ones then — payment-overlay-footer-
+// reachable-1542). A pointer can no longer reach the originals while the
+// overlay is open, but the close-if-open handlers stay (a programmatic or
+// assistive-technology activation still can), so they are activated with a
+// DOM click event here rather than a pointer click.
 test.describe('New Sale / Hold Sale close the payment overlay if it is open (ut-docs#1386)', () => {
   test.beforeEach(async ({ page }) => {
     // Shared server-global engine across specs (ut-docs#1310) — start clean.
@@ -35,7 +43,7 @@ test.describe('New Sale / Hold Sale close the payment overlay if it is open (ut-
 
     await Promise.all([
       page.waitForResponse((r) => r.url().includes('/api/pos/reset')),
-      page.getByTestId('kiosk-checkout-start').click(),
+      page.getByTestId('kiosk-checkout-start').dispatchEvent('click'),
     ]);
     await expect(page.locator('#payment-overlay')).not.toBeVisible();
   });
@@ -67,7 +75,7 @@ test.describe('New Sale / Hold Sale close the payment overlay if it is open (ut-
     await page.getByTestId('payment-open').click();
     await expect(page.locator('#payment-overlay')).toBeVisible();
 
-    await page.locator('.tender-default-footer button', { hasText: 'Hold Sale' }).click();
+    await page.locator('.tender-default-footer button', { hasText: 'Hold Sale' }).dispatchEvent('click');
     await expect(page.locator('#hold-modal')).toBeVisible();
 
     await Promise.all([

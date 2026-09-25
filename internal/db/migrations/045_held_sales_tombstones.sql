@@ -1,4 +1,4 @@
--- 044_held_sales_tombstones.sql — ADR-0093 Amendment B (universaltill/
+-- 045_held_sales_tombstones.sql — ADR-0093 Amendment B (universaltill/
 -- ut-docs#2712, "resume needs an atomic claim, not a read-then-restore").
 -- One row per held sale the PRIMARY has deleted recently: written by both
 -- primary-side deletions (POST /api/sync/held-sales/delete and the new

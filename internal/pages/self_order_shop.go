@@ -2,13 +2,17 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/barcode"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -467,12 +471,37 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		renderKioskPaymentPicker(w, r, eng, methods, "")
 	})
 
+	// Spam guard for checkout (ut-docs#2714). This route is anonymous and
+	// auth-exempt (ADR-0020), and one checkout can hand out a C-number,
+	// print a kitchen ticket, park a held sale (pushed to the main till on a
+	// replica) or call a card terminal. checkoutLimiter caps each source at
+	// 20 POSTs a minute -- the same pairRateLimiter+sourceOf shape as the
+	// table-session mint limiter (registerSelfOrder) -- checked before any
+	// work. checkoutInFlight lets only one checkout per basket run at a
+	// time, so a double tap (or a retry racing the first request) gets 409
+	// instead of a second order for the same basket. Both are per mux, like
+	// every other limiter here.
+	checkoutLimiter := newPairRateLimiter(time.Minute, 20)
+	checkoutInFlight := newSelfOrderCheckoutInFlight()
 	mux.HandleFunc("POST /api/self-order/checkout", func(w http.ResponseWriter, r *http.Request) {
+		if !checkoutLimiter.allow(sourceOf(r)) {
+			refuseKioskCheckout(w, http.StatusTooManyRequests)
+			return
+		}
 		_ = r.ParseForm()
 		// eng is this request's basket; token is non-empty only when it is
 		// a table-QR guest session (ADR-0103), which a completed checkout
 		// must remove rather than reset (releaseSelfOrderSession).
 		eng, token := selfOrderSession(d, r)
+		basketKey := selfOrderWalkUpCheckoutKey
+		if token != "" {
+			basketKey = token
+		}
+		if !checkoutInFlight.acquire(basketKey) {
+			refuseKioskCheckout(w, http.StatusConflict)
+			return
+		}
+		defer checkoutInFlight.release(basketKey)
 		// ut-docs#582/#815: counter-order checkout is a COMPLETELY separate
 		// path -- checked before any method/ListActiveNonCashPaymentMethods
 		// code runs -- because it creates no sale/payment at all. Kiosk
@@ -533,7 +562,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "failed to prepare sale", http.StatusInternalServerError)
 			return
 		}
-		saleLines, total, taxBlocked := kioskSaleLinesAndTotal(d, eng, locID)
+		saleLines, total, taxBlocked := kioskSaleLinesAndTotal(d, eng, lines, locID)
 		if taxBlocked {
 			// ut-docs#368 — same fail-closed rule as the cashier tender
 			// path: a basket line whose registered tax plugin is broken
@@ -600,7 +629,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			AllowNegativeInventory: allowNegative,
 			ActorID:                "kiosk",
 		}
-		saleID, err := completeTender(r.Context(), d, eng, repo, saleInput, saleInput.Payments, "kiosk")
+		saleID, err := completeTender(r.Context(), d, eng, repo, saleInput, saleInput.Payments, "kiosk", kitchenDeltaFilter(lines))
 		if err != nil {
 			var declined *paymentDeclinedError
 			var noReceipt *fiscalDeviceNoReceiptError
@@ -667,6 +696,38 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 	})
 }
 
+// selfOrderWalkUpCheckoutKey is the in-flight key of the shared walk-up
+// kiosk basket (ut-docs#2714); a table-QR session uses its own token. The
+// NUL byte keeps it from ever equalling a real (random, printable) token.
+const selfOrderWalkUpCheckoutKey = "\x00walk-up"
+
+// selfOrderCheckoutInFlight is the set of baskets with a checkout currently
+// running (ut-docs#2714): acquire reports false when key is already in it.
+type selfOrderCheckoutInFlight struct {
+	mu   sync.Mutex
+	keys map[string]struct{}
+}
+
+func newSelfOrderCheckoutInFlight() *selfOrderCheckoutInFlight {
+	return &selfOrderCheckoutInFlight{keys: map[string]struct{}{}}
+}
+
+func (g *selfOrderCheckoutInFlight) acquire(key string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if _, busy := g.keys[key]; busy {
+		return false
+	}
+	g.keys[key] = struct{}{}
+	return true
+}
+
+func (g *selfOrderCheckoutInFlight) release(key string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.keys, key)
+}
+
 // selfOrderForcesCounterCheckout reports whether THIS basket must check out
 // as a kiosk_counter_orders row (ut-docs#582's "pay at counter" path)
 // rather than attempting a sale/card payment. True whenever the till's
@@ -693,6 +754,19 @@ func renderKioskCounterConfirmPicker(w http.ResponseWriter, r *http.Request, eng
 	})(w, r)
 }
 
+// refuseKioskCheckout answers a checkout the spam guards refused
+// (ut-docs#2714) with an empty body and HX-Reswap: none. The kiosk page
+// force-swaps every /api/self-order/* 4xx into its modal
+// (self_order_shop.html), so a text body would show untranslated English
+// to the customer, and a 409 that lands after the first request's
+// confirmation would wipe that confirmation. Painting nothing leaves the
+// first request's result on screen; a customer tapping 20+ times a
+// minute from one address just sees their tap do nothing.
+func refuseKioskCheckout(w http.ResponseWriter, status int) {
+	w.Header().Set("HX-Reswap", "none")
+	w.WriteHeader(status)
+}
+
 // counterOrderModifierNames flattens a basket line's chosen modifiers to
 // their option names, the same shape kitchenItemsFor (kitchen_print.go)
 // reads off data.SaleDetailLine.Modifiers — this basket line hasn't been
@@ -709,65 +783,178 @@ func counterOrderModifierNames(mods []data.SelectedModifier) []string {
 	return names
 }
 
-// completeCounterOrderCheckout is the entire "pay at counter" checkout path
-// (ut-docs#582): unlike the kiosk (card/contactless) path above, it never
-// builds a pos.SaleInput and never calls completeTender — there is no
-// payment to take, so there must be no sale/payment row either. It records
-// a kiosk_counter_orders row instead (internal/data/
-// kiosk_counter_orders_repo.go), fires a best-effort kitchen ticket, clears
-// the basket — the walk-up KioskEngine the same way GET /self-order does on
-// every fresh visit (Reset()); a table-QR guest session (token != "",
-// ADR-0103 D5) by removing it from the manager and clearing its cookie so
-// the table is free at once — and renders the SAME
-// self_order_confirmation.html partial the kiosk path uses, with
-// CounterMode=true selecting the "selforder.confirm.counter_hint" copy
-// instead of the payment-flow hint.
-func completeCounterOrderCheckout(w http.ResponseWriter, r *http.Request, d *common.Deps, eng *pos.Service, token string) {
-	lines := eng.Lines()
-	if len(lines) == 0 {
-		http.Error(w, "basket is empty", http.StatusBadRequest)
-		return
-	}
-	orderLines := make([]data.KioskCounterOrderLine, 0, len(lines))
-	for _, l := range lines {
-		orderLines = append(orderLines, data.KioskCounterOrderLine{
+// counterOrderTicketFromSnapshot (ut-docs#2703) builds the kiosk order's
+// lines -- what the kitchen ticket prints -- 1:1 and in order from
+// snap.Lines, and returns markSent, which records every one of those same
+// lines as fully sent (SnapshotLine.KitchenSentQty = Qty). Ticket and marks
+// share one source by construction, so a line can be marked sent only if
+// the ticket showed it.
+func counterOrderTicketFromSnapshot(snap *pos.BasketSnapshot) ([]data.KioskCounterOrderLine, func()) {
+	lines := make([]data.KioskCounterOrderLine, 0, len(snap.Lines))
+	for _, l := range snap.Lines {
+		lines = append(lines, data.KioskCounterOrderLine{
 			Name:      l.Name,
 			Qty:       l.Qty,
 			Modifiers: counterOrderModifierNames(l.Modifiers),
 		})
 	}
+	n := len(lines)
+	return lines, func() {
+		for i := 0; i < n && i < len(snap.Lines); i++ {
+			snap.Lines[i].KitchenSentQty = snap.Lines[i].Qty
+		}
+	}
+}
 
-	repo := data.NewKioskCounterOrdersRepo(d.Db)
-	order, err := repo.Create(r.Context(), data.KioskCounterOrder{
+// completeCounterOrderCheckout is the entire "pay at counter" checkout path
+// (ut-docs#582, reshaped by ut-docs#2703): unlike the kiosk
+// (card/contactless) path above it takes no payment, so it creates no sale.
+//
+// ut-docs#2703 (product owner, 2026-09-25): "when the customer still didn't
+// pay for the order and waits for pay at the counter, it should be exactly
+// the same as a hold order, not a placed one." So the kiosk basket is
+// parked as a HELD SALE -- the same held_sales row, payload
+// (pos.BasketSnapshot) and write-through (heldSaleWriteThrough, ADR-0093)
+// the till's own Hold uses. It then shows in Open orders, the parked-orders
+// popup and the On hold strip, the cashier resumes it with the existing
+// resume path, and payment goes through the normal tender -- a real sale,
+// fiscally signed, in day-close. Before this, "Mark collected" closed the
+// order with no money taken at all.
+//
+// A kiosk_counter_orders row is still written (status "held"):
+// the "C-" order number sequence lives there, and it records what was
+// ordered. It is not the payable object and never shows on the legacy
+// staff board. If the order cannot be parked, that row is deleted again
+// (ut-docs#2714), so a retry reuses the number; the POST handler lets only
+// one checkout per basket run at a time and rate-limits each source.
+//
+// The snapshot carries the order number (BasketSnapshot.DisplayNo) so the
+// paid sale's display_no, receipt and kitchen ticket show the number the
+// customer holds. Kitchen ticket timing: a walk-up pay-at-counter order
+// prints at payment, like any till sale (completeTender); a table-QR order
+// (ut-docs#815) prints now -- dine-in guests eat before they pay. The
+// checkout print is SYNCHRONOUS (printCounterOrderTicket, short timeout) so
+// its outcome is known before the order is parked: only when it actually
+// reached the printer is every line marked sent (SnapshotLine.
+// KitchenSentQty), and the tender path then prints only what the cashier
+// adds later. A printer that is down, or no legacy kitchen printer at all,
+// leaves the lines unsent, so the whole order prints at payment instead of
+// being lost -- and the guest is told it is made after payment.
+//
+// The basket is then cleared -- the walk-up KioskEngine by Reset(); a
+// table-QR guest session (token != "", ADR-0103 D5) removed from the
+// manager with its cookie cleared -- and the customer sees the SAME
+// self_order_confirmation.html partial with their C-number.
+func completeCounterOrderCheckout(w http.ResponseWriter, r *http.Request, d *common.Deps, eng *pos.Service, token string) {
+	// ONE read of the basket (round-2 review of ut-docs#2703): the order
+	// row, the kitchen ticket, the "already sent" marks and the parked
+	// payload all come from this snapshot. Reading the engine twice let an
+	// add landing in between be parked as sent although no ticket showed it.
+	snap := eng.Snapshot()
+	if len(snap.Lines) == 0 {
+		http.Error(w, "basket is empty", http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+	tableBound := snap.TableID != ""
+	orderLines, markSentToKitchen := counterOrderTicketFromSnapshot(&snap)
+
+	// One id for both rows, so a held sale can always be traced back to
+	// the kiosk order it came from. "hold-" like every other held sale id;
+	// a uuid rather than hold-<nanos> because several table-QR sessions
+	// can check out at the same instant.
+	heldID := "hold-" + uuid.NewString()
+	counterRepo := data.NewKioskCounterOrdersRepo(d.Db)
+	order, err := counterRepo.Create(ctx, data.KioskCounterOrder{
+		ID:        heldID,
+		Status:    data.KioskCounterOrderStatusHeld,
 		OrderType: eng.OrderType(),
-		// TableID/TableLabel (ut-docs#815): "" for a plain kiosk-till
-		// counter order (#582, unaffected) -- only set when this checkout
-		// is forced by a table-bound session (selfOrderForcesCounterCheckout).
-		// Read straight off the engine rather than re-querying the tables
-		// repo: SetTable (registerSelfOrder) already resolved and cached
-		// both at session start, same as CustomerID/CustomerName elsewhere
-		// on this same Service.
-		TableID:    eng.TableID(),
-		TableLabel: eng.TableLabel(),
+		// TableID/TableLabel (ut-docs#815): "" for a walk-up kiosk order;
+		// set when a table-bound session forced this path. From the
+		// snapshot; SetTable already resolved them at session start.
+		TableID:    snap.TableID,
+		TableLabel: snap.TableLabel,
 		Lines:      orderLines,
 	})
 	if err != nil {
+		logging.L().Errorf("self-order counter checkout: record order: %v", err)
 		http.Error(w, "failed to place order", http.StatusInternalServerError)
 		return
 	}
 
-	// Same post-checkout reset the kiosk (card/contactless) path gets via
-	// completeTender's own engine.Reset() call — a counter order is just as
-	// "done" from the kiosk's point of view as a paid sale. A table-QR
-	// session is removed outright instead (ADR-0103 D5; header write, so it
-	// runs before RenderPartial below).
+	snap.DisplayNo = order.DisplayNo
+	// Printed before parking so the held payload records the real outcome.
+	// Chosen over an async print + success callback: the callback would
+	// have to rewrite a held row that may already have been pushed to the
+	// main till (heldSaleWriteThrough), a second networked write for one
+	// flag. The cost is that the guest waits up to
+	// counterOrderTicketTimeout on a dead printer. Known edge: if parking
+	// then fails, the kitchen has a ticket for an order the guest is told
+	// failed -- a local DB write failure, and a duplicate/stray ticket is
+	// recoverable where a lost one is not. The failed order's row is removed
+	// (ut-docs#2714), so the guest's retry carries the same C-number as that
+	// stray ticket.
+	sentToKitchen := false
+	if tableBound {
+		sent, perr := printCounterOrderTicket(ctx, d, order)
+		if perr != nil {
+			logging.L().Warnf("self-order counter checkout: kitchen ticket for %s not printed, it will print at payment: %v", order.DisplayNo, perr)
+		}
+		sentToKitchen = sent
+	}
+	if sentToKitchen {
+		markSentToKitchen()
+	}
+	payload, err := json.Marshal(snap)
+	if err != nil {
+		// Same cleanup as a failed park below (ut-docs#2714).
+		if derr := counterRepo.DeleteHeld(context.WithoutCancel(ctx), order.ID); derr != nil {
+			logging.L().Errorf("self-order counter checkout: remove unparked order %s: %v", order.DisplayNo, derr)
+		}
+		http.Error(w, "failed to place order", http.StatusInternalServerError)
+		return
+	}
+	held := data.HeldSale{
+		ID:         heldID,
+		Label:      counterOrderHeldLabel(order.DisplayNo, snap.OrderType),
+		TotalMinor: snap.Total.Minor(),
+		LineCount:  len(snap.Lines),
+		Payload:    string(payload),
+		TableID:    snap.TableID,
+	}
+	// Offline-first: on a replica this pushes the order to the main till
+	// (so it is listed and payable there, like any parked order); any
+	// failure reaching it keeps the row local -- the checkout never waits
+	// on the network beyond the proxy's own short budget.
+	if outcome, err := heldSaleWriteThrough(ctx, d, data.NewHeldSalesRepo(d.Db), held); err != nil {
+		// ut-docs#2714: delete the "held" counter row created above, so no
+		// orphan is left that nothing lists or ever cleans up; since it held
+		// the max, the customer's retry gets the same C-number. (If that
+		// delete fails too, Create prunes the row once it is stale.) The
+		// customer is told the order failed, so nothing is promised that the
+		// till cannot find. Not when the main till refused the push: that
+		// refusal proves it already holds this order under this number, so
+		// freeing the number would let the retry mint a second order with
+		// it. The delete runs detached from the request so a guest closing
+		// the page cannot cancel it.
+		logging.L().Errorf("self-order counter checkout: park order %s as held sale: %v", order.DisplayNo, err)
+		if outcome != heldSaleSyncRefused {
+			if derr := counterRepo.DeleteHeld(context.WithoutCancel(ctx), order.ID); derr != nil {
+				logging.L().Errorf("self-order counter checkout: remove unparked order %s: %v", order.DisplayNo, derr)
+			}
+		}
+		http.Error(w, "failed to place order", http.StatusInternalServerError)
+		return
+	}
+
+	// A table-QR session is removed outright (ADR-0103 D5; header write,
+	// so it runs before RenderPartial below); the walk-up kiosk basket is
+	// reset, same as completeTender does after a paid kiosk sale.
 	if token != "" {
 		releaseSelfOrderSession(w, d, token)
 	} else {
 		eng.Reset()
 	}
-
-	printCounterOrderTicketAsync(d, order)
 
 	httpx.RenderPartial("ui/partials/self_order_confirmation.html", map[string]any{
 		"ReceiptNo":   order.ID,
@@ -775,58 +962,78 @@ func completeCounterOrderCheckout(w http.ResponseWriter, r *http.Request, d *com
 		"TrackingQR":  "",
 		"TrackingURL": "",
 		"CounterMode": true,
+		"PayFirst":    !sentToKitchen,
 	})(w, r)
 }
 
-// printCounterOrderTicketAsync sends a kitchen ticket for a counter order
-// without ever blocking checkout — mirrors printKitchenAsync's shape
-// (kitchen_print.go: goroutine, d.AsyncWork tracked, its own timeout,
-// best-effort, never fails or delays the order) but builds
-// print.KitchenTicket/print.KitchenItem DIRECTLY from the counter order's
-// own fields instead of going through buildKitchenTicket/buildKitchenTargets
-// — both of those hard-require a data.SaleDetail via GetSaleDetail(receiptNo),
-// which does not exist for a counter order (there is no sale row at all).
-// v1 scope (explicit non-goal per the card): one ticket to the legacy
-// printer.kitchen_addr only — no per-station routing.
-func printCounterOrderTicketAsync(d *common.Deps, order data.KioskCounterOrder) {
-	d.AsyncWork.Add(1)
-	go func() {
-		defer d.AsyncWork.Done()
-		ctx, cancel := context.WithTimeout(context.Background(), printAsyncTimeout)
-		defer cancel()
-		cfg, cfgErr := printerConfigChecked(ctx, d)
-		if cfgErr != nil || !cfg.KitchenEnabled() {
-			// No legacy kitchen printer configured (or the settings read
-			// itself failed) — best-effort, silently no-op, same as
-			// printKitchenAsync's own "nothing to send" path. A counter
-			// order carries no /orders warning flag to set (it isn't a
-			// sale), so there is nothing further to record either way.
-			return
-		}
-		// locale here is the SHOP's default, matching Station/OrderLabel/
-		// OrderType below — ut-docs#2221 moved Qty's formatting from write
-		// time (completeCounterOrderCheckout, keyed on the ordering
-		// customer's own request locale) to here, so it now follows the
-		// same locale as every other field on this ticket rather than
-		// being the one odd one out keyed on whoever happened to place the
-		// order. FormatQtyLatin (never digit-shaped) is still correct
-		// regardless of locale — an ESC/POS printer can't render
-		// Arabic-Indic glyphs — only the decimal/grouping convention for a
-		// weighed line's fractional qty can change here.
-		locale := httpx.DefaultLocale()
-		ticket := kitchenTicketForCounterOrder(order, cfg, locale)
-		tr, err := print.TransportForAddress(cfg.KitchenAddress)
-		if err != nil || tr == nil {
-			return
-		}
-		_ = tr.Print(ctx, print.RenderKitchenTicket(ticket))
-	}()
+// counterOrderHeldLabel names a parked pay-at-counter order the way the
+// cashier will look for it on Open orders: the customer's order number
+// plus the order type ("C-12 · Takeaway"). The table is not repeated here
+// -- held_sales.table_id carries it and every list shows it in its own
+// column/chip. Rendered in the SHOP's default locale, not the kiosk
+// customer's: the label is stored text read by staff, same choice as the
+// kitchen ticket (printCounterOrderTicket).
+func counterOrderHeldLabel(displayNo, orderType string) string {
+	locale := httpx.DefaultLocale()
+	key := "selforder.order_type.dine_in"
+	switch orderType {
+	case pos.OrderTypeTakeaway:
+		key = "basket.order_type.takeaway"
+	case pos.OrderTypeMixed:
+		key = "basket.order_type.mixed"
+	}
+	return displayNo + " · " + httpx.T(locale, key)
+}
+
+// counterOrderTicketTimeout bounds the synchronous checkout print of a
+// table-QR order's kitchen ticket (ut-docs#2703): the guest is waiting on
+// the confirmation screen, and a dead printer only means the ticket prints
+// at payment instead.
+var counterOrderTicketTimeout = 5 * time.Second
+
+// printCounterOrderTicket sends a table-QR counter order's kitchen ticket
+// and reports whether it actually reached the printer (ut-docs#2703: the
+// caller marks the order's lines as sent only on true, so a failed print is
+// retried at payment instead of lost). (false, nil) means there was nothing
+// to print to -- no legacy kitchen printer configured -- and the tender
+// path's routed print covers it. It builds print.KitchenTicket DIRECTLY
+// from the counter order's own fields instead of going through
+// buildKitchenTicket/buildKitchenTargets, which hard-require a sale
+// (there is none until payment). v1 scope (explicit non-goal per the
+// card): one ticket to the legacy printer.kitchen_addr only -- no
+// per-station routing. Runs on a context detached from the request so a
+// guest closing the page mid-print cannot cut a ticket in half.
+func printCounterOrderTicket(ctx context.Context, d *common.Deps, order data.KioskCounterOrder) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), counterOrderTicketTimeout)
+	defer cancel()
+	cfg, err := printerConfigChecked(ctx, d)
+	if err != nil {
+		return false, err
+	}
+	if !cfg.KitchenEnabled() {
+		return false, nil
+	}
+	// locale is the SHOP's default (ut-docs#2221), matching every other
+	// field on the ticket -- see kitchenTicketForCounterOrder.
+	locale := httpx.DefaultLocale()
+	ticket := kitchenTicketForCounterOrder(order, cfg, locale)
+	tr, err := print.TransportForAddress(cfg.KitchenAddress)
+	if err != nil {
+		return false, err
+	}
+	if tr == nil {
+		return false, nil
+	}
+	if err := tr.Print(ctx, print.RenderKitchenTicket(ticket)); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // kitchenTicketForCounterOrder builds the print.KitchenTicket for a counter
-// order — extracted out of printCounterOrderTicketAsync's own goroutine so
+// order — extracted out of printCounterOrderTicket so
 // it's unit-testable directly (byte-comparison tests still cover the
-// goroutine end-to-end via printCounterOrderTicketAsync itself). Table
+// print end-to-end via printCounterOrderTicket itself). Table
 // (ut-docs#815) mirrors kitchenTicketFor's own detail.TableLabel handling
 // (kitchen_print.go, ut-docs#820) exactly: the raw, already-resolved table
 // label, "" for a plain kiosk-till counter order with no table --
@@ -852,17 +1059,19 @@ func kitchenTicketForCounterOrder(order data.KioskCounterOrder, cfg print.Config
 	}
 }
 
-// kioskSaleLinesAndTotal converts the current basket into SaleLineInput rows
+// kioskSaleLinesAndTotal converts lines -- the basket as the checkout
+// handler read it, once (ut-docs#2703: the kitchen filter handed to
+// completeTender is built from the same slice) -- into SaleLineInput rows
 // and computes the payable total, mirroring the cashier tender handler's
 // subtotal/tax math (/api/pos/tender in pos_api.go) exactly — a kiosk
 // checkout must land on the same total a cashier would for an identical
 // basket. Kiosk sales never carry a sale-level discount (no UI surfaces one
 // to an anonymous customer), so this is deliberately simpler than the
 // cashier path, which also honors a client- or basket-supplied discount.
-func kioskSaleLinesAndTotal(d *common.Deps, eng *pos.Service, locID string) ([]pos.SaleLineInput, money.Money, bool) {
+func kioskSaleLinesAndTotal(d *common.Deps, eng *pos.Service, lines []pos.BasketLine, locID string) ([]pos.SaleLineInput, money.Money, bool) {
 	var saleLines []pos.SaleLineInput
 	subtotal, taxTotal := money.Zero, money.Zero
-	for _, l := range eng.Lines() {
+	for _, l := range lines {
 		// Same resolution as the cashier tender handler (pos_api.go) —
 		// required by this function's own invariant above. taxBlocked is
 		// the same ut-docs#368 fail-closed signal the cashier path honors:

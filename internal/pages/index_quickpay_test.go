@@ -1,9 +1,12 @@
 package pages
 
-// ut-docs#1336: one-tap quick pay — the sale screen's default view renders a
-// full-width quick-pay button below Hold Sale/Payment that tenders the shop's
-// preferred/default method directly. These tests cover the Go-side plumbing
-// (the defaultPayMethod template var) at the level the e2e suite can't: the
+// ut-docs#1336: one-tap quick pay on the shop's preferred/default method.
+// ut-docs#2702 moved it off the sale screen into the payment panel: the
+// preferred method is the Pay grid's first, highlighted button
+// (data-testid="pay-default"). The defaultPayMethod template var is gone:
+// the ordering comes from the payment-methods list itself, preferred-first
+// via payments.default_method. These tests cover that at the level the
+// e2e suite can't: the
 // e2e till's demo seed has no payment_methods rows, so Playwright only ever
 // exercises the zero-state cash fallback branch — the labeled branch (a real
 // method row, preferred-first via payments.default_method) is proven here
@@ -51,22 +54,23 @@ func quickPayTestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	return mux, dp
 }
 
-// quickPayButtonSnippet isolates the quick-pay button's own opening tag from
-// the full page body. The page also contains the overlay pay-grid's own Cash
-// button, which independently renders an escaped hx-vals='{&#34;amount&#34;...}'
-// for method=cash — a whole-page substring search can't tell that apart from
-// quick-pay's own attribute, so scope the search to quick-pay's own tag.
+// quickPayButtonSnippet isolates the preferred-method button from the full
+// page body. Since ut-docs#2702 the one-tap quick-pay button is no longer a
+// separate row on the sale screen: its job is the payment panel's first
+// Pay-grid button, marked data-testid="pay-default". The page contains other
+// Cash buttons with the same escaped hx-vals, so scope to this one tag.
 func quickPayButtonSnippet(t *testing.T, home string) string {
 	t.Helper()
-	idx := strings.Index(home, `data-testid="quick-pay"`)
+	idx := strings.Index(home, `data-testid="pay-default"`)
 	if idx == -1 {
-		t.Fatalf("quick-pay button missing from home page")
+		t.Fatalf("preferred-method (pay-default) button missing from home page")
 	}
+	start := strings.LastIndex(home[:idx], "<button")
 	closeIdx := strings.Index(home[idx:], "</button>")
-	if closeIdx == -1 {
-		t.Fatalf("quick-pay button's closing tag not found")
+	if start == -1 || closeIdx == -1 {
+		t.Fatalf("pay-default button's tags not found")
 	}
-	return home[idx : idx+closeIdx+len("</button>")]
+	return home[start : idx+closeIdx+len("</button>")]
 }
 
 func getHome(t *testing.T, mux *http.ServeMux) string {

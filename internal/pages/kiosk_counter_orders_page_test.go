@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"database/sql"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/settings"
 )
@@ -259,5 +261,41 @@ func TestKioskCounterOrdersPage_NoTableOrderShowsNoTableSuffix(t *testing.T) {
 	}
 	if !strings.Contains(body, created.DisplayNo) {
 		t.Fatalf("missing display_no in board: %s", body)
+	}
+}
+
+// ut-docs#2703: new pay-at-counter orders are held sales (Open orders), so
+// this board only holds orders placed before that change. Those were never
+// paid on the till: the page must say where new orders went, tell staff to
+// ring the old ones up by hand, and make "Mark collected" ask before it
+// closes an order with no payment on this till.
+func TestKioskCounterOrdersPage_LegacyRowsAskBeforeCollectingUnpaid(t *testing.T) {
+	dp, dbase := setupKioskCounterOrdersDeps(t)
+	if _, err := data.NewKioskCounterOrdersRepo(dbase).Create(context.Background(), data.KioskCounterOrder{
+		Lines: []data.KioskCounterOrderLine{{Name: "Flat White", Qty: 1}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	registerKioskCounterOrdersPage(mux, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/kiosk-counter-orders", nil))
+	page := rec.Body.String()
+	if !strings.Contains(page, `href="/open-orders"`) {
+		t.Fatalf("the board must point staff to Open orders, where new orders are paid: %s", page)
+	}
+	if !strings.Contains(page, httpx.T("en", "kiosk_counter_orders.moved_hint")) {
+		t.Fatalf("the board must explain that new orders are on Open orders: %s", page)
+	}
+
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/ui/kiosk-counter-orders", nil))
+	body := html.UnescapeString(rec2.Body.String())
+	if !strings.Contains(body, httpx.T("en", "kiosk_counter_orders.ring_up_manually")) {
+		t.Fatalf("a legacy row must say it is rung up by hand: %s", body)
+	}
+	if !strings.Contains(body, `hx-confirm="`+httpx.T("en", "kiosk_counter_orders.confirm_collect_unpaid")+`"`) {
+		t.Fatalf("Mark collected on an unpaid order must ask first: %s", body)
 	}
 }

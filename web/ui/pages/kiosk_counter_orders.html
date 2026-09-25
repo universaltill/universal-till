@@ -2,6 +2,11 @@
 <div class="page-head">
   <h1>{{ T "kiosk_counter_orders.title" }} {{ helpLink "kiosk-counter-orders" }}</h1>
 </div>
+{{/* ut-docs#2703: new pay-at-the-counter orders are parked as held sales
+     and paid from Open orders like any held sale -- a real, signed sale.
+     This board now only carries orders placed before that change, which
+     were never paid on the till. */}}
+<p class="muted" data-testid="counter-orders-moved-hint">{{ T "kiosk_counter_orders.moved_hint" }} <a class="btn secondary btn-touch" href="/open-orders">{{ T "open_orders.title" }}</a></p>
 <div class="card">
   {{/* Loads once here; the fragment's own root then polls every 15s, same
        shape as /orders (orders.html) — a kiosk "pay at counter" order must

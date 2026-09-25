@@ -33,7 +33,11 @@ export const PREBUILT_BIN = path.join(REPO_ROOT, 'e2e', '.bin', 'unitill-pos-e2e
 // single-server projects (auth/ai-identify/layout/diagnostics) keep their
 // static 8092-8095 (and the diagnostics spec's fake ut-cloud on 8096), and
 // they run in other worker slots of the SAME overall run.
-export const WORKER_PORT_BASE = 9091;
+// UT_E2E_WORKER_PORT_BASE (local only): several agent sessions/worktrees on
+// one machine each run this suite; with a fixed 9091 a second run would
+// REUSE the first run's till (the isHealthy() reuse below) and silently test
+// the other checkout's binary. A distinct base per session avoids that.
+export const WORKER_PORT_BASE = Number(process.env.UT_E2E_WORKER_PORT_BASE) || 9091;
 
 // How long a fresh server may take to answer /healthz (covers the two
 // `go run` seeds, which compile on a cold build cache).

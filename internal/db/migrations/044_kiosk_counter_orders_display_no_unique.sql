@@ -1,0 +1,23 @@
+-- 044_kiosk_counter_orders_display_no_unique.sql — universaltill/ut-docs#2714
+-- ("self-order checkout hardening"). Since ut-docs#2703 a pay-at-counter
+-- kiosk order is a held sale whose customer-facing number is this table's
+-- display_no ("C-<n>", 026_kiosk_counter_orders.sql). Two rows with the
+-- same number mean two customers holding the same ticket and two Open
+-- orders labelled alike, so display_no is now UNIQUE per till. (The table
+-- is per-till operational state, never synced -- sync_admin_repo.go -- so a
+-- per-till index is the whole guarantee; cross-till numbers are kept apart
+-- by the till prefix KioskCounterOrdersRepo.Create adds.)
+--
+-- First renames any duplicates a till already holds (a genuine race before
+-- this index, or a double-tapped checkout): the lowest rowid of each number
+-- keeps it, every later copy becomes "<no>~<rowid>" -- still readable, and
+-- CAST(substr(...)) of it still yields the same integer, so the next
+-- allocated number is unchanged. Then the unique index.
+--
+-- Replay-safe, same reason as 021/023/025/026: this repo's
+-- fiscal_signing_keys_{rename,split}_test.go rewinds the ledger and re-runs
+-- every later migration against an already-migrated file. Once the index
+-- exists no duplicates can, so the UPDATE matches nothing, and the index is
+-- IF NOT EXISTS.
+UPDATE kiosk_counter_orders SET display_no = display_no || '~' || rowid WHERE rowid NOT IN (SELECT MIN(rowid) FROM kiosk_counter_orders GROUP BY display_no);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_kiosk_counter_orders_display_no ON kiosk_counter_orders(display_no);

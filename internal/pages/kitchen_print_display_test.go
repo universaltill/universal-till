@@ -71,7 +71,7 @@ func TestPrintKitchen_DisplayOnlyStationFallsThroughToDefault(t *testing.T) {
 	}
 	seedKitchenSale(t, dbase, "R-2001", "itm-steak")
 
-	targets, err := buildKitchenTargets(ctx, dp, "R-2001", "")
+	targets, err := buildKitchenTargets(ctx, dp, "R-2001", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

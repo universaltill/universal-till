@@ -26,6 +26,20 @@ type openOrderRow struct {
 	// re-park keeps the original created_at, so this is genuinely "how long
 	// has this order been open", not "how long since it was last touched".
 	AgeMinutes int
+	// MoveTargets (ut-docs#2702 review) are the free tables the sale
+	// screen's popup offers under "Move table" -- filled only by
+	// renderParkedOrdersPopup, never for the /open-orders page, so that page
+	// pays no cross-till table-state hop it doesn't render.
+	MoveTargets []parkedMoveTarget
+
+	tableID string
+	payload string
+}
+
+// parkedMoveTarget is one free table the popup's Move table control offers.
+type parkedMoveTarget struct {
+	ID    string
+	Label string
 }
 
 // registerOpenOrders wires the Open orders page (ut-docs#1918): every order
@@ -56,58 +70,8 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewHeldSalesRepo(d.Db)
 	posRepo := data.NewPOSRepo(d.Db)
 
-	// listOpenOrders builds the display-ready rows both surfaces render: the
-	// full /open-orders page and the sale screen's parked-orders popup
-	// (ut-docs#2137). One reader, so the two can never disagree about what is
-	// parked, what it is worth, or which table it is on.
-	//
-	// ADR-0093 (ut-docs#1920): heldSalesForDisplay (held_sale_sync_proxy.go),
-	// not the bare repo.List -- on a REPLICA it merges the primary's live
-	// list (GET /api/sync/held-sales, same 800ms budget as every other
-	// proxy) with the local table, primary's copy winning per id and a
-	// local-only row (taken during an outage) still shown, so an order
-	// parked at another till is listed -- and resumable -- here. ANY
-	// failure reaching the primary is the local list alone, silently: the
-	// page renders either way, never a blocking error over a primary that
-	// happens to be off. On the primary itself, or a standalone till, this
-	// IS repo.List.
-	listOpenOrders := func(ctx context.Context) ([]openOrderRow, error) {
-		items, err := heldSalesForDisplay(ctx, d, repo)
-		if err != nil {
-			return nil, err
-		}
-		now := time.Now().UTC()
-		// Memoised per distinct table id: several parked orders rarely share
-		// a table (IsTableFree forbids it for a move), but a repeat lookup
-		// costs nothing to skip. Falls back to the raw id, same as the strip.
-		tableLabels := map[string]string{}
-		rows := make([]openOrderRow, 0, len(items))
-		for _, h := range items {
-			row := openOrderRow{
-				ID:         h.ID,
-				Label:      h.Label,
-				LineCount:  h.LineCount,
-				Total:      money.FromMinor(h.TotalMinor),
-				AgeMinutes: elapsedMinutes(h.CreatedAt, now),
-			}
-			if h.TableID != "" {
-				label, seen := tableLabels[h.TableID]
-				if !seen {
-					label = h.TableID
-					if t, found, err := posRepo.GetTable(ctx, h.TableID); err == nil && found {
-						label = t.Label
-					}
-					tableLabels[h.TableID] = label
-				}
-				row.TableLabel = label
-			}
-			rows = append(rows, row)
-		}
-		return rows, nil
-	}
-
 	mux.HandleFunc("GET /open-orders", func(w http.ResponseWriter, r *http.Request) {
-		rows, err := listOpenOrders(r.Context())
+		rows, err := listOpenOrders(r.Context(), d, repo, posRepo)
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "open_orders.error.load_failed", err)
 			return
@@ -185,22 +149,124 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 	// pointed the cashier at that same strip. A parked order was
 	// unreachable on that device.
 	mux.HandleFunc("GET /ui/parked-orders", func(w http.ResponseWriter, r *http.Request) {
-		rows, err := listOpenOrders(r.Context())
-		if err != nil {
-			// NEVER fall through to the empty-state body here (ut-docs#2137
-			// review): "No open orders right now" is the one thing a cashier
-			// with parked orders must not be told falsely -- it reads as
-			// "your order is gone", and the recovery is to re-ring the whole
-			// sale. A read failure has to look like a failure. 500 leaves the
-			// popup body unswapped and lets app.js's htmx:responseError
-			// handler raise the usual server banner, which is how every other
-			// fragment on this screen reports the same thing.
-			logging.L().Errorf("parked-orders popup: list held sales: %v", err)
-			http.Error(w, "could not load parked orders", http.StatusInternalServerError)
-			return
-		}
-		httpx.RenderPartial("ui/partials/parked_orders.html", map[string]any{
-			"orders": rows,
-		})(w, r)
+		renderParkedOrdersPopup(w, r, d, repo, posRepo, "", "")
 	})
+}
+
+// listOpenOrders builds the display-ready rows both surfaces render: the
+// full /open-orders page and the sale screen's parked-orders popup
+// (ut-docs#2137). One reader, so the two can never disagree about what is
+// parked, what it is worth, or which table it is on.
+//
+// ADR-0093 (ut-docs#1920): heldSalesForDisplay (held_sale_sync_proxy.go),
+// not the bare repo.List -- on a REPLICA it merges the primary's live
+// list (GET /api/sync/held-sales, same 800ms budget as every other
+// proxy) with the local table, primary's copy winning per id and a
+// local-only row (taken during an outage) still shown, so an order
+// parked at another till is listed -- and resumable -- here. ANY
+// failure reaching the primary is the local list alone, silently: the
+// page renders either way, never a blocking error over a primary that
+// happens to be off. On the primary itself, or a standalone till, this
+// IS repo.List.
+func listOpenOrders(ctx context.Context, d *common.Deps, repo *data.HeldSalesRepo, posRepo *data.POSRepo) ([]openOrderRow, error) {
+	items, err := heldSalesForDisplay(ctx, d, repo)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	// Memoised per distinct table id: several parked orders rarely share
+	// a table (IsTableFree forbids it for a move), but a repeat lookup
+	// costs nothing to skip. Falls back to the raw id.
+	tableLabels := map[string]string{}
+	rows := make([]openOrderRow, 0, len(items))
+	for _, h := range items {
+		row := openOrderRow{
+			ID:         h.ID,
+			Label:      h.Label,
+			LineCount:  h.LineCount,
+			Total:      money.FromMinor(h.TotalMinor),
+			AgeMinutes: elapsedMinutes(h.CreatedAt, now),
+			tableID:    h.TableID,
+			payload:    h.Payload,
+		}
+		if h.TableID != "" {
+			label, seen := tableLabels[h.TableID]
+			if !seen {
+				label = h.TableID
+				if t, found, err := posRepo.GetTable(ctx, h.TableID); err == nil && found {
+					label = t.Label
+				}
+				tableLabels[h.TableID] = label
+			}
+			row.TableLabel = label
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+// renderParkedOrdersPopup renders the sale screen's parked-orders popup
+// body (ut-docs#2137): GET /ui/parked-orders when the popup opens, and
+// POST /api/pos/held/table (hold_api.go) when a move was made from it
+// (view=parked-orders), with toast set on a refused move.
+//
+// Each row carries a Move table control (ut-docs#820, restored here by the
+// ut-docs#2702 review after the held-sales strip that used to carry it was
+// removed). It offers only tables that are free cross-till
+// (tablesWithStateForDisplay, ut-docs#1392/#1704), never the order's own
+// table, and nothing at all for a takeaway order (heldSaleMayHaveTable,
+// ut-docs#1381) or a shop with no tables (ADR-0054 soft-gate). The POST
+// handler re-validates all of this -- the offer is a convenience, not the
+// enforcement point.
+func renderParkedOrdersPopup(w http.ResponseWriter, r *http.Request, d *common.Deps, repo *data.HeldSalesRepo, posRepo *data.POSRepo, toast, level string) {
+	ctx := r.Context()
+	rows, err := listOpenOrders(ctx, d, repo, posRepo)
+	if err != nil {
+		// NEVER fall through to the empty-state body here (ut-docs#2137
+		// review): "No open orders right now" is the one thing a cashier
+		// with parked orders must not be told falsely -- it reads as
+		// "your order is gone", and the recovery is to re-ring the whole
+		// sale. A read failure has to look like a failure. 500 leaves the
+		// popup body unswapped and lets app.js's htmx:responseError
+		// handler raise the usual server banner, which is how every other
+		// fragment on this screen reports the same thing.
+		logging.L().Errorf("parked-orders popup: list held sales: %v", err)
+		http.Error(w, "could not load parked orders", http.StatusInternalServerError)
+		return
+	}
+	var free []parkedMoveTarget
+	if len(rows) > 0 {
+		if states, err := tablesWithStateForDisplay(ctx, d, posRepo, time.Now().Add(-tillClaimTTL)); err == nil {
+			for _, s := range states {
+				if s.Enabled && !s.Occupied {
+					free = append(free, parkedMoveTarget{ID: s.ID, Label: s.Label})
+				}
+			}
+		}
+	}
+	if len(free) > 0 {
+		for i := range rows {
+			if !heldSaleMayHaveTable(rows[i].payload) {
+				continue
+			}
+			// Fresh slice per row -- never alias free's backing array.
+			targets := make([]parkedMoveTarget, 0, len(free))
+			for _, ft := range free {
+				if ft.ID != rows[i].tableID {
+					targets = append(targets, ft)
+				}
+			}
+			rows[i].MoveTargets = targets
+		}
+	}
+	toastRole := "status"
+	if level == "error" {
+		toastRole = "alert"
+	}
+	httpx.RenderPartial("ui/partials/parked_orders.html", map[string]any{
+		"orders":     rows,
+		"toast":      toast,
+		"toastLevel": level,
+		"toastRole":  toastRole,
+	})(w, r)
 }

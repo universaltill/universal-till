@@ -229,12 +229,12 @@ func TestSelfOrderShop_GetCheckout_ModeSelectsCorrectPartial(t *testing.T) {
 	}
 }
 
-// printCounterOrderTicketAsync must build the SAME shape ticket a plain
+// printCounterOrderTicket must build the SAME shape ticket a plain
 // print.KitchenTicket/print.RenderKitchenTicket call would for the order's
 // own fields — mirrors TestPrintKitchen_ZeroStations_ByteIdenticalLegacyTicket's
 // byte-comparison pattern, adapted to a counter order (which has no
 // data.SaleDetail to build from).
-func TestPrintCounterOrderTicketAsync_MatchesDirectKitchenTicketRender(t *testing.T) {
+func TestPrintCounterOrderTicket_MatchesDirectKitchenTicketRender(t *testing.T) {
 	chdirRoot(t)
 	dbase := &db.DB{DB: openPagesTestDB(t)}
 	defer dbase.Close()
@@ -258,8 +258,9 @@ func TestPrintCounterOrderTicketAsync_MatchesDirectKitchenTicketRender(t *testin
 			{Name: "Croissant", Qty: 1},
 		},
 	}
-	printCounterOrderTicketAsync(dp, order)
-	dp.WaitForAsyncWork()
+	if sent, err := printCounterOrderTicket(t.Context(), dp, order); err != nil || !sent {
+		t.Fatalf("printCounterOrderTicket = %v, %v; want sent", sent, err)
+	}
 
 	got, err := os.ReadFile(printerFile)
 	if err != nil {
@@ -297,7 +298,7 @@ func TestPrintCounterOrderTicketAsync_MatchesDirectKitchenTicketRender(t *testin
 // externally observable: under a comma-decimal shop locale (tr — see
 // httpx.numberSeparators), 1.5 must print as "1,5", never the request
 // locale's own convention, whatever that was.
-func TestPrintCounterOrderTicketAsync_QtyFollowsShopLocaleNotRequestLocale(t *testing.T) {
+func TestPrintCounterOrderTicket_QtyFollowsShopLocaleNotRequestLocale(t *testing.T) {
 	chdirRoot(t)
 	httpx.SetDefaultLocale("tr")
 	t.Cleanup(func() { httpx.SetDefaultLocale("en") })
@@ -324,8 +325,9 @@ func TestPrintCounterOrderTicketAsync_QtyFollowsShopLocaleNotRequestLocale(t *te
 		// locale must no longer matter to what prints.
 		Lines: []data.KioskCounterOrderLine{{Name: "Ham (weighed)", Qty: 1.5}},
 	}
-	printCounterOrderTicketAsync(dp, order)
-	dp.WaitForAsyncWork()
+	if sent, err := printCounterOrderTicket(t.Context(), dp, order); err != nil || !sent {
+		t.Fatalf("printCounterOrderTicket = %v, %v; want sent", sent, err)
+	}
 
 	got, err := os.ReadFile(printerFile)
 	if err != nil {

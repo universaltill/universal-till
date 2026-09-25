@@ -42,6 +42,21 @@ type SnapshotLine struct {
 	// falls back to the header (a legacy "takeaway" header meant EVERY line
 	// was takeaway).
 	OrderType string `json:"order_type,omitempty"`
+	// KitchenSentQty (ut-docs#2703): see BasketLine.KitchenSentQty. A
+	// table-QR order parked after its kitchen ticket printed carries it on
+	// every line; omitted (0) everywhere else, so the tender path prints
+	// the whole line as before.
+	KitchenSentQty float64 `json:"kitchen_sent_qty,omitempty"`
+}
+
+// KitchenPendingQty (ut-docs#2703) is how much of l still has to go to the
+// kitchen: Qty minus what already printed, never negative (a line voided
+// down after sending prints nothing, it never "un-prints").
+func KitchenPendingQty(l BasketLine) float64 {
+	if d := l.Qty - l.KitchenSentQty; d > 0 {
+		return d
+	}
+	return 0
 }
 
 // BasketSnapshot captures the full in-progress sale state for hold/resume.
@@ -69,6 +84,12 @@ type BasketSnapshot struct {
 	TableID    string      `json:"table_id,omitempty"`
 	TableLabel string      `json:"table_label,omitempty"`
 	Total      money.Money `json:"total"`
+	// DisplayNo (ut-docs#2703) is the customer-facing order number a kiosk
+	// pay-at-counter order was placed under ("C-12"), "" for a basket rung
+	// up on the till. The tender path uses it as the sale's display_no, so
+	// the receipt, the kitchen ticket printed at payment and the order
+	// board all show the number the customer is holding.
+	DisplayNo string `json:"display_no,omitempty"`
 }
 
 // HeldOrigin (ut-docs#1918) identifies the parked held_sales row the live
@@ -111,6 +132,15 @@ func (s *Service) HeldOrigin() HeldOrigin {
 	return s.heldOrigin
 }
 
+// OrderDisplayNo (ut-docs#2703) returns the customer-facing order number
+// this basket was resumed under (a kiosk pay-at-counter order's "C-12"),
+// or "" for a basket rung up on the till.
+func (s *Service) OrderDisplayNo() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.orderDisplayNo
+}
+
 // HasItems reports whether the current basket has any lines.
 func (s *Service) HasItems() bool {
 	s.mu.Lock()
@@ -133,6 +163,7 @@ func (s *Service) Snapshot() BasketSnapshot {
 		TableID:           s.tableID,
 		TableLabel:        s.tableLabel,
 		Total:             s.basket.Total,
+		DisplayNo:         s.orderDisplayNo,
 	}
 	for _, l := range s.lines {
 		snap.Lines = append(snap.Lines, SnapshotLine{
@@ -144,7 +175,8 @@ func (s *Service) Snapshot() BasketSnapshot {
 			TaxCodeID:   l.TaxCodeID,
 			Modifiers:   l.Modifiers,
 			QtyFromCode: l.QtyFromCode, NoMerge: l.NoMerge,
-			OrderType: l.OrderType,
+			OrderType:      l.OrderType,
+			KitchenSentQty: l.KitchenSentQty,
 		})
 	}
 	return snap
@@ -169,6 +201,7 @@ func (s *Service) RestoreHeld(snap BasketSnapshot, origin HeldOrigin) {
 	// and already held here (see the locking-pattern comment on Service.mu).
 	s.resetLocked()
 	s.heldOrigin = origin
+	s.orderDisplayNo = snap.DisplayNo
 	// ADR-0073 legacy rule: a pre-ADR-0073 payload has no per-line values
 	// and its header IS the mode of every line. A new payload always writes
 	// an explicit "takeaway" on every takeaway line, so only a "takeaway"
@@ -198,7 +231,8 @@ func (s *Service) RestoreHeld(snap BasketSnapshot, origin HeldOrigin) {
 			TaxCodeID:   l.TaxCodeID,
 			Modifiers:   l.Modifiers,
 			QtyFromCode: l.QtyFromCode, NoMerge: l.NoMerge,
-			OrderType: lineMode,
+			OrderType:      lineMode,
+			KitchenSentQty: l.KitchenSentQty,
 		})
 	}
 	s.discountType = snap.DiscountType

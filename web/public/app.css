@@ -1454,7 +1454,13 @@ body.osk-padded .modifier-groups-modal { block-size: calc(100% - var(--osk-reser
      layout static — every other cause of `.pos-container` resizing
      (window resize, ui-scale, basket receipt-view toggling) reflows
      tender the same way and was never guarded against before either. */
-  grid-template-rows: minmax(8rem, 5fr) minmax(0, 2fr);
+  /* ut-docs#2702: the tender panel is now two fixed rows (thin scan row +
+     one action row, no held-sales strip, no quick-pay row), so it no
+     longer needs a flexible share at all -- `auto` sizes it to exactly its
+     content (~6.5rem) and products takes everything else. The ratio
+     history above is kept for context; every one of those retunings was
+     chasing tender's content footprint, which is now small and constant. */
+  grid-template-rows: minmax(8rem, 1fr) auto;
   grid-template-areas:
     "basket divider products"
     "basket divider tender";
@@ -1473,51 +1479,10 @@ body.osk-padded .modifier-groups-modal { block-size: calc(100% - var(--osk-reser
   flex: 1 1 auto;
   min-height: 0;
 }
-/* 2026-08-30: the `@media (max-height: 700px)` override that used to sit
-   here (giving tender a 5fr:6fr share instead of the base 4:3) is GONE,
-   not just tuned again — it was compensating for `.tender-default-footer`
-   needing ~131px stacked at the old 4.2rem/1.15rem oversized button
-   styling. Now that Hold Sale + Payment sit side by side at the base
-   .btn size (~48px total, not ~131px), tender's real content need at
-   1024x600 dropped well below even its plain 3fr share — re-measured
-   live after the button-size change, base 4:3 clears the base case AND
-   a full held-sales matrix with real headroom, no override needed. Left
-   as a cautionary note for whoever next touches this ratio: it's been
-   retuned four separate times chasing tender's CONTENT footprint, not
-   the ratio itself being wrong — measure the actual content need first,
-   because the right ratio depends entirely on it.
-   2026-08-31 (ut-docs#1336): …and exactly per that note, the content
-   footprint changed again — the quick-pay row (.tender-quickpay, a base
-   .btn ~51px + gap) re-raised tender's need past its short-viewport
-   share, so a height-scoped override RETURNS below. Measured live
-   before re-adding it (real Chromium, e2e built-binary server, 1024px
-   width): with the base ratio the quick-pay button overflowed .tender
-   by +17.6px at 600px height (hit-test false), +3.3px at 650, clear
-   from ~680 (−5.3px), internal overflow gone entirely from ~710px.
-   Independent review (ut-docs#1336, F2) measured this override's own
-   cost outside its target element at the first-drafted 720px threshold:
-   products goes from 0px internal overflow to 113px at 1024x600 (as
-   intended — that's the tradeoff this override exists to make) but ALSO
-   from 0px to 50px/38px at 700/720px height specifically, i.e. degrading
-   an already-fits-with-no-scroll case in the 711-720px band purely
-   because the threshold sat above where quick-pay's own need stops,
-   not because quick-pay needed it there. Narrowed to 710px — exactly
-   the measured break-even where quick-pay's internal overflow already
-   reaches 0 under the BASE ratio — so 711-720px reverts to the base
-   ratio and keeps products' no-scroll case, while quick-pay itself is
-   already clear well before 710 (from ~680). No single-pixel cliff
-   introduced at the new boundary either (the earlier review's B3
-   objection): both sides sit deep inside their own already-measured
-   clear range, not at a freshly-drawn edge. */
-@media (max-height: 710px) {
-  /* Tender's share up (products keeps the larger track and its 8rem
-     floor): re-measured with this rule at 1024x600 — quick-pay clears
-     .tender's edge by −12.9px with zero internal overflow, at every
-     held-sales count 0-3 (the .tender-scroll split keeps held-strip
-     growth invisible to this budget), and products' grid still renders
-     usable tiles. See docs/code-reviews entry for ut-docs#1336. */
-  .pos-container { grid-template-rows: minmax(8rem, 5fr) minmax(0, 3fr); }
-}
+/* ut-docs#2702: the short-viewport `@media (max-height: 710px)` tender-
+   share override (ut-docs#1336's quick-pay row budget, and before it the
+   700px one) is gone with the rows it budgeted for — tender is content-
+   sized now (`auto` above). History: git log -p on this file. */
 .pos-container > .basket { grid-area: basket; }
 .pos-container > .products { grid-area: products; }
 .pos-container > .journal { grid-area: journal; display: none; } /* own page */
@@ -1609,12 +1574,11 @@ body.osk-padded .modifier-groups-modal { block-size: calc(100% - var(--osk-reser
    this product's actual installed webkit2gtk-4.1 build (no such hardware
    in this session), so if a Linux desktop build ever shows the halo
    again, check the runtime WebKitGTK version first before assuming this
-   fix regressed. `.products` and (since ut-docs#2128) `.tender-scroll` carry this recipe
-   -- `.basket`'s own pinned-footer/tab-panel scroll pattern is different
-   and out of scope here, though the same two-gradient-pair recipe would
-   apply if a future card asks for it there too. Both occurrences here AND
-   both in `.tender-scroll`'s own copy below use the swap -- see that
-   rule's comment. */
+   fix regressed. `.products` carries this recipe (`.tender-scroll`'s copy,
+   ut-docs#2128, left with that wrapper in ut-docs#2702) -- `.basket`'s own
+   pinned-footer/tab-panel scroll pattern is different and out of scope
+   here, though the same two-gradient-pair recipe would apply if a future
+   card asks for it there too. */
 .pos-container > .products {
   background-color: var(--surface);
   background-image:
@@ -1668,7 +1632,10 @@ body.osk-padded .modifier-groups-modal { block-size: calc(100% - var(--osk-reser
 @media (max-width: 900px) {
   .pos-container {
     grid-template-columns: 1fr;
-    grid-template-rows: auto;
+    /* ut-docs#2702: products (last) is the one flexible row, so the
+       stacked tier gives the tender panel's freed height to the grid too,
+       instead of `auto`'s align-content stretch padding every row. */
+    grid-template-rows: auto auto minmax(8rem, 1fr);
     grid-template-areas: "basket" "tender" "products";
     height: auto;
   }
@@ -3159,83 +3126,50 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
 .journal .empty { text-align: center; color: var(--muted); }
 
 /* ---------- Tender ----------
-   Scan row + held strip + the single Payment trigger (ut-docs#1252). Pay/
-   Split tabs, pay-grid and footer actions now render inside
-   .payment-overlay (a <dialog>, styled further down this section) instead
-   of always-on in this column.
-   2026-08-30 (independent review): .tender-scroll (below) is the ONLY
-   scrolling region here now — same split as .basket/.basket-scroll/
-   .totals: the growable part (scan row + held strip) scrolls in its own
-   flex:1 wrapper, .tender-default-footer is a plain, un-scrolled sibling
-   after it, so it's always visible regardless of how tall the held-sales
-   strip gets. .tender itself keeps overflow-y: auto as the same last-
-   resort "never invisible" fallback .basket/.tab-panel already use
-   elsewhere in this file — should never engage in normal use now that the
-   footer no longer competes with held-sales for the same box. */
+   ut-docs#2702: two content-sized rows — the thin scan row and ONE action
+   row (Pay + Hold / New sale / Open orders icons). Pay/Split tabs, the
+   pay-grid and the overlay footer render inside .payment-overlay (a
+   <dialog>, ut-docs#1252, styled further down this section). Nothing in
+   this column grows with shop data any more (the held-sales strip left in
+   ut-docs#2702), so it neither scrolls nor needs a grid-ratio budget. */
 [x-cloak] { display: none !important; }
-/* gap .55rem->.45rem (2026-08-30): closes the last ~1-2px of clip at
-   1024x600 after the .tender-scroll split + @media(max-height:700px)
-   fix above — see .pos-container's own comment for the measurement. */
 .tender { display: flex; flex-direction: column; gap: .45rem; }
-.tender-scroll { flex: 1; min-height: 3rem; overflow-y: auto;
-                 display: flex; flex-direction: column; gap: .55rem; }
-/* ut-docs#2128: same scroll-shadow recipe as .products (ut-docs#1313,
-   comment above that rule has the full mechanism/caveats — not repeated
-   here). A real product-owner report on the pilot tablet ("held sales not
-   findable") traced to exactly this class of bug: .tender-scroll already
-   scrolls (overflow-y: auto above) once the scan row + held-sales strip
-   don't fit, and live measurement for this card found that's true even at
-   1024x600 with just 1 held sale, not only the higher held-counts this
-   file's own grid-ratio comment assumed -- but nothing on screen hints
-   there's more to scroll to, and many kiosk browsers hide native
-   scrollbars entirely. Two gradient pairs, local/local/scroll/scroll,
-   self-hiding at whichever edge has no unseen content -- no JS, no scroll
-   listener. Same `color-mix(in srgb, var(--surface), transparent 100%)`
-   swap as `.products` (ut-docs#2176) -- see that rule's comment for the
-   full history; was `rgba(255, 255, 255, 0)`, silently coupled to
-   --surface's then-only value (#ffffff), deferred pending a dark theme to
-   verify against. */
-.tender-scroll {
-  background-color: var(--surface);
-  background-image:
-    linear-gradient(var(--surface) 30%, color-mix(in srgb, var(--surface), transparent 100%)),
-    linear-gradient(color-mix(in srgb, var(--surface), transparent 100%), var(--surface) 70%),
-    radial-gradient(farthest-side at 50% 0, rgba(0, 0, 0, .18), rgba(0, 0, 0, 0)),
-    radial-gradient(farthest-side at 50% 100%, rgba(0, 0, 0, .18), rgba(0, 0, 0, 0));
-  background-repeat: no-repeat;
-  background-position: 0 0, 0 100%, 0 0, 0 100%;
-  background-size: 100% 16px, 100% 16px, 100% 8px, 100% 8px;
-  background-attachment: local, local, scroll, scroll;
-}
-/* ut-docs#2142 (considered, decided against): whether #held-sales should
-   move out of this shared scrolling box into its own always-visible grid
-   region in .pos-container, now that scrolling is the normal case (see
-   the ut-docs#2128 comment above) rather than the edge case. Decided to
-   leave it here — not mainly for lack of data, but because the actual
-   reachability problem is already solved at zero vertical-budget cost:
-   ut-docs#2137 added an always-rendered "Open orders" popup
-   (.tender-quickpay, below) precisely because this strip is clipped at
-   1280x800 and a parked order needs to be resumable regardless of this
-   box's own CSS. A grid change here would only buy at-a-glance visibility
-   on top of that already-shipped fix, against .pos-container's grid-row-
-   ratio math, independently re-measured four times already
-   (ut-docs#213/#1231/#1336, plus the 2026-08-30 compact-UI pass) for
-   unrelated height budgets — reopening it for an unverified marginal
-   benefit is a real, demonstrated regression risk, not a hypothetical
-   one. (No real shop is live yet either, so there is also no production
-   telemetry to size that marginal benefit against — a secondary reason,
-   not the load-bearing one.) Cheap future move if this strip's own
-   visibility ever needs to improve further: a parked-count badge on the
-   #2137 button, not a grid restructure. Full reasoning: ut-docs#2142. */
-
-.scan-row { display: flex; gap: .4rem; }
+/* ut-docs#2702: .tender-scroll (the scrolling wrapper for scan row + held
+   strip, ut-docs#2128's scroll shadows, ut-docs#2142's "keep the strip
+   here" note) is gone: the strip left the sale screen, and the two
+   remaining rows are fixed-height, so nothing here scrolls any more. The
+   ut-docs#2142 note's suggested future move -- a parked-count badge on the
+   Open orders button -- is what replaced the strip. */
+.scan-row { display: flex; gap: .4rem; align-items: center; flex-shrink: 0; }
 /* 2026-08-30 (product owner): the barcode field inherited the global
    input padding (.5rem .65rem, sized for a normal form field on an
    admin page) — smaller here, since this row is tapped/scanned dozens
-   of times a shift and doesn't need that much padding to stay usable. */
-.scan-row input { padding: .4rem .55rem; }
+   of times a shift and doesn't need that much padding to stay usable.
+   ut-docs#2702: thinner still — a fixed 2.5rem field ("barcode box can be
+   thinner smaller with its belongings"); body.kiosk's 2.4rem input floor
+   stays below it, so kiosk is never smaller than this. */
+.scan-row input { padding: .3rem .55rem; block-size: 2.5rem; min-height: 2.5rem; }
 .scan-row input[name="code"] { flex: 1; min-width: 0; }
-.scan-row input[name="qty"] { width: 3.4rem; }
+.scan-row input[name="qty"] { width: 3.4rem; text-align: center; }
+/* ut-docs#2702: the scan row's and the action row's icon-only buttons.
+   A 2.75rem (44px) square — the WCAG 2.5.5/2.5.8 touch floor this file
+   already uses for .held-chip/.modifier-option — with a 1.25rem glyph.
+   The label lives in a .visually-hidden span + title (index.html). */
+.tender-icon-btn { flex: 0 0 auto; inline-size: 2.75rem; min-inline-size: 2.75rem;
+                   min-height: 2.75rem; block-size: 2.75rem; padding: 0; position: relative; }
+.tender-icon-btn .btn-ico svg { inline-size: 1.25rem; block-size: 1.25rem; }
+/* Count badge on the Open orders icon (ut-docs#2702): parked orders at a
+   glance, replacing the held-sales strip. Sits on the button's block-start/
+   inline-end corner (logical insets — mirrors under RTL). Not colour alone:
+   it carries the number itself. [hidden] needs its own rule because the
+   display below would otherwise out-rank the UA's hidden styling. */
+.count-badge { position: absolute; inset-block-start: -.35rem; inset-inline-end: -.35rem;
+               min-inline-size: 1.25rem; block-size: 1.25rem; padding-inline: .3rem;
+               display: inline-flex; align-items: center; justify-content: center;
+               border-radius: 999px; background: var(--danger); color: #fff;
+               font-size: .72rem; font-weight: 700; line-height: 1;
+               box-shadow: 0 0 0 2px var(--surface); pointer-events: none; }
+.count-badge[hidden] { display: none; }
 /* ut-docs#413: this input's own `min-width: 0` above deliberately lets it
    shrink below its placeholder's content width (unlike the nav/kiosk
    buttons elsewhere in this file, which is exactly what made them squeeze
@@ -3317,78 +3251,51 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
    a 2-column grid would only fill half the width. */
 .tender-footer.single { grid-template-columns: 1fr; }
 
-/* ut-docs#1252: the Pay/Split tabs, pay-grid and New-Customer footer moved
-   out of the always-visible .tender column into the <dialog> below (opened
-   by .payment-trigger) — "we shouldn't show all payment things, ... a
-   payment button can open something over them ... but still show the
-   items on the left." Hold Sale stays here, NOT in the dialog (independent
-   review): it's a "step away from checkout" action, not a payment one, and
-   the dialog is modal — a Hold Sale reachable only inside it would cost an
-   unrelated trip through Payment.
-   2026-08-30 (independent review, two attempts before this one — see
-   .tender-scroll above for the full history): this footer no longer needs
-   margin-top:auto OR position:sticky to stay pinned to the bottom — it's
-   simply the plain sibling AFTER .tender-scroll's own flex:1 wrapper, so
-   it's always the last thing in .tender's un-scrolled remainder, exactly
-   like .basket's .totals sits after .basket-scroll. flex-shrink: 0 keeps
-   it from being squeezed if .tender-scroll's own 6rem floor and this
-   footer's own content together somehow still exceed the panel (the same
-   "outer .tender scrolls as a last resort" fallback, never invisible).
-   2026-08-30 (product owner, comparing against a competitor POS): row
-   instead of column, and .payment-trigger dropped from a 4.2rem/1.15rem
-   giant (matched to the old always-visible pay-grid buttons it replaced)
-   down to the base .btn size it now sits beside — Hold Sale and Payment
-   are two roughly-equal-weight actions in the default view, not one
-   dominant CTA over a secondary one, so making Payment 40% taller than
-   Hold Sale no longer earns its footprint now that it's not also the
-   only way to see any payment method. Still bold, and never sized below
-   the base .btn's 3rem/48px — this is still the button that opens the
-   actual payment flow. */
-.tender-default-footer { display: flex; flex-direction: row; gap: .5rem; flex-shrink: 0; }
-/* 2026-08-30: dropped further, to .btn.compact's own 2.5rem/40px — Hold
-   Sale (parks the sale, fully recoverable) and Payment (opens the
-   overlay; the actual charge happens on Cash/Card inside it, not here)
-   aren't money/tax-consequential the way the dine-in/takeaway toggle is
-   (see that rule's own comment for the contrast) — no reason to hold
-   them to the same floor. */
-.tender-default-footer > .btn { flex: 1; min-height: 2.5rem; padding: .45rem .8rem; font-size: .9rem; }
-.payment-trigger { font-weight: 700; }
-/* ut-docs#1336: one-tap quick pay — its own full-width row BELOW the
-   Hold Sale/Payment row, deliberately NOT a child of .tender-default-footer:
-   that row's compact 2.5rem floor (rule above) was justified there because
-   those buttons only OPEN things (hold modal, overlay). This button itself
-   completes a charge — money-consequential, like the dine-in/takeaway
-   toggle's own comment contrasts — so it keeps the base .btn 3rem/48px
-   floor. flex-shrink: 0 for the same reason as the footer's (outer .tender
-   scrolls as a last resort, never squeezes this to nothing). Full-width via
-   the row's single stretched flex item — direction-agnostic, no
-   left/right, nothing to mirror for RTL. */
-.tender-quickpay { display: flex; flex-shrink: 0; gap: .5rem; }
-.tender-quickpay > .btn { flex: 1; font-weight: 700; }
-
-/* ut-docs#2137: the parked-orders trigger shares the quick-pay row with Card
-   (the product owner's placement). Card completes a charge and stays the
-   dominant target, so this one is sized to its own label and no larger.
-
-   flex-basis must stay content-sized, and the label must not wrap. An
-   earlier cut used `flex: 0 1 38%`, which is 158px at 1024px width -- wide
-   enough for "Open orders" and NOT for the German "Offene Vorgänge" (or the
-   Spanish "Pedidos abiertos"). The label wrapped to two lines, taking this
-   row from 51px to 66.6px, which overflowed .tender by 8px and pushed the
-   bottom of the Card button into that pane's scroll -- on the exact
-   1024x600 kiosk the #1336 budget above was measured to protect, in the
-   exact market this product is piloting in. Measured, not theorised: the
-   English baseline clears by only 0.99px, so this row has no slack to lend
-   a second line. Pinned by parked-orders-popup-2137.spec.ts's
-   long-label test, which fails at 38%. */
-.tender-quickpay > .parked-orders-btn { flex: 0 0 auto; white-space: nowrap; font-weight: 600; }
+/* ut-docs#1252: the Pay/Split tabs, pay-grid and New-Customer footer live
+   in the <dialog> opened by .payment-trigger; Hold Sale stays in this row,
+   NOT in the dialog (independent review) — a "step away from checkout"
+   action must not cost a trip through Payment. flex-shrink: 0 so the row is
+   never squeezed. Full history of this row's sizing: git log -p. */
+.tender-default-footer { display: flex; flex-direction: row; gap: .4rem; flex-shrink: 0; align-items: center; }
+/* ut-docs#2702: ONE action row — Pay takes every pixel the three 44px icon
+   buttons (.tender-icon-btn above) leave. Pay is the one primary, text-
+   labelled action here; it keeps the 2.75rem (44px) touch floor the icons
+   use, so the row is one even height. min-width: 0 + ellipsis: a long
+   "Pay £1,234.56" in a long locale shrinks inside its own box instead of
+   pushing the icons off the row. */
+.tender-default-footer > .payment-trigger { flex: 1 1 auto; min-width: 0; min-height: 2.75rem;
+  block-size: 2.75rem; padding: 0 .8rem; font-size: 1rem; font-weight: 700; line-height: 2.75rem;
+  /* block (not .btn's inline-flex): text-overflow only applies to a block
+     container's own text, never to a flex container's anonymous item. */
+  display: block; text-align: center;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* ut-docs#2702: the preferred payment method (payments.default_method)
+   leads the payment panel's grid and spans its whole first row — the
+   quick-pay button's one-tap job, now one tap after Pay. */
+.pay-grid > .pay-default { grid-column: 1 / -1; }
 
 /* The popup body. Scrolls internally rather than growing the dialog past the
    viewport -- a till with a dozen parked tables must still show its Close
    button. */
 .parked-orders-modal { min-width: min(30rem, 92vw); }
+/* ut-docs#2702 review: a non-modal show() dialog is positioned in flow by the
+   UA sheet, so at 360px the sale screen's positioned tender controls painted
+   over its Close button -- worse once a row's Move table options open. Same
+   fixed + z-index frame as #pfand-modal/#elevation-modal (below #hold-modal's
+   550 and #osk's 1000), with its own scroll so Close stays reachable. */
+#parked-orders-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; max-block-size: 84vh; overflow-y: auto; }
 .parked-orders-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; max-height: 60vh; overflow-y: auto; }
-.parked-orders-list > li { display: flex; }
+.parked-orders-list > li { display: flex; flex-wrap: wrap; gap: .5rem; }
+/* ut-docs#2702 review: Move table on each popup row (ut-docs#820). Closed,
+   it is a compact button beside the row; open, it takes a row of its own so
+   the free-table options wrap under the order they move. Every target keeps
+   the 46px floor (.btn-touch); logical properties only (RTL). */
+.parked-move { flex: 0 0 auto; }
+.parked-move[open] { flex-basis: 100%; }
+.parked-move > summary { list-style: none; min-height: 46px; display: inline-flex; align-items: center; cursor: pointer; }
+.parked-move > summary::-webkit-details-marker { display: none; }
+.parked-move-options { display: flex; flex-wrap: wrap; gap: .5rem; margin-block-start: .5rem; }
+.parked-move-option { min-height: 46px; min-width: 46px; }
 /* Whole-row target at the product's documented 46px floor (.btn-touch): the
    cashier taps this with a finger, and the label alone is a few characters
    wide. text-align/margin-inline keep it correct under RTL. */

@@ -7,6 +7,12 @@
   `docs/2712-adr-0093-amendment-b-held-sale-claim`, not yet merged).
 - **Author:** Opus (Dev). **Reviewer:** Fable (independent, different
   model, from-scratch, in its own detached worktree).
+- **Post-review note:** the migration below is `045_held_sales_tombstones.sql`
+  on the branch that actually merged — a concurrent lane's PR claimed `044`
+  for an unrelated migration (`044_kiosk_counter_orders_display_no_unique.sql`)
+  and merged to `main` first. Renumbered when merging `main` in, same class
+  of collision ADR-0093/ADR-0111 already document; every "044" below is the
+  number this review was actually run against and is otherwise unchanged.
 
 ## What shipped (Dev)
 

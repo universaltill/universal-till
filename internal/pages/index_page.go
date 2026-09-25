@@ -85,7 +85,7 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 		for _, m := range payMethods {
 			methods = append(methods, m.ID)
 		}
-		// The Pay grid and the ⚡ quick-pay button get the list WITHOUT
+		// The Pay grid (its first button is the one-tap preferred method) gets the list WITHOUT
 		// voucher-type methods: those buttons tender "everything owed" in
 		// one tap with no further input, and a voucher redemption needs a
 		// voucher id (and refuses change), which the grid has no field for
@@ -130,18 +130,15 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			methods = []string{"cash", "card"}
 		}
 		defaultMethod := methods[0]
-		// ut-docs#1336: one-tap quick pay in the default view's footer.
 		// gridMethods is already preferred-method-first (the reorder above
 		// ran on payMethods before the voucher filter), so its head IS the
-		// shop's default; nil when no one-tap method row exists, which the
-		// template mirrors with the same hardcoded-cash fallback the
-		// overlay's own pay-grid `{{ else }}` branch uses. The Split
+		// shop's default: the payment panel's first, highlighted Pay-grid
+		// button (index.html .pay-default -- the one-tap quick-pay job since
+		// ut-docs#2702 moved it off the sale screen, ut-docs#1336). The Split
 		// select's preselected method follows the same head (ut-docs#1832):
 		// a voucher-type default there would open the tab on a method whose
 		// voucher-id field the operator hasn't asked for yet.
-		var defaultPayMethod *data.PaymentMethod
 		if len(gridMethods) > 0 {
-			defaultPayMethod = &gridMethods[0]
 			defaultMethod = gridMethods[0].ID
 		}
 		// DE+TR fiscal-signing-device hard gate (ADR-0048, fiscal.RequiresHardGate): while an owner override window is
@@ -215,7 +212,6 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			// pos_api.go/computeSaleTotals will demand.
 			"taxInclusive":         d.CurrentState().TaxInclusive,
 			"payMethods":           gridMethods,
-			"defaultPayMethod":     defaultPayMethod,
 			"aiIdentify":           aiService(r.Context(), d).Enabled(),
 			"fiscalOverrideActive": fiscalOverrideActive,
 			"fiscalOverrideUntil":  fiscalOverrideUntil,

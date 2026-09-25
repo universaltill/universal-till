@@ -619,7 +619,7 @@ func TestPrintKitchen_StationFilterOnlyPrintsThatStation(t *testing.T) {
 	seedKitchenSale(t, dbase, "R-2098", "itm-steak", "itm-cola", "itm-combo", "itm-bread")
 
 	// buildKitchenTargets, filtered: exactly Grill's own target, nothing else.
-	targets, err := buildKitchenTargets(ctx, dp, "R-2098", grill)
+	targets, err := buildKitchenTargets(ctx, dp, "R-2098", grill, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -838,7 +838,7 @@ func TestPrintKitchen_ShopStationNamedKitchenStaysUntranslated(t *testing.T) {
 	}
 	seedKitchenSale(t, dbase, "R-1005", "itm-steak")
 
-	targets, err := buildKitchenTargets(ctx, dp, "R-1005", "")
+	targets, err := buildKitchenTargets(ctx, dp, "R-1005", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -871,7 +871,7 @@ func TestBuildKitchenTargets_SurfacesSettingsReadError(t *testing.T) {
 		t.Fatalf("drop settings table: %v", err)
 	}
 
-	if _, err := buildKitchenTargets(ctx, dp, "R-1533", ""); err == nil {
+	if _, err := buildKitchenTargets(ctx, dp, "R-1533", "", nil); err == nil {
 		t.Fatal("expected buildKitchenTargets to surface the settings read error, got nil")
 	}
 }
@@ -936,7 +936,7 @@ func TestBuildKitchenTargets_RoutingPrecedence(t *testing.T) {
 			}
 			seedKitchenSale(t, dbase, "R-2284", "itm-steak")
 
-			targets, err := buildKitchenTargets(ctx, dp, "R-2284", "")
+			targets, err := buildKitchenTargets(ctx, dp, "R-2284", "", nil)
 			if err != nil {
 				t.Fatalf("buildKitchenTargets: %v", err)
 			}
