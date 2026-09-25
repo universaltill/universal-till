@@ -278,8 +278,9 @@ func BuildCategoryGroups(buttons []Button, cats []data.CategoryNode, itemCounts 
 	// whole subtree, but its items stay sellable by search, scan AND quick
 	// buttons. So an explicit quick button (Button.QuickButton) anywhere in
 	// a hidden subtree moves to the uncategorised bucket — never off the
-	// sale screen, All tab on or off — while an implicit catalog tile leaves
-	// with its category (the item is still in the All grid, search, scan).
+	// sale screen (the strip has no All tab since ut-docs#2613) — while an
+	// implicit catalog tile leaves with its category (the item still sells
+	// by search and scan, and shows in the all_filter_chips All grid).
 	var uncategorized []ButtonVM
 	for i, b := range buttons {
 		vm := toButtonVM(b)

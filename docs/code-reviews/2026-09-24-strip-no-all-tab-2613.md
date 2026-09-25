@@ -95,3 +95,27 @@ Safe to merge.
 - Recapture the README sell screenshots after the next release (Backlog card).
 - A possibly flaky `internal/pages` test reading a truncated locale JSON (seen
   once, passed on re-run). Noted on the card.
+
+## Post-merge fix-up (main moved: #2584 hidden categories)
+
+Merging `main` brought in #1348 (ut-docs#2584), which merged cleanly but broke semantically:
+- `internal/ui/category_icon_hidden_test.go` looped over the removed
+  `HideAllTab`.
+- The comment in `BuildCategoryGroups` and the new Categories help said a
+  hidden category's items stay sellable "from the All tab".
+
+The contract (manage-shop catalog §3.2, "sellable by search, scan AND quick
+buttons") still holds without the strip's All tab:
+- Explicit quick buttons of a hidden category move to the **Uncategorized** tab.
+- Implicit tiles leave with their category and still sell by search and scan,
+  and still show in the `all_filter_chips` All grid.
+
+What changed:
+- The test now pins the strip-only shape. Both hidden-category tests pass.
+- The comment is reworded.
+- `categories.md` is reworded in en/de/ar/fa/tr, using the UI's own labels.
+- The docs-shots manifest is regenerated with `make docs-shots`. Main's PNGs
+  are kept: the local Chromium renders different bytes, and the manifest
+  hashes only the sources and topic markdown.
+
+Reviewed inline by the orchestrator; the change is small and local.
