@@ -626,8 +626,20 @@
             return;
           }
           var totalEl = basket.querySelector('.total');
-          var total = totalEl ? parseInt(totalEl.getAttribute('data-minor') || '0', 10) : 0;
-          var totalLabel = window.utCurrency ? window.utCurrency.format(total) : total;
+          // ut-docs#2649: prefer the server-formatted, locale-digit amount
+          // basket.html's .total now carries in data-label -- window.
+          // utCurrency.format (web/public/app.js) has no digit-shape
+          // substitution (its own header comment documents that as a known,
+          // separate gap), so falling back to it after every htmx swap is
+          // what made this button show Latin digits ("پرداخت £8.30") next
+          // to a basket already showing Persian ones under fa/ar. Only
+          // falls back to the old JS-formatted path when data-label is
+          // absent (e.g. an older cached #basket fragment mid-deploy).
+          var totalLabel = totalEl && totalEl.getAttribute('data-label');
+          if (!totalLabel) {
+            var total = totalEl ? parseInt(totalEl.getAttribute('data-minor') || '0', 10) : 0;
+            totalLabel = window.utCurrency ? window.utCurrency.format(total) : total;
+          }
           btn.textContent = fmt(T.payWithTotal, totalLabel);
           btn.disabled = false;
         }
