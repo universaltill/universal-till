@@ -71,6 +71,10 @@ jobs:
         # no separate install step — its version is pinned/guarded by the
         # "Shellcheck version guard" step above (ut-docs#1955), not here.
         run: shellcheck scripts/ci/*.sh
+      - name: e2e launchers never open a browser (ut-docs#2704)
+        run: bash scripts/ci/guard-e2e-no-browser.sh
+      - name: e2e no-browser guard regression test
+        run: bash scripts/ci/guard-e2e-no-browser_test.sh
       - name: Data-access policy guard
         run: bash scripts/ci/guard-data-access.sh
       - name: Data-access policy guard regression test
