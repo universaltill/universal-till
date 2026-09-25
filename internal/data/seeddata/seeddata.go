@@ -22,8 +22,9 @@ import (
 // DemoCatalogueSQL (re)inserts the full demo catalogue: categories, brands,
 // items (flagged is_sample_data = 1), barcodes, images, variants, variant
 // barcodes, inventory, price history and shortcut buttons. INSERT OR IGNORE
-// throughout, so it is idempotent and never fails on an operator's clashing
-// row. Requires the structural defaults (tax codes, stock locations) that
+// throughout, so it is idempotent; an operator's clashing SKU, barcode or
+// tax-code name skips only the affected demo rows (ut-docs#2639), except a
+// clashing brand name, which still fails the seed (ut-docs#2697). Requires the structural defaults (tax codes, stock locations) that
 // every till has from 001_init.sql.
 //
 //go:embed demo_catalogue.sql

@@ -23,8 +23,15 @@ func NewDemoSeedRepo(db *sql.DB) *DemoSeedRepo {
 }
 
 // SeedDemoCatalogue (re)inserts the demo catalogue, every item flagged
-// is_sample_data = 1. Idempotent (INSERT OR IGNORE throughout) and atomic:
-// either the whole catalogue lands or none of it does.
+// is_sample_data = 1. Idempotent (INSERT OR IGNORE throughout) and atomic
+// on a real error: a genuine failure rolls back the whole transaction, none
+// of it lands. A clash with an operator's own row is not a real error: an
+// item/variant SKU clash skips that one demo item or variant and only its
+// own dependent rows (every dependent insert in seeddata/demo_catalogue.sql
+// is gated on its parent actually having landed — ut-docs#2639); a barcode
+// clash skips only that barcode row; a tax-code-name clash makes the café
+// items fall back to tax_std. Known gap: a brand-name clash still FK-fails
+// the whole seed (ut-docs#2697).
 func (r *DemoSeedRepo) SeedDemoCatalogue(ctx context.Context) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
