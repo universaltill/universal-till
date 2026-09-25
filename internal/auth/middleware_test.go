@@ -163,6 +163,9 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		// 0033 pairing surface instead of the sync-pull loop.
 		"/api/sync/pair-request",
 		"/api/sync/pair-requests/some-request-id",
+		// ut-docs#2722: a replica re-finding its moved main till challenges
+		// it BEFORE sending any bearer — no session, no bearer by design.
+		"/api/sync/primary-proof",
 		// ut-docs#611: the desktop shell (unitill-desktop) reads this at
 		// launch, before any operator has signed in, to decide which native
 		// window mode to apply — same "no session exists yet" shape as the

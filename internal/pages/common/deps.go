@@ -9,6 +9,7 @@ import (
 	"github.com/universaltill/universal-till/internal/ai"
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -45,9 +46,14 @@ type Deps struct {
 	Pm       *plugins.Manager
 	Db       *sql.DB
 	Settings *settings.Store
-	State    RuntimeState
-	BaseMenu []MenuItem
-	Menu     []MenuItem
+	// PrimaryWatch tracks a replica's contact with its main till and
+	// re-finds a main till that moved to a new address (ut-docs#2722).
+	// Driven by the replica pull loop; read by the main-till status chip.
+	// Nil in tests that don't exercise it — every reader must allow that.
+	PrimaryWatch *discovery.PrimaryWatch
+	State        RuntimeState
+	BaseMenu     []MenuItem
+	Menu         []MenuItem
 	// MenuAmendments are the Menu-slot amendments in force (ADR-0088):
 	// every active `layout` plugin's, minus the entries the merchant
 	// restored from Settings → Hidden menu tiles. Rebuilt beside Menu in

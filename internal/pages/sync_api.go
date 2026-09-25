@@ -193,10 +193,13 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		// below only to tag its own row in .Tills (now populated on a
 		// replica too, ut-docs#405's adminTables addition) as "(this
 		// till)" rather than just another sibling.
-		var thisTillID string
+		var thisTillID, primaryLastContact string
 		if primaryURL != "" {
 			thisTillID, _, _ = d.Settings.Get(r.Context(), "sync.till_id")
+			primaryLastContact, _, _ = d.Settings.Get(r.Context(), "sync.last_contact_at")
 		}
+		// ut-docs#2722: the main till has stopped answering this replica.
+		unreachableSince, mainUnreachable := mainTillUnreachable(r.Context(), d)
 		httpx.Render("ui/pages/tills.html", map[string]any{
 			"title":           httpx.T(httpx.RequestLocale(r), "page.title.tills"),
 			"theme":           d.CurrentState().Theme,
@@ -205,6 +208,10 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			"PrimaryTillName": primaryName,
 			"SyncPrimary":     primaryURL,
 			"ThisTillID":      thisTillID,
+			// ut-docs#2722
+			"PrimaryLastContact":   primaryLastContact,
+			"MainUnreachable":      mainUnreachable,
+			"MainUnreachableSince": unreachableSince,
 		})(w, r)
 	})
 

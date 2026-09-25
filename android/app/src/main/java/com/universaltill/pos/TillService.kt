@@ -1,7 +1,9 @@
 package com.universaltill.pos
 
 import android.app.Service
+import android.content.Context
 import android.content.Intent
+import android.net.wifi.WifiManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
@@ -42,6 +44,10 @@ class TillService : Service() {
         private set
 
     private val listeners = mutableListOf<(String?, String?) -> Unit>()
+
+    /** ut-docs#2722: held while the server runs so mDNS queries reach it —
+     * see [acquireMulticastLock]. */
+    private var multicastLock: WifiManager.MulticastLock? = null
 
     /** Registers a listener for the (address, error) Start eventually
      * resolves to — called immediately with the current state if Start
@@ -96,6 +102,7 @@ class TillService : Service() {
                 .build()
         NotificationManagerCompat.from(this).createNotificationChannel(channel)
         startForeground(NOTIFICATION_ID, buildNotification(str(R.string.status_starting)))
+        multicastLock = acquireMulticastLock()
 
         // Start() is idempotent (mobile/mobile.go) — a service restart
         // (e.g. START_STICKY after the OS killed it under memory
@@ -167,6 +174,8 @@ class TillService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        multicastLock?.let { if (it.isHeld) it.release() }
+        multicastLock = null
         // Mobile.stop() blocks until the server has fully torn down
         // (internal/app.Run's deferred database.Close() included) —
         // internal/server.Start alone allows up to a 5s graceful-shutdown
@@ -186,6 +195,27 @@ class TillService : Service() {
         stopper.start()
         stopper.join(STOP_JOIN_TIMEOUT_MS)
     }
+
+    /**
+     * ut-docs#2722: lets inbound mDNS multicast reach the embedded server's
+     * advertiser (internal/discovery). Many Wi-Fi drivers filter multicast
+     * an app hasn't asked for, so without this an Android main till never
+     * answers a replica searching for it after it moved to a new address.
+     * Best-effort: a device without Wi-Fi (Ethernet-only) or a vendor build
+     * that refuses the lock still runs the till — direct-IP sync and the
+     * pairing-code fallback don't need multicast.
+     */
+    private fun acquireMulticastLock(): WifiManager.MulticastLock? =
+        try {
+            (applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager)
+                ?.createMulticastLock("unitill-mdns")
+                ?.apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+        } catch (e: RuntimeException) {
+            null
+        }
 
     private fun buildNotification(text: String) =
         NotificationCompat.Builder(this, CHANNEL_ID)

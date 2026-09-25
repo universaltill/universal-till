@@ -16,6 +16,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
+	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/issuereport"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -544,7 +545,10 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSyncCloudDevice(mux, dp) // replica's own cloud device identity, main-till side (ut-docs#2730)
 	registerSyncAssets(mux, dp)
 	registerSyncQuarantinePage(mux, dp) // ut-docs#1133: quarantined LAN-sync journal entries, primary-only admin panel (ADR-0065 follow-up)
-	StartSyncPush(bgCtx, dp, wg)        // replica journal loop (ADR-0011 D3); joined by app.Run's drain
+	registerPrimaryProof(mux, dp)       // main till answers a moved-till challenge (ut-docs#2722)
+	registerMainTillStatus(mux, dp)     // replica's "main till not reachable" status chip (ut-docs#2722)
+	dp.PrimaryWatch = discovery.NewPrimaryWatch(dp.Settings, discovery.Browse)
+	StartSyncPush(bgCtx, dp, wg) // replica journal loop (ADR-0011 D3); joined by app.Run's drain
 	rederiveSettings := newRederiveSettings(dp, authDisabled, i18n)
 	StartSyncPull(bgCtx, dp, rederiveSettings, wg)          // joined by app.Run's drain
 	StartHeldOrderClaimReaffirm(bgCtx, dp, wg)              // periodic held-order table-claim re-affirm (ut-docs#1724); joined by app.Run's drain

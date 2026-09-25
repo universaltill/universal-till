@@ -4,6 +4,17 @@
   <a class="btn secondary" href="/settings">← {{ T "settings.title" }}</a>
 </div>
 
+{{/* ut-docs#2722: on a replica whose main till stopped answering — the
+     same state as the status-bar chip that links here, explained, with
+     what happens by itself and the one case that needs a person. */}}
+{{ if .MainUnreachable }}
+<div class="notice-block-warn" role="status" data-testid="tills-main-unreachable">
+  <strong><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ T "tills.main_unreachable_title" }}</strong>
+  — {{ if .MainUnreachableSince }}{{ printf (T "sync.main_till_unreachable_since") (datetime .MainUnreachableSince) }}{{ else }}{{ T "sync.main_till_unreachable" }}{{ end }}
+  <p>{{ T "tills.main_unreachable_help" }}</p>
+</div>
+{{ end }}
+
 <div class="catalog-layout">
   <div class="card">
   {{/* ut-docs#405: a code minted here would encode THIS device's own
@@ -135,7 +146,10 @@
           <td>{{ .PrimaryTillName }} <span class="muted">({{ T "tills.this_till" }})</span></td>
           {{ end }}
           <td>—</td>
-          <td>—</td>
+          {{/* ut-docs#2722: on a replica, when THIS till last reached the
+               main till (sync.last_contact_at) — the same column a main
+               till fills for each replica from its side. */}}
+          <td>{{ if and .SyncPrimary .PrimaryLastContact }}{{ datetime .PrimaryLastContact }}{{ else }}—{{ end }}</td>
           <td></td>
         </tr>
         {{ end }}
