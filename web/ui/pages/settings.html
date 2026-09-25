@@ -285,6 +285,8 @@
 </div>
 <div class="card" id="settings-theme">
   <h2>{{ T "settings.theme.title" }}</h2>
+  {{/* ut-docs#2783: per station, never synced between tills. */}}
+  <p class="muted">{{ T "settings.theme.help_per_till" }}</p>
   <form hx-post="/api/settings/theme" hx-swap="none" hx-on::after-request="if(event.detail.successful){window.location.reload()}else{document.getElementById('settings-save-error').hidden=false}">
     <select name="theme">
       {{ $current := .theme }}

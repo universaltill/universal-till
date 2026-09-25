@@ -10,13 +10,13 @@ import (
 func restorePendingUpdates(t *testing.T) {
 	t.Helper()
 	before := CurrentPendingUpdates()
-	t.Cleanup(func() { SetPendingUpdates(before.Count, before.LanguagePending) })
+	t.Cleanup(func() { PublishPendingUpdates(before) })
 }
 
 func TestNotePendingUpdateAppliedDecrementsAndFloorsAtZero(t *testing.T) {
 	restorePendingUpdates(t)
 
-	SetPendingUpdates(2, false)
+	PublishPendingUpdates(PendingUpdateStatus{Count: 2, LanguagePending: false})
 	NotePendingUpdateApplied()
 	if got := CurrentPendingUpdates().Count; got != 1 {
 		t.Fatalf("count = %d, want 1", got)
@@ -32,26 +32,26 @@ func TestNotePendingUpdateAppliedDecrementsAndFloorsAtZero(t *testing.T) {
 	if got := CurrentPendingUpdates().Count; got != 0 {
 		t.Fatalf("count = %d, want 0 — the count must never go negative", got)
 	}
-	SetPendingUpdates(-3, false)
+	PublishPendingUpdates(PendingUpdateStatus{Count: -3, LanguagePending: false})
 	if got := CurrentPendingUpdates().Count; got != 0 {
-		t.Fatalf("count = %d, want 0 — SetPendingUpdates must clamp too", got)
+		t.Fatalf("count = %d, want 0 — PublishPendingUpdates must clamp too", got)
 	}
 }
 
 // TestSetPendingUpdatesClampsLanguagePendingAtZeroCount pins down the
-// invariant SetPendingUpdates and NotePendingUpdateApplied must both keep:
+// invariant PublishPendingUpdates and NotePendingUpdateApplied must both keep:
 // LanguagePending can never be true while Count is 0 — a "language pack
 // update available" chip with nothing actually pending would be a lie a
 // merchant can never resolve by tapping it (ut-docs#2299).
-func TestSetPendingUpdatesClampsLanguagePendingAtZeroCount(t *testing.T) {
+func TestPublishPendingUpdatesClampsLanguagePendingAtZeroCount(t *testing.T) {
 	restorePendingUpdates(t)
 
-	SetPendingUpdates(0, true)
+	PublishPendingUpdates(PendingUpdateStatus{Count: 0, LanguagePending: true})
 	if got := CurrentPendingUpdates(); got.Count != 0 || got.LanguagePending {
 		t.Fatalf("status = %+v, want {0 false} — languagePending must clamp to false at count 0", got)
 	}
 
-	SetPendingUpdates(-1, true)
+	PublishPendingUpdates(PendingUpdateStatus{Count: -1, LanguagePending: true})
 	if got := CurrentPendingUpdates(); got.Count != 0 || got.LanguagePending {
 		t.Fatalf("status = %+v, want {0 false} — a negative count clamp must also clear languagePending", got)
 	}
@@ -63,7 +63,7 @@ func TestSetPendingUpdatesClampsLanguagePendingAtZeroCount(t *testing.T) {
 func TestNotePendingUpdateAppliedPreservesLanguagePendingUntilZero(t *testing.T) {
 	restorePendingUpdates(t)
 
-	SetPendingUpdates(2, true)
+	PublishPendingUpdates(PendingUpdateStatus{Count: 2, LanguagePending: true})
 	NotePendingUpdateApplied()
 	if got := CurrentPendingUpdates(); got.Count != 1 || !got.LanguagePending {
 		t.Fatalf("status = %+v, want {1 true} — languagePending must survive a decrement that leaves Count > 0", got)
@@ -80,7 +80,7 @@ func TestNotePendingUpdateAppliedPreservesLanguagePendingUntilZero(t *testing.T)
 // till. Run with -race, this catches a load-modify-store implementation.
 func TestNotePendingUpdateAppliedIsRaceSafe(t *testing.T) {
 	restorePendingUpdates(t)
-	SetPendingUpdates(100, false)
+	PublishPendingUpdates(PendingUpdateStatus{Count: 100, LanguagePending: false})
 
 	var wg sync.WaitGroup
 	for i := 0; i < 50; i++ {

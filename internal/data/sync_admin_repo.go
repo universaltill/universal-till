@@ -554,6 +554,18 @@ const FiscalPendingSignRetriesSettingsKey = "fiscal.pending_sign_retries"
 // same literal instead of re-typing it.
 const AutoUpdateLastAttemptSettingsKey = "update.auto_last_attempt"
 
+// ThemeSettingsKey is the UI theme of THIS till (ut-docs#2783): per station,
+// never admin-synced — a self-order kiosk, a back-office screen and a
+// cashier's till may each want their own look (product-owner decision
+// 2026-09-25; most POS apps apply the theme per device). While it synced
+// shop-wide, a theme picked on a joined till was silently overwritten by the
+// main till's value on the next admin pull whose fingerprint moved, and the
+// open page's /ui/theme-sync poll then flipped the screen back. Exported so
+// internal/pages/common's KeyTheme can be asserted equal to it
+// (TestThemeSettingsKeyMatchesCommon) — common already imports this package,
+// so it cannot be imported the other way.
+const ThemeSettingsKey = "theme"
+
 // PerTillSettingPrefixes are settings that belong to ONE till, never synced:
 // the replica's own sync identity/cursors, its printer, its screen, its own
 // end-of-day schedule (a replica Z-report would only cover local data), and
@@ -582,6 +594,9 @@ const AutoUpdateLastAttemptSettingsKey = "update.auto_last_attempt"
 // /api/sync/cloud-device) without any credential crossing the LAN.
 var PerTillSettingPrefixes = []string{
 	"sync.", "printer.", "display.", "reports.eod_", FiscalPendingSignRetriesSettingsKey, AutoUpdateLastAttemptSettingsKey,
+	// ut-docs#2783: this till's own theme. A full key used as a prefix, like
+	// the two above; no other settings key starts with "theme".
+	ThemeSettingsKey,
 	// The same three entries as db.TillCloudIdentityPrefixes (the join
 	// snapshot's redaction; internal/db can't import this package) —
 	// TestPerTillSettingsCoverTillCloudIdentity keeps them in step.
