@@ -118,6 +118,12 @@
           if (!el || el === document.documentElement) return;
           e.stopImmediatePropagation();
           e.preventDefault();
+          // The trusted mousedown was hit-tested to <html> too, so it never
+          // focused anything: focus the field/control under the pointer first
+          // (a mouse click on the scan field mid-motion must leave the caret
+          // there -- review M1).
+          var f = el.closest && el.closest('input,textarea,select,[contenteditable],[tabindex]');
+          if (f && f.focus) { try { f.focus(); } catch (err) { /* not focusable */ } }
           // dispatchEvent, not el.click(): the element under the pointer is
           // often an SVG icon inside the tile (no .click()); a synthetic
           // click still runs a link's/button's activation behaviour.
@@ -318,6 +324,9 @@
         document.addEventListener('htmx:afterSwap', function (e) {
           if (pendingSync && (e.detail || {}).xhr === pendingXhr) flushShellSync();
         });
+        // A swap that throws never reaches afterSwap: drop its sync so no
+        // later, unrelated transition can flush a stale shell (review M2).
+        document.addEventListener('htmx:swapError', function () { pendingSync = null; pendingXhr = null; });
         // Belt and braces from ADR-0097, kept for the same-document case: a
         // skipped/aborted transition rejects its promises (a console error per
         // skip otherwise), and nothing may ever hold the screen -- the shared
@@ -372,6 +381,7 @@
           // requestConfig.elt is the anchor that issued the request; detail.elt
           // here is the pre-retarget swap target (body), not the issuer.
           if (!rc.boosted || !shellNav(rc.elt)) return;
+          pendingSync = null; pendingXhr = null;
           var xhr = d.xhr;
           var url = finalURL(d);
           var ct = (xhr && xhr.getResponseHeader && xhr.getResponseHeader('Content-Type')) || '';

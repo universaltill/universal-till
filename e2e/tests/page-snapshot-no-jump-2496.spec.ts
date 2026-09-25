@@ -217,4 +217,30 @@ test.describe('page transition snapshots the old page before the shell sync (ut-
       await ctx.close();
     }
   });
+  // Review M1: the trusted mousedown is hit-tested to <html> as well, so the
+  // hand-over must focus the field under the pointer -- a mouse click on the
+  // Sell screen's scan field mid-motion leaves the caret there.
+  test('a mouse click on a field during the transition focuses it', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.setViewportSize({ width: 1024, height: 600 });
+    await page.goto('/menu');
+    await page.waitForLoadState('networkidle');
+    const supported = await page.evaluate(() => typeof document.startViewTransition === 'function');
+    test.skip(!supported, 'engine without same-document View Transitions');
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await instrument(page);
+    await page.locator('[data-testid="nav-till"]').click();
+    await expect.poll(async () => (await readRec(page)).ready).toBe('resolved');
+    await page.evaluate(() => {
+      document.getAnimations()
+        .filter((a) => ((a.effect as KeyframeEffect | null)?.pseudoElement || '').startsWith('::view-transition'))
+        .forEach((a) => a.pause());
+    });
+    const box = await page.locator('input[name="code"]').first().boundingBox();
+    expect(box).not.toBeNull();
+    expect((await readRec(page)).finished, 'the transition is still running when the operator clicks').toBe('pending');
+    await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2);
+    await expect.poll(() => page.evaluate(() => document.activeElement && document.activeElement.getAttribute('name'))).toBe('code');
+    assertClean();
+  });
 });

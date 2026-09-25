@@ -296,4 +296,13 @@ func TestPersistentShell_BeforeSwapDefersTheShellSync(t *testing.T) {
 	if !strings.Contains(src, "if (pendingSync && (e.detail || {}).xhr === pendingXhr) flushShellSync();") {
 		t.Errorf("htmx:afterSwap must flush the pending shell sync for the no-transition path (reduced motion / no View Transitions)")
 	}
+	// Review M2: a swap that throws never reaches afterSwap, so its sync must
+	// be dropped rather than flushed by a later, unrelated transition.
+	if !strings.Contains(src, "document.addEventListener('htmx:swapError', function () { pendingSync = null; pendingXhr = null; });") {
+		t.Errorf("htmx:swapError must drop a pending shell sync (ut-docs#2496 review M2)")
+	}
+	// Review M1: the mouse hand-over must focus the control under the pointer.
+	if !strings.Contains(src, "if (f && f.focus) { try { f.focus(); } catch (err) { /* not focusable */ } }") {
+		t.Errorf("the mid-transition click hand-over must focus the field under the pointer (ut-docs#2496 review M1)")
+	}
 }
