@@ -157,6 +157,24 @@ test.describe('page transition snapshots the old page before the shell sync (ut-
   // pointerdown and hands a mouse click to the element under the pointer.
   // Both input kinds are exercised: a touch tap is re-hit-tested at tap time
   // (native path), a mouse click needs the hand-over.
+  // Freeze the motion the moment it starts, in the page itself: polling for
+  // vt.ready from the test backs off (100/250/500 ms), long enough on a CI
+  // runner for the whole 400 ms transition to finish before a test-side pause.
+  async function freezeOnReady(page: import('@playwright/test').Page) {
+    await page.evaluate(() => {
+      const orig = document.startViewTransition.bind(document);
+      (document as unknown as { startViewTransition: unknown }).startViewTransition = (...args: unknown[]) => {
+        const vt = (orig as (...a: unknown[]) => ViewTransition)(...args);
+        vt.ready.then(() => {
+          document.getAnimations()
+            .filter((a) => ((a.effect as KeyframeEffect | null)?.pseudoElement || '').startsWith('::view-transition'))
+            .forEach((a) => a.pause());
+        }, () => {});
+        return vt;
+      };
+    });
+  }
+
   async function tapDuringTransition(page: import('@playwright/test').Page, how: 'mouse' | 'touch') {
     await page.setViewportSize({ width: 1024, height: 600 });
     await page.goto('/');
@@ -165,6 +183,7 @@ test.describe('page transition snapshots the old page before the shell sync (ut-
     test.skip(!supported, 'engine without same-document View Transitions');
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     await instrument(page);
+    await freezeOnReady(page);
     await page.evaluate(() => {
       const w = window as unknown as { __hit: string[] };
       w.__hit = [];
@@ -181,9 +200,6 @@ test.describe('page transition snapshots the old page before the shell sync (ut-
     // Hold the motion mid-flight (deterministic, independent of runner speed).
     await expect.poll(async () => (await readRec(page)).ready).toBe('resolved');
     await page.evaluate(() => {
-      document.getAnimations()
-        .filter((a) => ((a.effect as KeyframeEffect | null)?.pseudoElement || '').startsWith('::view-transition'))
-        .forEach((a) => a.pause());
       document.documentElement.classList.add('__probe');
     });
     const box = await page.locator('a.menu-tile').first().boundingBox();
@@ -229,13 +245,9 @@ test.describe('page transition snapshots the old page before the shell sync (ut-
     test.skip(!supported, 'engine without same-document View Transitions');
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     await instrument(page);
+    await freezeOnReady(page);
     await page.locator('[data-testid="nav-till"]').click();
     await expect.poll(async () => (await readRec(page)).ready).toBe('resolved');
-    await page.evaluate(() => {
-      document.getAnimations()
-        .filter((a) => ((a.effect as KeyframeEffect | null)?.pseudoElement || '').startsWith('::view-transition'))
-        .forEach((a) => a.pause());
-    });
     const box = await page.locator('input[name="code"]').first().boundingBox();
     expect(box).not.toBeNull();
     expect((await readRec(page)).finished, 'the transition is still running when the operator clicks').toBe('pending');
