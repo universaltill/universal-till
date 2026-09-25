@@ -904,6 +904,38 @@ func TestSettingsPage_TillNameFieldOnlyOnPrimary(t *testing.T) {
 	}
 }
 
+// ut-docs#2726: the auto-update switch shows what the scheduler actually
+// does — On at 03:00 on a till that never touched it, Off once the shop
+// switched it off.
+func TestSettingsPage_AutoUpdateShowsEffectiveDefault(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	get := func() string {
+		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/settings", nil), mgrUser)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /settings = %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+	checked := regexp.MustCompile(`<input type="checkbox" name="enabled"\s+checked>`)
+
+	body := get()
+	if !checked.MatchString(body) {
+		t.Fatal("untouched till: the auto-update switch should render On")
+	}
+	if !strings.Contains(body, `<input type="time" name="time" value="03:00">`) {
+		t.Fatal("untouched till: the auto-update time should render 03:00")
+	}
+
+	if err := d.Settings.Set(t.Context(), keyAutoUpdateEnabled, "false"); err != nil {
+		t.Fatal(err)
+	}
+	if checked.MatchString(get()) {
+		t.Fatal("shop switched auto-update off: the switch must render Off")
+	}
+}
+
 // ut-docs#1133 (ADR-0065 follow-up, independent review 2026-08-26): the
 // Tills card's quarantine help text + "View quarantined entries" button
 // must not appear on a single-till shop that has never enrolled a

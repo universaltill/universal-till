@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -219,9 +220,195 @@ func TestAutoUpdateDue(t *testing.T) {
 		{"attempted yesterday, due again today", true, "22:15", yesterday, true},
 	}
 	for _, c := range cases {
-		if got := autoUpdateDue(now, c.enabled, c.hhmm, c.lastAttempt); got != c.want {
+		if got := autoUpdateDue(now, c.enabled, c.hhmm, 0, c.lastAttempt); got != c.want {
 			t.Errorf("%s: autoUpdateDue() = %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// ut-docs#2726: the per-till offset shifts the window, and a window that
+// crosses midnight still fires once — the attempt is recorded against the
+// SLOT's date, so 00:05 inside a 23:50 slot is not a second "new day".
+func TestAutoUpdateDue_OffsetAndMidnight(t *testing.T) {
+	at := func(h, m int) time.Time { return time.Date(2026, 9, 25, h, m, 0, 0, time.UTC) }
+	cases := []struct {
+		name        string
+		now         time.Time
+		hhmm        string
+		offset      time.Duration
+		lastAttempt string
+		want        bool
+	}{
+		{"before the offset start", at(3, 10), "03:00", 20 * time.Minute, "", false},
+		{"at the offset start", at(3, 20), "03:00", 20 * time.Minute, "", true},
+		{"end of the shifted window", at(3, 49), "03:00", 20 * time.Minute, "", true},
+		{"past the shifted window", at(3, 50), "03:00", 20 * time.Minute, "", false},
+		{"window crossing midnight, after midnight", at(0, 5), "23:50", 0, "", true},
+		{"window crossing midnight, already attempted before midnight", at(0, 5), "23:50", 0, "2026-09-24", false},
+		{"offset pushes the start past midnight", at(0, 10), "23:50", 20 * time.Minute, "", true},
+		{"offset past midnight, attempted earlier the same slot", at(0, 15), "23:50", 20 * time.Minute, "2026-09-25", false},
+		{"offset past midnight, yesterday's slot does not block today's", at(0, 15), "23:50", 20 * time.Minute, "2026-09-24", true},
+	}
+	for _, c := range cases {
+		if got := autoUpdateDue(c.now, true, c.hhmm, c.offset, c.lastAttempt); got != c.want {
+			t.Errorf("%s: autoUpdateDue() = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// ut-docs#2726: the product owner's default is ON, nightly. Unset means on at
+// 03:00 on a main/standalone till; an explicit "false" is the shop's choice
+// and is respected; a replica stays off while unset until the replica
+// version cap exists (a replica must never run ahead of its main till).
+func TestAutoUpdateSchedule_Defaults(t *testing.T) {
+	cases := []struct {
+		name        string
+		settings    map[string]string
+		wantEnabled bool
+		wantHHMM    string
+	}{
+		{"never touched: on at 03:00", map[string]string{}, true, "03:00"},
+		{"explicit off is respected", map[string]string{keyAutoUpdateEnabled: "false"}, false, "03:00"},
+		{"explicit on with a time", map[string]string{keyAutoUpdateEnabled: "true", keyAutoUpdateTime: "02:15"}, true, "02:15"},
+		{"explicit on, blank time falls back to 03:00", map[string]string{keyAutoUpdateEnabled: "true", keyAutoUpdateTime: " "}, true, "03:00"},
+		{"replica, never touched: off", map[string]string{"sync.primary_url": "http://main.local:8080"}, false, "03:00"},
+		{"replica, explicitly on", map[string]string{"sync.primary_url": "http://main.local:8080", keyAutoUpdateEnabled: "true"}, true, "03:00"},
+	}
+	for _, c := range cases {
+		get := func(k string) string { return c.settings[k] }
+		enabled, hhmm := autoUpdateSchedule(get)
+		if enabled != c.wantEnabled || hhmm != c.wantHHMM {
+			t.Errorf("%s: autoUpdateSchedule() = (%v, %q), want (%v, %q)", c.name, enabled, hhmm, c.wantEnabled, c.wantHHMM)
+		}
+	}
+}
+
+// The offset spreads a fleet across [0, 30] minutes, is stable for one till
+// (so it does not wander tick to tick) and differs between tills.
+func TestAutoUpdateJitterFor(t *testing.T) {
+	seen := map[time.Duration]bool{}
+	for i := 0; i < 200; i++ {
+		seed := "device-" + strings.Repeat("x", i%7) + string(rune('a'+i%26)) + time.Duration(i).String()
+		j := autoUpdateJitterFor(seed)
+		if j < 0 || j >= autoUpdateMaxJitter {
+			t.Fatalf("seed %q: jitter %v outside [0, %v)", seed, j, autoUpdateMaxJitter)
+		}
+		if j%time.Minute != 0 {
+			t.Fatalf("seed %q: jitter %v is not whole minutes", seed, j)
+		}
+		if autoUpdateJitterFor(seed) != j {
+			t.Fatalf("seed %q: jitter not stable", seed)
+		}
+		seen[j] = true
+	}
+	if len(seen) < 10 {
+		t.Fatalf("jitter barely spreads the fleet: only %d distinct offsets over 200 tills", len(seen))
+	}
+}
+
+// The seed must differ between tills of ONE shop (review finding 1):
+// marketplace.device_id replicates from the main till on admin sync, so two
+// replicas carrying the same device id but their own sync.till_id must still
+// get their own offsets. A main till (no till id) seeds from its device id.
+func TestAutoUpdateJitter_SeedIsPerTill(t *testing.T) {
+	seedFor := func(tillID, deviceID string) time.Duration {
+		dp := newAutoUpdateTestDeps(t)
+		if tillID != "" {
+			_ = dp.Settings.Set(t.Context(), "sync.till_id", tillID)
+		}
+		_ = dp.Settings.Set(t.Context(), "marketplace.device_id", deviceID)
+		return defaultAutoUpdateJitter(t.Context(), dp)
+	}
+	if got, want := seedFor("", "dev-main"), autoUpdateJitterFor("marketplace.device_id=dev-main"); got != want {
+		t.Fatalf("main till: jitter = %v, want the device-id-seeded %v", got, want)
+	}
+	// Find two till ids that hash to different offsets, then prove a shared
+	// (synced) device id does not collapse them.
+	a, b := "till-a", ""
+	for i := 0; i < 100 && b == ""; i++ {
+		cand := fmt.Sprintf("till-%d", i)
+		if autoUpdateJitterFor("sync.till_id="+cand) != autoUpdateJitterFor("sync.till_id="+a) {
+			b = cand
+		}
+	}
+	if seedFor(a, "dev-main") == seedFor(b, "dev-main") {
+		t.Fatal("two replicas sharing the synced device id got the same offset")
+	}
+}
+
+// Review finding 2: ticking "Update automatically" on the MAIN till must not
+// write an explicit "true" — that replicates and would switch every replica
+// on without a version cap. On a main till "on" is the default (unset);
+// "off" is explicit. On a replica, "on" is explicit.
+func TestPostSettingsUpdateSchedule_OnIsDefaultOnMainTill(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newEODTestDeps(t)
+	mux := http.NewServeMux()
+	registerUpdateAPI(mux, dp)
+	post := func(body string) {
+		req := httptest.NewRequest(http.MethodPost, "/api/settings/update-schedule", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("POST %q = %d: %s", body, rec.Code, rec.Body.String())
+		}
+	}
+	stored := func() string { v, _, _ := dp.Settings.Get(t.Context(), keyAutoUpdateEnabled); return v }
+
+	post("enabled=off&time=03:00")
+	if stored() != "false" {
+		t.Fatalf("off must be stored explicitly, got %q", stored())
+	}
+	post("enabled=on&time=02:00")
+	if stored() != "" {
+		t.Fatalf("main till: on must be stored as the default (unset), got %q", stored())
+	}
+	replicaGet := func(k string) string {
+		if k == "sync.primary_url" {
+			return "http://main.local:8080"
+		}
+		v, _, _ := dp.Settings.Get(t.Context(), k)
+		return v
+	}
+	if on, _ := autoUpdateSchedule(replicaGet); on {
+		t.Fatal("a replica pulling the main till's saved 'on' must stay off")
+	}
+
+	_ = dp.Settings.Set(t.Context(), "sync.primary_url", "http://main.local:8080")
+	post("enabled=on&time=02:00")
+	if stored() != "true" {
+		t.Fatalf("replica: on must be stored explicitly, got %q", stored())
+	}
+}
+
+// End to end through the tick: a till that never touched the setting updates
+// at its nightly slot.
+func TestAutoUpdateTick_UnsetSettingUpdatesNightly(t *testing.T) {
+	dp := newAutoUpdateTestDeps(t)
+	applyCalls := stubAutoUpdateSeams(t, updates.Status{Available: true}, updates.Status{Available: true}, true, nil)
+	autoUpdateJitter = func(context.Context, *common.Deps) time.Duration { return 7 * time.Minute }
+
+	night := time.Date(2026, 9, 25, 3, 0, 0, 0, time.UTC)
+	autoUpdateTick(t.Context(), dp, night) // before this till's 03:07 slot
+	if *applyCalls != 0 {
+		t.Fatalf("applied before the per-till offset: %d calls", *applyCalls)
+	}
+	autoUpdateTick(t.Context(), dp, night.Add(7*time.Minute))
+	if *applyCalls != 1 {
+		t.Fatalf("expected one nightly apply with the setting unset, got %d", *applyCalls)
+	}
+}
+
+// A replica must not jump ahead of its main till: while the setting is unset
+// it stays off (ut-docs#2726, until the replica version cap lands).
+func TestAutoUpdateTick_UnsetSettingOnReplicaDoesNotUpdate(t *testing.T) {
+	dp := newAutoUpdateTestDeps(t)
+	_ = dp.Settings.Set(t.Context(), "sync.primary_url", "http://main.local:8080")
+	applyCalls := stubAutoUpdateSeams(t, updates.Status{Available: true}, updates.Status{Available: true}, true, nil)
+	autoUpdateTick(t.Context(), dp, time.Date(2026, 9, 25, 3, 0, 0, 0, time.UTC))
+	if *applyCalls != 0 {
+		t.Fatalf("replica auto-updated with the setting unset: %d calls", *applyCalls)
 	}
 }
 
@@ -292,9 +479,10 @@ func TestPostSettingsUpdateSchedule_ValidatesTimeFormat(t *testing.T) {
 	if err != nil || val != "03:30" {
 		t.Fatalf("expected the time setting persisted, got %q err=%v", val, err)
 	}
+	// A main till stores "on" as the default (unset), ut-docs#2726.
 	enabledVal, _, err := dp.Settings.Get(t.Context(), keyAutoUpdateEnabled)
-	if err != nil || enabledVal != "true" {
-		t.Fatalf("expected enabled=true persisted, got %q err=%v", enabledVal, err)
+	if err != nil || enabledVal != "" {
+		t.Fatalf("expected enabled stored as the default, got %q err=%v", enabledVal, err)
 	}
 
 	// Disabling doesn't require a valid time at all.
@@ -325,11 +513,11 @@ const tickHHMM = "10:00" // == tickNow's clock, so due with zero elapsed
 
 func stubAutoUpdateSeams(t *testing.T, current updates.Status, checkNow updates.Status, supported bool, applyErr error) *int {
 	t.Helper()
-	origCurrent, origCheckNow, origSupported, origApply, origBuildVersion :=
-		autoUpdateCurrent, autoUpdateCheckNow, autoUpdateSupported, autoUpdateApply, autoUpdateBuildVersion
+	origCurrent, origCheckNow, origSupported, origApply, origBuildVersion, origJitter :=
+		autoUpdateCurrent, autoUpdateCheckNow, autoUpdateSupported, autoUpdateApply, autoUpdateBuildVersion, autoUpdateJitter
 	t.Cleanup(func() {
-		autoUpdateCurrent, autoUpdateCheckNow, autoUpdateSupported, autoUpdateApply, autoUpdateBuildVersion =
-			origCurrent, origCheckNow, origSupported, origApply, origBuildVersion
+		autoUpdateCurrent, autoUpdateCheckNow, autoUpdateSupported, autoUpdateApply, autoUpdateBuildVersion, autoUpdateJitter =
+			origCurrent, origCheckNow, origSupported, origApply, origBuildVersion, origJitter
 	})
 	applyCalls := 0
 	autoUpdateCurrent = func() updates.Status { return current }
@@ -346,6 +534,9 @@ func stubAutoUpdateSeams(t *testing.T, current updates.Status, checkNow updates.
 	// tests that specifically cover that guard override this after calling
 	// stubAutoUpdateSeams.
 	autoUpdateBuildVersion = func() string { return "0.2.60" }
+	// No per-till offset by default (ut-docs#2726) so tickHHMM stays "due
+	// with zero elapsed"; the jitter's own tests override this.
+	autoUpdateJitter = func(context.Context, *common.Deps) time.Duration { return 0 }
 	return &applyCalls
 }
 

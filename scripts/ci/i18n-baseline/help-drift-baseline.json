@@ -517,20 +517,20 @@
       "locale": "fa",
       "topic": "updates",
       "signature": {
-        "headings": 3,
-        "numbered_steps": 3,
-        "sub_bullets": 0,
-        "top_bullets": 0,
-        "bold_leadins": 0
-      },
-      "english": {
-        "headings": 3,
+        "headings": 4,
         "numbered_steps": 8,
         "sub_bullets": 0,
         "top_bullets": 0,
         "bold_leadins": 0
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "english": {
+        "headings": 4,
+        "numbered_steps": 13,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2726: a new \"Automatic updates\" section (one heading, five numbered steps) added to English and this locale in lockstep (headings 3->4 / 3->4, numbered_steps 8->13 / 3->8); the pre-existing gap is unchanged, just re-recorded at its new absolute values."
     },
     {
       "locale": "fa",

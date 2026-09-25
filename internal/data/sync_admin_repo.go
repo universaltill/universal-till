@@ -547,6 +547,13 @@ var nonAdminTables = map[string]string{
 // each just trusting the other's copy.
 const FiscalPendingSignRetriesSettingsKey = "fiscal.pending_sign_retries"
 
+// AutoUpdateLastAttemptSettingsKey is the date THIS till last tried its
+// nightly unattended update (pages.autoUpdateTick). Per-till (ut-docs#2726):
+// synced shop-wide, the main till's attempt reached every replica as "already
+// attempted today" and cancelled theirs. Exported so internal/pages uses the
+// same literal instead of re-typing it.
+const AutoUpdateLastAttemptSettingsKey = "update.auto_last_attempt"
+
 // PerTillSettingPrefixes are settings that belong to ONE till, never synced:
 // the replica's own sync identity/cursors, its printer, its screen, its own
 // end-of-day schedule (a replica Z-report would only cover local data), and
@@ -558,8 +565,10 @@ const FiscalPendingSignRetriesSettingsKey = "fiscal.pending_sign_retries"
 // primary re-seeding it onto an already-migrated replica on a later sync).
 // FiscalPendingSignRetriesSettingsKey is a full key, not a prefix family
 // like the other four entries — strings.HasPrefix on an equal-length string
-// is a true equality test, so this works as an exact match.
-var PerTillSettingPrefixes = []string{"sync.", "printer.", "display.", "reports.eod_", FiscalPendingSignRetriesSettingsKey}
+// is a true equality test, so this works as an exact match. So is
+// AutoUpdateLastAttemptSettingsKey (ut-docs#2726); the auto-update schedule
+// itself stays shop-wide.
+var PerTillSettingPrefixes = []string{"sync.", "printer.", "display.", "reports.eod_", FiscalPendingSignRetriesSettingsKey, AutoUpdateLastAttemptSettingsKey}
 
 func perTillSetting(key string) bool {
 	for _, p := range PerTillSettingPrefixes {

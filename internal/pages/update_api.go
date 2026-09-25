@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"html"
 	"net/http"
+	"os"
 	"runtime"
 	"strings"
 	"sync"
@@ -28,8 +30,8 @@ import (
 // "Update now" — same enable+HH:MM shape as the EOD scheduler (eod_api.go).
 const (
 	keyAutoUpdateEnabled     = "update.auto_enabled"
-	keyAutoUpdateTime        = "update.auto_time"         // local "HH:MM"
-	keyAutoUpdateLastAttempt = "update.auto_last_attempt" // "YYYY-MM-DD"
+	keyAutoUpdateTime        = "update.auto_time"                    // local "HH:MM"
+	keyAutoUpdateLastAttempt = data.AutoUpdateLastAttemptSettingsKey // "YYYY-MM-DD", per-till (never synced)
 )
 
 // Seams so tests can fake the scheduler's decisions without hitting the real
@@ -60,27 +62,108 @@ var (
 // waiting for tomorrow's, not "whenever the till next happens to be on."
 const autoUpdateWindow = 30 * time.Minute
 
+// Unattended updates are ON by default, nightly (product owner, ut-docs#2726):
+// a till nobody switched on never moved, so the fleet drifted across versions.
+// An unset update.auto_enabled means on; an explicit "false" is the shop's
+// choice and is kept. The default slot is a quiet local hour, and every till
+// adds its own stable 0–30 min offset so a fleet does not hit the releases
+// API (and restart) all at the same minute.
+const (
+	autoUpdateDefaultTime = "03:00"
+	autoUpdateMaxJitter   = 30 * time.Minute
+)
+
+// autoUpdateJitter is a seam so tick tests can pin the per-till offset.
+var autoUpdateJitter = defaultAutoUpdateJitter
+
+// autoUpdateSchedule resolves the effective (enabled, HH:MM) from the stored
+// settings. A replica (sync.primary_url set) stays OFF while the setting is
+// unset: nothing yet caps a replica at its main till's version, and a replica
+// that updates while its main till cannot (a Windows main till, an unwritable
+// .deb) would run ahead of it indefinitely. An explicit "true" still enables it,
+// exactly as before this default existed. The replica cap is its own card.
+func autoUpdateSchedule(get func(string) string) (enabled bool, hhmm string) {
+	hhmm = strings.TrimSpace(get(keyAutoUpdateTime))
+	if hhmm == "" {
+		hhmm = autoUpdateDefaultTime
+	}
+	// Only the two values the save handler writes mean anything; any other
+	// (hand-edited) value fails safe to off.
+	switch strings.TrimSpace(get(keyAutoUpdateEnabled)) {
+	case "true":
+		return true, hhmm
+	case "":
+		// Same role rule as discovery.RoleCheckFromSettings / Deps.SyncPrimaryURL:
+		// an empty sync.primary_url is a main or standalone till.
+		return strings.TrimSpace(get("sync.primary_url")) == "", hhmm
+	default:
+		return false, hhmm
+	}
+}
+
+// autoUpdateJitterFor maps a per-till seed onto a stable whole-minute offset
+// in [0, autoUpdateMaxJitter).
+func autoUpdateJitterFor(seed string) time.Duration {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(seed))
+	return time.Duration(h.Sum32()%uint32(autoUpdateMaxJitter/time.Minute)) * time.Minute
+}
+
+// defaultAutoUpdateJitter seeds the offset from a value that really is this
+// till's own: sync.till_id first (set per replica at join, and sync.* never
+// replicates), then marketplace.device_id (a main/standalone till has no
+// till id; on a replica the device id is overwritten by the main till's on
+// the next admin sync, so it can't come first), then the hostname on a till
+// that never registered. Computed, not stored: the update.* settings
+// replicate shop-wide, so a stored offset would be copied onto every till.
+func defaultAutoUpdateJitter(ctx context.Context, d *common.Deps) time.Duration {
+	seed := ""
+	if d.Settings != nil {
+		for _, k := range []string{"sync.till_id", "marketplace.device_id"} {
+			if v, _, _ := d.Settings.Get(ctx, k); strings.TrimSpace(v) != "" {
+				seed = k + "=" + strings.TrimSpace(v)
+				break
+			}
+		}
+	}
+	if seed == "" {
+		host, _ := os.Hostname()
+		seed = "host=" + host
+	}
+	return autoUpdateJitterFor(seed)
+}
+
+// autoUpdateSlot reports whether now falls in the window that opens at
+// hhmm+offset, and the date that slot belongs to. Minutes-of-day arithmetic
+// modulo 24h, so a window that crosses midnight (23:50, or 23:45 plus an
+// offset) still opens and closes where it should; the slot date is the date
+// the window OPENED on, so the half after midnight is not mistaken for a new
+// day's slot.
+func autoUpdateSlot(now time.Time, hhmm string, offset time.Duration) (inWindow bool, slotDate string) {
+	sched, err := time.Parse("15:04", hhmm)
+	if err != nil {
+		return false, ""
+	}
+	const day = 24 * 60
+	start := (sched.Hour()*60 + sched.Minute() + int(offset/time.Minute)) % day
+	cur := now.Hour()*60 + now.Minute()
+	elapsed := (cur - start + day) % day
+	if time.Duration(elapsed)*time.Minute >= autoUpdateWindow {
+		return false, ""
+	}
+	return true, now.Add(-time.Duration(elapsed) * time.Minute).Format("2006-01-02")
+}
+
 // autoUpdateDue is the pure schedule decision: enabled, a valid HH:MM whose
-// window [hhmm, hhmm+autoUpdateWindow) now falls in, and not already
-// attempted today (success or failure — at most once per day, mirrors
-// eodDue's alreadyDone gate).
-func autoUpdateDue(now time.Time, enabled bool, hhmm string, lastAttempt string) bool {
+// window [hhmm+offset, hhmm+offset+autoUpdateWindow) now falls in, and that
+// slot not already attempted (success or failure — at most once per day,
+// mirrors eodDue's alreadyDone gate).
+func autoUpdateDue(now time.Time, enabled bool, hhmm string, offset time.Duration, lastAttempt string) bool {
 	if !enabled || !eodTimeRe.MatchString(hhmm) {
 		return false
 	}
-	if lastAttempt == now.Format("2006-01-02") {
-		return false
-	}
-	sched, err := time.Parse("15:04", hhmm)
-	if err != nil {
-		return false
-	}
-	clock, err := time.Parse("15:04", now.Format("15:04"))
-	if err != nil {
-		return false
-	}
-	elapsed := clock.Sub(sched)
-	return elapsed >= 0 && elapsed < autoUpdateWindow
+	in, slotDate := autoUpdateSlot(now, hhmm, offset)
+	return in && lastAttempt != slotDate
 }
 
 // autoUpdateTick runs one scheduler decision for the given wall-clock time.
@@ -99,10 +182,10 @@ func autoUpdateTick(ctx context.Context, d *common.Deps, now time.Time) {
 		v, _, _ := d.Settings.Get(ctx, key)
 		return strings.TrimSpace(v)
 	}
-	enabled := get(keyAutoUpdateEnabled) == "true"
-	hhmm := get(keyAutoUpdateTime)
+	enabled, hhmm := autoUpdateSchedule(get)
 	lastAttempt := get(keyAutoUpdateLastAttempt)
-	if !autoUpdateDue(now, enabled, hhmm, lastAttempt) {
+	offset := autoUpdateJitter(ctx, d)
+	if !autoUpdateDue(now, enabled, hhmm, offset, lastAttempt) {
 		return
 	}
 	if !autoUpdateCurrent().Available || !autoUpdateSupported() {
@@ -130,7 +213,8 @@ func autoUpdateTick(ctx context.Context, d *common.Deps, now time.Time) {
 	// Mark the attempt BEFORE calling Apply so a failure (or a stale-cache
 	// miss below) never retries twice in one day — repeated large downloads
 	// on failure would be wasteful/aggressive.
-	_ = d.Settings.Set(ctx, keyAutoUpdateLastAttempt, now.Format("2006-01-02"))
+	_, slotDate := autoUpdateSlot(now, hhmm, offset)
+	_ = d.Settings.Set(ctx, keyAutoUpdateLastAttempt, slotDate)
 	st := autoUpdateCheckNow(ctx)
 	if !st.Available {
 		return
@@ -483,7 +567,18 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "time must be HH:MM", http.StatusBadRequest)
 			return
 		}
-		_ = d.Settings.Set(r.Context(), keyAutoUpdateEnabled, fmt.Sprintf("%t", enabled))
+		// On a main/standalone till, "on" is stored as the default (unset),
+		// not "true" (ut-docs#2726 review): the setting replicates shop-wide,
+		// and an explicit "true" would switch every replica on too — with no
+		// replica version cap yet (ut-docs#2732), a replica must stay off.
+		// "Off" is still stored explicitly and applies to the whole shop.
+		val := fmt.Sprintf("%t", enabled)
+		if enabled {
+			if primary, _, _ := d.Settings.Get(r.Context(), "sync.primary_url"); strings.TrimSpace(primary) == "" {
+				val = ""
+			}
+		}
+		_ = d.Settings.Set(r.Context(), keyAutoUpdateEnabled, val)
 		_ = d.Settings.Set(r.Context(), keyAutoUpdateTime, hhmm)
 		w.WriteHeader(http.StatusNoContent)
 	})
