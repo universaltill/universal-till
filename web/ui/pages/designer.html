@@ -44,7 +44,9 @@
   // handlers. Delegated on body, not bound to the fragment, because the
   // whole .products root is outerHTML-swapped on every buttons-changed.
   //
-  // 1. Reorder. The move-earlier/move-later buttons (data-cat-move) post
+  // 1. Reorder. The move-earlier/move-later buttons (data-cat-move, inside
+  //    a row's inline edit form since ut-docs#2699; long-press drag and
+  //    Alt+Arrow are web/public/list-reorder.js's) post
   //    EVERY category id in its new display order -- the body shape
   //    /api/designer/categories/reorder shares with /api/categories/reorder
   //    and /api/buttons/reorder -- computed from the list's current DOM
@@ -67,6 +69,11 @@
   //    edit form collapsed after a save), on the nearest sensible control
   //    in the same row.
   var pendingFocus = null;
+  // ut-docs#2699: Move earlier/later now live inside a row's inline edit
+  // form, which the re-render collapses (fresh x-data). Re-open that row's
+  // form after the root settles so a run of moves doesn't mean re-opening
+  // it each time, and focus can land back on the button just used.
+  var reopenRow = null;
 
   function focusable(el) {
     return !!(el && !el.disabled && el.getClientRects().length > 0);
@@ -102,6 +109,7 @@
     ids[i] = ids[j];
     ids[j] = row.dataset.catId;
     pendingFocus = btn.id;
+    reopenRow = row.dataset.catId;
     window.htmx.ajax('POST', '/api/designer/categories/reorder', {
       source: btn,
       target: '#designer-categories-msg',
@@ -127,6 +135,28 @@
     var info = ev.detail && ev.detail.pathInfo;
     var path = (info && (info.finalRequestPath || info.requestPath)) || '';
     if (path.indexOf('/ui/buttons') !== 0) return;
+    var id = reopenRow;
+    reopenRow = null;
+    var row = id ? document.querySelector('.designer-categories [data-cat-id="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]') : null;
+    if (row) {
+      // At afterSettle Alpine has usually NOT initialised the fresh row yet
+      // (measured: no _x_dataStack), so seed its x-data instead; if it has,
+      // flip the live state.
+      if (row._x_dataStack && window.Alpine && window.Alpine.$data) {
+        try { window.Alpine.$data(row).editing = true; } catch (e) { /* focus falls back below */ }
+      } else {
+        row.setAttribute('x-data', '{ editing: true }');
+      }
+      // Wait (briefly) for x-show to reveal the pending control before
+      // restoring, or restoreFocus would fall back to the row's toggle.
+      var until = Date.now() + 600;
+      (function wait() {
+        var el = pendingFocus && document.getElementById(pendingFocus);
+        if (el && !el.disabled && !focusable(el) && Date.now() < until) { setTimeout(wait, 16); return; }
+        restoreFocus();
+      })();
+      return;
+    }
     restoreFocus();
   });
 })();

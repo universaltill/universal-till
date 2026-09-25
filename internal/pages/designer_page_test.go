@@ -227,7 +227,9 @@ func TestButtonsPartial_EditMode(t *testing.T) {
 		// order, rather than fixed up client-side after the fact.
 		`id="designer-cat-up-cat-a" data-cat-move="-1" disabled`,
 		`id="designer-cat-down-cat-off" data-cat-move="1" disabled`,
-		`id="designer-cat-up-cat-empty" data-cat-move="-1" aria-label`,
+		// ut-docs#2699: the pair now lives in the row's inline form as
+		// labelled buttons (no aria-label/icon-only), enabled mid-list.
+		`id="designer-cat-up-cat-empty" data-cat-move="-1">`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("edit-mode fragment missing %q: %.3000s", want, body)

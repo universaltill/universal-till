@@ -987,13 +987,13 @@
      deliberately differ, and each row says how many buttons it has on the
      sale screen so the gap is explained rather than surprising.
 
-     Every pointer action has a keyboard path (ut-docs#826): the move
-     controls are real <button>s with the same move-earlier/move-later
-     pattern the retired admin grid and /categories use (a single mechanism
-     that already works by tap, click and Tab+Enter/Space, no gesture code
-     -- ut-docs#1221); edit/new are plain buttons toggling an Alpine-shown
-     inline form (aria-expanded/aria-controls); deactivate/activate are
-     real submit buttons. Nothing here is a div with a click handler.
+     Every pointer action has a keyboard path (ut-docs#826): since
+     ut-docs#2699 a row is long-pressed and dragged to reorder
+     (web/public/list-reorder.js) or, focused, moved with Alt+ArrowUp/Down;
+     the row body is a real button toggling an Alpine-shown inline form
+     (aria-expanded/aria-controls) that also carries Move earlier/later;
+     new is the same kind of toggle; deactivate/activate are real submit
+     buttons. Nothing here is a div with a click handler.
 
      Rename/recolour and create post hx-boost-free forms straight to the
      Designer's own routes (designer_categories_api.go) with hx-swap=
@@ -1025,35 +1025,48 @@
 <section class="designer-categories" aria-labelledby="designer-categories-title" data-testid="designer-categories">
   <div class="designer-categories-head">
     <h3 id="designer-categories-title">{{ T "categories.title" }}</h3>
-    <p class="muted designer-categories-help">{{ T "designer.categories.help" }}</p>
+    <p class="muted designer-categories-help" id="designer-categories-help">{{ T "designer.categories.help" }}</p>
   </div>
   <div id="designer-categories-msg" class="designer-cat-msg" role="status" aria-live="polite"></div>
+  <div id="designer-categories-live" class="visually-hidden" role="status" aria-live="polite"></div>
   {{/* No arithmetic funcs in the template set: find the last row's id with
        a pre-pass so its move-later button can render disabled. */}}
   {{ $last := "" }}{{ range .AdminCategories }}{{ $last = .ID }}{{ end }}
-  <ol class="designer-cat-list">
+  {{/* ut-docs#2699: web/public/list-reorder.js drives this list —
+       long-press + drag, and Alt+ArrowUp/Down on a row's focused body
+       button — posting every id in the new order to the Designer's reorder
+       route; on success it fires buttons-changed so the replica (strip AND
+       this list) re-renders from the server's truth, on a refusal it puts
+       the rows back and shows the reason in #designer-categories-msg.
+       The help text describes the list ONCE (aria-describedby here, not
+       on every row's button — a screen reader would repeat it per row);
+       each row's button only names its keys (aria-keyshortcuts). */}}
+  <ol class="designer-cat-list" aria-describedby="designer-categories-help" data-reorder-list
+      data-reorder-url="/api/designer/categories/reorder"
+      data-reorder-refresh="buttons-changed"
+      data-reorder-live="designer-categories-live"
+      data-reorder-msg="designer-categories-msg"
+      data-reorder-msg-moved="{{ T "list_reorder.moved" }}"
+      data-reorder-msg-cancelled="{{ T "list_reorder.cancelled" }}"
+      data-reorder-msg-failed="{{ T "list_reorder.failed" }}">
     {{ range $i, $c := .AdminCategories }}
-    <li class="designer-cat{{ if not $c.IsActive }} designer-cat-inactive{{ end }}" data-cat-id="{{ $c.ID }}" x-data="{ editing: false }">
-      <span class="designer-cat-swatch" {{ if $c.Color }}style="--swatch: {{ $c.Color }}"{{ end }} aria-hidden="true"></span>
-      <span class="designer-cat-text">
-        <span class="designer-cat-name">{{ $c.Name }}</span>
-        <span class="muted designer-cat-meta">{{ printf (T "products.category_button_count") $c.ButtonCount }} · {{ printf (T "categories.item_count") $c.ItemCount }}{{ if not $c.IsActive }} · {{ T "categories.inactive" }}{{ end }}</span>
-      </span>
+    <li class="designer-cat{{ if not $c.IsActive }} designer-cat-inactive{{ end }}" data-cat-id="{{ $c.ID }}"
+        data-reorder-id="{{ $c.ID }}" data-reorder-name="{{ $c.Name }}" x-data="{ editing: false }">
+      {{/* ut-docs#2699: the row body (picture, name, counts) IS the edit
+           toggle — a real button, so Tab + Enter/Space opens the inline
+           form and Alt+ArrowUp/Down moves the row; no pencil, no chevrons
+           on the row. Leading visual: image → icon (ui.CategoryThumb, icon
+           only via iconid.AssetPath) → colour swatch → placeholder. */}}
+      <button type="button" class="designer-cat-open" id="designer-cat-open-{{ $c.ID }}" data-cat-edit
+              :aria-expanded="editing" aria-expanded="false" aria-controls="designer-cat-form-{{ $c.ID }}" @click="editing = !editing"
+              aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown">
+        <span class="cat-thumb" aria-hidden="true">{{ if $c.Thumb }}<img src="{{ imgv $c.Thumb }}" alt="" width="36" height="36" loading="lazy">{{ else if $c.Color }}<span class="cat-thumb-swatch" style="--swatch: {{ $c.Color }}"></span>{{ else }}<span class="cat-thumb-placeholder">{{ icon "tag" }}</span>{{ end }}</span>
+        <span class="designer-cat-text">
+          <span class="designer-cat-name">{{ $c.Name }}</span>
+          <span class="muted designer-cat-meta">{{ printf (T "products.category_button_count") $c.ButtonCount }} · {{ printf (T "categories.item_count") $c.ItemCount }}{{ if not $c.IsActive }} · {{ T "categories.inactive" }}{{ end }}</span>
+        </span>
+      </button>
       <div class="list-actions designer-cat-actions">
-        {{/* Edge rows render their dead-end move button disabled here, on
-             the server, which knows the order -- not fixed up client-side
-             after the fact as the retired admin grid did. */}}
-        <button type="button" class="btn secondary btn-icon" id="designer-cat-up-{{ $c.ID }}" data-cat-move="-1"{{ if eq $i 0 }} disabled{{ end }} aria-label="{{ T "designer.move_up" }}" title="{{ T "designer.move_up" }}">
-          <span class="btn-ico" aria-hidden="true">{{ icon "chevron-up" }}</span>
-        </button>
-        <button type="button" class="btn secondary btn-icon" id="designer-cat-down-{{ $c.ID }}" data-cat-move="1"{{ if eq $c.ID $last }} disabled{{ end }} aria-label="{{ T "designer.move_down" }}" title="{{ T "designer.move_down" }}">
-          <span class="btn-ico" aria-hidden="true">{{ icon "chevron-down" }}</span>
-        </button>
-        <button type="button" class="btn secondary btn-icon" id="designer-cat-edit-{{ $c.ID }}" data-cat-edit
-                :aria-expanded="editing" aria-controls="designer-cat-form-{{ $c.ID }}" @click="editing = !editing"
-                aria-label="{{ T "categories.edit" }}" title="{{ T "categories.edit" }}">
-          <span class="btn-ico" aria-hidden="true">{{ icon "pencil" }}</span>
-        </button>
         {{ if $c.IsActive }}
         <form hx-post="/api/designer/categories/{{ $c.ID }}/active" hx-target="#designer-cat-msg-{{ $c.ID }}" hx-swap="innerHTML"
               {{ if eq $c.ItemCount 0 }}hx-confirm="{{ printf (T "designer.category.deactivate_confirm") $c.Name }}"{{ end }}>
@@ -1081,6 +1094,18 @@
           <input type="text" name="name" value="{{ $c.Name }}" required placeholder="{{ T "categories.create_placeholder" }}">
         </label>
         {{ template "designer-category-colors" (dict "Colors" $.ItemColors "Selected" $c.Color) }}
+        {{/* ut-docs#2699: the single-pointer alternative to the drag
+             (WCAG 2.5.7). Edge rows render their dead-end button disabled
+             here, on the server, which knows the order. designer.html
+             posts the swap and re-opens this form after the re-render. */}}
+        <div class="designer-cat-move" role="group" aria-label="{{ T "list_reorder.position_label" }}">
+          <button type="button" class="btn secondary compact" id="designer-cat-up-{{ $c.ID }}" data-cat-move="-1"{{ if eq $i 0 }} disabled{{ end }}>
+            <span class="btn-ico" aria-hidden="true">{{ icon "chevron-up" }}</span> {{ T "designer.move_up" }}
+          </button>
+          <button type="button" class="btn secondary compact" id="designer-cat-down-{{ $c.ID }}" data-cat-move="1"{{ if eq $c.ID $last }} disabled{{ end }}>
+            <span class="btn-ico" aria-hidden="true">{{ icon "chevron-down" }}</span> {{ T "designer.move_down" }}
+          </button>
+        </div>
         <div class="designer-cat-form-actions">
           <button type="submit" class="btn primary compact" id="designer-cat-save-{{ $c.ID }}">{{ T "common.save" }}</button>
           <button type="button" class="btn secondary compact" @click="editing = false">{{ T "common.cancel" }}</button>

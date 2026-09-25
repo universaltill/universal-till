@@ -5035,30 +5035,25 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .designer-categories-help { margin: 0; font-size: .85rem; }
 .designer-cat-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .45rem; }
 .designer-cat {
-  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "swatch text actions"; gap: .3rem .6rem; align-items: center;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .3rem .6rem; align-items: center;
   padding: .45rem .65rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
 }
-.designer-cat-swatch { grid-area: swatch; inline-size: 1rem; block-size: 1rem; border-radius: 50%; background: var(--swatch, transparent); border: 1px solid rgba(15, 23, 42, .18); }
-.designer-cat-text { grid-area: text; display: flex; flex-direction: column; min-inline-size: 0; }
+/* ut-docs#2699: the row body (picture + name + counts) is the edit toggle —
+   a real button, reset to look like the row it is; the deactivate button is
+   the only other control on the line, so the row stays one line at 360px
+   (the ut-docs#2174 narrow-width stacking rule is gone with the three
+   buttons that needed it). */
+.designer-cat-open {
+  display: flex; align-items: center; gap: .6rem; min-inline-size: 0; min-block-size: 3rem;
+  padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer;
+  border-radius: var(--radius);
+}
+.designer-cat-open:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: 2px; }
+.designer-cat-text { display: flex; flex-direction: column; min-inline-size: 0; }
 .designer-cat-name { font-weight: 600; overflow-wrap: anywhere; }
 .designer-cat-inactive .designer-cat-name { color: var(--muted); }
 .designer-cat-meta { font-size: .8rem; }
-.designer-cat-actions { grid-area: actions; }
-/* ut-docs#2174 (Tester finding): at a real kiosk/phone-portrait width the
-   3-column row's `auto`-sized actions column (4 icon buttons) claims its
-   full intrinsic width before the `minmax(0, 1fr)` text column gets
-   anything, squeezing the category name down to a several-pixel sliver
-   and wrapping it mid-word — confirmed with a real 360px screenshot, not
-   guessed. Below 480px (this file's own established narrow-viewport
-   breakpoint, e.g. .scan-row above) the actions move to their own full-
-   width row under the swatch+text row instead of competing for the same
-   line; .list-actions' own gap/sizing is untouched, so the four buttons
-   still meet the real 3rem touch-target floor (ut-docs#2218) — they just
-   have the whole row's width to lay out in rather than a squeezed third. */
-@media (max-width: 480px) {
-  .designer-cat { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "swatch text" "actions actions"; }
-  .designer-cat-actions { justify-content: flex-start; }
-}
+.designer-cat-move { display: flex; flex-wrap: wrap; gap: .5rem; }
 /* Everything below the row's first line spans the full width. */
 .designer-cat-blocked, .designer-cat-msg, .designer-cat-form { grid-column: 1 / -1; }
 .designer-cat-blocked { margin: 0; font-size: .8rem; }
@@ -5096,3 +5091,53 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .designer-cat-colors .item-color-tile:has(input:focus-visible) { outline: 2px solid rgba(37, 99, 235, .35); outline-offset: 1px; }
 .designer-cat-new { display: flex; flex-direction: column; gap: .5rem; align-items: flex-start; }
 .designer-cat-new .designer-cat-form { inline-size: 100%; border-block-start: 0; padding-block-start: 0; }
+
+/* ut-docs#2699: category rows' leading picture (image → icon → colour
+   swatch → placeholder, chosen server-side) on /categories and in the
+   Designer's category list, and the long-press drag-to-reorder states that
+   web/public/list-reorder.js toggles. Logical properties only (fa/ar RTL). */
+.cat-thumb {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  inline-size: 2.25rem; block-size: 2.25rem; border-radius: var(--radius); overflow: hidden;
+  background: var(--surface-2); border: 1px solid var(--border); vertical-align: middle;
+}
+.cat-thumb img { inline-size: 100%; block-size: 100%; object-fit: contain; }
+.cat-thumb-swatch { inline-size: 1.25rem; block-size: 1.25rem; border-radius: 50%; background: var(--swatch, transparent); border: 1px solid rgba(15, 23, 42, .18); }
+.cat-thumb-placeholder { display: inline-flex; color: var(--muted); }
+.cat-thumb-placeholder svg { inline-size: 1.1rem; block-size: 1.1rem; }
+.category-row-open {
+  display: inline-flex; align-items: center; gap: .6rem; min-block-size: 3rem; max-inline-size: 100%;
+  padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer;
+  border-radius: var(--radius);
+}
+.category-row-open:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: 2px; }
+.category-row-name { overflow-wrap: break-word; }
+/* The name column keeps room for the picture plus a short word at 360px;
+   the table's own .list-scroll wrapper scrolls sideways if it must,
+   rather than breaking names mid-word. */
+.category-name-cell { min-inline-size: 9.5rem; }
+.list-reorder-hint { font-size: .85rem; margin-block: 0 .5rem; }
+.list-reorder-msg { margin-block: 0 .5rem; color: var(--danger); font-size: .9rem; }
+.list-reorder-msg[hidden] { display: none; }
+.category-move[hidden] { display: none; }
+/* A reorderable row: no text-selection callout under a held finger, and
+   vertical swipes still scroll the page until the hold arms the drag.
+   touch-action does NOT apply to table rows (CSS spec: it applies to all
+   elements except non-replaced inlines, table rows, row groups, columns
+   and column groups), so on /categories the <tr>'s own declaration is
+   inert — its cells carry pan-y instead. The Designer's <li> takes it
+   directly. (The effective value is the intersection down the ancestor
+   chain, so the buttons inside a cell inherit the restriction.) */
+[data-reorder-id] { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: pan-y; }
+[data-reorder-id] > td { touch-action: pan-y; }
+[data-reorder-id] input, [data-reorder-id] textarea { -webkit-user-select: text; user-select: text; }
+.is-reordering, .is-reordering * { cursor: grabbing; }
+.designer-cat.is-dragging {
+  border-color: var(--accent); background: var(--surface-2);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, .18), inset 0 0 0 1px var(--accent);
+}
+.category-row.is-dragging > td { background: var(--surface-2); box-shadow: inset 0 2px 0 var(--accent), inset 0 -2px 0 var(--accent); }
+@media (prefers-reduced-motion: no-preference) {
+  .designer-cat { transition: box-shadow .12s ease, transform .12s ease; }
+  .designer-cat.is-dragging { transform: scale(1.015); }
+}

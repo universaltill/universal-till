@@ -680,9 +680,10 @@ func TestCategoriesPage_RendersRecordDialogWithFieldsSlot(t *testing.T) {
 			t.Errorf("page still renders the old %q pattern", gone)
 		}
 	}
-	// The reorder pair draws icons now, still with their accessible names.
-	if !strings.Contains(body, `data-icon="chevron-up"`) || !strings.Contains(body, `data-icon="chevron-down"`) {
-		t.Errorf("reorder buttons do not draw chevron icons")
+	// ut-docs#2699: the reorder pair moved off the rows into the dialog
+	// (Move up / Move down, labelled); rows reorder by long-press drag.
+	if !strings.Contains(body, `id="category-move-up"`) || !strings.Contains(body, `id="category-move-down"`) {
+		t.Errorf("dialog has no Move up / Move down pair")
 	}
 }
 

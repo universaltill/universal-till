@@ -69,7 +69,7 @@ test.describe('category editor pickers (ut-docs#2284)', () => {
     await expect(r).toHaveCount(1);
     await expect(r).toHaveAttribute('data-field-color', '#0f766e');
     await expect(r).toHaveAttribute('data-stations', /.+/);
-    await expect(r.locator('.category-swatch')).toHaveCount(1);
+    await expect(r.locator('.cat-thumb-swatch')).toHaveCount(1) // ut-docs#2699: the row's leading visual;
 
     // (b) Opening a row must never prompt: fail loudly if any confirm()
     // appears from here on.

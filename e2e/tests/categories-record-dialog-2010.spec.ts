@@ -133,17 +133,9 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
     await page.locator(`${DIALOG} .record-dialog-close`).click();
     await expect(dlg).toBeHidden();
 
-    // A reorder button inside the row keeps its own job: it must NOT open.
-    // The real POST is driven, not stubbed (ut-docs#2018: the script sends
-    // multipart FormData and the handler used to ParseForm only → 400; a
-    // stub here hid that from the suite).
-    const [reorderRes] = await Promise.all([
-      page.waitForResponse((res) => res.url().includes('/api/categories/reorder')),
-      r.locator('.move-up').click(),
-    ]);
-    expect(reorderRes.status(), 'reorder must accept the multipart body the browser sends').toBe(204);
-    await expect(dlg).toBeHidden();
-    // The pencil is the explicit (keyboard-reachable) path to the same edit.
+    // ut-docs#2699: no reorder buttons on the row any more (long-press
+    // drag + Alt+Arrow keys — category-list-drag-2699.spec.ts); the row's
+    // name button is the explicit (keyboard-reachable) path to the same edit.
     await r.locator('[data-record-edit]').focus();
     await page.keyboard.press('Enter');
     await expect(dlg).toBeVisible();
@@ -561,7 +553,7 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
     assertClean();
   });
 
-  test('(c5) a reorder made with the arrow buttons survives a reload', async ({ page }) => {
+  test('(c5) a reorder made with Alt+ArrowUp survives a reload', async ({ page }) => {
     // Review S4 / ut-docs#2018: the DOM swap happens client-side BEFORE the
     // request, so "the rows swapped" passes against a 400. Only the order
     // after a reload proves the server accepted the multipart body.
@@ -577,9 +569,12 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
         (els, needle) => els.findIndex((e) => (e.textContent || '').includes(needle)), n);
     expect(await indexOf(second)).toBe((await indexOf(first)) + 1);
 
+    // ut-docs#2699: the row's chevrons are gone; the keyboard path is
+    // Alt+ArrowUp on the row's focused name button.
+    await row(page, second).locator('[data-record-edit]').focus();
     const [res] = await Promise.all([
       page.waitForResponse((r) => r.url().includes('/api/categories/reorder')),
-      row(page, second).locator('.move-up').click(),
+      page.keyboard.press('Alt+ArrowUp'),
     ]);
     expect(res.status()).toBe(204);
     await page.reload();
@@ -788,10 +783,17 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
     await page.goto('/categories');
     const name = 'Focus Probe ' + Date.now();
     await createCategory(page, name);
-    for (const sel of ['#categories-new', '#categories-table .category-row .move-down', '#categories-table .category-row [data-record-edit]']) {
+    // ut-docs#2699: the row's edit control is its name (a labelled button,
+    // not icon-only), so only the New button is checked for aria-label +
+    // title; both still need a real focus ring.
+    for (const sel of ['#categories-new', '#categories-table .category-row [data-record-edit]']) {
       const b = page.locator(sel).first();
-      await expect(b).toHaveAttribute('aria-label', /.+/);
-      await expect(b).toHaveAttribute('title', /.+/);
+      if (sel === '#categories-new') {
+        await expect(b).toHaveAttribute('aria-label', /.+/);
+        await expect(b).toHaveAttribute('title', /.+/);
+      } else {
+        await expect(b).toHaveText(/.+/);
+      }
       await b.focus();
       const ring = await b.evaluate((el) => {
         const cs = getComputedStyle(el);

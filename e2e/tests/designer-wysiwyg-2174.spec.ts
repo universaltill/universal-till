@@ -195,6 +195,8 @@ test.describe('Quick Buttons Designer as a live sale-screen replica (ut-docs#217
     // Reorder by keyboard: the new category is last, so "move later" is
     // disabled and "move earlier" works from the keyboard — and after the
     // replica re-renders, focus is back on the same control (not <body>).
+    // ut-docs#2699: the pair lives in the row's inline form now.
+    await page.locator(`#designer-cat-open-${id}`).click();
     const up = page.locator(`#designer-cat-up-${id}`);
     await expect(page.locator(`#designer-cat-down-${id}`)).toBeDisabled();
     await up.focus();
