@@ -230,45 +230,10 @@
     </div>
   </div>
 
-  <!-- Item customization (ADR-0020): modifier groups (e.g. "Extras") and
-       their options (e.g. "Extra shot", +price), shown by the cashier and
-       kiosk picker. ut-docs#1957: the create/edit CRUD used to be embedded
-       directly in this panel (a full modifier-group/option admin sitting
-       right under the variants grid), which a product-owner review found
-       confusing — "I saw the customization groups under the variants".
-       That CRUD now lives on /modifiers (the shop-wide home, grouped per
-       item) and, for a quick in-context edit, in the nested
-       #modifier-groups-modal dialog opened by the button below — see
-       catalog.html for that dialog's static markup and
-       modifier_group_admin.html for the reused form partial. This panel
-       keeps only a compact, read-only summary: it must NEVER regain a
-       target="_blank"/window.open/location navigation here — the kiosk
-       build runs fully chromeless (see base.html ~line 131), so a new
-       tab/window has nowhere to land and would either no-op or navigate in
-       place, losing this dialog's own unsaved item-form edits underneath. -->
-  <div class="catalog-detail-modifiers-summary">
-    <div class="muted catalog-detail-label">{{ T "catalog.modifiers.title" }}</div>
-    {{ if .ModifierGroupNames }}
-    <p class="catalog-modifiers-summary-line">{{ .ModifierGroupNames }}</p>
-    {{ end }}
-    {{/* ut-docs#2284: groups inherited from the item's category (ADR-0094),
-         minus its opt-outs — named here so an item customised entirely
-         through its category never reads "no customization groups yet";
-         the skip/use-again toggle lives in the nested dialog below. */}}
-    {{ if .InheritedGroupNames }}
-    <p class="catalog-modifiers-summary-line muted">{{ printf (T "catalog.modifiers.inherited_summary") .InheritedGroupNames }}</p>
-    {{ end }}
-    {{ if and (not .ModifierGroupNames) (not .InheritedGroupNames) }}
-    <p class="muted">{{ T "catalog.modifiers.summary_none" }}</p>
-    {{ end }}
-    <button type="button" class="btn secondary" id="manage-modifiers-btn" data-item-id="{{ .ItemID }}"
-            hx-get="/api/catalog/modifier-groups-panel?item_id={{ .ItemID }}"
-            hx-target="#modifier-groups-modal-list" hx-swap="outerHTML"
-            hx-on::after-request="if (event.detail.successful) { document.getElementById('modifier-groups-modal').show(); }">
-      {{ T "catalog.modifiers.manage" }}
-    </button>
-  </div>
-
+  {{/* ut-docs#2211: nothing about modifiers lives in this panel any more
+       — the item's groups, the attach picker and the category-inherited
+       groups are the item editor's own Modifiers tab (catalog.html,
+       #item-form-panel-modifiers). Don't add a summary back here. */}}
   <!-- ut-docs#2284: kitchen-printer routing from the item's side. What the
        item's category routes to is shown as text (edited on /categories or
        /kitchen-stations); the checkboxes are the item's OWN override —
@@ -282,7 +247,7 @@
   <div class="catalog-detail-routing">
     <div class="muted catalog-detail-label">{{ T "catalog.routing.title" }}</div>
     <p class="muted catalog-routing-inherited">{{ if .CategoryStationNames }}{{ printf (T "catalog.routing.inherited") .CategoryStationNames }}{{ else }}{{ T "catalog.routing.inherited_default" }}{{ end }}</p>
-    {{ if .HasItemRoutes }}<p class="catalog-modifiers-summary-line">{{ T "catalog.routing.override_active" }}</p>{{ end }}
+    {{ if .HasItemRoutes }}<p class="catalog-routing-override">{{ T "catalog.routing.override_active" }}</p>{{ end }}
     <form id="item-routing-form" hx-post="/api/catalog/item-station-routes" hx-target="#catalog-variants" hx-swap="outerHTML" class="catalog-routing-form">
       <input type="hidden" name="panelItem" value="{{ .ItemID }}">
       <input type="hidden" name="itemId" value="{{ .ItemID }}">
@@ -310,9 +275,6 @@
           el.value = window.utCurrency.toMajor(minor);
         }
       });
-      // ut-docs#1957: .modifier-price-major fields no longer live in this
-      // panel — they moved to modifier_group_admin.html, which carries its
-      // own identical, self-scoped currency-conversion script.
       // ut-docs#1900: at most two option sets per item. The repo enforces
       // this for real (ApplyOptionSetsToItem); this only greys out the
       // remaining boxes once two are ticked so the limit is visible before
