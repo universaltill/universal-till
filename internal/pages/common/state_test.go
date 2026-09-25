@@ -826,3 +826,11 @@ func TestFiscalPendingSignRetriesSettingsKeyMatchesCommon(t *testing.T) {
 		t.Fatalf("data.FiscalPendingSignRetriesSettingsKey = %q, want it to match common.KeyPendingFiscalSignRetries = %q", data.FiscalPendingSignRetriesSettingsKey, KeyPendingFiscalSignRetries)
 	}
 }
+
+// ut-docs#2783: the theme is per till; data.PerTillSettingPrefixes names it
+// by data.ThemeSettingsKey, so it must be the very key SaveState writes.
+func TestThemeSettingsKeyMatchesCommon(t *testing.T) {
+	if data.ThemeSettingsKey != KeyTheme {
+		t.Fatalf("data.ThemeSettingsKey = %q, want it to match common.KeyTheme = %q", data.ThemeSettingsKey, KeyTheme)
+	}
+}

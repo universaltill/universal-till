@@ -282,6 +282,49 @@ func TestAdminDumpApplyRoundTrip_AutoUpdateLastAttemptNeverSyncs(t *testing.T) {
 	}
 }
 
+// ut-docs#2783: the theme is per station (product-owner decision
+// 2026-09-25). Synced shop-wide, a theme picked on a joined till was
+// overwritten by the main till's value on the next admin pull whose
+// fingerprint moved (every ~2 min on a busy shop), and the page's
+// /ui/theme-sync poll then flipped the open screen back. Both ends enforce
+// it: the main till never dumps it, and a replica never applies it from a
+// pre-fix main till that still sends it.
+func TestAdminDumpApplyRoundTrip_ThemeIsPerTillAndNeverSyncs(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	mustExec(t, primary, `INSERT OR REPLACE INTO settings (key, value) VALUES ('theme', 'monarch'), ('store.currency', 'EUR')`)
+	mustExec(t, replica, `INSERT OR REPLACE INTO settings (key, value) VALUES ('theme', 'slate')`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	for _, rec := range bundle.Tables["settings"] {
+		if rec["key"] == ThemeSettingsKey {
+			t.Fatal("the main till's theme leaked into the admin dump")
+		}
+	}
+
+	// A pre-fix main till still sends its theme row: the replica must
+	// ignore it at the sink too.
+	legacy := wireTrip(t, bundle)
+	legacy.Tables["settings"] = append(legacy.Tables["settings"], map[string]any{"key": "theme", "value": "monarch", "updated_at": "2026-09-25T16:05:28Z"})
+	for i := 0; i < 3; i++ { // repeated pulls, as the 30 s drift loop does
+		if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, legacy); err != nil {
+			t.Fatalf("apply %d: %v", i, err)
+		}
+	}
+	var v string
+	if err := replica.QueryRow(`SELECT value FROM settings WHERE key = 'theme'`).Scan(&v); err != nil || v != "slate" {
+		t.Fatalf("replica's own theme overwritten by an admin pull: got %q, want slate (err=%v)", v, err)
+	}
+	if err := replica.QueryRow(`SELECT value FROM settings WHERE key = 'store.currency'`).Scan(&v); err != nil || v != "EUR" {
+		t.Fatalf("shop-wide settings must still sync: store.currency = %q err=%v", v, err)
+	}
+}
+
 // ut-docs#405: the shop's till roster now syncs like any other admin
 // table, but bearer_hash is that row's sync-auth secret and must never
 // leave the primary — redactCols strips it out of the dump, and migration

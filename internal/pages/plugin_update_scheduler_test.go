@@ -88,7 +88,7 @@ func seededSchedulerCatalogRepo(t *testing.T, summaries []marketplace.PluginSumm
 func resetPendingUpdatesAfterTest(t *testing.T) {
 	t.Helper()
 	before := plugins.CurrentPendingUpdates()
-	t.Cleanup(func() { plugins.SetPendingUpdates(before.Count, before.LanguagePending) })
+	t.Cleanup(func() { plugins.PublishPendingUpdates(before) })
 }
 
 func TestPluginUpdateCheckTick_AutoAppliesLanguagePacksOnly(t *testing.T) {
@@ -156,6 +156,8 @@ func TestPluginUpdateCheckTick_ReplicaNeverAutoApplies(t *testing.T) {
 		t.Fatalf("pending count = %d, want 1 (even a language-pack update stays pending on a replica)", got.Count)
 	} else if !got.LanguagePending {
 		t.Fatalf("LanguagePending = false, want true — a replica's pending language-pack update must surface distinctly (ut-docs#2299)")
+	} else if got.MainTillURL != "https://primary.example" {
+		t.Fatalf("MainTillURL = %q, want the main till's address so the chip can point there (ut-docs#2783)", got.MainTillURL)
 	}
 }
 
@@ -186,7 +188,7 @@ func TestPluginUpdateCheckTick_FailedAutoApplyCountsAsPending(t *testing.T) {
 
 func TestPluginUpdateCheckTick_NoCatalogRepo_NoOp(t *testing.T) {
 	resetPendingUpdatesAfterTest(t)
-	plugins.SetPendingUpdates(99, false)
+	plugins.PublishPendingUpdates(plugins.PendingUpdateStatus{Count: 99, LanguagePending: false})
 	d := &common.Deps{Db: openRealSchemaPagesDB(t), Settings: settings.NewStore(nil), CatalogRepo: nil}
 
 	pluginUpdateCheckTick(t.Context(), d)
@@ -198,7 +200,7 @@ func TestPluginUpdateCheckTick_NoCatalogRepo_NoOp(t *testing.T) {
 
 func TestPluginUpdateCheckTick_CatalogReadError_LeavesPendingUnchanged(t *testing.T) {
 	resetPendingUpdatesAfterTest(t)
-	plugins.SetPendingUpdates(7, false)
+	plugins.PublishPendingUpdates(plugins.PendingUpdateStatus{Count: 7, LanguagePending: false})
 	db := openRealSchemaPagesDB(t)
 	// CheckForUpdates short-circuits before ever touching the catalog when
 	// there are zero installed plugins, so an installed plugin is needed

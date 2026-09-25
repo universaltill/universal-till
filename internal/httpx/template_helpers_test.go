@@ -433,8 +433,8 @@ func TestBaseLayoutPSUChipAbsentWhenHealthy(t *testing.T) {
 // nothing else covers it.
 func TestBaseLayoutPluginUpdateChipRendersWhenPending(t *testing.T) {
 	before := plugins.CurrentPendingUpdates()
-	t.Cleanup(func() { plugins.SetPendingUpdates(before.Count, before.LanguagePending) })
-	plugins.SetPendingUpdates(3, false)
+	t.Cleanup(func() { plugins.PublishPendingUpdates(before) })
+	plugins.PublishPendingUpdates(plugins.PendingUpdateStatus{Count: 3, LanguagePending: false})
 
 	InitI18n(realI18n(t), "en")
 	r, err := NewRenderer(
@@ -474,6 +474,62 @@ func TestBaseLayoutPluginUpdateChipRendersWhenPending(t *testing.T) {
 	}
 }
 
+// ut-docs#2783: a joined till never installs a plugin update itself — it
+// follows the main till's versions (ut-docs#460) — so "Plugin updates
+// available (N)" there was a chip the owner could not act on. On a joined
+// till it says updates are installed from the main till, and links to the
+// main till's own Plugins page where a cross-device link is actionable, or
+// to this till's Tills page (which names the main till) on a kiosk where it
+// is not.
+func TestBaseLayoutPluginUpdateChipOnAJoinedTillPointsAtTheMainTill(t *testing.T) {
+	before := plugins.CurrentPendingUpdates()
+	t.Cleanup(func() { plugins.PublishPendingUpdates(before) })
+	plugins.PublishPendingUpdates(plugins.PendingUpdateStatus{Count: 2, MainTillURL: "http://192.168.1.136:8080"})
+	origLink := CrossDeviceLinkActionable
+	t.Cleanup(func() { CrossDeviceLinkActionable = origLink })
+	InitI18n(realI18n(t), "en")
+
+	chipOf := func(t *testing.T) string {
+		t.Helper()
+		r, err := NewRenderer(
+			filepath.Join("web", "ui", "layouts", "base.html"),
+			filepath.Join("web", "ui", "pages", "pin.html"),
+			FuncsFor("en"),
+		)
+		if err != nil {
+			t.Fatalf("NewRenderer: %v", err)
+		}
+		w := httptest.NewRecorder()
+		if err := r.Render(w, "base", map[string]any{"title": "Change PIN", "theme": "", "menuItems": nil, "errKey": ""}); err != nil {
+			t.Fatalf("Render: %v", err)
+		}
+		body := w.Body.String()
+		idx := strings.Index(body, `data-testid="sb-plugin-update"`)
+		if idx == -1 {
+			t.Fatalf("expected the plugin-update chip on a joined till, got %.800s", body)
+		}
+		open := strings.LastIndex(body[:idx], "<a ")
+		end := strings.Index(body[idx:], "</a>")
+		chip := body[open : idx+end]
+		if strings.Contains(chip, "Plugin updates available") {
+			t.Fatalf("a joined till must not offer updates it cannot install: %q", chip)
+		}
+		if !strings.Contains(chip, "Updates are installed from the main till") || !strings.Contains(chip, "(2)") {
+			t.Fatalf("expected the main-till wording with the count, got %q", chip)
+		}
+		return chip
+	}
+
+	CrossDeviceLinkActionable = func() bool { return true }
+	if chip := chipOf(t); !strings.Contains(chip, `href="http://192.168.1.136:8080/plugins"`) || !strings.Contains(chip, `hx-boost="false"`) {
+		t.Fatalf("expected a link to the main till's Plugins page, got %q", chip)
+	}
+	CrossDeviceLinkActionable = func() bool { return false }
+	if chip := chipOf(t); !strings.Contains(chip, `href="/tills"`) {
+		t.Fatalf("on a kiosk (no way back from another device's UI) expected the local Tills page, got %q", chip)
+	}
+}
+
 // The language-pack-specific chip (ut-docs#2299) is a SEPARATE element from
 // the generic plugin-update chip above — both can render together (a
 // joined till's pending language pack plus some other pending plugin type),
@@ -481,8 +537,8 @@ func TestBaseLayoutPluginUpdateChipRendersWhenPending(t *testing.T) {
 // than assuming it piggybacks on the generic chip's assertions.
 func TestBaseLayoutLanguagePackUpdateChipRendersWhenLanguagePending(t *testing.T) {
 	before := plugins.CurrentPendingUpdates()
-	t.Cleanup(func() { plugins.SetPendingUpdates(before.Count, before.LanguagePending) })
-	plugins.SetPendingUpdates(1, true)
+	t.Cleanup(func() { plugins.PublishPendingUpdates(before) })
+	plugins.PublishPendingUpdates(plugins.PendingUpdateStatus{Count: 1, LanguagePending: true})
 
 	InitI18n(realI18n(t), "en")
 	r, err := NewRenderer(
@@ -520,8 +576,8 @@ func TestBaseLayoutLanguagePackUpdateChipRendersWhenLanguagePending(t *testing.T
 // with other updates pending (Count > 0) — the two states are independent.
 func TestBaseLayoutLanguagePackUpdateChipAbsentWhenNotLanguagePending(t *testing.T) {
 	before := plugins.CurrentPendingUpdates()
-	t.Cleanup(func() { plugins.SetPendingUpdates(before.Count, before.LanguagePending) })
-	plugins.SetPendingUpdates(2, false)
+	t.Cleanup(func() { plugins.PublishPendingUpdates(before) })
+	plugins.PublishPendingUpdates(plugins.PendingUpdateStatus{Count: 2, LanguagePending: false})
 
 	InitI18n(realI18n(t), "en")
 	r, err := NewRenderer(
@@ -547,8 +603,8 @@ func TestBaseLayoutLanguagePackUpdateChipAbsentWhenNotLanguagePending(t *testing
 // zero value.
 func TestBaseLayoutPluginUpdateChipAbsentWhenNonePending(t *testing.T) {
 	before := plugins.CurrentPendingUpdates()
-	t.Cleanup(func() { plugins.SetPendingUpdates(before.Count, before.LanguagePending) })
-	plugins.SetPendingUpdates(0, false)
+	t.Cleanup(func() { plugins.PublishPendingUpdates(before) })
+	plugins.PublishPendingUpdates(plugins.PendingUpdateStatus{Count: 0, LanguagePending: false})
 
 	InitI18n(realI18n(t), "en")
 	r, err := NewRenderer(
