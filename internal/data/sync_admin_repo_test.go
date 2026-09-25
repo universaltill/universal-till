@@ -253,6 +253,35 @@ func TestAdminDumpApplyRoundTrip_FiscalPendingSignRetriesNeverSyncs(t *testing.T
 	}
 }
 
+// ut-docs#2726: update.auto_last_attempt records when THIS till tried its
+// nightly update. Synced shop-wide, the main till's 03:0x attempt landed on
+// every replica as "already attempted today" and silently cancelled theirs.
+// The schedule itself (update.auto_enabled / update.auto_time) stays shop-wide.
+func TestAdminDumpApplyRoundTrip_AutoUpdateLastAttemptNeverSyncs(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	mustExec(t, primary, `INSERT INTO settings (key, value) VALUES ('update.auto_last_attempt', '2026-09-25'), ('update.auto_enabled', 'false')`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	var n int
+	_ = replica.QueryRow(`SELECT COUNT(*) FROM settings WHERE key = 'update.auto_last_attempt'`).Scan(&n)
+	if n != 0 {
+		t.Fatal("the main till's update attempt date synced onto the replica")
+	}
+	var v string
+	if err := replica.QueryRow(`SELECT value FROM settings WHERE key = 'update.auto_enabled'`).Scan(&v); err != nil || v != "false" {
+		t.Fatalf("the shop's auto-update switch must still sync: got %q err=%v", v, err)
+	}
+}
+
 // ut-docs#405: the shop's till roster now syncs like any other admin
 // table, but bearer_hash is that row's sync-auth secret and must never
 // leave the primary — redactCols strips it out of the dump, and migration

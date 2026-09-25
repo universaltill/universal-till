@@ -435,8 +435,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			}
 			feeRows = append(feeRows, fr)
 		}
-		autoUpdateEnabled, _, _ := d.Settings.Get(r.Context(), keyAutoUpdateEnabled)
-		autoUpdateTime, _, _ := d.Settings.Get(r.Context(), keyAutoUpdateTime)
+		// The effective schedule, not the raw rows: an untouched till shows
+		// On at 03:00 because that is what the scheduler does (ut-docs#2726).
+		autoUpdateEnabled, autoUpdateTime := autoUpdateSchedule(func(k string) string {
+			v, _, _ := d.Settings.Get(r.Context(), k)
+			return v
+		})
 		// Sample-data note (ut-docs#539, extended to customers/promos by
 		// ut-docs#567): best-effort — a schema-less test DB or a query
 		// error just renders the page without the note, same posture as
@@ -689,7 +693,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"payDefault":             payDefault,
 			"payFees":                feeRows,
 			"exportEntries":          exportEntries,
-			"autoUpdateEnabled":      autoUpdateEnabled == "true",
+			"autoUpdateEnabled":      autoUpdateEnabled,
 			"autoUpdateTime":         autoUpdateTime,
 			"TillName":               tillNameOrDefault(r.Context(), d, locale),
 			"TillRegisterID":         tillRegisterID,

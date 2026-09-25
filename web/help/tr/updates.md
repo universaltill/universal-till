@@ -16,6 +16,16 @@ Kasa yeni sürümleri denetler ve çıktığında haber verir; çoğu platformda
 2. Güncelleme önerildiğinde Şimdi güncelle'ye tıklayın — uygulama yeni sürümle yeniden başlar.
 3. Durum çubuğundaki güncelleme rozeti de aynısını gösterir — Windows ve Mac'te dokunulduğunda indirme sayfasını açar; uygulama içi güncellemenin kullanılamadığı kurulumlarda (örneğin kiosk modu) sadece bağlantısız bilgilendirme metni gösterilir.
 
+## Otomatik güncellemeler
+
+Kasa, siz kapatmadıkça gece kendini günceller.
+
+1. Ayarlar → Yazılım güncelleme → Otomatik güncelle baştan açıktır, saat 03:00'te. Her kasa bu saatten sonraki 30 dakika içinde kendi anını seçer, böylece birkaç kasa aynı anda yeniden başlamaz.
+2. Bir satışın ortasında asla yeniden başlamaz. Bir sepette (self servis veya masa siparişi dahil) hâlâ ürün varsa, sepet boşalana kadar bekler. Bu yarım saat içinde olmazsa ya da kasa o sırada kapalıysa, ertesi gece yeniden dener.
+3. Otomatik güncellemeleri durdurmak için Otomatik güncelle işaretini kaldırıp Kaydet'e tıklayın. Kasa bu seçimi korur.
+4. Ana kasaya bağlanmış ek bir kasa kendini güncellemez; böylece hiçbir zaman ana kasanın sürümünün önüne geçmez. Ana kasa güncellendikten sonra ek kasayı kendi Ayarlar'ından güncelleyin.
+5. Windows ve Android kasalar güncellemeleri henüz kendi başına kuramaz. Onları yukarıda anlatıldığı gibi elle güncelleyin.
+
 ## Android kasalarda
 
 Android uygulaması kendini masaüstü sürümleri gibi değiştiremez; bunun yerine yeni sürümü Android'in kendi yükleyicisine verir. Adımlar biraz farklıdır:

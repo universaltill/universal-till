@@ -17,6 +17,16 @@ Die Kasse prüft auf neue Versionen und teilt mit, wenn eine verfügbar ist; auf
 2. Wird ein Update angeboten, klicken Sie auf „Jetzt aktualisieren“ — die App startet mit der neuen Version neu.
 3. Der Update-Chip in der Statusleiste spiegelt dies wider: Unter Windows und macOS führt er direkt zur Download-Seite; bei Installationen ohne App-internes Update (zum Beispiel einem Kiosk) ist er einfach reiner Text ohne etwas zum Antippen.
 
+## Automatische Updates
+
+Die Kasse aktualisiert sich nachts selbst, solange Sie das nicht ausschalten.
+
+1. Einstellungen → Software-Update → „Automatisch aktualisieren“ ist von Anfang an eingeschaltet, um 03:00 Uhr. Jede Kasse wählt ihren eigenen Zeitpunkt innerhalb der 30 Minuten danach, damit nicht mehrere Kassen gleichzeitig neu starten.
+2. Sie startet nie mitten in einem Verkauf neu. Liegen noch Artikel in einem Warenkorb (auch in einer Selbstbedienungs- oder Tischbestellung), wartet sie, bis der Warenkorb leer ist. Geschieht das nicht innerhalb einer halben Stunde oder war die Kasse zu dieser Zeit ausgeschaltet, versucht sie es in der nächsten Nacht erneut.
+3. Um automatische Updates zu beenden, entfernen Sie das Häkchen bei „Automatisch aktualisieren“ und klicken Sie auf Speichern. Die Kasse behält diese Einstellung.
+4. Eine zusätzliche Kasse, die mit einer Hauptkasse verbunden ist, aktualisiert sich nicht selbst. So ist sie nie auf einer neueren Version als die Hauptkasse. Sobald die Hauptkasse aktualisiert ist, aktualisieren Sie die zusätzliche Kasse über ihre eigenen Einstellungen.
+5. Kassen unter Windows und Android können Updates noch nicht selbst installieren. Aktualisieren Sie sie von Hand wie oben beschrieben.
+
 ## Auf einer Android-Kasse
 
 Die Android-App kann sich nicht wie die Desktop-Versionen selbst ersetzen, sie übergibt die neue Version daher an Androids eigenen Installer. Die Schritte sind etwas anders:
