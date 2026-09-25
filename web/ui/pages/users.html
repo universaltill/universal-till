@@ -8,8 +8,8 @@
 
 {{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
 
-<div class="users-layout">
-  <div class="card users-list">
+<div class="users-layout" data-ut-refresh="#users-list">
+  <div class="card users-list" id="users-list">
     <table class="table">
       <thead>
         <tr>
@@ -35,7 +35,9 @@
                  hx-target/hx-swap="innerHTML" so BOTH the elevation dialog's
                  needsElevation hint and this handler's own success/error
                  message land in the same per-row span, and
-                 hx-on::after-request reloads the page on success only —
+                 hx-on::after-request refreshes the users list on success
+                 only (UT.refreshRegion, app.js — ut-docs#2762; it was a
+                 full-page reload) —
                  mirrors shifts.html's close/open-shift forms exactly, since
                  (like a shift close) a successful write here changes what
                  this row itself displays (role/PIN-set/active state), not
@@ -59,15 +61,15 @@
                  X-UT-Response response header (elevation.go's
                  renderElevationPrompt / users_page.go's usersRespondOK|
                  Error) is the one signal that actually distinguishes all
-                 THREE outcomes — reload only fires on "ok". */}}
+                 THREE outcomes — the refresh only fires on "ok". */}}
             <form hx-post="/api/users/{{ .ID }}/pin" hx-target="#user-msg-{{ .ID }}" hx-swap="innerHTML"
-                  hx-on::after-request="if ((event.detail.xhr.getResponseHeader('X-UT-Response')||'')==='ok') window.location.reload()" class="users-inline">
+                  hx-on::after-request="if ((event.detail.xhr.getResponseHeader('X-UT-Response')||'')==='ok') UT.refreshRegion(this)" class="users-inline">
               <input type="password" name="pin" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8"
                      placeholder="{{ T "users.new_pin" }}" required />
               <button type="submit" class="btn secondary">{{ T "users.set_pin" }}</button>
             </form>
             <form hx-post="/api/users/{{ .ID }}/active" hx-target="#user-msg-{{ .ID }}" hx-swap="innerHTML"
-                  hx-on::after-request="if ((event.detail.xhr.getResponseHeader('X-UT-Response')||'')==='ok') window.location.reload()" class="users-inline">
+                  hx-on::after-request="if ((event.detail.xhr.getResponseHeader('X-UT-Response')||'')==='ok') UT.refreshRegion(this)" class="users-inline">
               <input type="hidden" name="active" value="{{ if .IsActive }}0{{ else }}1{{ end }}" />
               <button type="submit" class="btn secondary">
                 {{ if .IsActive }}{{ T "users.deactivate" }}{{ else }}{{ T "users.activate" }}{{ end }}
@@ -94,7 +96,7 @@
             {{/* Same X-UT-Response discriminator as the pin/active forms
                  above — see their shared comment. */}}
             <form hx-post="/api/users/{{ .ID }}/role" hx-target="#user-msg-{{ .ID }}" hx-swap="innerHTML"
-                  hx-on::after-request="if ((event.detail.xhr.getResponseHeader('X-UT-Response')||'')==='ok') window.location.reload()" class="users-inline">
+                  hx-on::after-request="if ((event.detail.xhr.getResponseHeader('X-UT-Response')||'')==='ok') UT.refreshRegion(this)" class="users-inline">
               <select name="role">
                 <option value="cashier" {{ if eq .Role "cashier" }}selected{{ end }}>{{ T "users.role.cashier" }}</option>
                 {{ if $.isAdmin }}
@@ -125,12 +127,12 @@
     {{/* ut-docs#795: POST /api/users is a checkOrElevate("user_management")
          site now — same hx-target/hx-swap/hx-on::after-request convention
          as the row forms above (a new row appearing in the list IS this
-         form's own "success" state, so a reload is the simplest correct
-         refresh, matching shifts.html's precedent). Same X-UT-Response
+         form's own "success" state, so it clears itself and refreshes
+         #users-list — ut-docs#2762, was a full-page reload). Same X-UT-Response
          discriminator as the row forms above — see their shared comment
          (Blocker 1/2, ut-docs#795 review). */}}
-    <form hx-post="/api/users" hx-target="#new-user-msg" hx-swap="innerHTML"
-          hx-on::after-request="if ((event.detail.xhr.getResponseHeader('X-UT-Response')||'')==='ok') window.location.reload()" autocomplete="off">
+    <form data-ut-reset-on-ok hx-post="/api/users" hx-target="#new-user-msg" hx-swap="innerHTML"
+          hx-on::after-request="if ((event.detail.xhr.getResponseHeader('X-UT-Response')||'')==='ok') { this.reset(); UT.refreshRegion(this); }" autocomplete="off">
       <label>{{ T "users.new.username" }} <input type="text" name="username" required /></label>
       <label>{{ T "users.new.display" }} <input type="text" name="display_name" required /></label>
       <label>{{ T "users.col.role" }}

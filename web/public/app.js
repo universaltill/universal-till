@@ -2739,3 +2739,58 @@ window.utTabBarFade = function (el) {
     showOrderTypePromptModal(function () { overlay.show(); });
   };
 })();
+
+// ut-docs#2762: refresh only the region a successful write changed, instead
+// of window.location.reload() (a full-page flash of the whole shell). The
+// region is named declaratively: the nearest ancestor of `el` carrying
+// data-ut-refresh="<selector>". The current URL is re-fetched as a plain
+// page GET (never cached, no HX-Request, so it is the same document a
+// reload would get), the matching element is lifted out of it and swapped
+// in place, then handed to htmx.process so its forms work again. The
+// triggering action's own message (el, or el's hx-target) is carried over,
+// so a "✓ Saved" confirmation survives the swap. Anything unexpected (no
+// host, a non-2xx such as an expired session, the region missing from the
+// response, a network error) falls back to the old full reload — never
+// worse than before.
+(function () {
+  var UT = window.UT = window.UT || {};
+  UT.refreshRegion = function (el) {
+    var host = null;
+    try {
+      if (typeof el === 'string') el = document.querySelector(el);
+      host = el && el.closest ? el.closest('[data-ut-refresh]') : null;
+    } catch (e) { host = null; }
+    var sel = host && host.getAttribute('data-ut-refresh');
+    var cur = sel && document.querySelector(sel);
+    if (!cur || !window.fetch || !window.DOMParser) { window.location.reload(); return Promise.resolve(false); }
+    // Only the triggering action's own message is carried over (el itself,
+    // or el's hx-target): a stale hint or refusal in ANOTHER row is dropped,
+    // exactly as a reload dropped it.
+    var keep = {};
+    var msg = null;
+    try {
+      msg = el.id && el.matches('[aria-live]') ? el
+        : (el.getAttribute && el.getAttribute('hx-target') ? document.querySelector(el.getAttribute('hx-target')) : null);
+    } catch (e) { msg = null; }
+    if (msg && msg.id && cur.contains(msg) && msg.innerHTML.trim()) keep[msg.id] = msg.innerHTML;
+    return fetch(window.location.pathname + window.location.search, { credentials: 'same-origin', cache: 'no-store' })
+      .then(function (r) {
+        if (!r.ok) throw new Error('status ' + r.status);
+        return r.text();
+      })
+      .then(function (html) {
+        var fresh = new DOMParser().parseFromString(html, 'text/html').querySelector(sel);
+        var live = document.querySelector(sel);
+        if (!fresh || !live) throw new Error('region missing');
+        fresh = document.importNode(fresh, true);
+        live.replaceWith(fresh);
+        Object.keys(keep).forEach(function (id) {
+          var m = document.getElementById(id);
+          if (m) m.innerHTML = keep[id];
+        });
+        if (window.htmx) window.htmx.process(fresh);
+        return true;
+      })
+      .catch(function () { window.location.reload(); return false; });
+  };
+})();
