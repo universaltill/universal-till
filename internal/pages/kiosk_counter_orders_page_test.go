@@ -6,6 +6,7 @@ import (
 	"html"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -138,6 +139,9 @@ func TestKioskCounterOrdersPage_ItemsFollowViewerLocaleDigitShape(t *testing.T) 
 // not an absolute wall-clock timestamp: staff scanning this board need to
 // spot a stale order at a glance, and a column literally labeled "Age" that
 // actually renders "09/11/2026 03:05" tells them nothing at a glance.
+// absoluteDateShape matches dd/mm/yyyy, dd.mm.yyyy and yyyy-mm-dd renders.
+var absoluteDateShape = regexp.MustCompile(`\b\d{1,2}[/.]\d{1,2}[/.]\d{2,4}\b|\b\d{4}-\d{2}-\d{2}\b`)
+
 func TestKioskCounterOrdersPage_ColumnShowsElapsedAgeNotAbsoluteTimestamp(t *testing.T) {
 	dp, dbase := setupKioskCounterOrdersDeps(t)
 	repo := data.NewKioskCounterOrdersRepo(dbase)
@@ -167,9 +171,15 @@ func TestKioskCounterOrdersPage_ColumnShowsElapsedAgeNotAbsoluteTimestamp(t *tes
 		t.Fatalf("Age column must show elapsed minutes (want \"42 min\"), got: %s", body)
 	}
 	// The current year appearing anywhere near the row would mean this
-	// regressed back to an absolute-datetime render.
-	if strings.Contains(body, strconv.Itoa(time.Now().Year())) {
+	// regressed back to an absolute-datetime render. The order's random
+	// UUID is stripped first: it is hex and can itself contain the year
+	// (ut-docs#2749 — "…c01e2026f39a" failed release v0.23.0).
+	withoutID := strings.ReplaceAll(body, created.ID, "")
+	if strings.Contains(withoutID, strconv.Itoa(time.Now().Year())) {
 		t.Fatalf("Age column must not render an absolute date/year: %s", body)
+	}
+	if absoluteDateShape.MatchString(withoutID) {
+		t.Fatalf("Age column must not render a date: %s", body)
 	}
 }
 
