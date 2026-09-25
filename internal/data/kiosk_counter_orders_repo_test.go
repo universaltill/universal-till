@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -260,5 +261,117 @@ func TestKioskCounterOrdersRepo_ListOpenNoTableIsEmpty(t *testing.T) {
 	}
 	if open[0].TableID != "" || open[0].TableLabel != "" {
 		t.Fatalf("expected no table on a plain counter order, got TableID=%q TableLabel=%q", open[0].TableID, open[0].TableLabel)
+	}
+}
+
+// ut-docs#2703: a pay-at-counter order is now parked as a held sale; its
+// kiosk_counter_orders row only records the "C-" number and what was
+// ordered. It shares the one C- sequence with legacy rows, never shows on
+// the legacy staff board, and can never be "collected" without payment.
+func TestKioskCounterOrdersRepo_HeldOrderSharesSequenceButIsNotOpen(t *testing.T) {
+	d := openKioskCounterOrdersDB(t, "counter_orders_held.db")
+	ctx := context.Background()
+	repo := NewKioskCounterOrdersRepo(d.DB)
+
+	legacy, err := repo.Create(ctx, KioskCounterOrder{Lines: []KioskCounterOrderLine{{Name: "Tea", Qty: 1}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, err := repo.Create(ctx, KioskCounterOrder{ID: "hold-abc", Status: KioskCounterOrderStatusHeld, Lines: []KioskCounterOrderLine{{Name: "Flat White", Qty: 1}}})
+	if err != nil {
+		t.Fatalf("Create(held): %v", err)
+	}
+	if legacy.DisplayNo != "C-1" || held.DisplayNo != "C-2" {
+		t.Fatalf("display numbers = %q, %q; want C-1, C-2 from one sequence", legacy.DisplayNo, held.DisplayNo)
+	}
+	if held.ID != "hold-abc" || held.Status != KioskCounterOrderStatusHeld {
+		t.Fatalf("Create(held) returned %+v", held)
+	}
+	open, err := repo.ListOpen(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 1 || open[0].ID != legacy.ID {
+		t.Fatalf("ListOpen = %+v, want only the legacy open row", open)
+	}
+	if err := repo.MarkCollected(ctx, held.ID); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	if err := d.DB.QueryRow(`SELECT status FROM kiosk_counter_orders WHERE id = ?`, held.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != KioskCounterOrderStatusHeld {
+		t.Fatalf("MarkCollected moved a held (unpaid) order to %q", status)
+	}
+}
+
+// ut-docs#2703 review F2: every till mints its own C- sequence from its own
+// kiosk_counter_orders table, and a held counter order is pushed to the
+// main till -- so two kiosks on two tills both minted "C-1" onto the main's
+// Open orders and into sales.display_no. The till's sync.receipt_prefix
+// namespaces the sequence exactly as NextDisplayNo does; no prefix keeps
+// the plain "C-n".
+func TestKioskCounterOrdersRepo_DisplayNoCarriesTillPrefix(t *testing.T) {
+	d := openKioskCounterOrdersDB(t, "counter_orders_prefix.db")
+	ctx := context.Background()
+	repo := NewKioskCounterOrdersRepo(d.DB)
+	line := []KioskCounterOrderLine{{Name: "Tea", Qty: 1}}
+
+	plain, err := repo.Create(ctx, KioskCounterOrder{Lines: line})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.DisplayNo != "C-1" {
+		t.Fatalf("no prefix configured: display_no = %q, want C-1", plain.DisplayNo)
+	}
+
+	if _, err := d.DB.Exec(`INSERT INTO settings (key, value) VALUES ('sync.receipt_prefix', 'T2-')`); err != nil {
+		t.Fatal(err)
+	}
+	// A counter number from another till (pushed to this one) must not
+	// bleed into this till's max either.
+	if _, err := d.DB.Exec(`INSERT INTO kiosk_counter_orders (id, display_no, order_type, lines_json, status, created_at) VALUES ('other', 'C-T9-40', '', '[]', 'held', '2026-09-25T10:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	first, err := repo.Create(ctx, KioskCounterOrder{Lines: line})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := repo.Create(ctx, KioskCounterOrder{Status: KioskCounterOrderStatusHeld, Lines: line})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.DisplayNo != "C-T2-1" || second.DisplayNo != "C-T2-2" {
+		t.Fatalf("prefixed display numbers = %q, %q; want C-T2-1, C-T2-2", first.DisplayNo, second.DisplayNo)
+	}
+}
+
+// ...and the sale display-number sequence still ignores every C-number a
+// paid counter order put into sales.display_no, prefixed or not.
+func TestPOSRepo_NextDisplayNo_IgnoresCounterOrderNumbers(t *testing.T) {
+	d := openKioskCounterOrdersDB(t, "counter_orders_nextdisplay.db")
+	ctx := context.Background()
+	pos := NewPOSRepo(d.DB)
+	for i, dn := range []string{"3", "C-9", "C-T2-50", "C-T2-7"} {
+		if _, err := d.DB.Exec(`INSERT INTO sales (id, receipt_no, display_no, status, sale_type, currency, subtotal, total, created_at)
+VALUES (?, ?, ?, 'completed', 'sale', 'GBP', 100, 100, '2026-09-25T10:00:00Z')`, fmt.Sprintf("s%d", i), fmt.Sprintf("R%d", i), dn); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := pos.NextDisplayNo(ctx, nil)
+	if err != nil || got != "4" {
+		t.Fatalf("NextDisplayNo(no prefix) = (%q,%v), want (4,nil): C-numbers must not count", got, err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO settings (key, value) VALUES ('sync.receipt_prefix', 'T2-')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO sales (id, receipt_no, display_no, status, sale_type, currency, subtotal, total, created_at)
+VALUES ('sp', 'T2-1', 'T2-5', 'completed', 'sale', 'GBP', 100, 100, '2026-09-25T10:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	got, err = pos.NextDisplayNo(ctx, nil)
+	if err != nil || got != "T2-6" {
+		t.Fatalf("NextDisplayNo(T2-) = (%q,%v), want (T2-6,nil): C-T2- numbers must not count", got, err)
 	}
 }

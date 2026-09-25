@@ -21,6 +21,7 @@ Bu kasada şu anda bekletilen her satış tek listede — kimin için, hangi mas
 ## Notlar
 
 - Biri bir satışı bekletene kadar liste boştur — sepeti bekletme ve geri çağırma için **Satış ve ödeme** konusuna bakın.
+- Self-servis kiosktan gelen kasada öde siparişleri de müşterinin sipariş numarasıyla adlandırılarak burada bekler (örneğin **C-12 · Paket**) — birine dokunun ve bekletilen herhangi bir satış gibi ödemeyi alın. Bkz. **Kasada öde**.
 - Bir sipariş üzerinde çalışılırken bu listeden çıkar ve yeniden bekletilirse özgün adıyla hemen geri gelir. Ödendiğinde ise kalıcı olarak gider — satış, diğer tüm satışlar gibi Günlük'tedir.
 - Bu, **Sipariş durumu** panosu (mutfağın hazırlanıyor / hazır / teslim alındı kuyruğu) değildir — orada zaten ödenmiş satışlar listelenir. Açık siparişler, henüz ödenmemiş satışlarla ilgilidir.
 - Tamamen çevrimdışı çalışır. Birden fazla kasası olan bir dükkanda, herhangi bir kasada bekletilen bir sipariş, ana kasaya erişilebildiği sürece diğer her kasada da burada görünür ve bunlardan herhangi birinden devam ettirilebilir — böylece ikinci bir kasa veya bir garsonun tableti, başkasının açtığı bir hesaba ekleme yapabilir. Ana kasaya erişilemiyorsa her kasa, eskisi gibi kendi beklettiği siparişleri göstermeye ve bunlarla çalışmaya devam eder.

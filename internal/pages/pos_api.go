@@ -192,7 +192,23 @@ func releaseTableClaim(ctx context.Context, d *common.Deps, repo *data.POSRepo, 
 // on printed receipts/tickets. The cashier tender path passes d.Engine; the
 // kiosk checkout passes d.KioskEngine (ut-docs#449: an anonymous kiosk
 // checkout must never reset the cashier's live basket, and vice versa).
-func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, repo *data.POSRepo, saleInput pos.SaleInput, payments []pos.PaymentInput, actorID string) (string, error) {
+func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, repo *data.POSRepo, saleInput pos.SaleInput, payments []pos.PaymentInput, actorID string, kitchenFilter kitchenLineFilter) (string, error) {
+	// ut-docs#2703: a basket resumed from a kiosk pay-at-counter order
+	// carries the order number the customer is holding ("C-12") -- it
+	// becomes this sale's display_no, so the receipt, the kitchen ticket
+	// and the order board all show the same number. And the kitchen print
+	// below sends only what the kitchen does not have yet: a table-QR
+	// order whose ticket printed at checkout carries, per line, how much
+	// was sent (BasketLine.KitchenSentQty), so items the cashier added
+	// after recalling it still print, and nothing prints twice. The number
+	// is read before engine.Reset() below clears the basket. kitchenFilter
+	// is the CALLER's kitchenDeltaFilter over the very slice it built
+	// saleInput.Lines from -- never a second engine.Lines() read here, which
+	// could see a different basket than the sale records. "" / a nil filter
+	// for every basket rung up on the till and for the kiosk card checkout.
+	if saleInput.DisplayNo == "" {
+		saleInput.DisplayNo = engine.OrderDisplayNo()
+	}
 	// DE+TR fiscal-signing-device hard gate (ADR-0048, ut-docs#715, fiscal.RequiresHardGate) — evaluated BEFORE the
 	// payment.<key>.authorize loop: "never configured" needs no plugin
 	// round trip, just local settings reads (never the network — a till
@@ -643,7 +659,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// Kitchen ticket to the separate kitchen printer, if one is
 	// configured (docs: arch/restaurant-phone-orders.md) — also async
 	// and best-effort; a no-op when no kitchen printer is set.
-	printKitchenAsync(d, receiptNo, actorID)
+	printKitchenAsync(d, receiptNo, actorID, kitchenFilter)
 
 	return saleID, nil
 }
@@ -1929,7 +1945,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			Offline:                offline,
 			VoucherIssues:          voucherIssues,
 		}
-		saleID, err := completeTender(r.Context(), d, d.Engine, repo, saleInput, payments, getSessionUserID(r))
+		saleID, err := completeTender(r.Context(), d, d.Engine, repo, saleInput, payments, getSessionUserID(r), kitchenDeltaFilter(lines))
 		if err != nil {
 			var declined *paymentDeclinedError
 			if errors.As(err, &declined) {

@@ -199,7 +199,7 @@ func TestAsyncPrintGoroutinesFinishBeforeWaitForAsyncWorkReturns(t *testing.T) {
 		// actorID "" -> audit_log.actor_id NULL (nullIfEmpty), so this
 		// doesn't need a seeded users row to satisfy the FK.
 		printReceiptAsync(dp, receiptNo, "")
-		printKitchenAsync(dp, receiptNo, "")
+		printKitchenAsync(dp, receiptNo, "", nil)
 		dp.WaitForAsyncWork()
 
 		var failureRows int
@@ -417,7 +417,7 @@ func TestAsyncPrintFailureSetsFlagAndSuccessClears(t *testing.T) {
 	}
 
 	printReceiptAsync(dp, "R-PF1", "")
-	printKitchenAsync(dp, "R-PF1", "")
+	printKitchenAsync(dp, "R-PF1", "", nil)
 	dp.WaitForAsyncWork()
 
 	entry := findRecentOrder(t, dp, "R-PF1")
@@ -446,7 +446,7 @@ func TestAsyncPrintFailureSetsFlagAndSuccessClears(t *testing.T) {
 	}
 
 	printReceiptAsync(dp, "R-PF1", "")
-	printKitchenAsync(dp, "R-PF1", "")
+	printKitchenAsync(dp, "R-PF1", "", nil)
 	dp.WaitForAsyncWork()
 
 	// Sanity: the "printer" files actually received bytes, so this was a
@@ -692,7 +692,7 @@ func TestAsyncPrintFailureIsRecordedWhenPrintCtxExpired(t *testing.T) {
 		<-ctx.Done()
 		return fmt.Errorf("printer write: %w", ctx.Err())
 	}
-	hangKitchen := func(ctx context.Context, _ *common.Deps, _, _, _ string) (int, []kitchenSendFailure, error) {
+	hangKitchen := func(ctx context.Context, _ *common.Deps, _, _, _ string, _ kitchenLineFilter) (int, []kitchenSendFailure, error) {
 		<-ctx.Done()
 		return 0, nil, fmt.Errorf("printer write: %w", ctx.Err())
 	}
@@ -715,7 +715,7 @@ func TestAsyncPrintFailureIsRecordedWhenPrintCtxExpired(t *testing.T) {
 	printReceiptFn, printKitchenFn = hang, hangKitchen
 
 	printReceiptAsync(dp, "R-EXP1", "")
-	printKitchenAsync(dp, "R-EXP1", "")
+	printKitchenAsync(dp, "R-EXP1", "", nil)
 	dp.WaitForAsyncWork()
 
 	entry := findRecentOrder(t, dp, "R-EXP1")
@@ -763,7 +763,7 @@ func TestAsyncPrintFailureIsRecordedWhenSettingsReadFails(t *testing.T) {
 	}
 
 	printReceiptAsync(dp, "R-SR1", "")
-	printKitchenAsync(dp, "R-SR1", "")
+	printKitchenAsync(dp, "R-SR1", "", nil)
 	dp.WaitForAsyncWork()
 
 	entry := findRecentOrder(t, dp, "R-SR1")
@@ -804,7 +804,7 @@ func TestAsyncPrintNoFailureFlagWhenPrinterGenuinelyOff(t *testing.T) {
 	seedReceiptSale(t, dp, "sale-off", "R-OFF1", "sale", "", 120, 0, 0)
 
 	printReceiptAsync(dp, "R-OFF1", "")
-	printKitchenAsync(dp, "R-OFF1", "")
+	printKitchenAsync(dp, "R-OFF1", "", nil)
 	dp.WaitForAsyncWork()
 
 	entry := findRecentOrder(t, dp, "R-OFF1")

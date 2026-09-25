@@ -3,23 +3,26 @@ id: kiosk-counter-orders
 title: Pay at counter
 section: Everyday selling
 order: 46
-summary: "The board for self-order kiosk orders placed in 'pay at counter' mode — see what's waiting and mark it collected."
+summary: "Self-order kiosk orders in 'pay at counter' mode: new ones wait in Open orders to be paid; this page lists older orders placed before that."
 routes: [/kiosk-counter-orders]
-keywords: [kiosk, self order, pay at counter, counter orders, collected]
+keywords: [kiosk, self order, pay at counter, counter orders, collected, open orders, C-number]
 ---
 
 # Pay at counter
 
-When the self-order kiosk is set to **pay at counter** mode (Settings → Kiosk payment mode), a customer's order is sent straight to the kitchen without taking any payment — they pay a person at the till when they collect it. This page is where staff see those orders and mark them collected.
+When the self-order kiosk is set to **pay at counter** mode (Settings → Kiosk payment mode), the customer orders at the kiosk and pays a person at the till. Each order gets a short number such as **C-12**, shown on the kiosk's confirmation screen.
 
 ## How to use it
 
-1. Open **Pay at counter** from the ☰ menu. This lists every open counter order, oldest first — its short reference, dine-in/takeaway, and what's in it.
-2. Take payment at the till as normal, using whichever tender method the customer wants — this board doesn't handle payment itself, it only tracks what's been ordered and not yet collected.
-3. Tap **Mark collected** once the customer has paid and has their order. The row disappears immediately.
+1. A pay-at-counter order waits on the till exactly like a held sale, named after its number and order type (for example **C-12 · Takeaway**). Find it under **Open orders** — from the ☰ menu, or the **Open orders** button next to the pay button on the sale screen.
+2. Tap the order to bring it into the basket with the items, options and prices the customer chose at the kiosk. You can still add or remove items before taking payment.
+3. Take payment as normal. The order becomes a real sale — it gets a receipt, it is in the Journal and in day-close, and it is fiscally signed wherever your country requires it — and the kitchen ticket prints at this point, showing the customer's number.
+4. This page, **Pay at counter**, only lists orders placed before orders started waiting in Open orders. Those were never paid on the till: ring each one up by hand on the sale screen, then tap **Mark collected**. The till asks you to confirm first, because the order was not paid here.
 
 ## Notes
 
-- A counter order is never a sale — it carries no price and never appears in reports, the journal or day-close totals. Ring up the customer's payment separately, the same way you would for a walk-up order taken at the till.
-- The board refreshes itself every few seconds.
-- Everything here works fully offline, like the rest of the till.
+- Orders placed from a table's QR code are dine-in: their kitchen ticket prints as soon as the guest orders. When the order is paid, only items you added at the till print — nothing the kitchen already has is printed twice. If the kitchen printer could not be reached when the guest ordered, the whole order prints when it is paid instead, and the guest's screen says so. Removing an item the kitchen already has does not tell the kitchen, and adding it again prints it again.
+- In a shop with several tills, the number starts with the till's receipt prefix (for example **C-T2-12**), so orders from different tills never share a number.
+- If you void every item of an order you brought up, it stops being that order: it loses its C-number, and whatever you ring up next is a new sale with a normal number.
+- If you hold an order again after bringing it up, it goes back to Open orders under the same name.
+- Works fully offline, like the rest of the till. In a shop with several tills, the order shows on every till while the main till is reachable, just like any held sale.

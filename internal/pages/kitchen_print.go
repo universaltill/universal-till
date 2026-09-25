@@ -204,6 +204,48 @@ type kitchenSendFailure struct {
 	Err     error
 }
 
+// kitchenLineFilter (ut-docs#2703) narrows which sale lines -- and how much
+// of each -- a kitchen print sends. i is the line's position in the sale
+// (line_no order). It returns the line to print (Qty possibly reduced) and
+// false to leave it off the ticket. nil means "every line, in full".
+type kitchenLineFilter func(i int, l data.SaleDetailLine) (data.SaleDetailLine, bool)
+
+// kitchenDeltaFilter (ut-docs#2703) builds the tender-time filter from the
+// basket lines as they stood when the sale was completed: each line prints
+// only what the kitchen does not already have (pos.KitchenPendingQty), so a
+// table-QR order printed at checkout prints just the items the cashier
+// added after recalling it. Sale lines are written 1:1 and in order from
+// these basket lines (both tender handlers build SaleInput.Lines from one
+// engine.Lines() read and pass this filter over that SAME slice), so
+// position i maps line to line; the SKU check is
+// defence in depth -- on any mismatch the line prints in full, because a
+// duplicate ticket is recoverable and a lost one is not. nil (no filter)
+// when nothing was ever sent, which is every basket except a recalled
+// table order: the print is then exactly what it always was.
+func kitchenDeltaFilter(lines []pos.BasketLine) kitchenLineFilter {
+	anySent := false
+	for _, l := range lines {
+		if l.KitchenSentQty > 0 {
+			anySent = true
+			break
+		}
+	}
+	if !anySent {
+		return nil
+	}
+	return func(i int, l data.SaleDetailLine) (data.SaleDetailLine, bool) {
+		if i >= len(lines) || lines[i].SKU != l.SKU {
+			return l, true
+		}
+		pending := pos.KitchenPendingQty(lines[i])
+		if pending <= 0 {
+			return l, false
+		}
+		l.Qty = pending
+		return l, true
+	}
+}
+
 // buildKitchenTargets resolves station routing for a sale (ut-docs#516) and
 // groups its lines into one ticket per destination:
 //
@@ -234,7 +276,11 @@ type kitchenSendFailure struct {
 // mixed into its own resend. Empty stationID keeps the original
 // unfiltered, every-destination behavior used by the shop-wide /orders
 // board and by the automatic post-sale print.
-func buildKitchenTargets(ctx context.Context, d *common.Deps, receiptNo, stationID string) ([]kitchenTarget, error) {
+//
+// filter (ut-docs#2703) optionally narrows which lines -- and how much of
+// each -- are sent, applied before routing so a delta print goes through
+// exactly the same station routing as a full one; nil = every line in full.
+func buildKitchenTargets(ctx context.Context, d *common.Deps, receiptNo, stationID string, filter kitchenLineFilter) ([]kitchenTarget, error) {
 	repo := data.NewPOSRepo(d.Db)
 	detail, ok, err := repo.GetSaleDetail(ctx, receiptNo)
 	if err != nil {
@@ -242,6 +288,15 @@ func buildKitchenTargets(ctx context.Context, d *common.Deps, receiptNo, station
 	}
 	if !ok {
 		return nil, fmt.Errorf("receipt %s not found", receiptNo)
+	}
+	if filter != nil {
+		kept := make([]data.SaleDetailLine, 0, len(detail.Lines))
+		for i, l := range detail.Lines {
+			if fl, keep := filter(i, l); keep {
+				kept = append(kept, fl)
+			}
+		}
+		detail.Lines = kept
 	}
 	// Checked, not the plain printerConfig wrapper (ut-docs#1533, residual
 	// gap left by #1153): a genuine settings-read error here used to be
@@ -353,7 +408,13 @@ func buildKitchenTargets(ctx context.Context, d *common.Deps, receiptNo, station
 // printKitchenAsync ignores them. stationID scopes the resend to one
 // station — see buildKitchenTargets' own doc comment (ut-docs#2098).
 func printKitchen(ctx context.Context, d *common.Deps, receiptNo, actorID, stationID string) (total int, failures []kitchenSendFailure, err error) {
-	targets, err := buildKitchenTargets(ctx, d, receiptNo, stationID)
+	return printKitchenFiltered(ctx, d, receiptNo, actorID, stationID, nil)
+}
+
+// printKitchenFiltered is printKitchen with an optional line filter
+// (ut-docs#2703, see kitchenLineFilter).
+func printKitchenFiltered(ctx context.Context, d *common.Deps, receiptNo, actorID, stationID string, filter kitchenLineFilter) (total int, failures []kitchenSendFailure, err error) {
+	targets, err := buildKitchenTargets(ctx, d, receiptNo, stationID, filter)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -435,7 +496,11 @@ func kitchenPrintingEnabledChecked(ctx context.Context, d *common.Deps) (bool, e
 // "no attempt" (kitchen printing off everywhere, or nothing resolved to
 // send) must neither overwrite a real prior failure nor falsely clear one.
 // Tracked on d.AsyncWork (ut-docs#425), same reasoning as printReceiptAsync.
-func printKitchenAsync(d *common.Deps, receiptNo string, actorID string) {
+//
+// filter (ut-docs#2703): the tender path passes kitchenDeltaFilter so a
+// recalled table order prints only what the kitchen does not have yet; nil
+// prints every line.
+func printKitchenAsync(d *common.Deps, receiptNo string, actorID string, filter kitchenLineFilter) {
 	d.AsyncWork.Add(1)
 	go func() {
 		defer d.AsyncWork.Done()
@@ -459,7 +524,7 @@ func printKitchenAsync(d *common.Deps, receiptNo string, actorID string) {
 			// overwrite a real prior failure nor falsely clear one.
 			return
 		}
-		total, failures, err := printKitchenFn(ctx, d, receiptNo, actorID, "") // async post-sale print is always every destination, never station-scoped
+		total, failures, err := printKitchenFn(ctx, d, receiptNo, actorID, "", filter) // async post-sale print is always every destination, never station-scoped
 		if err != nil {
 			// Fresh context: a hung/out-of-paper printer burns the whole
 			// print budget before failing, so ctx is already expired here —

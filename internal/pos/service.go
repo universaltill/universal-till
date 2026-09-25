@@ -88,6 +88,11 @@ type Service struct {
 	// was never parked. Set only by RestoreHeld; cleared by resetLocked and
 	// Tender, so it can never leak into the next customer's sale.
 	heldOrigin HeldOrigin
+	// orderDisplayNo (ut-docs#2703) comes from a resumed kiosk
+	// pay-at-counter order's snapshot (BasketSnapshot.DisplayNo). Cleared
+	// together with heldOrigin: it describes the order that basket came
+	// from, never the next sale.
+	orderDisplayNo string
 	// taxAsker, when set, can override a line's tax rate per the current
 	// order type — see TaxRateAsker. nil (the default) means core just uses
 	// each line's own configured rate, unaffected by order type.
@@ -305,6 +310,15 @@ type BasketLine struct {
 	// with. Serialized so the basket partial can render the per-line
 	// control; SnapshotLine carries it through hold/resume.
 	OrderType string `json:"orderType,omitempty"`
+	// KitchenSentQty (ut-docs#2703) is how much of this line's Qty has
+	// already been printed on a kitchen ticket -- a table-QR order prints
+	// at checkout, before the guests pay. The tender path prints only the
+	// rest (KitchenPendingQty), so items the cashier adds to a recalled
+	// order still reach the kitchen and nothing is made twice. It is set
+	// ONLY once the print actually succeeded; a merged scan raises Qty but
+	// never this. Not on the wire (json:"-"): SnapshotLine carries it
+	// through hold/resume.
+	KitchenSentQty float64 `json:"-"`
 	// modSig/modSigSet (ut-docs#1359) memoize ModifierSignature() so
 	// mergeResolved's per-add scan over every existing line reads a cached
 	// string instead of re-sorting and re-joining that line's Modifiers from
@@ -1103,6 +1117,7 @@ func (s *Service) Tender(amount money.Money, method string) (map[string]any, err
 	s.tableID = ""
 	s.tableLabel = ""
 	s.heldOrigin = HeldOrigin{}
+	s.orderDisplayNo = ""
 	return map[string]any{"status": "ok", "method": method, "amount": amount}, nil
 }
 
@@ -1408,6 +1423,7 @@ func (s *Service) removeLocked(sku string) {
 		// then be upserted under the OLD order's id/label/created_at,
 		// silently replacing it on the Open orders page.
 		s.heldOrigin = HeldOrigin{}
+		s.orderDisplayNo = ""
 	}
 	s.recomputeTotals()
 }
@@ -1437,6 +1453,7 @@ func (s *Service) removeLineLocked(key string) {
 	if len(s.lines) == 0 {
 		// ut-docs#1918: same reasoning as removeLocked above.
 		s.heldOrigin = HeldOrigin{}
+		s.orderDisplayNo = ""
 	}
 	s.recomputeTotals()
 }
@@ -1487,6 +1504,7 @@ func (s *Service) resetLocked() {
 	s.tableLabel = ""
 	s.tenderAttemptID = ""
 	s.heldOrigin = HeldOrigin{}
+	s.orderDisplayNo = ""
 	// ut-docs#1833: s.basket = Basket{} above already zeroes
 	// VoucherID/VoucherBalance, same as it does for CustomerID/CustomerName
 	// -- a completed/abandoned sale's pending voucher must never leak into

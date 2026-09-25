@@ -21,6 +21,7 @@ Jeder aktuell gehaltene Verkauf an dieser Kasse in einer Liste — für wen, an 
 ## Gut zu wissen
 
 - Die Liste ist leer, bis jemand einen Verkauf hält — siehe **Verkaufen & Kassieren** dazu, wie ein Warenkorb gehalten und abgerufen wird.
+- An-der-Kasse-bezahlen-Bestellungen vom Selbstbedienungs-Kiosk warten ebenfalls hier, benannt nach der Bestellnummer des Kunden (zum Beispiel **C-12 · Zum Mitnehmen**) — tippen Sie eine an und kassieren Sie wie bei jedem gehaltenen Verkauf. Siehe **An der Kasse bezahlen**.
 - Eine Bestellung verschwindet aus dieser Liste, während an ihr gearbeitet wird, und kommt unter ihrem ursprünglichen Namen sofort zurück, wenn sie erneut gehalten wird. Sobald sie bezahlt ist, ist sie endgültig weg — der Verkauf steht wie jeder andere im Journal.
 - Dies ist nicht die Tafel **Bestellstatus** (die Küchen-Warteschlange in Zubereitung / fertig / abgeholt) — dort stehen Verkäufe, die bereits bezahlt sind. Offene Bestellungen betrifft Verkäufe, die noch nicht bezahlt wurden.
 - Funktioniert vollständig offline. In einem Geschäft mit mehreren Kassen erscheint eine an irgendeiner Kasse gehaltene Bestellung hier auch an jeder anderen Kasse, solange die Hauptkasse erreichbar ist, und kann von jeder davon wieder aufgenommen werden — so kann eine zweite Kasse oder das Tablet einer Bedienung an einer Rechnung weiterarbeiten, die jemand anderes eröffnet hat. Ist die Hauptkasse nicht erreichbar, zeigt und bearbeitet jede Kasse weiterhin die an ihr selbst gehaltenen Bestellungen, genau wie bisher.
