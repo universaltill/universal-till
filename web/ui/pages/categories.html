@@ -85,6 +85,7 @@
           data-groups="{{ .Groups }}"
           data-stations="{{ .Stations }}"
           data-image="{{ .ImagePath }}"
+          data-icon-id="{{ .IconID }}"
           data-image-url="{{ if imgExists .ImagePath }}{{ imgv .ImagePath }}{{ end }}"
           data-field-show_on_sale_screen="{{ if .SellScreenHidden }}0{{ else }}1{{ end }}"
           data-field-active="{{ if .IsActive }}1{{ else }}0{{ end }}">
@@ -244,17 +245,33 @@
     if (!anyPressed && tiles.length) tiles[0].setAttribute('tabindex', '0');
   }
 
-  // Which tile a stored path corresponds to: a built-in icon's key, "none"
-  // for no image, or null for an uploaded photo (no tile pressed).
-  function keyForPath(path) {
-    if (!path) return 'none';
-    var match = null;
-    if (iconGrid) {
+  // Which tile a stored picture corresponds to (ut-docs#2717: the same
+  // one-picture rule as iconid.Resolve): a set icon id beats a library
+  // tile path an older till stored; an uploaded photo presses no tile
+  // (null); nothing at all is "none". An icon id this till has no tile
+  // for (a newer my.) presses nothing either.
+  function isLibraryPath(path) {
+    var found = false;
+    if (path && iconGrid) {
       iconGrid.querySelectorAll('.builtin-icon-tile[data-icon-path]').forEach(function (btn) {
-        if (btn.dataset.iconPath === path) match = btn.dataset.icon;
+        if (btn.dataset.iconPath === path) found = true;
       });
     }
-    return match;
+    return found;
+  }
+
+  function keyForPicture(path, iconId) {
+    var byPath = null, byId = null;
+    if (iconGrid) {
+      iconGrid.querySelectorAll('.builtin-icon-tile[data-icon-path]').forEach(function (btn) {
+        if (path && btn.dataset.iconPath === path) byPath = btn.dataset.icon;
+        if (iconId && btn.dataset.iconId === iconId) byId = btn.dataset.icon;
+      });
+    }
+    if (path && byPath === null) return null; // an uploaded photo
+    if (iconId) return byId;
+    if (path) return byPath;
+    return 'none';
   }
 
   function clearPickedFile() {
@@ -358,11 +375,11 @@
     // ut-docs#2506: a search left over from the previous record would
     // hide this record's own icon (form.reset() fires no "input").
     if (window.clearIconFilter) window.clearIconFilter('category-icon-grid');
-    var key = keyForPath(currentImage);
+    var key = keyForPicture(currentImage, row ? (row.getAttribute('data-icon-id') || '') : '');
     paintIcons(key);
     if (imageCurrent && imagePreview) {
       var url = row ? (row.getAttribute('data-image-url') || '') : '';
-      var isUpload = key === null && url !== '';
+      var isUpload = key === null && url !== '' && !isLibraryPath(currentImage);
       imageCurrent.hidden = !isUpload;
       if (isUpload) imagePreview.setAttribute('src', url); else imagePreview.removeAttribute('src');
     }
@@ -493,7 +510,7 @@
       {{ range .root.builtinIconGroups }}
       <div class="builtin-icon-group-label">{{ T .I18nKey }}</div>
       {{ range .Icons }}
-      <button type="button" class="picker-tile builtin-icon-tile" data-icon="{{ .Key }}" data-icon-path="{{ .Path }}" data-keywords="{{ .Keywords }}" aria-pressed="false" title="{{ T .I18nKey }}">
+      <button type="button" class="picker-tile builtin-icon-tile" data-icon="{{ .Key }}" data-icon-id="{{ .ID }}" data-icon-path="{{ .Path }}" data-keywords="{{ .Keywords }}" aria-pressed="false" title="{{ T .I18nKey }}">
         <img src="{{ .Path }}" alt="" width="28" height="28">
         <span>{{ T .I18nKey }}</span>
       </button>

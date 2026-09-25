@@ -110,7 +110,11 @@ async function seed(page: Page): Promise<Seeded> {
 
   const iconCatId = (await row(page, iconCat).getAttribute('data-id'))!;
   const photoCatId = (await row(page, photoCat).getAttribute('data-id'))!;
-  await expect(row(page, iconCat)).toHaveAttribute('data-image', '/public/assets/category-icons/coffee.svg');
+  // ut-docs#2717: a library pick stores its icon id (the id my. uses),
+  // not a path; an upload stores the path and no icon.
+  await expect(row(page, iconCat)).toHaveAttribute('data-image', '');
+  await expect(row(page, iconCat)).toHaveAttribute('data-icon-id', 'lucide:coffee');
+  await expect(row(page, photoCat)).toHaveAttribute('data-icon-id', '');
   await expect(row(page, photoCat)).toHaveAttribute('data-image', `/public/assets/categories/${photoCatId}/thumb.png`);
 
   // One item per category (tiles only show categories with active items),

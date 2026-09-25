@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/barcode"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
+	"github.com/universaltill/universal-till/internal/iconid"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/taxrate"
 )
@@ -1271,9 +1272,12 @@ type CategoryNode struct {
 	Color     string // empty when no explicit color is set
 	IsActive  bool
 	// ImagePath (ut-docs#2500) is the category's image as a /public/...
-	// path — a built-in icon (catimport.IconPath) or an uploaded photo —
-	// or "" for none. Whether an uploaded file is actually present on
-	// THIS till is the renderer's question, not the repo's.
+	// path — an uploaded photo, the id-less generic library tile, or (on
+	// rows written before ut-docs#2717, when a library pick stored its
+	// path) a built-in icon — or "" for none. A category has one picture:
+	// writers keep only one of ImagePath/Icon, and iconid.Resolve decides
+	// for older rows holding both. Whether an uploaded file is actually
+	// present on THIS till is the renderer's question, not the repo's.
 	ImagePath string
 	// Icon (manage-shop catalog contract §0.12, migration 041) is an icon
 	// id "namespace:name" or "" for none. Untrusted on read: the sale
@@ -1561,17 +1565,27 @@ func (r *CatalogRepo) UpdateCategoryWithHidden(ctx context.Context, id, name, co
 	return nil
 }
 
-// SetCategoryImage (ut-docs#2500) stores a category's image path — a
-// built-in icon's /public/assets/category-icons/... path or an uploaded
-// photo's /public/assets/categories/<id>/thumb.png — or clears it ("" →
-// NULL). Unknown id → ErrCategoryNotFound. Validating the path (an
-// IconPath key, a written upload) is the handler's job; nothing else on
-// the row is touched.
-func (r *CatalogRepo) SetCategoryImage(ctx context.Context, id, path string) error {
-	res, err := r.db.ExecContext(ctx, `UPDATE categories SET image_path = ? WHERE id = ?`,
-		nullableString(strings.TrimSpace(path)), id)
+// SetCategoryPicture stores a category's one picture (ut-docs#2500,
+// #2717): an image path (an uploaded photo's
+// /public/assets/categories/<id>/thumb.png, or the id-less generic
+// library tile) OR an icon id ("lucide:beer", contract §0.12) — the other
+// column is cleared in the same UPDATE, so the last writer wins whether it
+// is this till's editor or a save_category directive from my. Both ""
+// clears the picture (NULL, NULL). A malformed icon id is refused; an
+// unknown category is ErrCategoryNotFound. Validating the path (a written
+// upload, a library key) is the handler's job.
+func (r *CatalogRepo) SetCategoryPicture(ctx context.Context, id, imagePath, icon string) error {
+	imagePath, icon = strings.TrimSpace(imagePath), strings.TrimSpace(icon)
+	if icon != "" && !iconid.ValidFormat(icon) {
+		return fmt.Errorf("icon %q is not a valid icon id", icon)
+	}
+	if imagePath != "" && icon != "" {
+		return errors.New("a category has one picture: an image path or an icon id, not both")
+	}
+	res, err := r.db.ExecContext(ctx, `UPDATE categories SET image_path = ?, icon = ? WHERE id = ?`,
+		nullableString(imagePath), nullableString(icon), id)
 	if err != nil {
-		return fmt.Errorf("set category image: %w", err)
+		return fmt.Errorf("set category picture: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrCategoryNotFound

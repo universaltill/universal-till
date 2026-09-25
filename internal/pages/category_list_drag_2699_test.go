@@ -62,9 +62,10 @@ func assertThumbs2699(t *testing.T, surface string, seg func(id string) string) 
 		id, want string
 		not      []string
 	}{
-		{"c-img", `src="/public/assets/category-icons/drink.svg`, []string{`coffee.svg`, `cat-thumb-swatch`}},
+		// ut-docs#2717: a set icon beats a library tile left in image_path.
+		{"c-img", `src="/public/assets/category-icons/coffee.svg`, []string{`src="/public/assets/category-icons/drink.svg`, `cat-thumb-swatch`}},
 		{"c-icon", `src="/public/assets/category-icons/coffee.svg`, []string{`cat-thumb-swatch`}},
-		{"c-evil", `src="/public/assets/category-icons/generic.svg`, []string{`javascript`, `src="/public/uploads/missing.png`, `alert(1)`}},
+		{"c-evil", `src="/public/assets/category-icons/tag.svg`, []string{`javascript`, `src="/public/uploads/missing.png`, `alert(1)`}},
 		{"c-color", `class="cat-thumb-swatch" style="--swatch: #b91c1c"`, []string{`<img`}},
 		{"c-none", `class="cat-thumb-placeholder"`, []string{`<img`, `cat-thumb-swatch`}},
 	}

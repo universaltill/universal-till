@@ -428,6 +428,10 @@ type CategorySaveResult struct {
 	Created bool
 	Name    string
 	Changed []string
+	// ClearedImagePath is the image_path a non-empty icon replaced
+	// (ut-docs#2717: one picture per category), "" when none was cleared —
+	// the caller deletes a superseded upload's file.
+	ClearedImagePath string
 }
 
 type catNode struct {
@@ -549,11 +553,11 @@ func (r *CatalogRepo) SaveCategory(ctx context.Context, p CategorySave) (Categor
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var name, parent, color, icon string
+	var name, parent, color, icon, imagePath string
 	var hidden, active bool
 	err = tx.QueryRowContext(ctx, `
-SELECT name, COALESCE(parent_id, ''), COALESCE(color, ''), COALESCE(icon, ''), sell_screen_hidden, is_active
-FROM categories WHERE id = ?`, p.ID).Scan(&name, &parent, &color, &icon, &hidden, &active)
+SELECT name, COALESCE(parent_id, ''), COALESCE(color, ''), COALESCE(icon, ''), COALESCE(image_path, ''), sell_screen_hidden, is_active
+FROM categories WHERE id = ?`, p.ID).Scan(&name, &parent, &color, &icon, &imagePath, &hidden, &active)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		if !p.Create {
@@ -619,14 +623,26 @@ FROM categories WHERE id = ?`, p.ID).Scan(&name, &parent, &color, &icon, &hidden
 	if p.Icon != nil {
 		icon = *p.Icon
 		res.Changed = append(res.Changed, "icon")
+		// One picture per category, last writer wins (ut-docs#2717): an
+		// icon set from my. replaces whatever image the till had — a
+		// library tile or an uploaded photo — or it would stay hidden
+		// behind it on the sale screen. A cleared icon ("") leaves an
+		// uploaded photo alone -- but a legacy library tile in image_path
+		// IS the category's icon (it renders and is reported as its id),
+		// so clearing the icon clears that tile too (#2717 review).
+		if icon != "" && imagePath != "" {
+			res.ClearedImagePath, imagePath = imagePath, ""
+		} else if icon == "" && iconid.IDForAssetPath(imagePath) != "" {
+			imagePath = ""
+		}
 	}
 	if p.ShowOnSaleScreen != nil {
 		hidden = !*p.ShowOnSaleScreen
 		res.Changed = append(res.Changed, "show_on_sale_screen")
 	}
 	if _, err := tx.ExecContext(ctx, `
-UPDATE categories SET name = ?, parent_id = ?, color = ?, icon = ?, sell_screen_hidden = ? WHERE id = ?`,
-		name, nullableString(parent), nullableString(color), nullableString(icon), boolToInt(hidden), p.ID); err != nil {
+UPDATE categories SET name = ?, parent_id = ?, color = ?, icon = ?, image_path = ?, sell_screen_hidden = ? WHERE id = ?`,
+		name, nullableString(parent), nullableString(color), nullableString(icon), nullableString(imagePath), boolToInt(hidden), p.ID); err != nil {
 		return res, fmt.Errorf("save category: row: %w", err)
 	}
 	if _, _, err := writeCategoryLinksTx(ctx, tx, p.ID, p.GroupIDs, p.StationIDs); err != nil {

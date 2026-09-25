@@ -62,6 +62,9 @@ export const test = base.extend<{ resetPosOncePerFile: void }, WorkerOpts>({
         return;
       }
       const till = await startWorkerTill(workerInfo.parallelIndex);
+      // ut-docs#2717: each worker is its own Node process, so this names
+      // THIS worker's till only (category-icon-directive-2717.spec.ts).
+      if (till.dataDir) process.env.UT_E2E_WORKER_DATA_DIR = till.dataDir;
       try {
         await use(till.url);
       } finally {

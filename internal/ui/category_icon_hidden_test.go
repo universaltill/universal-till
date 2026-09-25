@@ -56,7 +56,10 @@ func TestBuildCategoryGroups_HiddenCategoryLeftOut(t *testing.T) {
 
 // The category icon id renders only through the till's icon registry: a
 // known id shows its artwork, an unknown or malformed one the neutral
-// fallback, never the raw value; an explicit image wins over the icon.
+// fallback, never the raw value. ut-docs#2717: a set icon beats a library
+// tile left in image_path (the pilot's rows — "d": the till's #2500 pastry
+// pick under a newer my. coffee icon, which used to stay hidden), and a
+// library tile with no icon reads as its own id ("f").
 func TestBuildCategoryGroups_IconIDRendersViaRegistry(t *testing.T) {
 	cats := []data.CategoryNode{
 		{ID: "a", Name: "A", Icon: "lucide:coffee"},
@@ -64,6 +67,7 @@ func TestBuildCategoryGroups_IconIDRendersViaRegistry(t *testing.T) {
 		{ID: "c", Name: "C", Icon: "<img src=x onerror=alert(1)>"},
 		{ID: "d", Name: "D", Icon: "lucide:coffee", ImagePath: "/public/assets/category-icons/pastry.svg"},
 		{ID: "e", Name: "E"},
+		{ID: "f", Name: "F", ImagePath: "/public/assets/category-icons/beer.svg"},
 	}
 	var buttons []Button
 	for _, c := range cats {
@@ -71,10 +75,11 @@ func TestBuildCategoryGroups_IconIDRendersViaRegistry(t *testing.T) {
 	}
 	want := map[string]string{
 		"a": "/public/assets/category-icons/coffee.svg",
-		"b": "/public/assets/category-icons/generic.svg",
-		"c": "/public/assets/category-icons/generic.svg",
-		"d": "/public/assets/category-icons/pastry.svg",
+		"b": "/public/assets/category-icons/tag.svg",
+		"c": "/public/assets/category-icons/tag.svg",
+		"d": "/public/assets/category-icons/coffee.svg",
 		"e": "",
+		"f": "/public/assets/category-icons/beer.svg",
 	}
 	for _, g := range BuildCategoryGroups(buttons, cats, nil) {
 		if g.ImageURL != want[g.ID] {

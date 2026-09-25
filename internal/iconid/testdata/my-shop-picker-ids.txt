@@ -1,0 +1,13 @@
+# Every icon id the my. (ut-my-shop) category icon picker offers — a
+# checked-in copy of the `id:` values in ut-my-shop/src/icons/registry.ts
+# (ICONS), as of ut-my-shop e6c23cd (2026-09-25). TestMyShopPickerIDsResolve
+# fails when one of them would draw the till's fallback glyph: when my.'s
+# picker grows, add its new ids here in the same change (ut-docs#2717).
+lucide:coffee
+lucide:cup-soda
+lucide:croissant
+lucide:cake-slice
+lucide:egg-fried
+lucide:soup
+lucide:leaf
+lucide:tag
