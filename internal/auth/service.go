@@ -274,6 +274,20 @@ func (s *Service) Logout(ctx context.Context, token string) {
 // sessions are revoked — a changed credential invalidates sessions, so the
 // operator signs back in with the new PIN.
 func (s *Service) ChangeOwnPIN(ctx context.Context, userID, currentPIN, newPIN string) error {
+	return s.ChangeOwnPINVia(ctx, userID, currentPIN, newPIN, nil)
+}
+
+// ChangeOwnPINVia is ChangeOwnPIN with the persistence step handed to
+// persist (ADR-0115 §1): an additional till verifies the current PIN and
+// the new PIN's format/uniqueness locally, exactly as ChangeOwnPIN does,
+// then persist writes the new HASH through to the main till (and mirrors
+// it locally) instead of the local SetUserPIN. persist's error is returned
+// unchanged, and sessions are revoked only after it succeeded. A nil
+// persist is the local SetUserPIN.
+func (s *Service) ChangeOwnPINVia(ctx context.Context, userID, currentPIN, newPIN string, persist func(ctx context.Context, hash string) error) error {
+	if persist == nil {
+		persist = func(ctx context.Context, hash string) error { return s.repo.SetUserPIN(ctx, userID, hash) }
+	}
 	if s.locked() {
 		return ErrLockedOut
 	}
@@ -298,7 +312,7 @@ func (s *Service) ChangeOwnPIN(ctx context.Context, userID, currentPIN, newPIN s
 	if err != nil {
 		return err
 	}
-	if err := s.repo.SetUserPIN(ctx, userID, hash); err != nil {
+	if err := persist(ctx, hash); err != nil {
 		return err
 	}
 	return s.repo.RevokeUserSessions(ctx, userID)

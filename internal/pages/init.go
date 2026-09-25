@@ -542,6 +542,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSyncTablesClaim(mux, dp) // cross-till table-claim write-through, primary side (ut-docs#1703)
 	registerSyncVouchers(mux, dp)    // cross-till voucher lookup + redemption write-through, primary side (ut-docs#1668)
 	registerSyncHeldSales(mux, dp)   // cross-till held-sale (open order) write-through + list, primary side (ADR-0093, ut-docs#1920)
+	registerSyncUsers(mux, dp)       // additional-till user/PIN write-through, main-till side (ADR-0115 §1, ut-docs#2755)
 	syncAdminRepo := registerSyncAdmin(mux, dp)
 	// ADR-0114 (ut-docs#2734): the main-till link. Set before the server
 	// accepts requests; the revoke handler and every NudgeLink change point

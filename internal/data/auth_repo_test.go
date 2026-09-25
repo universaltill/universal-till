@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -837,5 +838,146 @@ func TestAuthRepo_CountUsersByRole(t *testing.T) {
 	// the count of any other role.
 	if n, err := repo.CountUsersByRole(ctx, "cashier"); err != nil || n != 1 {
 		t.Fatalf("CountUsersByRole(cashier) = %d, err=%v, want 1 (the seeded kiosk user)", n, err)
+	}
+}
+
+// ADR-0115 §1 (ut-docs#2755): an additional till mirrors the row the main
+// till answered with (plus the hash it sent) so the change shows at once,
+// before the next admin-bundle pull. Insert on a new id, update on a known
+// one; an empty PinHash leaves the stored hash alone on update and stores
+// NULL on insert (a fresh user has no PIN yet, same as CreateUser).
+func TestAuthRepo_MirrorUser(t *testing.T) {
+	ctx := context.Background()
+	repo, d := newAuthTestRepo(t)
+
+	if err := repo.MirrorUser(ctx, UserRow{ID: "u-main-1", Username: "lea", DisplayName: "Lea", Role: "cashier", IsActive: true}); err != nil {
+		t.Fatalf("MirrorUser insert: %v", err)
+	}
+	var pin *string
+	if err := d.DB.QueryRow(`SELECT pin_hash FROM users WHERE id = 'u-main-1'`).Scan(&pin); err != nil {
+		t.Fatal(err)
+	}
+	if pin != nil {
+		t.Fatalf("a mirrored new user without a PIN must store NULL, got %q", *pin)
+	}
+
+	if err := repo.MirrorUser(ctx, UserRow{ID: "u-main-1", Username: "lea", DisplayName: "Lea", Role: "cashier", PinHash: "h1", IsActive: true}); err != nil {
+		t.Fatalf("MirrorUser set pin: %v", err)
+	}
+	// Role/active change without a hash keeps the stored hash.
+	if err := repo.MirrorUser(ctx, UserRow{ID: "u-main-1", Username: "lea", DisplayName: "Lea B", Role: "manager", IsActive: false}); err != nil {
+		t.Fatalf("MirrorUser update: %v", err)
+	}
+	u, ok, err := repo.GetUser(ctx, "u-main-1")
+	if err != nil || !ok {
+		t.Fatalf("GetUser: ok=%v err=%v", ok, err)
+	}
+	if u.PinHash != "h1" || u.Role != "manager" || u.IsActive || u.DisplayName != "Lea B" {
+		t.Fatalf("mirror update wrong: %+v", u)
+	}
+}
+
+func TestAuthRepo_UsernameTaken(t *testing.T) {
+	ctx := context.Background()
+	repo, _ := newAuthTestRepo(t)
+	if _, err := repo.CreateUser(ctx, "omar", "Omar", "cashier"); err != nil {
+		t.Fatal(err)
+	}
+	if taken, err := repo.UsernameTaken(ctx, "omar"); err != nil || !taken {
+		t.Fatalf("omar: taken=%v err=%v, want true", taken, err)
+	}
+	if taken, err := repo.UsernameTaken(ctx, "nobody"); err != nil || taken {
+		t.Fatalf("nobody: taken=%v err=%v, want false", taken, err)
+	}
+}
+
+// The last-admin / last-super_admin guard and the write it protects run in
+// ONE transaction (ut-docs#2755 review finding), so two concurrent
+// deactivations of the only two admins can never both land: exactly one
+// wins and the other sees its effect and is refused. db.Open's
+// _txlock=immediate makes the outcome deterministic -- the second tx
+// waits for the first to commit before it counts.
+func TestAuthRepo_GuardedUserUpdatesAreAtomic(t *testing.T) {
+	ctx := context.Background()
+	repo, d := newAuthTestRepo(t)
+	mk := func(username, role string) string {
+		id, err := repo.CreateUser(ctx, username, username, role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.SetUserPIN(ctx, id, "hash-"+username); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	a1, a2 := mk("a1", "admin"), mk("a2", "admin")
+	s1 := mk("s1", "super_admin")
+
+	for round := 0; round < 20; round++ {
+		for _, id := range []string{a1, a2} {
+			if err := repo.SetUserActive(ctx, id, true); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var wg sync.WaitGroup
+		refused := make([]string, 2)
+		errs := make([]error, 2)
+		for i, id := range []string{a1, a2} {
+			wg.Add(1)
+			go func(i int, id string) {
+				defer wg.Done()
+				tx, err := d.DB.BeginTx(ctx, nil)
+				if err != nil {
+					errs[i] = err
+					return
+				}
+				defer tx.Rollback()
+				if i == 0 {
+					refused[i], errs[i] = repo.SetUserActiveGuarded(ctx, tx, id, false)
+				} else {
+					refused[i], errs[i] = repo.SetUserRoleGuarded(ctx, tx, id, "manager")
+				}
+				if errs[i] == nil && refused[i] == "" {
+					errs[i] = tx.Commit()
+				}
+			}(i, id)
+		}
+		wg.Wait()
+		for _, err := range errs {
+			if err != nil {
+				t.Fatalf("round %d: %v", round, err)
+			}
+		}
+		if (refused[0] == "") == (refused[1] == "") {
+			t.Fatalf("round %d: refusals %q, want exactly one change refused as last admin", round, refused)
+		}
+		if n, err := repo.CountOtherActiveAdminsWithPIN(ctx, "none"); err != nil || n != 1 {
+			t.Fatalf("round %d: active admins = %d (%v), want 1", round, n, err)
+		}
+		// Reset for the next round.
+		tx, _ := d.DB.BeginTx(ctx, nil)
+		if err := repo.SetUserRole(ctx, tx, a2, "admin"); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The super_admin side: the only super_admin can be neither
+	// deactivated nor moved away from the role.
+	tx, err := d.DB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if refused, err := repo.SetUserActiveGuarded(ctx, tx, s1, false); err != nil || refused != "super_admin" {
+		t.Fatalf("deactivate last super_admin: refused=%q err=%v", refused, err)
+	}
+	if refused, err := repo.SetUserRoleGuarded(ctx, tx, s1, "admin"); err != nil || refused != "super_admin" {
+		t.Fatalf("demote last super_admin: refused=%q err=%v", refused, err)
+	}
+	if _, err := repo.SetUserActiveGuarded(ctx, tx, "ghost", false); err == nil {
+		t.Fatal("unknown user must error")
 	}
 }
