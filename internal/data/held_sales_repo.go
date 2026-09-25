@@ -251,6 +251,126 @@ func (r *HeldSalesRepo) ReconcileWithPrimary(ctx context.Context, presentIDs []s
 	return dropped, nil
 }
 
+// heldSaleTombstoneTTL is how long a primary-side tombstone keeps answering
+// "resolved" (ADR-0093 Amendment B, ut-docs#2712): long enough to outlast
+// any realistic lost-reply window, short enough that a till offline for
+// days finds nothing and trusts its own local row (Decision 4's
+// offline-first guarantee). SQLite datetime() modifier text.
+const heldSaleTombstoneTTL = "-24 hours"
+
+// tombstoneHeldSaleTx writes/refreshes id's tombstone -- stamped with the
+// till that resolved it (see ClaimAndTombstone) -- and prunes every
+// tombstone past heldSaleTombstoneTTL, inside the caller's transaction --
+// the shared tail of both primary-side deletions, so neither can delete a
+// row without leaving the proof behind.
+func tombstoneHeldSaleTx(ctx context.Context, tx *sql.Tx, id, till string) error {
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO held_sales_tombstones (id, deleted_at, till) VALUES (?, datetime('now'), ?)
+ON CONFLICT(id) DO UPDATE SET deleted_at = excluded.deleted_at, till = excluded.till
+`, id, till); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `DELETE FROM held_sales_tombstones WHERE deleted_at < datetime('now', ?)`, heldSaleTombstoneTTL)
+	return err
+}
+
+// ClaimAndTombstone (ADR-0093 Amendment B, ut-docs#2712) is the primary's
+// atomic resume hand-off behind POST /api/sync/held-sales/claim (and the
+// primary till's own resume). One transaction: DELETE ... RETURNING takes
+// the row and makes this a write transaction from its first statement, so
+// two tills claiming the same id serialize on SQLite's single writer and
+// exactly one ever gets a row back -- the fix for two tills both restoring
+// the same order. A taken row leaves a tombstone (claimed=true, known=true).
+// An absent row answers known = "a fresh tombstone written by ANOTHER till
+// exists": true means resolved elsewhere (an earlier claim/delete from some
+// other till, e.g. after this caller's own push reply was lost), false means
+// nothing on the primary contradicts the caller's own copy -- the one
+// answer under which a caller may still trust it. Stale tombstones are
+// pruned on both branches.
+//
+// till is the caller's identity (the enrolled replica's tills.id; "" for
+// the primary's own resume), stamped on the tombstone it writes and
+// compared against the one it finds (independent review of #2712): a
+// caller's OWN tombstone never answers known. After a resume the same
+// order is re-parked under the same id (ut-docs#1918); when that re-park
+// alone fell back to local-only, the re-parking till holds the newest copy
+// in the shop, and its own earlier claim's tombstone refusing it would drop
+// a genuinely open order -- the offline-first regression this rule closes.
+// Its own copy can only be stale when the row was resolved by someone else
+// since (then the tombstone carries THEIR till), or when a primary_synced
+// mirror outlived the resume (Amendment A F2 still drops that one).
+func (r *HeldSalesRepo) ClaimAndTombstone(ctx context.Context, id, till string) (h HeldSale, claimed, known bool, err error) {
+	done := heldSalesObs.trace("claim_and_tombstone")
+	defer func() { done(err) }()
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return HeldSale{}, false, false, heldSalesObs.wrapf("claim_and_tombstone", "begin", err)
+	}
+	defer tx.Rollback()
+	var synced int
+	err = tx.QueryRowContext(ctx, `
+DELETE FROM held_sales WHERE id = ?
+RETURNING id, label, total_minor, line_count, payload, COALESCE(table_id, ''), created_at, updated_at, primary_synced
+`, id).Scan(&h.ID, &h.Label, &h.TotalMinor, &h.LineCount, &h.Payload, &h.TableID, &h.CreatedAt, &h.UpdatedAt, &synced)
+	switch {
+	case err == nil:
+		h.PrimarySynced = synced != 0
+		claimed, known = true, true
+		if err = tombstoneHeldSaleTx(ctx, tx, id, till); err != nil {
+			return HeldSale{}, false, false, heldSalesObs.wrapf("claim_and_tombstone", "tombstone held sale %s", err, id)
+		}
+	case err == sql.ErrNoRows:
+		h = HeldSale{}
+		if _, err = tx.ExecContext(ctx, `DELETE FROM held_sales_tombstones WHERE deleted_at < datetime('now', ?)`, heldSaleTombstoneTTL); err != nil {
+			return HeldSale{}, false, false, heldSalesObs.wrapf("claim_and_tombstone", "prune tombstones", err)
+		}
+		var resolvedBy string
+		switch err = tx.QueryRowContext(ctx, `SELECT till FROM held_sales_tombstones WHERE id = ?`, id).Scan(&resolvedBy); {
+		case err == nil:
+			known = resolvedBy != till
+		case err == sql.ErrNoRows:
+			err = nil
+		default:
+			return HeldSale{}, false, false, heldSalesObs.wrapf("claim_and_tombstone", "read tombstone %s", err, id)
+		}
+	default:
+		return HeldSale{}, false, false, heldSalesObs.wrapf("claim_and_tombstone", "claim held sale %s", err, id)
+	}
+	if err = tx.Commit(); err != nil {
+		return HeldSale{}, false, false, heldSalesObs.wrapf("claim_and_tombstone", "commit", err)
+	}
+	return h, claimed, known, nil
+}
+
+// DeleteAndTombstone (ADR-0093 Amendment B) is the plain primary-side
+// delete behind POST /api/sync/held-sales/delete: the row goes and its
+// tombstone is written in the same transaction, so a stale replica copy of
+// an order resolved this way (e.g. by a till still on the pre-claim version
+// during a rollout) is refused by a later claim exactly like a claimed one.
+// Idempotent -- a missing row still (re)writes the tombstone. till is the
+// deleting replica's tills.id, stamped on the tombstone exactly as
+// ClaimAndTombstone does. Delete stays the local-only form for a replica's
+// own mirror cleanup.
+func (r *HeldSalesRepo) DeleteAndTombstone(ctx context.Context, id, till string) (err error) {
+	done := heldSalesObs.trace("delete_and_tombstone")
+	defer func() { done(err) }()
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return heldSalesObs.wrapf("delete_and_tombstone", "begin", err)
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `DELETE FROM held_sales WHERE id = ?`, id); err != nil {
+		return heldSalesObs.wrapf("delete_and_tombstone", "delete held sale %s", err, id)
+	}
+	if err = tombstoneHeldSaleTx(ctx, tx, id, till); err != nil {
+		return heldSalesObs.wrapf("delete_and_tombstone", "tombstone held sale %s", err, id)
+	}
+	if err = tx.Commit(); err != nil {
+		return heldSalesObs.wrapf("delete_and_tombstone", "commit", err)
+	}
+	return nil
+}
+
 func (r *HeldSalesRepo) Delete(ctx context.Context, id string) error {
 	var err error
 	done := heldSalesObs.trace("delete")

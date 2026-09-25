@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -37,6 +38,10 @@ type heldSaleProxyPrimary struct {
 	srv         *httptest.Server
 	upsertCalls atomic.Int64
 	deleteCalls atomic.Int64
+	claimCalls  atomic.Int64
+	lastClaim   atomic.Value    // string id
+	mu          sync.Mutex      // guards listRows / tombstones across /claim and the list
+	tombstones  map[string]bool // ids /claim has taken, mimicking held_sales_tombstones
 	listCalls   atomic.Int64
 	lastAuth    atomic.Value
 	lastUpsert  atomic.Value // syncHeldSaleRow
@@ -56,7 +61,7 @@ type heldSaleProxyPrimary struct {
 // from whatever (if anything) it sent.
 func newHeldSaleProxyPrimary(t *testing.T, applied bool, listRows ...syncHeldSaleRow) *heldSaleProxyPrimary {
 	t.Helper()
-	p := &heldSaleProxyPrimary{applied: applied, listRows: listRows}
+	p := &heldSaleProxyPrimary{applied: applied, listRows: listRows, tombstones: map[string]bool{}}
 	p.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p.lastAuth.Store(r.Header.Get("Authorization"))
 		w.Header().Set("Content-Type", "application/json")
@@ -83,9 +88,31 @@ func newHeldSaleProxyPrimary(t *testing.T, applied bool, listRows ...syncHeldSal
 			_ = json.NewDecoder(r.Body).Decode(&in)
 			p.lastDelete.Store(in.ID)
 			fmt.Fprint(w, `{"data":{"deleted":true},"error":null}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/sync/held-sales/claim":
+			// Mimics ClaimAndTombstone over listRows: a listed row is taken
+			// (gone from later lists) and tombstoned; otherwise known says
+			// whether an earlier claim took it.
+			p.claimCalls.Add(1)
+			var in syncHeldSaleClaimRequest
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			p.lastClaim.Store(in.ID)
+			p.mu.Lock()
+			defer p.mu.Unlock()
+			out := syncHeldSaleClaimResult{Known: p.tombstones[in.ID]}
+			for i, row := range p.listRows {
+				if row.ID == in.ID {
+					out = syncHeldSaleClaimResult{Claimed: true, Known: true, Row: &row}
+					p.listRows = append(p.listRows[:i:i], p.listRows[i+1:]...)
+					p.tombstones[in.ID] = true
+					break
+				}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": out, "error": nil})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/sync/held-sales":
 			p.listCalls.Add(1)
-			rows := p.listRows
+			p.mu.Lock()
+			rows := append([]syncHeldSaleRow(nil), p.listRows...)
+			p.mu.Unlock()
 			if rows == nil {
 				rows = []syncHeldSaleRow{}
 			}
@@ -134,11 +161,16 @@ func TestHeldSaleWriteThrough_NotAReplicaUsesLocalOnly(t *testing.T) {
 	if primary.upsertCalls.Load() != 0 {
 		t.Fatalf("a non-replica must never call a primary, got %d calls", primary.upsertCalls.Load())
 	}
-	if primaryDeleted, err := heldSaleDeleteWriteThrough(context.Background(), dp, repo, "h1"); err != nil || primaryDeleted {
-		t.Fatalf("not a replica must delete locally only: primaryDeleted=%v err=%v", primaryDeleted, err)
+	// Resume (ADR-0093 Amendment B): a non-replica is its own authority and
+	// claims the row from its own table -- taken, and never a primary call.
+	if got, found, claimed := heldSaleClaimForResume(context.Background(), dp, repo, "h1"); !found || !claimed || got.Payload != `{"lines":[]}` {
+		t.Fatalf("not a replica must claim locally: found=%v claimed=%v %+v", found, claimed, got)
 	}
 	if _, ok := heldSaleRowOnLocal(t, dp, "h1"); ok {
-		t.Fatal("the local row must be deleted")
+		t.Fatal("the local row must be deleted by the claim")
+	}
+	if primary.claimCalls.Load() != 0 {
+		t.Fatalf("a non-replica must never call a primary, got %d claim calls", primary.claimCalls.Load())
 	}
 }
 
@@ -271,12 +303,13 @@ func TestHeldSaleWriteThrough_ReplicaFallsBackToLocalWhenPrimaryUnreachable(t *t
 	if got, ok := heldSaleRowOnLocal(t, dp, "h1"); !ok || got.Payload != `{"lines":[]}` || got.PrimarySynced {
 		t.Fatalf("an unreachable primary must fall back to the local write, never marked primary_synced, got ok=%v %+v", ok, got)
 	}
-	// Delete: the local row always goes, primary or not.
-	if primaryDeleted, err := heldSaleDeleteWriteThrough(context.Background(), dp, repo, "h1"); err != nil || primaryDeleted {
-		t.Fatalf("delete with an unreachable primary: primaryDeleted=%v err=%v", primaryDeleted, err)
+	// Resume with an unreachable primary: the local row, unchanged, nothing
+	// claimed (so nothing to give back); resumeHeldSale deletes it itself.
+	if got, found, claimed := heldSaleClaimForResume(context.Background(), dp, repo, "h1"); !found || claimed || got.Payload != `{"lines":[]}` {
+		t.Fatalf("resume with an unreachable primary must fall back to the local row: found=%v claimed=%v %+v", found, claimed, got)
 	}
-	if _, ok := heldSaleRowOnLocal(t, dp, "h1"); ok {
-		t.Fatal("the local row must be deleted even when the primary is unreachable")
+	if _, ok := heldSaleRowOnLocal(t, dp, "h1"); !ok {
+		t.Fatal("an unreachable primary must never drop the local row")
 	}
 }
 
@@ -415,29 +448,27 @@ func TestHeldSaleWriteThrough_PreFixPrimaryOmittingUpdatedAtStillMirrors(t *test
 	}
 }
 
-// Delete write-through: resuming on a replica tells the primary to delete
-// the row AND always drops the local row too.
-func TestHeldSaleWriteThrough_ReplicaDeletesOnPrimaryAndLocally(t *testing.T) {
+// Resume on a replica (ADR-0093 Amendment B): the order is CLAIMED on the
+// primary, and the primary's row (not the replica's own local copy) is what
+// comes back.
+func TestHeldSaleClaimForResume_ReplicaClaimsOnPrimary(t *testing.T) {
 	_, dp := newPOSTestDeps(t)
 	repo := data.NewHeldSalesRepo(dp.Db)
-	primary := newHeldSaleProxyPrimary(t, true)
+	primary := newHeldSaleProxyPrimary(t, true, syncHeldSaleRow{ID: "h1", Label: "Table 4", Payload: `{"v":"claimed"}`})
 	setReplicaSettings(t, dp.Settings, primary.srv.URL, "b-123")
 
 	if _, err := heldSaleWriteThrough(context.Background(), dp, repo, proxyTestHeldSale); err != nil {
 		t.Fatal(err)
 	}
-	primaryDeleted, err := heldSaleDeleteWriteThrough(context.Background(), dp, repo, "h1")
-	if err != nil || !primaryDeleted {
-		t.Fatalf("delete: primaryDeleted=%v err=%v", primaryDeleted, err)
+	got, found, claimed := heldSaleClaimForResume(context.Background(), dp, repo, "h1")
+	if !found || !claimed || got.ID != "h1" || got.Payload != `{"v":"claimed"}` {
+		t.Fatalf("claim: found=%v claimed=%v %+v", found, claimed, got)
 	}
-	if primary.deleteCalls.Load() != 1 {
-		t.Fatalf("the primary must be told to delete exactly once, got %d", primary.deleteCalls.Load())
+	if primary.claimCalls.Load() != 1 {
+		t.Fatalf("the primary must be asked to claim exactly once, got %d", primary.claimCalls.Load())
 	}
-	if id, _ := primary.lastDelete.Load().(string); id != "h1" {
-		t.Fatalf("primary must be told to delete %q, got %q", "h1", id)
-	}
-	if _, ok := heldSaleRowOnLocal(t, dp, "h1"); ok {
-		t.Fatal("the local mirror row must be deleted too")
+	if id, _ := primary.lastClaim.Load().(string); id != "h1" {
+		t.Fatalf("primary must be asked to claim %q, got %q", "h1", id)
 	}
 }
 
@@ -626,6 +657,11 @@ func newHeldSaleCrossTill(t *testing.T) heldSaleCrossTill {
 	primary := httptest.NewServer(primaryMux)
 	t.Cleanup(primary.Close)
 	seedSyncOrdersTill(t, primaryDp, "Replica", "b-123")
+	// A second enrolled till ("till A", bearer a-456) for tests that need
+	// ANOTHER till to act on the primary: since #2712's review the primary
+	// tells tombstones apart by the till that wrote them, so "another till"
+	// must really be one, not the replica's own bearer reused.
+	seedSyncOrdersTill(t, primaryDp, "Till A", "a-456")
 
 	mux, dp := newHoldCrossTillReplica(t, primary.URL, "b-123")
 	dp.Menu = []common.MenuItem{{Href: "/", Label: "nav.till"}}

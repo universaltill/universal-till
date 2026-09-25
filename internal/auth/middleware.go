@@ -45,6 +45,9 @@ func exempt(path string) bool {
 	switch path {
 	case "/api/sync/enroll", "/api/sync/ping", "/api/sync/snapshot", "/api/sync/sales", "/api/sync/admin",
 		"/api/sync/stock", "/api/sync/plugins", "/api/sync/assets", "/api/sync/assets/file",
+		// ut-docs#2566: uploaded category photos, the categories scope of
+		// the same bearer-authed asset surface (sync_assets.go).
+		"/api/sync/assets/categories", "/api/sync/assets/categories/file",
 		// ut-docs#1350: the primary-side cross-till orders board a replica's
 		// /ui/orders polls. Bearer-authed in the handler (syncTill), same as
 		// every other entry on this line — omitting it here would silently
@@ -91,10 +94,10 @@ func exempt(path string) bool {
 		// documents. TestSyncPullPathsAreExempt pins this entry.
 		"/api/sync/tables/release-all",
 		// ADR-0093 (ut-docs#1920): the primary-side held-sale (open order)
-		// write-through trio — the guarded upsert and the delete a
-		// replica's heldSaleWriteThrough / heldSaleDeleteWriteThrough
-		// (internal/pages/held_sale_sync_proxy.go) proxy to on every
-		// park / re-park / resume, and the read-only list its Open orders
+		// write-through trio — the guarded upsert a replica's
+		// heldSaleWriteThrough (internal/pages/held_sale_sync_proxy.go)
+		// proxies to on every park / re-park, the delete a pre-Amendment-B
+		// replica still sends on resume, and the read-only list its Open orders
 		// page merges in (fetchHeldSalesFromPrimary). syncTill-authed in
 		// the handler exactly like /api/sync/tables/claim above. Omitting
 		// them here would silently no-op the whole feature (the proxy
@@ -103,6 +106,13 @@ func exempt(path string) bool {
 		// /api/sync/stock incident this switch's own comment documents.
 		// TestSyncPullPathsAreExempt pins all three entries.
 		"/api/sync/held-sales", "/api/sync/held-sales/upsert", "/api/sync/held-sales/delete",
+		// ADR-0093 Amendment B (ut-docs#2712): the atomic claim a replica's
+		// resume makes BEFORE restoring an order (claimHeldSaleOnPrimary).
+		// syncTill-authed in the handler like the trio above. Omitting it
+		// 401s every claim, the resume silently falls back to local-only,
+		// and the double-tender it closes is back -- the same
+		// /api/sync/stock incident class. TestSyncPullPathsAreExempt pins it.
+		"/api/sync/held-sales/claim",
 		// ADR-0082 (ut-docs#1739): the primary-side one-shot fetch of the
 		// shop-scoped plugin-settings encryption key a replica's KeyStore
 		// makes on first use (internal/pages/sync_admin.go, SecretsKeyFetcher).

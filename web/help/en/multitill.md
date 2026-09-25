@@ -13,7 +13,7 @@ keywords: [second till, pairing, sync, lan, primary, register, quarantine]
 
 # Multiple tills (one shop)
 
-Run several tills on the same shop network: one is the main till, the others join it and share the catalog, prices, settings and stock automatically.
+Run several tills on the same shop network: one is the main till, the others join it and share the catalog, prices, settings and stock automatically. Photos you upload for items and categories on the main till follow within about half a minute, so every till shows the same pictures.
 
 ## How to use it
 
