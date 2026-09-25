@@ -4940,6 +4940,15 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .category-filter .chip-check, .filter-chips .chip-check { display: none; flex: none; inline-size: 1rem; block-size: 1rem; }
 .category-filter .chip-check svg, .filter-chips .chip-check svg { inline-size: 1rem; block-size: 1rem; }
 .category-filter .chip[aria-pressed="true"] .chip-check, .filter-chips .chip[aria-pressed="true"] .chip-check { display: inline-flex; }
+/* ut-docs#1976: /reports' date-range chips are links (plain GET navigation,
+   no JS), so their "selected" state is aria-current rather than
+   aria-pressed — same pressed look, same checkmark (never colour alone). */
+.filter-chips a.chip { text-decoration: none; }
+.filter-chips .chip[aria-current="true"] { background: var(--accent); color: var(--accent-contrast);
+                                          border-color: var(--accent); }
+.filter-chips .chip[aria-current="true"] .chip-check { display: inline-flex; }
+.report-window { display: flex; flex-direction: column; gap: .5rem; margin-block-end: .75rem; }
+.report-window .filter-chips { margin-block-end: 0; }
 
 /* ut-docs#2174: Quick Buttons Designer — the live replica of the sale
    screen's product panel plus its category-management section
