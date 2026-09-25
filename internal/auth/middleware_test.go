@@ -250,6 +250,11 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		// credential reads as "not configured" on the replica forever: the
 		// /api/sync/stock failure class, again.
 		"/api/sync/secrets-key",
+		// ut-docs#2730: a replica's request that the main till register its
+		// own cloud device. Bearer-authed in the handler (syncTill); without this
+		// entry every replica is 401'd here and never gets its own cloud
+		// identity.
+		"/api/sync/cloud-device",
 	} {
 		if !exempt(p) {
 			t.Errorf("%s is not exempt — this middleware will 401 it before the "+

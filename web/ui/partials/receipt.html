@@ -217,13 +217,56 @@
     {{ end }}
     <div class="actions">
       <button class="btn primary" onclick="var b=this;fetch('/api/print/receipt/{{ .ReceiptNo }}',{method:'POST'}).then(function(r){if(r.ok){b.textContent='✓ {{ T "receipt.print" }}';}else{window.print();}}).catch(function(){window.print();})">{{ T "receipt.print" }}</button>
-      <button class="btn secondary" onclick="window.location='/'">{{ T "receipt.new_customer" }}</button>
+      <button class="btn secondary" type="button" data-testid="receipt-new-customer"
+              hx-get="/ui/basket" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">{{ T "receipt.new_customer" }}</button>
       <button class="btn secondary" onclick="window.location='/refund/{{ .ReceiptNo }}'">↩ {{ T "refund.title" }}</button>
     </div>
     <small>{{ T "receipt.auto_reset" }}</small>
   </div>
 </div>
 <script>
-  setTimeout(function(){ window.location='/'; }, 60000);
+  // ut-docs#2763: the 60 s auto-reset returns to a fresh sale by swapping
+  // #basket only (GET /ui/basket renders the live basket, no mutation) --
+  // never a page navigation. It used to be an uncancelled
+  // window.location='/', so the whole screen reloaded 60 s after every
+  // sale, usually mid-way through the next one. ONE handle
+  // (UT.receiptReset); it dies the moment anything else happens to the
+  // basket: a request aimed at #basket (the cashier started the next sale,
+  // New Sale, New Customer), any swap that replaces the receipt (including
+  // the app shell's own navigations, which replace #ut-page), or a later
+  // receipt taking over. Touching the receipt itself (reading a long one,
+  // Print) restarts the minute rather than resetting under the finger.
+  // The listeners are page-scoped (base.html drops them on navigation).
+  (function () {
+    var UT = window.UT = window.UT || {};
+    if (UT.receiptReset) UT.receiptReset.cancel();
+    var receipt = document.currentScript && document.currentScript.closest('#basket');
+    if (!receipt || !window.htmx) return;
+    var RESET_MS = 60000, timer = 0, handle;
+    function arm() { clearTimeout(timer); timer = setTimeout(fire, RESET_MS); }
+    function fire() {
+      var live = handle === UT.receiptReset && receipt.isConnected;
+      handle.cancel();
+      if (live) window.htmx.ajax('GET', '/ui/basket', { target: '#basket', swap: 'outerHTML' });
+    }
+    function aimsAtReceipt(t) { return !!t && t.nodeType === 1 && (t === receipt || t.contains(receipt)); }
+    function onRequest(e) { if (aimsAtReceipt(e.detail && e.detail.target)) handle.cancel(); }
+    function onSwap(e) { if (aimsAtReceipt(e.detail && e.detail.target)) handle.cancel(); }
+    function onTouch() { if (handle === UT.receiptReset) arm(); }
+    handle = {
+      cancel: function () {
+        clearTimeout(timer);
+        document.removeEventListener('htmx:beforeRequest', onRequest);
+        document.removeEventListener('htmx:beforeSwap', onSwap);
+        receipt.removeEventListener('pointerdown', onTouch);
+        if (UT.receiptReset === handle) UT.receiptReset = null;
+      }
+    };
+    UT.receiptReset = handle;
+    document.addEventListener('htmx:beforeRequest', onRequest);
+    document.addEventListener('htmx:beforeSwap', onSwap);
+    receipt.addEventListener('pointerdown', onTouch);
+    arm();
+  })();
 </script>
 {{ end }}

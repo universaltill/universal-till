@@ -568,7 +568,26 @@ const AutoUpdateLastAttemptSettingsKey = "update.auto_last_attempt"
 // is a true equality test, so this works as an exact match. So is
 // AutoUpdateLastAttemptSettingsKey (ut-docs#2726); the auto-update schedule
 // itself stays shop-wide.
-var PerTillSettingPrefixes = []string{"sync.", "printer.", "display.", "reports.eod_", FiscalPendingSignRetriesSettingsKey, AutoUpdateLastAttemptSettingsKey}
+//
+// The marketplace entries (ut-docs#2730) are this till's own cloud identity
+// (db.TillCloudIdentityPrefixes) plus the marketplace signing key it pinned on
+// first sight (a synced value would let another till silently replace a
+// pinned trust anchor). Syncing them made every replica heartbeat as the
+// main till's device, carrying the main till's store token. Both ends
+// enforce it: DumpAdmin never sends these rows and ApplyAdmin never applies
+// them (a pre-fix main till still sends them). The store-level marketplace
+// keys — store_id, merchant_id, telemetry_opt_in, auto_register_opt_in — are
+// the same for every till of the shop and keep syncing; the main till
+// registers each replica's own device (internal/enroll, POST
+// /api/sync/cloud-device) without any credential crossing the LAN.
+var PerTillSettingPrefixes = []string{
+	"sync.", "printer.", "display.", "reports.eod_", FiscalPendingSignRetriesSettingsKey, AutoUpdateLastAttemptSettingsKey,
+	// The same three entries as db.TillCloudIdentityPrefixes (the join
+	// snapshot's redaction; internal/db can't import this package) —
+	// TestPerTillSettingsCoverTillCloudIdentity keeps them in step.
+	"marketplace.device_", "marketplace.token", "marketplace.enrolled_at",
+	"marketplace.public_key",
+}
 
 func perTillSetting(key string) bool {
 	for _, p := range PerTillSettingPrefixes {
