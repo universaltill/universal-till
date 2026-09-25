@@ -167,8 +167,11 @@ func TestKioskCounterOrdersPage_ColumnShowsElapsedAgeNotAbsoluteTimestamp(t *tes
 		t.Fatalf("Age column must show elapsed minutes (want \"42 min\"), got: %s", body)
 	}
 	// The current year appearing anywhere near the row would mean this
-	// regressed back to an absolute-datetime render.
-	if strings.Contains(body, strconv.Itoa(time.Now().Year())) {
+	// regressed back to an absolute-datetime render. The order's random
+	// UUID is in the row too (id, action URLs) and contains the year's
+	// digits about once in a thousand runs, so it is removed first
+	// (ut-docs#2748 — it failed a release that way).
+	if strings.Contains(strings.ReplaceAll(body, created.ID, ""), strconv.Itoa(time.Now().Year())) {
 		t.Fatalf("Age column must not render an absolute date/year: %s", body)
 	}
 }
