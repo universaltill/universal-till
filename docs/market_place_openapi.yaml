@@ -628,7 +628,8 @@ components:
           type: string
         trust_tier:
           type: string
-          enum: [verified, trusted, community]
+          description: official = first-party (com.universaltill.* listing, ut-docs#2647) — the till shows the gold Official badge; otherwise the listing's stored tier.
+          enum: [official, verified, trusted, community, unverified]
         capabilities:
           type: array
           items:
