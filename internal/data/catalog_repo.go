@@ -40,6 +40,9 @@ var ErrBarcodeNoSymbologyMatch = errors.New("barcode matches no enabled symbolog
 type BarcodeConflictError struct {
 	TargetType string // "item" or "variant"
 	TargetID   string
+	// Barcode is the code as submitted, when the caller set it (SaveItem
+	// does, so a directive's failure text can name the code). May be "".
+	Barcode string
 }
 
 func (e *BarcodeConflictError) Error() string {
@@ -1272,6 +1275,14 @@ type CategoryNode struct {
 	// or "" for none. Whether an uploaded file is actually present on
 	// THIS till is the renderer's question, not the repo's.
 	ImagePath string
+	// Icon (manage-shop catalog contract §0.12, migration 041) is an icon
+	// id "namespace:name" or "" for none. Untrusted on read: the sale
+	// screen renders it only through iconid.AssetPath.
+	Icon string
+	// SellScreenHidden (migration 041) keeps the category and its subtree
+	// off the sale screen's category strip/tabs/overflow; its items stay
+	// sellable by search, scan and the All tab.
+	SellScreenHidden bool
 }
 
 // ListCategories returns every category (active AND inactive, flat,
@@ -1286,7 +1297,8 @@ type CategoryNode struct {
 // and existing ordering unchanged for whatever else still relies on it.
 func (r *CatalogRepo) ListCategories(ctx context.Context) ([]CategoryNode, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, COALESCE(parent_id, ''), sort_order, COALESCE(color, ''), is_active, COALESCE(image_path, '')
+SELECT id, name, COALESCE(parent_id, ''), sort_order, COALESCE(color, ''), is_active, COALESCE(image_path, ''),
+       COALESCE(icon, ''), sell_screen_hidden
 FROM categories
 ORDER BY sort_order, name`)
 	if err != nil {
@@ -1297,7 +1309,7 @@ ORDER BY sort_order, name`)
 	for rows.Next() {
 		var c CategoryNode
 		var active int
-		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color, &active, &c.ImagePath); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color, &active, &c.ImagePath, &c.Icon, &c.SellScreenHidden); err != nil {
 			return nil, fmt.Errorf("list categories: %w", err)
 		}
 		c.IsActive = active == 1
@@ -1320,7 +1332,8 @@ ORDER BY sort_order, name`)
 // see that var's comment for why).
 func (r *CatalogRepo) ListActiveCategories(ctx context.Context) ([]CategoryNode, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, COALESCE(parent_id, ''), sort_order, COALESCE(color, ''), COALESCE(image_path, '')
+SELECT id, name, COALESCE(parent_id, ''), sort_order, COALESCE(color, ''), COALESCE(image_path, ''),
+       COALESCE(icon, ''), sell_screen_hidden
 FROM categories
 WHERE is_active = 1
 ORDER BY sort_order, name`)
@@ -1331,7 +1344,7 @@ ORDER BY sort_order, name`)
 	var out []CategoryNode
 	for rows.Next() {
 		var c CategoryNode
-		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color, &c.ImagePath); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color, &c.ImagePath, &c.Icon, &c.SellScreenHidden); err != nil {
 			return nil, fmt.Errorf("list active categories: %w", err)
 		}
 		c.IsActive = true
@@ -1395,6 +1408,8 @@ type CategoryAdminRow struct {
 	// a category has real items in it, hidden or not.
 	VisibleItemCount int
 	ImagePath        string // ut-docs#2500, see CategoryNode.ImagePath
+	Icon             string // migration 041, see CategoryNode.Icon
+	SellScreenHidden bool   // migration 041, see CategoryNode.SellScreenHidden
 }
 
 // ListCategoriesForAdmin returns every category (active and inactive, so a
@@ -1406,7 +1421,7 @@ func (r *CatalogRepo) ListCategoriesForAdmin(ctx context.Context) ([]CategoryAdm
 SELECT c.id, c.name, COALESCE(c.parent_id, ''), c.sort_order, COALESCE(c.color, ''), c.is_active,
        COUNT(i.id) AS item_count,
        COUNT(CASE WHEN i.sell_screen_hidden = 0 THEN i.id END) AS visible_item_count,
-       COALESCE(c.image_path, '')
+       COALESCE(c.image_path, ''), COALESCE(c.icon, ''), c.sell_screen_hidden
 FROM categories c
 LEFT JOIN items i ON i.category_id = c.id AND i.is_active = 1
 GROUP BY c.id
@@ -1419,7 +1434,7 @@ ORDER BY c.sort_order, c.name`)
 	for rows.Next() {
 		var c CategoryAdminRow
 		var active int
-		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color, &active, &c.ItemCount, &c.VisibleItemCount, &c.ImagePath); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color, &active, &c.ItemCount, &c.VisibleItemCount, &c.ImagePath, &c.Icon, &c.SellScreenHidden); err != nil {
 			return nil, fmt.Errorf("list categories for admin: %w", err)
 		}
 		c.IsActive = active == 1
@@ -1464,6 +1479,14 @@ func (r *CatalogRepo) CreateCategory(ctx context.Context, name string) (string, 
 // caller's job (categories_page.go, same as the item editor's
 // validateLookups): the repo stays a plain persistence layer.
 func (r *CatalogRepo) CreateCategoryWithColor(ctx context.Context, name, color string) (string, error) {
+	return r.CreateCategoryWithColorHidden(ctx, name, color, false)
+}
+
+// CreateCategoryWithColorHidden is CreateCategoryWithColor plus the
+// category's sell_screen_hidden flag (the editor's "Show on the sale
+// screen" box, manage-shop catalog contract §3.2), written by the SAME
+// INSERT so a failure can't leave a half-saved category behind.
+func (r *CatalogRepo) CreateCategoryWithColorHidden(ctx context.Context, name, color string, hidden bool) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return "", ErrCategoryNameRequired
@@ -1478,8 +1501,8 @@ func (r *CatalogRepo) CreateCategoryWithColor(ctx context.Context, name, color s
 	}
 	id := uuid.NewString()
 	if _, err := r.db.ExecContext(ctx,
-		`INSERT INTO categories (id, name, sort_order, is_active, color) VALUES (?, ?, ?, 1, ?)`,
-		id, name, sortOrder, nullableString(strings.TrimSpace(color))); err != nil {
+		`INSERT INTO categories (id, name, sort_order, is_active, color, sell_screen_hidden) VALUES (?, ?, ?, 1, ?, ?)`,
+		id, name, sortOrder, nullableString(strings.TrimSpace(color)), boolToInt(hidden)); err != nil {
 		return "", fmt.Errorf("create category: %w", err)
 	}
 	return id, nil
@@ -1510,12 +1533,24 @@ func (r *CatalogRepo) RenameCategory(ctx context.Context, id, name string) error
 // flag, parent) is touched. An empty colour clears the column (NULL,
 // read back as "") — how the picker's "No colour" tile is stored.
 func (r *CatalogRepo) UpdateCategory(ctx context.Context, id, name, color string) error {
+	return r.UpdateCategoryWithHidden(ctx, id, name, color, nil)
+}
+
+// UpdateCategoryWithHidden is UpdateCategory plus, when hidden is non-nil,
+// the sell_screen_hidden flag — in the SAME UPDATE statement, so the
+// editor's Save can't rename a category and then fail on the flag (review
+// finding 6). nil leaves the flag as it is.
+func (r *CatalogRepo) UpdateCategoryWithHidden(ctx context.Context, id, name, color string, hidden *bool) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return ErrCategoryNameRequired
 	}
-	res, err := r.db.ExecContext(ctx, `UPDATE categories SET name = ?, color = ? WHERE id = ?`,
-		name, nullableString(strings.TrimSpace(color)), id)
+	var hiddenArg any
+	if hidden != nil {
+		hiddenArg = boolToInt(*hidden)
+	}
+	res, err := r.db.ExecContext(ctx, `UPDATE categories SET name = ?, color = ?, sell_screen_hidden = COALESCE(?, sell_screen_hidden) WHERE id = ?`,
+		name, nullableString(strings.TrimSpace(color)), hiddenArg, id)
 	if err != nil {
 		return fmt.Errorf("update category: %w", err)
 	}
@@ -1612,82 +1647,13 @@ func (r *CatalogRepo) UpdateCategoryPartial(ctx context.Context, id string, p Ca
 		color = strings.TrimSpace(*p.Color)
 	}
 
-	var groupIDs, stationIDs []string
-	if p.GroupIDs != nil {
-		groupIDs = dedupeIDs(*p.GroupIDs)
-		for _, gid := range groupIDs {
-			if ok, err := rowExists(ctx, tx, `SELECT 1 FROM item_modifier_groups WHERE id = ? AND is_active = 1`, gid); err != nil {
-				return res, fmt.Errorf("update category partial: check group: %w", err)
-			} else if !ok {
-				return res, fmt.Errorf("%w: %s", ErrModifierGroupNotFound, gid)
-			}
-		}
-		submitted := make(map[string]bool, len(groupIDs))
-		for _, gid := range groupIDs {
-			submitted[gid] = true
-		}
-		rows, err := tx.QueryContext(ctx, `
-SELECT l.group_id FROM category_modifier_group_links l
-JOIN item_modifier_groups g ON g.id = l.group_id
-WHERE l.category_id = ? AND g.is_active = 0
-ORDER BY l.sort_order, g.name`, id)
-		if err != nil {
-			return res, fmt.Errorf("update category partial: inactive links: %w", err)
-		}
-		var keep []string
-		for rows.Next() {
-			var gid string
-			if err := rows.Scan(&gid); err != nil {
-				rows.Close()
-				return res, fmt.Errorf("update category partial: inactive links: %w", err)
-			}
-			if !submitted[gid] {
-				keep = append(keep, gid)
-			}
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return res, fmt.Errorf("update category partial: inactive links: %w", err)
-		}
-		groupIDs = append(groupIDs, keep...)
-	}
-	if p.StationIDs != nil {
-		stationIDs = dedupeIDs(*p.StationIDs)
-		for _, sid := range stationIDs {
-			if ok, err := rowExists(ctx, tx, `SELECT 1 FROM kitchen_stations WHERE id = ?`, sid); err != nil {
-				return res, fmt.Errorf("update category partial: check station: %w", err)
-			} else if !ok {
-				return res, fmt.Errorf("%w: %s", ErrKitchenStationNotFound, sid)
-			}
-		}
-	}
-
 	if _, err := tx.ExecContext(ctx, `UPDATE categories SET name = ?, color = ? WHERE id = ?`,
 		name, nullableString(color), id); err != nil {
 		return res, fmt.Errorf("update category partial: row: %w", err)
 	}
-	if p.GroupIDs != nil {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM category_modifier_group_links WHERE category_id = ?`, id); err != nil {
-			return res, fmt.Errorf("update category partial: clear groups: %w", err)
-		}
-		for i, gid := range groupIDs {
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO category_modifier_group_links (category_id, group_id, sort_order) VALUES (?, ?, ?)`,
-				id, gid, i); err != nil {
-				return res, fmt.Errorf("update category partial: link group: %w", err)
-			}
-		}
-	}
-	if p.StationIDs != nil {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM category_station_routes WHERE category_id = ?`, id); err != nil {
-			return res, fmt.Errorf("update category partial: clear stations: %w", err)
-		}
-		for _, sid := range stationIDs {
-			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO category_station_routes (category_id, station_id) VALUES (?, ?)`, id, sid); err != nil {
-				return res, fmt.Errorf("update category partial: route station: %w", err)
-			}
-		}
+	groupIDs, stationIDs, err := writeCategoryLinksTx(ctx, tx, id, p.GroupIDs, p.StationIDs)
+	if err != nil {
+		return res, err
 	}
 	if err := tx.Commit(); err != nil {
 		return res, fmt.Errorf("update category partial: commit: %w", err)
@@ -1700,6 +1666,91 @@ ORDER BY l.sort_order, g.name`, id)
 		res.StationIDs = append([]string{}, stationIDs...)
 	}
 	return res, nil
+}
+
+// writeCategoryLinksTx replaces a category's modifier-group links and/or
+// kitchen-station routes inside the caller's transaction — the shared link
+// half of UpdateCategoryPartial (update_category) and SaveCategory
+// (save_category). A nil list leaves that set untouched. Every id is
+// validated before anything is written: an unknown station id, or a group
+// id that is unknown or inactive, refuses the whole edit (the local dialog
+// only offers active groups). Blank and repeated ids are dropped. Links to
+// inactive groups that are not in the submitted list are kept (the
+// ut-docs#2284 rule: a picker of active groups can't express them). Returns
+// the effective ids written for each set it touched (nil otherwise).
+func writeCategoryLinksTx(ctx context.Context, tx *sql.Tx, id string, groups, stations *[]string) (groupIDs, stationIDs []string, err error) {
+	if groups != nil {
+		groupIDs = dedupeIDs(*groups)
+		for _, gid := range groupIDs {
+			if ok, err := rowExists(ctx, tx, `SELECT 1 FROM item_modifier_groups WHERE id = ? AND is_active = 1`, gid); err != nil {
+				return nil, nil, fmt.Errorf("category links: check group: %w", err)
+			} else if !ok {
+				return nil, nil, fmt.Errorf("%w: %s", ErrModifierGroupNotFound, gid)
+			}
+		}
+		submitted := make(map[string]bool, len(groupIDs))
+		for _, gid := range groupIDs {
+			submitted[gid] = true
+		}
+		rows, err := tx.QueryContext(ctx, `
+SELECT l.group_id FROM category_modifier_group_links l
+JOIN item_modifier_groups g ON g.id = l.group_id
+WHERE l.category_id = ? AND g.is_active = 0
+ORDER BY l.sort_order, g.name`, id)
+		if err != nil {
+			return nil, nil, fmt.Errorf("category links: inactive links: %w", err)
+		}
+		var keep []string
+		for rows.Next() {
+			var gid string
+			if err := rows.Scan(&gid); err != nil {
+				rows.Close()
+				return nil, nil, fmt.Errorf("category links: inactive links: %w", err)
+			}
+			if !submitted[gid] {
+				keep = append(keep, gid)
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, nil, fmt.Errorf("category links: inactive links: %w", err)
+		}
+		groupIDs = append(groupIDs, keep...)
+	}
+	if stations != nil {
+		stationIDs = dedupeIDs(*stations)
+		for _, sid := range stationIDs {
+			if ok, err := rowExists(ctx, tx, `SELECT 1 FROM kitchen_stations WHERE id = ?`, sid); err != nil {
+				return nil, nil, fmt.Errorf("category links: check station: %w", err)
+			} else if !ok {
+				return nil, nil, fmt.Errorf("%w: %s", ErrKitchenStationNotFound, sid)
+			}
+		}
+	}
+	if groups != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM category_modifier_group_links WHERE category_id = ?`, id); err != nil {
+			return nil, nil, fmt.Errorf("category links: clear groups: %w", err)
+		}
+		for i, gid := range groupIDs {
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO category_modifier_group_links (category_id, group_id, sort_order) VALUES (?, ?, ?)`,
+				id, gid, i); err != nil {
+				return nil, nil, fmt.Errorf("category links: link group: %w", err)
+			}
+		}
+	}
+	if stations != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM category_station_routes WHERE category_id = ?`, id); err != nil {
+			return nil, nil, fmt.Errorf("category links: clear stations: %w", err)
+		}
+		for _, sid := range stationIDs {
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO category_station_routes (category_id, station_id) VALUES (?, ?)`, id, sid); err != nil {
+				return nil, nil, fmt.Errorf("category links: route station: %w", err)
+			}
+		}
+	}
+	return groupIDs, stationIDs, nil
 }
 
 // dedupeIDs trims ids and drops blanks and repeats, keeping first-seen order.

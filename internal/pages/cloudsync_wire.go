@@ -418,14 +418,19 @@ func remoteCategoriesReport(ctx context.Context, d *common.Deps) []map[string]an
 	out := make([]map[string]any, 0, len(cats))
 	for _, c := range cats {
 		out = append(out, map[string]any{
-			"id":                 c.ID,
-			"name":               c.Name,
-			"parent_id":          c.ParentID,
-			"color":              c.Color,
-			"sort_order":         c.SortOrder,
-			"active":             c.IsActive,
-			"modifier_group_ids": capIDs(groupLinks[c.ID]),
-			"station_ids":        capIDs(stationRoutes[c.ID]),
+			"id":        c.ID,
+			"name":      c.Name,
+			"parent_id": c.ParentID,
+			"color":     c.Color,
+			// Manage-shop catalog contract §3.6: the icon id ("" = none)
+			// and the sale-screen flag, the wire's inverse of
+			// categories.sell_screen_hidden.
+			"icon":                c.Icon,
+			"show_on_sale_screen": !c.SellScreenHidden,
+			"sort_order":          c.SortOrder,
+			"active":              c.IsActive,
+			"modifier_group_ids":  capIDs(groupLinks[c.ID]),
+			"station_ids":         capIDs(stationRoutes[c.ID]),
 		})
 	}
 	return out
@@ -633,6 +638,25 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		UpsertModifierGroup: func(ctx context.Context, itemID, name string, required bool, minSelect, maxSelect int, options []cloudsync.ModifierGroupOption) (string, error) {
 			return cloudUpsertModifierGroup(ctx, d, itemID, name, required, minSelect, maxSelect, options)
 		},
+		// The manage-shop catalog directives (ut-docs
+		// reference/manage-shop-catalog-api.md §3): main-till only,
+		// one transaction each, audited, idempotent. See
+		// cloudsync_catalog_wire.go.
+		SaveItem: func(ctx context.Context, p data.ItemPatch) (string, error) {
+			return cloudSaveItem(ctx, d, p)
+		},
+		SaveCategory: func(ctx context.Context, p data.CategorySave) (string, error) {
+			return cloudSaveCategory(ctx, d, p)
+		},
+		DeleteCategory: func(ctx context.Context, id, moveItemsTo string) (string, error) {
+			return cloudDeleteCategory(ctx, d, id, moveItemsTo)
+		},
+		SaveModifierGroup: func(ctx context.Context, p data.ModifierGroupSave) (string, error) {
+			return cloudSaveModifierGroup(ctx, d, p)
+		},
+		DeleteModifierGroup: func(ctx context.Context, id string) (string, error) {
+			return cloudDeleteModifierGroup(ctx, d, id)
+		},
 		// diagnostic_mode_revoke (ADR-0092 §1/§4, ut-docs#2169): Universal
 		// Till ended this till's diagnostic session — clear the local flag
 		// and drain that session's whole pending queue in one step. Same
@@ -681,6 +705,9 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 				// PKR and has no IRT.
 				"currency":          d.CurrentState().Currency,
 				"currency_decimals": httpx.CurrencyByCode(d.CurrentState().Currency).Decimals,
+				// The till's UI language tag, for the cloud's status bar
+				// ("EUR · de-DE", manage-shop catalog contract §3.6).
+				"locale": httpx.DefaultLocale(),
 			}
 			// ut-docs#2472 (ADR-0095 Decision 2, read side): the applied
 			// menu configuration — categories with their modifier-group and

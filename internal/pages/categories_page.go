@@ -354,6 +354,11 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		icon     string
 		iconPath string
 		photo    image.Image
+		// hidden (manage-shop catalog contract §7.2(5)) is the "Show on
+		// the sale screen" box, inverted: nil when the post carried no
+		// show_on_sale_screen_field marker (an older page), so an absent
+		// checkbox is never read as "hide".
+		hidden *bool
 	}
 
 	// parseCategoryForm reads and validates the dialog's form. The colour
@@ -386,6 +391,10 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		}
 		if !catalogtypes.ValidItemColor(f.color) {
 			return f, "categories.error.color_invalid"
+		}
+		if r.PostFormValue("show_on_sale_screen_field") == "1" {
+			h := r.PostFormValue("show_on_sale_screen") != "1"
+			f.hidden = &h
 		}
 		f.icon = strings.TrimSpace(r.PostFormValue("icon"))
 		if f.icon != "" && f.icon != "none" {
@@ -553,7 +562,9 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 			renderCategoryDialogError(w, r, errKey, 0)
 			return
 		}
-		id, err := catRepo.CreateCategoryWithColor(r.Context(), f.name, f.color)
+		// The hidden flag rides in the create's own INSERT (review finding
+		// 6): nothing half-saved if it fails.
+		id, err := catRepo.CreateCategoryWithColorHidden(r.Context(), f.name, f.color, f.hidden != nil && *f.hidden)
 		if err != nil {
 			key := "categories.error.create"
 			if err == data.ErrCategoryNameRequired {
@@ -594,7 +605,8 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 			renderCategoryDialogError(w, r, errKey, 0)
 			return
 		}
-		if err := catRepo.UpdateCategory(r.Context(), id, f.name, f.color); err != nil {
+		// The hidden flag rides in the same UPDATE (review finding 6).
+		if err := catRepo.UpdateCategoryWithHidden(r.Context(), id, f.name, f.color, f.hidden); err != nil {
 			key := "categories.error.rename"
 			switch err {
 			case data.ErrCategoryNameRequired:

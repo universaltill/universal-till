@@ -13,6 +13,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -180,6 +181,17 @@ type Hooks struct {
 	// group" picker, until the read-side StoreSnapshot extension (ADR-0095
 	// Decision 2) ships. See pages.cloudUpsertModifierGroup.
 	UpsertModifierGroup func(ctx context.Context, itemID, name string, required bool, minSelect, maxSelect int, options []ModifierGroupOption) (string, error)
+	// The manage-shop catalog directives (ut-docs
+	// reference/manage-shop-catalog-api.md §3). All five are main-till only:
+	// Tick skips them on a satellite till (no apply, no result post). Each
+	// hook applies its change atomically through the till's own repository
+	// write path, writes one audit row and is idempotent. The save types
+	// take a patch of pointer fields — nil means the field was absent.
+	SaveItem            func(ctx context.Context, p data.ItemPatch) (string, error)
+	SaveCategory        func(ctx context.Context, p data.CategorySave) (string, error)
+	DeleteCategory      func(ctx context.Context, id, moveItemsTo string) (string, error)
+	SaveModifierGroup   func(ctx context.Context, p data.ModifierGroupSave) (string, error)
+	DeleteModifierGroup func(ctx context.Context, id string) (string, error)
 	// DeviceExtra contributes extra fields to the device report (e.g. the
 	// current theme + the themes this till can switch to, so the cloud can
 	// render a real design picker instead of a raw key/value form). Keys must
@@ -239,7 +251,9 @@ func Tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) erro
 	// data actually changed (hash gate) — most ticks send nothing. Replicas
 	// skip it entirely: their catalog mirrors the primary (ADR-0011), so the
 	// primary's snapshot is the shop's snapshot.
-	if v, _, _ := data.NewSettingsRepo(db).Get(ctx, "sync.primary_url"); strings.TrimSpace(v) == "" {
+	primaryURL, _, _ := data.NewSettingsRepo(db).Get(ctx, "sync.primary_url")
+	isMainTill := strings.TrimSpace(primaryURL) == ""
+	if isMainTill {
 		if err := pushSnapshotIfChanged(ctx, cfg, db); err != nil {
 			logging.L().Warnf("cloudsync: snapshot push failed (will retry): %v", err)
 		}
@@ -267,14 +281,37 @@ func Tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) erro
 		// never fails the tick.
 		pushSalesAggregates(ctx, cfg, db)
 	}
+	catalogApplied := false
 	for _, d := range dirs {
+		if !isMainTill && mainTillOnlyTypes[d.Type] {
+			// Contract §3: a satellite till leaves these pending for the
+			// main till — no apply, and no result post that would resolve
+			// them as failed.
+			// Logged once per directive id (review finding 5), not on
+			// every tick while it waits for the main till.
+			if firstSatelliteSkip(d.ID) {
+				logging.L().Infof("cloudsync: directive %s (%s) skipped: main till only", d.ID, d.Type)
+			}
+			continue
+		}
 		status, msg := apply(ctx, d, hooks)
+		if status == "applied" && catalogTypes[d.Type] {
+			catalogApplied = true
+		}
 		if err := postResult(ctx, cfg, d.ID, status, msg); err != nil {
 			// Leave it pending on the cloud; the next tick re-applies (the
 			// hooks are idempotent for the supported types) and re-reports.
 			logging.L().Warnf("cloudsync: result for %s not delivered: %v", d.ID, err)
 		} else {
 			logging.L().Infof("cloudsync: directive %s (%s) %s: %s", d.ID, d.Type, status, msg)
+		}
+	}
+	// Fresh data in the same tick (contract §3.6): a catalog change the
+	// cloud just made is reported back now, not a tick later. The hash gate
+	// makes this free when nothing actually changed.
+	if isMainTill && catalogApplied {
+		if err := pushSnapshotIfChanged(ctx, cfg, db); err != nil {
+			logging.L().Warnf("cloudsync: snapshot push after directives failed (will retry): %v", err)
 		}
 	}
 	// Issue-reporter status pull (ADR-0022, spec 012, ut-docs#348): the
@@ -616,6 +653,60 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", oerr.Error()
 		}
 		msg, err = hooks.UpsertModifierGroup(ctx, id, name, required, int(minSelect), int(maxSelect), options)
+	case "save_item":
+		if hooks.SaveItem == nil {
+			return "failed", "save_item is not supported on this till"
+		}
+		p, bad := decodeSaveItem(payload(d.Payload))
+		if bad != "" {
+			return "failed", bad
+		}
+		msg, err = hooks.SaveItem(ctx, p)
+	case "save_category":
+		if hooks.SaveCategory == nil {
+			return "failed", "save_category is not supported on this till"
+		}
+		p, bad := decodeSaveCategory(payload(d.Payload))
+		if bad != "" {
+			return "failed", bad
+		}
+		msg, err = hooks.SaveCategory(ctx, p)
+	case "delete_category":
+		if hooks.DeleteCategory == nil {
+			return "failed", "delete_category is not supported on this till"
+		}
+		pl := payload(d.Payload)
+		id := pl.id()
+		if id == "" {
+			return "failed", "missing id"
+		}
+		target, ok := pl.optStr("move_items_to")
+		if !ok {
+			return "failed", "bad move_items_to"
+		}
+		move := ""
+		if target != nil {
+			move = *target
+		}
+		msg, err = hooks.DeleteCategory(ctx, id, move)
+	case "save_modifier_group":
+		if hooks.SaveModifierGroup == nil {
+			return "failed", "save_modifier_group is not supported on this till"
+		}
+		p, bad := decodeSaveModifierGroup(payload(d.Payload))
+		if bad != "" {
+			return "failed", bad
+		}
+		msg, err = hooks.SaveModifierGroup(ctx, p)
+	case "delete_modifier_group":
+		if hooks.DeleteModifierGroup == nil {
+			return "failed", "delete_modifier_group is not supported on this till"
+		}
+		id := payload(d.Payload).id()
+		if id == "" {
+			return "failed", "missing id"
+		}
+		msg, err = hooks.DeleteModifierGroup(ctx, id)
 	default:
 		return "failed", "unknown directive type " + d.Type
 	}
@@ -773,71 +864,100 @@ func cacheEntitlement(ctx context.Context, settings *data.SettingsRepo, raw json
 	}
 }
 
+// snapshotSchema is the catalog snapshot's wire version (contract §3.7).
+// The cloud's schema-2 ingest (16 MiB cap) must be live before a till
+// release that sends it — the old 4 MiB cap would answer 413 forever.
+const snapshotSchema = 2
+
+// maxSnapshotItems mirrors the cloud's 20 000-item cap. Items are ordered
+// active first, so a truncation drops inactive items first.
+const maxSnapshotItems = 20000
+
+type snapshotVariantRow struct {
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	SKU        string   `json:"sku"`
+	PriceMinor int64    `json:"price_minor"`
+	Active     bool     `json:"active"`
+	Barcodes   []string `json:"barcodes"`
+}
+
+type snapshotItemRow struct {
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	SKU            string   `json:"sku"`
+	PriceMinor     int64    `json:"price_minor"`
+	CategoryID     string   `json:"category_id"`
+	Color          string   `json:"color"`
+	Active         bool     `json:"active"`
+	IsWeighed      bool     `json:"is_weighed"`
+	StockUntracked bool     `json:"stock_untracked"`
+	Qty            *float64 `json:"qty,omitempty"`
+	// Barcode is the legacy primary barcode, kept for a schema-1 reader.
+	Barcode                   string               `json:"barcode"`
+	Barcodes                  []string             `json:"barcodes"`
+	ModifierGroupIDs          []string             `json:"modifier_group_ids"`
+	ModifierOptOutIDs         []string             `json:"modifier_opt_out_ids"`
+	EffectiveModifierGroupIDs []string             `json:"effective_modifier_group_ids"`
+	Variants                  []snapshotVariantRow `json:"variants"`
+}
+
 // pushSnapshotIfChanged uploads the catalog + on-hand stock when it differs
 // from what the cloud already has (tracked via a content hash in settings).
+// Schema 2 (contract §3.7): every item, inactive included, with its full
+// barcode set, modifier links, the till's own resolved groups and its
+// variants nested.
 func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) error {
 	eff := enroll.Effective(cfg)
 	m := eff.Marketplace
 
-	items, err := data.NewCatalogRepo(db).ListItems(ctx)
-	if err != nil {
-		return err
-	}
-	barcodes, err := data.NewCatalogRepo(db).ItemBarcodes(ctx)
+	items, err := data.NewCatalogRepo(db).CatalogSnapshotItems(ctx)
 	if err != nil {
 		return err
 	}
 	qty := map[string]float64{}
 	if levels, err := data.NewPOSRepo(db).ListStockLevels(ctx); err == nil {
 		for _, l := range levels {
-			// ut-docs#2082: ListStockLevels now ALSO returns a variant's own
-			// row (same ADR-0043 additive shape as StockForExport), carrying
-			// its PARENT item's ItemID. Skip those here, same guard
-			// StockForExport itself needed for the identical reason — an
-			// unguarded += would fold a variant's stock into its parent's
-			// cloud qty (ADR-0043 Decision 3 forbids exactly this
-			// double-counting), inflating the pushed catalog qty by however
-			// much stock the item's variants hold.
+			// ut-docs#2082: ListStockLevels ALSO returns a variant's own row
+			// carrying its PARENT item's ItemID. Skip those, or a variant's
+			// stock would fold into its parent's cloud qty (ADR-0043
+			// Decision 3 forbids exactly this double-counting). Variants
+			// carry no qty in the snapshot.
 			if l.VariantID != "" {
 				continue
 			}
 			qty[l.ItemID] += l.CurrentQty
 		}
 	}
-	// Variant rows ride along under their parent: own id/price/barcode, name
-	// composed for the cloud table. No qty on variants here — qty above
-	// (qty[it.ID]) comes solely from ListStockLevels' item-scoped rows (the
-	// guard above), so a variant's own stock is simply absent from this
-	// cloud snapshot today, a known and accepted gap in THIS surface —
-	// putting the variant's own qty on its own row wouldn't double-count
-	// anything (item- and variant-scoped inventory rows are disjoint per the
-	// CHECK constraint in 001_init.sql); it's just not done here. (Not an
-	// ADR-0011 citation: that ADR is multi-till sync/ownership, not
-	// export/reporting granularity — see ADR-0043, which does surface
-	// variant-scoped stock distinctly, but only in the export payload, a
-	// different surface from this cloud catalog sync.)
-	variants, _ := data.NewCatalogRepo(db).ItemVariants(ctx)
-	rows := make([]map[string]any, 0, len(items))
+	if len(items) > maxSnapshotItems {
+		logging.L().Warnf("cloudsync: catalog has %d items; the snapshot carries the first %d (inactive items dropped first)", len(items), maxSnapshotItems)
+		items = items[:maxSnapshotItems]
+	}
+	rows := make([]snapshotItemRow, 0, len(items))
 	for _, it := range items {
-		if !it.IsActive {
-			continue
+		row := snapshotItemRow{
+			ID: it.ID, Name: it.Name, SKU: it.SKU, PriceMinor: it.PriceMinor,
+			CategoryID: it.CategoryID, Color: it.Color, Active: it.Active,
+			IsWeighed: it.IsWeighed, StockUntracked: it.StockUntracked,
+			Barcodes: it.Barcodes, ModifierGroupIDs: it.ModifierGroupIDs,
+			ModifierOptOutIDs: it.ModifierOptOutIDs, EffectiveModifierGroupIDs: it.EffectiveModifierGroupIDs,
+			Variants: make([]snapshotVariantRow, 0, len(it.Variants)),
 		}
-		barcode := ""
-		if bs := barcodes[it.ID]; len(bs) > 0 {
-			barcode = bs[0]
+		if len(it.Barcodes) > 0 {
+			row.Barcode = it.Barcodes[0]
 		}
-		rows = append(rows, map[string]any{
-			"id": it.ID, "name": it.Name, "price_minor": it.BasePrice,
-			"barcode": barcode, "qty": qty[it.ID],
-		})
-		for _, v := range variants[it.ID] {
-			rows = append(rows, map[string]any{
-				"id": v.ID, "name": it.Name + " — " + v.Name,
-				"price_minor": v.PriceMinor, "barcode": v.Barcode,
+		if !it.StockUntracked {
+			q := qty[it.ID]
+			row.Qty = &q
+		}
+		for _, v := range it.Variants {
+			row.Variants = append(row.Variants, snapshotVariantRow{
+				ID: v.ID, Name: v.Name, SKU: v.SKU, PriceMinor: v.PriceMinor, Active: v.Active, Barcodes: v.Barcodes,
 			})
 		}
+		rows = append(rows, row)
 	}
-	payload, _ := json.Marshal(map[string]any{"store_id": m.StoreID, "items": rows})
+	payload, _ := json.Marshal(map[string]any{"store_id": m.StoreID, "schema": snapshotSchema, "items": rows})
 
 	sum := sha256.Sum256(payload)
 	hash := hex.EncodeToString(sum[:])
@@ -845,10 +965,35 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 	if prev, _, _ := settings.Get(ctx, "cloudsync.snapshot_hash"); prev == hash {
 		return nil // unchanged since the last successful push
 	}
+	// Size guard (review finding 3): over the cloud's 16 MiB schema-2 cap
+	// the post would only be refused, so don't send it. Logged once at
+	// warn level, which also puts it in the heartbeat's problems digest.
+	if len(payload) > maxSnapshotBytes {
+		if snapshotOversize() {
+			logging.L().Warnf("cloudsync: catalog snapshot is too large to upload (%d bytes, limit %d); not sent until the catalog shrinks", len(payload), maxSnapshotBytes)
+		}
+		return nil
+	}
+	if snapshotInBackoff() {
+		return nil // the cloud refused the last attempt; wait it out
+	}
 	if _, err := post(ctx, cfg, "/v1/stores/catalog-snapshot", payload); err != nil {
+		var se *statusError
+		if errors.As(err, &se) && rejectedRollup(se.StatusCode) {
+			// The cloud refused the body itself (413 from an older cloud's
+			// 4 MiB cap, 400/422…): the same bytes get the same answer, so
+			// back off exponentially instead of re-uploading the whole
+			// catalog every tick, and log each distinct refusal once.
+			wait, first := snapshotRefused(fmt.Sprintf("status %d", se.StatusCode))
+			if first {
+				logging.L().Warnf("cloudsync: catalog snapshot refused by the cloud (%d, %d bytes); retrying with backoff, next in %s", se.StatusCode, len(payload), wait)
+			}
+			return nil
+		}
 		return err
 	}
-	logging.L().Infof("cloudsync: catalog snapshot pushed (%d items)", len(rows))
+	snapshotSucceeded()
+	logging.L().Infof("cloudsync: catalog snapshot pushed (schema %d, %d items, %d bytes)", snapshotSchema, len(rows), len(payload))
 	return settings.Set(ctx, "cloudsync.snapshot_hash", hash)
 }
 
