@@ -1,0 +1,24 @@
+-- 041_categories_icon_sell_screen_hidden.sql — manage-shop catalog contract
+-- (ut-docs reference/manage-shop-catalog-api.md §3.2; cards ut-docs#2526,
+-- #2584): two new category columns the cloud's save_category directive and
+-- the till's own category editor both write.
+--
+-- icon: an icon id string "namespace:name" (e.g. "lucide:coffee") or NULL
+-- for none. Never SVG, a URL or markup — the till only ever renders ids its
+-- own icon registry knows (internal/iconid), anything else falls back to a
+-- neutral built-in glyph. Separate from 039's image_path: image_path is a
+-- /public/... file path (a built-in icon file or an uploaded photo), icon
+-- is a portable id the cloud and every till agree on.
+--
+-- sell_screen_hidden: 1 = leave this category (and its subtree) out of the
+-- sale screen's category strip/tabs and overflow sheet; its items stay
+-- sellable by search, scan and the All tab. Stored inverted from the
+-- wire's show_on_sale_screen so every existing row reads "shown" with
+-- NOT NULL DEFAULT 0 — hiding is an explicit later action, never an
+-- upgrade side effect (same convention as 038's items.sell_screen_hidden).
+--
+-- categories is an admin-synced table dumped whole-row (sync_admin_repo.go)
+-- and 023's trigger bumps the admin version on any UPDATE, so both columns
+-- reach satellite tills with no sync code change.
+ALTER TABLE categories ADD COLUMN icon TEXT;
+ALTER TABLE categories ADD COLUMN sell_screen_hidden INTEGER NOT NULL DEFAULT 0;

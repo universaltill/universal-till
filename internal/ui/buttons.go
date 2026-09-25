@@ -18,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/iconid"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/money"
 	pos "github.com/universaltill/universal-till/internal/pos"
@@ -50,6 +51,12 @@ type Button struct {
 	CategoryID  string `json:"categoryId,omitempty"` // the item's category, empty when uncategorized
 	// Color is the item's tile swatch (ut-docs#1901) — empty when unset.
 	Color string `json:"color,omitempty"`
+	// QuickButton marks an explicit shortcut_buttons row (set by LoadWith),
+	// as opposed to an implicit tile derived from the active catalog. Only
+	// an explicit quick button survives its category being hidden from the
+	// sale screen (manage-shop catalog contract §3.2) — see
+	// BuildCategoryGroups. Never on the wire.
+	QuickButton bool `json:"-"`
 }
 
 // ButtonVM is the view-model passed to templates.
@@ -243,7 +250,7 @@ func BuildCategoryGroups(buttons []Button, cats []data.CategoryNode, itemCounts 
 	byID := make(map[string]*CategoryGroup, len(cats))
 	nodeByID := make(map[string]data.CategoryNode, len(cats))
 	for _, c := range cats {
-		byID[c.ID] = &CategoryGroup{ID: c.ID, Name: c.Name, Color: resolveCategoryColor(c), ImageURL: categoryImageURL(c.ImagePath)}
+		byID[c.ID] = &CategoryGroup{ID: c.ID, Name: c.Name, Color: resolveCategoryColor(c), ImageURL: categoryPicture(c)}
 		nodeByID[c.ID] = c
 	}
 
@@ -266,17 +273,26 @@ func BuildCategoryGroups(buttons []Button, cats []data.CategoryNode, itemCounts 
 		roots = append(roots, g)
 	}
 
+	// Manage-shop catalog contract §3.2: a category whose
+	// show_on_sale_screen is off leaves the strip/tabs/overflow with its
+	// whole subtree, but its items stay sellable by search, scan AND quick
+	// buttons. So an explicit quick button (Button.QuickButton) anywhere in
+	// a hidden subtree moves to the uncategorised bucket — never off the
+	// sale screen, All tab on or off — while an implicit catalog tile leaves
+	// with its category (the item is still in the All grid, search, scan).
 	var uncategorized []ButtonVM
 	for i, b := range buttons {
 		vm := toButtonVM(b)
 		vm.Pos = i // global sort index — see ButtonVM.Pos
 		g, ok := byID[b.CategoryID]
-		if b.CategoryID == "" || !ok {
+		if b.CategoryID == "" || !ok || (b.QuickButton && inHiddenCategorySubtree(b.CategoryID, nodeByID)) {
 			uncategorized = append(uncategorized, vm)
 			continue
 		}
 		g.Buttons = append(g.Buttons, vm)
 	}
+
+	roots = dropHiddenGroups(roots, nodeByID)
 
 	kept := roots[:0]
 	for _, g := range roots {
@@ -294,6 +310,52 @@ func BuildCategoryGroups(buttons []Button, cats []data.CategoryNode, itemCounts 
 		roots = append(roots, &CategoryGroup{Color: uncategorizedColor, Buttons: uncategorized})
 	}
 	return roots
+}
+
+// inHiddenCategorySubtree reports whether catID or one of its ancestors is
+// sell-screen hidden. A seen-set bounds the walk on malformed (cyclic)
+// data, like isCategoryAncestor.
+func inHiddenCategorySubtree(catID string, nodes map[string]data.CategoryNode) bool {
+	seen := map[string]bool{}
+	for cur := catID; cur != "" && !seen[cur]; {
+		seen[cur] = true
+		n, ok := nodes[cur]
+		if !ok {
+			return false
+		}
+		if n.SellScreenHidden {
+			return true
+		}
+		cur = n.ParentID
+	}
+	return false
+}
+
+// dropHiddenGroups removes every group whose category is sell-screen
+// hidden, recursively (a hidden group's subtree goes with it).
+func dropHiddenGroups(groups []*CategoryGroup, nodes map[string]data.CategoryNode) []*CategoryGroup {
+	kept := groups[:0]
+	for _, g := range groups {
+		if nodes[g.ID].SellScreenHidden {
+			continue
+		}
+		g.Children = dropHiddenGroups(g.Children, nodes)
+		kept = append(kept, g)
+	}
+	return kept
+}
+
+// categoryPicture is what a category shows on the sale screen: its image
+// (categories.image_path, ut-docs#2500) when it has one this till can
+// serve, else its icon id (manage-shop catalog contract §0.12) drawn
+// through the till's icon registry — an id the registry doesn't know, or a
+// malformed value that arrived over sync, draws the neutral fallback glyph
+// and never reaches the page as-is — else nothing.
+func categoryPicture(c data.CategoryNode) string {
+	if img := categoryImageURL(c.ImagePath); img != "" {
+		return img
+	}
+	return categoryImageURL(iconid.AssetPath(c.Icon))
 }
 
 // isCategoryAncestor reports whether id is an ancestor of candidateID,
@@ -968,6 +1030,7 @@ func (s *ButtonStore) LoadWith(ctx context.Context, allActive []Button) ([]Butto
 			HasVariants:  hasVariants[b.ItemID],
 			CategoryID:   b.CategoryID,
 			Color:        b.Color,
+			QuickButton:  true,
 		})
 		if b.ItemID != "" {
 			seen[b.ItemID] = true
