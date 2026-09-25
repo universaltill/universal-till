@@ -18,6 +18,13 @@ type PendingUpdateStatus struct {
 	// because "N plugin updates available" doesn't tell a merchant that a
 	// stale German/Turkish/... UI is specifically what's behind (ut-docs#2299).
 	LanguagePending bool
+	// MainTillURL is set on a joined till (ut-docs#2783): the address of the
+	// main till whose plugin versions this till follows (ut-docs#460). A
+	// joined till never installs an update itself, so its status-bar chip
+	// says updates are installed from the main till and points there,
+	// instead of offering updates the owner can't act on. Empty on a main or
+	// standalone till.
+	MainTillURL string
 }
 
 var pendingUpdateState atomic.Value // PendingUpdateStatus
@@ -31,20 +38,22 @@ func CurrentPendingUpdates() PendingUpdateStatus {
 	return PendingUpdateStatus{}
 }
 
-// SetPendingUpdates records the outcome of one scheduler tick. Exported so
-// internal/pages' StartPluginUpdateScheduler (which owns the DB/catalog
+// PublishPendingUpdates records the outcome of one scheduler tick. Exported
+// so internal/pages' StartPluginUpdateScheduler (which owns the DB/catalog
 // access needed to actually run the check) can publish the result here for
-// the status-chip template funcs to read. languagePending is ignored (forced
-// false) whenever count is clamped to zero, so the two fields can never
-// disagree about there being anything pending at all.
-func SetPendingUpdates(count int, languagePending bool) {
-	if count < 0 {
-		count = 0
+// the status-chip template funcs to read. A joined till publishes its
+// MainTillURL alongside the count (ut-docs#2783; this replaced
+// SetPendingUpdates(count, languagePending)). A negative count is clamped to
+// zero, and LanguagePending is forced false when nothing is pending, so the
+// fields can never disagree about there being anything pending at all.
+func PublishPendingUpdates(s PendingUpdateStatus) {
+	if s.Count < 0 {
+		s.Count = 0
 	}
-	if count == 0 {
-		languagePending = false
+	if s.Count == 0 {
+		s.LanguagePending = false
 	}
-	pendingUpdateState.Store(PendingUpdateStatus{Count: count, LanguagePending: languagePending})
+	pendingUpdateState.Store(s)
 }
 
 // NotePendingUpdateApplied decrements the published count by one, never
@@ -64,7 +73,8 @@ func NotePendingUpdateApplied() {
 		if current.Count <= 0 {
 			return
 		}
-		next := PendingUpdateStatus{Count: current.Count - 1, LanguagePending: current.LanguagePending}
+		next := current
+		next.Count--
 		if next.Count == 0 {
 			next.LanguagePending = false
 		}

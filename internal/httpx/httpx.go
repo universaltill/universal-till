@@ -123,7 +123,13 @@ var baseFuncs = template.FuncMap{
 	// distinguishes that specifically from the generic "N plugin updates"
 	// count above (ut-docs#2299).
 	"languagepackupdateavailable": func() bool { return plugins.CurrentPendingUpdates().LanguagePending },
-	"jsonVals":                    jsonVals,
+	// pluginupdatesfrommain/maintillurl (ut-docs#2783): on a joined till the
+	// plugin-update chip says updates are installed from the main till and
+	// points there — a joined till follows the main till's plugin versions
+	// (ut-docs#460) and can't install one itself.
+	"pluginupdatesfrommain": func() bool { return plugins.CurrentPendingUpdates().MainTillURL != "" },
+	"maintillurl":           func() string { return plugins.CurrentPendingUpdates().MainTillURL },
+	"jsonVals":              jsonVals,
 	// Default target for the nav's contextual "?" — the manual's index.
 	// Render() overrides this per request with the topic documenting the page
 	// actually being rendered; fragment renderers that also parse nav.html
