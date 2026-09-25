@@ -23,6 +23,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pages/itemsnav"
 	"github.com/universaltill/universal-till/internal/paths"
+	"github.com/universaltill/universal-till/internal/ui"
 )
 
 // categoryUploadMaxBytes bounds the category dialog's whole multipart body
@@ -255,6 +256,10 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		data.CategoryAdminRow
 		Groups   string
 		Stations string
+		// Thumb (ut-docs#2699): the row's leading picture, the same one
+		// the sale screen draws (ui.CategoryThumb) — "" falls back to the
+		// colour swatch, then a placeholder, in the template.
+		Thumb string
 	}
 
 	renderCategories := func(w http.ResponseWriter, r *http.Request, errKey string, errCount int) {
@@ -294,6 +299,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 				CategoryAdminRow: c,
 				Groups:           strings.Join(groupLinks[c.ID], ","),
 				Stations:         strings.Join(stationRoutes[c.ID], ","),
+				Thumb:            ui.CategoryThumb(c.ImagePath, c.Icon),
 			})
 		}
 		categoriesData := map[string]any{

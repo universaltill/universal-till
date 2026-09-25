@@ -23,6 +23,7 @@ var HeadAssets = []string{
 	"public/autofill.js",
 	"public/input-heartbeat.js",
 	"public/record-dialog.js",
+	"public/list-reorder.js", // ut-docs#2699: long-press drag reorder for admin lists
 	"public/category-filter.js",
 	"public/icon-picker-filter.js", // ut-docs#2506: built-in icon picker search
 	"public/bugreport-draft.js",    // ut-docs#2342: the bug-report draft store

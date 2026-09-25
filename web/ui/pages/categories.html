@@ -4,15 +4,19 @@
        - the list is the page; no side-by-side create card;
        - {{ template "list_header" }} above the table: search + icon-only New;
        - every row is tap-to-edit (data-record-open + data-field-* prefill,
-         its own data-record-action) with a real focusable pencil button as
-         the keyboard path (ut-docs#826);
+         its own data-record-action) with a real focusable button as the
+         keyboard path (ut-docs#826) — since ut-docs#2699 the name itself,
+         not a pencil;
        - row actions are icon-only, aria-label + title always paired;
        - one full-screen {{ template "record_dialog" }} per page, and the
          page owes it the two {{ define }} slots at the bottom of this file.
      All behaviour is web/public/record-dialog.js reading data-* attributes;
-     the inline scripts are the pre-existing reorder (ut-docs#1221) and, since
-     ut-docs#2284, the dialog's own picker sync (colour tiles + the two
-     checkbox sets), driven by record-dialog.js's record-dialog:open hook. */}}
+     reorder is web/public/list-reorder.js (ut-docs#2699: long-press drag,
+     Alt+Arrow keys, and the dialog's Move up/down — the row keeps no
+     pencil or chevrons; its name is the keyboard edit button); the inline
+     script is the dialog's own picker sync (ut-docs#2284: colour tiles +
+     the two checkbox sets), driven by record-dialog.js's
+     record-dialog:open hook. */}}
 {{ define "content" }}
 <div class="page-head">
   <h1>{{ T "categories.title" }} {{ helpLink "categories" }}</h1>
@@ -41,19 +45,38 @@
   {{ if not .categories }}
   <p class="muted">{{ T "categories.empty" }}</p>
   {{ else }}
+  {{/* ut-docs#2699: the reorder gesture is invisible on a touchscreen, so
+       the list says how to do it. The same text describes the TABLE once
+       (aria-describedby) — never each row's button, which would make a
+       screen reader repeat two sentences per row; each row's button only
+       names its Alt+ArrowUp/Down keys (aria-keyshortcuts). */}}
+  <p class="muted list-reorder-hint" id="categories-reorder-hint">{{ T "categories.reorder_hint" }}</p>
+  <div id="categories-reorder-live" class="visually-hidden" role="status" aria-live="polite"></div>
+  <p id="categories-reorder-msg" class="list-reorder-msg" role="alert" hidden></p>
   <div class="list-scroll">
-  <table class="table" id="categories-table">
+  <table class="table" id="categories-table" aria-describedby="categories-reorder-hint">
     <thead>
       <tr>
         <th>{{ T "categories.col.name" }}</th>
         <th>{{ T "categories.col.items" }}</th>
         <th>{{ T "categories.col.status" }}</th>
-        <th></th>
       </tr>
     </thead>
-    <tbody>
+    {{/* ut-docs#2699: web/public/list-reorder.js (loaded from base.html)
+         drives this tbody: long-press + drag, Alt+ArrowUp/Down on a row's
+         focused button, and the dialog's Move up/Move down — each posts
+         every id in the new order to the existing reorder endpoint, and
+         puts the rows back if the till refuses. */}}
+    <tbody data-reorder-list
+           data-reorder-url="/api/categories/reorder"
+           data-reorder-live="categories-reorder-live"
+           data-reorder-msg="categories-reorder-msg"
+           data-reorder-msg-moved="{{ T "list_reorder.moved" }}"
+           data-reorder-msg-cancelled="{{ T "list_reorder.cancelled" }}"
+           data-reorder-msg-failed="{{ T "list_reorder.failed" }}">
       {{ range .categories }}
       <tr class="category-row" data-id="{{ .ID }}"
+          data-reorder-id="{{ .ID }}" data-reorder-name="{{ .Name }}"
           data-record-open="category-dialog"
           data-record-action="/api/categories/{{ .ID }}"
           data-record-destructive-action="/api/categories/{{ .ID }}/active"
@@ -74,27 +97,26 @@
              deliberately NOT data-field-* — a set of same-named checkboxes
              is not a single form control, so the page's own script ticks
              them from these on record-dialog:open (see the script below). */}}
-        <td>{{ if .Color }}<span class="swatch-dot category-swatch" style="--swatch: {{ .Color }}" aria-hidden="true"></span> {{ end }}{{ .Name }}{{ if .SellScreenHidden }} <span class="chip category-hidden-badge">{{ T "categories.hidden_badge" }}</span>{{ end }}</td>
+        {{/* ut-docs#2699: no pencil/chevron column any more. The whole row
+             opens the dialog on tap (data-record-open); the name is a real
+             button carrying data-record-edit — the keyboard path to the
+             same edit, and the focus target for Alt+ArrowUp/Down. Leading
+             visual: image → icon (ui.CategoryThumb, icon only via
+             iconid.AssetPath) → colour swatch → placeholder. */}}
+        <td class="category-name-cell">
+          <button type="button" class="category-row-open" data-record-edit
+                  aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown">
+            <span class="cat-thumb" aria-hidden="true">{{ if .Thumb }}<img src="{{ imgv .Thumb }}" alt="" width="36" height="36" loading="lazy">{{ else if .Color }}<span class="cat-thumb-swatch" style="--swatch: {{ .Color }}"></span>{{ else }}<span class="cat-thumb-placeholder">{{ icon "tag" }}</span>{{ end }}</span>
+            <span class="category-row-name">{{ .Name }}</span>
+          </button>
+          {{ if .SellScreenHidden }} <span class="chip category-hidden-badge">{{ T "categories.hidden_badge" }}</span>{{ end }}
+        </td>
         <td>{{ printf (T "categories.item_count") .ItemCount }}</td>
         <td>{{ if .IsActive }}{{ T "categories.active" }}{{ else }}<span class="muted">{{ T "categories.inactive" }}</span>{{ end }}</td>
-        <td class="list-actions">
-          <button type="button" class="btn secondary btn-icon move-up" data-move="-1"
-                  aria-label="{{ T "categories.move_up" }}" title="{{ T "categories.move_up" }}">
-            <span class="btn-ico" aria-hidden="true">{{ icon "chevron-up" }}</span>
-          </button>
-          <button type="button" class="btn secondary btn-icon move-down" data-move="1"
-                  aria-label="{{ T "categories.move_down" }}" title="{{ T "categories.move_down" }}">
-            <span class="btn-ico" aria-hidden="true">{{ icon "chevron-down" }}</span>
-          </button>
-          <button type="button" class="btn secondary btn-icon" data-record-edit
-                  aria-label="{{ T "common.edit" }}" title="{{ T "common.edit" }}">
-            <span class="btn-ico" aria-hidden="true">{{ icon "pencil" }}</span>
-          </button>
-        </td>
       </tr>
       {{ end }}
       <tr id="categories-no-results" class="list-empty-row" hidden>
-        <td colspan="4">{{ T "common.no_results" }}</td>
+        <td colspan="3">{{ T "common.no_results" }}</td>
       </tr>
     </tbody>
   </table>
@@ -115,71 +137,6 @@
      "editTitleKey"   "categories.edit"
      "createAction"   "/api/categories"
      "root"           .) }}
-
-<script>
-(function () {
-  'use strict';
-  // Move-up/move-down reorder (ut-docs#1221's pattern, same reasoning as
-  // buttons_admin.html's reorder grid: explicit buttons work by tap, click
-  // AND keyboard with no gesture-detection code, unlike drag-and-drop which
-  // has no touch path on the till's own touchscreen browser).
-  var table = document.getElementById('categories-table');
-  if (!table) return;
-  var body = table.querySelector('tbody');
-
-  function rows() {
-    return body.querySelectorAll('.category-row');
-  }
-
-  function refreshEdgeStates() {
-    var all = rows();
-    Array.prototype.forEach.call(all, function (row, i) {
-      var up = row.querySelector('.move-up');
-      var down = row.querySelector('.move-down');
-      if (up) up.disabled = (i === 0);
-      if (down) down.disabled = (i === all.length - 1);
-    });
-  }
-
-  // Chain sends onto one running promise (same fix as buttons_admin.html's
-  // persistOrder) so a fast run of taps can never have an earlier save
-  // overtake a later one on the wire.
-  var pending = Promise.resolve();
-
-  function persistOrder() {
-    var ids = Array.prototype.map.call(rows(), function (r) { return r.dataset.id; });
-    pending = pending.then(function () {
-      var fd = new FormData();
-      ids.forEach(function (id) { fd.append('ids', id); });
-      return fetch('/api/categories/reorder', { method: 'POST', body: fd }).then(function (res) {
-        if (!res.ok) location.reload();
-      });
-    }).catch(function () {
-      // A rejected fetch must not permanently break later moves — same
-      // recovery as buttons_admin.html's persistOrder.
-    });
-  }
-
-  body.addEventListener('click', function (ev) {
-    var btn = ev.target.closest ? ev.target.closest('[data-move]') : null;
-    if (!btn) return;
-    var row = btn.closest('.category-row');
-    if (!row) return;
-    var sibling = (btn.dataset.move === '-1') ? row.previousElementSibling : row.nextElementSibling;
-    if (!sibling || !sibling.classList.contains('category-row')) return;
-    if (btn.dataset.move === '-1') {
-      body.insertBefore(row, sibling);
-    } else {
-      body.insertBefore(sibling, row);
-    }
-    refreshEdgeStates();
-    (btn.disabled ? row.querySelector(btn.dataset.move === '-1' ? '.move-down' : '.move-up') : btn).focus();
-    persistOrder();
-  });
-
-  refreshEdgeStates();
-})();
-</script>
 
 <script>
 (function () {
@@ -360,8 +317,41 @@
     });
   }
 
+  // ut-docs#2699: Move up / Move down for the row this dialog was opened
+  // on. The row itself is moved (list-reorder.js reorders the tbody,
+  // saves, announces); the buttons then reflect the new edges.
+  var moveBox = document.getElementById('category-move');
+  var movePos = document.getElementById('category-move-position');
+  var moveUp = document.getElementById('category-move-up');
+  var moveDown = document.getElementById('category-move-down');
+  var openRow = null;
+  function paintMove() {
+    if (!moveBox) return;
+    var R = window.utListReorder;
+    moveBox.hidden = !openRow || !R;
+    if (!openRow || !R) return;
+    var p = R.position(openRow);
+    if (moveUp) moveUp.disabled = !R.canMove(openRow, -1);
+    if (moveDown) moveDown.disabled = !R.canMove(openRow, 1);
+    if (movePos) movePos.textContent = R.format(movePos.getAttribute('data-template') || '', [p.index, p.total]);
+  }
+  [moveUp, moveDown].forEach(function (btn) {
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      if (!openRow || !window.utListReorder) return;
+      window.utListReorder.move(openRow, parseInt(btn.getAttribute('data-reorder-step'), 10));
+      paintMove();
+      // Keep focus on a usable control once the row reaches an edge.
+      if (btn.disabled) (btn === moveUp ? moveDown : moveUp).focus();
+    });
+  });
+  // A failed save puts the rows back: repaint so the edges match again.
+  document.addEventListener('list-reorder:reverted', paintMove);
+
   dialog.addEventListener('record-dialog:open', function (ev) {
     var row = ev.detail && ev.detail.row;
+    openRow = row || null;
+    paintMove();
     currentImage = row ? (row.getAttribute('data-image') || '') : '';
     clearPickedFile();
     if (iconInput) iconInput.value = '';
@@ -411,6 +401,25 @@
   <label>{{ T "categories.col.name" }}
     <input type="text" name="name" required placeholder="{{ T "categories.create_placeholder" }}" />
   </label>
+
+  {{/* ut-docs#2699: the single-pointer alternative to long-press drag
+       (WCAG 2.5.7) — moves the opened row one place and saves at once,
+       through the same web/public/list-reorder.js path the drag and the
+       Alt+Arrow keys use. Edit mode only (the page script hides it for
+       create); type="button", so the discard guard never sees it. */}}
+  <div class="category-dialog-section category-move" id="category-move" hidden>
+    <div class="category-dialog-label">{{ T "list_reorder.position_label" }}</div>
+    <p class="muted category-dialog-help" id="category-move-position" aria-live="polite"
+       data-template="{{ T "list_reorder.position" }}"></p>
+    <div class="field-pair">
+      <button type="button" class="btn secondary" id="category-move-up" data-reorder-step="-1">
+        <span class="btn-ico" aria-hidden="true">{{ icon "chevron-up" }}</span> {{ T "categories.move_up" }}
+      </button>
+      <button type="button" class="btn secondary" id="category-move-down" data-reorder-step="1">
+        <span class="btn-ico" aria-hidden="true">{{ icon "chevron-down" }}</span> {{ T "categories.move_down" }}
+      </button>
+    </div>
+  </div>
 
   {{/* Manage-shop catalog contract §7.2(5): the till-side twin of the
        cloud's show_on_sale_screen. The hidden marker tells the handler the

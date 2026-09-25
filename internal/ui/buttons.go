@@ -418,10 +418,20 @@ func dropHiddenGroups(groups []*CategoryGroup, nodes map[string]data.CategoryNod
 // malformed value that arrived over sync, draws the neutral fallback glyph
 // and never reaches the page as-is — else nothing.
 func categoryPicture(c data.CategoryNode) string {
-	if img := categoryImageURL(c.ImagePath); img != "" {
+	return CategoryThumb(c.ImagePath, c.Icon)
+}
+
+// CategoryThumb is categoryPicture for callers holding the two raw columns
+// rather than a CategoryNode — the /categories list and the Designer's
+// category-management rows (ut-docs#2699) draw the same picture the sale
+// screen does as each row's leading visual. The icon value only ever
+// reaches the page through iconid.AssetPath; "" means "no picture" and the
+// caller falls back to the colour swatch, then a placeholder.
+func CategoryThumb(imagePath, icon string) string {
+	if img := categoryImageURL(imagePath); img != "" {
 		return img
 	}
-	return categoryImageURL(iconid.AssetPath(c.Icon))
+	return categoryImageURL(iconid.AssetPath(icon))
 }
 
 // isCategoryAncestor reports whether id is an ancestor of candidateID,
@@ -529,6 +539,10 @@ type DesignerCategoryVM struct {
 	IsActive    bool
 	ItemCount   int // active catalog items in this category (blocks deactivation)
 	ButtonCount int // quick buttons currently on the sale screen for it
+	// Thumb (ut-docs#2699) is the row's leading picture: CategoryThumb of
+	// the stored image/icon, "" when there is none (swatch, then
+	// placeholder).
+	Thumb string
 }
 
 // pruneEmptyCategoryGroup drops child branches with no buttons AND no
@@ -1744,6 +1758,7 @@ func (h *ButtonsHTTP) renderList(w http.ResponseWriter, r *http.Request) bool {
 				IsActive:    c.IsActive,
 				ItemCount:   c.ItemCount,
 				ButtonCount: counts[c.ID],
+				Thumb:       CategoryThumb(c.ImagePath, c.Icon),
 			})
 		}
 		palette = catalogtypes.ItemColors()
