@@ -15,6 +15,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fiscal"
+	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -129,6 +130,9 @@ func CreateStockReceipt(dp *common.Deps) http.HandlerFunc {
 			Location:  req.LocationID,
 		})
 
+		// A receipt or adjustment moves the levels linked tills pull
+		// (ADR-0114 §2); nil-safe, a no-op with no link.
+		dp.NudgeLink(fleetlink.ScopeStock)
 		respondSuccess(w, r, StockReceiptResponse{MovementID: movementID, Success: true})
 	}
 }
@@ -722,10 +726,9 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 		publishStockAdjustedForSale(ctx, dp, returnInput)
 		// A replica's return is a journaled sale like any other (ADR-0011
 		// D3) — nudge the push loop the same way a tender does (ut-docs#404,
-		// ADR-0036). No-op on a primary/single till.
-		if dp.SyncPrimaryURL(ctx) != "" {
-			dp.RequestSyncPush()
-		}
+		// ADR-0036). On a main till it is the `stock` nudge to its linked
+		// tills instead (ADR-0114 §2), so it is never gated.
+		dp.RequestSyncPush()
 		// Fetch receipt_no
 		var receiptNo string
 		receiptNo, ok, err := repo.GetReceiptNo(ctx, returnSaleID)

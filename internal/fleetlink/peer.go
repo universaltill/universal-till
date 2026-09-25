@@ -15,17 +15,20 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
-// Peer is one live link to one paired till.
+// Peer is one live link: on the main till, to one paired till (Hub); on an
+// additional till, to its main till (Client). The two sides differ only in
+// their peerHost — what they say in hello and what they do with the frames
+// only one direction carries (report → main; sync/fleet/pairing → peer).
 //
 // Goroutine model (ADR-0114 §8: 2 goroutines per connection): the goroutine
-// that called Hub.ServeConn is the reader; run starts exactly one writer.
+// that calls run is the reader; run starts exactly one writer.
 // Inbound request handlers run in their own goroutines, at most MaxInFlight
 // at a time. The writer is the only goroutine that writes to or closes the
 // Conn, so frame order is simple: hello first, then coalesced sync flags,
 // then the bounded queue, with pings in between.
 type Peer struct {
 	tillID string
-	hub    *Hub
+	host   peerHost
 	cfg    Config
 	conn   Conn
 
@@ -61,25 +64,46 @@ type Peer struct {
 
 	hmu   sync.Mutex
 	hello *Hello
+
+	// Set by the reader before it returns; read after run returns.
+	readErr error  // why the reader stopped (carries the peer's close code)
+	peerBye string // the reason in the peer's bye, if it said one
 }
 
-func newPeer(h *Hub, tillID string, conn Conn) *Peer {
+// peerHost is the side-specific half of a Peer: Hub on the main till,
+// Client on an additional till. Every method is called on the link's reader
+// or writer goroutine and must not block.
+type peerHost interface {
+	// helloFor builds this side's hello (the writer's first frame).
+	helloFor(ctx context.Context, tillID string) Hello
+	// onFrame is the throttled inbound-frame hook (nil: none).
+	onFrame() (fn func(tillID string), every time.Duration)
+	// handler answers inbound requests of type typ (nil: unknown_type).
+	handler(typ string) RequestHandler
+	// gotHello is told the peer's hello once it arrived.
+	gotHello(p *Peer, h Hello)
+	// gotMessage takes the one-directional notifications (report, sync,
+	// fleet, pairing); a side ignores the ones it should never receive.
+	gotMessage(p *Peer, env Envelope)
+}
+
+func newPeer(host peerHost, cfg Config, idPrefix, tillID string, conn Conn) *Peer {
 	ctx, cancel := context.WithCancel(context.Background())
 	var rnd [4]byte
 	_, _ = rand.Read(rnd[:])
 	p := &Peer{
 		tillID:   tillID,
-		hub:      h,
-		cfg:      h.cfg,
+		host:     host,
+		cfg:      cfg,
 		conn:     conn,
 		ctx:      ctx,
 		cancel:   cancel,
 		stop:     make(chan struct{}),
 		wake:     make(chan struct{}, 1),
-		idPrefix: "m" + hex.EncodeToString(rnd[:]) + "-",
+		idPrefix: idPrefix + hex.EncodeToString(rnd[:]) + "-",
 		pending:  map[string]chan Envelope{},
-		outSem:   make(chan struct{}, h.cfg.MaxInFlight),
-		inSem:    make(chan struct{}, h.cfg.MaxInFlight),
+		outSem:   make(chan struct{}, cfg.MaxInFlight),
+		inSem:    make(chan struct{}, cfg.MaxInFlight),
 	}
 	p.lastFrame.Store(time.Now().UnixNano())
 	return p
@@ -211,6 +235,16 @@ func (p *Peer) Request(ctx context.Context, typ string, payload any) (json.RawMe
 	}
 }
 
+// notify queues a one-way message (no reply expected), e.g. a report.
+// ErrBusy on a full queue, never a wait.
+func (p *Peer) notify(typ string, payload any) error {
+	m, err := newMessage(p.nextID(), typ, "", payload)
+	if err != nil {
+		return err
+	}
+	return p.enqueue(m)
+}
+
 // run drives the link until it closes. Called on the reader goroutine.
 func (p *Peer) run() {
 	writerDone := make(chan struct{})
@@ -230,9 +264,11 @@ func (p *Peer) run() {
 
 func (p *Peer) readLoop() {
 	var lastTouch time.Time
+	onFrame, every := p.host.onFrame()
 	for {
 		b, err := p.conn.Read(p.ctx)
 		if err != nil {
+			p.readErr = err
 			if errors.Is(err, errNonText) {
 				p.shutdown(CloseProtocol, "text frames only", "")
 			}
@@ -240,9 +276,9 @@ func (p *Peer) readLoop() {
 		}
 		now := time.Now()
 		p.lastFrame.Store(now.UnixNano())
-		if f := p.hub.opts.OnFrame; f != nil && now.Sub(lastTouch) >= p.hub.onFrameEvery() {
+		if onFrame != nil && now.Sub(lastTouch) >= every {
 			lastTouch = now
-			f(p.tillID)
+			onFrame(p.tillID)
 		}
 		env, err := Decode(b)
 		if errors.Is(err, errVersion) {
@@ -293,16 +329,19 @@ func (p *Peer) dispatch(env Envelope) bool {
 			p.hmu.Lock()
 			p.hello = &h
 			p.hmu.Unlock()
+			p.host.gotHello(p, h)
 		}
-	case TypeReport:
-		if r, ok := decodeReport(env.Payload); ok {
-			p.hub.storeReportFrom(p, r)
-		}
+	case TypeReport, TypeSync, TypeFleet, TypePairing:
+		p.host.gotMessage(p, env)
 	case TypeBye:
+		var b ByePayload
+		_ = json.Unmarshal(env.Payload, &b)
+		p.peerBye = clip(b.Reason, maxReportField)
+		if p.peerBye == "" {
+			p.peerBye = ByeShutdown
+		}
 		p.shutdown(closeAfterBye, "bye", "")
 		return false
-	case TypeSync, TypeFleet, TypePairing:
-		// main → peer only; a peer sending them is ignored.
 	default:
 		p.handleRequest(env)
 	}
@@ -310,7 +349,7 @@ func (p *Peer) dispatch(env Envelope) bool {
 }
 
 func (p *Peer) handleRequest(env Envelope) {
-	h := p.hub.handler(env.Type)
+	h := p.host.handler(env.Type)
 	if h == nil {
 		p.replyError(env.ID, CodeUnknownType, false)
 		return
@@ -368,12 +407,7 @@ func (p *Peer) replyError(replyTo, code string, retryable bool) {
 func (p *Peer) writeLoop() {
 	defer func() { p.conn.Close(p.closeCode, p.closeReason) }()
 
-	hello := Hello{Role: "main"}
-	if f := p.hub.opts.Hello; f != nil {
-		hello = f(p.ctx, p.tillID)
-	}
-	hello.PeerTillID = p.tillID
-	if !p.writeMsg(TypeHello, hello) {
+	if !p.writeMsg(TypeHello, p.host.helloFor(p.ctx, p.tillID)) {
 		return
 	}
 
