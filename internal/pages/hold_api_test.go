@@ -45,6 +45,12 @@ func newHoldTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	if _, err := db.Exec(`CREATE TABLE held_sales (id TEXT PRIMARY KEY, label TEXT NOT NULL DEFAULT '', total_minor INTEGER NOT NULL DEFAULT 0, line_count INTEGER NOT NULL DEFAULT 0, payload TEXT NOT NULL, table_id TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT '', primary_synced INTEGER NOT NULL DEFAULT 0);`); err != nil {
 		t.Fatalf("create held_sales: %v", err)
 	}
+	// ADR-0093 Amendment B (ut-docs#2712): resume claims the row through
+	// HeldSalesRepo.ClaimAndTombstone, which writes this table (migration
+	// 044) -- column-identical to the migration.
+	if _, err := db.Exec(`CREATE TABLE held_sales_tombstones (id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL, till TEXT NOT NULL DEFAULT '');`); err != nil {
+		t.Fatalf("create held_sales_tombstones: %v", err)
+	}
 	// ut-docs#820: POST /api/pos/held/table validates the target table is
 	// free via POSRepo.IsTableFree, which queries `tables` and `held_sales`
 	// directly -- needed even by tests that never assign a table.

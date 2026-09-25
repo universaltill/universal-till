@@ -29,17 +29,19 @@ const maxHoldLabelRunes = 64
 // split out of ut-docs#1920/ADR-0093's own review). Those two paths are the
 // only callers that stack several independent ~800ms-budgeted proxy calls
 // serially on one request:
-//   - resume: heldSaleForResume's primary fetch, heldSaleWriteThrough (the
-//     auto-park, only when the live basket is busy), claimTableWriteThrough,
-//     heldSaleDeleteWriteThrough -- up to FOUR, never five: the auto-park
+//   - resume: heldSaleClaimForResume's primary claim, heldSaleWriteThrough
+//     (the auto-park, only when the live basket is busy), and
+//     claimTableWriteThrough -- up to THREE since ADR-0093 Amendment B
+//     (ut-docs#2712) folded the old lookup and trailing delete hops into the
+//     one claim, never four: the auto-park
 //     branch always ends in d.Engine.Reset(), which clears the engine's
 //     table id, so the release call right after (releaseTableClaim(ctx, d,
 //     posRepo, prevTable)) always sees an empty tableID and short-circuits
 //     before any network call (releaseTableClaimWriteThrough's own `if
 //     tableID == "" { return false }`) -- auto-park and a real release are
 //     mutually exclusive on this path, they never both cost a hop on the
-//     same request. Worst case today: ~3.2s (4 x 800ms), matching
-//     ut-docs#2270's own measurement.
+//     same request. Worst case: ~2.4s (3 x 800ms); ut-docs#2270 measured
+//     ~3.2s back when it was four hops.
 //   - held/table move: claimTableWriteThrough (new table), heldSaleWriteThrough
 //     (the move commit), releaseTableClaim (old table) -- plus TWO more this
 //     card's own review caught were still missing their bound: heldSaleForResume's
@@ -60,7 +62,7 @@ const maxHoldLabelRunes = 64
 // claim-new-before-release-old ordering is load-bearing, not incidental,
 // per its own comments). 300ms is generous for a genuinely reachable
 // primary on a LAN (sub-50ms typical) while bounding the pathological
-// dropped-packet case tightly: worst case becomes ~1.2s (resume, 4 x 300ms)
+// dropped-packet case tightly: worst case becomes ~0.9s (resume, 3 x 300ms)
 // / ~1.5s (move, 5 x 300ms) -- both well under the pre-ADR-0093 baselines
 // the original issue quoted (~2.4s / ~1.6s), though note those two
 // baselines predate this comment's own hop recount above and so aren't
@@ -297,7 +299,11 @@ func parkCurrentBasket(ctx context.Context, d *common.Deps, repo *data.HeldSales
 // rung up. The target row is fetched and its payload validated BEFORE the
 // live basket is touched, so a not-found or corrupt target costs nothing --
 // the current basket is only ever parked once the resume is known to be able
-// to proceed. ut-docs#2138: extracted out of the POST /api/pos/resume
+// to proceed -- and since ADR-0093 Amendment B (ut-docs#2712) "fetched" means
+// CLAIMED (heldSaleClaimForResume): taken from the shop's authority for the
+// order before it is restored, so two tills can never both restore it; any
+// early exit after a successful claim hands the order back
+// (heldSaleGiveBack). ut-docs#2138: extracted out of the POST /api/pos/resume
 // handler below so /open-orders' own resume route (open_orders_page.go)
 // shares it rather than duplicating it -- it carries the ut-docs#820 table
 // re-resolution and the ut-docs#1390 claim handling, and those must never
@@ -306,24 +312,30 @@ func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 	if id == "" {
 		return resumeNotFound
 	}
-	// ut-docs#2270: this request can stack up to four independent
-	// write-through hops (this lookup, the auto-park, the re-claim, the
-	// delete) -- mark ctx once so every one of them bounds its own outbound
+	// ut-docs#2270: this request can stack up to three independent
+	// write-through hops (the order claim, the auto-park, the table
+	// re-claim) -- mark ctx once so every one of them bounds its own outbound
 	// call tightly, see crossTillHotPathProxyTimeout. The old-table release
 	// a few lines below is NOT a fifth hop on this path: it only ever runs
 	// after an auto-park, whose own d.Engine.Reset() always clears the
 	// engine's table id first, so that release call always sees an empty
 	// tableID and short-circuits with no network call at all.
 	ctx = withCrossTillHotPathTimeout(ctx)
-	// ADR-0093 (ut-docs#1920): heldSaleForResume, not repo.Get -- on a
-	// replica an order parked at ANOTHER till exists only on the primary
-	// (the Open orders page lists it from there), and must open here too.
-	held, found := heldSaleForResume(ctx, d, repo, id)
+	// ADR-0093 Amendment B (ut-docs#2712): heldSaleClaimForResume, not a
+	// read -- on a replica an order parked at ANOTHER till exists only on
+	// the primary and must open here too (ut-docs#1920), and the claim is
+	// what makes it this till's alone: a till whose own push reply was lost,
+	// or that raced this one to the same order, is refused rather than
+	// handed a copy to tender a second time.
+	held, found, claimed := heldSaleClaimForResume(ctx, d, repo, id)
 	if !found {
 		return resumeNotFound
 	}
 	var snap pos.BasketSnapshot
 	if err := json.Unmarshal([]byte(held.Payload), &snap); err != nil {
+		if claimed {
+			heldSaleGiveBack(ctx, d, repo, held)
+		}
 		return resumeFailed
 	}
 	// ut-docs#1919, independent review: the live basket can already BE this
@@ -336,8 +348,12 @@ func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 	// -- silently destroying whatever the cashier had added since the
 	// stale row was left behind, with no held row left to recover it from.
 	// Tapping "resume" on the order you are already on has nothing to do,
-	// so treat it as a no-op success rather than reaching HasItems() at all.
+	// so treat it as a no-op success rather than reaching HasItems() at all
+	// -- handing a claimed row back, so the no-op leaves it exactly as found.
 	if origin := d.Engine.HeldOrigin(); origin.ID == id {
+		if claimed {
+			heldSaleGiveBack(ctx, d, repo, held)
+		}
 		return resumeOK
 	}
 	parkedPrior := false
@@ -349,6 +365,9 @@ func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 		// and this reuses the existing, well-tested Hold path rather
 		// than adding a second concurrent-basket concept to the engine.
 		if err := parkCurrentBasket(ctx, d, repo, "", locale, true); err != nil {
+			if claimed {
+				heldSaleGiveBack(ctx, d, repo, held)
+			}
 			return resumeFailed
 		}
 		parkedPrior = true
@@ -400,11 +419,11 @@ func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 	if prevTable != restoredTable {
 		releaseTableClaim(ctx, d, posRepo, prevTable)
 	}
-	// ADR-0093 (ut-docs#1920): heldSaleDeleteWriteThrough, not repo.Delete
-	// -- on a replica the PRIMARY's copy goes too, so the order stops
-	// showing as open on every other till; the local row is always deleted
-	// regardless, and the primary's answer never blocks the resume.
-	if _, err := heldSaleDeleteWriteThrough(ctx, d, repo, id); err != nil {
+	// ADR-0093 Amendment B: the claim above already removed the order from
+	// the shop's authority (the primary, or this till's own table when it
+	// is one), so only a replica's local copy is left to clean up here -- a
+	// no-op when there is none.
+	if err := repo.Delete(ctx, id); err != nil {
 		// The sale is restored either way; a stale row is the lesser evil.
 		_ = err
 	}

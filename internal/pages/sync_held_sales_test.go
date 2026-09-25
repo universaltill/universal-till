@@ -15,7 +15,7 @@ import (
 // Cross-till held-sale write-through, primary side (ADR-0093, ut-docs#1920):
 // POST /api/sync/held-sales/upsert, POST /api/sync/held-sales/delete and
 // GET /api/sync/held-sales are the bearer-authed endpoints a replica's
-// heldSaleWriteThrough / heldSaleDeleteWriteThrough / fetchHeldSalesFromPrimary
+// heldSaleWriteThrough / fetchHeldSalesFromPrimary
 // (held_sale_sync_proxy.go) hit. Same shape as sync_tables_claim_test.go:
 // syncTill auth, JSON envelope, snake_case, a real migrated database.
 

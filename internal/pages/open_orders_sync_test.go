@@ -94,10 +94,10 @@ func TestOpenOrdersPage_MergesPrimaryRowsPrimaryWinsPerID(t *testing.T) {
 // TestOpenOrdersResume_RowOnlyOnPrimaryResumesFromThere: the merged list
 // is only useful if a row parked at ANOTHER till can actually be opened
 // here -- the ADR's stated consequence ("visible and addable from till
-// B"). The local table has no such row, so resumeHeldSale falls through to
-// the primary's copy, restores it onto the live basket under its own id
-// (so a re-park goes back under that same id, ut-docs#1918), and the
-// primary's row is deleted -- it is live on this till now.
+// B"). The local table has no such row; resumeHeldSale claims the
+// primary's copy (ADR-0093 Amendment B -- which also removes it there: it is
+// live on this till now) and restores it onto the live basket under its own
+// id (so a re-park goes back under that same id, ut-docs#1918).
 func TestOpenOrdersResume_RowOnlyOnPrimaryResumesFromThere(t *testing.T) {
 	mux, d := newOpenOrdersTestMux(t)
 	primary := newHeldSaleProxyPrimary(t, true,
@@ -115,11 +115,11 @@ func TestOpenOrdersResume_RowOnlyOnPrimaryResumesFromThere(t *testing.T) {
 	if origin := d.Engine.HeldOrigin(); origin.ID != "remote" || origin.Label != "Parked at till A" || origin.CreatedAt != "2026-09-15 09:10:00" {
 		t.Fatalf("the primary's row must be live under its own identity, got %+v", origin)
 	}
-	if primary.deleteCalls.Load() != 1 {
-		t.Fatalf("the primary must be told to delete the resumed row exactly once, got %d", primary.deleteCalls.Load())
+	if primary.claimCalls.Load() != 1 {
+		t.Fatalf("the primary must be asked to claim the resumed row exactly once, got %d", primary.claimCalls.Load())
 	}
-	if id, _ := primary.lastDelete.Load().(string); id != "remote" {
-		t.Fatalf("primary must be told to delete %q, got %q", "remote", id)
+	if id, _ := primary.lastClaim.Load().(string); id != "remote" {
+		t.Fatalf("primary must be asked to claim %q, got %q", "remote", id)
 	}
 
 	// Unknown everywhere is still not-found -- the fallback never invents a
