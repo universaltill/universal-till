@@ -24,6 +24,7 @@ import (
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/iconid"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
@@ -434,8 +435,11 @@ func remoteCategoriesReport(ctx context.Context, d *common.Deps) []map[string]an
 			"color":     c.Color,
 			// Manage-shop catalog contract §3.6: the icon id ("" = none)
 			// and the sale-screen flag, the wire's inverse of
-			// categories.sell_screen_hidden.
-			"icon":                c.Icon,
+			// categories.sell_screen_hidden. The icon is the one the sale
+			// screen actually draws (ut-docs#2717): a library tile an
+			// older till stored as a path reports as its id, a photo as
+			// "" — so my. shows what the till shows.
+			"icon":                iconid.EffectiveIcon(c.ImagePath, c.Icon),
 			"show_on_sale_screen": !c.SellScreenHidden,
 			"sort_order":          c.SortOrder,
 			"active":              c.IsActive,

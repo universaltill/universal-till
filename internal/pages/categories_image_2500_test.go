@@ -92,10 +92,12 @@ func TestCategoryImage_CreateWithIconEditWithUploadThenIconThenNone(t *testing.T
 	if _, err := data.NewModifierRepo(d.Db).CreateGroup(ctx, "g-milk", "Milk", false, 0, 1, 0); err != nil {
 		t.Fatal(err)
 	}
+	// ut-docs#2717: the picture is image_path|icon — one of the two, never
+	// both. A library pick stores the icon id; an upload the path.
 	readImage := func(id string) string {
 		t.Helper()
 		var p string
-		if err := d.Db.QueryRow(`SELECT COALESCE(image_path, '') FROM categories WHERE id = ?`, id).Scan(&p); err != nil {
+		if err := d.Db.QueryRow(`SELECT COALESCE(image_path, '') || '|' || COALESCE(icon, '') FROM categories WHERE id = ?`, id).Scan(&p); err != nil {
 			t.Fatalf("read image_path: %v", err)
 		}
 		return p
@@ -113,8 +115,8 @@ func TestCategoryImage_CreateWithIconEditWithUploadThenIconThenNone(t *testing.T
 	if err := d.Db.QueryRow(`SELECT id FROM categories WHERE name = 'Coffee'`).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	if got := readImage(id); got != "/public/assets/category-icons/coffee.svg" {
-		t.Fatalf("create with icon stored %q", got)
+	if got := readImage(id); got != "|lucide:coffee" {
+		t.Fatalf("create with icon stored %q, want the icon id and no path", got)
 	}
 	if links, _ := data.NewModifierRepo(d.Db).AllCategoryModifierGroupLinks(ctx); len(links[id]) != 1 {
 		t.Fatalf("group_id lost in the multipart body (ut-docs#2018): links=%v", links[id])
@@ -132,33 +134,45 @@ func TestCategoryImage_CreateWithIconEditWithUploadThenIconThenNone(t *testing.T
 	if _, err := os.Stat(file); err != nil {
 		t.Fatalf("uploaded thumb not written at %s: %v", file, err)
 	}
-	if got := readImage(id); got != "/public/assets/categories/"+id+"/thumb.png" {
-		t.Fatalf("edit with upload stored %q", got)
+	if got := readImage(id); got != "/public/assets/categories/"+id+"/thumb.png|" {
+		t.Fatalf("edit with upload stored %q, want the path and the icon cleared", got)
 	}
 
 	// A plain Save with icon "" (keep) leaves the upload alone.
 	rec = postCategoryMultipart(t, mux, "/api/categories/"+id, []catPart{{"name", "Coffee Bar"}, {"icon", ""}}, nil, manager)
-	if rec.Code != http.StatusOK || readImage(id) != "/public/assets/categories/"+id+"/thumb.png" {
+	if rec.Code != http.StatusOK || readImage(id) != "/public/assets/categories/"+id+"/thumb.png|" {
 		t.Fatalf("keep: code=%d image=%q", rec.Code, readImage(id))
 	}
 
 	// Picking a built-in icon replaces the upload AND removes its file.
 	rec = postCategoryMultipart(t, mux, "/api/categories/"+id, []catPart{{"name", "Coffee Bar"}, {"icon", "pastry"}}, nil, manager)
-	if rec.Code != http.StatusOK || readImage(id) != "/public/assets/category-icons/pastry.svg" {
-		t.Fatalf("icon over upload: code=%d image=%q", rec.Code, readImage(id))
+	if rec.Code != http.StatusOK || readImage(id) != "|tabler:cake-roll" {
+		t.Fatalf("icon over upload: code=%d image=%q, want pastry's icon id and no path", rec.Code, readImage(id))
 	}
 	if _, err := os.Stat(file); !os.IsNotExist(err) {
 		t.Fatalf("superseded upload must be removed, stat err=%v", err)
 	}
 
-	// "none" clears the image.
+	// The hand-drawn generic tile has no icon id: it stays a path.
+	rec = postCategoryMultipart(t, mux, "/api/categories/"+id, []catPart{{"name", "Coffee Bar"}, {"icon", "generic"}}, nil, manager)
+	if rec.Code != http.StatusOK || readImage(id) != "/public/assets/category-icons/generic.svg|" {
+		t.Fatalf("generic: code=%d image=%q", rec.Code, readImage(id))
+	}
+
+	// "none" clears the picture — both columns, so an icon my. set can't
+	// linger behind it either.
+	if _, err := d.Db.Exec(`UPDATE categories SET icon = 'lucide:soup' WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
 	rec = postCategoryMultipart(t, mux, "/api/categories/"+id, []catPart{{"name", "Coffee Bar"}, {"icon", "none"}}, nil, manager)
-	if rec.Code != http.StatusOK || readImage(id) != "" {
+	if rec.Code != http.StatusOK || readImage(id) != "|" {
 		t.Fatalf("none: code=%d image=%q", rec.Code, readImage(id))
 	}
 
-	// The list row carries the current image for the dialog's picker.
-	if _, err := d.Db.Exec(`UPDATE categories SET image_path = '/public/assets/category-icons/drink.svg' WHERE id = ?`, id); err != nil {
+	// The list row carries the current picture for the dialog's picker:
+	// the image path and the icon id, and every tile its id so the picker
+	// can press the tile an icon id (from my. or a pick) names.
+	if _, err := d.Db.Exec(`UPDATE categories SET image_path = '/public/assets/category-icons/drink.svg', icon = 'lucide:soup' WHERE id = ?`, id); err != nil {
 		t.Fatal(err)
 	}
 	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/categories", nil), manager)
@@ -167,6 +181,8 @@ func TestCategoryImage_CreateWithIconEditWithUploadThenIconThenNone(t *testing.T
 	body := rec.Body.String()
 	for _, want := range []string{
 		`data-image="/public/assets/category-icons/drink.svg"`,
+		`data-icon-id="lucide:soup"`,
+		`data-icon="soup" data-icon-id="lucide:soup"`,
 		`enctype="multipart/form-data"`,
 		`id="category-icon-grid"`,
 		`data-icon="coffee"`,

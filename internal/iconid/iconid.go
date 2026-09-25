@@ -8,9 +8,8 @@
 // malformed value that arrived over LAN sync — renders the neutral
 // Fallback glyph, never the raw value.
 //
-// The registry is deliberately a small seed: the full icon library, its
-// shop-type groups and artwork are ut-docs#2506, which swaps the data in
-// registry below without changing this package's API.
+// The registry is the whole icon library (library.go, ut-docs#2506), one
+// list shared with internal/catimport's picker (ut-docs#2664).
 package iconid
 
 import (
@@ -31,18 +30,22 @@ func ValidFormat(id string) bool {
 	return len(id) <= MaxLen && formatRE.MatchString(id)
 }
 
-// registry maps each icon id this till can draw to its bundled asset (the
-// catalog's built-in category icons, web/public/assets/category-icons/).
-// Seed ids from the contract with no artwork here yet (lucide:cake-slice,
-// lucide:egg-fried, lucide:soup, lucide:leaf) are simply absent: they
-// render the fallback until ut-docs#2506 ships their glyphs.
-var registry = map[string]string{
-	"lucide:coffee":    "/public/assets/category-icons/coffee.svg",
-	"lucide:cup-soda":  "/public/assets/category-icons/drink.svg",
-	"lucide:croissant": "/public/assets/category-icons/pastry.svg",
-	"lucide:sandwich":  "/public/assets/category-icons/sandwich.svg",
-	"lucide:tag":       "/public/assets/category-icons/generic.svg",
-}
+// registry maps each icon id this till can draw to its library tile, and
+// libraryPaths maps every tile's path back to its id ("" for the id-less
+// generic tile). Both are derived from library (library.go) — the one
+// list (ut-docs#2664).
+var registry, libraryPaths = func() (map[string]string, map[string]string) {
+	reg := make(map[string]string, len(library))
+	paths := make(map[string]string, len(library))
+	for _, ic := range library {
+		p := PublicDir + ic.Key + ".svg"
+		paths[p] = ic.ID
+		if ic.ID != "" {
+			reg[ic.ID] = p
+		}
+	}
+	return reg, paths
+}()
 
 // AssetPath returns the /public/... asset to render for a stored icon id:
 // "" for no icon, the registered artwork for a known id, and the
@@ -55,4 +58,47 @@ func AssetPath(id string) string {
 		return p
 	}
 	return registry[Fallback]
+}
+
+// IDForAssetPath returns the icon id of the library tile at path, or ""
+// when path is not a library tile (an uploaded photo, anything else) or is
+// the id-less generic tile. Older tills stored a library pick as its path
+// in categories.image_path (ut-docs#2500); this is the read-time mapping
+// that makes such a row an icon (ut-docs#2717).
+func IDForAssetPath(path string) string {
+	return libraryPaths[path]
+}
+
+// Resolve applies the one-picture rule (ut-docs#2717) to a category's two
+// columns: path is an image to show — an uploaded photo, or the id-less
+// generic tile — and id the icon to draw when path is "" or this till
+// cannot serve it (a photo's file does not travel over LAN sync).
+//
+//   - A set icon beats a library tile. Writers now keep only one of the
+//     two columns, so both being set means a row from before #2717: a
+//     library pick on the till with a later icon from my. over it — the
+//     pilot's case, where the newer icon must show.
+//   - A library tile with no icon reads as the tile's own id.
+//   - An uploaded photo wins over an icon (again a pre-#2717 row); the icon
+//     stays the fallback for a till without the photo's file.
+func Resolve(imagePath, icon string) (path, id string) {
+	libID, isLib := libraryPaths[imagePath]
+	switch {
+	case isLib && icon != "":
+		return "", icon
+	case isLib && libID != "":
+		return "", libID
+	default:
+		return imagePath, icon
+	}
+}
+
+// EffectiveIcon is the icon id a category shows, "" when it shows a photo,
+// the generic tile or nothing — what the till reports to the cloud so my.
+// draws what the sale screen draws (ut-docs#2717).
+func EffectiveIcon(imagePath, icon string) string {
+	if path, id := Resolve(imagePath, icon); path == "" {
+		return id
+	}
+	return ""
 }

@@ -83,6 +83,11 @@ async function applyWorkerTillDefaults(baseURL: string): Promise<void> {
 
 export type WorkerTill = {
   url: string;
+  // The till's own throwaway data dir (ut-docs#2717: a spec that must
+  // change the database out of band, the way a cloud directive lands,
+  // runs a Go helper against it). Undefined for a reused server — the
+  // spec skips.
+  dataDir?: string;
   // Resolves once the server is gone and its data dir removed. A no-op
   // for a reused (not spawned here) server, mirroring `reuseExistingServer`.
   stop: () => Promise<void>;
@@ -202,6 +207,7 @@ export async function startWorkerTill(parallelIndex: number): Promise<WorkerTill
     const removeExitHook = onExit;
     return {
       url,
+      dataDir,
       stop: async () => {
         process.removeListener('exit', removeExitHook);
         if (proc.exitCode === null && proc.signalCode === null) {

@@ -11,9 +11,9 @@ import (
 
 // ut-docs#2500: a category carries one image path (a built-in icon's
 // /public/assets/category-icons/... path or an uploaded photo's
-// /public/assets/categories/<id>/thumb.png). SetCategoryImage writes it,
+// /public/assets/categories/<id>/thumb.png). SetCategoryPicture writes it,
 // "" clears it back to NULL, and all three category readers carry it.
-func TestSetCategoryImage_RoundTripAndClear(t *testing.T) {
+func TestSetCategoryPicture_RoundTripAndClear(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
 	defer db.Close()
 	repo := data.NewCatalogRepo(db)
@@ -24,8 +24,8 @@ func TestSetCategoryImage_RoundTripAndClear(t *testing.T) {
 		t.Fatal(err)
 	}
 	const icon = "/public/assets/category-icons/coffee.svg"
-	if err := repo.SetCategoryImage(ctx, id, icon); err != nil {
-		t.Fatalf("SetCategoryImage: %v", err)
+	if err := repo.SetCategoryPicture(ctx, id, icon, ""); err != nil {
+		t.Fatalf("SetCategoryPicture: %v", err)
 	}
 
 	all, err := repo.ListCategories(ctx)
@@ -41,8 +41,8 @@ func TestSetCategoryImage_RoundTripAndClear(t *testing.T) {
 		t.Fatalf("ListCategoriesForAdmin = %+v err=%v, want ImagePath %q", admin, err, icon)
 	}
 
-	if err := repo.SetCategoryImage(ctx, id, ""); err != nil {
-		t.Fatalf("SetCategoryImage clear: %v", err)
+	if err := repo.SetCategoryPicture(ctx, id, "", ""); err != nil {
+		t.Fatalf("SetCategoryPicture clear: %v", err)
 	}
 	var isNull bool
 	if err := db.QueryRow(`SELECT image_path IS NULL FROM categories WHERE id = ?`, id).Scan(&isNull); err != nil || !isNull {
@@ -54,11 +54,11 @@ func TestSetCategoryImage_RoundTripAndClear(t *testing.T) {
 	}
 }
 
-func TestSetCategoryImage_UnknownIDNotFound(t *testing.T) {
+func TestSetCategoryPicture_UnknownIDNotFound(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
 	defer db.Close()
 	repo := data.NewCatalogRepo(db)
-	if err := repo.SetCategoryImage(context.Background(), "nope", "/public/x.svg"); !errors.Is(err, data.ErrCategoryNotFound) {
-		t.Fatalf("SetCategoryImage on unknown id: err=%v, want ErrCategoryNotFound", err)
+	if err := repo.SetCategoryPicture(context.Background(), "nope", "/public/x.svg", ""); !errors.Is(err, data.ErrCategoryNotFound) {
+		t.Fatalf("SetCategoryPicture on unknown id: err=%v, want ErrCategoryNotFound", err)
 	}
 }
