@@ -63,12 +63,21 @@ func TestApplyReplicaIdentityReissuesDeviceID(t *testing.T) {
 	if got := get("marketplace.device_registered"); got != "" {
 		t.Fatalf("device_registered = %q, want cleared so it re-registers", got)
 	}
-	// The shared store identity must survive untouched.
+	// The shared store identity (which store the shop is) survives.
 	if got := get("marketplace.store_id"); got != "store-shared" {
 		t.Fatalf("store_id = %q, want the shared store-shared", got)
 	}
-	if got := get("marketplace.token"); got != "shared-token" {
-		t.Fatalf("store token was disturbed: %q", got)
+	// ut-docs#2730 (reverses the earlier "keep the shared token" rule): the
+	// main till's cloud credential never lives on a replica — defence at the
+	// sink for a snapshot from a pre-fix main till that still carried it.
+	var n int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM settings WHERE key = 'marketplace.token'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("the main till's store token survived the join (rows=%d err=%v)", n, err)
+	}
+	// The fresh device id is recorded as minted for THIS till, so the
+	// enrolment repair (internal/enroll) doesn't re-mint it at first boot.
+	if got := get("marketplace.device_till_id"); got != "till-2" {
+		t.Fatalf("device_till_id = %q, want till-2", got)
 	}
 }
 
