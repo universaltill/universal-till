@@ -524,19 +524,34 @@
     {{ template "pos_alert" . }}
     <main class="container">{{ template "content" . }}</main>
     <footer class="statusbar" aria-label="Status">
-      <!-- data-conn-*, not data-online: html/template strips "data-" and
+      <!-- ut-docs#2722/#2742: an additional till's ONE connectivity light
+           for its main till — linked / polling / "not reachable since … —
+           selling offline" (web/ui/partials/main_till_status.html). Filled
+           by GET /ui/main-till-status on load and every 5 s, so a dropped
+           link shows within ~15 s (12 s presence window + one poll); empty
+           body on a main or standalone till. Same hx-preserve + default
+           innerHTML swap as nav.html's #sync-chip: the response is the
+           chip itself, never an OOB swap of this element. -->
+      <span id="sb-main-till-mount" hx-preserve hx-get="/ui/main-till-status" hx-trigger="load, every 5s"></span>
+      <!-- Screen readers hear a CHANGE of link state, not every poll: the
+           script below copies the chip's text here only when its
+           data-link-state differs from the last one seen — and not on the
+           chip's first appearance after a full page load, or every hard
+           navigation would announce "Main till linked" (review). -->
+      <span id="sb-link-live" class="visually-hidden" aria-live="polite" hx-preserve></span>
+      <!-- The browser's own network light (navigator.onLine). On a till
+           with a main till it no longer says "Online" next to the chip
+           above — that green only meant a network interface was up and
+           contradicted "main till not reachable" (ut-docs#2742); there it
+           shows only when the network is down, as "No internet".
+           data-conn-*, not data-online: html/template strips "data-" and
            treats on*-named attributes as JS context, JSON-quoting the value. -->
       <span class="sb-item sb-conn" id="sb-conn" data-testid="status-indicator"
-            data-conn-online="{{ T "status.online" }}" data-conn-offline="{{ T "status.offline" }}">
-        <span class="sb-dot"></span>
+            data-conn-online="{{ T "status.online" }}" data-conn-offline="{{ T "status.offline" }}"
+            data-conn-no-internet="{{ T "status.no_internet" }}">
+        <span class="sb-dot" aria-hidden="true"></span>
         <span class="sb-conn-text">{{ T "status.online" }}</span>
       </span>
-      <!-- ut-docs#2722: "main till not reachable since … — selling offline"
-           on a replica. Placeholder filled by GET /ui/main-till-status on
-           load and every 30s; empty body (the normal case) renders nothing.
-           Same hx-preserve + default innerHTML swap as nav.html's
-           #sync-chip, so a boosted navigation keeps it without a refetch. -->
-      <span id="sb-main-till-mount" hx-preserve hx-get="/ui/main-till-status" hx-trigger="load, every 30s"></span>
       {{ if not enrolled }}
         <!-- ut-docs#1859: was a bare ✦ emoji (platform-color-emoji-font
              risk); .btn-ico's 1em svg sizing already tracks whatever
@@ -635,14 +650,45 @@
         if (!el) return;
         var txt = el.querySelector('.sb-conn-text');
         var on = el.getAttribute('data-conn-online'), off = el.getAttribute('data-conn-offline');
+        var noNet = el.getAttribute('data-conn-no-internet');
+        var bar = el.closest('.statusbar');
         function update() {
           var online = navigator.onLine;
+          // ut-docs#2742: .has-link (set below while a main-till chip is
+          // shown) hides the green light in CSS; offline it reads "No
+          // internet" so it can't be taken for the main till's state.
+          var linked = bar && bar.classList.contains('has-link');
           el.classList.toggle('is-offline', !online);
-          txt.textContent = online ? on : off;
+          txt.textContent = online ? on : (linked ? noNet : off);
         }
         window.addEventListener('online', update);
         window.addEventListener('offline', update);
         update();
+        // ut-docs#2742: follow the main-till chip — mark the bar while one
+        // is shown, and announce a state change (not every 5 s poll) in
+        // the polite live region.
+        var mount = document.getElementById('sb-main-till-mount');
+        var live = document.getElementById('sb-link-live');
+        var lastState = null;
+        function followChip() {
+          if (!mount || !bar) return;
+          var chip = mount.querySelector('[data-link-state]');
+          bar.classList.toggle('has-link', !!chip);
+          update();
+          var state = chip ? chip.getAttribute('data-link-state') : '';
+          // lastState '' = no chip yet (the load poll hasn't answered):
+          // its arrival is not a change of state, only a change of
+          // knowledge; a boosted navigation keeps the chip (hx-preserve),
+          // so there lastState starts at the real state.
+          if (live && lastState && state && state !== lastState) {
+            live.textContent = chip.textContent.replace(/\s+/g, ' ').trim();
+          }
+          lastState = state;
+        }
+        document.body.addEventListener('htmx:afterSwap', function (e) {
+          if (e.target === mount) followChip();
+        });
+        followChip();
       })();
       (function () {
         // ut-docs#1537: the Android chip INSTALLS, the same way the desktop

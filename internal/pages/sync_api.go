@@ -173,46 +173,23 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			http.Redirect(w, r, "/settings", http.StatusSeeOther)
 			return
 		}
-		list, err := repo.ListTills(r.Context())
+		// The roster (names, last seen and — on a main till — each till's
+		// live link, ut-docs#2742) is shared with GET /ui/tills/roster,
+		// which the page polls; tills_roster.go has the details.
+		m, err := tillsRosterData(r.Context(), d, w, r)
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "sync.error.server", err)
 			return
 		}
-		// The primary's own name (ut-docs#396's till.name setting): shown
-		// on this page regardless of role. till.name is NOT in
-		// PerTillSettingPrefixes, so on a replica it's already the value
-		// synced down from the primary via the admin bundle (ut-docs#405 —
-		// this used to be primary-only: "a replica showing its primary is
-		// a separate, out-of-scope concern," which is exactly the gap this
-		// card closes; tillNameOrDefault needs no replica-specific branch
-		// because that setting key means "the primary's name" everywhere
-		// it's read, on any till).
-		primaryURL := d.SyncPrimaryURL(r.Context())
-		primaryName := tillNameOrDefault(r.Context(), d, httpx.ResolveLocale(w, r))
-		// This device's own till id, when it's itself a replica — used
-		// below only to tag its own row in .Tills (now populated on a
-		// replica too, ut-docs#405's adminTables addition) as "(this
-		// till)" rather than just another sibling.
-		var thisTillID, primaryLastContact string
-		if primaryURL != "" {
-			thisTillID, _, _ = d.Settings.Get(r.Context(), "sync.till_id")
-			primaryLastContact, _, _ = d.Settings.Get(r.Context(), "sync.last_contact_at")
-		}
-		// ut-docs#2722: the main till has stopped answering this replica.
-		unreachableSince, mainUnreachable := mainTillUnreachable(r.Context(), d)
-		httpx.Render("ui/pages/tills.html", map[string]any{
-			"title":           httpx.T(httpx.RequestLocale(r), "page.title.tills"),
-			"theme":           d.CurrentState().Theme,
-			"menuItems":       d.MenuSnapshot(),
-			"Tills":           list,
-			"PrimaryTillName": primaryName,
-			"SyncPrimary":     primaryURL,
-			"ThisTillID":      thisTillID,
-			// ut-docs#2722
-			"PrimaryLastContact":   primaryLastContact,
-			"MainUnreachable":      mainUnreachable,
-			"MainUnreachableSince": unreachableSince,
-		})(w, r)
+		// ut-docs#2722: the main till has stopped answering this replica —
+		// the same view as the status-bar chip that links here (#2742).
+		lv := replicaLinkView(r.Context(), d)
+		m["title"] = httpx.T(httpx.RequestLocale(r), "page.title.tills")
+		m["theme"] = d.CurrentState().Theme
+		m["menuItems"] = d.MenuSnapshot()
+		m["MainUnreachable"] = lv.State == linkUnreachable
+		m["MainUnreachableSince"] = lv.Since
+		httpx.Render("ui/pages/tills.html", m)(w, r)
 	})
 
 	// Issue a one-time enrolment token; responds with the QR + manual code.

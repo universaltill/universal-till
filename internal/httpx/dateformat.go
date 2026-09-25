@@ -65,3 +65,31 @@ func FormatDateTime(t time.Time, locale string) string {
 func FormatDateTimeLatin(t time.Time, locale string) string {
 	return t.Format(dateLayout(locale) + " 15:04")
 }
+
+// ParseStoredTime parses a timestamp the way the till stores them: RFC 3339
+// (what Go code writes), or SQLite's own datetime('now') layout
+// "2006-01-02 15:04:05", which is UTC (what a column DEFAULT writes —
+// tills.enrolled_at). The `datetime` template helpers accept both so one
+// table never shows one raw and one localised (ut-docs#2742 review).
+func ParseStoredTime(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, true
+	}
+	if t, err := time.ParseInLocation("2006-01-02 15:04:05", s, time.UTC); err == nil {
+		return t, true
+	}
+	return time.Time{}, false
+}
+
+// FormatShortDateTime renders t as a bare 24-hour clock when it falls on
+// now's calendar day (both compared in t's own location), else as
+// FormatDateTime — for a status chip where "since 14:05" says it and a
+// full date would crowd the bar (ut-docs#2742).
+func FormatShortDateTime(t, now time.Time, locale string) string {
+	now = now.In(t.Location())
+	if t.Year() == now.Year() && t.YearDay() == now.YearDay() {
+		return LocalizeDigits(t.Format("15:04"), locale)
+	}
+	return FormatDateTime(t, locale)
+}

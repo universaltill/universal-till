@@ -12,10 +12,8 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/discovery"
-	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
-	"github.com/universaltill/universal-till/internal/plugins"
 )
 
 // Main-till re-discovery, the HTTP side (ut-docs#2722). The mechanism itself
@@ -140,31 +138,16 @@ func validProofRequest(req discovery.ProofRequest) bool {
 }
 
 // registerMainTillStatus: GET /ui/main-till-status, polled from the status
-// bar on every page (base.html). Empty unless this till is a replica whose
-// main till is unreachable — then a persistent status chip, never a modal
-// (offline-first rule): "Main till not reachable since <time> — selling
-// offline", linking to the Tills page. On a replica, plugin updates wait
-// for the main till (ADR-0011 §7), so pending ones are named too.
+// bar on every page (base.html). Empty unless this till has a main till;
+// then its one connectivity chip (link_status.go, ut-docs#2742): linked,
+// polling, or "Main till not reachable since <time> — selling offline" —
+// a persistent chip linking to the Tills page, never a modal
+// (offline-first rule). On a replica, plugin updates wait for the main
+// till (ADR-0011 §7), so pending ones are named on the unreachable chip.
 func registerMainTillStatus(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /ui/main-till-status", func(w http.ResponseWriter, r *http.Request) {
-		since, unreachable := mainTillUnreachable(r.Context(), d)
-		if !unreachable {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		httpx.RenderPartial("ui/partials/main_till_status.html", map[string]any{
-			"since":          since,
-			"pluginsWaiting": plugins.CurrentPendingUpdates().Count > 0,
-		})(w, r)
+		renderLinkChip(replicaLinkView(r.Context(), d))(w, r)
 	})
-}
-
-// mainTillUnreachable reports the watch's view, only on a replica.
-func mainTillUnreachable(ctx context.Context, d *common.Deps) (since string, unreachable bool) {
-	if d.PrimaryWatch == nil || d.SyncPrimaryURL(ctx) == "" {
-		return "", false
-	}
-	return d.PrimaryWatch.Unreachable(ctx)
 }
 
 // primaryContactFailed is the pull loop's failure path: feeds the watch,

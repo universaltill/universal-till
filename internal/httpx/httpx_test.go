@@ -247,6 +247,16 @@ func TestFuncsForExposesDateTime(t *testing.T) {
 		t.Errorf("datetimeUTC(%s) = %q, want 05.09.2026 23:30 (UTC)", ts, got)
 	}
 
+	// ut-docs#2742 (independent review): SQLite's own datetime('now')
+	// layout — what tills.enrolled_at defaults to — is UTC and formats
+	// like an RFC 3339 value, so ENROLLED and LAST SEEN on the Tills page
+	// read in one locale-aware format instead of one raw and one localised.
+	if got := dtFn("2026-09-25 16:59:38"); got != "25.09.2026 19:59" {
+		t.Errorf("datetime(sqlite layout) = %q, want 25.09.2026 19:59 (UTC read as local)", got)
+	}
+	if got := dtUTCFn("2026-09-25 16:59:38"); got != "25.09.2026 16:59" {
+		t.Errorf("datetimeUTC(sqlite layout) = %q, want 25.09.2026 16:59", got)
+	}
 	if got := dtFn("2026-09-05"); got != "2026-09-05" {
 		t.Errorf("datetime(non-RFC3339) = %q, want the raw string back", got)
 	}

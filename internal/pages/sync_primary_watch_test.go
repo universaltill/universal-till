@@ -222,8 +222,10 @@ func TestReplicaWithStaleURL_RecoversEndToEnd(t *testing.T) {
 	}
 	replica.PrimaryWatch = discovery.NewPrimaryWatch(replica.Settings, browse)
 
-	if chip := getMainTillChip(t, replica); strings.TrimSpace(chip) != "" {
-		t.Fatalf("chip rendered before any failed contact: %q", chip)
+	// ut-docs#2742: a replica always shows its main-till chip; before any
+	// failed contact (and with no link client) it reads "polling".
+	if chip := getMainTillChip(t, replica); !strings.Contains(chip, `data-link-state="polling"`) {
+		t.Fatalf("chip before any failed contact = %q, want polling", chip)
 	}
 
 	client := &http.Client{Timeout: 5 * time.Second}
@@ -259,8 +261,9 @@ func TestReplicaWithStaleURL_RecoversEndToEnd(t *testing.T) {
 	if ts, err := time.Parse(time.RFC3339, last); err != nil || time.Since(ts) > time.Minute {
 		t.Fatalf("sync.last_contact_at = %q after the recovered tick, want just now", last)
 	}
-	if chip := getMainTillChip(t, replica); strings.TrimSpace(chip) != "" {
-		t.Fatalf("chip still showing after recovery: %q", chip)
+	if chip := getMainTillChip(t, replica); strings.Contains(chip, "not reachable") ||
+		!strings.Contains(chip, `data-link-state="polling"`) {
+		t.Fatalf("chip after recovery = %q, want polling again", chip)
 	}
 	if got, _, _ := replica.Settings.Get(ctx, discovery.PrimaryTillIDSettingKey); got != primaryID {
 		t.Fatalf("proven main-till id not stored: %q", got)
