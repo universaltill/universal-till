@@ -18,8 +18,15 @@
 -- sample data" takes it with them once nothing uses it.
 --
 -- INSERT OR IGNORE throughout: re-seeding over a partially-removed or
--- already-seeded catalogue must be idempotent, and a clash with an
--- operator's own row (same barcode/SKU) must never fail the whole seed.
+-- already-seeded catalogue must be idempotent. A clash with an operator's
+-- own row (same SKU/barcode/tax-code name) makes that one demo row's
+-- INSERT OR IGNORE a no-op, never a failure (known gap: a brand-name clash
+-- still FK-fails the items insert — ut-docs#2697) — and it must not take the rest
+-- of the catalogue down with it: every dependent insert below (barcodes,
+-- images, variants, variant_barcodes, inventory, price_history, shortcut
+-- buttons) is gated by a `WHERE EXISTS` check against the parent row it
+-- references, so a skipped demo item or variant skips only its own
+-- dependents too, leaving everything else to seed normally (ut-docs#2639).
 -- Every item row carries is_sample_data = 1 so the UI can badge it and the
 -- removal path can target it.
 
@@ -125,7 +132,9 @@ FROM (VALUES
   ('itm052', 'SKU-0052', 'Ham & Cheese Sandwich', 'Freshly made sandwich', 'cat_food', 'br_generic', 'each', 450, 180, 'tax_demo_cafe', 1, 0, 1, 1));
 
 -- item_barcodes
-INSERT OR IGNORE INTO item_barcodes (barcode, item_id, barcode_type, is_primary) VALUES
+INSERT OR IGNORE INTO item_barcodes (barcode, item_id, barcode_type, is_primary)
+SELECT column1, column2, column3, column4
+FROM (VALUES
   ('5000000000012', 'itm001', 'EAN13', 1),
   ('5000000000029', 'itm002', 'EAN13', 1),
   ('5000000000036', 'itm003', 'EAN13', 1),
@@ -175,10 +184,13 @@ INSERT OR IGNORE INTO item_barcodes (barcode, item_id, barcode_type, is_primary)
   ('5000000000470', 'itm047', 'EAN13', 1),
   ('5000000000487', 'itm048', 'EAN13', 1),
   ('5000000000494', 'itm049', 'EAN13', 1),
-  ('5000000000500', 'itm050', 'EAN13', 1);
+  ('5000000000500', 'itm050', 'EAN13', 1))
+WHERE EXISTS (SELECT 1 FROM items i WHERE i.id = column2);
 
 -- item_images
-INSERT OR IGNORE INTO item_images (id, item_id, role, path, sort_order) VALUES
+INSERT OR IGNORE INTO item_images (id, item_id, role, path, sort_order)
+SELECT column1, column2, column3, column4, column5
+FROM (VALUES
   ('img001', 'itm001', 'thumbnail', '/public/assets/items/itm001/thumb.png', 0),
   ('img002', 'itm002', 'thumbnail', '/public/assets/items/itm002/thumb.png', 0),
   ('img003', 'itm003', 'thumbnail', '/public/assets/items/itm003/thumb.png', 0),
@@ -228,7 +240,8 @@ INSERT OR IGNORE INTO item_images (id, item_id, role, path, sort_order) VALUES
   ('img047', 'itm047', 'thumbnail', '/public/assets/items/itm047/thumb.png', 0),
   ('img048', 'itm048', 'thumbnail', '/public/assets/items/itm048/thumb.png', 0),
   ('img049', 'itm049', 'thumbnail', '/public/assets/items/itm049/thumb.png', 0),
-  ('img050', 'itm050', 'thumbnail', '/public/assets/items/itm050/thumb.png', 0);
+  ('img050', 'itm050', 'thumbnail', '/public/assets/items/itm050/thumb.png', 0))
+WHERE EXISTS (SELECT 1 FROM items i WHERE i.id = column2);
 
 -- item_variants
 -- ut-docs#2227: var001/var002/var003/var004/var005 were originally attached
@@ -245,7 +258,9 @@ INSERT OR IGNORE INTO item_images (id, item_id, role, path, sort_order) VALUES
 -- individually. No e2e/tests-docs spec exercises the variant-picker flow
 -- through any of these five items specifically (checked), so nothing
 -- was relying on itm001/002/005 having variants.
-INSERT OR IGNORE INTO item_variants (id, item_id, sku, name, price, cost_price, is_active) VALUES
+INSERT OR IGNORE INTO item_variants (id, item_id, sku, name, price, cost_price, is_active)
+SELECT column1, column2, column3, column4, column5, column6, column7
+FROM (VALUES
   ('var001', 'itm006', 'SKU-0006-6P', 'Pack of 6', 650, 330, 1),
   ('var002', 'itm006', 'SKU-0006-12P', 'Pack of 12', 1200, 640, 1),
   ('var003', 'itm007', 'SKU-0007-6P', 'Pack of 6', 630, 320, 1),
@@ -257,10 +272,13 @@ INSERT OR IGNORE INTO item_variants (id, item_id, sku, name, price, cost_price, 
   ('var009', 'itm024', 'SKU-0024-2K', '2kg Bag', 280, 160, 1),
   ('var010', 'itm041', 'SKU-0041-250', '250ml Bottle', 210, 120, 1),
   ('var011', 'itm041', 'SKU-0041-400', '400ml Bottle', 310, 190, 1),
-  ('var012', 'itm046', 'SKU-0046-4P', '4 Pack', 540, 280, 1);
+  ('var012', 'itm046', 'SKU-0046-4P', '4 Pack', 540, 280, 1))
+WHERE EXISTS (SELECT 1 FROM items i WHERE i.id = column2);
 
 -- variant_barcodes
-INSERT OR IGNORE INTO variant_barcodes (barcode, variant_id, barcode_type, is_primary) VALUES
+INSERT OR IGNORE INTO variant_barcodes (barcode, variant_id, barcode_type, is_primary)
+SELECT column1, column2, column3, column4
+FROM (VALUES
   ('6000000000011', 'var001', 'EAN13', 1),
   ('6000000000028', 'var002', 'EAN13', 1),
   ('6000000000035', 'var003', 'EAN13', 1),
@@ -272,10 +290,13 @@ INSERT OR IGNORE INTO variant_barcodes (barcode, variant_id, barcode_type, is_pr
   ('6000000000097', 'var009', 'EAN13', 1),
   ('6000000000103', 'var010', 'EAN13', 1),
   ('6000000000110', 'var011', 'EAN13', 1),
-  ('6000000000127', 'var012', 'EAN13', 1);
+  ('6000000000127', 'var012', 'EAN13', 1))
+WHERE EXISTS (SELECT 1 FROM item_variants v WHERE v.id = column2);
 
 -- inventory
-INSERT OR IGNORE INTO inventory (id, item_id, variant_id, location_id, quantity, reorder_level) VALUES
+INSERT OR IGNORE INTO inventory (id, item_id, variant_id, location_id, quantity, reorder_level)
+SELECT column1, column2, column3, column4, column5, column6
+FROM (VALUES
   ('inv001', 'itm001', NULL, 'loc_main', 40, 10),
   ('inv002', 'itm002', NULL, 'loc_main', 38, 10),
   ('inv003', 'itm003', NULL, 'loc_main', 55, 12),
@@ -337,10 +358,18 @@ INSERT OR IGNORE INTO inventory (id, item_id, variant_id, location_id, quantity,
   ('inv059', NULL, 'var009', 'loc_main', 6, 2),
   ('inv060', NULL, 'var010', 'loc_main', 11, 3),
   ('inv061', NULL, 'var011', 'loc_main', 9, 2),
-  ('inv062', NULL, 'var012', 'loc_main', 13, 3);
+  ('inv062', NULL, 'var012', 'loc_main', 13, 3))
+WHERE (column2 IS NULL OR EXISTS (SELECT 1 FROM items i WHERE i.id = column2))
+  AND (column3 IS NULL OR EXISTS (SELECT 1 FROM item_variants v WHERE v.id = column3));
 
--- price_history
-INSERT OR IGNORE INTO price_history (id, item_id, variant_id, price, starts_at, ends_at) VALUES
+-- price_history. Includes the café items' rows (ph063/ph064, ut-docs#167)
+-- in the same VALUES list as everything else — an operator's own
+-- SKU-0051/0052 (or SKU-0001..0050/-variant SKU) makes the matching item
+-- or variant's own INSERT OR IGNORE a no-op, and the WHERE EXISTS below
+-- skips its price_history row too, rather than FK-failing the whole seed.
+INSERT OR IGNORE INTO price_history (id, item_id, variant_id, price, starts_at, ends_at)
+SELECT column1, column2, column3, column4, column5, column6
+FROM (VALUES
   ('ph001', 'itm001', NULL, 120, '2025-01-01', NULL),
   ('ph002', 'itm002', NULL, 115, '2025-01-01', NULL),
   ('ph003', 'itm003', NULL, 85, '2025-01-01', NULL),
@@ -402,19 +431,16 @@ INSERT OR IGNORE INTO price_history (id, item_id, variant_id, price, starts_at, 
   ('ph059', NULL, 'var009', 280, '2025-01-01', NULL),
   ('ph060', NULL, 'var010', 210, '2025-01-01', NULL),
   ('ph061', NULL, 'var011', 310, '2025-01-01', NULL),
-  ('ph062', NULL, 'var012', 540, '2025-01-01', NULL);
--- café items' price history (ut-docs#167): only for an item that actually
--- landed — an operator's own SKU-0051/0052 makes the item INSERT OR IGNORE
--- a no-op, and a row for the missing item would FK-fail the whole seed.
-INSERT OR IGNORE INTO price_history (id, item_id, variant_id, price, starts_at, ends_at)
-SELECT column1, column2, column3, column4, column5, column6
-FROM (VALUES
+  ('ph062', NULL, 'var012', 540, '2025-01-01', NULL),
   ('ph063', 'itm051', NULL, 320, '2025-01-01', NULL),
   ('ph064', 'itm052', NULL, 450, '2025-01-01', NULL))
-WHERE EXISTS (SELECT 1 FROM items i WHERE i.id = column2);
+WHERE (column2 IS NULL OR EXISTS (SELECT 1 FROM items i WHERE i.id = column2))
+  AND (column3 IS NULL OR EXISTS (SELECT 1 FROM item_variants v WHERE v.id = column3));
 
 -- shortcut_buttons
-INSERT OR IGNORE INTO shortcut_buttons (barcode, item_id, label, image_path) VALUES
+INSERT OR IGNORE INTO shortcut_buttons (barcode, item_id, label, image_path)
+SELECT column1, column2, column3, column4
+FROM (VALUES
   ('2000010000012', 'itm001', 'Coca-Cola 330ml', '/public/assets/items/itm001/thumb.png'),
   ('2000010000029', 'itm002', 'Pepsi 330ml', '/public/assets/items/itm002/thumb.png'),
   ('2000010000036', 'itm003', 'Sparkling Water 500ml', '/public/assets/items/itm003/thumb.png'),
@@ -424,5 +450,6 @@ INSERT OR IGNORE INTO shortcut_buttons (barcode, item_id, label, image_path) VAL
   ('2000010000074', 'itm007', 'Semi-Skimmed Milk 2L', '/public/assets/items/itm007/thumb.png'),
   ('2000010000081', 'itm008', 'Whole Milk 1L', '/public/assets/items/itm008/thumb.png'),
   ('2000010000098', 'itm009', 'Butter 250g', '/public/assets/items/itm009/thumb.png'),
-  ('2000010000104', 'itm010', 'Cheddar Cheese 400g', '/public/assets/items/itm010/thumb.png');
+  ('2000010000104', 'itm010', 'Cheddar Cheese 400g', '/public/assets/items/itm010/thumb.png'))
+WHERE EXISTS (SELECT 1 FROM items i WHERE i.id = column2);
 
