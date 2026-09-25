@@ -30,6 +30,10 @@ import * as path from 'path';
 //   - a topic's secondary routes (routes[1:]) — same accepted gap as the
 //     docs-shots harness itself (ut-docs#900); only routes[0] is checked.
 const { routedTopics } = require('../tests-docs/lib');
+// PR-only carve-out for keys that are NEW in the PR (ut-docs#2805) — the
+// rule and the reason live in lib/new-keys.js, unit-tested by
+// lib/new-keys_test.js.
+const { partitionFindings } = require('./lib/new-keys');
 
 // Same special case as tests-docs/docs-shots.spec.ts: GET /users requires a
 // real manager session (UT_AUTH=off has no operator in the request
@@ -44,9 +48,12 @@ const AUTH_TILL_TOPIC_IDS = ['users'];
 // The base locale's own string VALUES (trimmed, deduped) — the deterministic
 // "known English text" signal. Loaded once, at module scope: every test in
 // this file checks rendered text against the exact same catalog snapshot.
-function loadEnglishCatalogValues(): Set<string> {
+function loadEnglishCatalog(): Record<string, string> {
   const enPath = path.join(__dirname, '..', '..', 'web', 'locales', 'en.json');
-  const en = JSON.parse(fs.readFileSync(enPath, 'utf8')) as Record<string, string>;
+  return JSON.parse(fs.readFileSync(enPath, 'utf8')) as Record<string, string>;
+}
+
+function loadEnglishCatalogValues(en: Record<string, string>): Set<string> {
   const values = new Set<string>();
   for (const v of Object.values(en)) {
     const trimmed = v.trim();
@@ -64,7 +71,21 @@ function loadAllowlist(): Set<string> {
   return new Set(entries.map((e) => e.text));
 }
 
-const ENGLISH_VALUES = loadEnglishCatalogValues();
+// The base BRANCH's en.json (ut-docs#2805) — set by
+// locale-render-audit.yml on pull_request runs only (AUDIT_BASE_EN_JSON),
+// so findings for keys this PR adds can be deferred until the de pack PR
+// that follows the merge. Unset/empty (push to main, workflow_dispatch, a
+// local run) => null => strict, nothing deferred. Set but unreadable is a
+// workflow bug, so it throws rather than quietly going strict.
+function loadBaseEnglishCatalog(): Record<string, string> | null {
+  const basePath = process.env.AUDIT_BASE_EN_JSON;
+  if (!basePath) return null;
+  return JSON.parse(fs.readFileSync(basePath, 'utf8')) as Record<string, string>;
+}
+
+const EN_CATALOG = loadEnglishCatalog();
+const BASE_EN_CATALOG = loadBaseEnglishCatalog();
+const ENGLISH_VALUES = loadEnglishCatalogValues(EN_CATALOG);
 const ALLOWLIST = loadAllowlist();
 
 // A line with no letters at all (pure numbers, currency, punctuation,
@@ -177,6 +198,24 @@ function formatReport(flags: Flag[]): string {
   return lines.join('\n');
 }
 
+// Splits a test's findings, prints the deferred new-key ones as a GitHub
+// ::notice:: (still visible on the PR, never red), and returns only the
+// ones that must fail.
+function failuresAfterNewKeyCarveOut(flags: Flag[]): Flag[] {
+  const { failures, deferred } = partitionFindings(flags, EN_CATALOG, BASE_EN_CATALOG) as {
+    failures: Flag[];
+    deferred: Flag[];
+  };
+  if (deferred.length > 0) {
+    const detail = deferred.map((f) => `[${f.topicId}] ${f.route} -> "${f.text}"`).join('; ');
+    console.log(
+      `::notice file=web/locales/en.json::${deferred.length} new key(s) not yet in the de pack — ` +
+        `the pack PR follows after merge (ut-docs#1857). ${detail}`,
+    );
+  }
+  return failures;
+}
+
 const topics = routedTopics() as { id: string; route: string }[];
 
 test('German (de) render audit: no page shows a known English catalog string', async ({ page, baseURL }) => {
@@ -190,7 +229,8 @@ test('German (de) render audit: no page shows a known English catalog string', a
     });
   }
 
-  expect(allFlags, formatReport(allFlags)).toEqual([]);
+  const failures = failuresAfterNewKeyCarveOut(allFlags);
+  expect(failures, formatReport(failures)).toEqual([]);
 });
 
 test.describe('manager-gated topics (auth till)', () => {
@@ -200,7 +240,7 @@ test.describe('manager-gated topics (auth till)', () => {
     test(`German (de) render audit: ${id}`, async ({ page }) => {
       test.skip(!topic, `${id} topic no longer declares routes`);
       await ensureOperator(page); // fresh Playwright context per test -> log in each time
-      const flags = await auditRoute(page, topic!.id, topic!.route);
+      const flags = failuresAfterNewKeyCarveOut(await auditRoute(page, topic!.id, topic!.route));
       expect(flags, formatReport(flags)).toEqual([]);
     });
   }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -248,6 +249,37 @@ func (h *Hub) Len() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return len(h.peers)
+}
+
+// PeerInfo is one live link as the main till's Tills page shows it
+// (ADR-0114 §10).
+type PeerInfo struct {
+	TillID    string
+	Hello     Hello // the peer's hello (role, version); valid when HasHello
+	HasHello  bool
+	LastFrame time.Time // the last inbound frame (a ping at least every 5 s)
+	Report    Report    // the latest report; valid when HasReport
+	HasReport bool
+}
+
+// Peers is a snapshot of every live link, sorted by till id. Bounded by
+// MaxConns.
+func (h *Hub) Peers() []PeerInfo {
+	h.mu.Lock()
+	out := make([]PeerInfo, 0, len(h.peers))
+	peers := make([]*Peer, 0, len(h.peers))
+	for id, p := range h.peers {
+		r, ok := h.reports[id]
+		out = append(out, PeerInfo{TillID: id, Report: r, HasReport: ok})
+		peers = append(peers, p)
+	}
+	h.mu.Unlock()
+	for i, p := range peers {
+		out[i].Hello, out[i].HasHello = p.Hello()
+		out[i].LastFrame = time.Unix(0, p.lastFrame.Load())
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].TillID < out[j].TillID })
+	return out
 }
 
 // Report returns tillID's latest report.

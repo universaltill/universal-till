@@ -520,7 +520,8 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSyncAssets(mux, dp)
 	registerSyncQuarantinePage(mux, dp) // ut-docs#1133: quarantined LAN-sync journal entries, primary-only admin panel (ADR-0065 follow-up)
 	registerPrimaryProof(mux, dp)       // main till answers a moved-till challenge (ut-docs#2722)
-	registerMainTillStatus(mux, dp)     // replica's "main till not reachable" status chip (ut-docs#2722)
+	registerMainTillStatus(mux, dp)     // replica's main-till connectivity chip (ut-docs#2722, #2742)
+	registerTillsRoster(mux, dp)        // Tills page roster, live link per till (ut-docs#2742)
 	dp.PrimaryWatch = discovery.NewPrimaryWatch(dp.Settings, discovery.Browse)
 	// ADR-0114 (ut-docs#2735): this till's side of the main-till link. Built
 	// before StartSyncPull, which reads its link state for the polling floor.

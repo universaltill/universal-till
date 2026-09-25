@@ -194,6 +194,9 @@ body.tracking-screen { -webkit-user-select: text; user-select: text; }
    upload, ut-docs#637) — same warn tint .sync-banner below uses, reused
    here rather than inventing a second warning color. */
 .tag.warn { background: var(--warning-tint); color: var(--warning); border-color: var(--warning); }
+/* A tag for a healthy live state (the Tills roster's "Linked", ut-docs#2742)
+   — the success tint; the word itself carries the meaning. */
+.tag.ok { background: var(--success-tint); color: var(--success); border-color: var(--success); }
 
 /* ---------- Navigation: left icon rail (>480px), top bar (<=480px) ----------
    2026-08-30 (ut-docs#1332): converted from an always-horizontal top bar,
@@ -4232,6 +4235,23 @@ body.login-screen {
 }
 .statusbar a.sb-main-till:hover { filter: brightness(0.92); }
 #sb-main-till-mount:empty { display: none; }
+/* ut-docs#2742: the replica's one main-till light (main_till_status.html).
+   Words carry the state; the dot only repeats it — filled green while
+   linked, a hollow ring while polling (sync works, just not instantly).
+   The unreachable state keeps sb-main-till's amber pill above. A real
+   link to /tills, so it gets a comfortable hit area on a touchscreen. */
+.statusbar .sb-link { text-decoration: none; min-block-size: 1.75rem; }
+.statusbar a.sb-link:hover .sb-link-text { text-decoration: underline; }
+.statusbar .sb-link.is-linked { color: #bbf7d0; }
+.statusbar .sb-link.is-polling { color: #cbd5e1; }
+.statusbar .sb-link.is-polling .sb-dot {
+  background: transparent; box-shadow: none; border: 2px solid #94a3b8;
+  box-sizing: border-box;
+}
+/* A till with a main till: the browser's "Online" light would only say a
+   network interface is up — hidden next to the chip, shown only as
+   "No internet" when the network is really down. */
+.statusbar.has-link .sb-conn:not(.is-offline) { display: none; }
 /* Installed-plugin update chip (ut-docs#1953) — same green "there's
    something new" pill as sb-update above (not sb-power's amber: a pending
    plugin update is a notice, not a hardware-degrading warning), just its
@@ -4274,6 +4294,7 @@ body.login-screen {
   .statusbar .sb-update,
   .statusbar .sb-enrol,
   .statusbar .sb-power,
+  .statusbar .sb-link,
   .statusbar .sb-plugin-update,
   /* ut-docs#2299: sb-language-pack-update's own text ("Language pack
      update available") is longer than sb-plugin-update's, and its
