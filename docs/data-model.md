@@ -208,6 +208,8 @@ erDiagram
         string name
         string parent_id
         int    sort_order
+        string icon
+        int    sell_screen_hidden
     }
 
     brands {

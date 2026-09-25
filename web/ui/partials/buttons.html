@@ -36,7 +36,7 @@
      operator out of it (iOS keeps jiggling after a delete too).
      Both are configuration-change events, never a basket/sale mutation —
      see ut-docs#2294's own query-count test for why that distinction is
-     load-bearing: the All grid must re-fetch on either of these, but never
+     load-bearing: the grid must re-fetch on either of these, but never
      on a basket/scan event. */}}
 {{/* ut-docs#2174: .EditMode is the Quick Buttons Designer's live replica of
      this exact panel (designer.html's placeholder, GET /ui/buttons?mode=edit,
@@ -44,8 +44,7 @@
      edit mode adds the "designer-categories" management section (bottom of
      the "buttons" define) and renders every product-tile inert (see that
      define), and drops the sale-only affordances -- the sale-screen search,
-     the link to /designer, the All tab (buttons_api.go turns it off) and
-     the plugin action strip. The mode rides on hx-vals, which htmx appends
+     the link to /designer and the plugin action strip. The mode rides on hx-vals, which htmx appends
      to a GET as ?mode=edit, so hx-get stays the literal "/ui/buttons":
      app.js's utTileJiggle unsaved-drag guard matches
      `.products[hx-get="/ui/buttons"]` verbatim, and that guard is what
@@ -55,38 +54,28 @@
      hx-vals literal, not {{ "jsonVals" }}: nothing interpolated (guard-i18n
      check 4 only flags a literal with a template action inside it). */}}
 <div class="products" hx-get="/ui/buttons"{{ if .EditMode }} hx-vals='{"mode":"edit"}'{{ end }} hx-trigger="modifiers-changed from:body, buttons-changed from:body" hx-swap="outerHTML">
-  {{/* ut-docs#2294: $showAllTab (.ShowAllTab -- originally the
-       settings.sale.show_all_tab toggle, retired by ut-docs#2499; now true
-       on every sell-screen render and false only on the Designer
-       replica -- ANDed with there being at least one active item to
-       show) is computed up here, ahead of the empty-state branch below,
-       because that branch's own condition needs it: the empty state now
-       only fires when there is NEITHER a quick button NOR a showable All
-       tab -- before this card, a till with zero quick buttons configured
-       (but a real catalog behind it) always fell into this branch and hid
-       everything, All included, even though All's whole point is to work
-       with no quick buttons set up at all. Deliberately NOT keyed off the
-       raw .AllButtons/.ShowAllTab fields directly: with the setting OFF
-       (or no active items at all), a till with zero quick buttons must
-       still fall back to this exact empty state -- the pre-#2212 behavior
-       "off" is supposed to restore -- not render a silently blank screen
-       with nothing sellable and no CTA telling the operator why. */}}
+  {{/* ut-docs#2613: the strip has no All tab any more (ut-docs#2212 added
+       one, ut-docs#2294 gave it its own grid of every active item, and
+       both are retired here) -- it shows only category tabs plus the
+       ut-docs#2307 '...' button. Every active item stays reachable from
+       the strip through the server-side search (/ui/buttons/search). So a
+       strip till with zero quick buttons falls back to the empty state
+       below (products.empty + the "+ add" link) rather than an All grid. */}}
   {{/* ut-docs#2499: $mode is the shop's sale.browsing_mode, already
        clamped by ButtonsHTTP.List (EditMode and the zero value both land
        on strip_overflow there). ONE template, three shapes: the strip
-       branch below is the pre-#2499 sell screen unchanged; category_tabs
+       branch below is the pre-#2499 sell screen minus its All tab
+       (ut-docs#2613); category_tabs
        replaces the tab bar + grids with a grid of category tiles whose
        popup is fetched on tap (category-items-fragment, further down);
        all_filter_chips replaces them with a chip row over the All grid.
        Search (the strip's own icon/input and #search-results) and the
        plugin action strip are shared by all three. */}}
   {{ $mode := .BrowsingMode }}
-  {{ $showAllTab := and (eq $mode "strip_overflow") .ShowAllTab .AllButtons }}
-  {{/* $empty: nothing sellable to show for THIS mode -- the strip has
-       neither a quick button nor a showable All tab (ut-docs#2294's
-       reasoning, see $showAllTab above); the tile mode has no category
+  {{/* $empty: nothing sellable to show for THIS mode -- the strip has no
+       category group to show (ut-docs#2613); the tile mode has no category
        with an active item; the chip mode has no active item at all. */}}
-  {{ $empty := and (not .Groups) (not $showAllTab) }}
+  {{ $empty := not .Groups }}
   {{ if eq $mode "category_tabs" }}{{ $empty = not .CategoryTiles }}{{ end }}
   {{ if eq $mode "all_filter_chips" }}{{ $empty = not .AllButtons }}{{ end }}
   {{/* ut-docs#2174: never the empty state in edit mode -- the Designer
@@ -116,39 +105,26 @@
          render it via "category-group" (its own header, unchanged from
          before this feature) with no tab bar, same "nothing to switch
          between" reasoning. Search applies in all three cases. */}}
-    {{/* ut-docs#2294: $showAllTab was computed above (ahead of the
-         empty-state branch, which needs it too) — see that comment for
-         what it means. $hasTabs widens from "2+ quick-button categories"
-         to "that, OR the All tab is showing" -- All is a real,
-         independently useful tab now (it works even for a shop with zero
-         quick buttons configured), not just an extra button bolted onto
-         the existing category tab bar, so it must be able to pull a till
-         that would otherwise have had no tab bar at all into the tabbed
-         branch below. $defaultTab is the initial active tab: '__all__'
-         when $showAllTab, else the first category's own ID -- restoring
-         the exact pre-#2212 default (the first tab) for a till with the
-         setting off, per the card's own requirement. Indexing .Groups 0
-         here is only reached when $showAllTab is false, and by
-         construction $hasTabs was only true via `gt (len .Groups) 1` in
-         that case, so the index is always safe (len >= 2).
+    {{/* $defaultTab is the initial active tab: a real category's own ID
+         (ut-docs#2613 retired the strip's '__all__' All tab, which used to
+         be the default). Indexing .Groups 0 is only reached when $hasTabs,
+         i.e. len >= 2, so the index is always safe.
 
          ut-docs#2498: among those candidates, prefer the first group that
          actually HasButtons over a plain "first in .Groups" pick -- a
-         group can now survive pruning with zero quick buttons anywhere in
-         its subtree (kept only because it has active catalog items), and
+         group can survive pruning with zero quick buttons anywhere in its
+         subtree (kept only because it has active catalog items), and
          landing there by default would greet the operator with the
          empty-state message instead of real quick buttons on first paint.
-         Falls back to Groups[0] (the exact old behavior) when NOTHING in
-         .Groups has a button yet -- a shop that hasn't configured any
-         quick buttons at all is unaffected by this preference. */}}
-    {{ $hasTabs := or $showAllTab (gt (len .Groups) 1) }}
+         Falls back to Groups[0] when NOTHING in .Groups has a button yet. */}}
+    {{ $hasTabs := gt (len .Groups) 1 }}
     {{ $flat := and (not $hasTabs) (eq (len .Groups) 1) (eq (index .Groups 0).ID "") }}
-    {{ $defaultTab := "__all__" }}
-    {{ if not $showAllTab }}{{ if $hasTabs }}
+    {{ $defaultTab := "" }}
+    {{ if $hasTabs }}
       {{ $defaultTab = (index .Groups 0).ID }}
       {{ $pickedButtons := false }}
       {{ range .Groups }}{{ if and (not $pickedButtons) .HasButtons }}{{ $defaultTab = .ID }}{{ $pickedButtons = true }}{{ end }}{{ end }}
-    {{ end }}{{ end }}
+    {{ end }}
     {{/* .ID is interpolated raw into an Alpine JS string literal below
          (x-data, :class, @click) — html/template auto-escapes this as a
          plain HTML attribute (a literal ' survives as &#39;, which the
@@ -234,7 +210,7 @@
             that edit instead of the full gate. */}}
     {{/* ut-docs#2285: this whole root is outerHTML-swapped on
          buttons-changed (a Move/Remove from the tile sheet), which rebuilds
-         this x-data from scratch -- tab back to All, search cleared. Until
+         this x-data from scratch -- tab back to the default, search cleared. Until
          #2285 the only swap trigger was modifiers-changed, emitted from the
          catalog admin screens and never while an operator was on the sale
          screen, so the state loss was invisible; a reorder-within-category
@@ -243,7 +219,7 @@
          page-level stash the $watch calls keep current, and only restores a
          tab that still exists in the fresh render (a category can be gone).
          The stash lives on window, not storage: it is per page life, so a
-         real navigation still starts on All as before. No double quotes
+         real navigation still starts on the default tab as before. No double quotes
          inside these attributes -- see the note above this section. */}}
     {{/* ut-docs#2499: openCategoryPopup(tileEl), the category_tabs mode's
          tile click handler defined inside x-data below (kept out of that
@@ -268,31 +244,16 @@
       q: '',
       matches(tileEl) { return !this.q || tileEl.dataset.name.toLowerCase().includes(this.q.toLowerCase()); },
       sectionHasMatch(el) { return !this.q || Array.from(el.querySelectorAll('.btn-tile')).some(t => this.matches(t)); },
-      {{/* ut-docs#2212 gave the category strip a synthetic "All" tab
-           (sentinel '__all__' — never a real category ID, which is always
-           either a server-generated uuid or "" for the uncategorized
-           bucket). ut-docs#2294 changed what selecting it shows: it used
-           to reuse the EXISTING per-category panels (every panelVisible()
-           call returning true at once); it now has its own dedicated grid
-           (every ACTIVE catalog item, not just quick-button ones — see
-           showAllGrid() below and the #buttons-grid-all block), so a
-           category panel is visible ONLY for its own tab now, never under
-           All — otherwise a quick-button item would render twice at once
-           (once in its own category's reused panel, once in the All
-           grid). */}}
+      {{/* A category panel is visible only for its own tab, or -- while a
+           query is active -- whenever it has a match (ut-docs#2181). */}}
       panelVisible(id, panelEl) {
         return this.q ? this.sectionHasMatch(panelEl) : this.tab === id;
       },
-      {{/* showAllGrid(): the All tab's own dedicated grid (ut-docs#2294) —
-           see panelVisible's comment above for why All no longer reuses
-           the category panels it used to. */}}
-      showAllGrid() { return this.tab === '__all__'; },
       searching: false,
       restoreGridState() {
         const st = window.utSaleGridState;
         if (st) {
-          const tabStillExists = st.tab === '__all__' ? !!document.getElementById('cat-tab-all')
-            : !!document.getElementById('cat-tab-' + (st.tab || 'uncategorized'));
+          const tabStillExists = !!document.getElementById('cat-tab-' + (st.tab || 'uncategorized'));
           if (typeof st.tab === 'string' && tabStillExists) this.tab = st.tab;
           {{/* ut-docs#2174 review: never in edit mode -- utSaleGridState is
                a window global that survives the shell's boosted navigation,
@@ -381,8 +342,8 @@
         const gap = parseFloat(cs.columnGap || cs.gap) || 0;
         // Sums an ordered row of widths plus one gap between every pair of
         // adjacent items -- NOT per item -- so this stays correct whether
-        // there are zero fixed tabs (Categories/All are both opt-in, off
-        // by default), one, or two.
+        // there are zero fixed tabs (the strip has none since ut-docs#2499
+        // retired Categories and ut-docs#2613 retired All) or any.
         const sumWithGaps = (widths) => widths.reduce((sum, w, i) => sum + w + (i > 0 ? gap : 0), 0);
         // bar's own rendered width is the row's real available budget
         // regardless of which children are currently hidden: .tab-bar is
@@ -619,30 +580,15 @@
                that used to render first here: the category_tabs browsing
                mode IS that tile grid now, as the whole view rather than a
                tab inside the strip. */}}
-          {{ if $showAllTab }}
-          {{/* ut-docs#2212: the All tab, always first, always selected by
-               default (tab's own initial value above) when it renders at
-               all — ut-docs#2294 made that conditional on
-               settings.sale.show_all_tab (.ShowAllTab, default on) AND
-               there being at least one active item to show ($showAllTab).
-               Deliberately no aria-controls — unlike a real category tab,
-               All doesn't own a panel owned by anything else, it shows its
-               OWN dedicated grid (#buttons-grid-all below, every active
-               catalog item — see showAllGrid() above), so aria-controls
-               would be redundant with :aria-selected here rather than
-               wrong, but is still omitted to match every other
-               no-single-owned-target tab in this file. No --cat-color
-               either: All isn't one category, so it has nothing to
-               color-code with. */}}
-          <button type="button" id="cat-tab-all" class="tab" role="tab" :class="tab === '__all__' && 'active'" :aria-selected="tab === '__all__'" :tabindex="tab === '__all__' ? 0 : -1" @click="tab = '__all__'">{{ T "products.all" }}</button>
-          {{ end }}
+          {{/* ut-docs#2613 retired the strip's All tab (ut-docs#2212/#2294)
+               that used to render first here: the first tab is now always
+               a real category. */}}
           {{ range .Groups }}
           {{/* data-cat-tab (ut-docs#2307): a plain boolean marker so
                applyCategoryOverflow() (this file's own x-data, above) can
-               select exactly the per-category tabs -- never the fixed
-               Categories/All tabs above, which the card's own requirement
-               keeps always visible -- without having to duplicate the
-               '__categories__'/'__all__' sentinel checks in JS. */}}
+               select exactly the per-category tabs -- never a fixed,
+               always-visible tab (none today: ut-docs#2499/#2613 retired
+               Categories and All) -- without sentinel checks in JS. */}}
           <button type="button" id="cat-tab-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" class="tab" role="tab" data-cat-tab style="--cat-color: {{ .Color }}" :class="tab === '{{ .ID }}' && 'active'" :aria-selected="tab === '{{ .ID }}'" :tabindex="tab === '{{ .ID }}' ? 0 : -1" aria-controls="cat-panel-{{ if .ID }}{{ .ID }}{{ else }}uncategorized{{ end }}" @click="tab = '{{ .ID }}'">{{ if .ImageURL }}<img class="tab-cat-img" src="{{ imgv .ImageURL }}" alt="" loading="lazy">{{ end }}{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</button>
           {{ end }}
           {{/* ut-docs#2307: the trailing "more categories" button --
@@ -842,8 +788,9 @@
         </div>
         {{ else if eq $mode "all_filter_chips" }}
         {{/* ut-docs#2499 all_filter_chips: the All grid (every active item,
-             first page -- same #buttons-grid-all/all-more pagination as the
-             strip's All tab, ut-docs#2294/#2319) under a row of category
+             first page -- the #buttons-grid-all/all-more pagination of
+             ut-docs#2294/#2319, the one All grid left since ut-docs#2613
+             retired the strip's All tab) under a row of category
              filter chips. The row is the shared .filter-chips chip pattern
              (app.css, ut-docs#2119/#2167: a real 44px+ touch floor, wraps
              rather than clips or scrolls, pressed state carried by
@@ -889,40 +836,12 @@
         </div>
         <p class="empty" x-show="!sectionHasMatch($el.parentElement)">{{ T "products.no_matches" }}</p>
         {{ else if $hasTabs }}
-        {{ if $showAllTab }}
-        {{/* ut-docs#2294: the All tab's own dedicated grid — EVERY active
-             catalog item (.AllButtons, sorted by name; see
-             ButtonStore.LoadAllActive), not just the quick-button items a
-             category panel shows. Reuses the shared "product-tile"
-             partial so price/variant/modifier/color behavior is pixel-
-             and-behavior-identical to a quick-button tile. No x-cloak:
-             All is the default active tab whenever it renders at all (see
-             $defaultTab above), so this is visible on first paint before
-             Alpine hydrates — cloaking it would hide real content from a
-             client where Alpine never loads, same reasoning the category
-             panels below apply in the opposite direction (they're NOT the
-             default any more, so THEY get cloaked). */}}
-        <div id="buttons-grid-all" class="grid" x-show="showAllGrid()">
-          {{ range .AllButtons }}{{ template "product-tile" . }}{{ end }}
-          {{/* ut-docs#2319: only the first AllTabPageSize items ship in this
-               response (see the Go side's own doc comment on that
-               constant) — a catalog at or under that size never renders
-               this button at all (.AllHasMore is false), so a small till's
-               All tab is completely unchanged. */}}
-          {{ if .AllHasMore }}{{ template "all-more-button" (dict "Offset" .AllNextOffset) }}{{ end }}
-        </div>
-        {{ end }}
         {{ range $g := .Groups }}
         {{/* ut-docs#2294: a category panel is x-cloak'd unless it's the
-             DEFAULT tab ($defaultTab, computed above) — the inverse of
-             ut-docs#2212's own rule here (every panel visible-by-default,
-             none cloaked), because All no longer reuses these panels (see
-             panelVisible's own comment above): the default tab is now
-             either All (its own grid, handled above) or, when the setting
-             is off, the first category — so every OTHER category panel
-             must stay hidden until Alpine actually hydrates and picks a
-             tab, or it would flash visible pre-hydration stacked on top
-             of whichever panel/grid IS the default.
+             DEFAULT tab ($defaultTab, computed above) — every OTHER
+             category panel must stay hidden until Alpine actually hydrates
+             and picks a tab, or it would flash visible pre-hydration
+             stacked on top of the default one.
              --cat-color set here too (ut-docs#1325), not just on the tab
              button above: a top-level group's OWN buttons render straight
              into this panel via "category-group-body-tabbed" (own
@@ -949,7 +868,7 @@
              than assert a relationship that no longer holds; Alpine
              removes an :attr bound to null/false, it doesn't render the
              literal string. */}}
-        <div id="cat-panel-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}" :role="(q || tab === '__all__') ? 'group' : 'tabpanel'" :aria-labelledby="(q || tab === '__all__') ? null : 'cat-tab-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}'" class="products-tab-panel" style="--cat-color: {{ $g.Color }}" x-show="panelVisible('{{ $g.ID }}', $el)" {{ if ne $g.ID $defaultTab }}x-cloak{{ end }}>
+        <div id="cat-panel-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}" :role="q ? 'group' : 'tabpanel'" :aria-labelledby="q ? null : 'cat-tab-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}'" class="products-tab-panel" style="--cat-color: {{ $g.Color }}" x-show="panelVisible('{{ $g.ID }}', $el)" {{ if ne $g.ID $defaultTab }}x-cloak{{ end }}>
           {{ template "category-group-body-tabbed" $g }}
         </div>
         {{ end }}
@@ -1212,21 +1131,21 @@
      via the recursive "category-group" template below — same markup a
      subcategory always used. The top-level bucket's own buttons get a
      "category-group" wrapper too, but with its header shown only while a
-     query is active (ut-docs#2181) OR the All tab is selected (ut-docs#2212)
-     — outside both, the active tab already names the category, so a
-     permanent header here would be redundant noise; but once either one
-     makes panelVisible() (above) show more than one tab's panel at once,
-     the tab bar (hidden while searching; not naming any one category while
-     All is active) can no longer tell the operator which category a result
-     came from, and the header is what does instead. Nested subcategories
-     don't need this treatment — "category-group" below already carries its
-     own always-visible header regardless of search/All state, which is
+     query is active (ut-docs#2181) — otherwise the active tab already names
+     the category, so a permanent header here would be redundant noise; but
+     once a query makes panelVisible() (above) show more than one tab's
+     panel at once, the tab bar (hidden while searching) can no longer tell
+     the operator which category a result came from, and the header is what
+     does instead. (ut-docs#2613 retired the strip's All tab, the other
+     case that used to show it.) Nested subcategories don't need this
+     treatment — "category-group" below already carries its own
+     always-visible header regardless of search state, which is
      exactly what already keeps a Dairy/Bakery-style result unambiguous
      today. */}}
 {{ define "category-group-body-tabbed" }}
   {{ if .Buttons }}
   <section class="category-group" x-show="sectionHasMatch($el)">
-    <h3 class="category-header" x-show="q || tab === '__all__'">{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</h3>
+    <h3 class="category-header" x-show="q" x-cloak>{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</h3>
     <div class="grid">
       {{ range .Buttons }}{{ template "product-tile" . }}{{ end }}
     </div>
@@ -1267,25 +1186,25 @@
      top-level root's name. Two subcategories that happen to share a name
      under different top-level categories (e.g. Food>Specials and
      Household>Specials) are only ambiguous once more than one root's
-     content can be visible at once — a cross-category search (q truthy),
-     or the default "All" tab (ut-docs#2212 made tab start at '__all__') —
-     so the prefix span reuses the EXACT same gating expression
-     "category-group-body-tabbed"'s own top-level header already uses
-     (x-show="q || tab === '__all__'") rather than inventing a second
-     condition that could drift from it. Inside a single specific category
-     tab (q empty, tab a real ID, not All) this renders exactly as before —
+     content can be visible at once — a cross-category search (q truthy;
+     the strip's All tab, the other such case, was retired by
+     ut-docs#2613) — so the prefix span reuses the EXACT same gating
+     expression "category-group-body-tabbed"'s own top-level header already
+     uses (x-show="q") rather than inventing a second condition that could
+     drift from it. Inside a single specific category tab (q empty) this
+     renders exactly as before —
      the at-rest view that convention already protects. The "› " separator
      is a bare glyph, not template prose, so it needs no {{ "T" }} key
      (guard-i18n.sh only scans {{ "T" }} calls/specific Go call sites, never
      arbitrary template text) and no RTL handling beyond the page's existing
-     `dir` — this adds no new box layout, just inline text. No x-cloak on
-     the ancestor span, same reasoning as "category-group-body-tabbed"'s
-     own header (see that template's test file): since All is the default
-     tab, this can be visible on first paint, so cloaking it would hide a
-     real disambiguating label from a client where Alpine never loads. */}}
+     `dir` — this adds no new box layout, just inline text. x-cloak'd (as
+     is "category-group-body-tabbed"'s own q-gated header) since
+     ut-docs#2613: q starts empty on every render, so the label is hidden
+     until a query shows it -- the old "All is the default tab, so this is
+     visible on first paint" reason for leaving it uncloaked is gone. */}}
 {{ define "category-group" }}
 <section class="category-group" style="--cat-color: {{ .Color }}" x-show="sectionHasMatch($el)">
-  <h3 class="category-header">{{ if .AncestorName }}<span class="category-header-ancestor" x-show="q || tab === '__all__'">{{ .AncestorName }} › </span>{{ end }}{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</h3>
+  <h3 class="category-header">{{ if .AncestorName }}<span class="category-header-ancestor" x-show="q" x-cloak>{{ .AncestorName }} › </span>{{ end }}{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</h3>
   {{ if .Buttons }}
   <div class="grid">
     {{ range .Buttons }}{{ template "product-tile" . }}{{ end }}
@@ -1339,7 +1258,8 @@
      data-pos is the tile's index in the GLOBAL sort order (ui.ButtonVM.Pos)
      -- what utTileJiggle needs to rebuild the full list /api/buttons/reorder
      expects, since this grid's DOM order is grouped by category. */}}
-{{/* all-more-button (ut-docs#2319): the All tab's "load more" trigger,
+{{/* all-more-button (ut-docs#2319): the All grid's "load more" trigger
+     (all_filter_chips only since ut-docs#2613),
      shown only while ButtonsHTTP.List/AllMore report more items beyond the
      current page (AllTabPageSize). hx-target="this"/hx-swap="outerHTML"
      replaces the button itself with the next page's tiles followed by
@@ -1351,8 +1271,7 @@
      (app.css) spans the full grid row so it never sits mid-row like a tile. */}}
 {{/* ut-docs#2499: an optional "Category" dict key (the all_filter_chips
      mode's pressed chip, or "all") rides along on the URL so the next page
-     stays inside the same filter; the strip's own All tab passes none and
-     pages the whole catalog exactly as before. */}}
+     stays inside the same filter ("all" pages the whole catalog). */}}
 {{ define "all-more-button" }}
 {{ $_ := req . "Offset" }}
   <button type="button" class="btn secondary compact all-more-btn" id="buttons-all-more"
@@ -1518,7 +1437,7 @@
            properties -- app.css's .tile-badge-hide sets inset-inline-end/
            inset-block-end, never left/right/bottom, so it mirrors correctly
            under RTL same as every other badge in this file) -- hides the
-           item from the sell screen grid/All tab without touching the
+           item from the sell screen grid/All grid without touching the
            catalog item itself; reversible (Designer's "Hidden from sell
            screen" section, Unhide), so no confirm at all, granted or
            Locked alike. */}}
@@ -1557,7 +1476,7 @@
      comment for why. Otherwise identical markup/behavior (price, image,
      color swatch, and the same modifier/variant-vs-straight-to-basket
      branch), so a search result looks and behaves exactly like a
-     quick-button/All-tab tile, per the card's own requirement. */}}
+     quick-button/All-grid tile, per the card's own requirement. */}}
 {{ define "product-tile-result" }}
   {{ $colored := and (not .ImageURL) .Color }}
   {{ if or .HasModifiers .HasVariants }}

@@ -12,8 +12,8 @@ import { watchConsole, waitForStableLayout } from './helpers';
 //
 // Drives the real demo-seeded catalog (001_init.sql / demo_catalogue.sql),
 // same convention as sale-screen-category-tabs-search-418.spec.ts — the
-// default-active tab (ut-docs#2212: the synthetic "All" tab, showing every
-// category at once) alone has enough categories/items to overflow
+// default-active tab (the strip's first category since ut-docs#2613
+// retired the synthetic "All" tab) alone has enough items to overflow
 // `.products` at a normal desktop viewport, so no viewport-shrinking trick
 // is needed to reach the "content taller than the panel" precondition this
 // spec exists to test.

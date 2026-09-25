@@ -13,17 +13,11 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 )
 
-// TestButtonsHTTPList_AllTabIsFirstAndDefaultSelected (ut-docs#2212,
-// reworked by ut-docs#2294): the tabbed view ($hasTabs) must render a
-// leading "All" tab, selected by default, so an operator who has tapped
-// into a category always has an escape hatch back to the whole catalogue
-// without hunting for which category everything happens to live under.
-// ut-docs#2294 changed WHAT selecting it shows: All used to reuse the
-// existing per-category panels; it now has its own dedicated grid (every
-// active catalog item, not just quick-button ones) — see the wiring
-// assertions below, and buttons_all_tab_test.go's other new tests for the
-// "every active item, including one with no quick button" behavior itself.
-func TestButtonsHTTPList_AllTabIsFirstAndDefaultSelected(t *testing.T) {
+// newTwoCategoryStripHTTP seeds Food (Bread) and Drinks (Cola), each item
+// with its own quick button unless noColaButton, so $hasTabs is true and a
+// tab bar actually renders.
+func newTwoCategoryStripHTTP(t *testing.T, noColaButton bool) *ButtonsHTTP {
+	t.Helper()
 	db := setupFullTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	store := NewButtonStore(db)
@@ -36,26 +30,32 @@ func TestButtonsHTTPList_AllTabIsFirstAndDefaultSelected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
 	}
-	h := &ButtonsHTTP{Store: *store, View: renderer}
-
-	// Two top-level categories, same shape as
-	// TestButtonsHTTPList_TabbedPanelsCarryCrossCategorySearchWiring, so
-	// $hasTabs is true and a tab bar actually renders.
 	mustExec(t, db, `INSERT INTO categories(id, name, parent_id, sort_order) VALUES
 		('cat_food', 'Food', NULL, 1),
 		('cat_drink', 'Drinks', NULL, 2)`)
 	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, category_id, is_active) VALUES
 		('i1', 'S1', 'Bread', 140, 'cat_food', 1),
 		('i2', 'S2', 'Cola', 120, 'cat_drink', 1)`)
-	for _, b := range []Button{
-		{Label: "Bread", Code: "C1", ItemID: "i1"},
-		{Label: "Cola", Code: "C2", ItemID: "i2"},
-	} {
+	btns := []Button{{Label: "Bread", Code: "C1", ItemID: "i1"}}
+	if !noColaButton {
+		btns = append(btns, Button{Label: "Cola", Code: "C2", ItemID: "i2"})
+	}
+	for _, b := range btns {
 		if err := store.Add(b); err != nil {
 			t.Fatalf("Add(%+v): %v", b, err)
 		}
 	}
+	return &ButtonsHTTP{Store: *store, View: renderer, BrowsingMode: browsingModeStripOverflow}
+}
 
+// TestButtonsHTTPList_StripFirstCategoryTabIsDefaultSelected (ut-docs#2613,
+// replacing ut-docs#2212/#2294's All-tab tests): the strip no longer renders
+// a leading All tab or its dedicated #buttons-grid-all grid — the first
+// category tab is first in the tablist and selected by default, its panel
+// is the only uncloaked one, and no '__all__' sentinel survives anywhere in
+// the Alpine wiring.
+func TestButtonsHTTPList_StripFirstCategoryTabIsDefaultSelected(t *testing.T) {
+	h := newTwoCategoryStripHTTP(t, false)
 	rec := httptest.NewRecorder()
 	h.List(rec, httptest.NewRequest("GET", "/ui/buttons", nil))
 	if rec.Code != 200 {
@@ -63,181 +63,71 @@ func TestButtonsHTTPList_AllTabIsFirstAndDefaultSelected(t *testing.T) {
 	}
 	body := rec.Body.String()
 
-	// The default `tab` value is the All sentinel, not the first real
-	// category's ID — this is what actually makes "All" the pre-selected
-	// tab on first paint.
-	if !strings.Contains(body, `tab: '__all__',`) {
-		t.Fatalf("expected the Alpine component's default tab to be the All sentinel, got: %s", body)
+	for _, unwanted := range []string{`id="cat-tab-all"`, `id="buttons-grid-all"`, `'__all__'`, `showAllGrid`, "products.all<"} {
+		if strings.Contains(body, unwanted) {
+			t.Fatalf("strip must not render %q any more (ut-docs#2613), got: %s", unwanted, body)
+		}
 	}
-
-	// The All tab itself: a real, focusable, ARIA-correct tab, appearing
-	// BEFORE either category tab (first in DOM order).
-	allIdx := strings.Index(body, `id="cat-tab-all"`)
+	if !strings.Contains(body, `tab: 'cat_food',`) {
+		t.Fatalf("expected the first category's own ID to seed the initial active tab, got: %s", body)
+	}
 	foodIdx := strings.Index(body, `id="cat-tab-cat_food"`)
 	drinkIdx := strings.Index(body, `id="cat-tab-cat_drink"`)
-	if allIdx < 0 {
-		t.Fatalf("expected an All tab button (id=cat-tab-all), got: %s", body)
+	if foodIdx < 0 || drinkIdx < 0 || foodIdx > drinkIdx {
+		t.Fatalf("expected Food then Drinks tabs, got: %s", body)
 	}
-	if allIdx > foodIdx || allIdx > drinkIdx {
-		t.Fatalf("expected the All tab to render before every category tab, got: %s", body)
-	}
-	if !strings.Contains(body, `:aria-selected="tab === '__all__'"`) {
-		t.Fatalf("expected the All tab's aria-selected to be keyed off the All sentinel, got: %s", body)
-	}
-	// The All tab owns no single panel of the OLD reused-panel kind (it
-	// has its own dedicated grid instead — see #buttons-grid-all below),
-	// so it must not claim one via aria-controls — same "drop the
-	// attribute rather than assert a false relationship" precedent this
-	// file already applies during search.
-	allTagEnd := strings.Index(body[allIdx:], ">")
-	if allTagEnd < 0 {
-		t.Fatalf("could not find the end of the All tab's opening tag, got: %s", body)
-	}
-	allTag := body[allIdx : allIdx+allTagEnd]
-	if strings.Contains(allTag, "aria-controls") {
-		t.Fatalf("expected the All tab to carry no aria-controls, got tag: %s", allTag)
-	}
-
-	// ut-docs#2294: the All tab's OWN dedicated grid — not a reuse of the
-	// category panels — carries both items, visible by default (no
-	// x-cloak, since All is the default tab) and gated on showAllGrid().
-	allGridIdx := strings.Index(body, `id="buttons-grid-all"`)
-	if allGridIdx < 0 {
-		t.Fatalf("expected a dedicated All grid (#buttons-grid-all), got: %s", body)
-	}
-	allGridTagEnd := strings.Index(body[allGridIdx:], ">")
-	allGridTag := body[allGridIdx : allGridIdx+allGridTagEnd]
-	if !strings.Contains(allGridTag, `x-show="showAllGrid()"`) {
-		t.Fatalf("expected the All grid to be gated on showAllGrid(), got tag: %s", allGridTag)
-	}
-	if strings.Contains(allGridTag, "x-cloak") {
-		t.Fatalf("expected the All grid to carry no x-cloak (it's the default tab's content), got tag: %s", allGridTag)
-	}
-	// Scope to the All grid's own content only: from its opening tag up to
-	// the first category panel that follows it (id="cat-panel-..." is an
-	// unambiguous boundary — it never appears inside the All grid itself).
-	allGridEnd := strings.Index(body[allGridIdx:], `id="cat-panel-`)
-	if allGridEnd < 0 {
-		t.Fatalf("expected at least one category panel after the All grid, got: %s", body)
-	}
-	allGridSection := body[allGridIdx : allGridIdx+allGridEnd]
-	if !strings.Contains(allGridSection, "Bread") || !strings.Contains(allGridSection, "Cola") {
-		t.Fatalf("expected both items in the All grid, got: %s", allGridSection)
-	}
-
-	// Each category panel must now be x-cloak'd (they are NOT the default
-	// tab any more — All is, and it owns its own grid, not these) and
-	// must render ONLY when its own tab is picked, never under All
-	// (panelVisible no longer OR's in the All sentinel — see
-	// panelVisible's own comment in buttons.html for why: showing a
-	// category panel under All as well as the All grid would duplicate
-	// every quick-button tile on screen at once).
-	for _, marker := range []string{`id="cat-panel-cat_food"`, `id="cat-panel-cat_drink"`} {
+	// Food's panel is the default one (no x-cloak); Drinks' stays cloaked
+	// until Alpine picks a tab.
+	for marker, wantCloak := range map[string]bool{`id="cat-panel-cat_food"`: false, `id="cat-panel-cat_drink"`: true} {
 		idx := strings.Index(body, marker)
 		if idx < 0 {
 			t.Fatalf("expected to find panel %s, got: %s", marker, body)
 		}
-		tagEnd := strings.Index(body[idx:], ">")
-		tag := body[idx : idx+tagEnd]
-		if !strings.Contains(tag, "x-cloak") {
-			t.Fatalf("expected panel %s to carry x-cloak (All, not this panel, is the default), got tag: %s", marker, tag)
+		tag := body[idx : idx+strings.Index(body[idx:], ">")]
+		if strings.Contains(tag, "x-cloak") != wantCloak {
+			t.Fatalf("panel %s x-cloak = %v, want %v; tag: %s", marker, !wantCloak, wantCloak, tag)
+		}
+		if !strings.Contains(tag, `:role="q ? 'group' : 'tabpanel'"`) {
+			t.Fatalf("panel %s role must key off the query alone now, tag: %s", marker, tag)
 		}
 	}
 	if !strings.Contains(body, `panelVisible(id, panelEl) {
         return this.q ? this.sectionHasMatch(panelEl) : this.tab === id;
       },`) {
-		t.Fatalf("expected panelVisible's no-query branch to check ONLY the panel's own tab, not the All sentinel, got: %s", body)
-	}
-
-	// i18n: the All tab's own label goes through T, not a hardcoded
-	// literal (no InitI18n call in this package's tests, so T falls back
-	// to the raw key — guard-i18n.sh is what enforces the translation
-	// itself exists in every locale file).
-	if !strings.Contains(body, "products.all<") && !strings.Contains(body, ">products.all<") {
-		t.Fatalf("expected the products.all key to render as the All tab's label, got: %s", body)
+		t.Fatalf("expected panelVisible's no-query branch to check ONLY the panel's own tab, got: %s", body)
 	}
 }
 
-// TestButtonsHTTPList_AllTabShowsItemWithNoQuickButton (ut-docs#2294, the
-// core of the card): the whole point of the All tab is that it lists EVERY
-// active catalog item, not only ones with a shortcut_buttons row. Seeds one
-// item WITH a quick button and one WITHOUT, and pins that both show in the
-// All grid while only the quick-button one shows in its category's own
-// (quick-button-only) panel — proving All's data source genuinely changed,
-// not just its default-tab wiring.
-func TestButtonsHTTPList_AllTabShowsItemWithNoQuickButton(t *testing.T) {
-	db := setupFullTestDB(t)
-	t.Cleanup(func() { db.Close() })
-	store := NewButtonStore(db)
-	renderer, err := NewRenderer(
-		filepath.Join("web", "ui", "layouts", "base.html"),
-		filepath.Join("web", "ui", "pages", "index.html"),
-		filepath.Join("web", "ui", "partials", "buttons.html"),
-		httpx.FuncsFor("en"),
-	)
-	if err != nil {
-		t.Fatalf("NewRenderer: %v", err)
-	}
-	h := &ButtonsHTTP{Store: *store, View: renderer}
-
-	mustExec(t, db, `INSERT INTO categories(id, name, parent_id, sort_order) VALUES
-		('cat_food', 'Food', NULL, 1),
-		('cat_drink', 'Drinks', NULL, 2)`)
-	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, category_id, is_active) VALUES
-		('i1', 'S1', 'Bread', 140, 'cat_food', 1),
-		('i2', 'S2', 'Cola', 120, 'cat_drink', 1)`)
-	// Only Bread ever gets a quick button. Cola never does — it's the
-	// item the pre-ut-docs#2294 All tab could never show.
-	if err := store.Add(Button{Label: "Bread", Code: "C1", ItemID: "i1"}); err != nil {
-		t.Fatalf("Add: %v", err)
-	}
-
+// TestButtonsHTTPList_StripShowsItemWithNoQuickButtonInItsCategory
+// (ut-docs#2613): with the strip's All grid gone, an active item with no
+// shortcut_buttons row of its own is still on the strip — as an implicit
+// tile (ut-docs#2541) in its own category's panel — so retiring All loses
+// no item from the sell screen.
+func TestButtonsHTTPList_StripShowsItemWithNoQuickButtonInItsCategory(t *testing.T) {
+	h := newTwoCategoryStripHTTP(t, true)
 	rec := httptest.NewRecorder()
 	h.List(rec, httptest.NewRequest("GET", "/ui/buttons", nil))
 	if rec.Code != 200 {
 		t.Fatalf("List = %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-
-	allGridIdx := strings.Index(body, `id="buttons-grid-all"`)
-	if allGridIdx < 0 {
-		t.Fatalf("expected a dedicated All grid (#buttons-grid-all), got: %s", body)
+	drinkIdx := strings.Index(body, `id="cat-panel-cat_drink"`)
+	if drinkIdx < 0 {
+		t.Fatalf("expected a Drinks category panel, got: %s", body)
 	}
-	// Scope to the All grid's own content only — see
-	// TestButtonsHTTPList_AllTabIsFirstAndDefaultSelected's identical
-	// scoping for why "id=\"cat-panel-\"" is the right boundary.
-	allGridEnd := strings.Index(body[allGridIdx:], `id="cat-panel-`)
-	if allGridEnd < 0 {
-		t.Fatalf("expected at least one category panel after the All grid, got: %s", body)
+	if !strings.Contains(body[drinkIdx:], `data-name="Cola"`) {
+		t.Fatalf("expected Cola (no explicit quick button) as an implicit tile in the Drinks panel, got: %s", body[drinkIdx:])
 	}
-	allGrid := body[allGridIdx : allGridIdx+allGridEnd]
-	if !strings.Contains(allGrid, "Bread") {
-		t.Fatalf("expected the quick-button item to be in the All grid too, got: %s", allGrid)
-	}
-	if !strings.Contains(allGrid, "Cola") {
-		t.Fatalf("expected the NO-quick-button item to be in the All grid — this is the card's whole point, got: %s", allGrid)
-	}
-
-	// Drinks (Cola's category) DOES now get its own category tab/panel
-	// (ut-docs#2498): BuildCategoryGroups no longer prunes a branch purely
-	// for having no quick buttons — it also survives via an active-item
-	// count, and Cola is an active item in Drinks with no quick button.
-	// This test predates #2498 and used to assert the opposite (the bug
-	// the card fixed: a category with real items but no quick buttons was
-	// invisible everywhere, not just absent from All). The panel now
-	// renders, but empty of quick-button tiles — see
-	// TestButtonsHTTPList_CategoryWithActiveItemButNoButtonStillAppears
-	// in buttons_category_item_only_test.go for the dedicated empty-state
-	// coverage.
-	if !strings.Contains(body, `id="cat-panel-cat_drink"`) {
-		t.Fatalf("expected a Drinks category panel (has an active item, Cola) even with no quick button in it, got: %s", body)
+	if strings.Contains(body, `id="buttons-grid-all"`) {
+		t.Fatalf("strip must not render an All grid (ut-docs#2613), got: %s", body)
 	}
 }
 
-// TestButtonsHTTPList_AllTabExcludesInactiveItems (ut-docs#2294, ut-docs#2281
+// TestButtonsHTTPList_AllGridExcludesInactiveItems (ut-docs#2294, ut-docs#2281
 // context — "the All grid must filter is_active = 1 from day one"): a
-// deactivated item must never show as an All-tab tile.
-func TestButtonsHTTPList_AllTabExcludesInactiveItems(t *testing.T) {
+// deactivated item must never show as an All-grid tile. Since ut-docs#2613
+// the only All grid is all_filter_chips' own.
+func TestButtonsHTTPList_AllGridExcludesInactiveItems(t *testing.T) {
 	db := setupFullTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	store := NewButtonStore(db)
@@ -250,7 +140,7 @@ func TestButtonsHTTPList_AllTabExcludesInactiveItems(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
 	}
-	h := &ButtonsHTTP{Store: *store, View: renderer}
+	h := &ButtonsHTTP{Store: *store, View: renderer, BrowsingMode: browsingModeAllFilterChips}
 
 	mustExec(t, db, `INSERT INTO categories(id, name, parent_id, sort_order) VALUES
 		('cat_food', 'Food', NULL, 1),
@@ -272,18 +162,18 @@ func TestButtonsHTTPList_AllTabExcludesInactiveItems(t *testing.T) {
 	if strings.Contains(body, "Discontinued Soda") {
 		t.Fatalf("expected a deactivated item to stay off the All grid, got: %s", body)
 	}
-	if !strings.Contains(body, "Bread") {
-		t.Fatalf("expected the active item to still render, got: %s", body)
+	if !strings.Contains(body, `id="buttons-grid-all"`) || !strings.Contains(body, "Bread") {
+		t.Fatalf("expected the active item to still render in the All grid, got: %s", body)
 	}
 }
 
-// TestButtonsHTTPList_AllTabRendersEvenWithNoQuickButtonCategories
-// (ut-docs#2294): the All tab must work for a shop with zero (or one)
-// quick-button categories configured — its whole value is that it does NOT
-// depend on the Designer having been used at all. Before this card, a till
-// with no quick buttons hit buttons.html's own empty state
-// ({{ if not .Groups }}) and showed NOTHING, All tab included.
-func TestButtonsHTTPList_AllTabRendersEvenWithNoQuickButtonCategories(t *testing.T) {
+// TestButtonsHTTPList_StripWithNoCategoriesRendersFlatImplicitTiles
+// (ut-docs#2613, replacing ut-docs#2294's "All tab renders even with no
+// quick-button categories"): a shop with no categories and no quick
+// buttons configured still sees its catalog on the strip — as the flat,
+// tab-less grid of implicit tiles (ut-docs#2541) — not an All tab and not
+// the empty state.
+func TestButtonsHTTPList_StripWithNoCategoriesRendersFlatImplicitTiles(t *testing.T) {
 	h, db := newButtonsHTTPWithDB(t, "buttons.html")
 
 	// No categories, no shortcut_buttons rows at all — just a catalog.
@@ -297,25 +187,22 @@ func TestButtonsHTTPList_AllTabRendersEvenWithNoQuickButtonCategories(t *testing
 	body := rec.Body.String()
 
 	if strings.Contains(body, "products.empty<") {
-		t.Fatalf("expected the empty state NOT to fire (there IS an active item, just no quick buttons), got: %s", body)
+		t.Fatalf("expected the empty state NOT to fire (there IS an active item), got: %s", body)
 	}
-	if !strings.Contains(body, `id="cat-tab-all"`) {
-		t.Fatalf("expected the All tab to render even with zero quick-button categories, got: %s", body)
+	for _, unwanted := range []string{`id="cat-tab-all"`, `id="buttons-grid-all"`, `class="tab-bar"`} {
+		if strings.Contains(body, unwanted) {
+			t.Fatalf("flat strip must not render %q, got: %s", unwanted, body)
+		}
 	}
-	if !strings.Contains(body, "Loose Sweet") {
-		t.Fatalf("expected the item in the All grid, got: %s", body)
+	if !strings.Contains(body, `data-name="Loose Sweet"`) {
+		t.Fatalf("expected the item as a flat implicit tile, got: %s", body)
 	}
 }
 
-// TestButtonsHTTPList_EmptyStateStillFiresWithSettingOffAndNoActiveItems
-// (ut-docs#2294 regression, rewritten for ut-docs#2541): a till with ZERO
-// active catalog items and the All-tab setting OFF must still fall back to
-// the pre-#2212 empty state (the "add some in Quick Buttons" CTA). An
-// earlier draft of this card gated the empty state on raw AllButtons
-// non-emptiness rather than on $showAllTab (which also factors in the
-// setting), which would have rendered a silently blank screen with nothing
-// sellable and no CTA whenever an operator turned the setting off on a
-// till that had never set up any quick buttons.
+// TestButtonsHTTPList_EmptyStateFiresWithNoActiveItems (ut-docs#2294
+// regression, rewritten for ut-docs#2541 and ut-docs#2613): a strip till
+// with ZERO active catalog items must fall back to the empty state (the
+// "add some in Quick Buttons" CTA), never a silently blank screen.
 //
 // ut-docs#2541 renamed and rewrote this test: it used to seed one ACTIVE
 // item with no shortcut_buttons row and assert the empty state fired
@@ -324,7 +211,7 @@ func TestButtonsHTTPList_AllTabRendersEvenWithNoQuickButtonCategories(t *testing
 // merge), so that item would render as an uncategorized tile and the empty
 // state would correctly NOT fire. The empty state's real trigger is now
 // "zero active items at all", which is what this rewrite seeds.
-func TestButtonsHTTPList_EmptyStateStillFiresWithSettingOffAndNoActiveItems(t *testing.T) {
+func TestButtonsHTTPList_EmptyStateFiresWithNoActiveItems(t *testing.T) {
 	db := setupFullTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	store := NewButtonStore(db)
@@ -337,7 +224,7 @@ func TestButtonsHTTPList_EmptyStateStillFiresWithSettingOffAndNoActiveItems(t *t
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
 	}
-	h := &ButtonsHTTP{Store: *store, View: renderer, HideAllTab: true}
+	h := &ButtonsHTTP{Store: *store, View: renderer}
 
 	// No items at all (active or otherwise) — Groups ends up empty
 	// (BuildCategoryGroups has nothing to bucket, and Load's implicit merge
@@ -350,7 +237,7 @@ func TestButtonsHTTPList_EmptyStateStillFiresWithSettingOffAndNoActiveItems(t *t
 	body := rec.Body.String()
 
 	if !strings.Contains(body, "products.empty<") {
-		t.Fatalf("expected the empty-state CTA to fire (zero active items, All off), got: %s", body)
+		t.Fatalf("expected the empty-state CTA to fire (zero active items), got: %s", body)
 	}
 }
 
@@ -360,11 +247,9 @@ func TestButtonsHTTPList_EmptyStateStillFiresWithSettingOffAndNoActiveItems(t *t
 // (the pre-#2541 behavior TestButtonsHTTPList_EmptyStateStillFires...
 // above used to pin) and is not merely "still counted for the category to
 // survive pruning" (ut-docs#2498's own item-count path) — it renders as a
-// real tile, even with the All tab off and even with no quick buttons
-// configured at all.
+// real tile, even with no quick buttons configured at all.
 func TestButtonsHTTPList_ActiveItemWithNoButtonRendersAsImplicitTile(t *testing.T) {
 	h, db := newButtonsHTTPWithDB(t, "buttons.html")
-	h.HideAllTab = true
 
 	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('i1','S1','Loose Sweet', 10, 1)`)
 
@@ -380,64 +265,6 @@ func TestButtonsHTTPList_ActiveItemWithNoButtonRendersAsImplicitTile(t *testing.
 	}
 	if !strings.Contains(body, "Loose Sweet") {
 		t.Fatalf("expected the button-less active item to render as an implicit tile, got: %s", body)
-	}
-}
-
-// TestButtonsHTTPList_AllTabHiddenWhenSettingOff (ut-docs#2294): with
-// HideAllTab set (settings.sale.show_all_tab off), no All tab renders at
-// all, and the first CATEGORY tab (not the All sentinel) is default-
-// selected — the exact pre-ut-docs#2212 behavior the card asks for.
-func TestButtonsHTTPList_AllTabHiddenWhenSettingOff(t *testing.T) {
-	db := setupFullTestDB(t)
-	t.Cleanup(func() { db.Close() })
-	store := NewButtonStore(db)
-	renderer, err := NewRenderer(
-		filepath.Join("web", "ui", "layouts", "base.html"),
-		filepath.Join("web", "ui", "pages", "index.html"),
-		filepath.Join("web", "ui", "partials", "buttons.html"),
-		httpx.FuncsFor("en"),
-	)
-	if err != nil {
-		t.Fatalf("NewRenderer: %v", err)
-	}
-	h := &ButtonsHTTP{Store: *store, View: renderer, HideAllTab: true}
-
-	mustExec(t, db, `INSERT INTO categories(id, name, parent_id, sort_order) VALUES
-		('cat_food', 'Food', NULL, 1),
-		('cat_drink', 'Drinks', NULL, 2)`)
-	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, category_id, is_active) VALUES
-		('i1', 'S1', 'Bread', 140, 'cat_food', 1),
-		('i2', 'S2', 'Cola', 120, 'cat_drink', 1)`)
-	for _, b := range []Button{
-		{Label: "Bread", Code: "C1", ItemID: "i1"},
-		{Label: "Cola", Code: "C2", ItemID: "i2"},
-	} {
-		if err := store.Add(b); err != nil {
-			t.Fatalf("Add(%+v): %v", b, err)
-		}
-	}
-
-	rec := httptest.NewRecorder()
-	h.List(rec, httptest.NewRequest("GET", "/ui/buttons", nil))
-	if rec.Code != 200 {
-		t.Fatalf("List = %d: %s", rec.Code, rec.Body.String())
-	}
-	body := rec.Body.String()
-
-	if strings.Contains(body, `id="cat-tab-all"`) {
-		t.Fatalf("expected no All tab when the setting is off, got: %s", body)
-	}
-	if strings.Contains(body, "products.all<") || strings.Contains(body, ">products.all<") {
-		t.Fatalf("expected the products.all label to be entirely absent, got: %s", body)
-	}
-	// First real category (Food) is now the default-selected tab — the
-	// pre-#2212 default this setting restores.
-	if !strings.Contains(body, `tab: 'cat_food',`) {
-		t.Fatalf("expected the first category's own ID to seed the initial active tab, got: %s", body)
-	}
-	// No dedicated All grid either.
-	if strings.Contains(body, `id="buttons-grid-all"`) {
-		t.Fatalf("expected no All grid to render when the setting is off, got: %s", body)
 	}
 }
 
@@ -539,7 +366,9 @@ func TestButtonsHTTPList_AllTabDoesNotScaleWithCatalogSize(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewRenderer: %v", err)
 		}
-		h := &ButtonsHTTP{Store: *store, View: renderer}
+		// ut-docs#2613: all_filter_chips is the one mode that still renders
+		// the All grid, so that's the render whose cost must not scale.
+		h := &ButtonsHTTP{Store: *store, View: renderer, BrowsingMode: browsingModeAllFilterChips}
 
 		atomic.StoreInt64(counter, 0)
 		rec := httptest.NewRecorder()
@@ -584,7 +413,7 @@ func seedQCAllTabFixture(t *testing.T, db *sql.DB, n int) {
 	stmts := []string{
 		`PRAGMA foreign_keys = ON;`,
 		`CREATE TABLE items (id TEXT PRIMARY KEY, sku TEXT, name TEXT, description TEXT, base_price INTEGER NOT NULL, tax_code_id TEXT, category_id TEXT, brand_id TEXT, unit TEXT NOT NULL DEFAULT 'each', color TEXT, is_active INTEGER NOT NULL DEFAULT 1, is_weighed INTEGER NOT NULL DEFAULT 0, is_sample_data INTEGER NOT NULL DEFAULT 0, stock_untracked INTEGER NOT NULL DEFAULT 0, sell_screen_hidden INTEGER NOT NULL DEFAULT 0);`,
-		`CREATE TABLE categories (id TEXT PRIMARY KEY, name TEXT NOT NULL, parent_id TEXT, sort_order INTEGER NOT NULL DEFAULT 0, color TEXT, is_active INTEGER NOT NULL DEFAULT 1, image_path TEXT);`,
+		`CREATE TABLE categories (id TEXT PRIMARY KEY, name TEXT NOT NULL, parent_id TEXT, sort_order INTEGER NOT NULL DEFAULT 0, color TEXT, is_active INTEGER NOT NULL DEFAULT 1, image_path TEXT, icon TEXT, sell_screen_hidden INTEGER NOT NULL DEFAULT 0);`,
 		`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP);`,
 		`CREATE TABLE item_images (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, role TEXT NOT NULL, path TEXT NOT NULL);`,
 		`CREATE TABLE price_history (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, price INTEGER NOT NULL, starts_at TEXT NOT NULL, ends_at TEXT);`,

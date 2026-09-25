@@ -5,10 +5,9 @@ import { watchConsole, setBrowsingMode, hideUncategorizedStrays } from './helper
 // ut-docs#2307: the sell-screen category strip must never scroll any more
 // (product owner, direct: "I prefer to have a ... button at the right;
 // when clicked it shows all the categories to select"). It now shows as
-// many category tabs as actually fit the row, plus the fixed Categories/
-// All tabs (always first, untouched by this card — see
-// sale-screen-category-tabs-search-418.spec.ts for their own coverage),
-// and reveals a trailing "..." button only once at least one category tab
+// many category tabs as actually fit the row (the fixed Categories/All
+// tabs that used to precede them were retired by ut-docs#2499/#2613), and
+// reveals a trailing "..." button only once at least one category tab
 // genuinely doesn't fit.
 //
 // The demo catalogue (seeded fresh into every worker's own till —

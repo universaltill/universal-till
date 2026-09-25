@@ -111,12 +111,7 @@ func TestButtonsHTTPList_SingleCategoryNoTabsAlsoCarriesNoMatchesMessage(t *test
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
 	}
-	// ut-docs#2294: HideAllTab so this still exercises the no-tab-bar
-	// branch it's named for — with All ON (the default), a single
-	// quick-button category now ALSO gets a tab bar (All + that one
-	// category); see buttons_http_test.go's
-	// TestButtonsHTTPList_NoTabBarWithOneCategory for that same reasoning.
-	h := &ButtonsHTTP{Store: *store, View: renderer, HideAllTab: true}
+	h := &ButtonsHTTP{Store: *store, View: renderer}
 
 	// Exactly ONE real category and nothing uncategorized -> $flat is
 	// false (a real category ID exists) and $hasTabs is false (only one
@@ -168,12 +163,7 @@ func TestButtonsHTTPList_FlatCatalogAlsoCarriesNoMatchesMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
 	}
-	// ut-docs#2294: HideAllTab so this still exercises the $flat branch it's
-	// named for — with All ON (the default), a fully-flat catalog now ALSO
-	// gets a tab bar (All + the synthetic Uncategorized bucket); see
-	// buttons_http_test.go's TestButtonsHTTPList_FlatWhenNoCategoriesConfigured
-	// for that same reasoning.
-	h := &ButtonsHTTP{Store: *store, View: renderer, HideAllTab: true}
+	h := &ButtonsHTTP{Store: *store, View: renderer}
 
 	// No categories inserted at all -> BuildCategoryGroups's only group is
 	// the synthetic uncategorized bucket (ID == "") -> $flat is true.
@@ -267,15 +257,11 @@ func TestButtonsHTTPList_TabbedPanelsCarryCrossCategorySearchWiring(t *testing.T
 	// Each top-level bucket's own buttons now render inside a
 	// "category-group" section with a header hidden until a query is
 	// active — the same q-gated header the no-subcategory case never had
-	// before this card. (ut-docs#2212 widened the condition to also show
-	// while the All tab is selected — see buttons_all_tab_test.go — so this
-	// assertion checks the OR'd condition, not the original q-only one.
-	// No x-cloak: since All is the default tab, this header is visible on
-	// first paint by default, so cloaking it would hide real category
-	// labels from a client where Alpine never loads — same reasoning that
-	// already dropped x-cloak from the per-category panels themselves.)
-	if strings.Count(body, `<h3 class="category-header" x-show="q || tab === '__all__'">`) != 2 {
-		t.Fatalf("expected both Food's and Drinks' own buttons to carry a q-or-All-gated category header, got: %s", body)
+	// before this card. (ut-docs#2212 had widened the condition to also
+	// show while the All tab was selected; ut-docs#2613 retired that tab,
+	// so it is q-only again.)
+	if strings.Count(body, `<h3 class="category-header" x-show="q" x-cloak>`) != 2 {
+		t.Fatalf("expected both Food's and Drinks' own buttons to carry a q-gated category header, got: %s", body)
 	}
 	// Exactly one no-matches message for the whole tabbed view (outside the
 	// per-panel loop), not one per panel.
@@ -287,8 +273,8 @@ func TestButtonsHTTPList_TabbedPanelsCarryCrossCategorySearchWiring(t *testing.T
 // TestButtonsHTTPList_SameNamedSubcategoriesCarryDistinctAncestorLabels
 // (ut-docs#2198): two top-level categories each with a same-named
 // subcategory ("Specials") are ambiguous the instant more than one root's
-// content is visible at once (the default "All" tab, or a cross-category
-// search) — the rendered markup must carry a distinguishing prefix per
+// content is visible at once (a cross-category search; the strip's
+// All tab that used to do this too was retired by ut-docs#2613) — the rendered markup must carry a distinguishing prefix per
 // subcategory, driven by that subcategory's OWN top-level ancestor, not a
 // shared/generic label. Also pins that a ROOT category's own header (no
 // ancestor to disambiguate against) never grows a spurious prefix span.
@@ -339,7 +325,7 @@ func TestButtonsHTTPList_SameNamedSubcategoriesCarryDistinctAncestorLabels(t *te
 	}
 	body := rec.Body.String()
 
-	const ancestorSpanOpen = `<span class="category-header-ancestor" x-show="q || tab === '__all__'">`
+	const ancestorSpanOpen = `<span class="category-header-ancestor" x-show="q" x-cloak>`
 	if strings.Count(body, ancestorSpanOpen) != 2 {
 		t.Fatalf("expected exactly two ancestor-prefixed subcategory headers (one per same-named Specials), got: %s", body)
 	}
@@ -351,8 +337,8 @@ func TestButtonsHTTPList_SameNamedSubcategoriesCarryDistinctAncestorLabels(t *te
 	}
 	// The two ROOT categories (Food, Household) must never grow a spurious
 	// ancestor prefix on their own header — only a genuine descendant does.
-	rootFoodHeader := `<h3 class="category-header" x-show="q || tab === '__all__'">Food</h3>`
-	rootHouseholdHeader := `<h3 class="category-header" x-show="q || tab === '__all__'">Household</h3>`
+	rootFoodHeader := `<h3 class="category-header" x-show="q" x-cloak>Food</h3>`
+	rootHouseholdHeader := `<h3 class="category-header" x-show="q" x-cloak>Household</h3>`
 	if !strings.Contains(body, rootFoodHeader) {
 		t.Fatalf("expected Food's own top-level header to render unprefixed, got: %s", body)
 	}

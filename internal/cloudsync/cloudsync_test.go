@@ -311,17 +311,18 @@ func TestSnapshotPushGatedByHash(t *testing.T) {
 		t.Fatalf("snapshots after first tick = %d, want 1", len(cloud.snapshots))
 	}
 	items := cloud.snapshots[0]["items"].([]any)
-	if len(items) != 2 {
-		t.Fatalf("snapshot rows = %d, want item + variant", len(items))
+	if len(items) != 1 {
+		t.Fatalf("snapshot rows = %d, want 1 (schema 2 nests the variant under its item)", len(items))
 	}
 	row := items[0].(map[string]any)
 	if row["name"] != "Coca-Cola" || row["barcode"] != "5000000000011" {
 		t.Fatalf("snapshot row = %+v", row)
 	}
-	// The variant rides under its parent: composed name, own price/barcode,
-	// and NO qty (stock is item-level; repeating it would double-count).
-	vrow := items[1].(map[string]any)
-	if vrow["name"] != "Coca-Cola — 1.5L" || vrow["barcode"] != "5000000000028" || vrow["price_minor"] != float64(210) {
+	// The variant rides nested under its parent with its own name, price
+	// and barcodes, and NO qty (stock is item-level; repeating it would
+	// double-count).
+	vrow := row["variants"].([]any)[0].(map[string]any)
+	if vrow["name"] != "1.5L" || vrow["price_minor"] != float64(210) || vrow["barcodes"].([]any)[0] != "5000000000028" {
 		t.Fatalf("variant row = %+v", vrow)
 	}
 	if _, has := vrow["qty"]; has {

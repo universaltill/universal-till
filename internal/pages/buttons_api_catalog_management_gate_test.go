@@ -99,9 +99,7 @@ func TestButtonsPartial_JiggleModeLockAffordance(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("cashier /ui/buttons = %d: %s", rec.Code, rec.Body.String())
 	}
-	// withoutAllGrid: the lock affordance is a quick-button-grid concern —
-	// see that helper's own comment in buttons_api_test.go.
-	body := withoutAllGrid(t, rec.Body.String())
+	body := rec.Body.String()
 	for _, want := range []string{
 		`class="tile-badge tile-badge-edit locked"`,
 		`class="tile-badge tile-badge-remove locked"`,
@@ -125,7 +123,7 @@ func TestButtonsPartial_JiggleModeLockAffordance(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s /ui/buttons = %d: %s", role, rec.Code, rec.Body.String())
 		}
-		body := withoutAllGrid(t, rec.Body.String())
+		body := rec.Body.String()
 		for _, unwanted := range []string{
 			`tile-badge-edit locked`,
 			`tile-badge-remove locked`,

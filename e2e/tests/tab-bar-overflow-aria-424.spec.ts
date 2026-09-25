@@ -146,7 +146,7 @@ test.describe('tab-bar overflow + ARIA tabs pattern (ut-docs#424)', () => {
       // (see ut-docs#2307's own coverage for the fit/overflow split
       // itself) — a plain CSS class locator matches a hidden tab just as
       // well as a visible one, so this count is unaffected by that card.
-      await expect(tabBar.locator('.tab')).toHaveCount(CATEGORY_COUNT + 5, { timeout: 10_000 }); // + seeded Food/Drinks/Household/Produce (ut-docs#2498: items-only categories now show) + ut-docs#2212's All tab
+      await expect(tabBar.locator('.tab')).toHaveCount(CATEGORY_COUNT + 4, { timeout: 10_000 }); // + seeded Food/Drinks/Household/Produce (ut-docs#2498: items-only categories now show); no All tab since ut-docs#2613
       await waitForStableLayout(page, '.products .tab-bar, .products .tab-bar .tab');
 
       // ut-docs#2307: never overflows its own box — nothing left to
@@ -246,14 +246,14 @@ test.describe('tab-bar overflow + ARIA tabs pattern (ut-docs#424)', () => {
       const count = await tabs.count();
       expect(count, 'at least the fixed tabs plus one real category should be reachable').toBeGreaterThan(1);
 
-      // ut-docs#2212's All tab is selected by default and deliberately
-      // carries no aria-controls (it owns no single panel — see
-      // buttons.html's own comment on that). This test's aria-controls/
-      // panel-identity assertions below need a REAL category active, so
-      // select the first real category tab (DOM index 1, right after All)
-      // before proceeding — the roving-tabindex/arrow-key mechanics under
-      // test are unaffected by which tab starts active.
-      await tabs.nth(1).click();
+      // This test's aria-controls/panel-identity assertions below need a
+      // REAL category active. Since ut-docs#2613 retired ut-docs#2212's
+      // All tab (which owned no single panel), the first tab already is
+      // one and is selected by default; click it anyway so the starting
+      // state doesn't depend on that default — the roving-tabindex/
+      // arrow-key mechanics under test are unaffected by which tab starts
+      // active.
+      await tabs.nth(0).click();
 
       // Exactly one tab is the roving-tabindex stop and carries aria-selected.
       await expect(tabBar.locator('[aria-selected="true"]')).toHaveCount(1);

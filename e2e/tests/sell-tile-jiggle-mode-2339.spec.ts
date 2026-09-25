@@ -171,12 +171,10 @@ test.describe('Sell-screen jiggle edit mode (ut-docs#2339)', () => {
 
     try {
       await page.goto('/');
-      // ut-docs#2294: All (not this fixture's own category) is the default
-      // tab now, and its dedicated #buttons-grid-all grid renders a SECOND
-      // copy of every quick-button tile (every active catalog item, not
-      // just shortcuts) -- switch to the fixture's own category tab so its
-      // `.products-tab-panel` (the one actually reorderable -- see app.js's
-      // own inAllGrid()) is the visible one, not just DOM-present-but-hidden.
+      // The strip's default tab is its first category (ut-docs#2613 retired
+      // the All tab), not necessarily this fixture's own -- switch to the
+      // fixture's category tab so its `.products-tab-panel` is the visible
+      // one, not just DOM-present-but-hidden.
       await page.getByRole('tab', { name: ITEM_A.category }).click();
       const tileA = page.locator(`.products-tab-panel .btn-tile[data-code="${ITEM_A.barcode}"]`);
       const tileB = page.locator(`.products-tab-panel .btn-tile[data-code="${ITEM_B.barcode}"]`);
@@ -416,9 +414,9 @@ test.describe('Sell-screen jiggle edit mode (ut-docs#2339)', () => {
     await seedItems(page, [ITEM_A, ITEM_B]);
     try {
       await page.goto('/');
-      // See the first test's own comment: switch off the default All tab
-      // so this fixture's own category panel (the reorderable one) is what
-      // actually renders visible, not just present-but-hidden in the DOM.
+      // See the first test's own comment: switch to this fixture's own
+      // category panel so it is what actually renders visible, not just
+      // present-but-hidden in the DOM.
       await page.getByRole('tab', { name: ITEM_A.category }).click();
       const tileA = page.locator(`.products-tab-panel .btn-tile[data-code="${ITEM_A.barcode}"]`);
       const tileB = page.locator(`.products-tab-panel .btn-tile[data-code="${ITEM_B.barcode}"]`);
@@ -455,22 +453,21 @@ test.describe('Sell-screen jiggle edit mode (ut-docs#2339)', () => {
     }
   });
 
-  // ut-docs#2402 independent-review finding: the other two tests in this
-  // file switch OFF the default All tab before long-pressing (see their own
-  // comments) specifically so they never exercise a long-press on the
-  // All-grid copy of a tile — app.js's inAllGrid() guard (ut-docs#2294
-  // fallout) had no coverage at all before this test. Every seeded item is
-  // also active-catalog, so it renders a second time in #buttons-grid-all
-  // (the default-visible tab), with the SAME data-code here since seedItems
-  // gives the shortcut the item's own barcode.
-  test('a long-press on the default All tab never arms jiggle mode (ut-docs#2402)', async ({ page }) => {
+  // ut-docs#2402 independent-review finding: app.js's inAllGrid() guard
+  // (ut-docs#2294 fallout) keeps a long-press on an All-grid tile from
+  // arming jiggle mode. ut-docs#2613 retired the strip's All tab, so the
+  // only All grid left is the all_filter_chips browsing mode's own
+  // #buttons-grid-all -- this test now long-presses there. The seeded item
+  // renders in it with the SAME data-code the shortcut carries, since
+  // seedItems gives the shortcut the item's own barcode.
+  test('a long-press on the all_filter_chips All grid never arms jiggle mode (ut-docs#2402)', async ({ page }) => {
     const assertClean = watchConsole(page);
     const { A: ITEM_A } = fixture('3');
     await seedItems(page, [ITEM_A]);
+    await setBrowsingMode(page, 'all_filter_chips');
     try {
       await page.goto('/');
-      // Deliberately do NOT switch tabs -- All is default-selected, and
-      // this test is specifically about the All-grid copy of the tile.
+      await expect(page.locator('#browsing-category-chips')).toBeVisible();
       const allTile = page.locator(`#buttons-grid-all .btn-tile[data-code="${ITEM_A.barcode}"]`);
       await expect(allTile).toBeVisible();
       // The All grid lists every active catalog item (demo-seeded ones
@@ -490,6 +487,9 @@ test.describe('Sell-screen jiggle edit mode (ut-docs#2339)', () => {
 
       assertClean();
     } finally {
+      // Every worker till boots in strip_overflow (worker-till.ts); put it
+      // back so a later spec file on this worker isn't left in chip mode.
+      await setBrowsingMode(page, 'strip_overflow');
       await cleanupItems(page, [ITEM_A]);
     }
   });

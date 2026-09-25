@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- lucide:percent, generated from internal/catimport/icons.go (ut-docs#2506). Licence: internal/catimport/iconsrc/lucide/LICENSE -->
+  <rect width="64" height="64" fill="#E2E8F0"/>
+  <g transform="translate(12 12) scale(1.6667)" fill="none" stroke="#334155" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="19" x2="5" y1="5" y2="19"/>
+    <circle cx="6.5" cy="6.5" r="2.5"/>
+    <circle cx="17.5" cy="17.5" r="2.5"/>
+  </g>
+</svg>
