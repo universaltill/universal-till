@@ -10,7 +10,9 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/settings"
 )
 
 func newPermissionSettingsTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
@@ -439,5 +441,34 @@ func TestPermissionSettingsPage_POST_ElevationPromptShowsSpecificSummary(t *test
 	// name BOTH the role and the action, not a generic phrase.
 	if !strings.Contains(body, "manager") || !strings.Contains(body, "Refund") {
 		t.Fatalf("expected the summary to name the specific role (manager) and action (Refund), got: %s", body)
+	}
+}
+
+// ADR-0115 §1 (ut-docs#2755): the role permission matrix is shop-wide
+// configuration the main till owns; on an additional till a change would
+// be reverted by the next admin-bundle pull, so it is refused up front
+// with a 409 whose text/html body app.js force-swaps into #perm-msg.
+func TestPermissionSettingsPage_POST_RefusedOnReplica(t *testing.T) {
+	mux, dp := newPermissionSettingsTestDeps(t)
+	dp.Settings = settings.NewStore(dp.Db)
+	setReplicaSettings(t, dp.Settings, "http://192.0.2.1:8080", "b-123")
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/users/permissions",
+		formBody("role=manager&action=refund&granted=0")), auth.User{ID: "sa-1", Role: "super_admin"})
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("replica POST = %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Fatalf("Content-Type = %q, want text/html so htmx swaps the message in", ct)
+	}
+	if want := httpx.T("en", "users.error.replica_use_primary"); !strings.Contains(rec.Body.String(), want) {
+		t.Fatalf("body %q missing %q", rec.Body.String(), want)
+	}
+	if granted, err := data.NewAuthRepo(dp.Db).HasPermission(t.Context(), "manager", "refund"); err != nil || !granted {
+		t.Fatalf("a replica must not change the matrix, granted=%v err=%v", granted, err)
 	}
 }

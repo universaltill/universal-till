@@ -119,6 +119,46 @@ func (r *AuthRepo) CreateUser(ctx context.Context, username, displayName, role s
 	return id, nil
 }
 
+// UsernameTaken reports whether a user row already holds username (the
+// users.username UNIQUE constraint). The main till checks it before a
+// written-through create (ADR-0115 §1) so a duplicate is answered as a
+// business refusal rather than a raw constraint error.
+func (r *AuthRepo) UsernameTaken(ctx context.Context, username string) (bool, error) {
+	var n int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE username = ?`, username).Scan(&n); err != nil {
+		return false, fmt.Errorf("username taken: %w", err)
+	}
+	return n > 0, nil
+}
+
+// MirrorUser lands a row the main till just applied into this till's own
+// users table (ADR-0115 §1), so an additional till shows the change at once
+// instead of after its next admin-bundle pull -- which would write exactly
+// the same values. Insert on a new id (the main till assigned it), update
+// on a known one. An empty PinHash means "no hash in this change": NULL on
+// insert (a new user has no PIN yet, same as CreateUser), the stored hash
+// left alone on update.
+func (r *AuthRepo) MirrorUser(ctx context.Context, u UserRow) error {
+	active := 0
+	if u.IsActive {
+		active = 1
+	}
+	_, err := r.db.ExecContext(ctx,
+		`INSERT INTO users (id, username, display_name, role, pin_hash, is_active)
+		 VALUES (?, ?, ?, ?, NULLIF(?, ''), ?)
+		 ON CONFLICT(id) DO UPDATE SET
+		   username = excluded.username,
+		   display_name = excluded.display_name,
+		   role = excluded.role,
+		   pin_hash = COALESCE(excluded.pin_hash, users.pin_hash),
+		   is_active = excluded.is_active`,
+		u.ID, u.Username, u.DisplayName, u.Role, u.PinHash, active)
+	if err != nil {
+		return fmt.Errorf("mirror user %s: %w", u.ID, err)
+	}
+	return nil
+}
+
 // SetUserPIN stores a new PIN hash for the user.
 func (r *AuthRepo) SetUserPIN(ctx context.Context, userID, pinHash string) error {
 	res, err := r.db.ExecContext(ctx, `UPDATE users SET pin_hash = ? WHERE id = ?`, pinHash, userID)
@@ -217,6 +257,84 @@ func (r *AuthRepo) CountOtherActiveSuperAdminsWithPIN(ctx context.Context, exclu
 		return 0, fmt.Errorf("count super_admins: %w", err)
 	}
 	return n, nil
+}
+
+// lastPrivilegedRoleLeft is the last-active-admin / last-super_admin rule
+// evaluated inside tx: it returns the role ("admin" or "super_admin") the
+// change would leave with no other active holder that has a PIN, or "".
+// curRole is the target's role now; newRole/active describe it AFTER the
+// change.
+func lastPrivilegedRoleLeft(ctx context.Context, tx *sql.Tx, userID, curRole, newRole string, active bool) (string, error) {
+	for _, role := range []string{"admin", "super_admin"} {
+		if curRole != role || (active && newRole == role) {
+			continue
+		}
+		var n int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM users
+			 WHERE is_active = 1 AND role = ? AND pin_hash IS NOT NULL AND pin_hash != '' AND id != ?`,
+			role, userID).Scan(&n); err != nil {
+			return "", fmt.Errorf("count other active %s: %w", role, err)
+		}
+		if n == 0 {
+			return role, nil
+		}
+	}
+	return "", nil
+}
+
+// userRoleTx reads a user's current role inside tx.
+func userRoleTx(ctx context.Context, tx *sql.Tx, userID string) (string, error) {
+	var role string
+	err := tx.QueryRowContext(ctx, `SELECT role FROM users WHERE id = ?`, userID).Scan(&role)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("user %s not found", userID)
+	}
+	if err != nil {
+		return "", fmt.Errorf("read user role: %w", err)
+	}
+	return role, nil
+}
+
+// SetUserActiveGuarded is SetUserActive with the last-active-admin /
+// last-super_admin guard evaluated in the SAME transaction as the write
+// (ut-docs#2755 review): the target's role is re-read and the other
+// holders counted inside tx, so two concurrent changes can never both pass
+// a count taken before either wrote. A non-empty refusedRole means the
+// change was refused and nothing was written; the caller commits tx (with
+// its audit row) otherwise.
+func (r *AuthRepo) SetUserActiveGuarded(ctx context.Context, tx *sql.Tx, userID string, active bool) (refusedRole string, err error) {
+	role, err := userRoleTx(ctx, tx, userID)
+	if err != nil {
+		return "", fmt.Errorf("set active: %w", err)
+	}
+	if refused, err := lastPrivilegedRoleLeft(ctx, tx, userID, role, role, active); err != nil || refused != "" {
+		return refused, err
+	}
+	v := 0
+	if active {
+		v = 1
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET is_active = ? WHERE id = ?`, v, userID); err != nil {
+		return "", fmt.Errorf("set active: %w", err)
+	}
+	return "", nil
+}
+
+// SetUserRoleGuarded is SetUserRole with the same in-transaction
+// last-admin / last-super_admin guard as SetUserActiveGuarded.
+func (r *AuthRepo) SetUserRoleGuarded(ctx context.Context, tx *sql.Tx, userID, role string) (refusedRole string, err error) {
+	cur, err := userRoleTx(ctx, tx, userID)
+	if err != nil {
+		return "", fmt.Errorf("set user role: %w", err)
+	}
+	if refused, err := lastPrivilegedRoleLeft(ctx, tx, userID, cur, role, true); err != nil || refused != "" {
+		return refused, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET role = ? WHERE id = ?`, role, userID); err != nil {
+		return "", fmt.Errorf("set user role: %w", err)
+	}
+	return "", nil
 }
 
 // InsertSession stores a new session (token already hashed by the caller).

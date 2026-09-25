@@ -221,6 +221,12 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		// Missing here, every claim is 401'd, the resume silently falls back
 		// to local-only, and the double-tender this endpoint closes is back.
 		"/api/sync/held-sales/claim",
+		// ADR-0115 §1 (ut-docs#2755): the main-till user/PIN write-through
+		// an additional till's users page and own-PIN change call
+		// (user_sync_proxy.go). Bearer-authed in the handler (syncTill).
+		// Missing here, every user edit on an additional till is refused
+		// as "can't reach the main till" while the main till is right there.
+		"/api/sync/users/apply",
 		// ut-docs#1668: the primary-side cross-till voucher lookup a
 		// replica's fetchVoucherFromPrimary (voucher_sync_proxy.go) proxies
 		// to. Bearer-authed in the handler (syncTill), same as

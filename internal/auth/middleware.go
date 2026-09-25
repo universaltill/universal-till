@@ -113,6 +113,14 @@ func exempt(path string) bool {
 		// and the double-tender it closes is back -- the same
 		// /api/sync/stock incident class. TestSyncPullPathsAreExempt pins it.
 		"/api/sync/held-sales/claim",
+		// ADR-0115 §1 (ut-docs#2755): the main-till user/PIN write-through
+		// an additional till's users page and own-PIN change call
+		// (internal/pages/user_sync_proxy.go). syncTill-authed in the
+		// handler like the held-sale trio. Omitting it 401s every call, and
+		// every user edit on an additional till is refused as "can't reach
+		// the main till" -- the /api/sync/stock failure class again.
+		// TestSyncPullPathsAreExempt pins it.
+		"/api/sync/users/apply",
 		// ADR-0082 (ut-docs#1739): the primary-side one-shot fetch of the
 		// shop-scoped plugin-settings encryption key a replica's KeyStore
 		// makes on first use (internal/pages/sync_admin.go, SecretsKeyFetcher).

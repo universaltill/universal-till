@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -279,9 +280,29 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			http.Redirect(w, r, "/pin?err=auth.error.pin_mismatch", http.StatusSeeOther)
 			return
 		}
-		err := svc.ChangeOwnPIN(r.Context(), u.ID, r.PostFormValue("current_pin"), newPIN)
+		// ADR-0115 §1: on a till that follows a main till the current PIN
+		// is still verified here (lockout accounting unchanged), but the
+		// new hash is written through to the main till and mirrored from
+		// its answer instead of the local SetUserPIN. Any failure refuses
+		// with no local write.
+		var persist func(ctx context.Context, hash string) error
+		if tillFollowsMain(r.Context(), d) {
+			persist = func(ctx context.Context, hash string) error {
+				_, err := userWriteThrough(ctx, d, svc.Repo(), syncUserApplyRequest{Op: "set_pin", UserID: u.ID, PinHash: hash, ActorID: u.ID})
+				return err
+			}
+		}
+		err := svc.ChangeOwnPINVia(r.Context(), u.ID, r.PostFormValue("current_pin"), newPIN, persist)
 		now := time.Now().UTC().Format(time.RFC3339)
+		var syncErr *errUserSync
 		switch {
+		case errors.As(err, &syncErr) && userSyncForbidden(err):
+			// The main till refused this staffer (e.g. deactivated there).
+			http.Error(w, "forbidden by the main till", http.StatusForbidden)
+			return
+		case errors.As(err, &syncErr):
+			http.Redirect(w, r, "/pin?err="+userSyncErrorKey(err), http.StatusSeeOther)
+			return
 		case errors.Is(err, auth.ErrLockedOut):
 			_ = posRepo.InsertAudit(r.Context(), nil, u.ID, "user", u.ID, "pin_change_locked_out", nil, now, "")
 			http.Redirect(w, r, "/pin?err=auth.error.locked", http.StatusSeeOther)
