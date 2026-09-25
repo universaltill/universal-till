@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // defaultMinUptime is how far into a boot the shell refuses to create its
@@ -39,7 +41,7 @@ func gateDuration() time.Duration {
 	}
 	secs, err := strconv.Atoi(strings.TrimSpace(raw))
 	if err != nil || secs < 0 {
-		fmt.Fprintf(os.Stderr, "%s=%q is not a non-negative integer; using default %s\n",
+		fmt.Fprintf(logging.Stderr(), "%s=%q is not a non-negative integer; using default %s\n",
 			minUptimeEnv, raw, defaultMinUptime)
 		return defaultMinUptime
 	}
@@ -47,7 +49,7 @@ func gateDuration() time.Duration {
 		return 0
 	}
 	if secs > maxGateSeconds {
-		fmt.Fprintf(os.Stderr, "%s=%d exceeds the %ds sanity cap; using default %s\n",
+		fmt.Fprintf(logging.Stderr(), "%s=%d exceeds the %ds sanity cap; using default %s\n",
 			minUptimeEnv, secs, maxGateSeconds, defaultMinUptime)
 		return defaultMinUptime
 	}

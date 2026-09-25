@@ -31,6 +31,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/buildinfo"
+	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/paths"
+
 	"github.com/universaltill/universal-till/internal/recovery"
 )
 
@@ -47,6 +51,20 @@ func init() {
 }
 
 func main() {
+	// Shell log file (ut-docs#2720): a Windows GUI launch has no console,
+	// so everything this process says would otherwise vanish. desktop.log
+	// sits beside the till's own till.log; rotated, size-bounded, redacted.
+	// Best-effort: a shell that can't write its log still opens the till.
+	if p, on := shellLogPath(os.Getenv("UT_LOG_FILE"), os.Getenv("UT_DATA_DIR"), paths.Default(), runtime.GOOS); on {
+		if err := logging.AttachFile(p); err != nil {
+			fmt.Fprintln(os.Stderr, "log file unavailable:", err)
+		} else {
+			defer logging.DetachFile()
+		}
+	}
+	logging.L().Infof("unitill-desktop starting: version=%s os=%s/%s args=%d log_file=%q",
+		buildinfo.Version, runtime.GOOS, runtime.GOARCH, len(os.Args)-1, logging.FilePath())
+
 	// Hidden install-time invocation (ut-docs#1040), checked before ANY
 	// window/attach logic: `unitill-desktop --install-autostart` writes this
 	// binary's own XDG autostart entry (reconcileAutostart, the same code
@@ -57,7 +75,7 @@ func main() {
 	// fetchShellPrefs→reconcileAutostart loop owns the entry.
 	if installAutostartRequested(os.Args[1:]) {
 		if err := reconcileAutostart(true); err != nil {
-			fmt.Fprintln(os.Stderr, "install autostart entry:", err)
+			fmt.Fprintln(logging.Stderr(), "install autostart entry:", err)
 			os.Exit(1)
 		}
 		return
@@ -99,8 +117,9 @@ func main() {
 		// window — ut-docs#882 review m1), not this caller.
 		ctl, err := newControlServer()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "control channel unavailable:", err)
+			fmt.Fprintln(logging.Stderr(), "control channel unavailable:", err)
 		}
+		logging.L().Infof("attaching to the till already running on 127.0.0.1:8080")
 		showWindow("http://127.0.0.1:8080", "Universal Till", -1, ctl)
 		return
 	}
@@ -148,7 +167,7 @@ func main() {
 	// ut-docs#882 review m1), not this caller.
 	ctl, ctlErr := newControlServer()
 	if ctlErr != nil {
-		fmt.Fprintln(os.Stderr, "control channel unavailable:", ctlErr)
+		fmt.Fprintln(logging.Stderr(), "control channel unavailable:", ctlErr)
 	}
 
 	cmd := exec.Command(posBin)
@@ -167,10 +186,11 @@ func main() {
 		env = append(env, envDesktopControlAddr+"="+ctl.Addr(), envDesktopControlToken+"="+ctl.Token())
 	}
 	cmd.Env = env
+	logging.L().Infof("starting till server %s (workdir %q) on %s", posBin, workDir, addr)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	configureChild(cmd) // Windows: keep the server's console window hidden
 	if err := cmd.Start(); err != nil {
-		fmt.Fprintln(os.Stderr, "failed to start the till:", err)
+		fmt.Fprintln(logging.Stderr(), "failed to start the till:", err)
 		os.Exit(1)
 	}
 	defer func() { _ = cmd.Process.Kill() }()

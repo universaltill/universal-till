@@ -4,8 +4,9 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // procUptime is the real source; tests point readUptimeFrom at a fixture.
@@ -53,7 +54,7 @@ func waitForSafeStartup() {
 	if err != nil {
 		// Unreadable /proc/uptime is not a reason to refuse to start: a till
 		// that opens late is bad, one that never opens is worse.
-		fmt.Fprintln(os.Stderr, "startup gate: cannot read uptime, starting immediately:", err)
+		fmt.Fprintln(logging.Stderr(), "startup gate: cannot read uptime, starting immediately:", err)
 		return
 	}
 	wait := holdFor(up, min)
@@ -61,7 +62,7 @@ func waitForSafeStartup() {
 		return
 	}
 
-	fmt.Fprintf(os.Stderr, "startup gate: %s into boot, holding %s before opening the window (ut-docs#1093)\n",
+	fmt.Fprintf(logging.Stderr(), "startup gate: %s into boot, holding %s before opening the window (ut-docs#1093)\n",
 		up.Round(time.Second), wait.Round(time.Second))
 	time.Sleep(wait)
 }

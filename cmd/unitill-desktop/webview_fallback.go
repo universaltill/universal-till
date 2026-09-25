@@ -6,10 +6,11 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
 	"os/exec"
 	"runtime"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/logging"
 
 	webview "github.com/webview/webview_go"
 )
@@ -46,7 +47,7 @@ func showWindow(url, title string, childPid int, ctl *controlServer) {
 	// webview.New has returned it is already too late.
 	waitForSafeStartup()
 	if err := setupPersistentCookies(); err != nil {
-		fmt.Fprintln(os.Stderr, "unitill: persistent cookie storage setup failed, language/login choices won't survive a restart:", err)
+		fmt.Fprintln(logging.Stderr(), "unitill: persistent cookie storage setup failed, language/login choices won't survive a restart:", err)
 	}
 	w := webview.New(false)
 	if w == nil {
@@ -115,7 +116,7 @@ func showWindow(url, title string, childPid int, ctl *controlServer) {
 		ctl.SetAppliedMode(prefs.WindowMode)
 	}
 	if err := reconcileAutostart(prefs.LaunchOnStartup); err != nil {
-		fmt.Fprintln(os.Stderr, "reconcile autostart entry:", err)
+		fmt.Fprintln(logging.Stderr(), "reconcile autostart entry:", err)
 	}
 
 	// Polled window-control channel (ADR-0064, ut-docs#1039): long-poll the

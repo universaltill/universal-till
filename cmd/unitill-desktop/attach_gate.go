@@ -2,8 +2,9 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // attachPollInterval paces retries of the attach probe against a
@@ -108,11 +109,11 @@ func waitForAttach(deadline time.Time, probe func() bool, sleep func(time.Durati
 	for {
 		attempts++
 		if probe() {
-			fmt.Fprint(os.Stderr, attachDecisionLine(retryWindow, attempts, now().Sub(start), true))
+			fmt.Fprint(logging.Stderr(), attachDecisionLine(retryWindow, attempts, now().Sub(start), true))
 			return true
 		}
 		if !now().Before(deadline) {
-			fmt.Fprint(os.Stderr, attachDecisionLine(retryWindow, attempts, now().Sub(start), false))
+			fmt.Fprint(logging.Stderr(), attachDecisionLine(retryWindow, attempts, now().Sub(start), false))
 			return false
 		}
 		sleep(attachPollInterval)

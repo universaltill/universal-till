@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -38,10 +39,21 @@ type diagnosticsView struct {
 	StoppedEvents  int
 	EndedReason    string // diagnostics.Ended* for the last session, "" if none
 	EndedAt        string
+	// LogFolder is the folder holding till.log (ut-docs#2720), "" when this
+	// till writes no log file. Summary is the startup line re-computed now
+	// — what "Copy diagnostics" puts on the clipboard for a support call.
+	LogFolder string
+	Summary   string
 }
 
 func diagnosticsViewFor(ctx context.Context, d *common.Deps, locale string) diagnosticsView {
 	v := diagnosticsView{}
+	if p := logging.FilePath(); p != "" {
+		v.LogFolder = filepath.Dir(p)
+	}
+	if d.Cfg != nil && d.Settings != nil {
+		v.Summary = TillStartupInfo(ctx, d.Cfg, d.Settings, logging.RememberedStartup().EnvFile).Line()
+	}
 	if s, ok := diagnostics.Current(); ok {
 		v.Active = true
 		v.SessionID = s.ID

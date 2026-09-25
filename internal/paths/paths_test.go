@@ -443,3 +443,36 @@ func TestMigrateLegacyUploadedAssetsGuards(t *testing.T) {
 		t.Fatal("half-copied item dir must be removed")
 	}
 }
+
+// ut-docs#2720: the till's log folder is <data root>/logs on every OS, so a
+// Windows till logs to %LOCALAPPDATA%\UniversalTill\logs, a Mac to
+// ~/Library/Application Support/UniversalTill/logs and a Linux desktop to
+// ~/.local/share/universal-till/logs — the same place its database lives,
+// which survives self-updates. defaultFor is exercised for every GOOS here
+// (not just the host's), so a Windows regression is caught on a Mac/Linux
+// CI runner too.
+func TestLogDirPerOS(t *testing.T) {
+	home := filepath.Join("h", "user")
+	env := map[string]string{
+		"LOCALAPPDATA":  filepath.Join("C:", "Users", "shop", "AppData", "Local"),
+		"XDG_DATA_HOME": "",
+	}
+	getenv := func(k string) string { return env[k] }
+	homeDir := func() (string, error) { return home, nil }
+
+	cases := []struct {
+		goos string
+		want string
+	}{
+		{"windows", filepath.Join(env["LOCALAPPDATA"], "UniversalTill", "logs")},
+		{"darwin", filepath.Join(home, "Library", "Application Support", "UniversalTill", "logs")},
+		{"linux", filepath.Join(home, ".local", "share", "universal-till", "logs")},
+	}
+	for _, c := range cases {
+		root := defaultFor(c.goos, getenv, homeDir)
+		if got := filepath.Join(root, "logs"); got != c.want {
+			t.Errorf("%s: log dir = %q, want %q", c.goos, got, c.want)
+		}
+	}
+
+}
