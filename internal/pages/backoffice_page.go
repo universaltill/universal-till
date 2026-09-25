@@ -54,7 +54,10 @@ func registerBackofficePage(mux *http.ServeMux, d *common.Deps) {
 			low = low[:8]
 		}
 
-		problems := logging.Recent()
+		// Open problems only: one whose condition recovered (e.g. the main
+		// till answering again) is history, not a problem (ut-docs#2798).
+		// No age cut here — this panel is the till's own recent log digest.
+		problems := logging.OpenProblems(time.Now().UTC(), 0)
 		if len(problems) > 5 {
 			problems = problems[:5]
 		}

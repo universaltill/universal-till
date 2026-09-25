@@ -1309,14 +1309,16 @@ var divergencePruneTables = map[string]string{
 	"item_modifier_options": "ut-docs#1667",
 }
 
-// logSatelliteDivergencePrune warns when deleteMissing successfully prunes
+// logSatelliteDivergencePrune notes when deleteMissing successfully prunes
 // (hard-deletes or retires in place) a row from one of divergencePruneTables.
+// INFO, not WARN (ut-docs#2798): the prune is the designed clean-up working,
+// not a problem — a WARN lands in the cloud's "Attention needed" list.
 func logSatelliteDivergencePrune(t adminTable, args []any, action string) {
 	card, ok := divergencePruneTables[t.name]
 	if !ok {
 		return
 	}
-	logging.L().Warnf("sync pull: pruned pre-existing satellite-local %s row %v (%s) — see %s: a row created directly on a satellite before that fix is expected to disappear on the first sync after upgrading", t.name, args, action, card)
+	logging.L().Infof("sync pull: pruned pre-existing satellite-local %s row %v (%s) — see %s: a row created directly on a satellite before that fix is expected to disappear on the first sync after upgrading", t.name, args, action, card)
 }
 
 // deleteMissing prunes rows this table's PK set no longer includes in the

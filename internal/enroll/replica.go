@@ -159,7 +159,9 @@ func repairCopiedIdentity(ctx context.Context, kv Settings, get func(string) str
 		}
 	}
 	if copied {
-		logging.L().Warnf("enrolment: this replica carried another till's cloud device identity (%s); minted its own (%s) and will register it through the main till (ut-docs#2730)", old, fresh)
+		// INFO, not WARN (ut-docs#2798): a successful self-repair, not a
+		// problem the owner must act on (a failed repair above stays WARN).
+		logging.L().Infof("enrolment: this replica carried another till's cloud device identity (%s); minted its own (%s) and will register it through the main till (ut-docs#2730)", old, fresh)
 	} else {
 		logging.L().Infof("enrolment: replica minted its own cloud device id %s", fresh)
 	}

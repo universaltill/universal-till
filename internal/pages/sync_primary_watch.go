@@ -177,15 +177,21 @@ func primaryContactFailed(ctx context.Context, d *common.Deps, cause string) {
 		if since == "" {
 			since = "never"
 		}
-		logging.L().Warnf("sync: main till unreachable (last contact %s; %s) — this till keeps selling offline and is looking for the main till on the network", since, cause)
+		logging.L().WarnProblemf(discovery.MainTillProblemKey, "sync: main till unreachable (last contact %s; %s) — this till keeps selling offline and is looking for the main till on the network", since, cause)
 		return
 	}
 	logging.L().Infof("sync pull: primary unreachable (%s) — will retry", cause)
 }
 
-// primaryContactOK is the pull loop's success path.
+// primaryContactOK is the pull loop's (and the link's) success path. The
+// main till answered, so the outage problems it left in the Problems ring
+// are over: resolve them, so the next heartbeat stops reporting them and
+// my.'s "Attention needed" clears (ut-docs#2798).
 func primaryContactOK(ctx context.Context, d *common.Deps) {
 	if d.PrimaryWatch != nil {
 		d.PrimaryWatch.ContactOK(ctx)
+	}
+	if n := logging.ResolveProblems(discovery.MainTillProblemKey); n > 0 {
+		logging.L().Infof("sync: main till reachable again — %d earlier main-till problem(s) resolved", n)
 	}
 }
