@@ -371,6 +371,13 @@ var nonAdminTables = map[string]string{
 	// it would be circular: applying it on a replica would fire nothing
 	// useful and its own value is meaningless off the till that counted it.
 	"sync_admin_version": "DumpAdmin's cache-invalidation counter for this till's own admin tables — sync-internal, per-database",
+	// ut-docs#2501: migration 042's one-row counter bumped by triggers on
+	// price_history and item_images (the two sell-screen inputs
+	// sync_admin_version does not cover), read with it by
+	// SellScreenRepo.SellScreenVersion to invalidate internal/ui's
+	// in-memory sell-screen tile cache. Same reasoning as
+	// sync_admin_version above: it describes THIS database's own writes.
+	"sell_screen_version": "sell-screen tile cache's invalidation counter for this till's own price_history/item_images writes — sync-internal, per-database",
 
 	// Inventory/stock: D3's own additive-movement sync (ADR-0011), a
 	// separate mechanism from this bundle — already named above.
