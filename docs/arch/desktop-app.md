@@ -98,8 +98,9 @@ automatically once these **repo secrets** exist (absent → ad-hoc, as today):
 | `MACOS_NOTARY_PASSWORD` | app-specific password |
 
 The job imports the cert into a throwaway keychain, then the scripts pick up
-the env. The Windows installer wants a separate code-signing cert (Authenticode)
-by the same logic.
+the env. Windows binaries are Authenticode-signed with Azure Artifact Signing
+instead (no certificate secret — `packaging/windows/sign-exe.sh`, ut-docs#2480,
+#2610).
 
 ## Follow-ups
 

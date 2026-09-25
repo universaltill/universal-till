@@ -94,7 +94,9 @@ setting, and full platform parity — all tracked as separate follow-ups.
 - **macOS is Apple-Silicon only and unsigned** — Gatekeeper warns on first run.
   See the desktop app work for the friendlier `.app` path. No Intel (amd64)
   mac build is produced.
-- **Windows installer is unsigned** — SmartScreen warns until a code-signing
-  cert is added.
+- **Windows binaries are code-signed** (Setup.exe, uninstall.exe and the
+  portable zip's .exe files) as TASK RUNNER TECHNOLOGY LTD — see
+  `packaging/windows/sign-exe.sh` and ut-docs `architecture/packaging.md`
+  (ut-docs#2480, #2610).
 - Public release = confirm intent, then push the tag. There is no separate
   "publish" button; the tag *is* the release.

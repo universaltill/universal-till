@@ -226,6 +226,17 @@ jobs:
         # regression that made every nightly report false failure after a
         # successful publish could resurface unnoticed.
         run: bash scripts/ci/prune-nightly-assets_test.sh
+      - name: Windows code-signing regression test
+        # ut-docs#2610: the release's signing wiring (goreleaser hooks, the
+        # signing job, the NSIS uninstaller hook) and
+        # packaging/windows/sign-exe.sh's fail-closed checks, against a
+        # throwaway test CA — no signing identity involved.
+        env:
+          UT_REQUIRE_SIGNING_TOOLS: "1"
+        run: |
+          bash scripts/ci/retry-with-backoff.sh 3 5 --clear-apt-lists -- sudo apt-get update
+          sudo apt-get install -y osslsigncode nsis
+          bash scripts/ci/windows-signing_test.sh
       - name: Makefile version-stamp guard
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
