@@ -2065,6 +2065,24 @@ func (r *CatalogRepo) SetSellScreenHidden(ctx context.Context, itemID string, hi
 	return nil
 }
 
+// UnhideAllSellScreen clears items.sell_screen_hidden for every ACTIVE
+// hidden item in one statement (ut-docs#2614 — the Designer's "Show all N
+// on the sell screen") and returns how many items it unhid (0 when none
+// were hidden, not an error). Inactive items are left alone, matching
+// ListSellScreenHidden's own is_active filter. No shortcut_buttons rows are
+// written: an unhidden item comes back as an implicit tile (ut-docs#2541).
+func (r *CatalogRepo) UnhideAllSellScreen(ctx context.Context) (int, error) {
+	res, err := r.db.ExecContext(ctx, `UPDATE items SET sell_screen_hidden = 0 WHERE sell_screen_hidden = 1 AND is_active = 1`)
+	if err != nil {
+		return 0, fmt.Errorf("unhide all sell screen: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("unhide all sell screen: %w", err)
+	}
+	return int(n), nil
+}
+
 // ListSellScreenHidden returns every ACTIVE item currently hidden from the
 // sell screen (ut-docs#2541) — a deactivated item is never listed here even
 // if it was hidden before deactivation: the Designer's "Hidden from sell

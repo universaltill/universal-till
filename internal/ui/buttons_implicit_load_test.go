@@ -133,7 +133,7 @@ func TestButtonStoreLoad_ExcludesHiddenItems(t *testing.T) {
 		t.Fatalf("LoadAllActive: %v", err)
 	}
 	if len(all) != 1 || all[0].Label != "Bread" {
-		t.Fatalf("expected LoadAllActive (the All tab) to exclude the hidden item too, got %+v", all)
+		t.Fatalf("expected LoadAllActive (the All grid) to exclude the hidden item too, got %+v", all)
 	}
 }
 
@@ -458,5 +458,36 @@ func TestButtonStoreUpdateOrder_MaterializedRowShowsLiveItemName(t *testing.T) {
 	}
 	if got != "Granny Smith Apple" {
 		t.Fatalf("materialized tile Label = %q, want the item's LIVE (renamed) name %q -- it must not have frozen at materialization time", got, "Granny Smith Apple")
+	}
+}
+
+// TestButtonStoreUnhideAll (ut-docs#2614): the Designer's "Show all N on
+// the sell screen" unhides every active hidden item and returns the count.
+func TestButtonStoreUnhideAll(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('i1','S1','Apple', 100, 1)`)
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('i2','S2','Bread', 200, 1)`)
+	store := NewButtonStore(db)
+	ctx := context.Background()
+	for _, id := range []string{"i1", "i2"} {
+		if err := store.Hide(ctx, id); err != nil {
+			t.Fatalf("Hide %s: %v", id, err)
+		}
+	}
+
+	n, err := store.UnhideAll(ctx)
+	if err != nil {
+		t.Fatalf("UnhideAll: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("UnhideAll n = %d, want 2", n)
+	}
+	hidden, err := store.ListHidden(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hidden) != 0 {
+		t.Fatalf("expected no hidden items after UnhideAll, got %+v", hidden)
 	}
 }

@@ -1034,26 +1034,38 @@ func TestReportsPage_PickerAnchorMatchesTabQueryStringAnchor(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, _ := newReportsPageTestDeps(t)
 
-	rec := getReportsPage(t, mux, "?period=day")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-	body := rec.Body.String()
+	// ut-docs#1976: an anchor-less ?period=day is the "Today" preset, so
+	// the anchor the header shows lives on the active chip rather than the
+	// date input; ?period=year (Custom) still renders the date input. Both
+	// must agree with the anchor the tabs query.
+	for _, c := range []struct {
+		period string
+		anchor *regexp.Regexp
+	}{
+		{"day", regexp.MustCompile(`href="/reports\?period=day&(?:amp;)?anchor=([0-9-]+)"\s+aria-current="true"`)},
+		{"year", regexp.MustCompile(`name="anchor" value="([^"]+)"`)},
+	} {
+		rec := getReportsPage(t, mux, "?period="+c.period)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
 
-	m := regexp.MustCompile(`name="anchor" value="([^"]+)"`).FindStringSubmatch(body)
-	if m == nil {
-		t.Fatalf("expected the picker's anchor date input, got: %s", body)
-	}
-	pickerAnchor := m[1]
+		m := c.anchor.FindStringSubmatch(body)
+		if m == nil {
+			t.Fatalf("period=%s: expected the header's anchor, got: %s", c.period, body)
+		}
+		pickerAnchor := m[1]
 
-	tabM := regexp.MustCompile(`/ui/reports/tab/items\?period=day&amp;anchor=([0-9-]+)`).FindStringSubmatch(body)
-	if tabM == nil {
-		t.Fatalf("expected the items tab's hx-get to carry period=day&anchor=..., got: %s", body)
-	}
-	tabAnchor := tabM[1]
+		tabM := regexp.MustCompile(`/ui/reports/tab/items\?period=` + c.period + `&amp;anchor=([0-9-]+)`).FindStringSubmatch(body)
+		if tabM == nil {
+			t.Fatalf("expected the items tab's hx-get to carry period=%s&anchor=..., got: %s", c.period, body)
+		}
+		tabAnchor := tabM[1]
 
-	if pickerAnchor != tabAnchor {
-		t.Fatalf("picker anchor %q and tab query-string anchor %q must agree — a mismatch means clicking a tab queries a different window than the KPIs above it", pickerAnchor, tabAnchor)
+		if pickerAnchor != tabAnchor {
+			t.Fatalf("period=%s: header anchor %q and tab query-string anchor %q must agree — a mismatch means clicking a tab queries a different window than the KPIs above it", c.period, pickerAnchor, tabAnchor)
+		}
 	}
 }
 
@@ -2046,5 +2058,63 @@ func TestReportsPage_WorkerAllocationExport_IncludesYuzdeUsuluPoolRows(t *testin
 	// (11:00Z) before the tip row (10:00Z).
 	if strings.Index(body, "floor share") > strings.Index(body, "shift payout") {
 		t.Fatalf("expected rows merged and sorted by date DESC across source types, got: %s", body)
+	}
+}
+
+// ut-docs#1976: the header's chip row replaces the period/days selects;
+// the selects survive only under the Custom chip.
+func TestReportsPage_PresetChipRow(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newReportsPageTestDeps(t)
+	today := businessDateFor(reportNow(), 0, 0).Format("2006-01-02")
+
+	// A preset is active: its chip carries aria-current, the Custom chip
+	// doesn't, and neither legacy select renders.
+	rec := getReportsPage(t, mux, "?period=day&anchor="+today)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	activeToday := regexp.MustCompile(`<a class="chip" href="/reports\?period=day&(?:amp;)?anchor=` + today + `"\s+aria-current="true"`)
+	if !activeToday.MatchString(body) {
+		t.Fatalf("expected the Today chip linked and aria-current, got: %s", body)
+	}
+	if n := strings.Count(body, `aria-current="true"`); n != 1 {
+		t.Fatalf("expected exactly one active chip, got %d: %s", n, body)
+	}
+	if strings.Contains(body, `<select name="period"`) || strings.Contains(body, `<select name="days"`) {
+		t.Fatalf("legacy selects must be hidden while a preset chip is active, got: %s", body)
+	}
+	for _, label := range []string{"Today", "Yesterday", "This week", "This month", "Custom"} {
+		if !strings.Contains(body, label+"</a>") {
+			t.Fatalf("expected a %q chip, got: %s", label, body)
+		}
+	}
+
+	// Default (rolling ?days=) → Custom is active and the existing
+	// controls stay reachable underneath it, unchanged.
+	rec = getReportsPage(t, mux, "")
+	body = rec.Body.String()
+	activeCustom := regexp.MustCompile(`<a class="chip" href="/reports"\s+aria-current="true"`)
+	if !activeCustom.MatchString(body) {
+		t.Fatalf("expected the Custom chip active by default, got: %s", body)
+	}
+	if !strings.Contains(body, `<select name="period"`) || !strings.Contains(body, `<select name="days"`) {
+		t.Fatalf("Custom must keep the period/days controls, got: %s", body)
+	}
+	if !strings.Contains(body, `<option value="year"`) {
+		t.Fatalf("Custom must keep the Year period, got: %s", body)
+	}
+
+	// Tapping the already-active Custom chip must not throw away the
+	// operator's custom selection (review finding): it links to itself.
+	body = getReportsPage(t, mux, "?period=year&anchor=2025-03-04").Body.String()
+	if !regexp.MustCompile(`<a class="chip" href="/reports\?period=year&amp;anchor=2025-03-04"\s+aria-current="true"`).MatchString(body) {
+		t.Fatalf("active Custom chip must keep the current selection, got: %s", body)
+	}
+	// With a preset active, Custom opens the rolling window as before.
+	body = getReportsPage(t, mux, "?period=month").Body.String()
+	if !strings.Contains(body, `<a class="chip" href="/reports?days=14"`) {
+		t.Fatalf("inactive Custom chip must link to the rolling window, got: %s", body)
 	}
 }

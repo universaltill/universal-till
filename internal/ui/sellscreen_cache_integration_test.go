@@ -84,7 +84,7 @@ func (f *sellScreenFixture) handler(t *testing.T, granted, edit bool) *ButtonsHT
 	}
 	return &ButtonsHTTP{
 		Store: *f.store, View: renderer, Cache: f.cache, Locale: "en",
-		BrowsingMode: browsingModeStripOverflow, Granted: granted, EditMode: edit, HideAllTab: edit,
+		BrowsingMode: browsingModeStripOverflow, Granted: granted, EditMode: edit,
 	}
 }
 

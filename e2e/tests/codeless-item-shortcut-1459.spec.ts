@@ -79,11 +79,8 @@ test('a catalog item with neither barcode nor SKU can be added as a button and r
   // unit test).
   await page.goto('/');
   await page.getByRole('tab', { name: category }).click();
-  // ut-docs#2294: this same tile also exists in the All tab's own dedicated
-  // grid (hidden here, since this category's own tab -- not All -- is
-  // selected) -- scope to `.products-tab-panel` so the locator resolves to
-  // the one real, visible instance rather than throwing a strict-mode
-  // violation over the two matches.
+  // Scope to `.products-tab-panel` so the locator resolves to the one
+  // real, visible category-panel instance (never a search result).
   const tile = page.locator(`.products-tab-panel .btn-tile[data-name="${name}"]`);
   await expect(tile).toBeVisible();
   await tile.click();

@@ -13,7 +13,10 @@ import { watchConsole } from './helpers';
 // Found by independent review of #2402's fix
 // (docs/code-reviews/2026-09-18-e2e-green-after-all-tab-2294.md); fixed by
 // scoping the fallback query with the same inAllGrid() helper
-// tileFor/badgeFor already use.
+// tileFor/badgeFor already use, plus a real-visibility filter (every OTHER
+// category panel is present-but-hidden too). ut-docs#2613 retired the
+// strip's All tab and its grid; the hidden-other-panels half of the bug
+// is what this test still pins on the strip.
 //
 // Per-run suffix: same reasoning as sell-tile-jiggle-mode-2339.spec.ts's
 // own note -- a fresh SKU/barcode per run avoids colliding with a
@@ -75,20 +78,17 @@ async function longPress(tile: Locator) {
 }
 
 test.describe('Jiggle-mode Done focus fallback never falls to <body> (ut-docs#2417)', () => {
-  test('keyboard-activated Done focuses a real visible tile, not the hidden All-grid copy', async ({ page }) => {
+  test('keyboard-activated Done focuses a real visible tile, not a hidden one', async ({ page }) => {
     const assertClean = watchConsole(page);
     await seedTile(page);
     try {
       await page.goto('/');
-      // ut-docs#2294: All is the default-selected tab, and its own
-      // #buttons-grid-all grid renders a SECOND, hidden copy of this same
-      // tile -- switch to the item's own category tab so the tile under
+      // Switch to the item's own category tab so the tile under
       // `.products-tab-panel` (the one the fallback SHOULD focus) is
-      // genuinely visible, not just DOM-present. This is exactly the setup
-      // the bug needs: #buttons-grid-all still renders first inside
-      // #buttons-grid regardless of which tab is active, which is why the
-      // unscoped query kept resolving to it even here. "Food", not
-      // Uncategorized -- see seedTile's own comment above.
+      // genuinely visible, not just DOM-present; every other category's
+      // panel stays present-but-hidden, which is what an unscoped query
+      // would wrongly resolve to. "Food", not Uncategorized -- see
+      // seedTile's own comment above.
       await page.getByRole('tab', { name: 'Food' }).click();
       const tile = page.locator(`.products-tab-panel .btn-tile[data-name="${ITEM.name}"]`);
       await expect(tile).toBeVisible();
@@ -112,7 +112,7 @@ test.describe('Jiggle-mode Done focus fallback never falls to <body> (ut-docs#24
       // The Uncategorized panel also holds demo-seeded tiles ahead of our
       // own in DOM order, so the fallback's *first* candidate need not be
       // OUR tile -- what matters is that it's a genuinely visible one in
-      // the active category panel, not the hidden All-grid copy.
+      // the active category panel, not a hidden one.
       const active = await page.evaluate(() => {
         const el = document.activeElement as HTMLElement | null;
         return {
@@ -126,7 +126,7 @@ test.describe('Jiggle-mode Done focus fallback never falls to <body> (ut-docs#24
       expect(active.tag, 'focus must not fall to <body>').not.toBe('BODY');
       expect(active.isBtnTile, 'focus must land on a .btn-tile').toBe(true);
       expect(active.inProductsPanel, 'focus must land inside the visible category panel').toBe(true);
-      expect(active.inAllGrid, 'focus must never land inside the hidden All grid').toBe(false);
+      expect(active.inAllGrid, 'focus must never land inside an All grid (the strip has none since ut-docs#2613)').toBe(false);
       expect(active.visible, 'the focused tile must actually be visible').toBe(true);
 
       assertClean();

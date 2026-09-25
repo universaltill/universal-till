@@ -163,7 +163,7 @@ type CategoryGroup struct {
 	// against). ut-docs#2198: two subcategories sharing a name under
 	// different top-level categories (e.g. Food>Specials and
 	// Household>Specials) are indistinguishable once both are visible at
-	// once (a cross-category search, or the default "All" tab), so the
+	// once (a cross-category search), so the
 	// template prefixes a nested header with this field while that
 	// ambiguity is possible. Set once, at build time, to the root's name
 	// only (not the immediate parent's) even for a grandchild — "at least
@@ -279,8 +279,9 @@ func BuildCategoryGroups(buttons []Button, cats []data.CategoryNode, itemCounts 
 	// whole subtree, but its items stay sellable by search, scan AND quick
 	// buttons. So an explicit quick button (Button.QuickButton) anywhere in
 	// a hidden subtree moves to the uncategorised bucket — never off the
-	// sale screen, All tab on or off — while an implicit catalog tile leaves
-	// with its category (the item is still in the All grid, search, scan).
+	// sale screen (the strip has no All tab since ut-docs#2613) — while an
+	// implicit catalog tile leaves with its category (the item still sells
+	// by search and scan, and shows in the all_filter_chips All grid).
 	var uncategorized []ButtonVM
 	for i, b := range buttons {
 		vm := toButtonVM(b)
@@ -729,7 +730,9 @@ func (s *ButtonStore) SearchItems(ctx context.Context, q string, offset, limit i
 // (ut-docs#2294) — unlike Load (shortcut_buttons rows only, i.e. Designer
 // quick buttons), this is sourced straight from the catalog itself
 // (CatalogRepo.ListItems, already `WHERE is_active = 1 ORDER BY name`), so
-// an item with no quick button still shows on the sell screen's All tab.
+// an item with no quick button still shows on the sell screen
+// (all_filter_chips' All grid, the category tiles/popups, and Load's
+// implicit tiles).
 // Sorted by name (ListItems' own ORDER BY) — a flat A-Z grid, not grouped
 // by category: the card explicitly allows this simplification over
 // reusing BuildCategoryGroups' tree machinery for a second, parallel grid;
@@ -756,7 +759,7 @@ func (s *ButtonStore) loadAllActive(ctx context.Context) (_ []Button, degraded b
 		return nil, false, err
 	}
 	// ut-docs#2541: an item hidden from the sell screen (items.
-	// sell_screen_hidden) is left out of the All tab and every implicit
+	// sell_screen_hidden) is left out of the All grid and every implicit
 	// quick-button slot Load derives from this same method -- it still
 	// sells via barcode scan/live search (SearchSellable, the scan
 	// resolver), which don't call LoadAllActive and stay unfiltered. A
@@ -976,7 +979,8 @@ func (s *ButtonStore) SearchSellable(ctx context.Context, q string, limit int) (
 
 // Load is LoadWith with a freshly-fetched LoadAllActive result -- the
 // convenience most callers want. ButtonsHTTP.List needs the SAME
-// LoadAllActive result a second time (for the All tab), so it calls
+// LoadAllActive result a second time (for the All grid / category tiles),
+// so it calls
 // LoadAllActive itself and passes it to LoadWith directly rather than going
 // through Load, which would otherwise run that batched, chunked query a
 // second time on every single render (ut-docs#2541 review finding 2).
@@ -996,9 +1000,10 @@ func (s *ButtonStore) Load() ([]Button, error) {
 
 // LoadWith is Load's own logic, taking an ALREADY-FETCHED LoadAllActive
 // result (ut-docs#2541 review finding 2) instead of calling LoadAllActive
-// itself -- ButtonsHTTP.List needs that same result again for the All tab,
-// and before this the render called LoadAllActive twice: once inside Load's
-// old body, once directly for the tab. Both are now the SAME batched,
+// itself -- ButtonsHTTP.List needs that same result again for its
+// mode-specific views, and before this the render called LoadAllActive
+// twice: once inside Load's old body, once directly for the (since
+// ut-docs#2613 strip-less) All tab. Both are now the SAME batched,
 // chunked query set (ItemBarcodes/ItemThumbnails/ItemIDsWithModifiers/
 // ItemIDsWithVariants/ItemCurrentPrices, all sized to the WHOLE active
 // catalog), so a large catalog paid for it twice on every render. allActive
@@ -1310,7 +1315,8 @@ func (s *ButtonStore) Remove(code, itemID string) error {
 	return s.catalogRepo.SetSellScreenHidden(ctx, itemID, true)
 }
 
-// Hide takes an item off the sell-screen quick-button grid/All tab
+// Hide takes an item off the sell-screen quick-button grid and the
+// all_filter_chips All grid
 // (ut-docs#2541) — see CatalogRepo.SetSellScreenHidden for the full
 // contract (still sells via scan/search; deletes any explicit tile row).
 func (s *ButtonStore) Hide(ctx context.Context, itemID string) error {
@@ -1331,6 +1337,14 @@ func (s *ButtonStore) Unhide(ctx context.Context, itemID string) error {
 		return errors.New("itemId is required")
 	}
 	return s.catalogRepo.SetSellScreenHidden(ctx, itemID, false)
+}
+
+// UnhideAll puts every hidden active item back on the sell-screen grid in
+// one step (ut-docs#2614 — the Designer's "Show all N on the sell screen")
+// and returns how many it unhid. Like Unhide, each comes back as an
+// IMPLICIT tile — no shortcut_buttons rows are written.
+func (s *ButtonStore) UnhideAll(ctx context.Context) (int, error) {
+	return s.catalogRepo.UnhideAllSellScreen(ctx)
 }
 
 // ListHidden returns every item currently hidden from the sell screen — the
@@ -1424,24 +1438,17 @@ type ButtonsHTTP struct {
 	// pre-#2499 &ButtonsHTTP{Store: ..., View: ...} literal in this
 	// package's tests was written against the strip, and the fragment
 	// handlers (AllMore/Search/CategoryItems) never render a mode at all —
-	// same "zero value keeps the historical shape" convention HideAllTab's
-	// inverted naming below documents. NOT the setting's own default (that
+	// the "zero value keeps the historical shape" convention. NOT the
+	// setting's own default (that
 	// is category_tabs, common.DefaultBrowsingMode): the one production
 	// caller always passes the live clamped value, so the zero value is
 	// only ever reachable from code that never wanted a mode.
+	//
+	// ut-docs#2613: the strip has no All tab any more — it shows category
+	// tabs plus the ut-docs#2307 "…" button only. The one All grid left is
+	// all_filter_chips' own; every active item is still reachable from the
+	// strip through the server-side search (Search below).
 	BrowsingMode string
-	// HideAllTab turns off the sell screen's All tab. Since ut-docs#2499
-	// retired settings.sale.show_all_tab (ut-docs#2294) it has exactly one
-	// production setter — EditMode, the Designer's replica, which lists
-	// quick buttons only — but it stays a separate field so the tests
-	// that pin the no-All-tab strip shapes keep meaning what they say.
-	// Named in the INVERTED sense (like catalogtypes.ItemInput.
-	// StockUntracked) so the Go zero value (false) means "show it": every
-	// existing &ButtonsHTTP{Store: ..., View: ...} literal in this
-	// package's own test suite leaves this field unset, and the strip's
-	// own default is ALSO "on" — a straight-named ShowAllTab field would
-	// have silently flipped every one of those to "off" instead.
-	HideAllTab bool
 	// Granted (ut-docs#2361) is this request's catalog_management
 	// permission check result, resolved by the caller (registerButtonsAPI,
 	// which has the *common.Deps and *http.Request canPerform needs —
@@ -1455,8 +1462,8 @@ type ButtonsHTTP struct {
 	// EditMode (ut-docs#2174): render the Designer's live replica of the
 	// sale screen instead of the sale screen itself — same "buttons"
 	// template, with the category-management section added and the
-	// sale-only affordances (search, All tab, plugin action strip, live
-	// scan tiles) removed. Set by registerButtonsAPI's /ui/buttons handler
+	// sale-only affordances (search, plugin action strip, live scan tiles)
+	// removed. Set by registerButtonsAPI's /ui/buttons handler
 	// from ?mode=edit, which it only honours for a catalog_management
 	// session (a cashier gets a 403, never this UI). Zero value = the sale
 	// screen, so every existing ButtonsHTTP literal renders exactly as
@@ -1472,7 +1479,7 @@ type ButtonsHTTP struct {
 	Locale string
 }
 
-// AllTabPageSize bounds how many of the sell screen's All-tab items
+// AllTabPageSize bounds how many of the sell screen's All-grid items
 // (ButtonStore.LoadAllActive) any single response ships (ut-docs#2319):
 // GET /ui/buttons used to inline EVERY active item into the All grid every
 // time it rendered — including on the "modifiers-changed"/"buttons-changed"
@@ -1517,15 +1524,16 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 func (h *ButtonsHTTP) renderList(w http.ResponseWriter, r *http.Request) bool {
 	clean := true
 	// ut-docs#2541 review finding 2: LoadAllActive is fetched exactly ONCE
-	// per render and reused for both Load's implicit-tile merge AND the All
-	// tab below, via LoadWith -- before this fix, Store.Load() ran its own
+	// per render and reused for both Load's implicit-tile merge AND the
+	// mode-specific views below (all_filter_chips' All grid, the category
+	// tiles), via LoadWith -- before this fix, Store.Load() ran its own
 	// internal LoadAllActive call AND this handler ran a second, separate
-	// one for the All tab, doubling the cost of LoadAllActive's own batched/
+	// one for the All grid, doubling the cost of LoadAllActive's own batched/
 	// chunked queries (ItemBarcodes, ItemThumbnails, ItemIDsWithModifiers,
 	// ItemIDsWithVariants, ItemCurrentPrices — all sized to the whole active
-	// catalog) on every single /ui/buttons render, All tab shown or not
-	// (Load's own implicit merge always needs the full active-item set,
-	// regardless of h.HideAllTab).
+	// catalog) on every single /ui/buttons render. Load's own implicit merge
+	// always needs the full active-item set, in every mode — including the
+	// strip, which since ut-docs#2613 has no All grid of its own.
 	// A degraded load (an inner lookup fell back, already logged) still
 	// renders, but is not clean: it must not be cached (review finding 1).
 	allBtns, degraded, err := h.Store.loadAllActive(r.Context())
@@ -1567,8 +1575,10 @@ func (h *ButtonsHTTP) renderList(w http.ResponseWriter, r *http.Request) bool {
 	// -- never on a basket mutation), not re-queried per basket change.
 	// ut-docs#2541: allBtns is loaded unconditionally at the top of this
 	// handler (Load's implicit-tile merge always needs it), so every mode
-	// below — the All grid and ut-docs#2499's BuildCategoryTiles — reuses
-	// that ONE load rather than querying again.
+	// below — all_filter_chips' All grid and ut-docs#2499's
+	// BuildCategoryTiles — reuses that ONE load rather than querying again.
+	// The strip (the default branch) pages nothing: ut-docs#2613 retired its
+	// All tab, so it renders quick-button categories only.
 	var allPage []Button
 	var allHasMore bool
 	var categoryTiles []CategoryTileVM
@@ -1577,15 +1587,11 @@ func (h *ButtonsHTTP) renderList(w http.ResponseWriter, r *http.Request) bool {
 		categoryTiles = BuildCategoryTiles(allBtns, cats)
 	case browsingModeAllFilterChips:
 		categoryTiles = BuildCategoryTiles(allBtns, cats)
+		// ut-docs#2319: only the first page ships on the initial render
+		// (and on every modifiers-changed/buttons-changed whole-document
+		// refetch) — see AllTabPageSize's own doc comment. The rest loads
+		// on demand via the "load more" button AllMore serves below.
 		allPage, allHasMore = pageButtons(allBtns, 0)
-	default:
-		if !h.HideAllTab {
-			// ut-docs#2319: only the first page ships on the initial render
-			// (and on every modifiers-changed/buttons-changed whole-document
-			// refetch) — see AllTabPageSize's own doc comment. The rest loads
-			// on demand via the "load more" button AllMore serves below.
-			allPage, allHasMore = pageButtons(allBtns, 0)
-		}
 	}
 	// ut-docs#2498: LoadCategoriesForAdmin is the one query that carries a
 	// per-category ACTIVE ITEM count (data.CategoryAdminRow.ItemCount) —
@@ -1655,7 +1661,6 @@ func (h *ButtonsHTTP) renderList(w http.ResponseWriter, r *http.Request) bool {
 		"AllButtons":      ToVM(allPage),
 		"AllHasMore":      allHasMore,
 		"AllNextOffset":   len(allPage),
-		"ShowAllTab":      !h.HideAllTab,
 		"BrowsingMode":    mode,
 		"CategoryTiles":   categoryTiles,
 		"EditMode":        h.EditMode,
@@ -1698,7 +1703,9 @@ const (
 // (filterButtonsInCategory — nested categories fold into their top-level
 // chip, "" is the uncategorized bucket), and the page's own load-more
 // button carries the category along so paging stays inside the filter. No
-// ?category, or ?category=all, is the whole catalog exactly as before.
+// ?category, or ?category=all, is the whole catalog (the chip row's All
+// chip sends category=all; the strip's own All tab, which sent no
+// category, was retired by ut-docs#2613).
 func (h *ButtonsHTTP) AllMore(w http.ResponseWriter, r *http.Request) {
 	offset := 0
 	if off := r.URL.Query().Get("offset"); off != "" {
@@ -1967,6 +1974,24 @@ func (h *ButtonsHTTP) Unhide(w http.ResponseWriter, r *http.Request) bool {
 	w.Header().Set("HX-Trigger", "buttons-changed")
 	w.WriteHeader(http.StatusOK)
 	return true
+}
+
+// UnhideAll returns how many items it unhid and whether it succeeded --
+// ut-docs#2614. Same false-only-on-failure contract as Unhide; the count is
+// for the caller's audit row. It takes no form input.
+func (h *ButtonsHTTP) UnhideAll(w http.ResponseWriter, r *http.Request) (int, bool) {
+	n, err := h.Store.UnhideAll(r.Context())
+	if err != nil {
+		logging.L().Infof("[buttons] unhide-all: %v", err)
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`<div class="error">` + html.EscapeString(httpx.T(locale, designerErrorServerKey)) + `</div>`))
+		return 0, false
+	}
+	w.Header().Set("HX-Trigger", "buttons-changed")
+	w.WriteHeader(http.StatusOK)
+	return n, true
 }
 
 // DeleteItem returns whether the item was actually deactivated --

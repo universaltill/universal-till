@@ -9,6 +9,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/ui"
 )
 
 // TestBrowsingModeEndpoint (ut-docs#2499): POST /api/settings/browsing-mode
@@ -147,5 +148,52 @@ func TestRetiredSellScreenToggleEndpointsAreGone(t *testing.T) {
 		if rec := postForm(mux, path, url.Values{"enabled": {"true"}}, &mgrUser); rec.Code != http.StatusNotFound {
 			t.Fatalf("POST %s = %d, want 404 (retired)", path, rec.Code)
 		}
+	}
+}
+
+// TestStripOverflowSellScreenHasNoAllTab (ut-docs#2613): through the real
+// mux — the browsing mode saved via its own settings endpoint, then the
+// sell screen's GET /ui/buttons — the category strip renders its category
+// tabs and the "…" button but no All tab and no All grid. The chip mode
+// (the one mode that still has an All grid) keeps it.
+func TestStripOverflowSellScreenHasNoAllTab(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	d.BtnStore = ui.NewButtonStore(d.Db)
+	registerButtonsAPI(mux, d)
+	for _, stmt := range []string{
+		`INSERT INTO categories(id,name,sort_order,is_active) VALUES ('cat-a','Drinks',0,1),('cat-b','Snacks',1,1)`,
+		`INSERT INTO items(id,sku,name,base_price,is_active,category_id) VALUES ('itm-a','A-SKU','Cola',120,1,'cat-a'),('itm-b','B-SKU','Crisps',150,1,'cat-b'),('itm-c','C-SKU','Loose',10,1,NULL)`,
+		`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES ('BTNA','Cola','itm-a',0),('BTNB','Crisps','itm-b',1)`,
+	} {
+		if _, err := d.Db.Exec(stmt); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+
+	if rec := postForm(mux, "/api/settings/browsing-mode", url.Values{"mode": {common.BrowsingModeStripOverflow}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("save strip_overflow = %d, want 204", rec.Code)
+	}
+	rec := getWithUser(mux, "/ui/buttons", &mgrUser)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /ui/buttons = %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{`id="cat-tab-cat-a"`, `id="cat-tab-cat-b"`, `id="cat-tab-more"`, `tab: 'cat-a',`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("strip_overflow /ui/buttons missing %q: %.3000s", want, body)
+		}
+	}
+	for _, unwanted := range []string{`id="cat-tab-all"`, `id="buttons-grid-all"`, `'__all__'`} {
+		if strings.Contains(body, unwanted) {
+			t.Fatalf("strip_overflow /ui/buttons must not render %q (ut-docs#2613): %.3000s", unwanted, body)
+		}
+	}
+
+	if rec := postForm(mux, "/api/settings/browsing-mode", url.Values{"mode": {common.BrowsingModeAllFilterChips}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("save all_filter_chips = %d, want 204", rec.Code)
+	}
+	chips := getWithUser(mux, "/ui/buttons", &mgrUser).Body.String()
+	if !strings.Contains(chips, `id="buttons-grid-all"`) || !strings.Contains(chips, `data-name="Loose"`) {
+		t.Fatalf("all_filter_chips must keep its All grid of every active item: %.3000s", chips)
 	}
 }

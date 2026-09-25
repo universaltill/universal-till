@@ -168,3 +168,67 @@ func TestListSellScreenHidden_ActiveOnlyOrderedByName(t *testing.T) {
 		t.Fatalf("unexpected item ids: %+v", hidden)
 	}
 }
+
+// TestUnhideAllSellScreen (ut-docs#2614): the Designer's one-click "Show
+// all N on the sell screen" clears sell_screen_hidden for every ACTIVE
+// hidden item in one UPDATE and reports how many it touched. An inactive
+// hidden item is left alone (it isn't listed in the Designer section
+// either), and no shortcut_buttons rows are created -- an unhidden item
+// comes back as an implicit tile (ut-docs#2541), never as a duplicate or
+// moved explicit button.
+func TestUnhideAllSellScreen(t *testing.T) {
+	repo, d := newCatalogHiddenTestDB(t)
+	ctx := context.Background()
+
+	if n, err := repo.UnhideAllSellScreen(ctx); err != nil || n != 0 {
+		t.Fatalf("nothing hidden: got (%d, %v), want (0, nil)", n, err)
+	}
+
+	for _, stmt := range []string{
+		`INSERT INTO items (id, sku, name, base_price, is_active, is_weighed, unit) VALUES ('item-b','SKU-B','Mocha',350,1,0,'each')`,
+		`INSERT INTO items (id, sku, name, base_price, is_active, is_weighed, unit) VALUES ('item-c','SKU-C','Retired',100,0,0,'each')`,
+		`INSERT INTO items (id, sku, name, base_price, is_active, is_weighed, unit) VALUES ('item-d','SKU-D','Visible',100,1,0,'each')`,
+		`UPDATE items SET sell_screen_hidden = 1 WHERE id IN ('item-a','item-b','item-c')`,
+	} {
+		if _, err := d.DB.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("seed %q: %v", stmt, err)
+		}
+	}
+	var before int
+	if err := d.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM shortcut_buttons`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := repo.UnhideAllSellScreen(ctx)
+	if err != nil {
+		t.Fatalf("unhide all: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("unhide all: n = %d, want 2 (the two active hidden items)", n)
+	}
+	hidden, err := repo.SellScreenHiddenItemIDs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hidden["item-a"] || hidden["item-b"] {
+		t.Fatalf("expected active items unhidden, still hidden: %+v", hidden)
+	}
+	var inactiveHidden int
+	if err := d.DB.QueryRowContext(ctx, `SELECT sell_screen_hidden FROM items WHERE id = 'item-c'`).Scan(&inactiveHidden); err != nil {
+		t.Fatal(err)
+	}
+	if inactiveHidden != 1 {
+		t.Fatalf("inactive hidden item must stay hidden, got sell_screen_hidden = %d", inactiveHidden)
+	}
+	var after int
+	if err := d.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM shortcut_buttons`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("unhide all must not create shortcut_buttons rows: before %d, after %d", before, after)
+	}
+
+	if n, err := repo.UnhideAllSellScreen(ctx); err != nil || n != 0 {
+		t.Fatalf("second call: got (%d, %v), want (0, nil)", n, err)
+	}
+}

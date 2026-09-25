@@ -123,9 +123,6 @@ func TestSellScreenCache_KeysAreSeparate(t *testing.T) {
 	k.BrowsingMode = "strip_overflow"
 	variants["browsing mode"] = k
 	k = base
-	k.HideAllTab = true
-	variants["hide all tab"] = k
-	k = base
 	k.Route = "category"
 	k.Param = "cat-1"
 	variants["category cat-1"] = k

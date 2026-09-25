@@ -2096,7 +2096,7 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
    overflow-wrap, verified against a realistic long name before shipping,
    not asserted without checking. */
 .grid { display: grid; gap: .5rem; grid-template-columns: repeat(auto-fill, minmax(7rem, 1fr)); }
-/* ut-docs#2319: the All tab's "load more" button (buttons.html's
+/* ut-docs#2319: the All grid's "load more" button (buttons.html's
    all-more-button) sits inside the same .grid as the product tiles it
    loads more of — span the full row instead of sizing to one tile column.
    Its touch target comes from the `.compact` class already on the element
@@ -4940,6 +4940,15 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .category-filter .chip-check, .filter-chips .chip-check { display: none; flex: none; inline-size: 1rem; block-size: 1rem; }
 .category-filter .chip-check svg, .filter-chips .chip-check svg { inline-size: 1rem; block-size: 1rem; }
 .category-filter .chip[aria-pressed="true"] .chip-check, .filter-chips .chip[aria-pressed="true"] .chip-check { display: inline-flex; }
+/* ut-docs#1976: /reports' date-range chips are links (plain GET navigation,
+   no JS), so their "selected" state is aria-current rather than
+   aria-pressed — same pressed look, same checkmark (never colour alone). */
+.filter-chips a.chip { text-decoration: none; }
+.filter-chips .chip[aria-current="true"] { background: var(--accent); color: var(--accent-contrast);
+                                          border-color: var(--accent); }
+.filter-chips .chip[aria-current="true"] .chip-check { display: inline-flex; }
+.report-window { display: flex; flex-direction: column; gap: .5rem; margin-block-end: .75rem; }
+.report-window .filter-chips { margin-block-end: 0; }
 
 /* ut-docs#2174: Quick Buttons Designer — the live replica of the sale
    screen's product panel plus its category-management section
@@ -4999,6 +5008,8 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   padding: .45rem .65rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
 }
 .designer-hidden-name { font-weight: 600; overflow-wrap: anywhere; }
+/* ut-docs#2614: natural width, start-aligned (the head is a column flexbox). */
+.designer-hidden-unhide-all { align-self: flex-start; }
 .designer-cat-form { display: flex; flex-direction: column; gap: .55rem; margin-block-start: .35rem; padding-block-start: .55rem; border-block-start: 1px dashed var(--border); }
 .designer-cat-field { display: flex; flex-direction: column; gap: .25rem; font-size: .85rem; }
 .designer-cat-field input[type="text"] { inline-size: min(100%, 22rem); }

@@ -12,8 +12,9 @@ import (
 )
 
 // allGridSlice returns just the #buttons-grid-all portion of a /ui/buttons
-// body, so a tile count taken from it can only ever see the All tab's own
-// tiles.
+// body, so a tile count taken from it can only ever see the All grid's own
+// tiles. Since ut-docs#2613 the only All grid is all_filter_chips' own, so
+// the List tests below render that mode.
 //
 // Corrected in independent review (ut-docs#2319 review): this used to slice
 // to the END of the body, on the stated grounds that "no sibling grid
@@ -117,7 +118,7 @@ func TestButtonsHTTPList_AllTabCapsInitialPageAndOffersLoadMore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
 	}
-	h := &ButtonsHTTP{Store: *store, View: renderer}
+	h := &ButtonsHTTP{Store: *store, View: renderer, BrowsingMode: browsingModeAllFilterChips}
 
 	rec := httptest.NewRecorder()
 	h.List(rec, httptest.NewRequest("GET", "/ui/buttons", nil))
@@ -188,7 +189,7 @@ func TestButtonsHTTPList_AllTabUnderPageSizeIsUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRenderer: %v", err)
 	}
-	h := &ButtonsHTTP{Store: *store, View: renderer}
+	h := &ButtonsHTTP{Store: *store, View: renderer, BrowsingMode: browsingModeAllFilterChips}
 
 	rec := httptest.NewRecorder()
 	h.List(rec, httptest.NewRequest("GET", "/ui/buttons", nil))

@@ -111,9 +111,9 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		// renders category-management controls, so it's gated on the same
 		// catalog_management the Designer page itself is (designer_page.go,
 		// ut-docs#2357): a cashier fetching it by hand gets a plain 403, the
-		// sale screen's own render is untouched. The All tab is off in edit
-		// mode — it lists every catalog item, not quick buttons, and isn't
-		// something the Designer arranges.
+		// sale screen's own render is untouched. Edit mode always renders
+		// the quick-button strip (ui.ButtonsHTTP.List), which has no All
+		// tab since ut-docs#2613.
 		editMode := r.URL.Query().Get("mode") == "edit"
 		if editMode && !granted {
 			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
@@ -127,7 +127,6 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			Store:        *d.BtnStore,
 			View:         renderer,
 			BrowsingMode: common.ClampBrowsingMode(d.CurrentState().BrowsingMode),
-			HideAllTab:   editMode,
 			Granted:      granted,
 			EditMode:     editMode,
 			Cache:        sellCache,
@@ -160,7 +159,8 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		btnHTTP.CategoryItems(w, r)
 	})
 
-	// Sell screen All-tab "load more" (ut-docs#2319): the next page of
+	// Sell screen All-grid "load more" (ut-docs#2319; since ut-docs#2613
+	// only the all_filter_chips mode has an All grid): the next page of
 	// ButtonStore.LoadAllActive beyond the first AllTabPageSize items GET
 	// /ui/buttons itself already inlined — see ui.ButtonsHTTP.AllMore's own
 	// doc comment. Mirrors /api/buttons/search's offset-query-param shape
@@ -394,6 +394,34 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore}
 		if ok := btnHTTP.Unhide(w, r); ok && elev.Outcome == elevated {
 			auditButtonsElevated(r, elev.ApproverID, elev.ActorID, itemID, "buttons_unhide", map[string]any{"item_id": itemID})
+		}
+	})
+
+	// Unhide every hidden item at once -- the Designer's "Show all N on the
+	// sell screen" in its "Hidden from sell screen" section (ut-docs#2614).
+	// Same gating/elevation/audit pattern as unhide above; no form input
+	// (so no hidden fields to mirror on the elevation retry). POST only:
+	// with nothing to validate, a GET (link prefetch, an <img src>) would
+	// otherwise be a one-request shop-wide change.
+	mux.HandleFunc("/api/buttons/unhide-all", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if !requirePrimary(w, r) {
+			return
+		}
+		_ = r.ParseForm()
+		elev := checkOrElevate(d, r, "catalog_management", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/buttons/unhide-all", "#buttons-add-error",
+				httpx.T(httpx.ResolveLocale(w, r), "elevation.summary.buttons_unhide_all"), nil, elev)
+			return
+		}
+		btnHTTP := &ui.ButtonsHTTP{Store: *d.BtnStore}
+		if n, ok := btnHTTP.UnhideAll(w, r); ok && elev.Outcome == elevated {
+			auditButtonsElevated(r, elev.ApproverID, elev.ActorID, "all", "buttons_unhide_all", map[string]any{"count": n})
 		}
 	})
 

@@ -170,6 +170,63 @@ func reportPeriodParam(r *http.Request) string {
 	return ""
 }
 
+// reportPreset is one chip in /reports' Today / Yesterday / This week /
+// This month row (ut-docs#1976). Period/Anchor are the existing
+// ?period=&anchor= contract parseReportWindow already reads, so no tab
+// endpoint changes. They stay separate fields so the template builds the
+// href itself (html/template would escape a pre-joined query string).
+type reportPreset struct {
+	Label  string // i18n key
+	Period string // "day" | "week" | "month"
+	Anchor string // YYYY-MM-DD
+	Active bool
+}
+
+// reportPresets builds the chip row for the request's current window. A
+// preset is Active exactly when its own resolved [From, To) window equals
+// the one r resolves to — compared through parseReportWindow itself, so a
+// chip can never claim a window the page isn't showing. "Today" is the
+// business date (businessDateFor), the same default the window uses.
+// Anything matching no preset (the rolling ?days= window, a past anchor,
+// a year) is the Custom chip's state.
+//
+// current is the window the page already resolved for r (never re-resolved
+// here, so "now" can't be sampled twice across a business-day boundary).
+// With no usable ?anchor= that window was anchored on today's business
+// date, so current.Anchor IS today; only an explicit anchor makes this
+// look at the clock itself.
+func reportPresets(r *http.Request, current reportWindow, businessDayStart string) []reportPreset {
+	hh, mm := parseBusinessDayStart(businessDayStart)
+	today := businessDateFor(reportNow(), hh, mm)
+	if _, err := time.ParseInLocation("2006-01-02", r.URL.Query().Get("anchor"), time.Local); err != nil {
+		if a, err := time.ParseInLocation("2006-01-02", current.Anchor, time.Local); err == nil {
+			today = a
+		}
+	}
+	defs := []struct {
+		label, period string
+		anchor        time.Time
+	}{
+		{"reports.preset.today", "day", today},
+		{"reports.preset.yesterday", "day", today.AddDate(0, 0, -1)},
+		{"reports.preset.this_week", "week", today},
+		{"reports.preset.this_month", "month", today},
+	}
+	out := make([]reportPreset, 0, len(defs))
+	for _, def := range defs {
+		anchor := def.anchor.Format("2006-01-02")
+		q := url.Values{"period": {def.period}, "anchor": {anchor}}
+		w := parseReportWindow(&http.Request{URL: &url.URL{RawQuery: q.Encode()}}, businessDayStart)
+		out = append(out, reportPreset{
+			Label:  def.label,
+			Period: def.period,
+			Anchor: anchor,
+			Active: current.Label != "" && w.From.Equal(current.From) && w.To.Equal(current.To),
+		})
+	}
+	return out
+}
+
 func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 	// GET /reports is the always-visible monitoring section only: the KPI
 	// row (revenue/sales/tax/refunds/net/YoY) and the low-stock chip. The
@@ -180,6 +237,13 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		days := parseReportDays(r)
 		bizDayStart, _, _ := d.Settings.Get(r.Context(), keyReportsBusinessDayStart)
 		window := parseReportWindow(r, bizDayStart)
+		presets := reportPresets(r, window, bizDayStart)
+		customActive := true
+		for _, p := range presets {
+			if p.Active {
+				customActive = false
+			}
+		}
 		repo := data.NewPOSRepo(d.Db)
 		daily, _ := repo.SalesByDay(r.Context(), window.From, window.To, window.Hour, window.Minute)
 		curPeriod, lastYear, _ := repo.PeriodComparison(r.Context(), window.From, window.To)
@@ -246,6 +310,9 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			// Tips tab (ADR-0063: one ledger, two filtered views).
 			"ShowYuzdeUsulu": d.CurrentState().Country == "TR",
 			"Days":           days,
+			"Presets":        presets,
+			"CustomActive":   customActive,
+			"CurrentURI":     r.URL.RequestURI(),
 			"Period":         reportPeriodParam(r),
 			"Anchor":         window.Anchor,
 			"PeriodLabel":    window.Label,

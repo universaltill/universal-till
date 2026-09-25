@@ -182,19 +182,6 @@ func (c *SellScreenCache) Put(key string, v SellScreenVersion, resp CachedRespon
 	return true
 }
 
-// Len and Bytes report the cache's current occupancy.
-func (c *SellScreenCache) Len() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.lru.Len()
-}
-
-func (c *SellScreenCache) Bytes() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.used
-}
-
 func (c *SellScreenCache) removeLocked(el *list.Element) {
 	e := el.Value.(*sellScreenEntry)
 	c.lru.Remove(el)
@@ -276,7 +263,6 @@ type sellScreenKeyParts struct {
 	Translations string
 	Granted      bool
 	BrowsingMode string
-	HideAllTab   bool
 }
 
 // String encodes the parts unambiguously: every field is Go-quoted, so a
@@ -284,7 +270,7 @@ type sellScreenKeyParts struct {
 // another key.
 func (p sellScreenKeyParts) String() string {
 	var b strings.Builder
-	for _, s := range []string{p.Route, p.Param, p.Locale, p.Currency, p.Translations, strconv.FormatBool(p.Granted), p.BrowsingMode, strconv.FormatBool(p.HideAllTab)} {
+	for _, s := range []string{p.Route, p.Param, p.Locale, p.Currency, p.Translations, strconv.FormatBool(p.Granted), p.BrowsingMode} {
 		b.WriteString(strconv.Quote(s))
 		b.WriteByte('|')
 	}
@@ -300,7 +286,6 @@ func (h *ButtonsHTTP) sellScreenKey(route, param string) string {
 		Translations: httpx.TranslationsVersion(),
 		Granted:      h.Granted,
 		BrowsingMode: h.BrowsingMode,
-		HideAllTab:   h.HideAllTab,
 	}.String()
 }
 
