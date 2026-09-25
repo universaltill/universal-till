@@ -111,3 +111,21 @@ func (r *TillsRepo) DeleteTill(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+// BearerHashByID returns an enrolled till's stored bearer hash, for the
+// primary-proof handshake (ut-docs#2722): a replica that re-finds its main
+// till over mDNS asks it to prove it holds this till's pairing record before
+// sending it the bearer. Deliberately does NOT touch last_seen_at — the proof
+// request is unauthenticated, so it must never make a till look alive. A
+// missing or empty hash (a redacted snapshot copy) is "not found".
+func (r *TillsRepo) BearerHashByID(ctx context.Context, id string) (string, bool, error) {
+	var h string
+	err := r.db.QueryRowContext(ctx, `SELECT COALESCE(bearer_hash, '') FROM tills WHERE id = ?`, id).Scan(&h)
+	if err == sql.ErrNoRows || (err == nil && h == "") {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("till bearer hash: %w", err)
+	}
+	return h, true, nil
+}

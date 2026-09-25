@@ -104,3 +104,27 @@ func TestListenWithFallback_WildcardHostFallsBackToLoopback(t *testing.T) {
 		})
 	}
 }
+
+// ut-docs#2722: the Android main till logged "port 0.0.0.0:34029 was busy —
+// listening on [::]:34029 instead" on a clean first-try bind — the
+// configured and bound strings differ only in how the wildcard host is
+// spelled. That false "busy" line sent the #2722 investigation the wrong way.
+func TestMovedOffConfiguredAddr(t *testing.T) {
+	cases := []struct {
+		configured, actual string
+		want               bool
+	}{
+		{"0.0.0.0:34029", "[::]:34029", false},
+		{":8080", "[::]:8080", false},
+		{"127.0.0.1:8080", "127.0.0.1:8080", false},
+		{"0.0.0.0:8080", "127.0.0.1:8081", true},
+		{":8080", "127.0.0.1:8080", true}, // wildcard degraded to loopback IS a move
+		{"127.0.0.1:0", "127.0.0.1:53211", false},
+		{"not-an-addr", "[::]:8080", true},
+	}
+	for _, c := range cases {
+		if got := movedOffConfiguredAddr(c.configured, c.actual); got != c.want {
+			t.Errorf("movedOffConfiguredAddr(%q, %q) = %v, want %v", c.configured, c.actual, got, c.want)
+		}
+	}
+}

@@ -267,7 +267,7 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 	if err != nil {
 		return err
 	}
-	if actualAddr != cfg.ListenAddr {
+	if movedOffConfiguredAddr(cfg.ListenAddr, actualAddr) {
 		log.Printf("port %s was busy — listening on %s instead", cfg.ListenAddr, actualAddr)
 	}
 	cfg.ListenAddr = actualAddr
@@ -385,6 +385,27 @@ func listenWithFallback(addr string) (net.Listener, string, error) {
 		return l, l.Addr().String(), nil
 	}
 	return nil, "", err // nothing free — report the original failure
+}
+
+// movedOffConfiguredAddr reports whether listenWithFallback really had to
+// move: a different port, or a wildcard host degraded to loopback. A plain
+// string compare (the pre-#2722 check) also fired on a clean first-try bind,
+// because the configured "0.0.0.0:34029" comes back from the listener as
+// "[::]:34029" — logging a false "port was busy" that misled the #2722
+// investigation. A configured port of 0 ("any") never counts as a move.
+func movedOffConfiguredAddr(configured, actual string) bool {
+	ch, cp, err1 := net.SplitHostPort(configured)
+	ah, ap, err2 := net.SplitHostPort(actual)
+	if err1 != nil || err2 != nil {
+		return configured != actual
+	}
+	if cp != "0" && cp != ap {
+		return true
+	}
+	if isWildcardHost(ch) {
+		return !isWildcardHost(ah)
+	}
+	return ch != ah
 }
 
 // isWildcardHost reports whether host means "every interface": Go's own

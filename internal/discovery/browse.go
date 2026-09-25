@@ -92,11 +92,13 @@ func detectIPv6Support() bool {
 }
 
 // Browse queries the LAN for tills advertising ServiceName and returns
-// whatever answers within timeout. Bounded and synchronous — meant to be
-// invoked per explicit user action (the Tills page "Find a primary"
-// button), never as a background/ambient browser (ADR-0033 part 1 scope;
-// the click-to-select flow itself is a separate future card, #185 — this
-// only surfaces read-only results).
+// whatever answers within timeout. Bounded and synchronous — invoked per
+// explicit user action (the Tills page "Find a primary" button), never as
+// an ambient browser (ADR-0033 part 1 scope). The one background caller is
+// PrimaryWatch (ut-docs#2722): a replica whose main till stopped answering
+// browses at most once per MinBrowseInterval, only for the till id it was
+// paired with, and switches only after that till proves it holds the
+// pairing — see primary_watch.go.
 //
 // A partial failure is not reported as a total one (ut-docs#538): a real
 // LAN with no usable IPv6 multicast route ("write udp6 …: sendto: no

@@ -61,12 +61,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/app"
 	"github.com/universaltill/universal-till/internal/bluetooth"
 	"github.com/universaltill/universal-till/internal/diagnostics"
+	"github.com/universaltill/universal-till/internal/listenport"
 	"github.com/universaltill/universal-till/internal/recovery"
 )
 
@@ -105,14 +107,17 @@ var (
 // loopback connections, so the loopback address the caller gets keeps
 // working exactly as it did when the bind itself was loopback-only.
 //
-// Known gap, tracked separately (ut-docs#1256 review, not fixed here):
-// Android's mDNS multicast packets may still not reach this till without
-// android.net.wifi.WifiManager's MulticastLock (no CHANGE_WIFI_MULTICAST_STATE
-// permission or lock call exists in android/ yet) — many Android Wi-Fi
-// drivers drop inbound multicast an app hasn't asked to receive. Direct-IP
-// sync (an already-paired replica) and the manual/QR pairing fallback both
-// work regardless; the "browse and find it" discovery UX needs a real
-// on-device check before relying on it.
+// The port is stable across launches (ut-docs#2722, chooseListenPort): the
+// one served on last time (persisted in dataDir), else 8080, moving only if
+// that is genuinely busy — paired replicas store this till's host:port.
+//
+// mDNS on Android (ut-docs#1256 gap, closed by ut-docs#2722): many Android
+// Wi-Fi drivers drop inbound multicast an app hasn't asked to receive, so
+// the native shell's TillService holds a WifiManager MulticastLock
+// (CHANGE_WIFI_MULTICAST_STATE) while the server runs — without it an
+// Android main till can't answer a replica searching for it after it moved.
+// Still needs a real on-device check per device model; direct-IP sync and
+// the pairing-code fallback work regardless.
 //
 // Idempotent while genuinely running: a second Start call with the same
 // dataDir just returns the existing address (mirrors cmd/unitill-desktop's
@@ -154,7 +159,7 @@ func Start(dataDir string) (string, error) {
 		mu.Unlock()
 	}()
 
-	port, err := freePort()
+	port, err := chooseListenPort(dataDir)
 	if err != nil {
 		return "", fmt.Errorf("mobile: find a free port: %w", err)
 	}
@@ -246,6 +251,15 @@ func Start(dataDir string) (string, error) {
 		cancel()
 		<-newInst.done // wait for the full teardown before reporting failure
 		return "", err
+	}
+
+	// ut-docs#2722: remember the port we actually served on, so the next
+	// launch comes back on it and paired replicas keep reaching this till.
+	// Best-effort: failing to persist only costs stability, never startup.
+	if p, perr := strconv.Atoi(port); perr == nil {
+		if err := listenport.Save(dataDir, p); err != nil {
+			fmt.Fprintf(os.Stderr, "mobile: could not persist listen port %d: %v\n", p, err)
+		}
 	}
 
 	mu.Lock()
@@ -356,6 +370,24 @@ func SetBluetoothBridge(b BluetoothBridge) {
 // restoring that default.
 func SetDeviceModel(model string) {
 	diagnostics.SetDeviceModel(model)
+}
+
+// defaultListenPort is the port a till with nothing persisted asks for
+// first. A var only so tests can point it at a port that is free on the
+// machine running them.
+var defaultListenPort = listenport.DefaultPort
+
+// chooseListenPort picks a STABLE port (ut-docs#2722): the port this till
+// served on last launch, else the well-known default, moving up only when
+// that one is genuinely busy — and only letting the OS pick a random port
+// as the very last resort. Before #2722 this was always freePort(), a fresh
+// ephemeral port per launch, and every restart of an Android main till left
+// its paired replicas knocking on a dead port.
+func chooseListenPort(dataDir string) (string, error) {
+	if p := listenport.Choose(dataDir, defaultListenPort, listenport.Bindable); p != 0 {
+		return strconv.Itoa(p), nil
+	}
+	return freePort()
 }
 
 // freePort asks the OS for an unused port, probed on ALL interfaces
