@@ -1118,6 +1118,43 @@ document.addEventListener('click', function(e){
   setTimeout(function(){ if (notice.parentNode) notice.parentNode.removeChild(notice); }, 250);
 });
 
+// Copy-to-clipboard buttons (ut-docs#2720: Settings → Diagnostic mode's
+// "Copy folder path" / "Copy diagnostics"). Delegated so it survives the
+// card's htmx outerHTML swaps. navigator.clipboard needs a secure context
+// (127.0.0.1 is one; a till opened over the LAN by IP is not), so fall back
+// to a hidden textarea + execCommand('copy'). The button briefly shows its
+// data-copied-label (already localized by the template) as confirmation.
+document.addEventListener('click', function(e){
+  var btn = e.target.closest ? e.target.closest('[data-copy-target]') : null;
+  if (!btn) return;
+  var src = document.querySelector(btn.getAttribute('data-copy-target'));
+  if (!src) return;
+  var text = src.textContent || '';
+  function done(){
+    var label = btn.getAttribute('data-copied-label');
+    if (!label) return;
+    var orig = btn.textContent;
+    btn.textContent = label;
+    setTimeout(function(){ btn.textContent = orig; }, 1500);
+  }
+  function fallback(){
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { if (document.execCommand('copy')) done(); } catch (_) {}
+    document.body.removeChild(ta);
+  }
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(done, fallback);
+  } else {
+    fallback();
+  }
+});
+
 // Shrinkage reason sheet (void/comp/waste, ut-docs#1465, G41) — delegated
 // so it survives every #basket outerHTML swap, same reasoning as the
 // notice-dismiss handler just above. The sheet is a real <dialog>

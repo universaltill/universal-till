@@ -327,6 +327,19 @@ UT_MARKETPLACE_DEV_OVERRIDE_URL=       # Local marketplace override (dev mode on
 # Optional
 UT_SAMPLES_DIR=/path/to/images        # Sample product images
 
+# Logging (ut-docs#2720)
+UT_LOG_LEVEL=info                     # debug | info | warn | error
+UT_LOG_FILE=                          # Empty = on for Windows/macOS/Linux, off on
+                                       # Android/iOS: a rotating, redacted log at
+                                       # <data dir>/logs/till.log (5 files x 5 MB;
+                                       # e.g. %LOCALAPPDATA%\UniversalTill\logs on
+                                       # Windows). The desktop app's own messages
+                                       # go to desktop.log beside it. 0 = off,
+                                       # 1 = force on, or a file path to relocate.
+                                       # The first "startup:" line names version,
+                                       # data dir, pos.env used, cloud host and
+                                       # enrolment state.
+
 # Assistive AI (optional): camera item identification on the sale screen and
 # "Ask your till" — plain-language questions about sales/stock on /reports
 # (managers only, every question audited).

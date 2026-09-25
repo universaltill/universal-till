@@ -24,10 +24,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // shellPollWaitSeconds is how long each poll asks the server to hold
@@ -128,7 +129,7 @@ func watchShellMode(ctx context.Context, client *http.Client, baseURL string, in
 		if failingSince.IsZero() {
 			failingSince = time.Now()
 		} else if time.Since(failingSince) > shellPollDowngradeAfter && isChromeHidingMode(lastRequested) {
-			fmt.Fprintf(os.Stderr, "unitill-desktop: till server unreachable for over %s while the window hides OS chrome — leaving %s for a normal window (it will be re-applied when the server is back)\n",
+			fmt.Fprintf(logging.Stderr(), "unitill-desktop: till server unreachable for over %s while the window hides OS chrome — leaving %s for a normal window (it will be re-applied when the server is back)\n",
 				shellPollDowngradeAfter, lastRequested)
 			requestApply("normal")
 		}
