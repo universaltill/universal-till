@@ -47,14 +47,6 @@ func Plugins(parts ...string) string {
 	return filepath.Join(append([]string{DataDir(), "plugins"}, parts...)...)
 }
 
-// Logs joins parts onto the till's log folder, <data root>/logs
-// (ut-docs#2720) — e.g. %LOCALAPPDATA%\UniversalTill\logs on Windows. It
-// lives beside the database so it survives self-updates like everything
-// else under the data root.
-func Logs(parts ...string) string {
-	return filepath.Join(append([]string{DataDir(), "logs"}, parts...)...)
-}
-
 // MigrateLegacyData brings an old cwd-relative ./data tree into the resolved
 // data directory: the database (first run only) and any installed plugin
 // bundles that are missing from the stable location. Plugin migration is

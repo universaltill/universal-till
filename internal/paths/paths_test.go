@@ -475,9 +475,4 @@ func TestLogDirPerOS(t *testing.T) {
 		}
 	}
 
-	t.Cleanup(func() { Init("") })
-	Init(filepath.Join("srv", "ut"))
-	if got, want := Logs("till.log"), filepath.Join("srv", "ut", "logs", "till.log"); got != want {
-		t.Fatalf("Logs = %q, want %q", got, want)
-	}
 }
