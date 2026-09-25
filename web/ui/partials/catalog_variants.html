@@ -104,6 +104,10 @@
         {{ if .Generated }}<p class="option-set-pick-msg" role="status">{{ printf (T "catalog.variants.generated_count") .GeneratedCount }}</p>{{ end }}
       </div>
 
+      {{/* ut-docs#2815: a variant save re-renders this whole panel, which
+           on its own reads as "nothing happened". Same one-shot role=status
+           line as the option-set generator's messages above. */}}
+      {{ if .VariantSaved }}<p class="option-set-pick-msg" role="status" data-testid="variant-saved">{{ T "catalog.item_form.saved" }}</p>{{ end }}
       {{ if not .Variants }}<p class="muted">{{ T "catalog.variants.none" }}</p>{{ end }}
 
       {{ range .Variants }}
@@ -173,8 +177,8 @@
                kiosk OSK (see index.html's split-tender amount field). The
                htmx:configRequest listener below already reads these fields'
                raw .value at submit time, so no JS change is needed. -->
-          <input form="vf-{{ .ID }}" type="text" inputmode="decimal" class="variant-price-major" data-minor="{{ .PriceMinor }}" {{ moneypattern currency.Decimals false }} required>
-          <input form="vf-{{ .ID }}" type="text" inputmode="decimal" class="variant-cost-major" data-minor="{{ .CostMinor }}" {{ moneypattern currency.Decimals false }} placeholder="—">
+          <input form="vf-{{ .ID }}" type="text" inputmode="decimal" class="variant-price-major" data-minor="{{ .PriceMinor }}" {{ moneypatternlocal currency.Decimals }} required>
+          <input form="vf-{{ .ID }}" type="text" inputmode="decimal" class="variant-cost-major" data-minor="{{ .CostMinor }}" {{ moneypatternlocal currency.Decimals }} placeholder="—">
           <div class="chip-row">
             {{ range .Barcodes }}
             <span class="chip">{{ . }}
@@ -220,8 +224,8 @@
           <div></div>
           <input form="vf-new" type="text" name="name" required placeholder="{{ T "catalog.variants.add" }} — 330ml / XL">
           <input form="vf-new" type="text" name="sku" placeholder="{{ T "catalog.auto_if_blank" }}">
-          <input form="vf-new" type="text" inputmode="decimal" class="variant-price-major" {{ moneypattern currency.Decimals false }} required>
-          <input form="vf-new" type="text" inputmode="decimal" class="variant-cost-major" {{ moneypattern currency.Decimals false }} placeholder="—">
+          <input form="vf-new" type="text" inputmode="decimal" class="variant-price-major" {{ moneypatternlocal currency.Decimals }} required>
+          <input form="vf-new" type="text" inputmode="decimal" class="variant-cost-major" {{ moneypatternlocal currency.Decimals }} placeholder="—">
           <div class="muted"></div>
           <div></div>
           <button form="vf-new" class="btn" type="submit">{{ T "catalog.save_variant" }}</button>

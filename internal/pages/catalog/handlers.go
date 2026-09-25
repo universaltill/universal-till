@@ -1203,12 +1203,18 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		}
 		priceStr := strings.TrimSpace(r.Form.Get("price"))
 		if priceStr == "" {
-			http.Error(w, "price required", http.StatusBadRequest)
+			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", fmt.Errorf("variant price required"))
 			return
 		}
+		// ut-docs#2815: the wire carries MINOR units (catalog.html's
+		// htmx:configRequest listener converts the typed major amount, a
+		// German "3,50" included). Anything else is refused with the
+		// localized message — rendered into the item dialog's own notice
+		// area by its htmx:responseError listener — never stored as 0 and
+		// never answered with an unlocalized plain-text error.
 		price, err := strconv.ParseInt(priceStr, 10, 64)
-		if err != nil {
-			http.Error(w, "invalid price", http.StatusBadRequest)
+		if err != nil || price < 0 {
+			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", fmt.Errorf("variant price %q: %v", priceStr, err))
 			return
 		}
 		// Checkbox semantics: an unchecked box submits nothing, so the panel
@@ -1231,10 +1237,10 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			IsActive: active,
 		}
 		if costStr := strings.TrimSpace(r.Form.Get("costPrice")); costStr != "" {
-			if c, err := strconv.ParseInt(costStr, 10, 64); err == nil {
+			if c, err := strconv.ParseInt(costStr, 10, 64); err == nil && c >= 0 {
 				vInput.CostPrice = &c
 			} else {
-				http.Error(w, "invalid costPrice", http.StatusBadRequest)
+				common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", fmt.Errorf("variant costPrice %q: %v", costStr, err))
 				return
 			}
 		}
@@ -1250,7 +1256,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 		if panelItem := strings.TrimSpace(r.Form.Get("panelItem")); panelItem != "" {
-			renderVariantsPanel(w, r, panelItem, true)
+			// ut-docs#2815: say so — a bare re-render of the same row read
+			// as "nothing happened" on the till.
+			renderVariantsPanelWith(w, r, panelItem, true, map[string]any{"VariantSaved": true})
 			return
 		}
 		writeRowOOB(w, r, itemID, false)
