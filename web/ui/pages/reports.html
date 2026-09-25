@@ -3,9 +3,23 @@
 <div class="page-head">
   <h1>{{ T "reports.title" }}
     {{ if .RunningOut }}<a class="chip chip-warn" href="/inventory" style="text-decoration:none">⚠ {{ .RunningOut }} {{ T "inventory.running_out" }}</a>{{ end }}</h1>
+</div>
+<div class="report-window">
+  {{/* ut-docs#1976: one chip row for the common windows. Each chip is a
+       plain link onto the existing ?period=&anchor= contract; the active
+       one is decided server-side (reportPresets) and carries aria-current
+       plus the checkmark, never colour alone. The original controls live
+       on under Custom, unchanged (arbitrary from-to waits on ut-docs#1977). */}}
+  <div class="filter-chips report-presets" role="group" aria-label="{{ T "reports.preset.label" }}">
+    {{ range .Presets }}<a class="chip" href="/reports?period={{ .Period }}&amp;anchor={{ .Anchor }}"
+       {{ if .Active }}aria-current="true"{{ end }}><span class="chip-check" aria-hidden="true">{{ icon "check" }}</span>{{ T .Label }}</a>
+    {{ end }}<a class="chip" href="{{ if .CustomActive }}{{ .CurrentURI }}{{ else }}/reports?days={{ .Days }}{{ end }}"
+       {{ if .CustomActive }}aria-current="true"{{ end }}><span class="chip-check" aria-hidden="true">{{ icon "check" }}</span>{{ T "reports.period.custom" }}</a>
+  </div>
+  {{ if .CustomActive }}
   <form method="get" action="/reports" style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap">
     <select name="period" onchange="this.form.submit()">
-      <option value=""      {{ if not $period }}selected{{ end }}>{{ T "reports.period.custom" }}</option>
+      <option value=""      {{ if not $period }}selected{{ end }}>{{ T "reports.period.rolling" }}</option>
       <option value="day"   {{ if eq $period "day" }}selected{{ end }}>{{ T "reports.period.day" }}</option>
       <option value="week"  {{ if eq $period "week" }}selected{{ end }}>{{ T "reports.period.week" }}</option>
       <option value="month" {{ if eq $period "month" }}selected{{ end }}>{{ T "reports.period.month" }}</option>
@@ -24,6 +38,7 @@
     </select>
     {{ end }}
   </form>
+  {{ end }}
 </div>
 
 <div class="report-cards">
