@@ -38,6 +38,7 @@ var knownIconNames = map[string]bool{
 	"arrow-up": true, "sparkles": true, "upload": true, "download": true,
 	"landmark": true, "scan-barcode": true, "log-out": true, "filter": true,
 	"arrow-left": true, "chevron-left": true, "chevron-right": true,
+	"pause": true, "keyboard": true, // ut-docs#2702 compact tender row
 	"rotate-ccw": true, "eye": true, "ellipsis": true, "eye-off": true,
 }
 

@@ -82,12 +82,14 @@ test.describe('payment overlay duplicate controls have distinguishing accessible
     await expect(page.locator('#hold-modal')).toBeHidden();
   });
 
-  // The originals must stay fully reachable/clickable while the overlay is
-  // open — this is the regression this fix must not cause (ut-docs#1386,
-  // driven directly here rather than just re-asserted by reference): a
-  // blanket `inert` on `.tender-default-footer` would break this at wide
-  // viewports where the overlay never covers the originals at all.
-  test('the ORIGINAL Hold Sale button is still clickable while the overlay is open at a wide viewport', async ({ page }) => {
+  // The originals must not be made inert while the overlay is open -- a
+  // blanket `inert` on `.tender-default-footer` was the rejected fix here
+  // (ut-docs#1386). ut-docs#2702 moved Hold / New sale to the row's inline
+  // end, which the overlay covers at every width now (their in-overlay
+  // copies take over there), so the uncovered control that proves the row
+  // is still live is Pay, which leads the row: at 1920x1080 it sits clear
+  // of the overlay and must take a real, unforced click.
+  test('the action row is not made inert while the overlay is open: the uncovered Pay button still takes a real click at a wide viewport', async ({ page }) => {
     await page.setViewportSize({ width: 1920, height: 1080 });
     await page.goto('/');
     await page.waitForSelector('.pos-container');
@@ -98,12 +100,13 @@ test.describe('payment overlay duplicate controls have distinguishing accessible
       page.locator('.scan-row button[type=submit]').click(),
     ]);
 
-    await page.getByTestId('payment-open').click();
+    const pay = page.getByTestId('payment-open');
+    await pay.click();
     await expect(page.locator('#payment-overlay')).toBeVisible();
 
-    const originalHold = page.locator('.tender-default-footer button', { hasText: 'Hold Sale' });
-    await expect(originalHold).toBeEnabled();
-    await originalHold.click(); // no force: must be a genuinely landable, non-inert click
-    await expect(page.locator('#hold-modal')).toBeVisible();
+    expect(await page.locator('.tender-default-footer').evaluate((el) => (el as HTMLElement).inert || !!el.closest('[inert]'))).toBe(false);
+    await expect(pay).toBeEnabled();
+    await pay.click(); // no force: must be a genuinely landable, non-inert click
+    await expect(page.locator('#payment-overlay')).toBeVisible();
   });
 });

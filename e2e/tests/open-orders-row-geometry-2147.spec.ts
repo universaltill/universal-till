@@ -137,7 +137,7 @@ test.describe('/open-orders row geometry + accessible name (ut-docs#2147)', () =
     await expect(pageRow).toHaveAccessibleName(/£\d/);
 
     await page.goto('/');
-    await page.locator('.tender-quickpay [data-testid="parked-orders-open"]').click();
+    await page.locator('.tender-default-footer [data-testid="parked-orders-open"]').click();
     const modal = page.locator('#parked-orders-modal');
     await expect(modal).toBeVisible();
     const popupRow = modal.getByRole('button', { name: new RegExp(`Resume order.*${label}`) });

@@ -854,7 +854,8 @@ window.utCurrency = (function(){
 // tabindex save/restore below — no new mechanism, just three more targets.
 // quick-pay and the phone duplicate live outside .tender-default-footer
 // (`.tender-quickpay` and `.kiosk-header.phone-fallback-only` respectively)
-// so they're queried from `document`, not `footer`.
+// so they're queried from `document`, not `footer`. (ut-docs#2702 removed
+// the quick-pay row; candidates() below never named it specifically.)
 //
 // ut-docs#1702 (found by #1674's own review, same coverage sweep, with
 // #1674's fix already applied): the hand-maintained targets array above
@@ -2411,7 +2412,7 @@ window.utTabBarFade = function (el) {
 // not lose that action -- it must ANSWER, then CONTINUE it, not just answer
 // and leave the cashier to repeat the tap.
 //
-// The item-add/quick-pay cases are htmx requests that haven't been SENT
+// The item-add case is an htmx request that hasn't been SENT
 // yet when the gate fires -- htmx's own htmx:confirm event (fired before
 // every request, cancelable) hands back evt.detail.issueRequest, which
 // looks tailor-made for "defer, then resume": a closure over the
@@ -2667,27 +2668,11 @@ window.utTabBarFade = function (el) {
     });
   });
 
-  // "at_pay", the one-tap quick-pay path (a direct hx-post tender, no
-  // overlay in between) -- the OTHER at_pay entry point, the main Pay
-  // button that opens the overlay, is posOpenPayment() below (a plain
-  // onclick, not an htmx request, so it can't go through htmx:confirm).
-  document.body.addEventListener('htmx:confirm', function (evt) {
-    var elt = evt.detail.elt;
-    var isQuickPay = elt && elt.matches && elt.matches('[data-testid="quick-pay"]');
-    if (!isQuickPay || promptMode() !== 'at_pay' || orderTypeChosen()) return;
-    evt.preventDefault();
-    var path = evt.detail.path || '/api/pos/tender';
-    // Snapshot now, same reasoning as the item-add handler above (values
-    // are static hx-vals here, not a typed field, so less exposed to that
-    // exact bug -- captured up front anyway, on the same principle: never
-    // trust a value read to still be live after an arbitrary-length modal
-    // round-trip when reading it now costs nothing).
-    var values = htmx.values(elt, 'post');
-    showOrderTypePromptModal(function () {
-      htmx.ajax('post', path, { target: '#basket', swap: 'outerHTML', values: values });
-    });
-  });
-
+  // ut-docs#2702: the other "at_pay" entry point, the sale screen's one-tap
+  // quick-pay button (a direct hx-post tender intercepted via htmx:confirm
+  // here), is gone -- its job moved inside the payment panel, which is only
+  // reachable through posOpenPayment() below, so that is now the single
+  // "at_pay" gate.
   // Called by index.html's Pay button (data-testid="payment-open") in
   // place of a bare document.getElementById('payment-overlay').show().
   window.posOpenPayment = function () {

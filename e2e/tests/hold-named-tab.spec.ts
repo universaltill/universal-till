@@ -17,7 +17,7 @@ import { watchConsole } from './helpers';
 test.afterEach(async ({ page }) => {
   await page.request.post('/api/pos/reset').catch(() => {});
 });
-test('holding a sale with a typed name shows that name in the held strip', async ({ page }) => {
+test('holding a sale with a typed name shows that name in the Open orders popup', async ({ page }) => {
   const assertClean = watchConsole(page);
   await page.goto('/');
 
@@ -42,7 +42,12 @@ test('holding a sale with a typed name shows that name in the held strip', async
 
   await expect(page.locator('#hold-modal')).toBeHidden();
   await expect(page.locator('#basket')).not.toContainText('Coca-Cola');
-  await expect(page.locator('#held-sales')).toContainText('Tab 1');
+  // ut-docs#2702: the held strip left the sale screen -- held sales are
+  // listed in the Open orders popup (its icon's badge says they exist).
+  await expect(page.getByTestId('open-orders-badge')).toBeVisible();
+  await page.getByTestId('parked-orders-open').click();
+  await expect(page.locator('#parked-orders-body')).toContainText('Tab 1');
+  await page.locator('#parked-orders-modal button', { hasText: 'Close' }).first().click();
   assertClean();
 });
 
@@ -78,6 +83,8 @@ test('holding with a blank name still falls back to a timestamp label', async ({
   await page.locator('#hold-modal button[type=submit]').click();
 
   await expect(page.locator('#hold-modal')).toBeHidden();
-  await expect(page.locator('#held-sales')).toContainText(/\d{2}:\d{2}/);
+  await page.getByTestId('parked-orders-open').click();
+  await expect(page.locator('#parked-orders-body')).toContainText(/\d{2}:\d{2}/);
+  await page.locator('#parked-orders-modal button', { hasText: 'Close' }).first().click();
   assertClean();
 });
