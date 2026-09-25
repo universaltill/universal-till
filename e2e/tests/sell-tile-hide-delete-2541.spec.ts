@@ -4,10 +4,13 @@ import { watchConsole } from './helpers';
 
 // ut-docs#2541: every active catalog item is a sell-screen quick button by
 // default (no manual "add button" step), and jiggle edit mode gives each
-// tile three actions: edit (unchanged), delete (trash -- deletes the ITEM,
-// after a confirm naming it) and hide (eye-off, bottom-end corner -- off the
-// purchase page only; it still sells via search/scan and comes back from the
-// Designer's "Hidden from sell screen" list).
+// tile three actions: edit (unchanged), remove (trash, after a confirm
+// naming it) and hide (eye-off, bottom-end corner -- off the purchase page
+// only; it still sells via search/scan and comes back from the Designer's
+// "Hidden from sell screen" list). ut-docs#2698: the trash badge removes the
+// tile from the quick buttons only (the item stays in the catalog), and a
+// hidden tile stays greyed in its spot while editing -- see
+// sell-tile-hidden-greyed-2698.spec.ts for those flows in full.
 //
 // Same honesty note as sell-tile-jiggle-mode-2339.spec.ts: gestures are
 // Playwright's synthetic mouse pointer in Chromium, not real touch on the
@@ -55,7 +58,7 @@ async function enterJiggle(page: Page, t: Locator) {
   await expect(page.locator('#buttons-grid.jiggle-mode')).toHaveCount(1);
 }
 
-test.describe('every item is a quick button; hide / unhide / delete (ut-docs#2541)', () => {
+test.describe('every item is a quick button; hide / unhide / remove (ut-docs#2541, #2698)', () => {
   test.afterAll(async ({ browser }) => {
     const page = await browser.newPage();
     for (const it of [A, B]) {
@@ -65,7 +68,7 @@ test.describe('every item is a quick button; hide / unhide / delete (ut-docs#254
     await page.close();
   });
 
-  test('imported items appear as tiles; hide, search, unhide, delete', async ({ page }) => {
+  test('imported items appear as tiles; hide, search, unhide, remove', async ({ page }) => {
     const assertClean = watchConsole(page);
     await importItems(page);
 
@@ -91,10 +94,13 @@ test.describe('every item is a quick button; hide / unhide / delete (ut-docs#254
     expect(Math.abs(hb!.x - db!.x)).toBeLessThan(db!.width);
     await page.screenshot({ path: test.info().outputPath('jiggle-badges.png') });
 
-    // (3) Hide: no confirm, tile leaves the grid.
+    // (3) Hide: no confirm; ut-docs#2698: greyed in place while editing,
+    // out of sight once editing ends.
     await Promise.all([page.waitForResponse((r) => r.url().includes('/api/buttons/hide') && r.ok()), hide.click()]);
-    await expect(tile(page, A.name)).toHaveCount(0);
+    await expect(cellOf(page, A.name)).toHaveClass(/tile--hidden/);
+    await expect(tile(page, A.name)).toBeVisible();
     await page.keyboard.press('Escape');
+    await expect(tile(page, A.name)).toBeHidden();
 
     // (4) A hidden item still sells via search.
     await page.reload();
@@ -123,7 +129,8 @@ test.describe('every item is a quick button; hide / unhide / delete (ut-docs#254
     await page.getByRole('tab', { name: CAT }).click();
     await expect(tile(page, A.name)).toBeVisible();
 
-    // (6) Delete: cancelling the confirm (which names the item) changes nothing.
+    // (6) Remove (trash): cancelling the confirm (which names the item)
+    // changes nothing.
     await enterJiggle(page, tile(page, B.name));
     const delB = cellOf(page, B.name).getByTestId('tile-badge-remove');
     let confirmText = '';
@@ -136,11 +143,12 @@ test.describe('every item is a quick button; hide / unhide / delete (ut-docs#254
     await page.waitForTimeout(300);
     await expect(tile(page, B.name)).toBeVisible();
 
-    // Accepting it deletes the item: tile gone, catalog row gone.
+    // Accepting it removes the tile -- gone from the grid even while editing
+    // -- but NOT the item: its catalog row is still there (ut-docs#2698).
     page.once('dialog', (d) => d.accept());
-    await Promise.all([page.waitForResponse((r) => r.url().includes('/api/buttons/delete-item') && r.ok()), delB.click()]);
+    await Promise.all([page.waitForResponse((r) => r.url().includes('/api/buttons/remove-from-grid') && r.ok()), delB.click()]);
     await expect(tile(page, B.name)).toHaveCount(0);
-    expect(await itemId(page, B.name)).toBeNull();
+    expect(await itemId(page, B.name)).not.toBeNull();
 
     assertClean();
   });

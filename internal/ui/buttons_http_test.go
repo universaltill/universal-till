@@ -48,7 +48,13 @@ func TestButtonsHTTPList_RendersTiles(t *testing.T) {
 }
 
 func TestButtonsHTTPAdd_NormalizesImageAndRendersGrid(t *testing.T) {
-	h, store := newButtonsHTTP(t, "buttons_admin.html")
+	h, db := newButtonsHTTPWithDB(t, "buttons_admin.html")
+	store := &h.Store
+	// One item per case: an item has one quick-button row, so re-adding an
+	// item under another code refreshes its existing row (ut-docs#2698 F1).
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('i1','S1','Coffee', 350, 1)`)
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('i2','S2','Tea', 250, 1)`)
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('i3','S3','Cocoa', 300, 1)`)
 
 	cases := []struct {
 		in, want string
@@ -58,7 +64,7 @@ func TestButtonsHTTPAdd_NormalizesImageAndRendersGrid(t *testing.T) {
 		{"https://cdn.example/c.png", "https://cdn.example/c.png"}, // absolute URL, untouched
 	}
 	for i, tc := range cases {
-		form := url.Values{"label": {"Coffee"}, "code": {"C" + string(rune('1'+i))}, "itemId": {"i1"}, "imageUrl": {tc.in}}
+		form := url.Values{"label": {"Coffee"}, "code": {"C" + string(rune('1'+i))}, "itemId": {"i" + string(rune('1'+i))}, "imageUrl": {tc.in}}
 		req := httptest.NewRequest("POST", "/api/buttons/add", strings.NewReader(form.Encode()))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		rec := httptest.NewRecorder()

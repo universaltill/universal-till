@@ -12,15 +12,13 @@ import { watchConsole, setBrowsingMode } from './helpers';
 // (sell-tile-long-press-2285.spec.ts, retired with it).
 //
 // ut-docs#2541: since every active, non-hidden catalog item is a quick
-// button by default now, the trash badge's OWN meaning changed — it no
-// longer just removes a shortcut_buttons row (the tile would just come
-// back), it deletes the ITEM itself (POST /api/buttons/delete-item, the
-// same soft-deactivate the catalog page's own "Delete item" uses). A third
-// badge (trailing BOTTOM corner, eye-off icon) now hides a tile from the
-// sell screen without touching the catalog — this file's own "Remove
-// badge" step below is rewritten into a "Hide badge" step for that reason;
-// destructive delete-item coverage lives in the Go-level handler tests
-// (internal/pages/buttons_hide_api_test.go), not here.
+// button by default now, the trash badge's OWN meaning changed; a third
+// badge (trailing BOTTOM corner, eye-off icon) hides a tile from the sell
+// screen without touching the catalog — this file's own "Remove badge" step
+// below is a "Hide badge" step for that reason. ut-docs#2698: the trash
+// badge removes the tile from the quick buttons (never the item), and a
+// hidden tile stays in the grid, greyed, while editing — the full hide/
+// remove/re-add flows are sell-tile-hidden-greyed-2698.spec.ts.
 //
 // HONESTY NOTE (per the `ux` skill's touch-sensitive-change rule, same
 // convention as designer-reorder-1221.spec.ts's own note): every gesture
@@ -376,10 +374,11 @@ test.describe('Sell-screen jiggle edit mode (ut-docs#2339)', () => {
 
       // (6) Hide badge — LAST, and only on this spec's OWN fixture tile
       // (ut-docs#2541): no confirm dialog (reversible); POSTs
-      // /api/buttons/hide; the grid refreshes WITHOUT the tile and stays in
-      // edit mode (iOS keeps jiggling after a hide); Done then has nothing
-      // to save. Done first via a fresh entry so the count is taken at rest.
-      const beforeCount = await page.locator('.products-tab-panel .btn-tile[data-code]').count();
+      // /api/buttons/hide; the grid refreshes and stays in edit mode (iOS
+      // keeps jiggling after a hide) with the tile still in its spot, greyed
+      // (ut-docs#2698); Done then has nothing to save, and at rest the tile
+      // is out of sight. Counted as VISIBLE tiles, at rest.
+      const beforeCount = await page.locator('.products-tab-panel .btn-tile[data-code]:visible').count();
       const tileC2 = page.locator(`.products-tab-panel .btn-tile[data-code="${ITEM_C.barcode}"]`);
       const hiddenItemId = await tileC2.getAttribute('data-item-id');
       await longPress(tileC2);
@@ -387,16 +386,18 @@ test.describe('Sell-screen jiggle edit mode (ut-docs#2339)', () => {
       const hideResponse = page.waitForResponse((r) => r.url().includes('/api/buttons/hide'));
       await tileC2.locator('xpath=..').locator('[data-testid="tile-badge-hide"]').click();
       await hideResponse;
-      await expect(page.locator('.products-tab-panel .btn-tile[data-code]')).toHaveCount(beforeCount - 1);
       await expect(grid(page)).toHaveClass(/jiggle-mode/);
+      await expect(tileC2).toBeVisible();
+      await expect(tileC2).toHaveAttribute('data-hidden', '');
       buttonCalls.length = 0;
       await page.locator('[data-testid="jiggle-done"]').click();
       await expect(grid(page)).not.toHaveClass(/jiggle-mode/);
       await page.waitForTimeout(200);
       expect(buttonCalls.filter((r) => r.url().includes('/api/buttons/reorder')), 'nothing to save after a hide').toHaveLength(0);
+      await expect(tileC2).toBeHidden();
+      await expect(page.locator('.products-tab-panel .btn-tile[data-code]:visible')).toHaveCount(beforeCount - 1);
 
-      // Unhide restores it as an implicit tile (ut-docs#2541) — no re-add
-      // needed, unlike the retired remove-badge behavior this replaces.
+      // Unhide restores it in place (ut-docs#2541/#2698) — no re-add needed.
       const unhide = await page.request.post('/api/buttons/unhide', {
         form: { itemId: hiddenItemId ?? '' },
       });

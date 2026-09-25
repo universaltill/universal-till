@@ -30,7 +30,7 @@ func TestNewCatalogTestDB_ClosesOnCleanup(t *testing.T) {
 // real schema (migration 040) added items.sell_screen_hidden -- this
 // fixture had drifted from it, the same fixture-drift class as
 // ut-docs#2209/#625 elsewhere in this helper, so any repo call that reads
-// or writes the column (CatalogRepo.SellScreenHiddenItemIDs/
+// or writes the column (CatalogRepo.SellScreenStates/
 // SetSellScreenHidden, ButtonStore.LoadAllActive) failed with "no such
 // column" against a db built from this helper.
 func TestNewCatalogTestDB_HasSellScreenHiddenColumn(t *testing.T) {
@@ -38,8 +38,12 @@ func TestNewCatalogTestDB_HasSellScreenHiddenColumn(t *testing.T) {
 	SeedItem(t, db, ItemSeed{ID: "i1", SKU: "S1", Name: "Apple", BasePrice: 100, IsActive: true})
 
 	repo := data.NewCatalogRepo(db)
-	if _, err := repo.SellScreenHiddenItemIDs(context.Background()); err != nil {
-		t.Fatalf("SellScreenHiddenItemIDs: %v (items table is missing sell_screen_hidden)", err)
+	// ut-docs#2698: SellScreenStates reads sell_screen_removed too.
+	if _, _, err := repo.SellScreenStates(context.Background()); err != nil {
+		t.Fatalf("SellScreenStates: %v (items table is missing sell_screen_hidden/sell_screen_removed)", err)
+	}
+	if err := repo.RemoveFromSellScreen(context.Background(), "i1"); err != nil {
+		t.Fatalf("RemoveFromSellScreen: %v", err)
 	}
 	if err := repo.SetSellScreenHidden(context.Background(), "i1", true); err != nil {
 		t.Fatalf("SetSellScreenHidden: %v", err)

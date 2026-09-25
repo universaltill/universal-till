@@ -107,10 +107,10 @@ test('Designer search result tap-to-add works from a touch context (ut-docs#1170
   // for the replica to render before taking the "before" count.
   await expect(page.locator('[data-testid="designer-categories"]')).toBeVisible();
   const tiles = page.locator('[data-testid="designer-tile"] .tile-name', { hasText: 'Sparkling Water' });
-  // Count-based, not visibility-based: the shared dev till server persists
-  // added tiles across repeated local runs (reuseExistingServer), so a
-  // previous run may have already added this item — assert the tap adds
-  // ONE MORE, not that it's the first ever.
+  // Count-based, not visibility-based. ut-docs#2541 made every active item
+  // a tile already and ut-docs#2698 (review F1) keeps ONE row per item, so
+  // re-adding the demo item must not duplicate its tile: the tap has to
+  // reach /api/buttons/add successfully and leave exactly one tile.
   const before = await tiles.count();
 
   const search = page.locator('#search');
@@ -118,9 +118,9 @@ test('Designer search result tap-to-add works from a touch context (ut-docs#1170
 
   const result = page.locator('#search-results .result', { hasText: 'Sparkling Water' });
   await expect(result).toBeVisible({ timeout: 5000 });
-  await result.tap();
+  await Promise.all([page.waitForResponse((r) => r.url().includes('/api/buttons/add') && r.ok()), result.tap()]);
 
-  await expect(tiles).toHaveCount(before + 1, { timeout: 5000 });
+  await expect(tiles).toHaveCount(Math.max(before, 1), { timeout: 5000 });
 
   assertClean();
   await ctx.close();

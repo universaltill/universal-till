@@ -1405,7 +1405,8 @@ type CategoryAdminRow struct {
 	// keeps counting hidden items too: it's what the Designer's own
 	// category-management list shows an admin (DesignerCategoryVM.
 	// ItemCount) — an operator managing categories still needs to see that
-	// a category has real items in it, hidden or not.
+	// a category has real items in it, hidden or not. ut-docs#2698: items
+	// removed from the quick buttons (sell_screen_removed) are left out too.
 	VisibleItemCount int
 	ImagePath        string // ut-docs#2500, see CategoryNode.ImagePath
 	Icon             string // migration 041, see CategoryNode.Icon
@@ -1420,7 +1421,7 @@ func (r *CatalogRepo) ListCategoriesForAdmin(ctx context.Context) ([]CategoryAdm
 	rows, err := r.db.QueryContext(ctx, `
 SELECT c.id, c.name, COALESCE(c.parent_id, ''), c.sort_order, COALESCE(c.color, ''), c.is_active,
        COUNT(i.id) AS item_count,
-       COUNT(CASE WHEN i.sell_screen_hidden = 0 THEN i.id END) AS visible_item_count,
+       COUNT(CASE WHEN i.sell_screen_hidden = 0 AND i.sell_screen_removed = 0 THEN i.id END) AS visible_item_count,
        COALESCE(c.image_path, ''), COALESCE(c.icon, ''), c.sell_screen_hidden
 FROM categories c
 LEFT JOIN items i ON i.category_id = c.id AND i.is_active = 1
@@ -2015,24 +2016,21 @@ type HiddenItem struct {
 
 // SetSellScreenHidden sets or clears items.sell_screen_hidden for itemID
 // (ut-docs#2541) — hiding an item takes it off the sell-screen quick-button
-// grid and the All tab (ButtonStore.Load/LoadAllActive both read the flag),
-// while barcode scan and live search stay unfiltered (SearchSellable, the
-// scan resolver) so a hidden item still rings up. Hiding also deletes any
-// explicit shortcut_buttons row for the item — same reasoning
-// ShortcutsRepo.LoadButtons' own hidden filter has: without this, a
-// Designer-configured explicit tile would keep resolving as a real row even
-// though its item is meant to be off the grid, purely by accident of
-// ordering between the two writes. Both run in one transaction so a hide
-// can never persist the flag without also clearing the stale row (or vice
-// versa) on a mid-write failure.
+// grid and the All grid at rest, while barcode scan and live search stay
+// unfiltered (SearchSellable, the scan resolver) so a hidden item still
+// rings up.
+//
+// ut-docs#2698: hiding no longer deletes the item's explicit
+// shortcut_buttons row. The row is what keeps the tile's POSITION: while the
+// grid is being edited (sale-screen jiggle mode, the Designer) a hidden tile
+// is shown greyed in the same spot with an Unhide badge, and unhiding puts it
+// back there. The rest view filters the row out at read time
+// (ShortcutsRepo.LoadButtons). Taking an item off the quick buttons for good
+// is RemoveFromSellScreen.
 func (r *CatalogRepo) SetSellScreenHidden(ctx context.Context, itemID string, hidden bool) error {
 	itemID = strings.TrimSpace(itemID)
 	if itemID == "" {
 		return errors.New("itemID required")
-	}
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("set sell screen hidden: %w", err)
 	}
 	v := 0
 	if hidden {
@@ -2041,26 +2039,51 @@ func (r *CatalogRepo) SetSellScreenHidden(ctx context.Context, itemID string, hi
 	// ut-docs#2541 review finding 4: AND is_active = 1 -- an unknown id or
 	// an already-inactive item's id must refuse, not silently no-op (see
 	// ErrItemNotFound's own doc comment).
-	res, err := tx.ExecContext(ctx, `UPDATE items SET sell_screen_hidden = ? WHERE id = ? AND is_active = 1`, v, itemID)
+	res, err := r.db.ExecContext(ctx, `UPDATE items SET sell_screen_hidden = ? WHERE id = ? AND is_active = 1`, v, itemID)
 	if err != nil {
-		tx.Rollback()
 		return fmt.Errorf("set sell screen hidden: %w", err)
 	}
 	if n, err := res.RowsAffected(); err != nil {
-		tx.Rollback()
 		return fmt.Errorf("set sell screen hidden: %w", err)
 	} else if n == 0 {
-		tx.Rollback()
 		return ErrItemNotFound
 	}
-	if hidden {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM shortcut_buttons WHERE item_id = ?`, itemID); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("set sell screen hidden: clear shortcut rows: %w", err)
-		}
+	return nil
+}
+
+// RemoveFromSellScreen takes itemID off the sell-screen quick buttons for
+// good (ut-docs#2698, the trash badge): sets items.sell_screen_removed,
+// clears sell_screen_hidden (removed wins — the item must not linger in the
+// Designer's "Hidden from sell screen" list, whose Unhide could not bring it
+// back) and deletes any explicit shortcut_buttons row, in one transaction so
+// a failure can never leave the flag without the row cleared or vice versa.
+// The catalog item itself stays ACTIVE: it keeps selling by scan and search,
+// and ButtonStore.Add (from search) makes it a quick button again. Unknown or
+// inactive ids refuse with ErrItemNotFound, like SetSellScreenHidden.
+func (r *CatalogRepo) RemoveFromSellScreen(ctx context.Context, itemID string) error {
+	itemID = strings.TrimSpace(itemID)
+	if itemID == "" {
+		return errors.New("itemID required")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("remove from sell screen: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	res, err := tx.ExecContext(ctx, `UPDATE items SET sell_screen_removed = 1, sell_screen_hidden = 0 WHERE id = ? AND is_active = 1`, itemID)
+	if err != nil {
+		return fmt.Errorf("remove from sell screen: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("remove from sell screen: %w", err)
+	} else if n == 0 {
+		return ErrItemNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM shortcut_buttons WHERE item_id = ?`, itemID); err != nil {
+		return fmt.Errorf("remove from sell screen: clear shortcut rows: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("set sell screen hidden: %w", err)
+		return fmt.Errorf("remove from sell screen: %w", err)
 	}
 	return nil
 }
@@ -2069,10 +2092,13 @@ func (r *CatalogRepo) SetSellScreenHidden(ctx context.Context, itemID string, hi
 // hidden item in one statement (ut-docs#2614 — the Designer's "Show all N
 // on the sell screen") and returns how many items it unhid (0 when none
 // were hidden, not an error). Inactive items are left alone, matching
-// ListSellScreenHidden's own is_active filter. No shortcut_buttons rows are
-// written: an unhidden item comes back as an implicit tile (ut-docs#2541).
+// ListSellScreenHidden's own is_active filter, and so is a removed item
+// (ut-docs#2698: sell_screen_removed wins, and it isn't listed either — the
+// count here must match the list's). No shortcut_buttons rows are written:
+// an unhidden item returns to its kept row's position, or as an implicit
+// tile (ut-docs#2541).
 func (r *CatalogRepo) UnhideAllSellScreen(ctx context.Context) (int, error) {
-	res, err := r.db.ExecContext(ctx, `UPDATE items SET sell_screen_hidden = 0 WHERE sell_screen_hidden = 1 AND is_active = 1`)
+	res, err := r.db.ExecContext(ctx, `UPDATE items SET sell_screen_hidden = 0 WHERE sell_screen_hidden = 1 AND sell_screen_removed = 0 AND is_active = 1`)
 	if err != nil {
 		return 0, fmt.Errorf("unhide all sell screen: %w", err)
 	}
@@ -2088,9 +2114,10 @@ func (r *CatalogRepo) UnhideAllSellScreen(ctx context.Context) (int, error) {
 // if it was hidden before deactivation: the Designer's "Hidden from sell
 // screen" section is about items an operator could otherwise see and add
 // back, not the catalog's own inactive/deleted items (those are the
-// catalog page's concern).
+// catalog page's concern). A removed item (ut-docs#2698) is not listed
+// either: Unhide can't bring it back, only adding it from search can.
 func (r *CatalogRepo) ListSellScreenHidden(ctx context.Context) ([]HiddenItem, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id, name FROM items WHERE is_active = 1 AND sell_screen_hidden = 1 ORDER BY name`)
+	rows, err := r.db.QueryContext(ctx, `SELECT id, name FROM items WHERE is_active = 1 AND sell_screen_hidden = 1 AND sell_screen_removed = 0 ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -2106,27 +2133,33 @@ func (r *CatalogRepo) ListSellScreenHidden(ctx context.Context) ([]HiddenItem, e
 	return out, rows.Err()
 }
 
-// SellScreenHiddenItemIDs returns the set of item ids currently hidden from
-// the sell screen (ut-docs#2541) — used to filter ButtonStore.LoadAllActive's
-// implicit tile set (the All tab + every active item that isn't an explicit
-// shortcut_buttons row). No is_active filter: callers already intersect
-// this against an already-active item list (ListItems), so an inactive
-// item's hidden flag, if any, is simply never looked up.
-func (r *CatalogRepo) SellScreenHiddenItemIDs(ctx context.Context) (map[string]bool, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id FROM items WHERE sell_screen_hidden = 1`)
+// SellScreenStates returns the item ids currently hidden from the sell
+// screen and those removed from its quick buttons (ut-docs#2541/#2698), in
+// ONE query — what ButtonStore's grid loads and the sell-screen search need
+// to mark (hidden → greyed in edit mode) or drop (removed) a tile. An item
+// carrying both flags is reported as removed only (removed wins). No
+// is_active filter: callers intersect this against an already-active item
+// list, so an inactive item's flags are simply never looked up.
+func (r *CatalogRepo) SellScreenStates(ctx context.Context) (hidden, removed map[string]bool, err error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id, sell_screen_hidden, sell_screen_removed FROM items WHERE sell_screen_hidden = 1 OR sell_screen_removed = 1`)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rows.Close()
-	out := map[string]bool{}
+	hidden, removed = map[string]bool{}, map[string]bool{}
 	for rows.Next() {
 		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
+		var h, rm int
+		if err := rows.Scan(&id, &h, &rm); err != nil {
+			return nil, nil, err
 		}
-		out[id] = true
+		if rm == 1 {
+			removed[id] = true
+		} else if h == 1 {
+			hidden[id] = true
+		}
 	}
-	return out, rows.Err()
+	return hidden, removed, rows.Err()
 }
 
 func (r *CatalogRepo) DeactivateVariant(ctx context.Context, variantID string) error {

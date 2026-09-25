@@ -110,9 +110,10 @@ func TestButtonStoreLoad_ImplicitTileNoSKUFallsBackToItemIDCode(t *testing.T) {
 	}
 }
 
-// TestButtonStoreLoad_ExcludesHiddenItems (ut-docs#2541): a hidden item is
-// left out of BOTH the explicit and implicit tile sets.
-func TestButtonStoreLoad_ExcludesHiddenItems(t *testing.T) {
+// TestButtonStoreLoad_MarksHiddenItems (ut-docs#2541, #2698): a hidden
+// item stays in the grid load (Load), marked Hidden -- edit mode shows it
+// greyed -- while the at-rest All grid source (LoadAllActive) leaves it out.
+func TestButtonStoreLoad_MarksHiddenItems(t *testing.T) {
 	db := setupFullTestDB(t)
 	defer db.Close()
 
@@ -124,8 +125,8 @@ func TestButtonStoreLoad_ExcludesHiddenItems(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if len(btns) != 1 || btns[0].Label != "Bread" {
-		t.Fatalf("expected only the non-hidden item, got %+v", btns)
+	if len(btns) != 2 || btns[0].Label != "Apple" || !btns[0].Hidden || btns[1].Hidden {
+		t.Fatalf("expected Apple (hidden) then Bread, got %+v", btns)
 	}
 
 	all, err := store.LoadAllActive(context.Background())
@@ -133,7 +134,7 @@ func TestButtonStoreLoad_ExcludesHiddenItems(t *testing.T) {
 		t.Fatalf("LoadAllActive: %v", err)
 	}
 	if len(all) != 1 || all[0].Label != "Bread" {
-		t.Fatalf("expected LoadAllActive (the All grid) to exclude the hidden item too, got %+v", all)
+		t.Fatalf("expected LoadAllActive (the All grid) to exclude the hidden item, got %+v", all)
 	}
 }
 
@@ -223,31 +224,42 @@ func TestButtonStoreHide_RequiresItemID(t *testing.T) {
 	}
 }
 
-func TestButtonStoreRemove_HidesTheItem(t *testing.T) {
+// TestButtonStoreRemove_RemovesFromQuickButtons (ut-docs#2698): the legacy
+// /api/buttons/remove (code or itemId payload) maps to the trash badge's
+// remove-from-quick-buttons -- never a hide, never a deactivation.
+func TestButtonStoreRemove_RemovesFromQuickButtons(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('i1','S1','Apple', 100, 1)`)
 	store := NewButtonStore(db)
+	state := func() (hidden, removed, active int) {
+		t.Helper()
+		if err := db.QueryRow(`SELECT sell_screen_hidden, sell_screen_removed, is_active FROM items WHERE id='i1'`).Scan(&hidden, &removed, &active); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
 
-	// By itemId directly (buttons.html's badge form).
+	// By itemId directly.
 	if err := store.Remove("", "i1"); err != nil {
 		t.Fatalf("Remove by itemId: %v", err)
 	}
-	var hidden int
-	if err := db.QueryRow(`SELECT sell_screen_hidden FROM items WHERE id='i1'`).Scan(&hidden); err != nil || hidden != 1 {
-		t.Fatalf("expected i1 hidden, hidden=%d err=%v", hidden, err)
+	if h, r, a := state(); h != 0 || r != 1 || a != 1 {
+		t.Fatalf("expected removed (not hidden, still active), got hidden=%d removed=%d active=%d", h, r, a)
 	}
 
-	// Reset, then remove by code alone (resolved via the shortcut row).
-	mustExec(t, db, `UPDATE items SET sell_screen_hidden = 0 WHERE id='i1'`)
+	// Add back, then remove by code alone (resolved via the shortcut row).
 	if err := store.Add(Button{Label: "Apple", Code: "B1", ItemID: "i1"}); err != nil {
 		t.Fatalf("Add: %v", err)
+	}
+	if _, r, _ := state(); r != 0 {
+		t.Fatalf("Add must clear removed, got %d", r)
 	}
 	if err := store.Remove("B1", ""); err != nil {
 		t.Fatalf("Remove by code: %v", err)
 	}
-	if err := db.QueryRow(`SELECT sell_screen_hidden FROM items WHERE id='i1'`).Scan(&hidden); err != nil || hidden != 1 {
-		t.Fatalf("expected i1 hidden again, hidden=%d err=%v", hidden, err)
+	if h, r, a := state(); h != 0 || r != 1 || a != 1 {
+		t.Fatalf("expected removed again, got hidden=%d removed=%d active=%d", h, r, a)
 	}
 }
 
@@ -260,35 +272,6 @@ func TestButtonStoreRemove_UnknownCodeErrors(t *testing.T) {
 	}
 	if err := store.Remove("", ""); err == nil {
 		t.Fatal("expected an error for both code and itemId blank")
-	}
-}
-
-// TestButtonStoreDeleteItem_Deactivates (ut-docs#2541): the jiggle-mode
-// trash badge's target -- the same soft-deactivate the catalog page's own
-// "Delete item" uses.
-func TestButtonStoreDeleteItem_Deactivates(t *testing.T) {
-	// setupFullTestDB, not setupTestDB: pos.DeactivateItem also deactivates
-	// item_variants, which only the fuller fixture defines.
-	db := setupFullTestDB(t)
-	defer db.Close()
-	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('i1','S1','Apple', 100, 1)`)
-	store := NewButtonStore(db)
-
-	if err := store.DeleteItem(context.Background(), "i1"); err != nil {
-		t.Fatalf("DeleteItem: %v", err)
-	}
-	var active int
-	if err := db.QueryRow(`SELECT is_active FROM items WHERE id='i1'`).Scan(&active); err != nil || active != 0 {
-		t.Fatalf("expected i1 deactivated, active=%d err=%v", active, err)
-	}
-}
-
-func TestButtonStoreDeleteItem_RequiresItemID(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
-	store := NewButtonStore(db)
-	if err := store.DeleteItem(context.Background(), ""); err == nil {
-		t.Fatal("expected an error for a blank itemId")
 	}
 }
 

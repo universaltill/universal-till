@@ -56,6 +56,17 @@ func seedOneButton(t *testing.T, d *common.Deps) {
 	}
 }
 
+// seedAddableItem seeds an active item with no shortcut_buttons row, for a
+// test that adds a quick button and asserts a new row by its code:
+// ut-docs#2698 review F1 -- adding an item that already has a row (like
+// seedOneButton's itm-btn) keeps that row instead of creating another.
+func seedAddableItem(t *testing.T, d *common.Deps, id string) {
+	t.Helper()
+	if _, err := d.Db.Exec(`INSERT INTO items(id,sku,name,base_price,is_active) VALUES (?,?,?,100,1)`, id, "SKU-"+id, "Addable "+id); err != nil {
+		t.Fatalf("seed addable item: %v", err)
+	}
+}
+
 // isElevationPrompt reports whether rec's body is checkOrElevate's
 // needsElevation response (elevation.go's renderElevationPrompt) -- the
 // X-UT-Response header it sets unconditionally on that branch, same check
@@ -177,7 +188,8 @@ func TestButtonsAPI_CatalogManagementGate_RealSessionGatesByRole(t *testing.T) {
 
 	t.Run("add", func(t *testing.T) {
 		mux, d := newMux(t)
-		rec := postForm(mux, "/api/buttons/add", url.Values{"label": {"New"}, "code": {"NEW1"}, "itemId": {"itm-btn"}}, &cashier)
+		seedAddableItem(t, d, "itm-add")
+		rec := postForm(mux, "/api/buttons/add", url.Values{"label": {"New"}, "code": {"NEW1"}, "itemId": {"itm-add"}}, &cashier)
 		if !isElevationPrompt(rec) {
 			t.Fatalf("cashier add: want elevation prompt, got %d: %s", rec.Code, rec.Body.String())
 		}
@@ -187,8 +199,9 @@ func TestButtonsAPI_CatalogManagementGate_RealSessionGatesByRole(t *testing.T) {
 		}
 		for _, role := range []string{"manager", "admin", "super_admin"} {
 			mux, d := newMux(t)
+			seedAddableItem(t, d, "itm-add")
 			mgr := auth.User{ID: "u-" + role, Role: role}
-			rec := postForm(mux, "/api/buttons/add", url.Values{"label": {"New"}, "code": {"NEW-" + role}, "itemId": {"itm-btn"}}, &mgr)
+			rec := postForm(mux, "/api/buttons/add", url.Values{"label": {"New"}, "code": {"NEW-" + role}, "itemId": {"itm-add"}}, &mgr)
 			if isElevationPrompt(rec) {
 				t.Fatalf("%s add: got elevation prompt, want past the gate: %d %s", role, rec.Code, rec.Body.String())
 			}

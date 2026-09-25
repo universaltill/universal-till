@@ -29,11 +29,33 @@ type ShortcutButton struct {
 	// a photo-less tile (product-tile, buttons.html): an item WITH an
 	// image keeps showing its photo regardless of Color.
 	Color string
+	// Hidden (ut-docs#2698) marks a row whose item is hidden from the sell
+	// screen (items.sell_screen_hidden). Only LoadGridButtons ever returns
+	// such a row; LoadButtons leaves it out.
+	Hidden bool
 }
 
+// LoadButtons returns the quick buttons as the sell screen shows them AT
+// REST: rows whose item is hidden are left out. It is what the cloud
+// heartbeat reports and what a cloud layout directive is validated against
+// (cloudsync_wire.go), so sell_screen_hidden keeps meaning "not on the sell
+// screen" there (ut-docs#2698).
 func (r *ShortcutsRepo) LoadButtons(ctx context.Context) ([]ShortcutButton, error) {
+	return r.loadButtons(ctx, "load_buttons", false)
+}
+
+// LoadGridButtons (ut-docs#2698) is LoadButtons plus the rows whose item is
+// hidden, each marked Hidden, in the same sort order: the rendered grid
+// carries hidden tiles in their own spot so edit mode (the sale screen's
+// client-side jiggle mode, and the Designer) can show them greyed with an
+// Unhide badge. CSS keeps them out of sight at rest.
+func (r *ShortcutsRepo) LoadGridButtons(ctx context.Context) ([]ShortcutButton, error) {
+	return r.loadButtons(ctx, "load_grid_buttons", true)
+}
+
+func (r *ShortcutsRepo) loadButtons(ctx context.Context, op string, withHidden bool) ([]ShortcutButton, error) {
 	var err error
-	done := shortcutsObs.trace("load_buttons")
+	done := shortcutsObs.trace(op)
 	defer func() { done(err) }()
 	// image_path falls back to the item's own catalog image (item_images,
 	// role='thumbnail' — same source the catalog list and barcode/scan
@@ -50,12 +72,12 @@ func (r *ShortcutsRepo) LoadButtons(ctx context.Context) ([]ShortcutButton, erro
 	// did nothing, since POSRepo.ResolveShortcutLineDecoded already filters
 	// i.is_active = 1 when actually resolving the tap. This makes
 	// LoadButtons agree with that resolver.
-	// ut-docs#2541: i.sell_screen_hidden = 0 -- a hidden item's explicit row
-	// (normally deleted by CatalogRepo.SetSellScreenHidden the moment the
-	// item is hidden) must never resurface as a tile even if a row somehow
-	// still exists for it (e.g. hidden by a future direct DB write that
-	// skips that method) -- defense in depth alongside the delete, not a
-	// substitute for it.
+	// ut-docs#2541/#2698: a hidden item's explicit row is KEPT (it holds the
+	// tile's position) and filtered here instead -- withHidden=false (the
+	// rest view) drops it, withHidden=true returns it marked Hidden. A
+	// removed item (sell_screen_removed) has no row left at all
+	// (CatalogRepo.RemoveFromSellScreen deletes it); the removed = 0 filter
+	// is defence in depth against a direct DB write that skips that method.
 	// ut-docs#2541 review finding 1: COALESCE(NULLIF(sb.label,''), i.name) --
 	// ButtonStore.UpdateOrder materializes an implicit tile with an
 	// intentionally EMPTY label (see ShortcutsRepo.MaterializeAndReorder)
@@ -68,22 +90,24 @@ func (r *ShortcutsRepo) LoadButtons(ctx context.Context) ([]ShortcutButton, erro
 	rows, err := r.db.QueryContext(ctx, `
 SELECT COALESCE(NULLIF(sb.label, ''), i.name), sb.barcode, sb.item_id,
        COALESCE(sb.image_path, (SELECT path FROM item_images img WHERE img.item_id = sb.item_id AND img.role = 'thumbnail' LIMIT 1)),
-       COALESCE(i.base_price, 0), COALESCE(i.category_id, ''), COALESCE(i.color, '')
+       COALESCE(i.base_price, 0), COALESCE(i.category_id, ''), COALESCE(i.color, ''), i.sell_screen_hidden
 FROM shortcut_buttons sb
-JOIN items i ON i.id = sb.item_id AND i.is_active = 1 AND i.sell_screen_hidden = 0
-ORDER BY sb.sort_order, sb.label`)
+JOIN items i ON i.id = sb.item_id AND i.is_active = 1 AND i.sell_screen_removed = 0 AND (? OR i.sell_screen_hidden = 0)
+ORDER BY sb.sort_order, sb.label`, withHidden)
 	if err != nil {
-		return nil, shortcutsObs.wrap("load_buttons", err)
+		return nil, shortcutsObs.wrap(op, err)
 	}
 	defer rows.Close()
 	var out []ShortcutButton
 	for rows.Next() {
 		var b ShortcutButton
 		var img sql.NullString
-		if err := rows.Scan(&b.Label, &b.Barcode, &b.ItemID, &img, &b.Price, &b.CategoryID, &b.Color); err != nil {
-			err = shortcutsObs.wrap("load_buttons", err)
+		var hidden int
+		if err := rows.Scan(&b.Label, &b.Barcode, &b.ItemID, &img, &b.Price, &b.CategoryID, &b.Color, &hidden); err != nil {
+			err = shortcutsObs.wrap(op, err)
 			return nil, err
 		}
+		b.Hidden = hidden == 1
 		if img.Valid {
 			b.ImageURL = img.String
 		}
@@ -91,7 +115,7 @@ ORDER BY sb.sort_order, sb.label`)
 	}
 	err = rows.Err()
 	if err != nil {
-		err = shortcutsObs.wrap("load_buttons", err)
+		err = shortcutsObs.wrap(op, err)
 	}
 	return out, err
 }
@@ -222,6 +246,21 @@ ON CONFLICT(barcode) DO NOTHING`)
 	return nil
 }
 
+// AddButton puts itemID on the quick buttons (ButtonStore.Add), in one
+// transaction:
+//
+//   - if the item already has a shortcut_buttons row, that row is kept --
+//     its code and its sort position -- and only its label/image are
+//     refreshed (ut-docs#2698 review F1). Hide keeps the row and search
+//     offers "Add to quick buttons" on a hidden result; the item's
+//     resolvable tile code may have changed since the row was written (a
+//     barcode plugin enabled after it was materialised with the SKU), and
+//     upserting on the NEW code would leave two live tiles for one item.
+//   - otherwise a row is inserted at the end, upserting ON CONFLICT(barcode)
+//     as before.
+//   - both sell-screen flags are cleared (ut-docs#2541/#2698): the operator
+//     just configured a tile for the item, so a stale hidden/removed flag
+//     must not keep it off the grid.
 func (r *ShortcutsRepo) AddButton(ctx context.Context, b ShortcutButton) error {
 	var err error
 	done := shortcutsObs.trace("add_button")
@@ -233,8 +272,18 @@ func (r *ShortcutsRepo) AddButton(ctx context.Context, b ShortcutButton) error {
 		err = errors.New("label, barcode, and itemId are required")
 		return err
 	}
+	tx, terr := r.db.BeginTx(ctx, nil)
+	if terr != nil {
+		err = shortcutsObs.wrap("add_button", terr)
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
 	var exists int
-	if err = r.db.QueryRowContext(ctx, `SELECT 1 FROM items WHERE id = ? AND is_active = 1`, b.ItemID).Scan(&exists); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT 1 FROM items WHERE id = ? AND is_active = 1`, b.ItemID).Scan(&exists); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			err = errors.New("item not found or inactive")
 			return err
@@ -242,12 +291,32 @@ func (r *ShortcutsRepo) AddButton(ctx context.Context, b ShortcutButton) error {
 		err = shortcutsObs.wrap("add_button", err)
 		return err
 	}
-	_, err = r.db.ExecContext(ctx, `INSERT INTO shortcut_buttons(barcode,label,item_id,image_path,sort_order)
+	var existing string
+	switch qerr := tx.QueryRowContext(ctx, `SELECT barcode FROM shortcut_buttons WHERE item_id = ? ORDER BY sort_order, barcode LIMIT 1`, b.ItemID).Scan(&existing); {
+	case qerr == nil:
+		_, err = tx.ExecContext(ctx, `UPDATE shortcut_buttons SET label = ?, image_path = ? WHERE barcode = ?`,
+			b.Label, nullIfEmptyButton(b.ImageURL), existing)
+	case errors.Is(qerr, sql.ErrNoRows):
+		_, err = tx.ExecContext(ctx, `INSERT INTO shortcut_buttons(barcode,label,item_id,image_path,sort_order)
 VALUES(?,?,?,?, (SELECT COALESCE(MAX(sort_order)+1, 0) FROM shortcut_buttons))
 ON CONFLICT(barcode) DO UPDATE SET label=excluded.label, item_id=excluded.item_id, image_path=excluded.image_path`,
-		b.Barcode, b.Label, b.ItemID, nullIfEmptyButton(b.ImageURL))
-	err = shortcutsObs.wrap("add_button", err)
-	return err
+			b.Barcode, b.Label, b.ItemID, nullIfEmptyButton(b.ImageURL))
+	default:
+		err = qerr
+	}
+	if err != nil {
+		err = shortcutsObs.wrap("add_button", err)
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE items SET sell_screen_hidden = 0, sell_screen_removed = 0 WHERE id = ?`, b.ItemID); err != nil {
+		err = shortcutsObs.wrap("add_button", err)
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		err = shortcutsObs.wrap("add_button", err)
+		return err
+	}
+	return nil
 }
 
 func (r *ShortcutsRepo) RemoveButton(ctx context.Context, code string) error {

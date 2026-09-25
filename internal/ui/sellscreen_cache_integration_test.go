@@ -156,10 +156,10 @@ func TestSellScreenCache_DeactivatedItemDisappearsOnNextRequest(t *testing.T) {
 	if body, _ := f.category(t, h, "cat-drinks"); !strings.Contains(body, "Green Tea") {
 		t.Fatal("Green Tea missing from the drinks popup before deactivation")
 	}
-	// The jiggle-mode trash badge's own path (pos.DeactivateItem).
-	if err := f.store.DeleteItem(context.Background(), "itm-tea"); err != nil {
-		t.Fatalf("DeleteItem: %v", err)
-	}
+	// The catalog's own deactivation (ut-docs#2698: the jiggle-mode trash
+	// badge no longer deactivates -- see the remove-from-quick-buttons case
+	// below).
+	f.exec(t, `UPDATE items SET is_active = 0 WHERE id = 'itm-tea'`)
 	if body, _ := f.list(t, h); strings.Contains(body, "Green Tea") {
 		t.Fatal("deactivated Green Tea still offered on the sell screen (stale cache)")
 	}
@@ -170,6 +170,17 @@ func TestSellScreenCache_DeactivatedItemDisappearsOnNextRequest(t *testing.T) {
 	f.exec(t, `DELETE FROM items WHERE id = 'itm-bun'`)
 	if body, _ := f.list(t, h); strings.Contains(body, "Sticky Bun") {
 		t.Fatal("deleted Sticky Bun still offered (stale cache)")
+	}
+	// ut-docs#2698: the trash badge's remove-from-quick-buttons (an items
+	// flag + a shortcut_buttons delete) must invalidate too.
+	if body, _ := f.list(t, h); !strings.Contains(body, "Cola Can") {
+		t.Fatal("Cola Can missing before removal")
+	}
+	if err := f.store.RemoveFromQuickButtons(context.Background(), "itm-cola"); err != nil {
+		t.Fatalf("RemoveFromQuickButtons: %v", err)
+	}
+	if body, _ := f.list(t, h); strings.Contains(body, "Cola Can") {
+		t.Fatal("removed Cola Can still on the sell screen (stale cache)")
 	}
 }
 

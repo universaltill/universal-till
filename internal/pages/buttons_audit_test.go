@@ -18,12 +18,13 @@ import (
 func TestButtonsAdd_ElevatedPINWritesAuditRow(t *testing.T) {
 	mux, d := newButtonsMuxRealSession(t)
 	seedOneButton(t, d)
+	seedAddableItem(t, d, "itm-add")
 	mgrID, blockedID := newElevationTestPrincipals(t, d, "mgr-btn-add", "blocked-cashier-btn-add", "778899")
 
 	form := url.Values{
 		"label":        {"New Tile"},
 		"code":         {"NEWTILE"},
-		"itemId":       {"itm-btn"},
+		"itemId":       {"itm-add"},
 		"override_pin": {"778899"},
 	}
 	rec := postForm(mux, "/api/buttons/add", form, &auth.User{ID: blockedID, Role: "cashier"})
@@ -100,9 +101,10 @@ func TestButtonsRemove_ElevatedPINWritesAuditRow(t *testing.T) {
 func TestButtonsAdd_NonElevatedManager_NoAuditRow(t *testing.T) {
 	mux, d := newButtonsMuxRealSession(t)
 	seedOneButton(t, d)
+	seedAddableItem(t, d, "itm-add")
 	mgr := auth.User{ID: "mgr-direct-add", Role: "manager"}
 
-	form := url.Values{"label": {"Direct Add"}, "code": {"DIRECT1"}, "itemId": {"itm-btn"}}
+	form := url.Values{"label": {"Direct Add"}, "code": {"DIRECT1"}, "itemId": {"itm-add"}}
 	rec := postForm(mux, "/api/buttons/add", form, &mgr)
 	if isElevationPrompt(rec) {
 		t.Fatalf("manager add: got elevation prompt, want past the gate: %d %s", rec.Code, rec.Body.String())

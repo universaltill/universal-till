@@ -202,7 +202,7 @@ func TestButtonsPartial_EditMode(t *testing.T) {
 	}
 	body := rec.Body.String()
 	for _, want := range []string{
-		`class="products" hx-get="/ui/buttons" hx-vals='{"mode":"edit"}' hx-trigger="modifiers-changed from:body, buttons-changed from:body" hx-swap="outerHTML"`,
+		`class="products products--edit" hx-get="/ui/buttons" hx-vals='{"mode":"edit"}' hx-trigger="modifiers-changed from:body, buttons-changed from:body" hx-swap="outerHTML"`,
 		// The real category strip + tile grid, same ids app.js/Alpine key off.
 		`id="cat-tab-cat-a"`, `id="cat-tab-cat-b"`, `id="buttons-grid"`, `class="tile-cell"`,
 		`data-code="BTN" data-item-id="itm-btn" data-pos="0"`,
