@@ -75,7 +75,8 @@ func (bj *BackgroundJobs) Start(ctx context.Context, wg *sync.WaitGroup) {
 			case <-ticker.C:
 				// Only sync if cache exists and is stale (not first fetch)
 				if bj.catalogRepo != nil {
-					_, isStale, err := bj.catalogRepo.Get()
+					locale, deviceArch := bj.catalogKey()
+					_, isStale, err := bj.catalogRepo.Get(locale, deviceArch)
 					if err == nil && isStale {
 						bj.logger.Println("[Scheduler] cache is stale, syncing catalog")
 						bj.syncCatalog(ctx)
@@ -128,22 +129,24 @@ func (bj *BackgroundJobs) Start(ctx context.Context, wg *sync.WaitGroup) {
 	}()
 }
 
+// catalogKey is the (locale, arch) catalog snapshot the scheduler keeps
+// fresh — the same key its staleness check reads (ut-docs#2674). The catalog
+// is arch-filtered server-side; request the architecture this till actually
+// runs on — same value every interactive path sends (plugins_store_page,
+// cloudsync_wire, plugin_api). A hardcoded arch here made an arm64 till's
+// scheduler overwrite the cache with an amd64-filtered catalog.
+func (bj *BackgroundJobs) catalogKey() (locale, deviceArch string) {
+	locale, _ = marketplace.TillCatalogKey(bj.cfg.DefaultLocale)
+	return locale, deviceArchOf()
+}
+
 // syncCatalog fetches the latest catalog from marketplace with exponential backoff
 func (bj *BackgroundJobs) syncCatalog(ctx context.Context) {
 	if bj.catalogRepo == nil {
 		return
 	}
 
-	// The catalog is arch-filtered server-side; request the architecture this
-	// till actually runs on — same value every interactive path sends
-	// (plugins_store_page, cloudsync_wire, plugin_api). A hardcoded arch here
-	// made an arm64 till's scheduler overwrite the cache with an
-	// amd64-filtered catalog.
-	deviceArch := deviceArchOf()
-	locale := bj.cfg.DefaultLocale
-	if locale == "" {
-		locale = "en-US" // fallback to US English
-	}
+	locale, deviceArch := bj.catalogKey()
 
 	maxRetries := 3
 	baseDelay := bj.retryBaseDelay
@@ -320,9 +323,7 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 // indistinguishable from the historical hardcoded "linux/amd64" default this
 // code once had, so a pass-through test needs a sentinel to catch a
 // re-hardcoding on every platform.
-var deviceArchOf = func() string {
-	return fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
-}
+var deviceArchOf = marketplace.DeviceArch
 
 // runDailyBackup snapshots the local DB unless a backup newer than 24h
 // already exists, then prunes old snapshots to the newest 14.

@@ -36,14 +36,22 @@ type UpdateChecker struct {
 	db          *sql.DB
 	catalogRepo *marketplace.CatalogRepository
 	repo        *data.PluginRepo
+	// locale and deviceArch pick the catalog snapshot this till's own
+	// updates are judged against (ut-docs#2674): the shop's default locale
+	// and the till's own arch, the key the scheduler keeps fresh.
+	locale     string
+	deviceArch string
 }
 
-// NewUpdateChecker creates a new update checker
-func NewUpdateChecker(db *sql.DB, catalogRepo *marketplace.CatalogRepository) *UpdateChecker {
+// NewUpdateChecker creates a new update checker that reads the catalog
+// snapshot cached for (locale, deviceArch).
+func NewUpdateChecker(db *sql.DB, catalogRepo *marketplace.CatalogRepository, locale, deviceArch string) *UpdateChecker {
 	return &UpdateChecker{
 		db:          db,
 		catalogRepo: catalogRepo,
 		repo:        data.NewPluginRepo(db),
+		locale:      locale,
+		deviceArch:  deviceArch,
 	}
 }
 
@@ -62,7 +70,7 @@ func (uc *UpdateChecker) CheckForUpdates(ctx context.Context) ([]UpdateInfo, err
 	}
 
 	// Get marketplace catalog
-	snapshot, _, err := uc.catalogRepo.Get()
+	snapshot, _, err := uc.catalogRepo.Get(uc.locale, uc.deviceArch)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get catalog: %w", err)
 	}

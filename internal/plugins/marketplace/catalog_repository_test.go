@@ -58,7 +58,7 @@ func TestCatalogRepository_FetchAndGet(t *testing.T) {
 		t.Error("expected plugins in snapshot")
 	}
 
-	cached, isStale, err := repo.Get()
+	cached, isStale, err := repo.Get("en-US", "linux/amd64")
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestCatalogRepository_StaleDetection(t *testing.T) {
 
 	time.Sleep(150 * time.Millisecond)
 
-	_, isStale, err := repo.Get()
+	_, isStale, err := repo.Get("en-US", "linux/amd64")
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestCatalogRepository_DiskPersistence(t *testing.T) {
 		t.Fatalf("NewCatalogRepository failed: %v", err)
 	}
 
-	snapshot2, _, err := repo2.Get()
+	snapshot2, _, err := repo2.Get("en-US", "linux/amd64")
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
@@ -220,7 +220,7 @@ func TestCatalogRepository_Filter(t *testing.T) {
 		t.Fatalf("Fetch failed: %v", err)
 	}
 
-	filtered, err := repo.Filter("payment", "", "")
+	filtered, err := repo.Filter("en-US", "linux/amd64", "payment", "", "")
 	if err != nil {
 		t.Fatalf("Filter failed: %v", err)
 	}
@@ -299,7 +299,7 @@ func TestCatalogRepository_FetchPagesThroughFullCatalog(t *testing.T) {
 		t.Errorf("SnapshotVersion = %d, want 7 (from the first page's response)", snapshot.SnapshotVersion)
 	}
 
-	filtered, err := repo.Filter("report", "", "")
+	filtered, err := repo.Filter("en-US", "linux/amd64", "report", "", "")
 	if err != nil {
 		t.Fatalf("Filter failed: %v", err)
 	}
@@ -398,7 +398,7 @@ func TestCatalogRepository_OfflineReplay(t *testing.T) {
 	// Simulate offline by using invalid endpoint
 	cfg.EndpointURL = "http://invalid-endpoint:9999"
 
-	snapshot, isStale, err := repo.Get()
+	snapshot, isStale, err := repo.Get("en-US", "linux/amd64")
 	if err != nil {
 		t.Fatalf("Get failed when offline: %v", err)
 	}
@@ -469,13 +469,15 @@ func TestCatalogRepository_GetOrFetch_StaleCacheReturnsImmediatelyOnUnreachableM
 	repo.staleAfter = time.Millisecond
 
 	seeded := &CatalogSnapshot{
-		Plugins:   []PluginSummary{{ID: "seed-plugin", Name: "Seed Plugin", Version: "1.0.0"}},
-		FetchedAt: time.Now(),
+		Plugins:    []PluginSummary{{ID: "seed-plugin", Name: "Seed Plugin", Version: "1.0.0"}},
+		FetchedAt:  time.Now(),
+		Locale:     "en-US",
+		DeviceArch: "linux/amd64",
 	}
 	if err := repo.saveSnapshot(seeded); err != nil {
 		t.Fatalf("seed failed: %v", err)
 	}
-	repo.cached = seeded
+	repo.cached[mustCatalogKey(t, "en-US", "linux/amd64")] = seeded
 	time.Sleep(2 * time.Millisecond) // let it go stale
 
 	start := time.Now()
@@ -561,13 +563,15 @@ func TestCatalogRepository_GetOrFetch_NoDuplicateConcurrentBackgroundRefresh(t *
 	repo.staleAfter = time.Millisecond
 
 	seeded := &CatalogSnapshot{
-		Plugins:   []PluginSummary{{ID: "seed-plugin", Name: "Seed Plugin", Version: "1.0.0"}},
-		FetchedAt: time.Now(),
+		Plugins:    []PluginSummary{{ID: "seed-plugin", Name: "Seed Plugin", Version: "1.0.0"}},
+		FetchedAt:  time.Now(),
+		Locale:     "en-US",
+		DeviceArch: "linux/amd64",
 	}
 	if err := repo.saveSnapshot(seeded); err != nil {
 		t.Fatalf("seed failed: %v", err)
 	}
-	repo.cached = seeded
+	repo.cached[mustCatalogKey(t, "en-US", "linux/amd64")] = seeded
 	time.Sleep(2 * time.Millisecond)
 
 	var wg sync.WaitGroup
@@ -726,8 +730,8 @@ func TestCatalogRepository_Fetch_NeverOverwritesCacheWithOlderResult(t *testing.
 
 	// Seed a cache entry that is chronologically NEWER than anything this
 	// test's Fetch can produce (its FetchedAt is stamped from time.Now()
-	// during the call, which is strictly before now+1h). Different
-	// locale/arch than the fetch below, so a clobber is unambiguous.
+	// during the call, which is strictly before now+1h). Same key as the
+	// fetch below — only a same-key write can clobber since ut-docs#2674.
 	seeded := &CatalogSnapshot{
 		Plugins: []PluginSummary{{
 			ListingID: "already-cached-newer-plugin",
@@ -736,11 +740,11 @@ func TestCatalogRepository_Fetch_NeverOverwritesCacheWithOlderResult(t *testing.
 		}},
 		SnapshotVersion: 42,
 		FetchedAt:       time.Now().Add(1 * time.Hour),
-		Locale:          "de-DE",
-		DeviceArch:      "linux/arm64",
+		Locale:          "en-US",
+		DeviceArch:      "linux/amd64",
 	}
 	repo.mu.Lock()
-	repo.cached = seeded
+	repo.cached[mustCatalogKey(t, "en-US", "linux/amd64")] = seeded
 	repo.mu.Unlock()
 
 	got, err := repo.Fetch(context.Background(), "en-US", "linux/amd64")
@@ -758,7 +762,7 @@ func TestCatalogRepository_Fetch_NeverOverwritesCacheWithOlderResult(t *testing.
 	}
 
 	// The seeded newer entry must be completely untouched in memory.
-	cached, _, err := repo.Get()
+	cached, _, err := repo.Get("en-US", "linux/amd64")
 	if err != nil {
 		t.Fatalf("Get failed: %v", err)
 	}
@@ -768,7 +772,7 @@ func TestCatalogRepository_Fetch_NeverOverwritesCacheWithOlderResult(t *testing.
 	if len(cached.Plugins) != 1 || cached.Plugins[0].Name != "already-cached-newer-plugin" {
 		t.Errorf("cached plugins changed: %+v", cached.Plugins)
 	}
-	if cached.Locale != "de-DE" || cached.DeviceArch != "linux/arm64" || cached.SnapshotVersion != 42 {
+	if cached.Locale != "en-US" || cached.DeviceArch != "linux/amd64" || cached.SnapshotVersion != 42 {
 		t.Errorf("cached snapshot fields changed: locale=%q arch=%q version=%d", cached.Locale, cached.DeviceArch, cached.SnapshotVersion)
 	}
 	if !cached.FetchedAt.Equal(seeded.FetchedAt) {
@@ -777,7 +781,7 @@ func TestCatalogRepository_Fetch_NeverOverwritesCacheWithOlderResult(t *testing.
 
 	// The disk write is guarded together with the memory write — nothing
 	// was persisted, so the on-disk snapshot must still be absent.
-	onDisk, err := repo.loadSnapshot()
+	onDisk, err := repo.loadSnapshot("en-US", "linux/amd64")
 	if err != nil {
 		t.Fatalf("loadSnapshot failed: %v", err)
 	}

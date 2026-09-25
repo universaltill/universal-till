@@ -256,6 +256,9 @@ func TestSyncCatalog_AbortsBackoffOnShutdown(t *testing.T) {
 
 // plantSnapshot writes a catalog snapshot file directly into the repo's cache
 // dir with the given age, so tests control staleness without network calls.
+// It deliberately writes the pre-ut-docs#2674 single catalog-snapshot.json,
+// so these scheduler tests also cover a till upgraded with only that file:
+// the repository still serves it for the one key it recorded.
 func plantSnapshot(t *testing.T, cacheDir string, fetchedAt time.Time) {
 	t.Helper()
 	snap := map[string]any{

@@ -3,14 +3,12 @@ package pages
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
@@ -43,6 +41,10 @@ func seedInstalledPluginManifest(t *testing.T, db *sql.DB, id, name, author, ver
 	}
 }
 
+// schedulerTestCfg supplies the shop default locale the update checker keys
+// its catalog read on (ut-docs#2674).
+var schedulerTestCfg = &config.Config{DefaultLocale: "en-US"}
+
 // seededSchedulerCatalogRepo writes a catalog snapshot straight to disk —
 // the same "no marketplace client, no network" shape update_checker_test.go's
 // own seededCatalogRepo uses in the plugins package, reimplemented here
@@ -54,19 +56,15 @@ func seededSchedulerCatalogRepo(t *testing.T, summaries []marketplace.PluginSumm
 		Plugins:         summaries,
 		SnapshotVersion: 1,
 		FetchedAt:       time.Now(),
-		Locale:          "en",
-		DeviceArch:      "any",
-	}
-	raw, err := json.Marshal(snapshot)
-	if err != nil {
-		t.Fatalf("marshal snapshot: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(cacheDir, "catalog-snapshot.json"), raw, 0o644); err != nil {
-		t.Fatalf("write snapshot: %v", err)
+		Locale:          schedulerTestCfg.DefaultLocale,
+		DeviceArch:      marketplace.DeviceArch(),
 	}
 	repo, err := marketplace.NewCatalogRepository(nil, cacheDir)
 	if err != nil {
 		t.Fatalf("NewCatalogRepository: %v", err)
+	}
+	if err := repo.SeedSnapshot(&snapshot); err != nil {
+		t.Fatalf("seed snapshot: %v", err)
 	}
 	return repo
 }
@@ -95,7 +93,7 @@ func TestPluginUpdateCheckTick_AutoAppliesLanguagePacksOnly(t *testing.T) {
 		{DeveloperID: "dev-1", Name: "Theme", Version: "1.1.0", CanonicalType: "theme"},
 	})
 
-	d := &common.Deps{Db: db, Settings: settings.NewStore(db), CatalogRepo: repo}
+	d := &common.Deps{Db: db, Settings: settings.NewStore(db), CatalogRepo: repo, Cfg: schedulerTestCfg}
 
 	var applied []string
 	orig := pluginApplyUpdateFn
@@ -130,7 +128,7 @@ func TestPluginUpdateCheckTick_ReplicaNeverAutoApplies(t *testing.T) {
 	if err := st.Set(t.Context(), "sync.primary_url", "https://primary.example"); err != nil {
 		t.Fatalf("set sync.primary_url: %v", err)
 	}
-	d := &common.Deps{Db: db, Settings: st, CatalogRepo: repo}
+	d := &common.Deps{Db: db, Settings: st, CatalogRepo: repo, Cfg: schedulerTestCfg}
 
 	called := false
 	orig := pluginApplyUpdateFn
@@ -160,7 +158,7 @@ func TestPluginUpdateCheckTick_FailedAutoApplyCountsAsPending(t *testing.T) {
 	repo := seededSchedulerCatalogRepo(t, []marketplace.PluginSummary{
 		{DeveloperID: "dev-3", Name: "Lang Pack 3", Version: "1.1.0", CanonicalType: "language"},
 	})
-	d := &common.Deps{Db: db, Settings: settings.NewStore(db), CatalogRepo: repo}
+	d := &common.Deps{Db: db, Settings: settings.NewStore(db), CatalogRepo: repo, Cfg: schedulerTestCfg}
 
 	orig := pluginApplyUpdateFn
 	pluginApplyUpdateFn = func(ctx context.Context, d *common.Deps, pluginID string) (string, string, error) {
@@ -203,7 +201,7 @@ func TestPluginUpdateCheckTick_CatalogReadError_LeavesPendingUnchanged(t *testin
 	if err != nil {
 		t.Fatalf("NewCatalogRepository: %v", err)
 	}
-	d := &common.Deps{Db: db, Settings: settings.NewStore(db), CatalogRepo: repo}
+	d := &common.Deps{Db: db, Settings: settings.NewStore(db), CatalogRepo: repo, Cfg: schedulerTestCfg}
 
 	pluginUpdateCheckTick(t.Context(), d)
 

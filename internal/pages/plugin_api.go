@@ -763,7 +763,8 @@ func resolveListingViaCatalog(ctx context.Context, d *common.Deps, pluginID stri
 	if !found {
 		return ""
 	}
-	snapshot, _, err := d.CatalogRepo.GetOrFetch(ctx, d.Cfg.DefaultLocale, fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH))
+	locale, deviceArch := marketplace.TillCatalogKey(d.Cfg.DefaultLocale)
+	snapshot, _, err := d.CatalogRepo.GetOrFetch(ctx, locale, deviceArch)
 	if err != nil || snapshot == nil {
 		return ""
 	}
@@ -940,7 +941,8 @@ func handleCheckUpdates(d *common.Deps) http.HandlerFunc {
 			return
 		}
 
-		updateChecker := plugins.NewUpdateChecker(d.Db, d.CatalogRepo)
+		locale, deviceArch := marketplace.TillCatalogKey(d.Cfg.DefaultLocale)
+		updateChecker := plugins.NewUpdateChecker(d.Db, d.CatalogRepo, locale, deviceArch)
 		updates, err := updateChecker.CheckForUpdates(ctx)
 		if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to check for updates: %v", err), http.StatusInternalServerError)

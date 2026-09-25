@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
@@ -292,5 +293,55 @@ func TestPluginsPage_MatchWithEmptyVersionReportsVersionUnknownNotCurrent(t *tes
 	}
 	if !got.VersionUnknown {
 		t.Error("versionUnknown = false, want true: a match with an empty version must not look current")
+	}
+}
+
+// ut-docs#2674: /plugins reads the till's own catalog key — the one the
+// store, the update checker and the scheduler share — not the UI locale.
+// A ?lang= must neither fetch nor cache a locale-filtered catalog of its own.
+func TestPluginsPage_ReadsTillCatalogKeyNotUILocale(t *testing.T) {
+	d := pluginsManagerTestDeps(t)
+	seedTestPlugin(t, d.Db, "com.x.faq", "FAQ Plugin", "1.0.0")
+	var mu sync.Mutex
+	var seen []string
+	mp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, r.URL.Query().Get("locale")+"|"+r.URL.Query().Get("arch"))
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"plugins":[]}`))
+	}))
+	t.Cleanup(mp.Close)
+	cfg := &config.MarketplaceConfig{EndpointURL: mp.URL}
+	repo, err := marketplace.NewCatalogRepository(marketplace.NewClient(cfg, oauth.NewTokenClient(cfg)), t.TempDir())
+	if err != nil {
+		t.Fatalf("catalog repo: %v", err)
+	}
+	d.CatalogRepo = repo
+
+	mux := http.NewServeMux()
+	registerPluginsPage(mux, d)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/plugins?lang=fa", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /plugins?lang=fa = %d", rec.Code)
+	}
+
+	locale, arch := marketplace.TillCatalogKey("") // these deps carry no Cfg
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) == 0 {
+		t.Fatal("/plugins made no catalog request")
+	}
+	for _, s := range seen {
+		if s != locale+"|"+arch {
+			t.Errorf("/plugins requested catalog %q, want the till key %q", s, locale+"|"+arch)
+		}
+	}
+	if _, _, err := repo.Get(locale, arch); err != nil {
+		t.Errorf("till key not cached after /plugins: %v", err)
+	}
+	if snap, _, err := repo.Get("fa", ""); err == nil {
+		t.Errorf("/plugins cached a UI-locale catalog: %+v", snap)
 	}
 }

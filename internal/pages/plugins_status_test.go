@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -40,6 +39,10 @@ func TestStorePageShowsLifecycleStatusAndInstalledSplit(t *testing.T) {
 	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
 
 	repo := newCatalogRepoWithSnapshot(t, marketplace.CatalogSnapshot{
+		// The store reads the till's own catalog key (ut-docs#2674); this
+		// cfg sets no shop locale, so that is the en-US fallback.
+		Locale:     "en-US",
+		DeviceArch: marketplace.DeviceArch(),
 		Plugins: []marketplace.PluginSummary{
 			{ListingID: "listing-active", Name: "Active Plugin", Version: "1.2.3", CanonicalType: "payment"},
 			{ListingID: "listing-failed", Name: "Failed Plugin", Version: "3.1.0", CanonicalType: "page"},
@@ -233,12 +236,8 @@ func newCatalogRepoWithSnapshot(t *testing.T, snapshot marketplace.CatalogSnapsh
 		t.Fatalf("new catalog repo: %v", err)
 	}
 
-	data, err := json.Marshal(snapshot)
-	if err != nil {
-		t.Fatalf("marshal snapshot: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(cacheDir, "catalog-snapshot.json"), data, 0o644); err != nil {
-		t.Fatalf("write snapshot: %v", err)
+	if err := repo.SeedSnapshot(&snapshot); err != nil {
+		t.Fatalf("seed snapshot: %v", err)
 	}
 
 	return repo

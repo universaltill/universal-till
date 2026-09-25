@@ -371,7 +371,7 @@ func TestGetOrFetchRefetchesWhenStale(t *testing.T) {
 
 	// Force staleness without waiting out the real 15-minute window.
 	repo.mu.Lock()
-	repo.cached.FetchedAt = time.Now().Add(-2 * repo.staleAfter)
+	repo.cached[mustCatalogKey(t, "en", "linux/amd64")].FetchedAt = time.Now().Add(-2 * repo.staleAfter)
 	repo.mu.Unlock()
 
 	snap, stale, err := repo.GetOrFetch(ctx, "en", "linux/amd64")
@@ -398,7 +398,7 @@ func TestGetOrFetchRefetchesWhenStale(t *testing.T) {
 	var freshStale bool
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		fresh, freshStale, err = repo.Get()
+		fresh, freshStale, err = repo.Get("en", "linux/amd64")
 		if err != nil {
 			t.Fatalf("Get after background refresh: %v", err)
 		}
@@ -457,7 +457,7 @@ func TestGetOrFetchFallsBackToStaleCacheWhenRefetchFails(t *testing.T) {
 	failAfterFirst = true // any refetch attempt now fails with a real 500
 
 	repo.mu.Lock()
-	repo.cached.FetchedAt = time.Now().Add(-2 * repo.staleAfter)
+	repo.cached[mustCatalogKey(t, "en", "linux/amd64")].FetchedAt = time.Now().Add(-2 * repo.staleAfter)
 	repo.mu.Unlock()
 
 	snap, stale, err := repo.GetOrFetch(ctx, "en", "linux/amd64")
@@ -481,7 +481,7 @@ func TestGetOrFetchFallsBackToStaleCacheWhenRefetchFails(t *testing.T) {
 
 	// The failed background refresh must not have clobbered the still-valid
 	// stale cache.
-	stillCached, stillStale, err := repo.Get()
+	stillCached, stillStale, err := repo.Get("en", "linux/amd64")
 	if err != nil {
 		t.Fatalf("Get after failed background refresh: %v", err)
 	}
@@ -499,10 +499,10 @@ func TestGetReportsCorruptSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewCatalogRepository: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "catalog-snapshot.json"), []byte("{corrupt"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, snapshotFileName("en", "linux/amd64")), []byte("{corrupt"), 0o644); err != nil {
 		t.Fatalf("write corrupt snapshot: %v", err)
 	}
-	if _, _, err := repo.Get(); err == nil {
+	if _, _, err := repo.Get("en", "linux/amd64"); err == nil {
 		t.Fatal("Get with corrupt snapshot: want error")
 	}
 }

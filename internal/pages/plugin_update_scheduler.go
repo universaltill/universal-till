@@ -8,6 +8,7 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
 
 const (
@@ -111,7 +112,8 @@ func pluginUpdateCheckTick(ctx context.Context, d *common.Deps) {
 	// skipped for a replica, not the whole tick.
 	isReplica := d.SyncPrimaryURL(ctx) != ""
 
-	checker := plugins.NewUpdateChecker(d.Db, d.CatalogRepo)
+	locale, deviceArch := marketplace.TillCatalogKey(d.Cfg.DefaultLocale)
+	checker := plugins.NewUpdateChecker(d.Db, d.CatalogRepo, locale, deviceArch)
 	found, err := checker.CheckForUpdates(ctx)
 	if err != nil {
 		log.Warnf("[PluginUpdateScheduler] check failed: %v", err)

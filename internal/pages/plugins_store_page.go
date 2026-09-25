@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"runtime"
 	"sort"
 	"strings"
 
@@ -81,10 +80,10 @@ func PluginStoreHandler(d *common.Deps) http.HandlerFunc {
 			return
 		}
 
-		deviceArch := fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)
+		locale, deviceArch := marketplace.TillCatalogKey(d.Cfg.DefaultLocale)
 		// Marketplace web base for relative icon paths (endpoint minus /api).
 		webBase := strings.TrimSuffix(strings.TrimRight(enroll.Effective(d.Cfg).Marketplace.EndpointURL, "/"), "/api")
-		snapshot, _, err := d.CatalogRepo.GetOrFetch(ctx, d.Cfg.DefaultLocale, deviceArch)
+		snapshot, _, err := d.CatalogRepo.GetOrFetch(ctx, locale, deviceArch)
 
 		var downloads map[string]plugins.StoreDownload
 		if installer, _, ierr := storeInstaller(d); ierr == nil {
