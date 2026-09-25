@@ -77,6 +77,30 @@ messages recorded in the Dev report.
   - `shellcheck` is not installed in the container. No shell files were
     touched.
 
+## Merge with main
+
+`origin/main` gained ut-docs#2613, which drops the strip's All tab and
+removes `ButtonsHTTP.HideAllTab`, and ut-docs#2614, which adds the
+Designer's show-all-hidden button. Merging them:
+
+- The `renderList` conflict was resolved by keeping main's comment and the
+  degraded-aware `loadAllActive`.
+- `HideAllTab` was dropped from the cache key.
+- `guard-deadcode-baseline.sh` then flagged `SellScreenCache.Len`/`Bytes`,
+  which only tests call, so they moved to `sellscreen_cache_helpers_test.go`.
+- #2614's unhide-all writes `items.sell_screen_hidden`, which the admin
+  triggers already cover.
+
+Re-run on the merged tree:
+
+- `go test -race ./...` passed. `internal/ui` was re-run on its own after
+  the helper move, because the full run compiled it mid-edit.
+- `golangci-lint` reported 0 issues.
+- The data-access, i18n, kiosk-engine, help, migration-collision,
+  price-history-sync, deadcode and naming/compliance guards passed.
+- The browser suites were re-run only by the PR's CI e2e and playwright
+  jobs, not locally.
+
 ## Accepted / deferred
 
 - An image file that lands on disk with no database write can take up to
