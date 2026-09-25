@@ -416,10 +416,10 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 		return
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	// Files ride alongside the row data: item images can change
+	// Files ride alongside the row data: item and category photos can change
 	// without moving the admin fingerprint, so this runs every tick
 	// (the manifest is cheap; only missing/changed files download).
-	syncItemAssets(ctx, client, primary, bearer)
+	syncAssets(ctx, client, primary, bearer)
 	if !out.Data.Unchanged {
 		if err := adminRepo.ApplyAdmin(ctx, out.Data.Bundle); err != nil {
 			logging.L().Errorf("sync pull: apply failed: %v", err)
