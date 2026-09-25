@@ -179,8 +179,8 @@ func TestAdvertiser_TXTRecordCarriesNoSecrets(t *testing.T) {
 		if !ok {
 			t.Fatalf("expected every TXT field to be key=value, got %q", field)
 		}
-		if k != "v" && k != "name" && k != "id" {
-			t.Fatalf("unexpected TXT key %q — only v/name/id are allowed by design", k)
+		if k != "v" && k != "name" && k != "id" && k != "link" {
+			t.Fatalf("unexpected TXT key %q — only v/name/id/link are allowed by design", k)
 		}
 		// A 64-hex-char value is exactly the shape of this codebase's
 		// sha256 pairing commitment (pairing_api.go's commitmentMatches) —
@@ -192,6 +192,22 @@ func TestAdvertiser_TXTRecordCarriesNoSecrets(t *testing.T) {
 		// same length as the commitment check above, already covered; also
 		// reject anything that merely LOOKS like a long random hex blob in
 		// an unexpected field.
+	}
+}
+
+// TestAdvertiser_TXTRecordAdvertisesLink pins ADR-0114 §11: a main till
+// that serves GET /api/sync/link says so in its TXT record ("link=1"), so a
+// replica dials the link only when advertised and polls otherwise.
+func TestAdvertiser_TXTRecordAdvertisesLink(t *testing.T) {
+	txt := txtRecord("Task Runner", "till-abc123")
+	found := false
+	for _, f := range txt {
+		if f == "link=1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("TXT record %v lacks link=1", txt)
 	}
 }
 

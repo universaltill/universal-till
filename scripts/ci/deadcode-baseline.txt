@@ -12,6 +12,11 @@ internal/data/related_items_repo.go: unreachable func: RelatedItemsRepo.LastRebu
 internal/diagnostics/device_model.go: unreachable func: SetDeviceModel
 internal/diagnostics/events.go: unreachable func: EnumValues
 internal/discovery/sweep.go: unreachable func: SweepPrinters
+internal/fleetlink/hub.go: unreachable func: Hub.Handle
+internal/fleetlink/hub.go: unreachable func: Hub.Peer
+internal/fleetlink/hub.go: unreachable func: Hub.Report
+internal/fleetlink/peer.go: unreachable func: Peer.Hello
+internal/fleetlink/peer.go: unreachable func: Peer.Request
 internal/fiscal/tse_credential_store.go: unreachable func: NewSigningDeviceCredentialStoreAt
 internal/fiscal/tse_credential_store.go: unreachable func: SigningDeviceCredentialStore.Path
 internal/httpx/httpx.go: unreachable func: NewRenderer

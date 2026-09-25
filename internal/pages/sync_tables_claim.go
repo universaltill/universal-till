@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -83,6 +84,13 @@ func registerSyncTablesClaim(mux *http.ServeMux, d *common.Deps) {
 			writeSyncOrdersJSON(w, http.StatusInternalServerError, nil, "server error")
 			return
 		}
+		// ADR-0114 §2: nudge linked tills for an operator's claim only. A
+		// replica's periodic re-affirm (periodic=1, tables_claim_proxy.go)
+		// refreshes a claim that already holds; nudging for it would make
+		// every linked till pull tables each tick while any table is held.
+		if claimed && r.Form.Get("periodic") != "1" {
+			d.NudgeLink(fleetlink.ScopeTables)
+		}
 		writeSyncOrdersJSON(w, http.StatusOK, syncTableClaimResult{Claimed: claimed}, nil)
 	})
 
@@ -105,6 +113,7 @@ func registerSyncTablesClaim(mux *http.ServeMux, d *common.Deps) {
 			writeSyncOrdersJSON(w, http.StatusInternalServerError, nil, "server error")
 			return
 		}
+		d.NudgeLink(fleetlink.ScopeTables) // ADR-0114 §2
 		writeSyncOrdersJSON(w, http.StatusOK, syncTableReleaseResult{Released: true}, nil)
 	})
 
@@ -144,6 +153,7 @@ func registerSyncTablesClaim(mux *http.ServeMux, d *common.Deps) {
 			writeSyncOrdersJSON(w, http.StatusInternalServerError, nil, "server error")
 			return
 		}
+		d.NudgeLink(fleetlink.ScopeTables) // ADR-0114 §2
 		writeSyncOrdersJSON(w, http.StatusOK, syncTableReleaseResult{Released: true}, nil)
 	})
 }

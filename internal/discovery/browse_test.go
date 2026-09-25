@@ -30,6 +30,27 @@ func TestCandidateFromEntry_ParsesNameAndID(t *testing.T) {
 	}
 }
 
+// ADR-0114 §11: the link level a main till advertises reaches the
+// candidate; an older main till (no link= field) reads as 0 — poll only.
+func TestCandidateFromEntry_ReadsLinkLevel(t *testing.T) {
+	base := mdns.ServiceEntry{AddrV4: net.IPv4(192, 168, 1, 50), Port: 8080}
+	e := base
+	e.InfoFields = []string{"v=1", "name=Shop", "id=till-1", "link=1"}
+	if c, ok := candidateFromEntry(&e); !ok || c.Link != 1 {
+		t.Fatalf("link=1 → %+v ok=%v, want Link 1", c, ok)
+	}
+	e2 := base
+	e2.InfoFields = []string{"v=1", "name=Shop", "id=till-1"}
+	if c, ok := candidateFromEntry(&e2); !ok || c.Link != 0 {
+		t.Fatalf("no link field → %+v ok=%v, want Link 0", c, ok)
+	}
+	e3 := base
+	e3.InfoFields = []string{"v=1", "name=Shop", "id=till-1", "link=banana"}
+	if c, ok := candidateFromEntry(&e3); !ok || c.Link != 0 {
+		t.Fatalf("junk link field → %+v ok=%v, want Link 0", c, ok)
+	}
+}
+
 func TestCandidateFromEntry_RejectsEntryWithoutID(t *testing.T) {
 	e := &mdns.ServiceEntry{
 		Name:       "mystery._unitill-sync._tcp.local.",

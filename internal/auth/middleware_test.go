@@ -186,6 +186,10 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		// so without its own entry the bridge authenticates perfectly and is
 		// still 401'd here: the /api/sync/stock failure class, again.
 		"/api/sync/orders/stream",
+		// ADR-0114 (ut-docs#2734): the main-till link WebSocket. Bearer-
+		// authed in the handler (syncTill) on the upgrade request — missing
+		// here, every replica's link would be 401'd before syncTill ran.
+		"/api/sync/link",
 		// ut-docs#1392: the primary-side READ-ONLY cross-till
 		// table-occupancy endpoint a replica's tablesWithStateForDisplay
 		// proxies to. Bearer-authed in the handler (syncTill), same as
