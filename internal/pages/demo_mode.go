@@ -401,6 +401,7 @@ var demoAllowedRoutes = map[string]bool{
 	"/ui/buttons/all/more":              true,
 	"/ui/buttons/category":              true,
 	"/ui/buttons/search":                true,
+	"GET /ui/buttons/version":           true,
 	"GET /api/vouchers/{id}":            true,
 	"GET /open-orders":                  true,
 	"GET /ui/held":                      true,
