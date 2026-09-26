@@ -82,8 +82,9 @@ if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
   trap notary_cleanup EXIT
   notary_args
   if [ "${#NOTARY[@]}" -gt 0 ]; then
-    echo "==> notarizing (this can take a few minutes)"
-    xcrun notarytool submit "$DMG" "${NOTARY[@]}" --wait
+    # Bounded (ut-docs#2917): fails the build on timeout/rejection, so an
+    # un-notarized .dmg is never produced as a release candidate.
+    notary_submit_and_wait "$DMG"
     notary_cleanup
     echo "==> stapling"
     xcrun stapler staple "$APP"        # so the app validates offline once copied out
