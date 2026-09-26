@@ -25,7 +25,7 @@ Die Kasse aktualisiert sich nachts selbst, solange Sie das nicht ausschalten.
 2. Sie startet nie mitten in einem Verkauf neu. Liegen noch Artikel in einem Warenkorb (auch in einer Selbstbedienungs- oder Tischbestellung), wartet sie, bis der Warenkorb leer ist. Geschieht das nicht innerhalb einer halben Stunde oder war die Kasse zu dieser Zeit ausgeschaltet, versucht sie es in der nächsten Nacht erneut.
 3. Um automatische Updates zu beenden, entfernen Sie das Häkchen bei „Automatisch aktualisieren“ und klicken Sie auf Speichern. Die Kasse behält diese Einstellung. Auf der Hauptkasse beendet das auch das Nachziehen ihrer zusätzlichen Kassen; eine zusätzliche Kasse übernimmt diese Einstellung immer von ihrer Hauptkasse.
 4. Eine zusätzliche Kasse folgt der Hauptkasse: Läuft auf der Hauptkasse eine neuere Version, installiert die zusätzliche Kasse genau diese Version im nächsten Moment, in dem kein Verkauf offen ist. Zusätzliche Kassen unter Windows und Android zeigen stattdessen einen Hinweis „erforderlich“, bis sie selbst installieren können.
-5. Kassen unter Windows und Android können Updates noch nicht selbst installieren. Aktualisieren Sie sie von Hand wie oben beschrieben.
+5. Kassen unter Windows und Android können Updates noch nicht selbst installieren. Aktualisieren Sie sie von Hand wie oben beschrieben. Unter Windows schließt das Installationsprogramm Universal Till zuerst, falls es noch geöffnet ist. Schließen Sie also einen laufenden Verkauf ab, bevor Sie es starten.
 
 ## Auf einer Android-Kasse
 

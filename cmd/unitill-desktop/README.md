@@ -111,6 +111,40 @@ sales are lost) or manually reconcile the two before restarting — there is
 no automated merge tool for this, it's a one-off recovery, not a shipped
 feature.
 
+## Server outlives a crashed shell (Windows, ut-docs#2760)
+
+When the shell died without running its deferred `cmd.Process.Kill()` — the
+WebView2 crash of ut-docs#2761, or a `taskkill` — the `unitill-pos.exe` it had
+spawned kept running. The orphan held the data directory, so a relaunch
+either attached to it or started a second server that exited with
+`db.ErrDataDirLocked`, and the installer failed with "Error opening file for
+writing" on `unitill-pos.exe`. Three changes close this:
+
+- **Kill-on-close job** (`internal/procjob`): right after `cmd.Start()` the
+  child goes into a Windows Job object with
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. The shell never closes the handle;
+  the OS does when the shell exits for any reason, and kills the server (and
+  the hardware plugins it started) with it. Only the child is in the job —
+  not the shell — so a browser opened by the WebView2 fallback survives. A
+  failure to create/assign the job is a warning in `desktop.log`, never
+  fatal. No-op on other platforms.
+- **Early exit is logged** (`child_wait.go`): the ~10s wait for the server
+  stops as soon as the child exits and `desktop.log` records its exit
+  status, instead of polling a dead port and recording nothing. Not on
+  macOS: reaping the child there would let its PID be reused before the
+  window-close handler SIGTERMs it.
+- **Installer/uninstaller** (`packaging/windows/installer.nsi`,
+  `StopRunningTill`): before extracting or deleting, stop any
+  `unitill-desktop.exe`/`unitill-pos.exe` whose image lives under
+  `$INSTDIR` (PowerShell + WMI `Win32_Process.ExecutablePath` — the 32-bit
+  installer's PowerShell can't read a 64-bit process's `Get-Process` path —
+  path passed via an env var), wait for them to exit, and say so in the
+  install log.
+
+`GOOS=windows go vet ./internal/procjob/` runs in `ci.yml`'s `build` job;
+`procjob_windows_test.go` (kill the parent → its child dies) runs only on
+Windows.
+
 ## Status & follow-ups
 
 Proof of concept — validated to build on macOS (arm64). Still to do:

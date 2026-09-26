@@ -267,6 +267,17 @@ jobs:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
         run: go build ./...
+      - name: Vet Windows-only code (GOOS=windows, ut-docs#2760)
+        # Nothing else on a PR compiles windows-tagged Go: the Windows shell
+        # is a mingw cgo build that only release.yml runs. internal/procjob
+        # (the kill-on-close job that stops unitill-pos when the shell dies)
+        # and the data-dir lock are pure Go, so cross-vet them — tests
+        # included — to catch a wrong x/sys signature before a release.
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+          GOOS: windows
+        run: go vet ./internal/procjob/ ./internal/db/
       - name: Test
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache

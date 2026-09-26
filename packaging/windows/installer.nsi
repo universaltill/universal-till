@@ -65,9 +65,33 @@ VIAddVersionKey "LegalCopyright" "© ${PUBLISHER}"
 
 !insertmacro MUI_LANGUAGE "English"
 
+; Stop a running Universal Till before its files are replaced or removed
+; (ut-docs#2760). A running unitill-pos.exe — including one orphaned by a
+; crashed shell — locks its own image, and File then fails with "Error
+; opening file for writing". Only copies whose image lives under $INSTDIR are
+; stopped (a headless unitill-pos elsewhere is left alone); the shell goes
+; first so its kill-on-close job takes its server down with it. The path
+; reaches PowerShell through an environment variable, never spliced into the
+; script text, so an apostrophe in the user's profile path can't break it.
+; Processes are found through WMI (Win32_Process.ExecutablePath), not
+; Get-Process: this installer is 32-bit, so nsExec starts the 32-bit
+; PowerShell, whose Get-Process returns a null Path for every 64-bit
+; process — the filter would silently match nothing.
+; Best-effort: if PowerShell can't run or the script fails, the install log
+; says so and carries on; File reports any file that is still locked.
+!macro StopRunningTill
+  DetailPrint "Closing ${APPNAME} if it is running…"
+  System::Call 'Kernel32::SetEnvironmentVariable(t "UT_STOP_DIR", t "$INSTDIR")'
+  nsExec::ExecToLog `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$d = $$env:UT_STOP_DIR.TrimEnd('\') + '\'; try { foreach ($$n in @('unitill-desktop.exe', 'unitill-pos.exe')) { Get-CimInstance Win32_Process -Filter ('Name=''' + $$n + '''') -ErrorAction Stop | Where-Object { $$_.ExecutablePath -and $$_.ExecutablePath.StartsWith($$d, [StringComparison]::OrdinalIgnoreCase) } | ForEach-Object { Write-Output ('Stopping ' + $$_.Name + ' (pid ' + $$_.ProcessId + ')'); Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue; Wait-Process -Id $$_.ProcessId -Timeout 15 -ErrorAction SilentlyContinue } }; exit 0 } catch { Write-Output $$_; exit 1 }"`
+  Pop $0
+  StrCmp $0 "0" +2 0
+    DetailPrint "Could not check for a running ${APPNAME} ($0); continuing."
+!macroend
+
 Section "Universal Till" SecMain
   SectionIn RO
   SetOutPath "$INSTDIR"
+  !insertmacro StopRunningTill
   ; Everything the goreleaser Windows archive contains: the exe, web/ assets,
   ; README, LICENSE, pos.env.example, and the .bat launcher.
   File /r "${SRCDIR}\*.*"
@@ -96,6 +120,7 @@ Section "Universal Till" SecMain
 SectionEnd
 
 Section "Uninstall"
+  !insertmacro StopRunningTill
   ; Preserve the shop's database: remove app files but keep the data/ folder
   ; (the operator can delete it by hand if they really mean to).
   Delete "$INSTDIR\${EXENAME}"
