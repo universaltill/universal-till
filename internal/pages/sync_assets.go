@@ -70,13 +70,23 @@ type assetEntry struct {
 }
 
 // list walks the scope's asset tree. Files over syncAssetMaxBytes and the
-// replica's own in-flight temp files are left out.
-func (s assetScope) list() ([]assetEntry, error) {
+// replica's own in-flight temp files are left out. complete is false when
+// any entry below the root could not be read (ut-docs#2785) — a replica
+// prunes against a complete manifest only, so an unreadable subdirectory on
+// the main can never read as "those photos were deleted".
+func (s assetScope) list() (entries []assetEntry, complete bool, err error) {
 	root := s.root()
 	var out []assetEntry
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+	complete = true
+	err = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			if path != root || !os.IsNotExist(err) {
+				complete = false
+			}
 			return nil // a missing tree just means "no images yet"
+		}
+		if info.IsDir() {
+			return nil
 		}
 		if info.Size() > syncAssetMaxBytes || strings.HasSuffix(path, syncTmpSuffix) {
 			return nil
@@ -89,9 +99,9 @@ func (s assetScope) list() ([]assetEntry, error) {
 		return nil
 	})
 	if os.IsNotExist(err) {
-		return nil, nil
+		return nil, true, nil
 	}
-	return out, err
+	return out, complete, err
 }
 
 // safePath resolves a manifest path under the scope root, refusing
@@ -121,13 +131,16 @@ func registerSyncAssets(mux *http.ServeMux, d *common.Deps) {
 				_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})
 				return
 			}
-			list, err := scope.list()
+			list, complete, err := scope.list()
 			if err != nil {
 				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_assets", err)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"data": list, "error": nil})
+			// "complete" (ut-docs#2785) tells the replica this manifest is
+			// the main's whole live set, so a file it no longer lists may be
+			// pruned; an older main never sends it and so never causes a prune.
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": list, "complete": complete, "error": nil})
 		})
 
 		mux.HandleFunc("GET "+scope.filePath, func(w http.ResponseWriter, r *http.Request) {
@@ -165,19 +178,28 @@ func sameMod(local, remote int64) bool {
 }
 
 // syncAssets runs on the replica's pull tick: for every scope, fetch the
-// primary's manifest and download anything missing or changed. Failures log
-// and wait for the next tick — never fatal (ADR-0003).
-func syncAssets(ctx context.Context, client *http.Client, primary, bearer string) {
+// primary's manifest and download anything missing or changed, then (with
+// a pruner) remove files the main no longer has (ut-docs#2785). Failures
+// log and wait for the next tick — never fatal (ADR-0003).
+func syncAssets(ctx context.Context, client *http.Client, primary, bearer string, pr *assetPruner) {
+	var t *pruneTick
+	if pr != nil {
+		t = pr.tick()
+	}
 	for _, scope := range syncAssetScopes {
-		if !scope.pull(ctx, client, primary, bearer) {
+		if !scope.pull(ctx, client, primary, bearer, t) {
 			return // primary went away; next tick retries
 		}
 	}
+	if t != nil && t.pruned > 0 {
+		logging.L().Infof("sync pull: %d image(s) the main till no longer has removed", t.pruned)
+	}
 }
 
-// pull syncs one scope. It reports false only when the primary is
+// pull syncs one scope; t (nil = no ledger, no prune) records downloads
+// and prunes (ut-docs#2785). It reports false only when the primary is
 // unreachable, so the caller can stop instead of timing out per scope.
-func (s assetScope) pull(ctx context.Context, client *http.Client, primary, bearer string) bool {
+func (s assetScope) pull(ctx context.Context, client *http.Client, primary, bearer string, t *pruneTick) bool {
 	base := strings.TrimSuffix(primary, "/")
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+s.listPath, nil)
 	if err != nil {
@@ -193,12 +215,21 @@ func (s assetScope) pull(ctx context.Context, client *http.Client, primary, bear
 		return true // an older primary without this scope answers 404
 	}
 	var out struct {
-		Data []assetEntry `json:"data"`
+		Data     []assetEntry `json:"data"`
+		Complete bool         `json:"complete"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, syncManifestMaxBytes)).Decode(&out); err != nil {
 		return true
 	}
 
+	var ledger map[string]data.SyncAssetLedgerRow
+	if t != nil {
+		if ledger, err = t.p.ledger.List(ctx, s.dir); err != nil {
+			logging.L().Errorf("sync pull: read %s asset ledger: %v", s.dir, err)
+			t = nil // no ledger → neither record nor prune this tick
+		}
+	}
+	defer t.flush(ctx, s) // this pull's ledger changes, one transaction
 	fetched := 0
 	for _, e := range out.Data {
 		local, ok := s.safePath(e.Path)
@@ -206,6 +237,9 @@ func (s assetScope) pull(ctx context.Context, client *http.Client, primary, bear
 			continue // never trust the wire, even from our own primary
 		}
 		if st, err := os.Stat(local); err == nil && st.Size() == e.Size && sameMod(st.ModTime().Unix(), e.Mod) {
+			// Already here as the main has it: record it (also backfills
+			// files downloaded before the ledger existed).
+			t.record(ctx, s, ledger, e.Path, local)
 			continue
 		}
 		freq, err := http.NewRequestWithContext(ctx, http.MethodGet,
@@ -220,10 +254,14 @@ func (s assetScope) pull(ctx context.Context, client *http.Client, primary, bear
 		}
 		if s.store(fresp, local, e) {
 			fetched++
+			t.record(ctx, s, ledger, e.Path, local)
 		}
 	}
 	if fetched > 0 {
 		logging.L().Infof("sync pull: %d %s image(s) fetched from the primary", fetched, s.dir)
+	}
+	if out.Complete {
+		t.prune(ctx, s, ledger, out.Data)
 	}
 	return true
 }

@@ -60,7 +60,7 @@ func runPull(t *testing.T, primaryRoot, replicaRoot string) int {
 	}))
 	t.Cleanup(srv.Close)
 	paths.Init(replicaRoot)
-	syncAssets(context.Background(), srv.Client(), srv.URL, "tok-assets")
+	syncAssets(context.Background(), srv.Client(), srv.URL, "tok-assets", nil)
 	return fetches
 }
 
@@ -158,7 +158,7 @@ func TestSyncAssets_OversizedFilesNeverSync(t *testing.T) {
 	root := withDataDir(t)
 	big := make([]byte, syncAssetMaxBytes+1)
 	writeAsset(t, root, "categories", "cat1/thumb.png", big)
-	list, err := categoryAssetScope.list()
+	list, _, err := categoryAssetScope.list()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestSyncAssets_ReplicaEnforcesCapAndManifestSize(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
-	syncAssets(context.Background(), srv.Client(), srv.URL, "b")
+	syncAssets(context.Background(), srv.Client(), srv.URL, "b", nil)
 
 	if served != 1 {
 		t.Fatalf("expected the over-cap entry skipped before any fetch (1 fetch for the liar), got %d", served)
@@ -206,7 +206,7 @@ func TestSyncAssets_OlderPrimaryWithoutCategoriesScope(t *testing.T) {
 	want := []byte("item")
 	primary := newStubAssetsPrimary(t, []assetEntry{{Path: "itm001/thumb.png", Size: int64(len(want))}}, want)
 
-	syncAssets(context.Background(), primary.server.Client(), primary.server.URL, "b")
+	syncAssets(context.Background(), primary.server.Client(), primary.server.URL, "b", nil)
 
 	if _, err := os.Stat(replicaAssetPath(replicaRoot, "itm001/thumb.png")); err != nil {
 		t.Fatalf("expected items to still sync from an older primary, got %v", err)

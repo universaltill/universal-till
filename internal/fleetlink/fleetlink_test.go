@@ -81,6 +81,66 @@ func TestReport_ClipsFields(t *testing.T) {
 	}
 }
 
+// ut-docs#2897: a replica's hello carries its own cloud device id
+// (enroll.CurrentStatus, #2730) alongside the LAN pairing till_id. It is
+// untrusted LAN input, display-only on my. (never used for auth), so it is
+// bounded and charset-checked exactly like every other hello field before
+// being kept for the link's lifetime.
+func TestHello_ClipsAndValidatesCloudDeviceID(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"a normal cloud device id is kept", "till-7547e9b4-1234-4d3a-9a0b-abc123456789", "till-7547e9b4-1234-4d3a-9a0b-abc123456789"},
+		{"empty (an older replica without the field) stays empty", "", ""},
+		{"oversized is clipped to the same bound as every other hello field", strings.Repeat("a", 500), strings.Repeat("a", maxReportField)},
+		{"garbage charset is dropped, not just truncated", "till-\x00\x01<script>oops", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := Hello{TillID: "t1", CloudDeviceID: tc.in}
+			h.clipStrings()
+			if h.CloudDeviceID != tc.want {
+				t.Fatalf("cloud_device_id = %q, want %q", h.CloudDeviceID, tc.want)
+			}
+			if h.TillID != "t1" {
+				t.Fatalf("till_id = %q, want it untouched", h.TillID)
+			}
+		})
+	}
+}
+
+// An older main till (built before #2897) decodes a newer replica's hello
+// fine: encoding/json silently ignores a field its own struct doesn't
+// declare. legacyHello stands in for that older struct shape.
+func TestHello_DecodeToleratesAnUnknownCloudDeviceIDField(t *testing.T) {
+	type legacyHello struct {
+		TillID string `json:"till_id"`
+		Role   string `json:"role"`
+	}
+	raw := []byte(`{"till_id":"t1","role":"replica","cloud_device_id":"till-abc"}`)
+	var h legacyHello
+	if err := json.Unmarshal(raw, &h); err != nil {
+		t.Fatalf("an older hello struct must tolerate the new field: %v", err)
+	}
+	if h.TillID != "t1" || h.Role != "replica" {
+		t.Fatalf("legacy hello = %+v", h)
+	}
+}
+
+// An older replica (built before #2897) never sends cloud_device_id: the
+// main till's Hello decodes with till_id present and CloudDeviceID empty.
+func TestHello_DecodeFromAnOlderReplicaLeavesCloudDeviceIDEmpty(t *testing.T) {
+	var h Hello
+	if err := json.Unmarshal([]byte(`{"till_id":"t1","role":"replica"}`), &h); err != nil {
+		t.Fatal(err)
+	}
+	if h.TillID != "t1" || h.CloudDeviceID != "" {
+		t.Fatalf("hello = %+v, want till_id kept and cloud_device_id empty", h)
+	}
+}
+
 // ---- peer over a fake conn --------------------------------------------------
 
 // servePeer runs one fake-conn link on hub and returns the conn plus a

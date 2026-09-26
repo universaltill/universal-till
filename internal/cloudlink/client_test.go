@@ -385,6 +385,28 @@ func TestStatusOnConnectAndOnChange(t *testing.T) {
 	}
 }
 
+// ut-docs#2897: a peer's cloud device id rides the status frame's wire
+// shape as device_id, alongside till_id — and is left off the frame
+// entirely (omitempty) for a peer with none, same as an older replica or a
+// down till the tills table has no device id for.
+func TestStatusFrameCarriesPeerDeviceIDAndOmitsItWhenEmpty(t *testing.T) {
+	h := newHarness(t, nil)
+	c := h.cloud.nextConn(t)
+	c.frame(t, "hello")
+	c.frame(t, "status") // the connect-time status; not what this test checks
+	h.status.Store(Status{Version: "v1.2.3", Peers: []PeerStatus{
+		{TillID: "t2", DeviceID: "till-cloud-2", Link: "up"},
+		{TillID: "t3", Link: "down"},
+	}})
+	next := c.frame(t, "status")
+	if !strings.Contains(string(next.Payload), `"till_id":"t2","device_id":"till-cloud-2"`) {
+		t.Fatalf("status = %s, want t2's device id on the wire", next.Payload)
+	}
+	if strings.Contains(string(next.Payload), `"till_id":"t3","device_id"`) {
+		t.Fatalf("status = %s, want t3's empty device id omitted from the wire", next.Payload)
+	}
+}
+
 // AC9: Sale never blocks, even with the link down or its queue full.
 func TestSaleNeverBlocks(t *testing.T) {
 	c := New(fastOptions())
