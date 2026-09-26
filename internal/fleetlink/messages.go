@@ -2,6 +2,7 @@ package fleetlink
 
 import (
 	"encoding/json"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -75,7 +76,24 @@ type Hello struct {
 	// authenticated as — lets the dialler confirm who the main till thinks
 	// it is.
 	PeerTillID string `json:"peer_till_id,omitempty"`
+	// CloudDeviceID is, on a replica's hello, its OWN cloud device id
+	// (enroll.CurrentStatus().DeviceID, ut-docs#2730's per-till identity) —
+	// separate from TillID, the LAN pairing id (the main till's tills-table
+	// row / this replica's sync.till_id). ut-docs#2897: the main till's
+	// status frame to the cloud sends both, so my.'s Tills rows and Live
+	// panel (keyed by cloud device id) can name a satellite/replica instead
+	// of showing its raw pairing id. Omitempty: an older replica's hello has
+	// no such field, and decodes with this simply empty (Go's
+	// encoding/json). Display-only on my. — never used for auth.
+	CloudDeviceID string `json:"cloud_device_id,omitempty"`
 }
+
+// cloudDeviceIDPattern bounds the charset a hello's cloud_device_id may use.
+// It is untrusted LAN input, kept only for display on my.'s Tills rows and
+// Live panel: a value that isn't this shape (an enroll device id is
+// "till-<uuid>", or an operator's explicit UT_MARKETPLACE_DEVICE_ID) is
+// dropped rather than risk odd bytes reaching that page.
+var cloudDeviceIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:-]+$`)
 
 // clipStrings bounds every string a peer's hello can carry before it is
 // kept for the link's lifetime.
@@ -89,6 +107,10 @@ func (h *Hello) clipStrings() {
 			v := clip(**p, maxReportField)
 			*p = &v
 		}
+	}
+	h.CloudDeviceID = clip(h.CloudDeviceID, maxReportField)
+	if !cloudDeviceIDPattern.MatchString(h.CloudDeviceID) {
+		h.CloudDeviceID = "" // garbage charset: dropped, not just truncated
 	}
 }
 
