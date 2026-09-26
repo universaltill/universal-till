@@ -5755,9 +5755,9 @@ type SaleCharge struct {
 // InsertSale signature (ut-docs#976 flags InsertSale's existing 25
 // positional arguments as already risky; this ADR deliberately does not add
 // a 26th). Deliberately a no-op for an empty/nil list: a sale with no
-// itemized charges (nothing has adopted charge.policy.ask's new Charges
-// field yet, per step 2/3 of this ADR) simply gets no sale_charges rows,
-// same as it does today.
+// charges (pos.CompleteSale passes its SaleInput.Charges, which never
+// carries a zero-amount item — pos.BuildCharges) simply gets no
+// sale_charges rows.
 func (r *POSRepo) InsertSaleCharges(ctx context.Context, tx *sql.Tx, saleID string, charges []SaleCharge) error {
 	for i, c := range charges {
 		if _, err := r.exec(tx).ExecContext(ctx, `

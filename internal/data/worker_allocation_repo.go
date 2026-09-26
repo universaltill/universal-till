@@ -128,16 +128,15 @@ type WorkerAllocationSummary struct {
 //     total for this source_type (a pool's "received" side is the whole
 //     pool as collected, not one worker's share) but continues to scope
 //     "allocated".
-//   - "service_charge": needs sale_charges (ADR-0062, migration only —
-//     ut-docs#984 landed the schema, but ut-docs#985's step 2 is what
-//     wires anything to actually WRITE a row, so the table exists but is
-//     empty as of this card). Returns ReceivedMinor: 0 with Allocated
-//     still correctly computed, rather than failing outright or joining a
-//     table that would return nothing anyway — #964 does not consume this
+//   - "service_charge": needs sale_charges (ADR-0062). ut-docs#984 landed
+//     the schema and ut-docs#985 now writes a row per charge on every
+//     sale, but this summary does not read them yet (follow-up). Returns
+//     ReceivedMinor: 0 with Allocated still correctly computed, rather
+//     than failing outright — #964 does not consume this
 //     source_type (UK's own obligation is "tip"/service-charge-under-UK-
 //     law, i.e. this codebase's "tip" bucket per ADR-0061), so nothing
-//     downstream depends on this being non-zero today. Revisit once
-//     ut-docs#985 lands.
+//     downstream depends on this being non-zero today. Revisit now that
+//     ut-docs#985 has landed.
 //
 // Deliberate deviation from ADR-0063 Decision 2's literal wording ("joins
 // ... by source_id"): this does NOT join Received to Allocated by
@@ -201,9 +200,9 @@ WHERE p.local_date BETWEEN date(?) AND date(?)
 		}
 		out.ReceivedMinor = received
 	case "service_charge":
-		// sale_charges exists (ADR-0062, ut-docs#984) but nothing writes to
-		// it until ut-docs#985 lands — see doc comment above. ReceivedMinor
-		// stays 0; AllocatedMinor above is still correct.
+		// sale_charges is written since ut-docs#985 but not summed here
+		// yet — see doc comment above. ReceivedMinor stays 0;
+		// AllocatedMinor above is still correct.
 	default:
 		return out, fmt.Errorf("worker allocations summary: unsupported source_type %q", sourceType)
 	}

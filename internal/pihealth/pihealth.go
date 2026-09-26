@@ -134,9 +134,6 @@ func isPi() bool {
 	return PiModel() != ""
 }
 
-// IsPi reports whether this host is a Raspberry Pi (see isPi).
-func IsPi() bool { return isPi() }
-
 // PiModel returns the device-tree model string (e.g. "Raspberry Pi 5 Model
 // B Rev 1.0") when this host is a Raspberry Pi, and "" otherwise. The
 // visual effects level's host detection uses it (ADR-0119 §4).

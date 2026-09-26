@@ -147,10 +147,10 @@ func TestCompleteSale_ServiceChargeTaxedByDefault_UntaxedPathUnreachable(t *test
 	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
 
 	baseIn := SaleInput{
-		SaleType:      "sale",
-		Currency:      "EUR",
-		TaxInclusive:  false,
-		ServiceCharge: 100,
+		SaleType:     "sale",
+		Currency:     "EUR",
+		TaxInclusive: false,
+		Charges:      []ChargeInput{{Key: ServiceChargeKey, Amount: 100}},
 		Lines: []SaleLineInput{
 			{ItemID: "itm1", SKU: "SKU1", Name: "Steak", Qty: 1, UnitPrice: 1000, TaxRateBasisPoints: 2000, LocationID: "loc1"},
 		},
@@ -199,10 +199,10 @@ func TestCompleteSale_ServiceChargeTaxedInclusiveMode(t *testing.T) {
 	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
 
 	in := SaleInput{
-		SaleType:      "sale",
-		Currency:      "EUR",
-		TaxInclusive:  true,
-		ServiceCharge: 119,
+		SaleType:     "sale",
+		Currency:     "EUR",
+		TaxInclusive: true,
+		Charges:      []ChargeInput{{Key: ServiceChargeKey, Amount: 119}},
 		Lines: []SaleLineInput{
 			{ItemID: "itm1", SKU: "SKU1", Name: "Schnitzel", Qty: 1, UnitPrice: 1190, TaxRateBasisPoints: 1900, LocationID: "loc1"},
 		},
@@ -238,11 +238,10 @@ func TestCompleteSale_ServiceChargeFlatTaxBasisFromPolicy(t *testing.T) {
 	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
 
 	in := SaleInput{
-		SaleType:                "sale",
-		Currency:                "EUR",
-		TaxInclusive:            false,
-		ServiceCharge:           100,
-		ServiceChargeTaxBasisBP: 700,
+		SaleType:     "sale",
+		Currency:     "EUR",
+		TaxInclusive: false,
+		Charges:      []ChargeInput{{Key: ServiceChargeKey, Amount: 100, TaxBasisBP: 700}},
 		Lines: []SaleLineInput{
 			{ItemID: "itm1", SKU: "SKU1", Name: "Steak", Qty: 1, UnitPrice: 1000, TaxRateBasisPoints: 2000, LocationID: "loc1"},
 		},
@@ -433,5 +432,162 @@ func TestCompleteSale_RejectsInvalidTipRecipient(t *testing.T) {
 	}
 	if _, err := CompleteSale(ctx, db, in); err == nil {
 		t.Fatal("expected an invalid tip_recipient to be rejected (validate all external input)")
+	}
+}
+
+// --- ADR-0062 Decision 4: N charges (ApportionChargesTax / ChargesTax) ------
+
+// Bands from every charge are aggregated by rate, ascending, each charge
+// apportioned at its OWN basis: a flat-basis charge lands on its own rate
+// band, a 0-basis one splits across the lines' bands.
+func TestApportionChargesTax_AggregatesByRatePerChargeBasis(t *testing.T) {
+	lines := []ChargeTaxLine{{RateBP: 700, Net: 1000}, {RateBP: 1900, Net: 1000}}
+	charges := []ChargeInput{
+		{Key: ServiceChargeKey, Amount: 200},         // 100 @7% + 100 @19%
+		{Key: "levy", Amount: 100, TaxBasisBP: 1900}, // 100 @19% flat
+		{Key: "other", Amount: 50, TaxBasisBP: 500},  // 50 @5% flat
+	}
+	got := ApportionChargesTax(charges, lines, false)
+	want := []ServiceChargeTaxBand{
+		{RateBP: 500, Amount: 50, Tax: 3}, // 2.5 -> 3 (half-up)
+		{RateBP: 700, Amount: 100, Tax: 7},
+		{RateBP: 1900, Amount: 200, Tax: 38}, // 19 + 19
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("band %d: got %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	if tax := ChargesTax(charges, lines, false); tax != 48 {
+		t.Fatalf("ChargesTax = %d, want 48", tax)
+	}
+	if ApportionChargesTax(nil, lines, false) != nil || ChargesTax(nil, lines, false) != 0 {
+		t.Fatal("no charges must yield no bands and no tax")
+	}
+}
+
+// A single charge through ApportionChargesTax is exactly
+// ApportionServiceChargeTax — the zero/one-charge fleet is unchanged.
+func TestApportionChargesTax_SingleChargeIdenticalToLegacy(t *testing.T) {
+	lines := []ChargeTaxLine{{RateBP: 700, Net: 333}, {RateBP: 1900, Net: 667}, {RateBP: 0, Net: 101}}
+	for _, inclusive := range []bool{false, true} {
+		for _, basis := range []int{0, 700} {
+			for amount := int64(1); amount < 400; amount += 7 {
+				c := []ChargeInput{{Amount: money.FromMinor(amount), TaxBasisBP: basis}}
+				legacy := ApportionServiceChargeTax(money.FromMinor(amount), lines, inclusive, basis)
+				got := ApportionChargesTax(c, lines, inclusive)
+				if len(got) != len(legacy) {
+					t.Fatalf("amount %d basis %d incl %v: got %+v, want %+v", amount, basis, inclusive, got, legacy)
+				}
+				for i := range legacy {
+					if got[i] != legacy[i] {
+						t.Fatalf("amount %d basis %d incl %v band %d: got %+v, want %+v", amount, basis, inclusive, i, got[i], legacy[i])
+					}
+				}
+			}
+		}
+	}
+}
+
+// ADR-0062 Decision 4 / Consequences: summing N independently-apportioned
+// charges is NOT the same as apportioning their sum in one pass. What is
+// always true is the AMOUNT direction: each charge's own highest band
+// absorbs its own floor remainder, so the aggregate puts at least as much
+// charge on the highest rate as a one-pass split would (see the property
+// test below). The TAX, however, is rounded per charge per band, and that
+// rounding can land on EITHER side of the one-pass figure — contrary to
+// the ADR's "never lower" wording (reported on ut-docs#985). Both
+// directions are pinned here with hand-checkable numbers, exclusive
+// pricing, two equal-weight lines at 0% and 20%:
+func TestApportionChargesTax_DiffersFromSumThenApportion(t *testing.T) {
+	lines := []ChargeTaxLine{{RateBP: 0, Net: 1000}, {RateBP: 2000, Net: 1000}}
+
+	// Over: charges 5+5. Per charge: 2 @0% + 3 @20% (tax 0.6 -> 1), x2 =
+	// tax 2, 6 on the 20% band. One pass over 10: 5 @0% + 5 @20% (tax 1).
+	over := []ChargeInput{{Amount: 5}, {Amount: 5}}
+	if got, naive := ChargesTax(over, lines, false), ServiceChargeTax(10, lines, false, 0); got != 2 || naive != 1 {
+		t.Fatalf("5+5: per-charge tax %d (want 2), one-pass %d (want 1)", got, naive)
+	}
+	if b := ApportionChargesTax(over, lines, false); b[1].RateBP != 2000 || b[1].Amount != 6 {
+		t.Fatalf("5+5: want 6 on the 20%% band, got %+v", b)
+	}
+
+	// Under: charges 3+3. Per charge: 1 @0% + 2 @20% (tax 0.4 -> 0), x2 =
+	// tax 0, even though 4 (not 3) sits on the 20% band. One pass over 6:
+	// 3 @0% + 3 @20% (tax 0.6 -> 1). The amount still over-declares; the
+	// per-charge tax rounding under-declares by one minor unit.
+	under := []ChargeInput{{Amount: 3}, {Amount: 3}}
+	if got, naive := ChargesTax(under, lines, false), ServiceChargeTax(6, lines, false, 0); got != 0 || naive != 1 {
+		t.Fatalf("3+3: per-charge tax %d (want 0), one-pass %d (want 1)", got, naive)
+	}
+	if b := ApportionChargesTax(under, lines, false); b[1].RateBP != 2000 || b[1].Amount != 4 {
+		t.Fatalf("3+3: want 4 on the 20%% band, got %+v", b)
+	}
+}
+
+// Property form over many inputs (0-basis charges, which is where the two
+// computations can differ at all):
+//   - amounts: every band below the highest carries <= the one-pass share,
+//     by at most N-1; the highest band carries >= it; the totals match —
+//     the over-declare direction ADR-0062 relies on.
+//   - tax: the difference is bounded by the amount shift (< 1 unit of tax
+//     per shifted minor unit, since rates are <= 100%) plus half a unit of
+//     rounding per (charge, band) term on the per-charge side and per band
+//     on the one-pass side: -(N+1)B/2 < diff < (N+1)B/2 + (N-1)(B-1).
+func TestApportionChargesTax_PropertyVersusSumThenApportion(t *testing.T) {
+	rates := []int{0, 500, 700, 1000, 1900, 2000}
+	seed := uint64(0x9e3779b97f4a7c15)
+	next := func(n int) int { // xorshift: deterministic, no math/rand seeding concerns
+		seed ^= seed << 13
+		seed ^= seed >> 7
+		seed ^= seed << 17
+		return int(seed % uint64(n))
+	}
+	for it := 0; it < 20000; it++ {
+		n := 2 + next(3)
+		charges := make([]ChargeInput, 0, n)
+		var sum money.Money
+		for i := 0; i < n; i++ {
+			a := money.FromMinor(int64(1 + next(500)))
+			charges = append(charges, ChargeInput{Amount: a})
+			sum = sum.Add(a)
+		}
+		var lines []ChargeTaxLine
+		for i, nl := 0, 1+next(3); i < nl; i++ {
+			lines = append(lines, ChargeTaxLine{RateBP: rates[next(len(rates))], Net: money.FromMinor(int64(1 + next(3000)))})
+		}
+		inclusive := next(2) == 0
+
+		agg := ApportionChargesTax(charges, lines, inclusive)
+		one := ApportionServiceChargeTax(sum, lines, inclusive, 0)
+		if len(agg) != len(one) {
+			t.Fatalf("it %d: band sets differ: %+v vs %+v", it, agg, one)
+		}
+		var aggSum money.Money
+		for i := range one {
+			if agg[i].RateBP != one[i].RateBP {
+				t.Fatalf("it %d: band rates differ: %+v vs %+v", it, agg, one)
+			}
+			aggSum = aggSum.Add(agg[i].Amount)
+			shift := one[i].Amount.Minor() - agg[i].Amount.Minor()
+			if i < len(one)-1 && (shift < 0 || shift > int64(n-1)) {
+				t.Fatalf("it %d: band %d shift %d outside [0, %d]: %+v vs %+v", it, i, shift, n-1, agg, one)
+			}
+			if i == len(one)-1 && shift > 0 {
+				t.Fatalf("it %d: highest band carries less than one pass: %+v vs %+v", it, agg, one)
+			}
+		}
+		if aggSum != sum {
+			t.Fatalf("it %d: aggregated amount %d != charges' sum %d", it, aggSum, sum)
+		}
+
+		b := len(one)
+		diff := ChargesTax(charges, lines, inclusive).Minor() - ServiceChargeTax(sum, lines, inclusive, 0).Minor()
+		if lo, hi := -int64((n+1)*b), int64((n+1)*b+2*(n-1)*(b-1)); 2*diff <= lo || 2*diff >= hi {
+			t.Fatalf("it %d: tax diff %d outside (%d/2, %d/2): charges %+v lines %+v incl %v", it, diff, lo, hi, charges, lines, inclusive)
+		}
 	}
 }

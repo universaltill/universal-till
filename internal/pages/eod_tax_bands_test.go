@@ -278,7 +278,7 @@ func TestEODTaxBands_ServiceChargeSaleThroughCompleteSale(t *testing.T) {
 
 	day := etbCompleteSale(t, d, pos.SaleInput{
 		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
-		ServiceCharge:          money.FromMinor(1000),
+		Charges:                []pos.ChargeInput{{Key: pos.ServiceChargeKey, Amount: money.FromMinor(1000)}},
 		AllowNegativeInventory: true,
 		Lines: []pos.SaleLineInput{{
 			ItemID: "itm-sc", Name: "Dinner", Qty: 1,
