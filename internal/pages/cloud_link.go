@@ -102,6 +102,28 @@ func cloudLinkStatusOf(version string, peers []fleetlink.PeerInfo) cloudlink.Sta
 	return st
 }
 
+// publishCloudLinkSale sends one sale frame for the cloud link's live view
+// (ADR-0117 §4/§8, ut-docs#2894): non-blocking and nil-safe on every axis a
+// caller might hit — d.CloudLink is nil only when no cloud link was built
+// (tests); on a replica or a periodic-tier till it exists but never dials
+// (cloudLinkTarget), and cloudlink.Client.Sale is
+// itself a documented no-op when live_view is off or the socket is down
+// (dropped, never queued). Every completion path that inserts a sale row —
+// the tender path, a refund/return, and the primary's ingest of a
+// replica's journaled sale — funnels through this one function so they
+// can never drift on shape or on the nil/non-blocking guarantee.
+//
+// tillID is "" for a sale/refund completed on THIS till (cloudlink.Sale's
+// own "" = this device convention) or the reporting replica's till id for
+// a journal-ingested sale (ut-docs#2894 AC2) — the cloud still attributes
+// the FRAME (the authenticated socket) to this, the main, device; till_id
+// is purely the my. live panel's "which physical till" label.
+func publishCloudLinkSale(d *common.Deps, detail data.SaleDetail, tillID string) {
+	s := cloudLinkSaleOf(detail, time.Now())
+	s.TillID = tillID
+	d.CloudLink.Sale(s)
+}
+
 // cloudLinkSaleOf maps a completed sale to the §4 summary (no lines, no
 // customer or card data). tender_kind is the sale's tender type as
 // pos.deriveTenderType stores it — the lowercase method key, "split" for

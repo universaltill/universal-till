@@ -1036,6 +1036,15 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		recordFiscalDeviceEvidence(r.Context(), d, repo, saleID, actorID, pickDeviceEvidence(nil, method, refundResp))
 		// Mirror the restock to inventory connectors (best-effort, non-blocking).
 		publishStockAdjustedForSale(r.Context(), d, saleInput)
+		// The cloud link's live view (ADR-0117 §4/§8, ut-docs#2894): a
+		// refund is a completed "return" sale like any other, so it gets
+		// the same summary frame the tender path sends — refund:true and a
+		// negative total_minor (cloudLinkSaleOf's own sign flip). Best-
+		// effort: a failed re-read of the just-committed return only skips
+		// the frame, never the refund itself.
+		if refundDetail, ok, err := repo.GetSaleDetailByID(r.Context(), saleID); err == nil && ok {
+			publishCloudLinkSale(d, refundDetail, "")
+		}
 		// A replica's refund is a journaled sale like any other (ADR-0011
 		// D3) — nudge the push loop the same way a tender does (ut-docs#404,
 		// ADR-0036) so the primary hears about the restock in seconds, not

@@ -185,6 +185,155 @@ func TestApplyJournal_AppliesOnceThenIdempotent(t *testing.T) {
 	}
 }
 
+// ut-docs#2894 AC2: the primary's ingest of a replica's journaled sale must
+// reach the my. live view too, attributed to the REPORTING replica's till
+// id (not the primary's own) -- the whole point being that a sale rung up
+// on a satellite till shows up in the owner's live feed the same as one
+// rung up on the main till.
+func TestApplyJournal_PublishesCloudLinkSaleFrameWithReplicaTillID(t *testing.T) {
+	_, dp := newSyncSalesTestDeps(t)
+	cloud := newFakeCloudLink(t, true)
+	dp.CloudLink = cloud.client(t)
+	cloud.waitConnected(t)
+	cloud.waitReady(t, dp.CloudLink)
+
+	j := seedJournalSale("remote-sale-cl1", "T2-CL001", "sale", "", "itm1", 1, 150)
+	// A real replica's own GetSaleDetail always derives TenderType from its
+	// payments before journaling; seedJournalSale (shared by tests that
+	// don't care) leaves it unset, so it's set explicitly here.
+	j.Sale.TenderType = "cash"
+	j.Sale.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	applied, _, err := applyJournal(context.Background(), dp, "replica-42", j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !applied {
+		t.Fatal("expected the journal to apply on first replay")
+	}
+
+	frame := cloud.waitForSaleWithID(t, "remote-sale-cl1")
+	if frame["till_id"] != "replica-42" {
+		t.Fatalf("till_id = %v, want the reporting replica's id (replica-42)", frame["till_id"])
+	}
+	if frame["total_minor"] != 150.0 || frame["currency"] != "GBP" || frame["tender_kind"] != "cash" {
+		t.Fatalf("sale frame = %+v, want the replica's own total/currency/tender", frame)
+	}
+	if frame["refund"] != false {
+		t.Fatalf("refund = %v, want false for a plain sale", frame["refund"])
+	}
+}
+
+// A refund/return journaled in from a replica must carry refund:true and a
+// negative total_minor, same as one taken on the main till.
+func TestApplyJournal_ReplicaReturnPublishesRefundFrame(t *testing.T) {
+	_, dp := newSyncSalesTestDeps(t)
+	cloud := newFakeCloudLink(t, true)
+	dp.CloudLink = cloud.client(t)
+	cloud.waitConnected(t)
+	cloud.waitReady(t, dp.CloudLink)
+
+	orig := seedJournalSale("remote-sale-cl2", "T2-CL002", "sale", "", "itm1", 1, 150)
+	if _, _, err := applyJournal(context.Background(), dp, "replica-42", orig); err != nil {
+		t.Fatal(err)
+	}
+	ret := seedJournalSale("remote-return-cl2", "T2-CL003", "return", "remote-sale-cl2", "itm1", 1, 150)
+	ret.Sale.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	applied, _, err := applyJournal(context.Background(), dp, "replica-42", ret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !applied {
+		t.Fatal("expected the return journal to apply")
+	}
+
+	frame := cloud.waitForSaleWithID(t, "remote-return-cl2")
+	if frame["refund"] != true {
+		t.Fatalf("refund = %v, want true for a journaled return", frame["refund"])
+	}
+	if frame["total_minor"] != -150.0 {
+		t.Fatalf("total_minor = %v, want -150 (negative)", frame["total_minor"])
+	}
+}
+
+// ut-docs#2894: a replica's retried journal push (the same entry submitted
+// twice — e.g. after a push that succeeded but whose 200 the replica never
+// saw) is idempotent by sale id (SaleExists), and must publish the cloud
+// link's sale frame AT MOST ONCE — never a second frame for a sale the my.
+// live panel already showed.
+func TestApplyJournal_DuplicateIngestPublishesCloudLinkSaleOnce(t *testing.T) {
+	_, dp := newSyncSalesTestDeps(t)
+	cloud := newFakeCloudLink(t, true)
+	dp.CloudLink = cloud.client(t)
+	cloud.waitConnected(t)
+	cloud.waitReady(t, dp.CloudLink)
+
+	j := seedJournalSale("remote-sale-cl3", "T2-CL004", "sale", "", "itm1", 1, 150)
+	j.Sale.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	if _, _, err := applyJournal(context.Background(), dp, "replica-42", j); err != nil {
+		t.Fatal(err)
+	}
+	cloud.waitForSaleWithID(t, "remote-sale-cl3")
+
+	// Replay the identical entry: SaleExists short-circuits before the
+	// publish call is ever reached.
+	applied, _, err := applyJournal(context.Background(), dp, "replica-42", j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied {
+		t.Fatal("expected the duplicate journal entry to be skipped (already exists)")
+	}
+	// Give any (wrongly re-published) second frame time to arrive before
+	// counting.
+	time.Sleep(200 * time.Millisecond)
+	if n := cloud.countSalesWithID("remote-sale-cl3"); n != 1 {
+		t.Fatalf("sale frames for remote-sale-cl3 = %d, want exactly 1 (duplicate ingest must not re-publish)", n)
+	}
+}
+
+// ut-docs#2894: while the cloud's live_view is off, ingesting a replica's
+// sale must never put a frame on the wire — cloudlink.Client.Sale already
+// enforces this at the transport level (internal/cloudlink's own
+// TestSaleFramesFollowLiveView); this pins that our NEW replica-ingest
+// call site actually goes through that same gated Sale() method rather
+// than some other path that would bypass it.
+func TestApplyJournal_NothingPublishedWhileLiveViewOff(t *testing.T) {
+	_, dp := newSyncSalesTestDeps(t)
+	cloud := newFakeCloudLink(t, false)
+	dp.CloudLink = cloud.client(t)
+	cloud.waitConnected(t)
+	time.Sleep(150 * time.Millisecond) // let the client finish processing the hello
+
+	j := seedJournalSale("remote-sale-cl4", "T2-CL005", "sale", "", "itm1", 1, 150)
+	applied, _, err := applyJournal(context.Background(), dp, "replica-42", j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !applied {
+		t.Fatal("expected the journal to apply")
+	}
+	cloud.expectNoSaleWithID(t, "remote-sale-cl4", 400*time.Millisecond)
+}
+
+// A replica coming back online replays its backlog; those old sales must
+// not reach the live panel (they'd look live, and would use up the sale
+// frame allowance ahead of the main till's own live sales) — ut-docs#2894
+// review.
+func TestApplyJournal_BacklogSaleNotPublished(t *testing.T) {
+	_, dp := newSyncSalesTestDeps(t)
+	cloud := newFakeCloudLink(t, true)
+	dp.CloudLink = cloud.client(t)
+	cloud.waitConnected(t)
+	cloud.waitReady(t, dp.CloudLink)
+
+	j := seedJournalSale("remote-sale-old", "T2-CLOLD", "sale", "", "itm1", 1, 150)
+	j.Sale.CreatedAt = time.Now().Add(-2 * time.Hour).UTC().Format(time.RFC3339)
+	if applied, _, err := applyJournal(context.Background(), dp, "replica-42", j); err != nil || !applied {
+		t.Fatalf("applyJournal = %v, %v", applied, err)
+	}
+	cloud.expectNoSaleWithID(t, "remote-sale-old", 400*time.Millisecond)
+}
+
 // ut-docs#543: a journaled-in sale (from a replica till, via the LAN sync
 // journal) must carry its card-present reconciliation fields through to the
 // primary's local `payments` row, not silently drop them -- the primary is
