@@ -1660,7 +1660,12 @@ function initOfflineOverride(updateFn){
     document.addEventListener(ev, bump, { passive: true });
   });
   setInterval(function () {
-    if ((Date.now() - last) / 1000 > secs) window.location.replace('/login');
+    if ((Date.now() - last) / 1000 > secs) {
+      // ut-docs#2788: a timer-driven jump to /login looks like a refresh on
+      // the till. /login is outside base.html, so report it now.
+      if (window.UT && UT.noteNav) UT.noteNav('idle-lock', { report: true });
+      window.location.replace('/login');
+    }
   }, 5000);
 })();
 
@@ -2754,6 +2759,11 @@ window.utTabBarFade = function (el) {
 // worse than before.
 (function () {
   var UT = window.UT = window.UT || {};
+  // ut-docs#2788: name the fallback in the till log (UT.reload lives in
+  // base.html's head script; guarded because this file is separate).
+  function fallbackReload() {
+    if (window.UT && UT.reload) UT.reload('refresh-region-fallback'); else window.location.reload();
+  }
   UT.refreshRegion = function (el) {
     var host = null;
     try {
@@ -2762,7 +2772,7 @@ window.utTabBarFade = function (el) {
     } catch (e) { host = null; }
     var sel = host && host.getAttribute('data-ut-refresh');
     var cur = sel && document.querySelector(sel);
-    if (!cur || !window.fetch || !window.DOMParser) { window.location.reload(); return Promise.resolve(false); }
+    if (!cur || !window.fetch || !window.DOMParser) { fallbackReload(); return Promise.resolve(false); }
     // Only the triggering action's own message is carried over (el itself,
     // or el's hx-target): a stale hint or refusal in ANOTHER row is dropped,
     // exactly as a reload dropped it.
@@ -2791,6 +2801,6 @@ window.utTabBarFade = function (el) {
         if (window.htmx) window.htmx.process(fresh);
         return true;
       })
-      .catch(function () { window.location.reload(); return false; });
+      .catch(function () { fallbackReload(); return false; });
   };
 })();

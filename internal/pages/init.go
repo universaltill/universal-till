@@ -587,6 +587,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerOrderTracking(mux, dp)          // anonymous customer tracking page /o/{token}, auth-exempt (ut-docs#527)
 	registerHealth(mux)
 	registerWindowState(mux, dp) // desktop shell reads this pre-login at launch (ut-docs#611)
+	registerReloadReason(mux)    // ut-docs#2788: base.html reports why a whole page just reloaded
 	registerExternalProxy(mux, dp)
 	registerPluginStore(mux, dp) // Marketplace plugin store
 	registerMarketplaceV1Stub(mux, dp)

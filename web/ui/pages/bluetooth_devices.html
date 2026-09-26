@@ -230,7 +230,7 @@
               return;
             }
             scanMsg.textContent = T.pairedConfirm;
-            window.location.reload();
+            UT.reload('bluetooth-paired');
           })
           .catch(function () { pair.disabled = false; scanMsg.textContent = T.pairError; });
       });
@@ -279,7 +279,7 @@
             return;
           }
           pairedMsg.textContent = T.forgottenConfirm;
-          window.location.reload();
+          UT.reload('bluetooth-forgotten');
         })
         .catch(function () { btn.disabled = false; pairedMsg.textContent = T.forgetError; });
     });

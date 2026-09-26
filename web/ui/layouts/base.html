@@ -141,7 +141,7 @@
           if (reduce && reduce.matches) { if (vt.skipTransition) vt.skipTransition(); return; }
           var act = navigation.activation;
           // A reload is not a move anywhere (pull-to-refresh on the tablet,
-          // the eight location.reload() sites, the server's HX-Refresh) --
+          // the UT.reload() sites, the server's HX-Refresh) --
           // from === entry, so the depth heuristic would read it as a push
           // and slide the same page in from the side. Skip the motion.
           if (act && act.navigationType === 'reload') { if (vt.skipTransition) vt.skipTransition(); return; }
@@ -192,6 +192,74 @@
         };
         // Set once at boot and never re-parsed: the document IS the shell now.
         UT.shellBootAt = Date.now();
+        // ut-docs#2788: every whole-page reload names its reason. A page that
+        // reloads itself calls UT.reload('why'); a full navigation the shell
+        // forces calls UT.noteNav('why'). Both stash the reason in
+        // sessionStorage; the NEXT document load reports it (or, for a
+        // reload nobody announced -- native WebView reload, pull-to-refresh,
+        // F5 -- "unattributed") to POST /api/diag/reload-reason, which writes
+        // one "page reload: reason=…" line to the till log. Diagnostics only:
+        // nothing here may throw or change what the page does.
+        var RELOAD_KEY = 'ut-reload-reason';
+        function reloadReason(r) {
+          return String(r || 'unattributed').toLowerCase().replace(/[^a-z0-9:_./ -]/g, '_').slice(0, 120) || 'unattributed';
+        }
+        function stashReload(reason) {
+          try { sessionStorage.setItem(RELOAD_KEY, JSON.stringify({ reason: reloadReason(reason), from: location.pathname, at: Date.now() })); } catch (e) { /* storage unavailable */ }
+        }
+        function sendReload(reason, navType) {
+          try {
+            var body = JSON.stringify({ reason: reloadReason(reason), path: location.pathname.slice(0, 200), nav_type: navType || '' });
+            if (navigator.sendBeacon && navigator.sendBeacon('/api/diag/reload-reason', new Blob([body], { type: 'application/json' }))) return;
+            if (window.fetch) fetch('/api/diag/reload-reason', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body, keepalive: true, credentials: 'same-origin' }).catch(function () {});
+          } catch (e) { /* best-effort */ }
+        }
+        UT.reload = function (reason) {
+          stashReload(reason);
+          try { console.info('[reload] ' + reloadReason(reason)); } catch (e) { /* no console */ }
+          location.reload();
+        };
+        // opts.report: send now instead of on the next load -- for a
+        // navigation to a page outside this shell (/login), which never runs
+        // the reporter below.
+        UT.noteNav = function (reason, opts) {
+          try { console.info('[reload] ' + reloadReason(reason)); } catch (e) { /* no console */ }
+          if (opts && opts.report) { sendReload(reason, 'navigate'); return; }
+          stashReload(reason);
+        };
+        // HX-Refresh / HX-Redirect make htmx do a whole-page load itself;
+        // name the request that asked for it, and flag a background poll
+        // (an hx-trigger with "every") -- the prime suspect for a reload
+        // nobody asked for.
+        document.addEventListener('htmx:beforeOnLoad', function (e) {
+          try {
+            var d = e.detail || {}, xhr = d.xhr;
+            if (!xhr || !xhr.getResponseHeader) return;
+            var kind = xhr.getResponseHeader('HX-Refresh') === 'true' ? 'hx-refresh' : (xhr.getResponseHeader('HX-Redirect') ? 'hx-redirect' : '');
+            if (!kind) return;
+            // A redirect to /login lands on a standalone page that never
+            // consumes the stash; the server's own "auth: htmx request …"
+            // line already names it, and a leftover stash would mislabel
+            // the first load after signing in.
+            if (kind === 'hx-redirect' && /^\/login(\?|$)/.test(xhr.getResponseHeader('HX-Redirect'))) return;
+            var pi = d.pathInfo || {};
+            var p = String(pi.requestPath || pi.finalRequestPath || '').split('?')[0];
+            var elt = d.elt || (d.requestConfig && d.requestConfig.elt);
+            var trig = elt && elt.getAttribute ? (elt.getAttribute('hx-trigger') || '') : '';
+            stashReload(kind + ':' + p + (/\bevery\b/.test(trig) ? ':poll' : ''));
+          } catch (err) { /* diagnostics only */ }
+        });
+        UT.ready(function () {
+          try {
+            var nav = performance.getEntriesByType ? performance.getEntriesByType('navigation')[0] : null;
+            var type = (nav && nav.type) || '';
+            var stash = null;
+            try { stash = JSON.parse(sessionStorage.getItem(RELOAD_KEY) || 'null'); sessionStorage.removeItem(RELOAD_KEY); } catch (e) { stash = null; }
+            var fresh = stash && stash.reason && (Date.now() - (stash.at || 0)) < 30000;
+            if (!fresh && type !== 'reload') return;
+            sendReload(fresh ? stash.reason : 'unattributed', type);
+          } catch (e) { /* diagnostics only */ }
+        });
         // Page-scoped listeners. A page's inline <script> runs again on every
         // boosted arrival (htmx re-evaluates scripts in swapped content), so a
         // `document.body.addEventListener('htmx:afterSwap', …)` in index.html
@@ -311,6 +379,7 @@
             // -- carries the signature and swaps in place below, rail intact.)
             d.shouldSwap = false;
             document.documentElement.setAttribute('data-shell-fallback', theirs ? 'signature' : 'no-shell');
+            UT.noteNav('shell-fallback:' + (theirs ? 'signature' : 'no-shell'));
             window.location.assign(url);
             return;
           }
@@ -854,7 +923,7 @@
               var iv = setInterval(function () {
                 tries++;
                 fetch('/healthz', { cache: 'no-store' }).then(function (r) {
-                  if (r.ok) { clearInterval(iv); location.reload(); }
+                  if (r.ok) { clearInterval(iv); UT.reload('update-restarted'); }
                 }).catch(function () {});
                 if (tries > 90) {
                   clearInterval(iv);
@@ -869,7 +938,7 @@
                   // instead of a silent, permanent dead end.
                   btn.disabled = false;
                   btn.textContent = T.installedReload;
-                  btn.onclick = function () { location.reload(); };
+                  btn.onclick = function () { UT.reload('update-manual-retry'); };
                 }
               }, 2000);
             });

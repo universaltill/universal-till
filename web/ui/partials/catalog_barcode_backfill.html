@@ -75,6 +75,6 @@
        comment) so the catalog table picks up the newly-assigned
        barcodes, same close-then-reload shape as
        plugin_install_modal.html. */}}
-  <button class="btn secondary" type="button" onclick="document.getElementById('barcode-backfill-modal').close(); location.reload()">{{ T "common.close" }}</button>
+  <button class="btn secondary" type="button" onclick="document.getElementById('barcode-backfill-modal').close(); UT.reload('barcode-backfill-done')">{{ T "common.close" }}</button>
 </div>
 {{ end }}

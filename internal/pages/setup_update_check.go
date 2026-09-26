@@ -85,10 +85,13 @@ func setupUpdateAlreadyCurrentHTML(locale string) string {
 // is new code, so the recovery text goes through a proper locale key like
 // everything else in this file, JSON-encoded for safe embedding in the
 // inline script (the established pattern elsewhere in this package, e.g.
-// index_page.go/invoice_page.go).
+// index_page.go/invoice_page.go). ut-docs#2788: reloads go through
+// UT.reload (names the reason in the till log) when the page has it --
+// the setup wizard is a standalone document without base.html, so it
+// falls back to a plain location.reload() there.
 func setupUpdateRestartingHTML(locale string) string {
 	timeoutJS, _ := json.Marshal(httpx.T(locale, "setup.update.restart_timeout"))
-	return fmt.Sprintf(`<span id="setup-update-restart-msg">%s</span><script>(function(){var el=document.getElementById('setup-update-restart-msg');var tries=0;var iv=setInterval(function(){tries++;fetch('/healthz',{cache:'no-store'}).then(function(r){if(r.ok){clearInterval(iv);location.reload();}}).catch(function(){});if(tries>90){clearInterval(iv);el.textContent=%s;el.style.cursor='pointer';el.onclick=function(){location.reload();};}},2000);})();</script>`,
+	return fmt.Sprintf(`<span id="setup-update-restart-msg">%s</span><script>(function(){var el=document.getElementById('setup-update-restart-msg');var rl=function(w){if(window.UT&&UT.reload){UT.reload(w);}else{location.reload();}};var tries=0;var iv=setInterval(function(){tries++;fetch('/healthz',{cache:'no-store'}).then(function(r){if(r.ok){clearInterval(iv);rl('setup-update-restarted');}}).catch(function(){});if(tries>90){clearInterval(iv);el.textContent=%s;el.style.cursor='pointer';el.onclick=function(){rl('setup-update-manual-retry');};}},2000);})();</script>`,
 		html.EscapeString(httpx.T(locale, "setup.update.restarting")),
 		string(timeoutJS))
 }
