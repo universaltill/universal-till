@@ -237,7 +237,7 @@ needs, since it's the same risk (cash leaving the drawer unapproved).
 Adding cash (a positive amount, e.g. a float top-up) doesn't need one.
 Enter the amount removed as a negative number (e.g. "-50" for a 50-unit
 payout) — on a touch till with no physical keyboard, tap the on-screen
-keyboard's "-" key first.
+keyboard's "-" key first. The shift amounts (opening and closing cash, skim, adjustment) can be typed with a dot or a comma before the decimals ("-3.50" or "-3,50").
 
 On a German shop in system-of-record mode, an adjustment that removes cash
 — and a Pfandrückgabe payout — also goes through the same TSE check a sale

@@ -201,7 +201,7 @@ Rückerstattung oder einer Pfandrückgabe-Auszahlung, da es dasselbe Risiko ist
 positiver Betrag, z. B. eine Wechselgeld-Auffüllung) benötigt keine. Geben Sie
 den entnommenen Betrag als negative Zahl ein (z. B. „-50“ für eine Auszahlung
 von 50 Einheiten) — tippen Sie an einer Touch-Kasse ohne physische Tastatur
-zuerst auf die „-“-Taste der Bildschirmtastatur.
+zuerst auf die „-“-Taste der Bildschirmtastatur. Die Schichtbeträge (Anfangs- und Endbestand, Abschöpfung, Anpassung) können mit Punkt oder Komma vor den Nachkommastellen eingegeben werden („-3.50“ oder „-3,50“).
 
 Bei einem deutschen Geschäft im Systemunterlage-Modus durchläuft eine
 Anpassung, die Bargeld entfernt — und eine Pfandrückgabe-Auszahlung — dieselbe

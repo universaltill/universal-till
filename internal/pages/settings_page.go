@@ -882,8 +882,16 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		pct, _ := strconv.ParseFloat(strings.TrimSpace(r.Form.Get("percent")), 64)
-		fixedMaj, _ := strconv.ParseFloat(strings.TrimSpace(r.Form.Get("fixed")), 64)
-		if pct < 0 || fixedMaj < 0 || pct > 100 {
+		// ut-docs#2925: the fixed fee is money -- ParseMoneyMajor accepts a
+		// decimal comma ("0,30") and refuses a malformed amount, which
+		// ParseFloat's ignored error used to store as 0. Empty stays 0.
+		fixedRaw := strings.TrimSpace(r.Form.Get("fixed"))
+		var fixedMinor int64
+		var fixedErr error
+		if fixedRaw != "" {
+			fixedMinor, fixedErr = httpx.ParseMoneyMajor(fixedRaw, httpx.ActiveCurrency().Decimals)
+		}
+		if pct < 0 || fixedErr != nil || pct > 100 {
 			fmt.Fprintf(w, `<span class="error">✗ range</span>`)
 			return
 		}
@@ -894,7 +902,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if elev.Outcome == needsElevation {
 			renderElevationPrompt(w, r, "/api/settings/payments-fee", "#fee-msg-"+method,
 				fmt.Sprintf(httpx.T(locale, "elevation.summary.payments_fee"), method,
-					strconv.FormatFloat(pct, 'f', -1, 64), strconv.FormatFloat(fixedMaj, 'f', -1, 64)),
+					strconv.FormatFloat(pct, 'f', -1, 64), httpx.FormatMajorPlain(fixedMinor, httpx.ActiveCurrency().Decimals)),
 				[]elevationHiddenField{
 					{Name: "method", Value: method},
 					{Name: "percent", Value: r.Form.Get("percent")},
@@ -903,10 +911,6 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		bp := int64(math.Round(pct * 100)) // basis points, not money -- stays *100 regardless of currency
-		// ut-docs#1400: currency.Decimals-aware, not a hardcoded *100 -- a
-		// hardcoded conversion stored a 100x-too-large fee on a 0-decimal
-		// shop (IRR/IRT/IQD/AFN/JPY).
-		fixedMinor := httpx.MinorFromMajor(fixedMaj, httpx.ActiveCurrency().Decimals)
 		raw, _ := json.Marshal(map[string]int64{
 			"bp":    bp,
 			"fixed": fixedMinor,

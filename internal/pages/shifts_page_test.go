@@ -246,13 +246,13 @@ func TestShiftsPage_LabelsAndPatternsAreCurrencyAware(t *testing.T) {
 	if !strings.Contains(body, "(£)") {
 		t.Fatalf("expected the GBP symbol in the counted-cash label, got:\n%s", body)
 	}
-	if !strings.Contains(body, `pattern="[0-9]+(\.[0-9]{1,2})?"`) {
+	if !strings.Contains(body, `pattern="[0-9]+([.,][0-9]{1,2})?" data-money-local`) { // ut-docs#2925: comma-tolerant
 		t.Fatalf("expected the 2-decimal pattern for GBP, got:\n%s", body)
 	}
 	if !strings.Contains(body, `placeholder="0.00"`) {
 		t.Fatalf("expected the 2-decimal placeholder for GBP, got:\n%s", body)
 	}
-	if !strings.Contains(body, `pattern="-?[0-9]+(\.[0-9]{1,2})?"`) {
+	if !strings.Contains(body, `pattern="-?[0-9]+([.,][0-9]{1,2})?" data-money-local`) {
 		t.Fatalf("expected the signed 2-decimal pattern for the adjustment field, got:\n%s", body)
 	}
 	if !strings.Contains(body, `placeholder="-50.00"`) {
@@ -280,7 +280,7 @@ func TestShiftsPage_LabelsAndPatternsAreCurrencyAware(t *testing.T) {
 	if !strings.Contains(body, `pattern="[0-9]+"`) {
 		t.Fatalf("expected the 0-decimal (integer-only) pattern for IRT, got:\n%s", body)
 	}
-	if strings.Contains(body, `pattern="[0-9]+(\.[0-9]{1,2})?"`) {
+	if strings.Contains(body, `pattern="[0-9]+([.,][0-9]{1,2})?"`) {
 		t.Fatalf("expected NO 2-decimal pattern left over anywhere once currency is 0-decimal, got:\n%s", body)
 	}
 	if !strings.Contains(body, `placeholder="0"`) {
@@ -429,7 +429,7 @@ func TestShiftsPage_CarryForwardDisplayIsCurrencyAware(t *testing.T) {
 	if !strings.Contains(body, "(£)") {
 		t.Fatalf("expected the GBP symbol in the opening-cash label, got:\n%s", body)
 	}
-	if !strings.Contains(body, `id="opening-cash" inputmode="decimal" pattern="[0-9]+(\.[0-9]{1,2})?" required value="5.00"`) {
+	if !strings.Contains(body, `id="opening-cash" inputmode="decimal" pattern="[0-9]+([.,][0-9]{1,2})?" data-money-local required value="5.00"`) {
 		t.Fatalf("expected #opening-cash's own pattern+value prefilled 5.00 under GBP, got:\n%s", body)
 	}
 
@@ -442,10 +442,10 @@ func TestShiftsPage_CarryForwardDisplayIsCurrencyAware(t *testing.T) {
 	if strings.Contains(body, "(£)") {
 		t.Fatalf("expected NO leftover GBP symbol on the opening-cash label once currency is 0-decimal, got:\n%s", body)
 	}
-	if !strings.Contains(body, `id="opening-cash" inputmode="decimal" pattern="[0-9]+" required value="500"`) {
+	if !strings.Contains(body, `id="opening-cash" inputmode="decimal" pattern="[0-9]+" data-money-local required value="500"`) {
 		t.Fatalf("expected #opening-cash's own pattern+value prefilled 500 (no /100) under a 0-decimal currency, got:\n%s", body)
 	}
-	if strings.Contains(body, `pattern="[0-9]+(\.[0-9]{1,2})?"`) || strings.Contains(body, `value="5.00"`) {
+	if strings.Contains(body, `pattern="[0-9]+([.,][0-9]{1,2})?"`) || strings.Contains(body, `value="5.00"`) {
 		t.Fatalf("expected NO 2-decimal pattern or carry-forward value left over once currency is 0-decimal, got:\n%s", body)
 	}
 }
