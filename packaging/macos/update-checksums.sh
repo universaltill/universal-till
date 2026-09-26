@@ -11,6 +11,9 @@
 # before ever mounting it, failing closed if the entry is missing or
 # mismatched — so the macos-app job must fold the dmg's checksum in here
 # after building it, or every in-app mac update would be refused.
+# release.yml's `checksums` job (ut-docs#2863) reuses this same script,
+# generic despite its packaging/macos/ home, to fold in the Windows setup
+# .exe and both Android .apk names too.
 #
 # Usage: packaging/macos/update-checksums.sh <checksums-file> <artifact-file> [artifact-name]
 #   checksums-file  path to checksums.txt (created if it doesn't exist)

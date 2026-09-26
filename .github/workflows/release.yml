@@ -304,6 +304,8 @@ jobs:
     permissions:
       contents: write
       id-token: write # OIDC for azure/login; job-scoped, so this job's actions are SHA-pinned
+    outputs:
+      exe_sha256: ${{ steps.build.outputs.exe_sha256 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -329,6 +331,7 @@ jobs:
       - name: Prepare Windows code signing
         run: packaging/windows/setup-signing.sh
       - name: Build, sign & attach Windows installer (NSIS)
+        id: build
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -357,6 +360,10 @@ jobs:
           test -n "$EXE" && test -f "$EXE"
           "$SIGN" "$EXE"
           gh release upload "${TAG}" "$EXE" --clobber
+          # ut-docs#2863: the `checksums` job needs the exact bytes this job
+          # signed and uploaded, to prove the published asset it later
+          # downloads is the same file (not a race with a re-upload).
+          echo "exe_sha256=$(sha256sum "$EXE" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
       # Limits the on-disk copy only; `az` itself stays logged in until
       # azure/login's post step at job end.
       - name: Drop the signing token
@@ -510,6 +517,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      apk_sha256: ${{ steps.attach.outputs.apk_sha256 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -613,11 +622,21 @@ jobs:
           echo "signed with SHA-256: ${FINGERPRINT}"
           mv "$APK" "unitill-pos_${VERSION}_android.apk"
       - name: Attach the APK to the release
+        id: attach
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.prepare.outputs.version }}
           TAG: ${{ needs.prepare.outputs.tag }}
-        run: gh release upload "${TAG}" "unitill-pos_${VERSION}_android.apk" --clobber
+        run: |
+          set -euo pipefail
+          APK="unitill-pos_${VERSION}_android.apk"
+          gh release upload "${TAG}" "$APK" --clobber
+          # ut-docs#2863: the `checksums` job needs the exact bytes this job
+          # signed and uploaded, to prove the published asset it later
+          # downloads is the same file (not a race with a re-upload). The
+          # fixed-name latest.apk copy is a byte copy of this same file, so
+          # one hash covers both.
+          echo "apk_sha256=$(sha256sum "$APK" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
       - name: Also attach a fixed-name copy for the website's stable download link
         # ut-docs (download-page-apk-dead-end, 2026-08-30): the versioned
         # filename above means the website's Android button has no static
@@ -881,6 +900,108 @@ jobs:
 
           exit $fail
 
+  # Folds the Windows setup .exe and both Android .apk names into
+  # checksums.txt and verifies EVERY published asset against it (ut-docs#2863).
+  # goreleaser's checksums.txt only ever covers goreleaser's own artifacts;
+  # macos-app already folds the .dmg in (packaging/macos/update-checksums.sh)
+  # because internal/selfupdate's mac update path verifies it before
+  # mounting, but before this job existed nothing did the same for the
+  # Windows installer or either Android .apk — a missing or wrong entry for
+  # any of them would only ever surface as a real device silently refusing a
+  # real update (#160's planned Windows self-updater will verify a
+  # downloaded setup .exe against this job's line the exact same way).
+  #
+  # Runs after windows-installer/macos-app/android-app (every job that
+  # uploads an asset of its own) and after verify-versions specifically:
+  # verify-versions downloads checksums.txt as part of its own checks, and
+  # this job's `--clobber` re-upload would otherwise race that download.
+  # Placed as the one job that runs the fold-in AFTER every uploader, so
+  # there is never a second read-modify-write of checksums.txt racing
+  # macos-app's own append.
+  checksums:
+    needs:
+      [
+        prepare,
+        goreleaser,
+        windows-installer,
+        macos-app,
+        android-app,
+        verify-versions,
+      ]
+    if: ${{ !cancelled() && needs.goreleaser.result == 'success' && needs.windows-installer.result == 'success' && needs.macos-app.result == 'success' && needs.android-app.result == 'success' && needs.verify-versions.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # needed to see the draft release by tag — see verify-versions' comment
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - name: Wait for the GitHub release to exist
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            gh release view "$TAG" --json tagName >/dev/null 2>&1 && exit 0
+            echo "release $TAG not visible yet (attempt $i/30)"; sleep 20
+          done
+          echo "::error::release $TAG does not exist — goreleaser failed before creating it; re-run goreleaser first"
+          exit 1
+      - name: Fold in the exe/apk checksums and verify every published asset
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          EXE_SHA256: ${{ needs.windows-installer.outputs.exe_sha256 }}
+          APK_SHA256: ${{ needs.android-app.outputs.apk_sha256 }}
+        run: |
+          set -euo pipefail
+          ASSETS="$RUNNER_TEMP/assets"
+          mkdir -p "$ASSETS"
+          gh release download "$TAG" --dir "$ASSETS" --clobber
+
+          EXE="$ASSETS/unitill-pos-setup-${VERSION}.exe"
+          APK="$ASSETS/unitill-pos_${VERSION}_android.apk"
+          LATEST_APK="$ASSETS/unitill-pos-android-latest.apk"
+          test -f "$EXE"
+          test -f "$APK"
+          test -f "$LATEST_APK"
+
+          # Prove the published bytes are the ones the build jobs actually
+          # signed — not something a later, unrelated re-upload replaced.
+          if [ -z "$EXE_SHA256" ]; then
+            echo "::error::windows-installer job produced no exe_sha256 output"
+            exit 1
+          fi
+          got_exe="$(sha256sum "$EXE" | awk '{print $1}')"
+          if [ "$got_exe" != "$EXE_SHA256" ]; then
+            echo "::error::published $EXE sha256 (${got_exe}) does not match the one windows-installer signed (${EXE_SHA256})"
+            exit 1
+          fi
+          if [ -z "$APK_SHA256" ]; then
+            echo "::error::android-app job produced no apk_sha256 output"
+            exit 1
+          fi
+          got_apk="$(sha256sum "$APK" | awk '{print $1}')"
+          if [ "$got_apk" != "$APK_SHA256" ]; then
+            echo "::error::published $APK sha256 (${got_apk}) does not match the one android-app signed (${APK_SHA256})"
+            exit 1
+          fi
+          got_latest="$(sha256sum "$LATEST_APK" | awk '{print $1}')"
+          if [ "$got_latest" != "$APK_SHA256" ]; then
+            echo "::error::published $LATEST_APK sha256 (${got_latest}) is not a copy of the APK android-app signed (${APK_SHA256})"
+            exit 1
+          fi
+
+          packaging/macos/update-checksums.sh "$ASSETS/checksums.txt" "$EXE"
+          packaging/macos/update-checksums.sh "$ASSETS/checksums.txt" "$APK"
+          packaging/macos/update-checksums.sh "$ASSETS/checksums.txt" "$LATEST_APK"
+
+          bash scripts/ci/check-release-checksums.sh "$ASSETS/checksums.txt" "$ASSETS"
+
+          gh release upload "$TAG" "$ASSETS/checksums.txt" --clobber
+
   # Flips the release goreleaser created (draft: true, .goreleaser.yaml) to
   # published/"Latest" — the ONLY point in this whole workflow that does.
   # Needs every platform job AND verify-versions: goreleaser's own job only
@@ -901,7 +1022,9 @@ jobs:
   # sitting as a draft — visible to anyone with repo write access for
   # inspection/manual fix-up, invisible to the public and to
   # releases/latest — rather than silently skipping this job and leaving
-  # no signal beyond "the release never went public."
+  # no signal beyond "the release never went public." Also needs `checksums`
+  # (ut-docs#2863) — a release must never go public missing a checksums.txt
+  # entry for one of its own published assets.
   publish-release:
     needs:
       [
@@ -911,8 +1034,9 @@ jobs:
         macos-app,
         android-app,
         verify-versions,
+        checksums,
       ]
-    if: ${{ !cancelled() && needs.goreleaser.result == 'success' && needs.windows-installer.result == 'success' && needs.macos-app.result == 'success' && needs.android-app.result == 'success' && needs.verify-versions.result == 'success' }}
+    if: ${{ !cancelled() && needs.goreleaser.result == 'success' && needs.windows-installer.result == 'success' && needs.macos-app.result == 'success' && needs.android-app.result == 'success' && needs.verify-versions.result == 'success' && needs.checksums.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -958,6 +1082,7 @@ jobs:
         macos-app,
         android-app,
         verify-versions,
+        checksums,
         publish-release,
       ]
     # Only for a tag `prepare` itself created (the workflow_dispatch path —
