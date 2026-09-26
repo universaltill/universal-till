@@ -142,6 +142,16 @@
       if (dialog.open) { close(); } else { open(); }
     });
     if (closeBtn) closeBtn.addEventListener('click', close);
+    // ut-docs#2873: a tap on the popup scrim (data-ut-scrim-dismiss)
+    // closes the dialog natively, not through close() above -- keep the
+    // trigger's aria-expanded in step with every close path.
+    // A native close leaves focus on <body>; send it back to the trigger
+    // like close() does, but never steal it from somewhere else.
+    dialog.addEventListener('close', function () {
+      trigger.setAttribute('aria-expanded', 'false');
+      var a = document.activeElement;
+      if (!a || a === document.body || dialog.contains(a)) trigger.focus();
+    });
     dialog.addEventListener('keydown', function (ev) {
       if (ev.key !== 'Escape' && ev.key !== 'Esc') return;
       ev.preventDefault();

@@ -467,11 +467,125 @@
             UT.trackZoom(c.anim, { passive: true });
           } catch (e) { done(); }
         }
+        // ut-docs#2873: the shared popup scrim (#ut-scrim, near the end of
+        // <body>; app.css). A showModal() dialog brings its own native
+        // ::backdrop; a NON-modal popup (a .show() dialog -- the #1385
+        // on-screen-keyboard family -- or a UT.popupOpened() panel) gets
+        // this one div behind it, so a tap beside the popup lands on the
+        // scrim, never on the sale screen. Driven by the SAME hooks as the
+        // motion (the show/showModal wrapper, the `close` event,
+        // UT.popupOpened/Closed) plus a MutationObserver backstop on `open`
+        // and on removed nodes. Shown iff the set of open, connected,
+        // non-modal, not-closing popups is non-empty; every recompute
+        // prunes the set first, so an htmx swap that removes an open
+        // dialog, `dialog.open = false` or removeAttribute('open') can
+        // never leave it stuck on. data-ut-no-scrim: a panel the cashier
+        // keeps working beside (never tracked). data-ut-scrim-dismiss: a
+        // tap on the scrim closes the topmost popup, only if IT opted in.
+        // Nothing here may throw into the page or cost a dialog its open.
+        var scrimSet = [];
+        var scrimRaf = 0;
+        function scrimShown(el) {
+          if (!el || !el.isConnected || el.hasAttribute('data-ut-closing')) return false;
+          if (el.tagName === 'DIALOG') {
+            if (!el.open) return false;
+            try { if (el.matches(':modal')) return false; } catch (e) { /* no :modal */ }
+            return true;
+          }
+          return !el.hidden && el.getClientRects().length > 0;
+        }
+        function scrimSync() {
+          scrimRaf = 0;
+          try {
+            scrimSet = scrimSet.filter(scrimShown);
+            var on = scrimSet.length > 0;
+            var sc = document.getElementById('ut-scrim');
+            if (sc && sc.hidden === on) sc.hidden = !on;
+            document.documentElement.classList.toggle('ut-scrim-on', on && !!sc);
+          } catch (e) { /* scrim only */ }
+        }
+        function scrimSoon() {
+          try {
+            if (scrimRaf) return;
+            scrimRaf = window.requestAnimationFrame ? requestAnimationFrame(scrimSync) : setTimeout(scrimSync, 16);
+          } catch (e) { /* scrim only */ }
+        }
+        function scrimTrack(el) {
+          try {
+            if (el && el.nodeType === 1 && !el.hasAttribute('data-ut-no-scrim')) {
+              var i = scrimSet.indexOf(el);
+              if (i >= 0) scrimSet.splice(i, 1);
+              scrimSet.push(el); // last = topmost (most recently opened)
+            }
+            scrimSync();
+          } catch (e) { /* scrim only */ }
+        }
+        UT.scrimSync = scrimSync;
+        function scrimInit() {
+          var sc = document.getElementById('ut-scrim');
+          if (!sc || sc.utScrim) return;
+          sc.utScrim = true;
+          // Keep focus (and the on-screen keyboard) in the popup's field:
+          // a tap on the scrim is not a tap on the page.
+          sc.addEventListener('mousedown', function (e) { e.preventDefault(); });
+          sc.addEventListener('click', function (e) {
+            e.preventDefault();
+            try {
+              scrimSync();
+              var top = scrimSet[scrimSet.length - 1];
+              if (top && top.tagName === 'DIALOG' && top.hasAttribute('data-ut-scrim-dismiss')) top.close();
+            } catch (err) { /* scrim only */ }
+          });
+          // Backstop for every open/close path the hooks do not see: a
+          // server-rendered or setAttribute('open') dialog, `open = false`,
+          // an htmx swap removing an open popup.
+          try {
+            new MutationObserver(function (records) {
+              for (var i = 0; i < records.length; i++) {
+                var t = records[i].target;
+                if (records[i].type === 'attributes' && t.tagName === 'DIALOG' && t.open && scrimSet.indexOf(t) < 0) {
+                  var modal = false;
+                  try { modal = t.matches(':modal'); } catch (e) { /* no :modal */ }
+                  if (!modal && !t.hasAttribute('data-ut-no-scrim')) { scrimSet.push(t); }
+                }
+              }
+              scrimSoon();
+            }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['open', 'hidden'] });
+          } catch (e) { /* scrim only: the hooks still drive it */ }
+          scrimSync();
+        }
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', scrimInit);
+        else scrimInit();
+        // A modal dialog opted in with data-ut-scrim-dismiss closes on a tap
+        // on its ::backdrop: the event's target is the dialog itself and
+        // the point lies outside its box (a press that started inside and
+        // was dragged out does not count).
+        var backdropDown = null;
+        function onBackdrop(e) {
+          var d = e.target;
+          if (!d || d.tagName !== 'DIALOG' || !d.open || !d.hasAttribute('data-ut-scrim-dismiss')) return false;
+          try { if (!d.matches(':modal')) return false; } catch (err) { return false; }
+          var r = d.getBoundingClientRect();
+          return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+        }
+        document.addEventListener('pointerdown', function (e) {
+          try { backdropDown = onBackdrop(e) ? e.target : null; } catch (err) { backdropDown = null; }
+        }, true);
+        document.addEventListener('click', function (e) {
+          try {
+            var d = backdropDown;
+            backdropDown = null;
+            if (d && d === e.target && onBackdrop(e)) d.close();
+          } catch (err) { /* scrim only */ }
+        }, true);
         UT.popupOpened = function (el) {
           try { endClosing(el); UT.finishZooms(); popupOpen(el); } catch (e) { /* motion only */ }
+          scrimTrack(el);
         };
         UT.popupClosed = function (el) {
           try { popupClose(el); } catch (e) { /* motion only */ }
+          try { var i = scrimSet.indexOf(el); if (i >= 0) scrimSet.splice(i, 1); } catch (e) { /* scrim only */ }
+          scrimSync();
         };
         // `close` does not bubble: capture phase on document sees every
         // dialog's. A dialog reopened before the event was delivered stays.
@@ -494,6 +608,7 @@
             try { endClosing(this); UT.finishZooms(); } catch (e) { /* motion only */ }
             var ret = native.apply(this, arguments);
             if (!was) { try { popupOpen(this); } catch (e) { /* motion only */ } }
+            if (m === 'show') scrimTrack(this);
             return ret;
           };
           wrapped.utWrapped = true;
@@ -1583,6 +1698,11 @@
          permission_settings_page.go) and an extra closed, empty <dialog> on
          pages that never trigger it costs nothing. -->
     <dialog id="elevation-modal" class="modifier-modal"></dialog>
+    <!-- ut-docs#2873: the ONE shared backdrop behind every non-modal popup
+         (a .show() dialog, a UT.popupOpened() panel). Shown and hidden only
+         by the popup hooks in the first inline script above; app.css
+         #ut-scrim. A tap on it reaches nothing behind. -->
+    <div id="ut-scrim" hidden aria-hidden="true"></div>
   </body>
 </html>
 {{- end }}

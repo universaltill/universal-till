@@ -71,6 +71,7 @@ ALLOWED_IDS=(
   4035824   # farshidmirza (Farshid Mirza — product owner / pipeline identity)
   35641125  # pouria-teimouri
   3191028   # ugurozsahin
+  111438931 # mahshid76 (web surfaces + market:pt, onboarded #2578; ut-docs#2953)
 )
 
 # Older-style GitHub noreply addresses carry no numeric-ID prefix

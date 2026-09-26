@@ -323,6 +323,11 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 		OrderType:              j.Sale.OrderType,
 		OriginalSaleID:         j.OriginalSaleID,
 		AllowNegativeInventory: true, // the remote sale already happened
+		// ut-docs#2975: a pre-#2571 replica stored a reader tip OUTSIDE
+		// amount, so the strict tip-excluding coverage rule would refuse
+		// its replay and poison the journal cursor. The remote sale
+		// already happened; the replica's own tender path enforced it.
+		LegacyTipCoverage: true,
 		// …and the same reasoning for a tracked voucher redemption
 		// (ut-docs#1053): on a genuine offline double-spend of one voucher
 		// across two tills, the second replay finds the balance already
