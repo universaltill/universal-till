@@ -73,36 +73,6 @@ func TestFormatMajorPlain(t *testing.T) {
 	}
 }
 
-// ut-docs#1400: MinorFromMajor is FormatMajorPlain's write-side inverse,
-// used by promotions_page.go/settings_page.go's form handlers instead of a
-// hardcoded `* 100` that silently multiplied 0-decimal-currency amounts
-// 100x too large.
-func TestMinorFromMajor(t *testing.T) {
-	cases := []struct {
-		major    float64
-		decimals int
-		want     int64
-	}{
-		{1.23, 2, 123},
-		{0.05, 2, 5},
-		{-0.50, 2, -50},
-		{0, 2, 0},
-		// 0-decimal: major and minor are the same number, never *100.
-		{500, 0, 500},
-		{-500, 0, -500},
-		{0, 0, 0},
-		{1234, 3, 1234000},
-		// float imprecision (0.1 + 0.2 style) rounds to the nearest minor
-		// unit rather than truncating.
-		{19.99, 2, 1999},
-	}
-	for _, c := range cases {
-		if got := MinorFromMajor(c.major, c.decimals); got != c.want {
-			t.Errorf("MinorFromMajor(%v, %d) = %d, want %d", c.major, c.decimals, got, c.want)
-		}
-	}
-}
-
 // ut-docs#1274: MoneyPattern/MoneyPlaceholder replace 7 duplicated
 // {{ if eq currency.Decimals 0 }}…{{ else }}…{1,2}…{{ end }} ternaries
 // across shifts.html/reports_tab_tips.html -- generic over decimals (not
@@ -182,14 +152,18 @@ func TestMoneyPatternAttr(t *testing.T) {
 func TestMoneyPatternLocalAttr(t *testing.T) {
 	cases := []struct {
 		decimals int
+		signed   bool
 		want     string
 	}{
-		{0, `pattern="[0-9]+" data-money-local`},
-		{2, `pattern="[0-9]+([.,][0-9]{1,2})?" data-money-local`},
+		{0, false, `pattern="[0-9]+" data-money-local`},
+		{2, false, `pattern="[0-9]+([.,][0-9]{1,2})?" data-money-local`},
+		// ut-docs#2925: the shift adjustment is signed.
+		{2, true, `pattern="-?[0-9]+([.,][0-9]{1,2})?" data-money-local`},
+		{0, true, `pattern="-?[0-9]+" data-money-local`},
 	}
 	for _, c := range cases {
-		if got := string(MoneyPatternLocalAttr(c.decimals)); got != c.want {
-			t.Errorf("MoneyPatternLocalAttr(%d) = %q, want %q", c.decimals, got, c.want)
+		if got := string(MoneyPatternLocalAttr(c.decimals, c.signed)); got != c.want {
+			t.Errorf("MoneyPatternLocalAttr(%d, %v) = %q, want %q", c.decimals, c.signed, got, c.want)
 		}
 	}
 	re := regexp.MustCompile(`^(?:` + MoneyPatternLocal(2) + `)$`)

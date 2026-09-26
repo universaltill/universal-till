@@ -50,17 +50,20 @@
          cross-document navigation snapshots the page at all -- the costly
          step on a Pi. -->
     {{ if ne fxlevel "light" }}<style>@view-transition{navigation:auto}@media (prefers-reduced-motion:reduce){@view-transition{navigation:none}}</style>{{ end }}
-    <!-- ut-docs#2223: page/menu transition PUSH-vs-POP direction. Must be
+    <!-- ut-docs#2223: page/menu transition PUSH-vs-POP direction (since
+         ADR-0122, ut-docs#2942: forward = zoom out of the tapped element,
+         back = shrink into it -- the origin recorder and back store are at
+         the top of the script below). Must be
          inline here, not in app.js (loaded `defer`, may run after the
          first render opportunity/`pagereveal` already fired) -- ~30 lines,
          no dependencies, fully feature-checked so an engine without
          Navigation API / View Transitions support just no-ops (today's
          instant swap, unchanged).
 
-         `pageswap` is deliberately NOT used: on the OUTGOING document the
-         old snapshot is captured before navigation happens, and the
-         animation itself runs in the NEW document -- which is exactly
-         where `pagereveal` fires. One listener is enough.
+         `pageswap` (on the OUTGOING document) only stores the forward
+         zoom origin in the back store for the incoming document (ADR-0122
+         §2); the animation itself runs in the NEW document, where
+         `pagereveal` reads that entry and decides the motion.
 
          Depth heuristic (Sell "/" = 0, Menu hub "/menu" = 1, everything
          else = 2 + extra path segments): a browser back/forward
@@ -85,16 +88,16 @@
         // ut-docs#2496: the one "a transition must never hold the screen"
         // watchdog, shared by the cross-document (pagereveal, below) and
         // same-document (boosted #ut-page swap, shell script) paths. The
-        // 1000ms budget (the 400ms motion of ADR-0118 plus margin for a slow
+        // 1000ms budget (the 400ms motion of ADR-0118/0122 plus margin for a slow
         // tablet's dropped frames) starts when the MOTION starts (vt.ready),
         // never when the transition is created: a same-document transition
         // is created BEFORE htmx swaps the page in, and on the pilot tablet
         // that swap alone can take most of the budget, so a creation-time
-        // timer cut the slide short or skipped it outright -- the "not like
+        // timer cut the motion short or skipped it outright -- the "not like
         // Apple anymore" regression (reproduced at 4x/8x CPU throttle). A 2s
         // backstop from creation still covers an engine whose ready never
         // settles (a swap that itself runs past 2s trips it just before
-        // ready and skips a slide that was about to play -- harmless: the
+        // ready and skips a motion that was about to play -- harmless: the
         // swap held the screen, not the transition). Defined before the
         // feature check below so the shell script can always find it.
         //
@@ -120,26 +123,6 @@
         var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
         UT.motionOff = function () {
           return !!(reduce && reduce.matches) || UT.fxLevel === 'light';
-        };
-        // ADR-0122 §2 (ut-docs#2943): the ONE origin recorder every zoom
-        // reads. A capture-phase pointerdown (or Enter/Space, for keyboard
-        // activation) remembers the pressed control's box BEFORE any request
-        // or swap, so a pane or popup that arrives from an htmx response
-        // still grows out of what was tapped. Consumers call UT.takeOrigin(),
-        // which returns it once and clears it; the next pointerdown replaces
-        // it, and it expires after 5 s so a stale tap never zooms.
-        var ORIGIN_SEL = 'a, button, [hx-get], [hx-post], [role=treeitem], [data-zoom-origin]';
-        function recordOrigin(t) {
-          var el = t && t.closest ? t.closest(ORIGIN_SEL) : null;
-          if (!el || !el.getBoundingClientRect) { UT.motionOrigin = null; return; }
-          var r = el.getBoundingClientRect();
-          UT.motionOrigin = { rect: { left: r.left, top: r.top, width: r.width, height: r.height }, el: el, at: Date.now() };
-        }
-        UT.takeOrigin = function () {
-          var o = UT.motionOrigin;
-          UT.motionOrigin = null;
-          if (!o || Date.now() - o.at > 5000) return null;
-          return o;
         };
         // ADR-0122 §4/§7: every running zoom (Web Animations) registers here
         // so a tap, a popup opening or the next pane swap can finish() it --
@@ -168,17 +151,15 @@
           // Any new press disarms a re-dispatch window a previous press left
           // behind (a scroll or drag that never produced a click).
           skippedByTapAt = 0; zoomTap = false;
+          // The origin itself is recorded by the ONE recorder below (#2942),
+          // which runs after this listener and reads zoomTap.
           var finished = UT.finishZooms();
-          recordOrigin(finished ? (document.elementFromPoint(e.clientX, e.clientY) || e.target) : e.target);
           var vt = activeVT;
           if (vt) {
             activeVT = null;
             try { vt.skipTransition(); } catch (err) { /* already done */ }
           }
           if (vt || finished) { skippedByTapAt = Date.now(); zoomTap = finished; }
-        }, true);
-        window.addEventListener('keydown', function (e) {
-          if (e.key === 'Enter' || e.key === ' ') recordOrigin(e.target);
         }, true);
         window.addEventListener('pointercancel', function () { skippedByTapAt = 0; zoomTap = false; }, true);
         window.addEventListener('click', function (e) {
@@ -228,6 +209,143 @@
           wrapped.utWrapped = true;
           HTMLDialogElement.prototype[m] = wrapped;
         });
+        // ADR-0122 §2 (ut-docs#2942): the ONE motion-origin recorder -- the
+        // iOS zoom's "source view". Capture phase, so it runs before any
+        // htmx request or swap the same press causes (and after the
+        // transition skip above, so a tap during a page motion reads the
+        // element really under the pointer, not <html>). Consumers --
+        // the page zoom below, the tree-pane zoom (#2943), the popup zoom
+        // (#2944) -- call UT.takeOrigin(), which hands the origin out ONCE.
+        // The next press replaces it, and it expires after 5 s, so a slow
+        // response on a weak device still zooms from the right place while
+        // a stale tap never does. An off-screen or zero-size box is no
+        // origin (the motion then uses the bottom-centre fallback). Nothing
+        // here may throw into the page.
+        var ORIGIN_SEL = 'a, button, [hx-get], [hx-post], [role=treeitem], [data-zoom-origin]';
+        var ORIGIN_TTL_MS = 5000;
+        UT.motionOrigin = null;
+        function viewport() {
+          var de = document.documentElement;
+          return { w: window.innerWidth || de.clientWidth || 0, h: window.innerHeight || de.clientHeight || 0 };
+        }
+        // Takes a DOMRect or the plain { left, top, width, height } the back
+        // store hands back.
+        function onScreen(r) {
+          var v = viewport();
+          return !!r && r.width > 0 && r.height > 0 &&
+            r.left + r.width > 0 && r.top + r.height > 0 && r.left < v.w && r.top < v.h;
+        }
+        function recordOrigin(e, target) {
+          try {
+            var t = target;
+            if (t === document.documentElement && e && typeof e.clientX === 'number' && document.elementFromPoint) {
+              t = document.elementFromPoint(e.clientX, e.clientY);
+            }
+            var el = t && t.closest ? t.closest(ORIGIN_SEL) : null;
+            var r = el ? el.getBoundingClientRect() : null;
+            if (!el || !onScreen(r)) { UT.motionOrigin = null; return; }
+            UT.motionOrigin = { rect: r, el: el, at: Date.now() };
+          } catch (err) { UT.motionOrigin = null; }
+        }
+        // A tap that just finished a zoom (the pointerdown listener above set
+        // zoomTap) was hit-tested at the moving position: record the element
+        // under the pointer NOW, at its final position (ADR-0122 §7).
+        window.addEventListener('pointerdown', function (e) {
+          var t = e.target;
+          if (zoomTap && document.elementFromPoint) t = document.elementFromPoint(e.clientX, e.clientY) || t;
+          recordOrigin(e, t);
+        }, true);
+        window.addEventListener('keydown', function (e) {
+          if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+          // Typing in a field (Space in a search box, Enter in a form) is
+          // not an activation of a source view -- and would otherwise force
+          // a layout read per keystroke and record the whole form.
+          var tg = e.target;
+          if (tg && (tg.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(tg.tagName || ''))) return;
+          // Like a tap (ADR-0122 §7): finish a running pane zoom first, so
+          // the box read is the control's final position, not a mid-zoom one.
+          try { UT.finishZooms(); } catch (err) { /* motion only */ }
+          recordOrigin(null, e.target);
+        }, true);
+        UT.takeOrigin = function () {
+          var o = UT.motionOrigin;
+          UT.motionOrigin = null;
+          if (!o || Date.now() - o.at > ORIGIN_TTL_MS) return null;
+          return o;
+        };
+        // ADR-0122 §3: the page zoom reads its origin from three custom
+        // properties on <html> -- the source centre in viewport px and the
+        // uniform start scale (source width / viewport width, clamped
+        // .1-1). They are consumed only by app.css's page keyframes, so
+        // writing them changes no layout (ADR-0118 §1 holds). No origin =
+        // the bottom centre of the viewport at the fallback scale.
+        var ZOOM_FALLBACK_S = 0.3;
+        UT.zoomTo = function (rect) {
+          try {
+            var v = viewport();
+            var x = v.w / 2, y = v.h, sc = ZOOM_FALLBACK_S;
+            if (rect && onScreen(rect) && v.w > 0) {
+              x = rect.left + rect.width / 2;
+              y = rect.top + rect.height / 2;
+              sc = rect.width / v.w;
+            }
+            x = Math.round(x); y = Math.round(y);
+            sc = Math.round(Math.min(1, Math.max(0.1, sc)) * 1000) / 1000;
+            var s = document.documentElement.style;
+            s.setProperty('--ut-zoom-x', x + 'px');
+            s.setProperty('--ut-zoom-y', y + 'px');
+            s.setProperty('--ut-zoom-s', String(sc));
+            return { x: x, y: y, s: sc };
+          } catch (err) { return null; }
+        };
+        // ADR-0122 §2, back: on a forward navigation the source box is kept
+        // in sessionStorage keyed by the DESTINATION path, as
+        // [to, from, left, top, width, height] -- a path and four numbers,
+        // no page content (ADR-0098 §5), newest 20 only. A later pop FROM
+        // `to` shrinks into that box only when it lands back on `from`;
+        // anywhere else (the rail jumping straight to Sell) is iOS's own
+        // rule: the source view is not on the new page, use the fallback.
+        var ZOOM_KEY = 'ut-zoom-back', ZOOM_MAX = 20;
+        function pathOf(u) {
+          try { return new URL(u, location.href).pathname.replace(/\/+$/, '') || '/'; } catch (err) { return ''; }
+        }
+        function zoomEntry(e) {
+          if (!e || e.length !== 6 || typeof e[0] !== 'string' || typeof e[1] !== 'string') return false;
+          for (var i = 2; i < 6; i++) if (typeof e[i] !== 'number' || !isFinite(e[i])) return false;
+          return true;
+        }
+        function zoomLoad() {
+          try {
+            var v = JSON.parse(sessionStorage.getItem(ZOOM_KEY) || '[]');
+            return Array.isArray(v) ? v.filter(zoomEntry) : [];
+          } catch (err) { return []; }
+        }
+        function zoomSave(list) {
+          try { sessionStorage.setItem(ZOOM_KEY, JSON.stringify(list)); } catch (err) { /* storage unavailable or full */ }
+        }
+        UT.zoomRemember = function (to, from, rect) {
+          try {
+            var t = pathOf(to), f = pathOf(from);
+            if (!t) return;
+            // Always drop the old entry for `to`: a hop with no origin must
+            // not leave an older visit's box behind for the next back.
+            var list = zoomLoad().filter(function (e) { return e[0] !== t; });
+            if (f && rect && onScreen(rect)) {
+              list.push([t, f, Math.round(rect.left), Math.round(rect.top), Math.round(rect.width), Math.round(rect.height)]);
+            }
+            while (list.length > ZOOM_MAX) list.shift();
+            zoomSave(list);
+          } catch (err) { /* motion only */ }
+        };
+        UT.zoomRecall = function (leaving, landing) {
+          try {
+            var l = pathOf(leaving);
+            landing = pathOf(landing);
+            var list = zoomLoad(), e = null;
+            for (var i = list.length - 1; i >= 0; i--) if (list[i][0] === l) { e = list[i]; break; }
+            return (e && e[1] === landing) ? { left: e[2], top: e[3], width: e[4], height: e[5] } : null;
+          } catch (err) { return null; }
+        };
         UT.vtWatchdog = function (vt) {
           if (!vt || !vt.skipTransition) return;
           var guard = null;
@@ -271,6 +389,20 @@
           });
         }
         window.addEventListener('pageswap', function (e) {
+          // ADR-0122 §2/§3, cross-document hop: the incoming document cannot
+          // see this one's UT.motionOrigin, so the forward source box goes
+          // into the back store here, keyed by the destination -- the new
+          // document's pagereveal reads the same entry to grow from it (and
+          // a later pop reads it to shrink into it). Only a link to exactly
+          // that destination counts as the source: a form POST's redirect,
+          // a timer or a script navigation grows from the fallback.
+          try {
+            var act = e.activation, o = UT.takeOrigin();
+            if (!UT.motionOff() && act && act.entry && act.from && act.navigationType !== 'reload' && dirFor(act) === 'push') {
+              var href = o && o.el && o.el.href;
+              UT.zoomRemember(act.entry.url, location.href, (typeof href === 'string' && pathOf(href) === pathOf(act.entry.url)) ? o.rect : null);
+            }
+          } catch (err) { /* motion only */ }
           if (!e.viewTransition) return;
           quiet(e.viewTransition);
           if (UT.motionOff()) e.viewTransition.skipTransition();
@@ -283,11 +415,18 @@
           // A reload is not a move anywhere (pull-to-refresh on the tablet,
           // the UT.reload() sites, the server's HX-Refresh) --
           // from === entry, so the depth heuristic would read it as a push
-          // and slide the same page in from the side. Skip the motion.
+          // and zoom the same page in again. Skip the motion.
           if (act && act.navigationType === 'reload') { if (vt.skipTransition) vt.skipTransition(); return; }
           var d = dirFor(act);
           document.documentElement.setAttribute('data-nav-dir', d);
           if (vt.types && d === 'pop') vt.types.add('back');
+          // ADR-0122 §3: forward grows from the box the outgoing document
+          // stored for THIS page (pageswap above); back shrinks into the box
+          // the page being left was opened from, only if we landed on the
+          // page it was opened from. Either way the entry must name the
+          // other end of this hop, else the bottom-centre fallback.
+          var here = location.href, prev = act && act.from ? act.from.url : '';
+          UT.zoomTo(d === 'pop' ? UT.zoomRecall(prev, here) : UT.zoomRecall(here, prev));
           // Watchdog: a transition must never hold the screen. The motion
           // is 400ms (ADR-0118); anything still running 1000ms after it
           // started is jank or a stuck engine (CI's Linux headless Chromium
@@ -318,8 +457,9 @@
               old page's snapshot is captured (ut-docs#2496, ADR-0118).
            3. Push/pop direction (ADR-0097's depth heuristic, now from the
               current URL to the final URL) on every boosted swap, and
-              htmx:beforeTransition cancelled under reduced motion so the
-              same-document View Transition never runs for that user.
+              htmx:beforeTransition cancelled under reduced motion / Light so
+              the same-document View Transition never runs for that user;
+              otherwise it sets the ADR-0122 zoom origin (--ut-zoom-*).
            4. UT.ready(fn) -- the boost-safe DOMContentLoaded: runs fn on
               DOMContentLoaded while the document is still loading, else on the
               next microtask (after Alpine's MutationObserver has initialised
@@ -619,7 +759,31 @@
           // UT.motionOff(): reduced motion or the Light effects level
           // (ADR-0119) -- cancelled here, so no View Transition and no
           // whole-page snapshot is ever created for that till.
-          if (UT.motionOff() || !document.startViewTransition) e.preventDefault();
+          if (UT.motionOff() || !document.startViewTransition) { e.preventDefault(); return; }
+          // ADR-0122 §3: the zoom origin, set now -- after beforeSwap
+          // decided the direction, before htmx starts the transition (and so
+          // before the old snapshot). Three custom properties on <html>, no
+          // layout effect. The press origin is used only when it IS the
+          // element that issued this navigation (or contains/is inside it)
+          // and the response was not redirected: an HX-Location, a timer, a
+          // poll or a redirect grows from the fallback (ADR-0122 §2 -- the
+          // same rule the cross-document pageswap applies).
+          var o = UT.takeOrigin();
+          var from = location.href, to = finalURL(d);
+          var pi = d.pathInfo || {};
+          var redirected = false;
+          try {
+            var norm = function (u) { return new URL(u, location.href).pathname.replace(/\/+$/, '') || '/'; };
+            redirected = !!pi.requestPath && norm(pi.requestPath) !== norm(to);
+          } catch (err) { redirected = true; }
+          if (document.documentElement.getAttribute('data-nav-dir') === 'pop') {
+            UT.zoomTo(UT.zoomRecall(from, to));
+          } else {
+            var src = rc.elt, rect = null;
+            if (!redirected && o && o.el && src && src.contains && (o.el === src || src.contains(o.el) || o.el.contains(src))) rect = o.rect;
+            UT.zoomRemember(to, from, rect);
+            UT.zoomTo(rect);
+          }
         });
       })();
     </script>

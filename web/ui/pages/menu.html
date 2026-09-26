@@ -75,7 +75,7 @@
          wrong charge. -->
     <label>{{ T "pfand.modal.amount" }} ({{ currency.Display }})
       <input type="text" id="pfand-amount" inputmode="decimal"
-             {{ moneypattern currency.Decimals false }}
+             {{ moneypatternlocal currency.Decimals false }}
              required {{ moneyplaceholder currency.Decimals 0 }}
              oninput="document.getElementById('pfand-amount-minor').value = window.utCurrency.toMinor(this.value)">
     </label>

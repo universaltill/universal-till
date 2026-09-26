@@ -787,8 +787,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				[]elevationHiddenField{{Name: "method", Value: method}}, elev)
 			return
 		}
-		if err := d.Settings.Set(r.Context(), "payments.default_method", method); err != nil {
-			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+		// ut-docs#2791: shop-wide -- through the main till on an
+		// additional till (settings_sync_proxy.go).
+		if err := saveShopSettings(r.Context(), d, elev, map[string]string{"payments.default_method": method}); err != nil {
+			if !respondSettingsSyncFragment(w, r, err) {
+				fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+			}
 			return
 		}
 		settingsAudit(r, posRepo, elev, "settings", "payments.default_method", "payments_default_changed",
@@ -816,8 +820,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				[]elevationHiddenField{{Name: "scheme", Value: scheme}}, elev)
 			return
 		}
-		if err := d.Settings.Set(r.Context(), data.SaleDisplayNoSchemeKey, scheme); err != nil {
-			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+		if err := saveShopSettings(r.Context(), d, elev, map[string]string{data.SaleDisplayNoSchemeKey: scheme}); err != nil {
+			if !respondSettingsSyncFragment(w, r, err) {
+				fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+			}
 			return
 		}
 		settingsAudit(r, posRepo, elev, "settings", data.SaleDisplayNoSchemeKey, "order_no_scheme_changed",
@@ -848,8 +854,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				[]elevationHiddenField{{Name: "mode", Value: mode}}, elev)
 			return
 		}
-		if err := d.Settings.Set(r.Context(), data.OrderTypePromptModeKey, mode); err != nil {
-			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+		if err := saveShopSettings(r.Context(), d, elev, map[string]string{data.OrderTypePromptModeKey: mode}); err != nil {
+			if !respondSettingsSyncFragment(w, r, err) {
+				fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+			}
 			return
 		}
 		httpx.InitOrderTypePromptMode(mode)
@@ -874,8 +882,16 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		pct, _ := strconv.ParseFloat(strings.TrimSpace(r.Form.Get("percent")), 64)
-		fixedMaj, _ := strconv.ParseFloat(strings.TrimSpace(r.Form.Get("fixed")), 64)
-		if pct < 0 || fixedMaj < 0 || pct > 100 {
+		// ut-docs#2925: the fixed fee is money -- ParseMoneyMajor accepts a
+		// decimal comma ("0,30") and refuses a malformed amount, which
+		// ParseFloat's ignored error used to store as 0. Empty stays 0.
+		fixedRaw := strings.TrimSpace(r.Form.Get("fixed"))
+		var fixedMinor int64
+		var fixedErr error
+		if fixedRaw != "" {
+			fixedMinor, fixedErr = httpx.ParseMoneyMajor(fixedRaw, httpx.ActiveCurrency().Decimals)
+		}
+		if pct < 0 || fixedErr != nil || pct > 100 {
 			fmt.Fprintf(w, `<span class="error">✗ range</span>`)
 			return
 		}
@@ -886,7 +902,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if elev.Outcome == needsElevation {
 			renderElevationPrompt(w, r, "/api/settings/payments-fee", "#fee-msg-"+method,
 				fmt.Sprintf(httpx.T(locale, "elevation.summary.payments_fee"), method,
-					strconv.FormatFloat(pct, 'f', -1, 64), strconv.FormatFloat(fixedMaj, 'f', -1, 64)),
+					strconv.FormatFloat(pct, 'f', -1, 64), httpx.FormatMajorPlain(fixedMinor, httpx.ActiveCurrency().Decimals)),
 				[]elevationHiddenField{
 					{Name: "method", Value: method},
 					{Name: "percent", Value: r.Form.Get("percent")},
@@ -895,16 +911,14 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		bp := int64(math.Round(pct * 100)) // basis points, not money -- stays *100 regardless of currency
-		// ut-docs#1400: currency.Decimals-aware, not a hardcoded *100 -- a
-		// hardcoded conversion stored a 100x-too-large fee on a 0-decimal
-		// shop (IRR/IRT/IQD/AFN/JPY).
-		fixedMinor := httpx.MinorFromMajor(fixedMaj, httpx.ActiveCurrency().Decimals)
 		raw, _ := json.Marshal(map[string]int64{
 			"bp":    bp,
 			"fixed": fixedMinor,
 		})
-		if err := d.Settings.Set(r.Context(), "payments.fee."+method, string(raw)); err != nil {
-			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+		if err := saveShopSettings(r.Context(), d, elev, map[string]string{"payments.fee." + method: string(raw)}); err != nil {
+			if !respondSettingsSyncFragment(w, r, err) {
+				fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+			}
 			return
 		}
 		settingsAudit(r, posRepo, elev, "settings", "payments.fee."+method, "payments_fee_changed",
@@ -1053,7 +1067,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				[]elevationHiddenField{{Name: "optIn", Value: r.Form.Get("optIn")}}, elev)
 			return
 		}
-		if err := d.Settings.Set(r.Context(), common.KeyAutoRegisterOptIn, optIn); err != nil {
+		if err := saveShopSettings(r.Context(), d, elev, map[string]string{common.KeyAutoRegisterOptIn: optIn}); err != nil {
+			if respondSettingsSyncError(w, r, err) {
+				return
+			}
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings_auto_register", err)
 			return
 		}
@@ -1330,8 +1347,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if b {
 			val = "1"
 		}
-		if err := d.Settings.Set(r.Context(), data.CatalogImportBarcodeFromSKUDefaultKey, val); err != nil {
-			http.Error(w, "could not save", http.StatusInternalServerError)
+		if err := saveShopSettings(r.Context(), d, elev, map[string]string{data.CatalogImportBarcodeFromSKUDefaultKey: val}); err != nil {
+			if !respondSettingsSyncError(w, r, err) {
+				http.Error(w, "could not save", http.StatusInternalServerError)
+			}
 			return
 		}
 		settingsAudit(r, posRepo, elev, "settings", data.CatalogImportBarcodeFromSKUDefaultKey, "catalog_import_barcode_default_changed", map[string]any{"enabled": b})
@@ -1606,7 +1625,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				[]elevationHiddenField{{Name: "optIn", Value: r.Form.Get("optIn")}}, elev)
 			return
 		}
-		if err := d.Settings.Set(r.Context(), "marketplace.telemetry_opt_in", optIn); err != nil {
+		if err := saveShopSettings(r.Context(), d, elev, map[string]string{"marketplace.telemetry_opt_in": optIn}); err != nil {
+			if respondSettingsSyncError(w, r, err) {
+				return
+			}
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings_telemetry", err)
 			return
 		}
@@ -1820,8 +1842,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				[]elevationHiddenField{{Name: "shop_type", Value: v}}, elev)
 			return
 		}
-		if err := d.Settings.Set(r.Context(), common.KeyShopType, v); err != nil {
-			http.Error(w, "could not save", http.StatusInternalServerError)
+		if err := saveShopSettings(r.Context(), d, elev, map[string]string{common.KeyShopType: v}); err != nil {
+			if !respondSettingsSyncError(w, r, err) {
+				http.Error(w, "could not save", http.StatusInternalServerError)
+			}
 			return
 		}
 		// ut-docs#1902: shop_type=service activates the builtin Salon layout
@@ -2161,8 +2185,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				httpx.T(locale, "elevation.summary.dismiss_restore_prompt"), nil, elev)
 			return
 		}
-		if err := d.Settings.Set(r.Context(), common.KeyRestorePromptStatus, ""); err != nil {
-			http.Error(w, "could not save", http.StatusInternalServerError)
+		if err := saveShopSettings(r.Context(), d, elev, map[string]string{common.KeyRestorePromptStatus: ""}); err != nil {
+			if !respondSettingsSyncError(w, r, err) {
+				http.Error(w, "could not save", http.StatusInternalServerError)
+			}
 			return
 		}
 		settingsAudit(r, posRepo, elev, "settings", common.KeyRestorePromptStatus, "restore_prompt_dismissed", nil)
@@ -2323,8 +2349,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if name != "" {
-			if err := d.Settings.Set(r.Context(), "till.name", name); err != nil {
-				http.Error(w, "could not save", http.StatusInternalServerError)
+			// till.name is admin-synced (shop-wide by data.SettingScope),
+			// so an additional till writes it through (ut-docs#2791).
+			if err := saveShopSettings(r.Context(), d, elev, map[string]string{"till.name": name}); err != nil {
+				if !respondSettingsSyncError(w, r, err) {
+					http.Error(w, "could not save", http.StatusInternalServerError)
+				}
 				return
 			}
 			settingsAudit(r, posRepo, elev, "settings", "till.name", "till_name_changed",
@@ -2717,6 +2747,14 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			if !requireFiscalAuthorityForCountryChange(w, r, d, value) {
 				return
 			}
+			// ut-docs#2791: the main till's write-through endpoint refuses
+			// store.country (its fiscal-authority check and posture reset
+			// are ut-docs#2948) -- refuse it here, before the reset below
+			// touches this till's own fiscal state.
+			if tillFollowsMain(r.Context(), d) {
+				respondSettingsSyncError(w, r, &errSettingsSync{Status: http.StatusBadRequest, Code: "not_supported_via_sync"})
+				return
+			}
 			if err := clearFiscalStateForCountryChange(r.Context(), d, actorIDFor(r), value); err != nil {
 				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings", err) // page-error:allow /api/ route
 				return
@@ -2735,7 +2773,32 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if fiscalToggleAction != "" {
 			prevFiscalValue, _, _ = d.Settings.Get(r.Context(), storageKey)
 		}
-		if err := d.Settings.Set(r.Context(), storageKey, value); err != nil {
+		// ut-docs#2791: a shop-wide key goes through the main till on an
+		// additional till; a refusal writes nothing and skips every side
+		// effect below.
+		kv := map[string]string{storageKey: value}
+		// ut-docs#2791 review: keys this write implies travel in the SAME
+		// batch, so the main till applies them in one transaction -- a
+		// second round-trip could land the currency without its
+		// confirmation, and a locally bumped store.locale_generation would
+		// be reverted by the next pull.
+		if key == common.KeyCurrency {
+			// An explicit Settings write is exactly the "operator chose
+			// this" signal ut-docs#970's import gate needs -- mark it
+			// confirmed so a catalogue import never re-asks after this.
+			kv[common.KeyCurrencyConfirmed] = "true"
+		}
+		localeGeneration := int64(-1)
+		if key == common.KeyLocale && slices.Contains(httpx.AvailableLocales(), value) && tillFollowsMain(r.Context(), d) {
+			cur, _, _ := d.Settings.Get(r.Context(), common.KeyLocaleGeneration)
+			n, _ := strconv.ParseInt(cur, 10, 64)
+			localeGeneration = n + 1
+			kv[common.KeyLocaleGeneration] = strconv.FormatInt(localeGeneration, 10)
+		}
+		if err := saveShopSettings(r.Context(), d, elev, kv); err != nil {
+			if respondSettingsSyncError(w, r, err) {
+				return
+			}
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings_fiscal", err)
 			return
 		}
@@ -2849,12 +2912,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		switch key {
 		case common.KeyCurrency:
 			httpx.InitCurrency(st.Currency)
-			// An explicit Settings write is exactly the "operator chose
-			// this" signal ut-docs#970's import gate needs — mark it
-			// confirmed so a catalogue import never re-asks after this.
-			if err := d.Settings.Set(r.Context(), common.KeyCurrencyConfirmed, "true"); err != nil {
-				logging.L().Errorf("settings: mark currency confirmed: %v", err)
-			}
+			// store.currency_confirmed was saved with the currency above.
 		case common.KeyTheme:
 			// ut-docs#2362, same class of gap as ut-docs#2121's display.mode
 			// case below: this generic key/value door set s.Theme above but
@@ -2874,7 +2932,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// cookie either. Guarded on the value actually having been
 			// ACCEPTED above — a rejected locale changes nothing, so it
 			// must not throw away anyone's override.
-			if slices.Contains(httpx.AvailableLocales(), value) {
+			if localeGeneration >= 0 {
+				// Already bumped through the main till with the locale.
+				httpx.SetLocaleGeneration(localeGeneration)
+			} else if slices.Contains(httpx.AvailableLocales(), value) {
 				retireLocaleOverrides(r.Context(), d.Settings)
 			}
 		case common.KeyTaxInclusive, common.KeyServiceChargeRate, common.KeyCountry:

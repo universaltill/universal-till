@@ -43,6 +43,13 @@ func fixedFieldTags(body string) []string {
 	return regexp.MustCompile(`<input[^>]*name="fixed"[^>]*>`).FindAllString(body, -1)
 }
 
+// gbpLocalPattern is the 2-decimal money pattern these fields render since
+// ut-docs#2925 moved them from {{ moneypattern }} to the comma-tolerant
+// {{ moneypatternlocal }} (their values are read by ParseMoneyMajor /
+// utCurrency.toMinor, both of which accept "3,50"). The IRT integer-only
+// pattern is the same either way.
+const gbpLocalPattern = `pattern="[0-9]+([.,][0-9]{1,2})?" data-money-local`
+
 // pfandAmountTag extracts menu.html's single #pfand-amount input tag.
 func pfandAmountTag(body string) string {
 	m := regexp.MustCompile(`<input[^>]*id="pfand-amount"[^>]*>`).FindString(body)
@@ -71,7 +78,7 @@ func TestMenuPage_PfandAmountPatternAndPlaceholderAreCurrencyAware(t *testing.T)
 	if tag == "" {
 		t.Fatalf("expected the #pfand-amount input to render")
 	}
-	if !strings.Contains(tag, `pattern="[0-9]+(\.[0-9]{1,2})?"`) {
+	if !strings.Contains(tag, gbpLocalPattern) {
 		t.Errorf("GBP: expected the 2-decimal pattern, got: %s", tag)
 	}
 	if !strings.Contains(tag, `placeholder="0.00"`) {
@@ -137,7 +144,7 @@ func TestPromotionsPage_ValueAmountPatternIsCurrencyAware(t *testing.T) {
 		t.Fatalf("expected at least 2 value_amount fields (dialog + inline row(s)), got %d: %v", len(tags), tags)
 	}
 	for _, tag := range tags {
-		if !strings.Contains(tag, `pattern="[0-9]+(\.[0-9]{1,2})?"`) {
+		if !strings.Contains(tag, gbpLocalPattern) {
 			t.Errorf("GBP: expected the 2-decimal pattern on %s", tag)
 		}
 	}
@@ -194,7 +201,7 @@ func TestSettingsPage_PaymentsFeeFixedPatternIsCurrencyAware(t *testing.T) {
 		t.Fatalf("expected at least one payments-fee 'fixed' field to render")
 	}
 	for _, tag := range tags {
-		if !strings.Contains(tag, `pattern="[0-9]+(\.[0-9]{1,2})?"`) {
+		if !strings.Contains(tag, gbpLocalPattern) {
 			t.Errorf("GBP: expected the 2-decimal pattern on %s", tag)
 		}
 	}
