@@ -44,7 +44,7 @@ Eine falsche aktuelle PIN zählt auf dieser Kasse als fehlgeschlagener Anmeldeve
 Eine unbeaufsichtigte, angemeldete Kasse ist ein echtes Risiko — jeder, der vorbeigeht, kann verkaufen, erstatten oder Einstellungen öffnen, als wer zuletzt angemeldet war. Die Kasse sperrt sich nach einer Weile ohne Berührung selbst zurück zum PIN-Feld, ohne dass eine Aktion oder Transaktion verloren geht: Was im Warenkorb war, ist genau so, wie Sie es verlassen haben, sobald Sie (oder jemand anderes Berechtigtes) sich wieder anmelden.
 
 1. Legen Sie das Zeitlimit unter Einstellungen → Auto-Sperre fest: aus, oder 2/5/10/15/30/60 Minuten — anfangs 10 Minuten, bis jemand es ändert.
-2. Jedes Tippen, jeder Tastendruck oder Scan an der Kasse setzt den Countdown zurück — er greift nur, wenn wirklich echter Leerlauf herrscht.
+2. Jedes Tippen, jeder Tastendruck oder Scan an der Kasse setzt den Countdown zurück — er greift nur, wenn wirklich echter Leerlauf herrscht. Ein Bildschirm, der sich selbst aktualisiert (die Status-Chips, neue Tasten oder offene Bestellungen auf dem Verkaufsbildschirm), zählt nicht als Aktivität. Ausnahme sind die Bildschirme, die man anschaut statt bedient — die Küchenanzeige, die Bestellstatus-Tafel und die Kiosk-Abholbestellungen: Sie bleiben angemeldet, solange sie geöffnet sind.
 3. Das Ändern dieser Einstellung erfordert die Rolle Manager oder Admin, dieselbe [Manager-Freigabe-Abfrage](/help/elevation) wie bei anderen Einstellungsänderungen.
 4. Möchten Sie nicht auf das Zeitlimit warten? Verwenden Sie die Schaltfläche „Sperren“ neben Ihrem Namen im linken Menü, um sie jederzeit selbst zu sperren.
 

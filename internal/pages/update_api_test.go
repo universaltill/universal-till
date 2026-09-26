@@ -523,7 +523,7 @@ func stubAutoUpdateSeams(t *testing.T, current updates.Status, checkNow updates.
 	autoUpdateCurrent = func() updates.Status { return current }
 	autoUpdateCheckNow = func(context.Context) updates.Status { return checkNow }
 	autoUpdateSupported = func() bool { return supported }
-	autoUpdateApply = func(context.Context) error {
+	autoUpdateApply = func(context.Context, func() bool) error {
 		applyCalls++
 		return applyErr
 	}

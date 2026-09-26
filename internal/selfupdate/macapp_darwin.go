@@ -22,8 +22,9 @@ import (
 // and relaunches the new version. Unlike the archive path it never swaps the
 // inner binary (that would break the code signature and the release archive
 // binary is unsigned anyway). Only arm64 is supported — no Intel .dmg is
-// ever published (see the goarch check below).
-func applyMacApp(ctx context.Context, appPath string) error {
+// ever published (see the goarch check below). version is the release to
+// install, as resolved by ApplyVersion ("" = latest, ut-docs#2738).
+func applyMacApp(ctx context.Context, appPath, version string, idle func() bool) error {
 	log := logging.L()
 	// Belt-and-suspenders: Supported() (selfupdate.go) already hides the
 	// "Update now" button for an Intel Mac via this same goarch var
@@ -36,11 +37,11 @@ func applyMacApp(ctx context.Context, appPath string) error {
 	if goarch != "arm64" {
 		return fmt.Errorf("in-app update is not available for Intel Macs — download the latest .dmg from https://www.universaltill.com/download instead")
 	}
-	rel, err := fetchLatest(ctx)
+	rel, err := fetchRelease(ctx, version)
 	if err != nil {
 		return err
 	}
-	version := strings.TrimPrefix(rel.TagName, "v")
+	version = strings.TrimPrefix(rel.TagName, "v")
 	dmgName := fmt.Sprintf("unitill-pos-%s-macOS-arm64.dmg", version)
 	dmgURL, checksumsURL := "", ""
 	for _, a := range rel.Assets {
@@ -108,6 +109,12 @@ func applyMacApp(ctx context.Context, appPath string) error {
 	// a swapped-out download.
 	if out, err := exec.Command("codesign", "--verify", "--deep", "--strict", staged).CombinedOutput(); err != nil {
 		return cleanupOnErr(fmt.Errorf("downloaded app failed signature check: %v: %s", err, strings.TrimSpace(string(out))))
+	}
+
+	// The helper quits and relaunches the app: hold it while a sale is open
+	// (ApplyVersionWhenIdle, ut-docs#2738 review).
+	if err := waitIdle(ctx, idle); err != nil {
+		return cleanupOnErr(err)
 	}
 
 	// Launch the detached replace-and-relaunch helper.

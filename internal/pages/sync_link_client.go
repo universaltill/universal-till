@@ -59,7 +59,15 @@ func newSyncLinkClient(d *common.Deps, opts fleetlink.ClientOptions) *fleetlink.
 		return t, t.BaseURL != "" && t.Bearer != ""
 	}
 	opts.Probe = func(ctx context.Context, t fleetlink.Target) (int, error) {
-		return probeLinkLevel(ctx, probeClient, t)
+		level, version, err := probeLinkLevel(ctx, probeClient, t)
+		// The main till's version is what this till follows (ut-docs#2738);
+		// kept per-till (sync.*) so a polling replica has a target too.
+		if err == nil && version != "" {
+			if cur, _, _ := d.Settings.Get(ctx, keyMainVersion); cur != version {
+				_ = d.Settings.Set(ctx, keyMainVersion, version)
+			}
+		}
+		return level, err
 	}
 	opts.Hello = func(ctx context.Context) fleetlink.Hello {
 		return fleetlink.Hello{
@@ -188,33 +196,40 @@ func refreshLinkContact(ctx context.Context, d *common.Deps) {
 }
 
 // probeLinkLevel asks the main till which link level it serves: GET
-// /api/sync/ping's "link" (0 when absent — an older main till).
-func probeLinkLevel(ctx context.Context, client *http.Client, t fleetlink.Target) (int, error) {
+// /api/sync/ping's "link" (0 when absent — an older main till), and its
+// version ("" when absent or not a release number, ut-docs#2738).
+func probeLinkLevel(ctx context.Context, client *http.Client, t fleetlink.Target) (int, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(t.BaseURL, "/")+"/api/sync/ping", nil)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+t.Bearer)
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	defer resp.Body.Close()
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized:
-		return 0, fleetlink.ErrUnauthorized
+		return 0, "", fleetlink.ErrUnauthorized
 	case resp.StatusCode != http.StatusOK:
-		return 0, errors.New("sync link: ping answered " + resp.Status)
+		return 0, "", errors.New("sync link: ping answered " + resp.Status)
 	}
 	var out struct {
 		Data struct {
-			Link int `json:"link"`
+			Link    int    `json:"link"`
+			Version string `json:"version"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&out); err != nil {
-		return 0, err
+		return 0, "", err
 	}
-	return out.Data.Link, nil
+	// Device input: only a release number is kept.
+	version := strings.TrimSpace(out.Data.Version)
+	if !releaseVersion(version) {
+		version = ""
+	}
+	return out.Data.Link, version, nil
 }
 
 // StartSyncLinkClient runs d.LinkClient until ctx ends, joined by app.Run's

@@ -238,6 +238,19 @@ func touchInterval(window time.Duration) time.Duration {
 // A session idle for longer than the configured window is revoked here —
 // the server is authoritative; the client-side timer is cosmetic.
 func (s *Service) Resolve(ctx context.Context, token string) (User, bool) {
+	return s.resolve(ctx, token, true)
+}
+
+// ResolveNoTouch is Resolve for requests nobody made by touching the till:
+// background polls (ut-docs#2901) and /login's "already signed in?" check.
+// It revokes an idle session exactly like Resolve, but never refreshes
+// last_seen_at — otherwise a sale screen polling every few seconds keeps
+// its session alive forever and the idle auto-lock never fires.
+func (s *Service) ResolveNoTouch(ctx context.Context, token string) (User, bool) {
+	return s.resolve(ctx, token, false)
+}
+
+func (s *Service) resolve(ctx context.Context, token string, touch bool) (User, bool) {
 	if token == "" {
 		return User{}, false
 	}
@@ -254,7 +267,7 @@ func (s *Service) Resolve(ctx context.Context, token string) (User, bool) {
 		}
 		return User{}, false
 	}
-	if idle >= touchInterval(time.Duration(s.idleLockMinutes.Load())*time.Minute) {
+	if touch && idle >= touchInterval(time.Duration(s.idleLockMinutes.Load())*time.Minute) {
 		_ = s.repo.TouchSession(ctx, hash)
 	}
 	return User{ID: row.UserID, Username: row.Username, DisplayName: row.DisplayName, Role: row.Role}, true
