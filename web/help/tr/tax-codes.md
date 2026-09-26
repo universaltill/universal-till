@@ -18,5 +18,5 @@ Katalogunuzdaki her ürün, üzerinden alınan vergi oranını (ve isteğe bağl
 2. Formu sağda doldurmak için bir satıra tıklayın, adı, oranı veya paket servis oranını düzenleyin ve **Kaydet**'e basın.
 3. Yepyeni bir vergi kodu oluşturmak için önce bir satıra tıklamadan formu doldurun. Yeni bir kod her zaman etkindir.
 4. Bir kodu silmek yerine emekliye ayırmak veya geri yüklemek için **Devre dışı bırak**/**Yeniden etkinleştir**'i kullanın — zaten bir vergi koduna bağlı ürünler, kod devre dışı bırakıldıktan sonra da bağlantılarını korur, böylece geçmiş satışlar doğru kalır. Silme seçeneği yoktur: bir vergi kodu ürünler tarafından referans alınabileceğinden, tamamen kaldırılması sunulmaz.
-5. Oranlar yüzde olarak girilir — %19 için `19` girin. Paket servis oranı salon içi orandan farklı değilse boş bırakın.
+5. Oranlar yüzde olarak girilir — %19 için `19` girin; ondalıktan önce nokta veya virgül kullanılabilir (`7.5` veya `7,5`). Paket servis oranı salon içi orandan farklı değilse boş bırakın.
 6. Bir eklentinin (örneğin Alman vergi eklentisi) bir vergi kodundaki her ürün için değil, yalnızca kendi mantığı için geçerli olan bir paket servis istisnasına ihtiyacı varsa, o eklentinin kendi ayarlar sayfasını açan **Eklentiye özel istisnaları yönet** bağlantısını kullanın.

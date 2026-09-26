@@ -3,9 +3,7 @@ package pages
 import (
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -80,25 +78,29 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 		var value int64
 		switch typ {
 		case "amount":
-			major, err := strconv.ParseFloat(strings.TrimSpace(r.PostFormValue("value_amount")), 64)
-			if err != nil || major <= 0 {
+			// ut-docs#2925: ParseMoneyMajor, not strconv.ParseFloat -- the
+			// field accepts a decimal comma ("3,50" from a German keyboard)
+			// and "1e3"/"0x10" are refused. Currency.Decimals-aware
+			// (ut-docs#1400: a hardcoded *100 stored a 100x-too-large value
+			// on a 0-decimal shop).
+			minor, err := httpx.ParseMoneyMajor(r.PostFormValue("value_amount"), httpx.ActiveCurrency().Decimals)
+			if err != nil || minor <= 0 {
 				return data.PromotionInput{}, "promotions.error.value_invalid", false
 			}
-			// ut-docs#1400: currency.Decimals-aware, not a hardcoded *100 --
-			// a hardcoded conversion stored a 100x-too-large value on a
-			// 0-decimal shop (IRR/IRT/IQD/AFN/JPY).
-			value = money.FromMinor(httpx.MinorFromMajor(major, httpx.ActiveCurrency().Decimals)).Minor()
+			value = money.FromMinor(minor).Minor()
 		case "percent":
-			pct, err := strconv.ParseFloat(strings.TrimSpace(r.PostFormValue("value_percent")), 64)
+			// ut-docs#2954: ParsePercentBP, not strconv.ParseFloat -- a
+			// German "1,5" is accepted and "1e3"/"NaN" are refused.
+			bp, err := httpx.ParsePercentBP(r.PostFormValue("value_percent"))
 			// A percent discount over 100% is never a real promotion: the
 			// engine clamps the basket total at zero, so 500% and 100% are
 			// indistinguishable at the till while the stored value lies
 			// about what the shop intended. Same 0 < pct <= 100 range
 			// settings_page.go's payment-fee percent already enforces.
-			if err != nil || pct <= 0 || pct > 100 {
+			if err != nil || bp <= 0 || bp > 10000 {
 				return data.PromotionInput{}, "promotions.error.value_invalid", false
 			}
-			value = int64(math.Round(pct * 100))
+			value = bp
 		default:
 			return data.PromotionInput{}, "promotions.error.value_invalid", false
 		}

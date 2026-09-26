@@ -23,7 +23,7 @@ Cash is built in; card and other payment methods come as plugins from the store 
 Once at least one payment method exists on the till (cash, card, gift card and voucher are there out of the box; a payment plugin adds its own branded method alongside them), a **Payments** card appears on **Settings**:
 
 - **Preferred method** — which method leads at checkout: for cash, card and any payment-plugin method, it's the first, full-width button in the payment panel. (Picking a gift-card or voucher method here doesn't do this — those never appear as one-tap buttons in that panel, only under **Split**.) Pick it, then **Apply**. Leaving it at "—" lists every method in its normal order instead — cash first on a till with no payment plugin installed.
-- **Provider fees** — what each provider charges you, as a percent plus a fixed amount per transaction (e.g. `2.50` % + `0.10`). The checkout panel uses these to show an estimated fee next to each method's button, so the cashier can steer a customer toward the cheaper one when it doesn't matter to them. Set a method's fee and **Save** it — a blank or zero fee is fine and just shows no estimate.
+- **Provider fees** — what each provider charges you, as a percent plus a fixed amount per transaction (e.g. `2.50` % + `0.10`; a comma works too — `2,50` % + `0,10`). The checkout panel uses these to show an estimated fee next to each method's button, so the cashier can steer a customer toward the cheaper one when it doesn't matter to them. Set a method's fee and **Save** it — a blank or zero fee is fine and just shows no estimate.
 
 What can go wrong: a percent outside 0–100, or a negative fixed amount, is refused before it's saved — fix the number and try again.
 

@@ -293,7 +293,7 @@
                  blocked the submit, and Android WebView shows no validation
                  bubble, so Save silently did nothing. toMinor reads the
                  comma. -->
-            <label>{{ T "catalog.col.price" }} ({{ currency.Display }}) <input type="text" inputmode="decimal" id="item-price" {{ moneypatternlocal currency.Decimals }} {{ moneyplaceholder currency.Decimals 0 }} required></label>
+            <label>{{ T "catalog.col.price" }} ({{ currency.Display }}) <input type="text" inputmode="decimal" id="item-price" {{ moneypatternlocal currency.Decimals false }} {{ moneyplaceholderlocal currency.Decimals 0 }} required></label>
             <label>{{ T "catalog.col.sku" }} <input type="text" name="sku" id="item-sku" placeholder="{{ T "catalog.auto_if_blank" }}"></label>
           </div>
           <label>{{ T "catalog.description" }} <input type="text" name="description" id="item-description"></label>

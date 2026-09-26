@@ -3,7 +3,6 @@ package httpx
 import (
 	"fmt"
 	"html/template"
-	"math"
 	"strconv"
 	"strings"
 )
@@ -412,25 +411,6 @@ func FormatMajorPlain(minor int64, decimals int) string {
 	return s
 }
 
-// MinorFromMajor converts a value entered in major units (e.g. "5.00" under
-// a 2-decimal currency, or "500" under a 0-decimal one) into minor units --
-// the write-side inverse of FormatMajorPlain, for a Go-side form handler
-// parsing a major-unit amount instead of relying on
-// window.utCurrency.toMinor() client-side. Rounds to the nearest minor unit
-// to absorb float parsing imprecision, same as the hardcoded `* 100`
-// literals this replaces already did for 2-decimal currencies.
-// ut-docs#1400: promotions_page.go/settings_page.go hardcoded `* 100`
-// regardless of the active currency's decimals, storing a 100x-too-large
-// value on a 0-decimal shop (IRR/IRT/IQD/AFN/JPY) -- e.g. an operator
-// entering "500" for ¥500 got 50000 minor units persisted.
-func MinorFromMajor(major float64, decimals int) int64 {
-	pow := int64(1)
-	for i := 0; i < decimals; i++ {
-		pow *= 10
-	}
-	return int64(math.Round(major * float64(pow)))
-}
-
 // MoneyPattern renders the value a decimal-mode money input's `pattern`
 // attribute should hold at the given currency's decimals: integer-only for
 // a 0-decimal currency, otherwise up to `decimals` fractional digits.
@@ -501,13 +481,18 @@ func MoneyPatternLocal(decimals int) string {
 }
 
 // MoneyPatternLocalAttr is the whole-attribute form of MoneyPatternLocal
-// (see MoneyPatternAttr for why the whole attribute). It also emits
+// (see MoneyPatternAttr for why the whole attribute; signed prepends `-?`
+// the same way, for a shift adjustment -- ut-docs#2925). It also emits
 // data-money-local, which opts the field into app.js's shop-language
 // "invalid amount" message (ut-docs#2819) in place of the browser's own
 // "Please match the requested format", which is in the device's OS
 // language and doesn't say that a comma is fine.
-func MoneyPatternLocalAttr(decimals int) template.HTMLAttr {
-	return template.HTMLAttr(`pattern="` + MoneyPatternLocal(decimals) + `" data-money-local`)
+func MoneyPatternLocalAttr(decimals int, signed bool) template.HTMLAttr {
+	p := MoneyPatternLocal(decimals)
+	if signed {
+		p = "-?" + p
+	}
+	return template.HTMLAttr(`pattern="` + p + `" data-money-local`)
 }
 
 // ParseMoneyMajor is the server-side reader for a MoneyPatternLocal field:
@@ -544,6 +529,39 @@ func ParseMoneyMajor(raw string, decimals int) (int64, error) {
 	return minor, nil
 }
 
+// PercentPatternLocal is the input pattern for a percentage field (a
+// promotion percent, a payment-fee percent, a tax rate): digits with an
+// optional '.' or ',' and at most two fraction digits -- the grammar
+// ParsePercentBP reads (ut-docs#2954).
+const PercentPatternLocal = `[0-9]+([.,][0-9]{1,2})?`
+
+// PercentPatternLocalAttr is the whole-attribute form of PercentPatternLocal
+// (see MoneyPatternAttr for why the whole attribute). Like
+// MoneyPatternLocalAttr it opts into app.js's shop-language message instead
+// of the browser's own (device OS language), but as data-money-local=
+// "percent": a percent always takes two decimals, so it reads
+// <body data-percent-invalid> (the "dot or a comma before the decimals"
+// text) even on a 0-decimal-currency shop, whose money message says
+// "whole number" (ut-docs#2954 review).
+func PercentPatternLocalAttr() template.HTMLAttr {
+	return template.HTMLAttr(`pattern="` + PercentPatternLocal + `" data-money-local="percent"`)
+}
+
+// ParsePercentBP is the server-side reader for a PercentPatternLocal field:
+// a non-negative percentage with '.' or ',' as the decimal separator and at
+// most two fraction digits, returned in basis points (1% = 100). Same
+// integer grammar as ParseMoneyMajor with two decimals -- no
+// strconv.ParseFloat, so "1e3", "NaN" and "Inf" are refused and 8.5% is
+// exactly 850, never 849 (ut-docs#2954). Range checks (e.g. <= 100%) are
+// the caller's.
+func ParsePercentBP(raw string) (int64, error) {
+	bp, err := ParseMoneyMajor(raw, 2)
+	if err != nil {
+		return 0, fmt.Errorf("invalid percent %q", raw)
+	}
+	return bp, nil
+}
+
 func allDigits(s string) bool {
 	for i := 0; i < len(s); i++ {
 		if s[i] < '0' || s[i] > '9' {
@@ -551,6 +569,28 @@ func allDigits(s string) bool {
 		}
 	}
 	return true
+}
+
+// LocalizeMajor swaps the '.' of a FormatMajorPlain/MoneyPlaceholder string
+// for the locale's decimal separator (ut-docs#2818): a German till's money
+// input shows "4,00", not an English-style "4.00" its own keyboard can't
+// type. Only the separator changes -- no grouping -- so use it only on a
+// MoneyPatternLocal field, whose reader (window.utCurrency.toMinor or
+// ParseMoneyMajor) accepts either separator; a dot-only MoneyPattern field
+// keeps the plain string.
+func LocalizeMajor(plain, locale string) string {
+	if _, dec := numberSeparators(locale); dec != '.' {
+		return strings.Replace(plain, ".", string(dec), 1)
+	}
+	return plain
+}
+
+// MoneyPlaceholderLocalAttr is MoneyPlaceholderAttr for a MoneyPatternLocal
+// field: the example amount in the locale's decimal separator
+// (ut-docs#2818). Template callers use {{ moneyplaceholderlocal … }}, which
+// binds the request's locale.
+func MoneyPlaceholderLocalAttr(decimals int, example int64, locale string) template.HTMLAttr {
+	return template.HTMLAttr(`placeholder="` + LocalizeMajor(MoneyPlaceholder(decimals, example), locale) + `"`)
 }
 
 // MoneyPlaceholderAttr renders the whole `placeholder="…"` HTML attribute

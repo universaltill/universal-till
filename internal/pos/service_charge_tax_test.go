@@ -31,8 +31,8 @@ func TestApportionServiceChargeTax_ExclusiveMultiBandByNetShare(t *testing.T) {
 	if bands[1].RateBP != 1900 || bands[1].Amount != 200 || bands[1].Tax != 38 {
 		t.Fatalf("1900bp band: got %+v, want amount 200 tax 38", bands[1])
 	}
-	if got := ServiceChargeTax(300, lines, false, 0); got != 45 {
-		t.Fatalf("ServiceChargeTax = %d, want 45 (7+38)", got)
+	if got := serviceChargeTax(300, lines, false, 0); got != 45 {
+		t.Fatalf("serviceChargeTax = %d, want 45 (7+38)", got)
 	}
 }
 
@@ -508,7 +508,7 @@ func TestApportionChargesTax_DiffersFromSumThenApportion(t *testing.T) {
 	// Over: charges 5+5. Per charge: 2 @0% + 3 @20% (tax 0.6 -> 1), x2 =
 	// tax 2, 6 on the 20% band. One pass over 10: 5 @0% + 5 @20% (tax 1).
 	over := []ChargeInput{{Amount: 5}, {Amount: 5}}
-	if got, naive := ChargesTax(over, lines, false), ServiceChargeTax(10, lines, false, 0); got != 2 || naive != 1 {
+	if got, naive := ChargesTax(over, lines, false), serviceChargeTax(10, lines, false, 0); got != 2 || naive != 1 {
 		t.Fatalf("5+5: per-charge tax %d (want 2), one-pass %d (want 1)", got, naive)
 	}
 	if b := ApportionChargesTax(over, lines, false); b[1].RateBP != 2000 || b[1].Amount != 6 {
@@ -520,7 +520,7 @@ func TestApportionChargesTax_DiffersFromSumThenApportion(t *testing.T) {
 	// 3 @0% + 3 @20% (tax 0.6 -> 1). The amount still over-declares; the
 	// per-charge tax rounding under-declares by one minor unit.
 	under := []ChargeInput{{Amount: 3}, {Amount: 3}}
-	if got, naive := ChargesTax(under, lines, false), ServiceChargeTax(6, lines, false, 0); got != 0 || naive != 1 {
+	if got, naive := ChargesTax(under, lines, false), serviceChargeTax(6, lines, false, 0); got != 0 || naive != 1 {
 		t.Fatalf("3+3: per-charge tax %d (want 0), one-pass %d (want 1)", got, naive)
 	}
 	if b := ApportionChargesTax(under, lines, false); b[1].RateBP != 2000 || b[1].Amount != 4 {
@@ -585,9 +585,20 @@ func TestApportionChargesTax_PropertyVersusSumThenApportion(t *testing.T) {
 		}
 
 		b := len(one)
-		diff := ChargesTax(charges, lines, inclusive).Minor() - ServiceChargeTax(sum, lines, inclusive, 0).Minor()
+		diff := ChargesTax(charges, lines, inclusive).Minor() - serviceChargeTax(sum, lines, inclusive, 0).Minor()
 		if lo, hi := -int64((n+1)*b), int64((n+1)*b+2*(n-1)*(b-1)); 2*diff <= lo || 2*diff >= hi {
 			t.Fatalf("it %d: tax diff %d outside (%d/2, %d/2): charges %+v lines %+v incl %v", it, diff, lo, hi, charges, lines, inclusive)
 		}
 	}
+}
+
+// serviceChargeTax is one charge's summed tax over its
+// ApportionServiceChargeTax bands — the single-charge figure these tests
+// compare against. Production code sums per charge via ChargesTax.
+func serviceChargeTax(charge money.Money, lines []ChargeTaxLine, taxInclusive bool, taxBasisBP int) money.Money {
+	var tax money.Money
+	for _, b := range ApportionServiceChargeTax(charge, lines, taxInclusive, taxBasisBP) {
+		tax = tax.Add(b.Tax)
+	}
+	return tax
 }

@@ -638,6 +638,14 @@ var PerTillSettingPrefixes = []string{
 	// dials the cloud-link socket (ADR-0117 §1), so a replica never needs
 	// its own cached value.
 	"cloud.link_",
+	// ut-docs#2950: three families #2791 had left shop-wide only because the
+	// bundle carried them. diagnostics.* is this till's own ADR-0092 support
+	// session ("ordinary till-local settings", internal/diagnostics) — synced,
+	// the main till's session switched a replica's on or off. cloudsync.* is
+	// the hash of what THIS till last pushed to the cloud; synced, every main
+	// till snapshot moved the admin fingerprint (the #2792 churn). install.*
+	// is this machine's one-time OS provisioning marker (internal/app).
+	"diagnostics.", "cloudsync.", "install.",
 }
 
 func perTillSetting(key string) bool {
@@ -1720,4 +1728,82 @@ func scanGenericCols(rows *sql.Rows, cols []string) ([]map[string]any, error) {
 		out = append(out, rec)
 	}
 	return out, rows.Err()
+}
+
+// SettingScopeKind is where a settings key belongs (ut-docs#2791): to one
+// till, to the whole shop, or -- a key nobody classified yet -- neither.
+type SettingScopeKind int
+
+const (
+	// SettingUnclassified is a key in neither list. The main till refuses
+	// it on POST /api/sync/settings/apply, and
+	// TestSettingScope_EveryUsedKeyIsClassified fails on any key the code
+	// uses that lands here.
+	SettingUnclassified SettingScopeKind = iota
+	// SettingPerTill is a PerTillSettingPrefixes key: saved on the till it
+	// was changed on, never synced.
+	SettingPerTill
+	// SettingShopWide is a ShopWideSettingPrefixes key: the same for every
+	// till of the shop, carried main -> additional tills by the admin
+	// bundle. An additional till writes it through to the main till
+	// (pages/settings_sync_proxy.go) rather than locally, where the next
+	// admin pull would silently overwrite it.
+	SettingShopWide
+)
+
+// ShopWideSettingPrefixes are the settings key families that are the same
+// for every till of one shop (ut-docs#2791). Like PerTillSettingPrefixes, an
+// entry is a prefix; a full key works as an exact match. It does NOT change
+// what the admin bundle carries -- DumpAdmin/ApplyAdmin still sync every key
+// that is not per-till -- it only names, for the write-through, which keys
+// an additional till must send to its main till. PerTillSettingPrefixes
+// wins where both match (reports.eod_* under reports.,
+// fiscal.pending_sign_retries under fiscal.).
+var ShopWideSettingPrefixes = []string{
+	// Shop identity, money, tax, locale and trading rules.
+	"store.", "shop.", "sale.", "pos.", "payments.", "invoice.", "receipt.",
+	// Fiscal posture and override state (fiscal.pending_sign_retries is
+	// per-till, above).
+	"fiscal.",
+	// Kiosk behaviour, the idle-lock policy, shop-wide report options
+	// (reports.eod_* is per-till), auto-update schedule, setup state.
+	"kiosk.", "auth.", "reports.", "update.", "setup.",
+	// Barcode handling (data/barcode_settings.go).
+	BarcodeEnabledSymbologiesKey, CatalogImportBarcodeFromSKUDefaultKey,
+	// The store-level marketplace keys (see PerTillSettingPrefixes' own
+	// comment). Listed key by key: a new marketplace.* key must be
+	// classified on purpose, since most of that family is per-till.
+	"marketplace.store_id", "marketplace.merchant_id",
+	"marketplace.telemetry_opt_in", "marketplace.auto_register_opt_in",
+	// Reviewed in ut-docs#2950 and kept shop-wide (diagnostics.*,
+	// cloudsync.* and install.* moved to PerTillSettingPrefixes then):
+	// - till.name is the main till's name; a replica's own is sync.till_name.
+	// - menu.restored_keys restores hidden Menu tiles for the shop, like
+	//   the plugins that hid them.
+	// - lan_discovery.till_id on a replica IS the main till's discovery id,
+	//   which only a primary advertises; a pre-#2722 replica's re-discovery
+	//   uses it as its hint (discovery.PrimaryWatch.rediscover).
+	// Under setup. and fiscal. above, also kept: setup.restore_prompt_status
+	// (the "import from another POS" offer is the shop's catalogue, which
+	// only the main till owns) and fiscal.tse_provisioning_state (ADR-0053
+	// provisions one TSE per store, from the main till's wizard).
+	"till.name",
+	"menu.",
+	"lan_discovery.",
+}
+
+// SettingScope classifies a settings key. Per-till wins over shop-wide.
+func SettingScope(key string) SettingScopeKind {
+	if key == "" {
+		return SettingUnclassified
+	}
+	if perTillSetting(key) {
+		return SettingPerTill
+	}
+	for _, p := range ShopWideSettingPrefixes {
+		if strings.HasPrefix(key, p) {
+			return SettingShopWide
+		}
+	}
+	return SettingUnclassified
 }

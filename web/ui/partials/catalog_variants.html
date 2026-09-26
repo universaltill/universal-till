@@ -51,9 +51,9 @@
              /api/catalog/item-cost handler parses this raw string
              server-side (httpx.ParseMoneyMajor), which reads a decimal
              comma too, hence moneypatternlocal (ut-docs#2819). -->
-        <input type="text" inputmode="decimal" name="cost" {{ moneypatternlocal currency.Decimals }} style="max-inline-size:7rem"
-               value="{{ .CostMajor }}"
-               {{ moneyplaceholder currency.Decimals 0 }} title="{{ T "catalog.cost_price_hint" }}">
+        <input type="text" inputmode="decimal" name="cost" {{ moneypatternlocal currency.Decimals false }} style="max-inline-size:7rem"
+               value="{{ majorlocal .CostMajor }}"
+               {{ moneyplaceholderlocal currency.Decimals 0 }} title="{{ T "catalog.cost_price_hint" }}">
         <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
       </form>
       <div class="muted catalog-detail-label">{{ T "catalog.lead_time_days" }}</div>
@@ -178,8 +178,8 @@
                kiosk OSK (see index.html's split-tender amount field). The
                htmx:configRequest listener below already reads these fields'
                raw .value at submit time, so no JS change is needed. -->
-          <input form="vf-{{ .ID }}" type="text" inputmode="decimal" class="variant-price-major" data-minor="{{ .PriceMinor }}" {{ moneypatternlocal currency.Decimals }} required>
-          <input form="vf-{{ .ID }}" type="text" inputmode="decimal" class="variant-cost-major" data-minor="{{ .CostMinor }}" {{ moneypatternlocal currency.Decimals }} placeholder="—">
+          <input form="vf-{{ .ID }}" type="text" inputmode="decimal" class="variant-price-major" data-minor="{{ .PriceMinor }}" {{ moneypatternlocal currency.Decimals false }} required>
+          <input form="vf-{{ .ID }}" type="text" inputmode="decimal" class="variant-cost-major" data-minor="{{ .CostMinor }}" {{ moneypatternlocal currency.Decimals false }} placeholder="—">
           <div class="chip-row">
             {{ range .Barcodes }}
             <span class="chip">{{ . }}
@@ -225,8 +225,8 @@
           <div></div>
           <input form="vf-new" type="text" name="name" required placeholder="{{ T "catalog.variants.add" }} — 330ml / XL">
           <input form="vf-new" type="text" name="sku" placeholder="{{ T "catalog.auto_if_blank" }}">
-          <input form="vf-new" type="text" inputmode="decimal" class="variant-price-major" {{ moneypatternlocal currency.Decimals }} required>
-          <input form="vf-new" type="text" inputmode="decimal" class="variant-cost-major" {{ moneypatternlocal currency.Decimals }} placeholder="—">
+          <input form="vf-new" type="text" inputmode="decimal" class="variant-price-major" {{ moneypatternlocal currency.Decimals false }} required>
+          <input form="vf-new" type="text" inputmode="decimal" class="variant-cost-major" {{ moneypatternlocal currency.Decimals false }} placeholder="—">
           <div class="muted"></div>
           <div></div>
           <button form="vf-new" class="btn" type="submit">{{ T "catalog.save_variant" }}</button>

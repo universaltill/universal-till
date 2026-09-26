@@ -282,18 +282,29 @@ body.login-screen, body.tracking-screen { padding-inline-start: 0; }
    and, in headless Chromium, never revealed at all. The rules below are
    inert on a page that has not opted in.
 
-   WHAT MOVES (ADR-0118, amending ADR-0097 §4 — ut-docs#2496): the ROOT
-   snapshot — the whole document MINUS the two named groups below — as a
-   stacked-card push over --ut-motion-ms (400ms, eased
-   cubic-bezier(.32,.72,0,1): fast start, long soft landing). PUSH: the
-   outgoing page recedes (scales to .92, drops 3%, dims to .55) while the
-   incoming page slides in over it from the inline-end edge. POP (back):
-   the exact reverse — the page being left slides back out to the
-   inline-end on top, uncovering the previous page as it comes back up
-   from the receded state. The same rules drive the boosted same-document
-   transition and the cross-document fallback, on every engine.
+   WHAT MOVES (ADR-0122, superseding ADR-0118 §2's push — ut-docs#2939,
+   #2942): the ROOT snapshot — the whole document MINUS the two named
+   groups below — as an iOS zoom from the tapped element, over
+   --ut-motion-ms (400ms Full / 200ms Balanced, eased
+   cubic-bezier(.32,.72,0,1): fast start, long soft landing). FORWARD: the
+   incoming page grows out of the tapped tile/link/button — uniform scale
+   --ut-zoom-s (source width / viewport width, clamped .1–1) about its
+   centre, translated so that centre starts on the source's centre
+   (--ut-zoom-x/--ut-zoom-y, viewport px), from opacity .4 (never blank) —
+   while the outgoing page recedes underneath (scales to .92, drops 3%,
+   dims to .55) on the black backdrop. BACK: the page being left shrinks
+   into the box it grew from and fades out ON TOP; the previous page
+   comes back up from the receded state underneath. The three properties
+   are set on <html> by base.html's shell script (htmx:beforeTransition
+   for the boosted hop, pagereveal for a full load) from the origin
+   recorder / the sessionStorage back store; with no origin they default
+   to the bottom centre below. Custom properties on <html> are consumed
+   only by these keyframes, so setting them changes no layout and the
+   ADR-0118 §1 snapshot-before-swap still holds. The same rules drive the
+   boosted same-document transition and the cross-document fallback, on
+   every engine.
    `.nav` (rail) and `.statusbar` are named view-transition groups pinned
-   to "no animation, always drawn from the new page, above the sliding
+   to "no animation, always drawn from the new page, above the zooming
    root", so the rail reads as fixed furniture (ut-docs#1830).
 
    Deliberately NOT named: <main>, or anything else that hosts a
@@ -307,19 +318,22 @@ body.login-screen, body.tracking-screen { padding-inline-start: 0; }
    effect with NO transition running). The rail and statusbar host no
    fixed descendants (checked), which is why they can be named.
 
-   Direction (push vs pop) is decided by the inline `pagereveal` script in
-   base.html's <head> (must run before first paint, so it can't live in
-   app.js, which is `defer`) — it sets `data-nav-dir` on <html> and, where
+   Direction (forward vs back) is decided by the inline `pagereveal`
+   script in base.html's <head> (must run before first paint, so it can't
+   live in app.js, which is `defer`) and, for a boosted hop, by the shell's
+   htmx:beforeSwap — it sets `data-nav-dir` on <html> and, where
    supported, `vt.types.add('back')` so `:active-view-transition-type(back)`
    flips the animation; the `html[data-nav-dir="pop"]` selectors are the
    same flip via a plain attribute, belt-and-braces for an engine with
    View Transitions but not the newer `types` API. NB: written with NO
    descendant combinator — every ::view-transition-* pseudo originates on
    <html> itself, so `:root ::view-transition-new(x)` can never match.
-   RTL mirrors the travel direction through --ut-nav-dir (one variable,
-   not two mirrored sets of keyframes), no left/right literal anywhere. */
-:root { --ut-nav-dir: 1; --ut-motion-ms: 400ms; --ut-motion-ease: cubic-bezier(.32,.72,0,1); }
-[dir="rtl"] { --ut-nav-dir: -1; }
+   RTL needs nothing: the zoom has no side, it starts from the tapped
+   element's own (already mirrored) box — no left/right literal anywhere. */
+:root {
+  --ut-motion-ms: 400ms; --ut-motion-ease: cubic-bezier(.32,.72,0,1);
+  --ut-zoom-x: 50vw; --ut-zoom-y: 100vh; --ut-zoom-s: .3;
+}
 .nav        { view-transition-name: ut-rail; }
 .statusbar  { view-transition-name: ut-statusbar; }
 /* Fixed furniture: no cross-fade at all, new image simply covers the old.
@@ -334,21 +348,23 @@ body.login-screen, body.tracking-screen { padding-inline-start: 0; }
 ::view-transition-old(ut-statusbar), ::view-transition-new(ut-statusbar) { animation: none; mix-blend-mode: normal; }
 ::view-transition-old(ut-rail), ::view-transition-old(ut-statusbar) { opacity: 0; }
 /* `.nav` precedes <main> in DOM order, so without an explicit stacking
-   order the sliding root snapshot paints OVER the rail/statusbar for the
+   order the zooming root snapshot paints OVER the rail/statusbar for the
    400ms it animates -- confirmed live, this is the fix. */
 ::view-transition-group(ut-rail), ::view-transition-group(ut-statusbar) { animation-duration: 0s; z-index: 2; }
-/* Never block input (ADR-0118): the transition overlay sits on top of the
-   real, already-swapped DOM for the whole 400ms; without this a tap during
-   the motion hits the overlay (retargeted to <html>) and is lost. */
+/* Never block input (ADR-0118 §3, kept by ADR-0122): the transition
+   overlay sits on top of the real, already-swapped DOM for the whole
+   400ms; without this a tap during the motion hits the overlay
+   (retargeted to <html>) and is lost. */
 ::view-transition { pointer-events: none; }
-/* Content = the root pair (ADR-0118). Transform + opacity only
-   (compositor-only, no layout); travel mirrors under RTL through
-   --ut-nav-dir, no left/right anywhere. `mix-blend-mode: normal`: the UA
-   blends the pair with plus-lighter (right for a cross-fade whose
-   opacities sum to 1), but here an opaque page slides OVER a dimmed one —
+/* Content = the root pair (ADR-0122). Uniform scale + translate and
+   opacity only (compositor-only, no layout, no clipping mask — not
+   compositor-only on every engine we ship). `mix-blend-mode: normal`: the
+   UA blends the pair with plus-lighter (right for a cross-fade whose
+   opacities sum to 1), but here an opaque page grows OVER a dimmed one —
    additive blending would flash the overlap brighter, worst on dark
-   themes. The dim reads against the ::view-transition backdrop below,
-   which is only ever visible around the receded (scaled) page. */
+   themes. The dim reads against the black ::view-transition backdrop
+   (ADR-0118 §2, kept), which is only ever visible around the receded
+   (scaled) page. */
 ::view-transition { background: #000; }
 ::view-transition-old(root), ::view-transition-new(root) {
   mix-blend-mode: normal;
@@ -357,20 +373,23 @@ body.login-screen, body.tracking-screen { padding-inline-start: 0; }
   animation-fill-mode: both;
   transform-origin: 50% 50%;
 }
-/* Push: old recedes underneath, new slides in on top (DOM order of the
-   pair already paints new above old). */
+/* Forward: old recedes underneath, new grows out of the origin on top (DOM
+   order of the pair already paints new above old). `translate(... - 50%)`
+   is relative to the snapshot image's own box, so the image's centre lands
+   exactly on the source centre at scale --ut-zoom-s. */
 ::view-transition-old(root) { animation-name: ut-page-recede; }
-::view-transition-new(root) { animation-name: ut-page-slide-in; }
-@keyframes ut-page-slide-in { from { transform: translateX(calc(var(--ut-nav-dir) * 100%)); } to { transform: none; } }
+::view-transition-new(root) { animation-name: ut-page-zoom-in; }
+@keyframes ut-page-zoom-in  { from { transform: translate(calc(var(--ut-zoom-x) - 50%), calc(var(--ut-zoom-y) - 50%)) scale(var(--ut-zoom-s)); opacity: .4; } to { transform: none; opacity: 1; } }
 @keyframes ut-page-recede   { from { transform: none; opacity: 1; } to { transform: translateY(3%) scale(.92); opacity: .55; } }
-/* Pop: the page being left (old) slides back out ON TOP; the previous page
-   (new) comes back up from the receded state underneath it. */
-:root:active-view-transition-type(back)::view-transition-old(root) { animation-name: ut-page-slide-out; z-index: 1; }
+/* Back: the page being left (old) shrinks into the box it came from and
+   fades out ON TOP; the previous page (new) comes back up from the receded
+   state underneath it. */
+:root:active-view-transition-type(back)::view-transition-old(root) { animation-name: ut-page-zoom-out; z-index: 1; }
 :root:active-view-transition-type(back)::view-transition-new(root) { animation-name: ut-page-return; }
-html[data-nav-dir="pop"]::view-transition-old(root) { animation-name: ut-page-slide-out; z-index: 1; }
+html[data-nav-dir="pop"]::view-transition-old(root) { animation-name: ut-page-zoom-out; z-index: 1; }
 html[data-nav-dir="pop"]::view-transition-new(root) { animation-name: ut-page-return; }
-@keyframes ut-page-slide-out { from { transform: none; } to { transform: translateX(calc(var(--ut-nav-dir) * 100%)); } }
-@keyframes ut-page-return    { from { transform: translateY(3%) scale(.92); opacity: .55; } to { transform: none; opacity: 1; } }
+@keyframes ut-page-zoom-out { from { transform: none; opacity: 1; } to { transform: translate(calc(var(--ut-zoom-x) - 50%), calc(var(--ut-zoom-y) - 50%)) scale(var(--ut-zoom-s)); opacity: 0; } }
+@keyframes ut-page-return   { from { transform: translateY(3%) scale(.92); opacity: .55; } to { transform: none; opacity: 1; } }
 
 /* In-page htmx swaps ease instead of blinking -- zero latency: no swap
    delay, no settle-timing dependency (ut-docs#239's defaultSettleDelay:0
@@ -381,42 +400,49 @@ html[data-nav-dir="pop"]::view-transition-new(root) { animation-name: ut-page-re
 .ut-swap-fx { animation: ut-swap-in 150ms ease-out both; }
 @keyframes ut-swap-in { from { opacity: .55; } to { opacity: 1; } }
 
-/* ut-docs#2338: the rail-driven in-panel swaps (#items-panel, #admin-panel,
-   #manual-panel -- master-detail navigation, not a live update) get a
-   slightly longer version of the generic .ut-swap-fx ease above, on the
-   SAME safe opacity-only shape -- deliberately never a directional
-   transform. A first cut of this rule used `transform: translateX(...)`
-   for a page-slide-like feel and was caught in independent review before
-   merge (ut-docs#2338's own review record): the swapped panel sits inside
-   `<main>`, which hosts `.record-dialog`/`.item-form-modal`
-   (`position: fixed` descendants, ut-docs#2010) -- ANY non-`none`
-   `transform` on an ancestor makes it their containing block, the exact
-   hazard ADR-0097 rule 2 already names for `view-transition-name` and
-   already broke once for real. Swapping the mechanism (CSS transform
-   instead of the View Transition API) doesn't avoid that hazard, it just
-   hides from the one guard (TestAppCSSNamesOnlyTheFixedRailAndStatusbar)
-   written to catch the View-Transition-API shape of it. Starting from
-   opacity 0 was ALSO a separate violation on its own -- ADR-0097 rule 5
-   requires the swap ease be "readable from frame one, never a flash to
-   blank", which is exactly what .ut-swap-fx's own .55-start already
-   gets right. So: opacity-only, same .55 start, just a touch longer
-   (180ms vs .ut-swap-fx's 150ms) as the one intentional difference.
-   app.js's htmx:afterSettle listener applies this class instead of
-   .ut-swap-fx for these three targets specifically. */
-.ut-panel-fx { animation: ut-panel-in 180ms ease-out both; }
-@keyframes ut-panel-in { from { opacity: .55; } to { opacity: 1; } }
+/* ADR-0122 §4 (ut-docs#2943): the rail-driven tree panes (#items-panel,
+   #admin-panel, #manual-panel) zoom out of the tapped tree item -- a
+   TRANSIENT Web Animations transform in app.js (zoomPane), never a CSS
+   rule here: a persistent transform on a pane would make it the containing
+   block of its position:fixed dialogs (#2338's hazard, which
+   TestAppCSSNamesOnlyTheFixedRailAndStatusbar still guards). Panes and
+   popups use the shorter small-zoom duration (ADR-0122 §1). */
+:root { --ut-zoom-small-ms: 300ms; }
 
-/* ut-docs#2010 / ut-docs#2338: a record-dialog.js standard dialog fades and
-   scales in on open -- zero added latency, dialog.show() already ran
-   synchronously beforehand (record-dialog.js), this only eases the very
-   next frames. Deliberately NOT applied to close(): delaying the native
-   .close() to let an exit animation finish would add latency to
-   Cancel/Save, which ADR-0097's rule 1 forbids on a cashier-facing
-   surface. Uniform scale, so RTL needs nothing extra. */
-.ut-dialog-fx { animation: ut-dialog-in 150ms ease-out both; }
-@keyframes ut-dialog-in {
-  from { opacity: 0; transform: scale(.96); }
-  to   { opacity: 1; transform: scale(1); }
+/* ADR-0122 §5 (ut-docs#2944): every popup (<dialog>, sheet, picker) grows
+   from the tapped element and shrinks back into it -- base.html's ONE
+   shared popup motion, a transient Web Animations transform, never a CSS
+   rule here. After the native close (the page already takes input) the
+   SAME element is painted again for at most --ut-zoom-small-ms with
+   data-ut-closing, inert and aria-hidden while it shrinks: fixed at the box
+   it last had open (the custom properties base.html sets), in its open
+   display type, no pointer events, above the rail (100) and the on-screen
+   keyboard (#osk, 1000). !important because it must beat every popup's own
+   closed-state rule (the UA's dialog:not([open]), .record-dialog:not([open]),
+   .bugreport-panel) and id-keyed frame (#hold-modal, #pfand-modal, ...).
+   `transform` is deliberately NOT important: the shrink animates it (an
+   important declaration would beat the animation); this only drops the
+   popup's own transform (e.g. .shrinkage-sheet's centring), which the
+   recorded box already includes. Logical properties, so RTL needs nothing
+   more (base.html measures the inline-start offset per direction). */
+html [data-ut-closing] {
+  display: var(--ut-closing-display, block) !important;
+  position: fixed !important;
+  inset: auto !important;
+  inset-block-start: var(--ut-closing-t) !important;
+  inset-inline-start: var(--ut-closing-is) !important;
+  inline-size: var(--ut-closing-w) !important;
+  block-size: var(--ut-closing-h) !important;
+  min-inline-size: 0 !important; min-block-size: 0 !important;
+  max-inline-size: none !important; max-block-size: none !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+  pointer-events: none !important;
+  z-index: 1500 !important;
+  translate: none !important; rotate: none !important; scale: none !important;
+  transform: none;
+  transition: none !important;
 }
 
 /* Reduced motion: ONE block, kills everything -- the new view-transition
@@ -432,6 +458,9 @@ html[data-nav-dir="pop"]::view-transition-new(root) { animation-name: ut-page-re
   /* Progress spinners are essential motion (WCAG 2.3.3 exempts them):
      frozen at 0s they read as "hung". Keep them turning. */
   #refresh-indicator, .animate-spin { animation-duration: 1s !important; }
+  /* ADR-0122 §6 backstop: base.html never re-shows a closing popup under
+     reduced motion; should one ever be marked, it is not painted. */
+  html:root [data-ut-closing] { display: none !important; }
 }
 
 /* ADR-0119 (ut-docs#2859): the per-till visual effects level. base.html
@@ -459,6 +488,8 @@ html.fx-light *, html.fx-light *::before, html.fx-light *::after {
   filter: none !important;
   -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
 }
+/* ADR-0122 §6 backstop: no closing popup is ever re-shown under Light. */
+html.fx-light [data-ut-closing] { display: none !important; }
 /* Essential motion stays (WCAG 2.3.3, as under reduced motion). */
 html.fx-light #refresh-indicator, html.fx-light .animate-spin { animation: spin 1s linear infinite !important; }
 /* Function stays: these state rings are drawn with an inset/spread
@@ -490,14 +521,15 @@ html.fx-light .designer-cat.is-dragging { transform: none; }
 /* No lift on the dragged tile (the drag's own inline translate still wins). */
 html.fx-light .jiggle-mode .tile-cell > .btn-tile.dragging { transform: none; }
 
-/* BALANCED: short opacity fades (.ut-swap-fx 150ms, .ut-panel-fx 180ms,
-   .ut-dialog-fx 150ms -- all within 200ms) stay; the ADR-0118 page push
-   stays but is cut to ADR-0097's original 200ms budget; no backdrop blur;
+/* BALANCED: the short opacity swap fade (.ut-swap-fx 150ms) stays; the
+   tree-pane and popup zooms (ADR-0122) are cut to 200ms; the ADR-0122 page
+   zoom stays but is cut to ADR-0097's original 200ms budget (ADR-0122 amends
+   ADR-0119 §3); no backdrop blur;
    one small shadow instead of large or layered ones; no drag lift or
    jiggle (the one decorative looping animation). `filter` itself is left
    alone: core uses it only for the hidden-tile grayscale and hover
    brightness, neither of them a blur. */
-html.fx-balanced { --ut-motion-ms: 200ms; --shadow: 0 1px 2px rgba(15, 23, 42, .08); }
+html.fx-balanced { --ut-motion-ms: 200ms; --ut-zoom-small-ms: 200ms; --shadow: 0 1px 2px rgba(15, 23, 42, .08); }
 html.fx-balanced *, html.fx-balanced *::before, html.fx-balanced *::after {
   -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
 }

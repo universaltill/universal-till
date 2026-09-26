@@ -1239,12 +1239,17 @@ func TestSelfOrderShop_CheckoutAppliesPluginReportedTipFromAuthorizeResponse(t *
 		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	var tip int64
-	if err := d.DB.QueryRow(`SELECT tip_amount FROM payments p JOIN sales s ON s.id = p.sale_id WHERE s.status = 'completed'`).Scan(&tip); err != nil {
+	var tip, amount, total int64
+	if err := d.DB.QueryRow(`SELECT p.tip_amount, p.amount, s.total FROM payments p JOIN sales s ON s.id = p.sale_id WHERE s.status = 'completed'`).Scan(&tip, &amount, &total); err != nil {
 		t.Fatalf("expected a completed sale's payment row: %v", err)
 	}
 	if tip != 150 {
 		t.Fatalf("want tip_amount 150 (from the plugin's authorize response), got %d", tip)
+	}
+	// ut-docs#2571: the kiosk path lands on the same convention — amount
+	// is what the reader charged, the sale total plus the tip on top.
+	if amount != total+150 {
+		t.Fatalf("want amount %d (sale total %d + reader-reported tip 150, ut-docs#2571), got %d", total+150, total, amount)
 	}
 }
 

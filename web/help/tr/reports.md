@@ -185,7 +185,7 @@ iade veya depozito iadesi (Pfandrückgabe) çıkışının gerektirdiği aynı o
 çünkü risk aynıdır (kasadan onaysız nakit çıkışı). Nakit eklemek (pozitif
 bir tutar, örn. bozukluk takviyesi) buna gerek duymaz. Çıkan tutarı negatif
 girin (ör. 50 birimlik bir çıkış için "-50") — fiziksel klavyesi olmayan
-dokunmatik bir kasada önce ekran klavyesinin "-" tuşuna dokunun.
+dokunmatik bir kasada önce ekran klavyesinin "-" tuşuna dokunun. Vardiya tutarları (açılış ve kapanış nakdi, kasadan alma, düzeltme) ondalık kısmından önce nokta veya virgülle yazılabilir ("-3.50" veya "-3,50").
 
 Resmi kayıt modundaki bir Alman mağazasında, nakdi azaltan bir düzeltme —
 ve bir Pfandrückgabe çıkışı — bir satışın veya iadenin geçtiği aynı TSE

@@ -4,7 +4,8 @@ import { watchConsole } from './helpers';
 // ut-docs#2338: extends ADR-0097's motion vocabulary to two more surfaces —
 // the /items rail's in-panel master-detail swap (#items-panel/#admin-panel/
 // #manual-panel) and record-dialog.js's dialog open — deliberately as
-// plain, opacity-only CSS keyframe animations (.ut-panel-fx/.ut-dialog-fx),
+// plain, opacity-only CSS keyframe animations (.ut-panel-fx and a dialog
+// open ease),
 // never the View Transition API and never a `transform`: an earlier draft
 // of this card used `transform: translateX(...)` on the swapped panel and
 // was caught in independent review before merge — the panel hosts
@@ -20,119 +21,62 @@ import { watchConsole } from './helpers';
 // reduced-motion user, fixtures.ts) — the reduced-motion coverage itself
 // is the LAST test in this file, which relies on that same default.
 
-test.describe('in-panel swap ease (#2338)', () => {
-  test('an /items rail click gives #items-panel an opacity-only ease, never a transform', async ({ page }) => {
-    const stopWatching = watchConsole(page);
-    await page.emulateMedia({ reducedMotion: 'no-preference' });
-    await page.goto('/items');
-    await expect(page.locator('#items-panel')).toBeVisible();
+// The in-panel swap half of #2338 (.ut-panel-fx) was replaced by ADR-0122's
+// tree-pane zoom -- see tree-pane-zoom-2943.spec.ts.
 
-    // /categories is a real, different rail destination from the default
-    // /catalog landing section.
-    const captured: { transform: string; opacityAtAdd: number }[] = [];
-    await page.exposeFunction('__reportPanelFx', (transform: string, opacity: string) => {
-      captured.push({ transform, opacityAtAdd: parseFloat(opacity) });
-    });
-    await page.locator('#items-panel').evaluate((el) => {
-      new MutationObserver(() => {
-        if (el.classList.contains('ut-panel-fx')) {
-          const cs = getComputedStyle(el);
-          (window as any).__reportPanelFx(cs.transform, cs.opacity);
-        }
-      }).observe(el, { attributes: true, attributeFilter: ['class'] });
-    });
+// ut-docs#2944 / ADR-0122 §5: the record-dialog open ease (#2338's
+// .ut-dialog-fx class) is replaced by base.html's shared popup zoom -- a
+// transient Web Animations transform from the tapped button. What #2338
+// pinned still holds: the close itself is never delayed. The zoom's own
+// geometry is covered by popup-zoom-2944.spec.ts.
 
-    await page.locator('#items-rail a[href="/categories"]').click();
-    await page.waitForTimeout(250);
+const transformAnims = (el: Element) => el.getAnimations()
+  .filter((a) => ((a.effect as KeyframeEffect | null)?.getKeyframes() || []).some((k) => 'transform' in k)).length;
 
-    expect(captured.length).toBeGreaterThan(0);
-    for (const c of captured) {
-      // 'none' (no transform at all) is the only acceptable value — this is
-      // the actual regression guard: a transform here re-creates the
-      // fixed-descendant containing-block hazard ADR-0097 rule 2 exists to
-      // prevent, whatever CSS property causes it.
-      expect(c.transform).toBe('none');
-      // Never a flash to blank (ADR-0097 rule 5): opacity must never read
-      // as fully transparent while the class is active.
-      expect(c.opacityAtAdd).toBeGreaterThan(0);
-    }
-
-    stopWatching();
-  });
-
-  test('#admin-panel gets the same treatment as #items-panel', async ({ page }) => {
-    await page.emulateMedia({ reducedMotion: 'no-preference' });
-    await page.goto('/admin');
-    const panel = page.locator('#admin-panel');
-    if ((await panel.count()) === 0) test.skip(true, 'no #admin-panel on this build');
-    await expect(panel).toBeVisible();
-
-    let sawClass = false;
-    await page.exposeFunction('__reportAdminFx', () => { sawClass = true; });
-    await panel.evaluate((el) => {
-      new MutationObserver(() => {
-        if (el.classList.contains('ut-panel-fx')) (window as any).__reportAdminFx();
-      }).observe(el, { attributes: true, attributeFilter: ['class'] });
-    });
-
-    const railLink = page.locator('a[hx-target="#admin-panel"]').first();
-    if ((await railLink.count()) === 0) test.skip(true, 'no admin rail link to click');
-    await railLink.click();
-    await page.waitForTimeout(250);
-    expect(sawClass).toBe(true);
-  });
-});
-
-test.describe('record-dialog open ease (#2338)', () => {
-  test('opening a standard record dialog (/categories) gets an opacity+scale ease, and close() is instant', async ({ page }) => {
+test.describe('record-dialog open motion (#2338, now ADR-0122 §5)', () => {
+  test('opening a standard record dialog (/categories) gets the shared zoom and no per-dialog class; close is instant', async ({ page }) => {
     const stopWatching = watchConsole(page);
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     await page.goto('/categories');
 
-    let sawOpenFx = false;
-    await page.exposeFunction('__reportDialogFx', () => { sawOpenFx = true; });
-    await page.locator('#category-dialog').evaluate((el) => {
-      new MutationObserver(() => {
-        if (el.classList.contains('ut-dialog-fx')) (window as any).__reportDialogFx();
-      }).observe(el, { attributes: true, attributeFilter: ['class'] });
-    });
-
+    // A slow zoom, so the check below provably sees it running.
+    await page.evaluate(() => document.documentElement.style.setProperty('--ut-zoom-small-ms', '1000ms'));
     // The list header's New button opens the dialog in create mode
     // (ut-docs#2010's own reference spec uses the same header control).
     await page.locator('.list-header [data-record-dialog-open]').first().click();
-    await expect(page.locator('#category-dialog')).toBeVisible();
-    await page.waitForTimeout(200);
-    expect(sawOpenFx).toBe(true);
+    const dialog = page.locator('#category-dialog');
+    await expect(dialog).toBeVisible();
+    // The shared wrapper started the zoom right after .show(), on the
+    // dialog itself; no per-dialog class is involved any more.
+    expect(await dialog.evaluate(transformAnims)).toBe(1);
+    expect(await dialog.evaluate((el) => el.className)).not.toContain('ut-dialog-fx');
+    await page.evaluate(() => document.documentElement.style.removeProperty('--ut-zoom-small-ms'));
+    // Transient (fill 'none'): nothing is left on the dialog afterwards.
+    await expect.poll(() => dialog.evaluate((el) => getComputedStyle(el).transform)).toBe('none');
 
-    // Close is instant — never delayed for an exit animation (ADR-0097
-    // rule 1: motion must never add latency on a cashier-facing surface).
-    const before = Date.now();
+    // Close is instant -- never delayed for an exit animation (ADR-0097
+    // rule 1): the native close has happened by the time Escape returns;
+    // the shrink that may follow is inert and paint-only.
     await page.keyboard.press('Escape');
-    await expect(page.locator('#category-dialog')).toBeHidden();
-    expect(Date.now() - before).toBeLessThan(300);
+    const st = await dialog.evaluate((el) => ({ open: (el as HTMLDialogElement).open, closing: el.hasAttribute('data-ut-closing'), inert: el.hasAttribute('inert') }));
+    expect(st.open).toBe(false);
+    if (st.closing) expect(st.inert).toBe(true);
+    await expect(dialog).toBeHidden();
 
     stopWatching();
   });
 
-  test('under reduced motion, a dialog open never gets the ease class at all', async ({ page }) => {
+  test('under reduced motion, a dialog open or close creates no animation at all', async ({ page }) => {
     // Deliberately relies on the shared fixture's DEFAULT reduced-motion
     // state (fixtures.ts) — no emulateMedia override here.
     await page.goto('/categories');
-
-    let sawOpenFx = false;
-    await page.exposeFunction('__reportDialogFxReduced', () => { sawOpenFx = true; });
-    await page.locator('#category-dialog').evaluate((el) => {
-      new MutationObserver(() => {
-        if (el.classList.contains('ut-dialog-fx')) (window as any).__reportDialogFxReduced();
-      }).observe(el, { attributes: true, attributeFilter: ['class'] });
-    });
-
     await page.locator('.list-header [data-record-dialog-open]').first().click();
-    await expect(page.locator('#category-dialog')).toBeVisible();
-    await page.waitForTimeout(200);
-    expect(sawOpenFx).toBe(false);
+    const dialog = page.locator('#category-dialog');
+    await expect(dialog).toBeVisible();
+    expect(await dialog.evaluate(transformAnims)).toBe(0);
 
     await page.keyboard.press('Escape');
-    await expect(page.locator('#category-dialog')).toBeHidden();
+    expect(await dialog.evaluate((el) => el.hasAttribute('data-ut-closing'))).toBe(false);
+    await expect(dialog).toBeHidden();
   });
 });

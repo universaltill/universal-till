@@ -285,9 +285,11 @@ type PaymentInput struct {
 	ChangeGiven money.Money `json:"change_given"`
 	// TipAmount is gratuity captured alongside a card-terminal payment
 	// (docs/germany-pos-parity-backlog.md, "Tips: SumUp reader -> till
-	// auto-sync"). It is metadata only: NOT part of Amount's coverage of
-	// the sale total, and does not affect netPayments/CompleteSale's
-	// payment-sufficiency check. Zero for tenders with no tip (e.g. cash).
+	// auto-sync"). Core's one convention (ut-docs#2571): Amount INCLUDES
+	// the tip and TipAmount is its breakdown, whether the tender request
+	// carried the tip or a payment plugin reported it on authorize
+	// (pages.applyPluginReportedTip). netPayments counts Amount - ChangeGiven
+	// and does not subtract TipAmount. Zero for tenders with no tip (e.g. cash).
 	TipAmount money.Money `json:"tip_amount"`
 	// TipRecipient (ADR-0061 Decision 3) is whose money the tip is for tax
 	// purposes: TipRecipientEmployee or TipRecipientBusiness. Persisted per
@@ -726,8 +728,9 @@ func netPayments(payments []PaymentInput, total money.Money) (money.Money, error
 				return 0, fmt.Errorf("payment %d (amount %d, outstanding %d): %w", i+1, p.Amount.Minor(), outstanding.Minor(), ErrVoucherOvertender)
 			}
 		}
-		// Tip is intentionally excluded from the sum that must cover the
-		// sale total -- it never offsets or inflates payment coverage.
+		// Coverage is Amount - ChangeGiven. Amount includes any tip
+		// (ut-docs#2571), and TipAmount is not subtracted here, so a tip
+		// does count toward covering the total — tracked on ut-docs#2975.
 		sum = sum.Add(p.Amount.Sub(p.ChangeGiven))
 	}
 	return sum, nil

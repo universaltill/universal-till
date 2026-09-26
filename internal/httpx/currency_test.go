@@ -73,36 +73,6 @@ func TestFormatMajorPlain(t *testing.T) {
 	}
 }
 
-// ut-docs#1400: MinorFromMajor is FormatMajorPlain's write-side inverse,
-// used by promotions_page.go/settings_page.go's form handlers instead of a
-// hardcoded `* 100` that silently multiplied 0-decimal-currency amounts
-// 100x too large.
-func TestMinorFromMajor(t *testing.T) {
-	cases := []struct {
-		major    float64
-		decimals int
-		want     int64
-	}{
-		{1.23, 2, 123},
-		{0.05, 2, 5},
-		{-0.50, 2, -50},
-		{0, 2, 0},
-		// 0-decimal: major and minor are the same number, never *100.
-		{500, 0, 500},
-		{-500, 0, -500},
-		{0, 0, 0},
-		{1234, 3, 1234000},
-		// float imprecision (0.1 + 0.2 style) rounds to the nearest minor
-		// unit rather than truncating.
-		{19.99, 2, 1999},
-	}
-	for _, c := range cases {
-		if got := MinorFromMajor(c.major, c.decimals); got != c.want {
-			t.Errorf("MinorFromMajor(%v, %d) = %d, want %d", c.major, c.decimals, got, c.want)
-		}
-	}
-}
-
 // ut-docs#1274: MoneyPattern/MoneyPlaceholder replace 7 duplicated
 // {{ if eq currency.Decimals 0 }}…{{ else }}…{1,2}…{{ end }} ternaries
 // across shifts.html/reports_tab_tips.html -- generic over decimals (not
@@ -182,14 +152,18 @@ func TestMoneyPatternAttr(t *testing.T) {
 func TestMoneyPatternLocalAttr(t *testing.T) {
 	cases := []struct {
 		decimals int
+		signed   bool
 		want     string
 	}{
-		{0, `pattern="[0-9]+" data-money-local`},
-		{2, `pattern="[0-9]+([.,][0-9]{1,2})?" data-money-local`},
+		{0, false, `pattern="[0-9]+" data-money-local`},
+		{2, false, `pattern="[0-9]+([.,][0-9]{1,2})?" data-money-local`},
+		// ut-docs#2925: the shift adjustment is signed.
+		{2, true, `pattern="-?[0-9]+([.,][0-9]{1,2})?" data-money-local`},
+		{0, true, `pattern="-?[0-9]+" data-money-local`},
 	}
 	for _, c := range cases {
-		if got := string(MoneyPatternLocalAttr(c.decimals)); got != c.want {
-			t.Errorf("MoneyPatternLocalAttr(%d) = %q, want %q", c.decimals, got, c.want)
+		if got := string(MoneyPatternLocalAttr(c.decimals, c.signed)); got != c.want {
+			t.Errorf("MoneyPatternLocalAttr(%d, %v) = %q, want %q", c.decimals, c.signed, got, c.want)
 		}
 	}
 	re := regexp.MustCompile(`^(?:` + MoneyPatternLocal(2) + `)$`)
@@ -417,5 +391,78 @@ func TestParseMoneyMajor(t *testing.T) {
 		if got, err := ParseMoneyMajor(c.raw, c.decimals); err == nil {
 			t.Errorf("ParseMoneyMajor(%q, %d) = %d, want an error", c.raw, c.decimals, got)
 		}
+	}
+}
+
+// ut-docs#2818: an editable money input's prefill (and its example
+// placeholder) uses the shop language's decimal separator, so a German
+// till shows "4,00" rather than "4.00". Only the separator changes -- no
+// grouping, sign and digits kept -- because the fields that use these are
+// MoneyPatternLocal fields whose readers (window.utCurrency.toMinor,
+// ParseMoneyMajor) accept either separator but refuse grouping.
+func TestLocalizeMajor(t *testing.T) {
+	cases := []struct {
+		in, locale, want string
+	}{
+		{"4.00", "de", "4,00"},
+		{"4.00", "de-DE", "4,00"},
+		{"-0.50", "fr", "-0,50"},
+		{"12345.67", "tr", "12345,67"},
+		{"1.234", "es", "1,234"},
+		{"4.00", "en", "4.00"},
+		{"4.00", "fa", "4.00"},
+		{"500", "de", "500"},
+		{"", "de", ""},
+	}
+	for _, c := range cases {
+		if got := LocalizeMajor(c.in, c.locale); got != c.want {
+			t.Errorf("LocalizeMajor(%q, %q) = %q, want %q", c.in, c.locale, got, c.want)
+		}
+	}
+}
+
+func TestMoneyPlaceholderLocalAttr(t *testing.T) {
+	cases := []struct {
+		decimals int
+		example  int64
+		locale   string
+		want     string
+	}{
+		{2, 0, "de", `placeholder="0,00"`},
+		{2, -50, "de", `placeholder="-50,00"`},
+		{2, 0, "en", `placeholder="0.00"`},
+		{0, 0, "de", `placeholder="0"`},
+	}
+	for _, c := range cases {
+		if got := string(MoneyPlaceholderLocalAttr(c.decimals, c.example, c.locale)); got != c.want {
+			t.Errorf("MoneyPlaceholderLocalAttr(%d, %d, %q) = %s, want %s", c.decimals, c.example, c.locale, got, c.want)
+		}
+	}
+}
+
+// ut-docs#2954: percent fields (promotion, payment fee, tax rates) read the
+// same comma-tolerant grammar as money, with two fraction digits, straight
+// into basis points -- no strconv.ParseFloat, so "1e3"/"NaN" are refused.
+func TestParsePercentBP(t *testing.T) {
+	ok := map[string]int64{
+		"1,5": 150, "1.5": 150, "19": 1900, "7,25": 725, "0,01": 1,
+		"8.5": 850, "100": 10000, "0": 0, " 2,5 ": 250,
+	}
+	for raw, want := range ok {
+		if got, err := ParsePercentBP(raw); err != nil || got != want {
+			t.Errorf("ParsePercentBP(%q) = %d, %v; want %d", raw, got, err, want)
+		}
+	}
+	for _, raw := range []string{"", "1e3", "NaN", "Inf", "0x10", "-1", "1,555", "1.2.3", "1,2,3", "abc", ",5", "5,"} {
+		if got, err := ParsePercentBP(raw); err == nil {
+			t.Errorf("ParsePercentBP(%q) = %d, want an error", raw, got)
+		}
+	}
+}
+
+func TestPercentPatternLocalAttr(t *testing.T) {
+	want := `pattern="[0-9]+([.,][0-9]{1,2})?" data-money-local="percent"`
+	if got := string(PercentPatternLocalAttr()); got != want {
+		t.Fatalf("PercentPatternLocalAttr() = %q, want %q", got, want)
 	}
 }

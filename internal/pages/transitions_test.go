@@ -105,7 +105,7 @@ func TestAppCSSDoesNotOptInStandalonePages(t *testing.T) {
 	if regexp.MustCompile(`(?m)^\s*@view-transition\s*\{`).MatchString(css) {
 		t.Fatalf("app.css must not contain an @view-transition rule — the opt-in (and its reduced-motion override) belong in base.html's <head> only")
 	}
-	for _, want := range []string{"--ut-motion-ms", "::view-transition-new(root)", "@keyframes ut-page-slide-in"} {
+	for _, want := range []string{"--ut-motion-ms", "::view-transition-new(root)", "@keyframes ut-page-zoom-in"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("app.css must still carry the transition animation rules (%q)", want)
 		}
@@ -128,10 +128,10 @@ func TestAppCSSNamesOnlyTheFixedRailAndStatusbar(t *testing.T) {
 	if !strings.Contains(css, "::view-transition-old(ut-rail)") || !strings.Contains(css, "::view-transition-new(ut-rail)") {
 		t.Errorf("app.css must suppress the default cross-fade on the ut-rail group (::view-transition-old/new(ut-rail) { animation: none })")
 	}
-	// It is the ROOT pair that slides — the whole document minus the two
-	// named groups — never a named <main>.
-	if !strings.Contains(css, "::view-transition-new(root) { animation-name: ut-page-slide-in; }") {
-		t.Errorf("app.css must animate ::view-transition-new(root) with the page slide")
+	// It is the ROOT pair that zooms — the whole document minus the two
+	// named groups — never a named <main> (ADR-0122 §3).
+	if !strings.Contains(css, "::view-transition-new(root) { animation-name: ut-page-zoom-in; }") {
+		t.Errorf("app.css must animate ::view-transition-new(root) with the page zoom (ADR-0122)")
 	}
 	// A `view-transition-name` gives its element a stacking context with
 	// layout containment, which makes it the containing block for every
@@ -156,84 +156,104 @@ func TestAppCSSNamesOnlyTheFixedRailAndStatusbar(t *testing.T) {
 
 func TestAppCSSHasPageTransitionKeyframes(t *testing.T) {
 	css := readAppCSS(t)
-	for _, want := range []string{"@keyframes ut-page-slide-in", "@keyframes ut-page-recede", "@keyframes ut-page-slide-out", "@keyframes ut-page-return"} {
+	for _, want := range []string{"@keyframes ut-page-zoom-in", "@keyframes ut-page-recede", "@keyframes ut-page-zoom-out", "@keyframes ut-page-return"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("app.css missing %q", want)
 		}
 	}
 }
 
-// TestAppCSSPageMotionIsTheStackedCardPush pins ADR-0118 (amending ADR-0097
-// §4, ut-docs#2496 reopened): 400ms on the iOS-like
-// cubic-bezier(.32,.72,0,1); push = the incoming page slides in from the
-// inline-end edge OVER the outgoing one, which recedes (scale .92, drops
-// 3%, dims); pop = the exact reverse, with the old page stacked on top.
-// Transform + opacity only; the travel mirrors via --ut-nav-dir, never a
-// left/right literal.
-func TestAppCSSPageMotionIsTheStackedCardPush(t *testing.T) {
+// TestAppCSSPageMotionIsTheZoomFromTheOrigin pins ADR-0122 §1/§3
+// (superseding ADR-0118 §2's push, ut-docs#2939/#2942): 400ms on the iOS
+// cubic-bezier(.32,.72,0,1). Forward = the incoming page grows OUT of the
+// tapped element (uniform scale --ut-zoom-s + translate to the source centre
+// --ut-zoom-x/--ut-zoom-y, starting at opacity .4, never blank) over the
+// outgoing one, which recedes as before (scale .92, dims) on the black
+// backdrop. Back = the page being left shrinks INTO the stored source and
+// fades out on top; the previous page rises from the receded state.
+// Transform + opacity only, no clip-path, no side travel (so RTL needs no
+// variable at all).
+func TestAppCSSPageMotionIsTheZoomFromTheOrigin(t *testing.T) {
 	css := readAppCSS(t)
+	const origin = "translate(calc(var(--ut-zoom-x) - 50%), calc(var(--ut-zoom-y) - 50%)) scale(var(--ut-zoom-s))"
 	for _, want := range []string{
 		"--ut-motion-ms: 400ms",
 		"--ut-motion-ease: cubic-bezier(.32,.72,0,1)",
+		// No origin (and no script) = bottom centre of the viewport.
+		"--ut-zoom-x: 50vw; --ut-zoom-y: 100vh; --ut-zoom-s: .3;",
 		"animation-duration: var(--ut-motion-ms);",
 		"animation-timing-function: var(--ut-motion-ease);",
-		"@keyframes ut-page-slide-in { from { transform: translateX(calc(var(--ut-nav-dir) * 100%)); } to { transform: none; } }",
+		"@keyframes ut-page-zoom-in  { from { transform: " + origin + "; opacity: .4; } to { transform: none; opacity: 1; } }",
 		"@keyframes ut-page-recede   { from { transform: none; opacity: 1; } to { transform: translateY(3%) scale(.92); opacity: .55; } }",
-		"@keyframes ut-page-slide-out { from { transform: none; } to { transform: translateX(calc(var(--ut-nav-dir) * 100%)); } }",
-		"@keyframes ut-page-return    { from { transform: translateY(3%) scale(.92); opacity: .55; } to { transform: none; opacity: 1; } }",
+		"@keyframes ut-page-zoom-out { from { transform: none; opacity: 1; } to { transform: " + origin + "; opacity: 0; } }",
+		"@keyframes ut-page-return   { from { transform: translateY(3%) scale(.92); opacity: .55; } to { transform: none; opacity: 1; } }",
 		"::view-transition-old(root) { animation-name: ut-page-recede; }",
-		// Pop: the page being left must paint ABOVE the returning one.
-		":root:active-view-transition-type(back)::view-transition-old(root) { animation-name: ut-page-slide-out; z-index: 1; }",
-		`html[data-nav-dir="pop"]::view-transition-old(root) { animation-name: ut-page-slide-out; z-index: 1; }`,
+		// Back: the page being left must paint ABOVE the returning one.
+		":root:active-view-transition-type(back)::view-transition-old(root) { animation-name: ut-page-zoom-out; z-index: 1; }",
+		`html[data-nav-dir="pop"]::view-transition-old(root) { animation-name: ut-page-zoom-out; z-index: 1; }`,
 		":root:active-view-transition-type(back)::view-transition-new(root) { animation-name: ut-page-return; }",
 		`html[data-nav-dir="pop"]::view-transition-new(root) { animation-name: ut-page-return; }`,
+		// The black backdrop of ADR-0118 §2 is kept (ADR-0122 Supersedes).
+		"::view-transition { background: #000; }",
 	} {
 		if !strings.Contains(css, want) {
-			t.Errorf("app.css page motion (ADR-0118) missing %q", want)
+			t.Errorf("app.css page zoom (ADR-0122) missing %q", want)
 		}
 	}
-	// The :root default is 400ms; ADR-0119's html.fx-balanced legitimately
-	// sets 200ms (ADR-0097's original budget) for the Balanced level only.
-	for _, gone := range []string{":root { --ut-nav-dir: 1; --ut-motion-ms: 200ms", "@keyframes ut-page-in ", "@keyframes ut-page-out ", "* 4%)"} {
+	// The push is gone, and so is every earlier motion.
+	for _, gone := range []string{
+		":root { --ut-nav-dir: 1; --ut-motion-ms: 200ms", "@keyframes ut-page-in ", "@keyframes ut-page-out ", "* 4%)",
+		"ut-page-slide-in", "ut-page-slide-out",
+	} {
 		if strings.Contains(css, gone) {
-			t.Errorf("app.css still carries the pre-ADR-0118 motion (%q)", gone)
+			t.Errorf("app.css still carries a superseded page motion (%q) — ADR-0122 replaced the push with the zoom", gone)
 		}
 	}
 	// Compositor-only: the page keyframes animate transform/opacity and
-	// nothing else (no layout property, no filter).
+	// nothing else (no layout property, no filter, no clip-path).
 	kf := regexp.MustCompile(`@keyframes (ut-page-[a-z-]+)\s*\{(.*)\}\s*$`)
 	prop := regexp.MustCompile(`([a-z-]+)\s*:`)
+	n := 0
 	for _, line := range strings.Split(css, "\n") {
 		m := kf.FindStringSubmatch(line)
 		if m == nil {
 			continue
 		}
+		n++
 		for _, p := range prop.FindAllStringSubmatch(m[2], -1) {
 			if p[1] != "transform" && p[1] != "opacity" {
-				t.Errorf("@keyframes %s animates %q — page motion is transform + opacity only (ADR-0118)", m[1], p[1])
+				t.Errorf("@keyframes %s animates %q — page motion is transform + opacity only (ADR-0122 §1)", m[1], p[1])
 			}
 		}
 	}
+	if n != 4 {
+		t.Errorf("expected exactly the 4 page keyframes (zoom-in, recede, zoom-out, return), found %d", n)
+	}
 	block := extractMotionRules(css)
 	if block == "" {
-		t.Fatalf("app.css: could not locate the ADR-0118 root-pair motion rules")
+		t.Fatalf("app.css: could not locate the ADR-0122 root-pair motion rules")
 	}
-	for _, lit := range []string{"translateX(-", "translateX(100%", "left:", "right:"} {
+	// Uniform scale + translate only: no side travel, no squash, no clip.
+	for _, lit := range []string{"translateX(", "scaleX(", "scaleY(", "clip-path", "left:", "right:"} {
 		if strings.Contains(block, lit) {
-			t.Errorf("page motion must mirror via --ut-nav-dir only, found %q", lit)
+			t.Errorf("page zoom must be a uniform scale plus translate (ADR-0122 §1), found %q", lit)
 		}
 	}
 }
 
-// extractMotionRules returns the ADR-0118 root-pair rules (from the
-// pointer-events rule to the last page keyframe).
+// extractMotionRules returns the root-pair rules (from the pointer-events
+// rule through the last page keyframe).
 func extractMotionRules(css string) string {
 	a := strings.Index(css, "::view-transition { pointer-events: none; }")
 	b := strings.Index(css, "@keyframes ut-page-return")
 	if a < 0 || b < a {
 		return ""
 	}
-	return css[a:b]
+	e := strings.Index(css[b:], "\n")
+	if e < 0 {
+		return ""
+	}
+	return css[a : b+e]
 }
 
 // TestAppCSSViewTransitionNeverBlocksInput: the ::view-transition overlay
@@ -248,8 +268,8 @@ func TestAppCSSViewTransitionNeverBlocksInput(t *testing.T) {
 	}
 	html := readBaseHTML(t)
 	for _, want := range []string{
-		"window.addEventListener('pointerdown', function () {",
-		"try { vt.skipTransition(); } catch (e) { /* already done */ }",
+		"window.addEventListener('pointerdown', function (e) {",
+		"try { vt.skipTransition(); } catch (err) { /* already done */ }",
 		"var el = document.elementFromPoint(e.clientX, e.clientY);",
 	} {
 		if !strings.Contains(html, want) {
@@ -258,28 +278,130 @@ func TestAppCSSViewTransitionNeverBlocksInput(t *testing.T) {
 	}
 }
 
-func TestAppCSSNavDirectionVariableMirrorsUnderRTL(t *testing.T) {
-	css := readAppCSS(t)
-	if !strings.Contains(css, "--ut-nav-dir: 1") {
-		t.Errorf("app.css must define a default --ut-nav-dir: 1 on :root")
+// TestAppCSSPageZoomNeedsNoDirectionVariable: the push travelled sideways
+// and mirrored under RTL through --ut-nav-dir. The zoom has no side: it
+// grows from the tapped element's own (already mirrored) box, so RTL needs
+// nothing extra (ADR-0122 §1) and the variable is gone rather than left as
+// dead code that a later rule might start trusting.
+func TestAppCSSPageZoomNeedsNoDirectionVariable(t *testing.T) {
+	if css := readAppCSS(t); strings.Contains(css, "--ut-nav-dir") {
+		t.Errorf("app.css still defines/uses --ut-nav-dir — the zoom has no travel direction (ADR-0122 §1)")
 	}
-	// Must be scoped under an RTL selector, not just present anywhere.
-	// app.css already has PRE-EXISTING selectors like `html[dir="rtl"]
-	// .foo {...}` elsewhere (those contain the substring `[dir="rtl"]`
-	// too), so anchor on the variable itself and look at what selector
-	// immediately precedes its declaration block, rather than the first
-	// `[dir="rtl"]` match anywhere in the file.
-	varIdx := strings.Index(css, "--ut-nav-dir: -1")
-	if varIdx < 0 {
-		t.Fatalf(`app.css missing "--ut-nav-dir: -1"`)
+}
+
+// TestBaseHTMLRecordsTheMotionOrigin pins ADR-0122 §2: ONE origin recorder,
+// in the first script of the document (where UT.motionOff lives), capture
+// phase, pointerdown plus keyboard activation, reading the nearest
+// interactive ancestor; UT.takeOrigin() hands it out once; it expires after
+// 5 s; an off-screen or zero-size box is no origin; nothing throws.
+func TestBaseHTMLRecordsTheMotionOrigin(t *testing.T) {
+	html := readBaseHTML(t)
+	first := strings.Index(html, "<script>")
+	firstEnd := strings.Index(html[first:], "</script>")
+	if first < 0 || firstEnd < 0 {
+		t.Fatalf("base.html: first inline <script> not found")
 	}
-	openBrace := strings.LastIndex(css[:varIdx], "{")
-	if openBrace < 0 {
-		t.Fatalf("could not find the rule's opening brace before --ut-nav-dir: -1")
+	script := html[first : first+firstEnd]
+	if !strings.Contains(script, "UT.motionOff = function () {") {
+		t.Fatalf("the origin recorder must live in the same first script as UT.motionOff")
 	}
-	selector := css[strings.LastIndex(css[:openBrace], "}")+1 : openBrace]
-	if !strings.Contains(selector, `[dir="rtl"]`) {
-		t.Errorf(`expected --ut-nav-dir: -1 to be declared under a selector containing [dir="rtl"], got selector: %q`, selector)
+	for _, want := range []string{
+		"var ORIGIN_SEL = 'a, button, [hx-get], [hx-post], [role=treeitem], [data-zoom-origin]';",
+		"recordOrigin(e, t);",
+		"window.addEventListener('keydown', function (e) {",
+		"if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;",
+		"UT.motionOrigin = { rect: r, el: el, at: Date.now() };",
+		"UT.takeOrigin = function () {",
+		"UT.motionOrigin = null;",
+		"Date.now() - o.at > ORIGIN_TTL_MS",
+		"var ORIGIN_TTL_MS = 5000;",
+		// Off-screen / zero-size = no origin.
+		"function onScreen(r) {",
+		"r.width > 0 && r.height > 0",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("base.html's first script must carry the ADR-0122 origin recorder (missing %q)", want)
+		}
+	}
+	// Recorder and zoom helpers are defined before the View-Transition
+	// feature check returns early, so the shell script (and the tree-pane /
+	// popup consumers, #2943/#2944) can always call them.
+	check := strings.Index(script, "if (!('navigation' in window) || !window.CSS || !CSS.supports('view-transition-name: x')) return;")
+	for _, def := range []string{"UT.takeOrigin = function () {", "UT.zoomTo = function (rect) {", "UT.zoomRemember = function (", "UT.zoomRecall = function ("} {
+		i := strings.Index(script, def)
+		if i < 0 || check < 0 || i > check {
+			t.Errorf("%q must be defined before the feature-check early return", def)
+		}
+	}
+	// The recorder must never throw into the page.
+	rec := extractBlock(t, script, "function recordOrigin(e, target) {")
+	if !strings.Contains(rec, "try {") || !strings.Contains(rec, "catch (err)") {
+		t.Errorf("recordOrigin must be wrapped in try/catch, got %s", rec)
+	}
+}
+
+// TestBaseHTMLZoomOriginAndBackStore pins ADR-0122 §2/§3's plumbing: the
+// three custom properties are written on <html> (layout-neutral) from the
+// boosted htmx:beforeTransition and the cross-document pagereveal, and the
+// back store is a bounded (20) sessionStorage list of a path and four
+// numbers, every access in try/catch.
+func TestBaseHTMLZoomOriginAndBackStore(t *testing.T) {
+	html := readBaseHTML(t)
+	for _, want := range []string{
+		"var ZOOM_KEY = 'ut-zoom-back', ZOOM_MAX = 20;",
+		"s.setProperty('--ut-zoom-x', x + 'px');",
+		"s.setProperty('--ut-zoom-y', y + 'px');",
+		"s.setProperty('--ut-zoom-s', String(sc));",
+		"Math.min(1, Math.max(0.1,",
+		"while (list.length > ZOOM_MAX) list.shift();",
+		// A pop only shrinks into the stored box when it lands on its `from`.
+		"return (e && e[1] === landing) ? { left: e[2], top: e[3], width: e[4], height: e[5] } : null;",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("base.html zoom origin/back store (ADR-0122) missing %q", want)
+		}
+	}
+	for _, fn := range []string{"function zoomLoad() {", "function zoomSave(list) {"} {
+		body := extractBlock(t, html, fn)
+		if !strings.Contains(body, "try {") || !strings.Contains(body, "sessionStorage") {
+			t.Errorf("%s must touch sessionStorage only inside try/catch, got %s", fn, body)
+		}
+	}
+	// Boosted path: set in beforeTransition, after the motion-off cancel.
+	bt := extractBlock(t, html, "document.addEventListener('htmx:beforeTransition', function (e) {")
+	off := strings.Index(bt, "if (UT.motionOff() || !document.startViewTransition) { e.preventDefault(); return; }")
+	zoom := strings.Index(bt, "UT.zoomTo(")
+	if off < 0 || zoom < 0 || zoom < off {
+		t.Errorf("htmx:beforeTransition must cancel under motionOff first, then set the zoom origin (UT.zoomTo); got %s", bt)
+	}
+	if !strings.Contains(bt, "UT.zoomRemember(") || !strings.Contains(bt, "UT.zoomRecall(") {
+		t.Errorf("htmx:beforeTransition must store the forward origin and recall it on a pop")
+	}
+	// ADR-0122 §2: a redirect is "no origin" -- the boosted path applies the
+	// same rule as the cross-document pageswap (#2942 review).
+	if !strings.Contains(bt, "redirected = !!pi.requestPath && norm(pi.requestPath) !== norm(to);") ||
+		!strings.Contains(bt, "if (!redirected && o && o.el") {
+		t.Errorf("htmx:beforeTransition must drop the press origin when the response was redirected")
+	}
+	// Typing in a field is not an activation of a source view.
+	if !strings.Contains(html, "/^(INPUT|TEXTAREA|SELECT)$/.test(tg.tagName || '')") {
+		t.Errorf("the keydown origin recorder must skip Enter/Space typed into a field")
+	}
+	// Cross-document path: pageswap stores, pagereveal reads and sets.
+	ps := extractBlock(t, html, "window.addEventListener('pageswap', function (e) {")
+	if !strings.Contains(ps, "UT.zoomRemember(") {
+		t.Errorf("pageswap must store the forward origin for the incoming document")
+	}
+	pr := extractBlock(t, html, "window.addEventListener('pagereveal', function (e) {")
+	if !strings.Contains(pr, "UT.zoomRecall(") || !strings.Contains(pr, "UT.zoomTo(") {
+		t.Errorf("pagereveal must read the stored origin and set the zoom properties")
+	}
+	// Never before the snapshot in beforeSwap's body (ADR-0118 §1 guard is
+	// TestPersistentShell_BeforeSwapDefersTheShellSync); the zoom lives in
+	// beforeTransition only.
+	bs := extractBlock(t, html, "document.addEventListener('htmx:beforeSwap', function (e) {")
+	if strings.Contains(bs, "zoomTo") || strings.Contains(bs, "--ut-zoom") {
+		t.Errorf("htmx:beforeSwap must not set the zoom origin; that is htmx:beforeTransition's job")
 	}
 }
 
@@ -570,113 +692,166 @@ func TestBaseHTMLQuietsSkippedTransitionPromises(t *testing.T) {
 // navigation — reusing it would slide the whole content area (or the whole
 // screen behind a dialog) on every panel click / dialog open.
 
-func TestAppCSSHasPanelSwapEaseAnimation(t *testing.T) {
+// ADR-0122 §4 (ut-docs#2943) replaced #2338's opacity-only .ut-panel-fx
+// with a transient Web Animations zoom from the tapped tree item. The
+// #2338 hazard (a transform on an ancestor of position:fixed dialogs) is
+// handled by making the transform transient, not by forbidding it: no
+// persistent CSS transform on a pane, fill 'none', finished on any tap,
+// before any popup opens and before the next pane swap.
+func TestAppCSSHasNoPersistentPanelEase(t *testing.T) {
 	css := readAppCSS(t)
-	if !strings.Contains(css, ".ut-panel-fx") {
-		t.Errorf("app.css missing .ut-panel-fx (the in-panel-swap ease class)")
+	for _, gone := range []string{".ut-panel-fx", "ut-panel-in"} {
+		if strings.Contains(css, gone) {
+			t.Errorf("app.css still carries %s -- ADR-0122 §4 replaces the #2338 pane ease with app.js's transient zoom", gone)
+		}
 	}
-	if !strings.Contains(css, "@keyframes ut-panel-in") {
-		t.Errorf("app.css missing @keyframes ut-panel-in")
+	// Point 1: panes and popups use the shorter small-zoom duration,
+	// 300ms at Full and 200ms at Balanced (ADR-0119).
+	if !strings.Contains(css, "--ut-zoom-small-ms: 300ms") {
+		t.Errorf("app.css must define --ut-zoom-small-ms: 300ms on :root (ADR-0122 §1)")
 	}
-	// Opacity-only, deliberately never a transform (independent review,
-	// ut-docs#2338): a first cut used `translateX(var(--ut-nav-dir) * ...)`
-	// for a page-slide-like feel, which both (a) violated ADR-0097 rule 5
-	// ("readable from frame one, never a flash to blank" — it started from
-	// opacity 0, not .55 like .ut-swap-fx) and (b) put a non-`none`
-	// `transform` on an ancestor of `.record-dialog`/`.item-form-modal`
-	// (`position: fixed` descendants living inside the swapped panel),
-	// which makes it their containing block — the exact hazard ADR-0097
-	// rule 2 already names for `view-transition-name`, just reached via a
-	// different CSS property. Pin both corrections here.
-	block := extractBlock(t, css, "@keyframes ut-panel-in")
-	if strings.Contains(block, "transform") {
-		t.Errorf("@keyframes ut-panel-in must never use `transform` — the swapped panel hosts position:fixed dialog descendants, and any non-`none` transform on an ancestor becomes their containing block (ADR-0097 rule 2's hazard), got: %s", block)
-	}
-	if !strings.Contains(block, "opacity: .55") {
-		t.Errorf("@keyframes ut-panel-in must start from opacity: .55, never 0 (ADR-0097 rule 5: readable from frame one, never a flash to blank), got: %s", block)
-	}
-	if !strings.Contains(block, "opacity: 1") {
-		t.Errorf("@keyframes ut-panel-in must end at opacity: 1, got: %s", block)
+	bal := extractBlock(t, css, "html.fx-balanced {")
+	if !strings.Contains(bal, "--ut-zoom-small-ms: 200ms") {
+		t.Errorf("html.fx-balanced must cut --ut-zoom-small-ms to 200ms (ADR-0122 §1), got: %s", bal)
 	}
 }
 
-func TestAppCSSHasDialogOpenEaseAnimation(t *testing.T) {
-	css := readAppCSS(t)
-	if !strings.Contains(css, ".ut-dialog-fx") {
-		t.Errorf("app.css missing .ut-dialog-fx (the record-dialog.js open ease class)")
-	}
-	if !strings.Contains(css, "@keyframes ut-dialog-in") {
-		t.Errorf("app.css missing @keyframes ut-dialog-in")
-	}
-}
-
-// The reduced-motion wildcard block (TestAppCSSReducedMotionBlockCoversEverything
-// above) already asserts `*, *::before, *::after { animation-duration: 0s
-// !important }`, which covers these two new keyframes automatically — no
-// separate CSS assertion needed here, only that app.js/record-dialog.js
-// also carry the belt-and-braces JS-side skip, checked below.
-
-func TestAppJSAppliesPanelEaseInsteadOfSwapEaseForItemsPanel(t *testing.T) {
+func TestAppJSZoomsTheTreePaneTransiently(t *testing.T) {
 	js := readAppJS(t)
-	// Independent review, ut-docs#2338: the original version of this
-	// assertion was `strings.Contains(js, "items-panel")`, which passes
-	// even with this whole card reverted — the literal "items-panel"
-	// already appears elsewhere in app.js (the X-UT-Page-Title allowlist).
-	// Assert the actual expression, and all three rail-driven panel ids
-	// (#items-panel, #admin-panel, #manual-panel), not just one.
-	if !strings.Contains(js, "['items-panel', 'admin-panel', 'manual-panel'].indexOf(t.id) !== -1") {
-		t.Fatalf("app.js's swap-ease listener must special-case all three rail-driven panel targets (#items-panel, #admin-panel, #manual-panel)")
+	if strings.Contains(js, "ut-panel-fx") || strings.Contains(js, "ut-panel-in") {
+		t.Fatalf("app.js still applies the #2338 .ut-panel-fx ease -- ADR-0122 §4 replaces it with the zoom")
 	}
-	if !strings.Contains(js, "isPanelNav ? 'ut-panel-fx' : 'ut-swap-fx'") {
-		t.Fatalf("app.js must apply the 'ut-panel-fx' class for a panel-nav swap, 'ut-swap-fx' otherwise")
+	// All three rail-driven panes, not just one (the #2338 review caught a
+	// test that passed on the bare literal "items-panel").
+	if !strings.Contains(js, "PANES = ['items-panel', 'admin-panel', 'manual-panel']") {
+		t.Fatalf("app.js must name all three tree panes (#items-panel, #admin-panel, #manual-panel)")
 	}
-	// The animationend cleanup must remove BOTH classes it can ever add —
-	// a stale class on an element that never gets a matching animationend
-	// (e.g. one class added, the id read wrong) would stick forever.
-	if !strings.Contains(js, "'ut-swap-in' || e.animationName === 'ut-panel-in'") {
-		t.Fatalf("app.js's animationend cleanup must match both ut-swap-in and ut-panel-in")
+	i := strings.Index(js, "function zoomPane(")
+	if i < 0 {
+		t.Fatalf("app.js has no zoomPane() (ADR-0122 §4)")
 	}
-	if !strings.Contains(js, "remove('ut-swap-fx', 'ut-panel-fx')") {
-		t.Fatalf("app.js's animationend cleanup must remove both ut-swap-fx and ut-panel-fx")
+	body := js[i:]
+	if end := strings.Index(body, "\n  }\n"); end > 0 {
+		body = body[:end]
+	}
+	for _, want := range []string{
+		"UT.takeOrigin()",              // the shared origin recorder (§2)
+		"dialog[open]",                 // a pane that already shows a dialog gets no zoom
+		"fill: 'none'",                 // transient: nothing remains after the last frame
+		"cubic-bezier(.32, .72, 0, 1)", // ADR-0118's easing (§1)
+		"--ut-zoom-small-ms",           // Full 300 / Balanced 200 (§1)
+		"UT.trackZoom(",                // so a tap / popup / next swap can finish() it
+		"opacity: 0.4",                 // never from blank (§1, ADR-0097 §5)
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("zoomPane() must contain %q, got: %s", want, body)
+		}
+	}
+	// Uniform scale clamped 0.1-1 (§1): never a non-uniform squash.
+	if !strings.Contains(body, "Math.min(1, Math.max(0.1,") {
+		t.Errorf("zoomPane() must clamp the uniform start scale to 0.1-1")
+	}
+	if strings.Contains(body, "scaleX") || strings.Contains(body, "scaleY") || strings.Contains(body, "clip-path") {
+		t.Errorf("zoomPane() must use one uniform scale, no scaleX/scaleY/clip-path (ADR-0122 §1)")
+	}
+	// Only an activation zooms; a debounced input/change swap into a pane
+	// (the /help search box) keeps the generic ease (review, ut-docs#2943).
+	if !strings.Contains(js, "(how === 'click' || how === 'submit')) { zoomPane(t); return; }") {
+		t.Errorf("app.js must zoom a pane only for a click/submit-triggered swap")
+	}
+	// A pane about to be swapped again finishes its running zoom first.
+	if !strings.Contains(js, "htmx:beforeSwap") || !strings.Contains(js, "UT.finishZooms()") {
+		t.Errorf("app.js must finish a running pane zoom on htmx:beforeSwap into a pane (ADR-0122 §4)")
 	}
 }
 
-func TestRecordDialogJSAppliesOpenEaseAndSkipsUnderReducedMotion(t *testing.T) {
-	js := readRecordDialogJS(t)
-	if !strings.Contains(js, "prefers-reduced-motion: reduce") {
-		t.Fatalf("record-dialog.js must feature-check prefers-reduced-motion before applying the open ease")
+// ADR-0122 §7 (ut-docs#2943): a tap during a pane zoom finishes it, the ONE
+// origin recorder (pinned by TestBaseHTMLRecordsTheMotionOrigin) then reads
+// the element under the pointer at its final position, and the following
+// click lands on that control.
+func TestBaseHTMLZoomTapFinishesAndRecordsOrigin(t *testing.T) {
+	html := readBaseHTML(t)
+	end := strings.Index(html, "UT.vtWatchdog = function")
+	if end < 0 {
+		t.Fatalf("base.html has no UT.vtWatchdog -- first script not found")
 	}
-	if !strings.Contains(js, "'ut-dialog-fx'") {
-		t.Fatalf("record-dialog.js must apply the 'ut-dialog-fx' class on open")
+	first := html[:end]
+	for _, want := range []string{"UT.finishZooms = function", "UT.trackZoom = function"} {
+		if !strings.Contains(first, want) {
+			t.Errorf("base.html's first script must contain %q (ADR-0122 §7)", want)
+		}
 	}
-	// The reduced-motion check must gate adding the class (belt-and-braces
-	// alongside the CSS wildcard), not just exist somewhere unrelated in
-	// the file.
-	openIdx := strings.Index(js, "function open(dialog, row, opener)")
-	if openIdx < 0 {
-		t.Fatalf("open(dialog, row, opener) not found in record-dialog.js")
+	if n := strings.Count(first, "function recordOrigin("); n != 1 {
+		t.Errorf("base.html must keep exactly ONE origin recorder (ADR-0122 §2), found %d", n)
 	}
-	closeIdx := strings.Index(js, "function close(dialog)")
-	if closeIdx < 0 || closeIdx < openIdx {
-		t.Fatalf("close(dialog) not found after open() in record-dialog.js")
+	listener := func(from int) string {
+		pd := first[from:]
+		if e := strings.Index(pd, "}, true);"); e > 0 {
+			pd = pd[:e]
+		}
+		return pd
 	}
-	openBody := js[openIdx:closeIdx]
-	if !strings.Contains(openBody, "ut-dialog-fx") {
-		t.Fatalf("open() must add the ut-dialog-fx class, got body: %s", openBody)
+	pdAt := strings.Index(first, "window.addEventListener('pointerdown'")
+	if pdAt < 0 {
+		t.Fatalf("base.html has no capture-phase pointerdown listener")
 	}
-	// ADR-0119: through motionOff() (UT.motionOff: reduced motion OR the
-	// Light effects level, falling back to the bare media query).
-	if !strings.Contains(openBody, "if (!motionOff()) dialog.classList.add('ut-dialog-fx')") {
-		t.Fatalf("open() must consult motionOff() (reduced motion or Light) before adding ut-dialog-fx")
+	pd := listener(pdAt)
+	// A new press disarms a stale re-dispatch window first (review).
+	if !strings.Contains(pd, "skippedByTapAt = 0; zoomTap = false;") {
+		t.Errorf("pointerdown must disarm a previous press's re-dispatch window")
 	}
-	// Never applied to close(): delaying the native .close() for an exit
-	// animation would add latency to Cancel/Save.
-	closeBody := js[closeIdx:]
-	closeEnd := strings.Index(closeBody, "\n  }\n")
-	if closeEnd > 0 {
-		closeBody = closeBody[:closeEnd]
+	if !strings.Contains(pd, "UT.finishZooms()") || !strings.Contains(pd, "zoomTap = finished") {
+		t.Errorf("the first capture-phase pointerdown must finish running zooms and flag the tap, got: %s", pd)
 	}
-	if strings.Contains(closeBody, "ut-dialog-fx") {
-		t.Fatalf("close() must NOT add/remove ut-dialog-fx — no exit animation, zero added latency on Cancel/Save, got body: %s", closeBody)
+	// The recorder's pointerdown is registered AFTER that one (capture
+	// listeners on window run in registration order), so it sees zoomTap.
+	recAt := strings.Index(first[pdAt+1:], "window.addEventListener('pointerdown'")
+	if recAt < 0 {
+		t.Fatalf("base.html has no second (origin recorder) pointerdown listener")
+	}
+	rec := listener(pdAt + 1 + recAt)
+	// Capture phase, pinned on the recorder itself (review): a bubble-phase
+	// recorder would run after htmx's handlers.
+	if !strings.Contains(first, "recordOrigin(e, t);\n        }, true);") {
+		t.Errorf("the origin recorder's pointerdown must be a capture-phase listener")
+	}
+	if strings.Count(rec, "addEventListener") != 1 {
+		t.Errorf("the recorder's pointerdown slice ran into another listener -- is it still capture phase?")
+	}
+	// A keyboard activation finishes a running zoom before it reads the box.
+	kd := strings.Index(first, "window.addEventListener('keydown'")
+	if kd < 0 || !strings.Contains(listener(kd), "UT.finishZooms()") {
+		t.Errorf("the keydown recorder must finish running zooms before recording (review)")
+	}
+	if !strings.Contains(rec, "zoomTap") || !strings.Contains(rec, "document.elementFromPoint(e.clientX, e.clientY)") || !strings.Contains(rec, "recordOrigin(e, t);") {
+		t.Errorf("after a zoom-finishing tap the recorder must read the element under the pointer, got: %s", rec)
 	}
 }
+
+// ADR-0122 §4/§5: opening any popup first finishes a running pane zoom, so
+// no position:fixed dialog is ever shown inside a transformed pane. Hooked
+// on HTMLDialogElement.prototype once; the native method still runs.
+func TestBaseHTMLDialogOpenFinishesPaneZooms(t *testing.T) {
+	html := readBaseHTML(t)
+	if n := strings.Count(html, "HTMLDialogElement.prototype[m] = "); n != 1 {
+		t.Fatalf("the showModal/show wrapper must be installed exactly once in base.html, found %d", n)
+	}
+	i := strings.Index(html, "['showModal', 'show'].forEach")
+	if i < 0 {
+		t.Fatalf("base.html must wrap HTMLDialogElement.prototype.showModal and .show")
+	}
+	w := html[i:]
+	if e := strings.Index(w, "});"); e > 0 {
+		w = w[:e]
+	}
+	if !strings.Contains(w, "UT.finishZooms()") || !strings.Contains(w, "native.apply(this, arguments)") {
+		t.Errorf("the dialog wrapper must finish zooms and then run the native method unchanged, got: %s", w)
+	}
+	if !strings.Contains(w, "try {") {
+		t.Errorf("the dialog wrapper must never throw into the caller (ADR-0122 consequences)")
+	}
+}
+
+// ut-docs#2944 / ADR-0122 §5: the #2010/#2338 record-dialog open ease
+// (.ut-dialog-fx) is gone -- every dialog now gets base.html's shared popup
+// zoom instead. popup_zoom_guard_test.go pins that.

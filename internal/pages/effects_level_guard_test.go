@@ -106,7 +106,8 @@ func TestAppCSSHasFxLightBlockZeroingMotion(t *testing.T) {
 	if rm < 0 || fx < rm || fx-rm > 6000 {
 		t.Errorf("the html.fx-light block must sit right after the reduced-motion block (rm=%d fx=%d)", rm, fx)
 	}
-	// Balanced: the ADR-0118 push shortened to 200ms.
+	// Balanced: the ADR-0122 page zoom shortened to 200ms (ADR-0122 amends
+	// ADR-0119 §3).
 	if !strings.Contains(css, "html.fx-balanced { --ut-motion-ms: 200ms;") {
 		t.Errorf("html.fx-balanced must shorten --ut-motion-ms to 200ms")
 	}
@@ -147,7 +148,7 @@ func TestEveryMotionPathUsesMotionOff(t *testing.T) {
 	for _, want := range []string{
 		"if (UT.motionOff()) e.viewTransition.skipTransition();",
 		"if (UT.motionOff()) { if (vt.skipTransition) vt.skipTransition(); return; }",
-		"if (UT.motionOff() || !document.startViewTransition) e.preventDefault();",
+		"if (UT.motionOff() || !document.startViewTransition) { e.preventDefault(); return; }",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("base.html motion path does not use UT.motionOff(): missing %q", want)
@@ -167,8 +168,11 @@ func TestEveryMotionPathUsesMotionOff(t *testing.T) {
 	if strings.Contains(app, "if (mq && mq.matches) return;") {
 		t.Errorf("app.js still gates the swap ease on the bare media query")
 	}
+	// ADR-0122 §5/§6 (ut-docs#2944): record-dialog.js has no motion of its
+	// own any more -- its dialogs get base.html's shared popup zoom, which
+	// bails on UT.motionOff() (popup_zoom_guard_test.go).
 	rd := readRecordDialogJS(t)
-	if !strings.Contains(rd, "window.UT.motionOff()") || !strings.Contains(rd, "if (!motionOff()) dialog.classList.add('ut-dialog-fx')") {
-		t.Errorf("record-dialog.js's open ease must skip via UT.motionOff()")
+	if strings.Contains(rd, "ut-dialog-fx") || strings.Contains(rd, ".animate(") {
+		t.Errorf("record-dialog.js must not carry its own dialog motion (ADR-0122 §5)")
 	}
 }

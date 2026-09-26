@@ -61,7 +61,14 @@ window.utCurrency = (function(){
       var n = parseMinor(v);
       return isNaN(n) ? 0 : n;
     },
-    toMajor: function(units){ return (units / factor).toFixed(decimals); },
+    // ut-docs#2818: an editable field's prefill, in the shop language's
+    // decimal separator ("4,00" on a German till) -- every caller's field
+    // is read back by parseMinor/toMinor or the server's ParseMoneyMajor,
+    // which accept either separator. No grouping: parseMinor refuses it.
+    toMajor: function(units){
+      var s = (units / factor).toFixed(decimals);
+      return decimalSep === ',' ? s.replace('.', ',') : s;
+    },
     format: formatMinor
   };
 })();
@@ -86,7 +93,12 @@ window.utCurrency = (function(){
     if (!el || !el.hasAttribute || !el.hasAttribute('data-money-local')) return;
     el.setCustomValidity('');
     if (el.validity.patternMismatch) {
-      el.setCustomValidity((document.body && document.body.dataset.moneyInvalid) || '');
+      // ut-docs#2954: a percent field (data-money-local="percent") always
+      // takes decimals, so it never gets the 0-decimal shop's "whole
+      // number" money message.
+      var ds = (document.body && document.body.dataset) || {};
+      var msg = el.getAttribute('data-money-local') === 'percent' ? ds.percentInvalid : ds.moneyInvalid;
+      el.setCustomValidity(msg || '');
     }
   }
   document.addEventListener('input', function(ev){ applyMoneyValidity(ev.target); }, true);
@@ -2441,6 +2453,7 @@ window.utTabBarFade = function (el) {
   // ADR-0119: UT.motionOff() (base.html's first script) is reduced motion OR
   // the Light effects level; the bare media query is only the fallback for
   // a page outside base.html that loads this file without it.
+  var PANES = ['items-panel', 'admin-panel', 'manual-panel'];
   function motionOff() {
     return (window.UT && typeof window.UT.motionOff === 'function') ? window.UT.motionOff() : !!(mq && mq.matches);
   }
@@ -2484,24 +2497,69 @@ window.utTabBarFade = function (el) {
       t = (t.id && document.getElementById(t.id)) || d.elt;
     }
     if (!t || !t.classList || t === document.body || t === document.documentElement) return;
-    // ut-docs#2338: the rail-driven in-panel swaps (#items-panel,
-    // #admin-panel, #manual-panel -- same allowlist as the X-UT-Page-Title
-    // listener above) are master-detail navigation, not a live update --
-    // app.css's .ut-panel-fx (a slightly longer, still zero-latency,
-    // opacity-only ease) replaces the generic .ut-swap-fx for these
-    // targets specifically.
-    var isPanelNav = ['items-panel', 'admin-panel', 'manual-panel'].indexOf(t.id) !== -1;
-    var cls = isPanelNav ? 'ut-panel-fx' : 'ut-swap-fx';
+    // ADR-0122 §4 (ut-docs#2943): the rail-driven tree panes (same
+    // allowlist as the X-UT-Page-Title listener above) are master-detail
+    // navigation, not a live update -- the swapped pane zooms out of the
+    // tapped tree item instead of the generic opacity ease.
+    // Only an activation zooms (a tree tap, a submitted form): a
+    // debounced `input`/`change` swap into a pane (the /help search box)
+    // keeps the generic ease -- a zoom per keystroke would be noise
+    // (ut-docs#2943 review).
+    var how = rc.triggeringEvent.type;
+    if (PANES.indexOf(t.id) !== -1 && (how === 'click' || how === 'submit')) { zoomPane(t); return; }
     // Restart only when an ease is still running (a second swap inside
     // 150 ms) — the forced reflow is not free on the sale screen's basket.
-    if (t.classList.contains(cls)) { t.classList.remove(cls); void t.offsetWidth; }
-    t.classList.add(cls);
+    if (t.classList.contains('ut-swap-fx')) { t.classList.remove('ut-swap-fx'); void t.offsetWidth; }
+    t.classList.add('ut-swap-fx');
   });
   document.addEventListener('animationend', function (e) {
-    if ((e.animationName === 'ut-swap-in' || e.animationName === 'ut-panel-in') && e.target && e.target.classList) {
-      e.target.classList.remove('ut-swap-fx', 'ut-panel-fx');
+    if (e.animationName === 'ut-swap-in' && e.target && e.target.classList) {
+      e.target.classList.remove('ut-swap-fx');
     }
   });
+  // A pane about to be swapped again finishes its running zoom first
+  // (ADR-0122 §4), so the next zoom measures the pane's real box.
+  document.addEventListener('htmx:beforeSwap', function (evt) {
+    var t = evt.detail && evt.detail.target;
+    if (t && PANES.indexOf(t.id) !== -1 && window.UT && UT.finishZooms) UT.finishZooms();
+  });
+
+  // ADR-0122 §1/§4: grow the swapped pane from the tapped tree item's box
+  // (UT.takeOrigin(), recorded on pointerdown before the request) to its
+  // own box with the Web Animations API -- no View Transition, no snapshot,
+  // the same in WebView2, Android WebView and WebKitGTK. Uniform scale plus
+  // translation (so RTL needs nothing), transform and opacity only, from
+  // opacity 0.4, never blank. The transform is TRANSIENT (fill 'none') and
+  // registered with UT.trackZoom, so a tap, a popup opening (base.html's
+  // dialog wrapper) or the next pane swap finish() it: a position:fixed
+  // dialog inside the pane is never shown inside a transformed ancestor
+  // (the #2338 hazard). A pane that settles with a dialog already open
+  // gets no zoom at all. Callers have already checked motionOff().
+  function zoomPane(el) {
+    if (!el.animate || !window.UT || !UT.takeOrigin) return;
+    var o = UT.takeOrigin();
+    if (el.querySelector('dialog[open]')) return;
+    var box = el.getBoundingClientRect();
+    if (!box.width || !box.height) return;
+    var vw = window.innerWidth, vh = window.innerHeight;
+    var r = o && o.rect;
+    // No origin, or one that is zero-sized or off screen: the bottom
+    // centre of the viewport (ADR-0122 §2).
+    if (!r || !r.width || !r.height || r.left + r.width <= 0 || r.top + r.height <= 0 || r.left >= vw || r.top >= vh) {
+      r = { left: vw / 2, top: vh, width: 0, height: 0 };
+    }
+    var s = Math.min(1, Math.max(0.1, r.width / box.width));
+    var dx = (r.left + r.width / 2) - (box.left + box.width / 2);
+    var dy = (r.top + r.height / 2) - (box.top + box.height / 2);
+    var ms = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ut-zoom-small-ms')) || 300;
+    try {
+      var anim = el.animate([
+        { transform: 'translate(' + dx + 'px, ' + dy + 'px) scale(' + s + ')', opacity: 0.4 },
+        { transform: 'none', opacity: 1 }
+      ], { duration: ms, easing: 'cubic-bezier(.32, .72, 0, 1)', fill: 'none' });
+      UT.trackZoom(anim);
+    } catch (e) { /* motion only -- the pane is already in place */ }
+  }
 })();
 
 // ut-docs#2282: WHEN/WHERE the sale screen asks the cashier dine-in or

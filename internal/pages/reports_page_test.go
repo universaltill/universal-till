@@ -1254,7 +1254,7 @@ func TestReportsPage_TipsTabRecordFieldPatternIsCurrencyAware(t *testing.T) {
 	if !strings.Contains(body, "(£)") {
 		t.Fatalf("expected the GBP symbol in the tips-amount label, got:\n%s", body)
 	}
-	if !strings.Contains(body, `pattern="[0-9]+(\.[0-9]{1,2})?"`) {
+	if !strings.Contains(body, `pattern="[0-9]+([.,][0-9]{1,2})?" data-money-local`) {
 		t.Fatalf("expected the 2-decimal pattern for GBP, got:\n%s", body)
 	}
 	if !strings.Contains(body, `placeholder="0.00"`) {
@@ -1273,7 +1273,7 @@ func TestReportsPage_TipsTabRecordFieldPatternIsCurrencyAware(t *testing.T) {
 	if !strings.Contains(body, `pattern="[0-9]+"`) {
 		t.Fatalf("expected the 0-decimal (integer-only) pattern for IRT, got:\n%s", body)
 	}
-	if strings.Contains(body, `pattern="[0-9]+(\.[0-9]{1,2})?"`) {
+	if strings.Contains(body, `pattern="[0-9]+([.,][0-9]{1,2})?"`) {
 		t.Fatalf("expected NO 2-decimal pattern left over once currency is 0-decimal, got:\n%s", body)
 	}
 	if !strings.Contains(body, `placeholder="0"`) {

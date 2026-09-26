@@ -120,6 +120,7 @@ func refundableLines(detail data.SaleDetail, returned map[string]float64, return
 type refundGuardState struct {
 	returned               map[string]float64
 	alreadyRefundedCharge  int64
+	refundedChargeByKey    map[string]int64
 	returnedDiscount       map[string]int64
 	returnedDiscountByLine map[string]int64
 	returnedQtyByLine      map[string]float64
@@ -140,6 +141,10 @@ func loadRefundGuardState(ctx context.Context, repo *data.POSRepo, saleID string
 	// review finding B1): how much of the ORIGINAL charge prior completed
 	// returns already paid back.
 	if g.alreadyRefundedCharge, err = repo.RefundedServiceChargeTotal(ctx, saleID); err != nil {
+		return refundGuardState{}, err
+	}
+	// The same guard per itemized charge key (ADR-0062, ut-docs#1216).
+	if g.refundedChargeByKey, err = repo.RefundedChargeTotalsByKey(ctx, saleID); err != nil {
 		return refundGuardState{}, err
 	}
 	// Double-refund guard for each line's OWN discount (ut-docs#1531): how
@@ -183,7 +188,7 @@ func (e *refundQuantityExceedsRemainingError) Error() string {
 
 // refundLinesFromForm computes, from the requested per-line quantities in
 // the submitted form, exactly which return lines this refund would create
-// plus the prorated whole-sale discount and prorated service charge --
+// plus the prorated whole-sale discount and the prorated charge list --
 // the same math whether this is a real POST /api/refund (which then
 // completes the sale) or a read-only POST /api/refund/preview (which only
 // ever displays the total, ut-docs#1217). Extracted verbatim from the POST
@@ -202,7 +207,7 @@ func (e *refundQuantityExceedsRemainingError) Error() string {
 // for the real POST's downstream pos.CompleteSale call -- computeRefundTotal
 // never looks at it, so the preview endpoint passes "" rather than paying
 // for repo.EnsureStockLocation on every debounced keystroke.
-func refundLinesFromForm(detail data.SaleDetail, guard refundGuardState, locationID string, inclusive bool, form url.Values) (lines []pos.SaleLineInput, saleDiscount, serviceChargeRefund int64, err error) {
+func refundLinesFromForm(detail data.SaleDetail, guard refundGuardState, locationID string, inclusive bool, form url.Values) (lines []pos.SaleLineInput, saleDiscount int64, charges []pos.ChargeInput, err error) {
 	var refundGross, origGross int64
 	var refundNetWeight int64
 	// origNetWeight is the SAME true (tax-exclusive), net-after-line-
@@ -293,7 +298,7 @@ func refundLinesFromForm(detail data.SaleDetail, guard refundGuardState, locatio
 		// (409, not this function's own 400). Reject both explicitly,
 		// here, the same way a negative or non-numeric qty already is.
 		if perr != nil || qty <= 0 || math.IsNaN(qty) || math.IsInf(qty, 0) {
-			return nil, 0, 0, &refundInvalidQuantityError{lineIndex: i}
+			return nil, 0, nil, &refundInvalidQuantityError{lineIndex: i}
 		}
 		key := data.RefundLineKey(l.ItemID, l.VariantID, l.UnitPrice, l.OrderType)
 		// ut-docs#1583: cap at min(lineRemaining, pool[key]), not
@@ -318,7 +323,7 @@ func refundLinesFromForm(detail data.SaleDetail, guard refundGuardState, locatio
 			remaining = lineRemaining
 		}
 		if qty > remaining+1e-9 {
-			return nil, 0, 0, &refundQuantityExceedsRemainingError{lineName: l.Name, remaining: remaining}
+			return nil, 0, nil, &refundQuantityExceedsRemainingError{lineName: l.Name, remaining: remaining}
 		}
 		pool[key] -= qty
 		// Running per-key discount clamp (ut-docs#1531), replacing a
@@ -454,7 +459,7 @@ func refundLinesFromForm(detail data.SaleDetail, guard refundGuardState, locatio
 		refundNetWeight += pos.TrueNetWeight(refundNet, l.TaxRateBP, inclusive).Minor()
 	}
 	if len(lines) == 0 {
-		return nil, 0, 0, nil
+		return nil, 0, nil, nil
 	}
 
 	// Whole-sale discount prorated by the refunded share of the sale.
@@ -471,7 +476,7 @@ func refundLinesFromForm(detail data.SaleDetail, guard refundGuardState, locatio
 	// is exact for a single full refund but drifts on a SPLIT/partial
 	// refund of a sale that mixes per-line discounts and different tax
 	// rates alongside a charge apportioned across bands (not a flat
-	// basis): the tax this amount feeds below (pos.ServiceChargeTax,
+	// basis): the tax this amount feeds below (pos.ChargesTax,
 	// and pos.CompleteSale's own computeSaleTotals for the persisted
 	// return) weighs by NET, so a gross-derived amount mixes two
 	// different bases. Net-after-discount throughout matches that
@@ -480,53 +485,91 @@ func refundLinesFromForm(detail data.SaleDetail, guard refundGuardState, locatio
 	// which it doesn't -- it is NOT a general exactness guarantee, only
 	// a closer approximation than gross was); a per-line-discounted,
 	// multi-request split can still drift by a minor unit in EITHER
-	// direction, which is exactly why the clamp below exists.
-	if detail.ServiceCharge > 0 {
-		switch {
-		case origNetWeight > 0 && refundNetWeight > 0:
-			serviceChargeRefund = detail.ServiceCharge * refundNetWeight / origNetWeight
-		case origGross > 0:
-			// Review findings B2 (round 1) + B3 (round 2): the net
-			// basis can't apportion anything either when the WHOLE
-			// sale's net-after-discount is zero (origNetWeight == 0,
-			// B2's shape: every line fully line-discounted) OR when
-			// only THIS REQUEST's own refunded lines have zero net
-			// while other, unrefunded lines in the sale carry the
-			// sale's net (refundNetWeight == 0, B3's shape: refunding
-			// a comped/BOGO/staff-freebie line on its own, gross > 0
-			// but net == 0, while a different line elsewhere in the
-			// same sale is what makes origNetWeight positive). Either
-			// way, fall back to the gross fraction (this card's
-			// pre-fix basis, and the same edge
-			// ApportionServiceChargeTax's own zero-weight rule exists
-			// to handle on the sale side) so the sale stays refundable
-			// instead of computing a $0 charge refund that then fails
-			// CompleteSale's payment-must-be-positive check. Safe
-			// against B1 either way: the clamp below applies
-			// regardless of which branch produced the raw figure.
-			serviceChargeRefund = detail.ServiceCharge * refundGross / origGross
-		}
-		// Review finding B1: clamp against what's ACTUALLY left to
-		// refund, not just this request's own fraction of the whole.
-		// Flooring the per-request prorated line discount above makes
-		// each request's own refundNetWeight/refundGross slightly
-		// larger than its true proportional share, so the SUM of
-		// independently-computed per-request figures across several
-		// sequential partial refunds of the same sale can exceed the
-		// original charge -- a real money over-refund, verified via a
-		// driven repro during review. This clamp is what actually
-		// guarantees the invariant TestPostRefund_
-		// UnevenSequentialRefundsNeverExceedTheOriginalServiceCharge
-		// pins ("never more"): it no longer holds by luck of the
-		// arithmetic, it's now enforced.
-		if remaining := detail.ServiceCharge - guard.alreadyRefundedCharge; serviceChargeRefund > remaining {
-			if remaining < 0 {
-				remaining = 0
-			}
-			serviceChargeRefund = remaining
-		}
+	// direction, which is exactly why refundCharges' clamps exist.
+	var num, den int64
+	switch {
+	case origNetWeight > 0 && refundNetWeight > 0:
+		num, den = refundNetWeight, origNetWeight
+	case origGross > 0:
+		// Review findings B2 (round 1) + B3 (round 2): the net
+		// basis can't apportion anything either when the WHOLE
+		// sale's net-after-discount is zero (origNetWeight == 0,
+		// B2's shape: every line fully line-discounted) OR when
+		// only THIS REQUEST's own refunded lines have zero net
+		// while other, unrefunded lines in the sale carry the
+		// sale's net (refundNetWeight == 0, B3's shape: refunding
+		// a comped/BOGO/staff-freebie line on its own, gross > 0
+		// but net == 0, while a different line elsewhere in the
+		// same sale is what makes origNetWeight positive). Either
+		// way, fall back to the gross fraction (this card's
+		// pre-fix basis, and the same edge
+		// ApportionServiceChargeTax's own zero-weight rule exists
+		// to handle on the sale side) so the sale stays refundable
+		// instead of computing a $0 charge refund that then fails
+		// CompleteSale's payment-must-be-positive check. Safe
+		// against B1 either way: refundCharges' clamps apply
+		// regardless of which branch produced the fraction.
+		num, den = refundGross, origGross
 	}
-	return lines, saleDiscount, serviceChargeRefund, nil
+	return lines, saleDiscount, refundCharges(detail, guard, num, den), nil
+}
+
+// refundCharges is a refund's charge list: every charge of the original
+// sale prorated by the refunded fraction num/den (computed above).
+//
+// A sale with itemized charges (sale_charges rows, ADR-0062 — every sale
+// completed since ut-docs#985) refunds EACH charge on its own, keeping its
+// key, label and tax basis, so a levy at a flat basis is refunded at that
+// basis rather than folded into one service charge taxed at the sale's
+// scalar basis (0 for any 2+-charge sale) — ut-docs#1216. An older sale
+// with no rows keeps the pre-ADR-0062 path: one service_charge item from
+// the scalar sales.service_charge_amount / service_charge_tax_basis_bp.
+//
+// Review finding B1 (ut-docs#1215): each figure is clamped against what's
+// ACTUALLY left to refund, not just this request's own fraction of the
+// whole. Flooring the per-request prorated line discount makes each
+// request's own weight slightly larger than its true proportional share, so
+// the SUM of independently-computed per-request figures across several
+// sequential partial refunds could otherwise exceed the original charge --
+// a real money over-refund, verified via a driven repro during review.
+// TestPostRefund_UnevenSequentialRefundsNeverExceedTheOriginalServiceCharge
+// pins "never more". Itemized charges are clamped per key (what that key
+// still has unrefunded) AND against the summed remainder, so a return that
+// was recorded without rows still counts against the total.
+func refundCharges(detail data.SaleDetail, guard refundGuardState, num, den int64) []pos.ChargeInput {
+	if den <= 0 || detail.ServiceCharge <= 0 {
+		return nil
+	}
+	remainingTotal := detail.ServiceCharge - guard.alreadyRefundedCharge
+	if remainingTotal <= 0 {
+		return nil
+	}
+	if len(detail.Charges) == 0 {
+		return refundServiceCharges(min(detail.ServiceCharge*num/den, remainingTotal), detail.ServiceChargeTaxBasisBP)
+	}
+	origByKey := map[string]int64{}
+	for _, c := range detail.Charges {
+		origByKey[c.Key] += c.Amount
+	}
+	takenByKey := map[string]int64{}
+	var out []pos.ChargeInput
+	for _, c := range detail.Charges {
+		amount := c.Amount * num / den
+		amount = min(amount, origByKey[c.Key]-guard.refundedChargeByKey[c.Key]-takenByKey[c.Key], remainingTotal)
+		if amount <= 0 {
+			continue // a zero charge is not a charge (pos.BuildCharges)
+		}
+		takenByKey[c.Key] += amount
+		remainingTotal -= amount
+		out = append(out, pos.ChargeInput{
+			Key:        c.Key,
+			Label:      c.Label,
+			Amount:     money.FromMinor(amount),
+			TaxBasisBP: c.TaxBasisBP,
+			Base:       c.Base,
+		})
+	}
+	return out
 }
 
 // registerRefund mounts the refund screen + API (docs: refunds.md, G27/G28).
@@ -652,7 +695,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			return
 		}
 		inclusive := saleIsTaxInclusive(detail)
-		lines, saleDiscount, serviceChargeRefund, err := refundLinesFromForm(detail, guard, "", inclusive, r.Form)
+		lines, saleDiscount, charges, err := refundLinesFromForm(detail, guard, "", inclusive, r.Form)
 		if err != nil {
 			// A malformed or over-the-remaining-limit in-flight edit: the
 			// real POST is what actually rejects an invalid submission, but
@@ -665,7 +708,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			_, _ = w.Write([]byte(httpx.FormatMoney(0, locale)))
 			return
 		}
-		total := computeRefundTotal(lines, money.FromMinor(saleDiscount), money.FromMinor(serviceChargeRefund), detail.ServiceChargeTaxBasisBP, inclusive)
+		total := computeRefundTotal(lines, money.FromMinor(saleDiscount), charges, inclusive)
 		_, _ = w.Write([]byte(httpx.FormatMoney(total.Minor(), locale)))
 	})
 
@@ -755,7 +798,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// lines end up refunded.
 		inclusive := saleIsTaxInclusive(detail)
 
-		lines, saleDiscount, serviceChargeRefund, err := refundLinesFromForm(detail, guard, locID, inclusive, r.Form)
+		lines, saleDiscount, charges, err := refundLinesFromForm(detail, guard, locID, inclusive, r.Form)
 		if err != nil {
 			var invalidQty *refundInvalidQuantityError
 			var exceedsRemaining *refundQuantityExceedsRemainingError
@@ -797,7 +840,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// Engine computes the refund total from the same inputs as the
 		// original sale; the payment must cover it exactly. (`inclusive`
 		// was already resolved above, before the service-charge proration.)
-		refundTotal := computeRefundTotal(lines, money.FromMinor(saleDiscount), money.FromMinor(serviceChargeRefund), detail.ServiceChargeTaxBasisBP, inclusive)
+		refundTotal := computeRefundTotal(lines, money.FromMinor(saleDiscount), charges, inclusive)
 
 		// fiscal.sign.start (ADR-0077 Decision 1, ut-docs#1519): fires HERE,
 		// immediately before the payment.<key>.refund webhook below —
@@ -948,7 +991,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			Currency:               detail.Currency,
 			TaxInclusive:           inclusive,
 			SaleDiscount:           money.FromMinor(saleDiscount),
-			Charges:                refundServiceCharges(serviceChargeRefund, detail.ServiceChargeTaxBasisBP),
+			Charges:                charges,
 			Lines:                  lines,
 			Payments:               refundPayments(method, refundTotal, detail.Currency),
 			OriginalSaleID:         detail.ID,
@@ -1138,18 +1181,17 @@ func blockingPaymentEventWithResponseAndID(ctx context.Context, d *common.Deps, 
 }
 
 // computeRefundTotal mirrors the engine's total math so the refund payment
-// covers the return exactly (CompleteSale enforces coverage). serviceCharge
-// is the (already-prorated, ut-docs#243) share of the original sale's
-// service charge this refund is returning, and chargeTaxBasisBP is the
-// original sale's own basis (0 = apportion at the sale's own per-line
-// rates) — both threaded straight from data.SaleDetail, same shape as
-// saleDiscount above. Ordering mirrors pos.CompleteSale's own
-// computeSaleTotals exactly (internal/pos/sales.go): the discount reduces
+// covers the return exactly (CompleteSale enforces coverage). charges is
+// the (already-prorated, ut-docs#243/#1216) share of each of the original
+// sale's charges this refund is returning, each at its own tax basis
+// (refundCharges) — the same list the return's pos.SaleInput carries, so
+// the demanded payment and CompleteSale's own ChargesTax cannot disagree.
+// Ordering mirrors pos.CompleteSale's own computeSaleTotals exactly (internal/pos/sales.go): the discount reduces
 // subtotal BEFORE the charge is added (a sale discount never eats into the
 // service charge), and the charge's own tax is folded into `tax` the same
 // way a line's tax is -- exclusive adds it on top, inclusive keeps it
 // embedded in the charge amount already counted in `total`.
-func computeRefundTotal(lines []pos.SaleLineInput, saleDiscount, serviceCharge money.Money, chargeTaxBasisBP int, inclusive bool) money.Money {
+func computeRefundTotal(lines []pos.SaleLineInput, saleDiscount money.Money, charges []pos.ChargeInput, inclusive bool) money.Money {
 	var subtotal, tax money.Money
 	for _, l := range lines {
 		net := pos.AmountForQuantity(l.UnitPrice, l.Qty).Sub(l.LineDiscount)
@@ -1157,8 +1199,8 @@ func computeRefundTotal(lines []pos.SaleLineInput, saleDiscount, serviceCharge m
 		subtotal = subtotal.Add(net)
 		tax = tax.Add(t)
 	}
-	tax = tax.Add(pos.ServiceChargeTax(serviceCharge, pos.ChargeTaxLinesFromSale(lines), inclusive, chargeTaxBasisBP))
-	total := subtotal.Sub(saleDiscount).Add(serviceCharge)
+	tax = tax.Add(pos.ChargesTax(charges, pos.ChargeTaxLinesFromSale(lines), inclusive))
+	total := subtotal.Sub(saleDiscount).Add(pos.SumCharges(charges))
 	if !inclusive {
 		total = total.Add(tax)
 	}
@@ -1184,10 +1226,11 @@ func refundPayments(method string, refundTotal money.Money, currency string) []p
 	return []pos.PaymentInput{{MethodID: method, Amount: refundTotal, Currency: currency}}
 }
 
-// refundServiceCharges is a refund's charge list (ADR-0062): today's single
-// prorated service_charge item, taxed at the original sale's persisted
-// basis, or none when nothing of the charge is refunded (a zero charge is
-// not a charge — same rule as pos.BuildCharges).
+// refundServiceCharges is the refund charge list for a sale with no
+// itemized charge rows (pre-ADR-0062): one prorated service_charge item,
+// taxed at the original sale's persisted basis, or none when nothing of the
+// charge is refunded (a zero charge is not a charge — same rule as
+// pos.BuildCharges).
 func refundServiceCharges(amount int64, taxBasisBP int) []pos.ChargeInput {
 	if amount <= 0 {
 		return nil

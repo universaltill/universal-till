@@ -3997,6 +3997,39 @@ WHERE k.original_sale_id = ? AND s.sale_type = 'return' AND s.status = 'complete
 	return total, nil
 }
 
+// RefundedChargeTotalsByKey sums, per sale_charges key, the charge amounts
+// every completed return linked to originalSaleID already paid back — the
+// per-charge double-refund guard for a sale with itemized charges (ADR-0062,
+// ut-docs#1216), the itemized sibling of RefundedServiceChargeTotal. A
+// return with no sale_charges rows contributes nothing here; the refund
+// handler still clamps the summed figure against RefundedServiceChargeTotal.
+func (r *POSRepo) RefundedChargeTotalsByKey(ctx context.Context, originalSaleID string) (map[string]int64, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT c.key, SUM(c.amount_minor)
+FROM sale_charges c
+JOIN sale_links k ON k.sale_id = c.sale_id
+JOIN sales s ON s.id = c.sale_id AND s.sale_type = 'return' AND s.status = 'completed'
+WHERE k.original_sale_id = ?
+GROUP BY c.key`, originalSaleID)
+	if err != nil {
+		return nil, fmt.Errorf("refunded charge totals: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var key string
+		var total int64
+		if err := rows.Scan(&key, &total); err != nil {
+			return nil, fmt.Errorf("scan refunded charge total: %w", err)
+		}
+		out[key] = total
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate refunded charge totals: %w", err)
+	}
+	return out, nil
+}
+
 // ReturnedQuantities sums, per line key, what previous returns linked to
 // the original sale already gave back — the double-refund guard's input.
 func (r *POSRepo) ReturnedQuantities(ctx context.Context, originalSaleID string) (map[string]float64, error) {

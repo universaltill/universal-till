@@ -348,3 +348,56 @@ func TestApplyReplicaIdentityClearsInheritedEffectsLevel(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#2950: diagnostics.* and cloudsync.* are per-till, so an admin pull
+// no longer overwrites them — but the join snapshot is a whole-DB copy and
+// still carries the main till's rows. Joined while the main till had an
+// ADR-0092 support session open, the new till would boot believing that
+// session is its own and keep capturing until someone stopped it there.
+// install.* is left alone: it is this machine's provisioning marker and a
+// cleared marker would re-run provisioning over the owner's window mode.
+func TestApplyReplicaIdentityClearsInheritedTillLocalState(t *testing.T) {
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init("") })
+
+	path := filepath.Join(t.TempDir(), "data", "unitill-pos.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer d.Close()
+
+	for k, v := range map[string]string{
+		"diagnostics.active":                        "true",
+		"diagnostics.session_id":                    "main-session",
+		"cloudsync.snapshot_hash":                   "abc",
+		"cloudsync.order_tracking_hash":             "def",
+		"install.desktop_kiosk_overlay_provisioned": "2026-09-01T00:00:00Z",
+		"store.name":                                "Shop",
+	} {
+		if _, err := d.Exec(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`, k, v); err != nil {
+			t.Fatalf("seed %s: %v", k, err)
+		}
+	}
+
+	if err := StageReplicaIdentity(path, ReplicaIdentity{
+		PrimaryURL: "http://primary.local", TillID: "till-2", Bearer: "b",
+		ReceiptPrefix: "T2-", TillName: "Back lane",
+	}); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	if applied, err := ApplyReplicaIdentity(d.DB, path); err != nil || !applied {
+		t.Fatalf("apply: applied=%v err=%v", applied, err)
+	}
+
+	var n int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM settings WHERE substr(key, 1, 12) = 'diagnostics.' OR substr(key, 1, 10) = 'cloudsync.'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("the main till's diagnostics.*/cloudsync.* rows survived the join (rows=%d err=%v)", n, err)
+	}
+	for _, k := range []string{"install.desktop_kiosk_overlay_provisioned", "store.name"} {
+		var v string
+		if err := d.QueryRow(`SELECT value FROM settings WHERE key = ?`, k).Scan(&v); err != nil {
+			t.Fatalf("%s was deleted too (err=%v)", k, err)
+		}
+	}
+}

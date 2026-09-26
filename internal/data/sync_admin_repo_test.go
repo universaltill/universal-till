@@ -332,6 +332,84 @@ func TestAdminDumpApplyRoundTrip_AutoUpdateLastAttemptNeverSyncs(t *testing.T) {
 	}
 }
 
+// ut-docs#2950: three key families #2791 left shop-wide only because the
+// admin bundle carried them are one till's own state. diagnostics.* is this
+// till's ADR-0092 support session (a synced diagnostics.active switched a
+// replica's session on or off with the main till's); cloudsync.* is the
+// hash of what THIS till last pushed to the cloud (synced, every main-till
+// snapshot moved the admin fingerprint and sent every replica into a full
+// re-pull); install.* is this machine's one-time OS provisioning marker.
+// Both ends enforce it, as for the theme below. The keys #2950 reviewed and
+// kept shop-wide still sync.
+func TestAdminDumpApplyRoundTrip_TillLocalStateNeverSyncs(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	perTill := []string{
+		"diagnostics.active", "diagnostics.session_id", "diagnostics.next_seq",
+		"cloudsync.snapshot_hash", "cloudsync.order_tracking_hash",
+		"install.desktop_kiosk_overlay_provisioned",
+	}
+	shopWide := []string{
+		"setup.restore_prompt_status", "lan_discovery.till_id",
+		"fiscal.tse_provisioning_state", "till.name", "menu.restored_keys",
+	}
+	for _, k := range perTill {
+		mustExec(t, primary, `INSERT INTO settings (key, value) VALUES (?, 'main')`, k)
+		mustExec(t, replica, `INSERT INTO settings (key, value) VALUES (?, 'replica')`, k)
+	}
+	for _, k := range shopWide {
+		mustExec(t, primary, `INSERT OR REPLACE INTO settings (key, value) VALUES (?, 'main')`, k)
+	}
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	for _, rec := range bundle.Tables["settings"] {
+		for _, k := range perTill {
+			if rec["key"] == k {
+				t.Errorf("%s leaked into the admin dump", k)
+			}
+		}
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	for _, k := range perTill {
+		var v string
+		if err := replica.QueryRow(`SELECT value FROM settings WHERE key = ?`, k).Scan(&v); err != nil || v != "replica" {
+			t.Errorf("replica's own %s overwritten by an admin pull: got %q, want replica (err=%v)", k, v, err)
+		}
+	}
+	for _, k := range shopWide {
+		var v string
+		if err := replica.QueryRow(`SELECT value FROM settings WHERE key = ?`, k).Scan(&v); err != nil || v != "main" {
+			t.Errorf("shop-wide %s must still sync: got %q, want main (err=%v)", k, v, err)
+		}
+	}
+
+	// Defence in depth: a pre-fix main till still sends these rows; the
+	// replica must not apply them.
+	legacy := AdminBundle{Tables: map[string][]map[string]any{}}
+	for k, v := range bundle.Tables {
+		legacy.Tables[k] = v
+	}
+	legacy.Tables["settings"] = append(append([]map[string]any{}, bundle.Tables["settings"]...),
+		map[string]any{"key": "diagnostics.active", "value": "main"},
+		map[string]any{"key": "cloudsync.snapshot_hash", "value": "main"})
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, legacy)); err != nil {
+		t.Fatalf("apply legacy bundle: %v", err)
+	}
+	for _, k := range []string{"diagnostics.active", "cloudsync.snapshot_hash"} {
+		var v string
+		if err := replica.QueryRow(`SELECT value FROM settings WHERE key = ?`, k).Scan(&v); err != nil || v != "replica" {
+			t.Errorf("replica applied %s from a pre-fix main till's bundle: got %q (err=%v)", k, v, err)
+		}
+	}
+}
+
 // ut-docs#2783: the theme is per station (product-owner decision
 // 2026-09-25). Synced shop-wide, a theme picked on a joined till was
 // overwritten by the main till's value on the next admin pull whose

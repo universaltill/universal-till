@@ -129,7 +129,7 @@ test.describe('Price edits save (ut-docs#2815)', () => {
       await page.locator('#item-price').click();
       await page.locator('#item-price').evaluate((el: HTMLInputElement) => el.setSelectionRange(el.value.length, el.value.length));
       await page.locator('#osk button[data-k="5"]').click();
-      await expect(page.locator('#item-price')).toHaveValue('6.005');
+      await expect(page.locator('#item-price')).toHaveValue('6,005'); // de prefill is "6,00" (ut-docs#2818)
     } finally {
       await setOskMode(page, 'auto');
     }

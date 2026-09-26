@@ -69,7 +69,7 @@ test.describe('Money inputs (ut-docs#2819)', () => {
     ]);
     expect(resp.status()).toBe(200);
     const panel = await (await page.request.get(`/api/catalog/item-variants?item_id=${itemId}`)).text();
-    expect(panel).toMatch(/name="cost"[^>]*value="3\.50"/);
+    expect(panel).toMatch(/name="cost"[^>]*value="3,50"/); // de session: comma prefill (ut-docs#2818)
     assertClean();
   });
 
