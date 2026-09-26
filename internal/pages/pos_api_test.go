@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -732,12 +733,18 @@ func TestTenderHandler_AppliesPluginReportedTipFromAuthorizeResponse(t *testing.
 		t.Fatalf("expected error:null on success, got %+v", out.Error)
 	}
 
-	var tip int64
-	if err := dp.Db.QueryRow(`SELECT tip_amount FROM payments WHERE sale_id = ?`, out.Data.SaleID).Scan(&tip); err != nil {
+	var tip, amount int64
+	if err := dp.Db.QueryRow(`SELECT tip_amount, amount FROM payments WHERE sale_id = ?`, out.Data.SaleID).Scan(&tip, &amount); err != nil {
 		t.Fatalf("expected a payment row for the sale: %v", err)
 	}
 	if tip != 150 {
 		t.Fatalf("want tip_amount 150 (from the plugin's authorize response) on the cashier tender path, got %d", tip)
+	}
+	// ut-docs#2571: one convention — payments.amount includes the tip, the
+	// same as a tip the tender request itself carries. The reader charged
+	// the 120 it was asked for plus the 150 the customer added on it.
+	if amount != 120+150 {
+		t.Fatalf("want amount 270 (tendered 120 + reader-reported tip 150, ut-docs#2571), got %d", amount)
 	}
 }
 
@@ -2684,6 +2691,39 @@ func TestPluginReportedTipAmount(t *testing.T) {
 			amt, ok := pluginReportedTipAmount(c.resp)
 			if ok != c.wantOK || (ok && amt != c.wantAmt) {
 				t.Fatalf("pluginReportedTipAmount(%s) = (%d, %v), want (%d, %v)", c.resp, amt, ok, c.wantAmt, c.wantOK)
+			}
+		})
+	}
+}
+
+// applyPluginReportedTip (ut-docs#2571) folds a reader-reported tip into
+// the payment's amount — the reader charged the requested amount plus the
+// tip on top — so a reader tip ends up stored exactly like a tip the tender
+// request carried itself: inside amount, with tip_amount as the breakdown.
+func TestApplyPluginReportedTip(t *testing.T) {
+	cases := []struct {
+		name             string
+		in               pos.PaymentInput
+		tip              int64
+		wantAmt, wantTip int64
+		wantApplied      bool
+	}{
+		{"no request tip", pos.PaymentInput{Amount: 370}, 50, 420, 50, true},
+		{"zero reader tip changes nothing", pos.PaymentInput{Amount: 370}, 0, 370, 0, true},
+		// A tip the request already carried is inside Amount and was part
+		// of what the reader was asked to charge; the reader's own tip
+		// came on top of that, so both are tip money.
+		{"request tip plus reader tip", pos.PaymentInput{Amount: 420, TipAmount: 50}, 30, 450, 80, true},
+		{"overflowing tip ignored", pos.PaymentInput{Amount: 370}, math.MaxInt64 - 100, 370, 0, false},
+		{"voucher leg ignored", pos.PaymentInput{MethodID: "voucher", Amount: 370, VoucherID: "V1"}, 50, 370, 0, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := c.in
+			applied := applyPluginReportedTip(&p, c.tip)
+			if applied != c.wantApplied || p.Amount.Minor() != c.wantAmt || p.TipAmount.Minor() != c.wantTip {
+				t.Fatalf("applyPluginReportedTip(%+v, %d) = applied %v, amount %d, tip %d; want %v, %d, %d",
+					c.in, c.tip, applied, p.Amount.Minor(), p.TipAmount.Minor(), c.wantApplied, c.wantAmt, c.wantTip)
 			}
 		})
 	}
