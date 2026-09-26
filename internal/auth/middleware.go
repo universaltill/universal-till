@@ -128,6 +128,13 @@ func exempt(path string) bool {
 		// the main till" -- the /api/sync/stock failure class again.
 		// TestSyncPullPathsAreExempt pins it.
 		"/api/sync/users/apply",
+		// ut-docs#2791: the main-till shop-wide settings write-through an
+		// additional till's Settings handlers call
+		// (internal/pages/settings_sync_proxy.go). syncTill-authed in the
+		// handler like users/apply. Omitting it 401s every call, and every
+		// shop-wide settings change on an additional till is refused as
+		// "can't reach the main till". TestSyncPullPathsAreExempt pins it.
+		"/api/sync/settings/apply",
 		// ADR-0082 (ut-docs#1739): the primary-side one-shot fetch of the
 		// shop-scoped plugin-settings encryption key a replica's KeyStore
 		// makes on first use (internal/pages/sync_admin.go, SecretsKeyFetcher).
