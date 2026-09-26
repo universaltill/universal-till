@@ -1224,9 +1224,10 @@ func TestFiscalSignAsk_ApprovedWithTSEEvidencePersistsAndRenders(t *testing.T) {
 		t.Fatalf("persisted evidence mismatch: %+v", sig)
 	}
 
-	// Rendered on the inline HTML receipt: real values + a QR image.
+	// Rendered on the inline HTML receipt: real values. No QR — since
+	// ut-docs#2880 the QR comes only from a signer's receipt.qr_payload.
 	body := rec.Body.String()
-	for _, want := range []string{"TSE-TEST-SERIAL-1", "4711", "12345", "TESTSIGBASE64==", "ecdsa-plain-SHA256", "data:image/png;base64,"} {
+	for _, want := range []string{"TSE-TEST-SERIAL-1", "4711", "12345", "TESTSIGBASE64==", "ecdsa-plain-SHA256"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("receipt must render TSE evidence value %q, got: %s", want, body)
 		}

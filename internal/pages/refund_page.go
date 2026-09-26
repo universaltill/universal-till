@@ -1027,6 +1027,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// ever non-nil on approved.
 		if signRes.Outcome == fiscalSignApproved {
 			recordFiscalTSEEvidence(r.Context(), repo, saleID, actorID, signRes.Evidence)
+			recordFiscalReceiptEvidence(r.Context(), repo, saleID, actorID, signRes.Receipt)
 		}
 		// A fiscal DEVICE's refund slip (Turkey's ÖKC iade fişi), when the
 		// refund's payment leg went through a device plugin: persisted

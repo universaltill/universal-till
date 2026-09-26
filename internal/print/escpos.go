@@ -43,9 +43,11 @@ type Doc struct {
 	// Logo is a pre-encoded GS v 0 raster block (RasterLogo), printed
 	// centered above the store name when present.
 	Logo []byte
-	// TSEQR is a pre-encoded GS v 0 raster block (RasterLogo) of the §6
-	// KassenSichV TSE evidence QR (ut-docs#585/#1245), printed centered
-	// after the barcode and before the footer when present.
+	// TSEQR is a pre-encoded GS v 0 raster block (RasterLogo) of the fiscal
+	// receipt QR (ut-docs#585/#1245) — since ut-docs#2880 encoding the
+	// signer's own stored receipt.qr_payload (fiscal-sign-ask.md 1.10.0),
+	// never a payload core builds — printed centered after the barcode and
+	// before the footer when present. The name predates that generalisation.
 	TSEQR []byte
 }
 
@@ -137,7 +139,9 @@ func Render(d Doc) []byte {
 	b.Write(cmdAlignLeft)
 	line(strings.Repeat("-", Width))
 	for _, m := range d.Meta {
-		line(clip(m, Width))
+		for _, row := range wrapRunes(m, Width) {
+			line(row)
+		}
 	}
 	line(strings.Repeat("-", Width))
 
@@ -223,6 +227,23 @@ func kvRow(label, amount string) string {
 		space = 1
 	}
 	return label + strings.Repeat(" ", space) + amount
+}
+
+// wrapRunes splits s into rows of at most max runes, keeping every
+// character: Meta lines carry fiscal evidence (a TSE signature is 88 base64
+// chars, a serial 64 hex chars) that must reach paper whole (ut-docs#2880).
+// A hard wrap, not a word wrap — the evidence has no spaces to break at.
+func wrapRunes(s string, max int) []string {
+	r := []rune(s)
+	if max <= 0 || len(r) <= max {
+		return []string{s}
+	}
+	rows := make([]string, 0, len(r)/max+1)
+	for len(r) > max {
+		rows = append(rows, string(r[:max]))
+		r = r[max:]
+	}
+	return append(rows, string(r))
 }
 
 // clip truncates s to at most max runes (characters), never bytes — Width
@@ -450,7 +471,9 @@ func RenderText(d Doc) string {
 	}
 	b.WriteString(strings.Repeat("-", Width) + "\n")
 	for _, m := range d.Meta {
-		b.WriteString(clip(m, Width) + "\n")
+		for _, row := range wrapRunes(m, Width) {
+			b.WriteString(row + "\n")
+		}
 	}
 	b.WriteString(strings.Repeat("-", Width) + "\n")
 	for _, l := range d.Lines {
