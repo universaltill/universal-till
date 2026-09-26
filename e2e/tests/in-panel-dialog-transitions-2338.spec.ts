@@ -20,68 +20,8 @@ import { watchConsole } from './helpers';
 // reduced-motion user, fixtures.ts) — the reduced-motion coverage itself
 // is the LAST test in this file, which relies on that same default.
 
-test.describe('in-panel swap ease (#2338)', () => {
-  test('an /items rail click gives #items-panel an opacity-only ease, never a transform', async ({ page }) => {
-    const stopWatching = watchConsole(page);
-    await page.emulateMedia({ reducedMotion: 'no-preference' });
-    await page.goto('/items');
-    await expect(page.locator('#items-panel')).toBeVisible();
-
-    // /categories is a real, different rail destination from the default
-    // /catalog landing section.
-    const captured: { transform: string; opacityAtAdd: number }[] = [];
-    await page.exposeFunction('__reportPanelFx', (transform: string, opacity: string) => {
-      captured.push({ transform, opacityAtAdd: parseFloat(opacity) });
-    });
-    await page.locator('#items-panel').evaluate((el) => {
-      new MutationObserver(() => {
-        if (el.classList.contains('ut-panel-fx')) {
-          const cs = getComputedStyle(el);
-          (window as any).__reportPanelFx(cs.transform, cs.opacity);
-        }
-      }).observe(el, { attributes: true, attributeFilter: ['class'] });
-    });
-
-    await page.locator('#items-rail a[href="/categories"]').click();
-    await page.waitForTimeout(250);
-
-    expect(captured.length).toBeGreaterThan(0);
-    for (const c of captured) {
-      // 'none' (no transform at all) is the only acceptable value — this is
-      // the actual regression guard: a transform here re-creates the
-      // fixed-descendant containing-block hazard ADR-0097 rule 2 exists to
-      // prevent, whatever CSS property causes it.
-      expect(c.transform).toBe('none');
-      // Never a flash to blank (ADR-0097 rule 5): opacity must never read
-      // as fully transparent while the class is active.
-      expect(c.opacityAtAdd).toBeGreaterThan(0);
-    }
-
-    stopWatching();
-  });
-
-  test('#admin-panel gets the same treatment as #items-panel', async ({ page }) => {
-    await page.emulateMedia({ reducedMotion: 'no-preference' });
-    await page.goto('/admin');
-    const panel = page.locator('#admin-panel');
-    if ((await panel.count()) === 0) test.skip(true, 'no #admin-panel on this build');
-    await expect(panel).toBeVisible();
-
-    let sawClass = false;
-    await page.exposeFunction('__reportAdminFx', () => { sawClass = true; });
-    await panel.evaluate((el) => {
-      new MutationObserver(() => {
-        if (el.classList.contains('ut-panel-fx')) (window as any).__reportAdminFx();
-      }).observe(el, { attributes: true, attributeFilter: ['class'] });
-    });
-
-    const railLink = page.locator('a[hx-target="#admin-panel"]').first();
-    if ((await railLink.count()) === 0) test.skip(true, 'no admin rail link to click');
-    await railLink.click();
-    await page.waitForTimeout(250);
-    expect(sawClass).toBe(true);
-  });
-});
+// The in-panel swap half of #2338 (.ut-panel-fx) was replaced by ADR-0122's
+// tree-pane zoom -- see tree-pane-zoom-2943.spec.ts.
 
 test.describe('record-dialog open ease (#2338)', () => {
   test('opening a standard record dialog (/categories) gets an opacity+scale ease, and close() is instant', async ({ page }) => {
