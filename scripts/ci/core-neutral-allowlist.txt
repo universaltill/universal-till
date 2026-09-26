@@ -1,0 +1,48 @@
+# Allow-list for scripts/ci/guard-core-neutral.sh (ut-docs#2888; owner
+# rule 2026-09-25, #2848). Shrink-only: an entry that matches nothing is
+# stale and fails; in CI an entry the base branch's copy doesn't have fails.
+# A new offender is moved to its ut-plugin-* repo or gets a reviewed
+# same-line `// core-neutral:allow <reason>` — never a new line here.
+#
+# Format (stable across line moves):
+#   path|EnclosingFunc (Type.Method, or <file> for package level)|"Go-quoted literal" # #NNNN reason
+
+# --- #2879: hard-coded country/plugin-ID tables -> manifest declarations ---
+internal/fiscal/fiscal.go|RequiresHardGate|"DE" # #2879 fiscal hard-gate market list
+internal/fiscal/fiscal.go|RequiresHardGate|"TR" # #2879 fiscal hard-gate market list
+internal/fiscal/fiscal.go|RequiresPerSaleDeviceReceipt|"TR" # #2879 per-sale fiscal-device receipt market
+internal/fiscal/device.go|<file>|"com.universaltill.tax-tr" # #2879 fiscal.PluginIDTaxTR const
+internal/data/fiscal_repo.go|<file>|"com.universaltill.tax-de" # #2879 data.FiscalRegisterDEPluginID const
+internal/plugins/builtinlayouts/builtinlayouts.go|<file>|"com.universaltill.layout-salon" # #2879 SalonPluginID const
+internal/pages/tax_rate_switcher_banner.go|<file>|"DE" # #2879 taxRateSwitchMandatedCountries
+internal/pages/setup_tax_catalog.go|<file>|"DE" # #2879 countryTaxLocale
+internal/pages/setup_base_plugins.go|<file>|"DE" # #2879 setupBasePlugins country table
+internal/pages/setup_base_plugins.go|<file>|"ES" # #2879 setupBasePlugins country table
+internal/pages/menu_page.go|init|"DE" # #2879 menu DE tile
+internal/pages/menu_page.go|init|"TR" # #2879 menu TR tile
+internal/pages/settings_page.go|registerSettings|"DE" # #2879 receiptPolicyAdvisoryDE flag
+
+# --- #2881: DE TSE provisioning -> ut-plugin-tax-de ---
+internal/pages/setup_tse.go|validGermanTaxNumber|"DE" # #2881 German USt-IdNr format check
+internal/pages/setup_tse.go|<file>|"DE" # #2881 tseProvisionCountry const gating the TSE provisioning flow
+
+# --- #2883: TR fiscal-device status page -> ut-plugin-tax-tr ---
+internal/pages/fiscal_device_page.go|fiscalDeviceMarketActive|"TR" # #2883 TR fiscal-device page visibility gate
+
+# --- #2884: yuzde usulu (TR service-charge ban) -> plugin ---
+internal/pages/reports_page.go|registerReportsPage|"TR" # #2884 yuzde usulu reports tab
+internal/pages/common/state.go|ServiceChargeForbidden|"TR" # #2884 TR service-charge ban
+
+# --- #2885: .bkp competitor importer -> ut-plugin-import-speedykasse ---
+internal/catimport/bkp.go|ParseBkp|"speedy-kasse" # #2885 .bkp importer format tag
+internal/pages/import_page.go|registerImport|"speedy-kasse" # #2885 .bkp importer format tag
+
+# --- #2851: AI engine -> ut-plugin-integration-ai ---
+internal/pages/ai_resolve.go|<file>|"com.universaltill.integration-ai" # #2851 AIPluginID const
+
+# --- #2850: generic CSV import-dialect detection, class a, kept by audit ---
+internal/catimport/catimport.go|DetectFormat|"loyverse" # #2850 class a, kept by audit (CSV dialect detection)
+internal/catimport/catimport.go|DetectFormat|"square" # #2850 class a, kept by audit (CSV dialect detection)
+internal/catimport/catimport.go|DetectFormat|"sumup" # #2850 class a, kept by audit (CSV dialect detection)
+internal/catimport/catimport.go|Parse|"square" # #2850 class a, kept by audit (CSV dialect detection)
+internal/catimport/xlsx.go|ParseXLSX|"square" # #2850 class a, kept by audit (CSV dialect detection)
