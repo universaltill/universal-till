@@ -2789,6 +2789,10 @@ window.utTabBarFade = function (el) {
           if (m) m.innerHTML = keep[id];
         });
         if (window.htmx) window.htmx.process(fresh);
+        // A page whose own script post-processes the region (catalog.html
+        // re-applies its search filter) listens for this; htmx:afterSwap
+        // never fires for a swap htmx did not make.
+        fresh.dispatchEvent(new CustomEvent('ut:region-refreshed', { bubbles: true }));
         return true;
       })
       .catch(function () { window.location.reload(); return false; });
