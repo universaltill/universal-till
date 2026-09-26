@@ -111,6 +111,15 @@ func newSyncLinkClient(d *common.Deps, opts fleetlink.ClientOptions) *fleetlink.
 			d.MarkHeldChanged()
 		}
 	}
+	opts.OnCloudCheckin = func(context.Context) {
+		// The main till relayed a cloud nudge (ut-docs#2893): check in with
+		// the cloud now instead of at the next 2-min tick. Single-flight —
+		// the same capacity-1 kick the main till's own cloud link uses.
+		select {
+		case d.CloudSyncNow <- struct{}{}:
+		default: // a check-in is already pending (or no loop: nil channel)
+		}
+	}
 	opts.OnLost = func(ctx context.Context, cause string) {
 		primaryContactFailed(ctx, d, cause)
 	}

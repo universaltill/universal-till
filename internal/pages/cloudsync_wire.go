@@ -551,10 +551,19 @@ func remoteKitchenStationsReport(ctx context.Context, d *common.Deps) []map[stri
 // the conditional check-in (ut-docs#2827).
 func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.Context), wg *sync.WaitGroup) {
 	hooks := buildCloudHooks(d, rederive)
+	wireCloudLinkHooks(d, &hooks)
+	cloudsync.Start(ctx, d.Cfg, d.Db, hooks, wg)
+}
+
+// wireCloudLinkHooks connects the check-in loop to the cloud link: kicks
+// in, and each check-in's start and outcome out — the start so a nudge is
+// relayed to the replicas only after the check-in it caused (ut-docs#2893).
+// d.CloudLink's methods are nil-safe.
+func wireCloudLinkHooks(d *common.Deps, hooks *cloudsync.Hooks) {
 	hooks.Kick = d.CloudSyncNow
+	hooks.BeforeTick = func() { d.CloudLink.TickStarting() }
 	hooks.AfterTick = func(_ context.Context, contacted bool, _ error) { d.CloudLink.CheckedIn(contacted) }
 	hooks.LinkVersion = d.CloudLink.LinkVersion
-	cloudsync.Start(ctx, d.Cfg, d.Db, hooks, wg)
 }
 
 // buildCloudHooks is StartCloudSync's hook set, split out so tests can

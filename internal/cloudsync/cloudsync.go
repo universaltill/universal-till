@@ -207,6 +207,13 @@ type Hooks struct {
 	// Retry-After; a kick left pending then is satisfied by the check-in
 	// the backoff ends in (the loop drains it as each check-in starts).
 	Kick <-chan struct{}
+	// BeforeTick, when non-nil, runs on Start's goroutine as each check-in
+	// starts: after any pending Kick was drained (this check-in satisfies
+	// it), before the POST. A kick seen before BeforeTick is covered by the
+	// check-in that follows; one after it runs one more (ut-docs#2893: the
+	// main till relays a cloud nudge to its replicas only after a check-in
+	// that started after the nudge). It must not block.
+	BeforeTick func()
 	// AfterTick, when non-nil, is told each check-in's outcome on Start's
 	// goroutine (the cloud link re-reads its tier and role after every
 	// check-in, ADR-0117 §1). contacted is true only when the check-in
@@ -1246,6 +1253,9 @@ func Start(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks, wg 
 			select {
 			case <-hooks.Kick:
 			default:
+			}
+			if hooks.BeforeTick != nil {
+				hooks.BeforeTick()
 			}
 			contacted, err := tick(ctx, cfg, db, hooks)
 			if err != nil {

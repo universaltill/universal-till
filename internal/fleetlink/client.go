@@ -54,11 +54,15 @@ type ClientOptions struct {
 	// Callbacks, all on the client's own goroutine (never the link's
 	// reader), so they may touch the database. They must not block for
 	// long: the link's housekeeping waits on them.
-	OnHello     func(ctx context.Context, main Hello)     // the main till's hello: the link is up
-	OnSync      func(ctx context.Context, scopes []Scope) // a coalesced sync nudge
-	OnLost      func(ctx context.Context, cause string)   // an established link died without a bye
-	OnRevoked   func(ctx context.Context)                 // the main till revoked this till; dialling stops
-	WhileLinked func(ctx context.Context)                 // every RecheckEvery while linked
+	OnHello func(ctx context.Context, main Hello)     // the main till's hello: the link is up
+	OnSync  func(ctx context.Context, scopes []Scope) // a coalesced sync nudge
+	// OnCloudCheckin: the main till relayed "check in with the cloud now"
+	// (ut-docs#2893). Single-flight: frames arriving while it runs make
+	// exactly one more call.
+	OnCloudCheckin func(ctx context.Context)
+	OnLost         func(ctx context.Context, cause string) // an established link died without a bye
+	OnRevoked      func(ctx context.Context)               // the main till revoked this till; dialling stops
+	WhileLinked    func(ctx context.Context)               // every RecheckEvery while linked
 }
 
 // DefaultClientOptions returns ADR-0114's client timings.
@@ -95,6 +99,7 @@ type Client struct {
 	helloIn     chan struct{} // cap 1: the current peer's hello arrived
 	syncIn      chan struct{} // cap 1: syncMask has bits
 	syncMask    atomic.Uint32
+	checkinIn   chan struct{} // cap 1: a cloud_checkin arrived
 
 	mu         sync.Mutex
 	revokedFor *Target // dialling stopped for this pairing
@@ -259,6 +264,7 @@ func NewClient(opts ClientOptions) *Client {
 		redial:      make(chan struct{}, 1),
 		helloIn:     make(chan struct{}, 1),
 		syncIn:      make(chan struct{}, 1),
+		checkinIn:   make(chan struct{}, 1),
 	}
 }
 
@@ -477,7 +483,7 @@ const (
 // difference between an outage that just ended and one that continues.
 func (c *Client) runLink(ctx context.Context, t Target, conn Conn) (end linkEnd, established bool) {
 	// Signals from a previous link must not leak into this one.
-	for _, ch := range []chan struct{}{c.helloIn, c.syncIn} {
+	for _, ch := range []chan struct{}{c.helloIn, c.syncIn, c.checkinIn} {
 		select {
 		case <-ch:
 		default:
@@ -560,6 +566,10 @@ func (c *Client) runLink(ctx context.Context, t Target, conn Conn) (end linkEnd,
 			if s := scopesOf(c.syncMask.Swap(0)); len(s) > 0 && c.opts.OnSync != nil {
 				c.opts.OnSync(ctx, s)
 			}
+		case <-c.checkinIn:
+			if c.opts.OnCloudCheckin != nil {
+				c.opts.OnCloudCheckin(ctx)
+			}
 		case <-report.C:
 			sendReport(true)
 		case <-recheck.C:
@@ -629,6 +639,12 @@ func (c *Client) gotHello(*Peer, Hello, json.RawMessage) { poke(c.helloIn) }
 func (c *Client) oneWay(string) bool { return false }
 
 func (c *Client) gotMessage(_ *Peer, env Envelope) {
+	if env.Type == TypeCloudCheckin {
+		// Nothing in the payload is acted on: the check-in it triggers is
+		// this till's own, authenticated, and fetches its own state.
+		poke(c.checkinIn)
+		return
+	}
 	if env.Type != TypeSync {
 		return // fleet/pairing: their own cards (#2726, pairing push); report is → main only
 	}

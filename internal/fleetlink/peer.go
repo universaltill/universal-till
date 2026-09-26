@@ -56,6 +56,13 @@ type Peer struct {
 
 	dirty atomic.Uint32 // coalesced sync scopes (scopeBit), O(1) per slow peer
 
+	// A pending cloud_checkin (ut-docs#2893): merged like dirty, never
+	// queued per relay, and sent at most once per CloudCheckinEvery.
+	// lastCheckin is the writer's own.
+	cmu         sync.Mutex
+	checkin     *CloudCheckinPayload
+	lastCheckin time.Time
+
 	idPrefix string
 	seq      atomic.Uint64
 
@@ -173,6 +180,38 @@ func (p *Peer) markDirty(mask uint32) {
 	}
 	p.dirty.Or(mask)
 	p.poke()
+}
+
+// markCheckin merges a cloud_checkin request into the pending one and
+// wakes the writer. Non-blocking; bounded by CloudCheckinPayload.merge.
+func (p *Peer) markCheckin(scopes []string, linkVersion int64) {
+	p.cmu.Lock()
+	if p.checkin == nil {
+		p.checkin = &CloudCheckinPayload{Scopes: []string{}}
+	}
+	p.checkin.merge(scopes, linkVersion)
+	p.cmu.Unlock()
+	p.poke()
+}
+
+// takeCheckin returns the pending cloud_checkin once the rate window since
+// the last one has passed (writer goroutine only).
+func (p *Peer) takeCheckin(now time.Time) *CloudCheckinPayload {
+	p.cmu.Lock()
+	defer p.cmu.Unlock()
+	if p.checkin == nil || (!p.lastCheckin.IsZero() && now.Sub(p.lastCheckin) < p.cfg.CloudCheckinEvery) {
+		return nil
+	}
+	c := p.checkin
+	p.checkin, p.lastCheckin = nil, now
+	return c
+}
+
+// checkinPending reports whether a cloud_checkin waits on the rate window.
+func (p *Peer) checkinPending() bool {
+	p.cmu.Lock()
+	defer p.cmu.Unlock()
+	return p.checkin != nil
 }
 
 func (p *Peer) poke() {
@@ -366,7 +405,7 @@ func (p *Peer) dispatch(env Envelope) bool {
 			p.hmu.Unlock()
 			p.host.gotHello(p, h, env.Payload)
 		}
-	case TypeReport, TypeSync, TypeFleet, TypePairing:
+	case TypeReport, TypeSync, TypeFleet, TypePairing, TypeCloudCheckin:
 		p.host.gotMessage(p, env)
 	case TypeBye:
 		var b ByePayload
@@ -469,8 +508,13 @@ func (p *Peer) writeLoop() {
 		case <-check.C:
 			if p.sinceFrame(time.Now()) > p.cfg.PeerTimeout {
 				p.shutdown(CloseGone, "no frame within timeout", "")
+				continue // a dead peer gets no held cloud_checkin write (#2893 review)
 			}
-			continue
+			if !p.checkinPending() {
+				continue
+			}
+			// A cloud_checkin held by its rate window goes out once the
+			// window passes, not at the next unrelated wake.
 		}
 		if !p.flush() {
 			return
@@ -483,6 +527,11 @@ func (p *Peer) writeLoop() {
 func (p *Peer) flush() bool {
 	if mask := p.dirty.Swap(0); mask != 0 {
 		if !p.writeMsg(TypeSync, SyncPayload{Scopes: scopesOf(mask)}) {
+			return false
+		}
+	}
+	if c := p.takeCheckin(time.Now()); c != nil {
+		if !p.writeMsg(TypeCloudCheckin, c) {
 			return false
 		}
 	}

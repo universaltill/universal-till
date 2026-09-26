@@ -2,6 +2,7 @@ package fleetlink
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"time"
 )
@@ -95,6 +96,33 @@ func (h *Hello) clipStrings() {
 // frame, once each, in allScopes order.
 type SyncPayload struct {
 	Scopes []Scope `json:"scopes"`
+}
+
+// CloudCheckinPayload is a cloud_checkin frame (main → replica,
+// ut-docs#2893): "check in with the cloud now", relayed from the main
+// till's cloud-link nudge. It carries only what changed (the nudge's
+// scopes) and the cloud's link_version; the replica's own authenticated
+// check-in fetches everything else (ADR-0114 §7: frames can do little).
+type CloudCheckinPayload struct {
+	Scopes      []string `json:"scopes"`
+	LinkVersion int64    `json:"link_version"`
+}
+
+// maxCheckinScopes bounds a pending cloud_checkin's scope list (the cloud
+// defines five today).
+const maxCheckinScopes = 8
+
+// merge adds scopes (clipped, deduplicated, at most maxCheckinScopes, in
+// arrival order) and keeps the newest link_version.
+func (c *CloudCheckinPayload) merge(scopes []string, linkVersion int64) {
+	for _, s := range scopes {
+		s = clip(s, maxReportField)
+		if s == "" || len(c.Scopes) >= maxCheckinScopes || slices.Contains(c.Scopes, s) {
+			continue
+		}
+		c.Scopes = append(c.Scopes, s)
+	}
+	c.LinkVersion = max(c.LinkVersion, linkVersion)
 }
 
 // ByePayload says why a side is closing (ADR-0114 §2).

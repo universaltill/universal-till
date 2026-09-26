@@ -19,6 +19,10 @@ type Config struct {
 	RequestTimeout time.Duration // deadline for a request that brings none, and for inbound handlers
 	RetryAfter     time.Duration // Retry-After on the §1 cap's 503
 	MaxReports     int           // latest-report store bound (one per till; §8)
+	// CloudCheckinEvery is the least gap between two cloud_checkin frames
+	// to one replica (ut-docs#2893): a nudge burst is one frame, plus one
+	// coalesced frame after the window.
+	CloudCheckinEvery time.Duration
 }
 
 // DefaultConfig returns ADR-0114's values.
@@ -35,6 +39,8 @@ func DefaultConfig() Config {
 		RequestTimeout: 5 * time.Second,
 		RetryAfter:     30 * time.Second,
 		MaxReports:     256,
+
+		CloudCheckinEvery: 5 * time.Second,
 	}
 }
 
