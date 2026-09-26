@@ -66,6 +66,10 @@ expect_pass "a correctly-ID'd noreply commit" \
 expect_pass "a second known contributor's correctly-ID'd noreply commit" \
   'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb|35641125+pouria-teimouri@users.noreply.github.com|Pouria Teimouri'
 
+# ut-docs#2953: a third contributor, @mahshid76 (numeric ID 111438931).
+expect_pass "mahshid76's correctly-ID'd noreply commit" \
+  'kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk|111438931+mahshid76@users.noreply.github.com|Mahshid'
+
 # An allowlisted plain (non-noreply) address — the pipeline owner's own
 # sanctioned identity as of ut-docs#2103.
 expect_pass "the allowlisted pipeline-owner plain email address" \

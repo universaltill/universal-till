@@ -9,6 +9,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -222,6 +223,11 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			// (0 = unset, use app.css's own built-in split) — see
 			// common.RuntimeState.BasketPanelWidthRem's own doc comment.
 			"basketPanelWidthRem": d.CurrentState().BasketPanelWidthRem,
+			// ut-docs#2989: the sale screen's tile grid, inline in this first
+			// paint instead of a second /ui/buttons request after it. Empty
+			// (index.html then keeps the lazy hx-get placeholder) when the
+			// render failed.
+			"productsHTML": saleGridFirstPaint(d, w, r),
 		}
 		httpx.Render("ui/pages/index.html", data)(w, r)
 	})
@@ -276,4 +282,28 @@ func saleScreenReturnURLWithMsg(mode, msgKey string) string {
 		sep = "&"
 	}
 	return target + sep + "msg=" + msgKey
+}
+
+// saleGridFirstPaint renders the sale screen's grid for GET /'s first paint
+// (ut-docs#2989): measured on a real Android tablet, the tiles arrived only
+// after the page had painted, in a second request. The same fragment GET
+// /ui/buttons serves — same ButtonsHTTP (saleScreenButtons), same #2501
+// cache entry — trusted as template.HTML because it IS our own template's
+// output. "" when there is no button store (bare test Deps) or the render was
+// not a clean 200: the page then keeps the lazy placeholder, never a blank or
+// half-rendered grid. A var so a test can force the failure path.
+var saleGridFirstPaint = func(d *common.Deps, w http.ResponseWriter, r *http.Request) template.HTML {
+	if d.BtnStore == nil {
+		return ""
+	}
+	h, err := saleScreenButtons(d, w, r, false)
+	if err != nil {
+		logging.L().Warnf("index: inline sale grid: %v", err)
+		return ""
+	}
+	body, ok := h.ListFragment(r)
+	if !ok {
+		return ""
+	}
+	return template.HTML(body) //nolint:gosec // our own html/template output (buttons.html), already escaped
 }

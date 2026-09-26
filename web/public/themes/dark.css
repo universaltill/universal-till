@@ -36,6 +36,9 @@
   --radius: 12px;
   --radius-lg: 16px;
   --shadow: 0 1px 2px rgba(0,0,0,.4), 0 2px 8px rgba(0,0,0,.5);
+  /* ut-docs#2873: the popup backdrop. app.css's slate wash barely reads
+     over this theme's near-black page; a deeper black one does. */
+  --ut-scrim: rgba(0, 0, 0, .6);
 }
 .btn-tile { border-radius: 16px; box-shadow: 0 2px 6px rgba(0,0,0,.3); }
 .btn-tile:hover { border-color: #0f766e; box-shadow: 0 8px 20px rgba(45,212,191,.22); }

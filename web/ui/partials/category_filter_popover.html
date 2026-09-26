@@ -51,8 +51,11 @@
        own aria-label already carries (CategoryFilter.paintTriggerState in
        category-filter.js writes both) rather than a new locale key. */}}
   <div id="{{ .controlID }}-status" class="visually-hidden" aria-live="polite" aria-atomic="true" data-category-filter-status></div>
+  {{/* data-ut-scrim-dismiss (ut-docs#2873): a pure picker (chip toggles
+       that apply live, nothing typed, no money) -- a tap on the popup
+       scrim closes it, like its close button. */}}
   <dialog id="{{ .controlID }}-dialog" class="modifier-modal category-filter-dialog"
-          aria-labelledby="{{ .controlID }}-dialog-title" data-category-filter-dialog>
+          aria-labelledby="{{ .controlID }}-dialog-title" data-category-filter-dialog data-ut-scrim-dismiss>
     <div class="category-filter-dialog-head">
       <h3 id="{{ .controlID }}-dialog-title">{{ T "filter.category_label" }}</h3>
       <button type="button" class="btn secondary btn-icon category-filter-close"

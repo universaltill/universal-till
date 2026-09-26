@@ -223,6 +223,7 @@ func TestSettingsWriteThrough_Upsert(t *testing.T) {
 	if rec.Code < 400 || mustSetting(t, dp, common.KeyCountry) != "GB" {
 		t.Fatalf("store.country on an additional till = %d, local %q; want refused and unchanged", rec.Code, mustSetting(t, dp, common.KeyCountry))
 	}
+	wantPending(t, dp) // ut-docs#1068: a refused change queues no base plugins
 }
 
 // A PIN-elevated change carries the approver: the main till decides with

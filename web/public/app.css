@@ -79,6 +79,10 @@
   --pos-basket-max-w: 60rem;      /* generous sanity ceiling; real day-to-day limit is whatever leaves --pos-products-min-w free */
   --pos-products-min-w: 16.5rem;  /* two 7rem .grid tiles + .5rem gap + .products' own .7rem/.8rem padding, plus a small margin */
   --pos-divider-w: 1.5rem;        /* >=24px hit area even though the visible grip is thinner (ut-docs#2308 AC2) */
+  /* ut-docs#2873: the ONE popup backdrop colour -- every modal dialog's
+     native ::backdrop and the shared #ut-scrim behind every non-modal
+     popup (base.html) read it. A theme retunes it here (dark.css does). */
+  --ut-scrim: rgba(15, 23, 42, .45);
 }
 
 /* ---------- Base ---------- */
@@ -546,6 +550,41 @@ html.fx-balanced .jiggle-mode .tile-cell > .btn-tile { animation: none; }
 html.fx-balanced .jiggle-mode .tile-cell > .btn-tile.dragging { transform: none; box-shadow: 0 1px 3px rgba(15, 23, 42, .18); }
 html.fx-balanced .designer-cat.is-dragging { transform: none; box-shadow: inset 0 0 0 1px var(--accent); }
 /* ============================================================================ */
+
+/* ut-docs#2873: every till popup gets a full-screen dimmed backdrop that
+   blocks taps behind it. Two families, one colour (--ut-scrim, :root):
+   - a showModal() dialog: its native ::backdrop (top layer; the rest of
+     the page is already inert). The fallback is for an engine whose
+     ::backdrop does not inherit custom properties yet.
+   - a non-modal .show() dialog (the #1385 on-screen-keyboard family, z
+     500/550) or a UT.popupOpened() panel: the ONE shared #ut-scrim
+     (base.html), shown by base.html's popup hooks while any such popup is
+     open. z 450: above the page and the nav rail (100), below every
+     non-modal popup (>=500), the on-screen keyboard (#osk, 1000) and
+     toasts. No blur, no fade (ADR-0119: the cheapest possible paint).
+   The status bar stays reachable (CLAUDE.md "Offline-first", ut-docs#1999):
+   while the scrim is up it is lifted to 460 -- above the scrim, still
+   below every popup. So does Lock: the nav rail is lifted to 460 too,
+   dimmed by its own ::after and click-through (pointer-events: none, so
+   a tap on it lands on the scrim) -- except the Lock form, which stays
+   live (ut-docs#1999/#2873; exit-to-OS lives in Settings, not the rail;
+   self-order kiosk pages have no rail). Tap rule: a tap on the scrim does nothing unless the
+   topmost popup opts in with data-ut-scrim-dismiss; a popup the cashier
+   keeps working beside opts out with data-ut-no-scrim. */
+/* An engine whose ::backdrop does not inherit custom properties
+   (Chromium < 122, WebKit < 17.4) gets the light fallback in every theme. */
+dialog::backdrop { background: var(--ut-scrim, rgba(15, 23, 42, .45)); }
+#ut-scrim { position: fixed; inset: 0; z-index: 450; background: var(--ut-scrim); touch-action: none; }
+#ut-scrim[hidden] { display: none; }
+html.ut-scrim-on .statusbar { z-index: 460; }
+/* The docked payment panel opts out (data-ut-no-scrim) so the cashier works
+   beside it -- but a popup opened FROM it (its Hold button) must block it
+   too: while the scrim is up it drops just under it (review, ut-docs#2873).
+   Its own content holds no dialog, so nothing nested is pushed under. */
+html.ut-scrim-on #payment-overlay[data-ut-no-scrim] { z-index: 449; }
+html.ut-scrim-on .nav { z-index: 460; pointer-events: none; }
+html.ut-scrim-on .nav::after { content: ""; position: absolute; inset: 0; background: var(--ut-scrim); pointer-events: none; }
+html.ut-scrim-on .nav .session-lock { position: relative; z-index: 1; pointer-events: auto; }
 
 /* ut-docs#298: .nav's background is always var(--brand) — dark in every
    shipped theme (fresh/slate/amber/monarch all set it near-black/navy) — so
@@ -2351,7 +2390,7 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
   border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
   padding: 1.25rem; max-width: 28rem; width: 90vw;
 }
-.modifier-modal::backdrop { background: rgba(15, 23, 42, .45); }
+.modifier-modal::backdrop { background: var(--ut-scrim, rgba(15, 23, 42, .45)); }
 .modifier-modal:not([open]) { display: none; }
 /* ut-docs#1356: the barcode-backfill dialog reuses .modifier-modal's frame
    but holds a 3-column data table (name/SKU/derived barcode), which the
@@ -2838,8 +2877,10 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
    would re-trap a fixed-position descendant) — this is what the comment
    above originally claimed happened for free and didn't. inset-inline
    (not left/right) keeps this RTL-correct with no separate ruleset. */
+/* z-index 500 (ut-docs#2873): the non-modal popup family's layer, above
+   the shared popup scrim (450) -- without it the sheet painted under it. */
 .shrinkage-sheet {
-  position: fixed; inset-block-start: 50%; inset-inline: 0;
+  position: fixed; inset-block-start: 50%; inset-inline: 0; z-index: 500;
   transform: translateY(-50%); margin-inline: auto;
   max-height: min(80vh, 32rem); overflow-y: auto;
 }

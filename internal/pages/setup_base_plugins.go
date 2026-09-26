@@ -691,6 +691,7 @@ func StartBasePluginRetry(ctx context.Context, d *common.Deps, wg *sync.WaitGrou
 		defer wg.Done()
 		select {
 		case <-time.After(basePluginRetryInitialDelay):
+		case <-basePluginRetryNudge:
 		case <-ctx.Done():
 			return
 		}
@@ -701,9 +702,48 @@ func StartBasePluginRetry(ctx context.Context, d *common.Deps, wg *sync.WaitGrou
 			select {
 			case <-t.C:
 				basePluginRetryTick(ctx, d)
+			case <-basePluginRetryNudge:
+				basePluginRetryTick(ctx, d)
 			case <-ctx.Done():
 				return
 			}
 		}
 	}()
+}
+
+// queueBasePluginsForCountryChange is the post-setup counterpart of
+// installBasePluginsForSetup (ut-docs#1068): every writer of store.country
+// after the wizard (POST /api/settings/save, POST /api/settings/upsert and
+// the cloud SetSetting directive) calls it once the new country is
+// persisted, and only on a real change — so a pack the merchant dismissed
+// is not re-queued by re-saving the same country. It only queues (merge-
+// safe, like the wizard) and nudges the background retry: the caller never
+// waits on the network, and an offline till keeps the spec pending exactly
+// as the wizard's offline path does. A failure is logged, never returned —
+// the country change itself has already succeeded.
+func queueBasePluginsForCountryChange(ctx context.Context, d *common.Deps, country string) {
+	specs := setupBasePlugins[strings.ToUpper(strings.TrimSpace(country))]
+	if len(specs) == 0 {
+		return
+	}
+	if err := addPendingBasePlugins(ctx, d, append([]basePluginSpec(nil), specs...)); err != nil {
+		logging.L().Errorf("country change: queue base plugins for %s: %v", country, err)
+		return
+	}
+	nudgeBasePluginRetry()
+}
+
+// basePluginRetryNudge wakes StartBasePluginRetry's loop for an immediate
+// pass (ut-docs#1068) instead of waiting out its initial delay or the
+// 5-minute interval. Package-level because a till process runs exactly one
+// retry loop; buffered 1 so any number of nudges before the loop runs
+// collapse into one pass.
+var basePluginRetryNudge = make(chan struct{}, 1)
+
+// nudgeBasePluginRetry never blocks: a pass already pending covers it.
+func nudgeBasePluginRetry() {
+	select {
+	case basePluginRetryNudge <- struct{}{}:
+	default:
+	}
 }

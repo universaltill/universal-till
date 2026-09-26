@@ -129,7 +129,9 @@
      each row's "QR" button (hx-get="/api/tables/{id}/qr") above — same
      shape as #table-add-modal, just with its content fetched instead of
      a form. */}}
-<dialog id="table-qr-modal" class="modifier-modal" aria-labelledby="table-qr-title">
+{{/* data-ut-scrim-dismiss (ut-docs#2873): info only (a QR to print or
+     scan) -- a tap on its backdrop closes it, like its ✕. */}}
+<dialog id="table-qr-modal" class="modifier-modal" aria-labelledby="table-qr-title" data-ut-scrim-dismiss>
   <div class="modifier-actions" style="justify-content:space-between">
     <h3 id="table-qr-title" style="margin:0">{{ T "tables.qr.title" }}</h3>
     {{/* aria-label (review finding): a bare "✕" has no accessible name —

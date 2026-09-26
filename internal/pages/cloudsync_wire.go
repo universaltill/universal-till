@@ -599,6 +599,7 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 			// moved to another market loses a fiscal posture that was only
 			// ever proven for the old one. Before the write, so a failure
 			// cannot leave the country moved with the posture still set.
+			countryChanged := key == common.KeyCountry && countryChanging(d, value)
 			if key == common.KeyCountry {
 				if err := clearFiscalStateForCountryChange(ctx, d, "", value); err != nil {
 					return "", err
@@ -607,6 +608,10 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 			// settings-write:allow a cloud set_setting directive addressed to THIS till; not written through to a main till yet (a replica can receive one -- reported with ut-docs#2979)
 			if err := d.Settings.Set(ctx, key, value); err != nil {
 				return "", err
+			}
+			if countryChanged {
+				// ut-docs#1068: the new country's base plugins, as the wizard queues them.
+				queueBasePluginsForCountryChange(ctx, d, value)
 			}
 			if rederive != nil {
 				rederive(ctx)
