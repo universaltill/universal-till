@@ -27,10 +27,14 @@ const (
 	TypeFleet   = "fleet"   // ADR-0114 §5, #2726 — not sent yet
 	TypePairing = "pairing" // ADR-0114 §2 pairing push — not sent yet
 	TypeReport  = "report"
-	TypeBye     = "bye"
-	TypePing    = "ping"
-	TypePong    = "pong"
-	TypeError   = "error"
+	// TypeCloudCheckin (main → replica, one-way, ut-docs#2893): check in
+	// with the cloud now. Added after link level 1 without a bump: an
+	// older replica answers it unknown_type, which the main till drops.
+	TypeCloudCheckin = "cloud_checkin"
+	TypeBye          = "bye"
+	TypePing         = "ping"
+	TypePong         = "pong"
+	TypeError        = "error"
 )
 
 // Error codes carried in an error payload.

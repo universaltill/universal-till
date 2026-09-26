@@ -25,7 +25,9 @@ import (
 // truth; the check-in's outcome re-reads the gate (tier, role) through
 // d.CloudLink.CheckedIn. Replicas never dial: what the kicked check-in
 // changes on the main till reaches them over the ADR-0114 LAN link through
-// the existing change-point nudges (admin-bundle watch, plugin installs).
+// the existing change-point nudges (admin-bundle watch, plugin installs),
+// and once that check-in reached the cloud the nudge itself is relayed as a
+// cloud_checkin frame so each replica checks in now too (ut-docs#2893).
 //
 // Offline-first: the socket has its own goroutine; the sale path only calls
 // the non-blocking, drop-when-down d.CloudLink.Sale.
@@ -47,6 +49,7 @@ func newCloudLinkClient(d *common.Deps) *cloudlink.Client {
 			default: // a check-in is already pending
 			}
 		},
+		Relay: relayCloudCheckinToReplicas(d),
 		Status: func(context.Context) cloudlink.Status {
 			var peers []fleetlink.PeerInfo
 			if d.Link != nil {
@@ -57,6 +60,18 @@ func newCloudLinkClient(d *common.Deps) *cloudlink.Client {
 		Version:  buildinfo.Version,
 		Platform: runtime.GOOS + "/" + runtime.GOARCH,
 	})
+}
+
+// relayCloudCheckinToReplicas passes a cloud nudge on to every linked
+// replica as a fleetlink cloud_checkin (ADR-0117 §4, ut-docs#2893): each
+// kicks its own cloudsync check-in. Non-blocking; a no-op with no hub or
+// no replicas linked.
+func relayCloudCheckinToReplicas(d *common.Deps) func(scopes []string, linkVersion int64) {
+	return func(scopes []string, linkVersion int64) {
+		if d.Link != nil {
+			d.Link.RelayCloudCheckin(scopes, linkVersion)
+		}
+	}
 }
 
 // cloudLinkTarget is the dial gate: the main till (no sync.primary_url — a

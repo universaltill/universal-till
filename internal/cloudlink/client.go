@@ -22,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -149,6 +150,12 @@ type Options struct {
 	// Kick asks cloudsync for a check-in now. Must not block (a non-
 	// blocking send on a capacity-1 channel).
 	Kick func()
+	// Relay, when set, is told once per nudge burst — after the first
+	// check-in that started after the nudge and reached the cloud — to pass
+	// "check in now" on to the replicas (ADR-0117 §4, ut-docs#2893; the
+	// main till's fleetlink.Hub.RelayCloudCheckin). Called on cloudsync's
+	// goroutine; must not block.
+	Relay func(scopes []string, linkVersion int64)
 	// Status builds the current status frame (on connect, then on change).
 	Status func(ctx context.Context) Status
 
@@ -254,6 +261,13 @@ type Client struct {
 	lastVersion atomic.Int64 // the last link_version seen (hello or nudge)
 	lastAttempt atomic.Int64 // the redial attempt count Run carries (read by tests)
 
+	// Relay bookkeeping (ut-docs#2893): pending is what nudges asked for
+	// since the last check-in started; armed is what the running check-in
+	// covers, relayed when it reaches the cloud. Bounded like the frame.
+	rmu     sync.Mutex
+	pending *relayReq
+	armed   *relayReq
+
 	smu        sync.Mutex // sale bucket
 	saleTokens float64
 	saleAt     time.Time
@@ -295,6 +309,70 @@ func (c *Client) LinkVersion() int64 {
 	return c.lastVersion.Load()
 }
 
+// relayReq is one coalesced relay: the nudges' scopes, newest version.
+type relayReq struct {
+	scopes  []string
+	version int64
+}
+
+// maxRelayScopes bounds a pending relay (the cloud defines five scopes).
+const maxRelayScopes = 8
+
+func (r *relayReq) merge(scopes []string, v int64) {
+	for _, s := range scopes {
+		if s == "" || len(s) > 64 || len(r.scopes) >= maxRelayScopes || slices.Contains(r.scopes, s) {
+			continue
+		}
+		r.scopes = append(r.scopes, s)
+	}
+	r.version = max(r.version, v)
+}
+
+// wantRelay records that the cloud changed (a nudge, or a hello with a new
+// link_version): the replicas are told after the next check-in.
+func (c *Client) wantRelay(scopes []string, v int64) {
+	c.rmu.Lock()
+	defer c.rmu.Unlock()
+	if c.pending == nil {
+		c.pending = &relayReq{}
+	}
+	c.pending.merge(scopes, v)
+}
+
+// TickStarting is told each check-in is starting (cloudsync.Hooks.
+// BeforeTick): what nudges asked for so far is covered by this check-in.
+// Non-blocking; nil-safe.
+func (c *Client) TickStarting() {
+	if c == nil {
+		return
+	}
+	c.rmu.Lock()
+	defer c.rmu.Unlock()
+	if c.pending == nil {
+		return
+	}
+	if c.armed == nil {
+		c.armed = &relayReq{}
+	}
+	c.armed.merge(c.pending.scopes, c.pending.version)
+	c.pending = nil
+}
+
+// relayArmed hands an armed relay to Options.Relay after a check-in that
+// reached the cloud; a failed one keeps it for the next.
+func (c *Client) relayArmed(contacted bool) {
+	if !contacted {
+		return
+	}
+	c.rmu.Lock()
+	r := c.armed
+	c.armed = nil
+	c.rmu.Unlock()
+	if r != nil && c.o.Relay != nil { // no relay wired: still clear the pending request
+		c.o.Relay(r.scopes, r.version)
+	}
+}
+
 // CheckedIn is told every check-in's outcome (cloudsync.Hooks.AfterTick):
 // the gate is re-read either way, and only a check-in that really reached
 // the cloud (contacted — not a skipped or failed one) lifts a "wait for
@@ -303,6 +381,7 @@ func (c *Client) CheckedIn(contacted bool) {
 	if c == nil {
 		return
 	}
+	c.relayArmed(contacted)
 	if contacted {
 		poke(c.checkedIn)
 	}
@@ -611,6 +690,7 @@ func (c *Client) runLink(ctx context.Context, t Target, sess *fleetlink.Session)
 		case v := <-c.helloIn:
 			c.setState(StateLinked)
 			if v != c.lastVersion.Swap(v) {
+				c.wantRelay(nil, v)
 				c.kick()
 			}
 			sendStatus()
@@ -656,9 +736,13 @@ func (c *Client) gotMessage(env fleetlink.Envelope) {
 	switch env.Type {
 	case typeNudge:
 		var n struct {
-			LinkVersion int64 `json:"link_version"`
+			LinkVersion int64    `json:"link_version"`
+			Scopes      []string `json:"scopes"`
 		}
 		if json.Unmarshal(env.Payload, &n) == nil {
+			// Recorded before the kick is offered, so the check-in the
+			// kick starts always covers it.
+			c.wantRelay(n.Scopes, n.LinkVersion)
 			offerLatest(c.nudgeIn, n.LinkVersion)
 		}
 	case typeLiveView:

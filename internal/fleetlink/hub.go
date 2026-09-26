@@ -92,6 +92,9 @@ func withDefaults(c Config) Config {
 	if c.MaxReports <= 0 {
 		c.MaxReports = d.MaxReports
 	}
+	if c.CloudCheckinEvery <= 0 {
+		c.CloudCheckinEvery = d.CloudCheckinEvery
+	}
 	return c
 }
 
@@ -120,7 +123,7 @@ func (h *Hub) oneWay(string) bool { return false }
 
 func (h *Hub) gotMessage(p *Peer, env Envelope) {
 	if env.Type != TypeReport {
-		return // sync/fleet/pairing are main → peer only; a peer sending them is ignored
+		return // sync/fleet/pairing/cloud_checkin are main → peer only; a peer sending them is ignored
 	}
 	if r, ok := decodeReport(env.Payload); ok {
 		h.storeReportFrom(p, r)
@@ -223,6 +226,30 @@ func (h *Hub) Nudge(scopes ...Scope) {
 	h.mu.Unlock()
 	for _, p := range peers {
 		p.markDirty(mask)
+	}
+}
+
+// RelayCloudCheckin asks every linked replica to check in with the cloud
+// now (ADR-0117 §4, ut-docs#2893) — called on the main till after its own
+// nudge-triggered check-in. Non-blocking and O(1) per peer like Nudge: the
+// request is a merged pending flag on each link, sent at most once per
+// CloudCheckinEvery. Satellites and links whose hello hasn't arrived are
+// skipped: only a replica runs a cloud check-in. Accepted gap: a replica
+// that (re)connects in the ~100 ms before its hello lands misses that one
+// relay; its own 2-minute check-in covers it (latency only). A future
+// satellite client must set its hello Role explicitly — an empty Role is
+// reported as "replica" by Client.helloFor.
+func (h *Hub) RelayCloudCheckin(scopes []string, linkVersion int64) {
+	h.mu.Lock()
+	peers := make([]*Peer, 0, len(h.peers))
+	for _, p := range h.peers {
+		peers = append(peers, p)
+	}
+	h.mu.Unlock()
+	for _, p := range peers {
+		if hello, ok := p.Hello(); ok && hello.Role == "replica" {
+			p.markCheckin(scopes, linkVersion)
+		}
 	}
 }
 

@@ -196,3 +196,73 @@ func TestKickDuringBackoffIsSatisfiedByTheNextCheckIn(t *testing.T) {
 	cancel()
 	waitJoined(t, wg)
 }
+
+// ut-docs#2893: BeforeTick runs on the loop's goroutine after a pending
+// kick is drained and before the check-in's POST — so a caller can tell
+// the check-in a kick caused (it started after the kick) from one that
+// was already running when the kick came (the main till relays a cloud
+// nudge to its replicas only after the former).
+func TestBeforeTickRunsAfterTheKickDrainAndBeforeThePOST(t *testing.T) {
+	origFirst, origTick := firstDelayNS.Load(), tickIntervalNS.Load()
+	t.Cleanup(func() { firstDelayNS.Store(origFirst); tickIntervalNS.Store(origTick) })
+	firstDelayNS.Store(int64(time.Millisecond))
+	tickIntervalNS.Store(int64(time.Hour))
+
+	var (
+		mu     sync.Mutex
+		events []string
+	)
+	record := func(e string) { mu.Lock(); events = append(events, e); mu.Unlock() }
+	kick := make(chan struct{}, 1)
+	pendingAtBefore := make(chan int, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/stores/sync" {
+			record("post")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"directives": []any{}}})
+	}))
+	defer srv.Close()
+	var afterFirst sync.Once
+	hooks := Hooks{
+		Kick: kick,
+		BeforeTick: func() {
+			pendingAtBefore <- len(kick)
+			record("before")
+		},
+		AfterTick: func(context.Context, bool, error) {
+			record("after")
+			afterFirst.Do(func() { kick <- struct{}{} })
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	wg := startJoined(t, ctx, cancel, testCfg(srv.URL), testDB(t), hooks)
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		mu.Lock()
+		n := len(events)
+		mu.Unlock()
+		if n >= 6 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	waitJoined(t, wg)
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"before", "post", "after", "before", "post", "after"}
+	if len(events) < len(want) {
+		t.Fatalf("events = %v, want %v", events, want)
+	}
+	for i, w := range want {
+		if events[i] != w {
+			t.Fatalf("events = %v, want %v", events, want)
+		}
+	}
+	close(pendingAtBefore)
+	for n := range pendingAtBefore {
+		if n != 0 {
+			t.Fatalf("a kick was still pending when BeforeTick ran (%d)", n)
+		}
+	}
+}
