@@ -2261,8 +2261,8 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		// before the operator ever saw it — a partial backfill (some SKUs
 		// skipped) would then look identical to a full one. The result
 		// fragment's own "Close" button (catalog_barcode_backfill.html)
-		// reloads instead, once the operator has actually read the report —
-		// same close-then-reload shape as plugin_install_modal.html.
+		// refreshes #catalog-table instead (UT.refreshRegion, ut-docs#2762),
+		// once the operator has actually read the report.
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_barcode_backfill.html"),
 		), funcs)("catalog_barcode_backfill_result", barcodeBackfillResultView(assigned, skipped))(w, r)
