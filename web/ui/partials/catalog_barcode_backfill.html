@@ -70,11 +70,11 @@
 </ul>
 {{ end }}
 <div style="margin-block-start:.8rem">
-  {{/* Reload once the operator has actually read the report (not
+  {{/* Refresh once the operator has actually read the report (not
        HX-Refresh on the commit response itself — see handlers.go's
-       comment) so the catalog table picks up the newly-assigned
-       barcodes, same close-then-reload shape as
-       plugin_install_modal.html. */}}
-  <button class="btn secondary" type="button" onclick="document.getElementById('barcode-backfill-modal').close(); location.reload()">{{ T "common.close" }}</button>
+       comment) so the catalog grid picks up the newly-assigned barcodes.
+       ut-docs#2762: only #catalog-table is re-fetched and swapped (the
+       dialog's data-ut-refresh, catalog.html), not the whole page. */}}
+  <button class="btn secondary" type="button" onclick="document.getElementById('barcode-backfill-modal').close(); UT.refreshRegion(this)">{{ T "common.close" }}</button>
 </div>
 {{ end }}

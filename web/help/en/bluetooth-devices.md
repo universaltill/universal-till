@@ -16,7 +16,7 @@ Pair a Bluetooth barcode scanner or scale with the till from inside the POS — 
 
 1. Open **Bluetooth devices** from the menu (manager only). The **Paired devices** list shows everything already paired with this till, with its address and whether it is connected right now.
 2. Put the new device in pairing mode (most scanners: hold the trigger or scan the "pairing" barcode in their manual), then tap **Scan for devices**. The scan takes about ten seconds and lists what it finds; devices that look like a scanner or keyboard are marked **Scanner / keyboard**.
-3. Tap **Pair** next to the device. The till pairs it, trusts it and connects it in one go; the page refreshes and the device appears in the paired list. From now on it reconnects on its own whenever it is switched on nearby — a scanner works like a plugged-in one from that moment.
+3. Tap **Pair** next to the device. The till pairs it, trusts it and connects it in one go; the device moves from the search results into the paired list. From now on it reconnects on its own whenever it is switched on nearby — a scanner works like a plugged-in one from that moment.
 4. To remove a device, tap **Forget** next to it. It is no longer trusted or connected and will not reconnect until you pair it again.
 
 ## Good to know
