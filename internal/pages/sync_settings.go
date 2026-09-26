@@ -35,7 +35,7 @@ import (
 //     never settable here; clearing an override and the two posture flags
 //     need fiscal_tse_override on the ACTOR (an elevated settings approval
 //     never grants it). store.country is refused (not_supported_via_sync):
-//     its local fiscal-authority check and posture reset are ut-docs#2948.
+//     its local fiscal-authority check and posture reset are ut-docs#2980.
 //   - All keys are written in one transaction (settings.Store.SetMany),
 //     each audited as setting_changed_via_till with provenance
 //     {via: till-sync, till}, then this till's cached process globals are
@@ -131,7 +131,7 @@ func registerSyncSettings(mux *http.ServeMux, d *common.Deps, refresh func(conte
 			}
 			switch logical {
 			case common.KeyCountry:
-				// ut-docs#2948: the upsert handler's country change runs
+				// ut-docs#2980: the upsert handler's country change runs
 				// requireFiscalAuthorityForCountryChange and resets the old
 				// country's posture before persisting; not mirrored yet.
 				fail(http.StatusBadRequest, "not_supported_via_sync", "store.country cannot be changed from another till yet")

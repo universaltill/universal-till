@@ -33,9 +33,13 @@ import (
 // the shop-wide ones. Values are never logged. An admin screen; checkout
 // never depends on it (offline-first).
 //
-// Not covered yet (ut-docs#2948): /api/settings/save and every handler that
-// persists through common.SaveState, and shop-wide writes made outside
-// settings_page.go.
+// The handlers that persist through common.SaveState (the store card, the
+// kiosk and sell-screen policies, the per-till display cards) call
+// saveStateThrough, which sends only the fields the handler changed
+// (ut-docs#2948). Not covered yet: store.country from another till
+// (ut-docs#2980), shop-wide writes made outside these handlers
+// (ut-docs#2979) and read-only rendering while the main till is away
+// (ut-docs#2981).
 
 // settingsSyncProxyClient is the additional-till -> main-till client; same
 // admin-screen budget as the users write-through.
@@ -214,4 +218,45 @@ func applySettingsOnMain(ctx context.Context, d *common.Deps, client *http.Clien
 		return nil, unreachable
 	}
 	return out.Data.Settings, nil
+}
+
+// saveStateThrough persists st the way this till must (ut-docs#2948). On a
+// main till it is common.SaveState, then extra best-effort -- what the
+// handlers did before. On a till that follows one, SaveState's
+// every-key rewrite would send this till's copy of every shop-wide setting
+// (possibly stale) over the main till's, so only the shop-wide rows st
+// changed against base travel -- the snapshot the handler edited, never a
+// fresh d.CurrentState() that a concurrent admin pull may already have
+// replaced (#2948 review finding 1) -- together with extra (the keys
+// the change implies, e.g. store.currency_confirmed) in the same batch;
+// per-till rows are written locally as SaveState writes them, after the
+// main till accepted. A failed write-through is an *errSettingsSync and
+// writes nothing.
+func saveStateThrough(ctx context.Context, d *common.Deps, elev elevationCheck, base, st common.RuntimeState, extra map[string]string) error {
+	if !tillFollowsMain(ctx, d) {
+		if err := common.SaveState(ctx, d.Settings, st); err != nil {
+			return err
+		}
+		if len(extra) > 0 {
+			if err := d.Settings.SetMany(ctx, extra); err != nil {
+				logging.L().Errorf("settings: write implied keys: %v", err)
+			}
+		}
+		return nil
+	}
+	prev := common.StateKV(ctx, d.Settings, base)
+	kv := make(map[string]string, len(extra))
+	for k, v := range common.StateKV(ctx, d.Settings, st) {
+		if data.SettingScope(k) == data.SettingPerTill {
+			kv[k] = v
+			continue
+		}
+		if old, ok := prev[k]; !ok || old != v {
+			kv[k] = v
+		}
+	}
+	for k, v := range extra {
+		kv[k] = v
+	}
+	return saveShopSettings(ctx, d, elev, kv)
 }

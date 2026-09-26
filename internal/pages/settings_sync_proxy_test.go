@@ -315,7 +315,7 @@ func TestSettingsWriteThrough_UpsertImpliedKeysOneBatch(t *testing.T) {
 	}
 }
 
-// store.country on an additional till is not sent at all (ut-docs#2948), so
+// store.country on an additional till is not sent at all (ut-docs#2980), so
 // the operator is told to change it on the main till, not that the main
 // till refused it.
 func TestSettingsWriteThrough_CountryPointsAtMainTill(t *testing.T) {
