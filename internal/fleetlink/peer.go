@@ -15,6 +15,11 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
+// monoAnchor is lastFrame's reference point. time.Now() carries a
+// monotonic reading, so durations measured from it ignore wall-clock steps
+// (NTP, a Pi without an RTC setting its clock after boot — ut-docs#2853).
+var monoAnchor = time.Now()
+
 // Peer is one live link: on the main till, to one paired till (Hub); on an
 // additional till, to its main till (Client). The two sides differ only in
 // their peerHost — what they say in hello and what they do with the frames
@@ -60,7 +65,11 @@ type Peer struct {
 	inSem   chan struct{}            // inbound in flight
 	hwg     sync.WaitGroup           // inbound handler goroutines
 
-	lastFrame atomic.Int64 // unix nanos of the last inbound frame
+	// lastFrame is nanoseconds since monoAnchor of the last inbound frame
+	// (touch/sinceFrame/lastFrameAt below) — never wall-clock nanos: an NTP
+	// step or a Pi without an RTC setting its clock after boot must not
+	// move the watchdog or the client's link-lost status (ut-docs#2853).
+	lastFrame atomic.Int64
 
 	hmu   sync.Mutex
 	hello *Hello
@@ -111,8 +120,28 @@ func newPeer(host peerHost, cfg Config, idPrefix, tillID string, conn Conn) *Pee
 		outSem:   make(chan struct{}, cfg.MaxInFlight),
 		inSem:    make(chan struct{}, cfg.MaxInFlight),
 	}
-	p.lastFrame.Store(time.Now().UnixNano())
+	p.touch(time.Now())
 	return p
+}
+
+// touch records now as the time of the last inbound frame. now must come
+// from time.Now(): a time without a monotonic reading (time.Unix, Round(0),
+// one decoded from JSON or the DB) silently falls back to the wall clock.
+func (p *Peer) touch(now time.Time) {
+	p.lastFrame.Store(int64(now.Sub(monoAnchor)))
+}
+
+// sinceFrame is how long ago the last inbound frame was, measured from now
+// (monotonic: immune to a wall-clock step between the frame and now).
+func (p *Peer) sinceFrame(now time.Time) time.Duration {
+	return now.Sub(monoAnchor) - time.Duration(p.lastFrame.Load())
+}
+
+// lastFrameAt is when the last inbound frame arrived, placed on now's wall
+// clock — for display. It keeps now's monotonic reading, so a later Sub
+// against time.Now() is still monotonic.
+func (p *Peer) lastFrameAt(now time.Time) time.Time {
+	return now.Add(-p.sinceFrame(now))
 }
 
 // Hello returns the peer's hello, once it has sent one.
@@ -281,7 +310,7 @@ func (p *Peer) readLoop() {
 			return
 		}
 		now := time.Now()
-		p.lastFrame.Store(now.UnixNano())
+		p.touch(now)
 		if onFrame != nil && now.Sub(lastTouch) >= every {
 			lastTouch = now
 			onFrame(p.tillID)
@@ -438,7 +467,7 @@ func (p *Peer) writeLoop() {
 				return
 			}
 		case <-check.C:
-			if time.Since(time.Unix(0, p.lastFrame.Load())) > p.cfg.PeerTimeout {
+			if p.sinceFrame(time.Now()) > p.cfg.PeerTimeout {
 				p.shutdown(CloseGone, "no frame within timeout", "")
 			}
 			continue

@@ -195,7 +195,11 @@ func hostTCPOpen(ctx context.Context, m api.Module, hostPtr, hostLen, port, time
 		return hostErrInvalid
 	}
 	host := string(hostRaw)
-	if port == 0 || port > 65535 {
+	// "[::1]" and "::1" name the same address; tcpAddr adds the brackets.
+	if len(host) >= 2 && host[0] == '[' && host[len(host)-1] == ']' {
+		host = host[1 : len(host)-1]
+	}
+	if host == "" || port == 0 || port > 65535 {
 		return hostErrInvalid
 	}
 	// Name check: the exact host:port permission (tcp:<host>:<port>) or the
@@ -243,8 +247,8 @@ func hostTCPOpen(ctx context.Context, m api.Module, hostPtr, hostLen, port, time
 // and grants are revocable live") that tcp_write/tcp_read previously
 // violated by only authorizing once, at open time.
 //
-// The exact/wildcard probes here use the repository's plain CheckPermission
-// (no audit side effect), not the auditing plugins.CheckPermission — a
+// The exact/wildcard probes here read the granted permission list (no audit
+// side effect; tcpGrantMatch), not the auditing plugins.CheckPermission — a
 // device-plugin declaring only the tcp:* wildcard (the documented common
 // case: "configurable terminal plugins learn their device address from
 // install-time settings") would otherwise fail the exact-address probe on
@@ -258,11 +262,18 @@ func hostTCPOpen(ctx context.Context, m api.Module, hostPtr, hostLen, port, time
 // exact reports that the EXACT grant matched — only it covers a non-public
 // address (ut-docs#2891 review M1).
 func tcpAddrAuthorized(ctx context.Context, s *hostState, addr string) (authorized, exact bool) {
-	repo := data.NewPluginRepo(s.db)
-	if granted, exists, err := repo.CheckPermission(ctx, s.pluginID, "tcp:"+addr); err == nil && exists && granted {
+	// Exact grant — tcp:<host>:<port> compared normalised, or a
+	// tcp:@setting:<hostKey>:<portKey> whose stored address is this one
+	// (ut-docs#2899, resolved per call so a setting change moves it) — else
+	// the public-only wildcard. A lookup failure fails closed.
+	exact, wildcard, err := tcpGrantMatch(ctx, s.db, s.pluginID, addr)
+	if err != nil {
+		return false, false
+	}
+	if exact {
 		return true, true
 	}
-	if granted, exists, err := repo.CheckPermission(ctx, s.pluginID, "tcp:*"); err == nil && exists && granted {
+	if wildcard {
 		return true, false
 	}
 	// Genuine denial: audit it, same as hostTCPOpen's pre-existing pattern.

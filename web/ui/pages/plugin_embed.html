@@ -1,6 +1,13 @@
 {{ define "content" }}
 <h1>{{ .title }}</h1>
+{{ if .pluginFrameDoc }}
+{{/* ut-docs#2892: plugin-shipped HTML runs only in an empty-sandbox frame
+     (no scripts, opaque origin); srcdoc is a plain string, so html/template
+     attribute-escapes it. */}}
+<iframe class="plugin-page-frame card" sandbox srcdoc="{{ .pluginFrameDoc }}" title="{{ .title }}"></iframe>
+{{ else }}
 <div class="card">
   {{ .pluginHTML }}
 </div>
+{{ end }}
 {{ end }}

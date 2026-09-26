@@ -105,10 +105,24 @@ automatically once these **repo secrets** exist (absent → ad-hoc, as today):
 
 The API key is preferred (`packaging/macos/notary-args.sh`): scoped, revocable
 in App Store Connect, not a personal Apple ID password. It is written to a
-0600 temp file for `notarytool --key` and deleted after the submit. The Apple
+0600 temp file for `notarytool --key` and deleted once notarization ends. The Apple
 ID trio (`MACOS_NOTARY_APPLE_ID` + `MACOS_NOTARY_PASSWORD`) still works as a
 fallback but is not set. After stapling, the build fails unless `stapler
 validate` and `spctl --assess` accept the `.dmg`.
+
+**Notarization never holds a release (ut-docs#2917).** `make-dmg.sh` submits
+without `--wait`, writes the submission id to the job summary (check it with
+`xcrun notarytool info <id> …`), then waits with `notarytool wait --timeout`
+(`NOTARY_TIMEOUT`, 45m in CI; job `timeout-minutes: 90`). Only status
+`Accepted` passes. `publish-release` does not need `macos-app`: Linux, Windows
+and Android go live first, and `macos-dmg-attach` attaches the `.dmg` (and
+folds its `checksums.txt` line, then re-verifies every asset) after publish,
+only if `macos-app` succeeded. On a timeout or rejection `macos-app` fails
+loudly and nothing is attached — never an un-notarized `.dmg`. Recover with
+"Re-run failed jobs" on that run (never cancel a release); that builds and
+submits a **new** `.dmg` — the recorded id is only for `notarytool info/log`
+diagnosis. Mac tills whose nightly auto-update falls between publish and the
+attach retry the next night (the updater fails closed on a missing `.dmg`).
 
 **Rotate:** revoke the key in App Store Connect → Users and Access →
 Integrations, create a new one (role Developer), update both Key Vault and the

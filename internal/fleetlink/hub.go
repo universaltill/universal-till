@@ -276,9 +276,10 @@ func (h *Hub) Peers() []PeerInfo {
 		peers = append(peers, p)
 	}
 	h.mu.Unlock()
+	now := time.Now()
 	for i, p := range peers {
 		out[i].Hello, out[i].HasHello = p.Hello()
-		out[i].LastFrame = time.Unix(0, p.lastFrame.Load())
+		out[i].LastFrame = p.lastFrameAt(now)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].TillID < out[j].TillID })
 	return out

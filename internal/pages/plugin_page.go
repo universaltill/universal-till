@@ -131,6 +131,9 @@ func findPageEntry(r *http.Request, d *common.Deps) (data.PageEntryRow, bool) {
 func renderPluginPage(w http.ResponseWriter, r *http.Request, d *common.Deps, entry data.PageEntryRow) {
 	pluginDir := filepath.Join(pluginPagesDir, entry.PluginID, entry.PluginVersion)
 	locale := httpx.ResolveLocale(w, r)
+	// Every branch below (bundle, sandboxed static page, info card) gets
+	// the plugin page policy (ut-docs#2892 security review).
+	w.Header().Set("Content-Security-Policy", pluginPageCSP)
 	base := map[string]any{
 		// Entry labels are translator keys (plugins ship locales/ overlays);
 		// plain-text labels pass through T unchanged.
@@ -148,9 +151,18 @@ func renderPluginPage(w http.ResponseWriter, r *http.Request, d *common.Deps, en
 	}
 
 	if raw, err := os.ReadFile(filepath.Join(pluginDir, "content", "index.html")); err == nil {
-		// The plugin bundle was Ed25519-verified at install; its page HTML is
-		// trusted the same way its binary would be.
-		base["pluginHTML"] = template.HTML(raw) //nolint:gosec
+		// ut-docs#2892: a signed bundle proves who shipped the page, not that
+		// its HTML is safe to run with the manager's session. The page is
+		// rendered only inside an iframe with an EMPTY sandbox token list
+		// (no scripts, opaque origin, no forms/popups/top navigation), its
+		// document carried in srcdoc as a plain string so html/template
+		// attribute-escapes it -- never as template.HTML in the host page.
+		frameDoc, err := pluginFrameDocument(locale, d.CurrentState().Theme, raw)
+		if err != nil {
+			http.Error(w, "failed to render plugin page", http.StatusInternalServerError)
+			return
+		}
+		base["pluginFrameDoc"] = frameDoc
 		httpx.Render("ui/pages/plugin_embed.html", base)(w, r)
 		return
 	}
@@ -159,6 +171,65 @@ func renderPluginPage(w http.ResponseWriter, r *http.Request, d *common.Deps, en
 		"<p>" + template.HTMLEscapeString(entry.PluginName+" v"+entry.PluginVersion) + "</p>" +
 			"<p class=\"empty\">This plugin registered a page but ships no page content.</p>")
 	httpx.Render("ui/pages/plugin_embed.html", base)(w, r)
+}
+
+// pluginPageCSP is the minimal, host-page-safe policy for plugin page
+// responses (ut-docs#2892): no plugins/objects, frames only from the till
+// itself (a srcdoc frame is not a fetch, so it is unaffected; about: is
+// listed as insurance for engines, e.g. WebKitGTK on the Pi, that check a
+// srcdoc frame's about:srcdoc URL against frame-src). The global UI policy
+// is ut-docs#2913.
+const pluginPageCSP = "object-src 'none'; frame-src 'self' about:"
+
+// pluginFrameTmpl is the document a plugin's content/index.html is wrapped
+// in inside its sandboxed iframe: the till's stylesheet and theme so it
+// looks native, the locale's lang/dir on <html>, dir="auto" on <body> (the
+// plugin's content language need not match the till locale -- an English
+// docs page in an fa till must not be mirrored), and a body reset that drops the
+// shell's rail padding and flex column (app.css styles bare <body>). The
+// frame can't run scripts, so it gets no htmx and no auto-height; the host
+// sizes it with CSS (.plugin-page-frame) and it scrolls inside.
+var pluginFrameTmpl = template.Must(template.New("plugin-frame").Parse(`<!DOCTYPE html>
+<html lang="{{ .Lang }}" dir="{{ .Dir }}" style="--ui-scale: {{ .UIScale }}">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="/public/app.css?v={{ .AppCSSVer }}">
+{{- if .ThemeCSS }}
+<link rel="stylesheet" href="{{ .ThemeCSS }}">
+{{- end }}
+<style>
+body.plugin-frame-body { display: block; min-height: 0; padding: .8rem .9rem; margin: 0;
+  background: transparent; -webkit-user-select: text; user-select: text; }
+</style>
+</head>
+<body class="plugin-frame-body" dir="auto">
+{{ .Body }}
+</body>
+</html>`))
+
+// pluginFrameDocument renders the srcdoc document for a plugin's static
+// page. The returned string is later attribute-escaped by the host
+// template; the plugin HTML itself is inserted verbatim here because it
+// only ever runs inside the empty-sandbox frame.
+func pluginFrameDocument(locale, theme string, pluginHTML []byte) (string, error) {
+	dir := "ltr"
+	if httpx.IsRTL(locale) {
+		dir = "rtl"
+	}
+	themeCSS := ""
+	if theme != "" && theme != "default" {
+		themeCSS = "/themes/" + theme + ".css?v=" + httpx.AssetVersion("public/themes/"+theme+".css")
+	}
+	var b strings.Builder
+	err := pluginFrameTmpl.Execute(&b, map[string]any{
+		"Lang":      locale,
+		"Dir":       dir,
+		"UIScale":   httpx.UIScaleCSS(),
+		"AppCSSVer": httpx.AssetVersion("public/app.css"),
+		"ThemeCSS":  themeCSS,
+		"Body":      template.HTML(pluginHTML), //nolint:gosec // sandboxed frame only (ut-docs#2892)
+	})
+	return b.String(), err
 }
 
 // baseLang returns the language subtag before the first '-' (lowercased),

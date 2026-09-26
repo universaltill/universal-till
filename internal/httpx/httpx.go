@@ -530,6 +530,10 @@ func uiScalePx() string {
 // value rather than a server-computed px (ut-docs#161's sale screen) — the
 // stylesheet combines it with the fluid baseline via
 // calc(var(--ui-scale) * var(--fluid-fs)).
+// UIScaleCSS is uiScaleCSS for Go callers that build a standalone document
+// outside base.html (the sandboxed plugin page frame, ut-docs#2892).
+func UIScaleCSS() string { return uiScaleCSS() }
+
 func uiScaleCSS() string {
 	return strconv.FormatFloat(currentUIScale(), 'f', -1, 64)
 }
@@ -918,6 +922,10 @@ func uploadVersion(rel string) string {
 	}
 	return strconv.FormatInt(bootTime, 10)
 }
+
+// AssetVersion is the template's assetv for Go callers that build a
+// standalone document outside base.html (ut-docs#2892).
+func AssetVersion(rel string) string { return assetVersion(rel) }
 
 func assetVersion(rel string) string {
 	if info, ok := statAsset(rel); ok {

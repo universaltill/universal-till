@@ -14,8 +14,10 @@ package plugins
 //     multicast, reserved, and their IPv4-mapped / NAT64 / 6to4 forms) only
 //     when the plugin holds the EXACT permission for the host it asked for —
 //     net:<host> (an ERP webhook on the shop network, Ollama on the till) or
-//     tcp:<host>:<port> (a LAN payment terminal). net:* and tcp:* grant
-//     public addresses only;
+//     tcp:<host>:<port> (a LAN payment terminal), or the setting-bound form
+//     net:@setting:<urlKey> / tcp:@setting:<hostKey>:<portKey> naming the
+//     address an admin configured (permission_setting.go, ut-docs#2899).
+//     net:* and tcp:* grant public addresses only;
 //   - the till's own listen port on loopback or on one of its own addresses
 //     is always refused, whatever the permission — a plugin must never be
 //     able to drive the till's own API;
@@ -37,7 +39,6 @@ import (
 	"net/http"
 	"net/netip"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -165,18 +166,16 @@ type egressGrants struct {
 
 type egressGrantsKey struct{}
 
-func normHost(h string) string { return strings.TrimSuffix(strings.ToLower(h), ".") }
-
 func (g *egressGrants) add(host string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.exact[normHost(host)] = true
+	g.exact[normGrantHost(host)] = true
 }
 
 func (g *egressGrants) has(host string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.exact[normHost(host)]
+	return g.exact[normGrantHost(host)]
 }
 
 func withEgressGrants(ctx context.Context, g *egressGrants) context.Context {
@@ -359,14 +358,21 @@ func checkPluginRedirect(req *http.Request, via []*http.Request) error {
 }
 
 // netPermission checks the name half of the policy: the plugin must hold
-// net:<host> or net:*. exact reports the former — only it unlocks
-// non-public addresses at dial time.
+// net:<host>, a net:@setting:<urlKey> whose stored URL names this host
+// (ut-docs#2899), or net:*. exact reports either of the first two — only an
+// exact grant unlocks non-public addresses at dial time. Hosts are compared
+// normalised (normGrantHost). Only a genuine denial is audited.
 func netPermission(ctx context.Context, db *sql.DB, pluginID, host string) (exact bool, err error) {
-	if CheckPermission(ctx, db, pluginID, "net:"+host) == nil {
+	exact, wildcard, err := netGrantMatch(ctx, db, pluginID, host)
+	if err != nil {
+		return false, &egressDeniedError{host: host, reason: "permission lookup failed"}
+	}
+	if exact {
 		return true, nil
 	}
-	if CheckPermission(ctx, db, pluginID, "net:*") == nil {
+	if wildcard {
 		return false, nil
 	}
-	return false, &egressDeniedError{host: host, reason: "no net:" + host + " or net:* permission"}
+	_ = CheckPermission(ctx, db, pluginID, "net:"+host) // audit the denial
+	return false, &egressDeniedError{host: host, reason: "no net:" + host + ", matching net:@setting or net:* permission"}
 }

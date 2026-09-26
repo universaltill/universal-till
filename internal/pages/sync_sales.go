@@ -461,7 +461,46 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 	// mirror it to inventory connectors (best-effort, non-blocking). Guarded by
 	// the SaleExists idempotency check above, so it fires at most once per sale.
 	publishStockAdjustedForSale(ctx, d, in)
+	// The cloud link's live view (ADR-0117 §4/§8, ut-docs#2894 AC2): a
+	// replica's sale reaches the my. live panel too, attributed to the
+	// REPORTING replica's till id (j.Sale carries the reporting till's own
+	// SaleDetail — its TenderType/SaleType/Total are exactly what that
+	// till completed; the cloud still attributes the FRAME itself to this,
+	// the authenticated main device — see publishCloudLinkSale's own
+	// comment). Guarded by the same SaleExists check above, so a retried
+	// (already-applied) journal entry publishes at most once, never a
+	// duplicate frame on the wire for a sale the my. panel already showed.
+	publishJournaledSale(ctx, d, repo, j.Sale, tillID)
 	return true, "", repo.SetSaleProvenance(ctx, j.Sale.ID, tillID, j.Sale.CreatedAt)
+}
+
+// liveSaleMaxAge bounds which journaled replica sales count as live for the
+// cloud link's live view: a replica replaying its backlog after an outage
+// would otherwise show hours-old sales as if they had just happened and use
+// up the sale-frame allowance ahead of the main till's own live sales
+// (ut-docs#2894 review).
+const liveSaleMaxAge = 10 * time.Minute
+
+// publishJournaledSale sends a replica's journaled sale to the live view
+// from the row this till actually stored (its recomputed totals, not the
+// replica's own figures), and only when the sale is recent. Best-effort: a
+// failed read or an old/future-dated sale just skips the frame.
+func publishJournaledSale(ctx context.Context, d *common.Deps, repo *data.POSRepo, sent data.SaleDetail, tillID string) {
+	if d.CloudLink == nil {
+		return
+	}
+	at, err := time.Parse(time.RFC3339, sent.CreatedAt)
+	if err != nil {
+		return
+	}
+	if age := time.Since(at); age > liveSaleMaxAge || age < -2*time.Minute {
+		return
+	}
+	stored, ok, err := repo.GetSaleDetailByID(ctx, sent.ID)
+	if err != nil || !ok {
+		return
+	}
+	publishCloudLinkSale(d, stored, tillID)
 }
 
 // warnIfStockNegative surfaces negative stock as a back-office Problem

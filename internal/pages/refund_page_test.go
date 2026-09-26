@@ -350,6 +350,40 @@ VALUES('line-refund-1', ?, 1, 'itm1', 'Apple', 'ABC', 2, 100, 2000, 40, 200, 240
 	return saleID, receiptNo
 }
 
+// ut-docs#2894: a completed refund must publish a cloud-link sale frame
+// (ADR-0117 §4/§8) so the my. live view sees it too -- refund:true and a
+// negative total_minor, the same summary shape a live tender sends
+// (pos_api.go's completeTender).
+func TestPostRefund_PublishesCloudLinkSaleFrame(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+	cloud := newFakeCloudLink(t, true)
+	dp.CloudLink = cloud.client(t)
+	cloud.waitConnected(t)
+	cloud.waitReady(t, dp.CloudLink)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refund failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	var returnSaleID string
+	if err := dp.Db.QueryRow(`SELECT id FROM sales WHERE sale_type = 'return'`).Scan(&returnSaleID); err != nil {
+		t.Fatalf("read return sale id: %v", err)
+	}
+	frame := cloud.waitForSaleWithID(t, returnSaleID)
+	if frame["refund"] != true {
+		t.Fatalf("refund = %v, want true", frame["refund"])
+	}
+	if totalMinor, ok := frame["total_minor"].(float64); !ok || totalMinor >= 0 {
+		t.Fatalf("total_minor = %v, want a negative number", frame["total_minor"])
+	}
+}
+
 // seedCompletedSaleWithServiceChargeForRefund seeds a completed sale carrying
 // a service charge (ut-docs#243's fixture): 2 units @ 100 (subtotal 200,
 // no line tax to keep the arithmetic isolated to the charge itself) plus a

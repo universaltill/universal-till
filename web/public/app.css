@@ -689,6 +689,13 @@ body.sale-screen .session-admin-link { display: none; }
 /* ---------- Plugin content pages (FAQ etc.) ---------- */
 .plugin-content-search { display: block; min-width: 260px; max-width: 100%;
                           margin: 0 0 1rem; }
+/* ut-docs#2892: a plugin's static content/index.html renders in an
+   empty-sandbox iframe. With no scripts it can't report its own height, so
+   it fills the viewport below the page title and scrolls inside. The frame
+   document pads itself (plugin_page.go), so the card has no padding here. */
+.plugin-page-frame { display: block; inline-size: 100%; padding: 0;
+                     block-size: calc(100dvh - 9rem); min-block-size: 18rem;
+                     margin-block-start: .6rem; }
 /* ut-docs#1901: the add/edit-item form moved into a full-screen <dialog>
    (#item-form-modal below), so the list no longer shares this row with a
    permanent 360px side panel — single column at every width now, not just
