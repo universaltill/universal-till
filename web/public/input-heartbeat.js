@@ -12,6 +12,12 @@
 // Deliberately diagnosability-only — no self-recovery/auto-restart logic
 // lives here or anywhere else in this card. Just a heartbeat.
 //
+// Since ut-docs#2901 it is also the idle auto-lock's activity signal: the
+// server no longer counts background polls as activity, so a till whose
+// operator only taps things that don't hit the server (scrolling, a local
+// filter, keypad entry) stays signed in because of this POST alone. Keep it
+// on every base.html page, and never gate it behind the desktop shell.
+//
 // Scope (ut-docs#1329): wired from base.html only, the shared layout most
 // pages render through (including Settings, where the #1228 freeze was
 // observed). Five standalone documents do NOT load this script — login.html,
@@ -49,7 +55,12 @@
     // operator or affect the page in any way, so every error path is
     // silently swallowed. No credentials/body needed — the session cookie
     // already rides along on a same-origin fetch.
-    fetch('/api/window/input-heartbeat', { method: 'POST', signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
+    // AbortSignal.timeout is missing on older WebViews (Android < Chrome
+    // 103, WebKitGTK < 2.38); calling it there would throw on every tap and
+    // the heartbeat — now the idle lock's activity signal — would never go.
+    var signal = (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function')
+      ? AbortSignal.timeout(FETCH_TIMEOUT_MS) : undefined;
+    fetch('/api/window/input-heartbeat', { method: 'POST', signal: signal })
       .catch(function () { /* ignore — best-effort telemetry */ });
   }
 
