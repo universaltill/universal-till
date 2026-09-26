@@ -115,7 +115,7 @@
         // ADR-0119 (ut-docs#2859): the per-till effects level (the same
         // value as the fx-* class on <html>) and the ONE motion predicate
         // every JS motion path checks -- this script, the shell script
-        // below, app.js's swap ease and record-dialog.js's open ease.
+        // below, app.js's swap ease and the shared popup zoom (ADR-0122 §5).
         // prefers-reduced-motion stays the floor: the level can only take
         // motion away, never switch it back on. Defined here, the first
         // script in the document, so everything after it can rely on it.
@@ -128,9 +128,14 @@
         // so a tap, a popup opening or the next pane swap can finish() it --
         // the transform is transient, never left on a pane that hosts
         // position:fixed dialogs (the #2338 containing-block hazard).
+        // A PASSIVE zoom (opts.passive: the closing popup shrink -- inert,
+        // pointer-events:none, so no tap is ever hit-tested on it) is still
+        // finished by a tap, but finishZooms() reports only non-passive ones:
+        // its true is what arms the §7 click re-dispatch below.
         var zooms = [];
-        UT.trackZoom = function (anim) {
+        UT.trackZoom = function (anim, opts) {
           if (!anim) return;
+          if (opts && opts.passive) anim.utPassive = true;
           zooms.push(anim);
           function drop() { var i = zooms.indexOf(anim); if (i >= 0) zooms.splice(i, 1); }
           anim.onfinish = drop; anim.oncancel = drop;
@@ -139,7 +144,7 @@
           var list = zooms; zooms = [];
           var any = false;
           list.forEach(function (a) {
-            try { if (a.playState !== 'finished') { a.finish(); any = true; } } catch (e) { /* gone */ }
+            try { if (a.playState !== 'finished') { a.finish(); if (!a.utPassive) any = true; } } catch (e) { /* gone */ }
           });
           return any;
         };
@@ -194,21 +199,6 @@
             ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey
           }));
         }, true);
-        // ADR-0122 §4/§5: opening any popup first finishes a running pane
-        // zoom, so no position:fixed dialog is ever shown inside a
-        // transformed pane. One wrapper, installed once; it never throws into
-        // the caller and the native method runs unchanged. (The shared popup
-        // zoom, ut-docs#2944, extends this same wrapper.)
-        if (window.HTMLDialogElement) ['showModal', 'show'].forEach(function (m) {
-          var native = HTMLDialogElement.prototype[m];
-          if (typeof native !== 'function' || native.utWrapped) return;
-          var wrapped = function () {
-            try { UT.finishZooms(); } catch (e) { /* motion only */ }
-            return native.apply(this, arguments);
-          };
-          wrapped.utWrapped = true;
-          HTMLDialogElement.prototype[m] = wrapped;
-        });
         // ADR-0122 §2 (ut-docs#2942): the ONE motion-origin recorder -- the
         // iOS zoom's "source view". Capture phase, so it runs before any
         // htmx request or swap the same press causes (and after the
@@ -273,6 +263,243 @@
           if (!o || Date.now() - o.at > ORIGIN_TTL_MS) return null;
           return o;
         };
+        // ADR-0122 §5 (ut-docs#2944): the ONE popup motion. Every <dialog>,
+        // sheet and picker grows from its source element (UT.takeOrigin(),
+        // recorded on pointerdown -- before the htmx request that fetched an
+        // item's variants popup) and, on close, shrinks back into it. No
+        // per-dialog code: showModal/show are wrapped once, below, and the
+        // close side is the dialog `close` EVENT (it also covers Escape,
+        // <form method="dialog"> and requestClose(), which never call
+        // .close()). A popup that is not a <dialog> (the bug-report panel)
+        // calls UT.popupOpened(el) / UT.popupClosed(el) -- the same two code
+        // paths. FLIP on the SAME element: uniform scale (source width /
+        // popup width, clamped .1-1) plus the translation between the two
+        // centres, transform + opacity only, from opacity .4 (never blank),
+        // fill 'none' (nothing remains after the last frame), registered with
+        // UT.trackZoom so a tap finishes it and lands on the control at its
+        // final position (§7). The popup's own CSS transform (e.g.
+        // .shrinkage-sheet's translateY(-50%)) is kept: the zoom is composed
+        // in front of it, assuming the default centred transform-origin.
+        // Nothing here may throw into the page, and under UT.motionOff()
+        // (reduced motion or Light, ADR-0119) no animate() call is made and
+        // no closing popup is re-shown (§6).
+        var POPUP_EASE = 'cubic-bezier(.32, .72, 0, 1)';
+        var CLOSING_VARS = ['--ut-closing-t', '--ut-closing-is', '--ut-closing-w', '--ut-closing-h', '--ut-closing-display'];
+        // el -> { origin, box, display, opening, closing }
+        var popups = typeof WeakMap === 'function' ? new WeakMap() : null;
+        // Open, tracked popups whose box is kept current: a closed <dialog>
+        // has no box, so its closing shrink starts from the last one seen.
+        var livePopups = [];
+        var popupRO = null;
+        function smallMs() {
+          var ms = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ut-zoom-small-ms'));
+          return ms > 0 ? ms : 300;
+        }
+        function popupState(el) {
+          var st = popups.get(el);
+          if (!st) { st = { origin: null, box: null, display: '', opening: null, closing: null }; popups.set(el, st); }
+          return st;
+        }
+        // Records the popup's box while it is shown and still: a box read
+        // mid-zoom is transformed, a hidden one is empty (keep the last).
+        function measure(el) {
+          var st = popups && popups.get(el);
+          if (!st || st.opening || st.closing || !el.getClientRects().length) return;
+          var r = el.getBoundingClientRect();
+          if (!(r.width > 0 && r.height > 0)) return;
+          st.box = { left: r.left, top: r.top, width: r.width, height: r.height };
+          st.display = getComputedStyle(el).display;
+        }
+        function watchPopup(el) {
+          if (livePopups.indexOf(el) < 0) livePopups.push(el);
+          try {
+            if (!popupRO && window.ResizeObserver) {
+              popupRO = new ResizeObserver(function (entries) {
+                entries.forEach(function (en) { try { measure(en.target); } catch (e) { /* motion only */ } });
+              });
+            }
+            if (popupRO) popupRO.observe(el);
+          } catch (e) { /* motion only */ }
+        }
+        function unwatchPopup(el) {
+          var i = livePopups.indexOf(el);
+          if (i >= 0) livePopups.splice(i, 1);
+          try { if (popupRO) popupRO.unobserve(el); } catch (e) { /* motion only */ }
+        }
+        function measureLive() {
+          livePopups.slice().forEach(function (el) {
+            if (!el.isConnected) { unwatchPopup(el); return; }
+            try { measure(el); } catch (e) { /* motion only */ }
+          });
+        }
+        // A tap (after the listener above has finished every zoom), an
+        // Escape about to close a dialog (`cancel` fires before `close`) and
+        // a window resize all refresh the boxes; a ResizeObserver catches
+        // content swapped into an open popup.
+        window.addEventListener('pointerdown', measureLive, true);
+        document.addEventListener('cancel', measureLive, true);
+        window.addEventListener('resize', measureLive);
+        function bottomCentre() {
+          var v = viewport();
+          return { left: v.w / 2, top: v.h, width: 0, height: 0 };
+        }
+        // The translation-part of the popup's own transform, so the zoom can
+        // be composed in front of it (translate(T) scale(s) <own>, centred
+        // origin: the visual centre then lands on the source's centre).
+        function ownTransform(el) {
+          var css = getComputedStyle(el).transform;
+          if (!css || css === 'none') return { css: '', x: 0, y: 0 };
+          try {
+            var m = new DOMMatrixReadOnly(css);
+            return { css: css, x: m.m41, y: m.m42 };
+          } catch (e) { return { css: css, x: 0, y: 0 }; }
+        }
+        // Uniform start scale plus translation from box to the source rect.
+        function zoomFrom(box, r, own) {
+          var s = Math.min(1, Math.max(0.1, r.width / box.width));
+          var dx = (r.left + r.width / 2) - (box.left + box.width / 2) + (1 - s) * own.x;
+          var dy = (r.top + r.height / 2) - (box.top + box.height / 2) + (1 - s) * own.y;
+          return 'translate(' + dx + 'px, ' + dy + 'px) scale(' + s + ')' + (own.css ? ' ' + own.css : '');
+        }
+        // Where a closing popup shrinks to: the source element's box NOW if it
+        // is still in the document, rendered (not inside a closed dialog or a
+        // display:none subtree) and on screen; otherwise the bottom centre
+        // (iOS: the source view is gone). Never the box recorded at the tap:
+        // the element is no longer there (ADR-0122 §2/§5).
+        function closeTarget(o) {
+          try {
+            if (o && o.el && o.el.isConnected && o.el.getClientRects().length) {
+              var r = o.el.getBoundingClientRect();
+              if (onScreen(r)) return r;
+            }
+          } catch (e) { /* fall back */ }
+          return bottomCentre();
+        }
+        function popupOpen(el) {
+          if (UT.motionOff()) return;
+          if (!popups || !el || !el.animate || !el.getClientRects().length) return;
+          var st = popupState(el);
+          endClosing(el);
+          var o = UT.takeOrigin();
+          st.origin = o ? { el: o.el, rect: o.rect } : null;
+          watchPopup(el);
+          var box = el.getBoundingClientRect();
+          if (!box.width || !box.height) return;
+          st.box = { left: box.left, top: box.top, width: box.width, height: box.height };
+          st.display = getComputedStyle(el).display;
+          var r = (o && onScreen(o.rect)) ? o.rect : bottomCentre();
+          var own = ownTransform(el), ms = smallMs();
+          var anim = el.animate([
+            { transform: zoomFrom(box, r, own), opacity: 0.4 },
+            { transform: own.css || 'none', opacity: 1 }
+          ], { duration: ms, easing: POPUP_EASE, fill: 'none' });
+          st.opening = anim;
+          var settled = function () { if (st.opening === anim) { st.opening = null; measure(el); } };
+          anim.addEventListener('finish', settled);
+          anim.addEventListener('cancel', settled);
+          UT.trackZoom(anim);
+          // The ::backdrop (a modal's) fades in with the open motion; it goes
+          // with the native close, so the shrink has none by design.
+          try {
+            if (el.matches(':modal')) {
+              UT.trackZoom(el.animate({ opacity: [0, 1] }, { duration: ms, easing: POPUP_EASE, fill: 'none', pseudoElement: '::backdrop' }));
+            }
+          } catch (e) { /* engine without :modal or ::backdrop animations */ }
+        }
+        // Ends a closing shrink at once: the popup goes back to its own
+        // (closed) styling. Reopening during the shrink calls this first.
+        function endClosing(el) {
+          var st = popups && popups.get(el), c = st && st.closing;
+          if (!c) return;
+          st.closing = null;
+          clearTimeout(c.timer);
+          try { c.anim.cancel(); } catch (e) { /* already gone */ }
+          el.removeAttribute('data-ut-closing');
+          if (!c.inert) el.removeAttribute('inert');
+          if (c.aria === null) el.removeAttribute('aria-hidden'); else el.setAttribute('aria-hidden', c.aria);
+          CLOSING_VARS.forEach(function (p) { el.style.removeProperty(p); });
+        }
+        // The native close has already happened (the page takes input, focus
+        // is back): the SAME element is painted again for the motion's length
+        // only -- data-ut-closing (app.css: fixed at its last box, no pointer
+        // events, above the rail and the on-screen keyboard), inert and
+        // aria-hidden -- and shrinks into its source. Its id-keyed CSS, typed
+        // values and canvas stay as they were; a clone would lose them.
+        // Runs from the dialog `close` EVENT, a queued task -- the close site
+        // has already returned, so close sites must not mutate the dialog.
+        function popupClose(el) {
+          if (UT.motionOff()) return;
+          if (!popups || !el || !el.animate) return;
+          var st = popupState(el);
+          if (st.opening) { var op = st.opening; st.opening = null; try { op.finish(); } catch (e) { /* gone */ } }
+          endClosing(el);
+          measure(el); // a non-dialog may still be shown when it reports
+          unwatchPopup(el);
+          var box = st.box;
+          if (!box || !el.isConnected || el.open === true) return;
+          // Its content is already gone (a close site emptied it): a blank
+          // frame shrinking into the source is worse than no motion.
+          if (!el.childElementCount) return;
+          var r = closeTarget(st.origin);
+          var rtl = getComputedStyle(el).direction === 'rtl';
+          var vw = document.documentElement.clientWidth || viewport().w;
+          var s = el.style;
+          s.setProperty('--ut-closing-t', box.top + 'px');
+          s.setProperty('--ut-closing-is', (rtl ? vw - box.left - box.width : box.left) + 'px');
+          s.setProperty('--ut-closing-w', box.width + 'px');
+          s.setProperty('--ut-closing-h', box.height + 'px');
+          if (st.display && st.display !== 'none') s.setProperty('--ut-closing-display', st.display);
+          var c = { anim: null, timer: 0, inert: el.hasAttribute('inert'), aria: el.getAttribute('aria-hidden') };
+          st.closing = c;
+          el.setAttribute('data-ut-closing', '');
+          el.setAttribute('inert', '');
+          el.setAttribute('aria-hidden', 'true');
+          var ms = smallMs();
+          var done = function () { if (st.closing === c) endClosing(el); };
+          c.timer = setTimeout(done, ms + 250); // backstop: never left painted
+          try {
+            c.anim = el.animate([
+              { transform: 'none', opacity: 1 },
+              { transform: zoomFrom(box, r, { css: '', x: 0, y: 0 }), opacity: 0 }
+            ], { duration: ms, easing: POPUP_EASE, fill: 'none' });
+            c.anim.addEventListener('finish', done);
+            c.anim.addEventListener('cancel', done);
+            UT.trackZoom(c.anim, { passive: true });
+          } catch (e) { done(); }
+        }
+        UT.popupOpened = function (el) {
+          try { endClosing(el); UT.finishZooms(); popupOpen(el); } catch (e) { /* motion only */ }
+        };
+        UT.popupClosed = function (el) {
+          try { popupClose(el); } catch (e) { /* motion only */ }
+        };
+        // `close` does not bubble: capture phase on document sees every
+        // dialog's. A dialog reopened before the event was delivered stays.
+        document.addEventListener('close', function (e) {
+          var el = e.target;
+          if (!el || el.tagName !== 'DIALOG' || el.open) return;
+          UT.popupClosed(el);
+        }, true);
+        // Opening: one wrapper, installed once. It first ends this popup's
+        // own closing shrink and finishes a running pane zoom (ADR-0122 §4:
+        // no position:fixed dialog is ever shown inside a transformed pane),
+        // then runs the native method FIRST and unchanged -- the dialog is
+        // open and interactive at once, and a motion bug can only cost the
+        // motion, never the dialog -- then starts the zoom.
+        if (window.HTMLDialogElement) ['showModal', 'show'].forEach(function (m) {
+          var native = HTMLDialogElement.prototype[m];
+          if (typeof native !== 'function' || native.utWrapped) return;
+          var wrapped = function () {
+            var was = this.open;
+            try { endClosing(this); UT.finishZooms(); } catch (e) { /* motion only */ }
+            var ret = native.apply(this, arguments);
+            if (!was) { try { popupOpen(this); } catch (e) { /* motion only */ } }
+            return ret;
+          };
+          wrapped.utWrapped = true;
+          HTMLDialogElement.prototype[m] = wrapped;
+        });
+        // end ADR-0122 §5 popup motion
         // ADR-0122 §3: the page zoom reads its origin from three custom
         // properties on <html> -- the source centre in viewport px and the
         // uniform start scale (source width / viewport width, clamped
