@@ -47,3 +47,9 @@ Safe to merge.
 ## Deferred
 
 - ut-cloud side (seal, key recording, endpoints, `created_by` on served directives): ut-docs#2811.
+
+## Addendum (post-merge)
+
+v0.28.0 was tagged from the commit just before this PR merged, so the
+feature ships in the next release; `CHANGELOG.md` corrected in a follow-up
+PR (docs-only, no code).
