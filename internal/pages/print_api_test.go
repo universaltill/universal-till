@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -12,12 +13,15 @@ import (
 	"testing"
 	"time"
 
+	qrcode "github.com/skip2/go-qrcode"
+
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/print"
 	"github.com/universaltill/universal-till/internal/settings"
 )
 
@@ -1301,10 +1305,43 @@ func TestBuildReceiptDoc_TSESignatureLinesWhenRecorded(t *testing.T) {
 			t.Fatalf("ESC/POS Meta must carry TSE evidence value %q, got %+v", want, doc.Meta)
 		}
 	}
-	// ut-docs#1245: recorded evidence also yields the scannable QR as a
-	// pre-encoded GS v 0 raster block for the thermal-printer path.
-	if len(doc.TSEQR) == 0 {
-		t.Fatal("recorded TSE evidence must produce a printable TSE QR raster (ut-docs#1245)")
+	// ut-docs#2880: TSE evidence alone no longer yields a QR — core stopped
+	// inventing a payload; the QR comes only from the signer's own stored
+	// receipt.qr_payload (TestBuildReceiptDoc_FiscalReceiptQRFromStoredPayload).
+	if len(doc.TSEQR) != 0 {
+		t.Fatalf("TSE evidence without a receipt object must print no QR, got %d bytes", len(doc.TSEQR))
+	}
+}
+
+// ut-docs#2880: the ESC/POS reprint rasters the QR from the signer's stored
+// receipt.qr_payload (fiscal_receipt_evidence) — the exact bytes, never
+// re-derived — and prints the signer's lines as Meta lines.
+func TestBuildReceiptDoc_FiscalReceiptQRFromStoredPayload(t *testing.T) {
+	_, dp := newPrintAPITestDeps(t)
+	seedReceiptSale(t, dp, "sale1", "R001", "sale", "", 120, 0, 0)
+	ctx := context.Background()
+	const payload = "V0;ut-till-1;Kassenbeleg-V1;Beleg^0.00_1.20_0.00_0.00_0.00^1.20:Bar;7;12;2026-09-26T10:00:00.000Z;2026-09-26T10:00:01.000Z;ecdsa-plain-SHA384;unixTime;SIG==;PUB=="
+	if err := data.NewPOSRepo(dp.Db).RecordFiscalReceiptEvidence(ctx, data.FiscalReceiptEvidence{
+		SaleID: "sale1", QRPayload: payload, Lines: []string{"Signer line one", "Signer line two"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := buildReceiptDoc(ctx, dp, "R001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	png, err := qrcode.Encode(payload, qrcode.Medium, 240)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := print.RasterLogo(png); len(doc.TSEQR) == 0 || !bytes.Equal(doc.TSEQR, want) {
+		t.Fatalf("printed QR must be the raster of the stored payload (got %d bytes, want %d)", len(doc.TSEQR), len(want))
+	}
+	meta := strings.Join(doc.Meta, "\n")
+	for _, want := range []string{"Signer line one", "Signer line two"} {
+		if !strings.Contains(meta, want) {
+			t.Fatalf("ESC/POS Meta must carry signer line %q, got %+v", want, doc.Meta)
+		}
 	}
 }
 
