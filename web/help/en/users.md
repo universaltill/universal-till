@@ -44,7 +44,7 @@ A wrong current PIN counts as a failed sign-in attempt on this till, the same as
 An unattended, signed-in till is a real risk — anyone walking past can sell, refund or open settings as whoever last signed in. The till locks itself back to the PIN pad after it sits untouched for a while, no action or transaction lost: whatever was in the basket is exactly as you left it once you (or anyone else allowed to) sign back in.
 
 1. Set the timeout from Settings → Auto-lock: off, or 2/5/10/15/30/60 minutes — 10 minutes to start with, until someone changes it.
-2. Any tap, key press or scan on the till resets the countdown — it only fires after genuinely sitting idle.
+2. Any tap, key press or scan on the till resets the countdown — it only fires after genuinely sitting idle. A screen updating itself (the status chips, new buttons or open orders appearing on the sale screen) doesn't count as activity. The exception is the screens meant to be watched rather than touched — the kitchen display, the order-status board and the kiosk counter orders — which stay signed in while they are open.
 3. Changing this setting needs a manager's or admin's role, the same [manager-approval prompt](/help/elevation) as other settings changes.
 4. Don't want to wait for the timeout? Use the Lock button next to your name in the left-hand menu to lock it yourself, any time.
 

@@ -118,8 +118,12 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// who found this URL while such a session was still alive walked
 		// straight into Settings with no PIN prompt at all.
 		if next != "kiosk" {
+			// ResolveNoTouch (ut-docs#2901): the idle auto-lock's own
+			// timer navigates here, and that is not activity — touching
+			// the session would bounce an idle till straight back to "/"
+			// instead of letting the server revoke it.
 			if c, err := r.Cookie(auth.CookieName); err == nil {
-				if _, ok := svc.Resolve(r.Context(), c.Value); ok {
+				if _, ok := svc.ResolveNoTouch(r.Context(), c.Value); ok {
 					http.Redirect(w, r, loginDestination(next), http.StatusSeeOther)
 					return
 				}
