@@ -197,13 +197,17 @@ func TestHostStorageDeniedWithoutPermission(t *testing.T) {
 }
 
 // A configurable connector declares net:* (its target host is only known from
-// install-time settings). The http host function must honour the wildcard.
+// install-time settings). net:* authorises PUBLIC hosts (proved with a
+// stubbed resolver in TestHTTPEgress); since ut-docs#2891 it no longer
+// reaches loopback — here the till's own machine — without the exact grant.
 func TestHostHTTPWildcardNet(t *testing.T) {
 	guest := buildHostfnGuest(t)
 	d := hostfnTestDB(t)
 	const pluginID = "com.test.wildcardnet"
 
+	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
 		_, _ = w.Write([]byte("pong"))
 	}))
 	defer srv.Close()
@@ -219,8 +223,11 @@ func TestHostHTTPWildcardNet(t *testing.T) {
 	w.hasNet[pluginID] = true
 
 	res := runGuest(t, w, d, pluginID, srv.URL+"/ping")
-	if res["http_status"] != float64(200) {
-		t.Fatalf("net:* did not authorise the call; http_status = %v", res["http_status"])
+	if res["http_code"] != float64(hostErrDenied) {
+		t.Fatalf("net:* reached loopback: http_code = %v, status = %v, want %d (denied)", res["http_code"], res["http_status"], hostErrDenied)
+	}
+	if hits.Load() != 0 {
+		t.Fatal("denied request still reached the loopback server")
 	}
 }
 

@@ -155,6 +155,10 @@ type CatalogView struct {
 func Init(ctx context.Context, cfg *config.Config, db *sql.DB) (*Manager, error) {
 	log.Printf("initialising plugins for env=%s", cfg.Env)
 
+	// Plugin http_request egress refuses the till's own listen port
+	// (ut-docs#2891); server.Start refines this with the port actually bound.
+	SetTillListenAddr(cfg.ListenAddr)
+
 	repo := data.NewPluginRepo(db)
 	m := &Manager{
 		MenuPlugins: make(map[string]MenuPlugin),

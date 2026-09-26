@@ -575,8 +575,10 @@ func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 			http.Error(w, "plugin ID is required", http.StatusBadRequest)
 			return
 		}
-		// The id indexes a directory under ./data/plugins; reject traversal.
-		if strings.ContainsAny(pluginID, `/\`) || strings.Contains(pluginID, "..") {
+		// The id indexes a directory under ./data/plugins that is
+		// RemoveAll'd below. The old "/, \ or .." check let "." through —
+		// RemoveAll(plugins/.) = every plugin's files (ut-docs#2891 M2).
+		if plugins.ValidatePluginID(pluginID) != nil {
 			http.Error(w, "invalid plugin id", http.StatusBadRequest)
 			return
 		}
@@ -863,6 +865,12 @@ func handleRollbackPlugin(d *common.Deps) http.HandlerFunc {
 			http.Error(w, "version is required", http.StatusBadRequest)
 			return
 		}
+		// Both reach filepath.Join in RollbackManager (ut-docs#2891 M2);
+		// the manager re-validates — this is the 400 for the caller.
+		if plugins.ValidatePluginID(pluginID) != nil || plugins.ValidatePluginVersion(req.Version) != nil {
+			http.Error(w, "invalid plugin id or version", http.StatusBadRequest)
+			return
+		}
 
 		rollbackMgr := plugins.NewRollbackManager(d.Db, paths.Plugins())
 		// TODO: Extract actual user from session
@@ -905,6 +913,10 @@ func handleListPluginVersions(d *common.Deps) http.HandlerFunc {
 		pluginID := r.PathValue("id")
 		if pluginID == "" {
 			http.Error(w, "plugin ID is required", http.StatusBadRequest)
+			return
+		}
+		if plugins.ValidatePluginID(pluginID) != nil {
+			http.Error(w, "invalid plugin id", http.StatusBadRequest)
 			return
 		}
 
@@ -1114,6 +1126,10 @@ func handleExportPlugin(d *common.Deps) http.HandlerFunc {
 		version := strings.TrimSpace(r.URL.Query().Get("version"))
 		if pluginID == "" || version == "" {
 			http.Error(w, "plugin id (path) and version (?version=) are required", http.StatusBadRequest)
+			return
+		}
+		if plugins.ValidatePluginID(pluginID) != nil || plugins.ValidatePluginVersion(version) != nil {
+			http.Error(w, "invalid plugin id or version", http.StatusBadRequest)
 			return
 		}
 

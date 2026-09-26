@@ -332,14 +332,17 @@ func TestHostTCPExactGrantRoundTrip(t *testing.T) {
 	}
 }
 
-// The tcp:* wildcard (review-gated, same convention as net:*) authorises any
-// host:port.
+// The tcp:* wildcard (review-gated, same convention as net:*) passes the
+// NAME check for any host:port, but since ut-docs#2891 (review M1) it reaches
+// public addresses only: a loopback device like this fixture needs the exact
+// tcp:<host>:<port> grant. The public-address and LAN cases are in
+// wasm_tcp_egress_test.go (TestHostTCPEgressPolicy).
 func TestHostTCPWildcardGrant(t *testing.T) {
 	guest := buildTCPGuest(t)
 	d := hostfnTestDB(t)
 	const pluginID = "com.test.tcpwild"
 
-	host, port, _, _ := startTCPFixture(t, func(conn net.Conn) {
+	host, port, accepts, _ := startTCPFixture(t, func(conn net.Conn) {
 		defer conn.Close()
 		buf := make([]byte, 64)
 		if n, err := conn.Read(buf); err == nil {
@@ -356,11 +359,11 @@ func TestHostTCPWildcardGrant(t *testing.T) {
 		"mode": "roundtrip", "host": host, "port": port,
 		"connect_timeout_ms": 2000, "read_timeout_ms": 2000, "send": "ping",
 	})
-	if res["open_code"] != float64(0) {
-		t.Fatalf("tcp:* did not authorise the open; open_code = %v", res["open_code"])
+	if res["open_code"] != float64(hostErrDenied) {
+		t.Fatalf("tcp:* reached a loopback device; open_code = %v, want %d (denied)", res["open_code"], hostErrDenied)
 	}
-	if res["read_data"] != "ping" {
-		t.Errorf("echo round trip failed: read_data = %q", res["read_data"])
+	if n := accepts.Load(); n != 0 {
+		t.Fatalf("loopback device saw %d connection(s) under tcp:* alone", n)
 	}
 }
 

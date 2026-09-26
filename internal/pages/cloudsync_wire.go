@@ -966,8 +966,11 @@ func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, v
 // reload-and-rebuild-menu tail. Also the uninstall step of the LAN plugin
 // sync (syncPullPlugins, ut-docs#460).
 func cloudRemovePlugin(ctx context.Context, d *common.Deps, pluginID string) (string, error) {
-	if strings.ContainsAny(pluginID, `/\`) || strings.Contains(pluginID, "..") {
-		return "", fmt.Errorf("invalid plugin id")
+	// The id is RemoveAll'd under paths.Plugins() below — "." or "" would
+	// be the whole plugins dir (ut-docs#2891 M2), so the shared validator,
+	// not a "/, \ or .." check.
+	if err := plugins.ValidatePluginID(pluginID); err != nil {
+		return "", fmt.Errorf("invalid plugin id: %w", err)
 	}
 	if err := plugins.UninstallPlugin(ctx, d.Db, pluginID); err != nil {
 		return "", err

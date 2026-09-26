@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/data"
 )
 
 func writeVersionDir(t *testing.T, base, pluginID, version string, withManifest bool) string {
@@ -276,5 +278,49 @@ func TestRollback_PreservesRollForwardToTheVersionItLeaves(t *testing.T) {
 	}
 	if !found2 {
 		t.Fatalf("expected 2.0.0 (the version just left) to remain reachable for a future roll-forward, got history: %+v", history)
+	}
+}
+
+// ut-docs#2891 security review M2: POST /api/plugins/{id}/rollback and GET
+// /api/plugins/{id}/versions fed the path id and the body version straight
+// into filepath.Join. A version of "../../com.other.plugin/1.0.0" resolved to
+// ANOTHER plugin's install tree (and was then persisted as this plugin's
+// active version). Both are now validated inside the manager itself.
+func TestRollbackRefusesTraversalVersion(t *testing.T) {
+	db := managerTestDB(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	rm := NewRollbackManager(db, base)
+	const pluginID = "com.test.rb"
+	seedInstalledPlugin(t, db, pluginID, "RB", "2.0.0", "none", true)
+	writeVersionDir(t, base, pluginID, "2.0.0", true)
+	// The traversal target really exists — only validation can stop it.
+	other := filepath.Join(base, "com.other.plugin", "1.0.0")
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"id":"com.test.rb","name":"RB","version":"1.0.0","entrypoint":"./run","runtime":"none","canonical_type":"page","device_arch":"any"}`
+	if err := os.WriteFile(filepath.Join(other, "manifest.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, v := range []string{"../../com.other.plugin/1.0.0", "..", "1.0.0/../../../x", `..\..\x`, "/etc"} {
+		if err := rm.Rollback(ctx, pluginID, v, "test"); err == nil || !strings.Contains(err.Error(), "invalid plugin version") {
+			t.Errorf("Rollback(version %q) = %v, want an invalid-version error", v, err)
+		}
+	}
+	if got, _, _ := data.NewPluginRepo(db).GetActivePluginVersion(ctx, pluginID); got != "2.0.0" {
+		t.Fatalf("active version changed to %q after refused rollbacks", got)
+	}
+	for _, id := range []string{"..", "../com.other.plugin", "com.test.rb/../..", "COM.TEST.RB/x"} {
+		if err := rm.Rollback(ctx, id, "1.0.0", "test"); err == nil || !strings.Contains(err.Error(), "invalid plugin id") {
+			t.Errorf("Rollback(id %q) = %v, want an invalid-id error", id, err)
+		}
+		if _, err := rm.GetVersionHistory(ctx, id); err == nil || !strings.Contains(err.Error(), "invalid plugin id") {
+			t.Errorf("GetVersionHistory(id %q) = %v, want an invalid-id error", id, err)
+		}
+	}
+	if err := rm.StoreVersion(pluginID, "../escape", filepath.Join(base, pluginID, "versions", "2.0.0")); err == nil {
+		t.Error("StoreVersion accepted a traversal version")
 	}
 }

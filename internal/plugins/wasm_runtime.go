@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,6 +54,7 @@ type WasmRuntime struct {
 	netTimeout time.Duration   // wider deadline for plugins holding net:*
 	hasNet     map[string]bool // plugin id → granted net:* permission
 	hasTCP     map[string]bool // plugin id → granted tcp:* permission (raw device transport)
+	httpClient *http.Client    // http_request egress client; nil → defaultPluginHTTPClient
 	db         *sql.DB         // for host functions; set by Sync
 	baseDir    string
 	unsubGen   int // bumped per sync so stale handlers no-op
@@ -148,6 +150,14 @@ func (w *WasmRuntime) timeoutFor(pluginID, eventType string) time.Duration {
 	return timeout
 }
 
+// wasmMemoryLimitPages caps every plugin instance's linear memory
+// (ut-docs#2891). wazero's default is 65536 pages — 4 GiB per instance — so a
+// buggy or hostile plugin could OOM a Pi or tablet till mid-sale. 1024 pages
+// of 64 KiB = 64 MiB; shipped first-party plugins start at ~45 pages. A
+// module whose initial memory exceeds the cap fails to instantiate, and
+// memory.grow past it returns -1 inside the guest; the till keeps running.
+const wasmMemoryLimitPages = 1024
+
 // NewWasmRuntime creates the runtime; baseDir is the plugin install root
 // (e.g. ./data/plugins).
 func NewWasmRuntime(baseDir string) *WasmRuntime {
@@ -168,7 +178,9 @@ func NewWasmRuntime(baseDir string) *WasmRuntime {
 	// computes and applies actually terminate the guest module, bounding
 	// that hold — matching wazero's own documented guidance for untrusted
 	// guests.
-	rt := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig().WithCloseOnContextDone(true))
+	rt := wazero.NewRuntimeWithConfig(ctx, wazero.NewRuntimeConfig().
+		WithCloseOnContextDone(true).
+		WithMemoryLimitPages(wasmMemoryLimitPages))
 	wasi_snapshot_preview1.MustInstantiate(ctx, rt)
 	if err := instantiateHostModule(ctx, rt); err != nil {
 		// Modules that import "ut" will fail to instantiate; log, don't crash.
@@ -546,7 +558,7 @@ func (w *WasmRuntime) HandleEvent(ctx context.Context, pluginID string, ev Event
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	// Host functions ("ut" module) resolve the caller through this state.
-	cctx = withHostState(cctx, &hostState{pluginID: pluginID, db: db})
+	cctx = withHostState(cctx, &hostState{pluginID: pluginID, db: db, httpClient: w.httpClient})
 
 	var stdout, stderr bytes.Buffer
 	cfg := wazero.NewModuleConfig().
