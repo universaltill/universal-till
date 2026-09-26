@@ -5,11 +5,12 @@ import { watchConsole } from './helpers';
 // Root cause: the "never hold the screen" watchdog was armed when the View
 // Transition was CREATED, and a boosted (ADR-0098) hop creates it before
 // htmx swaps the page in — on a slow device the swap alone used most of the
-// 600ms budget, so the 200ms slide was cut short or skipped outright.
+// then-600ms budget, so the then-200ms slide was cut short or skipped
+// outright. (ADR-0118 since: 400ms motion, 1000ms post-ready watchdog.)
 //
 // This spec stands in for the slow device deterministically: a listener
 // busies the main thread for 750ms inside the transition's update callback
-// (htmx fires afterSwap there), i.e. longer than the whole old budget. The
+// (htmx fires afterSwap there), i.e. longer than the old 600ms budget. The
 // slide must still start (ready resolves) and play to the end without the
 // watchdog skipping it. Headless Chromium runs same-document transitions
 // (unlike cross-document ones — see fixtures.ts), so this is the real
@@ -71,7 +72,7 @@ test.describe('page slide survives a slow swap (ut-docs#2496)', () => {
     expect(rec.created, 'the boosted hop runs as a same-document View Transition').toBe(true);
     expect(rec.stalledInside, 'the 750ms stall ran inside the transition update callback').toBe(true);
     expect(rec.ready, 'the slide starts after the slow swap instead of being skipped').toBe('resolved');
-    expect(rec.slide).toContain('ut-page-in');
+    expect(rec.slide).toContain('ut-page-slide-in');
     expect(rec.skipped, `the watchdog must not cut a slide that started late (create->ready ${rec.readyAfterMs}ms; a value near 2000 means the runner hit the creation backstop)`).toBe(false);
     assertClean();
   });

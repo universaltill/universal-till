@@ -78,25 +78,70 @@
         // ut-docs#2496: the one "a transition must never hold the screen"
         // watchdog, shared by the cross-document (pagereveal, below) and
         // same-document (boosted #ut-page swap, shell script) paths. The
-        // 600ms budget starts when the MOTION starts (vt.ready), never when
-        // the transition is created: a same-document transition is created
-        // BEFORE htmx swaps the page in, and on the pilot tablet that swap
-        // alone can take most of 600ms, so a creation-time timer cut the
-        // 200ms slide short or skipped it outright -- the "not like Apple
-        // anymore" regression (reproduced at 4x/8x CPU throttle). A 2s
+        // 1000ms budget (the 400ms motion of ADR-0118 plus margin for a slow
+        // tablet's dropped frames) starts when the MOTION starts (vt.ready),
+        // never when the transition is created: a same-document transition
+        // is created BEFORE htmx swaps the page in, and on the pilot tablet
+        // that swap alone can take most of the budget, so a creation-time
+        // timer cut the slide short or skipped it outright -- the "not like
+        // Apple anymore" regression (reproduced at 4x/8x CPU throttle). A 2s
         // backstop from creation still covers an engine whose ready never
         // settles (a swap that itself runs past 2s trips it just before
         // ready and skips a slide that was about to play -- harmless: the
         // swap held the screen, not the transition). Defined before the
         // feature check below so the shell script can always find it.
+        //
+        // Input is never blocked by the motion either (ADR-0118). app.css
+        // sets `::view-transition { pointer-events: none }`, but Chromium
+        // (141, probed) still hit-tests every pointer to <html> while a
+        // transition runs, so a tap during the 400ms would be lost. A
+        // pointerdown during a transition therefore ends it on the spot
+        // (the operator's touch takes over, as on a phone): hit testing is
+        // back on the real, already-swapped DOM synchronously, so a touch
+        // tap's click (hit-tested again at tap time) lands natively; a mouse
+        // click, whose target was fixed at mousedown (<html>), is handed to
+        // the element actually under the pointer.
         var UT = window.UT = window.UT || {};
+        var activeVT = null, skippedByTapAt = 0;
+        window.addEventListener('pointerdown', function () {
+          var vt = activeVT;
+          if (!vt) return;
+          activeVT = null;
+          skippedByTapAt = Date.now();
+          try { vt.skipTransition(); } catch (e) { /* already done */ }
+        }, true);
+        window.addEventListener('click', function (e) {
+          if (!skippedByTapAt || Date.now() - skippedByTapAt > 1000) return;
+          skippedByTapAt = 0;
+          if (e.target !== document.documentElement) return;
+          var el = document.elementFromPoint(e.clientX, e.clientY);
+          if (!el || el === document.documentElement) return;
+          e.stopImmediatePropagation();
+          e.preventDefault();
+          // The trusted mousedown was hit-tested to <html> too, so it never
+          // focused anything: focus the field/control under the pointer first
+          // (a mouse click on the scan field mid-motion must leave the caret
+          // there -- review M1).
+          var f = el.closest && el.closest('input,textarea,select,[contenteditable],[tabindex]');
+          if (f && f.focus) { try { f.focus(); } catch (err) { /* not focusable */ } }
+          // dispatchEvent, not el.click(): the element under the pointer is
+          // often an SVG icon inside the tile (no .click()); a synthetic
+          // click still runs a link's/button's activation behaviour.
+          el.dispatchEvent(new MouseEvent('click', {
+            bubbles: true, cancelable: true, composed: true, view: window,
+            clientX: e.clientX, clientY: e.clientY, screenX: e.screenX, screenY: e.screenY,
+            button: e.button, buttons: e.buttons, detail: e.detail,
+            ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey
+          }));
+        }, true);
         UT.vtWatchdog = function (vt) {
           if (!vt || !vt.skipTransition) return;
           var guard = null;
+          activeVT = vt;
           function skip() { vt.skipTransition(); }
-          function clear() { clearTimeout(backstop); clearTimeout(guard); }
+          function clear() { clearTimeout(backstop); clearTimeout(guard); if (activeVT === vt) activeVT = null; }
           var backstop = setTimeout(skip, 2000);
-          if (vt.ready && vt.ready.then) vt.ready.then(function () { clearTimeout(backstop); guard = setTimeout(skip, 600); }, clear);
+          if (vt.ready && vt.ready.then) vt.ready.then(function () { clearTimeout(backstop); guard = setTimeout(skip, 1000); }, clear);
           if (vt.finished && vt.finished.then) vt.finished.then(clear, clear);
         };
         if (!('navigation' in window) || !window.CSS || !CSS.supports('view-transition-name: x')) return;
@@ -149,10 +194,11 @@
           document.documentElement.setAttribute('data-nav-dir', d);
           if (vt.types && d === 'pop') vt.types.add('back');
           // Watchdog: a transition must never hold the screen. The motion
-          // is 200ms; anything still running at 600ms is jank or a stuck
-          // engine (CI's Linux headless Chromium never revealed the new
-          // document at all, ut-docs#2223) -- skip it so the live page
-          // takes input. Cleared as soon as the transition finishes.
+          // is 400ms (ADR-0118); anything still running 1000ms after it
+          // started is jank or a stuck engine (CI's Linux headless Chromium
+          // never revealed the new document at all, ut-docs#2223) -- skip it
+          // so the live page takes input. Cleared as soon as the transition
+          // finishes.
           UT.vtWatchdog(vt);
         });
       })();
@@ -166,11 +212,15 @@
               response, an error page, a theme/language change, the FIRST
               navigation after a self-update) the swap is cancelled and the
               browser navigates to the response's final URL as a full document.
-           2. Same event -- sync what lives OUTSIDE the swapped region from the
-              response's <html>/<body> opening tags: lang, dir, the server's
-              body class list (runtime classes like osk-padded survive; the
-              server's own list is carried in data-shell-classes) and every
-              data-* attribute. Parsed from those two tags only.
+           2. Same event DECIDES, the swap APPLIES -- sync what lives OUTSIDE
+              the swapped region from the response's <html>/<body> opening
+              tags: lang, dir, --ui-scale, the server's body class list
+              (runtime classes like osk-padded survive; the server's own list
+              is carried in data-shell-classes) and every data-* attribute.
+              Parsed from those two tags only, and applied at the start of the
+              View Transition's update callback (or on htmx:afterSwap when no
+              transition runs) -- never in beforeSwap, which runs before the
+              old page's snapshot is captured (ut-docs#2496, ADR-0118).
            3. Push/pop direction (ADR-0097's depth heuristic, now from the
               current URL to the final URL) on every boosted swap, and
               htmx:beforeTransition cancelled under reduced motion so the
@@ -254,14 +304,52 @@
           return 1 + p.split('/').filter(Boolean).length;
         }
         var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
+        // Snapshot first, then mutate (ut-docs#2496, ADR-0118). The <html>/
+        // <body> sync for a boosted swap is DECIDED in htmx:beforeSwap but
+        // APPLIED here, exactly once, by whichever runs first: the start of
+        // the View Transition's update callback (the old-state snapshot is
+        // already captured by then) or htmx:afterSwap (no transition ran:
+        // reduced motion / no VT support -- same task as the swap, before any
+        // paint, before the new page's scripts run in settle). Applying it in
+        // beforeSwap -- before htmx even calls startViewTransition -- dropped
+        // body.sale-screen (height:100dvh) under the OUTGOING page, so Sell
+        // collapsed/grew before its snapshot and that is what slid out ("it
+        // first removes the lower part of the page, the page goes down").
+        var pendingSync = null, pendingXhr = null;
+        function flushShellSync() {
+          var f = pendingSync;
+          pendingSync = null; pendingXhr = null;
+          if (f) f();
+        }
+        document.addEventListener('htmx:afterSwap', function (e) {
+          if (pendingSync && (e.detail || {}).xhr === pendingXhr) flushShellSync();
+        });
+        // A swap that throws never reaches afterSwap: drop its sync so no
+        // later, unrelated transition can flush a stale shell (review M2).
+        document.addEventListener('htmx:swapError', function () { pendingSync = null; pendingXhr = null; });
         // Belt and braces from ADR-0097, kept for the same-document case: a
         // skipped/aborted transition rejects its promises (a console error per
         // skip otherwise), and nothing may ever hold the screen -- the shared
-        // UT.vtWatchdog (600 ms from when the motion starts, ut-docs#2496).
+        // UT.vtWatchdog (1000 ms from when the motion starts, ut-docs#2496,
+        // ADR-0118).
         if (document.startViewTransition) {
           var orig = document.startViewTransition;
-          document.startViewTransition = function () {
-            var vt = orig.apply(document, arguments);
+          document.startViewTransition = function (arg) {
+            var args = Array.prototype.slice.call(arguments);
+            // The update callback (plain function, or the newer { update }
+            // options form) starts with the deferred shell sync. A skipped
+            // transition still runs its update callback, so the sync is never
+            // lost; flushShellSync is a no-op for a transition that is not a
+            // boosted shell swap (nothing pending).
+            if (typeof arg === 'function') {
+              args[0] = function () { flushShellSync(); return arg.apply(this, arguments); };
+            } else if (arg && typeof arg.update === 'function') {
+              var upd = arg.update, opts = {};
+              for (var k in arg) opts[k] = arg[k];
+              opts.update = function () { flushShellSync(); return upd.apply(this, arguments); };
+              args[0] = opts;
+            }
+            var vt = orig.apply(document, args);
             try {
               ['ready', 'updateCallbackDone', 'finished'].forEach(function (k) { if (vt[k] && vt[k].catch) vt[k].catch(function () {}); });
               UT.vtWatchdog(vt);
@@ -293,6 +381,7 @@
           // requestConfig.elt is the anchor that issued the request; detail.elt
           // here is the pre-retarget swap target (body), not the issuer.
           if (!rc.boosted || !shellNav(rc.elt)) return;
+          pendingSync = null; pendingXhr = null;
           var xhr = d.xhr;
           var url = finalURL(d);
           var ct = (xhr && xhr.getResponseHeader && xhr.getResponseHeader('Content-Type')) || '';
@@ -321,7 +410,15 @@
           // boosted swap, motion or not; beforeTransition below only decides
           // whether the transition itself runs.
           document.documentElement.setAttribute('data-nav-dir', depth(url) < depth(location.href) ? 'pop' : 'push');
+          // Listeners only, no visual effect -- and it must run BEFORE the swap
+          // in every path: deferred to afterSwap, the outgoing page's own
+          // htmx:afterSwap handlers would fire for the swap that replaces it.
           dropPageListeners();
+          // Everything that can change layout is deferred (see flushShellSync).
+          pendingXhr = xhr;
+          pendingSync = function () { syncShell(html); };
+        });
+        function syncShell(html) {
           var h = openTag(html, 'html');
           if (h) {
             ['lang', 'dir'].forEach(function (a) {
@@ -351,7 +448,7 @@
               if (at.name.indexOf('data-') === 0 && !keep[at.name]) document.body.removeAttribute(at.name);
             });
           }
-        });
+        }
         document.addEventListener('htmx:beforeTransition', function (e) {
           var d = e.detail || {};
           var rc = d.requestConfig || {};
