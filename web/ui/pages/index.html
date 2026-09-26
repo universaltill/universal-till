@@ -462,7 +462,11 @@
       <span id="open-orders-watch" hidden aria-hidden="true"></span>
     </div>
 
-    <dialog id="payment-overlay" class="payment-overlay" aria-labelledby="payment-overlay-title">
+    <!-- data-ut-no-scrim (ut-docs#2873): a panel docked beside the basket,
+         which stays visible, undimmed and live while paying (New sale/Hold
+         in the footer beside it, ut-docs#1386/#1542) -- not a blocking
+         popup, so no shared scrim behind it. -->
+    <dialog id="payment-overlay" class="payment-overlay" aria-labelledby="payment-overlay-title" data-ut-no-scrim>
       <div class="payment-overlay-body">
         <div class="payment-overlay-header">
           <h3 id="payment-overlay-title">{{ T "tender.title" }}</h3>

@@ -688,8 +688,14 @@
              this dialog sits earlier in the DOM. app.css shares the
              visual ruleset across both class names by selector list
              instead, so the two never look different by accident. */}}
+        {{/* data-ut-scrim-dismiss (ut-docs#2873): a pure picker (choose a
+             category tab; nothing typed, no money) -- a tap on the popup
+             scrim closes it; @close keeps categoryOverflowOpen in step with
+             that (and any other) native close and returns lost focus to
+             the More button, as closeCategoryOverflow() does. */}}
         <dialog id="category-overflow-dialog" x-ref="overflowDialog" class="modifier-modal category-overflow-dialog"
-                aria-labelledby="category-overflow-dialog-title"
+                aria-labelledby="category-overflow-dialog-title" data-ut-scrim-dismiss
+                @close="categoryOverflowOpen = false; if (!document.activeElement || document.activeElement === document.body || $el.contains(document.activeElement)) { $refs.moreBtn && $refs.moreBtn.focus() }"
                 @keydown.escape.prevent="closeCategoryOverflow()" @keydown.tab="trapOverflowTab($event)">
           <div class="category-filter-dialog-head">
             <h3 id="category-overflow-dialog-title">{{ T "products.categories" }}</h3>
