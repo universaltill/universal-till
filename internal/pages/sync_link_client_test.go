@@ -14,8 +14,10 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
+	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/discovery"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -154,6 +156,34 @@ func TestReplicaLink_HelloKicksAPullAndAnAdminChangeArrivesInASecond(t *testing.
 	}
 	if took := time.Since(start); took > 1500*time.Millisecond {
 		t.Fatalf("admin change took %v to reach the replica, want about a second", took)
+	}
+}
+
+// ut-docs#2897: the replica's hello carries its own cloud device id
+// (enroll.CurrentStatus, #2730) alongside the LAN pairing till_id, so the
+// main till's status frame can name a satellite/replica by the id my.'s
+// Tills rows and Live panel actually key on.
+func TestReplicaLink_HelloCarriesItsOwnCloudDeviceID(t *testing.T) {
+	f := newSyncLinkFixture(t)
+	tillID := f.enrol(t, "Till 2", "token-abc")
+
+	cfg := &config.Config{Marketplace: config.MarketplaceConfig{DeviceID: "till-cloud-xyz"}}
+	enroll.Init(t.Context(), cfg, newMemKV(), &sync.WaitGroup{})
+	t.Cleanup(func() { enroll.Init(context.Background(), &config.Config{}, newMemKV(), &sync.WaitGroup{}) })
+
+	replica := linkReplica(t, f.srv.URL, tillID, fastLinkClientOptions())
+	runReplica(t, replica, time.Hour, time.Hour)
+
+	if !waitFor(t, 3*time.Second, replica.LinkClient.Linked) {
+		t.Fatal("replica never linked")
+	}
+	p := f.dp.Link.Peer(tillID)
+	if p == nil {
+		t.Fatal("the main till has no link for the replica")
+	}
+	h, ok := p.Hello()
+	if !ok || h.TillID != tillID || h.CloudDeviceID != "till-cloud-xyz" {
+		t.Fatalf("replica hello at the main till = %+v (ok=%v), want till_id %q and cloud_device_id till-cloud-xyz", h, ok, tillID)
 	}
 }
 

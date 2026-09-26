@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http/httptest"
 	"strings"
@@ -135,6 +136,56 @@ func TestCloudLinkStatusFromHub(t *testing.T) {
 	}
 }
 
+// ut-docs#2897: a live peer's cloud device id (carried on its fleetlink
+// hello, ut-docs#2730's per-till identity) rides alongside till_id on the
+// status frame, so my.'s Tills rows and Live panel (keyed by cloud device
+// id) can name it instead of showing the raw LAN pairing id. An older
+// replica's hello has no such field: its peer status carries an empty
+// device id, till_id still present — never a stale or wrong value.
+func TestCloudLinkStatusCarriesPeerCloudDeviceID(t *testing.T) {
+	db := openPagesTestDB(t)
+	defer db.Close()
+	d := &common.Deps{Db: db}
+	st := cloudLinkStatusOf(context.Background(), d, "v9", []fleetlink.PeerInfo{
+		{TillID: "t2", HasHello: true, Hello: fleetlink.Hello{Version: "v8", CloudDeviceID: "till-cloud-2"}},
+		{TillID: "t3", HasHello: true, Hello: fleetlink.Hello{Version: "v8"}}, // older replica: no cloud device id
+	})
+	if len(st.Peers) != 2 {
+		t.Fatalf("status = %+v", st)
+	}
+	var t2, t3 *cloudlink.PeerStatus
+	for i := range st.Peers {
+		switch st.Peers[i].TillID {
+		case "t2":
+			t2 = &st.Peers[i]
+		case "t3":
+			t3 = &st.Peers[i]
+		}
+	}
+	if t2 == nil || t2.DeviceID != "till-cloud-2" {
+		t.Fatalf("t2 = %+v, want device id till-cloud-2", t2)
+	}
+	if t3 == nil || t3.DeviceID != "" {
+		t.Fatalf("t3 = %+v, want an empty device id (older replica)", t3)
+	}
+}
+
+// ut-docs#2897: a down till (from ListTills, ut-docs#2895) never carries a
+// device id — the tills table has no such column, so leaving it empty is
+// the honest answer rather than guessing.
+func TestCloudLinkStatusDownTillsHaveNoDeviceID(t *testing.T) {
+	db := openPagesTestDB(t)
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO tills (id, name, bearer_hash) VALUES ('t3','Register 3','h3')`); err != nil {
+		t.Fatalf("seed tills: %v", err)
+	}
+	d := &common.Deps{Db: db}
+	st := cloudLinkStatusOf(context.Background(), d, "v9", nil)
+	if len(st.Peers) != 1 || st.Peers[0].TillID != "t3" || st.Peers[0].Link != "down" || st.Peers[0].DeviceID != "" {
+		t.Fatalf("status = %+v, want t3 down with an empty device id", st.Peers)
+	}
+}
+
 // ut-docs#2895: an enrolled till with no live link is listed as down —
 // cheap enough (one indexed SELECT) to do on every status frame, same as
 // the Tills page's own 10s roster poll already does.
@@ -185,8 +236,8 @@ func TestCloudLinkStatusCapsPeers(t *testing.T) {
 		peers = append(peers, fleetlink.PeerInfo{TillID: fmt.Sprintf("t%03d", i), HasHello: true})
 	}
 	st := cloudLinkStatusOf(context.Background(), &common.Deps{Db: db}, "v9", peers)
-	if len(st.Peers) != maxCloudLinkStatusPeers || maxCloudLinkStatusPeers != 64 {
-		t.Fatalf("peers = %d (cap %d), want 64", len(st.Peers), maxCloudLinkStatusPeers)
+	if len(st.Peers) != maxCloudLinkStatusPeers {
+		t.Fatalf("peers = %d, want the cap %d", len(st.Peers), maxCloudLinkStatusPeers)
 	}
 	for i := range 10 {
 		if st.Peers[i].Link != "up" {
@@ -301,5 +352,23 @@ func TestCloudLinkSaleOfTimeFallback(t *testing.T) {
 		if got := cloudLinkSaleOf(data.SaleDetail{CreatedAt: created}, now).Time; !got.Equal(now) {
 			t.Fatalf("created_at %q -> time %v, want the fallback %v", created, got, now)
 		}
+	}
+}
+
+// ut-docs#2897 review: at the peer cap with every field at its 64-byte
+// maximum, the encoded status frame must stay under ADR-0117 §7's 16 KiB
+// message limit, or the cloud closes the link and the till redials in a loop.
+func TestCloudLinkStatusWorstCaseFitsTheMessageLimit(t *testing.T) {
+	long := strings.Repeat("x", 64)
+	st := cloudlink.Status{Version: long, UpdateState: long}
+	for range maxCloudLinkStatusPeers {
+		st.Peers = append(st.Peers, cloudlink.PeerStatus{TillID: long, DeviceID: long, Link: "down", Version: long, UpdateState: long})
+	}
+	b, err := json.Marshal(map[string]any{"v": 1, "id": long, "type": "status", "payload": st})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b) > 16*1024 {
+		t.Fatalf("worst-case status frame = %d bytes, over the 16 KiB limit", len(b))
 	}
 }

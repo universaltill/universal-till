@@ -127,10 +127,11 @@ func cloudLinkTarget(ctx context.Context, cfg *config.Config, s entitlement.Read
 	return t, reason == gateEligible
 }
 
-// maxCloudLinkStatusPeers caps the status frame's peer list: ut-cloud keeps
-// only the first 64 (tilllink.maxStatusPeers), and ADR-0117 §7 bounds a
-// message at 16 KiB. Live peers go first, so the cap drops down tills.
-const maxCloudLinkStatusPeers = 64
+// maxCloudLinkStatusPeers caps the status frame's peer list at ADR-0114's
+// 32-links-per-main-till limit, so the worst-case frame (every field at its
+// 64-byte clip) stays under ADR-0117 §7's 16 KiB message limit (#2897 review;
+// ut-cloud keeps up to 64). Live peers go first, so the cap drops down tills.
+const maxCloudLinkStatusPeers = 32
 
 // cloudLinkStatusOf is the status frame: this till plus every enrolled LAN
 // till's link — live ones from the hub (which only ever tracks currently-
@@ -146,7 +147,7 @@ func cloudLinkStatusOf(ctx context.Context, d *common.Deps, version string, peer
 			break // the hub caps links well below this (ADR-0114); defensive
 		}
 		live[p.TillID] = true
-		ps := cloudlink.PeerStatus{TillID: p.TillID, Link: "up", Version: p.Hello.Version, UpdateState: updateStateIdle}
+		ps := cloudlink.PeerStatus{TillID: p.TillID, DeviceID: p.Hello.CloudDeviceID, Link: "up", Version: p.Hello.Version, UpdateState: updateStateIdle}
 		if p.HasReport {
 			if p.Report.Version != "" {
 				ps.Version = p.Report.Version

@@ -13,6 +13,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -72,6 +73,14 @@ func newSyncLinkClient(d *common.Deps, opts fleetlink.ClientOptions) *fleetlink.
 				Plugins: get(ctx, "sync.plugins_version"),
 				Stock:   get(ctx, "sync.stock_version"),
 			},
+			// This replica's OWN cloud device id (ut-docs#2730), separate
+			// from TillID (the LAN pairing id) — lets the main till's
+			// status frame to the cloud (ut-docs#2897) name this peer as
+			// my.'s Tills rows and Live panel actually key it, instead of
+			// the raw pairing id. Empty until this till's own enrolment
+			// has minted one; the main till then just carries an empty
+			// device id, same as an older replica.
+			CloudDeviceID: enroll.CurrentStatus().DeviceID,
 		}
 	}
 	opts.Report = func(ctx context.Context) fleetlink.Report {
