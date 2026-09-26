@@ -88,6 +88,12 @@
   // present. Never adding the class at all for a reduced-motion user is
   // what actually avoids that, not just a redundant second guard.
   var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
+  // ADR-0119: UT.motionOff() (base.html's first script) is reduced motion OR
+  // the Light effects level -- never add the class under either. The bare
+  // media query is only the fallback for a page without base.html.
+  function motionOff() {
+    return (window.UT && typeof window.UT.motionOff === 'function') ? window.UT.motionOff() : !!(reduceMotion && reduceMotion.matches);
+  }
 
   function serialize(form) {
     // What the server would receive, as one comparable string.
@@ -285,7 +291,7 @@
     // never applied to close() below, since delaying the native .close()
     // for an exit animation would add latency to Cancel/Save.
     if (!dialog.open) {
-      if (!(reduceMotion && reduceMotion.matches)) dialog.classList.add('ut-dialog-fx');
+      if (!motionOff()) dialog.classList.add('ut-dialog-fx');
       dialog.show();
     }
     if (form && snapshots) snapshots.set(dialog, serialize(form));

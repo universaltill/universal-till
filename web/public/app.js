@@ -2133,6 +2133,9 @@ function initOfflineOverride(updateFn){
     domMove();
     dirty = true;
     if (drag && drag.cell === cell) capture();
+    // ADR-0119: no FLIP slide under reduced motion or the Light effects
+    // level -- the cells just land in their new places.
+    if (window.UT && typeof window.UT.motionOff === 'function' && window.UT.motionOff()) return;
     before.forEach(function (b) {
       var r2 = b.c.getBoundingClientRect();
       var dx = b.r.left - r2.left, dy = b.r.top - r2.top;
@@ -2414,7 +2417,7 @@ window.utTabBarFade = function (el) {
 // zero latency: no swap delay, no settle-timing dependency, ut-docs#239's
 // defaultSettleDelay:0 stays untouched. Compositor-only (opacity); restarts
 // on the next swap (interrupting, never queuing); skipped entirely under
-// prefers-reduced-motion.
+// prefers-reduced-motion or the Light effects level (UT.motionOff, ADR-0119).
 //
 // Which element to animate — verified against the actual vendored
 // web/public/vendor/htmx.min.js (1.9.12), not assumed:
@@ -2435,6 +2438,12 @@ window.utTabBarFade = function (el) {
 // id, e.g. basket.html's `id="basket"`).
 (function () {
   var mq = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
+  // ADR-0119: UT.motionOff() (base.html's first script) is reduced motion OR
+  // the Light effects level; the bare media query is only the fallback for
+  // a page outside base.html that loads this file without it.
+  function motionOff() {
+    return (window.UT && typeof window.UT.motionOff === 'function') ? window.UT.motionOff() : !!(mq && mq.matches);
+  }
   // afterSETTLE, not afterSwap (independent review + tester trace,
   // 2026-09-16): for an id-matched target (every outerHTML swap here, e.g.
   // #basket) htmx's settle step clones the OLD element's attributes onto
@@ -2445,7 +2454,7 @@ window.utTabBarFade = function (el) {
   // the transient add and passed. afterSettle fires after that restore,
   // in the same tick -- still zero added latency.
   document.addEventListener('htmx:afterSettle', function (evt) {
-    if (mq && mq.matches) return;
+    if (motionOff()) return;
     var d = evt.detail || {};
     // Only a swap the OPERATOR caused gets the ease (independent review,
     // 2026-09-16): htmx fires afterSwap identically for `hx-trigger="load"`

@@ -21,6 +21,7 @@ import (
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/enroll"
+	"github.com/universaltill/universal-till/internal/fxlevel"
 	"github.com/universaltill/universal-till/internal/manual"
 	moneypkg "github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/paths"
@@ -470,6 +471,28 @@ func oskModeVal() string {
 		return v
 	}
 	return "auto"
+}
+
+var effectsLevel atomic.Value // string: full|balanced|light
+
+// InitEffectsLevel publishes this till's RESOLVED visual effects level
+// (ADR-0119 §2, ut-docs#2859) to templates: base.html renders it as the one
+// fx-<level> class on <html> and as window.UT.fxLevel. "auto" is resolved
+// by the caller (internal/pages, from the host detection) before it gets
+// here; anything that is not a resolved level falls back to "full", today's
+// look — same fail-safe shape as InitOSKMode.
+func InitEffectsLevel(level string) {
+	if !fxlevel.ValidResolved(level) {
+		level = fxlevel.Full
+	}
+	effectsLevel.Store(level)
+}
+
+func effectsLevelVal() string {
+	if v, ok := effectsLevel.Load().(string); ok && v != "" {
+		return v
+	}
+	return fxlevel.Full
 }
 
 var orderTypePromptMode atomic.Value // string: top|before_item|at_pay
@@ -1167,6 +1190,8 @@ func FuncsFor(locale string) template.FuncMap {
 	funcs["uiscalepx"] = uiScalePx
 	funcs["uiscale"] = uiScaleCSS
 	funcs["oskmode"] = oskModeVal
+	// ADR-0119: the resolved effects level (base.html's <html class="fx-…">).
+	funcs["fxlevel"] = effectsLevelVal
 	funcs["idlelocksecs"] = func() int64 { return idleLockSecs.Load() }
 	funcs["ordertypepromptmode"] = orderTypePromptModeVal
 	funcs["barcodesvg"] = BarcodeSVG // scannable CODE39 for receipt numbers

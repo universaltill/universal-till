@@ -295,3 +295,56 @@ func TestApplyReplicaIdentityInvalidatesRegisteredKeyStore(t *testing.T) {
 		t.Fatal("a previously-registered KeyStore must be invalidated on replica join, not left serving a cached stale key")
 	}
 }
+
+// ADR-0119 §1 (ut-docs#2859): the join snapshot copies the primary's
+// settings rows verbatim, including its display.effects_* rows — its
+// explicit effects level and its host detection. Applying the replica
+// identity drops them all, so the new till starts at auto and detects its
+// own hardware at its next boot; other display.* rows are left alone.
+func TestApplyReplicaIdentityClearsInheritedEffectsLevel(t *testing.T) {
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init("") })
+
+	path := filepath.Join(t.TempDir(), "data", "unitill-pos.db")
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer d.Close()
+
+	for k, v := range map[string]string{
+		"display.effects_level":       "full",
+		"display.effects_detected":    "full",
+		"display.effects_reason":      "cores=16,ram=32g",
+		"display.effects_fingerprint": "c16|r32|-|linux/amd64",
+		"display.ui_scale":            "1.2",
+		// '_' is a LIKE wildcard: a key that only matches "display.effects%"
+		// through it must survive.
+		"display.effectsXlevel": "keep",
+	} {
+		if _, err := d.Exec(`INSERT INTO settings (key, value) VALUES (?, ?)`, k, v); err != nil {
+			t.Fatalf("seed %s: %v", k, err)
+		}
+	}
+
+	if err := StageReplicaIdentity(path, ReplicaIdentity{
+		PrimaryURL: "http://primary.local", TillID: "till-2", Bearer: "b",
+		ReceiptPrefix: "T2-", TillName: "Back lane",
+	}); err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	if applied, err := ApplyReplicaIdentity(d.DB, path); err != nil || !applied {
+		t.Fatalf("apply: applied=%v err=%v", applied, err)
+	}
+
+	var n int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM settings WHERE substr(key, 1, 16) = 'display.effects_'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("the main till's display.effects_* rows survived the join (rows=%d err=%v)", n, err)
+	}
+	for _, k := range []string{"display.ui_scale", "display.effectsXlevel"} {
+		var v string
+		if err := d.QueryRow(`SELECT value FROM settings WHERE key = ?`, k).Scan(&v); err != nil {
+			t.Fatalf("%s was deleted too (err=%v) — only display.effects_* may go", k, err)
+		}
+	}
+}

@@ -1,6 +1,9 @@
 {{ define "base" -}}
 <!DOCTYPE html>
-<html lang="{{ locale }}" dir="{{ dir }}" style="--ui-scale: {{ uiscale }}">
+{{- /* ADR-0119 (ut-docs#2859): the ONE effects-level gate -- exactly one
+     fx-full|fx-balanced|fx-light class, the resolved level (never auto).
+     Core CSS/JS and theme/layout plugins gate costly paint and motion on it. */}}
+<html lang="{{ locale }}" dir="{{ dir }}" class="fx-{{ fxlevel }}" style="--ui-scale: {{ uiscale }}">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -41,8 +44,12 @@
          (the Pi 5 shell) never showed the race. The reduced-motion
          override has to sit next to it for the same timing reason;
          app.css still carries both rules so the opt-in is complete for a
-         reader of the stylesheet alone. -->
-    <style>@view-transition{navigation:auto}@media (prefers-reduced-motion:reduce){@view-transition{navigation:none}}</style>
+         reader of the stylesheet alone.
+         ADR-0119 §3: rendered only when the effects level is not Light. The
+         at-rule cannot be scoped by a class, and without the opt-in no
+         cross-document navigation snapshots the page at all -- the costly
+         step on a Pi. -->
+    {{ if ne fxlevel "light" }}<style>@view-transition{navigation:auto}@media (prefers-reduced-motion:reduce){@view-transition{navigation:none}}</style>{{ end }}
     <!-- ut-docs#2223: page/menu transition PUSH-vs-POP direction. Must be
          inline here, not in app.js (loaded `defer`, may run after the
          first render opportunity/`pagereveal` already fired) -- ~30 lines,
@@ -102,6 +109,18 @@
         // click, whose target was fixed at mousedown (<html>), is handed to
         // the element actually under the pointer.
         var UT = window.UT = window.UT || {};
+        // ADR-0119 (ut-docs#2859): the per-till effects level (the same
+        // value as the fx-* class on <html>) and the ONE motion predicate
+        // every JS motion path checks -- this script, the shell script
+        // below, app.js's swap ease and record-dialog.js's open ease.
+        // prefers-reduced-motion stays the floor: the level can only take
+        // motion away, never switch it back on. Defined here, the first
+        // script in the document, so everything after it can rely on it.
+        UT.fxLevel = '{{ fxlevel }}';
+        var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
+        UT.motionOff = function () {
+          return !!(reduce && reduce.matches) || UT.fxLevel === 'light';
+        };
         var activeVT = null, skippedByTapAt = 0;
         window.addEventListener('pointerdown', function () {
           var vt = activeVT;
@@ -165,7 +184,8 @@
         // leaves the page dead to input. Skipping on the OUTGOING page
         // (pageswap) means no snapshot is even captured; the pagereveal
         // skip covers an engine that fires only one of the two.
-        var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
+        // UT.motionOff() (above) is reduced motion OR the Light effects
+        // level (ADR-0119).
         // A skipped transition rejects its ready/updateCallbackDone/finished
         // promises with AbortError ("Transition was skipped") -- by spec,
         // not a fault -- and an unhandled rejection is a console error on
@@ -178,12 +198,12 @@
         window.addEventListener('pageswap', function (e) {
           if (!e.viewTransition) return;
           quiet(e.viewTransition);
-          if (reduce && reduce.matches) e.viewTransition.skipTransition();
+          if (UT.motionOff()) e.viewTransition.skipTransition();
         });
         window.addEventListener('pagereveal', function (e) {
           var vt = e.viewTransition; if (!vt) return;
           quiet(vt);
-          if (reduce && reduce.matches) { if (vt.skipTransition) vt.skipTransition(); return; }
+          if (UT.motionOff()) { if (vt.skipTransition) vt.skipTransition(); return; }
           var act = navigation.activation;
           // A reload is not a move anywhere (pull-to-refresh on the tablet,
           // the UT.reload() sites, the server's HX-Refresh) --
@@ -371,7 +391,6 @@
           if (p === '/menu') return 1;
           return 1 + p.split('/').filter(Boolean).length;
         }
-        var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
         // Snapshot first, then mutate (ut-docs#2496, ADR-0118). The <html>/
         // <body> sync for a boosted swap is DECIDED in htmx:beforeSwap but
         // APPLIED here, exactly once, by whichever runs first: the start of
@@ -522,7 +541,10 @@
           var d = e.detail || {};
           var rc = d.requestConfig || {};
           if (!rc.boosted || !shellNav(rc.elt)) return;
-          if ((reduce && reduce.matches) || !document.startViewTransition) e.preventDefault();
+          // UT.motionOff(): reduced motion or the Light effects level
+          // (ADR-0119) -- cancelled here, so no View Transition and no
+          // whole-page snapshot is ever created for that till.
+          if (UT.motionOff() || !document.startViewTransition) e.preventDefault();
         });
       })();
     </script>

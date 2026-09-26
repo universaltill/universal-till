@@ -315,6 +315,29 @@
     </select>
     <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
   </form>
+  <!-- ADR-0119 (ut-docs#2859): this till's visual effects level, per
+       station and never synced. Same form/reload shape and role as the
+       ui-scale/osk controls; the new level takes effect on the reload (its
+       shell signature changes, so it is one full load). The line under the
+       selector puts the last host detection into words, whatever the
+       choice, so an operator who picked a level can still see what Auto
+       would use. -->
+  <form hx-post="/api/settings/effects-level" hx-swap="none" hx-on::after-request="if(event.detail.successful){UT.reload('settings-effects-level')}else{document.getElementById('settings-save-error').hidden=false}" class="set-gap" id="settings-effects-level">
+    {{ $fx := .fxView }}
+    <label class="set-row">{{ T "settings.display.effects" }}
+      <select name="level" data-testid="effects-level-select">
+        <option value="auto"     {{ if eq $fx.Level "auto" }}selected{{ end }}>{{ T "settings.display.effects_auto" }}</option>
+        <option value="full"     {{ if eq $fx.Level "full" }}selected{{ end }}>{{ T "settings.display.effects_full" }}</option>
+        <option value="balanced" {{ if eq $fx.Level "balanced" }}selected{{ end }}>{{ T "settings.display.effects_balanced" }}</option>
+        <option value="light"    {{ if eq $fx.Level "light" }}selected{{ end }}>{{ T "settings.display.effects_light" }}</option>
+      </select>
+      <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
+    </label>
+    <p class="muted">{{ T "settings.display.effects_help" }}</p>
+    {{ if $fx.Detected }}
+    <p class="muted" data-testid="effects-detected">{{ T "settings.display.effects_detected" }} {{ T (printf "settings.display.effects_name_%s" $fx.Detected) }}{{ if $fx.ReasonParts }} ({{ range $i, $p := $fx.ReasonParts }}{{ if $i }}{{ T "settings.display.effects_reason_sep" }}{{ end }}{{ if $p.Arg }}{{ printf (T $p.Key) $p.Arg }}{{ else }}{{ T $p.Key }}{{ end }}{{ end }}){{ end }}</p>
+    {{ end }}
+  </form>
   <form hx-post="/api/settings/osk" hx-swap="none" hx-on::after-request="if(event.detail.successful){UT.reload('settings-osk')}else{document.getElementById('settings-save-error').hidden=false}" class="set-gap">
     {{ $osk := oskmode }}
     <label class="set-row">{{ T "settings.display.osk" }}
