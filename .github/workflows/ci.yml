@@ -73,6 +73,8 @@ jobs:
         run: shellcheck scripts/ci/*.sh
       - name: Release checksums completeness check regression test (ut-docs#2863)
         run: bash scripts/ci/check-release-checksums_test.sh
+      - name: macOS notarization never holds a release — wiring test (ut-docs#2917)
+        run: bash scripts/ci/release-macos-nonblocking_test.sh
       - name: e2e launchers never open a browser (ut-docs#2704)
         run: bash scripts/ci/guard-e2e-no-browser.sh
       - name: e2e no-browser guard regression test

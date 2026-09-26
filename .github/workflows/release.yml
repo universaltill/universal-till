@@ -196,8 +196,8 @@ jobs:
   # Code signing (ut-docs#2480, ut-docs#2610): the Windows binaries are signed
   # by .goreleaser.yaml's post-build hook (packaging/windows/sign-exe.sh)
   # BEFORE they are archived, so the portable zip and checksums.txt carry the
-  # signed files. Re-zipping in a later job would race macos-app's
-  # read-modify-write of checksums.txt. Hence this job runs in the
+  # signed files. Re-zipping in a later job would race the checksums /
+  # macos-dmg-attach read-modify-write of checksums.txt. Hence this job runs in the
   # `release-signing` environment with job-scoped OIDC, and every action it
   # uses is SHA-pinned.
   goreleaser:
@@ -372,8 +372,9 @@ jobs:
 
   # A real macOS .app (embedded WebView, no Terminal) packaged as a .dmg. Needs
   # a macOS runner for CGO/WKWebView + codesign/iconutil, so it's a separate
-  # job; goreleaser already published the core release, so a failure here never
-  # blocks it. It Developer-ID signs + notarizes when the signing secrets are
+  # job. It never holds the release (ut-docs#2917): publish-release does not
+  # need it, and the .dmg reaches the release only via macos-dmg-attach,
+  # after publish. It Developer-ID signs + notarizes when the signing secrets are
   # configured, otherwise ad-hoc signs (Apple Silicon requires a signature to
   # run; ad-hoc downloads need right-click → Open). See docs/arch/desktop-app.md.
   macos-app:
@@ -384,8 +385,15 @@ jobs:
     needs: [prepare, goreleaser]
     if: ${{ !cancelled() && needs.prepare.result == 'success' }}
     runs-on: macos-14 # Apple Silicon
+    # ut-docs#2917: bounded. Notarization alone is capped at NOTARY_TIMEOUT
+    # (below); the rest of the build is ~15 min. On timeout/rejection this job
+    # fails loudly and no .dmg is attached — the other platforms already
+    # published. Recover with "Re-run failed jobs" (never cancel a release).
+    timeout-minutes: 90
     permissions:
       contents: write
+    outputs:
+      dmg_sha256: ${{ steps.dmg.outputs.dmg_sha256 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -458,51 +466,56 @@ jobs:
           MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
           MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
           MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+          # Bound on `notarytool wait` (ut-docs#2917); the submission id is
+          # written to this job's summary for `notarytool info <id>`.
+          NOTARY_TIMEOUT: 45m
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
           packaging/macos/build-app.sh "$VERSION" dist/macos
           packaging/macos/make-dmg.sh "$VERSION" dist/macos
-      - name: Attach the .dmg to the release
+      # Moved here from verify-versions (ut-docs#2917): that job no longer
+      # waits for macos-app, so the .dmg's embedded version is checked on the
+      # built file; macos-dmg-attach then proves the published bytes are
+      # these same bytes (dmg_sha256).
+      - name: The .app in the .dmg must report the real version, never "dev"
+        id: dmg
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.prepare.outputs.version }}
-          TAG: ${{ needs.prepare.outputs.tag }}
-        run: gh release upload "${TAG}" "dist/macos/unitill-pos-${VERSION}-macOS-arm64.dmg" --clobber
-      # goreleaser's checksums.txt only ever covers goreleaser's own
-      # artifacts, so the .dmg built above is never in it. The till's in-app
-      # updater (internal/selfupdate/macapp_darwin.go) verifies the .dmg's
-      # SHA-256 against checksums.txt before mounting it and fails CLOSED if
-      # the entry is missing — so without this step every in-app mac update
-      # would be refused. Wait for goreleaser's checksums.txt to actually be
-      # on the release (same race as the .dmg itself: this job only needs
-      # the RELEASE to exist, not that every goreleaser asset finished
-      # uploading), then fold the dmg's line in and re-upload.
-      - name: Wait for checksums.txt and append the .dmg's SHA-256
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ needs.prepare.outputs.version }}
-          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           set -euo pipefail
-          rm -f "$RUNNER_TEMP/checksums.txt"
-          ok=""
-          for i in $(seq 1 30); do
-            if gh release download "${TAG}" --pattern checksums.txt --dir "$RUNNER_TEMP" --clobber 2>/dev/null; then
-              ok=1
-              break
+          dmg="dist/macos/unitill-pos-${VERSION}-macOS-arm64.dmg"
+          mnt="$RUNNER_TEMP/dmg-check"
+          mkdir -p "$mnt"
+          hdiutil attach -nobrowse -quiet -mountpoint "$mnt" "$dmg"
+          fail=0
+          for bin in unitill-pos unitill-desktop; do
+            f="$mnt/Universal Till.app/Contents/MacOS/$bin"
+            # Capture, then grep (not `strings | grep -q`: macOS strings
+            # errors when grep closes the pipe early — see verify-versions).
+            out="$(strings -a "$f" 2>/dev/null || true)"
+            if [ ! -f "$f" ]; then
+              echo "::error::missing macOS .app $bin"; fail=1
+            elif grep -qx "dev" <<< "$out"; then
+              echo "::error::macOS .app $bin embeds buildinfo.Version=dev"; fail=1
+            elif grep -qxE "v?${VERSION//./\\.}" <<< "$out"; then
+              echo "ok: macOS .app $bin carries version $VERSION"
+            else
+              echo "::error::macOS .app $bin does not contain version $VERSION"; fail=1
             fi
-            echo "checksums.txt not published yet (attempt $i/30)"
-            sleep 20
           done
-          if [ -z "$ok" ]; then
-            echo "::error::checksums.txt never appeared on release ${TAG} — goreleaser may have failed or not finished uploading"
-            exit 1
-          fi
-          packaging/macos/update-checksums.sh \
-            "$RUNNER_TEMP/checksums.txt" \
-            "dist/macos/unitill-pos-${VERSION}-macOS-arm64.dmg"
-          gh release upload "${TAG}" "$RUNNER_TEMP/checksums.txt" --clobber
+          hdiutil detach -quiet -force "$mnt" || true
+          [ "$fail" = 0 ]
+          echo "dmg_sha256=$(shasum -a 256 "$dmg" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: dist/macos/unitill-pos-${{ needs.prepare.outputs.version }}-macOS-arm64.dmg
+          if-no-files-found: error
+          retention-days: 14
+          # A re-run of this job must be able to replace the artifact (v4
+          # answers 409 on a duplicate name otherwise) — ut-docs#2917 review.
+          overwrite: true
 
   # Android app (ADR-0023; android/README.md): the same embedded Go server
   # (internal/app.Run via ./mobile, gomobile-bound) as every other platform,
@@ -676,9 +689,12 @@ jobs:
     # without it this job could race android-app's own APK upload and either
     # download nothing (gh release download finding no matching asset yet) or
     # a stale one left over from a previous run's --clobber.
-    needs: [prepare, goreleaser, macos-app, android-app]
+    # macos-app deliberately NOT needed (ut-docs#2917): a slow notarization
+    # must not hold the release. The .dmg's version is checked in macos-app
+    # itself and its checksum entry in macos-dmg-attach.
+    needs: [prepare, goreleaser, android-app]
     if: ${{ !cancelled() && needs.prepare.result == 'success' }}
-    runs-on: macos-14 # hdiutil for the .dmg, plus tar/unzip for the rest — one runner covers every format
+    runs-on: macos-14 # tar/unzip/strings for every format (kept from when it also mounted the .dmg)
     # contents: write, not the read-only this job actually needs (ut-docs#1376
     # follow-up): since .goreleaser.yaml's release.draft became true, this
     # job's own "wait for the release to exist" step (gh release view "$TAG")
@@ -739,33 +755,8 @@ jobs:
             --pattern "unitill-pos_*_linux_amd64.tar.gz" \
             --pattern "unitill-pos_*_windows_amd64.zip" \
             --pattern "unitill-pos_*_darwin_arm64.tar.gz" \
-            --pattern "unitill-pos-*-macOS-arm64.dmg" \
             --pattern "unitill-pos_*_android.apk" \
             --pattern "checksums.txt"
-      # Regression gate for the macos-app job's "append the .dmg's SHA-256"
-      # step (packaging/macos/update-checksums.sh): internal/selfupdate's mac
-      # update path (macapp_darwin.go) fails closed if the dmg's
-      # checksums.txt entry is missing or wrong, so a silent failure there
-      # would only surface as every in-app mac update being refused, not as a
-      # release-time error. Assert it here instead of waiting to find out.
-      - name: The .dmg's checksums.txt entry must match the published artifact
-        env:
-          VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          set -euo pipefail
-          cd dist-check
-          dmg="unitill-pos-${VERSION}-macOS-arm64.dmg"
-          want="$(awk -v f="$dmg" '$2 == f { print $1 }' checksums.txt)"
-          if [ -z "$want" ]; then
-            echo "::error::checksums.txt has no entry for $dmg — the macos-app job's checksum-append step may have failed silently"
-            exit 1
-          fi
-          got="$(shasum -a 256 "$dmg" | awk '{print $1}')"
-          if [ "$want" != "$got" ]; then
-            echo "::error::checksums.txt entry for $dmg ($want) does not match the actual published artifact ($got)"
-            exit 1
-          fi
-          echo "ok: checksums.txt entry for $dmg matches the published artifact"
       - name: Every binary must report the real version, never "dev"
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -815,12 +806,6 @@ jobs:
 
           tar xzf "unitill-pos_${VERSION}_darwin_arm64.tar.gz" -C extracted
           check extracted/unitill-pos "macOS portable unitill-pos"
-          rm -rf extracted && mkdir extracted
-
-          hdiutil attach -nobrowse -quiet -mountpoint extracted "unitill-pos-${VERSION}-macOS-arm64.dmg"
-          check "extracted/Universal Till.app/Contents/MacOS/unitill-pos" "macOS .app unitill-pos"
-          check "extracted/Universal Till.app/Contents/MacOS/unitill-desktop" "macOS .app unitill-desktop"
-          hdiutil detach -quiet -force extracted || true
 
           exit $fail
       # ut-docs#1260: the Android APK never had a version check at all, so
@@ -903,32 +888,31 @@ jobs:
   # Folds the Windows setup .exe and both Android .apk names into
   # checksums.txt and verifies EVERY published asset against it (ut-docs#2863).
   # goreleaser's checksums.txt only ever covers goreleaser's own artifacts;
-  # macos-app already folds the .dmg in (packaging/macos/update-checksums.sh)
-  # because internal/selfupdate's mac update path verifies it before
+  # macos-dmg-attach folds the .dmg in after publishing
+  # (packaging/macos/update-checksums.sh, ut-docs#2917) because internal/selfupdate's mac update path verifies it before
   # mounting, but before this job existed nothing did the same for the
   # Windows installer or either Android .apk — a missing or wrong entry for
   # any of them would only ever surface as a real device silently refusing a
   # real update (#160's planned Windows self-updater will verify a
   # downloaded setup .exe against this job's line the exact same way).
   #
-  # Runs after windows-installer/macos-app/android-app (every job that
+  # Runs after windows-installer/android-app (every pre-publish job that
   # uploads an asset of its own) and after verify-versions specifically:
   # verify-versions downloads checksums.txt as part of its own checks, and
   # this job's `--clobber` re-upload would otherwise race that download.
-  # Placed as the one job that runs the fold-in AFTER every uploader, so
-  # there is never a second read-modify-write of checksums.txt racing
-  # macos-app's own append.
+  # macos-app is NOT needed (ut-docs#2917): the .dmg is attached and its line
+  # folded in by macos-dmg-attach, which needs publish-release (which needs
+  # this job) — so the two read-modify-writes of checksums.txt never race.
   checksums:
     needs:
       [
         prepare,
         goreleaser,
         windows-installer,
-        macos-app,
         android-app,
         verify-versions,
       ]
-    if: ${{ !cancelled() && needs.goreleaser.result == 'success' && needs.windows-installer.result == 'success' && needs.macos-app.result == 'success' && needs.android-app.result == 'success' && needs.verify-versions.result == 'success' }}
+    if: ${{ !cancelled() && needs.goreleaser.result == 'success' && needs.windows-installer.result == 'success' && needs.android-app.result == 'success' && needs.verify-versions.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write # needed to see the draft release by tag — see verify-versions' comment
@@ -1025,28 +1009,96 @@ jobs:
   # no signal beyond "the release never went public." Also needs `checksums`
   # (ut-docs#2863) — a release must never go public missing a checksums.txt
   # entry for one of its own published assets.
+  #
+  # Except macos-app (ut-docs#2917): v0.25.0 sat 100+ minutes in Apple's
+  # notary queue with every other platform's release held as a draft. The
+  # .dmg is attached after publish by macos-dmg-attach; until then a mac
+  # till's updater finds no .dmg and fails safe ("no macOS .dmg in release").
   publish-release:
     needs:
       [
         prepare,
         goreleaser,
         windows-installer,
-        macos-app,
         android-app,
         verify-versions,
         checksums,
       ]
-    if: ${{ !cancelled() && needs.goreleaser.result == 'success' && needs.windows-installer.result == 'success' && needs.macos-app.result == 'success' && needs.android-app.result == 'success' && needs.verify-versions.result == 'success' && needs.checksums.result == 'success' }}
+    if: ${{ !cancelled() && needs.goreleaser.result == 'success' && needs.windows-installer.result == 'success' && needs.android-app.result == 'success' && needs.verify-versions.result == 'success' && needs.checksums.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Publish the release (undraft) now that every platform succeeded
+      - name: Publish the release (undraft) now that every pre-publish platform succeeded
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.prepare.outputs.tag }}
         run: gh release edit "$TAG" --draft=false --latest
+
+  # Attaches the notarized .dmg to the already-published release (ut-docs#2917)
+  # and folds its line into checksums.txt — internal/selfupdate's mac update
+  # path (macapp_darwin.go) verifies the .dmg against it before mounting and
+  # fails closed without it. Runs only when macos-app succeeded, so a timed
+  # out / rejected notarization attaches nothing (never an un-notarized .dmg
+  # when notary credentials exist). Needs publish-release, which needs
+  # checksums: the only other read-modify-write of checksums.txt is finished.
+  macos-dmg-attach:
+    needs: [prepare, macos-app, publish-release]
+    if: ${{ !cancelled() && needs.macos-app.result == 'success' && needs.publish-release.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: macos-dmg
+          path: dist/macos
+      - name: The .dmg must be the one macos-app built, version-checked and notarized
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          DMG_SHA256: ${{ needs.macos-app.outputs.dmg_sha256 }}
+        run: |
+          set -euo pipefail
+          dmg="dist/macos/unitill-pos-${VERSION}-macOS-arm64.dmg"
+          got="$(sha256sum "$dmg" | awk '{print $1}')"
+          if [ -z "$DMG_SHA256" ] || [ "$got" != "$DMG_SHA256" ]; then
+            echo "::error::$dmg sha256 ($got) is not the one macos-app produced (${DMG_SHA256:-none})"
+            exit 1
+          fi
+      - name: Attach the .dmg and fold its SHA-256 into checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          dmg="dist/macos/unitill-pos-${VERSION}-macOS-arm64.dmg"
+          gh release upload "$TAG" "$dmg" --clobber
+          rm -f "$RUNNER_TEMP/checksums.txt"
+          gh release download "$TAG" --pattern checksums.txt --dir "$RUNNER_TEMP" --clobber
+          packaging/macos/update-checksums.sh "$RUNNER_TEMP/checksums.txt" "$dmg"
+          gh release upload "$TAG" "$RUNNER_TEMP/checksums.txt" --clobber
+      # The gate verify-versions used to run for the .dmg: the published
+      # checksums.txt entry must match the published artifact — plus every
+      # other asset, since checksums.txt was just rewritten.
+      - name: Every published asset (the .dmg included) must match checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          ASSETS="$RUNNER_TEMP/assets"
+          mkdir -p "$ASSETS"
+          gh release download "$TAG" --dir "$ASSETS" --clobber
+          dmg="unitill-pos-${VERSION}-macOS-arm64.dmg"
+          test -f "$ASSETS/$dmg" || { echo "::error::$dmg is not on release $TAG"; exit 1; }
+          bash scripts/ci/check-release-checksums.sh "$ASSETS/checksums.txt" "$ASSETS"
 
   # ut-docs#2274: on the workflow_dispatch path, `prepare` creates and
   # pushes the tag before any build job runs (so every downstream job can
