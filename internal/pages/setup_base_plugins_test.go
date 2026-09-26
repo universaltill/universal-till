@@ -1037,6 +1037,7 @@ func TestSetupWizardDE_OfflineCompletesAndLeavesPendingForRetry(t *testing.T) {
 // till would sit on the delay before it could finish shutting down.
 func TestStartBasePluginRetryShutsDownOnCtxDone(t *testing.T) {
 	dp := newBasePluginTestDeps(t)
+	drainBasePluginRetryNudge() // else a stale nudge skips the initial delay under test
 	ctx, cancel := context.WithCancel(context.Background())
 	var wg sync.WaitGroup
 

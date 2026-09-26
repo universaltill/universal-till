@@ -2555,6 +2555,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// is the one that actually matters for the real UI.
 			extra[common.KeyCurrencyConfirmed] = "true"
 		}
+		countryChanged := false
 		if v := strings.TrimSpace(r.Form.Get("country")); v != "" {
 			// ut-docs#1750: the second writer of store.country. A reviewer
 			// reproduced a manager-only bypass through THIS handler after
@@ -2573,6 +2574,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings", err) // page-error:allow /api/ route
 				return
 			}
+			countryChanged = countryChanging(d, v)
 			st.Country = v
 			auditPayload["country"] = v
 			// ut-docs#1027: re-derive locale from the new country when the
@@ -2673,6 +2675,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		d.SetState(st)
+		if countryChanged {
+			// ut-docs#1068: the new country's base plugins, as the wizard queues them.
+			queueBasePluginsForCountryChange(r.Context(), d, st.Country)
+		}
 		httpx.InitCurrency(st.Currency)
 		// Live-apply, no restart (ut-docs#861) — st.Locale is always the
 		// current-or-just-changed value (CurrentState() seeds it when the
@@ -2856,6 +2862,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// ADR-0083 the posture rows are per country, so this is
 		// shop-configuration hygiene plus an owner check on changing a
 		// live shop's tax jurisdiction, no longer a shared-key guard.
+		countryChanged := false
 		if key == common.KeyCountry {
 			if !requireFiscalAuthorityForCountryChange(w, r, d, value) {
 				return
@@ -2868,6 +2875,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				respondSettingsSyncError(w, r, &errSettingsSync{Status: http.StatusBadRequest, Code: "not_supported_via_sync"})
 				return
 			}
+			// ut-docs#1068: decided before the write -- a rederive reloading
+			// state from the DB afterwards would hide the change.
+			countryChanged = countryChanging(d, value)
 			if err := clearFiscalStateForCountryChange(r.Context(), d, actorIDFor(r), value); err != nil {
 				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings", err) // page-error:allow /api/ route
 				return
@@ -3068,6 +3078,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// derivedLocale above didn't fire) — same reasoning as the
 			// KeyLocale case just above.
 			httpx.SetDefaultLocale(st.Locale)
+			if countryChanged {
+				// ut-docs#1068: the new country's base plugins, as the wizard queues them.
+				queueBasePluginsForCountryChange(r.Context(), d, value)
+			}
 			newCfg := pos.Config{
 				TaxInclusive:                 st.TaxInclusive,
 				TaxRateBasisPoints:           st.TaxRatePct * 100,
