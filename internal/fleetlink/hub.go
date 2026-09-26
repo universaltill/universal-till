@@ -105,7 +105,7 @@ func (h *Hub) onFrame() (func(string), time.Duration) {
 	return h.opts.OnFrame, every
 }
 
-func (h *Hub) helloFor(ctx context.Context, tillID string) Hello {
+func (h *Hub) helloFor(ctx context.Context, tillID string) any {
 	hello := Hello{Role: "main"}
 	if f := h.opts.Hello; f != nil {
 		hello = f(ctx, tillID)
@@ -114,7 +114,9 @@ func (h *Hub) helloFor(ctx context.Context, tillID string) Hello {
 	return hello
 }
 
-func (h *Hub) gotHello(*Peer, Hello) {}
+func (h *Hub) gotHello(*Peer, Hello, json.RawMessage) {}
+
+func (h *Hub) oneWay(string) bool { return false }
 
 func (h *Hub) gotMessage(p *Peer, env Envelope) {
 	if env.Type != TypeReport {
