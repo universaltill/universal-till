@@ -65,7 +65,7 @@ func deviceAuthorizePayloadExtras(in pos.SaleInput, payments []pos.PaymentInput)
 		"total":          total,
 		"tax_inclusive":  in.TaxInclusive,
 		"sale_discount":  in.SaleDiscount.Minor(),
-		"service_charge": in.ServiceCharge.Minor(),
+		"service_charge": in.ChargesTotal().Minor(),
 		"lines":          lines,
 	}
 }

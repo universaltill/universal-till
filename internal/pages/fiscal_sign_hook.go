@@ -88,7 +88,9 @@ type fiscalSignAskPayload struct {
 	TaxInclusive bool `json:"tax_inclusive"`
 	// SaleDiscount / ServiceCharge are the sale-level (not per-line)
 	// amounts already folded into Total — mirrors pos.SaleInput.SaleDiscount
-	// / .ServiceCharge verbatim (minor units, money.Money wire form).
+	// verbatim and, for ServiceCharge, pos.SaleInput.ChargesTotal() (the sum
+	// of every additive charge, ADR-0062; minor units, money.Money wire
+	// form). Charges are apportioned per charge (pos.ApportionChargesTax).
 	// SaleDiscount is still NOT reflected anywhere in VATBreakdown
 	// (ut-docs#834): a signer apportions it across rates itself, per the
 	// contract's recommended method. ServiceCharge, since contract 1.5.0
@@ -689,13 +691,14 @@ func buildFiscalSignPayload(in *pos.SaleInput, now time.Time) fiscalSignAskPaylo
 		agg.Net += lineNet.Minor()
 		agg.Tax += lineTax.Minor()
 	}
-	// ADR-0061 Decision 2 / contract 1.5.0: fold the service charge's
-	// apportioned net/tax into the per-rate lines via the SAME shared
-	// function computeSaleTotals taxes it with — never a local re-derivation,
-	// so the signed breakdown and the persisted totals cannot drift. The
-	// flat ServiceCharge field below stays display/reconciliation-only.
+	// ADR-0061 Decision 2 / ADR-0062 Decision 4 / contract 1.5.0: fold
+	// every charge's apportioned net/tax into the per-rate lines via the
+	// SAME shared function computeSaleTotals taxes them with — never a
+	// local re-derivation, so the signed breakdown and the persisted totals
+	// cannot drift. The flat ServiceCharge field below (the charges' sum)
+	// stays display/reconciliation-only.
 	var chargeTax money.Money
-	for _, b := range pos.ApportionServiceChargeTax(in.ServiceCharge, pos.ChargeTaxLinesFromSale(in.Lines), in.TaxInclusive, in.ServiceChargeTaxBasisBP) {
+	for _, b := range pos.ApportionChargesTax(in.Charges, pos.ChargeTaxLinesFromSale(in.Lines), in.TaxInclusive) {
 		agg, ok := perRate[b.RateBP]
 		if !ok {
 			agg = &fiscalSignAskVATLine{RateBP: b.RateBP}
@@ -705,7 +708,7 @@ func buildFiscalSignPayload(in *pos.SaleInput, now time.Time) fiscalSignAskPaylo
 		agg.Tax += b.Tax.Minor()
 		chargeTax = chargeTax.Add(b.Tax)
 	}
-	total := subtotal.Sub(in.SaleDiscount).Add(in.ServiceCharge)
+	total := subtotal.Sub(in.SaleDiscount).Add(in.ChargesTotal())
 	if !in.TaxInclusive {
 		// Mirrors computeSaleTotals: the charge's tax rides on top exactly
 		// like each line's own (inclusive already carries it inside the
@@ -745,7 +748,7 @@ func buildFiscalSignPayload(in *pos.SaleInput, now time.Time) fiscalSignAskPaylo
 		VATBreakdown:  vat,
 		TaxInclusive:  in.TaxInclusive,
 		SaleDiscount:  in.SaleDiscount.Minor(),
-		ServiceCharge: in.ServiceCharge.Minor(),
+		ServiceCharge: in.ChargesTotal().Minor(),
 	}
 }
 

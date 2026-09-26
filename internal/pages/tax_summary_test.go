@@ -90,7 +90,7 @@ func TestTaxSummary_AgreesWithEODTaxBands_ServiceChargeAndReturn(t *testing.T) {
 	// same shape as TestEODTaxBands_ServiceChargeSaleThroughCompleteSale.
 	day1 := etbCompleteSale(t, d, pos.SaleInput{
 		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
-		ServiceCharge:          money.FromMinor(1000),
+		Charges:                []pos.ChargeInput{{Key: pos.ServiceChargeKey, Amount: money.FromMinor(1000)}},
 		AllowNegativeInventory: true,
 		Lines: []pos.SaleLineInput{{
 			ItemID: "itm-sc2", Name: "Dinner", Qty: 1,

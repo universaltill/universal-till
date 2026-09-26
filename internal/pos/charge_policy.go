@@ -55,8 +55,8 @@ type ChargePolicy struct {
 // ChargeItem is one plugin-declared additive statutory charge (ADR-0062
 // Decision 3) — the same shape as ChargeInput minus Amount, since a policy
 // answer supplies a rate the caller applies to the sale's net, not an
-// already-computed amount. ChargeInput itself lands in internal/pos/sales.go
-// at ADR-0062 step 2 (ut-docs#985), not yet present as of this step.
+// already-computed amount (ChargeInput, internal/pos/sales.go). BuildCharges
+// (charges.go) turns each item into a ChargeInput at its DefaultRateBP.
 type ChargeItem struct {
 	// Key is a stable id for this charge, e.g. "municipality_tax". The
 	// reserved key "service_charge" is core's own merchant-rate item above

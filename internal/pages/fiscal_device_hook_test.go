@@ -18,10 +18,10 @@ import (
 
 func TestDeviceAuthorizePayloadExtras(t *testing.T) {
 	in := pos.SaleInput{
-		Currency:      "TRY",
-		TaxInclusive:  true,
-		SaleDiscount:  money.FromMinor(100),
-		ServiceCharge: money.FromMinor(0),
+		Currency:     "TRY",
+		TaxInclusive: true,
+		SaleDiscount: money.FromMinor(100),
+		Charges:      nil,
 		Lines: []pos.SaleLineInput{
 			{Name: "Çay", Qty: 2, UnitPrice: money.FromMinor(1500), TaxRateBasisPoints: 1000},
 			{Name: "Simit", Qty: 1, UnitPrice: money.FromMinor(2000), TaxRateBasisPoints: 100, LineDiscount: money.FromMinor(50)},

@@ -969,10 +969,10 @@ func TestFiscalSignAsk_ReturnDispatchCarriesSaleType(t *testing.T) {
 // fields sees no shape change on the common no-sale-level-adjustment sale.
 func TestFiscalSignPayload_SaleDiscountAndServiceChargeBreakout(t *testing.T) {
 	in := &pos.SaleInput{
-		SaleID:        "sale-discount-service",
-		Currency:      "EUR",
-		SaleDiscount:  money.FromMinor(200),
-		ServiceCharge: money.FromMinor(150),
+		SaleID:       "sale-discount-service",
+		Currency:     "EUR",
+		SaleDiscount: money.FromMinor(200),
+		Charges:      []pos.ChargeInput{{Key: pos.ServiceChargeKey, Amount: money.FromMinor(150)}},
 		Lines: []pos.SaleLineInput{
 			{Name: "Thing", Qty: 1, UnitPrice: money.FromMinor(1000), TaxRateBasisPoints: 1900},
 		},
@@ -1066,11 +1066,11 @@ func TestFiscalSignPayload_ServiceChargeApportionedIntoVATBreakdown(t *testing.T
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			in := &pos.SaleInput{
-				SaleID:        "sale-charge-bands-" + tc.name,
-				Currency:      "EUR",
-				TaxInclusive:  tc.taxInclusive,
-				ServiceCharge: money.FromMinor(300),
-				Lines:         lines,
+				SaleID:       "sale-charge-bands-" + tc.name,
+				Currency:     "EUR",
+				TaxInclusive: tc.taxInclusive,
+				Charges:      []pos.ChargeInput{{Key: pos.ServiceChargeKey, Amount: money.FromMinor(300)}},
+				Lines:        lines,
 			}
 			payload := buildFiscalSignPayload(in, time.Date(2026, 8, 24, 10, 0, 0, 0, time.UTC))
 
@@ -1555,5 +1555,32 @@ func TestFiscalSignStart_SharesSaleIDWithFinishThroughTender(t *testing.T) {
 	}
 	if startSaleID != saleID || startTxID != "tx-tender-1" || startTxRevision != 1 {
 		t.Fatalf("unexpected fiscal_sign_starts row: sale_id=%q tx_id=%q tx_revision=%d", startSaleID, startTxID, startTxRevision)
+	}
+}
+
+// ADR-0062 step 2 (ut-docs#985): vat_breakdown folds EVERY charge through
+// pos.ApportionChargesTax (each at its own basis), the flat service_charge
+// field is the charges' sum, and the total includes every charge. No
+// contract shape change (the `charges` array is ut-docs#986).
+func TestFiscalSignPayload_MultiChargeFoldedPerCharge(t *testing.T) {
+	// 1000 @19% (tax 190). Charges: 100 per-line (all at 19% -> 19) and
+	// 50 at a flat 7% (4, half-up of 3.5). Exclusive total:
+	// 1000 + 150 + 190 + 19 + 4 = 1363.
+	in := &pos.SaleInput{
+		SaleID:   "sale-multi-charge",
+		Currency: "EUR",
+		Charges: []pos.ChargeInput{
+			{Key: pos.ServiceChargeKey, Amount: money.FromMinor(100)},
+			{Key: "levy", Label: "Levy", Amount: money.FromMinor(50), TaxBasisBP: 700},
+		},
+		Lines: []pos.SaleLineInput{{Name: "Thing", Qty: 1, UnitPrice: money.FromMinor(1000), TaxRateBasisPoints: 1900}},
+	}
+	p := buildFiscalSignPayload(in, time.Date(2026, 9, 26, 10, 0, 0, 0, time.UTC))
+	if p.ServiceCharge != 150 || p.Total != 1363 {
+		t.Fatalf("service_charge %d total %d, want 150/1363", p.ServiceCharge, p.Total)
+	}
+	want := []fiscalSignAskVATLine{{RateBP: 700, Net: 50, Tax: 4}, {RateBP: 1900, Net: 1100, Tax: 209}}
+	if !reflect.DeepEqual(p.VATBreakdown, want) {
+		t.Fatalf("vat_breakdown = %+v, want %+v", p.VATBreakdown, want)
 	}
 }
