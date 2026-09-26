@@ -385,6 +385,17 @@ func TestSettingScope_Classification(t *testing.T) {
 		{"theme", SettingPerTill},
 		{"marketplace.device_id", SettingPerTill},
 		{"marketplace.token", SettingPerTill},
+		// ut-docs#2950: one till's own state.
+		{"diagnostics.active", SettingPerTill},
+		{"cloudsync.snapshot_hash", SettingPerTill},
+		{"install.desktop_kiosk_overlay_provisioned", SettingPerTill},
+		// ut-docs#2950: reviewed and kept shop-wide (reasons at
+		// ShopWideSettingPrefixes).
+		{"setup.restore_prompt_status", SettingShopWide},
+		{"lan_discovery.till_id", SettingShopWide},
+		{"fiscal.tse_provisioning_state", SettingShopWide},
+		{"till.name", SettingShopWide},
+		{"menu.restored_keys", SettingShopWide},
 		{"no_such_family.key", SettingUnclassified},
 		{"", SettingUnclassified},
 	} {
