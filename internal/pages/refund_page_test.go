@@ -152,7 +152,7 @@ func TestComputeRefundTotal_ExclusiveAddsTaxOnTop(t *testing.T) {
 	lines := []pos.SaleLineInput{
 		{UnitPrice: money.FromMinor(100), Qty: 2, TaxRateBasisPoints: 2000}, // net 200, tax 40 (exclusive)
 	}
-	total := computeRefundTotal(lines, 0, 0, 0, false)
+	total := computeRefundTotal(lines, 0, nil, false)
 	if total.Minor() != 240 {
 		t.Fatalf("expected 200 + 40 tax = 240, got %d", total.Minor())
 	}
@@ -162,7 +162,7 @@ func TestComputeRefundTotal_InclusiveDoesNotAddTaxOnTop(t *testing.T) {
 	lines := []pos.SaleLineInput{
 		{UnitPrice: money.FromMinor(120), Qty: 1, TaxRateBasisPoints: 2000}, // 120 already includes tax
 	}
-	total := computeRefundTotal(lines, 0, 0, 0, true)
+	total := computeRefundTotal(lines, 0, nil, true)
 	if total.Minor() != 120 {
 		t.Fatalf("expected the inclusive total to stay 120 (tax already inside), got %d", total.Minor())
 	}
@@ -172,7 +172,7 @@ func TestComputeRefundTotal_SubtractsSaleDiscount(t *testing.T) {
 	lines := []pos.SaleLineInput{
 		{UnitPrice: money.FromMinor(100), Qty: 1, TaxRateBasisPoints: 0},
 	}
-	total := computeRefundTotal(lines, money.FromMinor(30), 0, 0, false)
+	total := computeRefundTotal(lines, money.FromMinor(30), nil, false)
 	if total.Minor() != 70 {
 		t.Fatalf("expected 100 - 30 discount = 70, got %d", total.Minor())
 	}
@@ -185,7 +185,7 @@ func TestComputeRefundTotal_NeverNegative(t *testing.T) {
 	// A discount larger than the line total must clamp to zero, not swing
 	// negative (which would mean the shop pays the customer to return an
 	// already-discounted item).
-	total := computeRefundTotal(lines, money.FromMinor(999), 0, 0, false)
+	total := computeRefundTotal(lines, money.FromMinor(999), nil, false)
 	if total.Minor() != 0 {
 		t.Fatalf("expected a clamped-to-zero refund total, got %d", total.Minor())
 	}
@@ -195,7 +195,7 @@ func TestComputeRefundTotal_LineDiscountReducesNet(t *testing.T) {
 	lines := []pos.SaleLineInput{
 		{UnitPrice: money.FromMinor(100), Qty: 1, LineDiscount: money.FromMinor(20), TaxRateBasisPoints: 0},
 	}
-	total := computeRefundTotal(lines, 0, 0, 0, false)
+	total := computeRefundTotal(lines, 0, nil, false)
 	if total.Minor() != 80 {
 		t.Fatalf("expected 100 - 20 line discount = 80, got %d", total.Minor())
 	}
@@ -210,7 +210,7 @@ func TestComputeRefundTotal_ExclusiveServiceChargeAddsChargeAndItsTaxOnTop(t *te
 		{UnitPrice: money.FromMinor(100), Qty: 2, TaxRateBasisPoints: 0}, // net 200, no line tax
 	}
 	// A flat 10% basis on a 100 charge: 10 tax, added on top since exclusive.
-	total := computeRefundTotal(lines, 0, money.FromMinor(100), 1000, false)
+	total := computeRefundTotal(lines, 0, refundServiceCharges(100, 1000), false)
 	if total.Minor() != 310 {
 		t.Fatalf("expected 200 (lines) + 100 (charge) + 10 (charge tax) = 310, got %d", total.Minor())
 	}
@@ -222,7 +222,7 @@ func TestComputeRefundTotal_InclusiveServiceChargeFoldsTaxIn(t *testing.T) {
 	}
 	// Inclusive: the charge's tax is already embedded in the charge amount,
 	// so it must NOT be added a second time on top of the total.
-	total := computeRefundTotal(lines, 0, money.FromMinor(100), 1000, true)
+	total := computeRefundTotal(lines, 0, refundServiceCharges(100, 1000), true)
 	if total.Minor() != 300 {
 		t.Fatalf("expected 200 (lines) + 100 (charge, tax already inside) = 300, got %d", total.Minor())
 	}
@@ -234,7 +234,7 @@ func TestComputeRefundTotal_DiscountAppliesBeforeServiceChargeIsAdded(t *testing
 	}
 	// Mirrors pos.CompleteSale's own ordering: a whole-sale discount reduces
 	// the line subtotal but never eats into the service charge.
-	total := computeRefundTotal(lines, money.FromMinor(30), money.FromMinor(10), 0, false)
+	total := computeRefundTotal(lines, money.FromMinor(30), refundServiceCharges(10, 0), false)
 	if total.Minor() != 80 {
 		t.Fatalf("expected (100-30 discount)+10 charge = 80, got %d", total.Minor())
 	}
@@ -244,7 +244,7 @@ func TestComputeRefundTotal_ZeroServiceChargeIsARegressionNoOp(t *testing.T) {
 	lines := []pos.SaleLineInput{
 		{UnitPrice: money.FromMinor(100), Qty: 2, TaxRateBasisPoints: 2000},
 	}
-	total := computeRefundTotal(lines, 0, 0, 0, false)
+	total := computeRefundTotal(lines, 0, nil, false)
 	if total.Minor() != 240 {
 		t.Fatalf("a zero service charge must behave exactly as before this change: expected 240, got %d", total.Minor())
 	}
