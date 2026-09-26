@@ -31,3 +31,6 @@ Verdict: **safe to merge**, no blocker or major findings.
 ## Not verified — deferred
 - The Windows VM check (desktop shortcut, Start menu, taskbar, window title bar, Apps & features) needs a human after the next release. It is tracked on ut-docs#2786.
 - The desktop exe (CGO + mingw) was not cross-compiled here because this sandbox has no mingw. Its resource config is covered by `TestCheckAcceptsReleaseConfigs/desktop`, and release.yml checks the real exe.
+
+## CI round 1
+The first push failed `build`. `scripts/ci/windows-signing_test.sh` compiles a *copy* of `installer.nsi` in a temp dir, so the new relative `MUI_ICON` path didn't resolve ("Error while loading icon … can't open file"). The local gate had skipped that test because osslsigncode was missing. Fix: the icon path is now an overridable `APP_ICON` define (the default stays repo-relative), and the test passes the absolute path. Verified locally with osslsigncode + makensis installed: `UT_REQUIRE_SIGNING_TOOLS=1 bash scripts/ci/windows-signing_test.sh` gives "all Windows signing checks passed", and the default-path build still succeeds.
