@@ -70,6 +70,67 @@ WHERE sale_id = ?
 	return &sig, true, nil
 }
 
+// FiscalReceiptEvidence is the generic, country-neutral `receipt` object a
+// fiscal.sign.ask signer may return alongside "approved" (contract
+// fiscal-sign-ask.md 1.10.0, ut-docs#2880), stored verbatim in
+// fiscal_receipt_evidence (migration 048): the QR payload the receipt must
+// carry — its format is the signer's (e.g. Germany's DSFinV-K "V0;…" string
+// from fiskaly's qr_code_data), opaque to core — plus any extra lines the
+// signer wants printed under the fiscal block. Both receipt render paths
+// read it back; a reprint never re-derives it.
+type FiscalReceiptEvidence struct {
+	SaleID    string
+	QRPayload string
+	Lines     []string
+	// CreatedAt is stamped by the DB on insert; zero on the way in.
+	CreatedAt string
+}
+
+// RecordFiscalReceiptEvidence stores one sale's receipt evidence.
+// Idempotent (INSERT ... ON CONFLICT DO NOTHING on the sale_id primary key),
+// same as RecordFiscalTSESignature: the first recorded evidence wins.
+func (r *POSRepo) RecordFiscalReceiptEvidence(ctx context.Context, ev FiscalReceiptEvidence) error {
+	lines := ev.Lines
+	if lines == nil {
+		lines = []string{}
+	}
+	linesJSON, err := json.Marshal(lines)
+	if err != nil {
+		return fmt.Errorf("encode fiscal receipt lines: %w", err)
+	}
+	if _, err := r.db.ExecContext(ctx, `
+INSERT INTO fiscal_receipt_evidence (sale_id, qr_payload, lines_json)
+VALUES (?, ?, ?)
+ON CONFLICT(sale_id) DO NOTHING
+`, ev.SaleID, ev.QRPayload, string(linesJSON)); err != nil {
+		return fmt.Errorf("insert fiscal_receipt_evidence: %w", err)
+	}
+	return nil
+}
+
+// GetFiscalReceiptEvidence loads the receipt evidence recorded for a sale.
+// (nil, false, nil) when none exists — not an error: no row means no QR and
+// no signer lines on the receipt, never a placeholder.
+func (r *POSRepo) GetFiscalReceiptEvidence(ctx context.Context, saleID string) (*FiscalReceiptEvidence, bool, error) {
+	var ev FiscalReceiptEvidence
+	var linesJSON string
+	err := r.db.QueryRowContext(ctx, `
+SELECT sale_id, qr_payload, lines_json, created_at
+FROM fiscal_receipt_evidence
+WHERE sale_id = ?
+`, saleID).Scan(&ev.SaleID, &ev.QRPayload, &linesJSON, &ev.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("select fiscal_receipt_evidence: %w", err)
+	}
+	if err := json.Unmarshal([]byte(linesJSON), &ev.Lines); err != nil {
+		return nil, false, fmt.Errorf("decode fiscal_receipt_evidence lines for sale %s: %w", saleID, err)
+	}
+	return &ev, true, nil
+}
+
 // FiscalSignStart is the best-effort tx_id/tx_revision round trip captured
 // from a fiscal.sign.start dispatch (ADR-0077 D1, ut-docs#1519), stored
 // verbatim against the sale/refund/return it was minted for (migration 005).
