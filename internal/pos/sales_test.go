@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -427,7 +429,7 @@ func TestCompleteSale_RejectsUnderpayment(t *testing.T) {
 // least one payment, unchanged from before this card (pinned by the sibling
 // test below).
 func TestNetPayments_ZeroTotalAllowsNoPayments(t *testing.T) {
-	net, err := netPayments(nil, 0)
+	net, err := netPayments(nil, 0, false)
 	if err != nil {
 		t.Fatalf("expected a zero total with no payments to succeed, got %v", err)
 	}
@@ -440,7 +442,7 @@ func TestNetPayments_ZeroTotalAllowsNoPayments(t *testing.T) {
 // ut-docs#1561 deliberately leaves untouched: a NONZERO total with no
 // payments must still fail exactly as before this card.
 func TestNetPayments_NonzeroTotalStillRequiresAPayment(t *testing.T) {
-	if _, err := netPayments(nil, money.FromMinor(1)); err == nil {
+	if _, err := netPayments(nil, money.FromMinor(1), false); err == nil {
 		t.Fatalf("expected a nonzero total with no payments to fail")
 	}
 }
@@ -1438,5 +1440,121 @@ func TestCompleteSale_ClampsUnknownOrderTypeToDineIn(t *testing.T) {
 	}
 	if detail2.OrderType != OrderTypeTakeaway {
 		t.Fatalf("legitimate OrderTypeTakeaway was clamped away: got %q", detail2.OrderType)
+	}
+}
+
+// ut-docs#2975: a tip is the customer's gratuity, not sale money, so it never
+// covers the total. The #2975 example: sale 1000, a card leg the reader
+// charged 950 + a 50 tip, stored as amount 1000 / tip 50 — only 950 of it
+// pays for the sale.
+func TestCompleteSale_TipDoesNotCoverTotal(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+	_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Dinner', 1000, 1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv1','itm1',NULL,'loc1',5,datetime('now'))`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('card','Card','card',1)`)
+
+	in := SaleInput{
+		SaleType: "sale",
+		Currency: "GBP",
+		Lines: []SaleLineInput{
+			{ItemID: "itm1", SKU: "SKU1", Name: "Dinner", Qty: 1, UnitPrice: 1000, LocationID: "loc1"},
+		},
+		Payments: []PaymentInput{{MethodID: "card", Amount: 1000, TipAmount: 50}},
+	}
+	_, err := CompleteSale(ctx, db, in)
+	if err == nil || !strings.Contains(err.Error(), "do not cover total") {
+		t.Fatalf("want an underpayment refusal (950 of sale money against 1000), got %v", err)
+	}
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("a refused sale must persist nothing: count=%d err=%v", n, err)
+	}
+
+	// Journal replay only (SaleInput.LegacyTipCoverage): a pre-#2571
+	// replica stored the tip outside amount, so the same shape must still
+	// replay rather than poison the journal.
+	in.LegacyTipCoverage = true
+	if _, err := CompleteSale(ctx, db, in); err != nil {
+		t.Fatalf("legacy replay coverage must accept a tip counted toward the total: %v", err)
+	}
+}
+
+func TestCompleteSale_RejectsTipExceedingAmountLessChange(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+	_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Coffee', 370, 1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv1','itm1',NULL,'loc1',5,datetime('now'))`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('card','Card','card',1)`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
+
+	in := SaleInput{
+		SaleType: "sale",
+		Currency: "GBP",
+		Lines: []SaleLineInput{
+			{ItemID: "itm1", SKU: "SKU1", Name: "Coffee", Qty: 1, UnitPrice: 370, LocationID: "loc1"},
+		},
+		// The cash leg alone covers the sale; the card leg's tip is larger
+		// than the money that leg took, which no real tender produces.
+		Payments: []PaymentInput{
+			{MethodID: "cash", Amount: 1000, ChangeGiven: 0},
+			{MethodID: "card", Amount: 100, TipAmount: 150},
+		},
+	}
+	_, err := CompleteSale(ctx, db, in)
+	if err == nil || !strings.Contains(err.Error(), "tip cannot exceed amount") {
+		t.Fatalf("want a tip-exceeds-amount refusal, got %v", err)
+	}
+}
+
+// CheckPaymentCoverage is the DB-free copy of CompleteSale's coverage check
+// the tender path runs before authorize (ut-docs#2975).
+func TestCheckPaymentCoverage(t *testing.T) {
+	lines := []SaleLineInput{{ItemID: "itm1", SKU: "SKU1", Name: "Dinner", Qty: 1, UnitPrice: 1000, LocationID: "loc1"}}
+	cases := []struct {
+		name     string
+		payments []PaymentInput
+		legacy   bool
+		wantErr  string
+	}{
+		{"exact cover", []PaymentInput{{MethodID: "card", Amount: 1000}}, false, ""},
+		{"tip on top covers", []PaymentInput{{MethodID: "card", Amount: 1050, TipAmount: 50}}, false, ""},
+		{"cash with change and tip", []PaymentInput{{MethodID: "cash", Amount: 2000, ChangeGiven: 900, TipAmount: 100}}, false, ""},
+		{"tip inside amount short", []PaymentInput{{MethodID: "card", Amount: 1000, TipAmount: 50}}, false, "do not cover total"},
+		{"split leg short", []PaymentInput{{MethodID: "card", Amount: 950}}, false, "do not cover total"},
+		{"legacy counts tip", []PaymentInput{{MethodID: "card", Amount: 1000, TipAmount: 50}}, true, ""},
+		{"no payments", nil, false, "at least one payment"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := CheckPaymentCoverage(SaleInput{SaleType: "sale", Currency: "GBP", Lines: lines, Payments: tc.payments, LegacyTipCoverage: tc.legacy})
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("want covered, got %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("want %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+// Review nit (ut-docs#2975): legs whose applied sums would wrap past
+// MaxInt64 are refused, never allowed to wrap around and "cover" the total.
+func TestNetPayments_RefusesOverflowingSum(t *testing.T) {
+	big := money.FromMinor(math.MaxInt64 / 2)
+	payments := []PaymentInput{
+		{MethodID: "card", Amount: big},
+		{MethodID: "card", Amount: big},
+		{MethodID: "card", Amount: big},
+	}
+	if _, err := netPayments(payments, money.FromMinor(100), false); err == nil || !strings.Contains(err.Error(), "overflows") {
+		t.Fatalf("want an overflow refusal, got %v", err)
 	}
 }
