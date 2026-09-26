@@ -71,3 +71,12 @@ remaining reload name its cause so the next device capture is conclusive.
 
 Safe to merge once CI (including `android-ci`) is green. Device
 confirmation on the tablet stays with the local lane.
+
+## Merge note
+
+While this PR waited on CI, #1401 (ut-docs#2762) landed and replaced the
+Bluetooth pair/forget and barcode-backfill reloads with region swaps. The
+merge takes #1401's versions of `bluetooth_devices.html` and
+`catalog_barcode_backfill.html`, which have no whole-page reload left for
+UT.reload to name. `TestBaseRenderedTemplatesReloadWithAReason` passes on
+the merged tree.
