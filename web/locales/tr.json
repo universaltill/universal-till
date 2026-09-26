@@ -475,6 +475,8 @@
   "common.error.network": "Bağlantı sorunu. Ağınızı kontrol edip tekrar deneyin.",
   "common.error.server": "Bir şeyler ters gitti. Lütfen tekrar deneyin.",
   "common.loading": "Yükleniyor…",
+  "common.money.invalid": "Tutarı rakamla girin; ondalık kısmından önce nokta veya virgül kullanın (örneğin 3.50 veya 3,50).",
+  "common.money.invalid_whole": "Tutarı yalnızca rakamlarla, tam sayı olarak girin.",
   "common.no_results": "Eşleşme yok — farklı bir arama deneyin.",
   "common.save": "Kaydet",
   "common.submit": "Gönder",

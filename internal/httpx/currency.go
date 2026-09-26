@@ -487,11 +487,12 @@ func MoneyPatternAttr(decimals int, signed bool) template.HTMLAttr {
 }
 
 // MoneyPatternLocal is MoneyPattern with either '.' or ',' as the decimal
-// separator. Only for fields whose value never reaches the server raw but
-// goes through window.utCurrency.toMinor (web/public/app.js), which accepts
-// both -- the item editor's variant price/cost grid (ut-docs#2815: a German
-// tablet keyboard types "3,50", which the dot-only pattern refused). A field
-// parsed server-side with strconv.ParseFloat must keep MoneyPattern.
+// separator. Only for fields whose value is read by a parser that accepts
+// both: window.utCurrency.toMinor (web/public/app.js) -- the item editor's
+// variant price/cost grid (ut-docs#2815: a German tablet keyboard types
+// "3,50", which the dot-only pattern refused) -- or ParseMoneyMajor on the
+// server (item cost, modifier option price; ut-docs#2819). A field parsed
+// server-side with strconv.ParseFloat must keep MoneyPattern.
 func MoneyPatternLocal(decimals int) string {
 	if decimals <= 0 {
 		return `[0-9]+`
@@ -500,9 +501,56 @@ func MoneyPatternLocal(decimals int) string {
 }
 
 // MoneyPatternLocalAttr is the whole-attribute form of MoneyPatternLocal
-// (see MoneyPatternAttr for why the whole attribute).
+// (see MoneyPatternAttr for why the whole attribute). It also emits
+// data-money-local, which opts the field into app.js's shop-language
+// "invalid amount" message (ut-docs#2819) in place of the browser's own
+// "Please match the requested format", which is in the device's OS
+// language and doesn't say that a comma is fine.
 func MoneyPatternLocalAttr(decimals int) template.HTMLAttr {
-	return template.HTMLAttr(`pattern="` + MoneyPatternLocal(decimals) + `"`)
+	return template.HTMLAttr(`pattern="` + MoneyPatternLocal(decimals) + `" data-money-local`)
+}
+
+// ParseMoneyMajor is the server-side reader for a MoneyPatternLocal field:
+// a non-negative major-unit amount with '.' or ',' as the decimal
+// separator and at most `decimals` fraction digits, returned in minor
+// units. Integer arithmetic only -- strconv.ParseFloat also accepts
+// "1e3", "0x10", "NaN" and "Inf", which no money field should
+// (ut-docs#2819). Anything outside the grammar is an error, never 0.
+// Thousands separators are refused and a single '.' or ',' is always the
+// decimal separator, so on a 3-decimal currency (KWD/BHD/OMR) "1,234"
+// reads as 1.234 -- the same grammar the field's pattern already accepts.
+func ParseMoneyMajor(raw string, decimals int) (int64, error) {
+	s := strings.TrimSpace(raw)
+	if decimals < 0 {
+		decimals = 0
+	}
+	whole, frac := s, ""
+	if i := strings.IndexAny(s, ".,"); i >= 0 {
+		whole, frac = s[:i], s[i+1:]
+		if frac == "" || len(frac) > decimals {
+			return 0, fmt.Errorf("invalid amount %q", raw)
+		}
+	}
+	// 15 whole digits keeps whole*10^decimals far inside int64 for any
+	// real currency's decimals (0-3).
+	if whole == "" || len(whole) > 15 || !allDigits(whole) || !allDigits(frac) {
+		return 0, fmt.Errorf("invalid amount %q", raw)
+	}
+	frac += strings.Repeat("0", decimals-len(frac))
+	minor, err := strconv.ParseInt(whole+frac, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid amount %q", raw)
+	}
+	return minor, nil
+}
+
+func allDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // MoneyPlaceholderAttr renders the whole `placeholder="…"` HTML attribute
