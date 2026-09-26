@@ -397,12 +397,16 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		deviceEvidence = pickDeviceEvidence(deviceEvidence, p.MethodID, resp)
 		// A card-terminal plugin (e.g. a reader that prompts the customer
 		// for a tip) can report the tip it actually captured back on its
-		// authorize response — this overrides whatever tip (if any) the
-		// tender request itself carried, since the reader-confirmed amount
-		// is the source of truth. An absent/malformed/negative field is
-		// ignored, leaving the request's own tip (typically zero) in place.
+		// authorize response. The reader charged the requested amount plus
+		// that tip, so it lands in Amount as well as TipAmount — core's one
+		// convention, the same as a tip the tender request carries itself
+		// (ut-docs#2571; see applyPluginReportedTip). An absent/malformed/
+		// negative field is ignored, leaving the request's own tip
+		// (typically zero) in place.
 		if tip, ok := pluginReportedTipAmount(resp); ok {
-			payments[i].TipAmount = money.FromMinor(tip)
+			if !applyPluginReportedTip(&payments[i], tip) {
+				log.Printf("tender: ignoring reader-reported tip %d for method %q (attempt %s): a voucher leg or an amount overflow", tip, p.MethodID, requestID)
+			}
 		}
 	}
 
@@ -721,6 +725,29 @@ func classifyTenderError(err error) string {
 	default:
 		return "pos.toast.tender_failed"
 	}
+}
+
+// applyPluginReportedTip folds a tip a payment plugin reported on its
+// authorize response into p (ut-docs#2571). Core has ONE convention for
+// tips: payments.amount includes the tip and tip_amount is the breakdown
+// (InsertPayment, data.EODTip, the per-method tax-band queries' `amount -
+// change_given - tip_amount`, the receipt's "Card 4.20 / Tip 0.50"). A
+// reader prompts for the tip on top of the amount it was asked to charge,
+// so the money actually taken is Amount + tip: both fields grow by it. A
+// tip the request already carried is inside Amount and was part of what
+// the reader was asked to charge, so the reader's tip adds to it rather
+// than replacing it. Refuses (returns false, p untouched) a tip that would
+// overflow Amount — only a broken or hostile plugin reports one — and any
+// tip on a tracked voucher leg: a voucher can't carry a tip (CompleteSale
+// refuses one), and inflating its Amount first would reserve the wrong
+// debit on the primary before that refusal.
+func applyPluginReportedTip(p *pos.PaymentInput, tip int64) bool {
+	if p.VoucherID != "" || tip < 0 || tip > math.MaxInt64-p.Amount.Minor() || tip > math.MaxInt64-p.TipAmount.Minor() {
+		return false
+	}
+	p.Amount = p.Amount.Add(money.FromMinor(tip))
+	p.TipAmount = p.TipAmount.Add(money.FromMinor(tip))
+	return true
 }
 
 // pluginReportedTipAmount extracts an optional `tip_amount` (integer minor
@@ -1437,7 +1464,8 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				// (docs/germany-pos-parity-backlog.md tip-flow gap) -- set by
 				// the caller (e.g. a SumUp reader plugin reading the tip back
 				// from its Cloud API transaction result), same shape as the
-				// existing cash `change` field. Never affects payment coverage.
+				// existing cash `change` field. Included in `amount`, the same
+				// as a reader-reported tip (ut-docs#2571).
 				Tip int64 `json:"tip,omitempty"`
 				// VoucherID (ut-docs#1008) marks this payment as a TRACKED
 				// voucher redemption against a real vouchers.id — method must
