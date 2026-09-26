@@ -381,30 +381,14 @@ html[data-nav-dir="pop"]::view-transition-new(root) { animation-name: ut-page-re
 .ut-swap-fx { animation: ut-swap-in 150ms ease-out both; }
 @keyframes ut-swap-in { from { opacity: .55; } to { opacity: 1; } }
 
-/* ut-docs#2338: the rail-driven in-panel swaps (#items-panel, #admin-panel,
-   #manual-panel -- master-detail navigation, not a live update) get a
-   slightly longer version of the generic .ut-swap-fx ease above, on the
-   SAME safe opacity-only shape -- deliberately never a directional
-   transform. A first cut of this rule used `transform: translateX(...)`
-   for a page-slide-like feel and was caught in independent review before
-   merge (ut-docs#2338's own review record): the swapped panel sits inside
-   `<main>`, which hosts `.record-dialog`/`.item-form-modal`
-   (`position: fixed` descendants, ut-docs#2010) -- ANY non-`none`
-   `transform` on an ancestor makes it their containing block, the exact
-   hazard ADR-0097 rule 2 already names for `view-transition-name` and
-   already broke once for real. Swapping the mechanism (CSS transform
-   instead of the View Transition API) doesn't avoid that hazard, it just
-   hides from the one guard (TestAppCSSNamesOnlyTheFixedRailAndStatusbar)
-   written to catch the View-Transition-API shape of it. Starting from
-   opacity 0 was ALSO a separate violation on its own -- ADR-0097 rule 5
-   requires the swap ease be "readable from frame one, never a flash to
-   blank", which is exactly what .ut-swap-fx's own .55-start already
-   gets right. So: opacity-only, same .55 start, just a touch longer
-   (180ms vs .ut-swap-fx's 150ms) as the one intentional difference.
-   app.js's htmx:afterSettle listener applies this class instead of
-   .ut-swap-fx for these three targets specifically. */
-.ut-panel-fx { animation: ut-panel-in 180ms ease-out both; }
-@keyframes ut-panel-in { from { opacity: .55; } to { opacity: 1; } }
+/* ADR-0122 §4 (ut-docs#2943): the rail-driven tree panes (#items-panel,
+   #admin-panel, #manual-panel) zoom out of the tapped tree item -- a
+   TRANSIENT Web Animations transform in app.js (zoomPane), never a CSS
+   rule here: a persistent transform on a pane would make it the containing
+   block of its position:fixed dialogs (#2338's hazard, which
+   TestAppCSSNamesOnlyTheFixedRailAndStatusbar still guards). Panes and
+   popups use the shorter small-zoom duration (ADR-0122 §1). */
+:root { --ut-zoom-small-ms: 300ms; }
 
 /* ut-docs#2010 / ut-docs#2338: a record-dialog.js standard dialog fades and
    scales in on open -- zero added latency, dialog.show() already ran
@@ -490,14 +474,14 @@ html.fx-light .designer-cat.is-dragging { transform: none; }
 /* No lift on the dragged tile (the drag's own inline translate still wins). */
 html.fx-light .jiggle-mode .tile-cell > .btn-tile.dragging { transform: none; }
 
-/* BALANCED: short opacity fades (.ut-swap-fx 150ms, .ut-panel-fx 180ms,
-   .ut-dialog-fx 150ms -- all within 200ms) stay; the ADR-0118 page push
+/* BALANCED: short opacity fades (.ut-swap-fx 150ms, .ut-dialog-fx 150ms)
+   stay; the tree-pane zoom (ADR-0122) is cut to 200ms; the ADR-0118 page push
    stays but is cut to ADR-0097's original 200ms budget; no backdrop blur;
    one small shadow instead of large or layered ones; no drag lift or
    jiggle (the one decorative looping animation). `filter` itself is left
    alone: core uses it only for the hidden-tile grayscale and hover
    brightness, neither of them a blur. */
-html.fx-balanced { --ut-motion-ms: 200ms; --shadow: 0 1px 2px rgba(15, 23, 42, .08); }
+html.fx-balanced { --ut-motion-ms: 200ms; --ut-zoom-small-ms: 200ms; --shadow: 0 1px 2px rgba(15, 23, 42, .08); }
 html.fx-balanced *, html.fx-balanced *::before, html.fx-balanced *::after {
   -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
 }

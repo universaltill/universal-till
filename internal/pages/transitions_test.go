@@ -248,8 +248,8 @@ func TestAppCSSViewTransitionNeverBlocksInput(t *testing.T) {
 	}
 	html := readBaseHTML(t)
 	for _, want := range []string{
-		"window.addEventListener('pointerdown', function () {",
-		"try { vt.skipTransition(); } catch (e) { /* already done */ }",
+		"window.addEventListener('pointerdown', function (e) {",
+		"try { vt.skipTransition(); } catch (err) { /* already done */ }",
 		"var el = document.elementFromPoint(e.clientX, e.clientY);",
 	} {
 		if !strings.Contains(html, want) {
@@ -570,33 +570,145 @@ func TestBaseHTMLQuietsSkippedTransitionPromises(t *testing.T) {
 // navigation — reusing it would slide the whole content area (or the whole
 // screen behind a dialog) on every panel click / dialog open.
 
-func TestAppCSSHasPanelSwapEaseAnimation(t *testing.T) {
+// ADR-0122 §4 (ut-docs#2943) replaced #2338's opacity-only .ut-panel-fx
+// with a transient Web Animations zoom from the tapped tree item. The
+// #2338 hazard (a transform on an ancestor of position:fixed dialogs) is
+// handled by making the transform transient, not by forbidding it: no
+// persistent CSS transform on a pane, fill 'none', finished on any tap,
+// before any popup opens and before the next pane swap.
+func TestAppCSSHasNoPersistentPanelEase(t *testing.T) {
 	css := readAppCSS(t)
-	if !strings.Contains(css, ".ut-panel-fx") {
-		t.Errorf("app.css missing .ut-panel-fx (the in-panel-swap ease class)")
+	for _, gone := range []string{".ut-panel-fx", "ut-panel-in"} {
+		if strings.Contains(css, gone) {
+			t.Errorf("app.css still carries %s -- ADR-0122 §4 replaces the #2338 pane ease with app.js's transient zoom", gone)
+		}
 	}
-	if !strings.Contains(css, "@keyframes ut-panel-in") {
-		t.Errorf("app.css missing @keyframes ut-panel-in")
+	// Point 1: panes and popups use the shorter small-zoom duration,
+	// 300ms at Full and 200ms at Balanced (ADR-0119).
+	if !strings.Contains(css, "--ut-zoom-small-ms: 300ms") {
+		t.Errorf("app.css must define --ut-zoom-small-ms: 300ms on :root (ADR-0122 §1)")
 	}
-	// Opacity-only, deliberately never a transform (independent review,
-	// ut-docs#2338): a first cut used `translateX(var(--ut-nav-dir) * ...)`
-	// for a page-slide-like feel, which both (a) violated ADR-0097 rule 5
-	// ("readable from frame one, never a flash to blank" — it started from
-	// opacity 0, not .55 like .ut-swap-fx) and (b) put a non-`none`
-	// `transform` on an ancestor of `.record-dialog`/`.item-form-modal`
-	// (`position: fixed` descendants living inside the swapped panel),
-	// which makes it their containing block — the exact hazard ADR-0097
-	// rule 2 already names for `view-transition-name`, just reached via a
-	// different CSS property. Pin both corrections here.
-	block := extractBlock(t, css, "@keyframes ut-panel-in")
-	if strings.Contains(block, "transform") {
-		t.Errorf("@keyframes ut-panel-in must never use `transform` — the swapped panel hosts position:fixed dialog descendants, and any non-`none` transform on an ancestor becomes their containing block (ADR-0097 rule 2's hazard), got: %s", block)
+	bal := extractBlock(t, css, "html.fx-balanced {")
+	if !strings.Contains(bal, "--ut-zoom-small-ms: 200ms") {
+		t.Errorf("html.fx-balanced must cut --ut-zoom-small-ms to 200ms (ADR-0122 §1), got: %s", bal)
 	}
-	if !strings.Contains(block, "opacity: .55") {
-		t.Errorf("@keyframes ut-panel-in must start from opacity: .55, never 0 (ADR-0097 rule 5: readable from frame one, never a flash to blank), got: %s", block)
+}
+
+func TestAppJSZoomsTheTreePaneTransiently(t *testing.T) {
+	js := readAppJS(t)
+	if strings.Contains(js, "ut-panel-fx") || strings.Contains(js, "ut-panel-in") {
+		t.Fatalf("app.js still applies the #2338 .ut-panel-fx ease -- ADR-0122 §4 replaces it with the zoom")
 	}
-	if !strings.Contains(block, "opacity: 1") {
-		t.Errorf("@keyframes ut-panel-in must end at opacity: 1, got: %s", block)
+	// All three rail-driven panes, not just one (the #2338 review caught a
+	// test that passed on the bare literal "items-panel").
+	if !strings.Contains(js, "PANES = ['items-panel', 'admin-panel', 'manual-panel']") {
+		t.Fatalf("app.js must name all three tree panes (#items-panel, #admin-panel, #manual-panel)")
+	}
+	i := strings.Index(js, "function zoomPane(")
+	if i < 0 {
+		t.Fatalf("app.js has no zoomPane() (ADR-0122 §4)")
+	}
+	body := js[i:]
+	if end := strings.Index(body, "\n  }\n"); end > 0 {
+		body = body[:end]
+	}
+	for _, want := range []string{
+		"UT.takeOrigin()",              // the shared origin recorder (§2)
+		"dialog[open]",                 // a pane that already shows a dialog gets no zoom
+		"fill: 'none'",                 // transient: nothing remains after the last frame
+		"cubic-bezier(.32, .72, 0, 1)", // ADR-0118's easing (§1)
+		"--ut-zoom-small-ms",           // Full 300 / Balanced 200 (§1)
+		"UT.trackZoom(",                // so a tap / popup / next swap can finish() it
+		"opacity: 0.4",                 // never from blank (§1, ADR-0097 §5)
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("zoomPane() must contain %q, got: %s", want, body)
+		}
+	}
+	// Uniform scale clamped 0.1-1 (§1): never a non-uniform squash.
+	if !strings.Contains(body, "Math.min(1, Math.max(0.1,") {
+		t.Errorf("zoomPane() must clamp the uniform start scale to 0.1-1")
+	}
+	if strings.Contains(body, "scaleX") || strings.Contains(body, "scaleY") || strings.Contains(body, "clip-path") {
+		t.Errorf("zoomPane() must use one uniform scale, no scaleX/scaleY/clip-path (ADR-0122 §1)")
+	}
+	// Only an activation zooms; a debounced input/change swap into a pane
+	// (the /help search box) keeps the generic ease (review, ut-docs#2943).
+	if !strings.Contains(js, "(how === 'click' || how === 'submit')) { zoomPane(t); return; }") {
+		t.Errorf("app.js must zoom a pane only for a click/submit-triggered swap")
+	}
+	// A pane about to be swapped again finishes its running zoom first.
+	if !strings.Contains(js, "htmx:beforeSwap") || !strings.Contains(js, "UT.finishZooms()") {
+		t.Errorf("app.js must finish a running pane zoom on htmx:beforeSwap into a pane (ADR-0122 §4)")
+	}
+}
+
+// ADR-0122 §2: one origin recorder in base.html's FIRST script, before any
+// request or swap; §7: a tap during a zoom finishes it and the following
+// click lands on the control at its final position.
+func TestBaseHTMLRecordsTheMotionOrigin(t *testing.T) {
+	html := readBaseHTML(t)
+	end := strings.Index(html, "UT.vtWatchdog = function")
+	if end < 0 {
+		t.Fatalf("base.html has no UT.vtWatchdog -- first script not found")
+	}
+	first := html[:end]
+	for _, want := range []string{
+		"UT.takeOrigin = function",
+		"'a, button, [hx-get], [hx-post], [role=treeitem], [data-zoom-origin]'",
+		"UT.motionOrigin = { rect:",
+		"> 5000",                             // stale taps never zoom
+		"e.key === 'Enter' || e.key === ' '", // keyboard activation
+		"UT.finishZooms = function",
+		"UT.trackZoom = function",
+	} {
+		if !strings.Contains(first, want) {
+			t.Errorf("base.html's first script must contain %q (ADR-0122 §2/§7)", want)
+		}
+	}
+	pdAt := strings.Index(first, "window.addEventListener('pointerdown'")
+	if pdAt < 0 {
+		t.Fatalf("base.html has no capture-phase pointerdown listener")
+	}
+	pd := first[pdAt:]
+	if e := strings.Index(pd, "}, true);"); e > 0 {
+		pd = pd[:e]
+	}
+	// A new press disarms a stale re-dispatch window first (review).
+	if !strings.Contains(pd, "skippedByTapAt = 0; zoomTap = false;") {
+		t.Errorf("pointerdown must disarm a previous press's re-dispatch window")
+	}
+	if !strings.Contains(pd, "UT.finishZooms()") || !strings.Contains(pd, "recordOrigin(") {
+		t.Errorf("the capture-phase pointerdown must finish running zooms and record the origin, got: %s", pd)
+	}
+	// §7: a finished zoom arms the re-dispatch whenever the click's target
+	// differs from the element now under the pointer, not only for <html>.
+	if !strings.Contains(first, "zoomTap") {
+		t.Errorf("the click re-dispatch must be extended to taps that finished a zoom (ADR-0122 §7)")
+	}
+}
+
+// ADR-0122 §4/§5: opening any popup first finishes a running pane zoom, so
+// no position:fixed dialog is ever shown inside a transformed pane. Hooked
+// on HTMLDialogElement.prototype once; the native method still runs.
+func TestBaseHTMLDialogOpenFinishesPaneZooms(t *testing.T) {
+	html := readBaseHTML(t)
+	if n := strings.Count(html, "HTMLDialogElement.prototype[m] = "); n != 1 {
+		t.Fatalf("the showModal/show wrapper must be installed exactly once in base.html, found %d", n)
+	}
+	i := strings.Index(html, "['showModal', 'show'].forEach")
+	if i < 0 {
+		t.Fatalf("base.html must wrap HTMLDialogElement.prototype.showModal and .show")
+	}
+	w := html[i:]
+	if e := strings.Index(w, "});"); e > 0 {
+		w = w[:e]
+	}
+	if !strings.Contains(w, "UT.finishZooms()") || !strings.Contains(w, "native.apply(this, arguments)") {
+		t.Errorf("the dialog wrapper must finish zooms and then run the native method unchanged, got: %s", w)
+	}
+	if !strings.Contains(w, "try {") {
+		t.Errorf("the dialog wrapper must never throw into the caller (ADR-0122 consequences)")
 	}
 }
 
@@ -615,31 +727,6 @@ func TestAppCSSHasDialogOpenEaseAnimation(t *testing.T) {
 // !important }`, which covers these two new keyframes automatically — no
 // separate CSS assertion needed here, only that app.js/record-dialog.js
 // also carry the belt-and-braces JS-side skip, checked below.
-
-func TestAppJSAppliesPanelEaseInsteadOfSwapEaseForItemsPanel(t *testing.T) {
-	js := readAppJS(t)
-	// Independent review, ut-docs#2338: the original version of this
-	// assertion was `strings.Contains(js, "items-panel")`, which passes
-	// even with this whole card reverted — the literal "items-panel"
-	// already appears elsewhere in app.js (the X-UT-Page-Title allowlist).
-	// Assert the actual expression, and all three rail-driven panel ids
-	// (#items-panel, #admin-panel, #manual-panel), not just one.
-	if !strings.Contains(js, "['items-panel', 'admin-panel', 'manual-panel'].indexOf(t.id) !== -1") {
-		t.Fatalf("app.js's swap-ease listener must special-case all three rail-driven panel targets (#items-panel, #admin-panel, #manual-panel)")
-	}
-	if !strings.Contains(js, "isPanelNav ? 'ut-panel-fx' : 'ut-swap-fx'") {
-		t.Fatalf("app.js must apply the 'ut-panel-fx' class for a panel-nav swap, 'ut-swap-fx' otherwise")
-	}
-	// The animationend cleanup must remove BOTH classes it can ever add —
-	// a stale class on an element that never gets a matching animationend
-	// (e.g. one class added, the id read wrong) would stick forever.
-	if !strings.Contains(js, "'ut-swap-in' || e.animationName === 'ut-panel-in'") {
-		t.Fatalf("app.js's animationend cleanup must match both ut-swap-in and ut-panel-in")
-	}
-	if !strings.Contains(js, "remove('ut-swap-fx', 'ut-panel-fx')") {
-		t.Fatalf("app.js's animationend cleanup must remove both ut-swap-fx and ut-panel-fx")
-	}
-}
 
 func TestRecordDialogJSAppliesOpenEaseAndSkipsUnderReducedMotion(t *testing.T) {
 	js := readRecordDialogJS(t)

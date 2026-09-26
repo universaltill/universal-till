@@ -121,27 +121,87 @@
         UT.motionOff = function () {
           return !!(reduce && reduce.matches) || UT.fxLevel === 'light';
         };
-        var activeVT = null, skippedByTapAt = 0;
-        window.addEventListener('pointerdown', function () {
+        // ADR-0122 §2 (ut-docs#2943): the ONE origin recorder every zoom
+        // reads. A capture-phase pointerdown (or Enter/Space, for keyboard
+        // activation) remembers the pressed control's box BEFORE any request
+        // or swap, so a pane or popup that arrives from an htmx response
+        // still grows out of what was tapped. Consumers call UT.takeOrigin(),
+        // which returns it once and clears it; the next pointerdown replaces
+        // it, and it expires after 5 s so a stale tap never zooms.
+        var ORIGIN_SEL = 'a, button, [hx-get], [hx-post], [role=treeitem], [data-zoom-origin]';
+        function recordOrigin(t) {
+          var el = t && t.closest ? t.closest(ORIGIN_SEL) : null;
+          if (!el || !el.getBoundingClientRect) { UT.motionOrigin = null; return; }
+          var r = el.getBoundingClientRect();
+          UT.motionOrigin = { rect: { left: r.left, top: r.top, width: r.width, height: r.height }, el: el, at: Date.now() };
+        }
+        UT.takeOrigin = function () {
+          var o = UT.motionOrigin;
+          UT.motionOrigin = null;
+          if (!o || Date.now() - o.at > 5000) return null;
+          return o;
+        };
+        // ADR-0122 §4/§7: every running zoom (Web Animations) registers here
+        // so a tap, a popup opening or the next pane swap can finish() it --
+        // the transform is transient, never left on a pane that hosts
+        // position:fixed dialogs (the #2338 containing-block hazard).
+        var zooms = [];
+        UT.trackZoom = function (anim) {
+          if (!anim) return;
+          zooms.push(anim);
+          function drop() { var i = zooms.indexOf(anim); if (i >= 0) zooms.splice(i, 1); }
+          anim.onfinish = drop; anim.oncancel = drop;
+        };
+        UT.finishZooms = function () {
+          var list = zooms; zooms = [];
+          var any = false;
+          list.forEach(function (a) {
+            try { if (a.playState !== 'finished') { a.finish(); any = true; } } catch (e) { /* gone */ }
+          });
+          return any;
+        };
+        var activeVT = null, skippedByTapAt = 0, zoomTap = false;
+        window.addEventListener('pointerdown', function (e) {
+          // A tap during a zoom completes it on the spot (ADR-0122 §7). The
+          // tap was hit-tested at the moving position, so the origin is read
+          // from the element under the pointer NOW, at its final position.
+          // Any new press disarms a re-dispatch window a previous press left
+          // behind (a scroll or drag that never produced a click).
+          skippedByTapAt = 0; zoomTap = false;
+          var finished = UT.finishZooms();
+          recordOrigin(finished ? (document.elementFromPoint(e.clientX, e.clientY) || e.target) : e.target);
           var vt = activeVT;
-          if (!vt) return;
-          activeVT = null;
-          skippedByTapAt = Date.now();
-          try { vt.skipTransition(); } catch (e) { /* already done */ }
+          if (vt) {
+            activeVT = null;
+            try { vt.skipTransition(); } catch (err) { /* already done */ }
+          }
+          if (vt || finished) { skippedByTapAt = Date.now(); zoomTap = finished; }
         }, true);
+        window.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' || e.key === ' ') recordOrigin(e.target);
+        }, true);
+        window.addEventListener('pointercancel', function () { skippedByTapAt = 0; zoomTap = false; }, true);
         window.addEventListener('click', function (e) {
           if (!skippedByTapAt || Date.now() - skippedByTapAt > 1000) return;
-          skippedByTapAt = 0;
-          if (e.target !== document.documentElement) return;
+          var byZoom = zoomTap;
+          skippedByTapAt = 0; zoomTap = false;
+          // A skipped View Transition hit-tests to <html>; a finished zoom
+          // hit-tested the moving element, so a mouse click lands on a common
+          // ancestor -- re-dispatch whenever the target is not the element now
+          // under the pointer (ADR-0122 §7). A keyboard click (detail 0) has
+          // no pointer position and is left alone.
+          if (byZoom ? e.detail === 0 : e.target !== document.documentElement) return;
           var el = document.elementFromPoint(e.clientX, e.clientY);
-          if (!el || el === document.documentElement) return;
+          if (!el || el === document.documentElement || el === e.target) return;
           e.stopImmediatePropagation();
           e.preventDefault();
           // The trusted mousedown was hit-tested to <html> too, so it never
           // focused anything: focus the field/control under the pointer first
           // (a mouse click on the scan field mid-motion must leave the caret
-          // there -- review M1).
-          var f = el.closest && el.closest('input,textarea,select,[contenteditable],[tabindex]');
+          // there -- review M1). A finished zoom's mousedown DID focus the
+          // moving control, so a button/link under the pointer takes focus
+          // too (ut-docs#2943 review).
+          var f = el.closest && el.closest('input,textarea,select,button,a[href],[contenteditable],[tabindex]');
           if (f && f.focus) { try { f.focus(); } catch (err) { /* not focusable */ } }
           // dispatchEvent, not el.click(): the element under the pointer is
           // often an SVG icon inside the tile (no .click()); a synthetic
@@ -153,6 +213,21 @@
             ctrlKey: e.ctrlKey, shiftKey: e.shiftKey, altKey: e.altKey, metaKey: e.metaKey
           }));
         }, true);
+        // ADR-0122 §4/§5: opening any popup first finishes a running pane
+        // zoom, so no position:fixed dialog is ever shown inside a
+        // transformed pane. One wrapper, installed once; it never throws into
+        // the caller and the native method runs unchanged. (The shared popup
+        // zoom, ut-docs#2944, extends this same wrapper.)
+        if (window.HTMLDialogElement) ['showModal', 'show'].forEach(function (m) {
+          var native = HTMLDialogElement.prototype[m];
+          if (typeof native !== 'function' || native.utWrapped) return;
+          var wrapped = function () {
+            try { UT.finishZooms(); } catch (e) { /* motion only */ }
+            return native.apply(this, arguments);
+          };
+          wrapped.utWrapped = true;
+          HTMLDialogElement.prototype[m] = wrapped;
+        });
         UT.vtWatchdog = function (vt) {
           if (!vt || !vt.skipTransition) return;
           var guard = null;
