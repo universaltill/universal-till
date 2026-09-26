@@ -721,6 +721,7 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 		// sale row, same as completeTender does for a sale.
 		if signRes.Outcome == fiscalSignApproved {
 			recordFiscalTSEEvidence(ctx, repo, returnSaleID, actorID, signRes.Evidence)
+			recordFiscalReceiptEvidence(ctx, repo, returnSaleID, actorID, signRes.Receipt)
 		}
 		// Mirror the restock to inventory connectors (best-effort, non-blocking).
 		publishStockAdjustedForSale(ctx, dp, returnInput)

@@ -545,3 +545,24 @@ func TestRenderLabel(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#2880 review: Meta lines were clipped to Width, so a TSE signature
+// (88 base64 chars) or serial (64 hex chars) lost its tail on paper, as would
+// a signer's 200-char receipt line. A long Meta line must wrap, never lose
+// characters, on both the ESC/POS and the plain-text renderings.
+func TestRenderWrapsLongMetaLines(t *testing.T) {
+	d := sampleDoc()
+	sig := "TSE signature: kHCYf4/f/zz+51m5XlzLtuEOFvVyAF3wrzsz+p+iyQcxzICkza8O9m/P45pRDQRWwEvxYzYZQWR3wGqEsSf2iA=="
+	d.Meta = append(d.Meta, sig)
+	for name, out := range map[string]string{"Render": string(Render(d)), "RenderText": RenderText(d)} {
+		joined := strings.NewReplacer("\n", "", "\r", "").Replace(out)
+		if !strings.Contains(joined, sig) {
+			t.Errorf("%s: long Meta line lost characters (want it wrapped in full)", name)
+		}
+		for _, l := range strings.Split(out, "\n") {
+			if strings.Contains(l, "kHCY") && utf8.RuneCountInString(l) > Width {
+				t.Errorf("%s: wrapped line wider than %d: %q", name, Width, l)
+			}
+		}
+	}
+}

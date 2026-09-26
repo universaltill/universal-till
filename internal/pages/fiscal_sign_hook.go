@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/data"
@@ -146,8 +148,30 @@ type fiscalSignAskVATLine struct {
 // fully valid answer (no evidence persisted/rendered for that sale), and the
 // other two states gain no fields.
 type fiscalSignAskResponse struct {
-	Status string             `json:"status"`
-	TSE    *fiscalTSEEvidence `json:"tse,omitempty"`
+	Status  string                 `json:"status"`
+	TSE     *fiscalTSEEvidence     `json:"tse,omitempty"`
+	Receipt *fiscalReceiptEvidence `json:"receipt,omitempty"`
+}
+
+// Bounds on the contract 1.10.0 `receipt` object (ut-docs#2880). Plugin
+// output is external input: anything outside them drops the WHOLE object
+// (logged), never a truncated payload — a cut-off QR would scan as garbage.
+const (
+	fiscalReceiptQRMaxBytes   = 1024
+	fiscalReceiptMaxLines     = 10
+	fiscalReceiptLineMaxRunes = 200
+)
+
+// fiscalReceiptEvidence is the optional, country-neutral `receipt` object an
+// "approved" answer may carry since contract fiscal-sign-ask.md 1.10.0
+// (ut-docs#2880): the QR payload the receipt must show, in the signer's own
+// format (opaque to core — for Germany the DSFinV-K "V0;…" string fiskaly
+// returns as qr_code_data), plus extra lines to print under the fiscal
+// block. Core stores it per sale and renders the QR from the stored value;
+// it never builds a payload itself.
+type fiscalReceiptEvidence struct {
+	QRPayload string   `json:"qr_payload,omitempty"`
+	Lines     []string `json:"lines,omitempty"`
 }
 
 // fiscalTSEEvidence is the optional §6 KassenSichV signing evidence a signer
@@ -169,6 +193,50 @@ type fiscalTSEEvidence struct {
 	LogTime            string `json:"log_time,omitempty"`
 	Signature          string `json:"signature,omitempty"`
 	SignatureAlgorithm string `json:"signature_algorithm,omitempty"`
+}
+
+// isEmpty reports whether the receipt object carries nothing to store — an
+// absent object, `{}`, or empty fields are all "no receipt evidence".
+func (e *fiscalReceiptEvidence) isEmpty() bool {
+	return e == nil || (e.QRPayload == "" && len(e.Lines) == 0)
+}
+
+// validate enforces the contract 1.10.0 bounds: qr_payload at most
+// fiscalReceiptQRMaxBytes, at most fiscalReceiptMaxLines lines of at most
+// fiscalReceiptLineMaxRunes characters each, valid UTF-8, and no control
+// characters anywhere (a newline or ESC in a line would break the ESC/POS
+// print; none belongs in a QR payload either).
+func (e *fiscalReceiptEvidence) validate() error {
+	if len(e.QRPayload) > fiscalReceiptQRMaxBytes {
+		return fmt.Errorf("receipt object qr_payload is %d bytes, over the %d-byte limit", len(e.QRPayload), fiscalReceiptQRMaxBytes)
+	}
+	if err := checkReceiptText(e.QRPayload); err != nil {
+		return fmt.Errorf("receipt object qr_payload: %w", err)
+	}
+	if len(e.Lines) > fiscalReceiptMaxLines {
+		return fmt.Errorf("receipt object has %d lines, over the %d-line limit", len(e.Lines), fiscalReceiptMaxLines)
+	}
+	for i, l := range e.Lines {
+		if n := utf8.RuneCountInString(l); n > fiscalReceiptLineMaxRunes {
+			return fmt.Errorf("receipt object line %d is %d characters, over the %d-character limit", i+1, n, fiscalReceiptLineMaxRunes)
+		}
+		if err := checkReceiptText(l); err != nil {
+			return fmt.Errorf("receipt object line %d: %w", i+1, err)
+		}
+	}
+	return nil
+}
+
+func checkReceiptText(s string) error {
+	if !utf8.ValidString(s) {
+		return errors.New("not valid UTF-8")
+	}
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("contains control character %U", r)
+		}
+	}
+	return nil
 }
 
 // hasSignature is the presence test the contract fixes: evidence without the
@@ -260,6 +328,10 @@ type fiscalSignResult struct {
 	// object (hasSignature); nil means "approved, nothing to persist/render",
 	// exactly the pre-1.1.0 behaviour.
 	Evidence *fiscalTSEEvidence
+	// Receipt is the contract 1.10.0 `receipt` object (ut-docs#2880) — non-nil
+	// only on fiscalSignApproved and only when it carried something and
+	// passed validate; nil means no QR and no signer lines for this sale.
+	Receipt *fiscalReceiptEvidence
 }
 
 // defaultedSaleType mirrors pos.CompleteSale's own empty-SaleType fallback
@@ -551,6 +623,17 @@ func askFiscalSign(ctx context.Context, bus *plugins.EventBus, payload fiscalSig
 		if parsed.TSE.hasSignature() {
 			res.Evidence = parsed.TSE
 		}
+		// 1.10.0 receipt object (ut-docs#2880): same "never changes the
+		// outcome" rule — an out-of-bounds one is dropped and logged, the
+		// sale is still a clean approval.
+		if parsed.Receipt.isEmpty() {
+			return res
+		}
+		if err := parsed.Receipt.validate(); err != nil {
+			logging.L().Warnf("fiscal signing: signer's receipt object dropped (%v) — this sale's receipt will show no signer QR/lines", err)
+			return res
+		}
+		res.Receipt = parsed.Receipt
 		return res
 	case fiscalSignStatusNotThisTerminal:
 		// An explicit "not me" — ADR-0041 Decision F: same as no answer.
@@ -705,6 +788,32 @@ func recordFiscalTSEEvidence(ctx context.Context, repo *data.POSRepo, saleID, ac
 			log.Printf("fiscal signing: fiscal_evidence_persist_failed audit marker for sale %s failed: %v", saleID, auditErr)
 		}
 		logging.L().Warnf("fiscal signing: sale %s was signed but its §6 KassenSichV evidence failed to persist (%v) — no evidence will be shown on this sale's receipt; journaled for follow-up", saleID, err)
+	}
+}
+
+// recordFiscalReceiptEvidence persists an approved answer's contract 1.10.0
+// `receipt` object (ut-docs#2880) — same best-effort, never-unwind policy
+// and same journal marker + Problems-ring observability as
+// recordFiscalTSEEvidence above; a nil object is a no-op.
+func recordFiscalReceiptEvidence(ctx context.Context, repo *data.POSRepo, saleID, actorID string, ev *fiscalReceiptEvidence) {
+	if ev == nil {
+		return
+	}
+	if err := repo.RecordFiscalReceiptEvidence(ctx, data.FiscalReceiptEvidence{
+		SaleID:    saleID,
+		QRPayload: ev.QRPayload,
+		Lines:     ev.Lines,
+	}); err != nil {
+		logging.L().Errorf("fiscal signing: persist receipt evidence for sale %s: %v", saleID, err)
+		now := time.Now().UTC().Format(time.RFC3339)
+		if auditErr := repo.InsertAudit(ctx, nil, actorID, "sale", saleID, "fiscal_evidence_persist_failed", map[string]any{
+			"reason":    err.Error(),
+			"evidence":  "receipt",
+			"failed_at": now,
+		}, now, ""); auditErr != nil {
+			log.Printf("fiscal signing: fiscal_evidence_persist_failed audit marker for sale %s failed: %v", saleID, auditErr)
+		}
+		logging.L().Warnf("fiscal signing: sale %s was signed but its receipt QR evidence failed to persist (%v) — no signer QR will be shown on this sale's receipt; journaled for follow-up", saleID, err)
 	}
 }
 

@@ -575,7 +575,7 @@ func renderHTMLReceiptForSale(t *testing.T, dp *common.Deps, saleID string) stri
 	lines := []pos.SaleLineInput{{Name: "Apple", Qty: 1, UnitPrice: 120}}
 	payments := []pos.PaymentInput{{MethodID: "cash", Amount: 120}}
 	html, err := renderReceipt(funcs, "R-D4", lines, payments, 120, 0, 120, false, 0, "", 0, nil, false, false,
-		gap == fiscalSignGapActionSigning, gap == fiscalSignGapActionCannotSign, tse, dev, "Shop", receiptDesign{ShowTax: true}, "", nil, "")
+		gap == fiscalSignGapActionSigning, gap == fiscalSignGapActionCannotSign, tse, dev, "Shop", receiptDesign{ShowTax: true}, "", nil, "", nil)
 	if err != nil {
 		t.Fatalf("renderReceipt: %v", err)
 	}

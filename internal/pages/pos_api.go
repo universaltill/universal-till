@@ -582,6 +582,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// bare approval (or a pre-1.1.0 signer) is a no-op here.
 	if signRes.Outcome == fiscalSignApproved {
 		recordFiscalTSEEvidence(ctx, repo, saleID, actorID, signRes.Evidence)
+		recordFiscalReceiptEvidence(ctx, repo, saleID, actorID, signRes.Receipt)
 	}
 
 	// The sale is committed: the table it was served at is free again.
@@ -2127,6 +2128,12 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		if tseErr != nil {
 			tseSignature = nil
 		}
+		// ut-docs#2880: the signer's stored receipt QR payload + lines —
+		// same per-sale derivation and degrade-to-absent policy.
+		receiptEvidence, _, recErr := repo.GetFiscalReceiptEvidence(r.Context(), saleID)
+		if recErr != nil {
+			receiptEvidence = nil
+		}
 		// Same derivation for a fiscal DEVICE's receipt (Turkey's ÖKC): the
 		// sale's own fiscal_device_receipts row, absent = no block.
 		deviceReceipt, _, devErr := repo.GetFiscalDeviceReceipt(r.Context(), saleID)
@@ -2143,7 +2150,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			issuedVouchers = append(issuedVouchers, receiptVoucherIssue{Code: v.VoucherID, Amount: v.Amount.Minor()})
 		}
 		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.CurrentState().TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable, unsignedOverride, unsignedFiscalSigning, unsignedCannotSign, tseSignature, deviceReceipt,
-			storeNameOrDefault(r.Context(), d), receiptDesignFromSettings(r.Context(), d), tableLabelForReceipt, issuedVouchers, printerCfg.ReceiptPolicy)
+			storeNameOrDefault(r.Context(), d), receiptDesignFromSettings(r.Context(), d), tableLabelForReceipt, issuedVouchers, printerCfg.ReceiptPolicy, receiptEvidence)
 		if renderErr != nil {
 			printerUnavailable = true
 			receiptHTML = `<div class="receipt-printer-warning"><span class="receipt-printer-message">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.unavailable")) + `</span><button class="btn secondary receipt-printer-retry" type="button" onclick="window.print()">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.retry")) + `</button></div>`
@@ -2264,9 +2271,17 @@ type receiptTSEView struct {
 	LogTime            string
 	Signature          string
 	SignatureAlgorithm string
-	// QRDataURI is a data:image/png;base64 URI of the evidence QR code
-	// (same inline-embed pattern as settings_page.go's claim QR); empty if
-	// encoding failed, in which case only the text lines render.
+}
+
+// receiptFiscalView is the template's view of the signer's contract 1.10.0
+// `receipt` object (ut-docs#2880) — built in renderReceipt from the persisted
+// fiscal_receipt_evidence row, nil when the sale has none (no QR, no lines).
+type receiptFiscalView struct {
+	Lines []string
+	// QRDataURI is a data:image/png;base64 URI of the QR encoding the
+	// signer's stored qr_payload verbatim (same inline-embed pattern as
+	// settings_page.go's claim QR); empty if there is no payload or encoding
+	// failed, in which case only the lines render.
 	//
 	// ut-docs#906: must be template.URL, not string. receipt.html renders
 	// this via html/template (this file switched from text/template to
@@ -2279,30 +2294,6 @@ type receiptTSEView struct {
 	// value was constructed here, not from user input, and is safe to
 	// emit as-is.
 	QRDataURI template.URL
-}
-
-// buildTSEQRPayload assembles the QR payload from the recorded evidence.
-//
-// PROVISIONAL FORMAT (ut-docs#585): a labeled, pipe-delimited string —
-// "UT-TSE-V0|serial|transaction|counter|start|log|algorithm|signature".
-// The exact byte-for-byte QR payload German receipt practice expects (the
-// DSFinV-K/vendor TSE-QR-code convention) has NOT been verified against the
-// authoritative spec or any real TSE vendor — no fiskaly sandbox/real TSE
-// was available (the same constraint ut-docs#757 records). The format MUST
-// be confirmed (and likely revised) against a real TSE before this ships to
-// a live German shop; the "UT-TSE-V0" prefix marks the payload as ours and
-// provisional rather than letting it masquerade as the official format.
-func buildTSEQRPayload(sig *data.FiscalTSESignature) string {
-	return strings.Join([]string{
-		"UT-TSE-V0",
-		sig.SerialNumber,
-		strconv.FormatInt(sig.TransactionNumber, 10),
-		strconv.FormatInt(sig.SignatureCounter, 10),
-		sig.StartTime,
-		sig.LogTime,
-		sig.SignatureAlgorithm,
-		sig.Signature,
-	}, "|")
 }
 
 type receiptTemplateConfig struct {
@@ -2393,7 +2384,7 @@ func normalizeLegalLines(text string, lines []string) []string {
 // receiptPolicy (ADR-0089) is the shop's resolved receipt policy: "ask"
 // renders the "would you like a receipt?" prompt above the action row;
 // "always"/"never" (or "") render the receipt exactly as before.
-func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, unsignedOverride bool, unsignedFiscalSigning bool, unsignedCannotSign bool, tseSignature *data.FiscalTSESignature, deviceReceipt *data.FiscalDeviceReceipt, storeName string, design receiptDesign, tableLabel string, issuedVouchers []receiptVoucherIssue, receiptPolicy string) (string, error) {
+func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, unsignedOverride bool, unsignedFiscalSigning bool, unsignedCannotSign bool, tseSignature *data.FiscalTSESignature, deviceReceipt *data.FiscalDeviceReceipt, storeName string, design receiptDesign, tableLabel string, issuedVouchers []receiptVoucherIssue, receiptPolicy string, receiptEvidence *data.FiscalReceiptEvidence) (string, error) {
 	// Fixed file set, parsed once and cloned per call thereafter
 	// (ut-docs#1320) — this runs on every completed sale.
 	t, err := httpx.ClonedTemplate("pages.renderReceipt", "receipt.html", funcs,
@@ -2453,9 +2444,8 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 		})
 	}
 	// ut-docs#585: the sale's recorded §6 KassenSichV evidence, when any —
-	// nil renders no block at all. The QR embed mirrors settings_page.go's
-	// claim-QR pattern (qrcode.Encode → base64 PNG data URI); an encode
-	// failure degrades to text lines only, never fails the receipt.
+	// nil renders no block at all. Text lines only since ut-docs#2880: the
+	// QR now comes from the signer's own stored payload (fiscalView below).
 	var tseView *receiptTSEView
 	if tseSignature != nil {
 		tseView = &receiptTSEView{
@@ -2467,8 +2457,19 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 			Signature:          tseSignature.Signature,
 			SignatureAlgorithm: tseSignature.SignatureAlgorithm,
 		}
-		if png, err := qrcode.Encode(buildTSEQRPayload(tseSignature), qrcode.Medium, 140); err == nil {
-			tseView.QRDataURI = template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(png))
+	}
+	// ut-docs#2880: the signer's receipt object (contract 1.10.0), when any —
+	// the QR encodes the STORED qr_payload verbatim (core never builds one),
+	// the lines render under the fiscal block. The embed mirrors
+	// settings_page.go's claim-QR pattern (qrcode.Encode → base64 PNG data
+	// URI); an encode failure degrades to lines only, never fails the receipt.
+	var fiscalView *receiptFiscalView
+	if receiptEvidence != nil {
+		fiscalView = &receiptFiscalView{Lines: receiptEvidence.Lines}
+		if receiptEvidence.QRPayload != "" {
+			if png, err := qrcode.Encode(receiptEvidence.QRPayload, qrcode.Medium, 140); err == nil {
+				fiscalView.QRDataURI = template.URL("data:image/png;base64," + base64.StdEncoding.EncodeToString(png))
+			}
 		}
 	}
 	data := map[string]any{
@@ -2502,6 +2503,8 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 		"UnsignedCannotSign": unsignedCannotSign,
 		// ut-docs#585: recorded TSE signing evidence — nil means no block.
 		"TSESignature": tseView,
+		// ut-docs#2880: the signer's receipt QR + lines — nil means neither.
+		"FiscalReceipt": fiscalView,
 		// Fiscal DEVICE receipt (Turkey's YN ÖKC, fiscal_device_hook.go):
 		// the device printed the legal receipt; this copy shows its
 		// receipt number, serial and Z counter so the two can be matched.

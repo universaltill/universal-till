@@ -157,7 +157,8 @@
          block is absent when no evidence was recorded, and individual
          fields the signer didn't return are skipped, never placeholders.
          Factual data display, no compliance-outcome claim (ADR-0040). The
-         QR payload format is provisional — see buildTSEQRPayload. -->
+         QR is not built from these fields — see the FiscalReceipt block
+         below (ut-docs#2880). -->
     <div class="receipt-legal receipt-tse">
       <div class="receipt-legal-label">{{ T "receipt.fiscal.tse.title" }}</div>
       {{ if .TSESignature.SerialNumber }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.serial_number" }}: {{ .TSESignature.SerialNumber }}</div>{{ end }}
@@ -167,7 +168,17 @@
       {{ if .TSESignature.LogTime }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.log_time" }}: {{ .TSESignature.LogTime }}</div>{{ end }}
       {{ if .TSESignature.SignatureAlgorithm }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.signature_algorithm" }}: {{ .TSESignature.SignatureAlgorithm }}</div>{{ end }}
       {{ if .TSESignature.Signature }}<div class="receipt-legal-line">{{ T "receipt.fiscal.tse.signature" }}: <span class="receipt-tse-signature">{{ .TSESignature.Signature }}</span></div>{{ end }}
-      {{ if .TSESignature.QRDataURI }}<div class="receipt-tse-qr"><img src="{{ .TSESignature.QRDataURI }}" alt="" width="140" height="140"></div>{{ end }}
+    </div>
+    {{ end }}
+    {{ if .FiscalReceipt }}
+    <!-- ut-docs#2880 (fiscal.sign.ask contract 1.10.0): the signer's own
+         receipt object, stored per sale at tender time — its extra lines
+         (plugin text, auto-escaped) and a QR encoding the stored
+         qr_payload verbatim (for Germany: fiskaly's DSFinV-K "V0;…"
+         string). Core never builds the payload; no stored row, no block. -->
+    <div class="receipt-legal receipt-fiscal-receipt">
+      {{ range .FiscalReceipt.Lines }}<div class="receipt-legal-line">{{ . }}</div>{{ end }}
+      {{ if .FiscalReceipt.QRDataURI }}<div class="receipt-tse-qr"><img src="{{ .FiscalReceipt.QRDataURI }}" alt="" width="140" height="140"></div>{{ end }}
     </div>
     {{ end }}
     {{ if .DeviceReceipt }}
