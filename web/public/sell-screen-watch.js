@@ -9,8 +9,11 @@
 // sale screen showing (and selling from) the old grid until something
 // happened to reload it.
 //
-// How: every GET /ui/buttons response for the grid carries
-// X-UT-Sell-Version, the catalog generation it was rendered at
+// How: every grid render carries the catalog generation it was rendered at
+// -- as the X-UT-Sell-Version header of a GET /ui/buttons response and, since
+// ut-docs#2989 inlined the grid into GET / itself (a page response has no
+// such header), as data-sell-version on the grid root; the root attribute is
+// read on load and after every swap, the header on every grid request
 // (sell_screen_version, migrations 042/047 -- catalog tables only, so a
 // completed sale never moves it). While the page is visible, this polls
 // GET /ui/buttons/version every POLL_MS (and at once when the page becomes
@@ -95,6 +98,24 @@
     rendered = v ? String(v) : null;
   });
 
+  // ut-docs#2989: adopt the version a grid root carries in its markup
+  // (data-sell-version), once per root element -- GET /'s inline first-paint
+  // grid has no response header. Later polls/refreshes update `rendered`
+  // through the header path above; a root already adopted is never re-read,
+  // so an old root left on screen by a failed refresh can't roll it back.
+  var seededFrom = null;
+  function seed() {
+    var g = saleGrid();
+    if (!g || g === seededFrom) return;
+    var v = g.getAttribute('data-sell-version');
+    if (!v) return;
+    seededFrom = g;
+    rendered = String(v);
+  }
+  document.addEventListener('htmx:afterSettle', seed);
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', seed, { once: true });
+  else seed();
+
   function pointerDown() { pointersDown++; }
   function pointerUp() { if (pointersDown > 0) pointersDown--; }
   document.addEventListener('pointerdown', pointerDown, true);
@@ -107,7 +128,8 @@
   function tick() {
     if (inFlight || document.visibilityState !== 'visible') return;
     var g = saleGrid();
-    if (!g) { rendered = null; refreshAt = 0; return; }
+    if (!g) { rendered = null; refreshAt = 0; seededFrom = null; return; }
+    seed();
     if (rendered === null) return;
     if (refreshAt && Date.now() - refreshAt < REFRESH_TIMEOUT_MS) return;
     refreshAt = 0;
