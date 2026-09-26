@@ -387,6 +387,10 @@ func Run(ctx context.Context) error {
 	// already available here.
 	procrestart.SetBeforeRestart(stopPluginsBeforeRestart(supervisor, log))
 	selfupdate.SetBeforeRestart(stopPluginsBeforeRestart(supervisor, log))
+	// ut-docs#2759: confirm an in-app update actually took over (clears its
+	// pending marker), or raise the "restart pending" Problem if this build
+	// is older than the one swapped in on disk.
+	selfupdate.ReconcileAtStartup()
 
 	mux, deps := pagesInit(ctx, bgCtx, cfg, pluginManager, database.DB, catalogRepo, &wg)
 

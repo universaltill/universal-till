@@ -7,3 +7,8 @@ package selfupdate
 func reexec(_ string) error {
 	return ErrUnsupported
 }
+
+// signalSelf is never reached on Windows (see reexec above).
+func signalSelf() error {
+	return ErrUnsupported
+}
