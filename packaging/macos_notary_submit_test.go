@@ -176,3 +176,29 @@ func TestMakeDmgUsesBoundedNotarization(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#2870 (v0.25.0 run 36221557677): Apple accepted the notarization
+// but `spctl --assess --type open --context context:primary-signature`
+// rejected the .dmg with "no usable signature" — a disk image must itself
+// be code-signed with the Developer ID (Apple's distribution flow: create
+// .dmg → codesign it → notarize → staple → assess). Pin that the .dmg is
+// signed after hdiutil create and before notarization.
+func TestMakeDmgSignsTheDiskImageBeforeNotarizing(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("macos", "make-dmg.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	create := strings.Index(s, "hdiutil create")
+	sign := strings.Index(s, `codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" "$DMG"`)
+	notarize := strings.Index(s, `notary_submit_and_wait "$DMG"`)
+	if create < 0 || notarize < 0 {
+		t.Fatal("make-dmg.sh no longer creates and notarizes the .dmg as expected")
+	}
+	if sign < 0 {
+		t.Fatal("make-dmg.sh never code-signs the .dmg; Gatekeeper rejects an unsigned disk image")
+	}
+	if sign < create || sign > notarize {
+		t.Fatal("the .dmg must be signed after hdiutil create and before notarization")
+	}
+}
