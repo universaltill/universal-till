@@ -304,6 +304,11 @@ func cloudLinkRowViewOf(gateReason cloudLinkGateReason, state cloudlink.State, r
 			return cloudLinkRowView{Show: true, Code: "paused_not_main", LabelKey: "tills.cloud_link.state_paused_not_main", HintKey: "tills.cloud_link.hint_paused_not_main"}
 		case cloudlink.WaitReasonTierChanged:
 			return cloudLinkRowView{Show: true, Code: "paused_tier", LabelKey: "tills.cloud_link.state_paused_tier", HintKey: "tills.cloud_link.hint_paused_tier"}
+		case cloudlink.WaitReasonCredentialRequired:
+			// ut-docs#2769: still on the shop's shared token; the cloud
+			// rotates this till onto its own credential at a check-in
+			// (ADR-0116 D4), else the owner pairs it again.
+			return cloudLinkRowView{Show: true, Code: "paused_credential", LabelKey: "tills.cloud_link.state_paused_credential", HintKey: "tills.cloud_link.hint_paused_credential"}
 		case cloudlink.WaitReasonRetryAfter:
 			// The cloud said when: Run redials by itself at that time, no
 			// check-in needed.
