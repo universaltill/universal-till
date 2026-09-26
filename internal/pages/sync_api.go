@@ -17,6 +17,7 @@ import (
 
 	qrcode "github.com/skip2/go-qrcode"
 
+	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -413,7 +414,9 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			// link: this main till serves GET /api/sync/link at this level
 			// (ADR-0114 §11) — a replica dials only when advertised.
-			"data":  map[string]any{"till_id": till.ID, "shop_name": storeNameOrDefault(r.Context(), d), "link": 1},
+			// version: what a replica without the link follows (ut-docs#2738).
+			"data": map[string]any{"till_id": till.ID, "shop_name": storeNameOrDefault(r.Context(), d), "link": 1,
+				"version": buildinfo.Version},
 			"error": nil,
 		})
 	})

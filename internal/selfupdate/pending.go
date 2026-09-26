@@ -277,6 +277,14 @@ type restartPlan struct {
 	signalSelf            func() error
 	smoke                 func(exe, version string) error
 	systemd               bool
+	// idle, when set (ApplyVersionWhenIdle, ut-docs#2738), is re-checked
+	// after the delay: a sale started meanwhile holds the restart, and the
+	// plugins it needs are only stopped once it is done.
+	idle func() bool
+	// idleSeen is closed by restartInto once its own idle wait passed; the
+	// watchdog counts from then, never from a poll of its own (which could
+	// see idle just before a sale opens and report a held restart).
+	idleSeen chan struct{}
 	// rolledBack is shared by restartInto and restartWatchdog: once the
 	// swap was undone there is no pending restart left to report.
 	rolledBack *atomic.Bool
@@ -287,13 +295,19 @@ func newRestartPlan(exe, version, webDir string) restartPlan {
 		exe: exe, version: version, running: buildinfo.Version, webDir: webDir,
 		delay: reexecDelay, hookBound: restartHookBound, watchdogAfter: restartWatchdogAfter,
 		hook: beforeRestart, exec: reexecFn, signalSelf: signalSelfFn, smoke: smokeRunFn,
-		systemd: underSystemd(), rolledBack: new(atomic.Bool),
+		systemd: underSystemd(), rolledBack: new(atomic.Bool), idleSeen: make(chan struct{}),
 	}
 }
 
 // restartInto replaces this process with the freshly swapped binary. It
 // only returns if that failed.
 func restartInto(p restartPlan) {
+	if p.idle != nil {
+		time.Sleep(p.delay)
+		_ = waitIdle(context.Background(), p.idle)
+		p.delay = 0 // already waited; stop the plugins now
+	}
+	close(p.idleSeen)
 	done := make(chan struct{})
 	go func() {
 		p.hook(context.Background())
@@ -305,6 +319,8 @@ func restartInto(p restartPlan) {
 	case <-time.After(p.hookBound):
 		logging.L().Warnf("[selfupdate] stopping plugins before restart took over %v — restarting anyway", p.hookBound)
 	}
+	// A sale opened while the plugins stopped still must not be cut off.
+	_ = waitIdle(context.Background(), p.idle)
 	err := p.exec(p.exe)
 	if err == nil {
 		return // only a test seam returns nil; a real exec never returns on success
@@ -338,6 +354,9 @@ func restartInto(p restartPlan) {
 // restartWatchdog raises the Problem if this process is still running
 // watchdogAfter after the restart was scheduled.
 func restartWatchdog(p restartPlan) {
+	// A restart held for an open sale is not "pending" yet: count from the
+	// moment restartInto's own idle wait passed.
+	<-p.idleSeen
 	time.Sleep(p.watchdogAfter)
 	if p.rolledBack.Load() {
 		return

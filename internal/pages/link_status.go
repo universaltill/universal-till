@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -40,11 +41,13 @@ const (
 	linkUnreachable linkState = "unreachable" // the main till is gone: selling offline
 )
 
-// Update notes shown next to a linked chip, from the main till's hello
-// version against this till's (the fleet-update states themselves are
-// #2726; until then these are what the versions alone can say).
+// Update notes shown next to a linked or polling chip, from the main till's
+// version (followTarget) against this till's. ut-docs#2738 replaced the old
+// "Update waiting", which promised an update nothing performed: the note now
+// says whether this till installs it by itself or someone has to.
 const (
-	linkUpdateWaiting     = "update_waiting"      // the main till is newer: this till follows it
+	linkUpdateFollowing   = "update_following"    // the main till is newer: this till installs it by itself
+	linkUpdateManual      = "update_manual"       // the main till is newer: this till can't install it by itself
 	linkMainUpdateWaiting = "main_update_waiting" // this till is newer: waiting for the main till
 )
 
@@ -58,6 +61,8 @@ type linkInputs struct {
 	WatchSince       string // RFC 3339, sync.last_contact_at
 	LastContact      string // RFC 3339, sync.last_contact_at
 	ThisVersion      string
+	Target           string    // the main till's version (followTarget), ut-docs#2738
+	CanFollow        bool      // followCanInstall: this till installs Target by itself
 	Now              time.Time // zero: time.Now()
 }
 
@@ -65,7 +70,8 @@ type linkInputs struct {
 type linkView struct {
 	State          linkState
 	Since          string // RFC 3339; set when unreachable and known
-	Update         string // linkUpdateWaiting / linkMainUpdateWaiting / ""
+	Update         string // linkUpdateFollowing / linkUpdateManual / linkMainUpdateWaiting / ""
+	Target         string // the main till's version, for the update note
 	PluginsWaiting bool   // plugin updates wait for the main till (ADR-0011 §7)
 }
 
@@ -102,7 +108,7 @@ func deriveLinkView(in linkInputs) linkView {
 		return linkView{State: linkUnreachable, Since: since}
 	}
 	if in.HasClient && in.Client.Linked {
-		return linkView{State: linkLinked, Update: linkUpdateNote(in.ThisVersion, in.Client.MainVersion)}
+		return withUpdateNote(linkView{State: linkLinked}, in)
 	}
 	if in.HasClient && !lostAt.IsZero() && !contactAfter(in.LastContact, lostSeen(in.Client)) {
 		return linkView{State: linkUnreachable, Since: lostAt.UTC().Format(time.RFC3339)}
@@ -110,7 +116,17 @@ func deriveLinkView(in linkInputs) linkView {
 	if in.HasClient && !in.Client.FailedAt.IsZero() && !contactAfter(in.LastContact, now.Add(-discovery.UnreachableWindow)) {
 		return linkView{State: linkUnreachable, Since: strings.TrimSpace(in.LastContact)}
 	}
-	return linkView{State: linkPolling}
+	return withUpdateNote(linkView{State: linkPolling}, in)
+}
+
+// withUpdateNote adds the update note to a linked or polling view — a
+// polling replica follows its main till too, from the pinged version.
+func withUpdateNote(v linkView, in linkInputs) linkView {
+	v.Update = linkUpdateNote(in.ThisVersion, in.Target, in.CanFollow)
+	if v.Update != "" {
+		v.Target = strings.TrimPrefix(strings.TrimSpace(in.Target), "v")
+	}
+	return v
 }
 
 // lostSeen is when the loss was noticed (LostAt when not recorded).
@@ -130,7 +146,7 @@ func contactAfter(contact string, t time.Time) bool {
 
 // linkUpdateNote compares this till's version with the main till's. Only
 // release versions compare; a dev build or an unknown version says nothing.
-func linkUpdateNote(this, main string) string {
+func linkUpdateNote(this, main string, canFollow bool) string {
 	if !releaseVersion(this) || !releaseVersion(main) {
 		return ""
 	}
@@ -139,18 +155,24 @@ func linkUpdateNote(this, main string) string {
 	this = strings.TrimPrefix(strings.TrimSpace(this), "v")
 	main = strings.TrimPrefix(strings.TrimSpace(main), "v")
 	switch {
+	case updates.Newer(main, this) && canFollow:
+		return linkUpdateFollowing
 	case updates.Newer(main, this):
-		return linkUpdateWaiting
+		return linkUpdateManual
 	case updates.Newer(this, main):
 		return linkMainUpdateWaiting
 	}
 	return ""
 }
 
-// releaseVersion: "1.2.3" or "v1.2.3" — a digit after the optional v.
+// releaseVersionRe: "1.2.3" or "v1.2.3" — dotted numbers only, the same
+// shape selfupdate.ApplyVersion accepts (ut-docs#2738), since a version from
+// the main till's hello or ping is device input that may be installed.
+var releaseVersionRe = regexp.MustCompile(`^v?[0-9]+(\.[0-9]+){1,3}$`)
+
+// releaseVersion reports whether v is a release version (never "dev").
 func releaseVersion(v string) bool {
-	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
-	return v != "" && v[0] >= '0' && v[0] <= '9'
+	return releaseVersionRe.MatchString(strings.TrimSpace(v))
 }
 
 // linkInputsOf reads the inputs for this till now.
@@ -166,6 +188,8 @@ func linkInputsOf(ctx context.Context, d *common.Deps) linkInputs {
 		in.WatchSince, in.WatchUnreachable = d.PrimaryWatch.Unreachable(ctx)
 	}
 	in.LastContact, _, _ = d.Settings.Get(ctx, "sync.last_contact_at")
+	fin := followInputsOf(ctx, d)
+	in.Target, in.CanFollow = fin.Target, followCanInstall(fin)
 	return in
 }
 
@@ -190,6 +214,7 @@ func renderLinkChip(v linkView) http.HandlerFunc {
 			"state":          string(v.State),
 			"since":          v.Since,
 			"update":         v.Update,
+			"target":         v.Target,
 			"pluginsWaiting": v.PluginsWaiting,
 		})(w, r)
 	}

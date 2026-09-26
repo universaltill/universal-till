@@ -14,7 +14,12 @@
      the explanation lives on that page. data-link-state is what base.html's
      announcer compares so a screen reader hears a CHANGE, not every poll.
      Plugin updates on a replica follow the main till (ADR-0011 §7), so the
-     unreachable chip names pending ones too. */}}
+     unreachable chip names pending ones too.
+     ut-docs#2738: a linked or polling chip adds a short update note when the
+     main till runs a newer version — "Updating to vX soon" when this till
+     installs it by itself, "Update to vX needed" when it can't (then the chip
+     links to Settings → Software update instead of /tills); the explanation
+     is in the title. */}}
 {{ if eq .state "unreachable" -}}
 <a class="sb-item sb-link is-unreachable sb-main-till" href="/tills" data-testid="sb-link" data-link-state="unreachable"
    title="{{ T "sync.main_till_unreachable_hint" }}">
@@ -22,9 +27,9 @@
   <span class="sb-link-text">{{ if .since }}{{ printf (T "sync.main_till_unreachable_since") (shortdatetime .since) }}{{ else }}{{ T "sync.main_till_unreachable" }}{{ end }}{{ if .pluginsWaiting }} · {{ T "sync.main_till_unreachable_plugins" }}{{ end }}</span>
 </a>
 {{- else -}}
-<a class="sb-item sb-link is-{{ .state }}" href="/tills" data-testid="sb-link" data-link-state="{{ .state }}"
-   title="{{ if eq .state "linked" }}{{ T "sync.link.linked_hint" }}{{ else }}{{ T "sync.link.polling_hint" }}{{ end }}">
+<a class="sb-item sb-link is-{{ .state }}" href="{{ if eq .update "update_manual" }}/settings#settings-update{{ else }}/tills{{ end }}" data-testid="sb-link" data-link-state="{{ .state }}"{{ if .update }} data-update="{{ .update }}"{{ end }}
+   title="{{ if eq .update "update_following" }}{{ T "sync.link.update_following_hint" }}{{ else if eq .update "update_manual" }}{{ printf (T "sync.link.update_manual_hint") .target }}{{ else if eq .state "linked" }}{{ T "sync.link.linked_hint" }}{{ else }}{{ T "sync.link.polling_hint" }}{{ end }}">
   <span class="sb-dot" aria-hidden="true"></span>
-  <span class="sb-link-text">{{ if eq .state "linked" }}{{ T "sync.link.linked" }}{{ else }}{{ T "sync.link.polling" }}{{ end }}{{ if eq .update "update_waiting" }} · {{ T "sync.link.update_waiting" }}{{ else if eq .update "main_update_waiting" }} · {{ T "sync.link.main_update_waiting" }}{{ end }}</span>
+  <span class="sb-link-text">{{ if eq .state "linked" }}{{ T "sync.link.linked" }}{{ else }}{{ T "sync.link.polling" }}{{ end }}{{ if eq .update "update_following" }} · {{ printf (T "sync.link.update_following") .target }}{{ else if eq .update "update_manual" }} · {{ printf (T "sync.link.update_manual") .target }}{{ else if eq .update "main_update_waiting" }} · {{ T "sync.link.main_update_waiting" }}{{ end }}</span>
 </a>
 {{- end }}
