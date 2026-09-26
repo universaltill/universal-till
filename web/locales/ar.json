@@ -2437,6 +2437,7 @@
   "status.update_failed": "فشل التحديث — راجع السجلات",
   "status.update_installed_reload": "تم تثبيت التحديث — انقر لإعادة التحميل",
   "status.update_now": "حدّث الآن",
+  "status.update_restart_pending": "تم تثبيت التحديث — بانتظار إعادة التشغيل. أعد تشغيل الصندوق لإكمال التحديث",
   "status.update_restarting": "جارٍ إعادة التشغيل…",
   "status.update_uptodate": "محدّث بالفعل",
   "suggest.add": "أضف إلى السلة",
