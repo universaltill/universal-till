@@ -198,6 +198,16 @@ func TestNewer(t *testing.T) {
 		{"0.1.10", "0.1.9", true}, // numeric, not lexical
 		{"0.1.3", "dev", true},    // any release beats a dev build
 		{"0.1.3", "", true},
+		// Prerelease suffixes (ut-docs#2759): a release beats its own
+		// release candidates, rcs order among themselves, and a bare numeric
+		// part still wins over any suffix on a lower version.
+		{"0.22.2", "0.22.2-rc1", true},
+		{"0.22.2-rc1", "0.22.2", false},
+		{"0.22.2-rc2", "0.22.2-rc1", true},
+		{"0.22.2-rc10", "0.22.2-rc9", true},
+		{"0.22.2-rc1", "0.22.2-rc1", false},
+		{"0.22.3-rc1", "0.22.2", true},
+		{"0.22.2+build5", "0.22.2", false}, // build metadata never orders
 	}
 	for _, c := range cases {
 		if got := Newer(c.a, c.b); got != c.want {
