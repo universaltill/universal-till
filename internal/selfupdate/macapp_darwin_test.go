@@ -72,7 +72,7 @@ func TestApplyMacAppNoDmgInRelease(t *testing.T) {
 	buildinfo.Version = "0.1.0"
 	t.Cleanup(func() { buildinfo.Version = oldVer })
 	newReleaseServer(t, "v0.2.0", map[string][]byte{"unitill-pos_0.2.0_linux_amd64.tar.gz": []byte("x")})
-	err := applyMacApp(context.Background(), "/Applications/Universal Till.app")
+	err := applyMacApp(context.Background(), "/Applications/Universal Till.app", "", nil)
 	if err == nil || !strings.Contains(err.Error(), "no macOS .dmg") {
 		t.Fatalf("err = %v, want no-dmg-in-release", err)
 	}
@@ -84,7 +84,7 @@ func TestApplyMacAppDmgDownloadFails(t *testing.T) {
 	t.Cleanup(func() { buildinfo.Version = oldVer })
 	// A nil asset body is listed in /latest but 404s on download.
 	newReleaseServer(t, "v0.2.0", map[string][]byte{"unitill-pos-0.2.0-macOS-arm64.dmg": nil})
-	err := applyMacApp(context.Background(), "/Applications/Universal Till.app")
+	err := applyMacApp(context.Background(), "/Applications/Universal Till.app", "", nil)
 	if err == nil || !strings.Contains(err.Error(), "download .dmg") {
 		t.Fatalf("err = %v, want download failure", err)
 	}
@@ -115,7 +115,7 @@ func TestApplyMacAppRejectsIntelMac(t *testing.T) {
 	// real GitHub API. If applyMacApp attempted a fetch before the arch
 	// check, this test would hit the network (and likely hang/fail) instead
 	// of returning immediately.
-	err := applyMacApp(context.Background(), "/Applications/Universal Till.app")
+	err := applyMacApp(context.Background(), "/Applications/Universal Till.app", "", nil)
 	if err == nil || !strings.Contains(err.Error(), "Intel Mac") {
 		t.Fatalf("err = %v, want a clear Intel Mac error", err)
 	}
@@ -135,7 +135,7 @@ func TestApplyMacAppDmgChecksumMatchProceeds(t *testing.T) {
 		dmgName:         dmg,
 		"checksums.txt": []byte(sha256hex(dmg) + "  " + dmgName + "\n"),
 	})
-	err := applyMacApp(context.Background(), "/Applications/Universal Till.app")
+	err := applyMacApp(context.Background(), "/Applications/Universal Till.app", "", nil)
 	if err == nil || !strings.Contains(err.Error(), "mount .dmg") {
 		t.Fatalf("err = %v, want mount failure (proving checksum passed)", err)
 	}
@@ -154,7 +154,7 @@ func TestApplyMacAppDmgChecksumMismatchAborts(t *testing.T) {
 		dmgName:         dmg,
 		"checksums.txt": []byte(strings.Repeat("0", 64) + "  " + dmgName + "\n"),
 	})
-	err := applyMacApp(context.Background(), "/Applications/Universal Till.app")
+	err := applyMacApp(context.Background(), "/Applications/Universal Till.app", "", nil)
 	if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("err = %v, want checksum mismatch", err)
 	}
@@ -173,7 +173,7 @@ func TestApplyMacAppDmgNoChecksumsFile(t *testing.T) {
 	before := countLeakedWorkDirs(t)
 	dmgName := "unitill-pos-0.2.0-macOS-arm64.dmg"
 	newReleaseServer(t, "v0.2.0", map[string][]byte{dmgName: []byte("dmg bytes")}) // no checksums.txt
-	err := applyMacApp(context.Background(), "/Applications/Universal Till.app")
+	err := applyMacApp(context.Background(), "/Applications/Universal Till.app", "", nil)
 	if err == nil || !strings.Contains(err.Error(), "checksums.txt") {
 		t.Fatalf("err = %v, want refusal over missing checksums.txt", err)
 	}
@@ -195,11 +195,30 @@ func TestApplyMacAppDmgChecksumEntryMissing(t *testing.T) {
 		dmgName:         []byte("dmg bytes"),
 		"checksums.txt": []byte(strings.Repeat("1", 64) + "  " + "some-other-file.tar.gz\n"),
 	})
-	err := applyMacApp(context.Background(), "/Applications/Universal Till.app")
+	err := applyMacApp(context.Background(), "/Applications/Universal Till.app", "", nil)
 	if err == nil || !strings.Contains(err.Error(), "checksum not found") {
 		t.Fatalf("err = %v, want checksum-not-found", err)
 	}
 	if after := countLeakedWorkDirs(t); after != before {
 		t.Errorf("bad download not cleaned up: %d leaked work dirs (was %d)", after, before)
+	}
+}
+
+// ut-docs#2738: the .app path installs the SAME release ApplyVersion was
+// asked for — it must not re-fetch /latest on its own.
+func TestApplyVersionMacAppUsesTheTag(t *testing.T) {
+	oldExec, oldVer := osExecutable, buildinfo.Version
+	osExecutable = func() (string, error) {
+		return "/Applications/Universal Till.app/Contents/MacOS/unitill-pos", nil
+	}
+	buildinfo.Version = "0.1.0"
+	t.Cleanup(func() { osExecutable, buildinfo.Version = oldExec, oldVer })
+	rs := newReleaseServer(t, "v0.2.0", map[string][]byte{})
+	err := ApplyVersion(context.Background(), "0.2.0")
+	if err == nil || !strings.Contains(err.Error(), "no macOS .dmg in release v0.2.0") {
+		t.Fatalf("err = %v, want applyMacApp's no-dmg error for v0.2.0", err)
+	}
+	if got := rs.requested(); len(got) != 1 || got[0] != "/tags/v0.2.0" {
+		t.Fatalf("release metadata asked for %v, want exactly [/tags/v0.2.0]", got)
 	}
 }

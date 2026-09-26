@@ -3,7 +3,7 @@ import { watchConsole } from './helpers';
 import { WORKER_TILL_EFFECTS_LEVEL } from './worker-till';
 
 // ut-docs#2859 / ADR-0119: the per-till visual effects level. Under Light
-// the ADR-0118 page motion must not even be CREATED -- htmx:beforeTransition
+// the page motion (ADR-0118, a zoom since ADR-0122) must not even be CREATED -- htmx:beforeTransition
 // is cancelled through UT.motionOff(), so no View Transition and no
 // whole-page snapshot (the costly part on a Pi) ever happens -- while Full
 // still runs it, and Balanced runs it at 200 ms.
@@ -89,7 +89,7 @@ test.describe('visual effects level gates the page motion (ut-docs#2859, ADR-011
     assertClean();
   });
 
-  test('Balanced: the page push runs at 200 ms', async ({ page }) => {
+  test('Balanced: the page zoom runs at 200 ms', async ({ page }) => {
     const assertClean = watchConsole(page);
     await setLevel(page, 'balanced');
     await openSell(page, 'balanced');
