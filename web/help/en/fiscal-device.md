@@ -16,7 +16,7 @@ This page shows that arrangement from the till's side. It never talks to the dev
 
 ## How to use it
 
-1. Install and enable the plugin **Türkiye fiscal device (YN ÖKC)** from **Plugins** and grant it the network permission it asks for. **Fiscal device** then appears on the menu (manager only, once your shop's country is Türkiye).
+1. Install and enable the plugin **Türkiye fiscal device (YN ÖKC)** from **Plugins**, enter the device's address in its settings (`okc.host`, `okc.port`; the default `127.0.0.1:4711` is a bridge on this till) and grant the network permission it asks for — it lets the plugin reach only that address. **Fiscal device** then appears on the menu (manager only, once your shop's country is Türkiye).
 2. Under **Plugin**, follow **Open plugin settings** and enter where the device is on your shop's network — the driver, address and port. Until a maker's driver is complete, the *bridge* driver talks to a bridge program or to the simulator used for testing; the plugin refuses every tender rather than pretending when its driver is not ready.
 3. Take a sale with **Yazarkasa (ÖKC)** as the payment. The device prints; the till records the receipt. The first receipt marks the device as **confirmed** on this page automatically.
 4. If you have already watched the device print a test receipt and want to mark it confirmed before the first real sale, press **Confirm device**. Press **Unpair device** when the device is removed or replaced — sales as system of record are refused again until a device proves itself.

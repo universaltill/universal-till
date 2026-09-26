@@ -96,7 +96,7 @@ func (t hostTransport) Dial(host string, port int, connectTimeoutMs int) (io.Rea
 	hp, hl := ptrOf([]byte(host))
 	h := tcpOpen(hp, hl, uint32(port), uint32(connectTimeoutMs))
 	if h < 0 {
-		return nil, fmt.Errorf("tcp_open %s:%d failed (%d) — check the tcp:* permission grant and the device address", host, port, h)
+		return nil, fmt.Errorf("tcp_open %s:%d failed (%d) — check the tcp:@setting:okc.host:okc.port grant and the device address", host, port, h)
 	}
 	return &hostConn{handle: h, readTimeoutMs: t.readTimeoutMs}, nil
 }

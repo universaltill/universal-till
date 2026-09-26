@@ -62,12 +62,27 @@ func seedOKCSettings(t *testing.T, d *data.PluginRepo, pluginID string, port int
 
 func itoa(n int) string { return strconv.Itoa(n) }
 
-// grantOKCDevice grants the exact device address. The sim listens on
-// loopback, and since ut-docs#2891 (review M1) tcp:* reaches public
-// addresses only — a loopback bridge or LAN ÖKC needs tcp:<host>:<port>.
-func grantOKCDevice(t *testing.T, db *sql.DB, pluginID string, port int) {
+// grantOKCManifestPermissions declares and grants exactly what the shipped
+// plugins/tax-tr/plugin.json asks for — tcp:@setting:okc.host:okc.port
+// (ut-docs#2899), so the device address comes from the okc.* settings, not
+// from a test-only exact grant.
+func grantOKCManifestPermissions(t *testing.T, db *sql.DB, pluginID string) {
 	t.Helper()
-	grantPerm(t, db, pluginID, "tcp:127.0.0.1:"+itoa(port))
+	f, err := os.Open(filepath.Join("..", "..", "plugins", "tax-tr", "plugin.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	m, err := ParseManifest(f)
+	if err != nil {
+		t.Fatalf("tax-tr manifest: %v", err)
+	}
+	for _, p := range m.Permissions {
+		if p == "tcp:*" {
+			t.Fatal("tax-tr must not declare tcp:* — it reaches public addresses only (ut-docs#2891)")
+		}
+		grantPerm(t, db, pluginID, p)
+	}
 }
 
 func authorizePayload(amount, total int64) map[string]any {
@@ -93,11 +108,10 @@ func TestOKCPlugin_AuthorizeReturnsDeviceEvidence(t *testing.T) {
 	db := hostfnTestDB(t)
 	const pluginID = fiscal.PluginIDTaxTR
 	seedPlugin(t, db, pluginID)
-	grantPerm(t, db, pluginID, "tcp:*")
+	grantOKCManifestPermissions(t, db, pluginID)
 	s := startOKCSim(t, sim.Options{Serial: "SIM-TEST-1", Maker: "sim", ZNo: 4})
 	repo := data.NewPluginRepo(db)
 	seedOKCSettings(t, repo, pluginID, s.Port())
-	grantOKCDevice(t, db, pluginID, s.Port())
 
 	w := newTCPTestRuntime(t, guest, pluginID)
 	w.mu.Lock()
@@ -145,7 +159,7 @@ func TestOKCPlugin_RefusesTenderWhenDeviceCannotPrint(t *testing.T) {
 	db := hostfnTestDB(t)
 	const pluginID = fiscal.PluginIDTaxTR
 	seedPlugin(t, db, pluginID)
-	grantPerm(t, db, pluginID, "tcp:*")
+	grantOKCManifestPermissions(t, db, pluginID)
 	repo := data.NewPluginRepo(db)
 	w := newTCPTestRuntime(t, guest, pluginID)
 	w.mu.Lock()
@@ -155,7 +169,6 @@ func TestOKCPlugin_RefusesTenderWhenDeviceCannotPrint(t *testing.T) {
 	t.Run("declined", func(t *testing.T) {
 		s := startOKCSim(t, sim.Options{DeclineAll: true})
 		seedOKCSettings(t, repo, pluginID, s.Port())
-		grantOKCDevice(t, db, pluginID, s.Port())
 		if _, err := runOKCEvent(t, w, repo, db, pluginID, "payment.okc.authorize", authorizePayload(3000, 3000)); err == nil {
 			t.Fatal("a declining device must refuse the tender")
 		}
@@ -166,7 +179,6 @@ func TestOKCPlugin_RefusesTenderWhenDeviceCannotPrint(t *testing.T) {
 	t.Run("split tender", func(t *testing.T) {
 		s := startOKCSim(t, sim.Options{})
 		seedOKCSettings(t, repo, pluginID, s.Port())
-		grantOKCDevice(t, db, pluginID, s.Port())
 		if _, err := runOKCEvent(t, w, repo, db, pluginID, "payment.okc.authorize", authorizePayload(1000, 3000)); err == nil {
 			t.Fatal("a split tender must be refused")
 		}
@@ -177,7 +189,6 @@ func TestOKCPlugin_RefusesTenderWhenDeviceCannotPrint(t *testing.T) {
 	t.Run("silent", func(t *testing.T) {
 		s := startOKCSim(t, sim.Options{Silent: true})
 		seedOKCSettings(t, repo, pluginID, s.Port())
-		grantOKCDevice(t, db, pluginID, s.Port())
 		start := time.Now()
 		if _, err := runOKCEvent(t, w, repo, db, pluginID, "payment.okc.authorize", authorizePayload(3000, 3000)); err == nil {
 			t.Fatal("a silent device must refuse the tender")
@@ -191,7 +202,6 @@ func TestOKCPlugin_RefusesTenderWhenDeviceCannotPrint(t *testing.T) {
 		port := s.Port()
 		s.Close()
 		seedOKCSettings(t, repo, pluginID, port)
-		grantOKCDevice(t, db, pluginID, port)
 		if _, err := runOKCEvent(t, w, repo, db, pluginID, "payment.okc.authorize", authorizePayload(3000, 3000)); err == nil {
 			t.Fatal("an unreachable device must refuse the tender")
 		}
@@ -200,7 +210,6 @@ func TestOKCPlugin_RefusesTenderWhenDeviceCannotPrint(t *testing.T) {
 		empty := ""
 		s := startOKCSim(t, sim.Options{ReceiptNoOverride: &empty})
 		seedOKCSettings(t, repo, pluginID, s.Port())
-		grantOKCDevice(t, db, pluginID, s.Port())
 		if _, err := runOKCEvent(t, w, repo, db, pluginID, "payment.okc.authorize", authorizePayload(3000, 3000)); err == nil {
 			t.Fatal("an ok:true answer with no receipt number must refuse the tender, not commit the sale")
 		}
@@ -211,7 +220,6 @@ func TestOKCPlugin_RefusesTenderWhenDeviceCannotPrint(t *testing.T) {
 	t.Run("scaffold driver", func(t *testing.T) {
 		s := startOKCSim(t, sim.Options{})
 		seedOKCSettings(t, repo, pluginID, s.Port())
-		grantOKCDevice(t, db, pluginID, s.Port())
 		if err := repo.UpsertPluginSettingScoped(context.Background(), pluginID, "okc.driver", `"hugin-pclink"`, "global", false); err != nil {
 			t.Fatal(err)
 		}
@@ -224,8 +232,9 @@ func TestOKCPlugin_RefusesTenderWhenDeviceCannotPrint(t *testing.T) {
 	})
 }
 
-// Without the tcp:* grant the plugin cannot reach the device and must
-// refuse — the permission model, not the plugin, decides who may dial.
+// Without its tcp grant (declared but not granted by an admin) the plugin
+// cannot reach the device and must refuse — the permission model, not the
+// plugin, decides who may dial.
 func TestOKCPlugin_RefusesWithoutTCPGrant(t *testing.T) {
 	guest := buildOKCPlugin(t)
 	db := hostfnTestDB(t)
@@ -234,23 +243,26 @@ func TestOKCPlugin_RefusesWithoutTCPGrant(t *testing.T) {
 	grantPerm(t, db, pluginID, "storage")
 	s := startOKCSim(t, sim.Options{})
 	repo := data.NewPluginRepo(db)
+	if err := repo.InsertPluginPermissions(context.Background(), nil, pluginID, []string{"tcp:@setting:okc.host:okc.port"}); err != nil {
+		t.Fatal(err)
+	}
 	seedOKCSettings(t, repo, pluginID, s.Port())
 	w := newTCPTestRuntime(t, guest, pluginID)
 	w.mu.Lock()
 	w.db = db
 	w.mu.Unlock()
 	if _, err := runOKCEvent(t, w, repo, db, pluginID, "payment.okc.authorize", authorizePayload(3000, 3000)); err == nil {
-		t.Fatal("without tcp:* the tender must be refused")
+		t.Fatal("without the granted tcp permission the tender must be refused")
 	}
 	if n := len(s.Log()); n != 0 {
 		t.Fatalf("device saw %d receipts without a tcp grant", n)
 	}
 }
 
-// ut-docs#2891 review M1: the plugin's manifest declares tcp:* and points at
-// a loopback bridge (okc.host 127.0.0.1) or a LAN device from settings.
-// tcp:* no longer reaches either — the tender is refused and the device sees
-// nothing until the exact tcp:<host>:<port> is granted (follow-up card).
+// ut-docs#2891 review M1: tcp:* reaches public addresses only, so it can
+// never reach the loopback bridge (okc.host 127.0.0.1) or a LAN device —
+// which is why the manifest declares tcp:@setting:okc.host:okc.port
+// (ut-docs#2899) instead.
 func TestOKCPlugin_WildcardAloneCannotReachLoopbackBridge(t *testing.T) {
 	guest := buildOKCPlugin(t)
 	db := hostfnTestDB(t)

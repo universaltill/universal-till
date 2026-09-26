@@ -16,7 +16,7 @@ Bu sayfa bu düzeni kasanın tarafından gösterir. Cihazla kendisi konuşmaz ve
 
 ## Nasıl kullanılır
 
-1. **Eklentiler**'den **Türkiye mali cihazı (YN ÖKC)** eklentisini kurup etkinleştirin ve istediği ağ iznini verin. Dükkanınızın ülkesi Türkiye ise menüde **Mali cihaz** görünür (yalnızca yönetici).
+1. **Eklentiler**'den **Türkiye mali cihazı (YN ÖKC)** eklentisini kurup etkinleştirin, ayarlarına cihazın adresini girin (`okc.host`, `okc.port`; varsayılan `127.0.0.1:4711` bu kasadaki bir köprüdür) ve istediği ağ iznini verin — bu izin eklentinin yalnızca o adrese erişmesine olanak tanır. Dükkanınızın ülkesi Türkiye ise menüde **Mali cihaz** görünür (yalnızca yönetici).
 2. **Eklenti** altında **Eklenti ayarlarını aç** bağlantısını izleyip cihazın dükkan ağındaki yerini girin — sürücü, adres ve port. Bir üreticinin sürücüsü tamamlanana kadar *bridge* sürücüsü bir köprü programıyla ya da test için kullanılan simülatörle konuşur; sürücüsü hazır olmayan eklenti, -mış gibi yapmak yerine her ödemeyi reddeder.
 3. Ödeme olarak **Yazarkasa (ÖKC)** seçerek bir satış yapın. Cihaz fişi basar; kasa fişi kaydeder. İlk fiş, bu sayfada cihazı otomatik olarak **doğrulanmış** yapar.
 4. Cihazın test fişi bastığını zaten gördüyseniz ve ilk gerçek satıştan önce doğrulanmış olarak işaretlemek istiyorsanız **Cihazı doğrula**'ya basın. Cihaz kaldırıldığında ya da değiştirildiğinde **Cihazı ayır**'a basın — bir cihaz kendini kanıtlayana kadar sistem kaydı olarak satışlar yeniden reddedilir.

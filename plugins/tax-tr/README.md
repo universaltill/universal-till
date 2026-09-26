@@ -113,9 +113,12 @@ the bridge (§5.3).
 | `okc.connect_timeout_ms` | `3000` | dial deadline |
 | `okc.read_timeout_ms` | `25000` | how long to wait for the device to finish (card presented, paper printed) — must stay under the till's own 30s authorize/refund deadline for tcp: plugins (ut-docs#1762) |
 
-Permissions: `tcp:*` (the device address is a setting, so the exact host:port
-cannot be declared in the manifest — same review-gated convention as other
-LAN-device plugins, ADR-0001 amendment) and `storage.local.1MB`.
+Permissions: `tcp:@setting:okc.host:okc.port` and `storage.local.1MB`. The
+setting-bound grant (ut-docs#2899) lets the plugin reach exactly the address
+currently saved in `okc.host` + `okc.port` — the local bridge on loopback or
+the register on the shop LAN — and nothing else on the network. Change the
+settings and the grant follows. The till's own port is never reachable.
+(`tcp:*` would not do: since ut-docs#2891 it reaches public addresses only.)
 
 ## Build and run
 
@@ -126,7 +129,8 @@ go test ./plugins/...               # driver + simulator tests (host Go)
 go test ./internal/plugins -run OKC # the real .wasm through the till's runtime
 ```
 
-Then install the plugin (manifest `plugin.json` + `plugin.wasm`), grant the
-`tcp:*` permission, set the country to Türkiye, and choose **Yazarkasa
+Then install the plugin (manifest `plugin.json` + `plugin.wasm`), set
+`okc.host`/`okc.port`, grant the `tcp:@setting:okc.host:okc.port` permission
+(shown as "connects only to the address saved in: okc.host, okc.port"), set the country to Türkiye, and choose **Yazarkasa
 (ÖKC)** at tender. `/fiscal-device` shows the device's last receipt and
 today's count.

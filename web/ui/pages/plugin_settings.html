@@ -67,7 +67,11 @@
     <tbody>
       {{ range .Permissions }}
       <tr>
+        {{ if .SettingKeys }}
+        <td title="{{ T "plugins.permissions.setting_bound_hint" }}">{{ T "plugins.permissions.setting_bound" }} <code>{{ .SettingKeys }}</code><br>{{ T "plugins.permissions.setting_bound_now" }} <strong data-bound-target="{{ .Target }}">{{ if .Target }}{{ .Target }}{{ else }}{{ T "plugins.permissions.setting_bound_not_set" }}{{ end }}</strong><br><small class="muted" style="font-family:monospace">{{ .Name }}</small></td>
+        {{ else }}
         <td style="font-family:monospace">{{ .Name }}</td>
+        {{ end }}
         <td>
           <span class="tag"{{ if .Granted }} style="background:rgba(22,163,74,.12); color:var(--success)"{{ end }}>{{ if .Granted }}{{ T "plugins.settings.permissions.granted" }}{{ else }}{{ T "plugins.settings.permissions.not_granted" }}{{ end }}</span>
         </td>
