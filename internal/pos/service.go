@@ -862,7 +862,7 @@ func (s *Service) snapshotForTotalsLocked() totalsSnapshot {
 // recomputeTotals' optimistic unlocked path (ut-docs#1317): each
 // computeTotals call Gets its own exclusive buffer and Puts it back only
 // after it is done reading from it, so two concurrent unlocked calls never
-// share one backing array. Neither VATBandsForSale nor ServiceChargeTax
+// share one backing array. Neither VATBandsForSale nor ChargesTax
 // retains the slice it's given past the call (both only aggregate from it),
 // so it's safe to reuse the instant they return.
 var vatLinePool = sync.Pool{New: func() any { s := make([]VATLine, 0, 16); return &s }}
