@@ -167,7 +167,7 @@ func TestTenderHandler_ChargePolicyNotPermittedSuppressesCharge(t *testing.T) {
 // INDEPENDENT mechanisms that meet on the same tender path, and neither
 // knows about the other: EffectiveServiceChargeRateBP zeroes the charge for
 // a TR shop BEFORE the policy consult, and the policy consult then hands a
-// flat tax basis to ServiceChargeTax. This pins that they compose — a plugin
+// flat tax basis to ApportionServiceChargeTax. This pins that they compose — a plugin
 // answering "permitted, taxed flat at 19%" must NOT resurrect a charge on a
 // Turkish till, and taxing a zero charge at a flat basis must be a clean
 // no-op (no phantom tax band, no inflated total), with the sale still

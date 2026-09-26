@@ -605,7 +605,7 @@ VALUES('line-refund-charge-uneven', ?, 1, 'itm1', 'Apple', 'ABC', 3, 100, 0, 0, 
 // Refunding line B THEN line A, each as its own request, used to recover
 // only 2 of the 3 charge-tax units (a 1-unit discrepancy). Both before and
 // after the fix, each request's tax bands are (re)derived from THAT
-// request's own line subset (pos.ServiceChargeTax(serviceChargeRefund,
+// request's own line subset (pos.ChargesTax(charges,
 // ChargeTaxLinesFromSale(lines), ...) is unchanged) -- what changed is the
 // CHARGE AMOUNT fed into that recomputation: pre-fix it was prorated by
 // gross share (refundGross/origGross), post-fix by net-after-discount

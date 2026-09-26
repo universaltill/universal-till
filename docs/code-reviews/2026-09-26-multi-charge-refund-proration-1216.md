@@ -73,6 +73,19 @@ The reviewer also checked:
   multi-charge refund in the real app isn't possible: no plugin declares a
   levy. The handler tests go through the real mux on a real migrated DB.
 
+## CI follow-up
+
+- The first push failed `desktop-shell`'s `guard-deadcode-baseline.sh`.
+  The refund total was the last production caller of
+  `pos.ServiceChargeTax`, so the guard reported it as unreachable.
+- Fix: removed the function rather than baselining it. Its tests now use an
+  identical unexported helper in `service_charge_tax_test.go`. Two stale
+  doc-comment references point at `ChargesTax` /
+  `ApportionServiceChargeTax` instead.
+- `internal/pos` and the refund/charge tests pass again. Locally the guard
+  now flags only `internal/logging`: this container can't compile
+  `cmd/unitill-desktop`. CI is unaffected.
+
 ## Deferred
 
 - R2: sync replay of itemized returns, covered by #986.

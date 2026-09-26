@@ -130,17 +130,6 @@ func ApportionServiceChargeTax(charge money.Money, lines []ChargeTaxLine, taxInc
 	return bands
 }
 
-// ServiceChargeTax is the summed tax over ApportionServiceChargeTax's bands
-// — the convenience form the totals paths use when the per-band split
-// itself isn't needed.
-func ServiceChargeTax(charge money.Money, lines []ChargeTaxLine, taxInclusive bool, taxBasisBP int) money.Money {
-	var tax money.Money
-	for _, b := range ApportionServiceChargeTax(charge, lines, taxInclusive, taxBasisBP) {
-		tax = tax.Add(b.Tax)
-	}
-	return tax
-}
-
 // ApportionChargesTax is ADR-0062 Decision 4's N-charge generalization: it
 // calls ApportionServiceChargeTax (unchanged) once per charge, in order,
 // each at that charge's own TaxBasisBP, and aggregates the resulting bands
@@ -187,7 +176,7 @@ func ApportionChargesTax(charges []ChargeInput, lines []ChargeTaxLine, taxInclus
 }
 
 // ChargesTax is the summed tax over ApportionChargesTax's bands — the
-// convenience form (mirrors ServiceChargeTax) for the totals paths.
+// convenience form for the totals paths.
 func ChargesTax(charges []ChargeInput, lines []ChargeTaxLine, taxInclusive bool) money.Money {
 	var tax money.Money
 	for _, b := range ApportionChargesTax(charges, lines, taxInclusive) {
