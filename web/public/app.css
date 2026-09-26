@@ -1676,8 +1676,11 @@ body.osk-padded .item-form-modal { block-size: calc(100% - var(--osk-reserved-he
    already use elsewhere in this file, for a phone short enough that even
    the three floors above don't all fit at once. Deliberately its own
    block, not an edit to the 900px block above: this tier's fix is scoped
-   to phones, not the wider tablet range this bug also affects (a separate,
-   pre-existing issue, out of this ticket's scope). */
+   to phones, not the wider tablet range this bug also affected
+   (ut-docs#416). Since ut-docs#2702 the 900px block's rows are
+   `auto auto minmax(8rem, 1fr)` -- the same flexible-last-track shape -- so
+   that tier is fixed too; regression test:
+   e2e/tests/tablet-tier-totals-416.spec.ts. */
 @media (max-width: 480px) {
   .pos-container {
     grid-template-rows: minmax(min-content, 45dvh) minmax(min-content, 1fr) minmax(min-content, 26dvh);
