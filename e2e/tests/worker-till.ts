@@ -69,6 +69,7 @@ export async function isHealthy(baseURL: string, timeoutMs = 1_000): Promise<boo
 // another mode switch it explicitly (helpers.ts's setBrowsingMode) and
 // restore this one afterwards.
 export const WORKER_TILL_BROWSING_MODE = 'strip_overflow';
+export const WORKER_TILL_EFFECTS_LEVEL = 'full';
 async function applyWorkerTillDefaults(baseURL: string): Promise<void> {
   const res = await fetch(`${baseURL}/api/settings/browsing-mode`, {
     method: 'POST',
@@ -78,6 +79,22 @@ async function applyWorkerTillDefaults(baseURL: string): Promise<void> {
   });
   if (!res.ok) {
     throw new Error(`worker till ${baseURL}: could not set browsing mode ${WORKER_TILL_BROWSING_MODE}: HTTP ${res.status}`);
+  }
+  // ut-docs#2859 / ADR-0119: the effects level defaults to Auto, which
+  // detects the host -- a 2-core CI runner would resolve to Light, and
+  // every spec that proves the page motion (page-transitions-2223,
+  // page-snapshot-no-jump-2496, ...) would then see no View Transition at
+  // all. Pin Full so the suite does not depend on the runner's hardware;
+  // effects-level-2859.spec.ts switches levels explicitly and restores
+  // this one.
+  const fx = await fetch(`${baseURL}/api/settings/effects-level`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ level: WORKER_TILL_EFFECTS_LEVEL }),
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!fx.ok) {
+    throw new Error(`worker till ${baseURL}: could not set effects level ${WORKER_TILL_EFFECTS_LEVEL}: HTTP ${fx.status}`);
   }
 }
 

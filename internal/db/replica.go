@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/fxlevel"
 	"github.com/universaltill/universal-till/internal/secrets"
 )
 
@@ -169,6 +170,14 @@ ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, val)
 		}
 	} else if _, err := sqlDB.Exec(`DELETE FROM settings WHERE key = 'sync.till_register_id'`); err != nil {
 		return false, fmt.Errorf("clear till register identity: %w", err)
+	}
+	// ADR-0119 §1 (ut-docs#2859): the snapshot carried the primary's
+	// visual effects level and its hardware detection. This till starts at
+	// auto and detects its own hardware at its next boot. A prefix match
+	// via substr, not LIKE: '_' is a LIKE wildcard.
+	if _, err := sqlDB.Exec(`DELETE FROM settings WHERE substr(key, 1, length(?)) = ?`,
+		fxlevel.SettingsPrefix, fxlevel.SettingsPrefix); err != nil {
+		return false, fmt.Errorf("clear inherited effects level: %w", err)
 	}
 	// The snapshot brought the primary's sessions; they mean nothing here.
 	if _, err := sqlDB.Exec(`DELETE FROM sessions`); err != nil {

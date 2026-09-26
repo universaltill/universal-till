@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/fxlevel"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/testsupport"
 )
@@ -2106,6 +2107,43 @@ func TestPerTillSettingsCoverTillCloudIdentity(t *testing.T) {
 			if !perTillSetting(k) {
 				t.Errorf("%s (cloud identity prefix %q) is not per-till: the admin sync would carry it", k, p)
 			}
+		}
+	}
+}
+
+// ADR-0119 §1 (ut-docs#2859): the visual effects level and its host
+// detection belong to one till's hardware. They never leave it in an admin
+// dump, and an admin pull never overwrites them.
+func TestAdminDumpApplyRoundTrip_EffectsLevelIsPerTill(t *testing.T) {
+	keys := []string{fxlevel.KeyLevel, fxlevel.KeyDetected, fxlevel.KeyReason, fxlevel.KeyFingerprint}
+	for _, k := range keys {
+		if !perTillSetting(k) {
+			t.Errorf("%s is not per-till (PerTillSettingPrefixes)", k)
+		}
+	}
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+	for _, k := range keys {
+		mustExec(t, primary, `INSERT INTO settings (key, value) VALUES (?, 'primary')`, k)
+		mustExec(t, replica, `INSERT INTO settings (key, value) VALUES (?, 'replica')`, k)
+	}
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	for _, rec := range bundle.Tables["settings"] {
+		if k, _ := rec["key"].(string); strings.HasPrefix(k, fxlevel.SettingsPrefix) {
+			t.Fatalf("%s leaked into the admin dump", k)
+		}
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	for _, k := range keys {
+		var v string
+		if err := replica.QueryRow(`SELECT value FROM settings WHERE key = ?`, k).Scan(&v); err != nil || v != "replica" {
+			t.Errorf("%s on the replica = %q (err=%v), want its own value", k, v, err)
 		}
 	}
 }

@@ -302,3 +302,16 @@ func waitWithin(wg *sync.WaitGroup, d time.Duration) bool {
 		return false
 	}
 }
+
+// ADR-0119 §4: the effects level's host detection reads the model through
+// the exported PiModel, which must agree with isPi.
+func TestPiModelExported(t *testing.T) {
+	withoutPi(t)
+	if isPi() || PiModel() != "" {
+		t.Fatalf("not a Pi: isPi=%v PiModel=%q", isPi(), PiModel())
+	}
+	withPi(t)
+	if !isPi() || PiModel() != "Raspberry Pi 5 Model B Rev 1.0" {
+		t.Fatalf("Pi: isPi=%v PiModel=%q", isPi(), PiModel())
+	}
+}

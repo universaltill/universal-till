@@ -131,11 +131,22 @@ var deviceTreeModelPath = "/proc/device-tree/model"
 // tree bind-mounted, which correctly reads as "not a Pi" rather than
 // guessing or erroring.
 func isPi() bool {
+	return PiModel() != ""
+}
+
+// PiModel returns the device-tree model string (e.g. "Raspberry Pi 5 Model
+// B Rev 1.0") when this host is a Raspberry Pi, and "" otherwise. The
+// visual effects level's host detection uses it (ADR-0119 §4).
+func PiModel() string {
 	b, err := os.ReadFile(deviceTreeModelPath)
 	if err != nil {
-		return false
+		return ""
 	}
-	return strings.HasPrefix(strings.TrimRight(string(b), "\x00\n"), "Raspberry Pi")
+	m := strings.TrimRight(string(b), "\x00\n")
+	if !strings.HasPrefix(m, "Raspberry Pi") {
+		return ""
+	}
+	return m
 }
 
 // --- vcgencmd get_throttled ---

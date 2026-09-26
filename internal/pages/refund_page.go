@@ -941,20 +941,19 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			// above (empty if fiscal.sign.start has no subscriber) — ADR-0077
 			// D1's shared-id requirement between the start and finish
 			// dispatches for the same refund.
-			SaleID:                  fiscalStartCarrier.SaleID,
-			SaleType:                "return",
-			CashierID:               actorID,
-			ActorID:                 actorID,
-			Currency:                detail.Currency,
-			TaxInclusive:            inclusive,
-			SaleDiscount:            money.FromMinor(saleDiscount),
-			ServiceCharge:           money.FromMinor(serviceChargeRefund),
-			ServiceChargeTaxBasisBP: detail.ServiceChargeTaxBasisBP,
-			Lines:                   lines,
-			Payments:                refundPayments(method, refundTotal, detail.Currency),
-			OriginalSaleID:          detail.ID,
-			Note:                    "refund of " + detail.ReceiptNo,
-			AllowNegativeInventory:  true, // returns only add stock back
+			SaleID:                 fiscalStartCarrier.SaleID,
+			SaleType:               "return",
+			CashierID:              actorID,
+			ActorID:                actorID,
+			Currency:               detail.Currency,
+			TaxInclusive:           inclusive,
+			SaleDiscount:           money.FromMinor(saleDiscount),
+			Charges:                refundServiceCharges(serviceChargeRefund, detail.ServiceChargeTaxBasisBP),
+			Lines:                  lines,
+			Payments:               refundPayments(method, refundTotal, detail.Currency),
+			OriginalSaleID:         detail.ID,
+			Note:                   "refund of " + detail.ReceiptNo,
+			AllowNegativeInventory: true, // returns only add stock back
 			// ut-docs#1493: mirrors completeTender's (pos_api.go) own
 			// offline-flag handling — the till's navigator.onLine-derived
 			// offline state, threaded from #offline-flag via the "offline"
@@ -1183,4 +1182,20 @@ func refundPayments(method string, refundTotal money.Money, currency string) []p
 		return nil
 	}
 	return []pos.PaymentInput{{MethodID: method, Amount: refundTotal, Currency: currency}}
+}
+
+// refundServiceCharges is a refund's charge list (ADR-0062): today's single
+// prorated service_charge item, taxed at the original sale's persisted
+// basis, or none when nothing of the charge is refunded (a zero charge is
+// not a charge — same rule as pos.BuildCharges).
+func refundServiceCharges(amount int64, taxBasisBP int) []pos.ChargeInput {
+	if amount <= 0 {
+		return nil
+	}
+	return []pos.ChargeInput{{
+		Key:        pos.ServiceChargeKey,
+		Amount:     money.FromMinor(amount),
+		TaxBasisBP: taxBasisBP,
+		Base:       pos.ChargeBaseNetLines,
+	}}
 }

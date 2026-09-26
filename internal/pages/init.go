@@ -233,6 +233,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		TaxInclusive:                 state.TaxInclusive,
 		TaxRateBasisPoints:           state.TaxRatePct * 100,
 		ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(state),
+		ChargesForbidden:             common.ServiceChargeForbidden(state.Country),
 	}, resolver)
 	// Country-specific tax rules (e.g. Germany's dine-in/takeaway VAT
 	// switch) are entirely a plugin's call — core has no built-in opinion,
@@ -256,6 +257,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		TaxInclusive:                 state.TaxInclusive,
 		TaxRateBasisPoints:           state.TaxRatePct * 100,
 		ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(state),
+		ChargesForbidden:             common.ServiceChargeForbidden(state.Country),
 	}, resolver)
 	kioskEngine.SetTaxRateAsker(taxAsker)
 	kioskEngine.SetChargePolicyAsker(chargeAsker)
@@ -670,6 +672,7 @@ func newRederiveSettings(dp *common.Deps, authDisabled bool, i18n *config.I18n) 
 			TaxInclusive:                 applied.TaxInclusive,
 			TaxRateBasisPoints:           applied.TaxRatePct * 100,
 			ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(applied),
+			ChargesForbidden:             common.ServiceChargeForbidden(applied.Country),
 		}); dp.Engine.Config() != newCfg {
 			dp.Engine.SetConfig(newCfg)
 			dp.KioskEngine.SetConfig(newCfg)
@@ -728,6 +731,10 @@ func publishCachedSettings(ctx context.Context, store *settings.Store, st common
 	// store is a no-op after a sync (they never sync), but keeps one path.
 	httpx.InitUIScale(st.UIScale)
 	httpx.InitOSKMode(st.OSKMode)
+	// ADR-0119 (ut-docs#2859): the visual effects level. Auto resolves to
+	// the host detection, re-run here only when the hardware fingerprint
+	// changed — local file reads, never the network.
+	httpx.InitEffectsLevel(resolveEffectsLevel(ctx, store))
 	// ut-docs#2099/#2154: self-order kiosk containment flag + the full
 	// display mode error_page.html's "Back to sale" link needs.
 	if mode, _, err := store.Get(ctx, "display.mode"); err == nil {
