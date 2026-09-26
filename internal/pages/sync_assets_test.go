@@ -37,7 +37,7 @@ func TestListItemAssets_FindsFilesInTheStableDataDir(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	entries, err := itemAssetScope.list()
+	entries, _, err := itemAssetScope.list()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestListItemAssets_EmptyTreeIsNotAnError(t *testing.T) {
 	paths.Init(t.TempDir()) // fresh dir, no items/ subtree at all
 	t.Cleanup(func() { paths.Init(orig) })
 
-	entries, err := itemAssetScope.list()
+	entries, _, err := itemAssetScope.list()
 	if err != nil {
 		t.Fatalf("expected a missing tree to mean 'no images yet', not an error, got %v", err)
 	}
@@ -226,7 +226,7 @@ func TestSyncItemAssets_DownloadsMissingThenSkipsMatching(t *testing.T) {
 		[]assetEntry{{Path: "itm001/thumb.png", Size: int64(len(want))}}, want)
 
 	client := primary.server.Client()
-	itemAssetScope.pull(context.Background(), client, primary.server.URL, "bearer")
+	itemAssetScope.pull(context.Background(), client, primary.server.URL, "bearer", nil)
 
 	got, err := os.ReadFile(replicaAssetPath(replicaRoot, "itm001/thumb.png"))
 	if err != nil {
@@ -241,7 +241,7 @@ func TestSyncItemAssets_DownloadsMissingThenSkipsMatching(t *testing.T) {
 
 	// Second tick: the local file already matches the manifest size, so it is
 	// skipped — no second fetch.
-	itemAssetScope.pull(context.Background(), client, primary.server.URL, "bearer")
+	itemAssetScope.pull(context.Background(), client, primary.server.URL, "bearer", nil)
 	if primary.fileServed != 1 {
 		t.Fatalf("expected the matching-size file to be skipped on the second tick, got %d fetches", primary.fileServed)
 	}
@@ -266,7 +266,7 @@ func TestSyncItemAssets_ReDownloadsWhenSizeChanged(t *testing.T) {
 	primary := newStubAssetsPrimary(t,
 		[]assetEntry{{Path: "itm001/thumb.png", Size: int64(len(want))}}, want)
 
-	itemAssetScope.pull(context.Background(), primary.server.Client(), primary.server.URL, "bearer")
+	itemAssetScope.pull(context.Background(), primary.server.Client(), primary.server.URL, "bearer", nil)
 
 	got, err := os.ReadFile(local)
 	if err != nil {
@@ -291,7 +291,7 @@ func TestSyncItemAssets_PrimaryManifestErrorIsNonFatal(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	// Must return cleanly (best-effort, non-blocking) and write nothing.
-	itemAssetScope.pull(context.Background(), srv.Client(), srv.URL, "bearer")
+	itemAssetScope.pull(context.Background(), srv.Client(), srv.URL, "bearer", nil)
 	if entries, _ := os.ReadDir(filepath.Join(replicaRoot, "public", "assets", "items")); len(entries) != 0 {
 		t.Fatalf("expected no files written when the manifest errors, got %d", len(entries))
 	}
@@ -307,7 +307,7 @@ func TestSyncItemAssets_FileFetch404IsSkipped(t *testing.T) {
 		[]assetEntry{{Path: "itm001/thumb.png", Size: 10}}, nil)
 	primary.fileStatus = http.StatusNotFound
 
-	itemAssetScope.pull(context.Background(), primary.server.Client(), primary.server.URL, "bearer")
+	itemAssetScope.pull(context.Background(), primary.server.Client(), primary.server.URL, "bearer", nil)
 	if _, err := os.Stat(replicaAssetPath(replicaRoot, "itm001/thumb.png")); err == nil {
 		t.Fatalf("expected no file written when the primary 404s the fetch")
 	}
@@ -324,7 +324,7 @@ func TestSyncItemAssets_RejectsTraversalPathsFromTheWire(t *testing.T) {
 	primary := newStubAssetsPrimary(t,
 		[]assetEntry{{Path: "../../../etc/evil", Size: 5}}, []byte("evil!"))
 
-	itemAssetScope.pull(context.Background(), primary.server.Client(), primary.server.URL, "bearer")
+	itemAssetScope.pull(context.Background(), primary.server.Client(), primary.server.URL, "bearer", nil)
 	if primary.fileServed != 0 {
 		t.Fatalf("expected a traversal manifest entry to be dropped before any fetch, got %d", primary.fileServed)
 	}

@@ -445,6 +445,7 @@ var nonAdminTables = map[string]string{
 	"sync_journal_quarantine": "this till's own quarantined-sale bookkeeping — sync-internal",
 	"schema_lineage":          "this till's own migration/reset marker — sync-internal schema bookkeeping",
 	"pending_pairings":        "in-flight LAN pairing requests — ephemeral, till-local",
+	"sync_asset_ledger":       "which asset files this replica downloaded from the main (ut-docs#2785 prune bookkeeping) — sync-internal",
 
 	// Live/ephemeral operational state: a periodic, primary-wins bundle is
 	// the wrong mechanism for a lock or an event stream — applying a stale
