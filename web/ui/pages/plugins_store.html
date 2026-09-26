@@ -62,8 +62,12 @@
     {{ if .Permissions }}
     <div style="display:flex; gap:.3rem; flex-wrap:wrap; align-items:center; margin-bottom:.4rem">
       <span class="muted" style="font-size:.78rem">{{ T "plugins.store.permissions_label" }}</span>
-      {{ range .Permissions }}
-      <span class="tag perm-badge" title="{{ T "plugins.store.permission_hint" }}">{{ . }}</span>
+      {{ range .PermissionBadges }}
+      {{ if .SettingKeys }}
+      <span class="tag perm-badge" title="{{ T "plugins.permissions.setting_bound_hint" }} ({{ .Name }})">{{ T "plugins.permissions.setting_bound" }} {{ .SettingKeys }}</span>
+      {{ else }}
+      <span class="tag perm-badge" title="{{ T "plugins.store.permission_hint" }}">{{ .Name }}</span>
+      {{ end }}
       {{ end }}
     </div>
     {{ end }}

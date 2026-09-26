@@ -212,6 +212,11 @@ func ParseManifest(r io.Reader) (*Manifest, error) {
 				s.Key, s.Type, SettingTypeSecret)
 		}
 	}
+	// Setting-bound grants (ut-docs#2899) must be well-formed and name keys
+	// this manifest declares.
+	if err := validateSettingBoundPermissions(&m); err != nil {
+		return nil, err
+	}
 
 	return &m, nil
 }

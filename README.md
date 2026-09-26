@@ -418,7 +418,10 @@ resolved IP at connect time: `net:*` reaches public addresses only, a LAN or
 loopback target needs its exact `net:<host>` grant, and the till's own port is
 never reachable (redirects included). `tcp_open` follows the same rule:
 `tcp:*` reaches public addresses only, a LAN or loopback device needs its
-exact `tcp:<host>:<port>` grant.
+exact `tcp:<host>:<port>` grant. For a target an admin configures after
+install, a manifest declares `net:@setting:<urlKey>` or
+`tcp:@setting:<hostKey>:<portKey>`: the address currently saved in those
+settings counts as the exact grant (ut-docs#2899).
 
 **See [PLUGIN_GUIDELINES.md](docs/plugin_guidelines.md) for complete documentation.**
 

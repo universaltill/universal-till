@@ -302,7 +302,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 	// already gated + audited; this page just gives an operator somewhere
 	// to see and act on it, alongside a plugin's other settings.
 	type permissionView struct {
-		Name    string
+		permissionBadge
 		Granted bool
 	}
 
@@ -352,7 +352,12 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		permViews := make([]permissionView, 0, len(perms))
 		for _, p := range perms {
-			permViews = append(permViews, permissionView{Name: p.Name, Granted: p.Granted})
+			b := describePermission(p.Name)
+			if b.SettingKeys != "" {
+				// Show what granting unlocks — a manifest default included.
+				b.Target, _ = plugins.SettingBoundTarget(r.Context(), d.Db, pluginID, p.Name)
+			}
+			permViews = append(permViews, permissionView{permissionBadge: b, Granted: p.Granted})
 		}
 		httpx.Render("ui/pages/plugin_settings.html", map[string]any{
 			"title":       httpx.T(httpx.RequestLocale(r), "page.title.plugin_settings"),
@@ -388,6 +393,10 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		changed := 0
+		// Keys (never values) whose stored value changed, for the audit row:
+		// a setting-bound grant moves with its setting (ut-docs#2899), so
+		// which setting moved must be traceable.
+		changedKeys := []string{}
 		locale := httpx.ResolveLocale(w, r)
 		// Validate any typed takeaway-overrides submission BEFORE the write
 		// loop: rows are written in key order, so a mid-loop validation abort
@@ -431,6 +440,9 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 					return
 				}
 				changed += n
+				if n > 0 {
+					changedKeys = append(changedKeys, row.Key)
+				}
 				continue
 			}
 			// Only keys the plugin declared are writable — the form cannot
@@ -461,9 +473,11 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 			changed++
+			changedKeys = append(changedKeys, row.Key)
 		}
+		sort.Strings(changedKeys)
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "plugin", pluginID, "plugin_settings_saved",
-			map[string]any{"changed": changed}, time.Now().UTC().Format(time.RFC3339), "")
+			map[string]any{"changed": changed, "keys": changedKeys}, time.Now().UTC().Format(time.RFC3339), "")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprintf(w, `<span>✓ %s (%d)</span>`, httpx.T(locale, "plugins.settings.saved"), changed)
 	})

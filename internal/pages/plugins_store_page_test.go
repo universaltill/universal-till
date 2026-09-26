@@ -142,3 +142,29 @@ func TestPluginStoreRendersPermissionAndManagerApprovalBadges(t *testing.T) {
 		t.Errorf("want manager-approval notice on the 2 not-yet-installed cards, got %d occurrences", got)
 	}
 }
+
+// ut-docs#2899: a setting-bound permission is shown in words — "connects
+// only to the address saved in: <keys>" — not as the raw manifest string.
+func TestPluginStoreRendersSettingBoundPermissionInWords(t *testing.T) {
+	chdirRoot(t)
+	initPagesI18n(t)
+	items := []storeItem{
+		{ListingID: "l1", Name: "Fiscal device", Version: "1.0", Type: "payment", Permissions: []string{"tcp:@setting:okc.host:okc.port", "storage"}},
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/plugins/store", nil)
+	httpx.Render("ui/pages/plugins_store.html", map[string]any{
+		"title": "Plugin Store", "menuItems": nil, "Items": items, "Categories": storeCategories(items),
+	})(rec, req)
+	body := rec.Body.String()
+	label := httpx.T("en", "plugins.permissions.setting_bound")
+	if label == "plugins.permissions.setting_bound" || !strings.Contains(body, label) {
+		t.Fatalf("store page missing the setting-bound label %q", label)
+	}
+	if !strings.Contains(body, "okc.host, okc.port") {
+		t.Errorf("store page must name the settings the grant follows")
+	}
+	if strings.Count(body, "perm-badge") != 2 {
+		t.Errorf("want 2 permission badges, got %d", strings.Count(body, "perm-badge"))
+	}
+}

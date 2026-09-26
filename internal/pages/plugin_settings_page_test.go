@@ -1194,3 +1194,98 @@ func TestPluginSettingsAPI_GrantThenPageShowsGrantedStatus(t *testing.T) {
 		t.Fatalf("expected events:receive to show as granted (revoke action) after the grant, got:\n%s", body)
 	}
 }
+
+// ut-docs#2899: a setting-bound permission reads as words on the settings
+// page, while grant/revoke still act on the raw permission string.
+func TestPluginSettingsPage_GET_RendersSettingBoundPermissionInWords(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	seedPluginPermissions(t, dp.Db, "p-bound", []string{"net:@setting:endpoint_url"})
+
+	req := httptest.NewRequest(http.MethodGet, "/plugins/p-bound/settings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET: code %d", rec.Code)
+	}
+	body := rec.Body.String()
+	label := httpx.T("en", "plugins.permissions.setting_bound")
+	if label == "plugins.permissions.setting_bound" || !strings.Contains(body, label) {
+		t.Fatalf("settings page missing the setting-bound label %q", label)
+	}
+	if !strings.Contains(body, "endpoint_url") {
+		t.Errorf("settings page must name the setting the grant follows")
+	}
+	if !strings.Contains(body, `data-perm-name="net:@setting:endpoint_url"`) {
+		t.Errorf("grant/revoke must still act on the raw permission string")
+	}
+}
+
+// ut-docs#2899 review: next to a setting-bound permission the admin sees
+// the address it CURRENTLY unlocks (a manifest default included), or "not
+// set" — granting without seeing the target would be granting blind.
+func TestPluginSettingsPage_GET_ShowsResolvedSettingBoundAddress(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	seedPluginPermissions(t, dp.Db, "p-bound", []string{"tcp:@setting:okc.host:okc.port", "net:@setting:endpoint_url", "net:@setting:backup_url"})
+	seedPluginSetting(t, dp, "p-bound", "okc.host", "127.0.0.1", "global")
+	seedPluginSetting(t, dp, "p-bound", "okc.port", "4711", "global")
+	seedPluginSetting(t, dp, "p-bound", "endpoint_url", "https://ERP.lan:8443/hook?token=x", "global")
+
+	req := httptest.NewRequest(http.MethodGet, "/plugins/p-bound/settings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET: code %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-bound-target="127.0.0.1:4711"`) {
+		t.Errorf("tcp setting-bound row must show the resolved 127.0.0.1:4711")
+	}
+	if !strings.Contains(body, `data-bound-target="erp.lan"`) {
+		t.Errorf("net setting-bound row must show the endpoint URL's host erp.lan")
+	}
+	notSet := httpx.T("en", "plugins.permissions.setting_bound_not_set")
+	if notSet == "plugins.permissions.setting_bound_not_set" || !strings.Contains(body, `data-bound-target="">`+notSet) {
+		t.Errorf("an unset setting-bound target must read %q", notSet)
+	}
+}
+
+// ut-docs#2899 review: the settings-saved audit row names WHICH keys
+// changed (so a moved setting-bound grant is traceable), never their values.
+func TestPluginSettingsAPI_POST_AuditRecordsChangedKeysNotValues(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	ctx := context.Background()
+	seedPluginSetting(t, dp, "p1", "endpoint_url", "https://old.example", "global")
+	seedPluginSetting(t, dp, "p1", "api_key", "original-secret", "global")
+	seedPluginSetting(t, dp, "p1", "label", "same", "global")
+
+	form := "setting_endpoint_url=https%3A%2F%2Fnew-host.example&setting_api_key=new-secret-value&setting_label=same"
+	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST: code %d body %s", rec.Code, rec.Body.String())
+	}
+	var raw string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT data_json FROM audit_log WHERE action = 'plugin_settings_saved'`).Scan(&raw); err != nil {
+		t.Fatalf("query audit log: %v", err)
+	}
+	var got struct {
+		Changed int      `json:"changed"`
+		Keys    []string `json:"keys"`
+	}
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("audit data_json %q: %v", raw, err)
+	}
+	if got.Changed != 2 || strings.Join(got.Keys, ",") != "api_key,endpoint_url" {
+		t.Fatalf("audit = %s, want changed 2 and keys [api_key endpoint_url]", raw)
+	}
+	for _, v := range []string{"new-host", "new-secret-value", "old.example", "original-secret"} {
+		if strings.Contains(raw, v) {
+			t.Fatalf("audit row must never carry setting values, found %q in %s", v, raw)
+		}
+	}
+}
