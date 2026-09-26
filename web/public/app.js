@@ -26,13 +26,27 @@ window.utCurrency = (function(){
     if (neg) num = '-' + num;
     return suffix ? num + ' ' + display : display + num;
   }
-  var commaDecimal = decimals > 0 ? new RegExp('^-?[0-9]+,[0-9]{1,' + decimals + '}$') : null;
+  // ut-docs#2819: strict grammar, the client twin of Go's
+  // httpx.ParseMoneyMajor (plus an optional leading minus for the payout/
+  // adjustment fields). Number() used to accept "0x10" (1600), "1e3"
+  // (100000), "19.999" (rounded to 2000) and "5.5" on a 0-decimal currency
+  // (6). The field patterns refuse all of those today, but toMinor also
+  // serves the tender and shift fields, so the parser must not rely on them.
+  var amountRe = decimals > 0
+    ? new RegExp('^(-?)([0-9]+)(?:[.,]([0-9]{1,' + decimals + '}))?$')
+    : /^(-?)([0-9]+)$/;
   function parseMinor(v){
-    var text = String(v == null ? '' : v).trim();
-    if (text === '') return NaN;
-    if (commaDecimal && commaDecimal.test(text)) text = text.replace(',', '.');
-    var num = Number(text);
-    return isFinite(num) ? Math.round(num * factor) : NaN;
+    // A Number (basketTotal's text fallback) is already a parsed amount:
+    // keep the long-standing rounding for it; only text is held to the
+    // grammar.
+    if (typeof v === 'number') return isFinite(v) ? Math.round(v * factor) : NaN;
+    var m = amountRe.exec(String(v == null ? '' : v).trim());
+    if (!m) return NaN;
+    var frac = (m[3] || '');
+    while (frac.length < decimals) frac += '0';
+    var units = parseInt(m[2] + frac, 10);
+    if (!isFinite(units) || units > Number.MAX_SAFE_INTEGER) return NaN;
+    return m[1] ? -units : units;
   }
   return {
     decimals: decimals, factor: factor, display: display, suffix: suffix,
@@ -50,6 +64,39 @@ window.utCurrency = (function(){
     toMajor: function(units){ return (units / factor).toFixed(decimals); },
     format: formatMinor
   };
+})();
+
+// ut-docs#2819: a money field that accepts either decimal separator
+// (httpx.MoneyPatternLocalAttr emits data-money-local) gets the shop-
+// language message from <body data-money-invalid> instead of the browser's
+// "Please match the requested format", which is in the device's OS
+// language and doesn't say a comma is fine. Capture-phase listeners on the
+// document run before any page's own `invalid` listener (the item dialog
+// mirrors validationMessage into its notice area), so that page sees the
+// localized text. The custom message is re-checked on every edit and on
+// every submit-button click (Enter's implicit submission is a click too):
+// a script can refill a field without an input event -- the item dialog
+// loads the next item's price into the same input -- and a stale custom
+// message would keep a now-valid field blocking the Save. This assumes a
+// money form submits through a submit-button click; a form submitted by
+// requestSubmit() or hx-trigger="change" after a script refill would lose
+// its first submit to the stale message and needs its own re-check.
+(function(){
+  function applyMoneyValidity(el){
+    if (!el || !el.hasAttribute || !el.hasAttribute('data-money-local')) return;
+    el.setCustomValidity('');
+    if (el.validity.patternMismatch) {
+      el.setCustomValidity((document.body && document.body.dataset.moneyInvalid) || '');
+    }
+  }
+  document.addEventListener('input', function(ev){ applyMoneyValidity(ev.target); }, true);
+  document.addEventListener('invalid', function(ev){ applyMoneyValidity(ev.target); }, true);
+  document.addEventListener('click', function(ev){
+    var btn = ev.target && ev.target.closest ? ev.target.closest('button, input[type="submit"]') : null;
+    var form = btn && btn.form;
+    if (!form) return;
+    for (var i = 0; i < form.elements.length; i++) applyMoneyValidity(form.elements[i]);
+  }, true);
 })();
 
 // ut-docs#2364: below 480px .nav reverts from the fixed-height rail to a

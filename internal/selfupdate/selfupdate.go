@@ -421,8 +421,10 @@ func applyVersion(ctx context.Context, version string, idle func() bool) error {
 	_ = os.Chmod(exe, 0o755)
 
 	// Swap web/ if the archive shipped it (keep a backup, best-effort).
+	swappedWeb := ""
 	if _, err := os.Stat(newWeb); err == nil {
 		curWeb := filepath.Join(webBase, "web")
+		swappedWeb = curWeb
 		webBak := curWeb + ".bak"
 		_ = os.RemoveAll(webBak)
 		if _, err := os.Stat(curWeb); err == nil {
@@ -438,40 +440,40 @@ func applyVersion(ctx context.Context, version string, idle func() bool) error {
 		}
 	}
 
+	// Prove the new binary can start on this machine before anything
+	// restarts into it (ut-docs#2759): a wrong-arch, corrupt or unrunnable
+	// build would otherwise take the till offline (exec fails → systemd
+	// respawns a binary that cannot start). Put the old one back instead.
+	if serr := smokeRunFn(exe, version); serr != nil {
+		if rerr := rollbackSwap(exe, swappedWeb); rerr != nil {
+			log.Errorf("[selfupdate] restoring the previous version failed: %v", rerr)
+		}
+		msg := cannotStartMsg(version, buildinfo.Version, serr)
+		log.WarnProblemf(ProblemKeyUpdateFailed, "%s", msg)
+		return fmt.Errorf("update v%s could not start on this till; kept version v%s: %w", version, buildinfo.Version, serr)
+	}
+
+	// Record what was swapped in, so the new image can confirm it is running
+	// and the old one can report "restart pending" (ut-docs#2759). Best
+	// effort: a failed write only loses that reporting, never the update.
+	if err := writePending(installDir, version, time.Now()); err != nil {
+		log.Warnf("[selfupdate] could not record the pending restart: %v", err)
+	}
+
 	log.Infof("[selfupdate] updated to v%s — restarting", version)
 	// Re-exec the new binary shortly, so the HTTP response can flush first.
 	// beforeRestart runs CONCURRENTLY with this delay, not after it
 	// (ut-docs#1616 review finding, same fix as internal/procrestart):
 	// stopping hardware plugins can itself take real time, and running it
 	// sequentially after reexecDelay would push the re-exec later than
-	// callers assume (web/ui/layouts/base.html's update-status poll times
-	// off reexecDelay). Overlapping means a fast/no-op stop adds no extra
-	// delay; only a genuinely slow plugin pushes the re-exec out, and only
-	// by the time it actually needed. Apply() is unreachable on an
-	// unsupported platform (the !Supported() check above already
-	// returned), so — unlike procrestart.Restart(), which must stay
-	// callable everywhere — there is no Windows no-op case to preserve here.
-	go func() {
-		if idle != nil {
-			// Unattended (nobody polls the restart): re-check idle once more
-			// after the delay — a sale started in it waits — and only then
-			// stop the hardware plugins, which that sale would need.
-			time.Sleep(reexecDelay)
-			_ = waitIdle(context.Background(), idle)
-			beforeRestart(context.Background())
-		} else {
-			done := make(chan struct{})
-			go func() {
-				beforeRestart(context.Background())
-				close(done)
-			}()
-			time.Sleep(reexecDelay)
-			<-done
-		}
-		if err := reexecFn(exe); err != nil {
-			logging.L().Errorf("[selfupdate] re-exec failed (restart manually): %v", err)
-		}
-	}()
+	// callers assume. Apply() is unreachable on an unsupported platform (the
+	// !Supported() check above already returned). restartInto falls back to
+	// the service manager when exec fails, and the watchdog raises a Problem
+	// if this process is somehow still alive afterwards (ut-docs#2759).
+	plan := newRestartPlan(exe, version, swappedWeb)
+	plan.idle = idle
+	go restartInto(plan)
+	go restartWatchdog(plan)
 	return nil
 }
 

@@ -181,6 +181,14 @@ func newInstallFixture(t *testing.T) *installFixture {
 	}
 
 	oldExec, oldReexec, oldDelay, oldVer := osExecutable, reexecFn, reexecDelay, buildinfo.Version
+	// The stubbed re-exec "succeeds" but the test process keeps running, so
+	// keep the restart watchdog (ut-docs#2759) from firing mid-suite.
+	oldWatchdog := restartWatchdogAfter
+	restartWatchdogAfter = time.Hour
+	t.Cleanup(func() { restartWatchdogAfter = oldWatchdog })
+	// The archive "binaries" here are text, not executables: stub the
+	// can-it-start smoke run (ut-docs#2759); its own tests use real scripts.
+	stubSmokeRun(t, nil)
 	osExecutable = func() (string, error) { return exe, nil }
 	reexecFn = func(path string) error { f.reexecd <- path; return nil }
 	reexecDelay = 5 * time.Millisecond
@@ -263,6 +271,14 @@ func TestApplySwapsWebAtWorkingDirNotBinaryDir(t *testing.T) {
 
 	reexecd := make(chan string, 1)
 	oldExec, oldReexec, oldDelay, oldVer := osExecutable, reexecFn, reexecDelay, buildinfo.Version
+	// The stubbed re-exec "succeeds" but the test process keeps running, so
+	// keep the restart watchdog (ut-docs#2759) from firing mid-suite.
+	oldWatchdog := restartWatchdogAfter
+	restartWatchdogAfter = time.Hour
+	t.Cleanup(func() { restartWatchdogAfter = oldWatchdog })
+	// The archive "binaries" here are text, not executables: stub the
+	// can-it-start smoke run (ut-docs#2759); its own tests use real scripts.
+	stubSmokeRun(t, nil)
 	osExecutable = func() (string, error) { return exe, nil }
 	reexecFn = func(path string) error { reexecd <- path; return nil }
 	reexecDelay = 5 * time.Millisecond

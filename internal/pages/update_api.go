@@ -48,6 +48,8 @@ var (
 	autoUpdateApply        = func(ctx context.Context, idle func() bool) error {
 		return selfupdate.ApplyVersionWhenIdle(ctx, "", idle)
 	}
+	// updateStatusFn backs GET /api/update/status (ut-docs#2759).
+	updateStatusFn = selfupdate.CurrentStatus
 	// autoUpdateBuildVersion is buildinfo.Version, but the manual Update-now
 	// button's own handler (`POST /api/update/apply`, above) does NOT use
 	// this seam or the guard built on it -- an explicit user action stays
@@ -381,6 +383,18 @@ func respondUpdateApplyCurrent(w http.ResponseWriter) {
 	})
 }
 
+// respondUpdateApplyInstalled is the success answer for POST
+// /api/update/apply: it names the version being installed so the status bar
+// reloads only once exactly that version answers (ut-docs#2759).
+func respondUpdateApplyInstalled(w http.ResponseWriter, version string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"data":  map[string]any{"message": "update installed — restarting", "version": version},
+		"error": nil,
+	})
+}
+
 func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/update/apply", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "plugin_management") {
@@ -417,7 +431,21 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 			respond(http.StatusBadGateway, false, err.Error())
 			return
 		}
-		respond(http.StatusOK, true, "update installed — restarting")
+		respondUpdateApplyInstalled(w, st.Latest)
+	})
+
+	// ut-docs#2759: which version is running and whether an applied update
+	// is still waiting for a restart. The status bar polls this after
+	// "Update now" and reloads only once the new version answers — /healthz
+	// is answered by the old process too. Same gate as apply.
+	mux.HandleFunc("GET /api/update/status", func(w http.ResponseWriter, r *http.Request) {
+		if !canPerform(d, r, "plugin_management") {
+			http.Error(w, "manager only", http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": updateStatusFn(), "error": nil})
 	})
 
 	// Manual "Check for updates" (Settings): one synchronous poll of the

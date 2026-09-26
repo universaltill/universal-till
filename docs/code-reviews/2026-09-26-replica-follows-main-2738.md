@@ -35,3 +35,15 @@ The reviewer re-verified three TDD claims by reverting code (restart gate, tag-n
 `go build`, `go vet`, full `go test ./...` green. Guards data-access, i18n, help-topics, help-drift and docs-shots (surface hash refreshed; no screenshotted page renders a replica chip) pass.
 
 **Verdict:** safe to merge. Language-pack PRs (de/es) for the 4 new keys follow in the same cycle.
+
+## Merge with universal-till#1424 (ut-docs#2759), re-reviewed
+
+`main` replaced the restart goroutine with `restartInto(plan)` + `restartWatchdog(plan)` (smoke-run, systemd fallback, rollback, restart-pending Problem). The resolution keeps all of that byte-identical for the manual path (`idle == nil`). The unattended path adds `restartPlan.idle`: `restartInto` sleeps the delay, waits for idle, stops the plugins, re-checks idle, then execs.
+
+Second Fable review of the resolution:
+- **should-fix:** the watchdog polled idle on its own, so a sale opening in the 1.5 s delay made `restartInto` hold while the watchdog's 60 s timer already ran → a false "restart pending" Problem. **Fixed:** `restartInto` closes `plan.idleSeen` after its own wait and the watchdog counts from that. `TestWatchdogQuietWhileASaleOpenedDuringTheDelayHoldsTheRestart` fails against the old watchdog ("watchdog raised … while the restart was held") and passes now.
+- **nit, fixed:** a sale opened while the plugins stop (≤ 15 s) was cut off by the exec; idle is re-checked right before exec.
+- **nit, accepted:** a basket left open forever holds the restart indefinitely with only the status marker; that is the safe side.
+- **nit, accepted:** a sale opening after the swap is served new `web/` by the old binary, until restart. Accepted: the swap now only happens once idle, so this needs a sale to start in the seconds between swap and restart.
+
+`go test -race ./internal/selfupdate/` clean (×3); `TestRestartIntoHoldsForAnOpenSale` 20/20.
