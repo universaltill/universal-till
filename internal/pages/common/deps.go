@@ -8,6 +8,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/ai"
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/cloudlink"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/fleetlink"
@@ -157,6 +158,19 @@ type Deps struct {
 	// and sets the pull loop's polling floor. Built once in pages.Init
 	// (it idles on a main or standalone till); nil in bare-Deps tests.
 	LinkClient *fleetlink.Client
+
+	// CloudLink is the main till's cloud link (ADR-0117, ut-docs#2824): on
+	// the realtime tier it holds one socket to the cloud and turns nudges
+	// into check-in kicks (CloudSyncNow). Built once in pages.Init (it
+	// idles on a replica or a periodic till); nil in bare-Deps tests —
+	// its methods are nil-safe.
+	CloudLink *cloudlink.Client
+
+	// CloudSyncNow asks the cloudsync loop for a check-in now
+	// (cloudsync.Hooks.Kick). Capacity 1: kicks coalesce, and one that
+	// arrives during a check-in runs exactly one more. Set once in
+	// pages.Init.
+	CloudSyncNow chan struct{}
 
 	// SyncPullNow, when non-nil, asks the replica admin-pull loop
 	// (pages.StartSyncPull) for one pull now — the link's nudge. Set once

@@ -2594,6 +2594,9 @@ func publishSaleCompleted(ctx context.Context, d *common.Deps, saleID string) {
 		return
 	}
 	_, _ = plugins.SharedBus(d.Db).PublishSaleCompleted(ctx, saleCompletedEventFor(detail))
+	// The cloud link's live view (ADR-0117 §4/§8): a summary frame while a
+	// my. viewer watches; never blocks, dropped when the link is down.
+	d.CloudLink.Sale(cloudLinkSaleOf(detail, time.Now()))
 }
 
 // saleCompletedEventFor maps the persisted sale snapshot to the stable

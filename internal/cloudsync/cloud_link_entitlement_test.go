@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/entitlement"
@@ -38,6 +39,10 @@ func TestSyncCloudLinkRealtimePresentIsCached(t *testing.T) {
 	got := readCloudLinkCache(t, d.DB)
 	if got[entitlement.KeyCloudLinkTier] != "realtime" || got[entitlement.KeyCloudLinkMode] != "always" {
 		t.Fatalf("cloud_link cache = %+v, want realtime/always", got)
+	}
+	tier, mode := entitlement.CloudLink(context.Background(), data.NewSettingsRepo(d.DB), time.Now())
+	if tier != "realtime" || mode != "always" {
+		t.Fatalf("entitlement.CloudLink after a fresh read = (%q, %q), want (realtime, always)", tier, mode)
 	}
 }
 
