@@ -3,8 +3,11 @@ package common
 import (
 	"context"
 	"database/sql"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/ai"
 	"github.com/universaltill/universal-till/internal/auth"
@@ -171,6 +174,16 @@ type Deps struct {
 	// arrives during a check-in runs exactly one more. Set once in
 	// pages.Init.
 	CloudSyncNow chan struct{}
+
+	// heldGen counts held-sale (open order) changes this process has seen
+	// or been told about (ut-docs#2858): every NudgeLink naming
+	// ScopeHeldSales — a park, resume, move or delete here, or one a
+	// linked till made through this main till — and every held_sales
+	// nudge the link client receives from the main till. The sale screen's
+	// hidden watcher polls HeldToken and re-fetches the Open orders badge
+	// when it moves, so an order resolved on ANOTHER till clears this
+	// till's badge within seconds. In memory only; zero value ready.
+	heldGen atomic.Int64
 
 	// SyncPullNow, when non-nil, asks the replica admin-pull loop
 	// (pages.StartSyncPull) for one pull now — the link's nudge. Set once
@@ -587,9 +600,36 @@ func (d *Deps) RequestSyncPull() {
 // instead of at its next poll (ADR-0114 §2). Nudges carry no data and
 // coalesce per peer; nil-safe and non-blocking, so any change point —
 // including the checkout path — may call it.
+//
+// A held_sales scope also moves this till's own held generation
+// (MarkHeldChanged) — including on a replica, whose Link is nil — so every
+// open sale screen here re-reads its Open orders badge (ut-docs#2858).
 func (d *Deps) NudgeLink(scopes ...fleetlink.Scope) {
+	for _, s := range scopes {
+		if s == fleetlink.ScopeHeldSales {
+			d.MarkHeldChanged()
+			break
+		}
+	}
 	if d.Link == nil {
 		return
 	}
 	d.Link.Nudge(scopes...)
+}
+
+// heldBoot distinguishes this process's held generations from a previous
+// run's: HeldToken is compared for equality only, and a restarted till's
+// counter starts again at zero, so a page open across the restart must see
+// a different token rather than an accidental match.
+var heldBoot = strconv.FormatInt(time.Now().UnixNano(), 36)
+
+// MarkHeldChanged records that the shop's held sales may have changed
+// (ut-docs#2858). Non-blocking; safe from any goroutine.
+func (d *Deps) MarkHeldChanged() { d.heldGen.Add(1) }
+
+// HeldToken is the opaque held-sales generation the sale screen's watcher
+// compares (GET /ui/open-orders-badge/watch). It changes on every
+// MarkHeldChanged and across restarts; nothing else may be read into it.
+func (d *Deps) HeldToken() string {
+	return heldBoot + "." + strconv.FormatInt(d.heldGen.Load(), 10)
 }

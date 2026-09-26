@@ -222,7 +222,9 @@ func TestOpenOrdersBadge_CountsHeldSales(t *testing.T) {
 	if !strings.Contains(two, `data-count="2"`) || !strings.Contains(two, ">2<") {
 		t.Fatalf("badge must show 2 held sales: %s", two)
 	}
-	if strings.Contains(two, " hidden") {
+	// The badge tag only: its out-of-band watcher (ut-docs#2858) is always
+	// hidden.
+	if strings.Contains(openTag(t, two, `data-testid="open-orders-badge"`), " hidden") {
 		t.Fatalf("a non-zero badge must be visible: %s", two)
 	}
 }
