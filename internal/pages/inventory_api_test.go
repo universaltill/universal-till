@@ -494,6 +494,36 @@ func TestCreateReturn_ByReceiptNo(t *testing.T) {
 	}
 }
 
+// ut-docs#2894: this endpoint completes a "return" sale exactly like
+// /refund does, so it must publish the same cloud-link sale frame
+// (ADR-0117 §4/§8) — refund:true and a negative total_minor.
+func TestCreateReturn_PublishesCloudLinkSaleFrame(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	saleID, _, lineID := seedCompletedSaleForReturn(t, dp)
+	cloud := newFakeCloudLink(t, true)
+	dp.CloudLink = cloud.client(t)
+	cloud.waitConnected(t)
+	cloud.waitReady(t, dp.CloudLink)
+
+	rec := postInvJSON(t, mux, "/api/inventory/return",
+		`{"original_sale_id":"`+saleID+`","reason":"faulty","lines":[{"line_id":"`+lineID+`","quantity":1}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var returnSaleID string
+	if err := dp.Db.QueryRow(`SELECT id FROM sales WHERE sale_type = 'return'`).Scan(&returnSaleID); err != nil {
+		t.Fatalf("read return sale id: %v", err)
+	}
+	frame := cloud.waitForSaleWithID(t, returnSaleID)
+	if frame["refund"] != true {
+		t.Fatalf("refund = %v, want true", frame["refund"])
+	}
+	if totalMinor, ok := frame["total_minor"].(float64); !ok || totalMinor >= 0 {
+		t.Fatalf("total_minor = %v, want a negative number", frame["total_minor"])
+	}
+}
+
 // seedInclusiveEURSaleForReturn seeds a German-shop-shaped original sale —
 // EUR currency, VAT-inclusive pricing (unit_price is the gross, tax-included
 // price, and the sale header's own arithmetic makes

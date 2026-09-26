@@ -725,6 +725,14 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 		}
 		// Mirror the restock to inventory connectors (best-effort, non-blocking).
 		publishStockAdjustedForSale(ctx, dp, returnInput)
+		// The cloud link's live view (ADR-0117 §4/§8, ut-docs#2894): this
+		// endpoint completes a "return" sale exactly like /refund does, so
+		// it gets the same summary frame — refund:true, negative
+		// total_minor. Best-effort: a failed re-read of the just-committed
+		// return only skips the frame, never the return itself.
+		if returnDetail, ok, err := repo.GetSaleDetailByID(ctx, returnSaleID); err == nil && ok {
+			publishCloudLinkSale(dp, returnDetail, "")
+		}
 		// A replica's return is a journaled sale like any other (ADR-0011
 		// D3) — nudge the push loop the same way a tender does (ut-docs#404,
 		// ADR-0036). On a main till it is the `stock` nudge to its linked
