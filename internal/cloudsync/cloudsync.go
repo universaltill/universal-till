@@ -895,12 +895,21 @@ func pushSync(ctx context.Context, cfg *config.Config, settings *data.SettingsRe
 			// raw so a malformed block can never fail the decode of the
 			// directives riding beside it.
 			Entitlement json.RawMessage `json:"entitlement"`
+			// DeviceID + DeviceToken: ADR-0116 D4's one-time rotation of a
+			// legacy-token till onto its own credential (ut-docs#2769).
+			// DeviceToken is a secret: never log it or this struct.
+			DeviceID    string `json:"device_id"`
+			DeviceToken string `json:"device_token"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("cloudsync: decode sync response: %w", err)
 	}
 	cacheEntitlement(ctx, settings, resp.Data.Entitlement, time.Now())
+	// Kept only for this till's own device id and only when the environment
+	// doesn't pin the token; every cloud caller sends it from the next
+	// request (enroll.Effective). Never fails the sync.
+	enroll.ApplyRotatedCredential(ctx, settings, resp.Data.DeviceID, resp.Data.DeviceToken)
 	return resp.Data.Directives, nil
 }
 

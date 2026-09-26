@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/universaltill/universal-till/internal/db"
 	"html"
 	"math"
 	"net/http"
@@ -394,6 +395,33 @@ func filterSettingsNavForRender(rows []settingsnav.Row, isManager, hasPayMethods
 	return out
 }
 
+// credentialSettingKey reports a settings row that is a credential or a
+// till's cloud identity (ut-docs#2769 review): this till's own cloud token
+// (ADR-0116, not reissuable), its device id and the LAN sync bearer. The
+// "All settings" card never shows them and its editor never writes them.
+func credentialSettingKey(k string) bool {
+	if k == "sync.bearer" {
+		return true
+	}
+	for _, p := range db.TillCloudIdentityPrefixes {
+		if strings.HasPrefix(k, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// visibleSettings is all without the credential rows.
+func visibleSettings(all map[string]string) map[string]string {
+	out := make(map[string]string, len(all))
+	for k, v := range all {
+		if !credentialSettingKey(k) {
+			out[k] = v
+		}
+	}
+	return out
+}
+
 func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 	mux.HandleFunc("/settings", func(w http.ResponseWriter, r *http.Request) {
@@ -646,7 +674,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"theme":       st.Theme,
 			"themes":      availableThemes(r.Context(), d),
 			"settings":    st,
-			"settingsMap": all,
+			"settingsMap": visibleSettings(all),
 			"menuItems":   d.MenuSnapshot(),
 			"uiScale":     strconv.FormatFloat(scale, 'f', -1, 64),
 			// ADR-0119: the effects selector and what Auto detected.
@@ -2590,6 +2618,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// authorization layer, out of scope for ut-docs#796.
 		if key == "" {
 			http.Error(w, "key required", http.StatusBadRequest)
+			return
+		}
+		if credentialSettingKey(key) {
+			http.Error(w, "this setting cannot be edited here", http.StatusForbidden)
 			return
 		}
 		// ut-docs#244: validate before persisting, not just before reflecting

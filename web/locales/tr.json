@@ -2655,6 +2655,8 @@
   "tills.cloud_link.hint_paused_not_main": "Bulut, bu mağazanın ana kasasının artık başka bir kasa olduğunu söylüyor. Bu, bir sonraki yoklamaya kadar duraklatılır.",
   "tills.cloud_link.state_paused_tier": "Duraklatıldı: kademe değişti",
   "tills.cloud_link.hint_paused_tier": "Mağazanın bulut planı değişti. Bu, bir sonraki yoklama yeni planı doğrulayana kadar duraklatılır.",
+  "tills.cloud_link.state_paused_credential": "Duraklatıldı: kendi kimlik bilgisi gerekiyor",
+  "tills.cloud_link.hint_paused_credential": "Bu kasanın kendi bulut kimlik bilgisi bekleniyor. Normalde bir sonraki yoklamayla gelir; bu durum sürerse destekle iletişime geçin.",
   "tills.cloud_link.state_paused_busy": "Duraklatıldı: bulut meşgul",
   "tills.cloud_link.hint_paused_busy": "Bulut bu kasadan beklemesini istedi. Bir sonraki yoklamadan sonra yeniden dener.",
   "tills.cloud_link.hint_paused_busy_retry": "Bulut bu kasadan beklemesini istedi. %s zamanında kendiliğinden yeniden dener.",
