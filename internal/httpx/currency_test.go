@@ -184,8 +184,8 @@ func TestMoneyPatternLocalAttr(t *testing.T) {
 		decimals int
 		want     string
 	}{
-		{0, `pattern="[0-9]+"`},
-		{2, `pattern="[0-9]+([.,][0-9]{1,2})?"`},
+		{0, `pattern="[0-9]+" data-money-local`},
+		{2, `pattern="[0-9]+([.,][0-9]{1,2})?" data-money-local`},
 	}
 	for _, c := range cases {
 		if got := string(MoneyPatternLocalAttr(c.decimals)); got != c.want {
@@ -374,5 +374,48 @@ func TestFormatMoney_IndianGrouping(t *testing.T) {
 func TestFormatQty_IndianGrouping(t *testing.T) {
 	if got := FormatQty(1234567.5, "en-IN"); got != "12,34,567.5" {
 		t.Errorf("FormatQty en-IN = %q, want Indian grouping", got)
+	}
+}
+
+// ut-docs#2819: the server-side twin of MoneyPatternLocal. The item-cost
+// and modifier-option handlers used strconv.ParseFloat, which refused a
+// German "3,50" and accepted "1e3", "NaN", "Inf" and "0x10". Same grammar
+// as the field's pattern, integer arithmetic, no float rounding.
+func TestParseMoneyMajor(t *testing.T) {
+	ok := []struct {
+		raw      string
+		decimals int
+		want     int64
+	}{
+		{"3", 2, 300},
+		{"3.50", 2, 350},
+		{"3,50", 2, 350},
+		{"3,5", 2, 350},
+		{"0.07", 2, 7},
+		{" 12.34 ", 2, 1234},
+		{"1000000", 2, 100000000},
+		{"350", 0, 350},
+		{"1,234", 3, 1234},
+		{"0", 2, 0},
+	}
+	for _, c := range ok {
+		got, err := ParseMoneyMajor(c.raw, c.decimals)
+		if err != nil || got != c.want {
+			t.Errorf("ParseMoneyMajor(%q, %d) = %d, %v; want %d", c.raw, c.decimals, got, err, c.want)
+		}
+	}
+	bad := []struct {
+		raw      string
+		decimals int
+	}{
+		{"", 2}, {"1e3", 2}, {"0x10", 2}, {"NaN", 2}, {"Inf", 2},
+		{"19.999", 2}, {"1,234.56", 2}, {"1.234,56", 2}, {"-3.50", 2},
+		{"+3", 2}, {".5", 2}, {"5.", 2}, {"5.5", 0}, {"5,5", 0},
+		{"3,50", 0}, {"abc", 2}, {"99999999999999999999", 2},
+	}
+	for _, c := range bad {
+		if got, err := ParseMoneyMajor(c.raw, c.decimals); err == nil {
+			t.Errorf("ParseMoneyMajor(%q, %d) = %d, want an error", c.raw, c.decimals, got)
+		}
 	}
 }
