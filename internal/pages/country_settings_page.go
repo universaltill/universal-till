@@ -334,14 +334,8 @@ func parsePercentAsBP(v string) (int64, error) {
 	if v == "" {
 		return 0, nil
 	}
-	pct, err := strconv.ParseFloat(v, 64)
-	if err != nil {
-		return 0, err
-	}
-	if pct < 0 {
-		return 0, strconv.ErrRange
-	}
-	// Round rather than truncate: 8.5% must land on 850 bp, and float
-	// representation makes a bare int64() conversion land on 849.
-	return int64(pct*100 + 0.5), nil
+	// ut-docs#2954: ParsePercentBP accepts a decimal comma ("7,5") and is
+	// integer arithmetic, so 8.5% is exactly 850 bp with no float rounding;
+	// a negative, "1e3" or "NaN" is refused.
+	return httpx.ParsePercentBP(v)
 }

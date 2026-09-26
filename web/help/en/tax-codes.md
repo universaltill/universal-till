@@ -18,5 +18,5 @@ Every item in your catalog is linked to a tax code, which sets the tax rate char
 2. Click a row to load it into the form on the right, edit the name, rate or takeaway rate, and press **Save**.
 3. Fill in the form without clicking a row first to create a brand new tax code. A new code is always active.
 4. Use **Deactivate**/**Reactivate** to retire or restore a code instead of deleting it — items already linked to a tax code keep their link even after it's deactivated, so historical sales stay correct. There is no delete: a tax code can be referenced by items, so removing it outright isn't offered.
-5. Rates are entered as a percentage — enter `19` for 19%. Leave the takeaway rate blank if it doesn't differ from the dine-in rate.
+5. Rates are entered as a percentage — enter `19` for 19%; a dot or a comma before the decimals both work (`7.5` or `7,5`). Leave the takeaway rate blank if it doesn't differ from the dine-in rate.
 6. If a plugin (e.g. the German tax add-on) needs a takeaway override that applies only to that plugin's own logic rather than every item on a tax code, use the **Manage per-plugin overrides** link, which opens that plugin's own settings page.
