@@ -99,9 +99,16 @@ func newSyncLinkClient(d *common.Deps, opts fleetlink.ClientOptions) *fleetlink.
 		// One full pull covers every scope the HTTP pull carries (admin,
 		// plugins and stock ride the same tick); held sales, tables and
 		// orders are read live from the main till, so a nudge naming only
-		// those costs nothing here. Kicks coalesce, so a burst is one pull.
+		// those costs no pull. Kicks coalesce, so a burst is one pull.
 		if linkScopesNeedPull(scopes) {
 			d.RequestSyncPull()
+		}
+		// ut-docs#2858: an order held, resumed or moved on another till
+		// changes what this till's Open orders badge counts; move the held
+		// generation so an open sale screen here re-reads it now instead of
+		// at its next reload.
+		if linkScopesTouchHeld(scopes) {
+			d.MarkHeldChanged()
 		}
 	}
 	opts.OnLost = func(ctx context.Context, cause string) {
@@ -122,6 +129,16 @@ func linkScopesNeedPull(scopes []fleetlink.Scope) bool {
 	for _, s := range scopes {
 		switch s {
 		case fleetlink.ScopeAdmin, fleetlink.ScopePlugins, fleetlink.ScopeStock:
+			return true
+		}
+	}
+	return false
+}
+
+// linkScopesTouchHeld reports whether a sync nudge names held sales.
+func linkScopesTouchHeld(scopes []fleetlink.Scope) bool {
+	for _, s := range scopes {
+		if s == fleetlink.ScopeHeldSales {
 			return true
 		}
 	}
