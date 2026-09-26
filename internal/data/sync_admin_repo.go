@@ -612,6 +612,15 @@ var PerTillSettingPrefixes = []string{
 	// replica gets the main till's cache on the vouch answer
 	// (enroll.applyRelayedEntitlement, POST /api/sync/cloud-device).
 	"entitlement.",
+	// ut-docs#2821, ADR-0117 §2: cloud.link_tier / cloud.link_mode, written
+	// by the same cacheEntitlement call (same transaction) as entitlement.*
+	// above — every valid sync-response block rewrites them, even when the
+	// tier itself doesn't change. Same fingerprint-churn reasoning, same
+	// fix: per-till, not admin-synced. Unlike entitlement.plan there is no
+	// dedicated relay to a token-less replica today — only the main till
+	// dials the cloud-link socket (ADR-0117 §1), so a replica never needs
+	// its own cached value.
+	"cloud.link_",
 }
 
 func perTillSetting(key string) bool {

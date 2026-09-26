@@ -2,7 +2,11 @@
 // subscription entitlement model (ut-docs#2547): the shop's plan tier as
 // last confirmed by the cloud's POST /v1/stores/sync response, cached in the
 // settings KV, and EffectivePlan — the one function the till consults to
-// decide whether a store-wide paid capability is on.
+// decide whether a store-wide paid capability is on. The same sync-response
+// block also carries ADR-0117 §2's cloud_link tier (ut-docs#2821) — a
+// separate setting family (Key*, LinkTier/LinkMode, CloudLink) cached and
+// staled the same way, since it rides the same block and the same
+// last_confirmed_at.
 //
 // NEVER A SALE GATE (ADR-0060 §5 and §7, ADR-0027 §1). Nothing on the sale
 // path — basket, tender, fiscal signing, receipt, EOD — may read this
@@ -10,7 +14,9 @@
 // internal/fiscal and internal/print do not import it, directly or
 // transitively. A lapsed or stale entitlement degrades paid cloud surfaces to
 // the free Local tier; it never stops a sale and never soft-disables a
-// mandated fiscal plugin.
+// mandated fiscal plugin. The same applies to cloud_link: a stale or
+// periodic tier only means the till stays on the 2-minute check-in
+// (ADR-0117 §8) — never a sale-path concern.
 //
 // The vocabulary (plans, capabilities, Allows) mirrors ut-cloud's
 // internal/subscription package; both fail closed on unknown values.
@@ -38,6 +44,17 @@ const (
 	// KeyLastConfirmedAt: UTC RFC3339 of the till's own clock at the last
 	// successful read of a valid entitlement block.
 	KeyLastConfirmedAt = "entitlement.last_confirmed_at"
+	// KeyCloudLinkTier: realtime | periodic (ADR-0117 §2). Deliberately not
+	// under the "entitlement." prefix (a different setting family), but
+	// rewritten on the same cadence as the block above — PerTillSettingPrefixes
+	// excludes "cloud.link_" from admin sync for exactly the same reason
+	// (ut-docs#2792): every valid block rewrites it, so syncing it shop-wide
+	// would move the main till's admin fingerprint every cloud tick.
+	KeyCloudLinkTier = "cloud.link_tier"
+	// KeyCloudLinkMode: always | on_demand, only meaningful when
+	// KeyCloudLinkTier is "realtime" — empty otherwise (ADR-0117 §2;
+	// on_demand is a recorded option, not built).
+	KeyCloudLinkMode = "cloud.link_mode"
 )
 
 // Grace is how long a cached plan is honoured without a fresh confirmation
@@ -178,9 +195,17 @@ type Block struct {
 	// records the till's own clock as last_confirmed_at, so a skewed cloud
 	// clock can never stretch or shrink the grace window.
 	RefreshedAt string `json:"refreshed_at"`
+	// CloudLink and CloudLinkMode are ADR-0117 §2's realtime/periodic tier
+	// fields, present on the same block. Raw and unvalidated: LinkTier/
+	// LinkMode normalise them in Values (an older cloud or a block that
+	// never sets them defaults to "periodic", never an error — missing =
+	// periodic, ADR-0117 §2).
+	CloudLink     string `json:"cloud_link"`
+	CloudLinkMode string `json:"cloud_link_mode"`
 }
 
-// Values validates b and returns the four settings rows to write, with
+// Values validates b and returns the six settings rows to write (the four
+// ADR-0060 §4 rows plus ADR-0117 §2's cloud_link tier/mode), with
 // last_confirmed_at = now (UTC). An unknown plan or status is an error — the
 // caller keeps its cache. A non-RFC3339 expires_at is stored empty.
 func (b Block) Values(now time.Time) (map[string]string, error) {
@@ -204,12 +229,42 @@ func (b Block) Values(now time.Time) (map[string]string, error) {
 			}
 		}
 	}
+	tier := LinkTier(b.CloudLink)
 	return map[string]string{
 		KeyPlan:               string(plan),
 		KeySubscriptionStatus: status,
 		KeyExpiresAt:          expires,
 		KeyLastConfirmedAt:    now.UTC().Format(time.RFC3339),
+		KeyCloudLinkTier:      tier,
+		KeyCloudLinkMode:      LinkMode(tier, b.CloudLinkMode),
 	}, nil
+}
+
+// LinkTier normalises a raw ADR-0117 §2 cloud_link wire value. Only the
+// exact string "realtime" is realtime; anything else — missing, an
+// unrecognised value, a future value this build doesn't understand — fails
+// closed to "periodic" (same fail-closed convention as Plan/subscription
+// status).
+func LinkTier(raw string) string {
+	if raw == "realtime" {
+		return "realtime"
+	}
+	return "periodic"
+}
+
+// LinkMode normalises a raw ADR-0117 §2 cloud_link_mode wire value. Only
+// meaningful for a realtime tier: on a periodic tier it is always "". For a
+// realtime tier, only the exact string "on_demand" selects it (the recorded
+// option ADR-0117 §2 keeps but does not build); anything else — missing,
+// "always", an unrecognised value — is "always".
+func LinkMode(tier, raw string) string {
+	if tier != "realtime" {
+		return ""
+	}
+	if raw == "on_demand" {
+		return "on_demand"
+	}
+	return "always"
 }
 
 // Cached is this till's entitlement cache as the main till relays it to a
