@@ -107,7 +107,9 @@
   </div>
 </div>
 
-<dialog id="barcode-backfill-modal" class="modifier-modal barcode-backfill-modal" aria-labelledby="catalog-barcode-backfill-btn"></dialog>
+{{/* data-ut-refresh (ut-docs#2762): the result's Close button refreshes
+     only the catalog grid, via UT.refreshRegion (app.js). */}}
+<dialog id="barcode-backfill-modal" class="modifier-modal barcode-backfill-modal" aria-labelledby="catalog-barcode-backfill-btn" data-ut-refresh="#catalog-table"></dialog>
 
 <!-- ut-docs#2095: Import and Tax codes floating above the /items shell —
      see the Import/Tax codes buttons above for the full reasoning. Empty
@@ -1767,6 +1769,11 @@
   search.addEventListener('input', filterRows);
   document.body.addEventListener('htmx:afterSwap', function (ev) {
     if (ev.detail.target && ev.detail.target.id === 'catalog-table') filterRows();
+  });
+  // ut-docs#2762: the barcode backfill's Close swaps a freshly rendered
+  // #catalog-table in (UT.refreshRegion) — re-apply the typed filter to it.
+  document.body.addEventListener('ut:region-refreshed', function (ev) {
+    if (ev.target && ev.target.id === 'catalog-table') filterRows();
   });
   // ut-docs#2119 review (F1): this inline block runs at PARSE time, before
   // category-filter.js's own `defer`red load finishes — window.

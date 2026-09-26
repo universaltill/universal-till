@@ -3,8 +3,6 @@
   <h1>{{ T "bluetoothdevices.title" }}</h1>
 </div>
 
-{{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
-
 <p class="muted">{{ T "bluetoothdevices.intro" }}</p>
 
 {{/* Degraded states (ADR-0078 consequences): a box with no Bluetooth
@@ -48,9 +46,14 @@
   .bt-notice { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
 </style>
 
-<div class="users-layout">
-  <div class="card users-list">
+<div class="users-layout" id="bt-layout">
+  {{/* ut-docs#2762: Pair and Forget refresh only this card
+       (UT.refreshRegion, app.js), not the whole page. */}}
+  <div class="card users-list" id="bt-paired" data-ut-refresh="#bt-paired">
     <h3>{{ T "bluetoothdevices.paired_heading" }}</h3>
+    {{/* The only error is a failed paired-list read, so it lives inside
+         the card that a refresh re-renders (ut-docs#2762 review F1). */}}
+    {{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
     {{ if not .devices }}
     <p class="muted" data-testid="bt-paired-list">{{ T "bluetoothdevices.none_paired" }}</p>
     {{ else }}
@@ -99,11 +102,12 @@
 <script>
 (function () {
   // Bluetooth pairing panel (ut-docs#76). Plain fetch(), no htmx — the
-  // list/scan/pair/forget calls are JSON, and each mutating action reloads
-  // the page so the paired list is re-read from BlueZ (the source of truth)
-  // rather than patched client-side. Every visible string comes from the
-  // template-populated T lookup below (CLAUDE.md: inline-script status text
-  // is user-facing too).
+  // list/scan/pair/forget calls are JSON, and each mutating action
+  // re-renders the paired-devices card (#bt-paired, UT.refreshRegion —
+  // ut-docs#2762) so the list is re-read from BlueZ (the source of truth)
+  // rather than patched client-side, without reloading the whole page.
+  // Every visible string comes from the template-populated T lookup below
+  // (CLAUDE.md: inline-script status text is user-facing too).
   var T = {
     scanning: "{{ T "bluetoothdevices.scanning" }}",
     noDevicesFound: "{{ T "bluetoothdevices.no_devices_found" }}",
@@ -194,7 +198,12 @@
   var scanBtn = document.getElementById('bt-scan-btn');
   var scanMsg = document.getElementById('bt-scan-msg');
   var scanOut = document.getElementById('bt-scan-results');
-  var pairedMsg = document.getElementById('bt-paired-msg');
+  // Looked up on each use: the paired card, this message included, is
+  // replaced by every refresh.
+  function pairedMsg() { return document.getElementById('bt-paired-msg'); }
+  // Refresh the paired card. Its message (id + aria-live) is carried over
+  // by UT.refreshRegion, so a confirmation stays readable.
+  function refreshPaired() { UT.refreshRegion(pairedMsg()); }
 
   function renderCandidates(list) {
     scanOut.innerHTML = '';
@@ -230,7 +239,10 @@
               return;
             }
             scanMsg.textContent = T.pairedConfirm;
-            UT.reload('bluetooth-paired');
+            // The device is paired now, so it is no longer a candidate.
+            li.remove();
+            pairedMsg().textContent = '';
+            refreshPaired();
           })
           .catch(function () { pair.disabled = false; scanMsg.textContent = T.pairError; });
       });
@@ -265,24 +277,26 @@
     });
   }
 
-  Array.prototype.forEach.call(document.querySelectorAll('.bt-forget-btn'), function (btn) {
-    btn.addEventListener('click', function () {
-      btn.disabled = true;
-      pairedMsg.textContent = T.forgetting;
-      post('/api/bluetooth-devices/forget', btn.getAttribute('data-address'))
-        .then(function (j) {
-          if (!j) return;
-          if (j.error) {
-            btn.disabled = false;
-            pairedMsg.textContent = messageFor(j.error.code, T.forgetError);
-            if (j.error.code === 'bluetooth_forget_unsupported') { offerBluetoothSettings(pairedMsg); }
-            return;
-          }
-          pairedMsg.textContent = T.forgottenConfirm;
-          UT.reload('bluetooth-forgotten');
-        })
-        .catch(function () { btn.disabled = false; pairedMsg.textContent = T.forgetError; });
-    });
+  // Delegated from #bt-layout (never replaced): the Forget buttons arrive
+  // with each refreshed #bt-paired card.
+  document.getElementById('bt-layout').addEventListener('click', function (ev) {
+    var btn = ev.target.closest ? ev.target.closest('.bt-forget-btn') : null;
+    if (!btn || btn.disabled) return;
+    btn.disabled = true;
+    pairedMsg().textContent = T.forgetting;
+    post('/api/bluetooth-devices/forget', btn.getAttribute('data-address'))
+      .then(function (j) {
+        if (!j) return;
+        if (j.error) {
+          btn.disabled = false;
+          pairedMsg().textContent = messageFor(j.error.code, T.forgetError);
+          if (j.error.code === 'bluetooth_forget_unsupported') { offerBluetoothSettings(pairedMsg()); }
+          return;
+        }
+        pairedMsg().textContent = T.forgottenConfirm;
+        refreshPaired();
+      })
+      .catch(function () { btn.disabled = false; pairedMsg().textContent = T.forgetError; });
   });
 })();
 </script>

@@ -16,7 +16,7 @@ Koppeln Sie einen Bluetooth-Barcode-Scanner oder eine Waage direkt aus der Kasse
 
 1. Öffnen Sie **Bluetooth-Geräte** über das Menü (nur Manager). Die Liste **Gekoppelte Geräte** zeigt alles, was bereits mit dieser Kasse gekoppelt ist, mit Adresse und aktuellem Verbindungsstatus.
 2. Versetzen Sie das neue Gerät in den Kopplungsmodus (bei den meisten Scannern: Auslöser gedrückt halten oder den „Pairing“-Barcode im Handbuch scannen) und tippen Sie dann auf **Nach Geräten suchen**. Der Suchvorgang dauert etwa zehn Sekunden und listet die gefundenen Geräte auf; Geräte, die wie ein Scanner oder eine Tastatur aussehen, werden als **Scanner/Tastatur** markiert.
-3. Tippen Sie neben dem Gerät auf **Koppeln**. Die Kasse koppelt, vertraut und verbindet das Gerät in einem Schritt; die Seite aktualisiert sich, und das Gerät erscheint in der Liste der gekoppelten Geräte. Von nun an verbindet es sich von selbst wieder, sobald es in der Nähe eingeschaltet wird — ein Scanner funktioniert ab diesem Moment wie ein fest angeschlossener.
+3. Tippen Sie neben dem Gerät auf **Koppeln**. Die Kasse koppelt, vertraut und verbindet das Gerät in einem Schritt; das Gerät wechselt aus den Suchergebnissen in die Liste der gekoppelten Geräte. Von nun an verbindet es sich von selbst wieder, sobald es in der Nähe eingeschaltet wird — ein Scanner funktioniert ab diesem Moment wie ein fest angeschlossener.
 4. Um ein Gerät zu entfernen, tippen Sie daneben auf **Vergessen**. Es wird nicht mehr vertraut oder verbunden und verbindet sich erst wieder, wenn Sie es erneut koppeln.
 
 ## Gut zu wissen

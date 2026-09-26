@@ -5,7 +5,7 @@ import { watchConsole, openNewItemForm, closeItemForm } from './helpers';
 // preview-before-apply, reusing #1224's exact SKU→barcode derivation. This
 // drives the real flow end to end: create a barcode-less item, open the
 // backfill dialog, see it in the preview, confirm, and see its derived
-// barcode as a chip on the (reloaded) catalog page.
+// barcode as a chip on the refreshed catalog grid.
 test('backfilling barcodes from SKU previews then assigns a derived barcode to a barcode-less item', async ({ page }) => {
   const assertClean = watchConsole(page);
   await page.goto('/catalog');
@@ -70,21 +70,21 @@ test('backfilling barcodes from SKU previews then assigns a derived barcode to a
   // after the reload below.
   await expect(dialog).toContainText(/Assigned \d+ barcode/);
 
-  // Only the operator's own "Close" click reloads the page (same
-  // close-then-reload shape as plugin_install_modal.html) — wait for that
-  // navigation before asserting anything about post-commit DOM state.
-  await Promise.all([
-    page.waitForNavigation(),
-    dialog.getByRole('button', { name: 'Close' }).click(),
-  ]);
+  // Only the operator's own "Close" click refreshes the catalog grid —
+  // in place (UT.refreshRegion, ut-docs#2762), not a page reload: a marker
+  // on `window` must survive it.
+  await page.evaluate(() => { (window as any).__ut2762 = 'still-here'; });
+  await dialog.getByRole('button', { name: 'Close' }).click();
+  await expect(dialog).toBeHidden();
 
-  // After the reload, the item's row shows its newly derived barcode — the
+  // After the refresh, the item's row shows its newly derived barcode — the
   // SKU itself, since a plain alphanumeric SKU derives verbatim under the
   // shop's default enabled symbologies (CODE128 catch-all, ut-docs#1224).
   const refreshedRow = page.locator('.catalog-row', { hasText: name });
   await expect(refreshedRow).toBeVisible();
   await expect(refreshedRow).toContainText('Barcodes:');
   await expect(refreshedRow).toContainText(sku);
+  expect(await page.evaluate(() => (window as any).__ut2762), 'page was reloaded').toBe('still-here');
 
   // ut-docs#2541: every active item is a sell-screen tile by default now —
   // deactivate the probe so it doesn't add an "uncategorized" tab to the
