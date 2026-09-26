@@ -1,4 +1,11 @@
 {{ define "content" }}
+{{/* ut-docs#2762: opening or closing a shift changes this whole region
+     (status tag, current-shift card, history, and which form shows) but
+     nothing in the shell, so the forms' success handler swaps #shifts-page
+     via UT.refreshRegion (app.js) instead of reloading the page. The
+     <script> below stays OUTSIDE the region: its listeners are delegated
+     from document.body, so they keep working on the swapped-in markup. */}}
+<div id="shifts-page" data-ut-refresh="#shifts-page">
 <div class="page-head">
   <h1>{{ T "shifts.title" }}</h1>
   {{ if .HasOpen }}<span class="tag" style="background:rgba(22,163,74,.12); color:var(--success)">{{ T "shifts.open_since" }} {{ datetime .Current.OpenedAt }}</span>
@@ -49,7 +56,7 @@
     {{ if .HasOpen }}
     <h3>{{ T "shifts.close" }}</h3>
     <form id="close-shift-form" hx-post="/api/shifts/close" hx-swap="innerHTML" hx-target="#shift-result"
-          hx-on::after-request="if (event.detail.successful) window.location.reload()">
+          hx-on::after-request="if (event.detail.successful) UT.refreshRegion(this)">
       <input type="hidden" name="shift_id" value="{{ .Current.ID }}">
       <input type="hidden" name="closing_cash" id="closing-cash-minor">
       <!-- ut-docs#1272 (same defect as ut-docs#1249, fixed on #pfand-amount):
@@ -115,7 +122,7 @@
     {{ else }}
     <h3>{{ T "shifts.open_new" }}</h3>
     <form id="open-shift-form" hx-post="/api/shifts/open" hx-swap="innerHTML" hx-target="#shift-result"
-          hx-on::after-request="if (event.detail.successful) window.location.reload()">
+          hx-on::after-request="if (event.detail.successful) UT.refreshRegion(this)">
       <label>{{ T "shifts.register" }}
         <select name="register_id" required>
           {{ range .Registers }}<option value="{{ .ID }}"{{ if eq .ID $.TillRegisterID }} selected{{ end }}>{{ .Name }}</option>
@@ -139,6 +146,7 @@
       <p class="muted" style="font-size:.82rem">{{ T "shifts.skim_formula" }}</p>
     </details>
   </div>
+</div>
 </div>
 
 <script>
@@ -174,11 +182,14 @@ document.body.addEventListener('htmx:sendError', function (ev) {
 // keyed by denomination in minor units mapping to piece count, only
 // denominations actually counted. Left entirely empty, no protocol is
 // submitted at all (the field stays "", stored as NULL).
+// Delegated from body (ut-docs#2762): #denom-grid is swapped in fresh when
+// a shift opens without a page reload, so a listener bound to the element
+// at load time would miss it.
 (function () {
-  var grid = document.getElementById('denom-grid');
-  var out = document.getElementById('count-protocol');
-  if (!grid || !out) return;
-  grid.addEventListener('change', function () {
+  document.body.addEventListener('change', function (ev) {
+    var grid = ev.target && ev.target.closest && ev.target.closest('#denom-grid');
+    var out = document.getElementById('count-protocol');
+    if (!grid || !out) return;
     var protocol = {};
     var any = false;
     grid.querySelectorAll('.denom-count').forEach(function (inp) {
