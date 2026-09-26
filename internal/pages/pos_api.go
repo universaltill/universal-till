@@ -282,6 +282,18 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// blocks: the actual dispatch happens on a goroutine this call doesn't
 	// wait for. saleInput is mutated (SaleID minted if empty) so this
 	// dispatch and the fiscal.sign.ask dispatch further down share an id.
+	// ut-docs#2975: refuse a tender whose requested legs can't cover the
+	// total BEFORE any payment.<key>.authorize below charges a card —
+	// CompleteSale would otherwise refuse the sale only after the money was
+	// taken. Same rule CompleteSale applies (pos.CheckPaymentCoverage: a
+	// tip never covers sale money); a tip a reader adds on authorize grows
+	// Amount and TipAmount equally, so it cannot change this answer.
+	coverage := saleInput
+	coverage.Payments = payments
+	if err := pos.CheckPaymentCoverage(coverage); err != nil {
+		return "", err
+	}
+
 	dispatchFiscalSignStart(ctx, d, &saleInput)
 
 	// Payment authorization (docs: wasm-runtime.md): a plugin method
@@ -1731,6 +1743,14 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			// before the sale persists.
 			if p.Change < 0 || p.Change > p.Amount {
 				http.Error(w, "invalid change amount", http.StatusBadRequest)
+				return
+			}
+			// ut-docs#2975: same boundary refusal for a tip larger than the
+			// money this leg took (Amount includes the tip, #2571) —
+			// pos.netPayments refuses it too, but a clear 400 here beats a
+			// generic tender-failed toast.
+			if p.Tip < 0 || p.Tip > p.Amount-p.Change {
+				http.Error(w, "invalid tip amount", http.StatusBadRequest)
 				return
 			}
 			if err := repo.EnsurePaymentMethod(r.Context(), p.Method); err != nil {
