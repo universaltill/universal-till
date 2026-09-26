@@ -34,7 +34,7 @@ code_lines() {
 MAIN_CODE="$(code_lines "$MAIN_ACTIVITY")"
 SERVICE_CODE="$(code_lines "$TILL_SERVICE")"
 
-if ! printf '%s\n' "$MAIN_CODE" | grep -q 'statusView\.visibility[[:space:]]*=.*BuildConfig\.DEBUG'; then
+if ! grep -q 'statusView\.visibility[[:space:]]*=.*BuildConfig\.DEBUG' <<<"$MAIN_CODE"; then
   echo "❌ android-status-address guard: ${MAIN_ACTIVITY} no longer gates" >&2
   echo "   statusView's visibility on BuildConfig.DEBUG (as code, not just a" >&2
   echo "   comment) — the debug-only address bar would ship visible to real" >&2
@@ -46,7 +46,7 @@ fi
 # check above alone would still pass an inverted
 # "if (!BuildConfig.DEBUG) View.VISIBLE else View.GONE" — visible in
 # RELEASE, hidden in debug, the exact bug this card fixes, just flipped.
-if ! printf '%s\n' "$MAIN_CODE" | grep -q 'if[[:space:]]*(BuildConfig\.DEBUG)[[:space:]]*View\.VISIBLE[[:space:]]*else[[:space:]]*View\.GONE'; then
+if ! grep -q 'if[[:space:]]*(BuildConfig\.DEBUG)[[:space:]]*View\.VISIBLE[[:space:]]*else[[:space:]]*View\.GONE' <<<"$MAIN_CODE"; then
   echo "❌ android-status-address guard: ${MAIN_ACTIVITY}'s BuildConfig.DEBUG" >&2
   echo "   check no longer reads exactly 'if (BuildConfig.DEBUG) View.VISIBLE" >&2
   echo "   else View.GONE' — the two tokens can co-occur with inverted" >&2
@@ -62,7 +62,7 @@ fi
 # directly — match either call shape so this guard doesn't go stale on a
 # refactor unrelated to what it actually protects: which STRING RESOURCE
 # feeds the notification, not which function fetched it.
-if printf '%s\n' "$SERVICE_CODE" | grep -qE '\<(getString|str)\(R\.string\.status_running'; then
+if grep -qE '\<(getString|str)\(R\.string\.status_running' <<<"$SERVICE_CODE"; then
   echo "❌ android-status-address guard: ${TILL_SERVICE} builds the foreground" >&2
   echo "   notification from status_running, which interpolates the raw bind" >&2
   echo "   address — the notification must use notification_running (no" >&2
@@ -70,7 +70,7 @@ if printf '%s\n' "$SERVICE_CODE" | grep -qE '\<(getString|str)\(R\.string\.statu
   exit 1
 fi
 
-if ! printf '%s\n' "$SERVICE_CODE" | grep -qE '\<(getString|str)\(R\.string\.notification_running\)\)'; then
+if ! grep -qE '\<(getString|str)\(R\.string\.notification_running\)\)' <<<"$SERVICE_CODE"; then
   echo "❌ android-status-address guard: ${TILL_SERVICE} no longer calls" >&2
   echo "   updateNotification with notification_running on a successful" >&2
   echo "   start — the running notification's text source changed; update" >&2
