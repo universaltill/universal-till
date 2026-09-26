@@ -36,10 +36,14 @@ import (
 // The handlers that persist through common.SaveState (the store card, the
 // kiosk and sell-screen policies, the per-till display cards) call
 // saveStateThrough, which sends only the fields the handler changed
-// (ut-docs#2948). Not covered yet: store.country from another till
-// (ut-docs#2980), shop-wide writes made outside these handlers
-// (ut-docs#2979) and read-only rendering while the main till is away
-// (ut-docs#2981).
+// (ut-docs#2948). Since ut-docs#2979 the receipt designer, the invoice
+// seller details, the signing-device confirm/unpair, the printer card, the
+// import's currency confirmation and the barcode-type checklist go through
+// here too, and settings_write_guard_test.go fails on any new direct
+// settings write in this package that is not per-till, main-till-only or
+// annotated `// settings-write:allow <reason>`. Not covered yet:
+// store.country from another till (ut-docs#2980) and read-only rendering
+// while the main till is away (ut-docs#2981).
 
 // settingsSyncProxyClient is the additional-till -> main-till client; same
 // admin-screen budget as the users write-through.
@@ -67,17 +71,35 @@ func settingsSyncFailure(err error) (*errSettingsSync, bool) {
 	return se, ok
 }
 
-// settingsSyncMessage is the translated message for a failed write-through.
-func settingsSyncMessage(r *http.Request, w http.ResponseWriter, se *errSettingsSync) string {
-	key := "settings.error.main_till_unreachable"
+// settingsSyncMessageKey is the locale key for a failed write-through.
+func settingsSyncMessageKey(se *errSettingsSync) string {
 	switch se.Code {
 	case "":
+		return "settings.error.main_till_unreachable"
 	case "not_supported_via_sync":
-		key = "settings.error.change_on_main_till"
+		return "settings.error.change_on_main_till"
 	default:
-		key = "settings.error.main_till_refused"
+		return "settings.error.main_till_refused"
 	}
-	return httpx.T(httpx.ResolveLocale(w, r), key)
+}
+
+// settingsSyncMessage is the translated message for a failed write-through.
+func settingsSyncMessage(r *http.Request, w http.ResponseWriter, se *errSettingsSync) string {
+	return httpx.T(httpx.ResolveLocale(w, r), settingsSyncMessageKey(se))
+}
+
+// settingsSyncStatus is the status a failed write-through answers with:
+// 403 for a main-till permission refusal, 409 for any other main-till
+// refusal, 502 when the main till could not be reached.
+func settingsSyncStatus(se *errSettingsSync) int {
+	switch {
+	case se.Code == "forbidden":
+		return http.StatusForbidden
+	case se.Code != "":
+		return http.StatusConflict
+	default:
+		return http.StatusBadGateway
+	}
 }
 
 // respondSettingsSyncFragment answers a failed write-through on a handler
@@ -109,14 +131,20 @@ func respondSettingsSyncError(w http.ResponseWriter, r *http.Request, err error)
 	if !ok {
 		return false
 	}
-	switch {
-	case se.Code == "forbidden":
-		http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "settings.error.main_till_refused"), http.StatusForbidden)
-	case se.Code != "":
-		http.Error(w, settingsSyncMessage(r, w, se), http.StatusConflict)
-	default:
-		http.Error(w, settingsSyncMessage(r, w, se), http.StatusBadGateway)
+	http.Error(w, settingsSyncMessage(r, w, se), settingsSyncStatus(se))
+	return true
+}
+
+// respondSettingsSyncPage answers a failed write-through on a handler whose
+// error shape is a full error page (httpx.RenderError, the fiscal-device
+// page's form posts), with respondSettingsSyncError's statuses. False when
+// err is not a write-through failure.
+func respondSettingsSyncPage(w http.ResponseWriter, r *http.Request, err error) bool {
+	se, ok := settingsSyncFailure(err)
+	if !ok {
+		return false
 	}
+	httpx.RenderError(w, r, settingsSyncStatus(se), settingsSyncMessageKey(se), err)
 	return true
 }
 

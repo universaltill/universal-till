@@ -126,15 +126,28 @@ func registerReceiptDesigner(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		_ = r.ParseForm()
-		set := func(key, val string) { _ = d.Settings.Set(r.Context(), key, val) }
-		set(keyReceiptHeader1, strings.TrimSpace(r.Form.Get("header1")))
-		set(keyReceiptHeader2, strings.TrimSpace(r.Form.Get("header2")))
-		set(keyReceiptHeader3, strings.TrimSpace(r.Form.Get("header3")))
-		set(keyReceiptFooter, strings.TrimSpace(r.Form.Get("footer")))
-		set(keyReceiptShowSKU, fmt.Sprintf("%t", r.Form.Get("show_sku") == "on"))
-		set(keyReceiptShowTax, fmt.Sprintf("%t", r.Form.Get("show_tax") == "on"))
-		set(keyReceiptShowBarcode, fmt.Sprintf("%t", r.Form.Get("show_barcode") == "on"))
-		set(keyReceiptShowLogo, fmt.Sprintf("%t", r.Form.Get("show_logo") == "on"))
+		// ut-docs#2979: the receipt design is shop-wide -- one batch through
+		// the main till on an additional till, nothing written locally on a
+		// refusal. The flat gate above is the whole authorization, so the
+		// session user travels as an allowed actor (what an allowed
+		// checkOrElevate would carry); the main till re-checks it.
+		elev := elevationCheck{Outcome: allowed, ActorID: getSessionUserID(r)}
+		if err := saveShopSettings(r.Context(), d, elev, map[string]string{
+			keyReceiptHeader1:     strings.TrimSpace(r.Form.Get("header1")),
+			keyReceiptHeader2:     strings.TrimSpace(r.Form.Get("header2")),
+			keyReceiptHeader3:     strings.TrimSpace(r.Form.Get("header3")),
+			keyReceiptFooter:      strings.TrimSpace(r.Form.Get("footer")),
+			keyReceiptShowSKU:     fmt.Sprintf("%t", r.Form.Get("show_sku") == "on"),
+			keyReceiptShowTax:     fmt.Sprintf("%t", r.Form.Get("show_tax") == "on"),
+			keyReceiptShowBarcode: fmt.Sprintf("%t", r.Form.Get("show_barcode") == "on"),
+			keyReceiptShowLogo:    fmt.Sprintf("%t", r.Form.Get("show_logo") == "on"),
+		}); err != nil {
+			if respondSettingsSyncFragment(w, r, err) {
+				return
+			}
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "designer.receipt.save_failed", "designer", err)
+			return
+		}
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "settings", "receipt", "receipt_design_saved",
 			nil, time.Now().UTC().Format(time.RFC3339), "")
 		locale := httpx.ResolveLocale(w, r)

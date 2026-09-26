@@ -1507,7 +1507,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 
 	// Barcode symbology checklist (ADR-0059 Decision §2, ut-docs#935): one
 	// checkbox per internal/barcode registry entry, persisted immediately
-	// via SettingsRepo.SetEnabledBarcodeSymbologies — same manager-gated,
+	// via SettingsRepo.SetBarcodeSymbologyEnabled (through the main till on
+	// an additional till, ut-docs#2979) — same manager-gated,
 	// audit-writing, elevation-wired shape as launch-on-startup above.
 	mux.HandleFunc("POST /api/settings/barcode-symbology", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
@@ -1546,7 +1547,25 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		settingsRepo := data.NewSettingsRepo(d.Db)
-		if _, err := settingsRepo.SetBarcodeSymbologyEnabled(r.Context(), id, b); err != nil {
+		if tillFollowsMain(r.Context(), d) {
+			// ut-docs#2979: the set is shop-wide. On a till that follows a
+			// main till the next set is computed here (the last-one refusal
+			// below still answers without a call) and sent through the main
+			// till as one value; nothing is written locally on a refusal.
+			// The mirror's SetMany drops the cached set.
+			var ids []string
+			if ids, err = settingsRepo.NextBarcodeSymbologySet(r.Context(), id, b); err == nil {
+				raw, _ := json.Marshal(ids)
+				err = saveShopSettings(r.Context(), d, elev, map[string]string{data.BarcodeEnabledSymbologiesKey: string(raw)})
+			}
+		} else {
+			// settings-write:allow main till: the atomic read-modify-write toggle (tillFollowsMain branch above sends it through the main till)
+			_, err = settingsRepo.SetBarcodeSymbologyEnabled(r.Context(), id, b)
+		}
+		if err != nil {
+			if respondSettingsSyncError(w, r, err) {
+				return
+			}
 			if errors.Is(err, data.ErrEmptyBarcodeSymbologySet) {
 				// ut-docs#935 review finding MAJOR 3: unticking the last
 				// enabled symbology would leave every scan and every

@@ -990,7 +990,14 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 		return fmt.Errorf("invalidate stale price_history: %w", err)
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	// The settings rows above bypass SettingsRepo, so its in-process caches
+	// are dropped here: a pulled barcode symbology set must take effect on
+	// the next scan, not at the next restart (ut-docs#2979).
+	invalidateBarcodeSymbologyCache(r.db)
+	return nil
 }
 
 // invalidateStalePriceHistoryOnSync is ADR-0099 Decision 2 (ut-docs#2348,

@@ -185,6 +185,7 @@ func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(cont
 		// other.
 		return "", fmt.Errorf("%s has no remote validation rule on this till", key)
 	}
+	// settings-write:allow a cloud set_till_setting directive addressed to THIS till; not written through to a main till yet (a replica can receive one -- reported with ut-docs#2979)
 	if err := d.Settings.Set(ctx, key, value); err != nil {
 		return "", err
 	}
@@ -603,6 +604,7 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 					return "", err
 				}
 			}
+			// settings-write:allow a cloud set_setting directive addressed to THIS till; not written through to a main till yet (a replica can receive one -- reported with ut-docs#2979)
 			if err := d.Settings.Set(ctx, key, value); err != nil {
 				return "", err
 			}

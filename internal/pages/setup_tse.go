@@ -205,12 +205,14 @@ func loadTSEProvisioningState(ctx context.Context, d *common.Deps) (*tseProvisio
 
 func saveTSEProvisioningState(ctx context.Context, d *common.Deps, st *tseProvisioningState) error {
 	if st == nil {
+		// settings-write:allow TSE provisioning state, written on the till running the provisioning (the main till, ADR-0053); not gated to it in code -- reported with ut-docs#2979
 		return d.Settings.Set(ctx, common.KeyTSEProvisioningState, "")
 	}
 	raw, err := json.Marshal(st)
 	if err != nil {
 		return err
 	}
+	// settings-write:allow TSE provisioning state, written on the till running the provisioning (the main till, ADR-0053); not gated to it in code -- reported with ut-docs#2979
 	return d.Settings.Set(ctx, common.KeyTSEProvisioningState, string(raw))
 }
 
@@ -476,6 +478,7 @@ func finishTSEProvisioning(ctx context.Context, d *common.Deps, msg string) (str
 		provisionedCountry = st.Country
 	}
 	configuredKey := fiscal.SigningDeviceConfiguredKey(provisionedCountry)
+	// settings-write:allow TSE provisioning directive: one TSE per store, provisioned from the main till (ADR-0053); not gated to it in code -- reported with ut-docs#2979
 	if err := d.Settings.Set(ctx, configuredKey, "true"); err != nil {
 		// Leave the directive un-acked: the re-serve is idempotent (the
 		// store.Load() fast path above) and will retry this write.
