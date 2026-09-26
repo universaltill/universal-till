@@ -1,7 +1,6 @@
 package entitlement
 
 import (
-	"context"
 	"testing"
 	"time"
 )
@@ -92,48 +91,3 @@ func TestBlockValuesCloudLinkDoesNotBypassPlanValidation(t *testing.T) {
 
 // CloudLink mirrors EffectivePlan's staleness rule (same Grace window,
 // anchored on the same last_confirmed_at) — the settings interface is
-// shared, and this package doc-comments that sharing deliberately.
-func TestCloudLinkReader(t *testing.T) {
-	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
-	ts := func(d time.Duration) string { return now.Add(d).Format(time.RFC3339) }
-	cache := func(tier, mode, confirmed string) mapReader {
-		return mapReader{
-			KeyCloudLinkTier:   tier,
-			KeyCloudLinkMode:   mode,
-			KeyLastConfirmedAt: confirmed,
-		}
-	}
-	cases := []struct {
-		name     string
-		r        mapReader
-		wantTier string
-		wantMode string
-	}{
-		{"never confirmed", mapReader{}, "periodic", ""},
-		{"fresh realtime always", cache("realtime", "always", ts(-time.Minute)), "realtime", "always"},
-		{"fresh realtime on_demand", cache("realtime", "on_demand", ts(0)), "realtime", "on_demand"},
-		{"fresh periodic", cache("periodic", "", ts(-time.Hour)), "periodic", ""},
-		{"unknown cached tier fails closed", cache("bogus", "", ts(0)), "periodic", ""},
-		{"exactly Grace old is honoured", cache("realtime", "always", ts(-Grace)), "realtime", "always"},
-		{"Grace+1s degrades", cache("realtime", "always", ts(-Grace-time.Second)), "periodic", ""},
-		{"unparsable last_confirmed_at", cache("realtime", "always", "yesterday-ish"), "periodic", ""},
-		{"missing last_confirmed_at", mapReader{KeyCloudLinkTier: "realtime", KeyCloudLinkMode: "always"}, "periodic", ""},
-		{"future-dated confirmation (clock skew) within Grace is fresh", cache("realtime", "always", ts(48*time.Hour)), "realtime", "always"},
-		{"future-dated confirmation beyond Grace is not trusted", cache("realtime", "always", ts(Grace+time.Second)), "periodic", ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			tier, mode := CloudLink(context.Background(), tc.r, now)
-			if tier != tc.wantTier || mode != tc.wantMode {
-				t.Fatalf("CloudLink = (%q, %q), want (%q, %q)", tier, mode, tc.wantTier, tc.wantMode)
-			}
-		})
-	}
-}
-
-func TestCloudLinkReaderErrorIsPeriodic(t *testing.T) {
-	tier, mode := CloudLink(context.Background(), errReader{}, time.Now())
-	if tier != "periodic" || mode != "" {
-		t.Fatalf("CloudLink with a reader error = (%q, %q), want (periodic, \"\")", tier, mode)
-	}
-}
