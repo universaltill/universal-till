@@ -5,10 +5,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"os/exec"
-	"runtime"
-	"time"
 
 	"github.com/universaltill/universal-till/internal/logging"
 
@@ -20,16 +16,28 @@ import (
 // default, overridden by webkit_linux.go's init() on Linux, the only
 // platform whose engine (webview_go's GTK/WebKit2 backend) defaults to an
 // in-memory-only cookie jar. Windows's WebView2 already persists cookies
-// to its own per-app user-data folder out of the box, same as macOS's
-// WKWebView (webkit_darwin.go), so both stay this no-op.
+// to its user data folder, which webview2_windows.go's init() pins to this
+// install's data directory (ut-docs#2761); macOS's WKWebView
+// (webkit_darwin.go) persists out of the box and stays this no-op.
 var setupPersistentCookies = func() error { return nil }
+
+// newWebView creates the native window — webview.New, a seam so a test can
+// inject a creation failure (ut-docs#2761). webview.New returns nil when the
+// system WebView cannot be created.
+var newWebView = func(debug bool) webview.WebView { return webview.New(debug) }
+
+// webViewRuntimeVersion reports the installed system WebView version for
+// the failure log line, "" when unknown — overridden on Windows
+// (webview2_windows.go) to read the WebView2 runtime's version.
+var webViewRuntimeVersion = func() string { return "" }
 
 // showWindow opens the webview_go window (Windows: Edge WebView2, Linux: GTK
 // WebKit) and blocks until it closes. Run() returns on close, so main's
 // deferred Kill stops the server; childPid is unused here.
 //
-// When the system WebView is unavailable (typically a Windows box without the
-// WebView2 runtime), webview.New returns nil — fall back to the default
+// When the system WebView is unavailable (a Windows box without the WebView2
+// runtime, or one whose WebView2 fails to start — ut-docs#2761; see
+// browserFallback), webview.New returns nil — fall back to the default
 // browser and keep serving until the server itself exits, which is exactly
 // the pre-shell behaviour. ctl is still very much non-nil here (main starts
 // the control listener before it even knows whether webview.New will
@@ -49,17 +57,13 @@ func showWindow(url, title string, childPid int, ctl *controlServer) {
 	if err := setupPersistentCookies(); err != nil {
 		fmt.Fprintln(logging.Stderr(), "unitill: persistent cookie storage setup failed, language/login choices won't survive a restart:", err)
 	}
-	w := webview.New(false)
+	w := newWebView(false)
 	if w == nil {
-		if ctl != nil {
-			ctl.SetOps(&windowOps{
-				ExitToOS:  func() error { return nil },
-				ApplyMode: func(string) error { return nil },
-			})
-			defer ctl.Close()
-		}
-		openBrowser(url)
-		waitForServer(url)
+		// ut-docs#2761: before the vendored webview_go was fixed, this branch
+		// was unreachable — New never returned nil, and a WebView2 that
+		// failed to start left a window with no browser inside, so the
+		// first Navigate crashed (0xc0000005) with nothing in any log.
+		browserFallback(url, ctl, webViewInitFailureReason(webview.LastInitError(), webViewRuntimeVersion()), fallbackOpen, fallbackWait)
 		return
 	}
 	defer w.Destroy()
@@ -198,35 +202,5 @@ func desktopWindowOps(w webview.WebView, ctl *controlServer) *windowOps {
 			w.Dispatch(func() { applyWindowMode(w, mode) })
 			return nil
 		},
-	}
-}
-
-// openBrowser opens the OS default browser on url, best-effort.
-func openBrowser(url string) {
-	switch runtime.GOOS {
-	case "windows":
-		_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
-	default:
-		_ = exec.Command("xdg-open", url).Start()
-	}
-}
-
-// waitForServer blocks while the till still answers; when it stops (server
-// quit or crashed) the shell exits too instead of lingering invisibly.
-func waitForServer(url string) {
-	client := &http.Client{Timeout: 5 * time.Second}
-	misses := 0
-	for {
-		time.Sleep(15 * time.Second)
-		resp, err := client.Get(url)
-		if err != nil {
-			misses++
-			if misses >= 2 {
-				return
-			}
-			continue
-		}
-		resp.Body.Close()
-		misses = 0
 	}
 }
