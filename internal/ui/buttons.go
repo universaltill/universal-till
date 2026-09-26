@@ -622,6 +622,17 @@ func (s *ButtonStore) SellScreenVersion(ctx context.Context) (SellScreenVersion,
 	return SellScreenVersion{Admin: admin, Sell: sell}, ok, err
 }
 
+// SellGeneration is sell_screen_version.generation alone — the open sale
+// screen's catalog-only live-refresh signal (ut-docs#2765, GET
+// /ui/buttons/version). ok=false (value 0) when the row is missing or no
+// repo is configured.
+func (s *ButtonStore) SellGeneration(ctx context.Context) (int64, bool, error) {
+	if s.sellRepo == nil {
+		return 0, false, nil
+	}
+	return s.sellRepo.SellGeneration(ctx)
+}
+
 // NextPriceBoundary is the next scheduled price_history start/end — when a
 // cached sell screen's prices go stale with no write (ut-docs#2501).
 func (s *ButtonStore) NextPriceBoundary(ctx context.Context) (time.Time, error) {
@@ -1619,7 +1630,7 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 		h.renderList(w, r)
 		return
 	}
-	h.serveSellScreen(w, r, h.sellScreenKey("list", ""), h.renderList)
+	h.serveSellScreen(w, r, h.sellScreenKey("list", ""), true, h.renderList)
 }
 
 // renderList is List's render, reporting whether it is clean enough to cache
@@ -1874,7 +1885,7 @@ func (h *ButtonsHTTP) AllMore(w http.ResponseWriter, r *http.Request) {
 // running its own second LoadAllActive.
 func (h *ButtonsHTTP) CategoryItems(w http.ResponseWriter, r *http.Request) {
 	catID := r.URL.Query().Get("id")
-	h.serveSellScreen(w, r, h.sellScreenKey("category", catID), func(w http.ResponseWriter, r *http.Request) bool {
+	h.serveSellScreen(w, r, h.sellScreenKey("category", catID), false, func(w http.ResponseWriter, r *http.Request) bool {
 		clean := true
 		all, degraded, err := h.Store.loadAllActive(r.Context())
 		if err != nil {

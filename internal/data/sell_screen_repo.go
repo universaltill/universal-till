@@ -37,6 +37,25 @@ WHERE a.id = 1 AND s.id = 1`).Scan(&admin, &sell)
 	return admin, sell, true, nil
 }
 
+// SellGeneration reads sell_screen_version.generation alone — the open sale
+// screen's catalog-only live-refresh signal (ut-docs#2765, GET
+// /ui/buttons/version polled by web/public/sell-screen-watch.js). Migrations
+// 042 + 047 bump it on every table the tile grid renders from and on nothing
+// else, so a completed sale never moves it. One single-row read, no render.
+// ok is false (and the value 0) when the row is missing; a failed query is
+// an error.
+func (r *SellScreenRepo) SellGeneration(ctx context.Context) (int64, bool, error) {
+	var g int64
+	err := r.db.QueryRowContext(ctx, `SELECT generation FROM sell_screen_version WHERE id = 1`).Scan(&g)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("sell screen generation: %w", err)
+	}
+	return g, true, nil
+}
+
 // sqliteDatetimeLayout is SQLite's datetime()/CURRENT_TIMESTAMP text form
 // (UTC) — the form ItemCurrentPrices compares price_history.starts_at/
 // ends_at in.
