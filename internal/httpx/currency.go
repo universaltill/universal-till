@@ -529,6 +529,39 @@ func ParseMoneyMajor(raw string, decimals int) (int64, error) {
 	return minor, nil
 }
 
+// PercentPatternLocal is the input pattern for a percentage field (a
+// promotion percent, a payment-fee percent, a tax rate): digits with an
+// optional '.' or ',' and at most two fraction digits -- the grammar
+// ParsePercentBP reads (ut-docs#2954).
+const PercentPatternLocal = `[0-9]+([.,][0-9]{1,2})?`
+
+// PercentPatternLocalAttr is the whole-attribute form of PercentPatternLocal
+// (see MoneyPatternAttr for why the whole attribute). Like
+// MoneyPatternLocalAttr it opts into app.js's shop-language message instead
+// of the browser's own (device OS language), but as data-money-local=
+// "percent": a percent always takes two decimals, so it reads
+// <body data-percent-invalid> (the "dot or a comma before the decimals"
+// text) even on a 0-decimal-currency shop, whose money message says
+// "whole number" (ut-docs#2954 review).
+func PercentPatternLocalAttr() template.HTMLAttr {
+	return template.HTMLAttr(`pattern="` + PercentPatternLocal + `" data-money-local="percent"`)
+}
+
+// ParsePercentBP is the server-side reader for a PercentPatternLocal field:
+// a non-negative percentage with '.' or ',' as the decimal separator and at
+// most two fraction digits, returned in basis points (1% = 100). Same
+// integer grammar as ParseMoneyMajor with two decimals -- no
+// strconv.ParseFloat, so "1e3", "NaN" and "Inf" are refused and 8.5% is
+// exactly 850, never 849 (ut-docs#2954). Range checks (e.g. <= 100%) are
+// the caller's.
+func ParsePercentBP(raw string) (int64, error) {
+	bp, err := ParseMoneyMajor(raw, 2)
+	if err != nil {
+		return 0, fmt.Errorf("invalid percent %q", raw)
+	}
+	return bp, nil
+}
+
 func allDigits(s string) bool {
 	for i := 0; i < len(s); i++ {
 		if s[i] < '0' || s[i] > '9' {

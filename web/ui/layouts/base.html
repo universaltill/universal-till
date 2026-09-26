@@ -1084,6 +1084,7 @@
         data-order-type-prompt-mode="{{ ordertypepromptmode }}"
         data-notice-dismiss="{{ T "notice.dismiss" }}"
         data-money-invalid="{{ if eq currency.Decimals 0 }}{{ T "common.money.invalid_whole" }}{{ else }}{{ T "common.money.invalid" }}{{ end }}"
+        data-percent-invalid="{{ T "common.money.invalid" }}"
         {{ if idlelocksecs }}data-idle-lock="{{ idlelocksecs }}"{{ end }}>
     <!-- ut-docs#2224 / ADR-0098: everything a navigation changes lives in
          this one region; an <a> inside it is boosted and the response's own

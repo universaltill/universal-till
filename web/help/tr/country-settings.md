@@ -24,7 +24,7 @@ Bu sayfa, o ülke varsayılanlarının bulunduğu yerdir. **İlk kurulum sihirba
 
 ## Bilmekte fayda var
 
-- Vergi yüzde olarak girilir — %19 için `19` yazın. `8.5` gibi buçuklu oranlar da kullanılabilir.
+- Vergi yüzde olarak girilir — %19 için `19` yazın. `8.5` (veya `8,5` — nokta ya da virgül) gibi buçuklu oranlar da kullanılabilir.
 - **Vergi fiyata dahil**, raf fiyatının vergiyi zaten içerdiği anlamına gelir; Avrupa'nın çoğunda normal olan budur. Verginin kasada eklendiği yerlerde bu seçeneği kapalı bırakın.
 - **Arşiv saklama** burada artırabileceğiniz ama gösterilen alt sınırın altına indiremeyeceğiniz bir tabandır. Bu değer, bir sıfırlama arşivi grubunun (Ayarlar → Veri yönetimi → Sıfırlama arşivleri) ne zaman kalıcı silme için uygun hale geleceğini belirler: gerçek satış içeren bir grup, arşivlendiğinden bu yana bu kadar gün geçmeden silinemez. Değeri artırmak mevcut grupları hemen daha uzun süre korur; halihazırda geçerli olan korumayı asla kısaltmaz. Sıfırlama arşivleri listesinin kendisi, korunan her grubun saklama bitiş tarihini doğrudan gösterir ve o tarihe kadar Kalıcı olarak sil düğmesini gizler — böylece onay ifadesini yazıp yalnızca reddedilmezsiniz.
 - Burada bir ülkeyi düzenlemek, halihazırda kurulmuş bir dükkânı değiştirmez ve zaten aldığınız satışları yeniden yazmaz.
