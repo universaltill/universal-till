@@ -43,7 +43,7 @@ Yanlış mevcut PIN, bu kasada başarısız bir oturum açma denemesi olarak say
 Gözetimsiz, oturumu açık bir kasa gerçek bir risktir — yanından geçen herkes, son oturum açan kişi olarak satış yapabilir, iade alabilir veya ayarları açabilir. Kasa, bir süre dokunulmadan kaldıktan sonra kendini PIN pad'ine kilitler, hiçbir işlem veya işlem kaybı olmadan: sepette ne vardıysa, siz (veya izin verilen başka biri) tekrar giriş yaptığınızda tam olarak bıraktığınız gibi kalır.
 
 1. Zaman aşımını Ayarlar → Otomatik kilitleme'den ayarlayın: kapalı, veya 2/5/10/15/30/60 dakika — başlangıç için 10 dakika, biri değiştirene kadar.
-2. Kasadaki herhangi bir dokunuş, tuş basışı veya tarama geri sayımı sıfırlar — gerçekten boşta kaldıktan sonra tetiklenir.
+2. Kasadaki herhangi bir dokunuş, tuş basışı veya tarama geri sayımı sıfırlar — gerçekten boşta kaldıktan sonra tetiklenir. Kendi kendine güncellenen bir ekran (durum çipleri, satış ekranında beliren yeni düğmeler veya açık siparişler) etkinlik sayılmaz. İstisna, dokunmak için değil izlemek için olan ekranlardır — mutfak ekranı, sipariş durumu panosu ve kiosk tezgâh siparişleri — bunlar açık oldukları sürece oturumu açık tutar.
 3. Bu ayarı değiştirmek bir yönetici veya admin rolü gerektirir, diğer ayar değişikliklerindeki [yönetici onay penceresi](/help/elevation) ile aynı.
 4. Zaman aşımını beklemek istemiyor musunuz? Yan menüdeki adınızın yanındaki Kilitle düğmesini kullanarak istediğiniz zaman kendiniz kilitleyin.
 
