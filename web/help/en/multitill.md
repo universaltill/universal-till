@@ -13,7 +13,7 @@ keywords: [second till, pairing, sync, lan, primary, register, quarantine]
 
 # Multiple tills (one shop)
 
-Run several tills on the same shop network: one is the main till, the others join it and share the catalog, prices, settings and stock automatically. Photos you upload for items and categories on the main till follow within about half a minute, so every till shows the same pictures.
+Run several tills on the same shop network: one is the main till, the others join it and share the catalog, prices, settings and stock automatically. Photos you upload for items and categories on the main till follow within about half a minute, so every till shows the same pictures. A photo you remove on the main till disappears from the other tills too, about an hour later and never in the middle of a sale; a photo uploaded directly on a joined till is left alone. If the main till suddenly has no photos, or far fewer all at once (for example after its photo folder was lost or restored), the other tills keep theirs and a warning appears in the till's problems list instead.
 
 ## How to use it
 

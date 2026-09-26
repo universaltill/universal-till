@@ -9,7 +9,7 @@ routes: [/tills, /ui/tills/pending-pairings, /registers, /sync-quarantine]
 
 # Birden çok kasa (tek dükkân)
 
-Aynı dükkân ağında birden çok kasa çalıştırın: biri ana kasadır, diğerleri ona katılır; katalog, fiyatlar, ayarlar ve stok otomatik paylaşılır.
+Aynı dükkân ağında birden çok kasa çalıştırın: biri ana kasadır, diğerleri ona katılır; katalog, fiyatlar, ayarlar ve stok otomatik paylaşılır. Ana kasada ürünler ve kategoriler için yüklediğiniz fotoğraflar yaklaşık yarım dakika içinde diğer kasalara geçer, böylece her kasa aynı görselleri gösterir. Ana kasada kaldırdığınız bir fotoğraf diğer kasalardan da kaybolur — yaklaşık bir saat sonra ve asla bir satışın ortasında değil; doğrudan katılmış bir kasaya yüklenen fotoğrafa dokunulmaz. Ana kasada birden hiç fotoğraf kalmazsa ya da bir anda çok daha az fotoğraf olursa (örneğin fotoğraf klasörü kaybolduktan veya geri yüklendikten sonra), diğer kasalar kendi fotoğraflarını korur ve bunun yerine kasanın sorun listesinde bir uyarı görünür.
 
 ## Nasıl kullanılır
 
