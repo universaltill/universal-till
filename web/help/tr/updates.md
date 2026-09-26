@@ -24,7 +24,7 @@ Kasa, siz kapatmadıkça gece kendini günceller.
 2. Bir satışın ortasında asla yeniden başlamaz. Bir sepette (self servis veya masa siparişi dahil) hâlâ ürün varsa, sepet boşalana kadar bekler. Bu yarım saat içinde olmazsa ya da kasa o sırada kapalıysa, ertesi gece yeniden dener.
 3. Otomatik güncellemeleri durdurmak için Otomatik güncelle işaretini kaldırıp Kaydet'e tıklayın. Kasa bu seçimi korur. Ana kasada bu, ek kasaların onu izlemesini de durdurur; ek kasa bu seçimi her zaman ana kasasından alır.
 4. Ek kasa ana kasayı izler: ana kasa daha yeni bir sürüm çalıştırdığında, ek kasa tam olarak o sürümü açık satışın olmadığı ilk anda kurar. Windows ve Android ek kasalar, kendi başlarına kurabilene kadar bunun yerine bir 'gerekli' notu gösterir.
-5. Windows ve Android kasalar güncellemeleri henüz kendi başına kuramaz. Onları yukarıda anlatıldığı gibi elle güncelleyin.
+5. Windows ve Android kasalar güncellemeleri henüz kendi başına kuramaz. Onları yukarıda anlatıldığı gibi elle güncelleyin. Windows'ta yükleyici, Universal Till hâlâ açıksa önce onu kapatır; bu yüzden çalıştırmadan önce devam eden satışı tamamlayın.
 
 ## Android kasalarda
 
