@@ -141,7 +141,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden">
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode">
             <!-- The server surviving rotation (TillService) is only half the
                  fix — without this, the DEFAULT Android behavior still
                  destroys and recreates the Activity (and its WebView) on
@@ -153,7 +153,25 @@
                  reload-avoidance check — actually do what their comments
                  claim. Independent review, 2026-07-25, traced through why
                  the reload-avoidance check was previously inert without
-                 this. -->
+                 this.
+
+                 ut-docs#2788: rotation is not the only config change that
+                 recreates the Activity. A Bluetooth HID barcode scanner or
+                 keyboard sleeping and reconnecting flips `keyboard` (and
+                 often `navigation`), and auto night mode / docking flips
+                 `uiMode` - each one used to destroy the Activity and load
+                 "/" in a fresh WebView: a whole-page refresh on the till
+                 with no operator action. keyboard|navigation|uiMode are
+                 handled in-process instead. Handling uiMode means the app's
+                 OWN -night resources would never re-apply, so it ships none
+                 (scripts/ci/guard-android-config-changes.sh enforces both
+                 halves). Known cosmetic limit: the DayNight theme's night
+                 variant lives in the AppCompat library, so after a day/night
+                 flip the native chrome inflated at onCreate (status text,
+                 error bar) keeps its old colours until the next restart
+                 while anything inflated later follows the new mode. The
+                 WebView covers the screen and the page theme is a till
+                 setting, so a stable page wins over matching native chrome. -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

@@ -67,7 +67,7 @@
        not trigger the success reload. Toggling ON also registers now,
        best-effort; toggling OFF never deregisters anything. -->
   <div class="set-divider">
-    <form hx-post="/api/settings/auto-register" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){window.location.reload()} } else {document.getElementById('settings-save-error').hidden=false}">
+    <form hx-post="/api/settings/auto-register" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-auto-register')} } else {document.getElementById('settings-save-error').hidden=false}">
       <label><input type="checkbox" name="optIn" {{ if eq (index .settingsMap "marketplace.auto_register_opt_in") "true" }}checked{{ end }}> {{ T "settings.enrol.auto_register.label" }}</label>
       <p class="muted">{{ T "settings.enrol.auto_register.help" }}</p>
       <div class="set-gap-s">
@@ -287,7 +287,7 @@
   <h2>{{ T "settings.theme.title" }}</h2>
   {{/* ut-docs#2783: per station, never synced between tills. */}}
   <p class="muted">{{ T "settings.theme.help_per_till" }}</p>
-  <form hx-post="/api/settings/theme" hx-swap="none" hx-on::after-request="if(event.detail.successful){window.location.reload()}else{document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/theme" hx-swap="none" hx-on::after-request="if(event.detail.successful){UT.reload('settings-theme')}else{document.getElementById('settings-save-error').hidden=false}">
     <select name="theme">
       {{ $current := .theme }}
       {{ range .themes }}
@@ -300,7 +300,7 @@
 <div class="card" id="settings-display">
   <h2>{{ T "settings.display.title" }}</h2>
   <p class="muted">{{ T "settings.display.help" }}</p>
-  <form hx-post="/api/settings/ui-scale" hx-swap="none" hx-on::after-request="if(event.detail.successful){window.location.reload()}else{document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/ui-scale" hx-swap="none" hx-on::after-request="if(event.detail.successful){UT.reload('settings-ui-scale')}else{document.getElementById('settings-save-error').hidden=false}">
     {{ $scale := .uiScale }}
     <select name="scale">
       <option value="0.7"  {{ if eq $scale "0.7" }}selected{{ end }}>70% — {{ T "settings.display.tiny" }}</option>
@@ -315,7 +315,7 @@
     </select>
     <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
   </form>
-  <form hx-post="/api/settings/osk" hx-swap="none" hx-on::after-request="if(event.detail.successful){window.location.reload()}else{document.getElementById('settings-save-error').hidden=false}" class="set-gap">
+  <form hx-post="/api/settings/osk" hx-swap="none" hx-on::after-request="if(event.detail.successful){UT.reload('settings-osk')}else{document.getElementById('settings-save-error').hidden=false}" class="set-gap">
     {{ $osk := oskmode }}
     <label class="set-row">{{ T "settings.display.osk" }}
       <select name="mode">
@@ -335,7 +335,7 @@
        same hx-on::after-request reload pattern as ui-scale/osk above,
        since THIS control (unlike the live drag) has no basket-loss risk
        to protect against. -->
-  <form hx-post="/api/settings/basket-panel-width" hx-swap="none" hx-on::after-request="if(event.detail.successful){window.location.reload()}else{document.getElementById('settings-save-error').hidden=false}" class="set-gap">
+  <form hx-post="/api/settings/basket-panel-width" hx-swap="none" hx-on::after-request="if(event.detail.successful){UT.reload('settings-basket-width')}else{document.getElementById('settings-save-error').hidden=false}" class="set-gap">
     <input type="hidden" name="width_rem" value="0">
     <p class="muted">{{ T "settings.display.basket_panel_help" }}</p>
     <button class="btn secondary" type="submit" data-testid="basket-panel-reset">{{ T "settings.display.basket_panel_reset_btn" }}</button>
@@ -349,7 +349,7 @@
        forms (#796) — an elevation prompt (text/html) must not trigger the
        unconditional navigate-away that used to sit here, which would
        destroy the just-opened dialog before an operator could even see it. -->
-  <form hx-post="/api/settings/display-mode" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){window.location.href='/'} } else {document.getElementById('settings-save-error').hidden=false}" class="set-gap">
+  <form hx-post="/api/settings/display-mode" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.noteNav('settings-display-mode');window.location.href='/'} } else {document.getElementById('settings-save-error').hidden=false}" class="set-gap">
     {{ $dmode := index .settingsMap "display.mode" }}
     <label class="set-row">{{ T "settings.display.mode" }}
       <select name="mode">
@@ -1413,7 +1413,7 @@
        the just-opened dialog before anyone could use it. Content-Type
        (text/html only on the elevation prompt; the real 204 success has
        none) is the same signal app.js's utPostWithElevation uses. -->
-  <form hx-post="/api/settings/report-retention" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){window.location.reload()} } else {document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/report-retention" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-report-retention')} } else {document.getElementById('settings-save-error').hidden=false}">
     {{ $mode := .reportRetentionMode }}
     <label>{{ T "settings.retention.mode_label" }}
       <select name="mode">
@@ -1526,7 +1526,7 @@
        "saved" apart from "needs a manager's PIN" — Content-Type
        (text/html only on the prompt; the real 204 success has none) is
        the same signal the report-retention form above uses. -->
-  <form hx-post="/api/settings/printer" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){window.location.reload()} } else {document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/printer" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-printer')} } else {document.getElementById('settings-save-error').hidden=false}">
     {{ $p := .printer }}
     <div class="field-pair">
       <label>{{ T "settings.printer.mode" }}
@@ -1740,7 +1740,7 @@
        success reload, which would destroy the just-opened dialog; the real
        success is a bare 204 with no Content-Type. -->
   <form hx-post="/api/settings/till-name" hx-swap="none"
-        hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){window.location.reload()} } else {document.getElementById('settings-save-error').hidden=false}">
+        hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-till-name')} } else {document.getElementById('settings-save-error').hidden=false}">
     <label>{{ T "settings.tills.name_label" }}
       <input type="text" name="name" maxlength="60" value="{{ .TillName }}">
     </label>
@@ -1755,7 +1755,7 @@
        this renders on primary AND replica — every till processes its own
        local payouts, so its register identity matters everywhere. -->
   <form hx-post="/api/settings/till-register" hx-swap="none"
-        hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){window.location.reload()} } else {document.getElementById('settings-save-error').hidden=false}">
+        hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-till-register')} } else {document.getElementById('settings-save-error').hidden=false}">
     <label>{{ T "settings.tills.register_label" }}
       <select name="register_id" required>
         {{ if not .TillRegisterID }}<option value="" selected disabled>{{ T "settings.tills.register_unset" }}</option>{{ end }}
@@ -1795,7 +1795,7 @@
   <!-- ut-docs#794 review finding: same Content-Type reload guard as the
        report-retention form above — the elevation prompt is itself a 2xx
        (200 + dialog HTML). -->
-  <form hx-post="/api/settings/invoice" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){window.location.reload()} } else {document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/invoice" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-invoice')} } else {document.getElementById('settings-save-error').hidden=false}">
     <div class="field-pair">
       <label>{{ T "settings.invoice.seller_name" }}
         <input type="text" name="seller_name" value="{{ index .settingsMap "invoice.seller_name" }}"></label>
@@ -1820,7 +1820,7 @@
        (#796) — a 200 elevation prompt (text/html) must not trigger the
        success reload, which would destroy the just-opened dialog; the
        real success is a bare 204 with no Content-Type. -->
-  <form hx-post="/api/settings/idle-lock" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){window.location.reload()} } else {document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/idle-lock" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-idle-lock')} } else {document.getElementById('settings-save-error').hidden=false}">
     {{ $idle := .settings.IdleLockMinutes }}
     <select name="minutes">
       <option value="0"  {{ if eq $idle 0 }}selected{{ end }}>{{ T "settings.idle_lock.off" }}</option>
@@ -1877,7 +1877,7 @@
   <!-- ut-docs#865: same Content-Type reload guard as idle-lock above — the
        unconditional reload previously here would destroy an elevation
        prompt the instant it appeared. -->
-  <form hx-post="/api/settings/telemetry" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){window.location.reload()} } else {document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/telemetry" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-telemetry')} } else {document.getElementById('settings-save-error').hidden=false}">
     <label><input type="checkbox" name="optIn" {{ if eq (index .settingsMap "marketplace.telemetry_opt_in") "true" }}checked{{ end }}> {{ T "settings.telemetry.enable" }}</label>
     <div class="set-gap-s">
       <button class="btn" type="submit">{{ T "settings.telemetry.save" }}</button>
@@ -1892,7 +1892,7 @@
   <p class="muted">{{ T "settings.currency.help" }}</p>
   <!-- ut-docs#796: Content-Type reload guard, same as the report-retention
        form — see the till-name form's comment. -->
-  <form hx-post="/api/settings/save" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){window.location.reload()} } else {document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/save" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-save')} } else {document.getElementById('settings-save-error').hidden=false}">
     {{ $cur := currency }}
     <select name="currency">
       {{ range currencies }}
@@ -1920,7 +1920,7 @@
 <div class="card" id="settings-language">
   <h2>{{ T "settings.language.title" }}</h2>
   <p class="muted">{{ T "settings.language.help" }}</p>
-  <form hx-post="/api/settings/save" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){window.location.reload()} } else {document.getElementById('settings-save-error').hidden=false}">
+  <form hx-post="/api/settings/save" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-save')} } else {document.getElementById('settings-save-error').hidden=false}">
     {{ $cur := defaultlocale }}
     <select name="locale">
       {{ range locales }}

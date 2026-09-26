@@ -149,7 +149,7 @@ function showInstallSuccess(message) {
 	`;
 	document.getElementById('modal-actions').innerHTML = `
 		<button 
-			onclick="closeInstallModal(); location.reload()"
+			onclick="closeInstallModal(); UT.reload('plugin-install')"
 			class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors">
 			${pluginInstallText.done}
 		</button>

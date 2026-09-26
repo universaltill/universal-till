@@ -545,6 +545,55 @@ path proven untouched). Manual checklist for the TECLAST P50T:
 5. Confirm the "Record screen" button still reads "not available here"
    — expected until the MediaProjection follow-up lands.
 
+## Diagnosing a page that "refreshes" by itself (ut-docs#2788)
+
+Every whole-page reload on the till leaves a reason in two places, so an
+on-device capture names the cause instead of "it flashed":
+
+- **Native side (logcat, tag `MainActivity`).** Every line that starts
+  `reload:` is a reload the Android wrapper did or caused:
+  `reload: till service ready, loading root (… was /path)` (first load, or
+  the embedded server restarted), `reload: bluetooth …` (the Bluetooth
+  prompts), `reload: back to till from the error bar`,
+  `reload: app locale -> xx, activity will be recreated`, and the pair
+  `reload: activity destroyed (…)` / `reload: activity recreated
+  (savedInstanceState present)` when Android rebuilt the Activity.
+  `config change handled in-process, no reload (…)` is the good case: a
+  rotation, Bluetooth scanner/keyboard reconnect (`keyboard`,
+  `navigation`) or night-mode/dock change (`uiMode`) that the manifest's
+  `configChanges` absorbed. `scripts/ci/guard-android-config-changes.sh`
+  keeps that list complete.
+- **Page side (till log; on Android also logcat tag `GoLog`).** The next
+  page load after a reload posts to `POST /api/diag/reload-reason`, which
+  logs `page reload: reason="…" path="/…" nav="reload|navigate|…"`
+  (at most 30 lines a minute). Reasons: `settings-<form>` (a Settings
+  save), `plugin-action:<api path>`, `plugin-import`, `plugin-store:<action>`,
+  `plugin-permissions:<action>`, `plugin-install`, `plugin-manual-import`,
+  `bluetooth-paired` / `bluetooth-forgotten`, `barcode-backfill-done`,
+  `update-restarted` / `update-manual-retry` (and `setup-update-…`),
+  `refresh-region-fallback`, `shell-fallback:signature|no-shell` (a
+  navigation to a page of a different shell, e.g. after a self-update),
+  `hx-refresh:<request path>` / `hx-redirect:<request path>` (the server
+  told htmx to reload/redirect; a `:poll` suffix means a background
+  `every Ns` poll asked, not the operator), `idle-lock` (the idle
+  auto-lock timer sent the till to /login), and **`unattributed`** — a
+  reload nobody announced (a native WebView reload, pull-to-refresh, F5).
+  An Activity recreate or a TillService restart loads "/" into a FRESH
+  WebView (nav type `navigate`, empty sessionStorage), so those two leave
+  **no** `page reload:` line in the till log — only the logcat `reload:`
+  lines name them; capture with adb. The self-order kiosk pages
+  (`self_order.html`, `self_order_shop.html`) are standalone and
+  auth-exempt, so their deliberate idle-reset reloads are not reported
+  either.
+  The browser console shows the same reason as `[reload] …`.
+- **Expired session.** A background htmx request without a session logs
+  `auth: htmx request "/path" without a session -> HX-Redirect "/login"`.
+
+Capture: `adb logcat -s MainActivity GoLog` while reproducing, plus the
+till log. A `reload: activity recreated` with no `config change handled`
+line before it points at a configuration change the manifest still
+doesn't declare.
+
 ## Not yet done
 
 - Screen recording in the bug-report panel on Android (MediaProjection)

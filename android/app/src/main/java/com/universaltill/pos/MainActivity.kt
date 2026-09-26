@@ -12,6 +12,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Rect
@@ -137,6 +138,11 @@ class MainActivity : AppCompatActivity() {
                     // invoke TillService's listener mechanism can produce
                     // (see the comment on addListener).
                     if (webView.url != "http://$address/") {
+                        // ut-docs#2788: every whole-page load leaves a reason
+                        // in logcat (`adb logcat -s MainActivity`).
+                        // Path only (never the query) of what the WebView showed.
+                        val was = webView.url?.let { Uri.parse(it).path } ?: "none"
+                        Log.i(TAG, "reload: till service ready, loading root (first load or server restarted; was $was)")
                         webView.loadUrl("http://$address")
                     }
                 }
@@ -246,6 +252,7 @@ class MainActivity : AppCompatActivity() {
             // builds, and the page's own re-read is the honest answer either
             // way — reporting a refusal we cannot be sure of is how a
             // working feature gets described as broken.
+            Log.i(TAG, "reload: bluetooth enable prompt answered")
             webView.reload()
         }
 
@@ -262,6 +269,7 @@ class MainActivity : AppCompatActivity() {
             if (permanentlyDenied) {
                 openAppSettings()
             } else {
+                Log.i(TAG, "reload: bluetooth permission prompt answered")
                 webView.reload()
             }
         }
@@ -581,6 +589,7 @@ class MainActivity : AppCompatActivity() {
                     return@runOnUiThread
                 }
                 if (adapter.isEnabled) {
+                    Log.i(TAG, "reload: bluetooth enable requested but already on")
                     webView.reload()
                     return@runOnUiThread
                 }
@@ -1188,7 +1197,10 @@ class MainActivity : AppCompatActivity() {
         // status bar (or, on a real device, nothing yet) is the honest
         // state; TillService's own listener loads the real address itself
         // the moment it's known, same as a normal cold start.
-        allowedHost?.let { webView.loadUrl("http://$it/") }
+        allowedHost?.let {
+            Log.i(TAG, "reload: back to till from the error bar")
+            webView.loadUrl("http://$it/")
+        }
     }
 
     /**
@@ -1275,6 +1287,12 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // ut-docs#2788: a recreated Activity builds a fresh WebView that
+        // loads "/" -- to the operator, a whole-page refresh nobody asked
+        // for. Name it so an on-device capture can tell it apart.
+        if (savedInstanceState != null) {
+            Log.i(TAG, "reload: activity recreated (savedInstanceState present)")
+        }
         setContentView(R.layout.activity_main)
 
         webView = findViewById(R.id.webview)
@@ -1478,6 +1496,9 @@ class MainActivity : AppCompatActivity() {
                         if (lang != null) {
                             val requested = LocaleListCompat.forLanguageTags(lang)
                             if (AppCompatDelegate.getApplicationLocales().toLanguageTags() != requested.toLanguageTags()) {
+                                // ut-docs#2788: this recreates the Activity
+                                // (a whole-page reload) -- say so.
+                                Log.i(TAG, "reload: app locale -> $lang, activity will be recreated")
                                 AppCompatDelegate.setApplicationLocales(requested)
                                 // Same-process call: AppCompatDelegate's
                                 // static locale state (what str()/
@@ -1758,8 +1779,27 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * ut-docs#2788: logging only. The manifest's configChanges routes
+     * rotation, keyboard/scanner reconnects and uiMode changes here instead
+     * of recreating the Activity (which reloaded the whole page). One line
+     * per change lets an on-device capture confirm a scanner reconnect was
+     * absorbed without a reload.
+     */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        Log.i(
+            TAG,
+            "config change handled in-process, no reload (keyboard=${newConfig.keyboard} " +
+                "navigation=${newConfig.navigation} uiMode=${newConfig.uiMode} " +
+                "orientation=${newConfig.orientation})",
+        )
+    }
+
     override fun onDestroy() {
         super.onDestroy()
+        // ut-docs#2788: pairs with onCreate's "activity recreated" line.
+        Log.i(TAG, "reload: activity destroyed (changingConfigurations=$isChangingConfigurations, finishing=$isFinishing)")
         // ut-docs#1639: drop any pending delayed pin-verification callback —
         // same leak-avoidance posture as the WebView teardown below; the
         // Handler otherwise holds this Activity indirectly via the Runnable

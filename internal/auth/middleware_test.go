@@ -1,9 +1,14 @@
 package auth
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
+
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // ut-docs#1099: POST /api/settings/exit-to-os is the manager's escape hatch
@@ -341,4 +346,50 @@ func TestEntitlementAPIIsNotExempt(t *testing.T) {
 			t.Errorf("%s must NOT be exempt or optional-auth — it discloses the shop's subscription state", p)
 		}
 	}
+}
+
+// ut-docs#2788: a background htmx poll that hits an expired session gets
+// HX-Redirect, which htmx turns into a whole-page navigation to /login --
+// one way a till "refreshes" with no operator action. The middleware must
+// leave a log line naming the request path (path only: no query string,
+// which may carry ids) and the redirect target.
+func TestHTMXRequestWithoutSessionLogsTheRedirect(t *testing.T) {
+	var buf lockedLogBuffer
+	t.Cleanup(logging.CaptureForTest(&buf))
+
+	h := Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler reached without a session")
+	}), nil)
+	req := httptest.NewRequest(http.MethodGet, "/ui/sync-chip?token=secret", nil)
+	req.Header.Set("HX-Request", "true")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Header().Get("HX-Redirect") != "/login" {
+		t.Fatalf("HX-Redirect = %q, want /login", rec.Header().Get("HX-Redirect"))
+	}
+	out := buf.String()
+	if !strings.Contains(out, `auth: htmx request "/ui/sync-chip" without a session -> HX-Redirect "/login"`) {
+		t.Fatalf("missing HX-Redirect log line; got %q", out)
+	}
+	if strings.Contains(out, "secret") {
+		t.Fatalf("query string leaked into the log: %q", out)
+	}
+}
+
+type lockedLogBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedLogBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedLogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }

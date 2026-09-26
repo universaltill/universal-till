@@ -101,7 +101,7 @@
       fetch('/api/plugins/permissions/' + action, { method: 'POST', body: body }).then(function (res) {
         if (res.status === 401) { window.location.href = '/login'; return; }
         return res.text().then(function (t) {
-          if (res.ok) { window.location.reload(); return; }
+          if (res.ok) { UT.reload('plugin-permissions:' + action); return; }
           permMsg.textContent = '✗ ' + t;
         });
       }).catch(function (e) { permMsg.textContent = '✗ ' + e; });

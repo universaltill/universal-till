@@ -187,7 +187,7 @@ window.utTrustPrompt = {{ printf "%q" (T "plugins.trust.confirm") }};
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ listing_id: listing }).toString()
     }).then(function (res) { return res.json().catch(function () { return {}; }).then(function (j) {
-      if (res.ok) { window.location.reload(); return; }
+      if (res.ok) { UT.reload('plugin-store:' + action); return; }
       msg.textContent = '✗ ' + (T[j.error] || j.error || ('HTTP ' + res.status));
       card.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
     }); }).catch(function (e) {

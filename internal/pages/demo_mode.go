@@ -361,6 +361,10 @@ var demoDeniedRoutes = map[string]bool{
 	"POST /api/settings/launch-on-startup": true,
 	"POST /api/settings/window-mode":       true,
 	"POST /api/window/input-heartbeat":     true,
+	// Reload-reason diagnostics (ut-docs#2788): telemetry about the till
+	// device itself, like the heartbeat; the page's beacon ignores the
+	// answer.
+	"POST /api/diag/reload-reason": true,
 	// Raw settings key/value editor: takes any key, URL/host settings included.
 	"POST /api/settings/upsert": true,
 }

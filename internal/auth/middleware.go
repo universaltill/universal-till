@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 type ctxKey struct{}
@@ -391,6 +393,11 @@ func Middleware(next http.Handler, svc *Service) http.Handler {
 		// the fragment's slot — the PIN pad rendered inside the header bar.
 		// HX-Redirect makes htmx do a real browser navigation to dest.
 		if r.Header.Get("HX-Request") == "true" {
+			// ut-docs#2788: HX-Redirect is a whole-page navigation -- a
+			// background poll hitting an expired session is one way a till
+			// "refreshes" to the login screen unprompted. Path only (never
+			// the query), %q so a crafted path can't forge a log line.
+			logging.L().Infof("auth: htmx request %q without a session -> HX-Redirect %q", r.URL.Path, dest)
 			w.Header().Set("HX-Redirect", dest)
 			w.WriteHeader(http.StatusUnauthorized)
 			return
