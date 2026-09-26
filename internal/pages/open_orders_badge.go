@@ -2,7 +2,9 @@ package pages
 
 import (
 	"fmt"
+	"html"
 	"net/http"
+	"net/url"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -27,16 +29,29 @@ import (
 // work the sale screen never did before the strip went. Do NOT add an
 // `every Ns` poll to the badge's hx-trigger without weighing that cost per
 // till per interval against the primary. The flip side, accepted for now:
-// the count is only as fresh as the last page load or local held-changed
-// event, so an order parked or resumed on ANOTHER till does not move this
-// till's badge until it reloads the sale screen or holds/resumes/moves
-// something itself (the popup, fetched on open, is always current).
+// A change made on ANOTHER till reaches an open sale screen through the
+// held generation instead (ut-docs#2858): every held_sales link nudge,
+// sent or received, moves d.HeldToken; each badge render also re-seeds the
+// hidden #open-orders-watch span (out of band) with the token read BEFORE
+// the list, and that span polls GET /ui/open-orders-badge/watch -- an
+// in-memory compare, no DB and no cross-till hop -- every
+// openOrdersWatchEvery while the page is visible. A mismatch answers
+// HX-Trigger: held-changed, and the badge re-fetches itself the normal way.
+// So the badge's cost per interval stays one loopback request, and the
+// badge itself is only re-fetched when something actually changed. The
+// till that made a change also gets the main till's nudge about it back,
+// which costs it one redundant badge re-fetch -- accepted over teaching the
+// hub who caused each nudge.
 //
 // Held sales only for now; ut-docs#2703 extends "open orders" to include
 // pay-at-counter kiosk orders and will extend this count with them.
 func registerOpenOrdersBadge(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewHeldSalesRepo(d.Db)
 	mux.HandleFunc("GET /ui/open-orders-badge", func(w http.ResponseWriter, r *http.Request) {
+		// Read before the list: a change landing while the list is fetched
+		// then leaves the watcher one token behind, so it re-fetches once
+		// more rather than missing that change.
+		token := d.HeldToken()
 		n := 0
 		if items, err := heldSalesForDisplay(r.Context(), d, repo); err != nil {
 			// A badge is a hint, not a record: on a read failure show none
@@ -49,7 +64,33 @@ func registerOpenOrdersBadge(mux *http.ServeMux, d *common.Deps) {
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = fmt.Fprint(w, openOrdersBadgeHTML(n, locale))
+		_, _ = fmt.Fprint(w, openOrdersWatchHTML(token))
 	})
+
+	// The watcher's poll (ut-docs#2858). Always 204, so htmx never swaps;
+	// htmx still fires an HX-Trigger header on a 204 (1.9's
+	// handleAjaxResponse reads it before the swap decision). A missing v is
+	// not a mismatch: firing on it could loop.
+	mux.HandleFunc("GET /ui/open-orders-badge/watch", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		if v := r.URL.Query().Get("v"); v != "" && v != d.HeldToken() {
+			w.Header().Set("HX-Trigger", "held-changed")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+}
+
+// openOrdersWatchEvery is how often an open, visible sale screen asks
+// whether the shop's held sales changed. Each ask is one in-memory compare
+// on this till's own server.
+const openOrdersWatchEvery = "3s"
+
+// openOrdersWatchHTML is the hidden watcher, swapped out of band over
+// index.html's #open-orders-watch placeholder by every badge render, so it
+// always carries the token the badge on screen was counted at.
+func openOrdersWatchHTML(token string) string {
+	return fmt.Sprintf(`<span id="open-orders-watch" data-testid="open-orders-watch" hidden aria-hidden="true" hx-swap-oob="true" hx-get="/ui/open-orders-badge/watch?v=%s" hx-trigger="every %s [document.visibilityState==='visible']" hx-swap="none"></span>`,
+		html.EscapeString(url.QueryEscape(token)), openOrdersWatchEvery)
 }
 
 // openOrdersBadgeHTML is the badge element every fetch swaps in (index.html

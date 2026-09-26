@@ -442,7 +442,9 @@
            the at-a-glance "orders are waiting" cue. Loaded after first
            paint (the count may need a cross-till hop, which the sale
            screen's own render must never wait on) and re-fetched on
-           hold_api.go's held-changed event. Held sales only for now —
+           held-changed -- from this page's own hold/resume, or from the
+           #open-orders-watch poller when another till changed an order
+           (ut-docs#2858). Held sales only for now —
            ut-docs#2703 adds pay-at-counter orders to the same count.
            hx-target="this" on the badge is load-bearing: htmx INHERITS
            hx-target, so without it the badge's own refresh would inherit
@@ -455,6 +457,9 @@
         <span class="btn-ico" aria-hidden="true">{{ icon "clipboard-list" }}</span><span class="visually-hidden">{{ T "open_orders.title" }}</span>
         <span class="count-badge" data-testid="open-orders-badge" data-count="0" hidden
               hx-get="/ui/open-orders-badge" hx-trigger="load, held-changed from:body" hx-target="this" hx-swap="outerHTML"></span></button>
+      <!-- ut-docs#2858: every badge render swaps its watcher in here (out
+           of band); it polls for held-sale changes made on other tills. -->
+      <span id="open-orders-watch" hidden aria-hidden="true"></span>
     </div>
 
     <dialog id="payment-overlay" class="payment-overlay" aria-labelledby="payment-overlay-title">

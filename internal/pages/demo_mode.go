@@ -406,6 +406,7 @@ var demoAllowedRoutes = map[string]bool{
 	"GET /open-orders":                  true,
 	"GET /ui/held":                      true,
 	"GET /ui/open-orders-badge":         true,
+	"GET /ui/open-orders-badge/watch":   true,
 	"GET /ui/parked-orders":             true,
 	"GET /ui/pos/modifiers":             true,
 	"GET /ui/pos/table-picker":          true,
