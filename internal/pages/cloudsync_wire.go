@@ -547,11 +547,13 @@ func remoteKitchenStationsReport(ctx context.Context, d *common.Deps) []map[stri
 //
 // The cloud link (ADR-0117, ut-docs#2824) plugs in here: its nudges kick a
 // check-in through d.CloudSyncNow, and every check-in's outcome goes back
-// to it so it re-reads its tier and role.
+// to it so it re-reads its tier and role; its newest link_version feeds
+// the conditional check-in (ut-docs#2827).
 func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.Context), wg *sync.WaitGroup) {
 	hooks := buildCloudHooks(d, rederive)
 	hooks.Kick = d.CloudSyncNow
 	hooks.AfterTick = func(_ context.Context, contacted bool, _ error) { d.CloudLink.CheckedIn(contacted) }
+	hooks.LinkVersion = d.CloudLink.LinkVersion
 	cloudsync.Start(ctx, d.Cfg, d.Db, hooks, wg)
 }
 

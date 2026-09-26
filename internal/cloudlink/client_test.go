@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -430,5 +431,43 @@ func TestReplacedLoopKeepsTheAttemptCount(t *testing.T) {
 	h.cloud.nextConn(t)
 	if a := h.c.lastAttempt.Load(); a < 3 {
 		t.Fatalf("attempt after three short-lived links = %d, want ≥ 3", a)
+	}
+}
+
+// ut-docs#2827 (ADR-0117 §3): the newest link_version a hello or nudge
+// carried is readable by the check-in, and is recorded BEFORE the kick —
+// so the check-in the kick runs sends it (a stale one would get a 304 and
+// skip the POST that picks the new directive up).
+func TestLinkVersionIsRecordedBeforeTheKick(t *testing.T) {
+	var atKick []int64
+	var mu sync.Mutex
+	var h *harness
+	h = newHarness(t, func(o *Options) {
+		o.Kick = func() {
+			mu.Lock()
+			atKick = append(atKick, h.c.LinkVersion())
+			mu.Unlock()
+			h.kicks.Add(1)
+		}
+	})
+	if v := h.c.LinkVersion(); v != 0 {
+		t.Fatalf("LinkVersion before any hello = %d, want 0", v)
+	}
+	h.cloud.linkVersion.Store(5)
+	c := h.cloud.nextConn(t)
+	eventually(t, "kick on hello", func() bool { return h.kicks.Load() == 1 })
+	c.send("nudge", map[string]any{"link_version": 9, "scopes": []string{"directives"}})
+	eventually(t, "kick on nudge", func() bool { return h.kicks.Load() == 2 })
+	mu.Lock()
+	defer mu.Unlock()
+	if len(atKick) != 2 || atKick[0] != 5 || atKick[1] != 9 {
+		t.Fatalf("LinkVersion seen at each kick = %v, want [5 9]", atKick)
+	}
+	if v := h.c.LinkVersion(); v != 9 {
+		t.Fatalf("LinkVersion = %d, want 9", v)
+	}
+	var nilClient *Client
+	if nilClient.LinkVersion() != 0 {
+		t.Fatal("nil Client LinkVersion must be 0")
 	}
 }
