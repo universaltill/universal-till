@@ -28,7 +28,11 @@ UT_BENCHMARK_INTERACT_FAIL_MS=250 go test ./internal/pos -run TestMicroInteracti
 The cashier sell screen's tile fragments — `GET /ui/buttons` (outside the
 Designer's `?mode=edit`) and the category popup `GET /ui/buttons/category?id=`
 — are served from an in-memory cache of the rendered bytes
-(`internal/ui/sellscreen_cache.go`, one cache per `registerButtonsAPI` mux).
+(`internal/ui/sellscreen_cache.go`, one cache per `common.Deps`,
+`Deps.SellScreenCache()`). `GET /` inlines the same `/ui/buttons` fragment
+into its first paint from the same cache entry (ut-docs#2989,
+`saleGridFirstPaint`), falling back to the lazy `hx-get` placeholder only when
+that render fails.
 A hit costs one single-row SELECT instead of the whole catalog read + template
 execution. Nothing else on any page has to know about it: every change is
 picked up through the database's own counters.
@@ -65,6 +69,13 @@ picked up through the database's own counters.
   larger than the budget is never stored; on Linux, when `MemAvailable`
   (`/proc/meminfo`, re-read at most every 5 s) is below 64 MiB nothing is
   stored and the cache is emptied. Elsewhere the budget alone bounds it.
+- **Fragment size** (ut-docs#2989): the sale screen's jiggle-mode edit
+  badges are not rendered per tile — the grid carries one
+  `<template id="tile-badges-tpl">` that `app.js`'s `utTileJiggle` clones
+  into each cell on entering edit mode. The Designer (`?mode=edit`) still
+  renders them per tile. The grid root carries `data-sell-version` (the
+  `X-UT-Sell-Version` value) so `sell-screen-watch.js` can seed from the
+  inline grid, which has no response header.
 - A new sell-screen input must be covered by one of the two counters (a
   trigger in a new migration), by the key, or by the max age — otherwise
   tiles go stale. Benchmark:

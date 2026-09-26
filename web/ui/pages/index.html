@@ -278,8 +278,17 @@
       <span class="pos-divider-grip" aria-hidden="true"></span>
     </div>
 
+    {{/* ut-docs#2989: the product grid is inlined into this first paint
+         (index_page.go saleGridFirstPaint -- the very fragment GET
+         /ui/buttons serves, whose root refetches itself on buttons-changed/
+         modifiers-changed). Only when that render failed does the page fall
+         back to fetching it after load. .productsHTML is absent when
+         ui.NewRenderer renders this block for /ui/buttons: a missing key is
+         falsy here, never a template error. */}}
+    {{ if .productsHTML }}{{ .productsHTML }}{{ else }}
     <!-- Product buttons panel loads on page load -->
     <div class="products" hx-get="/ui/buttons" hx-trigger="load" hx-swap="outerHTML"></div>
+    {{ end }}
 
   <!-- Tender and Scan: fixed-height panel, tabs instead of stacked cards so
        it never scrolls. Split-tender element IDs are load-bearing (app.js). -->

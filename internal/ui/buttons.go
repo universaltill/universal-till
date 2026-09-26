@@ -1622,6 +1622,19 @@ func pageButtons(all []Button, offset int) (page []Button, hasMore bool) {
 	return all[offset:end], true
 }
 
+// TileBadgeItemPlaceholder and TileBadgeLabelPlaceholder stand in for a
+// tile's item id and label in the sale screen's one jiggle-badge template
+// (ut-docs#2989, buttons.html "tile-badges-template"). app.js's utTileJiggle
+// clones the template into each .tile-cell on entering edit mode and replaces
+// them, attribute by attribute via setAttribute, with that cell's own
+// data-item-id/data-name — never through innerHTML, so item data is never
+// parsed as markup. Plain [a-z_] so no template escaping context (URL, JSON,
+// attribute) alters them.
+const (
+	TileBadgeItemPlaceholder  = "__ut_item_id__"
+	TileBadgeLabelPlaceholder = "__ut_item_label__"
+)
+
 func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 	// ut-docs#2501: the Designer's edit mode is never cached — it is a
 	// manager's working surface (hidden-items list, category management),
@@ -1787,6 +1800,14 @@ func (h *ButtonsHTTP) renderList(w http.ResponseWriter, r *http.Request) bool {
 		}
 	}
 	if err := h.View.Render(w, "buttons", map[string]any{
+		// ut-docs#2989: the root's data-sell-version (see serveSellScreen)
+		// and the sale screen's one badge template (buttons.html
+		// "tile-badges-template"): lock state is per session, identical for
+		// every tile (stampLocked), so it is resolved once here.
+		"SellVersion":     sellVersionFrom(r.Context()),
+		"Locked":          !h.Granted,
+		"BadgeItemPH":     TileBadgeItemPlaceholder,
+		"BadgeLabelPH":    TileBadgeLabelPlaceholder,
 		"Groups":          groups,
 		"AllButtons":      ToVM(allPage),
 		"AllHasMore":      allHasMore,

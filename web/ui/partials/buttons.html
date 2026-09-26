@@ -53,7 +53,13 @@
      on the Designer for free because the markup is the same. A constant
      hx-vals literal, not {{ "jsonVals" }}: nothing interpolated (guard-i18n
      check 4 only flags a literal with a template action inside it). */}}
-<div class="products{{ if .EditMode }} products--edit{{ end }}" hx-get="/ui/buttons"{{ if .EditMode }} hx-vals='{"mode":"edit"}'{{ end }} hx-trigger="modifiers-changed from:body, buttons-changed from:body" hx-swap="outerHTML">
+<div class="products{{ if .EditMode }} products--edit{{ end }}" hx-get="/ui/buttons"{{ if .EditMode }} hx-vals='{"mode":"edit"}'{{ end }} hx-trigger="modifiers-changed from:body, buttons-changed from:body" hx-swap="outerHTML"{{ with .SellVersion }} data-sell-version="{{ . }}"{{ end }}>
+  {{/* ut-docs#2989: data-sell-version is the catalog generation this grid
+       was rendered at (ui.serveSellScreen) -- the X-UT-Sell-Version header's
+       value, carried in the markup too because GET / now inlines this
+       fragment and a page has no such header; sell-screen-watch.js seeds
+       from it. The badge template sits first, outside #buttons-grid. */}}
+  {{ if not .EditMode }}{{ template "tile-badges-template" . }}{{ end }}
   {{/* ut-docs#2613: the strip has no All tab any more (ut-docs#2212 added
        one, ut-docs#2294 gave it its own grid of every active item, and
        both are retired here) -- it shows only category tabs plus the
@@ -1431,7 +1437,7 @@
 
 {{ define "product-tile" }}
   {{ $colored := and (not .ImageURL) .Color }}
-  <div class="tile-cell{{ if .Hidden }} tile--hidden{{ if not .Editing }} tile--rest-hidden{{ end }}{{ end }}" data-name="{{ .Label }}" x-show="matches($el)">
+  <div class="tile-cell{{ if .Hidden }} tile--hidden{{ if not .Editing }} tile--rest-hidden{{ end }}{{ end }}" data-name="{{ .Label }}" data-item-id="{{ .ItemID }}"{{ if .Hidden }} data-hidden{{ end }} x-show="matches($el)">
   {{/* ut-docs#2174: on the Designer's live replica (.Editing, see
        ui.ButtonVM.Editing) the tile is INERT -- same class, data-code/
        data-item-id/data-pos and body as a live tile (so utTileJiggle's
@@ -1493,6 +1499,25 @@
     {{ template "tile-hidden-mark" . }}
   </button>
   {{ end }}
+    {{/* ut-docs#2989: on the sale screen the badges are NOT rendered per
+         tile -- they were over half of a 230-tile grid's bytes and only
+         show in jiggle mode. The grid ships them once, as the
+         "tile-badges-template" <template>, and app.js's utTileJiggle clones
+         it into every cell on entering edit mode (data-item-id/data-name/
+         data-hidden on the cell above fill it in). The Designer (.Editing)
+         still renders them here, server-side. */}}
+    {{ if .Editing }}{{ template "tile-badges" (dict "ItemID" .ItemID "Label" .Label "Locked" .Locked "Editing" true "Hidden" .Hidden "Both" false) }}{{ end }}
+  </div>
+{{ end }}
+
+{{/* tile-badges (ut-docs#2339/#2361/#2541/#2698; a define since
+     ut-docs#2989): one tile's jiggle-mode badge set. A dict: ItemID, Label,
+     Locked, Editing (the Designer's replica: edit returns to /designer),
+     Hidden (Unhide in place of Hide) and Both -- true only for the sale
+     screen's "tile-badges-template", which carries BOTH hide variants for
+     app.js to pick from per cell, with ItemID/Label set to the
+     ui.TileBadge*Placeholder strings. */}}
+{{ define "tile-badges" }}
     {{/* ut-docs#2361: a non-granted (cashier) session sees a lock dot on
          each badge BEFORE tapping it -- the server-side catalog_management
          gate (ut-docs#2312) already exists and is unaffected; this is
@@ -1539,7 +1564,7 @@
         <span class="tile-badge-dot" aria-hidden="true">{{ icon "trash-2" }}</span>
         {{ if .Locked }}<span class="tile-badge-dot tile-badge-lock" data-testid="tile-badge-lock-remove" aria-hidden="true">{{ icon "lock" }}</span>{{ end }}
       </button>
-      {{ if .Hidden }}
+      {{ if or .Both .Hidden }}
       {{/* ut-docs#2698: a hidden tile's Unhide badge, in the Hide badge's
            own corner (inline-end bottom, logical properties) -- the same
            44x44 hit area as every badge, an accent dot so it reads as the
@@ -1554,7 +1579,8 @@
         <span class="tile-badge-dot" aria-hidden="true">{{ icon "eye" }}</span>
         {{ if .Locked }}<span class="tile-badge-dot tile-badge-lock" data-testid="tile-badge-lock-unhide" aria-hidden="true">{{ icon "lock" }}</span>{{ end }}
       </button>
-      {{ else }}
+      {{ end }}
+      {{ if or .Both (not .Hidden) }}
       {{/* ut-docs#2541: third badge, inline-END BOTTOM corner (logical CSS
            properties -- app.css's .tile-badge-hide sets inset-inline-end/
            inset-block-end, never left/right/bottom, so it mirrors correctly
@@ -1574,7 +1600,16 @@
       </button>
       {{ end }}
     </span>
-  </div>
+{{ end }}
+
+{{/* tile-badges-template (ut-docs#2989): the sale screen's ONE copy of the
+     badge markup, cloned per cell by app.js's utTileJiggle on entering jiggle
+     mode (and on any grid swap while in it). Lock state and every
+     translated string are resolved here, server-side; the item id and label
+     are placeholders (data-item-ph/data-label-ph) that the client replaces
+     attribute by attribute with setAttribute -- never innerHTML. */}}
+{{ define "tile-badges-template" }}
+<template id="tile-badges-tpl" data-item-ph="{{ .BadgeItemPH }}" data-label-ph="{{ .BadgeLabelPH }}">{{ template "tile-badges" (dict "ItemID" .BadgeItemPH "Label" .BadgeLabelPH "Locked" .Locked "Editing" false "Hidden" false "Both" true) }}</template>
 {{ end }}
 
 {{/* ut-docs#2294: the sell-screen live search's own results — ButtonsHTTP.

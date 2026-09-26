@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"container/list"
+	"context"
 	"net/http"
 	"os"
 	"strconv"
@@ -362,10 +363,20 @@ func writeCachedResponse(w http.ResponseWriter, resp CachedResponse) {
 // cache hit and the fresh render, so the sale screen's watcher knows which
 // catalog state the grid on screen shows. Only /ui/buttons asks for it: the
 // watcher compares against the grid's own render, never a popup's.
-func (h *ButtonsHTTP) serveSellScreen(w http.ResponseWriter, r *http.Request, key string, versionHeader bool, render func(http.ResponseWriter, *http.Request) bool) {
+//
+// ut-docs#2989: the same generation also rides on the request context into
+// render (sellVersionFrom), so the grid's root can carry it as
+// data-sell-version — GET /'s inline first-paint grid has no response header
+// of its own for the watcher to read. Embedding it in the cached body is
+// correct: an entry is only ever served for exactly the SellScreenVersion it
+// was stored under (Get compares both counters), so a hit's body always
+// carries the current Sell generation — the same value the header gets.
+//
+// It reports whether what was written is a clean render: a cache hit (only
+// clean renders are ever stored) or a render that returned true.
+func (h *ButtonsHTTP) serveSellScreen(w http.ResponseWriter, r *http.Request, key string, versionHeader bool, render func(http.ResponseWriter, *http.Request) bool) bool {
 	if h.Cache == nil {
-		render(w, r)
-		return
+		return render(w, r)
 	}
 	ctx := r.Context()
 	v, ok, err := h.Store.SellScreenVersion(ctx)
@@ -373,17 +384,17 @@ func (h *ButtonsHTTP) serveSellScreen(w http.ResponseWriter, r *http.Request, ke
 		logging.L().Warnf("ui: sell screen cache: read version failed, rendering uncached: %v", err)
 	}
 	if err != nil || !ok {
-		render(w, r)
-		return
+		return render(w, r)
 	}
 	if versionHeader {
 		// Set on w, never on the captured render: the stored entry's headers
 		// are copied over w on a hit, and this value is the key's own.
 		w.Header().Set(SellVersionHeader, strconv.FormatInt(v.Sell, 10))
+		r = r.WithContext(context.WithValue(ctx, sellVersionCtxKey{}, v.Sell))
 	}
 	if resp, hit := h.Cache.Get(key, v); hit {
 		writeCachedResponse(w, resp)
-		return
+		return true
 	}
 	// The next price boundary is read BEFORE rendering, like the version
 	// (review finding 2): read after, a boundary passing between the render's
@@ -402,4 +413,38 @@ func (h *ButtonsHTTP) serveSellScreen(w http.ResponseWriter, r *http.Request, ke
 		h.Cache.Put(key, v, resp, boundary)
 	}
 	writeCachedResponse(w, resp)
+	return clean
+}
+
+// sellVersionCtxKey carries serveSellScreen's Sell generation to the render
+// (ut-docs#2989).
+type sellVersionCtxKey struct{}
+
+// sellVersionFrom is the Sell generation serveSellScreen read for this
+// request, as the string the X-UT-Sell-Version header carries — "" when the
+// render is uncached (no cache, no trustworthy version), which is exactly
+// when that header is absent too.
+func sellVersionFrom(ctx context.Context) string {
+	if v, ok := ctx.Value(sellVersionCtxKey{}).(int64); ok {
+		return strconv.FormatInt(v, 10)
+	}
+	return ""
+}
+
+// ListFragment renders the sale screen's grid (List, never EditMode) into
+// memory for GET /'s first paint (ut-docs#2989): the same bytes, and the same
+// #2501 cache entry, GET /ui/buttons serves — ok only for a clean 200 render.
+// A caller falls back to the lazy hx-get placeholder when !ok, so a failed
+// render never ships a blank or half-rendered grid.
+func (h *ButtonsHTTP) ListFragment(r *http.Request) ([]byte, bool) {
+	if h.EditMode {
+		return nil, false
+	}
+	buf := newBufferedResponse()
+	clean := h.serveSellScreen(buf, r, h.sellScreenKey("list", ""), true, h.renderList)
+	resp := buf.response()
+	if !clean || resp.Status != http.StatusOK || len(resp.Body) == 0 {
+		return nil, false
+	}
+	return resp.Body, true
 }
