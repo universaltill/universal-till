@@ -1117,9 +1117,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				[]elevationHiddenField{{Name: "minutes", Value: r.Form.Get("minutes")}}, elev)
 			return
 		}
-		st := d.CurrentState()
+		base := d.CurrentState()
+		st := base
 		st.IdleLockMinutes = n
-		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+		if err := saveStateThrough(r.Context(), d, elev, base, st, nil); err != nil {
+			if respondSettingsSyncError(w, r, err) {
+				return
+			}
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
@@ -1157,9 +1161,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				[]elevationHiddenField{{Name: "seconds", Value: r.Form.Get("seconds")}}, elev)
 			return
 		}
-		st := d.CurrentState()
+		base := d.CurrentState()
+		st := base
 		st.KioskIdleResetSeconds = n
-		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+		if err := saveStateThrough(r.Context(), d, elev, base, st, nil); err != nil {
+			if respondSettingsSyncError(w, r, err) {
+				return
+			}
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
@@ -1194,9 +1202,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				[]elevationHiddenField{{Name: "mode", Value: mode}}, elev)
 			return
 		}
-		st := d.CurrentState()
+		base := d.CurrentState()
+		st := base
 		st.KioskPaymentMode = mode
-		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+		if err := saveStateThrough(r.Context(), d, elev, base, st, nil); err != nil {
+			if respondSettingsSyncError(w, r, err) {
+				return
+			}
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
@@ -1262,10 +1274,14 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "could not apply window mode", http.StatusInternalServerError)
 			return
 		}
-		st := d.CurrentState()
+		base := d.CurrentState()
+		st := base
 		st.WindowMode = mode
 		st.WindowModeChanged = true // ut-docs#1555: this save DOES mean to change it
-		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+		if err := saveStateThrough(r.Context(), d, elev, base, st, nil); err != nil {
+			if respondSettingsSyncError(w, r, err) {
+				return
+			}
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
@@ -1310,10 +1326,14 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				[]elevationHiddenField{{Name: "enabled", Value: r.Form.Get("enabled")}}, elev)
 			return
 		}
-		st := d.CurrentState()
+		base := d.CurrentState()
+		st := base
 		st.LaunchOnStartup = b
 		st.LaunchOnStartupChanged = true // ut-docs#1555: this save DOES mean to change it
-		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+		if err := saveStateThrough(r.Context(), d, elev, base, st, nil); err != nil {
+			if respondSettingsSyncError(w, r, err) {
+				return
+			}
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
@@ -1396,9 +1416,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				[]elevationHiddenField{{Name: "enabled", Value: r.Form.Get("enabled")}}, elev)
 			return
 		}
-		st := d.CurrentState()
+		base := d.CurrentState()
+		st := base
 		st.AllowNegativeInventory = b
-		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+		if err := saveStateThrough(r.Context(), d, elev, base, st, nil); err != nil {
+			if respondSettingsSyncError(w, r, err) {
+				return
+			}
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
@@ -1438,9 +1462,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				[]elevationHiddenField{{Name: "mode", Value: mode}}, elev)
 			return
 		}
-		st := d.CurrentState()
+		base := d.CurrentState()
+		st := base
 		st.BrowsingMode = mode
-		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+		if err := saveStateThrough(r.Context(), d, elev, base, st, nil); err != nil {
+			if respondSettingsSyncError(w, r, err) {
+				return
+			}
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
@@ -1652,9 +1680,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "scale must be between 0.5 and 2.0", http.StatusBadRequest)
 			return
 		}
-		st := d.CurrentState()
+		base := d.CurrentState()
+		st := base
 		st.UIScale = f
-		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+		if err := saveStateThrough(r.Context(), d, elevationCheck{}, base, st, nil); err != nil {
+			if respondSettingsSyncError(w, r, err) {
+				return
+			}
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
@@ -1679,7 +1711,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/settings/basket-panel-width", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		raw := strings.TrimSpace(r.Form.Get("width_rem"))
-		st := d.CurrentState()
+		base := d.CurrentState()
+		st := base
 		if raw == "" || raw == "0" {
 			st.BasketPanelWidthRem = 0
 			st.BasketPanelWidthRemChanged = true
@@ -1692,7 +1725,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			st.BasketPanelWidthRem = f
 			st.BasketPanelWidthRemChanged = false
 		}
-		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+		if err := saveStateThrough(r.Context(), d, elevationCheck{}, base, st, nil); err != nil {
+			if respondSettingsSyncError(w, r, err) {
+				return
+			}
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
@@ -1708,9 +1744,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "mode must be auto, on or off", http.StatusBadRequest)
 			return
 		}
-		st := d.CurrentState()
+		base := d.CurrentState()
+		st := base
 		st.OSKMode = mode
-		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+		if err := saveStateThrough(r.Context(), d, elevationCheck{}, base, st, nil); err != nil {
+			if respondSettingsSyncError(w, r, err) {
+				return
+			}
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
@@ -2424,9 +2464,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/settings/theme", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		if v := strings.TrimSpace(r.Form.Get("theme")); v != "" {
-			st := d.CurrentState()
+			base := d.CurrentState()
+			st := base
 			st.Theme = v
-			if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+			if err := saveStateThrough(r.Context(), d, elevationCheck{}, base, st, nil); err != nil {
+				if respondSettingsSyncError(w, r, err) {
+					return
+				}
 				http.Error(w, "could not save", http.StatusInternalServerError)
 				return
 			}
@@ -2461,7 +2505,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		auditPayload := map[string]any{}
-		st := d.CurrentState()
+		base := d.CurrentState()
+		st := base
+		// ut-docs#2948: keys this save implies travel in the same batch as
+		// the state (saveStateThrough), so an additional till's main till
+		// applies them together; on a main till they are written after it.
+		extra := map[string]string{}
+		follows := tillFollowsMain(r.Context(), d)
 		if v := strings.TrimSpace(r.Form.Get("currency")); v != "" {
 			st.Currency = v
 			auditPayload["currency"] = v
@@ -2475,15 +2525,20 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// Left the upsert-handler marking in place too (harmless, and
 			// correct for a caller that does use the raw table), but this
 			// is the one that actually matters for the real UI.
-			if err := d.Settings.Set(r.Context(), common.KeyCurrencyConfirmed, "true"); err != nil {
-				logging.L().Errorf("settings: mark currency confirmed: %v", err)
-			}
+			extra[common.KeyCurrencyConfirmed] = "true"
 		}
 		if v := strings.TrimSpace(r.Form.Get("country")); v != "" {
 			// ut-docs#1750: the second writer of store.country. A reviewer
 			// reproduced a manager-only bypass through THIS handler after
 			// the first fix guarded only /api/settings/upsert.
 			if !requireFiscalAuthorityForCountryChange(w, r, d, v) {
+				return
+			}
+			// ut-docs#2948: the main till's write-through refuses
+			// store.country (ut-docs#2980), as the upsert handler does -- refuse it here,
+			// before the reset below touches this till's own fiscal state.
+			if follows {
+				respondSettingsSyncError(w, r, &errSettingsSync{Status: http.StatusBadRequest, Code: "not_supported_via_sync"})
 				return
 			}
 			if err := clearFiscalStateForCountryChange(r.Context(), d, actorIDFor(r), v); err != nil {
@@ -2551,9 +2606,22 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				// (ut-docs#1027's country-change re-derive, or this
 				// card's own base-plugin-install catch-up) ever
 				// silently overrides it.
-				if err := d.Settings.Set(r.Context(), common.KeyLocaleConfirmed, "true"); err != nil {
-					logging.L().Errorf("settings: mark locale confirmed: %v", err)
-				}
+				extra[common.KeyLocaleConfirmed] = "true"
+			}
+		}
+		// ut-docs#2948: on an additional till the ut-docs#2135 generation
+		// bump below must reach the main till in the same batch -- a local
+		// bump would be reverted by the next pull.
+		localeGeneration := int64(-1)
+		// A failed read skips the bump rather than sending 1, which could move
+		// the shop's generation backwards (#2948 review finding 2).
+		if localeChosen && follows {
+			if cur, _, err := d.Settings.Get(r.Context(), common.KeyLocaleGeneration); err != nil {
+				logging.L().Errorf("settings: read %s: %v", common.KeyLocaleGeneration, err)
+			} else {
+				n, _ := strconv.ParseInt(cur, 10, 64)
+				localeGeneration = n + 1
+				extra[common.KeyLocaleGeneration] = strconv.FormatInt(localeGeneration, 10)
 			}
 		}
 		// TaxInclusive/AllowNegativeInventory are deliberately NOT set here:
@@ -2569,7 +2637,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				auditPayload["tax_rate_pct"] = n
 			}
 		}
-		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+		if err := saveStateThrough(r.Context(), d, elev, base, st, extra); err != nil {
+			if respondSettingsSyncError(w, r, err) {
+				return
+			}
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
@@ -2593,7 +2664,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// an operator does when the screen shows the wrong language and
 			// Settings already says the right one — and what lets that fix
 			// reach a till the manager is not standing at.
-			retireLocaleOverrides(r.Context(), d.Settings)
+			if localeGeneration >= 0 {
+				// Already written through with the save (ut-docs#2948).
+				httpx.SetLocaleGeneration(localeGeneration)
+			} else {
+				retireLocaleOverrides(r.Context(), d.Settings)
+			}
 		}
 		// In place: replacing the engine would empty a basket in progress.
 		// Both engines: the kiosk's separate instance (ut-docs#449) must see
@@ -2754,7 +2830,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			}
 			// ut-docs#2791: the main till's write-through endpoint refuses
 			// store.country (its fiscal-authority check and posture reset
-			// are ut-docs#2948) -- refuse it here, before the reset below
+			// are ut-docs#2980) -- refuse it here, before the reset below
 			// touches this till's own fiscal state.
 			if tillFollowsMain(r.Context(), d) {
 				respondSettingsSyncError(w, r, &errSettingsSync{Status: http.StatusBadRequest, Code: "not_supported_via_sync"})
