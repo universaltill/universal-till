@@ -24,6 +24,12 @@ var mainTillOnlyTypes = map[string]bool{
 	"delete_category":       true,
 	"save_modifier_group":   true,
 	"delete_modifier_group": true,
+	// Till user directives (reference/till-user-directives.md §4): only
+	// the main till applies them; the admin bundle carries the result to
+	// the other tills (ADR-0115 §1).
+	"save_user":       true,
+	"set_user_pin":    true,
+	"deactivate_user": true,
 }
 
 // catalogTypes are the directive types that change what the catalog
