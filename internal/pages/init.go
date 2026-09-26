@@ -512,6 +512,12 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSyncVouchers(mux, dp)    // cross-till voucher lookup + redemption write-through, primary side (ut-docs#1668)
 	registerSyncHeldSales(mux, dp)   // cross-till held-sale (open order) write-through + list, primary side (ADR-0093, ut-docs#1920)
 	registerSyncUsers(mux, dp)       // additional-till user/PIN write-through, main-till side (ADR-0115 §1, ut-docs#2755)
+	// ut-docs#2791: built here (it only closes over dp/i18n) so the
+	// settings write-through re-derives this till's cached globals exactly
+	// like a LAN pull or cloud directive does; StartSyncPull/StartCloudSync
+	// below take the same hook.
+	rederiveSettings := newRederiveSettings(dp, authDisabled, i18n)
+	registerSyncSettings(mux, dp, rederiveSettings) // additional-till shop-wide settings write-through, main-till side (ut-docs#2791)
 	syncAdminRepo := registerSyncAdmin(mux, dp)
 	// ADR-0114 (ut-docs#2734): the main-till link. Set before the server
 	// accepts requests; the revoke handler and every NudgeLink change point
@@ -532,9 +538,8 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// server accepts requests; the sale path reads dp.CloudLink.
 	dp.CloudSyncNow = make(chan struct{}, 1)
 	dp.CloudLink = newCloudLinkClient(dp)
-	StartSyncPush(bgCtx, dp, wg)                // replica journal loop (ADR-0011 D3); joined by app.Run's drain
-	StartSyncLink(bgCtx, dp, wg, syncAdminRepo) // main-till link: admin-change watch + bye on shutdown (ADR-0114); joined by app.Run's drain
-	rederiveSettings := newRederiveSettings(dp, authDisabled, i18n)
+	StartSyncPush(bgCtx, dp, wg)                            // replica journal loop (ADR-0011 D3); joined by app.Run's drain
+	StartSyncLink(bgCtx, dp, wg, syncAdminRepo)             // main-till link: admin-change watch + bye on shutdown (ADR-0114); joined by app.Run's drain
 	StartSyncPull(bgCtx, dp, rederiveSettings, wg)          // joined by app.Run's drain
 	StartSyncLinkClient(bgCtx, dp, wg)                      // replica side of the main-till link (ADR-0114); joined by app.Run's drain
 	StartHeldOrderClaimReaffirm(bgCtx, dp, wg)              // periodic held-order table-claim re-affirm (ut-docs#1724); joined by app.Run's drain
@@ -640,7 +645,8 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 // newRederiveSettings builds the shared settings re-derive: everything
 // Init computed from settings, redone with the same moves the settings
 // handlers make on a manual edit. Shared by the replica drift loop
-// (ADR-0011 D2b) and cloud set_setting directives (ADR-0018). Extracted
+// (ADR-0011 D2b), cloud set_setting directives (ADR-0018) and the main
+// till's settings write-through endpoint (ut-docs#2791). Extracted
 // from Init's body (review of ut-docs#1039, finding 9 / ut-docs#1058) so
 // it is testable against a hand-built Deps: the drift path was reloading
 // RuntimeState — WindowMode included — without ever telling the live shell
