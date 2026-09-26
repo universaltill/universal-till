@@ -270,6 +270,12 @@ func tileCell(body, itemID string) string {
 // show it) with the rest-hiding class, data-hidden, and an Unhide badge in
 // place of Hide; the removed item is not rendered at all. The Designer
 // (EditMode) renders it greyed without the rest-hiding class.
+//
+// ut-docs#2989: on the sale screen the badges are no longer rendered per
+// tile; the cell's data-hidden tells app.js to keep the template's Unhide
+// badge (and drop its Hide one) -- the template itself is pinned by
+// TestButtonsHTTPList_SaleScreenShipsBadgesOnceAsTemplate. The per-tile
+// badge assertions below therefore run on the Designer's render only.
 func TestButtonsHTTPList_HiddenTileRenderedGreyedWithUnhideBadge(t *testing.T) {
 	for _, edit := range []bool{false, true} {
 		h, db := newButtonsHTTPWithDB(t, "buttons.html")
@@ -301,6 +307,18 @@ func TestButtonsHTTPList_HiddenTileRenderedGreyedWithUnhideBadge(t *testing.T) {
 		restHidden := strings.Contains(hidden, "tile--rest-hidden")
 		if restHidden == edit {
 			t.Fatalf("edit=%v: tile--rest-hidden present=%v (sale screen hides it at rest, the Designer never does): %s", edit, restHidden, hidden)
+		}
+		if !edit {
+			if strings.Contains(hidden, "tile-badge") || !strings.Contains(hidden, "tile-hidden-mark") {
+				t.Fatalf("sale screen: hidden tile carries no badges (the template does) but keeps its eye-off mark, got: %s", hidden)
+			}
+			if visible := tileCell(body, "i2"); visible == "" || strings.Contains(visible, "tile--hidden") || strings.Contains(visible, "data-hidden") {
+				t.Fatalf("sale screen: the visible tile must render normally, got: %s", visible)
+			}
+			if strings.Contains(body, `data-item-id="i3"`) {
+				t.Fatalf("sale screen: a removed item must not be rendered at all, got: %s", body)
+			}
+			continue
 		}
 		if !strings.Contains(hidden, `data-testid="tile-badge-unhide"`) || !strings.Contains(hidden, `hx-post="/api/buttons/unhide"`) {
 			t.Fatalf("edit=%v: hidden tile needs the Unhide badge posting /api/buttons/unhide, got: %s", edit, hidden)

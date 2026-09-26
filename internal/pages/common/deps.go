@@ -227,6 +227,10 @@ type Deps struct {
 	// would close it; tracked as a follow-up rather than fixed inline here.
 	AsyncWork sync.WaitGroup
 
+	// sellCacheOnce/sellCache back SellScreenCache below (ut-docs#2989).
+	sellCacheOnce sync.Once
+	sellCache     *ui.SellScreenCache
+
 	// BrokenRefetchMu guards BrokenRefetch below.
 	BrokenRefetchMu sync.Mutex
 	// BrokenRefetch tracks consecutive marketplace re-fetch attempts per
@@ -361,6 +365,16 @@ type RuntimeState struct {
 }
 
 // CurrentState returns a consistent copy of the runtime state for rendering.
+// SellScreenCache is the sale screen's rendered-tile cache (ut-docs#2501),
+// one per Deps, created on first use. GET /ui/buttons (and its category
+// popup) and GET /'s inline first-paint grid (ut-docs#2989) must share it:
+// the inline grid is the same cache entry /ui/buttons serves, not a second
+// copy of it. Lazy, so a bare test Deps needs no wiring.
+func (d *Deps) SellScreenCache() *ui.SellScreenCache {
+	d.sellCacheOnce.Do(func() { d.sellCache = ui.NewSellScreenCache() })
+	return d.sellCache
+}
+
 func (d *Deps) CurrentState() RuntimeState {
 	d.StateMu.RLock()
 	defer d.StateMu.RUnlock()
