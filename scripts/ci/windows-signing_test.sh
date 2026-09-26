@@ -52,7 +52,8 @@ if grep -qE 'go test' <<<"$gr_job"; then
 else
   pass "goreleaser job runs no tests"
 fi
-if grep -E '^\s*(- )?uses:' <<<"$gr_job" | grep -vqE '@[0-9a-f]{40}( |$)'; then
+gr_uses="$(grep -E '^\s*(- )?uses:' <<<"$gr_job" || true)"
+if [ -n "$gr_uses" ] && grep -vqE '@[0-9a-f]{40}( |$)' <<<"$gr_uses"; then
   fail "release.yml goreleaser job has an action not pinned to a commit SHA (it holds id-token: write)"
 else
   pass "goreleaser job actions are SHA-pinned"
