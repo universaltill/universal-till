@@ -2,15 +2,28 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"github.com/universaltill/universal-till/internal/app"
+	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
 func main() {
+	// `unitill-pos --version` prints the build version and exits 0, before
+	// anything else runs: no config, data dir, database, plugins, network or
+	// listener. internal/selfupdate runs it against a freshly swapped-in
+	// binary to prove it can start on this machine before restarting into
+	// it (ut-docs#2759) — keep it first and side-effect free
+	// (main_test.go pins both).
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Println(buildinfo.Version)
+		return
+	}
+
 	// Cancel the context on Ctrl-C (SIGINT), a service/`kill` (SIGTERM), or a
 	// closed terminal (SIGHUP). That triggers the server's graceful shutdown
 	// (server.Start) so the till always stops cleanly instead of lingering as

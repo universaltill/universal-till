@@ -2439,6 +2439,7 @@
   "status.update_failed": "Güncelleme başarısız — günlüklere bakın",
   "status.update_installed_reload": "Güncelleme kuruldu — yeniden yüklemek için tıklayın",
   "status.update_now": "Şimdi güncelle",
+  "status.update_restart_pending": "Güncelleme yüklendi — yeniden başlatma bekleniyor. Tamamlamak için kasayı yeniden başlatın",
   "status.update_restarting": "Yeniden başlatılıyor…",
   "status.update_uptodate": "Zaten güncel",
   "suggest.add": "Sepete ekle",

@@ -135,12 +135,17 @@ func checkOnce(ctx context.Context) {
 
 // Newer reports whether version a is newer than b, compared as dotted numeric
 // versions. A non-numeric current build (e.g. "dev") is treated as older than
-// any real release.
+// any real release. A prerelease suffix ("0.22.2-rc1") ranks below the same
+// version without one, and prereleases of one version order naturally
+// (rc2 < rc10); "+build" metadata never affects the order (ut-docs#2759).
 func Newer(a, b string) bool {
 	if b == "dev" || b == "" {
 		return true
 	}
-	as, bs := strings.Split(a, "."), strings.Split(b, ".")
+	a, b = stripBuild(a), stripBuild(b)
+	aCore, aPre, _ := strings.Cut(a, "-")
+	bCore, bPre, _ := strings.Cut(b, "-")
+	as, bs := strings.Split(aCore, "."), strings.Split(bCore, ".")
 	n := max(len(as), len(bs))
 	for i := range n {
 		var ai, bi int
@@ -154,7 +159,52 @@ func Newer(a, b string) bool {
 			return ai > bi
 		}
 	}
-	return false
+	switch {
+	case aPre == bPre:
+		return false
+	case aPre == "":
+		return true // a release beats any of its own prereleases
+	case bPre == "":
+		return false
+	}
+	return naturalLess(bPre, aPre)
+}
+
+func stripBuild(v string) string {
+	v, _, _ = strings.Cut(v, "+")
+	return v
+}
+
+// naturalLess compares prerelease tags piecewise: runs of digits as numbers,
+// everything else as text ("rc2" < "rc10", "alpha" < "beta").
+func naturalLess(x, y string) bool {
+	for x != "" && y != "" {
+		xs, xr := splitRun(x)
+		ys, yr := splitRun(y)
+		xn, xerr := strconv.Atoi(xs)
+		yn, yerr := strconv.Atoi(ys)
+		switch {
+		case xerr == nil && yerr == nil && xn != yn:
+			return xn < yn
+		case (xerr == nil) != (yerr == nil):
+			return xerr == nil // numbers sort before text (as in semver)
+		case xs != ys:
+			return xs < ys
+		}
+		x, y = xr, yr
+	}
+	return x == "" && y != ""
+}
+
+// splitRun returns the leading run of s that is all digits or all
+// non-digits, and the rest.
+func splitRun(s string) (string, string) {
+	digit := s[0] >= '0' && s[0] <= '9'
+	i := 1
+	for i < len(s) && (s[i] >= '0' && s[i] <= '9') == digit {
+		i++
+	}
+	return s[:i], s[i:]
 }
 
 func numPrefix(s string) string {

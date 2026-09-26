@@ -2424,6 +2424,7 @@
   "status.update_failed": "Update failed — see logs",
   "status.update_installed_reload": "Update installed — click to reload",
   "status.update_now": "Update now",
+  "status.update_restart_pending": "Update installed — restart pending. Restart the till to finish",
   "status.update_restarting": "Restarting…",
   "status.update_uptodate": "Already up to date",
   "suggest.add": "Add to basket",

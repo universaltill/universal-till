@@ -998,7 +998,8 @@
           uptodate: "{{ T "status.update_uptodate" }}",
           failed: "{{ T "status.update_failed" }}",
           restarting: "{{ T "status.update_restarting" }}",
-          installedReload: "{{ T "status.update_installed_reload" }}"
+          installedReload: "{{ T "status.update_installed_reload" }}",
+          restartPending: "{{ T "status.update_restart_pending" }}"
         };
         // Two-click confirm — the desktop WebView doesn't support window.confirm.
         var latest = btn.getAttribute('data-latest');
@@ -1044,11 +1045,32 @@
               // Archive installs re-exec in place (reconnect + reload). The mac
               // .app quits and relaunches itself, so the window just closes and
               // reopens on the new version.
-              var tries = 0;
+              //
+              // ut-docs#2759: poll /api/update/status, not /healthz — the OLD
+              // process answers /healthz too, so a restart that never happened
+              // used to "succeed" with a reload onto the old build. Reload
+              // only once running_version IS the version being installed
+              // (named by the apply response, else the button's data-latest):
+              // restart_pending=false alone is also what the old process says
+              // if its marker write failed. A 4xx or a redirect (signed out
+              // across the restart, or a server without this endpoint) falls
+              // back to the old "it answers" rule; 5xx/network errors mean
+              // "still restarting".
+              var target = (data && data.version) || latest;
+              var tries = 0, pending = false;
               var iv = setInterval(function () {
                 tries++;
-                fetch('/healthz', { cache: 'no-store' }).then(function (r) {
-                  if (r.ok) { clearInterval(iv); UT.reload('update-restarted'); }
+                fetch('/api/update/status', { cache: 'no-store' }).then(function (r) {
+                  if (r.redirected || (r.status >= 400 && r.status < 500)) {
+                    clearInterval(iv); UT.reload('update-restarted');
+                    return null;
+                  }
+                  return r.ok ? r.json() : null;
+                }).then(function (res) {
+                  var st = res && res.data;
+                  if (!st) return;
+                  if (st.running_version === target) { clearInterval(iv); UT.reload('update-restarted'); return; }
+                  pending = true;
                 }).catch(function () {});
                 if (tries > 90) {
                   clearInterval(iv);
@@ -1062,7 +1084,9 @@
                   // read as "the update doesn't work" — offer a manual retry
                   // instead of a silent, permanent dead end.
                   btn.disabled = false;
-                  btn.textContent = T.installedReload;
+                  // Still the old version after ~3 minutes: say so plainly
+                  // (the server has also raised a Problem), don't imply done.
+                  btn.textContent = pending ? T.restartPending : T.installedReload;
                   btn.onclick = function () { UT.reload('update-manual-retry'); };
                 }
               }, 2000);

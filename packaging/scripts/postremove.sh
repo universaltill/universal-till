@@ -32,5 +32,8 @@ if [ "$1" = "purge" ]; then
     # self-updated at least once. A purge must remove these too, or remnants
     # of /opt/unitill survive a full package removal (ut-docs#257).
     rm -f /opt/unitill/bin/unitill-pos.bak
+    # ...and the "restart pending" marker it writes beside the binary
+    # (ut-docs#2759).
+    rm -f /opt/unitill/bin/.unitill-update-pending
     rm -rf /opt/unitill/web.bak
 fi
