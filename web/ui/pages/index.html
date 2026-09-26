@@ -863,7 +863,7 @@
                  purpose (pattern only validates format) — same accepted
                  tradeoff as ut-docs#1249/#1272/#1275; addPayment() already
                  rejects a non-positive amount. -->
-            <input type="text" inputmode="decimal" name="amount" {{ moneypattern currency.Decimals false }} {{ moneyplaceholder currency.Decimals 0 }} required>
+            <input type="text" inputmode="decimal" name="amount" {{ moneypatternlocal currency.Decimals false }} {{ moneyplaceholder currency.Decimals 0 }} required>
           </label>
           <!-- ut-docs#1832: tracked voucher REDEMPTION. Shown by app.js only
                while the selected method is the built-in "voucher" one (the
@@ -905,7 +905,7 @@
                0 while the voucher method is selected. -->
           <div id="split-tender-change-field">
             <label>{{ T "tender.change" }}
-              <input type="text" inputmode="decimal" name="change" {{ moneypattern currency.Decimals false }} value="{{ if eq currency.Decimals 0 }}0{{ else }}0.00{{ end }}">
+              <input type="text" inputmode="decimal" name="change" {{ moneypatternlocal currency.Decimals false }} value="{{ if eq currency.Decimals 0 }}0{{ else }}0.00{{ end }}">
             </label>
           </div>
           <label>{{ T "tender.reference" }}
@@ -944,7 +944,7 @@
         <form class="split-tender-form" id="split-tender-issue-form" autocomplete="off">
           <div class="split-grid">
             <label>{{ T "tender.issue_voucher.amount" }}
-              <input type="text" inputmode="decimal" name="amount" {{ moneypattern currency.Decimals false }} {{ moneyplaceholder currency.Decimals 0 }} required>
+              <input type="text" inputmode="decimal" name="amount" {{ moneypatternlocal currency.Decimals false }} {{ moneyplaceholder currency.Decimals 0 }} required>
             </label>
             <!-- ut-docs#1832 review: name="voucher_code", NOT "code" -- the
                  sale screen's barcode-scan input (line ~186) is already

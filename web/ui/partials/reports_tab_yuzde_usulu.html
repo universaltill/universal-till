@@ -99,7 +99,7 @@
          instead of a hardcoded *100, which is wrong by 100x on any
          0-decimal currency. */}}
     <label>{{ T "reports.yuzde_usulu.form_amount" }} ({{ currency.Display }})
-      <input type="text" id="yuzde-collection-amount" inputmode="decimal" {{ moneypattern currency.Decimals false }} required {{ moneyplaceholder currency.Decimals 0 }}
+      <input type="text" id="yuzde-collection-amount" inputmode="decimal" {{ moneypatternlocal currency.Decimals false }} required {{ moneyplaceholder currency.Decimals 0 }}
              oninput="document.getElementById('yuzde-collection-amount-minor').value = window.utCurrency.toMinor(this.value)">
     </label>
     <label>{{ T "reports.yuzde_usulu.form_basis" }}
@@ -172,7 +172,7 @@
     </label>
     <input type="hidden" name="amount" id="yuzde-distribution-amount-minor">
     <label>{{ T "reports.yuzde_usulu.form_amount" }} ({{ currency.Display }})
-      <input type="text" id="yuzde-distribution-amount" inputmode="decimal" {{ moneypattern currency.Decimals false }} required {{ moneyplaceholder currency.Decimals 0 }}
+      <input type="text" id="yuzde-distribution-amount" inputmode="decimal" {{ moneypatternlocal currency.Decimals false }} required {{ moneyplaceholder currency.Decimals 0 }}
              oninput="document.getElementById('yuzde-distribution-amount-minor').value = window.utCurrency.toMinor(this.value)">
     </label>
     <label>{{ T "reports.yuzde_usulu.form_note" }}

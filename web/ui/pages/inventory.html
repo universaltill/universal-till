@@ -213,12 +213,12 @@
         </div>
         <div class="field-pair">
           <!-- ut-docs#1282 review nit: hand-rolled decimals ternary replaced
-               with the shared moneypattern helper (ut-docs#1274,
+               with the shared money-pattern helper (ut-docs#1274; comma-tolerant since ut-docs#2925,
                internal/httpx/currency.go) -- same convention as
                shifts.html/menu.html/catalog_variants.html's money fields, so
                a future 3-decimal currency (KWD/BHD/OMR) doesn't need this
                call site updated in lockstep with the others. -->
-          <label>{{ T "inventory.cost_optional" }} <input type="text" inputmode="decimal" id="stock-cost" {{ moneypattern currency.Decimals false }}></label>
+          <label>{{ T "inventory.cost_optional" }} <input type="text" inputmode="decimal" id="stock-cost" {{ moneypatternlocal currency.Decimals false }}></label>
           <input type="hidden" name="cost_price" id="stock-cost-minor">
         </div>
         <label>{{ T "inventory.reason" }} <input type="text" name="reason" placeholder="{{ T "inventory.reason_placeholder" }}"></label>
@@ -377,9 +377,11 @@
   // constraint validation) would otherwise silently post "0" instead of
   // staying blank.
   document.getElementById('stock-form').addEventListener('submit', function () {
+    // ut-docs#2925: gate on parseMinor, not Number(raw) -- Number() refused
+    // a German "3,50" (so the cost was silently dropped) and accepted "1e3".
     var raw = (document.getElementById('stock-cost').value || '').trim();
     document.getElementById('stock-cost-minor').value =
-      raw === '' || isNaN(Number(raw)) ? '' : window.utCurrency.toMinor(raw);
+      raw === '' || isNaN(window.utCurrency.parseMinor(raw)) ? '' : window.utCurrency.toMinor(raw);
   });
 
   // Search filter over stock rows. The table is re-rendered from the server
