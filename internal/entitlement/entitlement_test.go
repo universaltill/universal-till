@@ -135,14 +135,19 @@ func TestBlockValues(t *testing.T) {
 		KeySubscriptionStatus: "active",
 		KeyExpiresAt:          "2026-10-23T22:00:00Z",
 		KeyLastConfirmedAt:    "2026-09-24T10:00:00Z",
+		// No CloudLink set on the literal above: ADR-0117 §2's "missing =
+		// periodic" default. cloud_link's own behaviour is covered in
+		// cloud_link_test.go; this asserts only that Values wires it in.
+		KeyCloudLinkTier: "periodic",
+		KeyCloudLinkMode: "",
 	}
 	for k, v := range want {
 		if got[k] != v {
 			t.Errorf("%s = %q, want %q", k, got[k], v)
 		}
 	}
-	if len(got) != 4 {
-		t.Errorf("Values returned %d keys, want exactly 4: %v", len(got), got)
+	if len(got) != 6 {
+		t.Errorf("Values returned %d keys, want exactly 6: %v", len(got), got)
 	}
 
 	// null expiry → empty string.
