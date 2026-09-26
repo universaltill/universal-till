@@ -66,6 +66,10 @@ func ShellSignature(locale, theme string) string {
 	b.WriteString(uiScaleCSS())
 	b.WriteString("|osk=")
 	b.WriteString(oskModeVal())
+	// ADR-0119 §2: the fx-<level> class on <html> and the @view-transition
+	// opt-in in <head> both follow the effects level.
+	b.WriteString("|fx=")
+	b.WriteString(effectsLevelVal())
 	b.WriteString("|idle=")
 	b.WriteString(strconv.FormatInt(idleLockSecs.Load(), 10))
 	b.WriteString("|lang=")

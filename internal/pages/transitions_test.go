@@ -192,7 +192,9 @@ func TestAppCSSPageMotionIsTheStackedCardPush(t *testing.T) {
 			t.Errorf("app.css page motion (ADR-0118) missing %q", want)
 		}
 	}
-	for _, gone := range []string{"--ut-motion-ms: 200ms", "@keyframes ut-page-in ", "@keyframes ut-page-out ", "* 4%)"} {
+	// The :root default is 400ms; ADR-0119's html.fx-balanced legitimately
+	// sets 200ms (ADR-0097's original budget) for the Balanced level only.
+	for _, gone := range []string{":root { --ut-nav-dir: 1; --ut-motion-ms: 200ms", "@keyframes ut-page-in ", "@keyframes ut-page-out ", "* 4%)"} {
 		if strings.Contains(css, gone) {
 			t.Errorf("app.css still carries the pre-ADR-0118 motion (%q)", gone)
 		}
@@ -532,8 +534,11 @@ func TestBaseHTMLSkipsTransitionsUnderReducedMotionInJS(t *testing.T) {
 	html := readBaseHTML(t)
 	for _, want := range []string{
 		"window.addEventListener('pageswap'",
-		"if (reduce && reduce.matches) e.viewTransition.skipTransition();",
-		"if (reduce && reduce.matches) { if (vt.skipTransition) vt.skipTransition(); return; }",
+		// ADR-0119: UT.motionOff() is reduced motion OR the Light effects
+		// level — reduced motion stays the floor inside it (see
+		// TestBaseHTMLMotionOffPredicate in effects_level_guard_test.go).
+		"if (UT.motionOff()) e.viewTransition.skipTransition();",
+		"if (UT.motionOff()) { if (vt.skipTransition) vt.skipTransition(); return; }",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("base.html must skip view transitions in JS under prefers-reduced-motion; missing %q", want)
@@ -659,8 +664,10 @@ func TestRecordDialogJSAppliesOpenEaseAndSkipsUnderReducedMotion(t *testing.T) {
 	if !strings.Contains(openBody, "ut-dialog-fx") {
 		t.Fatalf("open() must add the ut-dialog-fx class, got body: %s", openBody)
 	}
-	if !strings.Contains(openBody, "reduceMotion") {
-		t.Fatalf("open() must consult the reduced-motion flag before adding ut-dialog-fx")
+	// ADR-0119: through motionOff() (UT.motionOff: reduced motion OR the
+	// Light effects level, falling back to the bare media query).
+	if !strings.Contains(openBody, "if (!motionOff()) dialog.classList.add('ut-dialog-fx')") {
+		t.Fatalf("open() must consult motionOff() (reduced motion or Light) before adding ut-dialog-fx")
 	}
 	// Never applied to close(): delaying the native .close() for an exit
 	// animation would add latency to Cancel/Save.
