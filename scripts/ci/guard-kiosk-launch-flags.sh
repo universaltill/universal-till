@@ -20,7 +20,7 @@ code_lines() {
 }
 CODE="$(code_lines "$SCRIPT")"
 
-if ! printf '%s\n' "$CODE" | grep -q -- '--password-store=basic'; then
+if ! grep -q -- '--password-store=basic' <<<"$CODE"; then
   echo "❌ kiosk-launch guard: ${SCRIPT} is missing --password-store=basic (as code, not just a comment)" >&2
   echo "   (without it, Chromium can block the kiosk behind an undismissable keyring prompt)" >&2
   exit 1
@@ -35,13 +35,13 @@ echo "✓ kiosk-launch guard: --password-store=basic present"
 # nothing to select — the bug reporter's screenshot/recording is then unusable
 # on a kiosk, which is exactly how it shipped. Both lines are load-bearing:
 # exporting it alone is not enough.
-if ! printf '%s\n' "$CODE" | grep -q 'XDG_CURRENT_DESKTOP=wlroots'; then
+if ! grep -q 'XDG_CURRENT_DESKTOP=wlroots' <<<"$CODE"; then
   echo "❌ kiosk-launch guard: ${SCRIPT} does not set XDG_CURRENT_DESKTOP=wlroots (as code, not just a comment)" >&2
   echo "   (without it xdg-desktop-portal cannot pick the wlr backend, and" >&2
   echo "    screen capture silently has no sources — ut-docs#395)" >&2
   exit 1
 fi
-if ! printf '%s\n' "$CODE" | grep -q 'dbus-update-activation-environment'; then
+if ! grep -q 'dbus-update-activation-environment' <<<"$CODE"; then
   echo "❌ kiosk-launch guard: ${SCRIPT} never pushes the session environment" >&2
   echo "   into the D-Bus activation environment (as code, not just a comment)." >&2
   echo "   The portal is D-Bus-activated, so exporting XDG_CURRENT_DESKTOP alone" >&2

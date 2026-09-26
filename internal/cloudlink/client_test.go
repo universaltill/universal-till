@@ -545,7 +545,10 @@ func TestRefusedUpgradeReasonFromBody(t *testing.T) {
 		{"not_main_till", WaitReasonNotMainTill},
 		{"tier_periodic", WaitReasonTierChanged},
 		{"", WaitReasonBusy},
-		{"device_credential_required", WaitReasonBusy},
+		// ut-docs#2769: a till still on the shop's shared token is refused
+		// with device_credential_required — its own reason, never "busy".
+		{"device_credential_required", WaitReasonCredentialRequired},
+		{"some_future_code", WaitReasonBusy},
 	} {
 		t.Run(tc.code, func(t *testing.T) {
 			cloud := newFakeCloud(t)

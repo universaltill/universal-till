@@ -69,7 +69,7 @@ expect_fail_naming() {
     FAIL_COUNT=$((FAIL_COUNT + 1))
     return
   fi
-  if printf '%s\n' "$out" | grep -qF "$want_name"; then
+  if grep -qF "$want_name" <<<"$out"; then
     echo "✓ guard correctly rejected ${label} and named ${want_name}"
   else
     echo "❌ FAIL: guard rejected ${label} but its output never named ${want_name}" >&2

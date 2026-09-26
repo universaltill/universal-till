@@ -274,6 +274,13 @@ const (
 	// Retry-After — Run redials by itself when that runs out (NextAttempt),
 	// not after a check-in.
 	WaitReasonRetryAfter
+	// WaitReasonCredentialRequired: the cloud refused the upgrade with 403
+	// device_credential_required — this till still authenticates with the
+	// shop's shared (legacy) token, and the link needs the till's own
+	// device credential (ADR-0116, ut-docs#2769). The credential arrives
+	// with a check-in (D4 rotation) or a re-pairing; Run retries after the
+	// next check-in, which then dials with the new bearer.
+	WaitReasonCredentialRequired
 )
 
 // Client is the main till's cloud-link client. Goroutines: Run's own, plus
@@ -719,7 +726,8 @@ type linkEnd struct {
 
 // waitReasonForRefusal classifies a refused upgrade (other than 401 and a
 // Retry-After) by the JSON error code ut-cloud's stores_link.go sends with
-// its 403s; any other refusal — no code, 409, 503, 404 — reads as busy.
+// its 403s; any other refusal — no code, an unknown code, 409, 503, 404 —
+// reads as busy.
 func waitReasonForRefusal(de *fleetlink.DialError) WaitReason {
 	if de.Status == http.StatusForbidden {
 		switch de.Code {
@@ -727,6 +735,8 @@ func waitReasonForRefusal(de *fleetlink.DialError) WaitReason {
 			return WaitReasonNotMainTill
 		case "tier_periodic":
 			return WaitReasonTierChanged
+		case "device_credential_required":
+			return WaitReasonCredentialRequired
 		}
 	}
 	return WaitReasonBusy

@@ -2658,6 +2658,8 @@
   "tills.cloud_link.hint_paused_not_main": "تقول السحابة إن جهازًا آخر أصبح الآن الجهاز الرئيسي لهذا المتجر. يتوقف هذا مؤقتًا حتى التحقق التالي.",
   "tills.cloud_link.state_paused_tier": "متوقف مؤقتًا: تغيرت الفئة",
   "tills.cloud_link.hint_paused_tier": "تغيرت خطة هذا المتجر السحابية. يتوقف هذا مؤقتًا حتى يؤكد التحقق التالي الخطة الجديدة.",
+  "tills.cloud_link.state_paused_credential": "متوقف مؤقتًا: يحتاج إلى بيانات اعتماد خاصة به",
+  "tills.cloud_link.hint_paused_credential": "بانتظار بيانات الاعتماد السحابية الخاصة بهذا الجهاز. تصل عادةً مع التحقق التالي؛ وإن استمرت هذه الحالة، فتواصل مع الدعم.",
   "tills.cloud_link.state_paused_busy": "متوقف مؤقتًا: السحابة مشغولة",
   "tills.cloud_link.hint_paused_busy": "طلبت السحابة من هذا الجهاز الانتظار. سيعيد المحاولة بعد التحقق التالي.",
   "tills.cloud_link.hint_paused_busy_retry": "طلبت السحابة من هذا الجهاز الانتظار. سيعيد المحاولة تلقائيًا في %s.",
