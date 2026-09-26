@@ -25,10 +25,44 @@ fail() { echo "FAIL - $1" >&2; fails=$((fails + 1)); }
 job_block() { # job_block <job-name>
   awk -v j="  ${1}:" '$0==j{on=1; print; next} on && /^  [a-zA-Z_][a-zA-Z0-9_-]*:$/{exit} on{print}' "$WF"
 }
+# Every reader in these pipelines consumes its whole input — no `exit`, no
+# `grep -q` on a pipe — so a writer never dies of SIGPIPE, which pipefail would turn
+# into a false "missing" (ut-docs#2941).
 needs_of() { # needs_of <job-name> -- job names in its needs:, one per line
-  job_block "$1" | awk '/^    needs:/{f=1} f{print} f && (/\]/ || /needs: [a-z]/){exit}' \
+  job_block "$1" | awk 'done{next} /^    needs:/{f=1} f{print} f && (/\]/ || /needs: [a-z]/){f=0; done=1}' \
     | sed 's/needs://' | tr -d '[],' | tr -s ' \n' '\n' | sed '/^$/d'
 }
+needs_has() { # needs_has <job-name> <needed-job>
+  local needs
+  needs="$(needs_of "$1")"
+  grep -qx -- "$2" <<<"$needs"
+}
+
+# Self-test (ut-docs#2941): a job block larger than a pipe buffer must still
+# parse. needs_of's reader used to `exit` after the needs: line, so the
+# job_block writer died of SIGPIPE mid-block and, under pipefail, a real
+# "needs publish-release" read as missing — only sometimes on CI (4.3 KB
+# block), always here (> 64 KiB) with BSD awk or gawk (mawk swallows EPIPE).
+# The status is checked on its own, not through needs_has, whose capture
+# would discard it.
+selftest_wf="$(mktemp)"
+trap 'rm -f "$selftest_wf"' EXIT
+{
+  echo "jobs:"
+  echo "  big-job:"
+  echo "    needs: [prepare, publish-release]"
+  echo "    steps:"
+  for _ in $(seq 1 3000); do echo "      - run: echo padding-padding-padding-padding"; done
+  echo "  after-job:"
+} >"$selftest_wf"
+real_wf="$WF"
+WF="$selftest_wf"
+if selftest_out="$(needs_of big-job)" && grep -qx publish-release <<<"$selftest_out"; then
+  pass "self-test: needs_of reads a >64 KiB job block without SIGPIPE"
+else
+  fail "self-test: needs_of lost publish-release from a >64 KiB job block (SIGPIPE under pipefail)"
+fi
+WF="$real_wf"
 
 mac_job="$(job_block macos-app)"
 if grep -qE '^    timeout-minutes: [0-9]+$' <<<"$mac_job"; then
@@ -40,12 +74,13 @@ fi
 for j in publish-release checksums verify-versions; do
   if [ -z "$(job_block "$j")" ]; then
     fail "release.yml has no ${j} job"
-  elif needs_of "$j" | grep -qx 'macos-app'; then
+  elif needs_has "$j" macos-app; then
     fail "${j} needs macos-app — a slow notarization would hold the whole release"
   else
     pass "${j} does not need macos-app"
   fi
-  if job_block "$j" | grep -qF 'needs.macos-app.result'; then
+  block="$(job_block "$j")"
+  if grep -qF 'needs.macos-app.result' <<<"$block"; then
     fail "${j}'s if: still gates on needs.macos-app.result"
   fi
 done
@@ -55,7 +90,7 @@ if [ -z "$attach" ]; then
   fail "release.yml has no macos-dmg-attach job"
 else
   for want in macos-app publish-release; do
-    if needs_of macos-dmg-attach | grep -qx "$want"; then
+    if needs_has macos-dmg-attach "$want"; then
       pass "macos-dmg-attach needs ${want}"
     else
       fail "macos-dmg-attach does not need ${want}"
