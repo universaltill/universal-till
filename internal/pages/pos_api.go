@@ -1802,31 +1802,24 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		if discount.IsZero() {
 			discount = d.Engine.SaleDiscount()
 		}
-		// Service charge (ut-docs#72) computed here, off the same
-		// post-discount subtotal the basket engine uses for its own
-		// on-screen total (internal/pos/service.go recomputeTotals) --
-		// same rate, same base, so what's quoted on screen, what's
+		// Charges (ut-docs#72, ADR-0061, ADR-0062) built by the SAME shared
+		// pos.BuildCharges the basket engine's on-screen total uses
+		// (internal/pos/service.go computeTotals), off the same
+		// post-discount lines-only subtotal, the same till rate and the
+		// same charge.policy.ask answer -- so what's quoted on screen, what's
 		// demanded here for a zero-amount tender button, and what
-		// CompleteSale enforces all agree. The AMOUNT (not the rate) is
-		// what flows into SaleInput, same shape as SaleDiscount.
-		serviceCharge, _ := pos.ComputeTaxBasisPoints(subtotal.Sub(discount), common.EffectiveServiceChargeRateBP(d.CurrentState()), false)
-		// ADR-0061: an installed country plugin's charge.policy.ask answer
-		// can forbid the charge outright or fix a flat tax basis for it; no
-		// answer (the normal no-plugin case) leaves the fail-closed default —
-		// the charge stays permitted and its tax is apportioned at the
-		// sale's own per-line rates. Same consult the basket preview makes
-		// (Service.recomputeTotals), so screen and demand agree. Runs AFTER
-		// the ut-docs#962 Turkey backstop above, which may have already
-		// zeroed serviceCharge to 0 — ServiceChargeTax(0, ...) is a no-op,
-		// so the two mechanisms compose without either needing to know
-		// about the other.
-		chargeTaxBasisBP := 0
-		if policy, ok := d.Engine.ChargePolicy(); ok {
-			if !policy.ServiceChargePermitted {
-				serviceCharge = 0
-			}
-			chargeTaxBasisBP = policy.ServiceChargeTaxBasisBP
-		}
+		// CompleteSale enforces all agree. The merchant-rate service charge
+		// (unless the answer forbids it) plus every plugin-declared levy at
+		// its own rate; the ut-docs#962 Turkey ban suppresses the WHOLE list
+		// (ADR-0062 Decision 3), plugin items included. No answer (the
+		// normal no-plugin case) leaves the fail-closed default: the one
+		// merchant item, taxed at the sale's own per-line rates. The
+		// AMOUNTS (not rates) are what flow into SaleInput, same shape as
+		// SaleDiscount.
+		chargePolicy, chargeAnswered := d.Engine.ChargePolicy()
+		charges := pos.BuildCharges(subtotal.Sub(discount), common.EffectiveServiceChargeRateBP(d.CurrentState()),
+			common.ServiceChargeForbidden(d.CurrentState().Country), chargePolicy, chargeAnswered)
+		serviceCharge := pos.SumCharges(charges)
 		// ut-docs#1037: a single-purpose voucher is taxed at issue, so it is
 		// part of BOTH the service charge's rate-band apportionment and the
 		// taxed base — mirroring pos.computeSaleTotals, which is what
@@ -1842,7 +1835,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			subtotal = subtotal.Add(sp.Net)
 			taxTotal = taxTotal.Add(spTax)
 		}
-		chargeTax := pos.ServiceChargeTax(serviceCharge, chargeLines, d.CurrentState().TaxInclusive, chargeTaxBasisBP)
+		chargeTax := pos.ChargesTax(charges, chargeLines, d.CurrentState().TaxInclusive)
 		total := subtotal.Sub(discount).Add(serviceCharge)
 		if !d.CurrentState().TaxInclusive {
 			// Exclusive pricing: the charge's tax rides on top exactly like
@@ -1936,15 +1929,14 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		saleInput := pos.SaleInput{
-			SaleType:      "sale",
-			Currency:      d.CurrentState().Currency,
-			TaxInclusive:  d.CurrentState().TaxInclusive,
-			SaleDiscount:  discount,
-			ServiceCharge: serviceCharge,
-			// The plugin-answered flat basis (0 = per-line apportionment)
-			// travels with the sale so computeSaleTotals and the
-			// fiscal.sign.ask payload tax the charge identically (ADR-0061).
-			ServiceChargeTaxBasisBP: chargeTaxBasisBP,
+			SaleType:     "sale",
+			Currency:     d.CurrentState().Currency,
+			TaxInclusive: d.CurrentState().TaxInclusive,
+			SaleDiscount: discount,
+			// Each charge's plugin-answered flat basis (0 = per-line
+			// apportionment) travels with it so computeSaleTotals and the
+			// fiscal.sign.ask payload tax it identically (ADR-0061/0062).
+			Charges: charges,
 			// ADR-0073: the DERIVED summary of the lines (independent
 			// review B1) — never Engine.OrderType(), which is the default
 			// for NEW lines: "bulk Takeaway → scan → flip the line to dine

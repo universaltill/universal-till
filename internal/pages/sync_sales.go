@@ -373,19 +373,28 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 		// The ORIGINAL amount, not recomputed from whatever rate the
 		// primary happens to have configured right now (ut-docs#72) --
 		// same reasoning as SaleDiscount above.
-		in.ServiceCharge = money.FromMinor(j.Sale.ServiceCharge)
-		// ...and the ORIGINAL tax basis that amount was taxed at
-		// (ADR-0061 Decision 4). computeSaleTotals re-derives the charge's
-		// tax from this on replay, so it must be the basis the ORIGINATING
-		// till used, never the primary's own policy: replaying a
-		// plugin-answered flat basis (say 7%) under the primary's
-		// apportioned default would compute a different tax, store totals
-		// that disagree with the replica's, and -- when the re-derived
-		// total lands higher -- be rejected outright as underpayment, so
-		// the sale could never replicate. 0 (a pre-ADR-0061 peer's journal,
-		// which has no such key) IS the apportioned default, which is
-		// exactly what that peer computed, so it degrades correctly.
-		in.ServiceChargeTaxBasisBP = j.Sale.ServiceChargeTaxBasisBP
+		//
+		// ADR-0062: rebuilt as today's ONE-item service_charge list from the
+		// derived scalar pair; rebuilding the itemized list from
+		// j.Sale.Charges (with this as the pre-ADR-0062-peer fallback) is
+		// ut-docs#986.
+		in.Charges = []pos.ChargeInput{{
+			Key:    pos.ServiceChargeKey,
+			Amount: money.FromMinor(j.Sale.ServiceCharge),
+			// ...and the ORIGINAL tax basis that amount was taxed at
+			// (ADR-0061 Decision 4). computeSaleTotals re-derives the charge's
+			// tax from this on replay, so it must be the basis the ORIGINATING
+			// till used, never the primary's own policy: replaying a
+			// plugin-answered flat basis (say 7%) under the primary's
+			// apportioned default would compute a different tax, store totals
+			// that disagree with the replica's, and -- when the re-derived
+			// total lands higher -- be rejected outright as underpayment, so
+			// the sale could never replicate. 0 (a pre-ADR-0061 peer's journal,
+			// which has no such key) IS the apportioned default, which is
+			// exactly what that peer computed, so it degrades correctly.
+			TaxBasisBP: j.Sale.ServiceChargeTaxBasisBP,
+			Base:       pos.ChargeBaseNetLines,
+		}}
 	}
 	for _, p := range j.Sale.Payments {
 		// Same FK-upsert the live tender path (pos_api.go) and the refund

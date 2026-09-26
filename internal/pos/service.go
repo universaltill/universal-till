@@ -130,6 +130,14 @@ type Config struct {
 	// not this rate, so a synced/replayed sale never recomputes against
 	// whatever rate happens to be configured at replay time.
 	ServiceChargeRateBasisPoints int
+	// ChargesForbidden (ADR-0062 Decision 3) is set when the shop's country
+	// bans an additive charge line outright (ut-docs#962 — populated from
+	// common.ServiceChargeForbidden at every Config construction site in
+	// internal/pages, next to ServiceChargeRateBasisPoints). The rate above
+	// is already 0 then; this additionally suppresses every
+	// plugin-declared charge.policy.ask item in the preview, mirroring the
+	// tender handler, so a plugin can't put a banned line on the bill.
+	ChargesForbidden bool
 }
 
 // OrderTypeTakeaway is a value merchants may use for OrderType — dine-in vs.
@@ -944,31 +952,30 @@ func computeTotals(snap totalsSnapshot) computedTotals {
 		// the panel never shows a negative tax figure.
 		tax = 0
 	}
-	// Service charge (ut-docs#72): same base as CompleteSale/pos_api.go use
-	// -- the pre-tax net subtotal, after discount -- so what's shown here,
-	// before tender, matches what CompleteSale will actually demand.
-	serviceCharge, _ := ComputeTaxBasisPoints(sub.Sub(discount), snap.cfg.ServiceChargeRateBasisPoints, false)
-	// ADR-0061: an installed country plugin's charge.policy.ask answer can
-	// forbid the charge outright or fix a flat tax basis for it; with no
-	// answer (the normal no-plugin case) the fail-closed default taxes it
-	// at the sale's own per-line rates. Mirrors the tender handler
-	// (pos_api.go) exactly, so the on-screen total IS the demanded total.
-	chargeTaxBasisBP := 0
+	// Charges (ut-docs#72, ADR-0061, ADR-0062): built by the SAME shared
+	// BuildCharges the tender handler (pos_api.go) calls, off the same
+	// base — the lines-only, post-discount net subtotal — and the same
+	// charge.policy.ask answer, so what's shown here, before tender, is
+	// exactly what CompleteSale will demand: the merchant-rate service
+	// charge (unless the answer forbids it) plus every plugin-declared
+	// levy at its own rate, the whole list suppressed for a banned country.
+	// With no answer (the normal no-plugin case) the one merchant item is
+	// taxed at the sale's own per-line rates (the fail-closed default).
+	var policy ChargePolicy
+	answered := false
 	if snap.chargeAsker != nil {
-		if policy, ok := snap.chargeAsker.AskChargePolicy(); ok {
-			if !policy.ServiceChargePermitted {
-				serviceCharge = 0
-			}
-			chargeTaxBasisBP = policy.ServiceChargeTaxBasisBP
-		}
+		policy, answered = snap.chargeAsker.AskChargePolicy()
 	}
-	chargeTax := ServiceChargeTax(serviceCharge, chargeTaxLines, snap.cfg.TaxInclusive, chargeTaxBasisBP)
+	charges := BuildCharges(sub.Sub(discount), snap.cfg.ServiceChargeRateBasisPoints, snap.cfg.ChargesForbidden, policy, answered)
+	serviceCharge := SumCharges(charges)
+	chargeTax := ChargesTax(charges, chargeTaxLines, snap.cfg.TaxInclusive)
 	c.tax = tax.Add(chargeTax)
+	// The SUM of every charge (the itemized basket display is ut-docs#986).
 	c.serviceCharge = serviceCharge
 	total = total.Sub(discount).Add(serviceCharge)
 	if !snap.cfg.TaxInclusive {
-		// Exclusive pricing: the charge's tax goes on top, same as each
-		// line's own; inclusive already carries it inside serviceCharge.
+		// Exclusive pricing: each charge's tax goes on top, same as each
+		// line's own; inclusive already carries it inside the charge.
 		total = total.Add(chargeTax)
 	}
 	if total.IsNegative() {

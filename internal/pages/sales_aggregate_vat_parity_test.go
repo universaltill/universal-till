@@ -25,7 +25,7 @@ func TestSalesAggregateVATBands_MatchEODForSingleTill(t *testing.T) {
 
 	day := etbCompleteSale(t, d, pos.SaleInput{
 		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
-		ServiceCharge:          money.FromMinor(1000),
+		Charges:                []pos.ChargeInput{{Key: pos.ServiceChargeKey, Amount: money.FromMinor(1000)}},
 		AllowNegativeInventory: true,
 		Lines: []pos.SaleLineInput{
 			{ItemID: "itm-a", Name: "A", Qty: 1, UnitPrice: money.FromMinor(1190), TaxRateBasisPoints: 1900, LocationID: "loc_main"},

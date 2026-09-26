@@ -1115,9 +1115,9 @@ func TestCompleteSale_ServiceChargeInflatesTotalAndRequiresPayment(t *testing.T)
 	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
 
 	baseIn := SaleInput{
-		SaleType:      "sale",
-		Currency:      "GBP",
-		ServiceCharge: 100, // 10% of the 1000 subtotal, pre-computed by the caller
+		SaleType: "sale",
+		Currency: "GBP",
+		Charges:  []ChargeInput{{Key: ServiceChargeKey, Amount: 100}}, // 10% of the 1000 subtotal, pre-computed by the caller
 		Lines: []SaleLineInput{
 			{ItemID: "itm1", SKU: "SKU1", Name: "Steak", Qty: 1, UnitPrice: 1000, TaxRateBasisPoints: 0, LocationID: "loc1"},
 		},
@@ -1165,9 +1165,9 @@ func TestCompleteSale_ServiceChargeAndTipDoNotCrossContaminate(t *testing.T) {
 	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('card','Card','card',1)`)
 
 	in := SaleInput{
-		SaleType:      "sale",
-		Currency:      "GBP",
-		ServiceCharge: 100, // 10% of the 1000 subtotal -> total 1100
+		SaleType: "sale",
+		Currency: "GBP",
+		Charges:  []ChargeInput{{Key: ServiceChargeKey, Amount: 100}}, // 10% of the 1000 subtotal -> total 1100
 		Lines: []SaleLineInput{
 			{ItemID: "itm1", SKU: "SKU1", Name: "Steak", Qty: 1, UnitPrice: 1000, TaxRateBasisPoints: 0, LocationID: "loc1"},
 		},

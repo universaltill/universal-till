@@ -462,6 +462,12 @@ func FormatServiceChargeRatePercent(bp int) string {
 // so leniency is the fail-closed direction. The setup wizard persists
 // uppercase, but /api/settings/upsert, a restored backup and a hand-edited
 // settings row can all carry any casing.
+//
+// ADR-0062 Decision 3: the ban covers the WHOLE charge list, not just the
+// merchant-rate item — every pos.Config construction site also sets
+// ChargesForbidden from this, and the tender handler passes it to
+// pos.BuildCharges, so a plugin-declared charge.policy.ask levy is
+// suppressed too.
 func ServiceChargeForbidden(country string) bool {
 	return strings.EqualFold(strings.TrimSpace(country), "TR")
 }

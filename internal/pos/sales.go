@@ -17,6 +17,87 @@ import (
 	"github.com/universaltill/universal-till/internal/money"
 )
 
+// ServiceChargeKey is core's own key for the merchant-rate service-charge
+// item (ADR-0062 Decision 3) — the one charge a till's Settings configure.
+// A plugin's policy answer may not declare it (rejected at
+// internal/pages/charge_hook.go's validateChargePolicy).
+const ServiceChargeKey = "service_charge"
+
+// ChargeBaseNetLines is the only charge base core implements (ADR-0062
+// Decision 1): the rate applies to the sale's lines-only, post-discount net
+// subtotal. "net_lines_plus_prior_charges" is a reserved value with no code
+// path yet.
+const ChargeBaseNetLines = "net_lines"
+
+// ChargeInput is one ALREADY-COMPUTED additive charge on a sale (ADR-0062
+// Decision 1) — see SaleInput.Charges.
+type ChargeInput struct {
+	// Key is a stable id, e.g. ServiceChargeKey or "municipality_tax".
+	Key string
+	// Label is the receipt/journal display text; "" on core's own
+	// ServiceChargeKey item means core's default service-charge copy.
+	Label string
+	// Amount is persisted verbatim and never recomputed on replay.
+	Amount money.Money
+	// TaxBasisBP: 0 = apportion at the sale's own per-line rates
+	// (ADR-0061 Decision 2); > 0 = one flat rate on this charge alone.
+	TaxBasisBP int
+	// Base is ChargeBaseNetLines (the only implemented value).
+	Base string
+}
+
+// ChargesTotal is the sum of every charge's Amount — what
+// sales.service_charge_amount persists and what display/reconciliation
+// callers (the flat fiscal service_charge field, receipts) show. Never
+// derive tax from this sum: tax is per charge (ApportionChargesTax).
+func (in *SaleInput) ChargesTotal() money.Money {
+	return SumCharges(in.Charges)
+}
+
+// derivedChargeTaxBasisBP is sales.service_charge_tax_basis_bp (ADR-0062
+// Decision 2): the charge's own TaxBasisBP when the sale has exactly one
+// charge — so every one-charge sale persists byte-identically to
+// pre-ADR-0062 — else 0. One deliberate difference: a zero-amount charge is
+// dropped by BuildCharges, so a sale whose charge computed to 0 now stores
+// basis 0 where it used to store the policy's basis (no reader uses a basis
+// with a zero amount). Retained for schema compatibility only; with 2+
+// charges no single basis is meaningful, and no reader may derive tax from
+// the sum + this basis (read sale_charges instead).
+func derivedChargeTaxBasisBP(charges []ChargeInput) int {
+	if len(charges) == 1 {
+		return charges[0].TaxBasisBP
+	}
+	return 0
+}
+
+// saleChargeRows converts the charge list to its persisted rows — money to
+// minor units only here, at the DB boundary.
+func saleChargeRows(charges []ChargeInput) []data.SaleCharge {
+	if len(charges) == 0 {
+		return nil
+	}
+	rows := make([]data.SaleCharge, 0, len(charges))
+	for _, c := range charges {
+		rows = append(rows, data.SaleCharge{
+			Key:        c.Key,
+			Label:      c.Label,
+			Amount:     c.Amount.Minor(),
+			TaxBasisBP: c.TaxBasisBP,
+			Base:       c.Base,
+		})
+	}
+	return rows
+}
+
+// SumCharges is the sum of a charge list's amounts (see ChargesTotal).
+func SumCharges(charges []ChargeInput) money.Money {
+	var sum money.Money
+	for _, c := range charges {
+		sum = sum.Add(c.Amount)
+	}
+	return sum
+}
+
 // SaleInput captures the data needed to persist a sale (or return).
 type SaleInput struct {
 	SaleType     string // sale|return
@@ -27,33 +108,25 @@ type SaleInput struct {
 	Currency     string
 	TaxInclusive bool
 	SaleDiscount money.Money // fixed discount (minor units) applied to whole sale
-	// ServiceCharge is the ALREADY-COMPUTED till-set service charge amount
-	// (minor units) to add to total -- deliberately a fixed amount, same
-	// shape as SaleDiscount, NOT a rate: the caller (the live checkout
-	// handler) computes it from the currently configured rate, and a
-	// synced/replayed sale (internal/pages/sync_sales.go) passes the
-	// ORIGINAL amount straight through from the journaled sale, exactly
-	// like SaleDiscount already does -- a rate stored here instead would
-	// silently recompute against whatever rate happens to be configured
-	// at replay time, which is wrong for history. Unlike
-	// PaymentInput.TipAmount (metadata, excluded from the sale total), a
-	// service charge is revenue the customer owes and DOES participate in
-	// netPayments' payment-sufficiency check.
-	ServiceCharge money.Money
-	// ServiceChargeTaxBasisBP (ADR-0061) is the flat tax rate for the
-	// service charge, threaded through by the tender handler from an
-	// installed country plugin's charge.policy.ask answer
-	// (service_charge_tax_basis_bp). 0 — the value on every sale until a
-	// country plugin actually answers, and always on a synced/replayed sale
-	// — means the fail-closed default: the charge is taxed at the sale's own
-	// per-line rates, apportioned by net line value
-	// (ApportionServiceChargeTax). Deterministic either way, so a replayed
-	// sale's computeSaleTotals reproduces the original totals exactly
-	// without ever re-asking the policy hook (ADR-0061 Decision 4). NOTE:
-	// the LAN-sync journal does not carry this field yet — that lands with
-	// the follow-up card that makes ut-plugin-tax-{de,uk} actually answer
-	// the hook, before any plugin can set it non-zero in production.
-	ServiceChargeTaxBasisBP int
+	// Charges (ADR-0062 Decision 1, ut-docs#985) is the sale's ordered list
+	// of ALREADY-COMPUTED additive charges — the till-set service charge
+	// (Key ServiceChargeKey) and any plugin-declared statutory levy — each
+	// added to the total. Deliberately fixed amounts, same shape as
+	// SaleDiscount, NOT rates: the live checkout builds them with
+	// BuildCharges from the currently configured rate/policy, and a
+	// synced/replayed or refunded sale passes the ORIGINAL amounts straight
+	// through — a rate stored here instead would silently recompute against
+	// whatever happens to be configured at replay time, which is wrong for
+	// history (ADR-0061 Decision 4). Unlike PaymentInput.TipAmount
+	// (metadata, excluded from the sale total), a charge is revenue the
+	// customer owes and DOES participate in netPayments' payment-sufficiency
+	// check. Each item is taxed independently (ApportionChargesTax): at its
+	// own TaxBasisBP when > 0, else apportioned across the sale's per-line
+	// rates (the fail-closed default). CompleteSale persists every item as a
+	// sale_charges row and derives sales.service_charge_amount (the sum) /
+	// service_charge_tax_basis_bp (the one item's basis, 0 unless exactly
+	// one charge) from this same list, so the two can never drift.
+	Charges []ChargeInput
 	// OrderType is the sale's SUMMARY order type (ADR-0073 Decision 1):
 	// "" (all dine-in), pos.OrderTypeTakeaway (all takeaway) or
 	// pos.OrderTypeMixed. CompleteSale DERIVES it from the lines'
@@ -502,19 +575,24 @@ func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, voucher
 		taxTotal = 0
 	}
 	discountedSubtotal := subtotal.Sub(in.SaleDiscount)
-	if in.ServiceCharge.IsNegative() {
-		return 0, 0, 0, 0, 0, fmt.Errorf("service charge must be >= 0")
+	// ADR-0062 Decision 1: validated PER ITEM — a negative charge is a
+	// discount wearing a charge's clothes and would bypass the
+	// sale_discounts audit trail, even when the list's sum stays positive.
+	for i, c := range in.Charges {
+		if c.Amount.IsNegative() {
+			return 0, 0, 0, 0, 0, fmt.Errorf("charge %d (%s): amount must be >= 0", i+1, c.Key)
+		}
 	}
-	serviceCharge = in.ServiceCharge
-	// ADR-0061 Decision 2: the service charge is ALWAYS taxed — at a
-	// plugin-answered flat basis when one was threaded through, else
-	// apportioned across the sale's own per-line rate bands (the fail-closed
-	// default; no plugin subsystem exists in this package, so nothing here
-	// can be asked — the untaxed path is unreachable by construction).
-	// Inclusive pricing embeds the charge's tax inside the charge amount
-	// (taxTotal declares it, total is unchanged); exclusive adds it on top
-	// via the taxTotal fold below — the same split the lines themselves get.
-	chargeTax := ServiceChargeTax(serviceCharge, chargeLines, in.TaxInclusive, in.ServiceChargeTaxBasisBP)
+	serviceCharge = SumCharges(in.Charges)
+	// ADR-0061 Decision 2 / ADR-0062 Decision 4: every charge is ALWAYS
+	// taxed — at its own plugin-answered flat basis when one was threaded
+	// through, else apportioned across the sale's own per-line rate bands
+	// (the fail-closed default; no plugin subsystem exists in this package,
+	// so nothing here can be asked — the untaxed path is unreachable by
+	// construction). Inclusive pricing embeds each charge's tax inside its
+	// amount (taxTotal declares it, total is unchanged); exclusive adds it
+	// on top via the taxTotal fold below — the same split the lines get.
+	chargeTax := ChargesTax(in.Charges, chargeLines, in.TaxInclusive)
 	taxTotal = taxTotal.Add(chargeTax)
 	total = discountedSubtotal.Add(serviceCharge)
 	if !in.TaxInclusive {
@@ -952,7 +1030,7 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 				TaxTotal:                taxTotal.Minor(),
 				Total:                   total.Minor(),
 				ServiceCharge:           serviceCharge.Minor(),
-				ServiceChargeTaxBasisBP: in.ServiceChargeTaxBasisBP,
+				ServiceChargeTaxBasisBP: derivedChargeTaxBasisBP(in.Charges),
 				VoucherIssueTotal:       voucherIssueTotal.Minor(),
 				Note:                    in.Note,
 				CreatedAt:               now,
@@ -968,6 +1046,13 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 				if in.ReceiptNo == "" && isReceiptConflictErr(err) {
 					return errReceiptConflictRetry
 				}
+				return err
+			}
+			// ADR-0062 Decision 2: the itemized list, in the SAME
+			// transaction and from the SAME []ChargeInput the derived sales
+			// columns above came from, so the two can never drift. A sale
+			// with no charges writes no rows.
+			if err := repo.InsertSaleCharges(ctx, tx, saleID, saleChargeRows(in.Charges)); err != nil {
 				return err
 			}
 			in.ReceiptNo = receiptNo
