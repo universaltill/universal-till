@@ -174,10 +174,9 @@ func (c *Client) statusAt(now time.Time) ClientStatus {
 	s.Linked = c.linked.Load()
 	if s.Linked {
 		if p := c.cur.Load(); p != nil {
-			last := time.Unix(0, p.lastFrame.Load())
-			if now.Sub(last) > c.cfg.PeerTimeout {
+			if since := p.sinceFrame(now); since > c.cfg.PeerTimeout {
 				s.Linked = false
-				s.LostAt, s.LostSeen = last, now
+				s.LostAt, s.LostSeen = p.lastFrameAt(now), now
 			}
 		}
 	}
@@ -498,7 +497,7 @@ func (c *Client) runLink(ctx context.Context, t Target, conn Conn) (end linkEnd,
 		c.setLinked(false)
 		switch {
 		case end == endLost && established:
-			c.markLinkLost(time.Unix(0, p.lastFrame.Load()))
+			c.markLinkLost(p.lastFrameAt(time.Now()))
 		case end == endBye:
 			c.clearOutage()
 		}

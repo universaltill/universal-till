@@ -169,18 +169,98 @@ func TestClient_StatusIsNotLinkedOnceFramesStopEvenBeforeThePeerCloses(t *testin
 	c.cur.Store(p)
 	c.linked.Store(true)
 	now := time.Now()
-	p.lastFrame.Store(now.Add(-11 * time.Second).UnixNano())
+	p.touch(now.Add(-11 * time.Second))
 	if s := c.statusAt(now); !s.Linked || !s.LostAt.IsZero() {
 		t.Fatalf("a frame 11 s ago is still a live link: %+v", s)
 	}
 	last := now.Add(-13 * time.Second)
-	p.lastFrame.Store(last.UnixNano())
+	p.touch(last)
 	s := c.statusAt(now)
 	if s.Linked {
 		t.Fatal("no frame for 13 s must read as not linked (ADR-0114 §4: 12 s)")
 	}
-	if !s.LostAt.Equal(time.Unix(0, last.UnixNano())) {
+	if !s.LostAt.Equal(last) {
 		t.Fatalf("LostAt = %v, want the last frame %v", s.LostAt, last)
+	}
+}
+
+// A wall-clock step — an NTP correction, or a Pi without an RTC setting its
+// clock after boot — must not move the watchdog or the client's link-lost
+// status: both are measured from the monotonic reading time.Now() carries,
+// never the wall clock (ut-docs#2853).
+func TestClient_StatusIgnoresAWallClockStep(t *testing.T) {
+	c := NewClient(ClientOptions{Config: Config{PeerTimeout: 12 * time.Second}})
+	p := newPeer(c, c.cfg, "r", "main", newFakeConn())
+	c.cur.Store(p)
+	c.linked.Store(true)
+	now := time.Now()
+	p.touch(now)
+
+	t.Run("forward step right after a frame stays linked", func(t *testing.T) {
+		stepped := wallStepped(now, time.Hour)
+		if s := c.statusAt(stepped); !s.Linked || !s.LostAt.IsZero() {
+			t.Errorf("status after a +1h wall step = %+v, want still linked", s)
+		}
+		if got := p.sinceFrame(stepped); got >= p.cfg.PeerTimeout {
+			t.Fatalf("sinceFrame after a +1h wall step = %v, want < %v (the watchdog would wrongly fire)", got, p.cfg.PeerTimeout)
+		}
+	})
+
+	t.Run("backward step does not delay detecting a lost link", func(t *testing.T) {
+		// 13 s of real (monotonic) time since the last frame, then the wall
+		// clock is corrected an hour into the past.
+		elapsed := now.Add(13 * time.Second)
+		back := wallStepped(elapsed, -time.Hour)
+		if s := c.statusAt(back); s.Linked {
+			t.Errorf("status 13s on, after a -1h wall step, = %+v, want not linked", s)
+		}
+		if got := p.sinceFrame(back); got <= p.cfg.PeerTimeout {
+			t.Fatalf("sinceFrame 13s on, after a -1h wall step, = %v, want > %v", got, p.cfg.PeerTimeout)
+		}
+	})
+}
+
+// lastFrameAt places the last frame on the CALLER's wall clock — so once
+// that clock has stepped forward (NTP, a Pi without an RTC after boot), the
+// display value moves with it too, rather than staying pinned to a wall
+// timestamp captured before the step.
+func TestPeer_LastFrameAtTracksAWallClockStep(t *testing.T) {
+	c := NewClient(ClientOptions{Config: Config{PeerTimeout: 12 * time.Second}})
+	p := newPeer(c, c.cfg, "r", "main", newFakeConn())
+	now := time.Now()
+	p.touch(now)
+
+	elapsed := 3 * time.Second
+	stepped := wallStepped(now.Add(elapsed), time.Hour)
+
+	got := p.lastFrameAt(stepped)
+	if d := got.Round(0).Sub(now.Round(0)); d < 59*time.Minute || d > 61*time.Minute {
+		t.Fatalf("lastFrameAt's wall clock moved by %v since the frame, want ~1h (it should track the step)", d)
+	}
+	// Still the right distance behind the (stepped) caller's clock.
+	if d := stepped.Sub(got); d != elapsed {
+		t.Fatalf("stepped.Sub(lastFrameAt) = %v, want %v (the real time since the frame)", d, elapsed)
+	}
+}
+
+// The hub's Peers() snapshot uses lastFrameAt the same way (one now, read
+// right before the loop): a live peer's LastFrame is a few moments before
+// the snapshot, and stays a monotonically well-formed time.
+func TestHub_PeersSnapshotLastFrame(t *testing.T) {
+	hub := NewHub(HubOptions{Config: fastConfig(), Hello: testHello})
+	defer hub.Close()
+	fa, _ := servePeer(t, hub, "till-a")
+	fa.next(t)
+
+	before := time.Now()
+	peers := hub.Peers()
+	after := time.Now()
+	if len(peers) != 1 {
+		t.Fatalf("peers = %+v, want 1", peers)
+	}
+	last := peers[0].LastFrame
+	if last.IsZero() || last.Before(before.Add(-time.Second)) || last.After(after) {
+		t.Fatalf("LastFrame = %v, want a recent time between ~%v and %v", last, before, after)
 	}
 }
 
