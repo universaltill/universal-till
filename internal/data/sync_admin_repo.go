@@ -1721,3 +1721,77 @@ func scanGenericCols(rows *sql.Rows, cols []string) ([]map[string]any, error) {
 	}
 	return out, rows.Err()
 }
+
+// SettingScopeKind is where a settings key belongs (ut-docs#2791): to one
+// till, to the whole shop, or -- a key nobody classified yet -- neither.
+type SettingScopeKind int
+
+const (
+	// SettingUnclassified is a key in neither list. The main till refuses
+	// it on POST /api/sync/settings/apply, and
+	// TestSettingScope_EveryUsedKeyIsClassified fails on any key the code
+	// uses that lands here.
+	SettingUnclassified SettingScopeKind = iota
+	// SettingPerTill is a PerTillSettingPrefixes key: saved on the till it
+	// was changed on, never synced.
+	SettingPerTill
+	// SettingShopWide is a ShopWideSettingPrefixes key: the same for every
+	// till of the shop, carried main -> additional tills by the admin
+	// bundle. An additional till writes it through to the main till
+	// (pages/settings_sync_proxy.go) rather than locally, where the next
+	// admin pull would silently overwrite it.
+	SettingShopWide
+)
+
+// ShopWideSettingPrefixes are the settings key families that are the same
+// for every till of one shop (ut-docs#2791). Like PerTillSettingPrefixes, an
+// entry is a prefix; a full key works as an exact match. It does NOT change
+// what the admin bundle carries -- DumpAdmin/ApplyAdmin still sync every key
+// that is not per-till -- it only names, for the write-through, which keys
+// an additional till must send to its main till. PerTillSettingPrefixes
+// wins where both match (reports.eod_* under reports.,
+// fiscal.pending_sign_retries under fiscal.).
+var ShopWideSettingPrefixes = []string{
+	// Shop identity, money, tax, locale and trading rules.
+	"store.", "shop.", "sale.", "pos.", "payments.", "invoice.", "receipt.",
+	// Fiscal posture and override state (fiscal.pending_sign_retries is
+	// per-till, above).
+	"fiscal.",
+	// Kiosk behaviour, the idle-lock policy, shop-wide report options
+	// (reports.eod_* is per-till), auto-update schedule, setup state.
+	"kiosk.", "auth.", "reports.", "update.", "setup.",
+	// Barcode handling (data/barcode_settings.go).
+	BarcodeEnabledSymbologiesKey, CatalogImportBarcodeFromSKUDefaultKey,
+	// The store-level marketplace keys (see PerTillSettingPrefixes' own
+	// comment). Listed key by key: a new marketplace.* key must be
+	// classified on purpose, since most of that family is per-till.
+	"marketplace.store_id", "marketplace.merchant_id",
+	"marketplace.telemetry_opt_in", "marketplace.auto_register_opt_in",
+	// Scope genuinely unclear: these read like one till's own state, but
+	// every one of them is carried by the admin bundle today (none is
+	// per-till), so they are shop-wide by the rule ut-docs#2791 set --
+	// shop-wide iff synced today. Moving any of them to per-till is
+	// ut-docs#2950 (it changes what the admin bundle syncs).
+	"till.name",      // the main till's name; a replica's own name is sync.till_name
+	"menu.",          // menu.restored_keys
+	"diagnostics.",   // ADR-0092 support-session rows
+	"cloudsync.",     // cloud snapshot / order-tracking hashes
+	"install.",       // install.desktop_kiosk_overlay_provisioned
+	"lan_discovery.", // lan_discovery.till_id
+}
+
+// SettingScope classifies a settings key. Per-till wins over shop-wide.
+func SettingScope(key string) SettingScopeKind {
+	if key == "" {
+		return SettingUnclassified
+	}
+	if perTillSetting(key) {
+		return SettingPerTill
+	}
+	for _, p := range ShopWideSettingPrefixes {
+		if strings.HasPrefix(key, p) {
+			return SettingShopWide
+		}
+	}
+	return SettingUnclassified
+}
