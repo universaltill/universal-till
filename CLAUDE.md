@@ -72,6 +72,10 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   `plugins/**/plugin.json` (+ their `locales/`). Reviewed exception
   (help/UI only): same-line `naming-rule:allow`.
 
+## Core neutrality (#2848, ADR-0119 proposed; `scripts/ci/guard-core-neutral.sh`)
+- Country, vendor, vertical and integration code ships in its ut-plugin-* repo; core Go never tests a curated list of country codes, vendor names or plugin IDs (#2888).
+- Shrink-only allow-list `scripts/ci/core-neutral-allowlist.txt` (each entry cites its move card); reviewed exception: same-line `// core-neutral:allow <reason>`.
+
 ## Plugins
 - Installed plugins are Ed25519-verified before they run
   (`internal/plugins/manifest_verifier.go`). Never run an unverified plugin.

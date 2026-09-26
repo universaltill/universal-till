@@ -129,6 +129,14 @@ jobs:
         run: bash scripts/ci/guard-competitor-naming.sh
       - name: Competitor-naming guard regression test
         run: bash scripts/ci/guard-competitor-naming_test.sh
+      - name: Core-neutral guard (owner rule 2026-09-25, #2848)
+        # checkout is depth 1 with no other refs: fetch main so the guard
+        # can enforce its shrink-only allow-list against origin/main (#2888).
+        run: |
+          git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
+          bash scripts/ci/guard-core-neutral.sh
+      - name: Core-neutral guard regression test
+        run: bash scripts/ci/guard-core-neutral_test.sh
       - name: Manual screenshot freshness guard
         run: bash scripts/ci/guard-docs-shots.sh
       - name: Manual screenshot freshness guard regression test

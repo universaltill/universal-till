@@ -431,7 +431,7 @@ func run(ctx context.Context, m config.MarketplaceConfig, deviceName string, kv 
 // here (there is no such ambiguity with a country code, but the exactness is
 // deliberate: e.g. "DEU" must NOT match).
 func regionForCountry(country string) string {
-	if strings.ToUpper(strings.TrimSpace(country)) == "DE" {
+	if strings.ToUpper(strings.TrimSpace(country)) == "DE" { // core-neutral:allow ADR-0049 hosting-region routing, not a feature gate
 		return "de"
 	}
 	return ""
