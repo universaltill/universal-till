@@ -1,3 +1,22 @@
+{{/* ut-docs#2895: this till's own ADR-0117 realtime socket to the cloud —
+     a different link than the LAN roster below (this one is the main
+     till's link up to the cloud, not till-to-till on the shop's network),
+     so it renders on every till, main or joined, whether or not .LinkInfo
+     is true. .CloudLink.Show is false only when the shop has no cloud
+     enrolment at all (the status bar's own "Marketplace: not connected"
+     chip already covers that case). Words first, never colour alone, same
+     as the Link column below; NextAttempt is a localized date-time, only
+     set on the "reconnecting" and Retry-After "paused" hints. */}}
+{{ with .CloudLink }}
+{{ if .Show }}
+<p data-testid="cloud-link-row" data-cloud-link-state="{{ .Code }}">
+  <strong>{{ T "tills.cloud_link.title" }}:</strong> {{ T .LabelKey }}
+  <br><small class="muted">
+    {{ if .NextAttempt }}{{ printf (T .HintKey) .NextAttempt }}{{ else }}{{ T .HintKey }}{{ end }}
+  </small>
+</p>
+{{ end }}
+{{ end }}
 {{/* The Tills page's roster (tills.html includes it; GET /ui/tills/roster
      re-renders it standalone every 10 s on a main till — tills_roster.go).
      ut-docs#2742 (ADR-0114 §10): on a main till each enrolled till shows
