@@ -1,7 +1,12 @@
 <div class="modifier-picker">
+{{/* ut-docs#2944: close sites only close. The dialog's `close` event is a
+     queued task and base.html's shared shrink re-shows this SAME markup, so
+     emptying it here would shrink a blank card. The next open replaces it:
+     the tile opens only when its GET landed in #modifier-modal (#2525), and
+     app.js empties a closed picker before its own GET. */}}
   <h3>{{ .ItemName }}</h3>
   <form hx-post="/api/pos/scan-with-modifiers" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-        hx-on::after-request="if (event.detail.successful) { var m = document.getElementById('modifier-modal'); m.close(); m.innerHTML=''; }">
+        hx-on::after-request="if (event.detail.successful) { var m = document.getElementById('modifier-modal'); m.close(); }">
     <input type="hidden" name="code" value="{{ .Code }}">
     <input type="hidden" name="itemId" value="{{ .ItemID }}">
     <input type="hidden" name="qty" value="{{ .Qty }}">
@@ -37,7 +42,7 @@
     {{ end }}
     <div class="modifier-actions">
       <button type="button" class="btn secondary"
-              onclick="var m = document.getElementById('modifier-modal'); m.close(); m.innerHTML='';">
+              onclick="document.getElementById('modifier-modal').close();">
         {{ T "modifiers.cancel" }}
       </button>
       <button type="submit" class="btn primary">{{ T "modifiers.add_to_cart" }}</button>
