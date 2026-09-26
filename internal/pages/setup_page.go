@@ -615,6 +615,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			TaxInclusive:                 st.TaxInclusive,
 			TaxRateBasisPoints:           st.TaxRatePct * 100,
 			ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(st),
+			ChargesForbidden:             common.ServiceChargeForbidden(st.Country),
 		}
 		d.Engine.SetConfig(newCfg)
 		if d.KioskEngine != nil {

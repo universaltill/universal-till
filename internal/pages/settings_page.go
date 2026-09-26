@@ -2562,6 +2562,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			TaxInclusive:                 st.TaxInclusive,
 			TaxRateBasisPoints:           st.TaxRatePct * 100,
 			ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(st),
+			ChargesForbidden:             common.ServiceChargeForbidden(st.Country),
 		}
 		d.Engine.SetConfig(newCfg)
 		if d.KioskEngine != nil {
@@ -2892,6 +2893,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				TaxInclusive:                 st.TaxInclusive,
 				TaxRateBasisPoints:           st.TaxRatePct * 100,
 				ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(st),
+				ChargesForbidden:             common.ServiceChargeForbidden(st.Country),
 			}
 			d.Engine.SetConfig(newCfg)
 			if d.KioskEngine != nil {

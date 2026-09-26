@@ -140,3 +140,58 @@ func ServiceChargeTax(charge money.Money, lines []ChargeTaxLine, taxInclusive bo
 	}
 	return tax
 }
+
+// ApportionChargesTax is ADR-0062 Decision 4's N-charge generalization: it
+// calls ApportionServiceChargeTax (unchanged) once per charge, in order,
+// each at that charge's own TaxBasisBP, and aggregates the resulting bands
+// by RateBP (summing Amount and Tax), sorted ascending by rate — the
+// per-rate shape vat_breakdown's fold and the invoice VAT table need. The
+// shared function for every totals path (computeSaleTotals, the basket
+// preview, the tender handler via ChargesTax, and buildFiscalSignPayload),
+// so none of them can re-derive charge tax differently.
+//
+// Each charge is apportioned and rounded INDEPENDENTLY, so the result is
+// deliberately not the same as apportioning the charges' sum in one pass:
+// every charge's own highest band absorbs its own floor remainder (more
+// charge amount lands on the highest rate than a one-pass split would put
+// there), and each band's tax is rounded per charge. See
+// TestApportionChargesTax_DiffersFromSumThenApportion for the pinned
+// behaviour. Returns nil when no charge produces a band.
+func ApportionChargesTax(charges []ChargeInput, lines []ChargeTaxLine, taxInclusive bool) []ServiceChargeTaxBand {
+	var byRate map[int]*ServiceChargeTaxBand
+	var rates []int
+	for _, c := range charges {
+		for _, b := range ApportionServiceChargeTax(c.Amount, lines, taxInclusive, c.TaxBasisBP) {
+			if byRate == nil {
+				byRate = map[int]*ServiceChargeTaxBand{}
+			}
+			agg, ok := byRate[b.RateBP]
+			if !ok {
+				agg = &ServiceChargeTaxBand{RateBP: b.RateBP}
+				byRate[b.RateBP] = agg
+				rates = append(rates, b.RateBP)
+			}
+			agg.Amount = agg.Amount.Add(b.Amount)
+			agg.Tax = agg.Tax.Add(b.Tax)
+		}
+	}
+	if len(rates) == 0 {
+		return nil
+	}
+	sort.Ints(rates)
+	out := make([]ServiceChargeTaxBand, 0, len(rates))
+	for _, r := range rates {
+		out = append(out, *byRate[r])
+	}
+	return out
+}
+
+// ChargesTax is the summed tax over ApportionChargesTax's bands — the
+// convenience form (mirrors ServiceChargeTax) for the totals paths.
+func ChargesTax(charges []ChargeInput, lines []ChargeTaxLine, taxInclusive bool) money.Money {
+	var tax money.Money
+	for _, b := range ApportionChargesTax(charges, lines, taxInclusive) {
+		tax = tax.Add(b.Tax)
+	}
+	return tax
+}
