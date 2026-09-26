@@ -243,15 +243,48 @@ func (s State) String() string {
 	return "idle"
 }
 
+// WaitReason is why the link is StateWaiting, for the status surfaces
+// (ut-docs#2895); meaningless — always WaitReasonNone — in any other State.
+type WaitReason int32
+
+const (
+	// WaitReasonNone: not StateWaiting, or the wait has no finer reason.
+	WaitReasonNone WaitReason = iota
+	// WaitReasonNotMainTill: the cloud closed the link with 4011, or
+	// refused the upgrade with 403 not_main_till — another till is this
+	// store's main till.
+	WaitReasonNotMainTill
+	// WaitReasonTierChanged: the cloud closed the link with 4010, or
+	// refused the upgrade with 403 tier_periodic — the store's cloud_link
+	// tier is not realtime.
+	WaitReasonTierChanged
+	// WaitReasonBusy: the pod was full (1013), the till was rate limited
+	// (4029), or the cloud refused the upgrade outright (409, 503 without
+	// Retry-After, a 403 without a known error code) — every case where the
+	// cloud declined the link without saying it's structurally ineligible.
+	// Run retries after the next check-in.
+	WaitReasonBusy
+	// WaitReasonRetryAfter: the cloud refused the upgrade with 503 and a
+	// Retry-After — Run redials by itself when that runs out (NextAttempt),
+	// not after a check-in.
+	WaitReasonRetryAfter
+)
+
 // Client is the main till's cloud-link client. Goroutines: Run's own, plus
 // the Session's reader and writer while a socket is open.
 type Client struct {
 	o Options
 
 	state    atomic.Int32
+	reason   atomic.Int32 // WaitReason, valid while state is StateWaiting
 	liveView atomic.Bool
 	cur      atomic.Pointer[fleetlink.Session]
 	deviceID atomic.Value // string: the linked target's device id
+
+	// nextAttempt is when Run will next dial, as UnixNano; 0 when unknown
+	// (dialling now, or not on a wait-then-redial path) — the status
+	// surfaces' "next attempt" hint (ut-docs#2895).
+	nextAttempt atomic.Int64
 
 	checkedIn chan struct{} // cap 1: a check-in succeeded
 	recheck   chan struct{} // cap 1: a check-in ran (either way)
@@ -291,8 +324,18 @@ func New(o Options) *Client {
 
 // setState records a transition and logs it: the log (and so the ADR-0092
 // diagnostic stream) is where the link's state shows until a status
-// surface reads it.
-func (c *Client) setState(s State) {
+// surface reads it. reason is only meaningful for StateWaiting; every
+// other State stores WaitReasonNone.
+func (c *Client) setState(s State, reason WaitReason) {
+	c.reason.Store(int32(reason))
+	if s != StateConnecting {
+		// NextAttempt is only meaningful while a timed redial is pending
+		// (StateConnecting); leaving that state — linked, waiting for a
+		// check-in, idle, or revoked — always clears it, even though a
+		// successful redial reaches StateLinked without ever calling wait
+		// again to clear it itself.
+		c.nextAttempt.Store(0)
+	}
 	if old := State(c.state.Swap(int32(s))); old != s {
 		logging.L().Infof("cloudlink: %s -> %s", old, s)
 	}
@@ -371,6 +414,28 @@ func (c *Client) relayArmed(contacted bool) {
 	if r != nil && c.o.Relay != nil { // no relay wired: still clear the pending request
 		c.o.Relay(r.scopes, r.version)
 	}
+}
+
+// State reports what the link is doing now (ut-docs#2895's status
+// surfaces): idle (no dial expected — periodic tier or not the main till),
+// connecting, linked, waiting for the next check-in, or revoked. Safe for
+// concurrent use.
+func (c *Client) State() State { return State(c.state.Load()) }
+
+// Reason is why State is StateWaiting; WaitReasonNone in any other State.
+// Safe for concurrent use.
+func (c *Client) Reason() WaitReason { return WaitReason(c.reason.Load()) }
+
+// NextAttempt is when Run will next try to dial, while State is
+// StateConnecting on a timed backoff; the zero time when that isn't known
+// (dialling right now, or State isn't StateConnecting). Safe for
+// concurrent use.
+func (c *Client) NextAttempt() time.Time {
+	ns := c.nextAttempt.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ns)
 }
 
 // CheckedIn is told every check-in's outcome (cloudsync.Hooks.AfterTick):
@@ -525,15 +590,15 @@ func (c *Client) Run(ctx context.Context) {
 		}
 		switch {
 		case !ok || t.Bearer == "" || t.StoreID == "" || uerr != nil:
-			c.setState(StateIdle)
+			c.setState(StateIdle, WaitReasonNone)
 			kind, delay = waitRecheck, c.o.RecheckEvery
 		case revokedFor != "" && revokedFor == t.Bearer:
-			c.setState(StateRevoked)
+			c.setState(StateRevoked, WaitReasonNone)
 			kind, delay = waitRecheck, c.o.RecheckEvery
 		default:
 			revokedFor = ""
 			if State(c.state.Load()) != StateWaiting {
-				c.setState(StateConnecting)
+				c.setState(StateConnecting, WaitReasonNone)
 			}
 			var res dialResult
 			res, attempt = c.attempt(ctx, t, u, attempt)
@@ -541,7 +606,7 @@ func (c *Client) Run(ctx context.Context) {
 			kind, delay = res.kind, res.delay
 			if res.revoked {
 				revokedFor = t.Bearer
-				c.setState(StateRevoked)
+				c.setState(StateRevoked, WaitReasonNone)
 				logging.L().Warnf("cloudlink: the cloud refused this till's credential; not dialling until it changes")
 			}
 		}
@@ -587,17 +652,25 @@ func (c *Client) attempt(ctx context.Context, t Target, u string, attempt int) (
 		}
 		var de *fleetlink.DialError
 		if errors.As(err, &de) {
-			c.setState(StateWaiting)
 			switch {
 			case de.Status == http.StatusUnauthorized:
+				// About to become StateRevoked in Run() (res.revoked):
+				// reason doesn't matter here.
+				c.setState(StateWaiting, WaitReasonNone)
 				return dialResult{kind: waitRecheck, delay: c.o.RecheckEvery, revoked: true}, 0
 			case de.RetryAfter > 0:
+				c.setState(StateWaiting, WaitReasonRetryAfter)
 				return dialResult{kind: waitTimer, delay: de.RetryAfter}, 0
 			default: // 403 not_main_till / tier_periodic, 409, 503 without Retry-After, 404…
+				c.setState(StateWaiting, waitReasonForRefusal(de))
 				logging.L().Infof("cloudlink: the cloud refused the link (HTTP %d); retrying after the next check-in", de.Status)
 				return dialResult{kind: waitCheckIn}, 0
 			}
 		}
+		// A transport failure (no HTTP answer) retries on a backoff timer:
+		// that is Reconnecting, even straight after a Waiting refusal whose
+		// redial this was (Run keeps StateWaiting through that dial).
+		c.setState(StateConnecting, WaitReasonNone)
 		attempt++
 		return dialResult{kind: waitTimer, delay: c.backoff(attempt)}, attempt
 	}
@@ -617,7 +690,7 @@ func (c *Client) attempt(ctx context.Context, t Target, u string, attempt int) (
 		// A full pod (1013) or a till over its budget (4029) is not cured by
 		// redialling on a timer: like a 503 without Retry-After, wait for the
 		// next check-in.
-		c.setState(StateWaiting)
+		c.setState(StateWaiting, waitReasonForClose(end.code))
 		logging.L().Infof("cloudlink: the cloud closed the link (%d); waiting for the next check-in", end.code)
 		return dialResult{kind: waitCheckIn}, 0
 	}
@@ -625,7 +698,7 @@ func (c *Client) attempt(ctx context.Context, t Target, u string, attempt int) (
 	// heartbeat, a reset — is ADR-0117 §7's abnormal close: U(0, 60 s)
 	// first, so a cloud deploy's cut doesn't bring every till back in the
 	// same second, growing while links keep dying young.
-	c.setState(StateConnecting)
+	c.setState(StateConnecting, WaitReasonNone)
 	d, next := c.abnormalRedial(time.Since(began), attempt)
 	if end.code == closeReplaced {
 		logging.L().Infof("cloudlink: the cloud replaced this link (4001); redialling in %v", d.Round(time.Second))
@@ -636,6 +709,35 @@ func (c *Client) attempt(ctx context.Context, t Target, u string, attempt int) (
 type linkEnd struct {
 	code  fleetlink.CloseCode
 	gated bool // we closed it: the gate said no, or the target changed
+}
+
+// waitReasonForRefusal classifies a refused upgrade (other than 401 and a
+// Retry-After) by the JSON error code ut-cloud's stores_link.go sends with
+// its 403s; any other refusal — no code, 409, 503, 404 — reads as busy.
+func waitReasonForRefusal(de *fleetlink.DialError) WaitReason {
+	if de.Status == http.StatusForbidden {
+		switch de.Code {
+		case "not_main_till":
+			return WaitReasonNotMainTill
+		case "tier_periodic":
+			return WaitReasonTierChanged
+		}
+	}
+	return WaitReasonBusy
+}
+
+// waitReasonForClose classifies a close code into WaitReason for the
+// status surfaces; only ever called with one of the four codes the
+// StateWaiting case above matches.
+func waitReasonForClose(code fleetlink.CloseCode) WaitReason {
+	switch code {
+	case closeNotMainTill:
+		return WaitReasonNotMainTill
+	case closeTierChanged:
+		return WaitReasonTierChanged
+	default: // closeTryAgain, closeRateLimited
+		return WaitReasonBusy
+	}
 }
 
 // runLink runs one open socket until it ends, on Run's goroutine.
@@ -688,7 +790,7 @@ func (c *Client) runLink(ctx context.Context, t Target, sess *fleetlink.Session)
 			}
 			return linkEnd{code: e.RemoteCode}
 		case v := <-c.helloIn:
-			c.setState(StateLinked)
+			c.setState(StateLinked, WaitReasonNone)
 			if v != c.lastVersion.Swap(v) {
 				c.wantRelay(nil, v)
 				c.kick()
@@ -780,11 +882,17 @@ func drain(ch chan struct{}) {
 }
 
 // wait sleeps for kind, cut short by ctx; false only when ctx ended.
+// nextAttempt (the "reconnecting" hint, ut-docs#2895) tracks only
+// waitTimer: the actual timed redial backoff, entered while StateConnecting
+// — not waitRecheck's idle/revoked gate re-read, which the status surfaces
+// never read a next-attempt time for.
 func (c *Client) wait(ctx context.Context, kind waitKind, d time.Duration) bool {
 	switch kind {
 	case waitNone:
+		c.nextAttempt.Store(0)
 		return ctx.Err() == nil
 	case waitCheckIn:
+		c.nextAttempt.Store(0)
 		select {
 		case <-ctx.Done():
 			return false
@@ -795,6 +903,7 @@ func (c *Client) wait(ctx context.Context, kind waitKind, d time.Duration) bool 
 	t := time.NewTimer(d)
 	defer t.Stop()
 	if kind == waitRecheck {
+		c.nextAttempt.Store(0)
 		select {
 		case <-ctx.Done():
 			return false
@@ -803,10 +912,13 @@ func (c *Client) wait(ctx context.Context, kind waitKind, d time.Duration) bool 
 		}
 		return true
 	}
+	c.nextAttempt.Store(time.Now().Add(d).UnixNano())
 	select {
 	case <-ctx.Done():
 		return false
 	case <-t.C:
+		// Dialling now: the time just passed must not linger as the hint.
+		c.nextAttempt.Store(0)
 		return true
 	}
 }
