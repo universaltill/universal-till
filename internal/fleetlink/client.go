@@ -610,7 +610,7 @@ func (c *Client) classify(ctx context.Context, p *Peer) linkEnd {
 // Client's peerHost side. These run on the link's reader/writer
 // goroutines: they only signal Run's goroutine.
 
-func (c *Client) helloFor(ctx context.Context, _ string) Hello {
+func (c *Client) helloFor(ctx context.Context, _ string) any {
 	var h Hello
 	if c.opts.Hello != nil {
 		h = c.opts.Hello(ctx)
@@ -625,7 +625,9 @@ func (c *Client) onFrame() (func(string), time.Duration) { return nil, 0 }
 
 func (c *Client) handler(string) RequestHandler { return nil }
 
-func (c *Client) gotHello(*Peer, Hello) { poke(c.helloIn) }
+func (c *Client) gotHello(*Peer, Hello, json.RawMessage) { poke(c.helloIn) }
+
+func (c *Client) oneWay(string) bool { return false }
 
 func (c *Client) gotMessage(_ *Peer, env Envelope) {
 	if env.Type != TypeSync {

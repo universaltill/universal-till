@@ -74,14 +74,20 @@ type Peer struct {
 // Client on an additional till. Every method is called on the link's reader
 // or writer goroutine and must not block.
 type peerHost interface {
-	// helloFor builds this side's hello (the writer's first frame).
-	helloFor(ctx context.Context, tillID string) Hello
+	// helloFor builds this side's hello payload (the writer's first
+	// frame): a Hello on the LAN link, a Session's own shape otherwise.
+	helloFor(ctx context.Context, tillID string) any
 	// onFrame is the throttled inbound-frame hook (nil: none).
 	onFrame() (fn func(tillID string), every time.Duration)
 	// handler answers inbound requests of type typ (nil: unknown_type).
 	handler(typ string) RequestHandler
-	// gotHello is told the peer's hello once it arrived.
-	gotHello(p *Peer, h Hello)
+	// gotHello is told the peer's hello once it arrived, decoded and raw
+	// (a Session speaks another hello shape and reads raw).
+	gotHello(p *Peer, h Hello, raw json.RawMessage)
+	// oneWay reports whether a type outside this package's own vocabulary
+	// is a one-way notification for gotMessage rather than a request
+	// (a Session's declared types; always false on the LAN link).
+	oneWay(typ string) bool
 	// gotMessage takes the one-directional notifications (report, sync,
 	// fleet, pairing); a side ignores the ones it should never receive.
 	gotMessage(p *Peer, env Envelope)
@@ -329,7 +335,7 @@ func (p *Peer) dispatch(env Envelope) bool {
 			p.hmu.Lock()
 			p.hello = &h
 			p.hmu.Unlock()
-			p.host.gotHello(p, h)
+			p.host.gotHello(p, h, env.Payload)
 		}
 	case TypeReport, TypeSync, TypeFleet, TypePairing:
 		p.host.gotMessage(p, env)
@@ -343,6 +349,10 @@ func (p *Peer) dispatch(env Envelope) bool {
 		p.shutdown(closeAfterBye, "bye", "")
 		return false
 	default:
+		if p.host.oneWay(env.Type) {
+			p.host.gotMessage(p, env)
+			break
+		}
 		p.handleRequest(env)
 	}
 	return true
