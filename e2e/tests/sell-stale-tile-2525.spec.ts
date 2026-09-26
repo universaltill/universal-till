@@ -53,6 +53,16 @@ async function seedTileItem(page: Page, tag: string, withModifier: boolean): Pro
 }
 
 async function openTile(page: Page, seeded: Seeded) {
+  // ut-docs#2765: an open sale screen now refreshes itself a few seconds
+  // after a catalog change made elsewhere (web/public/sell-screen-watch.js).
+  // This spec is about the OTHER path -- tapping a tile that is already
+  // stale -- so the watcher's probe is switched off here; otherwise a poll
+  // landing between the deactivate and the tap would remove the tile first.
+  // Answered with no version (the watcher then does nothing) rather than
+  // aborted: a failed request logs a console error watchConsole would flag.
+  await page.route('**/ui/buttons/version', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '{"data":null,"error":null}' }),
+  );
   await page.goto('/');
   // The category may sit in the overflow menu on a crowded shared DB, so
   // select its tab directly (Alpine's own @click) rather than by position.

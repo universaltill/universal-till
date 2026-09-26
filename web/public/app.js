@@ -2413,7 +2413,7 @@ window.utTabBarFade = function (el) {
     var rc = d.requestConfig;
     if (!rc || !rc.triggeringEvent) return;
     // ADR-0098: a boosted page navigation swaps #ut-page under its own
-    // same-document View Transition (the ADR-0097 root slide) -- one motion,
+    // same-document View Transition (the ADR-0097/ADR-0118 root push) -- one motion,
     // not the slide plus this ease on top.
     if (rc.boosted && d.target && d.target.id === 'ut-page') return;
     // `hx-swap="none"` swaps nothing, but htmx still fires afterSwap on the

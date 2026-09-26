@@ -365,7 +365,7 @@ func TestSellScreenCache_PriceBoundaryPassingMidRenderNotCached(t *testing.T) {
 	start := time.Now().UTC().Truncate(time.Second).Add(2 * time.Second)
 	f.exec(t, `INSERT INTO price_history (id, item_id, price, starts_at) VALUES ('ph-mid', 'itm-cola', 77, ?)`, start.Format("2006-01-02 15:04:05"))
 	rec := httptest.NewRecorder()
-	h.serveSellScreen(rec, httptest.NewRequest("GET", "/ui/buttons", nil), h.sellScreenKey("list", ""), func(w http.ResponseWriter, r *http.Request) bool {
+	h.serveSellScreen(rec, httptest.NewRequest("GET", "/ui/buttons", nil), h.sellScreenKey("list", ""), true, func(w http.ResponseWriter, r *http.Request) bool {
 		clean := h.renderList(w, r)
 		// The boundary passes after the render read its prices.
 		time.Sleep(time.Until(start) + 1100*time.Millisecond)
@@ -465,3 +465,47 @@ func benchmarkButtonsList(b *testing.B, cached bool) {
 
 func BenchmarkButtonsList_Uncached(b *testing.B) { benchmarkButtonsList(b, false) }
 func BenchmarkButtonsList_Cached(b *testing.B)   { benchmarkButtonsList(b, true) }
+
+// ut-docs#2765: GET /ui/buttons carries the sell_screen_version generation it
+// rendered (or was cached) at as X-UT-Sell-Version, so the sale screen's
+// watcher (web/public/sell-screen-watch.js) knows which catalog state the
+// grid on screen shows — on the fresh render AND on the cache hit (where the
+// header must still be the entry's version, served with one SELECT).
+func TestSellScreenCache_ListCarriesSellVersionHeader(t *testing.T) {
+	f := newSellScreenFixture(t)
+	h := f.handler(t, false, false)
+	gen := func() string {
+		t.Helper()
+		var g int64
+		if err := f.db.QueryRowContext(context.Background(), `SELECT generation FROM sell_screen_version WHERE id = 1`).Scan(&g); err != nil {
+			t.Fatalf("read sell_screen_version: %v", err)
+		}
+		return fmt.Sprint(g)
+	}
+	get := func() (string, int64) {
+		t.Helper()
+		atomic.StoreInt64(f.counter, 0)
+		rec := httptest.NewRecorder()
+		h.List(rec, httptest.NewRequest("GET", "/ui/buttons", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("List = %d", rec.Code)
+		}
+		return rec.Header().Get("X-UT-Sell-Version"), atomic.LoadInt64(f.counter)
+	}
+	fresh, freshQ := get()
+	if fresh == "" || fresh != gen() {
+		t.Fatalf("fresh render X-UT-Sell-Version = %q, want %q", fresh, gen())
+	}
+	cached, cachedQ := get()
+	if cachedQ != 1 || freshQ <= 1 {
+		t.Fatalf("second request ran %d SELECTs (first %d) — not a cache hit, this test proves nothing about the cached path", cachedQ, freshQ)
+	}
+	if cached != fresh {
+		t.Fatalf("cached render X-UT-Sell-Version = %q, want %q", cached, fresh)
+	}
+	f.exec(t, `UPDATE items SET is_active = 0 WHERE id = 'itm-tea'`)
+	after, _ := get()
+	if after == fresh || after != gen() {
+		t.Fatalf("after a catalog write X-UT-Sell-Version = %q (was %q), want the new generation %q", after, fresh, gen())
+	}
+}

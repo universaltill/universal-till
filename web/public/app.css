@@ -282,8 +282,16 @@ body.login-screen, body.tracking-screen { padding-inline-start: 0; }
    and, in headless Chromium, never revealed at all. The rules below are
    inert on a page that has not opted in.
 
-   WHAT MOVES: the ROOT snapshot — i.e. the whole document MINUS the two
-   named groups below — slides 4% and cross-fades over --ut-motion-ms.
+   WHAT MOVES (ADR-0118, amending ADR-0097 §4 — ut-docs#2496): the ROOT
+   snapshot — the whole document MINUS the two named groups below — as a
+   stacked-card push over --ut-motion-ms (400ms, eased
+   cubic-bezier(.32,.72,0,1): fast start, long soft landing). PUSH: the
+   outgoing page recedes (scales to .92, drops 3%, dims to .55) while the
+   incoming page slides in over it from the inline-end edge. POP (back):
+   the exact reverse — the page being left slides back out to the
+   inline-end on top, uncovering the previous page as it comes back up
+   from the receded state. The same rules drive the boosted same-document
+   transition and the cross-document fallback, on every engine.
    `.nav` (rail) and `.statusbar` are named view-transition groups pinned
    to "no animation, always drawn from the new page, above the sliding
    root", so the rail reads as fixed furniture (ut-docs#1830).
@@ -310,7 +318,7 @@ body.login-screen, body.tracking-screen { padding-inline-start: 0; }
    <html> itself, so `:root ::view-transition-new(x)` can never match.
    RTL mirrors the travel direction through --ut-nav-dir (one variable,
    not two mirrored sets of keyframes), no left/right literal anywhere. */
-:root { --ut-nav-dir: 1; --ut-motion-ms: 200ms; }
+:root { --ut-nav-dir: 1; --ut-motion-ms: 400ms; --ut-motion-ease: cubic-bezier(.32,.72,0,1); }
 [dir="rtl"] { --ut-nav-dir: -1; }
 .nav        { view-transition-name: ut-rail; }
 .statusbar  { view-transition-name: ut-statusbar; }
@@ -327,22 +335,42 @@ body.login-screen, body.tracking-screen { padding-inline-start: 0; }
 ::view-transition-old(ut-rail), ::view-transition-old(ut-statusbar) { opacity: 0; }
 /* `.nav` precedes <main> in DOM order, so without an explicit stacking
    order the sliding root snapshot paints OVER the rail/statusbar for the
-   ~200ms it animates -- confirmed live, this is the fix. */
+   400ms it animates -- confirmed live, this is the fix. */
 ::view-transition-group(ut-rail), ::view-transition-group(ut-statusbar) { animation-duration: 0s; z-index: 2; }
-/* Content = the root pair: push = new slides in from the inline-end, old
-   slides out to the inline-start; pop = mirrored. Transform + opacity only
-   (compositor-only, no layout) -- 4% travel keeps it legible without a
-   long path. */
-::view-transition-old(root) { animation: var(--ut-motion-ms) cubic-bezier(.2,.8,.2,1) both ut-page-out; }
-::view-transition-new(root) { animation: var(--ut-motion-ms) cubic-bezier(.2,.8,.2,1) both ut-page-in; }
-@keyframes ut-page-in  { from { opacity: 0; transform: translateX(calc(var(--ut-nav-dir) * 4%)); } }
-@keyframes ut-page-out { to   { opacity: 0; transform: translateX(calc(var(--ut-nav-dir) * -4%)); } }
-:root:active-view-transition-type(back)::view-transition-new(root) { animation-name: ut-page-in-back; }
-:root:active-view-transition-type(back)::view-transition-old(root) { animation-name: ut-page-out-back; }
-html[data-nav-dir="pop"]::view-transition-new(root) { animation-name: ut-page-in-back; }
-html[data-nav-dir="pop"]::view-transition-old(root) { animation-name: ut-page-out-back; }
-@keyframes ut-page-in-back  { from { opacity: 0; transform: translateX(calc(var(--ut-nav-dir) * -4%)); } }
-@keyframes ut-page-out-back { to   { opacity: 0; transform: translateX(calc(var(--ut-nav-dir) * 4%)); } }
+/* Never block input (ADR-0118): the transition overlay sits on top of the
+   real, already-swapped DOM for the whole 400ms; without this a tap during
+   the motion hits the overlay (retargeted to <html>) and is lost. */
+::view-transition { pointer-events: none; }
+/* Content = the root pair (ADR-0118). Transform + opacity only
+   (compositor-only, no layout); travel mirrors under RTL through
+   --ut-nav-dir, no left/right anywhere. `mix-blend-mode: normal`: the UA
+   blends the pair with plus-lighter (right for a cross-fade whose
+   opacities sum to 1), but here an opaque page slides OVER a dimmed one —
+   additive blending would flash the overlap brighter, worst on dark
+   themes. The dim reads against the ::view-transition backdrop below,
+   which is only ever visible around the receded (scaled) page. */
+::view-transition { background: #000; }
+::view-transition-old(root), ::view-transition-new(root) {
+  mix-blend-mode: normal;
+  animation-duration: var(--ut-motion-ms);
+  animation-timing-function: var(--ut-motion-ease);
+  animation-fill-mode: both;
+  transform-origin: 50% 50%;
+}
+/* Push: old recedes underneath, new slides in on top (DOM order of the
+   pair already paints new above old). */
+::view-transition-old(root) { animation-name: ut-page-recede; }
+::view-transition-new(root) { animation-name: ut-page-slide-in; }
+@keyframes ut-page-slide-in { from { transform: translateX(calc(var(--ut-nav-dir) * 100%)); } to { transform: none; } }
+@keyframes ut-page-recede   { from { transform: none; opacity: 1; } to { transform: translateY(3%) scale(.92); opacity: .55; } }
+/* Pop: the page being left (old) slides back out ON TOP; the previous page
+   (new) comes back up from the receded state underneath it. */
+:root:active-view-transition-type(back)::view-transition-old(root) { animation-name: ut-page-slide-out; z-index: 1; }
+:root:active-view-transition-type(back)::view-transition-new(root) { animation-name: ut-page-return; }
+html[data-nav-dir="pop"]::view-transition-old(root) { animation-name: ut-page-slide-out; z-index: 1; }
+html[data-nav-dir="pop"]::view-transition-new(root) { animation-name: ut-page-return; }
+@keyframes ut-page-slide-out { from { transform: none; } to { transform: translateX(calc(var(--ut-nav-dir) * 100%)); } }
+@keyframes ut-page-return    { from { transform: translateY(3%) scale(.92); opacity: .55; } to { transform: none; opacity: 1; } }
 
 /* In-page htmx swaps ease instead of blinking -- zero latency: no swap
    delay, no settle-timing dependency (ut-docs#239's defaultSettleDelay:0

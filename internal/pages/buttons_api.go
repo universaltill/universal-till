@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"html"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/ui"
 )
@@ -133,6 +135,31 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 			Locale:       locale,
 		}
 		btnHTTP.List(w, r)
+	})
+
+	// ut-docs#2765: the open sale screen's live-refresh probe. A catalog
+	// change made outside the sale screen's own document (another till or
+	// tab, a my./cloud catalog push, a main-till -> replica admin sync pull)
+	// never reaches it through HX-Trigger, so web/public/sell-screen-watch.js
+	// polls this every few seconds while the screen is visible and refetches
+	// the grid when the value differs from the X-UT-Sell-Version its
+	// /ui/buttons render carried. One single-row read, no render; migrations
+	// 042/047 move it on catalog writes only, never on a sale. A missing row
+	// reads as version 0.
+	mux.HandleFunc("GET /ui/buttons/version", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		v, _, err := d.BtnStore.SellGeneration(r.Context())
+		if err != nil {
+			logging.L().Warnf("buttons version: %v", err)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": map[string]string{
+				"code":    "sell_version_unavailable",
+				"message": httpx.T(httpx.ResolveLocale(w, r), buttonsErrorKey),
+			}})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]int64{"version": v}, "error": nil})
 	})
 
 	// ut-docs#2499 (absorbing ut-docs#2372): the category-tiles mode's popup

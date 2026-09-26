@@ -13,7 +13,9 @@ import (
 // table — items, categories, shortcut_buttons, settings, …) AND
 // sell_screen_version.generation, migration 042's counter for the two tables
 // the sell screen renders from that the admin counter does NOT cover:
-// price_history (never synced, ADR-0099) and item_images (photos, D2 limit).
+// price_history (never synced, ADR-0099) and item_images (photos, D2 limit)
+// — and, since migration 047 (ut-docs#2765), every other catalog table the
+// tiles render from too (sell_screen_catalog_version_test.go).
 // A table the tiles read that neither counter sees would serve stale tiles
 // until the cache's max-age safety net — these tests pin both halves.
 
@@ -68,8 +70,10 @@ func TestSellScreenRepo_VersionMovesOnItemAndPriceChanges(t *testing.T) {
 	if admin2 == admin1 {
 		t.Fatalf("item deactivate did not move the admin half of the version (%d)", admin2)
 	}
-	if sell1 != sell0 {
-		t.Fatalf("an item write moved the sell half (%d -> %d); only price_history/item_images should", sell0, sell1)
+	// ut-docs#2765 (migration 047): the sell half now moves on catalog
+	// writes too — it is the open sale screen's live-refresh signal.
+	if sell1 == sell0 {
+		t.Fatalf("an item write did not move the sell half (%d); 047's items triggers should", sell1)
 	}
 	mustExec(t, d, `INSERT INTO price_history (id, item_id, price) VALUES ('ph1', 'itm1', 99)`)
 	_, sell2, _, _ := repo.SellScreenVersion(ctx)

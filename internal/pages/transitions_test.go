@@ -105,7 +105,7 @@ func TestAppCSSDoesNotOptInStandalonePages(t *testing.T) {
 	if regexp.MustCompile(`(?m)^\s*@view-transition\s*\{`).MatchString(css) {
 		t.Fatalf("app.css must not contain an @view-transition rule — the opt-in (and its reduced-motion override) belong in base.html's <head> only")
 	}
-	for _, want := range []string{"--ut-motion-ms", "::view-transition-new(root)", "@keyframes ut-page-in"} {
+	for _, want := range []string{"--ut-motion-ms", "::view-transition-new(root)", "@keyframes ut-page-slide-in"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("app.css must still carry the transition animation rules (%q)", want)
 		}
@@ -130,7 +130,7 @@ func TestAppCSSNamesOnlyTheFixedRailAndStatusbar(t *testing.T) {
 	}
 	// It is the ROOT pair that slides — the whole document minus the two
 	// named groups — never a named <main>.
-	if !strings.Contains(css, "::view-transition-new(root) { animation: var(--ut-motion-ms)") {
+	if !strings.Contains(css, "::view-transition-new(root) { animation-name: ut-page-slide-in; }") {
 		t.Errorf("app.css must animate ::view-transition-new(root) with the page slide")
 	}
 	// A `view-transition-name` gives its element a stacking context with
@@ -156,9 +156,102 @@ func TestAppCSSNamesOnlyTheFixedRailAndStatusbar(t *testing.T) {
 
 func TestAppCSSHasPageTransitionKeyframes(t *testing.T) {
 	css := readAppCSS(t)
-	for _, want := range []string{"@keyframes ut-page-in", "@keyframes ut-page-out"} {
+	for _, want := range []string{"@keyframes ut-page-slide-in", "@keyframes ut-page-recede", "@keyframes ut-page-slide-out", "@keyframes ut-page-return"} {
 		if !strings.Contains(css, want) {
 			t.Errorf("app.css missing %q", want)
+		}
+	}
+}
+
+// TestAppCSSPageMotionIsTheStackedCardPush pins ADR-0118 (amending ADR-0097
+// §4, ut-docs#2496 reopened): 400ms on the iOS-like
+// cubic-bezier(.32,.72,0,1); push = the incoming page slides in from the
+// inline-end edge OVER the outgoing one, which recedes (scale .92, drops
+// 3%, dims); pop = the exact reverse, with the old page stacked on top.
+// Transform + opacity only; the travel mirrors via --ut-nav-dir, never a
+// left/right literal.
+func TestAppCSSPageMotionIsTheStackedCardPush(t *testing.T) {
+	css := readAppCSS(t)
+	for _, want := range []string{
+		"--ut-motion-ms: 400ms",
+		"--ut-motion-ease: cubic-bezier(.32,.72,0,1)",
+		"animation-duration: var(--ut-motion-ms);",
+		"animation-timing-function: var(--ut-motion-ease);",
+		"@keyframes ut-page-slide-in { from { transform: translateX(calc(var(--ut-nav-dir) * 100%)); } to { transform: none; } }",
+		"@keyframes ut-page-recede   { from { transform: none; opacity: 1; } to { transform: translateY(3%) scale(.92); opacity: .55; } }",
+		"@keyframes ut-page-slide-out { from { transform: none; } to { transform: translateX(calc(var(--ut-nav-dir) * 100%)); } }",
+		"@keyframes ut-page-return    { from { transform: translateY(3%) scale(.92); opacity: .55; } to { transform: none; opacity: 1; } }",
+		"::view-transition-old(root) { animation-name: ut-page-recede; }",
+		// Pop: the page being left must paint ABOVE the returning one.
+		":root:active-view-transition-type(back)::view-transition-old(root) { animation-name: ut-page-slide-out; z-index: 1; }",
+		`html[data-nav-dir="pop"]::view-transition-old(root) { animation-name: ut-page-slide-out; z-index: 1; }`,
+		":root:active-view-transition-type(back)::view-transition-new(root) { animation-name: ut-page-return; }",
+		`html[data-nav-dir="pop"]::view-transition-new(root) { animation-name: ut-page-return; }`,
+	} {
+		if !strings.Contains(css, want) {
+			t.Errorf("app.css page motion (ADR-0118) missing %q", want)
+		}
+	}
+	for _, gone := range []string{"--ut-motion-ms: 200ms", "@keyframes ut-page-in ", "@keyframes ut-page-out ", "* 4%)"} {
+		if strings.Contains(css, gone) {
+			t.Errorf("app.css still carries the pre-ADR-0118 motion (%q)", gone)
+		}
+	}
+	// Compositor-only: the page keyframes animate transform/opacity and
+	// nothing else (no layout property, no filter).
+	kf := regexp.MustCompile(`@keyframes (ut-page-[a-z-]+)\s*\{(.*)\}\s*$`)
+	prop := regexp.MustCompile(`([a-z-]+)\s*:`)
+	for _, line := range strings.Split(css, "\n") {
+		m := kf.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		for _, p := range prop.FindAllStringSubmatch(m[2], -1) {
+			if p[1] != "transform" && p[1] != "opacity" {
+				t.Errorf("@keyframes %s animates %q — page motion is transform + opacity only (ADR-0118)", m[1], p[1])
+			}
+		}
+	}
+	block := extractMotionRules(css)
+	if block == "" {
+		t.Fatalf("app.css: could not locate the ADR-0118 root-pair motion rules")
+	}
+	for _, lit := range []string{"translateX(-", "translateX(100%", "left:", "right:"} {
+		if strings.Contains(block, lit) {
+			t.Errorf("page motion must mirror via --ut-nav-dir only, found %q", lit)
+		}
+	}
+}
+
+// extractMotionRules returns the ADR-0118 root-pair rules (from the
+// pointer-events rule to the last page keyframe).
+func extractMotionRules(css string) string {
+	a := strings.Index(css, "::view-transition { pointer-events: none; }")
+	b := strings.Index(css, "@keyframes ut-page-return")
+	if a < 0 || b < a {
+		return ""
+	}
+	return css[a:b]
+}
+
+// TestAppCSSViewTransitionNeverBlocksInput: the ::view-transition overlay
+// covers the real (already swapped) DOM for the whole 400ms; it must not
+// take pointer events (ADR-0118). Chromium still retargets to <html> during
+// a transition, so base.html also ends the transition on pointerdown —
+// both halves are pinned (the behaviour is e2e
+// page-snapshot-no-jump-2496.spec.ts).
+func TestAppCSSViewTransitionNeverBlocksInput(t *testing.T) {
+	if !strings.Contains(readAppCSS(t), "::view-transition { pointer-events: none; }") {
+		t.Errorf("app.css must set ::view-transition { pointer-events: none; }")
+	}
+	html := readBaseHTML(t)
+	for _, want := range []string{
+		"window.addEventListener('pointerdown', function () {",
+		"try { vt.skipTransition(); } catch (e) { /* already done */ }",
+		"var el = document.elementFromPoint(e.clientX, e.clientY);",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("base.html must end a running transition on pointerdown and hand the click on (missing %q)", want)
 		}
 	}
 }
@@ -346,10 +439,16 @@ func TestAppCSSDirectionSelectorsHaveNoDescendantCombinator(t *testing.T) {
 	}
 	// And the fixed furniture must not be blended additively: with
 	// `animation: none` on both images, the UA's plus-lighter blend adds two
-	// fully-opaque snapshots and the background flashes brighter for 200ms.
+	// fully-opaque snapshots and the background flashes brighter for the
+	// whole transition. Same for the root pair (ADR-0118): an opaque page
+	// sliding over a dimmed one would flash the overlap brighter.
 	fixed := extractBlock(t, css, "::view-transition-old(ut-statusbar), ::view-transition-new(ut-statusbar)")
 	if !strings.Contains(fixed, "mix-blend-mode: normal") {
 		t.Errorf("the rail/statusbar/root old+new images need mix-blend-mode: normal alongside animation: none; got %q", fixed)
+	}
+	root := extractBlock(t, css, "::view-transition-old(root), ::view-transition-new(root)")
+	if !strings.Contains(root, "mix-blend-mode: normal") {
+		t.Errorf("the root old+new images need mix-blend-mode: normal (ADR-0118); got %q", root)
 	}
 }
 
@@ -379,14 +478,14 @@ func TestBaseHTMLPageRevealSkipsReloads(t *testing.T) {
 	}
 }
 
-// TestBaseHTMLPageRevealHasASkipWatchdog: the motion is 200ms; a transition
-// still running long after that is jank or a stuck engine, and while it
-// runs the live page takes no input. Both transition paths (pagereveal and
-// the boosted same-document swap) must hand the transition to the one
-// shared watchdog, which skips it ~600ms after the MOTION starts and clears
-// on finish.
+// TestBaseHTMLPageRevealHasASkipWatchdog: the motion is 400ms (ADR-0118); a
+// transition still running long after that is jank or a stuck engine, and
+// while it runs the live page takes no input. Both transition paths
+// (pagereveal and the boosted same-document swap) must hand the transition
+// to the one shared watchdog, which skips it 1000ms after the MOTION starts
+// and clears on finish.
 //
-// ut-docs#2496: the 600ms timer must be armed on vt.ready, never at
+// ut-docs#2496: the post-ready timer must be armed on vt.ready, never at
 // creation. A same-document transition is created before htmx swaps the
 // page in; on the pilot tablet that swap ate most of a creation-time 600ms
 // budget and the slide was cut short or skipped ("not like Apple anymore").
@@ -396,7 +495,7 @@ func TestBaseHTMLPageRevealHasASkipWatchdog(t *testing.T) {
 	for _, want := range []string{
 		"UT.vtWatchdog = function (vt) {",
 		"var backstop = setTimeout(skip, 2000);",
-		"vt.ready.then(function () { clearTimeout(backstop); guard = setTimeout(skip, 600); }, clear);",
+		"vt.ready.then(function () { clearTimeout(backstop); guard = setTimeout(skip, 1000); }, clear);",
 		"vt.finished.then(clear, clear);",
 	} {
 		if !strings.Contains(html, want) {
