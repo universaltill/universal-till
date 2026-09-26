@@ -62,12 +62,17 @@ func main() {
 	raw, _ := io.ReadAll(os.Stdin)
 	var event struct {
 		Payload struct {
-			URL  string   `json:"url"`
-			Mode string   `json:"mode"`
-			URLs []string `json:"urls"`
+			URL     string   `json:"url"`
+			Mode    string   `json:"mode"`
+			URLs    []string `json:"urls"`
+			Method  string   `json:"method"`   // default GET
+			BodyB64 string   `json:"body_b64"` // request body, base64
 		} `json:"payload"`
 	}
 	_ = json.Unmarshal(raw, &event)
+	if event.Payload.Method == "" {
+		event.Payload.Method = "GET"
+	}
 	logf("guest running, url=%s mode=%s", event.Payload.URL, event.Payload.Mode)
 
 	if event.Payload.Mode == "http_retry" {
@@ -94,7 +99,7 @@ func main() {
 
 	// HTTP call (host enforces net:<host> permission).
 	reqJSON, _ := json.Marshal(map[string]any{
-		"method": "GET", "url": event.Payload.URL, "body_b64": "",
+		"method": event.Payload.Method, "url": event.Payload.URL, "body_b64": event.Payload.BodyB64,
 	})
 	rp, rl := ptrOf(reqJSON)
 	buf := make([]byte, 300*1024)

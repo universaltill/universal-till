@@ -14,6 +14,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -888,5 +889,91 @@ func TestHandleExportPlugin_StreamsImportedBundle(t *testing.T) {
 	}
 	if rec.Body.Len() == 0 {
 		t.Fatalf("expected a non-empty exported bundle")
+	}
+}
+
+// ut-docs#2891 security review M2: the path id and the body version reached
+// filepath.Join in RollbackManager unvalidated. The handlers now refuse an
+// unsafe id or version with 400 before touching the disk or the DB.
+func TestPluginPathHandlers_RejectTraversal_400(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	isolatePluginsDir(t)
+	db := openRealSchemaPagesDB(t)
+	seedInstalledPlugin(t, db, "com.test.rb", "1.0.0")
+	deps := newPluginAPIDeps(t, db, nil)
+
+	badIDs := []string{"..", "%2e%2e", "../com.other.plugin", "com.test.rb/../..", `..\x`}
+	for _, id := range badIDs {
+		req := httptest.NewRequest(http.MethodPost, "/api/plugins/x/rollback", strings.NewReader(`{"version":"1.0.0"}`))
+		req.SetPathValue("id", id)
+		rec := httptest.NewRecorder()
+		handleRollbackPlugin(deps)(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("rollback id %q: status %d, want 400", id, rec.Code)
+		}
+
+		req = httptest.NewRequest(http.MethodGet, "/api/plugins/x/versions", nil)
+		req.SetPathValue("id", id)
+		rec = httptest.NewRecorder()
+		handleListPluginVersions(deps)(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("versions id %q: status %d, want 400", id, rec.Code)
+		}
+
+		req = httptest.NewRequest(http.MethodGet, "/api/plugins/x/export?version=1.0.0", nil)
+		req.SetPathValue("id", id)
+		rec = httptest.NewRecorder()
+		handleExportPlugin(deps)(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("export id %q: status %d, want 400", id, rec.Code)
+		}
+	}
+
+	for _, v := range []string{"../../com.other.plugin/1.0.0", "..", "%2e%2e", "/etc/passwd"} {
+		body, _ := json.Marshal(map[string]string{"version": v})
+		req := httptest.NewRequest(http.MethodPost, "/api/plugins/com.test.rb/rollback", bytes.NewReader(body))
+		req.SetPathValue("id", "com.test.rb")
+		rec := httptest.NewRecorder()
+		handleRollbackPlugin(deps)(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("rollback version %q: status %d, want 400", v, rec.Code)
+		}
+
+		req = httptest.NewRequest(http.MethodGet, "/api/plugins/com.test.rb/export?version="+url.QueryEscape(v), nil)
+		req.SetPathValue("id", "com.test.rb")
+		rec = httptest.NewRecorder()
+		handleExportPlugin(deps)(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("export version %q: status %d, want 400", v, rec.Code)
+		}
+	}
+}
+
+// ut-docs#2891 M2 sweep: uninstall's hand-rolled "/, \ or .." check let the
+// id "." through, and the handler then RemoveAll'd paths.Plugins()/"." —
+// every installed plugin's files. It now uses the shared validator.
+func TestHandleUninstallPlugin_DotID_400_KeepsPluginFiles(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	isolatePluginsDir(t)
+	db := openRealSchemaPagesDB(t)
+	deps := newPluginAPIDeps(t, db, nil)
+	keep := filepath.Join(paths.Plugins(), "com.test.keep", "1.0.0", "manifest.json")
+	if err := os.MkdirAll(filepath.Dir(keep), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keep, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{".", "COM.TEST.KEEP", "-x"} {
+		req := httptest.NewRequest(http.MethodPost, "/api/plugins/x/uninstall", nil)
+		req.SetPathValue("id", id)
+		rec := httptest.NewRecorder()
+		handleUninstallPlugin(deps)(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("uninstall id %q: status %d, want 400", id, rec.Code)
+		}
+		if _, err := os.Stat(keep); err != nil {
+			t.Fatalf("uninstall id %q removed another plugin's files: %v", id, err)
+		}
 	}
 }

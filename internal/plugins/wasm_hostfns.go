@@ -42,6 +42,9 @@ const httpResponseCap = 256 << 10 // response body cap (base64-decoded bytes)
 type hostState struct {
 	pluginID string
 	db       *sql.DB
+	// httpClient is the http_request egress client (tests inject a stubbed
+	// resolver/dialer); nil → defaultPluginHTTPClient.
+	httpClient *http.Client
 
 	// httpCacheReq/httpCacheResp cache the most recently completed
 	// hostHTTPRequest call for THIS event (ut-docs#754). WasmRuntime.HandleEvent
@@ -258,17 +261,26 @@ func hostHTTPRequest(ctx context.Context, m api.Module, reqPtr, reqLen, dstPtr, 
 		return hostErrInvalid
 	}
 	if !hostAllowedScheme(u) {
+		logging.L().Infof("[wasm:%s] http egress denied: host %s: scheme %s (https only; plain http only to loopback)", s.pluginID, u.Hostname(), u.Scheme)
 		return hostErrInvalid
 	}
-	// Grant the call when the plugin holds either the exact host permission
+	// Name check: the plugin holds either the exact host permission
 	// (net:<host>) or the wildcard (net:*). Configurable connectors (ERP
 	// webhooks, ADR-0014) don't know their target host until install-time
 	// settings, so they declare net:* and are review-gated accordingly.
-	if err := CheckPermission(ctx, s.db, s.pluginID, "net:"+u.Hostname()); err != nil {
-		if err2 := CheckPermission(ctx, s.db, s.pluginID, "net:*"); err2 != nil {
-			return hostErrDenied
-		}
+	// net:* reaches PUBLIC addresses only; a LAN/loopback target needs the
+	// exact grant — enforced at dial time against the resolved IP, redirects
+	// included (wasm_egress.go, ut-docs#2891).
+	exact, err := netPermission(ctx, s.db, s.pluginID, u.Hostname())
+	if err != nil {
+		logEgressDenied(s.pluginID, err)
+		return hostErrDenied
 	}
+	grants := &egressGrants{exact: map[string]bool{}}
+	if exact {
+		grants.add(u.Hostname())
+	}
+	ctx = withEgressGrants(ctx, grants)
 	body, err := base64.StdEncoding.DecodeString(req.BodyB64)
 	if err != nil {
 		return hostErrInvalid
@@ -284,9 +296,24 @@ func hostHTTPRequest(ctx context.Context, m api.Module, reqPtr, reqLen, dstPtr, 
 		httpReq.Header.Set(k, v)
 	}
 	httpReq.Header.Set("User-Agent", "UniversalTill-plugin/"+s.pluginID)
-	resp, err := http.DefaultClient.Do(httpReq)
+	client := s.httpClient
+	if client == nil {
+		client = defaultPluginHTTPClient
+	}
+	resp, err := client.Do(httpReq)
 	if err != nil {
-		logging.L().Infof("[wasm:%s] http %s %s failed: %v", s.pluginID, req.Method, u.Hostname(), err)
+		if errors.Is(err, errEgressDenied) {
+			logEgressDenied(s.pluginID, err)
+			return hostErrDenied
+		}
+		// *url.Error's message embeds the full URL (query strings can hold
+		// tokens) — log the host and the underlying cause only.
+		cause := err
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			cause = ue.Err
+		}
+		logging.L().Infof("[wasm:%s] http %s %s failed: %v", s.pluginID, req.Method, u.Hostname(), cause)
 		return hostErrInternal
 	}
 	defer resp.Body.Close()
@@ -333,6 +360,17 @@ func hostAllowedScheme(u *url.URL) bool {
 	default:
 		return false
 	}
+}
+
+// logEgressDenied logs a refused request at Info: plugin id, host, reason —
+// never the URL or body.
+func logEgressDenied(pluginID string, err error) {
+	var de *egressDeniedError
+	if errors.As(err, &de) {
+		logging.L().Infof("[wasm:%s] %s", pluginID, de.Error())
+		return
+	}
+	logging.L().Infof("[wasm:%s] plugin egress denied", pluginID)
 }
 
 // pluginHasNetPermission reports whether any granted permission is net:*,

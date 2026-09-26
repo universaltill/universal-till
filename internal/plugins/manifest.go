@@ -175,13 +175,25 @@ func ParseManifest(r io.Reader) (*Manifest, error) {
 	if m.Version == "" {
 		return nil, fmt.Errorf("manifest missing required field: version")
 	}
+	if err := validatePluginID(m.ID); err != nil {
+		return nil, err
+	}
+	if err := validatePluginVersion(m.Version); err != nil {
+		return nil, err
+	}
 	// Asset-only plugins (runtime "none", e.g. themes) ship no executable, so
 	// entrypoint is only required for runnable runtimes.
 	if m.Entrypoint == "" && m.Runtime != "none" {
 		return nil, fmt.Errorf("manifest missing required field: entrypoint")
 	}
 	if m.Runtime == "" {
-		m.Runtime = "go" // default
+		// ut-docs#2891: the old default was "go" — the out-of-process
+		// runtime, the most privileged one — so a manifest that merely
+		// forgot the field ran unsandboxed. Older signed manifests rely on
+		// a default, so it is now the sandbox, which fails closed if the
+		// entrypoint is not a wasm module.
+		m.Runtime = defaultManifestRuntime
+		warnDefaultRuntimeOnce(m.ID)
 	}
 	// Entry types must be in the canonical taxonomy — fail here with a clear
 	// message instead of a DB CHECK-constraint error at persist time.

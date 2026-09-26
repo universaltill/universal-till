@@ -51,6 +51,11 @@ type VersionInfo struct {
 // web/ui/pages/plugins.html's "Versions" control surfaces it to an operator
 // (ut-docs#2239).
 func (rm *RollbackManager) GetVersionHistory(ctx context.Context, pluginID string) ([]VersionInfo, error) {
+	// The id reaches filepath.Join below; the HTTP handler validates it too,
+	// this is the defence-in-depth copy (ut-docs#2891 review M2).
+	if err := validatePluginID(pluginID); err != nil {
+		return nil, err
+	}
 	// Check plugin directory
 	pluginDir := filepath.Join(rm.pluginBaseDir, pluginID, "versions")
 	repo := data.NewPluginRepo(rm.db)
@@ -96,6 +101,16 @@ func (rm *RollbackManager) GetVersionHistory(ctx context.Context, pluginID strin
 func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion, actorID string) error {
 	log := logging.L()
 	repo := data.NewPluginRepo(rm.db)
+
+	// Both reach filepath.Join and targetVersion is then persisted as the
+	// active version — a "../../<other plugin>/<v>" would activate another
+	// plugin's tree under this id (ut-docs#2891 review M2).
+	if err := validatePluginID(pluginID); err != nil {
+		return err
+	}
+	if err := validatePluginVersion(targetVersion); err != nil {
+		return err
+	}
 
 	// Verify target version exists
 	targetPath := filepath.Join(rm.pluginBaseDir, pluginID, "versions", targetVersion)
@@ -263,6 +278,14 @@ func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion
 func (rm *RollbackManager) StoreVersion(pluginID, version, sourcePath string) error {
 	log := logging.L()
 
+	// StoreVersion RemoveAll()s versionDir before copying — never let an id
+	// or version steer that outside the plugin tree (ut-docs#2891 M2).
+	if err := validatePluginID(pluginID); err != nil {
+		return err
+	}
+	if err := validatePluginVersion(version); err != nil {
+		return err
+	}
 	versionDir := filepath.Join(rm.pluginBaseDir, pluginID, "versions", version)
 
 	if sourcePath != "" && filepath.Clean(sourcePath) != filepath.Clean(versionDir) {

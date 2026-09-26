@@ -271,6 +271,9 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 		log.Printf("port %s was busy — listening on %s instead", cfg.ListenAddr, actualAddr)
 	}
 	cfg.ListenAddr = actualAddr
+	// A fallback bind may have moved the port; plugin egress must refuse
+	// the one really serving (ut-docs#2891).
+	plugins.SetTillListenAddr(actualAddr)
 
 	// Graceful shutdown when context is cancelled. Registered with wg because
 	// net/http's Shutdown contract only guarantees Serve returns once

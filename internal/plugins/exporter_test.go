@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -146,5 +147,20 @@ func TestExport_MissingManifest(t *testing.T) {
 	})
 	if err == nil {
 		t.Error("expected error when manifest.json is missing")
+	}
+}
+
+// ut-docs#2891 review M2 sweep: the prefix check alone let id/version pairs
+// that resolve INSIDE the base through (".." as the version → the whole
+// plugins dir; "a/b" → a sub-tree of another plugin). Both are validated.
+func TestExport_RejectsUnsafeIDOrVersion(t *testing.T) {
+	base := t.TempDir()
+	writeTestFile(t, filepath.Join(base, "com.a", "1.0.0", "manifest.json"), `{"id":"com.a","version":"1.0.0"}`)
+	e := NewExporter(base)
+	for _, c := range [][2]string{{"com.a", ".."}, {"com.a/1.0.0", "."}, {"x", "../com.a/1.0.0"}, {"COM.A", "1.0.0"}} {
+		_, err := e.Export(context.Background(), &ExportRequest{PluginID: c[0], Version: c[1], DestPath: filepath.Join(t.TempDir(), "o.tar.gz")})
+		if err == nil || !strings.Contains(err.Error(), "invalid plugin") {
+			t.Errorf("Export(%q, %q) = %v, want an invalid id/version error", c[0], c[1], err)
+		}
 	}
 }

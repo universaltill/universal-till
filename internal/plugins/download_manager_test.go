@@ -247,3 +247,35 @@ func TestIsRetryable(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#2891 review M2 sweep: the .part file name is built from the
+// listing id a manager's HTTP request supplies. It must stay inside tmpDir.
+func TestDownloadPartFileStaysInTmpDir(t *testing.T) {
+	content := []byte("bundle")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(content)
+	}))
+	defer srv.Close()
+	root := t.TempDir()
+	tmp := filepath.Join(root, "a", "b", "tmp")
+	dm := NewDownloadManager(tmp)
+	res, err := dm.Download(context.Background(), &DownloadRequest{
+		URL: srv.URL, PluginID: "../../escaped", ExpectedChecksum: sha256Hex(content),
+	})
+	if err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	if filepath.Dir(res.FilePath) != filepath.Clean(tmp) {
+		t.Fatalf("part file %s escaped tmp dir %s", res.FilePath, tmp)
+	}
+	if _, err := os.Stat(filepath.Join(root, "a", "escaped.part")); err == nil {
+		t.Fatal("a traversal listing id wrote outside the tmp dir")
+	}
+	// CleanupPartFile must resolve the same (sanitized) name.
+	if err := dm.CleanupPartFile("../../escaped"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(res.FilePath); !os.IsNotExist(err) {
+		t.Fatal("CleanupPartFile did not remove the sanitized part file")
+	}
+}

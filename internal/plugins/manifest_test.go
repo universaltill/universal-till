@@ -130,7 +130,11 @@ func TestParseManifest_MissingRequiredFields(t *testing.T) {
 	}
 }
 
-func TestParseManifest_DefaultRuntime(t *testing.T) {
+// ut-docs#2891: a manifest that omits "runtime" used to default to "go" —
+// the out-of-process runtime, the most privileged one. Older signed
+// manifests rely on a default, so it now defaults to the sandbox ("wasm"),
+// which fails closed if the entrypoint is not a wasm module.
+func TestParseManifest_MissingRuntimeNeverProcess(t *testing.T) {
 	manifestJSON := `{
 		"id": "test",
 		"name": "Test",
@@ -142,9 +146,11 @@ func TestParseManifest_DefaultRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseManifest failed: %v", err)
 	}
-
-	if m.Runtime != "go" {
-		t.Errorf("expected default runtime 'go', got '%s'", m.Runtime)
+	if m.Runtime == "go" {
+		t.Fatal("a manifest without runtime got the process runtime \"go\"")
+	}
+	if m.Runtime != "wasm" {
+		t.Errorf("default runtime = %q, want \"wasm\"", m.Runtime)
 	}
 }
 

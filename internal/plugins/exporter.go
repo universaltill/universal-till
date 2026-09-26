@@ -58,8 +58,17 @@ func (e *Exporter) Export(ctx context.Context, req *ExportRequest) (*ExportResul
 		return nil, fmt.Errorf("destination path is required")
 	}
 
-	// Guard against path traversal: id/version may come from an HTTP request, so
-	// the resolved directory must stay under the plugin base dir.
+	// id/version come from an HTTP request: each must be one safe path
+	// segment (ut-docs#2891 review M2 — the prefix check below alone let
+	// version ".." export the whole plugins dir) …
+	if err := validatePluginID(req.PluginID); err != nil {
+		return nil, err
+	}
+	if err := validatePluginVersion(req.Version); err != nil {
+		return nil, err
+	}
+	// … and, belt and braces, the resolved directory must stay under the
+	// plugin base dir.
 	srcDir := filepath.Join(e.pluginBaseDir, req.PluginID, req.Version)
 	cleanBase := filepath.Clean(e.pluginBaseDir)
 	if srcDir != cleanBase && !strings.HasPrefix(filepath.Clean(srcDir), cleanBase+string(os.PathSeparator)) {

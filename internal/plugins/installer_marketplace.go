@@ -294,6 +294,14 @@ func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundl
 		}
 	}
 
+	// id and version become directory names; VerifyManifest already checks
+	// both, re-checked here right at the join (ut-docs#2891).
+	if err := validatePluginID(manifest.ID); err != nil {
+		return nil, err
+	}
+	if err := validatePluginVersion(manifest.Version); err != nil {
+		return nil, err
+	}
 	finalDir := filepath.Join(i.pluginBaseDir, manifest.ID, manifest.Version)
 	if err := os.RemoveAll(finalDir); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("clean existing plugin dir: %w", err)

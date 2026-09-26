@@ -134,6 +134,16 @@ func (mv *ManifestVerifier) VerifyManifest(manifestPath string) (*VerificationRe
 	if manifest.Version == "" {
 		result.Errors = append(result.Errors, "manifest missing required field: version")
 	}
+	if manifest.ID != "" {
+		if err := validatePluginID(manifest.ID); err != nil {
+			result.Errors = append(result.Errors, err.Error())
+		}
+	}
+	if manifest.Version != "" {
+		if err := validatePluginVersion(manifest.Version); err != nil {
+			result.Errors = append(result.Errors, err.Error())
+		}
+	}
 	if manifest.CanonicalType == "" {
 		result.Errors = append(result.Errors, "manifest missing required field: canonical_type")
 	}
@@ -201,6 +211,16 @@ func (mv *ManifestVerifier) VerifyManifest(manifestPath string) (*VerificationRe
 			err = fmt.Errorf("%w: %w", ErrManifestUnsigned, err)
 		}
 		return result, err
+	}
+
+	// Applied only AFTER the signature check: the signed canonical form is
+	// the manifest as published, runtime field absent included. A manifest
+	// without a runtime gets the sandbox, never the process runtime
+	// (ut-docs#2891) — the marketplace installer would otherwise treat ""
+	// as a native executable.
+	if manifest.Runtime == "" {
+		manifest.Runtime = defaultManifestRuntime
+		warnDefaultRuntimeOnce(manifest.ID)
 	}
 
 	return result, nil

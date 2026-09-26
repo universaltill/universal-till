@@ -154,6 +154,16 @@ func (imp *Importer) Import(ctx context.Context, req *ImportRequest) (*ImportRes
 		result.Warnings = append(result.Warnings, "Signature verification skipped (dev-mode)")
 	}
 
+	// id and version become directory names below; refuse anything that is
+	// not a single safe path segment, whichever parser produced them
+	// (ut-docs#2891).
+	if err := validatePluginID(manifest.ID); err != nil {
+		return nil, err
+	}
+	if err := validatePluginVersion(manifest.Version); err != nil {
+		return nil, err
+	}
+
 	// Check disk budget (prevent excessive plugin storage)
 	if err := imp.checkDiskBudget(manifest.ID, manifest.Version, tempDir); err != nil {
 		return nil, fmt.Errorf("disk budget check failed: %w", err)

@@ -82,7 +82,7 @@ func (dm *DownloadManager) Download(ctx context.Context, req *DownloadRequest) (
 	if err := os.MkdirAll(dm.tmpDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create download tmp dir: %w", err)
 	}
-	partFile := filepath.Join(dm.tmpDir, fmt.Sprintf("%s.part", req.PluginID))
+	partFile := dm.partFilePath(req.PluginID)
 
 	// Check if partial download exists
 	var resumeFrom int64
@@ -246,7 +246,7 @@ func (dm *DownloadManager) PromoteToPermanent(partFile, destDir, destName string
 
 // CleanupPartFile removes a .part file (used on permanent failure)
 func (dm *DownloadManager) CleanupPartFile(pluginID string) error {
-	partFile := filepath.Join(dm.tmpDir, fmt.Sprintf("%s.part", pluginID))
+	partFile := dm.partFilePath(pluginID)
 	if err := os.Remove(partFile); err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -292,4 +292,11 @@ func (dm *DownloadManager) isRetryable(err error) bool {
 		return false
 	}
 	return true
+}
+
+// partFilePath is the resume file for one download. The id is the listing id
+// a manager's request supplies, so it is flattened to one path segment —
+// "../../x" must never write outside tmpDir (ut-docs#2891 review M2 sweep).
+func (dm *DownloadManager) partFilePath(pluginID string) string {
+	return filepath.Join(dm.tmpDir, sanitizePathSegment(pluginID)+".part")
 }

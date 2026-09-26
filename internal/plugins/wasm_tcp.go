@@ -3,6 +3,7 @@ package plugins
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net"
 	"strconv"
 	"strings"
@@ -87,6 +88,9 @@ func tcpAddr(host string, port uint32) string {
 type tcpHandleInfo struct {
 	conn net.Conn
 	addr string
+	// nonPublic records that the dialled IP was non-public, so only the
+	// exact grant (never tcp:*) keeps the handle usable (ut-docs#2891 M1).
+	nonPublic bool
 }
 
 // tcpConnRegistry tracks open device connections by (pluginID, handle).
@@ -115,12 +119,7 @@ func newTCPConnRegistry() *tcpConnRegistry {
 // survive per-event module instances, and Sync must be able to reap them.
 var tcpConns = newTCPConnRegistry()
 
-// Open registers conn under the plugin's next handle, recording addr (the
-// `tcp:<host>:<port>` permission string checked to authorize this dial) for
-// later per-call re-checks. Returns (handle, true) or (0, false) when the
-// plugin is already at maxTCPHandlesPerPlugin — the caller still owns (and
-// must close) conn in that case.
-func (r *tcpConnRegistry) Open(pluginID string, conn net.Conn, addr string) (int32, bool) {
+func (r *tcpConnRegistry) open(pluginID string, info tcpHandleInfo) (int32, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(r.byPlugin[pluginID]) >= maxTCPHandlesPerPlugin {
@@ -131,29 +130,15 @@ func (r *tcpConnRegistry) Open(pluginID string, conn net.Conn, addr string) (int
 	}
 	h := r.next[pluginID]
 	r.next[pluginID] = h + 1
-	r.byPlugin[pluginID][h] = tcpHandleInfo{conn: conn, addr: addr}
+	r.byPlugin[pluginID][h] = info
 	return h, true
 }
 
-// GetWithAddr looks up an open connection by (pluginID, handle), returning
-// it together with the `tcp:<host>:<port>` permission string that was
-// checked when the handle was opened, in a single locked lookup —
-// hostTCPWrite/hostTCPRead need both the connection and its authorization
-// address per call, and looking them up as two separately-locked calls
-// leaves a re-lock window where a concurrent Close/CloseAll for the same
-// handle could interleave between them (reviewed 2026-08-22, ut-docs#606
-// review finding, non-blocking: analysis showed the window already fails
-// closed or, in the narrowest cross-reload race, degrades to a spurious
-// closed-connection I/O error rather than misdirecting a call onto a
-// different plugin's connection — this closes the window regardless,
-// since a single lock is free to have). It replaced a conn-only Get, whose
-// last (test-only) callers moved here under ut-docs#1566 so the tests
-// assert through the same lookup production uses.
-func (r *tcpConnRegistry) GetWithAddr(pluginID string, handle int32) (net.Conn, string, bool) {
+func (r *tcpConnRegistry) get(pluginID string, handle int32) (tcpHandleInfo, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	info, ok := r.byPlugin[pluginID][handle]
-	return info.conn, info.addr, ok
+	return info, ok
 }
 
 // Close closes and removes one handle; unknown handles are a no-op
@@ -213,12 +198,15 @@ func hostTCPOpen(ctx context.Context, m api.Module, hostPtr, hostLen, port, time
 	if port == 0 || port > 65535 {
 		return hostErrInvalid
 	}
-	// Grant the call when the plugin holds either the exact host:port
-	// permission (tcp:<host>:<port>) or the wildcard (tcp:*). Configurable
-	// terminal plugins learn their device address from install-time settings,
-	// so they declare tcp:* and are review-gated accordingly (like net:*).
+	// Name check: the exact host:port permission (tcp:<host>:<port>) or the
+	// wildcard (tcp:*). Then the dial goes through the egress policy
+	// (wasm_egress.go, ut-docs#2891 review M1) against the IP actually
+	// connected to: tcp:* reaches PUBLIC addresses only, a LAN or loopback
+	// device needs the exact grant, and the till's own listen port is
+	// refused whatever the grant.
 	addr := tcpAddr(host, port)
-	if !tcpAddrAuthorized(ctx, s, addr) {
+	authorized, exact := tcpAddrAuthorized(ctx, s, addr)
+	if !authorized {
 		return hostErrDenied
 	}
 	// DialContext, not DialTimeout (review finding B1): the guest's own
@@ -227,12 +215,16 @@ func hostTCPOpen(ctx context.Context, m api.Module, hostPtr, hostLen, port, time
 	// out anyway can still outlive the event that's supposed to bound it.
 	dialCtx, cancel := context.WithTimeout(ctx, clampTCPTimeoutMs(timeoutMs, maxTCPDialTimeoutMs))
 	defer cancel()
-	conn, err := (&net.Dialer{}).DialContext(dialCtx, "tcp", tcpAddr(host, port))
+	conn, ip, err := tcpEgressDialer.dialChecked(dialCtx, "tcp", addr, exact)
 	if err != nil {
+		if errors.Is(err, errEgressDenied) {
+			logEgressDenied(s.pluginID, err)
+			return hostErrDenied
+		}
 		logging.L().Infof("[wasm:%s] tcp open %s:%d failed: %v", s.pluginID, host, port, err)
 		return hostErrInternal
 	}
-	handle, ok := tcpConns.Open(s.pluginID, conn, addr)
+	handle, ok := tcpConns.open(s.pluginID, tcpHandleInfo{conn: conn, addr: addr, nonPublic: !isPublicIP(ip)})
 	if !ok {
 		_ = conn.Close()
 		logging.L().Infof("[wasm:%s] tcp open %s:%d refused: max %d handles", s.pluginID, host, port, maxTCPHandlesPerPlugin)
@@ -262,18 +254,37 @@ func hostTCPOpen(ctx context.Context, m api.Module, hostPtr, hostLen, port, time
 // audited, via the same two auditing calls hostTCPOpen already made before
 // this helper existed — reviewed 2026-08-22 (ut-docs#606 review finding,
 // non-blocking).
-func tcpAddrAuthorized(ctx context.Context, s *hostState, addr string) bool {
+//
+// exact reports that the EXACT grant matched — only it covers a non-public
+// address (ut-docs#2891 review M1).
+func tcpAddrAuthorized(ctx context.Context, s *hostState, addr string) (authorized, exact bool) {
 	repo := data.NewPluginRepo(s.db)
 	if granted, exists, err := repo.CheckPermission(ctx, s.pluginID, "tcp:"+addr); err == nil && exists && granted {
-		return true
+		return true, true
 	}
 	if granted, exists, err := repo.CheckPermission(ctx, s.pluginID, "tcp:*"); err == nil && exists && granted {
-		return true
+		return true, false
 	}
 	// Genuine denial: audit it, same as hostTCPOpen's pre-existing pattern.
 	_ = CheckPermission(ctx, s.db, s.pluginID, "tcp:"+addr)
 	_ = CheckPermission(ctx, s.db, s.pluginID, "tcp:*")
-	return false
+	return false, false
+}
+
+// tcpHandleAuthorized is the per-call re-check for tcp_write/tcp_read: the
+// grant must still hold, and a handle connected to a non-public address
+// needs the exact grant — tcp:* alone must not keep a LAN socket alive
+// after its exact grant is revoked.
+func tcpHandleAuthorized(ctx context.Context, s *hostState, info tcpHandleInfo) bool {
+	authorized, exact := tcpAddrAuthorized(ctx, s, info.addr)
+	if !authorized {
+		return false
+	}
+	if info.nonPublic && !exact {
+		_ = CheckPermission(ctx, s.db, s.pluginID, "tcp:"+info.addr) // audit the denial
+		return false
+	}
+	return true
 }
 
 // hostTCPWrite writes the guest buffer to the connection under a fixed 10s
@@ -283,13 +294,14 @@ func hostTCPWrite(ctx context.Context, m api.Module, handle int32, ptr, length u
 	if !ok {
 		return hostErrInternal
 	}
-	conn, addr, ok := tcpConns.GetWithAddr(s.pluginID, handle)
+	info, ok := tcpConns.get(s.pluginID, handle)
 	if !ok {
 		return hostErrNotFound
 	}
-	if !tcpAddrAuthorized(ctx, s, addr) {
+	if !tcpHandleAuthorized(ctx, s, info) {
 		return hostErrDenied
 	}
+	conn := info.conn
 	buf, ok := readGuest(m, ptr, length)
 	if !ok {
 		return hostErrInvalid
@@ -314,13 +326,14 @@ func hostTCPRead(ctx context.Context, m api.Module, handle int32, dstPtr, dstCap
 	if !ok {
 		return hostErrInternal
 	}
-	conn, addr, ok := tcpConns.GetWithAddr(s.pluginID, handle)
+	info, ok := tcpConns.get(s.pluginID, handle)
 	if !ok {
 		return hostErrNotFound
 	}
-	if !tcpAddrAuthorized(ctx, s, addr) {
+	if !tcpHandleAuthorized(ctx, s, info) {
 		return hostErrDenied
 	}
+	conn := info.conn
 	if dstCap == 0 {
 		return hostErrInvalid
 	}
@@ -378,3 +391,7 @@ func pluginHasTCPPermission(ctx context.Context, db *sql.DB, pluginID string) bo
 	}
 	return false
 }
+
+// tcpEgressDialer applies the plugin egress policy (wasm_egress.go) to
+// tcp_open. Tests swap it for a stubbed resolver/dialer.
+var tcpEgressDialer = defaultEgressDialer()

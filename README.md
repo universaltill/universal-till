@@ -412,6 +412,13 @@ and capability-gated (a module gets nothing until the manifest grants it).
 Asset-only plugins (themes, language packs, layouts) use `runtime: "none"` instead —
 no code, just files. Hardware/device plugins needing raw OS access (USB,
 serial) run as a supervised process (`runtime: "go"`), the minority case.
+A manifest that omits `runtime` gets the WASM sandbox, never a process. Each
+WASM instance is capped at 64 MiB of memory, and `http_request` checks the
+resolved IP at connect time: `net:*` reaches public addresses only, a LAN or
+loopback target needs its exact `net:<host>` grant, and the till's own port is
+never reachable (redirects included). `tcp_open` follows the same rule:
+`tcp:*` reaches public addresses only, a LAN or loopback device needs its
+exact `tcp:<host>:<port>` grant.
 
 **See [PLUGIN_GUIDELINES.md](docs/plugin_guidelines.md) for complete documentation.**
 

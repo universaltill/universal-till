@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,6 +21,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
 )
@@ -563,6 +565,29 @@ func TestCloudRemovePlugin_RejectsPathTraversalID(t *testing.T) {
 	for _, id := range []string{"../etc", "a/b", `a\b`, "../../secret"} {
 		if _, err := cloudRemovePlugin(ctx, dp, id); err == nil {
 			t.Fatalf("expected %q to be rejected as an invalid plugin id", id)
+		}
+	}
+}
+
+// ut-docs#2891 M2 sweep: the "/, \\ or .." check let "." (and "") through,
+// and RemoveAll(paths.Plugins()/".") wipes every installed plugin — reachable
+// from a cloud directive or the LAN primary's plugin set.
+func TestCloudRemovePlugin_DotIDKeepsOtherPlugins(t *testing.T) {
+	isolatePluginsDir(t)
+	dp := newCloudSyncTestDeps(t)
+	keep := filepath.Join(paths.Plugins(), "com.test.keep", "1.0.0", "manifest.json")
+	if err := os.MkdirAll(filepath.Dir(keep), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keep, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{".", "", "COM.TEST.KEEP"} {
+		if _, err := cloudRemovePlugin(t.Context(), dp, id); err == nil {
+			t.Errorf("expected %q to be rejected as an invalid plugin id", id)
+		}
+		if _, err := os.Stat(keep); err != nil {
+			t.Fatalf("cloudRemovePlugin(%q) removed another plugin's files: %v", id, err)
 		}
 	}
 }
