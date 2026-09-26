@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -118,7 +119,9 @@ func TestWatchdogRaisesProblemWhenStillRunning(t *testing.T) {
 	buildinfo.Version = "0.1.0"
 	t.Cleanup(func() { buildinfo.Version = oldVer })
 
-	restartWatchdog(newRestartPlan("unitill-pos", "0.2.0", ""))
+	plan := newRestartPlan("unitill-pos", "0.2.0", "")
+	close(plan.idleSeen) // as restartInto does once it proceeds
+	restartWatchdog(plan)
 	p, ok := openProblem(ProblemKeyRestartPending)
 	if !ok || !strings.Contains(p.Msg, "0.2.0") || !strings.Contains(p.Msg, "0.1.0") {
 		t.Fatalf("watchdog Problem = %+v, %v; want one naming both versions", p, ok)
@@ -416,5 +419,80 @@ func TestWatchdogSilentAfterRollback(t *testing.T) {
 	restartWatchdog(plan)
 	if p, raised := openProblem(ProblemKeyRestartPending); raised {
 		t.Fatalf("watchdog raised %+v after the update was rolled back", p)
+	}
+}
+
+// ut-docs#2738: an unattended restart re-checks idle after the delay — a
+// sale started in it holds the plugin stop and the exec — and the watchdog
+// only starts counting once the till is idle, so a held restart is not
+// reported as "pending" mid-sale.
+func TestRestartIntoHoldsForAnOpenSale(t *testing.T) {
+	logging.ResetRecent()
+	exe := fakeExe(t)
+	oldReexec, oldDelay, oldPoll, oldAfter := reexecFn, reexecDelay, restartIdlePoll, restartWatchdogAfter
+	execd := make(chan struct{}, 1)
+	reexecFn = func(string) error { execd <- struct{}{}; return nil }
+	reexecDelay, restartIdlePoll, restartWatchdogAfter = time.Millisecond, time.Millisecond, time.Millisecond
+	t.Cleanup(func() {
+		reexecFn, reexecDelay, restartIdlePoll, restartWatchdogAfter = oldReexec, oldDelay, oldPoll, oldAfter
+	})
+
+	var idle atomic.Bool
+	plan := newRestartPlan(exe, "0.2.0", "")
+	plan.idle = idle.Load
+	hooked := make(chan struct{}, 1)
+	plan.hook = func(context.Context) { hooked <- struct{}{} }
+	go restartInto(plan)
+	wdDone := make(chan struct{})
+	go func() { restartWatchdog(plan); close(wdDone) }()
+	// The watchdog outlives the test otherwise and raises its Problem into
+	// the next test's log.
+	t.Cleanup(func() { idle.Store(true); <-wdDone })
+
+	select {
+	case <-execd:
+		t.Fatal("restarted while a sale was open")
+	case <-hooked:
+		t.Fatal("stopped the plugins while a sale was open")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if _, ok := openProblem(ProblemKeyRestartPending); ok {
+		t.Fatal("watchdog reported a restart pending while it was held for a sale")
+	}
+	idle.Store(true)
+	select {
+	case <-execd:
+	case <-time.After(2 * time.Second):
+		t.Fatal("never restarted once idle")
+	}
+}
+
+// The reviewer's case (ut-docs#2738): the till is idle when the restart is
+// scheduled, a sale opens during the delay, so restartInto holds. The
+// watchdog must not have started counting from its own earlier idle poll.
+func TestWatchdogQuietWhileASaleOpenedDuringTheDelayHoldsTheRestart(t *testing.T) {
+	logging.ResetRecent()
+	exe := fakeExe(t)
+	oldReexec, oldDelay, oldPoll, oldAfter := reexecFn, reexecDelay, restartIdlePoll, restartWatchdogAfter
+	reexecFn = func(string) error { return nil }
+	reexecDelay, restartIdlePoll, restartWatchdogAfter = 50*time.Millisecond, time.Millisecond, time.Millisecond
+	t.Cleanup(func() {
+		reexecFn, reexecDelay, restartIdlePoll, restartWatchdogAfter = oldReexec, oldDelay, oldPoll, oldAfter
+	})
+
+	var busy atomic.Bool // idle at scheduling time
+	plan := newRestartPlan(exe, "0.2.0", "")
+	plan.idle = func() bool { return !busy.Load() }
+	plan.hook = func(context.Context) {}
+	inDone, wdDone := make(chan struct{}), make(chan struct{})
+	go func() { restartInto(plan); close(inDone) }()
+	go func() { restartWatchdog(plan); close(wdDone) }()
+	time.Sleep(10 * time.Millisecond)
+	busy.Store(true) // a sale opens during the delay
+	t.Cleanup(func() { busy.Store(false); <-inDone; <-wdDone })
+
+	time.Sleep(150 * time.Millisecond)
+	if p, ok := openProblem(ProblemKeyRestartPending); ok {
+		t.Fatalf("watchdog raised %+v while the restart was held for a sale", p)
 	}
 }

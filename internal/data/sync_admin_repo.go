@@ -557,6 +557,17 @@ const FiscalPendingSignRetriesSettingsKey = "fiscal.pending_sign_retries"
 // same literal instead of re-typing it.
 const AutoUpdateLastAttemptSettingsKey = "update.auto_last_attempt"
 
+// UpdateFollowAttemptedSettingsKey / UpdateFollowErrorSettingsKey are THIS
+// replica's own record of following its main till's version (ut-docs#2738,
+// pages.followTick): the target it last tried, and how that try ended ("" =
+// staged, "applying", or "failed:<code>"). Per-till for the same reason as
+// AutoUpdateLastAttemptSettingsKey: synced, one till's "already tried 1.4.0"
+// would stop every other replica from trying it.
+const (
+	UpdateFollowAttemptedSettingsKey = "update.follow_attempted"
+	UpdateFollowErrorSettingsKey     = "update.follow_error"
+)
+
 // ThemeSettingsKey is the UI theme of THIS till (ut-docs#2783): per station,
 // never admin-synced — a self-order kiosk, a back-office screen and a
 // cashier's till may each want their own look (product-owner decision
@@ -597,6 +608,10 @@ const ThemeSettingsKey = "theme"
 // /api/sync/cloud-device) without any credential crossing the LAN.
 var PerTillSettingPrefixes = []string{
 	"sync.", "printer.", "display.", "reports.eod_", FiscalPendingSignRetriesSettingsKey, AutoUpdateLastAttemptSettingsKey,
+	// ut-docs#2738: this replica's follow bookkeeping (full keys, like the
+	// one above). sync.main_version, the main till's pinged version, is
+	// already covered by "sync.".
+	UpdateFollowAttemptedSettingsKey, UpdateFollowErrorSettingsKey,
 	// ut-docs#2783: this till's own theme. A full key used as a prefix, like
 	// the two above; no other settings key starts with "theme".
 	ThemeSettingsKey,

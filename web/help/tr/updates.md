@@ -22,8 +22,8 @@ Kasa, siz kapatmadıkça gece kendini günceller.
 
 1. Ayarlar → Yazılım güncelleme → Otomatik güncelle baştan açıktır, saat 03:00'te. Her kasa bu saatten sonraki 30 dakika içinde kendi anını seçer, böylece birkaç kasa aynı anda yeniden başlamaz.
 2. Bir satışın ortasında asla yeniden başlamaz. Bir sepette (self servis veya masa siparişi dahil) hâlâ ürün varsa, sepet boşalana kadar bekler. Bu yarım saat içinde olmazsa ya da kasa o sırada kapalıysa, ertesi gece yeniden dener.
-3. Otomatik güncellemeleri durdurmak için Otomatik güncelle işaretini kaldırıp Kaydet'e tıklayın. Kasa bu seçimi korur.
-4. Ana kasaya bağlanmış ek bir kasa kendini güncellemez; böylece hiçbir zaman ana kasanın sürümünün önüne geçmez. Ana kasa güncellendikten sonra ek kasayı kendi Ayarlar'ından güncelleyin.
+3. Otomatik güncellemeleri durdurmak için Otomatik güncelle işaretini kaldırıp Kaydet'e tıklayın. Kasa bu seçimi korur. Ana kasada bu, ek kasaların onu izlemesini de durdurur; ek kasa bu seçimi her zaman ana kasasından alır.
+4. Ek kasa ana kasayı izler: ana kasa daha yeni bir sürüm çalıştırdığında, ek kasa tam olarak o sürümü açık satışın olmadığı ilk anda kurar. Windows ve Android ek kasalar, kendi başlarına kurabilene kadar bunun yerine bir 'gerekli' notu gösterir.
 5. Windows ve Android kasalar güncellemeleri henüz kendi başına kuramaz. Onları yukarıda anlatıldığı gibi elle güncelleyin.
 
 ## Android kasalarda
