@@ -232,14 +232,8 @@ type ModifierGroupOption struct {
 	PriceDeltaMinor int64
 }
 
-// Tick runs one full sync round: heartbeat up, directives down, apply,
-// report. Exported for tests; Start drives it on the loop.
-func Tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) error {
-	_, err := tick(ctx, cfg, db, hooks)
-	return err
-}
-
-// tick is Tick, also saying whether the cloud was really contacted: true
+// tick runs one full sync round (heartbeat up, directives down, apply,
+// report) and says whether the cloud was really contacted: true
 // once the /v1/stores/sync POST succeeded, false for an unregistered
 // till's early return (nil error, no contact) and for any failure.
 func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (contacted bool, err error) {
