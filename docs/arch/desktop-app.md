@@ -88,14 +88,31 @@ are present. With neither, the current free ad-hoc behavior is unchanged.
 The `macos-app` job in `.github/workflows/release.yml` signs + notarizes
 automatically once these **repo secrets** exist (absent → ad-hoc, as today):
 
+**Configured 2026-09-26 (ut-docs#2870).** Source of truth is the Key Vault
+`kv-unitill-dev` (`apple-devid-p12`, `apple-devid-p12-password`,
+`apple-asc-notary-key-p8`, `apple-asc-notary-key-id`, `apple-asc-issuer-id`,
+`apple-team-id`); the GitHub secrets below are copies for the release job.
+
 | Secret | What |
 | --- | --- |
-| `MACOS_CERT_P12` | base64 of the exported `.p12` (`base64 -i cert.p12 \| pbcopy`) |
-| `MACOS_CERT_PASSWORD` | the `.p12` export password |
-| `MACOS_SIGN_IDENTITY` | `Developer ID Application: … (TEAMID)` |
-| `MACOS_NOTARY_APPLE_ID` | Apple ID email |
+| `MACOS_CERT_P12` | base64 of the `.p12` (cert + key; key generated locally, never uploaded to Apple) |
+| `MACOS_CERT_PASSWORD` | the `.p12` export password (random) |
+| `MACOS_SIGN_IDENTITY` | `Developer ID Application: Task Runner Technology LTD (B45H898ZBK)` |
+| `MACOS_NOTARY_KEY_P8` | App Store Connect **Team API key** `.p8` contents, role **Developer** |
+| `MACOS_NOTARY_KEY_ID` | its Key ID |
+| `MACOS_NOTARY_ISSUER_ID` | the Issuer ID |
 | `MACOS_NOTARY_TEAM_ID` | 10-char Team ID |
-| `MACOS_NOTARY_PASSWORD` | app-specific password |
+
+The API key is preferred (`packaging/macos/notary-args.sh`): scoped, revocable
+in App Store Connect, not a personal Apple ID password. It is written to a
+0600 temp file for `notarytool --key` and deleted after the submit. The Apple
+ID trio (`MACOS_NOTARY_APPLE_ID` + `MACOS_NOTARY_PASSWORD`) still works as a
+fallback but is not set. After stapling, the build fails unless `stapler
+validate` and `spctl --assess` accept the `.dmg`.
+
+**Rotate:** revoke the key in App Store Connect → Users and Access →
+Integrations, create a new one (role Developer), update both Key Vault and the
+GitHub secrets. The Developer ID certificate expires 2031-09-17.
 
 The job imports the cert into a throwaway keychain, then the scripts pick up
 the env. Windows binaries are Authenticode-signed with Azure Artifact Signing

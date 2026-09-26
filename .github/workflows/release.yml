@@ -423,13 +423,31 @@ jobs:
           echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
           security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MACOS_CERT_PASSWORD" \
             -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/cert.p12"
+          # Apple's Developer ID G2 intermediate, so the identity chains to a
+          # trusted root even on a runner image that lacks it (ut-docs#2870).
+          # Public certificate, pinned by SHA-256 — a changed download fails.
+          curl -fsSL https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer -o "$RUNNER_TEMP/g2.cer"
+          echo "f16cd3c54c7f83cea4bf1a3e6a0819c8aaa8e4a1528fd144715f350643d2df3a  $RUNNER_TEMP/g2.cer" | shasum -a 256 -c -
+          # Any failure here is caught by the find-identity check below.
+          security import "$RUNNER_TEMP/g2.cer" -k "$KEYCHAIN" || echo "::warning::G2 intermediate import failed"
+          rm -f "$RUNNER_TEMP/g2.cer"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KP" "$KEYCHAIN"
           security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
-          rm -f "$RUNNER_TEMP/cert.p12"
+          # Fail here, not at codesign, if the identity doesn't chain/validate.
+          # Must run after list-keychains: trust evaluation only finds the
+          # G2 intermediate in a keychain on the search list.
+          security find-identity -v -p codesigning "$KEYCHAIN" | grep -q "Developer ID Application" \
+            || { echo "::error::no valid Developer ID Application identity after import"; exit 1; }
       - name: Build .app and .dmg
         env:
           # Empty when the secrets aren't set → build scripts ad-hoc sign / skip notarize.
           MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          # App Store Connect API key, role Developer (ut-docs#2870) — preferred
+          # by packaging/macos/notary-args.sh; the Apple ID trio is a fallback.
+          MACOS_NOTARY_KEY_P8: ${{ secrets.MACOS_NOTARY_KEY_P8 }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
           MACOS_NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
           MACOS_NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
           MACOS_NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
