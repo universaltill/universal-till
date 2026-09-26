@@ -167,20 +167,10 @@ test.describe('only the fixed nav rail / statusbar are named view-transition gro
   });
 });
 
-test.describe('RTL mirrors the nav-direction variable (ut-docs#2223)', () => {
-  test('--ut-nav-dir is -1 under lang=fa', async ({ page }) => {
-    const assertClean = watchConsole(page);
-    await page.goto('/menu?lang=fa');
-    await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
-
-    const navDir = await page.evaluate(() =>
-      getComputedStyle(document.documentElement).getPropertyValue('--ut-nav-dir').trim()
-    );
-    expect(navDir).toBe('-1');
-
-    assertClean();
-  });
-});
+// RTL: the push mirrored its travel through --ut-nav-dir; the ADR-0122
+// zoom has no side (it grows from the tapped element's own, already
+// mirrored, box), so the variable is gone. The RTL case now lives in
+// page-zoom-2942.spec.ts ("under lang=fa the origin is the tapped tile").
 
 // The ease is proven by the ANIMATION actually starting (`animationstart`
 // with animationName ut-swap-in), never by a class appearing: htmx's settle
