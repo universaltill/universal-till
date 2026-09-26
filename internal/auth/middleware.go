@@ -340,6 +340,53 @@ func optionalAuth(path string) bool {
 	return path == "/api/import"
 }
 
+// backgroundPollPaths are the GETs a page makes on a timer, not because
+// anyone touched the till (ut-docs#2901). The middleware resolves them with
+// ResolveNoTouch: they still get 401 + HX-Redirect once the session is
+// gone, but they never extend it — otherwise the shell's own status chips
+// (every 5-30 s on every base.html page) and the sale screen's watchers
+// keep an untouched till signed in forever and the idle auto-lock never
+// fires. Real input still counts: every real request, plus base.html's
+// POST /api/window/input-heartbeat on genuine taps and keys.
+//
+// EVERY NEW POLLER MUST BE ADDED HERE (or to displayBoardPoll).
+// TestEveryPollerIsClassified scans web/ui and internal/pages for timer
+// hx-triggers and fails on an unclassified one, or on a stale entry here.
+var backgroundPollPaths = map[string]bool{
+	// base.html / nav.html shell, on every page.
+	"/ui/main-till-status": true,
+	"/ui/sync-chip":        true,
+	"/ui/fiscal-chip":      true,
+	"/ui/diagnostics-chip": true,
+	"/ui/pairing-notice":   true,
+	"/ui/theme-sync":       true,
+	// Sale screen watchers (#2765, #2858).
+	"/ui/buttons/version":         true,
+	"/ui/open-orders-badge/watch": true,
+	// Operator pages that refresh themselves.
+	"/ui/tables/state":                true,
+	"/ui/tills/roster":                true,
+	"/ui/tills/pending-pairings":      true,
+	"/ui/settings/window-mode-status": true,
+	"/api/sync/pair-status":           true,
+}
+
+func backgroundPoll(path string) bool { return backgroundPollPaths[path] }
+
+// displayBoardPoll marks the pollers of screens meant to be watched, not
+// touched: the kitchen display, the order-status board and the kiosk
+// counter-orders list. They deliberately still extend the session, as they
+// always have — with the default 10-minute auto-lock, a no-touch rule would
+// lock a kitchen screen mid-service. Whether display devices should
+// auto-lock at all is a separate product decision (ut-docs#2935).
+func displayBoardPoll(path string) bool {
+	if path == "/ui/orders" || path == "/ui/kiosk-counter-orders" {
+		return true
+	}
+	id, ok := strings.CutPrefix(path, "/ui/kitchen-display/")
+	return ok && id != "" && !strings.Contains(id, "/")
+}
+
 func Middleware(next http.Handler, svc *Service) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if exempt(r.URL.Path) {
@@ -347,7 +394,14 @@ func Middleware(next http.Handler, svc *Service) http.Handler {
 			return
 		}
 		if c, err := r.Cookie(CookieName); err == nil {
-			if u, ok := svc.Resolve(r.Context(), c.Value); ok {
+			resolve := svc.Resolve
+			switch {
+			case displayBoardPoll(r.URL.Path):
+				// Watched, not touched: keeps extending, as it always has.
+			case backgroundPoll(r.URL.Path):
+				resolve = svc.ResolveNoTouch
+			}
+			if u, ok := resolve(r.Context(), c.Value); ok {
 				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, u)))
 				return
 			}
