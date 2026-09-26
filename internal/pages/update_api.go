@@ -45,7 +45,9 @@ var (
 	// endpoint (ut-docs#1545). A seam so a test can exercise both answers
 	// without reaching the GitHub API.
 	androidInstallCheckNow = updates.CheckNow
-	autoUpdateApply        = selfupdate.Apply
+	autoUpdateApply        = func(ctx context.Context, idle func() bool) error {
+		return selfupdate.ApplyVersionWhenIdle(ctx, "", idle)
+	}
 	// autoUpdateBuildVersion is buildinfo.Version, but the manual Update-now
 	// button's own handler (`POST /api/update/apply`, above) does NOT use
 	// this seam or the guard built on it -- an explicit user action stays
@@ -77,11 +79,12 @@ const (
 var autoUpdateJitter = defaultAutoUpdateJitter
 
 // autoUpdateSchedule resolves the effective (enabled, HH:MM) from the stored
-// settings. A replica (sync.primary_url set) stays OFF while the setting is
-// unset: nothing yet caps a replica at its main till's version, and a replica
-// that updates while its main till cannot (a Windows main till, an unwritable
-// .deb) would run ahead of it indefinitely. An explicit "true" still enables it,
-// exactly as before this default existed. The replica cap is its own card.
+// settings. A replica (sync.primary_url set) reads OFF while the setting is
+// unset: a replica that updates to latest while its main till cannot (a
+// Windows main till, an unwritable .deb) would run ahead of it indefinitely.
+// Since ut-docs#2738 a replica never runs the nightly path at all — it
+// follows its main till's exact version (followTick) — so this only
+// decides what the Settings page shows there.
 func autoUpdateSchedule(get func(string) string) (enabled bool, hhmm string) {
 	hhmm = strings.TrimSpace(get(keyAutoUpdateTime))
 	if hhmm == "" {
@@ -182,6 +185,12 @@ func autoUpdateTick(ctx context.Context, d *common.Deps, now time.Time) {
 		v, _, _ := d.Settings.Get(ctx, key)
 		return strings.TrimSpace(v)
 	}
+	// A replica follows its main till's exact version instead (ut-docs#2738):
+	// the nightly "latest" could run it ahead of its main till.
+	if get("sync.primary_url") != "" {
+		followTick(ctx, d)
+		return
+	}
 	enabled, hhmm := autoUpdateSchedule(get)
 	lastAttempt := get(keyAutoUpdateLastAttempt)
 	offset := autoUpdateJitter(ctx, d)
@@ -200,14 +209,10 @@ func autoUpdateTick(ctx context.Context, d *common.Deps, now time.Time) {
 	}
 	// Both engines (ut-docs#449): the kiosk basket is a separate instance
 	// from the cashier's, so an unattended update mid-kiosk-order must be
-	// blocked too, not just a cashier's mid-sale basket. d.KioskEngine is
-	// nil in some test harnesses that never wire a kiosk engine. Since
-	// ADR-0103 (ut-docs#2261) a table-QR guest's basket lives in its own
-	// session rather than KioskEngine, so those count too (HasItems is
-	// nil-receiver-safe).
-	if d.Engine.Basket().ItemCount() > 0 ||
-		(d.KioskEngine != nil && d.KioskEngine.Basket().ItemCount() > 0) ||
-		d.SelfOrderSessions.HasItems() {
+	// blocked too, not just a cashier's mid-sale basket. Since ADR-0103
+	// (ut-docs#2261) a table-QR guest's basket counts too. autoUpdateBusy
+	// (update_follow.go) is shared with the replica follow (ut-docs#2738).
+	if autoUpdateBusy(d) {
 		return
 	}
 	// Mark the attempt BEFORE calling Apply so a failure (or a stale-cache
@@ -219,7 +224,7 @@ func autoUpdateTick(ctx context.Context, d *common.Deps, now time.Time) {
 	if !st.Available {
 		return
 	}
-	if err := autoUpdateApply(ctx); err != nil {
+	if err := autoUpdateApply(ctx, autoUpdateIdle(d)); err != nil {
 		logging.L().Errorf("auto-update: %v", err)
 	}
 }

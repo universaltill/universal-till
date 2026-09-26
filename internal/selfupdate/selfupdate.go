@@ -25,6 +25,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -32,6 +33,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/updates"
 )
 
 // applyMu serializes Apply: the swap sequence below (rename exe→.bak, remove
@@ -254,7 +256,58 @@ type ghRelease struct {
 // Apply downloads the latest release, verifies it, swaps the binary + web/, and
 // schedules a re-exec of the new binary. It returns after the swap is staged;
 // the process re-execs a moment later so the caller's HTTP response can flush.
-func Apply(ctx context.Context) error {
+func Apply(ctx context.Context) error { return ApplyVersion(ctx, "") }
+
+// releaseVersionRe is what ApplyVersion accepts: a dotted release number,
+// optionally v-prefixed — nothing that could steer the tag URL elsewhere.
+var releaseVersionRe = regexp.MustCompile(`^v?[0-9]+(\.[0-9]+){1,3}$`)
+
+// ApplyVersion is Apply for one exact release (ut-docs#2738): an additional
+// till installs its main till's version, never "latest", which could run it
+// ahead of its main till. It is fetched from GitHub's /releases/tags/v<version>
+// — never from the main till — with the same checksum, backup and rollback.
+// A version that is not newer than this build is refused before any network
+// call: never a downgrade. "" means the latest release (Apply).
+func ApplyVersion(ctx context.Context, version string) error {
+	return applyVersion(ctx, version, nil)
+}
+
+// ApplyVersionWhenIdle is ApplyVersion for an unattended caller (the replica
+// follow and the nightly update, ut-docs#2738 review): it downloads and
+// verifies exactly as ApplyVersion, then blocks until idle() reports that no
+// sale is open before swapping anything, and re-checks before the restart.
+// The check before the download is not enough — a sale can start while the
+// release downloads, and the restart would destroy its in-memory basket.
+func ApplyVersionWhenIdle(ctx context.Context, version string, idle func() bool) error {
+	return applyVersion(ctx, version, idle)
+}
+
+// restartIdlePoll is how often a held restart re-checks idle (a test seam).
+var restartIdlePoll = 2 * time.Second
+
+// waitIdle blocks until idle() is true (nil: at once) or ctx ends.
+func waitIdle(ctx context.Context, idle func() bool) error {
+	for idle != nil && !idle() {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(restartIdlePoll):
+		}
+	}
+	return nil
+}
+
+func applyVersion(ctx context.Context, version string, idle func() bool) error {
+	version = strings.TrimSpace(version)
+	if version != "" {
+		if !releaseVersionRe.MatchString(version) {
+			return fmt.Errorf("not a release version: %q", version)
+		}
+		version = strings.TrimPrefix(version, "v")
+		if !updates.Newer(version, buildinfo.Version) {
+			return fmt.Errorf("v%s is not newer than this build (v%s)", version, buildinfo.Version)
+		}
+	}
 	if !applyMu.TryLock() {
 		return errors.New("an update is already being applied")
 	}
@@ -273,7 +326,7 @@ func Apply(ctx context.Context) error {
 	// of swapping the inner (signed) binary with an unsigned archive one.
 	if runtime.GOOS == "darwin" {
 		if app := appBundlePath(exe); app != "" {
-			return applyMacApp(ctx, app)
+			return applyMacApp(ctx, app, version, idle)
 		}
 	}
 	installDir := filepath.Dir(exe)
@@ -290,11 +343,11 @@ func Apply(ctx context.Context) error {
 		webBase = cwd
 	}
 
-	rel, err := fetchLatest(ctx)
+	rel, err := fetchRelease(ctx, version)
 	if err != nil {
 		return err
 	}
-	version := strings.TrimPrefix(rel.TagName, "v")
+	version = strings.TrimPrefix(rel.TagName, "v")
 
 	archiveName := fmt.Sprintf("unitill-pos_%s_%s_%s.tar.gz", version, runtime.GOOS, runtime.GOARCH)
 	archiveURL, checksumsURL := "", ""
@@ -346,6 +399,15 @@ func Apply(ctx context.Context) error {
 		return fmt.Errorf("update archive missing %s", filepath.Base(exe))
 	}
 
+	// An unattended caller (ApplyVersionWhenIdle) waits here, verified and
+	// staged but with nothing swapped, until no sale is open: the old process
+	// must never serve the new web/ assets to an open sale, nor restart under
+	// it (ut-docs#2738 review). applyMu stays held, so a second target can't
+	// re-swap meanwhile; a shutdown cancels ctx and leaves the install as is.
+	if err := waitIdle(ctx, idle); err != nil {
+		return fmt.Errorf("waiting for no open sale: %w", err)
+	}
+
 	// Swap the binary (rename = atomic on the same fs; keep a .bak for rollback).
 	bak := exe + ".bak"
 	_ = os.Remove(bak)
@@ -390,13 +452,22 @@ func Apply(ctx context.Context) error {
 	// returned), so — unlike procrestart.Restart(), which must stay
 	// callable everywhere — there is no Windows no-op case to preserve here.
 	go func() {
-		done := make(chan struct{})
-		go func() {
+		if idle != nil {
+			// Unattended (nobody polls the restart): re-check idle once more
+			// after the delay — a sale started in it waits — and only then
+			// stop the hardware plugins, which that sale would need.
+			time.Sleep(reexecDelay)
+			_ = waitIdle(context.Background(), idle)
 			beforeRestart(context.Background())
-			close(done)
-		}()
-		time.Sleep(reexecDelay)
-		<-done
+		} else {
+			done := make(chan struct{})
+			go func() {
+				beforeRestart(context.Background())
+				close(done)
+			}()
+			time.Sleep(reexecDelay)
+			<-done
+		}
 		if err := reexecFn(exe); err != nil {
 			logging.L().Errorf("[selfupdate] re-exec failed (restart manually): %v", err)
 		}
@@ -406,10 +477,16 @@ func Apply(ctx context.Context) error {
 
 // LatestVersionURL and related helpers -------------------------------------
 
-func fetchLatest(ctx context.Context) (*ghRelease, error) {
+// fetchRelease reads one release's metadata: /releases/tags/v<version>, or
+// /releases/latest when version is "" (ut-docs#2738).
+func fetchRelease(ctx context.Context, version string) (*ghRelease, error) {
+	url := releasesLatest
+	if version != "" {
+		url = strings.TrimSuffix(releasesLatest, "/latest") + "/tags/v" + version
+	}
 	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(reqCtx, http.MethodGet, releasesLatest, nil)
+	req, _ := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

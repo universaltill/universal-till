@@ -2147,3 +2147,38 @@ func TestAdminDumpApplyRoundTrip_EffectsLevelIsPerTill(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#2738: the replica-follow bookkeeping (update.follow_attempted /
+// update.follow_error) and the pinged main-till version (sync.main_version)
+// belong to ONE till. Synced, a till's "already attempted 1.4.0" would stop
+// every other replica from trying it.
+func TestAdminDumpApplyRoundTrip_UpdateFollowKeysNeverSync(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	mustExec(t, primary, `INSERT INTO settings (key, value) VALUES
+		('update.follow_attempted', '1.4.0'), ('update.follow_error', 'failed:download'), ('sync.main_version', '1.4.0')`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	for _, rec := range bundle.Tables["settings"] {
+		if k, _ := rec["key"].(string); k == UpdateFollowAttemptedSettingsKey || k == UpdateFollowErrorSettingsKey || k == "sync.main_version" {
+			t.Fatalf("the main till dumped its per-till %s", k)
+		}
+	}
+	// A pre-fix main till that still sends them: the replica must not apply.
+	bundle.Tables["settings"] = append(bundle.Tables["settings"],
+		map[string]any{"key": "update.follow_attempted", "value": "1.4.0"},
+		map[string]any{"key": "update.follow_error", "value": "failed:download"})
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	var n int
+	_ = replica.QueryRow(`SELECT COUNT(*) FROM settings WHERE key LIKE 'update.follow_%'`).Scan(&n)
+	if n != 0 {
+		t.Fatal("the main till's follow bookkeeping synced onto the replica")
+	}
+}

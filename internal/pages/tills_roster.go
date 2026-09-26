@@ -70,8 +70,8 @@ func tillPeerViewOf(p fleetlink.PeerInfo, mainVersion string, now time.Time) til
 		}
 	}
 	if releaseVersion(v.Version) && releaseVersion(mainVersion) {
-		switch linkUpdateNote(v.Version, mainVersion) {
-		case linkUpdateWaiting:
+		switch linkUpdateNote(v.Version, mainVersion, false) {
+		case linkUpdateFollowing, linkUpdateManual:
 			v.VersionCmp = "older"
 		case linkMainUpdateWaiting:
 			v.VersionCmp = "newer"

@@ -16,6 +16,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -81,13 +82,30 @@ type releaseServer struct {
 	srv    *httptest.Server
 	tag    string
 	assets map[string][]byte // asset name -> content, served at /asset/<name>; a nil body is listed in /latest but 404s on download
+	mu     sync.Mutex
+	paths  []string // release-metadata paths asked for (/latest, /tags/<tag>), in order
+}
+
+// requested returns the release-metadata paths asked for so far.
+func (rs *releaseServer) requested() []string {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	return append([]string(nil), rs.paths...)
 }
 
 func newReleaseServer(t *testing.T, tag string, assets map[string][]byte) *releaseServer {
 	t.Helper()
 	rs := &releaseServer{tag: tag, assets: assets}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/latest", func(w http.ResponseWriter, r *http.Request) {
+	release := func(w http.ResponseWriter, r *http.Request) {
+		rs.mu.Lock()
+		rs.paths = append(rs.paths, r.URL.Path)
+		rs.mu.Unlock()
+		// GitHub's /releases/tags/<tag> 404s for a tag it doesn't have.
+		if tag, ok := strings.CutPrefix(r.URL.Path, "/tags/"); ok && tag != rs.tag {
+			http.NotFound(w, r)
+			return
+		}
 		var sb strings.Builder
 		sb.WriteString(fmt.Sprintf(`{"tag_name":%q,"assets":[`, rs.tag))
 		first := true
@@ -100,7 +118,9 @@ func newReleaseServer(t *testing.T, tag string, assets map[string][]byte) *relea
 		}
 		sb.WriteString("]}")
 		w.Write([]byte(sb.String()))
-	})
+	}
+	mux.HandleFunc("/latest", release)
+	mux.HandleFunc("/tags/", release)
 	mux.HandleFunc("/asset/", func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(r.URL.Path, "/asset/")
 		body, ok := rs.assets[name]
@@ -438,7 +458,7 @@ func TestApplyReadOnlyDirIsUnsupportedAndLeavesBinary(t *testing.T) {
 	}
 }
 
-// fetchLatest error branches ------------------------------------------------
+// fetchRelease error branches -----------------------------------------------
 
 func TestFetchLatestHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -448,7 +468,7 @@ func TestFetchLatestHTTPError(t *testing.T) {
 	old := releasesLatest
 	releasesLatest = srv.URL
 	t.Cleanup(func() { releasesLatest = old })
-	_, err := fetchLatest(context.Background())
+	_, err := fetchRelease(context.Background(), "")
 	if err == nil || !strings.Contains(err.Error(), "HTTP 502") {
 		t.Fatalf("err = %v, want HTTP 502", err)
 	}
@@ -462,7 +482,7 @@ func TestFetchLatestBadJSON(t *testing.T) {
 	old := releasesLatest
 	releasesLatest = srv.URL
 	t.Cleanup(func() { releasesLatest = old })
-	if _, err := fetchLatest(context.Background()); err == nil {
+	if _, err := fetchRelease(context.Background(), ""); err == nil {
 		t.Fatal("want decode error, got nil")
 	}
 }
@@ -736,5 +756,150 @@ func TestApplyDefaultBeforeRestartHookIsNoop(t *testing.T) {
 	case <-fix.reexecd:
 	case <-time.After(2 * time.Second):
 		t.Fatal("re-exec never fired with the default (no-op) beforeRestart hook")
+	}
+}
+
+// ut-docs#2738: an additional till installs EXACTLY its main till's version,
+// never "latest" (a newer release than the main till's would run it ahead of
+// its main till). ApplyVersion asks GitHub for /releases/tags/v<version> and
+// installs that release with the same verify + swap + re-exec as Apply.
+func TestApplyVersionFetchesTheTagNotLatest(t *testing.T) {
+	fix := newInstallFixture(t)
+	name := archiveNameFor("0.2.0")
+	archive := makeTarGz(t, []tarEntry{{name: "unitill-pos", body: "NEW-BINARY-v2"}})
+	rs := newReleaseServer(t, "v0.2.0", map[string][]byte{
+		name:            archive,
+		"checksums.txt": []byte(sha256hex(archive) + "  " + name + "\n"),
+	})
+
+	if err := ApplyVersion(context.Background(), "0.2.0"); err != nil {
+		t.Fatalf("ApplyVersion: %v", err)
+	}
+	if got := rs.requested(); len(got) != 1 || got[0] != "/tags/v0.2.0" {
+		t.Fatalf("release metadata asked for %v, want exactly [/tags/v0.2.0]", got)
+	}
+	if got, _ := os.ReadFile(fix.exe); string(got) != "NEW-BINARY-v2" {
+		t.Errorf("binary not swapped, content = %q", got)
+	}
+	select {
+	case <-fix.reexecd:
+	case <-time.After(2 * time.Second):
+		t.Error("re-exec never scheduled")
+	}
+}
+
+// Apply is ApplyVersion with no version: it still installs /latest.
+func TestApplyStillFetchesLatest(t *testing.T) {
+	newInstallFixture(t)
+	rs := newReleaseServer(t, "v0.2.0", map[string][]byte{"something-else.zip": []byte("x")})
+	_ = Apply(context.Background())
+	if got := rs.requested(); len(got) != 1 || got[0] != "/latest" {
+		t.Fatalf("release metadata asked for %v, want exactly [/latest]", got)
+	}
+}
+
+// Never a downgrade, never a reinstall of the running version, and never a
+// non-release string: ApplyVersion refuses before any network call.
+func TestApplyVersionRefusesNotNewerOrNotARelease(t *testing.T) {
+	fix := newInstallFixture(t) // running 0.1.0
+	rs := newReleaseServer(t, "v0.0.9", map[string][]byte{})
+	for _, v := range []string{"0.1.0", "v0.1.0", "0.0.9", "dev", "latest", "../../x", "0.2.0/../../y"} {
+		if err := ApplyVersion(context.Background(), v); err == nil {
+			t.Errorf("ApplyVersion(%q) = nil, want a refusal", v)
+		}
+	}
+	if got := rs.requested(); len(got) != 0 {
+		t.Fatalf("a refused version still reached the releases API: %v", got)
+	}
+	if got, _ := os.ReadFile(fix.exe); string(got) != fix.oldBin {
+		t.Errorf("binary touched by a refused version: %q", got)
+	}
+}
+
+// A tag GitHub doesn't have (404) fails cleanly; nothing is swapped.
+func TestApplyVersionUnknownTagFails(t *testing.T) {
+	fix := newInstallFixture(t)
+	newReleaseServer(t, "v0.2.0", map[string][]byte{})
+	err := ApplyVersion(context.Background(), "0.3.0")
+	if err == nil || !strings.Contains(err.Error(), "HTTP 404") {
+		t.Fatalf("err = %v, want the releases API's 404", err)
+	}
+	if got, _ := os.ReadFile(fix.exe); string(got) != fix.oldBin {
+		t.Errorf("binary touched on a failed update: %q", got)
+	}
+}
+
+// ut-docs#2738 review: an unattended update now runs during trading hours
+// (an additional till follows its main till at once), so the basket check
+// before the download is not enough — a sale can start while the release
+// downloads. ApplyVersionWhenIdle downloads and verifies, then waits for
+// idle() BEFORE swapping anything: an old process must never serve the new
+// web/ assets to an open sale, nor restart under it.
+func TestApplyVersionWhenIdleSwapsAndRestartsOnlyOnceIdle(t *testing.T) {
+	fix := newInstallFixture(t)
+	oldPoll := restartIdlePoll
+	restartIdlePoll = 5 * time.Millisecond
+	t.Cleanup(func() { restartIdlePoll = oldPoll })
+	name := archiveNameFor("0.2.0")
+	archive := makeTarGz(t, []tarEntry{{name: "unitill-pos", body: "NEW-BINARY-v2"}, {name: "web/index.html", body: "NEW-WEB"}})
+	newReleaseServer(t, "v0.2.0", map[string][]byte{
+		name:            archive,
+		"checksums.txt": []byte(sha256hex(archive) + "  " + name + "\n"),
+	})
+
+	var idle atomic.Bool
+	errc := make(chan error, 1)
+	go func() { errc <- ApplyVersionWhenIdle(context.Background(), "0.2.0", idle.Load) }()
+	select {
+	case err := <-errc:
+		t.Fatalf("returned while a sale was open: %v", err)
+	case <-fix.reexecd:
+		t.Fatal("restarted while a sale was open")
+	case <-time.After(150 * time.Millisecond):
+	}
+	if got, _ := os.ReadFile(fix.exe); string(got) != fix.oldBin {
+		t.Fatalf("binary swapped while a sale was open: %q", got)
+	}
+	if got, _ := os.ReadFile(filepath.Join(fix.dir, "web", "index.html")); string(got) != "OLD-WEB" {
+		t.Fatalf("web/ swapped while a sale was open: %q", got)
+	}
+
+	idle.Store(true)
+	if err := <-errc; err != nil {
+		t.Fatalf("ApplyVersionWhenIdle: %v", err)
+	}
+	if got, _ := os.ReadFile(fix.exe); string(got) != "NEW-BINARY-v2" {
+		t.Errorf("binary not swapped once idle: %q", got)
+	}
+	if got, _ := os.ReadFile(filepath.Join(fix.dir, "web", "index.html")); string(got) != "NEW-WEB" {
+		t.Errorf("web/ not swapped once idle: %q", got)
+	}
+	select {
+	case <-fix.reexecd:
+	case <-time.After(2 * time.Second):
+		t.Fatal("re-exec never ran once the till was idle")
+	}
+}
+
+// Shutting down while an unattended update waits for idle leaves the install
+// untouched: nothing was swapped yet.
+func TestApplyVersionWhenIdleCancelledLeavesInstallUntouched(t *testing.T) {
+	fix := newInstallFixture(t)
+	oldPoll := restartIdlePoll
+	restartIdlePoll = 5 * time.Millisecond
+	t.Cleanup(func() { restartIdlePoll = oldPoll })
+	name := archiveNameFor("0.2.0")
+	archive := makeTarGz(t, []tarEntry{{name: "unitill-pos", body: "NEW-BINARY-v2"}})
+	newReleaseServer(t, "v0.2.0", map[string][]byte{
+		name:            archive,
+		"checksums.txt": []byte(sha256hex(archive) + "  " + name + "\n"),
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := ApplyVersionWhenIdle(ctx, "0.2.0", func() bool { return false }); err == nil {
+		t.Fatal("want an error when cancelled while waiting for idle")
+	}
+	if got, _ := os.ReadFile(fix.exe); string(got) != fix.oldBin {
+		t.Fatalf("binary swapped although the wait was cancelled: %q", got)
 	}
 }
