@@ -222,6 +222,16 @@ async function ensureInvoiceSeller(page: Page) {
   expect(res.status(), 'configuring the invoice seller failed').toBe(204);
 }
 
+// ut-docs#2859 / ADR-0119: the effects level defaults to Auto, which reads
+// the host's hardware -- a weak build machine would resolve to Light and
+// bake a flat, shadowless look into the manual. Pin Full (the look the
+// manual describes) through the till's own endpoint. Idempotent, so it just
+// re-runs per shot; the page is loaded fresh by capture() afterwards.
+async function ensureFullEffects(page: Page) {
+  const res = await page.request.post('/api/settings/effects-level', { form: { level: 'full' } });
+  expect(res.status(), 'pinning the effects level failed').toBe(204);
+}
+
 // The auth till (8092) is a genuinely fresh install: complete the first-boot
 // wizard if it appears (fresh server), or PIN-login (server reused from a
 // local e2e run that already set it up) — mirrors login.spec.ts.
@@ -311,6 +321,7 @@ for (const topic of topics.filter((t) => !AUTH_TILL_TOPICS.includes(t.id))) {
       // and only the sell screenshots want it in frame.
       if (topic.id === 'sell') await ensureBasketLines(page);
       if (topic.id === 'invoices') await ensureInvoiceSeller(page);
+      await ensureFullEffects(page);
       await capture(page, topic.id, locale, topic.route);
     });
   }
@@ -324,6 +335,7 @@ test.describe('manager-gated topics (auth till)', () => {
       test(`screenshot: ${id} (${locale})`, async ({ page }) => {
         test.skip(!topic, `${id} topic no longer declares routes`);
         await ensureOperator(page); // fresh Playwright context per test → log in each time
+        await ensureFullEffects(page);
         await capture(page, topic!.id, locale, topic!.route);
       });
     }

@@ -433,6 +433,86 @@ html[data-nav-dir="pop"]::view-transition-new(root) { animation-name: ut-page-re
      frozen at 0s they read as "hung". Keep them turning. */
   #refresh-indicator, .animate-spin { animation-duration: 1s !important; }
 }
+
+/* ADR-0119 (ut-docs#2859): the per-till visual effects level. base.html
+   renders exactly one fx-full | fx-balanced | fx-light class on <html>
+   (Auto is resolved on the server, never rendered). Only paint and motion
+   change between levels -- never layout, sizes, touch targets or theme
+   colours. prefers-reduced-motion (above) stays the floor at every level.
+   Theme/layout plugins gate their own costly effects on the same class
+   (html:not(.fx-light), .fx-balanced); the Light wildcard below covers
+   motion, shadow, blur and filter even for a plugin that ignores it.
+
+   LIGHT ("super light", for a Raspberry Pi or a weak/old machine): no
+   animation or transition at all -- the same wildcard shape as the
+   reduced-motion block, and JS (UT.motionOff) never even creates the View
+   Transition; no shadow, blur or filter; flat colours instead of the
+   gradients below (explicit selectors, never a universal
+   background-image: none -- icons can be background images); press
+   feedback is a colour change, not a scale. */
+html.fx-light::view-transition-group(*), html.fx-light::view-transition-old(*), html.fx-light::view-transition-new(*) { animation: none !important; }
+html.fx-light *, html.fx-light *::before, html.fx-light *::after {
+  transition-duration: 0s !important; transition-delay: 0s !important;
+  animation: none !important;
+  scroll-behavior: auto !important;
+  box-shadow: none !important; text-shadow: none !important;
+  filter: none !important;
+  -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
+}
+/* Essential motion stays (WCAG 2.3.3, as under reduced motion). */
+html.fx-light #refresh-indicator, html.fx-light .animate-spin { animation: spin 1s linear infinite !important; }
+/* Function stays: these state rings are drawn with an inset/spread
+   box-shadow (a border, not a shadow), so they come back after the
+   wildcard -- selected category, pressed picker tile, checked colour, the
+   suggested icon, the caps-lock key, a row being dragged. */
+html.fx-light .osk-caps { box-shadow: inset 0 0 0 2px var(--accent-contrast) !important; }
+html.fx-light .category-overflow-tile.active { box-shadow: 0 0 0 2px var(--cat-color, var(--accent)) inset !important; }
+html.fx-light .picker-tile[aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--accent) !important; }
+/* Its own rule: an engine without :has() drops only this one. */
+html.fx-light .designer-cat-colors .item-color-tile:has(input:checked) { box-shadow: inset 0 0 0 2px var(--accent) !important; }
+html.fx-light .builtin-icon-tile.builtin-icon-suggested { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent) !important; }
+html.fx-light .category-row.is-dragging > td { box-shadow: inset 0 2px 0 var(--accent), inset 0 -2px 0 var(--accent) !important; }
+html.fx-light .designer-cat.is-dragging { box-shadow: inset 0 0 0 1px var(--accent) !important; }
+/* Gradients and textures -> flat. */
+html.fx-light .pos-container > .products { background-image: none; }
+/* (The item editor's tab-bar scroll fades, ut-docs#2024, stay: they are the
+   only cue that tabs sit off-screen -- an affordance, not decoration.) */
+html.fx-light .busy-bar { background: var(--accent, #2563eb); }
+html.fx-light .trust-official { background: #fbbf24; }
+/* Press feedback: a colour change only, no scale. */
+html.fx-light .btn-tile:not(.tile-colored):active,
+html.fx-light .category-tile:active,
+html.fx-light .category-overflow-tile:active,
+html.fx-light .picker-tile:active { transform: none; background-color: var(--surface-2); }
+/* A coloured tile keeps its white label legible: darken its own colour. */
+html.fx-light .btn-tile.tile-colored:active { transform: none; background: color-mix(in srgb, var(--tile-color) 80%, #000); }
+html.fx-light .designer-cat.is-dragging { transform: none; }
+/* No lift on the dragged tile (the drag's own inline translate still wins). */
+html.fx-light .jiggle-mode .tile-cell > .btn-tile.dragging { transform: none; }
+
+/* BALANCED: short opacity fades (.ut-swap-fx 150ms, .ut-panel-fx 180ms,
+   .ut-dialog-fx 150ms -- all within 200ms) stay; the ADR-0118 page push
+   stays but is cut to ADR-0097's original 200ms budget; no backdrop blur;
+   one small shadow instead of large or layered ones; no drag lift or
+   jiggle (the one decorative looping animation). `filter` itself is left
+   alone: core uses it only for the hidden-tile grayscale and hover
+   brightness, neither of them a blur. */
+html.fx-balanced { --ut-motion-ms: 200ms; --shadow: 0 1px 2px rgba(15, 23, 42, .08); }
+html.fx-balanced *, html.fx-balanced *::before, html.fx-balanced *::after {
+  -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
+}
+html.fx-balanced .nav,
+html.fx-balanced #osk,
+html.fx-balanced .toast,
+html.fx-balanced .payment-overlay,
+html.fx-balanced .login-card,
+html.fx-balanced .bugreport-panel,
+html.fx-balanced .btn-tile:hover,
+html.fx-balanced .category-tile:hover,
+html.fx-balanced .category-overflow-tile:hover { box-shadow: 0 1px 3px rgba(15, 23, 42, .18); }
+html.fx-balanced .jiggle-mode .tile-cell > .btn-tile { animation: none; }
+html.fx-balanced .jiggle-mode .tile-cell > .btn-tile.dragging { transform: none; box-shadow: 0 1px 3px rgba(15, 23, 42, .18); }
+html.fx-balanced .designer-cat.is-dragging { transform: none; box-shadow: inset 0 0 0 1px var(--accent); }
 /* ============================================================================ */
 
 /* ut-docs#298: .nav's background is always var(--brand) — dark in every
@@ -4525,6 +4605,10 @@ body.login-screen {
    — and `align-items: center` then centres the label and its select on separate
    lines, turning each one-line Settings row into a 134px centred stack. */
 .set-row { display: flex; flex-direction: row; gap: .5rem; align-items: center; flex-wrap: wrap; }
+/* ut-docs#2859: a select sized to a long option (the effects level's
+   "Light: no animations, flat look (fastest)") must never outgrow its card
+   at 360px — it shrinks and the native control truncates the label. */
+.set-row select { max-inline-size: 100%; min-inline-size: 0; }
 .set-tight { margin-block-start: .35rem; }
 .set-below { margin-block-end: .6rem; }
 .set-gap { margin-block-start: .8rem; }

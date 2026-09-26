@@ -649,7 +649,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"settingsMap": all,
 			"menuItems":   d.MenuSnapshot(),
 			"uiScale":     strconv.FormatFloat(scale, 'f', -1, 64),
-			"isManager":   isManager,
+			// ADR-0119: the effects selector and what Auto detected.
+			"fxView":    effectsLevelViewFrom(all),
+			"isManager": isManager,
 			// ADR-0092 §7 / ut-docs#2169: the diagnostic-mode card's state
 			// (web/ui/partials/diagnostics_block.html). Only computed for a
 			// manager: #settings-diagnostics (settings.html) is the ONLY
@@ -1611,6 +1613,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		settingsAudit(r, posRepo, elev, "settings", "marketplace.telemetry_opt_in", "telemetry_opt_in_changed", map[string]any{"opt_in": optIn})
 		settingsRespondSaved(w, r, elev)
 	})
+
+	// ADR-0119: this till's visual effects level, beside the interface scale.
+	registerEffectsLevel(mux, d.Settings)
 
 	// Interface scale for this till's screen; saved and applied immediately.
 	mux.HandleFunc("POST /api/settings/ui-scale", func(w http.ResponseWriter, r *http.Request) {
