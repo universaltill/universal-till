@@ -19,5 +19,5 @@ Release notes for the till. Versions come from the release tag
   hashes or sessions).
 - ut-cloud: `claims.DirectiveMinTillVersion` for `save_user`,
   `set_user_pin` and `deactivate_user` is the release that ships this entry
-  (expected **0.28.0**, the next minor after v0.27.1; confirm against the
-  actual tag).
+  (the first release after **v0.28.0**, which was cut just before this
+  merged; v0.28.0 does not contain it).
