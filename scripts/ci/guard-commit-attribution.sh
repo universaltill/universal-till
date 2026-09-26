@@ -131,7 +131,7 @@ while IFS='|' read -r sha email name; do
   seen=$((seen + 1))
   email_lc="${email,,}"
 
-  if printf '%s' "$email_lc" | grep -Eq "$BANNED_RE"; then
+  if grep -Eq "$BANNED_RE" <<<"$email_lc"; then
     echo "::error::${sha:0:9} is authored by '${name} <${email}>' — AI-tool or unattributable identity"
     bad=1
   elif [[ "$email_lc" =~ $ID_PREFIXED_RE ]]; then
@@ -150,7 +150,7 @@ while IFS='|' read -r sha email name; do
       echo "::error::${sha:0:9} is authored by '${name} <${email}>' — legacy noreply username '${uname}' is not a known contributor (see ALLOWED_LEGACY_USERNAMES in scripts/ci/guard-commit-attribution.sh)"
       bad=1
     fi
-  elif printf '%s' "$email_lc" | grep -Eq "$NOREPLY_DOMAIN_RE"; then
+  elif grep -Eq "$NOREPLY_DOMAIN_RE" <<<"$email_lc"; then
     # Anything ending in @users.noreply.github.com that matched NEITHER
     # recognized shape above — e.g. a stray extra '+', a character GitHub
     # usernames can't contain, a truncated/malformed address. DEFAULT-DENY

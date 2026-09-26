@@ -23,6 +23,7 @@ import (
 	"github.com/universaltill/universal-till/internal/cloudsync"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
+	"github.com/universaltill/universal-till/internal/directivekey"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/iconid"
@@ -344,7 +345,8 @@ type configReportGate struct {
 	lastSent time.Time
 }
 
-// add puts categories / modifier_groups / kitchen_stations into extra when
+// add puts categories / modifier_groups / kitchen_stations (and, on the
+// main till, users) into extra when
 // they should be sent. A read error, an over-budget payload or an unchanged
 // config within the refresh period leaves all three keys out: the cloud
 // reads a missing key as "keep what you have", whereas an empty list would
@@ -357,6 +359,16 @@ func (g *configReportGate) add(ctx context.Context, d *common.Deps, extra map[st
 		return
 	}
 	lists := map[string]any{"categories": cats, "modifier_groups": groups, "kitchen_stations": stations}
+	// users (reference/till-user-directives.md §5) come from the main till
+	// only: it is the one place user changes are decided (ADR-0115 §1).
+	// Same hash gate and budget as the menu lists.
+	if d.SyncPrimaryURL(ctx) == "" {
+		users := remoteUsersReport(ctx, d)
+		if users == nil {
+			return
+		}
+		lists["users"] = users
+	}
 	raw, err := json.Marshal(lists)
 	if err != nil {
 		logging.L().Warnf("cloudsync: config report marshal failed: %v", err)
@@ -571,6 +583,10 @@ func wireCloudLinkHooks(d *common.Deps, hooks *cloudsync.Hooks) {
 // report carries) without starting the sync goroutine.
 func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.Hooks {
 	configGate := &configReportGate{}
+	// The main till's directive key (reference/till-user-directives.md §1):
+	// created lazily by DeviceExtra at the first check-in as main till,
+	// opened by the user directive hooks.
+	directiveKeys := directivekey.New()
 	return cloudsync.Hooks{
 		SetSetting: func(ctx context.Context, key, value string) (string, error) {
 			if err := rejectRemoteFiscalPostureWrite(d, key); err != nil {
@@ -689,6 +705,19 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		DeleteModifierGroup: func(ctx context.Context, id string) (string, error) {
 			return cloudDeleteModifierGroup(ctx, d, id)
 		},
+		// The till user directives (reference/till-user-directives.md §4):
+		// main-till only, PIN opened with the directive key, one
+		// transaction each, audited, idempotent. See
+		// cloud_user_directives.go.
+		SaveUser: func(ctx context.Context, u cloudsync.UserDirective) (string, error) {
+			return cloudSaveUser(ctx, d, directiveKeys, u)
+		},
+		SetUserPIN: func(ctx context.Context, u cloudsync.UserDirective) (string, error) {
+			return cloudSetUserPIN(ctx, d, directiveKeys, u)
+		},
+		DeactivateUser: func(ctx context.Context, u cloudsync.UserDirective) (string, error) {
+			return cloudDeactivateUser(ctx, d, directiveKeys, u)
+		},
 		// diagnostic_mode_revoke (ADR-0092 §1/§4, ut-docs#2169): Universal
 		// Till ended this till's diagnostic session — clear the local flag
 		// and drain that session's whole pending queue in one step. Same
@@ -748,6 +777,15 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 			// category/modifier editors to pre-fill from real state. Sent
 			// only when it changed (see configReportGate).
 			configGate.add(ctx, d, extra)
+			// The main till's directive key, on every check-in (contract
+			// §1): created here at the first one. A satellite never
+			// creates or reports one, so the cloud clears a key a
+			// demoted till reported before.
+			if d.SyncPrimaryURL(ctx) == "" {
+				if rep := directiveKeys.Report(); rep != nil {
+					extra["directive_key"] = rep
+				}
+			}
 			return extra
 		},
 	}
