@@ -538,6 +538,28 @@ func allDigits(s string) bool {
 	return true
 }
 
+// LocalizeMajor swaps the '.' of a FormatMajorPlain/MoneyPlaceholder string
+// for the locale's decimal separator (ut-docs#2818): a German till's money
+// input shows "4,00", not an English-style "4.00" its own keyboard can't
+// type. Only the separator changes -- no grouping -- so use it only on a
+// MoneyPatternLocal field, whose reader (window.utCurrency.toMinor or
+// ParseMoneyMajor) accepts either separator; a dot-only MoneyPattern field
+// keeps the plain string.
+func LocalizeMajor(plain, locale string) string {
+	if _, dec := numberSeparators(locale); dec != '.' {
+		return strings.Replace(plain, ".", string(dec), 1)
+	}
+	return plain
+}
+
+// MoneyPlaceholderLocalAttr is MoneyPlaceholderAttr for a MoneyPatternLocal
+// field: the example amount in the locale's decimal separator
+// (ut-docs#2818). Template callers use {{ moneyplaceholderlocal … }}, which
+// binds the request's locale.
+func MoneyPlaceholderLocalAttr(decimals int, example int64, locale string) template.HTMLAttr {
+	return template.HTMLAttr(`placeholder="` + LocalizeMajor(MoneyPlaceholder(decimals, example), locale) + `"`)
+}
+
 // MoneyPlaceholderAttr renders the whole `placeholder="…"` HTML attribute
 // for an example major-unit amount (may be negative) -- see
 // MoneyPlaceholder. Same template.HTMLAttr reasoning as MoneyPatternAttr

@@ -160,7 +160,7 @@
           <input type="hidden" name="groupId" value="{{ $group.ID }}">
           <input type="hidden" name="isActive" value="1">
           <input type="text" name="name" required placeholder="{{ T "catalog.modifiers.option_name" }} — {{ T "catalog.modifiers.option_example" }}">
-          <input type="text" inputmode="decimal" name="priceDeltaMajor" {{ moneypatternlocal currency.Decimals false }} {{ moneyplaceholder currency.Decimals 0 }} title="{{ T "catalog.modifiers.price_delta" }}">
+          <input type="text" inputmode="decimal" name="priceDeltaMajor" {{ moneypatternlocal currency.Decimals false }} {{ moneyplaceholderlocal currency.Decimals 0 }} title="{{ T "catalog.modifiers.price_delta" }}">
           <button class="btn" type="submit">{{ T "catalog.modifiers.add_option" }}</button>
         </form>
       </div>
