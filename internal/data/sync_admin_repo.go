@@ -1728,16 +1728,6 @@ const (
 	SettingShopWide
 )
 
-func (k SettingScopeKind) String() string {
-	switch k {
-	case SettingPerTill:
-		return "per-till"
-	case SettingShopWide:
-		return "shop-wide"
-	}
-	return "unclassified"
-}
-
 // ShopWideSettingPrefixes are the settings key families that are the same
 // for every till of one shop (ut-docs#2791). Like PerTillSettingPrefixes, an
 // entry is a prefix; a full key works as an exact match. It does NOT change

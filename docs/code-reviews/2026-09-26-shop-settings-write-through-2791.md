@@ -50,6 +50,8 @@ Values are not re-validated on the main till: each handler validates them on the
 - **Screenshots:** `make docs-shots` in the sandbox rewrote all 124 PNGs, which looks like Chromium build drift. Those were discarded. No rendered pixel changes on a main till, and the help change is prose only. So only `manifest.json` was refreshed: `surface_sha256` via `update-docs-shots-surface-hash.sh`, plus the four `multitill` topic hashes. Docs-Shots-Unchanged: true.
 - **Not done:** no two-till browser run. The flow is covered end to end by httptest against the real main-till handler, backed by its own migrated DB. Nothing visible changes except the error text.
 
+- **CI round 1:** `desktop-shell`'s `guard-deadcode-baseline.sh` flagged the unused `SettingScopeKind.String` (only a test `%v` used it). Removed.
+
 ## Verdict
 
 Safe to merge. Deferred: ut-docs#2948 and ut-docs#2950. Language-pack PRs in `ut-plugin-language-de`/`-es` follow the core merge in the same cycle.
