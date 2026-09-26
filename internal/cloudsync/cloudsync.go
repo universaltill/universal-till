@@ -192,6 +192,15 @@ type Hooks struct {
 	DeleteCategory      func(ctx context.Context, id, moveItemsTo string) (string, error)
 	SaveModifierGroup   func(ctx context.Context, p data.ModifierGroupSave) (string, error)
 	DeleteModifierGroup func(ctx context.Context, id string) (string, error)
+	// The till user directives (ut-docs reference/till-user-directives.md
+	// §4, ADR-0115 amendment 2026-09-25): main-till only, like the catalog
+	// ones above. Each opens pin_sealed (when present) with the main
+	// till's directive key and checks/hashes the PIN before its single
+	// write transaction, then applies through the same AuthRepo guards as
+	// the till's own users screens, audited and idempotent.
+	SaveUser       func(ctx context.Context, u UserDirective) (string, error)
+	SetUserPIN     func(ctx context.Context, u UserDirective) (string, error)
+	DeactivateUser func(ctx context.Context, u UserDirective) (string, error)
 	// DeviceExtra contributes extra fields to the device report (e.g. the
 	// current theme + the themes this till can switch to, so the cloud can
 	// render a real design picker instead of a raw key/value form). Keys must
@@ -233,6 +242,9 @@ type directive struct {
 	ID      string         `json:"id"`
 	Type    string         `json:"type"`
 	Payload map[string]any `json:"payload"`
+	// CreatedBy is the cloud's queuing actor, when the cloud sends it (the
+	// user directives' audit provenance); "" otherwise.
+	CreatedBy string `json:"created_by"`
 }
 
 // ModifierGroupOption is one option inside an upsert_modifier_group
@@ -757,6 +769,18 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", "missing id"
 		}
 		msg, err = hooks.DeleteModifierGroup(ctx, id)
+	case "save_user", "set_user_pin", "deactivate_user":
+		hook := map[string]func(context.Context, UserDirective) (string, error){
+			"save_user": hooks.SaveUser, "set_user_pin": hooks.SetUserPIN, "deactivate_user": hooks.DeactivateUser,
+		}[d.Type]
+		if hook == nil {
+			return "failed", d.Type + " is not supported on this till"
+		}
+		u, bad := decodeUserDirective(d)
+		if bad != "" {
+			return "failed", bad
+		}
+		msg, err = hook(ctx, u)
 	default:
 		return "failed", "unknown directive type " + d.Type
 	}
