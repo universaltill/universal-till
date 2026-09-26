@@ -168,8 +168,11 @@ func TestEveryMotionPathUsesMotionOff(t *testing.T) {
 	if strings.Contains(app, "if (mq && mq.matches) return;") {
 		t.Errorf("app.js still gates the swap ease on the bare media query")
 	}
+	// ADR-0122 §5/§6 (ut-docs#2944): record-dialog.js has no motion of its
+	// own any more -- its dialogs get base.html's shared popup zoom, which
+	// bails on UT.motionOff() (popup_zoom_guard_test.go).
 	rd := readRecordDialogJS(t)
-	if !strings.Contains(rd, "window.UT.motionOff()") || !strings.Contains(rd, "if (!motionOff()) dialog.classList.add('ut-dialog-fx')") {
-		t.Errorf("record-dialog.js's open ease must skip via UT.motionOff()")
+	if strings.Contains(rd, "ut-dialog-fx") || strings.Contains(rd, ".animate(") {
+		t.Errorf("record-dialog.js must not carry its own dialog motion (ADR-0122 §5)")
 	}
 }

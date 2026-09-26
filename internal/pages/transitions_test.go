@@ -852,58 +852,6 @@ func TestBaseHTMLDialogOpenFinishesPaneZooms(t *testing.T) {
 	}
 }
 
-func TestAppCSSHasDialogOpenEaseAnimation(t *testing.T) {
-	css := readAppCSS(t)
-	if !strings.Contains(css, ".ut-dialog-fx") {
-		t.Errorf("app.css missing .ut-dialog-fx (the record-dialog.js open ease class)")
-	}
-	if !strings.Contains(css, "@keyframes ut-dialog-in") {
-		t.Errorf("app.css missing @keyframes ut-dialog-in")
-	}
-}
-
-// The reduced-motion wildcard block (TestAppCSSReducedMotionBlockCoversEverything
-// above) already asserts `*, *::before, *::after { animation-duration: 0s
-// !important }`, which covers these two new keyframes automatically — no
-// separate CSS assertion needed here, only that app.js/record-dialog.js
-// also carry the belt-and-braces JS-side skip, checked below.
-
-func TestRecordDialogJSAppliesOpenEaseAndSkipsUnderReducedMotion(t *testing.T) {
-	js := readRecordDialogJS(t)
-	if !strings.Contains(js, "prefers-reduced-motion: reduce") {
-		t.Fatalf("record-dialog.js must feature-check prefers-reduced-motion before applying the open ease")
-	}
-	if !strings.Contains(js, "'ut-dialog-fx'") {
-		t.Fatalf("record-dialog.js must apply the 'ut-dialog-fx' class on open")
-	}
-	// The reduced-motion check must gate adding the class (belt-and-braces
-	// alongside the CSS wildcard), not just exist somewhere unrelated in
-	// the file.
-	openIdx := strings.Index(js, "function open(dialog, row, opener)")
-	if openIdx < 0 {
-		t.Fatalf("open(dialog, row, opener) not found in record-dialog.js")
-	}
-	closeIdx := strings.Index(js, "function close(dialog)")
-	if closeIdx < 0 || closeIdx < openIdx {
-		t.Fatalf("close(dialog) not found after open() in record-dialog.js")
-	}
-	openBody := js[openIdx:closeIdx]
-	if !strings.Contains(openBody, "ut-dialog-fx") {
-		t.Fatalf("open() must add the ut-dialog-fx class, got body: %s", openBody)
-	}
-	// ADR-0119: through motionOff() (UT.motionOff: reduced motion OR the
-	// Light effects level, falling back to the bare media query).
-	if !strings.Contains(openBody, "if (!motionOff()) dialog.classList.add('ut-dialog-fx')") {
-		t.Fatalf("open() must consult motionOff() (reduced motion or Light) before adding ut-dialog-fx")
-	}
-	// Never applied to close(): delaying the native .close() for an exit
-	// animation would add latency to Cancel/Save.
-	closeBody := js[closeIdx:]
-	closeEnd := strings.Index(closeBody, "\n  }\n")
-	if closeEnd > 0 {
-		closeBody = closeBody[:closeEnd]
-	}
-	if strings.Contains(closeBody, "ut-dialog-fx") {
-		t.Fatalf("close() must NOT add/remove ut-dialog-fx — no exit animation, zero added latency on Cancel/Save, got body: %s", closeBody)
-	}
-}
+// ut-docs#2944 / ADR-0122 §5: the #2010/#2338 record-dialog open ease
+// (.ut-dialog-fx) is gone -- every dialog now gets base.html's shared popup
+// zoom instead. popup_zoom_guard_test.go pins that.

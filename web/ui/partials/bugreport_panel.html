@@ -586,6 +586,11 @@
   }
 
   function closePanel() {
+    // ADR-0122 §5 (ut-docs#2944): the panel is the one popup that is not a
+    // <dialog>, so it reports to base.html's shared popup zoom itself --
+    // before it hides, so the shrink starts from where it really is (it
+    // may have been dragged). A no-op under Light / reduced motion.
+    if (window.UT && UT.popupClosed) UT.popupClosed(panel);
     panel.classList.remove('open');
     syncToggle(false);
     dismissed(true);
@@ -599,7 +604,11 @@
   document.addEventListener('click', function (e) {
     var t = e.target && e.target.closest ? e.target.closest('#bugreport-toggle') : null;
     if (!t) return;
-    if (panel.classList.contains('open')) closePanel(); else openPanel();
+    if (panel.classList.contains('open')) { closePanel(); return; }
+    openPanel();
+    // Grows from the toggle the operator tapped (ADR-0122 §5). Only this
+    // tap animates: a panel restored open on page load is not a move.
+    if (window.UT && UT.popupOpened) UT.popupOpened(panel);
   });
 
   document.getElementById('bugreport-close').addEventListener('click', closePanel);

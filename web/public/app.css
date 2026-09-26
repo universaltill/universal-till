@@ -409,17 +409,40 @@ html[data-nav-dir="pop"]::view-transition-new(root) { animation-name: ut-page-re
    popups use the shorter small-zoom duration (ADR-0122 §1). */
 :root { --ut-zoom-small-ms: 300ms; }
 
-/* ut-docs#2010 / ut-docs#2338: a record-dialog.js standard dialog fades and
-   scales in on open -- zero added latency, dialog.show() already ran
-   synchronously beforehand (record-dialog.js), this only eases the very
-   next frames. Deliberately NOT applied to close(): delaying the native
-   .close() to let an exit animation finish would add latency to
-   Cancel/Save, which ADR-0097's rule 1 forbids on a cashier-facing
-   surface. Uniform scale, so RTL needs nothing extra. */
-.ut-dialog-fx { animation: ut-dialog-in 150ms ease-out both; }
-@keyframes ut-dialog-in {
-  from { opacity: 0; transform: scale(.96); }
-  to   { opacity: 1; transform: scale(1); }
+/* ADR-0122 §5 (ut-docs#2944): every popup (<dialog>, sheet, picker) grows
+   from the tapped element and shrinks back into it -- base.html's ONE
+   shared popup motion, a transient Web Animations transform, never a CSS
+   rule here. After the native close (the page already takes input) the
+   SAME element is painted again for at most --ut-zoom-small-ms with
+   data-ut-closing, inert and aria-hidden while it shrinks: fixed at the box
+   it last had open (the custom properties base.html sets), in its open
+   display type, no pointer events, above the rail (100) and the on-screen
+   keyboard (#osk, 1000). !important because it must beat every popup's own
+   closed-state rule (the UA's dialog:not([open]), .record-dialog:not([open]),
+   .bugreport-panel) and id-keyed frame (#hold-modal, #pfand-modal, ...).
+   `transform` is deliberately NOT important: the shrink animates it (an
+   important declaration would beat the animation); this only drops the
+   popup's own transform (e.g. .shrinkage-sheet's centring), which the
+   recorded box already includes. Logical properties, so RTL needs nothing
+   more (base.html measures the inline-start offset per direction). */
+html [data-ut-closing] {
+  display: var(--ut-closing-display, block) !important;
+  position: fixed !important;
+  inset: auto !important;
+  inset-block-start: var(--ut-closing-t) !important;
+  inset-inline-start: var(--ut-closing-is) !important;
+  inline-size: var(--ut-closing-w) !important;
+  block-size: var(--ut-closing-h) !important;
+  min-inline-size: 0 !important; min-block-size: 0 !important;
+  max-inline-size: none !important; max-block-size: none !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+  pointer-events: none !important;
+  z-index: 1500 !important;
+  translate: none !important; rotate: none !important; scale: none !important;
+  transform: none;
+  transition: none !important;
 }
 
 /* Reduced motion: ONE block, kills everything -- the new view-transition
@@ -435,6 +458,9 @@ html[data-nav-dir="pop"]::view-transition-new(root) { animation-name: ut-page-re
   /* Progress spinners are essential motion (WCAG 2.3.3 exempts them):
      frozen at 0s they read as "hung". Keep them turning. */
   #refresh-indicator, .animate-spin { animation-duration: 1s !important; }
+  /* ADR-0122 §6 backstop: base.html never re-shows a closing popup under
+     reduced motion; should one ever be marked, it is not painted. */
+  html:root [data-ut-closing] { display: none !important; }
 }
 
 /* ADR-0119 (ut-docs#2859): the per-till visual effects level. base.html
@@ -462,6 +488,8 @@ html.fx-light *, html.fx-light *::before, html.fx-light *::after {
   filter: none !important;
   -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
 }
+/* ADR-0122 §6 backstop: no closing popup is ever re-shown under Light. */
+html.fx-light [data-ut-closing] { display: none !important; }
 /* Essential motion stays (WCAG 2.3.3, as under reduced motion). */
 html.fx-light #refresh-indicator, html.fx-light .animate-spin { animation: spin 1s linear infinite !important; }
 /* Function stays: these state rings are drawn with an inset/spread
@@ -493,8 +521,8 @@ html.fx-light .designer-cat.is-dragging { transform: none; }
 /* No lift on the dragged tile (the drag's own inline translate still wins). */
 html.fx-light .jiggle-mode .tile-cell > .btn-tile.dragging { transform: none; }
 
-/* BALANCED: short opacity fades (.ut-swap-fx 150ms, .ut-dialog-fx 150ms)
-   stay; the tree-pane zoom (ADR-0122) is cut to 200ms; the ADR-0122 page
+/* BALANCED: the short opacity swap fade (.ut-swap-fx 150ms) stays; the
+   tree-pane and popup zooms (ADR-0122) are cut to 200ms; the ADR-0122 page
    zoom stays but is cut to ADR-0097's original 200ms budget (ADR-0122 amends
    ADR-0119 §3); no backdrop blur;
    one small shadow instead of large or layered ones; no drag lift or

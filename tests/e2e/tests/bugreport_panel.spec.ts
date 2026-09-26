@@ -1,5 +1,15 @@
 import { test, expect } from '../support/fixtures';
 
+// ut-docs#2944 (ADR-0122 §5): the panel grows out of the toggle over
+// --ut-zoom-small-ms. This suite does not force reduced motion (unlike
+// e2e/tests/fixtures.ts), so a test that measures or drags the panel waits
+// for that open zoom to settle first -- it pins the RESTING geometry.
+async function openPanel(page: import('@playwright/test').Page) {
+  await page.getByTestId('bugreport-toggle').click();
+  await page.getByTestId('bugreport-panel').evaluate((el) =>
+    Promise.all(el.getAnimations().map((a) => a.finished.catch(() => undefined))));
+}
+
 // The 🐞 bug-report panel (ut-docs#346): non-modal capture panel opened
 // from the nav on every staff page. Mirrors the e2e/ suite's coverage so a
 // regression in either till setup is caught (a prior cycle shipped one by
@@ -32,7 +42,7 @@ test('🐞 nav button opens the non-modal panel', async ({ page }) => {
 
 test('a typed report sends inline without a page navigation', async ({ page }) => {
   await page.goto('/');
-  await page.getByTestId('bugreport-toggle').click();
+  await openPanel(page);
 
   await page.locator('#ir-note').fill('e2e(:8080): typed report via the panel');
   await Promise.all([
@@ -51,7 +61,7 @@ test('a typed report sends inline without a page navigation', async ({ page }) =
 test('the note field and Save are visible the moment the panel opens', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto('/');
-  await page.getByTestId('bugreport-toggle').click();
+  await openPanel(page);
 
   const panel = await page.getByTestId('bugreport-panel').boundingBox();
   const note = await page.locator('#ir-note').boundingBox();
@@ -77,7 +87,7 @@ test('closing the panel sticks across a navigation, even back to /report-issue',
   await page.goto('/');
   const panel = page.getByTestId('bugreport-panel');
 
-  await page.getByTestId('bugreport-toggle').click();
+  await openPanel(page);
   await expect(panel).toBeVisible();
   await page.getByTestId('bugreport-close').click();
   await expect(panel).toBeHidden();
@@ -90,7 +100,7 @@ test('closing the panel sticks across a navigation, even back to /report-issue',
   // visible: the suppression branch skips the lazy initCapture() the
   // forced-open path used to run, so a real save is driven here to prove
   // the panel isn't re-opening with dead buttons.
-  await page.getByTestId('bugreport-toggle').click();
+  await openPanel(page);
   await expect(panel).toBeVisible();
 
   await page.locator('#ir-note').fill('e2e(:8080): re-opened after a dismissal');
@@ -106,7 +116,7 @@ test('closing the panel sticks across a navigation, even back to /report-issue',
 // covering, dragged from the head bar, not the ✕ (which must keep closing).
 test('the panel can be dragged to a different position by its head bar', async ({ page }) => {
   await page.goto('/');
-  await page.getByTestId('bugreport-toggle').click();
+  await openPanel(page);
 
   const panel = page.getByTestId('bugreport-panel');
   const before = (await panel.boundingBox())!;
@@ -137,7 +147,7 @@ test('the panel can be dragged to a different position by its head bar', async (
 
 test('dragging the head does not trigger the ✕ close control', async ({ page }) => {
   await page.goto('/');
-  await page.getByTestId('bugreport-toggle').click();
+  await openPanel(page);
   const panel = page.getByTestId('bugreport-panel');
   await expect(panel).toBeVisible();
 
@@ -177,7 +187,7 @@ async function touchDriver(page: import('@playwright/test').Page) {
 
 test('touch: the panel drags, and a cancelled gesture does not leave it stuck to the pointer', async ({ page }) => {
   await page.goto('/');
-  await page.getByTestId('bugreport-toggle').click();
+  await openPanel(page);
   const panel = page.getByTestId('bugreport-panel');
   await expect(panel).toBeVisible();
   const touch = await touchDriver(page);
@@ -215,7 +225,7 @@ test('touch: the panel drags, and a cancelled gesture does not leave it stuck to
 test('a dragged panel is pulled back on-screen when the viewport shrinks', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto('/');
-  await page.getByTestId('bugreport-toggle').click();
+  await openPanel(page);
   const panel = page.getByTestId('bugreport-panel');
   const h = (await page.locator('.bugreport-head h2').boundingBox())!;
   await page.mouse.move(h.x + h.width / 2, h.y + h.height / 2);
