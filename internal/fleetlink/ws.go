@@ -2,8 +2,10 @@ package fleetlink
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -54,6 +56,12 @@ func (w wsConn) Close(code CloseCode, reason string) {
 type DialError struct {
 	Status     int
 	RetryAfter time.Duration // from Retry-After on a 503; 0 when absent
+	// Code is the refusal's machine reason from a JSON error body
+	// ({"error":{"code":"…"}}, ut-cloud's writeAPIError envelope — e.g.
+	// not_main_till, tier_periodic on the cloud link); "" when the body
+	// has none. Informational only: never trusted for anything but a
+	// status label.
+	Code string
 }
 
 func (e *DialError) Error() string {
@@ -81,12 +89,37 @@ func dial(ctx context.Context, url, bearer string, readLimit int64) (Conn, error
 			if s, perr := strconv.Atoi(resp.Header.Get("Retry-After")); perr == nil && s > 0 {
 				de.RetryAfter = time.Duration(min(s, 3600)) * time.Second
 			}
+			de.Code = refusalCode(resp)
 			return nil, de
 		}
 		return nil, err
 	}
 	c.SetReadLimit(readLimit)
 	return wsConn{c: c, dialled: true}, nil
+}
+
+// maxRefusalCode bounds DialError.Code: a code is a short identifier.
+const maxRefusalCode = 64
+
+// refusalCode reads a refused upgrade's JSON error code. The websocket
+// library has already buffered at most 1 KiB of the body; a missing,
+// non-JSON or oversized code yields "".
+func refusalCode(resp *http.Response) string {
+	if resp.Body == nil {
+		return ""
+	}
+	var body struct {
+		Error *struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&body) != nil || body.Error == nil {
+		return ""
+	}
+	if c := body.Error.Code; len(c) <= maxRefusalCode {
+		return c
+	}
+	return ""
 }
 
 // remoteCloseCode is the close code the other side sent, or 0 when the

@@ -2,6 +2,9 @@ package pages
 
 import (
 	"context"
+	"fmt"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +13,8 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/entitlement"
 	"github.com/universaltill/universal-till/internal/fleetlink"
+	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
 type cloudLinkSettings map[string]string
@@ -112,7 +117,10 @@ func TestCloudLinkSaleOfTenderAndRefundSign(t *testing.T) {
 
 // AC8: status carries this till's version and each linked LAN peer.
 func TestCloudLinkStatusFromHub(t *testing.T) {
-	st := cloudLinkStatusOf("v9", []fleetlink.PeerInfo{
+	db := openPagesTestDB(t)
+	defer db.Close()
+	d := &common.Deps{Db: db}
+	st := cloudLinkStatusOf(context.Background(), d, "v9", []fleetlink.PeerInfo{
 		{TillID: "t2", HasHello: true, Hello: fleetlink.Hello{Version: "v8"}},
 		{TillID: "t3", HasHello: true, Hello: fleetlink.Hello{Version: "v8"}, HasReport: true, Report: fleetlink.Report{Version: "v9", UpdateState: "downloading"}},
 	})
@@ -124,6 +132,164 @@ func TestCloudLinkStatusFromHub(t *testing.T) {
 	}
 	if p := st.Peers[1]; p.Version != "v9" || p.UpdateState != "downloading" {
 		t.Fatalf("peer 1 = %+v, want the report's version and update state", p)
+	}
+}
+
+// ut-docs#2895: an enrolled till with no live link is listed as down —
+// cheap enough (one indexed SELECT) to do on every status frame, same as
+// the Tills page's own 10s roster poll already does.
+func TestCloudLinkStatusListsDownTills(t *testing.T) {
+	db := openPagesTestDB(t)
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO tills (id, name, bearer_hash) VALUES ('t2','Register 2','h2'), ('t3','Register 3','h3')`); err != nil {
+		t.Fatalf("seed tills: %v", err)
+	}
+	d := &common.Deps{Db: db}
+	st := cloudLinkStatusOf(context.Background(), d, "v9", []fleetlink.PeerInfo{
+		{TillID: "t2", HasHello: true, Hello: fleetlink.Hello{Version: "v8"}},
+	})
+	if len(st.Peers) != 2 {
+		t.Fatalf("peers = %+v, want t2 up and t3 down", st.Peers)
+	}
+	var t2, t3 *cloudlink.PeerStatus
+	for i := range st.Peers {
+		switch st.Peers[i].TillID {
+		case "t2":
+			t2 = &st.Peers[i]
+		case "t3":
+			t3 = &st.Peers[i]
+		}
+	}
+	if t2 == nil || t2.Link != "up" {
+		t.Fatalf("t2 = %+v, want up", t2)
+	}
+	if t3 == nil || t3.Link != "down" {
+		t.Fatalf("t3 = %+v, want down", t3)
+	}
+}
+
+// ut-docs#2895: the status frame's peer list is capped at 64 (ut-cloud's
+// maxStatusPeers; ADR-0117 §7's 16 KiB message limit), live peers first —
+// a store with 200 enrolled tills must not grow the frame without bound.
+func TestCloudLinkStatusCapsPeers(t *testing.T) {
+	db := openPagesTestDB(t)
+	defer db.Close()
+	for i := range 200 {
+		if _, err := db.Exec(`INSERT INTO tills (id, name, bearer_hash) VALUES (?, ?, ?)`,
+			fmt.Sprintf("t%03d", i), fmt.Sprintf("Register %d", i), fmt.Sprintf("h%d", i)); err != nil {
+			t.Fatalf("seed tills: %v", err)
+		}
+	}
+	var peers []fleetlink.PeerInfo
+	for i := 190; i < 200; i++ { // the live ones sort last in the table
+		peers = append(peers, fleetlink.PeerInfo{TillID: fmt.Sprintf("t%03d", i), HasHello: true})
+	}
+	st := cloudLinkStatusOf(context.Background(), &common.Deps{Db: db}, "v9", peers)
+	if len(st.Peers) != maxCloudLinkStatusPeers || maxCloudLinkStatusPeers != 64 {
+		t.Fatalf("peers = %d (cap %d), want 64", len(st.Peers), maxCloudLinkStatusPeers)
+	}
+	for i := range 10 {
+		if st.Peers[i].Link != "up" {
+			t.Fatalf("peer %d = %+v, want the live peers first", i, st.Peers[i])
+		}
+	}
+}
+
+// ut-docs#2895: the Tills page's Cloud link row maps the client's own
+// State/Reason/NextAttempt, plus (only while idle) the gate's reason this
+// till never tries at all, onto exactly one translated label+hint pair —
+// pure and table-driven, same shape as link_status.go's deriveLinkView.
+func TestCloudLinkRowViewOf(t *testing.T) {
+	at := time.Date(2026, 9, 26, 12, 30, 0, 0, time.UTC)
+	cases := []struct {
+		name        string
+		gateReason  cloudLinkGateReason
+		state       cloudlink.State
+		reason      cloudlink.WaitReason
+		nextAttempt time.Time
+		wantShow    bool
+		wantCode    string
+		wantLabel   string
+		wantHint    string
+		wantNext    bool // NextAttempt should be non-empty
+	}{
+		{"unenrolled hides the row even if somehow linked", gateUnenrolled, cloudlink.StateLinked, cloudlink.WaitReasonNone, time.Time{}, false, "", "", "", false},
+		{"linked is live", gateEligible, cloudlink.StateLinked, cloudlink.WaitReasonNone, time.Time{}, true, "live", "tills.cloud_link.state_live", "tills.cloud_link.hint_live", false},
+		{"connecting with a next attempt", gateEligible, cloudlink.StateConnecting, cloudlink.WaitReasonNone, at, true, "reconnecting", "tills.cloud_link.state_reconnecting", "tills.cloud_link.hint_reconnecting", true},
+		{"connecting with no next attempt yet (dialling now)", gateEligible, cloudlink.StateConnecting, cloudlink.WaitReasonNone, time.Time{}, true, "reconnecting", "tills.cloud_link.state_reconnecting", "tills.cloud_link.hint_reconnecting_now", false},
+		{"revoked is stopped", gateEligible, cloudlink.StateRevoked, cloudlink.WaitReasonNone, time.Time{}, true, "stopped", "tills.cloud_link.state_stopped", "tills.cloud_link.hint_stopped", false},
+		{"waiting: not main till", gateEligible, cloudlink.StateWaiting, cloudlink.WaitReasonNotMainTill, time.Time{}, true, "paused_not_main", "tills.cloud_link.state_paused_not_main", "tills.cloud_link.hint_paused_not_main", false},
+		{"waiting: tier changed", gateEligible, cloudlink.StateWaiting, cloudlink.WaitReasonTierChanged, time.Time{}, true, "paused_tier", "tills.cloud_link.state_paused_tier", "tills.cloud_link.hint_paused_tier", false},
+		{"waiting: busy", gateEligible, cloudlink.StateWaiting, cloudlink.WaitReasonBusy, time.Time{}, true, "paused_busy", "tills.cloud_link.state_paused_busy", "tills.cloud_link.hint_paused_busy", false},
+		{"waiting: Retry-After with its retry time", gateEligible, cloudlink.StateWaiting, cloudlink.WaitReasonRetryAfter, at, true, "paused_busy", "tills.cloud_link.state_paused_busy", "tills.cloud_link.hint_paused_busy_retry", true},
+		{"waiting: Retry-After, dialling now", gateEligible, cloudlink.StateWaiting, cloudlink.WaitReasonRetryAfter, time.Time{}, true, "paused_busy", "tills.cloud_link.state_paused_busy", "tills.cloud_link.hint_reconnecting_now", false},
+		{"idle but eligible: connecting at boot", gateEligible, cloudlink.StateIdle, cloudlink.WaitReasonNone, time.Time{}, true, "connecting", "tills.cloud_link.state_connecting", "tills.cloud_link.hint_connecting", false},
+		{"idle: this till is not the main till", gateNotMainTill, cloudlink.StateIdle, cloudlink.WaitReasonNone, time.Time{}, true, "periodic", "tills.cloud_link.state_periodic", "tills.cloud_link.hint_periodic_not_main", false},
+		{"idle: the plan's tier is periodic", gateTierPeriodic, cloudlink.StateIdle, cloudlink.WaitReasonNone, time.Time{}, true, "periodic", "tills.cloud_link.state_periodic", "tills.cloud_link.hint_periodic_tier", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v := cloudLinkRowViewOf(tc.gateReason, tc.state, tc.reason, tc.nextAttempt, "en")
+			if v.Show != tc.wantShow || v.Code != tc.wantCode || v.LabelKey != tc.wantLabel || v.HintKey != tc.wantHint {
+				t.Fatalf("view = %+v, want show=%v code=%q label=%q hint=%q", v, tc.wantShow, tc.wantCode, tc.wantLabel, tc.wantHint)
+			}
+			if got := v.NextAttempt != ""; got != tc.wantNext {
+				t.Fatalf("NextAttempt = %q, want non-empty=%v", v.NextAttempt, tc.wantNext)
+			}
+		})
+	}
+}
+
+// ut-docs#2895: the roster partial actually renders the Cloud link row's
+// translated label and hint for every state (a handler-level check on top
+// of TestCloudLinkRowViewOf's pure mapping) — real i18n, real template,
+// same tills_roster.html the Tills page's 10s poll re-renders.
+func TestTillsRosterRendersCloudLinkStates(t *testing.T) {
+	chdirRoot(t)
+	initAuthTestI18n(t)
+	cases := []struct {
+		name       string
+		view       cloudLinkRowView
+		wantHidden bool
+		wantText   []string
+	}{
+		{"hidden when unenrolled", cloudLinkRowView{}, true, nil},
+		{"live", cloudLinkRowViewOf(gateEligible, cloudlink.StateLinked, cloudlink.WaitReasonNone, time.Time{}, "en"), false,
+			[]string{"Cloud link", "Live", "Connected in real time"}},
+		{"reconnecting with a next attempt", cloudLinkRowViewOf(gateEligible, cloudlink.StateConnecting, cloudlink.WaitReasonNone, time.Date(2026, 9, 26, 12, 30, 0, 0, time.UTC), "en"), false,
+			[]string{"Reconnecting", "Retrying"}},
+		{"paused: not the main till", cloudLinkRowViewOf(gateEligible, cloudlink.StateWaiting, cloudlink.WaitReasonNotMainTill, time.Time{}, "en"), false,
+			[]string{"Paused: not the main till"}},
+		{"paused: tier changed", cloudLinkRowViewOf(gateEligible, cloudlink.StateWaiting, cloudlink.WaitReasonTierChanged, time.Time{}, "en"), false,
+			[]string{"Paused: tier changed"}},
+		{"paused: cloud busy", cloudLinkRowViewOf(gateEligible, cloudlink.StateWaiting, cloudlink.WaitReasonBusy, time.Time{}, "en"), false,
+			[]string{"Paused: cloud busy"}},
+		{"paused: Retry-After", cloudLinkRowViewOf(gateEligible, cloudlink.StateWaiting, cloudlink.WaitReasonRetryAfter, time.Date(2026, 9, 26, 12, 30, 0, 0, time.UTC), "en"), false,
+			[]string{"Paused: cloud busy", "tries again by itself"}},
+		{"connecting at boot", cloudLinkRowViewOf(gateEligible, cloudlink.StateIdle, cloudlink.WaitReasonNone, time.Time{}, "en"), false,
+			[]string{"Connecting…"}},
+		{"stopped: credential revoked", cloudLinkRowViewOf(gateEligible, cloudlink.StateRevoked, cloudlink.WaitReasonNone, time.Time{}, "en"), false,
+			[]string{"Stopped: credential revoked"}},
+		{"periodic: not the main till", cloudLinkRowViewOf(gateNotMainTill, cloudlink.StateIdle, cloudlink.WaitReasonNone, time.Time{}, "en"), false,
+			[]string{"Periodic", "main till holds the live link"}},
+		{"periodic: plan's tier", cloudLinkRowViewOf(gateTierPeriodic, cloudlink.StateIdle, cloudlink.WaitReasonNone, time.Time{}, "en"), false,
+			[]string{"Periodic", "checks in every 2 minutes"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest("GET", "/ui/tills/roster", nil)
+			httpx.RenderPartial("ui/partials/tills_roster.html", map[string]any{"CloudLink": tc.view})(rec, req)
+			body := rec.Body.String()
+			if strings.Contains(body, `data-testid="cloud-link-row"`) == tc.wantHidden {
+				t.Fatalf("cloud-link-row present = %v, want hidden=%v; body=%s", !tc.wantHidden, tc.wantHidden, body)
+			}
+			for _, want := range tc.wantText {
+				if !strings.Contains(body, want) {
+					t.Fatalf("body missing %q; body=%s", want, body)
+				}
+			}
+		})
 	}
 }
 

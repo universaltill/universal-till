@@ -131,14 +131,20 @@ func tillsRosterData(ctx context.Context, d *common.Deps, w http.ResponseWriter,
 		}
 		rows = append(rows, row)
 	}
+	locale := httpx.ResolveLocale(w, r)
 	return map[string]any{
 		"Tills":              rows,
-		"PrimaryTillName":    tillNameOrDefault(ctx, d, httpx.ResolveLocale(w, r)),
+		"PrimaryTillName":    tillNameOrDefault(ctx, d, locale),
 		"SyncPrimary":        primaryURL,
 		"ThisTillID":         thisTillID,
 		"PrimaryLastContact": primaryLastContact,
 		"LinkInfo":           linkInfo,
 		"MainVersion":        buildinfo.Version,
+		// ut-docs#2895: this till's own ADR-0117 realtime socket to the
+		// cloud — a different link than the LAN roster above, shown
+		// whether or not this till is the main till (Show is false only
+		// when the shop has no cloud enrolment at all).
+		"CloudLink": cloudLinkRowFor(ctx, d, locale),
 	}, nil
 }
 

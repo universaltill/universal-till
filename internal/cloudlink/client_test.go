@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -102,6 +103,11 @@ func TestNotMainTillWaitsForACheckIn(t *testing.T) {
 	if n := h.cloud.dialCount(); n != 1 {
 		t.Fatalf("dials after 4011 = %d, want 1 (no redial before a check-in)", n)
 	}
+	// ut-docs#2895: the status surfaces distinguish this from a tier
+	// change or a busy pod.
+	if h.c.State() != StateWaiting || h.c.Reason() != WaitReasonNotMainTill {
+		t.Fatalf("state/reason after 4011 = %v/%v, want waiting/not-main-till", h.c.State(), h.c.Reason())
+	}
 	h.c.CheckedIn(false) // a FAILED check-in proves nothing
 	time.Sleep(100 * time.Millisecond)
 	if n := h.cloud.dialCount(); n != 1 {
@@ -120,6 +126,9 @@ func TestTierChangedWaitsForACheckIn(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	if n := h.cloud.dialCount(); n != 1 {
 		t.Fatalf("dials after 4010 = %d, want 1", n)
+	}
+	if h.c.State() != StateWaiting || h.c.Reason() != WaitReasonTierChanged {
+		t.Fatalf("state/reason after 4010 = %v/%v, want waiting/tier-changed", h.c.State(), h.c.Reason())
 	}
 	h.c.CheckedIn(true)
 	h.cloud.nextConn(t)
@@ -209,6 +218,33 @@ func TestAbnormalCloseRedials(t *testing.T) {
 	c2.frame(t, "hello")
 	_ = c2.ws.CloseNow() // a reset, no close frame
 	h.cloud.nextConn(t)
+}
+
+// ut-docs#2895: NextAttempt backs the "reconnecting" status surfaces' next-
+// attempt hint while a timed redial is pending, and clears once the link
+// is back up (or dialling right now, with nothing scheduled to report).
+func TestNextAttemptDuringBackoff(t *testing.T) {
+	h := newHarness(t, nil)
+	c := h.cloud.nextConn(t)
+	c.frame(t, "hello")
+	eventually(t, "linked", func() bool { return h.c.State() == StateLinked })
+	if at := h.c.NextAttempt(); !at.IsZero() {
+		t.Fatalf("NextAttempt while linked = %v, want zero", at)
+	}
+	before := time.Now()
+	c.send("bye", map[string]any{"reason": "deploying"})
+	eventually(t, "a next-attempt time after an abnormal close", func() bool { return !h.c.NextAttempt().IsZero() })
+	if h.c.State() != StateConnecting {
+		t.Fatalf("state while a redial is pending = %v, want connecting", h.c.State())
+	}
+	if at := h.c.NextAttempt(); at.Before(before) {
+		t.Fatalf("NextAttempt = %v, want at or after the close (%v)", at, before)
+	}
+	h.cloud.nextConn(t)
+	eventually(t, "linked again", func() bool { return h.c.State() == StateLinked })
+	if at := h.c.NextAttempt(); !at.IsZero() {
+		t.Fatalf("NextAttempt once linked again = %v, want zero", at)
+	}
 }
 
 // AC6: the first redial after an abnormal close waits U(0, spread), and
@@ -384,6 +420,9 @@ func TestTryAgainAndRateLimitedWaitForACheckIn(t *testing.T) {
 			if h.c.State() != StateWaiting {
 				t.Fatalf("state after %d = %v, want waiting", code, h.c.State())
 			}
+			if h.c.Reason() != WaitReasonBusy {
+				t.Fatalf("reason after %d = %v, want busy", code, h.c.Reason())
+			}
 			h.c.CheckedIn(true)
 			h.cloud.nextConn(t)
 		})
@@ -470,4 +509,106 @@ func TestLinkVersionIsRecordedBeforeTheKick(t *testing.T) {
 	if nilClient.LinkVersion() != 0 {
 		t.Fatal("nil Client LinkVersion must be 0")
 	}
+}
+
+// ut-docs#2895: a 403 upgrade refusal carries ut-cloud's JSON error code
+// (stores_link.go: not_main_till / tier_periodic); the status surfaces
+// show the real reason, not "cloud busy". A 403 with no parseable code
+// stays busy.
+func TestRefusedUpgradeReasonFromBody(t *testing.T) {
+	for _, tc := range []struct {
+		code string
+		want WaitReason
+	}{
+		{"not_main_till", WaitReasonNotMainTill},
+		{"tier_periodic", WaitReasonTierChanged},
+		{"", WaitReasonBusy},
+		{"device_credential_required", WaitReasonBusy},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			cloud := newFakeCloud(t)
+			cloud.queueRefusal(refusal{status: http.StatusForbidden, code: tc.code})
+			o := fastOptions()
+			o.Target = func(context.Context) (Target, bool) {
+				return Target{BaseURL: cloud.srv.URL + "/api", StoreID: "store-1", Bearer: "cred-1", DeviceID: "dev-1"}, true
+			}
+			c := New(o)
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan struct{})
+			go func() { defer close(done); c.Run(ctx) }()
+			defer func() { cancel(); <-done }()
+			eventually(t, "waiting after the 403", func() bool { return c.State() == StateWaiting })
+			if got := c.Reason(); got != tc.want {
+				t.Fatalf("reason after 403 %q = %v, want %v", tc.code, got, tc.want)
+			}
+		})
+	}
+}
+
+// ut-docs#2895: a 503 with Retry-After redials on a timer, not after a
+// check-in — its own reason, with the time it retries at; and when that
+// redial fails in transport, the row shows Reconnecting, not busy.
+func TestRetryAfterReasonThenFailedDialReconnects(t *testing.T) {
+	cloud := newFakeCloud(t)
+	cloud.queueRefusal(refusal{status: http.StatusServiceUnavailable, retryAfter: 1})
+	for range 200 { // every redial after it fails in transport
+		cloud.queueRefusal(refusal{drop: true})
+	}
+	o := fastOptions()
+	o.BackoffMin, o.BackoffMax = 200*time.Millisecond, 200*time.Millisecond
+	o.Target = func(context.Context) (Target, bool) {
+		return Target{BaseURL: cloud.srv.URL + "/api", StoreID: "store-1", Bearer: "cred-1", DeviceID: "dev-1"}, true
+	}
+	c := New(o)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); c.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	eventually(t, "the first dial", func() bool { return cloud.dialCount() == 1 })
+	eventually(t, "a Retry-After next attempt", func() bool { return !c.NextAttempt().IsZero() })
+	if c.State() != StateWaiting || c.Reason() != WaitReasonRetryAfter {
+		t.Fatalf("state/reason after 503 Retry-After = %v/%v, want waiting/retry-after", c.State(), c.Reason())
+	}
+	eventually(t, "the dropped redial", func() bool { return cloud.dialCount() >= 2 })
+	eventually(t, "reconnecting after the failed redial", func() bool {
+		return c.State() == StateConnecting && !c.NextAttempt().IsZero()
+	})
+	if c.Reason() != WaitReasonNone {
+		t.Fatalf("reason while reconnecting = %v, want none", c.Reason())
+	}
+}
+
+// ut-docs#2895: once the redial timer fires the next-attempt time is in
+// the past; it must clear rather than show a stale time while dialling.
+func TestNextAttemptClearsWhenTheTimerFires(t *testing.T) {
+	var block atomic.Bool
+	gate := make(chan struct{})
+	h := newHarness(t, func(o *Options) {
+		o.RedialSpread = 50 * time.Millisecond
+		inner := o.Target
+		o.Target = func(ctx context.Context) (Target, bool) {
+			if block.Load() {
+				select {
+				case <-gate:
+				case <-ctx.Done():
+				}
+			}
+			return inner(ctx)
+		}
+	})
+	c := h.cloud.nextConn(t)
+	c.frame(t, "hello")
+	eventually(t, "linked", func() bool { return h.c.State() == StateLinked })
+	block.Store(true)
+	c.send("bye", map[string]any{"reason": "deploying"})
+	eventually(t, "a next-attempt time", func() bool { return !h.c.NextAttempt().IsZero() })
+	// The timer fires within the spread; Run then blocks in Target, i.e.
+	// about to dial.
+	eventually(t, "next attempt cleared once the timer fired", func() bool { return h.c.NextAttempt().IsZero() })
+	if h.c.State() != StateConnecting {
+		t.Fatalf("state while about to redial = %v, want connecting", h.c.State())
+	}
+	block.Store(false)
+	close(gate)
+	h.cloud.nextConn(t)
 }

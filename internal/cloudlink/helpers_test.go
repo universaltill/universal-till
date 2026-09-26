@@ -3,6 +3,7 @@ package cloudlink
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -35,7 +36,9 @@ type fakeCloud struct {
 
 type refusal struct {
 	status     int
-	retryAfter int // seconds; 0 = no header
+	retryAfter int    // seconds; 0 = no header
+	code       string // the cloud's JSON error code in the body; "" = no body
+	drop       bool   // hijack and drop the connection: a transport failure, no HTTP status
 }
 
 type cloudConn struct {
@@ -56,11 +59,25 @@ func newFakeCloud(t *testing.T) *fakeCloud {
 			f.refuse = f.refuse[1:]
 		}
 		f.mu.Unlock()
+		if ref != nil && ref.drop {
+			if hj, ok := w.(http.Hijacker); ok {
+				if conn, _, err := hj.Hijack(); err == nil {
+					conn.Close()
+				}
+			}
+			return
+		}
 		if ref != nil {
+			if ref.code != "" {
+				w.Header().Set("Content-Type", "application/json")
+			}
 			if ref.retryAfter > 0 {
 				w.Header().Set("Retry-After", strconv.Itoa(ref.retryAfter))
 			}
 			w.WriteHeader(ref.status)
+			if ref.code != "" { // ut-cloud's writeAPIError envelope
+				fmt.Fprintf(w, `{"data":null,"error":{"code":%q,"message":"refused"}}`, ref.code)
+			}
 			return
 		}
 		ws, err := websocket.Accept(w, r, nil)
