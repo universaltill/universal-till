@@ -50,6 +50,17 @@ The till writes a technical log that support may ask for:
 
 `till.log` is the newest file, `till.log.1` to `till.log.4` are older ones, and `desktop.log` is the app window's own log. Passwords and tokens are removed before anything is written, and the folder never grows past about 25 MB. While the till is running, a manager can also find the folder under Settings → Diagnostic mode → **Log files**, with buttons to copy its path and a diagnostics summary to send to support. The Android app does not write these files.
 
+## On Windows: the till opens in your web browser instead of its own window
+
+The till's window on Windows is drawn by a Windows component called
+WebView2. If WebView2 can't start — most often right after Windows updated
+it in the background while an old copy was still running — the till no
+longer closes straight away. It opens in your default web browser
+instead, at the same address, and works normally there. Restart the
+computer when convenient; the till's own window comes back after the
+restart. If it doesn't, send support the `desktop.log` file from the log
+folder above: it records why the window couldn't open.
+
 ## On an Android till: a single page fails to load
 
 This is different from the recovery screen above, which is about the
