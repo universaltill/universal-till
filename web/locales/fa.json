@@ -2439,6 +2439,7 @@
   "status.update_failed": "به‌روزرسانی ناموفق بود — گزارش‌ها را ببینید",
   "status.update_installed_reload": "به‌روزرسانی نصب شد — برای بارگذاری مجدد کلیک کنید",
   "status.update_now": "اکنون به‌روزرسانی کن",
+  "status.update_restart_pending": "به‌روزرسانی نصب شد — در انتظار راه‌اندازی مجدد. برای تکمیل، صندوق را دوباره راه‌اندازی کنید",
   "status.update_restarting": "در حال راه‌اندازی مجدد…",
   "status.update_uptodate": "از قبل به‌روز است",
   "suggest.add": "افزودن به سبد",

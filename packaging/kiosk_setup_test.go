@@ -347,6 +347,16 @@ func TestPostremovePurgeCleansSelfUpdateBackups(t *testing.T) {
 		t.Errorf("postremove.sh: unitill-pos.bak cleanup is at depth %d, want 1 (nested inside the purge conditional, not unconditional)", binDepth)
 	}
 
+	// ut-docs#2759: the "restart pending" marker selfupdate writes next to
+	// the binary is just as un-package-owned as the .bak.
+	markDepth, markFound := chownDepthAt(post, "rm -f /opt/unitill/bin/.unitill-update-pending")
+	if !markFound {
+		t.Fatal("postremove.sh: no `rm -f /opt/unitill/bin/.unitill-update-pending` — a purge leaves the self-update marker behind")
+	}
+	if markDepth != 1 {
+		t.Errorf("postremove.sh: update-marker cleanup is at depth %d, want 1 (inside the purge conditional)", markDepth)
+	}
+
 	webDepth, webFound := chownDepthAt(post, "rm -rf /opt/unitill/web.bak")
 	if !webFound {
 		t.Fatal("postremove.sh: no `rm -rf /opt/unitill/web.bak` — a purge leaves the self-update rollback web/ backup behind")
