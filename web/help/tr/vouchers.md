@@ -14,7 +14,7 @@ Hediye çeki, müşterinin şimdi ödeyip daha sonra harcadığı paradır — d
 ## Hediye çeki satmak
 
 1. **Ödeme**'ye dokunun, **Böl** sekmesine geçin ve panelin altındaki **Hediye çeki sat** bölümünü açın.
-2. Hediye çekinin değerini **Hediye çeki tutarı** alanına yazın — normal bir para tutarı, örneğin `25.00`.
+2. Hediye çekinin değerini **Hediye çeki tutarı** alanına yazın — normal bir para tutarı, örneğin `25,00`.
 3. **Kod**: teslim ettiğiniz kartın üzerinde basılı kodu yazın. Boş bırakırsanız kasa ödemede kendisi bir kod üretir.
 4. **Kimin için** isteğe bağlıdır — hediye çekinin kimin için alındığını hatırlamak için bir ad.
 5. **Hediye çeki ekle**. Kodu (ya da *Kod ödemede oluşturulur*), değeri ve sahibiyle birlikte bekleyen listeye eklenir; her birinin kaldırmak için bir ✕'i vardır. Değer, müşterinin ödeyeceği tutara eklenir — **Kalanı doldur** bunu hesaba katar, dolayısıyla hesap her satışta olduğu gibi işler.

@@ -43,7 +43,7 @@
                    it in (same root cause as ut-docs#1249/#1272) -- switching
                    to text+inputmode="decimal" avoids that; range/positivity
                    is already enforced server-side (parsePromotionForm). -->
-              <input type="text" inputmode="decimal" {{ moneypatternlocal currency.Decimals false }} name="value_amount" x-show="type === 'amount'" value="{{ .ValueAmountMajor }}" style="width:5rem" placeholder="{{ T "promotions.col.value" }}" />
+              <input type="text" inputmode="decimal" {{ moneypatternlocal currency.Decimals false }} name="value_amount" x-show="type === 'amount'" value="{{ majorlocal .ValueAmountMajor }}" style="width:5rem" placeholder="{{ T "promotions.col.value" }}" />
               <input type="text" inputmode="decimal" pattern="[0-9]+(\.[0-9]{1,2})?" name="value_percent" x-show="type === 'percent'" value="{{ .ValuePercent }}" style="width:5rem" placeholder="{{ T "promotions.col.value" }}" />
               <input type="text" name="description" value="{{ .Description }}" placeholder="{{ T "promotions.field.description" }}" style="width:8rem" />
               <input type="date" name="starts_at" value="{{ .StartsAtDate }}" />

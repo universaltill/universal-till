@@ -14,7 +14,7 @@ Ein Gutschein ist Geld, das eine Kundin jetzt bezahlt, um es später auszugeben 
 ## Einen Gutschein verkaufen
 
 1. Tippen Sie auf **Zahlung**, wechseln Sie zum Reiter **Aufteilen** und öffnen Sie **Gutschein verkaufen** am unteren Rand des Feldes.
-2. Geben Sie den Wert des Gutscheins unter **Gutscheinwert** ein — ein normaler Währungsbetrag, z. B. `25.00`.
+2. Geben Sie den Wert des Gutscheins unter **Gutscheinwert** ein — ein normaler Währungsbetrag, z. B. `25,00`.
 3. **Code**: Tippen Sie den Code ein, der auf der Karte steht, die Sie aushändigen. Lassen Sie das Feld leer, erzeugt die Kasse den Code beim Abschluss selbst.
 4. **Für** ist optional — ein Name, um festzuhalten, für wen der Gutschein gekauft wurde.
 5. **Gutschein hinzufügen**. Er erscheint in einer Liste ausstehender Gutscheine mit seinem Code (oder *Code wird beim Abschluss erzeugt*), seinem Wert und dem Namen, jeweils mit einem ✕ zum Entfernen. Der Wert wird zu dem addiert, was die Kundin schuldet — **Rest auffüllen** rechnet ihn mit ein, die Rechnung geht also auf wie bei jedem anderen Verkauf.

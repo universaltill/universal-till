@@ -22,11 +22,12 @@ test.describe('Money inputs: decimal comma on the remaining fields (ut-docs#2925
       page.waitForURL(/\/promotions(\?lang=de)?$|\/promotions$/),
       form.locator('button[type="submit"]').click(),
     ]);
-    // The inline edit row prefills FormatMajorPlain(stored minor): "3.50"
-    // only if the server stored 350.
+    // The inline edit row prefills FormatMajorPlain(stored minor) in the
+    // session's German decimal comma (ut-docs#2818): "3,50" only if the
+    // server stored 350.
     const html = await (await page.request.get('/promotions')).text();
     const row = html.slice(html.indexOf(`action="/api/promotions/${code}/edit"`));
-    expect(row).toMatch(/name="value_amount"[^>]*value="3\.50"/);
+    expect(row).toMatch(/name="value_amount"[^>]*value="3,50"/);
     assertClean();
   });
 
