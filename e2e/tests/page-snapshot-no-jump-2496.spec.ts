@@ -128,7 +128,7 @@ test.describe('page transition snapshots the old page before the shell sync (ut-
     expect(rec.navDir).toBe('push');
     const byPseudo = (r: Rec) => Object.fromEntries(r.anims.map((a) => [a.pseudo, a]));
     let m = byPseudo(rec);
-    expect(m['::view-transition-new(root)']?.name, 'incoming page slides in over the old one').toBe('ut-page-slide-in');
+    expect(m['::view-transition-new(root)']?.name, 'incoming page zooms in over the old one (ADR-0122)').toBe('ut-page-zoom-in');
     expect(m['::view-transition-old(root)']?.name, 'outgoing page recedes').toBe('ut-page-recede');
     for (const a of rec.anims) {
       expect(a.duration, `${a.pseudo} duration`).toBeGreaterThanOrEqual(350);
@@ -146,7 +146,7 @@ test.describe('page transition snapshots the old page before the shell sync (ut-
     expect(rec.navDir).toBe('pop');
     m = byPseudo(rec);
     expect(m['::view-transition-new(root)']?.name, 'the previous page comes back up from the receded state').toBe('ut-page-return');
-    expect(m['::view-transition-old(root)']?.name, 'the page being left slides back out').toBe('ut-page-slide-out');
+    expect(m['::view-transition-old(root)']?.name, 'the page being left shrinks back out (ADR-0122)').toBe('ut-page-zoom-out');
     await expect(page.locator('body')).toHaveClass(/sale-screen/);
     assertClean();
   });
