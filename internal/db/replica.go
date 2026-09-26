@@ -179,6 +179,17 @@ ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, val)
 		fxlevel.SettingsPrefix, fxlevel.SettingsPrefix); err != nil {
 		return false, fmt.Errorf("clear inherited effects level: %w", err)
 	}
+	// ut-docs#2950: the primary's ADR-0092 support session (diagnostics.*)
+	// and the hashes of what it last pushed to the cloud (cloudsync.*) are
+	// its own state; admin pulls no longer overwrite them, so drop the
+	// snapshot's copy here. install.* stays: it is this machine's
+	// provisioning marker, and clearing it would re-run provisioning over
+	// the owner's window mode. Prefix match via substr, as above.
+	for _, p := range []string{"diagnostics.", "cloudsync."} {
+		if _, err := sqlDB.Exec(`DELETE FROM settings WHERE substr(key, 1, length(?)) = ?`, p, p); err != nil {
+			return false, fmt.Errorf("clear inherited %s* settings: %w", p, err)
+		}
+	}
 	// The snapshot brought the primary's sessions; they mean nothing here.
 	if _, err := sqlDB.Exec(`DELETE FROM sessions`); err != nil {
 		return false, fmt.Errorf("clear sessions: %w", err)

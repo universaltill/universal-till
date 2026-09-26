@@ -638,6 +638,14 @@ var PerTillSettingPrefixes = []string{
 	// dials the cloud-link socket (ADR-0117 §1), so a replica never needs
 	// its own cached value.
 	"cloud.link_",
+	// ut-docs#2950: three families #2791 had left shop-wide only because the
+	// bundle carried them. diagnostics.* is this till's own ADR-0092 support
+	// session ("ordinary till-local settings", internal/diagnostics) — synced,
+	// the main till's session switched a replica's on or off. cloudsync.* is
+	// the hash of what THIS till last pushed to the cloud; synced, every main
+	// till snapshot moved the admin fingerprint (the #2792 churn). install.*
+	// is this machine's one-time OS provisioning marker (internal/app).
+	"diagnostics.", "cloudsync.", "install.",
 }
 
 func perTillSetting(key string) bool {
@@ -1767,17 +1775,21 @@ var ShopWideSettingPrefixes = []string{
 	// classified on purpose, since most of that family is per-till.
 	"marketplace.store_id", "marketplace.merchant_id",
 	"marketplace.telemetry_opt_in", "marketplace.auto_register_opt_in",
-	// Scope genuinely unclear: these read like one till's own state, but
-	// every one of them is carried by the admin bundle today (none is
-	// per-till), so they are shop-wide by the rule ut-docs#2791 set --
-	// shop-wide iff synced today. Moving any of them to per-till is
-	// ut-docs#2950 (it changes what the admin bundle syncs).
-	"till.name",      // the main till's name; a replica's own name is sync.till_name
-	"menu.",          // menu.restored_keys
-	"diagnostics.",   // ADR-0092 support-session rows
-	"cloudsync.",     // cloud snapshot / order-tracking hashes
-	"install.",       // install.desktop_kiosk_overlay_provisioned
-	"lan_discovery.", // lan_discovery.till_id
+	// Reviewed in ut-docs#2950 and kept shop-wide (diagnostics.*,
+	// cloudsync.* and install.* moved to PerTillSettingPrefixes then):
+	// - till.name is the main till's name; a replica's own is sync.till_name.
+	// - menu.restored_keys restores hidden Menu tiles for the shop, like
+	//   the plugins that hid them.
+	// - lan_discovery.till_id on a replica IS the main till's discovery id,
+	//   which only a primary advertises; a pre-#2722 replica's re-discovery
+	//   uses it as its hint (discovery.PrimaryWatch.rediscover).
+	// Under setup. and fiscal. above, also kept: setup.restore_prompt_status
+	// (the "import from another POS" offer is the shop's catalogue, which
+	// only the main till owns) and fiscal.tse_provisioning_state (ADR-0053
+	// provisions one TSE per store, from the main till's wizard).
+	"till.name",
+	"menu.",
+	"lan_discovery.",
 }
 
 // SettingScope classifies a settings key. Per-till wins over shop-wide.
