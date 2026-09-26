@@ -93,7 +93,13 @@ type Status struct {
 
 // PeerStatus is one LAN peer as the main till sees it.
 type PeerStatus struct {
-	TillID      string `json:"till_id"`
+	TillID string `json:"till_id"`
+	// DeviceID is the peer's own cloud device id (ut-docs#2730), when known
+	// — separate from TillID, the LAN pairing id. ut-docs#2897: my.'s Tills
+	// rows and Live panel key on this, not till_id; empty for a down till
+	// (the tills table has no such column) or an older replica (its hello
+	// carries no cloud device id).
+	DeviceID    string `json:"device_id,omitempty"`
 	Link        string `json:"link"` // up | down
 	Version     string `json:"version"`
 	UpdateState string `json:"update_state"`

@@ -626,6 +626,7 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /api/settings/till-name":                      true,
 	"POST /api/settings/till-register":                  true,
 	"POST /api/settings/ui-scale":                       true,
+	"POST /api/settings/effects-level":                  true,
 	// Help.
 	"/help":                         true,
 	"GET /help/img/{locale}/{file}": true,

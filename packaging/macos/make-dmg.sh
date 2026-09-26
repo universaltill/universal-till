@@ -75,6 +75,13 @@ hdiutil create -volname "Universal Till" -srcfolder "$STAGE" -ov -format UDZO "$
 # by notary-args.sh: an App Store Connect API key (what CI uses, ut-docs#2870),
 # a keychain profile, or Apple ID creds. See docs/arch/desktop-app.md.
 if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
+  # The disk image is itself signed with the Developer ID (ut-docs#2870):
+  # Gatekeeper assesses a .dmg by its own signature, and v0.25.0's accepted,
+  # stapled but unsigned image failed `spctl --type open` with "no usable
+  # signature". Apple's flow: create .dmg → codesign → notarize → staple.
+  echo "==> codesign the disk image"
+  codesign --force --timestamp --sign "$MACOS_SIGN_IDENTITY" "$DMG"
+  codesign --verify --strict "$DMG"
   # shellcheck source=packaging/macos/notary-args.sh
   . "$(dirname "$0")/notary-args.sh"
   # Trap first: notary_args writes the .p8 to disk, and a failure between
