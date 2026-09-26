@@ -251,8 +251,15 @@
        data map does not carry this key — caught by
        internal/ui.TestButtonsNewRenderer_WorksFromAnyWorkingDirectory. */}}
   <div class="pos-container" data-currency="{{ or .currency "GBP" }}"{{ if gt (or .basketPanelWidthRem 0.0) 0.0 }} style="--basket-col-width: {{ .basketPanelWidthRem }}rem;"{{ end }}>
+    {{/* ut-docs#3000: the basket is inlined into this first paint
+         (index_page.go basketHTML -- the very fragment GET /ui/basket
+         serves, whose #basket root every basket update swaps outerHTML).
+         Only when that render failed does the page fall back to fetching it
+         after load. Same missing-key-is-falsy rule as .productsHTML below. */}}
+    {{ if .basketHTML }}{{ .basketHTML }}{{ else }}
     <!-- Basket loads on page load -->
     <div class="basket" hx-get="/ui/basket" hx-trigger="load" hx-swap="outerHTML"></div>
+    {{ end }}
 
     <!-- ut-docs#2308: the basket/products divider. Touch-and-hold (~300ms)
          then drag horizontally (mouse: plain drag, no hold) resizes both
