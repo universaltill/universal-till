@@ -4,10 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -103,22 +101,16 @@ func taxCodeFormActive(r *http.Request) bool {
 // 100 was refused with a message that claimed 100 was allowed, and a code
 // the CSV importer would happily create could not be re-entered by hand.
 func parsePercentToBP(val string) (int, error) {
-	// Both bounds are checked on the FLOAT, before the int conversion, for
-	// the same reason catimport.ParseTaxRateBP does it that way: Go leaves
-	// an out-of-range float64->int conversion implementation-defined (amd64
-	// wraps to MinInt64, arm64 saturates to MaxInt64), so a post-conversion
-	// range check on something like "1e300" is only accidentally correct on
-	// whichever machine it was tried. Review finding, ut-docs#259 -- same
-	// class as ut-docs#512's finding B1 on the import-side parser.
-	f, err := strconv.ParseFloat(strings.TrimSpace(val), 64)
-	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || f < 0 || f > 100 {
+	// ut-docs#2954: ParsePercentBP -- integer grammar, '.' or ',' decimal
+	// separator, at most two fraction digits -- instead of
+	// strconv.ParseFloat, which refused a German "7,5" and needed NaN/Inf
+	// and float->int overflow guards ("1e300", ut-docs#259) that this
+	// grammar can't produce (at most 15 whole digits).
+	bp, err := httpx.ParsePercentBP(val)
+	if err != nil || bp > 10000 {
 		return 0, fmt.Errorf("invalid rate")
 	}
-	bp := int(math.Round(f * 100))
-	if bp < 0 || bp > 10000 {
-		return 0, fmt.Errorf("invalid rate")
-	}
-	return bp, nil
+	return int(bp), nil
 }
 
 // parseTaxCodeForm validates the shared create/update submission shape:

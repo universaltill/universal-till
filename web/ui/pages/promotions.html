@@ -44,7 +44,7 @@
                    to text+inputmode="decimal" avoids that; range/positivity
                    is already enforced server-side (parsePromotionForm). -->
               <input type="text" inputmode="decimal" {{ moneypatternlocal currency.Decimals false }} name="value_amount" x-show="type === 'amount'" value="{{ .ValueAmountMajor }}" style="width:5rem" placeholder="{{ T "promotions.col.value" }}" />
-              <input type="text" inputmode="decimal" pattern="[0-9]+(\.[0-9]{1,2})?" name="value_percent" x-show="type === 'percent'" value="{{ .ValuePercent }}" style="width:5rem" placeholder="{{ T "promotions.col.value" }}" />
+              <input type="text" inputmode="decimal" {{ percentpatternlocal }} name="value_percent" x-show="type === 'percent'" value="{{ .ValuePercent }}" style="width:5rem" placeholder="{{ T "promotions.col.value" }}" />
               <input type="text" name="description" value="{{ .Description }}" placeholder="{{ T "promotions.field.description" }}" style="width:8rem" />
               <input type="date" name="starts_at" value="{{ .StartsAtDate }}" />
               <input type="date" name="ends_at" value="{{ .EndsAtDate }}" />
@@ -77,7 +77,7 @@
         </select>
       </label>
       <label x-show="type === 'amount'">{{ T "promotions.col.value" }} <input type="text" inputmode="decimal" {{ moneypatternlocal currency.Decimals false }} name="value_amount" /></label>
-      <label x-show="type === 'percent'">{{ T "promotions.col.value" }} <input type="text" inputmode="decimal" pattern="[0-9]+(\.[0-9]{1,2})?" name="value_percent" /></label>
+      <label x-show="type === 'percent'">{{ T "promotions.col.value" }} <input type="text" inputmode="decimal" {{ percentpatternlocal }} name="value_percent" /></label>
       <label>{{ T "promotions.field.description" }} <input type="text" name="description" /></label>
       <label>{{ T "promotions.field.starts_at" }} <input type="date" name="starts_at" /></label>
       <label>{{ T "promotions.field.ends_at" }} <input type="date" name="ends_at" /></label>

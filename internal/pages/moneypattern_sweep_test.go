@@ -167,13 +167,14 @@ func TestPromotionsPage_ValueAmountPatternIsCurrencyAware(t *testing.T) {
 	// The percent-type sibling field (name="value_percent") is NOT part of
 	// this sweep -- basis-point percentages stay 2-decimal regardless of
 	// the shop's money currency -- so it must be unaffected by the
-	// currency switch either way.
+	// currency switch either way. Since ut-docs#2954 that pattern is the
+	// comma-tolerant {{ percentpatternlocal }}.
 	percentTags := regexp.MustCompile(`<input[^>]*name="value_percent"[^>]*/?>`).FindAllString(body, -1)
 	if len(percentTags) < 1 {
 		t.Fatalf("expected at least 1 value_percent field (the dialog's), got %d: %v", len(percentTags), percentTags)
 	}
 	for _, tag := range percentTags {
-		if !strings.Contains(tag, `pattern="[0-9]+(\.[0-9]{1,2})?"`) {
+		if !strings.Contains(tag, `pattern="`+httpx.PercentPatternLocal+`" data-money-local="percent"`) {
 			t.Errorf("IRT: expected value_percent's own 2-decimal pattern to remain unaffected by currency, got: %s", tag)
 		}
 	}

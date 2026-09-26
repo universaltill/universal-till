@@ -591,7 +591,7 @@
          momentarily-invalid decimal string while osk.js types it in (same
          root cause as ut-docs#1249/#1272) -- text+inputmode="decimal" avoids
          that; range is already enforced server-side (payments-fee handler). -->
-    <input type="text" inputmode="decimal" name="percent" pattern="[0-9]+(\.[0-9]{1,2})?" value="{{ .PercentMaj }}" placeholder="%">
+    <input type="text" inputmode="decimal" name="percent" {{ percentpatternlocal }} value="{{ .PercentMaj }}" placeholder="%">
     <span class="muted">% +</span>
     <input type="text" inputmode="decimal" name="fixed" {{ moneypatternlocal currency.Decimals false }} value="{{ .FixedMaj }}" placeholder="0.00">
     <button class="btn secondary" type="submit">{{ T "common.save" }}</button>

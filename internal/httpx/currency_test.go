@@ -393,3 +393,30 @@ func TestParseMoneyMajor(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#2954: percent fields (promotion, payment fee, tax rates) read the
+// same comma-tolerant grammar as money, with two fraction digits, straight
+// into basis points -- no strconv.ParseFloat, so "1e3"/"NaN" are refused.
+func TestParsePercentBP(t *testing.T) {
+	ok := map[string]int64{
+		"1,5": 150, "1.5": 150, "19": 1900, "7,25": 725, "0,01": 1,
+		"8.5": 850, "100": 10000, "0": 0, " 2,5 ": 250,
+	}
+	for raw, want := range ok {
+		if got, err := ParsePercentBP(raw); err != nil || got != want {
+			t.Errorf("ParsePercentBP(%q) = %d, %v; want %d", raw, got, err, want)
+		}
+	}
+	for _, raw := range []string{"", "1e3", "NaN", "Inf", "0x10", "-1", "1,555", "1.2.3", "1,2,3", "abc", ",5", "5,"} {
+		if got, err := ParsePercentBP(raw); err == nil {
+			t.Errorf("ParsePercentBP(%q) = %d, want an error", raw, got)
+		}
+	}
+}
+
+func TestPercentPatternLocalAttr(t *testing.T) {
+	want := `pattern="[0-9]+([.,][0-9]{1,2})?" data-money-local="percent"`
+	if got := string(PercentPatternLocalAttr()); got != want {
+		t.Fatalf("PercentPatternLocalAttr() = %q, want %q", got, want)
+	}
+}

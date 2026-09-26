@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"html"
-	"math"
 	"net/http"
 	"os"
 	"slices"
@@ -881,7 +880,14 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			fmt.Fprintf(w, `<span class="error">✗ method</span>`)
 			return
 		}
-		pct, _ := strconv.ParseFloat(strings.TrimSpace(r.Form.Get("percent")), 64)
+		// ut-docs#2954: the percent reads a decimal comma ("1,5") too, and a
+		// malformed one is refused -- ParseFloat's ignored error used to
+		// store "1,5" as 0%. Empty stays 0.
+		var bp int64
+		var pctErr error
+		if pctRaw := strings.TrimSpace(r.Form.Get("percent")); pctRaw != "" {
+			bp, pctErr = httpx.ParsePercentBP(pctRaw)
+		}
 		// ut-docs#2925: the fixed fee is money -- ParseMoneyMajor accepts a
 		// decimal comma ("0,30") and refuses a malformed amount, which
 		// ParseFloat's ignored error used to store as 0. Empty stays 0.
@@ -891,7 +897,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if fixedRaw != "" {
 			fixedMinor, fixedErr = httpx.ParseMoneyMajor(fixedRaw, httpx.ActiveCurrency().Decimals)
 		}
-		if pct < 0 || fixedErr != nil || pct > 100 {
+		if pctErr != nil || fixedErr != nil || bp > 10000 {
 			fmt.Fprintf(w, `<span class="error">✗ range</span>`)
 			return
 		}
@@ -902,7 +908,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if elev.Outcome == needsElevation {
 			renderElevationPrompt(w, r, "/api/settings/payments-fee", "#fee-msg-"+method,
 				fmt.Sprintf(httpx.T(locale, "elevation.summary.payments_fee"), method,
-					strconv.FormatFloat(pct, 'f', -1, 64), httpx.FormatMajorPlain(fixedMinor, httpx.ActiveCurrency().Decimals)),
+					formatBPAsPercent(bp), httpx.FormatMajorPlain(fixedMinor, httpx.ActiveCurrency().Decimals)),
 				[]elevationHiddenField{
 					{Name: "method", Value: method},
 					{Name: "percent", Value: r.Form.Get("percent")},
@@ -910,7 +916,6 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				}, elev)
 			return
 		}
-		bp := int64(math.Round(pct * 100)) // basis points, not money -- stays *100 regardless of currency
 		raw, _ := json.Marshal(map[string]int64{
 			"bp":    bp,
 			"fixed": fixedMinor,

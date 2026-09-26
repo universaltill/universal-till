@@ -295,7 +295,7 @@
        after an edit -- setField() then overwrites all three with the row's
        real values in edit mode. */}}
   <label>{{ T "countrysettings.col.tax" }}
-    <input type="text" inputmode="decimal" name="tax_rate_pct" pattern="[0-9]+(\.[0-9]{1,2})?" value="0" dir="ltr" />
+    <input type="text" inputmode="decimal" name="tax_rate_pct" {{ percentpatternlocal }} value="0" dir="ltr" />
   </label>
   <label>
     <input type="checkbox" name="tax_inclusive" value="1" checked />

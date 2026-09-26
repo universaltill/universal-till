@@ -86,7 +86,12 @@ window.utCurrency = (function(){
     if (!el || !el.hasAttribute || !el.hasAttribute('data-money-local')) return;
     el.setCustomValidity('');
     if (el.validity.patternMismatch) {
-      el.setCustomValidity((document.body && document.body.dataset.moneyInvalid) || '');
+      // ut-docs#2954: a percent field (data-money-local="percent") always
+      // takes decimals, so it never gets the 0-decimal shop's "whole
+      // number" money message.
+      var ds = (document.body && document.body.dataset) || {};
+      var msg = el.getAttribute('data-money-local') === 'percent' ? ds.percentInvalid : ds.moneyInvalid;
+      el.setCustomValidity(msg || '');
     }
   }
   document.addEventListener('input', function(ev){ applyMoneyValidity(ev.target); }, true);

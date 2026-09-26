@@ -1153,6 +1153,8 @@ func FuncsFor(locale string) template.FuncMap {
 	funcs["moneypattern"] = MoneyPatternAttr
 	// ut-docs#2815/#2819: comma-or-dot variant for fields read by utCurrency.toMinor or ParseMoneyMajor.
 	funcs["moneypatternlocal"] = MoneyPatternLocalAttr
+	// ut-docs#2954: same comma-or-dot grammar for percent fields read by ParsePercentBP.
+	funcs["percentpatternlocal"] = PercentPatternLocalAttr
 	funcs["moneyplaceholder"] = MoneyPlaceholderAttr
 	funcs["toJson"] = toJSON
 	funcs["assetv"] = assetVersion

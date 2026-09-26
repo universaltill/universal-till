@@ -42,8 +42,8 @@
            root cause as ut-docs#1249/#1272) -- text+inputmode="decimal"
            avoids that; range is already enforced server-side
            (parsePercentToBP). -->
-      <label>{{ T "taxcodes.col.rate" }} (%) <input type="text" inputmode="decimal" name="rate" id="tax-code-rate" pattern="[0-9]+(\.[0-9]{1,2})?" required></label>
-      <label>{{ T "taxcodes.col.takeaway_rate" }} (%) <input type="text" inputmode="decimal" name="takeawayRate" id="tax-code-takeaway-rate" pattern="[0-9]+(\.[0-9]{1,2})?"></label>
+      <label>{{ T "taxcodes.col.rate" }} (%) <input type="text" inputmode="decimal" name="rate" id="tax-code-rate" {{ percentpatternlocal }} required></label>
+      <label>{{ T "taxcodes.col.takeaway_rate" }} (%) <input type="text" inputmode="decimal" name="takeawayRate" id="tax-code-takeaway-rate" {{ percentpatternlocal }}></label>
       <div class="field-checks" id="tax-code-active-field" hidden>
         <input type="hidden" name="isActive" value="0">
         <label><input type="checkbox" name="isActive" id="tax-code-active" value="1" checked> {{ T "taxcodes.col.active" }}</label>
