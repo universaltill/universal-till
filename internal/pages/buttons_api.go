@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"html/template"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -43,13 +44,72 @@ func buttonsElevationItemName(ctx context.Context, d *common.Deps, itemID string
 	return item.Name
 }
 
+// saleScreenButtons builds the ui.ButtonsHTTP that renders the sale screen's
+// grid — shared by GET /ui/buttons and GET /'s inline first paint
+// (ut-docs#2989, saleGridFirstPaint in index_page.go), so both render from
+// the same renderer files, locale, grant, browsing mode and the same #2501
+// cache (Deps.SellScreenCache), and therefore the same cache entry/key.
+func saleScreenButtons(d *common.Deps, w http.ResponseWriter, r *http.Request, editMode bool) (*ui.ButtonsHTTP, error) {
+	locale := httpx.ResolveLocale(w, r)
+	// Review of #2989: the renderer clones the whole base+index+buttons
+	// template set, so it is built only when a render actually runs. A
+	// cache hit (the common case on GET /) never pays for the clone.
+	renderer := &lazyButtonsRenderer{funcs: httpx.FuncsFor(locale)}
+	// ut-docs#2499: the clamped live browsing mode — ClampBrowsingMode
+	// here rather than trusting RuntimeState verbatim, because a bare
+	// Deps (tests, helpers) carries the zero value "" and the sell
+	// screen must still render the real default, not a fourth shape.
+	//
+	// Granted (ut-docs#2361): the jiggle-mode edit/remove badges need to
+	// know up front whether THIS session already holds catalog_management
+	// — the same permission /api/buttons/{add,remove,reorder} and /catalog
+	// itself gate on (ut-docs#2312) — so buttons.html can show a lock
+	// affordance before a cashier drags/taps into the real elevation
+	// prompt, instead of only discovering it needs a PIN after acting.
+	return &ui.ButtonsHTTP{
+		Store:        *d.BtnStore,
+		View:         renderer,
+		BrowsingMode: common.ClampBrowsingMode(d.CurrentState().BrowsingMode),
+		Granted:      canPerform(d, r, "catalog_management"),
+		EditMode:     editMode,
+		Cache:        d.SellScreenCache(),
+		Locale:       locale,
+	}, nil
+}
+
+// lazyButtonsRenderer builds the sale screen's ui.Renderer on its first
+// Render call (ut-docs#2989 review): serveSellScreen answers most requests
+// from the #2501 cache without rendering, and the clone is the costly part
+// on a till's CPU.
+type lazyButtonsRenderer struct {
+	funcs template.FuncMap
+	r     *ui.Renderer
+}
+
+func (l *lazyButtonsRenderer) Render(w http.ResponseWriter, name string, data any) error {
+	if l.r == nil {
+		r, err := ui.NewRenderer(
+			filepath.Join("web", "ui", "layouts", "base.html"),
+			filepath.Join("web", "ui", "pages", "index.html"),
+			filepath.Join("web", "ui", "partials", "buttons.html"),
+			l.funcs,
+		)
+		if err != nil {
+			return err
+		}
+		l.r = r
+	}
+	return l.r.Render(w, name, data)
+}
+
 func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 	// ut-docs#2501: the sell screen's rendered tile fragments (/ui/buttons
 	// outside edit mode, /ui/buttons/category), shared by every request this
-	// mux serves and invalidated by the database's own change counters — see
+	// Deps serves — GET /'s inline first paint included (ut-docs#2989) — and
+	// invalidated by the database's own change counters; see
 	// internal/ui/sellscreen_cache.go.
-	sellCache := ui.NewSellScreenCache()
+	sellCache := d.SellScreenCache()
 
 	// auditButtonsElevated records a manager-PIN-approved shortcut-button
 	// mutation with dual attribution (ut-docs#2312, mechanism ut-docs#557)
@@ -86,26 +146,6 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 
 	// UI fragment
 	mux.HandleFunc("/ui/buttons", func(w http.ResponseWriter, r *http.Request) {
-		locale := httpx.ResolveLocale(w, r)
-		funcs := httpx.FuncsFor(locale)
-		renderer, err := ui.NewRenderer(
-			filepath.Join("web", "ui", "layouts", "base.html"),
-			filepath.Join("web", "ui", "pages", "index.html"),
-			filepath.Join("web", "ui", "partials", "buttons.html"),
-			funcs,
-		)
-		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
-			return
-		}
-		// ut-docs#2361: the jiggle-mode edit/remove badges need to know
-		// up front whether THIS session already holds catalog_management
-		// — the same permission /api/buttons/{add,remove,reorder} and
-		// /catalog itself gate on (ut-docs#2312) — so buttons.html can
-		// show a lock affordance before a cashier drags/taps into the
-		// real elevation prompt, instead of only discovering it needs a
-		// PIN after acting.
-		granted := canPerform(d, r, "catalog_management")
 		// ut-docs#2174: ?mode=edit is the Quick Buttons Designer's live
 		// replica of this very fragment (designer.html's placeholder sends
 		// it via hx-vals, so its hx-get stays exactly "/ui/buttons" — the
@@ -117,22 +157,14 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		// the quick-button strip (ui.ButtonsHTTP.List), which has no All
 		// tab since ut-docs#2613.
 		editMode := r.URL.Query().Get("mode") == "edit"
-		if editMode && !granted {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+		btnHTTP, err := saleScreenButtons(d, w, r, editMode)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
 			return
 		}
-		// ut-docs#2499: the clamped live browsing mode — ClampBrowsingMode
-		// here rather than trusting RuntimeState verbatim, because a bare
-		// Deps (tests, helpers) carries the zero value "" and the sell
-		// screen must still render the real default, not a fourth shape.
-		btnHTTP := &ui.ButtonsHTTP{
-			Store:        *d.BtnStore,
-			View:         renderer,
-			BrowsingMode: common.ClampBrowsingMode(d.CurrentState().BrowsingMode),
-			Granted:      granted,
-			EditMode:     editMode,
-			Cache:        sellCache,
-			Locale:       locale,
+		if editMode && !btnHTTP.Granted {
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			return
 		}
 		btnHTTP.List(w, r)
 	})
