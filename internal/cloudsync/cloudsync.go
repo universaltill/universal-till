@@ -214,6 +214,12 @@ type Hooks struct {
 	// for a failed POST — so only a real contact lifts the link's "wait for
 	// the next check-in". It must not block.
 	AfterTick func(ctx context.Context, contacted bool, err error)
+	// LinkVersion, when non-nil, returns the newest link_version the cloud
+	// link has seen in a hello or nudge (0 = none) — ADR-0117 §3,
+	// ut-docs#2827. A version newer than the one the last successful POST
+	// processed makes the next check-in POST without asking (checkin.go);
+	// the link records it before it kicks. Must not block.
+	LinkVersion func() int64
 }
 
 type directive struct {
@@ -262,15 +268,29 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 		return false, nil // not registered — nothing further to sync
 	}
 
-	dirs, err := pushSync(ctx, cfg, db, hooks)
+	// ADR-0117 §3 (ut-docs#2827): the conditional check-in decides whether
+	// this tick needs the full POST. The body is built first because its
+	// till-state part is what the hash covers.
+	settings := data.NewSettingsRepo(db)
+	req := buildSyncRequest(ctx, cfg, settings, hooks)
+	sum, hashErr := stateHash(req.devices)
+	plan, err := planCheckin(ctx, cfg, settings, sum, hashErr != nil, hooks.LinkVersion)
 	if err != nil {
 		return false, err
+	}
+	var dirs []directive
+	if plan.post {
+		dirs, err = pushSync(ctx, cfg, settings, req)
+		if err != nil {
+			return false, err
+		}
+		plan.done(cfg)
 	}
 	// Catalog/inventory up-sync rides the same tick, but only when the shop's
 	// data actually changed (hash gate) — most ticks send nothing. Replicas
 	// skip it entirely: their catalog mirrors the primary (ADR-0011), so the
 	// primary's snapshot is the shop's snapshot.
-	primaryURL, _, _ := data.NewSettingsRepo(db).Get(ctx, "sync.primary_url")
+	primaryURL, _, _ := settings.Get(ctx, "sync.primary_url")
 	isMainTill := strings.TrimSpace(primaryURL) == ""
 	if isMainTill {
 		if err := pushSnapshotIfChanged(ctx, cfg, db); err != nil {
@@ -340,8 +360,12 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 	// everything above. The upload direction moved to the top of Tick
 	// (ut-docs#637) — this pull direction correctly stays gated behind
 	// registration/connectivity above: there is nothing to pull without
-	// them.
-	pullIssueReportStatuses(ctx, cfg, db)
+	// them. A 304 tick skips it too (ut-docs#2827): it is a network read
+	// every time, and the check-in's floor POST brings it back within
+	// checkinFloor.
+	if plan.post {
+		pullIssueReportStatuses(ctx, cfg, db)
+	}
 	return true, nil
 }
 
@@ -771,13 +795,17 @@ func modifierGroupOptions(raw any) ([]ModifierGroupOption, error) {
 	return out, nil
 }
 
-// pushSync reports this device's state and returns the store's pending
-// directives.
-func pushSync(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) ([]directive, error) {
-	eff := enroll.Effective(cfg)
-	m := eff.Marketplace
+// syncRequest is the /v1/stores/sync body before it is sent: built every
+// tick (the check-in hashes its device part), sent only when the check-in
+// says so.
+type syncRequest struct {
+	storeID string
+	devices []map[string]any
+	hasStop bool // a diagnostics stop report rides the device record
+}
 
-	settings := data.NewSettingsRepo(db)
+// buildSyncRequest assembles this device's report for the sync POST.
+func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.SettingsRepo, hooks Hooks) syncRequest {
 	get := func(k string) string {
 		v, _, _ := settings.Get(ctx, k)
 		return v
@@ -830,15 +858,25 @@ func pushSync(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) 
 	if hasStop {
 		device["diagnostics"] = stopReport
 	}
+	return syncRequest{
+		storeID: enroll.Effective(cfg).Marketplace.StoreID,
+		devices: []map[string]any{device},
+		hasStop: hasStop,
+	}
+}
+
+// pushSync sends the device report and returns the store's pending
+// directives.
+func pushSync(ctx context.Context, cfg *config.Config, settings *data.SettingsRepo, req syncRequest) ([]directive, error) {
 	payload, _ := json.Marshal(map[string]any{
-		"store_id": m.StoreID,
-		"devices":  []map[string]any{device},
+		"store_id": req.storeID,
+		"devices":  req.devices,
 	})
 	body, err := post(ctx, cfg, "/v1/stores/sync", payload)
 	if err != nil {
 		return nil, err
 	}
-	if hasStop {
+	if req.hasStop {
 		if cerr := diagnostics.ClearStopReport(ctx, settings); cerr != nil {
 			logging.L().Warnf("cloudsync: diagnostics stop report delivered but marker not cleared: %v", cerr)
 		}

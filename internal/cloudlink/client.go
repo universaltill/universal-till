@@ -284,6 +284,17 @@ func (c *Client) setState(s State) {
 	}
 }
 
+// LinkVersion is the newest link_version a cloud hello or nudge carried (0
+// before any). cloudsync's check-in reads it (Hooks.LinkVersion, ADR-0117
+// §3, ut-docs#2827) so a nudged check-in POSTs instead of sending a stale
+// If-None-Match; Run records it before it kicks. Nil-safe.
+func (c *Client) LinkVersion() int64 {
+	if c == nil {
+		return 0
+	}
+	return c.lastVersion.Load()
+}
+
 // CheckedIn is told every check-in's outcome (cloudsync.Hooks.AfterTick):
 // the gate is re-read either way, and only a check-in that really reached
 // the cloud (contacted — not a skipped or failed one) lifts a "wait for
