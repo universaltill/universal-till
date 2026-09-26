@@ -197,6 +197,23 @@ type Hooks struct {
 	// render a real design picker instead of a raw key/value form). Keys must
 	// not collide with the fixed report fields.
 	DeviceExtra func(ctx context.Context) map[string]any
+	// Kick, when non-nil, asks Start's loop for a check-in now (ADR-0117
+	// §4, ut-docs#2824: a cloud-link nudge). Single-flight by
+	// construction: the loop reads it only between check-ins, so a kick
+	// while one runs schedules exactly one more — the sender makes it a
+	// capacity-1 channel and sends without blocking, which coalesces any
+	// number of kicks into that one. Ignored while the loop is backing off
+	// after a failure, so a nudge can never beat the backoff or a
+	// Retry-After; a kick left pending then is satisfied by the check-in
+	// the backoff ends in (the loop drains it as each check-in starts).
+	Kick <-chan struct{}
+	// AfterTick, when non-nil, is told each check-in's outcome on Start's
+	// goroutine (the cloud link re-reads its tier and role after every
+	// check-in, ADR-0117 §1). contacted is true only when the check-in
+	// really reached the cloud — false for an unregistered till's skip and
+	// for a failed POST — so only a real contact lifts the link's "wait for
+	// the next check-in". It must not block.
+	AfterTick func(ctx context.Context, contacted bool, err error)
 }
 
 type directive struct {
@@ -218,6 +235,14 @@ type ModifierGroupOption struct {
 // Tick runs one full sync round: heartbeat up, directives down, apply,
 // report. Exported for tests; Start drives it on the loop.
 func Tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) error {
+	_, err := tick(ctx, cfg, db, hooks)
+	return err
+}
+
+// tick is Tick, also saying whether the cloud was really contacted: true
+// once the /v1/stores/sync POST succeeded, false for an unregistered
+// till's early return (nil error, no contact) and for any failure.
+func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (contacted bool, err error) {
 	// Issue-report uploads (ADR-0022, spec 012) get a chance on EVERY tick,
 	// before the registration/connectivity gates below — ut-docs#637 review:
 	// this used to sit at the tail of Tick (see the pull side, still there),
@@ -240,12 +265,12 @@ func Tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) erro
 	eff := enroll.Effective(cfg)
 	m := eff.Marketplace
 	if m.EndpointURL == "" || m.StoreID == "" || m.MerchantToken == "" {
-		return nil // not registered — nothing further to sync
+		return false, nil // not registered — nothing further to sync
 	}
 
 	dirs, err := pushSync(ctx, cfg, db, hooks)
 	if err != nil {
-		return err
+		return false, err
 	}
 	// Catalog/inventory up-sync rides the same tick, but only when the shop's
 	// data actually changed (hash gate) — most ticks send nothing. Replicas
@@ -323,7 +348,7 @@ func Tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) erro
 	// registration/connectivity above: there is nothing to pull without
 	// them.
 	pullIssueReportStatuses(ctx, cfg, db)
-	return nil
+	return true, nil
 }
 
 // maxCategoryLinkIDs bounds update_category's id lists: each id costs a
@@ -1178,11 +1203,29 @@ func Start(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks, wg 
 		case <-ctx.Done():
 			return
 		case <-first.C:
+		case <-hooks.Kick:
 		}
 		for {
-			err := Tick(ctx, cfg, db, hooks)
+			// This check-in satisfies any kick already pending — one sent
+			// during the backoff, or alongside the timer that just fired —
+			// so it must not fire a second, redundant POST right after.
+			// A kick that arrives while the check-in runs stays and runs
+			// exactly one more (the nudge may postdate what this one read).
+			select {
+			case <-hooks.Kick:
+			default:
+			}
+			contacted, err := tick(ctx, cfg, db, hooks)
 			if err != nil {
 				logging.L().Warnf("cloudsync: tick failed (will retry): %v", err)
+			}
+			if hooks.AfterTick != nil {
+				hooks.AfterTick(ctx, contacted, err)
+			}
+			// A nil channel never fires: no kicks while backing off.
+			kick := hooks.Kick
+			if err != nil {
+				kick = nil
 			}
 			timer := time.NewTimer(sched.next(err))
 			select {
@@ -1190,6 +1233,8 @@ func Start(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks, wg 
 				timer.Stop()
 				return
 			case <-timer.C:
+			case <-kick:
+				timer.Stop()
 			}
 		}
 	}()

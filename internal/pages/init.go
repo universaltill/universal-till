@@ -526,6 +526,10 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// ADR-0114 (ut-docs#2735): this till's side of the main-till link. Built
 	// before StartSyncPull, which reads its link state for the polling floor.
 	dp.LinkClient = newSyncLinkClient(dp, fleetlink.DefaultClientOptions())
+	// ADR-0117 (ut-docs#2824): the main till's cloud link. Set before the
+	// server accepts requests; the sale path reads dp.CloudLink.
+	dp.CloudSyncNow = make(chan struct{}, 1)
+	dp.CloudLink = newCloudLinkClient(dp)
 	StartSyncPush(bgCtx, dp, wg)                // replica journal loop (ADR-0011 D3); joined by app.Run's drain
 	StartSyncLink(bgCtx, dp, wg, syncAdminRepo) // main-till link: admin-change watch + bye on shutdown (ADR-0114); joined by app.Run's drain
 	rederiveSettings := newRederiveSettings(dp, authDisabled, i18n)
@@ -534,6 +538,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	StartHeldOrderClaimReaffirm(bgCtx, dp, wg)              // periodic held-order table-claim re-affirm (ut-docs#1724); joined by app.Run's drain
 	StartSelfOrderSessionSweep(bgCtx, dp, wg)               // evict idle table-QR self-order sessions (ADR-0103 D5, ut-docs#2261); joined by app.Run's drain
 	StartCloudSync(bgCtx, dp, rederiveSettings, wg)         // ADR-0018 cloud heartbeat + directives; joined by app.Run's drain
+	StartCloudLink(bgCtx, dp, wg)                           // ADR-0117 main-till cloud link on the realtime tier; joined by app.Run's drain
 	StartEODScheduler(bgCtx, dp, wg)                        // background Z-report (docs: G30); joined by app.Run's drain
 	StartAutoUpdateScheduler(bgCtx, dp, wg)                 // background unattended update (ut-docs#79); joined by app.Run's drain
 	StartPluginUpdateScheduler(bgCtx, dp, wg)               // background installed-plugin update check + language-pack auto-apply (ut-docs#1953); joined by app.Run's drain

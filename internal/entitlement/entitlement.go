@@ -185,6 +185,45 @@ func EffectivePlan(ctx context.Context, r Reader, now time.Time) Plan {
 	return PlanLocal
 }
 
+// CloudLink is ADR-0117 §2's till-side read of the cached cloud_link tier
+// and mode, mirroring EffectivePlan's staleness rule exactly: the cached
+// value is honoured only while last_confirmed_at (the same timestamp
+// EffectivePlan reads — both are written by the same cacheEntitlement call)
+// is no more than Grace old, in either direction (clock-skew symmetric,
+// same reasoning as EffectivePlan). No cache, an unparsable confirmation, a
+// stale one, or an unrecognised cached tier all degrade to ("periodic",
+// "") — fail closed, same as an unenrolled or lapsed till's EffectivePlan.
+// NEVER a sale gate (package doc): this is for the cloud-link client
+// (pages.cloudLinkTarget, ut-docs#2824) to decide whether to dial, nothing on
+// the sale path.
+func CloudLink(ctx context.Context, r Reader, now time.Time) (tier, mode string) {
+	get := func(k string) (string, bool) {
+		v, ok, err := r.Get(ctx, k)
+		if err != nil || !ok {
+			return "", false
+		}
+		return strings.TrimSpace(v), true
+	}
+	confirmedRaw, ok := get(KeyLastConfirmedAt)
+	if !ok {
+		return "periodic", ""
+	}
+	confirmed, err := time.Parse(time.RFC3339, confirmedRaw)
+	if err != nil {
+		return "periodic", ""
+	}
+	if now.Sub(confirmed) > Grace || confirmed.Sub(now) > Grace {
+		return "periodic", ""
+	}
+	tierRaw, _ := get(KeyCloudLinkTier)
+	tier = LinkTier(tierRaw)
+	if tier != "realtime" {
+		return "periodic", ""
+	}
+	modeRaw, _ := get(KeyCloudLinkMode)
+	return "realtime", LinkMode("realtime", modeRaw)
+}
+
 // Block is the optional "entitlement" object of the POST /v1/stores/sync
 // response data (ADR-0060 §3).
 type Block struct {
