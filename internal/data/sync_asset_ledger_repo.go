@@ -66,14 +66,6 @@ const syncAssetLedgerRecordSQL = `
 INSERT INTO sync_asset_ledger (scope, path, size, mod, unreferenced_since, unreferenced_misses) VALUES (?, ?, ?, ?, NULL, 0)
 ON CONFLICT (scope, path) DO UPDATE SET size = excluded.size, mod = excluded.mod, unreferenced_since = NULL, unreferenced_misses = 0`
 
-// Record upserts a downloaded file and clears its unreferenced mark.
-func (r *SyncAssetLedgerRepo) Record(ctx context.Context, scope, path string, size, mod int64) error {
-	if _, err := r.db.ExecContext(ctx, syncAssetLedgerRecordSQL, scope, path, size, mod); err != nil {
-		return fmt.Errorf("record sync asset: %w", err)
-	}
-	return nil
-}
-
 // Apply writes one pull's changes to a scope in a single transaction.
 func (r *SyncAssetLedgerRepo) Apply(ctx context.Context, scope string, b SyncAssetLedgerBatch) error {
 	if b.Empty() {

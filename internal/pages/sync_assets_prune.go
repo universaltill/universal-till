@@ -71,13 +71,6 @@ var (
 
 func assetPruneHeldKey(scope string) string { return "sync.asset_prune_held." + scope }
 
-// resetAssetPruneHeld clears the held state (tests).
-func resetAssetPruneHeld() {
-	assetPruneHeldMu.Lock()
-	defer assetPruneHeldMu.Unlock()
-	assetPruneHeld = map[string]bool{}
-}
-
 type assetPruner struct {
 	ledger     *data.SyncAssetLedgerRepo
 	busy       func() bool

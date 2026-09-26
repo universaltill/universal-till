@@ -168,7 +168,7 @@ func TestPrune_OlderMainWithoutCompleteFlagPrunesNothing(t *testing.T) {
 	paths.Init(h.replicaRoot)
 	local := writeAsset(t, h.replicaRoot, "items", "itm001/thumb.png", []byte("photo"))
 	st, _ := os.Stat(local)
-	if err := h.ledger.Record(context.Background(), "items", "itm001/thumb.png", st.Size(), st.ModTime().Unix()); err != nil {
+	if err := recordLedger(context.Background(), h.ledger, "items", "itm001/thumb.png", st.Size(), st.ModTime().Unix()); err != nil {
 		t.Fatal(err)
 	}
 	primary := newStubAssetsPrimary(t, []assetEntry{}, nil) // lists nothing, no "complete"
@@ -300,7 +300,7 @@ func TestPrune_RefusesPathsOutsideTheAssetRoot(t *testing.T) {
 	}
 	st, _ := os.Stat(outside)
 	for _, p := range []string{"../../../precious.db", outside, "..\\..\\..\\precious.db", "C:precious.db"} {
-		if err := h.ledger.Record(ctx, "items", p, st.Size(), st.ModTime().Unix()); err != nil {
+		if err := recordLedger(ctx, h.ledger, "items", p, st.Size(), st.ModTime().Unix()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -312,7 +312,7 @@ func TestPrune_RefusesPathsOutsideTheAssetRoot(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 	lst, _ := os.Lstat(link)
-	_ = h.ledger.Record(ctx, "items", "lnk/thumb.png", lst.Size(), lst.ModTime().Unix())
+	_ = recordLedger(ctx, h.ledger, "items", "lnk/thumb.png", lst.Size(), lst.ModTime().Unix())
 
 	// A main whose complete manifest lists none of them.
 	h.primaryRoot = t.TempDir()
@@ -349,7 +349,7 @@ func TestPrune_RefusesSymlinkedParentDirectory(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 	st, _ := os.Stat(victim)
-	_ = h.ledger.Record(context.Background(), "items", "evil/thumb.png", st.Size(), st.ModTime().Unix())
+	_ = recordLedger(context.Background(), h.ledger, "items", "evil/thumb.png", st.Size(), st.ModTime().Unix())
 	h.primaryRoot = t.TempDir()
 	writeKeepAssets(t, h.primaryRoot)
 	h.pull()
@@ -493,4 +493,17 @@ func mustLedger(t *testing.T, h *pruneHarness, rel string) data.SyncAssetLedgerR
 		t.Fatalf("no ledger row for %s", rel)
 	}
 	return r
+}
+
+// recordLedger upserts one downloaded file through the production Apply
+// path (the old single-row Record had no production caller).
+func recordLedger(ctx context.Context, l *data.SyncAssetLedgerRepo, scope, path string, size, mod int64) error {
+	return l.Apply(ctx, scope, data.SyncAssetLedgerBatch{Record: []data.SyncAssetLedgerRow{{Path: path, Size: size, Mod: mod}}})
+}
+
+// resetAssetPruneHeld clears the held-warning state between tests.
+func resetAssetPruneHeld() {
+	assetPruneHeldMu.Lock()
+	defer assetPruneHeldMu.Unlock()
+	assetPruneHeld = map[string]bool{}
 }
