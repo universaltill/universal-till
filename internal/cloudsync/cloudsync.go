@@ -841,10 +841,16 @@ func pushSync(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) 
 }
 
 // cacheEntitlement records the sync response's entitlement block in the
-// settings KV (ADR-0060 §4, ut-docs#2547). Best-effort by design: an absent
-// block (older cloud) touches nothing; a malformed one is ignored whole and
-// the previous cache kept; a write failure is logged. None of it ever fails
-// the sync tick or its directive handling.
+// settings KV (ADR-0060 §4, ut-docs#2547), including ADR-0117 §2's
+// cloud_link tier/mode carried on the same block (ut-docs#2821) — a block
+// that validates writes both entitlement.* and cloud.link_tier/
+// cloud.link_mode in the one SetMany transaction below, via Block.Values; a
+// block whose cloud_link field is empty/unset (older cloud, or a plan not
+// yet on the realtime tier) normalises to "periodic" there, never an error
+// (missing = periodic). Best-effort by design: an absent block (older
+// cloud) touches nothing at all, cloud_link included; a malformed one is
+// ignored whole and the previous cache kept; a write failure is logged.
+// None of it ever fails the sync tick or its directive handling.
 func cacheEntitlement(ctx context.Context, settings *data.SettingsRepo, raw json.RawMessage, now time.Time) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return

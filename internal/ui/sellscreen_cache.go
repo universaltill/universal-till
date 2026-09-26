@@ -30,7 +30,12 @@ import (
 //     shortcut_buttons, settings, modifiers, variants, barcodes, translation
 //     overrides, …) AND sell_screen_version.generation (migration 042's
 //     triggers on price_history and item_images, the two sell-screen inputs
-//     023 doesn't cover). Read in one query per request, before rendering
+//     023 doesn't cover, plus migration 047's on every other catalog table
+//     the tiles render from — items, categories, shortcut_buttons, barcodes,
+//     variants, modifier groups and links, translation overrides; never
+//     sales or settings, ut-docs#2765). The sell half alone is also the open
+//     sale screen's live-refresh signal (SellVersionHeader, GET
+//     /ui/buttons/version). Read in one query per request, before rendering
 //     (the ensureCached ordering in internal/data/sync_admin_repo.go: a write
 //     racing the render leaves the entry keyed on the OLDER version, never a
 //     pre-write render on the post-write version).
@@ -62,6 +67,13 @@ const (
 	// element, map slot, struct, header map) on top of key + body bytes.
 	sellScreenEntryOverhead = 256
 )
+
+// SellVersionHeader carries, on a GET /ui/buttons response, the
+// sell_screen_version generation that grid was rendered (or cached) at
+// (ut-docs#2765). web/public/sell-screen-watch.js records it and compares it
+// with GET /ui/buttons/version to learn that the catalog changed outside this
+// document (another till or tab, a cloud push, an admin sync pull).
+const SellVersionHeader = "X-UT-Sell-Version"
 
 // SellScreenVersion is the pair of change counters every cache entry is
 // valid for (internal/data's SellScreenRepo.SellScreenVersion).
@@ -344,7 +356,13 @@ func writeCachedResponse(w http.ResponseWriter, resp CachedResponse) {
 // load error, no degraded inner lookup, no template error) — capturing the result to store and write. With no
 // cache, or no trustworthy version (a missing counter row, a failed read),
 // render writes straight to w exactly as before this cache existed.
-func (h *ButtonsHTTP) serveSellScreen(w http.ResponseWriter, r *http.Request, key string, render func(http.ResponseWriter, *http.Request) bool) {
+//
+// versionHeader (ut-docs#2765) stamps the response with SellVersionHeader —
+// the sell_screen_version generation this entry is keyed on — on both the
+// cache hit and the fresh render, so the sale screen's watcher knows which
+// catalog state the grid on screen shows. Only /ui/buttons asks for it: the
+// watcher compares against the grid's own render, never a popup's.
+func (h *ButtonsHTTP) serveSellScreen(w http.ResponseWriter, r *http.Request, key string, versionHeader bool, render func(http.ResponseWriter, *http.Request) bool) {
 	if h.Cache == nil {
 		render(w, r)
 		return
@@ -357,6 +375,11 @@ func (h *ButtonsHTTP) serveSellScreen(w http.ResponseWriter, r *http.Request, ke
 	if err != nil || !ok {
 		render(w, r)
 		return
+	}
+	if versionHeader {
+		// Set on w, never on the captured render: the stored entry's headers
+		// are copied over w on a hit, and this value is the key's own.
+		w.Header().Set(SellVersionHeader, strconv.FormatInt(v.Sell, 10))
 	}
 	if resp, hit := h.Cache.Get(key, v); hit {
 		writeCachedResponse(w, resp)

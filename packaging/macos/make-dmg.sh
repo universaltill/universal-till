@@ -71,23 +71,26 @@ hdiutil create -volname "Universal Till" -srcfolder "$STAGE" -ov -format UDZO "$
 
 # Notarize + staple so the app opens with a plain double-click (no Gatekeeper
 # prompt). Runs only when notarytool credentials are provided and the app was
-# Developer ID signed — ad-hoc apps cannot be notarized. Provide EITHER a stored
-# keychain profile (MACOS_NOTARY_PROFILE) OR Apple ID creds
-# (MACOS_NOTARY_APPLE_ID + MACOS_NOTARY_TEAM_ID + MACOS_NOTARY_PASSWORD, an
-# app-specific password). See docs/arch/desktop-app.md.
+# Developer ID signed — ad-hoc apps cannot be notarized. Credentials are picked
+# by notary-args.sh: an App Store Connect API key (what CI uses, ut-docs#2870),
+# a keychain profile, or Apple ID creds. See docs/arch/desktop-app.md.
 if [ -n "${MACOS_SIGN_IDENTITY:-}" ]; then
-  if [ -n "${MACOS_NOTARY_PROFILE:-}" ]; then
-    NOTARY=(--keychain-profile "$MACOS_NOTARY_PROFILE")
-  elif [ -n "${MACOS_NOTARY_APPLE_ID:-}" ] && [ -n "${MACOS_NOTARY_TEAM_ID:-}" ] && [ -n "${MACOS_NOTARY_PASSWORD:-}" ]; then
-    NOTARY=(--apple-id "$MACOS_NOTARY_APPLE_ID" --team-id "$MACOS_NOTARY_TEAM_ID" --password "$MACOS_NOTARY_PASSWORD")
-  fi
-  if [ -n "${NOTARY:-}" ]; then
+  # shellcheck source=packaging/macos/notary-args.sh
+  . "$(dirname "$0")/notary-args.sh"
+  # Trap first: notary_args writes the .p8 to disk, and a failure between
+  # that write and a later trap would leave it behind.
+  trap notary_cleanup EXIT
+  notary_args
+  if [ "${#NOTARY[@]}" -gt 0 ]; then
     echo "==> notarizing (this can take a few minutes)"
     xcrun notarytool submit "$DMG" "${NOTARY[@]}" --wait
+    notary_cleanup
     echo "==> stapling"
     xcrun stapler staple "$APP"        # so the app validates offline once copied out
     xcrun stapler staple "$DMG"
-    spctl --assess --type open --context context:primary-signature -v "$DMG" || true
+    xcrun stapler validate "$DMG"
+    # Fails the build if Gatekeeper would not accept the notarized image.
+    spctl --assess --type open --context context:primary-signature -v "$DMG"
   else
     echo "==> signed but not notarized (no notary credentials); Gatekeeper will still prompt"
   fi

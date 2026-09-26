@@ -63,15 +63,20 @@
            refusal — both terminal, this dialog's job is done either way):
            close the dialog so its swapped message (success or refusal) is
            actually visible instead of sitting behind it, then additionally
-           reload ONLY on "ok" — a refusal changed nothing, so there's
-           nothing to refresh, and reloading would just discard the
-           refusal message before anyone could read it.
+           refresh ONLY on "ok" — a refusal changed nothing, so there's
+           nothing to refresh. ut-docs#2762: the refresh is
+           UT.refreshRegion (app.js) — it swaps just the region named by
+           the target's nearest data-ut-refresh ancestor (users.html's
+           #users-list), keeping the confirmation message, and falls back to
+           a full reload when there is none; a target inside a
+           form[data-ut-reset-on-ok] (users.html's new-user form) is also
+           cleared, as the outer form's own handler does.
        Sites other than users.html's 4 forms don't set X-UT-Response at
        all on their own success/refusal responses, so for them this still
        closes the dialog (itself already a strict improvement over never
-       closing at all) but never auto-reloads — no worse than before. */}}
+       closing at all) but never auto-refreshes — no worse than before. */}}
   <form hx-post="{{ .Action }}" hx-target="{{ .HxTarget }}" hx-swap="innerHTML"
-        hx-on::after-request="var xr=(event.detail.xhr.getResponseHeader('X-UT-Response')||''); if (xr!=='elevation-prompt'){ this.closest('dialog').close(); if (xr==='ok'){ window.location.reload(); } }">
+        hx-on::after-request="var xr=(event.detail.xhr.getResponseHeader('X-UT-Response')||''); if (xr!=='elevation-prompt'){ this.closest('dialog').close(); if (xr==='ok'){ var t=null; try { t=document.querySelector(this.getAttribute('hx-target')); } catch (e) {} var f=t&&t.closest('form[data-ut-reset-on-ok]'); if (f) f.reset(); UT.refreshRegion(t); } }">
     <h3>{{ T "elevation.prompt_title" }} {{ helpLink "elevation" }}</h3>
     <p class="muted">{{ T "elevation.prompt_help" }}</p>
     {{ if .Summary }}<p class="elevation-summary">{{ .Summary }}</p>{{ end }}

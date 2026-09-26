@@ -89,7 +89,9 @@ func TestMigration031_CreatesBothTablesAndIsReplaySafe(t *testing.T) {
 				t.Fatalf("%s.%s = %+v, want %+v (full: %v)", table, name, got[name], want, got)
 			}
 		}
-		if n := count(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ?`, table); n != 3 {
+		// Scoped to 023's trigger family: migration 047 (ut-docs#2765) adds
+		// its own sell_screen_version triggers to these tables too.
+		if n := count(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ? AND name LIKE 'trg_sync_admin_version_%'`, table); n != 3 {
 			t.Fatalf("sync_admin_version triggers on %s = %d, want 3 (ins/upd/del — see 023's header)", table, n)
 		}
 	}
@@ -156,7 +158,7 @@ func TestMigration031_CreatesBothTablesAndIsReplaySafe(t *testing.T) {
 		t.Fatalf("schema_migrations has version %d %d time(s), want 1", categoryModifierGroupLinksMigrationVersion, n)
 	}
 	for _, table := range []string{"category_modifier_group_links", "item_modifier_group_opt_outs"} {
-		if n := count(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ?`, table); n != 3 {
+		if n := count(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ? AND name LIKE 'trg_sync_admin_version_%'`, table); n != 3 {
 			t.Fatalf("triggers on %s after replay = %d, want 3", table, n)
 		}
 	}

@@ -512,6 +512,11 @@
          IndexedDB) so an open report survives a full document load. Deferred
          like the rest; the panel reads it from UT.ready on. -->
     <script defer src="/public/bugreport-draft.js?v={{ assetv "public/bugreport-draft.js" }}"></script>
+    <!-- ut-docs#2765: keeps an open sale screen's tile grid in step with
+         catalog changes made on another till/tab, by a cloud push or a sync
+         pull (polls GET /ui/buttons/version while visible) — a no-op on any
+         page without the sale-screen grid, same pattern as above. -->
+    <script defer src="/public/sell-screen-watch.js?v={{ assetv "public/sell-screen-watch.js" }}"></script>
   </head>
   <body class="{{ if kiosk }}kiosk{{ end }}{{ if .saleScreen }} sale-screen{{ end }}{{ if .menuScreen }} menu-screen{{ end }}"
         data-shell-classes="{{ if kiosk }}kiosk{{ end }}{{ if .saleScreen }} sale-screen{{ end }}{{ if .menuScreen }} menu-screen{{ end }}"
