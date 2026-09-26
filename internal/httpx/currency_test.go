@@ -394,6 +394,52 @@ func TestParseMoneyMajor(t *testing.T) {
 	}
 }
 
+// ut-docs#2818: an editable money input's prefill (and its example
+// placeholder) uses the shop language's decimal separator, so a German
+// till shows "4,00" rather than "4.00". Only the separator changes -- no
+// grouping, sign and digits kept -- because the fields that use these are
+// MoneyPatternLocal fields whose readers (window.utCurrency.toMinor,
+// ParseMoneyMajor) accept either separator but refuse grouping.
+func TestLocalizeMajor(t *testing.T) {
+	cases := []struct {
+		in, locale, want string
+	}{
+		{"4.00", "de", "4,00"},
+		{"4.00", "de-DE", "4,00"},
+		{"-0.50", "fr", "-0,50"},
+		{"12345.67", "tr", "12345,67"},
+		{"1.234", "es", "1,234"},
+		{"4.00", "en", "4.00"},
+		{"4.00", "fa", "4.00"},
+		{"500", "de", "500"},
+		{"", "de", ""},
+	}
+	for _, c := range cases {
+		if got := LocalizeMajor(c.in, c.locale); got != c.want {
+			t.Errorf("LocalizeMajor(%q, %q) = %q, want %q", c.in, c.locale, got, c.want)
+		}
+	}
+}
+
+func TestMoneyPlaceholderLocalAttr(t *testing.T) {
+	cases := []struct {
+		decimals int
+		example  int64
+		locale   string
+		want     string
+	}{
+		{2, 0, "de", `placeholder="0,00"`},
+		{2, -50, "de", `placeholder="-50,00"`},
+		{2, 0, "en", `placeholder="0.00"`},
+		{0, 0, "de", `placeholder="0"`},
+	}
+	for _, c := range cases {
+		if got := string(MoneyPlaceholderLocalAttr(c.decimals, c.example, c.locale)); got != c.want {
+			t.Errorf("MoneyPlaceholderLocalAttr(%d, %d, %q) = %s, want %s", c.decimals, c.example, c.locale, got, c.want)
+		}
+	}
+}
+
 // ut-docs#2954: percent fields (promotion, payment fee, tax rates) read the
 // same comma-tolerant grammar as money, with two fraction digits, straight
 // into basis points -- no strconv.ParseFloat, so "1e3"/"NaN" are refused.

@@ -22,7 +22,7 @@ Bargeld ist eingebaut; Karte und andere Zahlungsmethoden kommen als Plugins aus 
 
 Die Schnellschaltfläche „Bargeld“ kann kein Wechselgeld erfassen, da sie immer den genauen Gesamtbetrag bucht. Um Wechselgeld zurückzugeben, wechseln Sie stattdessen zum Reiter **Aufteilen**, auch bei einem ansonsten gewöhnlichen Barverkauf mit nur einer Methode:
 
-1. Wählen Sie **Bargeld** (oder welche Methode der Kunde auch übergeben hat) und geben Sie den tatsächlich erhaltenen Betrag ein — in normalen Währungsbeträgen, z. B. `5.00`, nicht in der kleinsten Einheit.
+1. Wählen Sie **Bargeld** (oder welche Methode der Kunde auch übergeben hat) und geben Sie den tatsächlich erhaltenen Betrag ein — in normalen Währungsbeträgen, z. B. `5,00`, nicht in der kleinsten Einheit.
 2. Geben Sie im Feld **Wechselgeld** ein, wie viel Wechselgeld zurückzugeben ist, und dann **Zahlung hinzufügen**. Eine Karte für die ausstehende Zahlung erscheint und zeigt, was der Verkauf tatsächlich einnimmt (Betrag minus Wechselgeld), zusammen mit einem Hinweis auf das gegebene Wechselgeld direkt daneben.
 3. **Verkauf abschließen**. Der Beleg erfasst sowohl den übergebenen Betrag als auch das für diese Zahlung gegebene Wechselgeld.
 
@@ -43,7 +43,7 @@ Was schiefgehen kann:
 - **Verkauf abschließen** ohne eingegebenen oder ausstehenden Betrag wird mit der Aufforderung abgelehnt, zuerst eine Zahlung hinzuzufügen.
 - **Verkauf abschließen**, während die ausstehenden Zahlungen den Gesamtbetrag noch nicht decken, wird mit einer Meldung abgelehnt, dass der erhaltene Betrag den Verkaufsgesamtbetrag nicht deckt — fügen Sie den Rest hinzu (oder verwenden Sie **Rest auffüllen**), bevor Sie es erneut versuchen.
 - **Rest auffüllen** selbst wird abgelehnt, wenn die ausstehenden Zahlungen den Gesamtbetrag bereits decken (es gibt nichts mehr aufzufüllen) oder wenn der Warenkorb gerade nicht in einem Zustand ist, eine Zahlung anzunehmen.
-- Die Felder „Betrag“ und „Wechselgeld“ hier nehmen einen normalen Währungsbetrag an (z. B. `2.50`) — anders als das kleine Rabattfeld pro Zeile im Warenkorb selbst, das die kleinste Währungseinheit erwartet (siehe den Abschnitt „Rabatte“ unter „Verkaufen & Kassieren“) — übertragen Sie diese Gewohnheit also nicht zwischen den beiden.
+- Die Felder „Betrag“ und „Wechselgeld“ hier nehmen einen normalen Währungsbetrag an (z. B. `2,50`) — anders als das kleine Rabattfeld pro Zeile im Warenkorb selbst, das die kleinste Währungseinheit erwartet (siehe den Abschnitt „Rabatte“ unter „Verkaufen & Kassieren“) — übertragen Sie diese Gewohnheit also nicht zwischen den beiden.
 
 ## Gutscheine
 

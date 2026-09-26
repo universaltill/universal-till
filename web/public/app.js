@@ -61,7 +61,14 @@ window.utCurrency = (function(){
       var n = parseMinor(v);
       return isNaN(n) ? 0 : n;
     },
-    toMajor: function(units){ return (units / factor).toFixed(decimals); },
+    // ut-docs#2818: an editable field's prefill, in the shop language's
+    // decimal separator ("4,00" on a German till) -- every caller's field
+    // is read back by parseMinor/toMinor or the server's ParseMoneyMajor,
+    // which accept either separator. No grouping: parseMinor refuses it.
+    toMajor: function(units){
+      var s = (units / factor).toFixed(decimals);
+      return decimalSep === ',' ? s.replace('.', ',') : s;
+    },
     format: formatMinor
   };
 })();

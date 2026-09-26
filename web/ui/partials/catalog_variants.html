@@ -52,8 +52,8 @@
              server-side (httpx.ParseMoneyMajor), which reads a decimal
              comma too, hence moneypatternlocal (ut-docs#2819). -->
         <input type="text" inputmode="decimal" name="cost" {{ moneypatternlocal currency.Decimals false }} style="max-inline-size:7rem"
-               value="{{ .CostMajor }}"
-               {{ moneyplaceholder currency.Decimals 0 }} title="{{ T "catalog.cost_price_hint" }}">
+               value="{{ majorlocal .CostMajor }}"
+               {{ moneyplaceholderlocal currency.Decimals 0 }} title="{{ T "catalog.cost_price_hint" }}">
         <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
       </form>
       <div class="muted catalog-detail-label">{{ T "catalog.lead_time_days" }}</div>
