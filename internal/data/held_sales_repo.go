@@ -371,6 +371,29 @@ func (r *HeldSalesRepo) DeleteAndTombstone(ctx context.Context, id, till string)
 	return nil
 }
 
+// MarkLocalOnly (ut-docs#2723) is the one write allowed to LOWER
+// primary_synced back to 0 -- Upsert's own primary_synced =
+// MAX(held_sales.primary_synced, excluded.primary_synced) deliberately never
+// can (other callers rely on that stickiness, see HeldSale.PrimarySynced),
+// so this exists purely for the one caller that must demote it: a held-sale
+// give-back (heldSaleGiveBack) whose OWN write-through to the primary
+// failed. That row's id was just claimed OFF the primary, so any earlier
+// primary_synced=1 confirmation for it is stale the moment the claim
+// succeeds -- if the give-back's local fallback write left it at 1 (Upsert's
+// MAX would), the next successful ReconcileWithPrimary would drop it as
+// "resolved elsewhere" and the order would be lost outright, even though
+// this till alone now holds it. Idempotent; a missing row is a no-op.
+func (r *HeldSalesRepo) MarkLocalOnly(ctx context.Context, id string) error {
+	var err error
+	done := heldSalesObs.trace("mark_local_only")
+	defer func() { done(err) }()
+	_, err = r.db.ExecContext(ctx, `UPDATE held_sales SET primary_synced = 0 WHERE id = ?`, id)
+	if err != nil {
+		return heldSalesObs.wrapf("mark_local_only", "mark held sale %s local-only", err, id)
+	}
+	return nil
+}
+
 func (r *HeldSalesRepo) Delete(ctx context.Context, id string) error {
 	var err error
 	done := heldSalesObs.trace("delete")
