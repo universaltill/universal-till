@@ -57,6 +57,11 @@
   </ul>
   <div class="selforder-cart-totals">
     <div>{{ T "basket.subtotal" }}: {{ money .Basket.Subtotal }}</div>
+    {{/* ut-docs#2937: the kiosk now charges the service charge (and any
+         ADR-0062 levy) it quotes, so an unattended customer must see it —
+         the sum of every charge; per-levy lines are ut-docs#986. Reuses the
+         journal's existing key, so no language-pack follow-up. */}}
+    {{ if .Basket.ServiceCharge.IsPositive }}<div class="selforder-cart-service-charge">{{ T "journal.detail.service_charge" }}: {{ money .Basket.ServiceCharge }}</div>{{ end }}
     <div>{{ T "basket.tax" }}: {{ money .Basket.Tax }}</div>
     <div class="selforder-cart-total">{{ T "basket.total" }}: {{ money .Basket.Total }}</div>
   </div>

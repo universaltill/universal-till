@@ -562,7 +562,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "failed to prepare sale", http.StatusInternalServerError)
 			return
 		}
-		saleLines, total, taxBlocked := kioskSaleLinesAndTotal(d, eng, lines, locID)
+		saleLines, charges, total, taxBlocked := kioskSaleLinesAndTotal(d, eng, lines, locID)
 		if taxBlocked {
 			// ut-docs#368 — same fail-closed rule as the cashier tender
 			// path: a basket line whose registered tax plugin is broken
@@ -613,6 +613,9 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			// consulted here.
 			Offline: formFlagTruthy(r.Form.Get("offline")),
 			Lines:   saleLines,
+			// ut-docs#2937: the charges the kiosk cart quoted — same list,
+			// so CompleteSale persists them and enforces the total below.
+			Charges: charges,
 			Payments: []pos.PaymentInput{{
 				MethodID: method,
 				Amount:   total,
@@ -1063,12 +1066,21 @@ func kitchenTicketForCounterOrder(order data.KioskCounterOrder, cfg print.Config
 // handler read it, once (ut-docs#2703: the kitchen filter handed to
 // completeTender is built from the same slice) -- into SaleLineInput rows
 // and computes the payable total, mirroring the cashier tender handler's
-// subtotal/tax math (/api/pos/tender in pos_api.go) exactly — a kiosk
+// subtotal/tax/charge math (/api/pos/tender in pos_api.go) exactly — a kiosk
 // checkout must land on the same total a cashier would for an identical
 // basket. Kiosk sales never carry a sale-level discount (no UI surfaces one
 // to an anonymous customer), so this is deliberately simpler than the
 // cashier path, which also honors a client- or basket-supplied discount.
-func kioskSaleLinesAndTotal(d *common.Deps, eng *pos.Service, lines []pos.BasketLine, locID string) ([]pos.SaleLineInput, money.Money, bool) {
+//
+// Charges (ut-docs#2937, ADR-0062): built by the same pos.BuildCharges the
+// kiosk cart's preview uses (eng's computeTotals) and the cashier tender
+// uses, from the same runtime state as the cashier path and the rest of
+// this function (the settings handlers push that state to KioskEngine via
+// SetConfig, so it is what the cart previewed) plus eng's
+// charge.policy.ask answer — so the customer is charged exactly what the
+// cart quoted: the merchant service charge plus every plugin-declared levy,
+// or nothing on a banned-country till.
+func kioskSaleLinesAndTotal(d *common.Deps, eng *pos.Service, lines []pos.BasketLine, locID string) ([]pos.SaleLineInput, []pos.ChargeInput, money.Money, bool) {
 	var saleLines []pos.SaleLineInput
 	subtotal, taxTotal := money.Zero, money.Zero
 	for _, l := range lines {
@@ -1079,7 +1091,7 @@ func kioskSaleLinesAndTotal(d *common.Deps, eng *pos.Service, lines []pos.Basket
 		// a silently-wrong base rate on this surface either.
 		taxBP, taxBlocked := eng.EffectiveLineTaxRateBP(l)
 		if taxBlocked {
-			return nil, money.Zero, true
+			return nil, nil, money.Zero, true
 		}
 		saleLines = append(saleLines, pos.SaleLineInput{
 			ItemID:             l.ItemID,
@@ -1101,14 +1113,19 @@ func kioskSaleLinesAndTotal(d *common.Deps, eng *pos.Service, lines []pos.Basket
 		subtotal = subtotal.Add(lineNet)
 		taxTotal = taxTotal.Add(lineTax)
 	}
-	total := subtotal
+	st := d.CurrentState()
+	chargePolicy, chargeAnswered := eng.ChargePolicy()
+	charges := pos.BuildCharges(subtotal, common.EffectiveServiceChargeRateBP(st),
+		common.ServiceChargeForbidden(st.Country), chargePolicy, chargeAnswered)
+	chargeTax := pos.ChargesTax(charges, pos.ChargeTaxLinesFromSale(saleLines), d.CurrentState().TaxInclusive)
+	total := subtotal.Add(pos.SumCharges(charges))
 	if !d.CurrentState().TaxInclusive {
-		total = total.Add(taxTotal)
+		total = total.Add(taxTotal).Add(chargeTax)
 	}
 	if total.IsNegative() {
 		total = money.Zero
 	}
-	return saleLines, total, false
+	return saleLines, charges, total, false
 }
 
 // renderKioskCart renders this request's basket (eng: selfOrderEngine's
