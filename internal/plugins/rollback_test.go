@@ -578,3 +578,183 @@ func TestStoreVersion_OtherStatErrorIsNotSentinel(t *testing.T) {
 		t.Fatalf("StoreVersion error = %v, want a plain error, not the ErrVersionSourceMissing sentinel", err)
 	}
 }
+
+// ut-docs#3016: a crash between StoreVersion's os.MkdirTemp(".store-*") and
+// its final os.Rename leaves a `.store-*` dir under versions/ behind. It's
+// not a version snapshot and must never be listed as one.
+func TestGetVersionHistory_SkipsTempDirs(t *testing.T) {
+	db := managerTestDB(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	rm := NewRollbackManager(db, base)
+	pluginID := "com.test.temphistory"
+
+	writeVersionDir(t, base, pluginID, "1.0.0", true)
+	seedInstalledPlugin(t, db, pluginID, "TH", "1.0.0", "none", true)
+
+	leftover := filepath.Join(base, pluginID, "versions", ".store-abc123")
+	if err := os.MkdirAll(leftover, 0o755); err != nil {
+		t.Fatalf("mkdir leftover: %v", err)
+	}
+
+	history, err := rm.GetVersionHistory(ctx, pluginID)
+	if err != nil {
+		t.Fatalf("GetVersionHistory: %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("history len = %d, want 1 (temp leftover must be excluded): %+v", len(history), history)
+	}
+	for _, v := range history {
+		if v.Version == ".store-abc123" {
+			t.Fatalf("temp leftover dir listed as a version: %+v", v)
+		}
+	}
+}
+
+// ut-docs#3016: a `.store-*` crash leftover in versions/ must not itself
+// occupy a "kept version" slot, nor push a real snapshot out of the
+// maxVersions=3 window. Without the fix, a leftover newer than an older
+// real snapshot sorts ahead of it in cleanupOldVersions' age-ordered
+// eviction, so the real snapshot gets deleted instead of the leftover.
+func TestStoreVersion_TempLeftoverNotCountedTowardMaxVersions(t *testing.T) {
+	db := managerTestDB(t)
+	base := t.TempDir()
+	rm := NewRollbackManager(db, base)
+	pluginID := "com.test.leftovercount"
+
+	now := time.Now()
+	for i, v := range []string{"1.0.0", "1.1.0", "1.2.0"} {
+		dir := writeVersionDir(t, base, pluginID, v, false)
+		mtime := now.Add(time.Duration(i-10) * time.Hour) // far in the past, oldest first
+		if err := os.Chtimes(dir, mtime, mtime); err != nil {
+			t.Fatalf("chtimes: %v", err)
+		}
+	}
+
+	// A fresh (not stale) leftover — recent enough that the sweep must
+	// leave it alone, so only the isTempVersionDirName filter (not the
+	// sweep) can save the real snapshots from it.
+	leftover := filepath.Join(base, pluginID, "versions", ".store-leftover")
+	if err := os.MkdirAll(leftover, 0o755); err != nil {
+		t.Fatalf("mkdir leftover: %v", err)
+	}
+
+	// Storing a 4th real version trips cleanupOldVersions.
+	if err := rm.StoreVersion(pluginID, "1.3.0", ""); err != nil {
+		t.Fatalf("StoreVersion: %v", err)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(base, pluginID, "versions"))
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	names := map[string]bool{}
+	for _, e := range entries {
+		names[e.Name()] = true
+	}
+
+	// maxVersions=3 real snapshots must survive: the 3 newest of
+	// {1.0.0,1.1.0,1.2.0,1.3.0} are 1.1.0, 1.2.0, 1.3.0 — 1.0.0 (the oldest)
+	// is the one that should be evicted, not 1.1.0.
+	if !names["1.1.0"] || !names["1.2.0"] || !names["1.3.0"] {
+		t.Fatalf("a real snapshot was wrongly evicted because of the temp leftover: %v", names)
+	}
+	if names["1.0.0"] {
+		t.Fatalf("oldest real snapshot should have been evicted: %v", names)
+	}
+}
+
+// ut-docs#3016: a `.store-*`/`.restore-*` temp dir older than
+// staleTempDirAge is a crash leftover and gets swept; one younger is left
+// alone in case a concurrent StoreVersion/restore call is still using it.
+func TestCleanupOldVersions_SweepsStaleTempDirsButKeepsFreshOnes(t *testing.T) {
+	db := managerTestDB(t)
+	base := t.TempDir()
+	rm := NewRollbackManager(db, base)
+	pluginID := "com.test.sweep"
+
+	versionsDir := filepath.Join(base, pluginID, "versions")
+	if err := os.MkdirAll(versionsDir, 0o755); err != nil {
+		t.Fatalf("mkdir versions: %v", err)
+	}
+	staleStore := filepath.Join(versionsDir, ".store-stale")
+	freshStore := filepath.Join(versionsDir, ".store-fresh")
+	if err := os.MkdirAll(staleStore, 0o755); err != nil {
+		t.Fatalf("mkdir stale store: %v", err)
+	}
+	if err := os.MkdirAll(freshStore, 0o755); err != nil {
+		t.Fatalf("mkdir fresh store: %v", err)
+	}
+	old := time.Now().Add(-2 * time.Hour)
+	if err := os.Chtimes(staleStore, old, old); err != nil {
+		t.Fatalf("chtimes stale store: %v", err)
+	}
+
+	pluginDir := filepath.Join(base, pluginID)
+	staleRestore := filepath.Join(pluginDir, ".restore-stale")
+	freshRestore := filepath.Join(pluginDir, ".restore-fresh")
+	if err := os.MkdirAll(staleRestore, 0o755); err != nil {
+		t.Fatalf("mkdir stale restore: %v", err)
+	}
+	if err := os.MkdirAll(freshRestore, 0o755); err != nil {
+		t.Fatalf("mkdir fresh restore: %v", err)
+	}
+	if err := os.Chtimes(staleRestore, old, old); err != nil {
+		t.Fatalf("chtimes stale restore: %v", err)
+	}
+
+	if err := rm.cleanupOldVersions(pluginID); err != nil {
+		t.Fatalf("cleanupOldVersions: %v", err)
+	}
+
+	if _, err := os.Stat(staleStore); !os.IsNotExist(err) {
+		t.Fatalf("stale .store- dir must be swept, stat err = %v", err)
+	}
+	if _, err := os.Stat(freshStore); err != nil {
+		t.Fatalf("fresh .store- dir must survive: %v", err)
+	}
+	if _, err := os.Stat(staleRestore); !os.IsNotExist(err) {
+		t.Fatalf("stale .restore- dir must be swept, stat err = %v", err)
+	}
+	if _, err := os.Stat(freshRestore); err != nil {
+		t.Fatalf("fresh .restore- dir must survive: %v", err)
+	}
+}
+
+// ut-docs#3016: Rollback used to restore the live target dir from its
+// snapshot BEFORE parsing the target manifest or running any validate*
+// check. A refused rollback (bad manifest, a colliding key, ...) left that
+// freshly-restored dir behind as an orphan — disk state for a rollback that
+// never took effect. The restore must happen only after every check and DB
+// write has succeeded, immediately before tx.Commit().
+func TestRollback_RefusedValidationDoesNotLeaveOrphanedLiveDir(t *testing.T) {
+	db := managerTestDB(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	rm := NewRollbackManager(db, base)
+	pluginID := "com.test.orphan"
+
+	seedInstalledPlugin(t, db, pluginID, "OR", "2.0.0", "none", true)
+	writeVersionDir(t, base, pluginID, "2.0.0", true)
+
+	// Target version has a versions/ snapshot but its manifest.json fails to
+	// parse — the validation step Rollback must run BEFORE restoring.
+	targetDir := writeVersionDir(t, base, pluginID, "1.0.0", false)
+	if err := os.WriteFile(filepath.Join(targetDir, "manifest.json"), []byte("{not valid json"), 0o644); err != nil {
+		t.Fatalf("write broken manifest: %v", err)
+	}
+
+	liveTargetDir := filepath.Join(base, pluginID, "1.0.0")
+	if _, err := os.Stat(liveTargetDir); !os.IsNotExist(err) {
+		t.Fatalf("precondition: live target dir must not already exist, stat err = %v", err)
+	}
+
+	err := rm.Rollback(ctx, pluginID, "1.0.0", "tester")
+	if err == nil || !strings.Contains(err.Error(), "parse manifest") {
+		t.Fatalf("Rollback(broken manifest) = %v, want a parse-manifest error", err)
+	}
+
+	if _, err := os.Stat(liveTargetDir); !os.IsNotExist(err) {
+		t.Fatalf("live target dir must not exist after a refused rollback, stat err = %v", err)
+	}
+}
