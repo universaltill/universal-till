@@ -83,7 +83,7 @@ var autoUpdateJitter = defaultAutoUpdateJitter
 // autoUpdateSchedule resolves the effective (enabled, HH:MM) from the stored
 // settings. A replica (sync.primary_url set) reads OFF while the setting is
 // unset: a replica that updates to latest while its main till cannot (a
-// Windows main till, an unwritable .deb) would run ahead of it indefinitely.
+// portable Windows main till, an unwritable .deb) would run ahead of it indefinitely.
 // Since ut-docs#2738 a replica never runs the nightly path at all — it
 // follows its main till's exact version (followTick) — so this only
 // decides what the Settings page shows there.
@@ -258,7 +258,7 @@ func StartAutoUpdateScheduler(ctx context.Context, d *common.Deps, wg *sync.Wait
 // updateUnavailableHTML renders the status line for "a newer version exists but
 // in-app apply can't run on this install". On Windows and macOS a download
 // link is actionable — both are windowed desktop OSes with a browser, so a
-// user who can't self-update (Windows: no in-app updater at all; macOS: an
+// user who can't self-update (Windows: a portable zip; macOS: an
 // Intel Mac, ut-docs#18 — no Intel .dmg is ever published) can still get the
 // new version themselves. On a unix kiosk a website link is a dead end —
 // fullscreen with no way out and no installer to run — so it states the
@@ -351,8 +351,9 @@ func setupUnavailableHTML(locale, latest, goos string) string {
 // latest release, verifies its checksum, swaps the binary + web assets, and
 // re-execs for any install whose tree is writable by the running user
 // (archive installs, and .deb installs whose postinstall chowns the tree to
-// the service user — ut-docs#151); Windows always uses its native installer,
-// and a non-writable install falls back to a plain reinstall.
+// the service user — ut-docs#151); a Windows installer install runs the signed
+// installer through a detached helper (ut-docs#160), and a non-writable install
+// or a portable Windows zip falls back to a plain reinstall.
 // respondUpdateApply writes the { "data": …, "error": null|"…" } envelope
 // universal-till/CLAUDE.md mandates (ut-docs#387) for POST /api/update/apply.
 // Package-level (not a closure inside the handler) so a test can call it
