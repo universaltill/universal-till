@@ -149,6 +149,17 @@ async function capture(page: Page, id: string, locale: string, route: string) {
   // Let webfonts finish before capturing, or Arabic-script shots race the
   // font swap.
   await page.evaluate(() => (document as any).fonts.ready);
+  if (process.env.DOCS_SHOTS_EXP_RELAYOUT) {
+    await page.evaluate((sel) => {
+      const el = document.querySelector(sel) as HTMLElement | null;
+      if (!el) return;
+      const prev = el.style.display;
+      el.style.display = 'none';
+      void el.offsetHeight;
+      el.style.display = prev;
+      void el.offsetHeight;
+    }, process.env.DOCS_SHOTS_EXP_RELAYOUT);
+  }
 
   // fonts.ready resolves when the font FILES have loaded, not when the
   // browser has actually repainted the glyphs with them — a one-frame gap
