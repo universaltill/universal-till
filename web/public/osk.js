@@ -347,7 +347,8 @@
   // (settings-osk.spec.ts deliberately delays it 700ms in one spec, and
   // still expects that field focused and IME-free by then), so a
   // server-rendered guard is the only thing that's actually always there
-  // in time for an `autofocus` field, whichever of the two finishes first.
+  // in time for a field focused at load (the scan field's parse-time
+  // preventScroll focus, ut-docs#3036), whichever of the two finishes first.
   // (oskGuarded/LAYOUTS are both declared at the top of the file — see the
   // comment there for why.)
   //
@@ -608,9 +609,9 @@
 
   // ut-docs#155: the OSK opens ONLY from a deliberate user action — a click/
   // tap on an OSK-able field, or a data-osk-toggle button. Programmatic focus
-  // (the sale screen's autofocus, the checkout-start button's delayed
+  // (the sale screen's load-time scan-field focus, the checkout-start button's delayed
   // .focus() for the scanner) must never pop it; this REVERSES the earlier
-  // "catch up with the autofocused field at init" behavior, per the field
+  // "catch up with the load-focused field at init" behavior, per the field
   // report. Click (not focusin) is the show trigger so that tapping the
   // already-focused scan input — which fires no focusin — still opens it.
   // The toggle must never steal focus (same rule as the OSK's own keys):
