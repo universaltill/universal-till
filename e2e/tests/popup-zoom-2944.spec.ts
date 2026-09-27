@@ -173,7 +173,9 @@ test.describe('popup zoom (ut-docs#2944, ADR-0122 §5)', () => {
     expect(await page.locator('#modifier-modal').evaluate((el) => getComputedStyle(el).transform)).toBe('none');
 
     // A slower shrink, so the assertions below provably land mid-motion.
-    await page.evaluate(() => document.documentElement.style.setProperty('--ut-zoom-small-ms', '1500ms'));
+    // ADR-0123 (#2987): the CLOSE has its own token/curve, --ut-zoom-close-ms
+    // / cubic-bezier(.4, 0, .6, 1) -- --ut-zoom-small-ms no longer governs it.
+    await page.evaluate(() => document.documentElement.style.setProperty('--ut-zoom-close-ms', '1500ms'));
 
     // close(): closed at once (native), then painted again, inert, shrinking.
     const now = await page.evaluate(() => {
@@ -187,15 +189,29 @@ test.describe('popup zoom (ut-docs#2944, ADR-0122 §5)', () => {
     expect(st).toMatchObject({ open: false, closing: true, inert: true, ariaHidden: 'true', visible: true });
     expect(st.running).toBe(1);
     // It shrinks INTO the tile: the closing animation's last keyframe
-    // centres on the tile.
+    // centres on the tile. Also its own duration/ease (ADR-0123): the
+    // getComputedTiming() duration reflects the slowed --ut-zoom-close-ms
+    // above, but getTiming()'s easing is the literal POPUP_CLOSE_EASE,
+    // never the open's POPUP_EASE -- and mid-close (well before offset
+    // .55) opacity is still 1, not fading with the shrink from frame one.
+    const closeTiming = await page.locator('#modifier-modal').evaluate((el) => {
+      const a = el.getAnimations().find((x) => ((x.effect as KeyframeEffect).getKeyframes()).some((k) => 'transform' in k))!;
+      const t = a.effect!.getTiming();
+      return { duration: Number(t.duration), easing: String(t.easing) };
+    });
+    expect(closeTiming.duration).toBe(1500);
+    expect(closeTiming.easing).toBe('cubic-bezier(0.4, 0, 0.6, 1)');
     const lastCentre = await page.locator('#modifier-modal').evaluate((el) => {
       const a = el.getAnimations().find((x) => ((x.effect as KeyframeEffect).getKeyframes()).some((k) => 'transform' in k))!;
       a.pause();
+      a.currentTime = Number((a.effect as KeyframeEffect).getComputedTiming().endTime) * 0.4;
+      const opacityAt40Pct = getComputedStyle(el).opacity;
       a.currentTime = Number((a.effect as KeyframeEffect).getComputedTiming().endTime) - 1;
       const r = el.getBoundingClientRect();
       a.play();
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2, opacityAt40Pct };
     });
+    expect(lastCentre.opacityAt40Pct).toBe('1');
     expect(Math.abs(lastCentre.x - (src.x + src.width / 2))).toBeLessThan(3);
     expect(Math.abs(lastCentre.y - (src.y + src.height / 2))).toBeLessThan(3);
     // Focus came back and the page takes input while it shrinks.
@@ -205,10 +221,10 @@ test.describe('popup zoom (ut-docs#2944, ADR-0122 §5)', () => {
     expect(st).toMatchObject({ open: false, closing: false, inert: false, ariaHidden: null, visible: false });
 
     // Escape: the same shrink (the close EVENT, not a .close() wrapper).
-    await page.evaluate(() => document.documentElement.style.removeProperty('--ut-zoom-small-ms'));
+    await page.evaluate(() => document.documentElement.style.removeProperty('--ut-zoom-close-ms'));
     await tapTileForModal(page, tile);
     await page.waitForTimeout(450);
-    await page.evaluate(() => document.documentElement.style.setProperty('--ut-zoom-small-ms', '1500ms'));
+    await page.evaluate(() => document.documentElement.style.setProperty('--ut-zoom-close-ms', '1500ms'));
     await page.keyboard.press('Escape');
     await expect.poll(async () => (await modalState(page)).closing).toBe(true);
     st = await modalState(page);
@@ -217,11 +233,11 @@ test.describe('popup zoom (ut-docs#2944, ADR-0122 §5)', () => {
     expect((await modalState(page)).inert).toBe(false);
 
     // Reopening during a shrink ends it first: open, interactive, no marker.
-    await page.evaluate(() => document.documentElement.style.removeProperty('--ut-zoom-small-ms'));
+    await page.evaluate(() => document.documentElement.style.removeProperty('--ut-zoom-close-ms'));
     await tapTileForModal(page, tile);
     await page.waitForTimeout(450);
     const re = await page.evaluate(async () => {
-      document.documentElement.style.setProperty('--ut-zoom-small-ms', '3000ms');
+      document.documentElement.style.setProperty('--ut-zoom-close-ms', '3000ms');
       const d = document.getElementById('modifier-modal') as HTMLDialogElement;
       d.close();
       await new Promise((r) => setTimeout(r, 50)); // the close event is delivered
@@ -229,19 +245,30 @@ test.describe('popup zoom (ut-docs#2944, ADR-0122 §5)', () => {
       d.showModal();
       const r = { mid, open: d.open, closing: d.hasAttribute('data-ut-closing'), inert: d.hasAttribute('inert') };
       d.close();
-      document.documentElement.style.removeProperty('--ut-zoom-small-ms');
+      document.documentElement.style.removeProperty('--ut-zoom-close-ms');
       return r;
     });
     expect(re).toEqual({ mid: true, open: true, closing: false, inert: false });
     assertClean();
   });
 
-  test('Balanced: the same zoom at 200 ms', async ({ page }) => {
+  test('Balanced: the same zoom at 200 ms, closing at 240 ms (ADR-0123)', async ({ page }) => {
     const tile = await openSale(page, 'balanced');
     await tapTileForModal(page, tile);
     const rec = (await recs(page)).find((r) => r.id === 'modifier-modal');
     expect(rec?.duration).toBe(200);
-    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+    const closeTiming = await page.evaluate(async () => {
+      const d = document.getElementById('modifier-modal') as HTMLDialogElement;
+      d.close();
+      await new Promise((r) => setTimeout(r, 50)); // the close event is a queued task
+      const a = d.getAnimations().find((x) => ((x.effect as KeyframeEffect).getKeyframes()).some((k) => 'transform' in k))!;
+      const t = a.effect!.getTiming();
+      return { duration: Number(t.duration), easing: String(t.easing) };
+    });
+    expect(closeTiming.duration).toBe(240);
+    expect(closeTiming.easing).toBe('cubic-bezier(0.4, 0, 0.6, 1)');
+    await expect(page.locator('#modifier-modal')).toBeHidden({ timeout: 5_000 });
   });
 
   test('Light: no animation and no closing re-show', async ({ page }) => {
@@ -327,7 +354,7 @@ test.describe('popup zoom (ut-docs#2944, ADR-0122 §5)', () => {
     // Cancel.
     await tapTileForModal(page, tile);
     await page.waitForTimeout(450);
-    await page.evaluate(() => document.documentElement.style.setProperty('--ut-zoom-small-ms', '1500ms'));
+    await page.evaluate(() => document.documentElement.style.setProperty('--ut-zoom-close-ms', '1500ms'));
     await modal.locator('.modifier-actions .btn.secondary').click();
     await expect.poll(async () => (await closing()).seen).toBe(1);
     let c = await closing();
@@ -336,10 +363,10 @@ test.describe('popup zoom (ut-docs#2944, ADR-0122 §5)', () => {
     await expect(modal).toBeHidden({ timeout: 5_000 });
 
     // Add: the item still reaches the basket, and the shrink is not blank.
-    await page.evaluate(() => document.documentElement.style.removeProperty('--ut-zoom-small-ms'));
+    await page.evaluate(() => document.documentElement.style.removeProperty('--ut-zoom-close-ms'));
     await tapTileForModal(page, tile);
     await page.waitForTimeout(450);
-    await page.evaluate(() => document.documentElement.style.setProperty('--ut-zoom-small-ms', '1500ms'));
+    await page.evaluate(() => document.documentElement.style.setProperty('--ut-zoom-close-ms', '1500ms'));
     await modal.locator('.modifier-option', { hasText: seeded!.optionName }).click();
     await Promise.all([
       page.waitForResponse((r) => r.url().includes('/api/pos/scan-with-modifiers') && r.ok()),
@@ -351,7 +378,7 @@ test.describe('popup zoom (ut-docs#2944, ADR-0122 §5)', () => {
     await expect(page.locator('#basket')).toContainText(seeded!.name);
     await expect(page.locator('#basket')).toContainText(seeded!.optionName);
     await expect(modal).toBeHidden({ timeout: 5_000 });
-    await page.evaluate(() => document.documentElement.style.removeProperty('--ut-zoom-small-ms'));
+    await page.evaluate(() => document.documentElement.style.removeProperty('--ut-zoom-close-ms'));
     assertClean();
   });
 
@@ -375,7 +402,7 @@ test.describe('popup zoom (ut-docs#2944, ADR-0122 §5)', () => {
 
     await tapTileForModal(page, tile);
     await page.waitForTimeout(450);
-    await page.evaluate(() => document.documentElement.style.setProperty('--ut-zoom-small-ms', '3000ms'));
+    await page.evaluate(() => document.documentElement.style.setProperty('--ut-zoom-close-ms', '3000ms'));
     await page.keyboard.press('Escape');
     await expect.poll(async () => (await modalState(page)).closing).toBe(true);
     let gets = 0;
@@ -397,7 +424,7 @@ test.describe('popup zoom (ut-docs#2944, ADR-0122 §5)', () => {
     expect(await page.evaluate(() => (window as unknown as { __tileClicks: number }).__tileClicks)).toBe(1);
     expect(gets).toBe(1);
     await page.evaluate(() => {
-      document.documentElement.style.removeProperty('--ut-zoom-small-ms');
+      document.documentElement.style.removeProperty('--ut-zoom-close-ms');
       (document.getElementById('modifier-modal') as HTMLDialogElement).close();
     });
   });
@@ -419,12 +446,12 @@ test.describe('popup zoom (ut-docs#2944, ADR-0122 §5)', () => {
     expect(Math.abs(rec!.box.t + rec!.box.h / 2 + dy - (src.y + src.height / 2))).toBeLessThan(1.5);
     await page.waitForTimeout(450);
 
-    await page.evaluate(() => document.documentElement.style.setProperty('--ut-zoom-small-ms', '1500ms'));
+    await page.evaluate(() => document.documentElement.style.setProperty('--ut-zoom-close-ms', '1500ms'));
     await page.locator('#bugreport-close').click();
     const st = await panel.evaluate((el) => ({ open: el.classList.contains('open'), closing: el.hasAttribute('data-ut-closing'), inert: el.hasAttribute('inert') }));
     expect(st).toEqual({ open: false, closing: true, inert: true });
     await expect(panel).toBeHidden({ timeout: 5_000 });
     expect(await panel.evaluate((el) => el.hasAttribute('inert') || el.hasAttribute('data-ut-closing'))).toBe(false);
-    await page.evaluate(() => document.documentElement.style.removeProperty('--ut-zoom-small-ms'));
+    await page.evaluate(() => document.documentElement.style.removeProperty('--ut-zoom-close-ms'));
   });
 });
