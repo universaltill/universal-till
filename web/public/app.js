@@ -1731,9 +1731,11 @@ function initOfflineOverride(updateFn){
   closeBtn.addEventListener('click', close);
 })();
 
-// Idle auto-lock, cosmetic half (docs: pos-auth.md). The server revokes the
-// session authoritatively; this timer just sends an abandoned till to the
-// keypad without waiting for the next request. Absent when the feature is off.
+// Idle auto-lock, client half (docs: pos-auth.md). The server revokes an idle
+// session on its own clock; this timer counts real input and, when it fires,
+// revokes through POST /api/auth/idle-lock and shows the keypad -- the
+// server's clock trails it after a page load (ut-docs#3005). Absent when the
+// feature is off.
 (function () {
   var secs = parseInt(document.body.dataset.idleLock || '0', 10);
   if (!secs || window.location.pathname === '/login') return;
@@ -1742,13 +1744,23 @@ function initOfflineOverride(updateFn){
   ['pointerdown', 'keydown', 'touchstart', 'wheel'].forEach(function (ev) {
     document.addEventListener(ev, bump, { passive: true });
   });
+  var locking = false;
   setInterval(function () {
-    if ((Date.now() - last) / 1000 > secs) {
-      // ut-docs#2788: a timer-driven jump to /login looks like a refresh on
-      // the till. /login is outside base.html, so report it now.
-      if (window.UT && UT.noteNav) UT.noteNav('idle-lock', { report: true });
-      window.location.replace('/login');
-    }
+    if (locking || (Date.now() - last) / 1000 <= secs) return;
+    locking = true;
+    // ut-docs#2788: a timer-driven jump to /login looks like a refresh on
+    // the till. /login is outside base.html, so report it now.
+    if (window.UT && UT.noteNav) UT.noteNav('idle-lock', { report: true });
+    // ut-docs#3005: revoke the session on THIS timer's verdict first. The
+    // server's own idle clock trails ours after a page load (the load's
+    // requests touch the session), so a bare jump to /login found the
+    // session still fresh, bounced to "/" and reloaded every 10 minutes
+    // without ever locking. Whatever the POST answers, go to the keypad.
+    var go = function () { window.location.replace('/login'); };
+    try {
+      fetch('/api/auth/idle-lock', { method: 'POST', credentials: 'same-origin', keepalive: true })
+        .then(go, go);
+    } catch (e) { go(); }
   }, 5000);
 })();
 

@@ -522,6 +522,27 @@ func TestRegisterOmitsRegionForNonGermanCountry(t *testing.T) {
 	}
 }
 
+// register() must send the owner-typed till.name as device_name (ut-docs#3019)
+// instead of leaving the field out entirely (which made ut-cloud default the
+// store's first device to "Till 1").
+func TestRegisterSendsDeviceNameFromTillName(t *testing.T) {
+	resetState()
+	var gotBody map[string]any
+	srv := registerTestServer(t, &gotBody)
+
+	kv := newFakeKV()
+	if err := kv.Set(context.Background(), keyTillName, "Front Counter"); err != nil {
+		t.Fatalf("seed till.name: %v", err)
+	}
+	m := config.MarketplaceConfig{EndpointURL: srv.URL + "/api"}
+	if err := register(context.Background(), m, "Corner Shop", kv); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if got := gotBody["device_name"]; got != "Front Counter" {
+		t.Fatalf("device_name = %v, want %q", got, "Front Counter")
+	}
+}
+
 // RegisterNow must read the shop's chosen country from settings (via
 // register()) so a German till's marketplace registration carries region
 // "de" with no extra setup step for the shop owner.
@@ -541,6 +562,57 @@ func TestRegisterNowSendsRegionFromConfiguredCountry(t *testing.T) {
 	}
 	if got := gotBody["region"]; got != "de" {
 		t.Fatalf("region = %v, want \"de\"", got)
+	}
+}
+
+// Init's device-registration path (a main/standalone till already enrolled
+// with the store, whose own device isn't registered as a fleet member yet)
+// must post the owner-typed till.name as device_name (ut-docs#3019), not
+// the "sync.till_name" it read before the fix (which only a replica join
+// ever writes, so a main till always sent "").
+func TestInitRegistersDeviceWithTillName(t *testing.T) {
+	resetState()
+	var gotBody map[string]any
+	bodyReceived := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/stores/devices/register", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		close(bodyReceived)
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]string{}})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	kv := newFakeKV()
+	for k, v := range map[string]string{
+		keyDeviceID:   "till-existing",
+		keyStoreID:    "store-old",
+		keyMerchantID: "store-old",
+		keyToken:      "tok-old",
+		keyPublicKey:  strings.Repeat("cd", 32),
+		keyTillName:   "Front Counter",
+		// keyDeviceRegistered deliberately absent/different, so Init sees
+		// this device as not-yet-registered under the store (needDevice).
+	} {
+		if err := kv.Set(context.Background(), k, v); err != nil {
+			t.Fatalf("seed %s: %v", k, err)
+		}
+	}
+	cfg := freshConfig(srv.URL)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var wg sync.WaitGroup
+
+	Init(ctx, cfg, kv, &wg)
+
+	select {
+	case <-bodyReceived:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Init never registered this device under the store")
+	}
+	if got := gotBody["device_name"]; got != "Front Counter" {
+		t.Fatalf("device_name = %v, want %q", got, "Front Counter")
 	}
 }
 

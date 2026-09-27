@@ -269,6 +269,21 @@ jobs:
           mapfile -t exes < <(find "$x" -iname '*.exe')
           test "${#exes[@]}" -ge 2 # unitill-pos.exe + unitill-desktop.exe
           for f in "${exes[@]}"; do packaging/windows/sign-exe.sh --verify-only "$f"; done
+      # Same fail-closed rule for the icon + VERSIONINFO resource the
+      # goreleaser pre-build hooks link in (ut-docs#2786): without it Windows
+      # shows its generic icon on the shortcuts, taskbar and Apps list.
+      - name: Every .exe in the portable Windows zip has the app icon
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          zip="dist/unitill-pos_${VERSION}_windows_amd64.zip"
+          test -f "$zip"
+          x="$(mktemp -d)"
+          unzip -q "$zip" -d "$x"
+          mapfile -t exes < <(find "$x" -iname '*.exe')
+          test "${#exes[@]}" -ge 2 # unitill-pos.exe + unitill-desktop.exe
+          go run ./scripts/ci/checkpeicon "${exes[@]}"
       # Limits the on-disk copy only; `az` itself stays logged in until
       # azure/login's post step at job end.
       - name: Drop the signing token

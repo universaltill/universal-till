@@ -700,3 +700,39 @@ func TestImportKeepsTheSessionWhileStayingReachableAtFirstBoot(t *testing.T) {
 			"exempt() skips cookie resolution; /api/import needs optional auth, not exemption")
 	}
 }
+
+// ut-docs#3005: the client's idle timer can decide the operator is gone while
+// the server still counts the session as fresh (a page load's own requests
+// touched it a moment after the last input), so GET /login bounced back to
+// "/" and the page reloaded every 10 min without ever locking. IdleLock
+// revokes on the client's verdict and audits it as an idle lock.
+func TestIdleLockRevokesFreshSessionAndAudits(t *testing.T) {
+	db := openAuthTestDB(t)
+	seedOperator(t, db, "op1", "cashier", "1234")
+	seedOperator(t, db, "op2", "cashier", "5678")
+	svc := NewService(db)
+	svc.SetIdleLockMinutes(10)
+	var locked []string
+	svc.SetIdleLockAudit(func(_ context.Context, userID string) { locked = append(locked, userID) })
+	mine := loginFor(t, svc, "1234")
+	other := loginFor(t, svc, "5678")
+
+	// Seconds old -- the server's own idle check would never lock this.
+	setLastSeen(t, db, 9*time.Minute+50*time.Second)
+	svc.IdleLock(context.Background(), mine)
+	if _, ok := svc.ResolveNoTouch(context.Background(), mine); ok {
+		t.Fatal("IdleLock must revoke the caller's session")
+	}
+	if len(locked) != 1 || locked[0] != "op1" {
+		t.Fatalf("idle-lock audit = %v, want [op1]", locked)
+	}
+	if _, ok := svc.ResolveNoTouch(context.Background(), other); !ok {
+		t.Fatal("another operator's session must survive")
+	}
+	// An unknown or already-revoked token is a no-op: no audit, no panic.
+	svc.IdleLock(context.Background(), mine)
+	svc.IdleLock(context.Background(), "")
+	if len(locked) != 1 {
+		t.Fatalf("a dead token must not audit again, got %v", locked)
+	}
+}

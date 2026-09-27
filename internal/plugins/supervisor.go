@@ -93,7 +93,7 @@ func (s *Supervisor) StartPlugin(ctx context.Context, pluginID, entrypoint strin
 
 	// Audit the start
 	if err := s.auditLifecycle(ctx, pluginID, "plugin_started", ""); err != nil {
-		fmt.Printf("warning: failed to audit plugin start: %v\n", err)
+		logging.L().Warnf("failed to audit plugin start: %v", err)
 	}
 
 	// Monitor process in background (wg-tracked so Shutdown can join it)
@@ -118,7 +118,7 @@ func (s *Supervisor) StopPlugin(ctx context.Context, pluginID string) error {
 
 	// Audit the stop
 	if err := s.auditLifecycle(ctx, pluginID, "plugin_stopped", ""); err != nil {
-		fmt.Printf("warning: failed to audit plugin stop: %v\n", err)
+		logging.L().Warnf("failed to audit plugin stop: %v", err)
 	}
 
 	delete(s.processes, pluginID)
@@ -174,7 +174,7 @@ func (s *Supervisor) monitorProcess(ctx context.Context, proc *PluginProcess) {
 	}
 
 	if err := s.auditLifecycle(ctx, proc.PluginID, "plugin_crashed", details); err != nil {
-		fmt.Printf("warning: failed to audit plugin crash: %v\n", err)
+		logging.L().Warnf("failed to audit plugin crash: %v", err)
 	}
 
 	// Check restart policy
@@ -186,7 +186,7 @@ func (s *Supervisor) monitorProcess(ctx context.Context, proc *PluginProcess) {
 	if proc.RestartCount >= proc.RestartPolicy.MaxRestarts {
 		details := fmt.Sprintf("max_restarts=%d reached", proc.RestartPolicy.MaxRestarts)
 		if err := s.auditLifecycle(ctx, proc.PluginID, "plugin_restart_limit", details); err != nil {
-			fmt.Printf("warning: failed to audit restart limit: %v\n", err)
+			logging.L().Warnf("failed to audit restart limit: %v", err)
 		}
 		s.mu.Unlock()
 		return
@@ -233,7 +233,7 @@ func (s *Supervisor) monitorProcess(ctx context.Context, proc *PluginProcess) {
 		cancel()
 		details := fmt.Sprintf("restart_failed: %s", err.Error())
 		if err := s.auditLifecycle(ctx, proc.PluginID, "plugin_restart_failed", details); err != nil {
-			fmt.Printf("warning: failed to audit restart failure: %v\n", err)
+			logging.L().Warnf("failed to audit restart failure: %v", err)
 		}
 		return
 	}
@@ -244,7 +244,7 @@ func (s *Supervisor) monitorProcess(ctx context.Context, proc *PluginProcess) {
 
 	details = fmt.Sprintf("restart_count=%d", proc.RestartCount)
 	if err := s.auditLifecycle(ctx, proc.PluginID, "plugin_restarted", details); err != nil {
-		fmt.Printf("warning: failed to audit plugin restart: %v\n", err)
+		logging.L().Warnf("failed to audit plugin restart: %v", err)
 	}
 
 	// Continue monitoring. The Add executes before this goroutine returns
@@ -319,7 +319,7 @@ func (s *Supervisor) Shutdown(ctx context.Context) error {
 		proc.cancel()
 
 		if err := s.auditLifecycle(ctx, pluginID, "plugin_shutdown", ""); err != nil {
-			fmt.Printf("warning: failed to audit plugin shutdown: %v\n", err)
+			logging.L().Warnf("failed to audit plugin shutdown: %v", err)
 		}
 	}
 	s.processes = make(map[string]*PluginProcess)
@@ -372,7 +372,7 @@ func (s *Supervisor) AutoStartPlugins(ctx context.Context) error {
 
 		// Start the plugin
 		if err := s.StartPlugin(ctx, pluginID, entrypoint, []string{}, policy); err != nil {
-			fmt.Printf("warning: failed to auto-start plugin %s: %v\n", pluginID, err)
+			logging.L().Warnf("failed to auto-start plugin %s: %v", pluginID, err)
 			failed = append(failed, pluginID)
 			continue
 		}
@@ -380,9 +380,11 @@ func (s *Supervisor) AutoStartPlugins(ctx context.Context) error {
 		started = append(started, pluginID)
 	}
 
-	fmt.Printf("Auto-started %d plugins (%d failed)\n", len(started), len(failed))
+	logging.L().Infof("Auto-started %d plugins (%d failed)", len(started), len(failed))
 	if len(failed) > 0 {
-		fmt.Printf("Failed to start: %v\n", failed)
+		// Info, not Warn: each failure already logged its own Warn above, and a
+		// second Warn would double-count it in the problems ring (ut-docs#2728).
+		logging.L().Infof("Failed to start: %v", failed)
 	}
 
 	return nil

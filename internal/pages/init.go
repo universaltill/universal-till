@@ -282,7 +282,8 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// approvals share a single device-wide lockout.
 	authSvc := auth.NewService(db)
 	// Idle auto-lock (docs: pos-auth.md): server-side check + audit hook.
-	// The cosmetic client timer (data-idle-lock) is only published when the
+	// The client timer (data-idle-lock), which also revokes through POST
+	// /api/auth/idle-lock (ut-docs#3005), is only published when the
 	// middleware actually enforces sessions.
 	authSvc.SetIdleLockMinutes(state.IdleLockMinutes)
 	idleAuditRepo := data.NewPOSRepo(db)

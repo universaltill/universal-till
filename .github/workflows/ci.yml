@@ -271,6 +271,20 @@ jobs:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
         run: go build ./...
+      - name: Windows exe carries the app icon + VERSIONINFO (ut-docs#2786)
+        # The release's goreleaser pre-build hook, end to end: winres.sh
+        # writes the .syso, a cross-compiled unitill-pos.exe links it, and
+        # checkpeicon reads it back. CGO off, so no mingw needed here;
+        # release.yml runs the same check on both signed release exes.
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+        run: |
+          set -euo pipefail
+          trap 'rm -f rsrc_windows_amd64.syso' EXIT
+          packaging/windows/winres.sh server 0.0.0-ci
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/unitill-pos.exe" .
+          go run ./scripts/ci/checkpeicon "$RUNNER_TEMP/unitill-pos.exe"
       - name: Test
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
