@@ -4,3 +4,4 @@
 "error_bar_message" = "Bu sayfa yüklenemedi.";
 "error_bar_action" = "Kasaya dön";
 "external_link_failed" = "Bağlantı tarayıcıda açılamadı.";
+"error_no_address" = "Kasa sunucusu bir adres bildirmedi.";

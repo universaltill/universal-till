@@ -30,7 +30,7 @@ enum TillServer {
         }
         guard !addr.isEmpty, let url = URL(string: "http://\(addr)/") else {
             throw NSError(domain: "UniversalTill", code: 1,
-                          userInfo: [NSLocalizedDescriptionKey: "no address from the till server"])
+                          userInfo: [NSLocalizedDescriptionKey: NSLocalizedString("error_no_address", comment: "")])
         }
         return url
     }
@@ -42,6 +42,16 @@ enum TillServer {
         return try start()
     }
 
+    /// The Go side's own view: false once app.Run has returned (e.g. the
+    /// listener died after iOS reclaimed its socket).
+    static func isRunning() -> Bool {
+        MobileIsRunning()
+    }
+
+    /// An ephemeral session: never reuse a pooled keep-alive connection
+    /// that died while the app was suspended.
+    private static let probeSession = URLSession(configuration: .ephemeral)
+
     /// Whether the server behind `base` still answers: /healthz 200, or the
     /// recovery screen's 503 + X-UT-Mode: recovery (the same "ready" rule
     /// as mobile.waitUntilReady). Blocking, with a short timeout.
@@ -51,7 +61,7 @@ enum TillServer {
         request.cachePolicy = .reloadIgnoringLocalCacheData
         let done = DispatchSemaphore(value: 0)
         var ok = false
-        URLSession.shared.dataTask(with: request) { _, response, _ in
+        probeSession.dataTask(with: request) { _, response, _ in
             if let http = response as? HTTPURLResponse {
                 ok = http.statusCode == 200 ||
                     (http.statusCode == 503 && http.value(forHTTPHeaderField: "X-UT-Mode") == "recovery")

@@ -5,3 +5,4 @@
 "error_bar_message" = "This page couldn’t load.";
 "error_bar_action" = "Back to till";
 "external_link_failed" = "Couldn’t open the link in a browser.";
+"error_no_address" = "The till server didn’t report an address.";

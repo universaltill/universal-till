@@ -36,7 +36,6 @@ struct TillWebView: UIViewRepresentable {
         // A (re)start of the server: load its start page again.
         if context.coordinator.loadedToken != reloadToken {
             context.coordinator.loadedToken = reloadToken
-            loadFailed = false
             webView.load(URLRequest(url: baseURL))
         }
     }
@@ -65,19 +64,27 @@ struct TillWebView: UIViewRepresentable {
                      decidePolicyFor action: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
             guard let url = action.request.url else { return decisionHandler(.cancel) }
-            if isTillOrigin(url) || url.scheme == "about" || url.scheme == "blob" || url.scheme == "data" {
+            if isTillOrigin(url) || url.scheme == "about" {
+                return decisionHandler(.allow)
+            }
+            // blob:/data: only inside a sub-frame, never replacing the till
+            // page itself.
+            let isMainFrame = action.targetFrame?.isMainFrame ?? true
+            if (url.scheme == "blob" || url.scheme == "data") && !isMainFrame {
                 return decisionHandler(.allow)
             }
             // Only a user's own tap leaves the app; a page can't bounce the
             // operator out on its own.
-            if action.navigationType == .linkActivated, action.targetFrame?.isMainFrame ?? true {
+            if action.navigationType == .linkActivated, isMainFrame {
                 openExternally(url)
             }
             decisionHandler(.cancel)
         }
 
-        // target="_blank": same origin stays in this view, anything else
-        // goes to the system.
+        // target="_blank" links: same origin stays in this view, anything
+        // else goes to the system. Script can't reach this without a user
+        // tap only because javaScriptCanOpenWindowsAutomatically stays at
+        // its default (false) — keep it that way.
         func webView(_ webView: WKWebView,
                      createWebViewWith configuration: WKWebViewConfiguration,
                      for action: WKNavigationAction,
@@ -105,7 +112,9 @@ struct TillWebView: UIViewRepresentable {
             decisionHandler(same ? .grant : .deny)
         }
 
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        // Clearing the error bar here, not in updateUIView: writing view
+        // state during a SwiftUI update is undefined behaviour.
+        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
             parent.loadFailed = false
         }
 

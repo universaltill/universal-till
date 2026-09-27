@@ -64,7 +64,10 @@ targets:
         # with this one (ADR-0033, ut-docs#1256) and advertises over mDNS.
         # Texts are translated in <lang>.lproj/InfoPlist.strings.
         NSLocalNetworkUsageDescription: Universal Till finds and syncs with the other tills in your shop over the local network.
+        # Go's mDNS uses raw multicast, so the real gate is the multicast
+        # entitlement (README); these are declared for completeness.
         NSBonjourServices:
           - _unitill-sync._tcp
+          - _pdl-datastream._tcp
         # Barcode scanning with the camera from the web UI.
         NSCameraUsageDescription: Universal Till uses the camera to scan barcodes.

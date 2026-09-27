@@ -4,3 +4,4 @@
 "error_bar_message" = "تعذّر تحميل هذه الصفحة.";
 "error_bar_action" = "العودة إلى الصندوق";
 "external_link_failed" = "تعذّر فتح الرابط في المتصفح.";
+"error_no_address" = "لم يُبلغ خادم الصندوق عن عنوان.";

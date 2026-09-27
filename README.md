@@ -604,7 +604,7 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 ### Long-term
 - [ ] Employee scheduling, customer loyalty programs
 - [x] Kitchen display system — HDMI-local slice ([ut-docs#544](https://github.com/universaltill/ut-docs/issues/544)): a kitchen station can be a printer, a display, or both; a display-capable station gets a live per-station order screen at `/kitchen-display/{station_id}` (the `/orders` board scoped by the same item-over-category routing that decides tickets, same one-tap status endpoint, same 15s poll + SSE refresh) meant for a second monitor on the machine already running the till. Still to come: the LAN-paired standalone KDS device (its own pairing/auth/liveness), the cross-till proxy so a replica's screen reads the primary's board, and per-line status (today status is per order, so a split order shows on both screens and clears from both)
-- [ ] iOS app, further mobile platform work
+- [ ] Further mobile platform work (iOS signing/TestFlight, device checks and Android-parity bridges — [ut-docs#3046](https://github.com/universaltill/ut-docs/issues/3046))
 - [ ] Advanced analytics and BI
 - [ ] Hardware manufacturer partnerships, white-label licensing
 

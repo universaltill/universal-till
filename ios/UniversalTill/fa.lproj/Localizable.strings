@@ -4,3 +4,4 @@
 "error_bar_message" = "این صفحه بارگذاری نشد.";
 "error_bar_action" = "بازگشت به صندوق";
 "external_link_failed" = "باز کردن پیوند در مرورگر ممکن نشد.";
+"error_no_address" = "سرور صندوق نشانی‌ای گزارش نکرد.";

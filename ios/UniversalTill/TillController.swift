@@ -15,7 +15,6 @@ final class TillController: ObservableObject {
     @Published private(set) var reloadToken = 0
 
     private let queue = DispatchQueue(label: "com.universaltill.pos.server")
-    private var busy = false // only touched on `queue`
     private var booted = false // only touched on the main thread
 
     /// First start. onAppear can fire more than once; only the first call
@@ -32,9 +31,19 @@ final class TillController: ObservableObject {
         run { try TillServer.start() }
     }
 
-    /// "Back to till" on the error bar: load the start page again.
+    /// "Back to till" on the error bar: make sure the server is still up
+    /// (it may have died while the app was in the foreground), then load
+    /// the start page again.
     func reloadHome() {
-        reloadToken += 1
+        guard case .running(let url) = state else { return retry() }
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            if self.serverIsUp(url) {
+                DispatchQueue.main.async { self.reloadToken += 1 }
+            } else {
+                self.runOnQueue { try TillServer.restart() }
+            }
+        }
     }
 
     /// Called whenever the app becomes active. iOS can reclaim a suspended
@@ -50,22 +59,33 @@ final class TillController: ObservableObject {
         case .running(let url):
             queue.async { [weak self] in
                 guard let self = self else { return }
-                if TillServer.isAnswering(url) { return }
+                if self.serverIsUp(url) { return }
                 self.runOnQueue { try TillServer.restart() }
             }
         }
+    }
+
+    /// A false "down" would restart a healthy server and drop the sale in
+    /// progress (the basket lives in the server's memory), so be slow to
+    /// say no: the Go side's own view first — a reclaimed listening socket
+    /// makes Serve return and IsRunning false — then up to three probes.
+    /// Runs on `queue`.
+    private func serverIsUp(_ url: URL) -> Bool {
+        if !TillServer.isRunning() { return false }
+        for attempt in 0..<3 {
+            if TillServer.isAnswering(url) { return true }
+            if attempt < 2 { Thread.sleep(forTimeInterval: 1) }
+        }
+        return false
     }
 
     private func run(_ work: @escaping () throws -> URL) {
         queue.async { [weak self] in self?.runOnQueue(work) }
     }
 
-    /// Must be called on `queue`; serialises start/restart so a resume
-    /// can't race the first boot.
+    /// Must be called on `queue`: the serial queue is what keeps a resume
+    /// from racing the first boot.
     private func runOnQueue(_ work: () throws -> URL) {
-        if busy { return }
-        busy = true
-        defer { busy = false }
         let result = Result { try work() }
         DispatchQueue.main.async {
             switch result {
