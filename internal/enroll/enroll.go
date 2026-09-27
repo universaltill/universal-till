@@ -99,6 +99,8 @@ type identity struct {
 }
 
 var (
+	// mu guards cur and every var below it through tokenExplicit
+	// (ut-docs#3021).
 	mu  sync.RWMutex
 	cur identity
 	// storeIDExplicit records whether UT_MARKETPLACE_STORE_ID was set in the
@@ -238,13 +240,15 @@ func RegisterNow(ctx context.Context, cfg *config.Config, kv Settings) (Status, 
 // callers can wait out shutdown instead of returning while it still runs.
 func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGroup) {
 	log := logging.L()
-	storeIDExplicit = os.Getenv("UT_MARKETPLACE_STORE_ID") != ""
+	// Locals here; the mu-guarded globals are set under the lock below
+	// (ut-docs#3021).
+	storeIDExplicitLocal := os.Getenv("UT_MARKETPLACE_STORE_ID") != ""
 	// At this point cfg.Marketplace.ClientID can only have come from the
 	// environment; a non-empty value means the operator configured a merchant
 	// identity themselves, so auto-enrolment must not mint another one.
 	clientIDExplicit := cfg.Marketplace.ClientID != ""
 	// Same for the merchant token: only the environment can have set it yet.
-	tokenExplicit = cfg.Marketplace.MerchantToken != ""
+	tokenExplicitLocal := cfg.Marketplace.MerchantToken != ""
 
 	get := func(key string) string {
 		v, _, err := kv.Get(ctx, key)
@@ -279,6 +283,8 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 	mu.Lock()
 	cur = id
 	explicitConfigured = clientIDExplicit
+	storeIDExplicit = storeIDExplicitLocal
+	tokenExplicit = tokenExplicitLocal
 	if clientIDExplicit {
 		displayStoreID = cfg.Marketplace.StoreID
 	} else {
@@ -295,7 +301,7 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 	if m.ClientID == "" {
 		m.ClientID = id.MerchantID
 	}
-	if id.StoreID != "" && !storeIDExplicit {
+	if id.StoreID != "" && !storeIDExplicitLocal {
 		m.StoreID = id.StoreID
 	}
 	if m.PublicKey == "" {

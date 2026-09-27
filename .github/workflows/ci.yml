@@ -294,8 +294,22 @@ jobs:
         # both run with -v there so a t.Skip is visible; this step stays
         # plain, so don't run either a second time here. Also excludes
         # internal/pages itself (own step below, ut-docs#1992) for the same
-        # margin reason as internal/plugins — see that step's comment.
-        run: go test $(go list ./... | grep -vE '/internal/plugins$|/internal/plugins/(oauth|marketplace)$|/internal/pages$')
+        # margin reason as internal/plugins — see that step's comment — and
+        # internal/enroll (own -race step below, ut-docs#3021).
+        run: go test $(go list ./... | grep -vE '/internal/plugins$|/internal/plugins/(oauth|marketplace)$|/internal/pages$|/internal/enroll$')
+      - name: Test internal/enroll under -race (ut-docs#3021)
+        # internal/enroll keeps its identity state (storeIDExplicit,
+        # tokenExplicit, cur) in package globals shared with background
+        # goroutines (the registration retry loop, the replica vouch loop) —
+        # exactly the shape that hid a real data race (Init writing a global
+        # without mu while a loop a previous test left running read it under
+        # mu.RLock) from the plain `go test` step above. Scoped to this one
+        # package rather than adding -race to the whole suite (that's the
+        # broader boot-path coverage tracked separately, ut-docs#3014).
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+        run: go test -race -count=1 ./internal/enroll/
       - name: Test (internal/plugins/oauth and /marketplace — ut-docs#1630)
         # Same gap #1626 fixed for internal/plugins itself: the main Test
         # step above runs plain (no -v), so a t.Skip in these subpackages
@@ -312,7 +326,7 @@ jobs:
           GOCACHE: ${{ runner.temp }}/gobuildcache
         run: go test -v ./internal/plugins/oauth ./internal/plugins/marketplace
       - name: Test (internal/plugins — wider timeout, ut-docs#643/#753/#776)
-        # internal/plugins hit the plain (this workflow never uses -race)
+        # internal/plugins hit the plain (this workflow uses -race only for internal/enroll)
         # default 600s per-package `go test` timeout for real in CI (PR
         # #316, "FAIL ... internal/plugins 600.015s") — not a deadlock: this
         # session measured the package's own plain runtime at 83-93s and
