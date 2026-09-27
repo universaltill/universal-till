@@ -30,8 +30,10 @@ func NewDemoSeedRepo(db *sql.DB) *DemoSeedRepo {
 // own dependent rows (every dependent insert in seeddata/demo_catalogue.sql
 // is gated on its parent actually having landed — ut-docs#2639); a barcode
 // clash skips only that barcode row; a tax-code-name clash makes the café
-// items fall back to tax_std. Known gap: a brand-name clash still FK-fails
-// the whole seed (ut-docs#2697).
+// items fall back to tax_std; a brand-name clash (ut-docs#2697) falls the
+// affected item(s) back to brand_id NULL instead — brand is optional item
+// metadata, and sample data deliberately never reuses the operator's own
+// same-named brand row.
 func (r *DemoSeedRepo) SeedDemoCatalogue(ctx context.Context) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
