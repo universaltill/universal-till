@@ -14,6 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/fleetlink"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // ut-docs#2742 (ADR-0114 §10): one truthful connectivity indicator on a
@@ -392,5 +393,115 @@ func TestTillPeerView_VersionAndUpdateState(t *testing.T) {
 	weird.Report.UpdateState = "<script>"
 	if got := tillPeerViewOf(weird, "1.2.0", now).UpdateState; got != "" {
 		t.Fatalf("an unknown update state from a peer passed through as %q", got)
+	}
+}
+
+// ut-docs#2915: the link's loss times and this process's last contact are
+// ordered on the monotonic clock, so a wall-clock step between them (an NTP
+// correction, a Pi without an RTC setting its clock after boot) cannot flip
+// the chip. LastContact is what sync.last_contact_at holds — the contact's
+// own wall clock, stepped with it.
+func TestDeriveLinkView_WallStepBetweenLossAndContact(t *testing.T) {
+	rfc := func(t time.Time) string { return t.UTC().Format(time.RFC3339) }
+	base := time.Now()
+	lostAt, seen := base, base.Add(12*time.Second)
+
+	// The clock steps back an hour after the loss is noticed; a pull then
+	// reaches the main till. Its stored wall time reads before the loss.
+	after := testsupport.WallStepped(seen.Add(2*time.Second), -time.Hour)
+	// The clock was an hour ahead when the last pull landed, and is
+	// corrected before the loss. That contact's wall time reads after it.
+	before := testsupport.WallStepped(base.Add(-5*time.Second), time.Hour)
+
+	lost := fleetlink.ClientStatus{Mode: fleetlink.ModeConnecting, LostAt: lostAt, LostSeen: seen}
+	for _, c := range []struct {
+		name  string
+		in    linkInputs
+		state linkState
+		since string
+	}{
+		{name: "clock stepped back, a pull reached the main till after the loss: polling",
+			in: linkInputs{Replica: true, HasClient: true, Client: lost,
+				Contact: after, LastContact: rfc(after), Now: seen.Add(3 * time.Second)},
+			state: linkPolling},
+		{name: "clock stepped back before the loss, nothing heard since: unreachable",
+			in: linkInputs{Replica: true, HasClient: true, Client: lost,
+				Contact: before, LastContact: rfc(before), Now: seen.Add(time.Second)},
+			state: linkUnreachable, since: rfc(lostAt)},
+		{name: "watch unreachable, contact after the last frame: since that contact",
+			in: linkInputs{Replica: true, HasClient: true, Client: lost,
+				WatchUnreachable: true, WatchSince: rfc(after),
+				Contact: after, LastContact: rfc(after), Now: seen.Add(time.Minute)},
+			state: linkUnreachable, since: rfc(after)},
+		{name: "watch unreachable, contact before the last frame: since the last frame",
+			in: linkInputs{Replica: true, HasClient: true, Client: lost,
+				WatchUnreachable: true, WatchSince: rfc(before),
+				Contact: before, LastContact: rfc(before), Now: seen.Add(time.Minute)},
+			state: linkUnreachable, since: rfc(lostAt)},
+		{name: "clock stepped forward after a recent contact, a dial fails: polling",
+			in: linkInputs{Replica: true, HasClient: true,
+				Client:      fleetlink.ClientStatus{Mode: fleetlink.ModeConnecting, FailedAt: base},
+				Contact:     testsupport.WallStepped(base.Add(-10*time.Second), -time.Hour),
+				LastContact: rfc(testsupport.WallStepped(base.Add(-10*time.Second), -time.Hour)),
+				Now:         base},
+			state: linkPolling},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			v := deriveLinkView(c.in)
+			if v.State != c.state || v.Since != c.since {
+				t.Fatalf("view = %+v, want state %q since %q", v, c.state, c.since)
+			}
+		})
+	}
+}
+
+// ut-docs#2915: a successful pull records this process's monotonic contact
+// along with sync.last_contact_at, and the chip's inputs carry it.
+func TestSyncPull_RecordsMonotonicMainContact(t *testing.T) {
+	primary := newPullTestPrimary(t)
+	replica := newPullTestReplica(t, primary.server.URL)
+	ctx := context.Background()
+	if !replica.MainContact().IsZero() {
+		t.Fatal("a fresh till already has a main-till contact")
+	}
+	before := time.Now()
+	syncPullTick(ctx, replica, &http.Client{Timeout: 5 * time.Second}, func(context.Context) {})
+	got := replica.MainContact()
+	if got.Before(before) || !strings.Contains(got.String(), "m=") {
+		t.Fatalf("MainContact = %v, want a monotonic time after %v", got, before)
+	}
+	if want := got.UTC().Format(time.RFC3339); settingOf(t, replica, "sync.last_contact_at") != want {
+		t.Fatalf("sync.last_contact_at = %q, want %q", settingOf(t, replica, "sync.last_contact_at"), want)
+	}
+	if in := linkInputsOf(ctx, replica); !in.Contact.Equal(got) {
+		t.Fatalf("linkInputsOf Contact = %v, want %v", in.Contact, got)
+	}
+}
+
+// Independent review of ut-docs#2915: the pull's contact is the moment the
+// main till answered the admin request, not when the tick finished — a
+// pull whose follow-up requests hang while the link's loss is noticed must
+// not count as contact after that loss.
+func TestSyncPull_ContactIsTheAdminAnswerNotTheTickEnd(t *testing.T) {
+	primary := newPullTestPrimary(t)
+	var firstFollowUp time.Time
+	stalling := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/sync/admin") {
+			if firstFollowUp.IsZero() {
+				firstFollowUp = time.Now()
+			}
+			time.Sleep(150 * time.Millisecond)
+		}
+		primary.server.Config.Handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(stalling.Close)
+	replica := newPullTestReplica(t, stalling.URL)
+	syncPullTick(t.Context(), replica, &http.Client{Timeout: 5 * time.Second}, func(context.Context) {})
+	got := replica.MainContact()
+	if got.IsZero() || firstFollowUp.IsZero() {
+		t.Fatalf("contact %v, first follow-up request %v: want both", got, firstFollowUp)
+	}
+	if !got.Before(firstFollowUp) {
+		t.Fatalf("contact recorded at %v, after the follow-up requests began (%v)", got, firstFollowUp)
 	}
 }

@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
 // ADR-0114 §10 (ut-docs#2742): what the link knows about itself, for the
@@ -197,7 +199,7 @@ func TestClient_StatusIgnoresAWallClockStep(t *testing.T) {
 	p.touch(now)
 
 	t.Run("forward step right after a frame stays linked", func(t *testing.T) {
-		stepped := wallStepped(now, time.Hour)
+		stepped := testsupport.WallStepped(now, time.Hour)
 		if s := c.statusAt(stepped); !s.Linked || !s.LostAt.IsZero() {
 			t.Errorf("status after a +1h wall step = %+v, want still linked", s)
 		}
@@ -210,7 +212,7 @@ func TestClient_StatusIgnoresAWallClockStep(t *testing.T) {
 		// 13 s of real (monotonic) time since the last frame, then the wall
 		// clock is corrected an hour into the past.
 		elapsed := now.Add(13 * time.Second)
-		back := wallStepped(elapsed, -time.Hour)
+		back := testsupport.WallStepped(elapsed, -time.Hour)
 		if s := c.statusAt(back); s.Linked {
 			t.Errorf("status 13s on, after a -1h wall step, = %+v, want not linked", s)
 		}
@@ -231,7 +233,7 @@ func TestPeer_LastFrameAtTracksAWallClockStep(t *testing.T) {
 	p.touch(now)
 
 	elapsed := 3 * time.Second
-	stepped := wallStepped(now.Add(elapsed), time.Hour)
+	stepped := testsupport.WallStepped(now.Add(elapsed), time.Hour)
 
 	got := p.lastFrameAt(stepped)
 	if d := got.Round(0).Sub(now.Round(0)); d < 59*time.Minute || d > 61*time.Minute {

@@ -173,7 +173,19 @@ func linkScopesTouchHeld(scopes []fleetlink.Scope) bool {
 
 // markLinkContact records contact with the main till now: its hello is one.
 func markLinkContact(ctx context.Context, d *common.Deps) {
-	_ = d.Settings.Set(ctx, "sync.last_contact_at", time.Now().UTC().Format(time.RFC3339))
+	recordMainContact(ctx, d, time.Now())
+}
+
+// recordMainContact records contact with the main till at at (a
+// time.Now() taken when the main till answered, so its monotonic reading
+// is kept) — both sync.last_contact_at and this process's monotonic twin
+// (Deps.MarkMainContact, ut-docs#2915) — and returns the stored RFC 3339
+// value. Every write of sync.last_contact_at goes through here.
+func recordMainContact(ctx context.Context, d *common.Deps, at time.Time) string {
+	d.MarkMainContact(at)
+	s := at.UTC().Format(time.RFC3339)
+	_ = d.Settings.Set(ctx, "sync.last_contact_at", s)
+	return s
 }
 
 // linkContactWindow is how long after its last successful pull a linked

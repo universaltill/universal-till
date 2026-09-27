@@ -185,6 +185,13 @@ type Deps struct {
 	// till's badge within seconds. In memory only; zero value ready.
 	heldGen atomic.Int64
 
+	// mainContact is when this process last reached its main till
+	// (ut-docs#2915): the in-memory twin of sync.last_contact_at, kept
+	// with its monotonic reading so the link-status chip can order it
+	// against the link's loss times across a wall-clock step. Nil until
+	// the first contact since start.
+	mainContact atomic.Pointer[time.Time]
+
 	// SyncPullNow, when non-nil, asks the replica admin-pull loop
 	// (pages.StartSyncPull) for one pull now — the link's nudge. Set once
 	// by StartSyncPull at boot; capacity 1, so any number of nudges before
@@ -651,6 +658,18 @@ var heldBoot = strconv.FormatInt(time.Now().UnixNano(), 36)
 // MarkHeldChanged records that the shop's held sales may have changed
 // (ut-docs#2858). Non-blocking; safe from any goroutine.
 func (d *Deps) MarkHeldChanged() { d.heldGen.Add(1) }
+
+// MarkMainContact records that this till reached its main till at t
+// (time.Now(), monotonic reading kept). Safe from any goroutine.
+func (d *Deps) MarkMainContact(t time.Time) { d.mainContact.Store(&t) }
+
+// MainContact is the last MarkMainContact time; zero before the first.
+func (d *Deps) MainContact() time.Time {
+	if t := d.mainContact.Load(); t != nil {
+		return *t
+	}
+	return time.Time{}
+}
 
 // HeldToken is the opaque held-sales generation the sale screen's watcher
 // compares (GET /ui/open-orders-badge/watch). It changes on every

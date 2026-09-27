@@ -60,10 +60,15 @@ type linkInputs struct {
 	WatchUnreachable bool   // PrimaryWatch: repeated failed contacts
 	WatchSince       string // RFC 3339, sync.last_contact_at
 	LastContact      string // RFC 3339, sync.last_contact_at
-	ThisVersion      string
-	Target           string    // the main till's version (followTarget), ut-docs#2738
-	CanFollow        bool      // followCanInstall: this till installs Target by itself
-	Now              time.Time // zero: time.Now()
+	// Contact is when this process last reached the main till, with its
+	// monotonic reading (Deps.MainContact); zero before the first contact
+	// since start. It orders contacts against the link's loss times
+	// across a wall-clock step (ut-docs#2915).
+	Contact     time.Time
+	ThisVersion string
+	Target      string    // the main till's version (followTarget), ut-docs#2738
+	CanFollow   bool      // followCanInstall: this till installs Target by itself
+	Now         time.Time // zero: time.Now()
 }
 
 // linkView is the chip's data.
@@ -102,7 +107,7 @@ func deriveLinkView(in linkInputs) linkView {
 	lostAt := in.Client.LostAt
 	if in.WatchUnreachable {
 		since := in.WatchSince
-		if !lostAt.IsZero() && !contactAfter(since, lostAt) {
+		if !lostAt.IsZero() && !in.heardAfter(since, lostAt) {
 			since = lostAt.UTC().Format(time.RFC3339)
 		}
 		return linkView{State: linkUnreachable, Since: since}
@@ -110,10 +115,10 @@ func deriveLinkView(in linkInputs) linkView {
 	if in.HasClient && in.Client.Linked {
 		return withUpdateNote(linkView{State: linkLinked}, in)
 	}
-	if in.HasClient && !lostAt.IsZero() && !contactAfter(in.LastContact, lostSeen(in.Client)) {
+	if in.HasClient && !lostAt.IsZero() && !in.heardAfter(in.LastContact, lostSeen(in.Client)) {
 		return linkView{State: linkUnreachable, Since: lostAt.UTC().Format(time.RFC3339)}
 	}
-	if in.HasClient && !in.Client.FailedAt.IsZero() && !contactAfter(in.LastContact, now.Add(-discovery.UnreachableWindow)) {
+	if in.HasClient && !in.Client.FailedAt.IsZero() && !in.heardAfter(in.LastContact, now.Add(-discovery.UnreachableWindow)) {
 		return linkView{State: linkUnreachable, Since: strings.TrimSpace(in.LastContact)}
 	}
 	return withUpdateNote(linkView{State: linkPolling}, in)
@@ -135,6 +140,19 @@ func lostSeen(c fleetlink.ClientStatus) time.Time {
 		return c.LostAt
 	}
 	return c.LostSeen
+}
+
+// heardAfter reports whether the main till was reached after t. This
+// process's own last contact decides when it has one: it and the link's
+// loss times carry monotonic readings, so a wall-clock step between them
+// (an NTP correction, a Pi without an RTC setting its clock after boot)
+// cannot reorder them (ut-docs#2915). Before the first contact since
+// start, the stored wall-clock contact (sync.last_contact_at) decides.
+func (in linkInputs) heardAfter(stored string, t time.Time) bool {
+	if !in.Contact.IsZero() {
+		return in.Contact.After(t)
+	}
+	return contactAfter(stored, t)
 }
 
 // contactAfter reports whether the RFC 3339 contact time is after t (at
@@ -188,6 +206,7 @@ func linkInputsOf(ctx context.Context, d *common.Deps) linkInputs {
 		in.WatchSince, in.WatchUnreachable = d.PrimaryWatch.Unreachable(ctx)
 	}
 	in.LastContact, _, _ = d.Settings.Get(ctx, "sync.last_contact_at")
+	in.Contact = d.MainContact()
 	fin := followInputsOf(ctx, d)
 	in.Target, in.CanFollow = fin.Target, followCanInstall(fin)
 	return in
