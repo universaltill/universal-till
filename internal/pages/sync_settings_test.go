@@ -194,7 +194,6 @@ func TestSyncSettingsApply_Validation(t *testing.T) {
 		{"per-till key", settingsApplyBody(t, syncSettingsApplyRequest{Settings: one("printer.host", "10.0.0.9"), ActorID: "m-1"}), http.StatusBadRequest, "not_shop_wide"},
 		{"per-till key among shop-wide", settingsApplyBody(t, syncSettingsApplyRequest{Settings: []syncSettingKV{{Key: "store.name", Value: "X"}, {Key: "sync.primary_url", Value: "http://evil"}}, ActorID: "m-1"}), http.StatusBadRequest, "not_shop_wide"},
 		{"unclassified key", settingsApplyBody(t, syncSettingsApplyRequest{Settings: one("no_such_family.key", "x"), ActorID: "m-1"}), http.StatusBadRequest, "not_shop_wide"},
-		{"store.country", settingsApplyBody(t, syncSettingsApplyRequest{Settings: one(common.KeyCountry, "DE"), ActorID: "adm-1"}), http.StatusBadRequest, "not_supported_via_sync"},
 		{"fabricated override", settingsApplyBody(t, syncSettingsApplyRequest{Settings: one(fiscal.KeyOverrideUntil, "2099-01-01T00:00:00Z"), ActorID: "adm-1"}), http.StatusBadRequest, "fiscal_not_settable"},
 		{"failing_since", settingsApplyBody(t, syncSettingsApplyRequest{Settings: one(wireKeySigningDeviceFailingSince+".de", ""), ActorID: "adm-1"}), http.StatusBadRequest, "fiscal_not_settable"},
 		{"no actor", settingsApplyBody(t, syncSettingsApplyRequest{Settings: one("store.name", "X")}), http.StatusBadRequest, "unknown_actor"},
@@ -265,4 +264,175 @@ func TestSyncSettingsApply_FiscalKeysNeedActorFiscalPermission(t *testing.T) {
 			t.Fatalf("%s by an admin = %d %q", key, rec.Code, rec.Body.String())
 		}
 	}
+}
+
+// ut-docs#2980: store.country through the main till. The main till runs
+// the same country-change invariant the local handlers do
+// (fiscal_country_change.go) against ITS OWN posture and role table: the
+// owner-only check while the country being left has a confirmed signing
+// device, the old country's posture reset before the write, and
+// ut-docs#1027's locale re-derive unless the locale was confirmed.
+
+// seedMainCountry puts the main till on country with a confirmed signing
+// device when configured is true.
+func seedMainCountry(t *testing.T, dp *common.Deps, country string, configured bool) {
+	t.Helper()
+	if err := dp.Settings.Set(t.Context(), common.KeyCountry, country); err != nil {
+		t.Fatal(err)
+	}
+	dp.SetState(common.RuntimeState{Country: country, Locale: "en"})
+	if configured {
+		if err := dp.Settings.Set(t.Context(), fiscal.SigningDeviceConfiguredKey(country), "true"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func answeredSettings(t *testing.T, rec *httptest.ResponseRecorder) map[string]string {
+	t.Helper()
+	var out syncSettingsApplyResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.Error != nil || out.Data == nil {
+		t.Fatalf("body = %q (err %v)", rec.Body.String(), err)
+	}
+	got := map[string]string{}
+	for _, s := range out.Data.Settings {
+		got[s.Key] = s.Value
+	}
+	return got
+}
+
+func TestSyncSettingsApply_CountryChangeResetsPostureAndDerivesLocale(t *testing.T) {
+	m := newSyncSettingsTestDeps(t)
+	seedMainCountry(t, m.dp, "GB", true)
+	if err := m.dp.Settings.Set(t.Context(), common.KeyLocale, "en"); err != nil {
+		t.Fatal(err)
+	}
+	body := settingsApplyBody(t, syncSettingsApplyRequest{Settings: one(common.KeyCountry, "DE"), ActorID: "adm-1"})
+	rec := postSyncSettingsApply(m.mux, body, syncSettingsBearer)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body %q", rec.Code, rec.Body.String())
+	}
+	if got := mustSetting(t, m.dp, common.KeyCountry); got != "DE" {
+		t.Fatalf("main till %s = %q, want DE", common.KeyCountry, got)
+	}
+	if got := mustSetting(t, m.dp, fiscal.SigningDeviceConfiguredKey("GB")); got != "" {
+		t.Fatalf("the country being left keeps its posture %q — it must be reset", got)
+	}
+	entries, err := data.NewPOSRepo(m.dp.Db).ListAudit(t.Context(), data.AuditFilters{EntityType: "settings", ActorID: "adm-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, e := range entries {
+		if e.Action == "tse_configured_changed" && e.EntityID == fiscal.SigningDeviceConfiguredKey("GB") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("posture reset audit rows = %d, want 1", n)
+	}
+	// ut-docs#1027: the locale follows the new country and travels back in
+	// the answer, so the additional till mirrors the pair together.
+	if got := mustSetting(t, m.dp, common.KeyLocale); got != "de-DE" {
+		t.Fatalf("main till %s = %q, want the derived de-DE", common.KeyLocale, got)
+	}
+	ans := answeredSettings(t, rec)
+	if ans[common.KeyCountry] != "DE" || ans[common.KeyLocale] != "de-DE" {
+		t.Fatalf("answer = %v, want store.country DE and store.locale de-DE", ans)
+	}
+	if _, ok := ans[fiscal.SigningDeviceConfiguredKey("GB")]; ok {
+		t.Fatal("the posture reset must reach additional tills through the pull, not the answer")
+	}
+	// ut-docs#1068: the new country's base plugins are queued here, where
+	// the country changed.
+	wantPending(t, m.dp, specDE)
+	if m.refreshN.Load() != 1 {
+		t.Fatalf("refresh calls = %d, want 1", m.refreshN.Load())
+	}
+}
+
+func TestSyncSettingsApply_CountryChangeNeedsActorFiscalAuthorityWhileConfigured(t *testing.T) {
+	m := newSyncSettingsTestDeps(t)
+	seedMainCountry(t, m.dp, "DE", true)
+	for _, in := range []syncSettingsApplyRequest{
+		{Settings: one(common.KeyCountry, "GB"), ActorID: "m-1"},
+		// An elevated settings approval never grants the fiscal authority:
+		// the upsert handler checks the session user.
+		{Settings: one(common.KeyCountry, "GB"), ActorID: "c-1", ApproverID: "adm-1"},
+	} {
+		wantSyncSettingsError(t, postSyncSettingsApply(m.mux, settingsApplyBody(t, in), syncSettingsBearer), http.StatusForbidden, "forbidden")
+	}
+	if got := mustSetting(t, m.dp, common.KeyCountry); got != "DE" {
+		t.Fatalf("refused change moved the country to %q", got)
+	}
+	if got := mustSetting(t, m.dp, fiscal.SigningDeviceConfiguredKey("DE")); got != "true" {
+		t.Fatalf("refused change touched the posture: %q", got)
+	}
+	wantPending(t, m.dp)
+	if m.refreshN.Load() != 0 {
+		t.Fatal("a refused call must not refresh")
+	}
+}
+
+func TestSyncSettingsApply_CountryChangeByManagerWithoutConfiguredDevice(t *testing.T) {
+	m := newSyncSettingsTestDeps(t)
+	seedMainCountry(t, m.dp, "GB", false)
+	if err := m.dp.Settings.Set(t.Context(), common.KeyLocaleConfirmed, "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.dp.Settings.Set(t.Context(), common.KeyLocale, "en"); err != nil {
+		t.Fatal(err)
+	}
+	body := settingsApplyBody(t, syncSettingsApplyRequest{Settings: one(common.KeyCountry, " ES "), ActorID: "m-1"})
+	rec := postSyncSettingsApply(m.mux, body, syncSettingsBearer)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body %q", rec.Code, rec.Body.String())
+	}
+	if got := mustSetting(t, m.dp, common.KeyCountry); got != "ES" {
+		t.Fatalf("main till %s = %q, want ES", common.KeyCountry, got)
+	}
+	// ut-docs#1074: a confirmed locale is never re-derived.
+	if got := mustSetting(t, m.dp, common.KeyLocale); got != "en" {
+		t.Fatalf("confirmed locale changed to %q", got)
+	}
+	if _, ok := answeredSettings(t, rec)[common.KeyLocale]; ok {
+		t.Fatal("no derived locale may be answered when the locale is confirmed")
+	}
+	assertSettingSyncAudit(t, m.dp, "m-1", common.KeyCountry, "ES", "Till 2")
+}
+
+// A batch that names the locale itself keeps it: the additional till's
+// /api/settings/save derives or chooses the locale and sends it along.
+func TestSyncSettingsApply_CountryWithExplicitLocaleKeepsIt(t *testing.T) {
+	m := newSyncSettingsTestDeps(t)
+	seedMainCountry(t, m.dp, "GB", false)
+	body := settingsApplyBody(t, syncSettingsApplyRequest{
+		Settings: []syncSettingKV{{Key: common.KeyCountry, Value: "DE"}, {Key: common.KeyLocale, Value: "en"}},
+		ActorID:  "m-1",
+	})
+	rec := postSyncSettingsApply(m.mux, body, syncSettingsBearer)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body %q", rec.Code, rec.Body.String())
+	}
+	if got := mustSetting(t, m.dp, common.KeyLocale); got != "en" {
+		t.Fatalf("main till %s = %q, want the batch's en", common.KeyLocale, got)
+	}
+	if ans := answeredSettings(t, rec); len(ans) != 2 || ans[common.KeyLocale] != "en" {
+		t.Fatalf("answer = %v", ans)
+	}
+}
+
+// Re-sending the current country is no change: no posture reset, no
+// owner check, nothing queued.
+func TestSyncSettingsApply_SameCountryIsNoChange(t *testing.T) {
+	m := newSyncSettingsTestDeps(t)
+	seedMainCountry(t, m.dp, "DE", true)
+	body := settingsApplyBody(t, syncSettingsApplyRequest{Settings: one(common.KeyCountry, "de"), ActorID: "m-1"})
+	if rec := postSyncSettingsApply(m.mux, body, syncSettingsBearer); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body %q", rec.Code, rec.Body.String())
+	}
+	if got := mustSetting(t, m.dp, fiscal.SigningDeviceConfiguredKey("DE")); got != "true" {
+		t.Fatalf("no-change re-send reset the posture: %q", got)
+	}
+	wantPending(t, m.dp)
 }
