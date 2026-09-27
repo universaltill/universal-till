@@ -104,6 +104,10 @@ func stockLevelsForDisplay(ctx context.Context, d *common.Deps) ([]stockRow, int
 
 func registerInventoryPage(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/inventory", func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#3079: stock is a manager surface (migration 052).
+		if !requirePage(d, w, r, "stock_management") {
+			return
+		}
 		ctx := r.Context()
 		catRepo := data.NewCatalogRepo(d.Db)
 
@@ -176,6 +180,9 @@ func registerInventoryPage(mux *http.ServeMux, d *common.Deps) {
 	// HX-Trigger: stock-updated, which the table in inventory.html listens
 	// for) without a full page reload.
 	mux.HandleFunc("/ui/inventory/stock-table", func(w http.ResponseWriter, r *http.Request) {
+		if !requirePage(d, w, r, "stock_management") { // ut-docs#3079
+			return
+		}
 		levels, runningOut := stockLevelsForDisplay(r.Context(), d)
 		httpx.RenderPartial("ui/partials/stock_table.html", map[string]any{
 			"StockLevels": levels,

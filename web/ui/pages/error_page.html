@@ -4,7 +4,9 @@
      this, so a page-route failure never leaves a stuck, bare-text screen
      with no way back on a kiosk. -->
 <div class="page-head">
-  <h1>{{ T "error.page.title" }}</h1>
+  {{/* ut-docs#3079: a refusal is not a failure -- a cashier sent here by a
+       permission check reads "Not allowed", not "Something went wrong". */}}
+  <h1>{{ if .Forbidden }}{{ T "error.page.forbidden_title" }}{{ else }}{{ T "error.page.title" }}{{ end }}</h1>
 </div>
 <div class="card">
   <p>{{ .Message }}</p>

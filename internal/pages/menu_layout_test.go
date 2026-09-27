@@ -70,8 +70,10 @@ func TestMenuPage_GoldenZeroPluginTileOrder(t *testing.T) {
 	// so a cashier no longer sees either -- goldenManagerTiles[:11] (this
 	// used to be a plain slice of it) would still include both, so the
 	// cashier list is spelled out explicitly here instead.
+	// ut-docs#3079: /reports, /settings and /plugins now carry VisibleIf too
+	// (a cashier is sale-only), so a cashier's grid is the sale flow only.
 	cashier := menuTileHrefs(getMenu(t, mux))
-	wantCashier := []string{"/shifts", "/journal", "/orders", "/reports", "/settings", "/plugins", "/open-orders", "/help", "/kiosk-counter-orders"}
+	wantCashier := []string{"/shifts", "/journal", "/orders", "/open-orders", "/help", "/kiosk-counter-orders"}
 	if strings.Join(cashier, " ") != strings.Join(wantCashier, " ") {
 		t.Fatalf("zero-plugin cashier tiles drifted:\n got %v\nwant %v", cashier, wantCashier)
 	}
@@ -436,15 +438,53 @@ func TestMenuPage_EveryCoreVisibleIfPredicateIsRegistered(t *testing.T) {
 			t.Errorf("%s is declared in uislot.CoreMenu AND iconSVGFor — the table is the only source for a core key", e.Key)
 		}
 	}
+	// ut-docs#3079: the rail's VisibleIf names resolve through the same
+	// predicates (pages.Init wires httpx.InitRailVisibility to them).
+	for _, e := range uislot.CoreRail {
+		if e.VisibleIf != "" {
+			if _, ok := menuPredicates[e.VisibleIf]; !ok {
+				t.Errorf("core rail entry %s names unregistered predicate %q", e.Key, e.VisibleIf)
+			}
+		}
+	}
 	for name := range menuPredicates {
 		used := false
-		for _, e := range uislot.CoreMenu {
+		for _, e := range append(append([]uislot.Entry{}, uislot.CoreMenu...), uislot.CoreRail...) {
 			if e.VisibleIf == name {
 				used = true
 			}
 		}
 		if !used {
 			t.Errorf("predicate %q is registered but no core entry uses it", name)
+		}
+	}
+}
+
+// saleFlowUngatedKeys are the ONLY core menu/rail destinations a cashier
+// sees (ut-docs#3079, product owner's standing rule: a cashier is
+// sale-only). Anything else must carry a VisibleIf. Widening this list is a
+// product decision, not a test fix.
+var saleFlowUngatedKeys = map[string]bool{
+	"/":                     true,
+	"/menu":                 true,
+	"/orders":               true,
+	"/journal":              true,
+	"/shifts":               true,
+	"/open-orders":          true,
+	"/help":                 true,
+	"/kiosk-counter-orders": true,
+}
+
+// TestCoreMenuAndRail_EveryUngatedEntryIsSaleFlow (ut-docs#3079): every
+// uislot.CoreMenu and uislot.CoreRail entry either names a VisibleIf
+// predicate or is on the sale-flow allowlist — a new ungated admin tile
+// fails here instead of silently reaching a cashier.
+func TestCoreMenuAndRail_EveryUngatedEntryIsSaleFlow(t *testing.T) {
+	for slot, entries := range map[string][]uislot.Entry{"CoreMenu": uislot.CoreMenu, "CoreRail": uislot.CoreRail} {
+		for _, e := range entries {
+			if e.VisibleIf == "" && !saleFlowUngatedKeys[e.Key] {
+				t.Errorf("%s entry %s has no VisibleIf and is not a sale-flow destination — a cashier would see it", slot, e.Key)
+			}
 		}
 	}
 }

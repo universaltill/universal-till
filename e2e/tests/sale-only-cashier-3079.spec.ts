@@ -1,0 +1,89 @@
+import { test, expect } from './fixtures';
+import type { Page } from '@playwright/test';
+import { ensureOperator } from './helpers';
+
+// ut-docs#3079 (security, P1): a cashier is sale-only. Before this card a
+// cashier saw Reports/Settings/Plugins on the Menu grid, Stock on the nav
+// rail, and could open /settings, /reports, /inventory, /plugins by URL
+// and POST goods-in/stock overrides. This drives a REAL cashier PIN login
+// against the auth till (UT_AUTH on) and asserts both halves: the entry
+// points are gone and the direct URLs answer 403 with the rail intact
+// (Sell stays reachable).
+//
+// Needs the `auth` project — the default project runs UT_AUTH=off, where
+// every permission check passes. Named to sort AFTER login.spec.ts: the auth
+// till is shared and serial, and login.spec.ts needs it still first-boot.
+
+const RUN = Date.now().toString(36).toUpperCase();
+const CASHIER_USERNAME = `cashier3079${RUN}`;
+const CASHIER_PIN = '246813';
+
+async function createCashier(page: Page): Promise<void> {
+  const createResp = await page.request.post('/api/users', {
+    form: { username: CASHIER_USERNAME, display_name: 'Cashier 3079', role: 'cashier' },
+  });
+  expect(createResp.ok(), 'create cashier user').toBe(true);
+
+  await page.goto('/users');
+  const row = page.locator('tr', { hasText: CASHIER_USERNAME });
+  const pinAction = await row.locator('form[hx-post$="/pin"]').getAttribute('hx-post');
+  expect(pinAction, 'cashier row has a pin-set form').not.toBeNull();
+  const id = pinAction!.match(/\/api\/users\/([^/]+)\/pin/)![1];
+
+  const pinResp = await page.request.post(`/api/users/${id}/pin`, { form: { pin: CASHIER_PIN } });
+  expect(pinResp.ok(), 'set cashier PIN').toBe(true);
+}
+
+async function loginAsCashier(page: Page): Promise<void> {
+  await page.request.post('/api/auth/logout');
+  await page.goto('/login');
+  for (const d of CASHIER_PIN.split('')) {
+    await page.locator('.pin-pad button').getByText(d, { exact: true }).click();
+  }
+  await page.locator('button[type=submit].pin-key').click();
+  await page.waitForURL((u) => !u.pathname.includes('/login'));
+}
+
+test.describe('Cashier is sale-only (ut-docs#3079)', () => {
+  test('no admin entry points, and direct admin URLs are refused', async ({ page }) => {
+    await ensureOperator(page); // admin — first-boot wizard or PIN re-login
+
+    // Control: the admin sees the entry points this spec says a cashier
+    // must not — so their absence below is the gate, not a broken page.
+    await page.goto('/menu');
+    for (const href of ['/reports', '/settings', '/plugins']) {
+      await expect(page.locator(`main a[href="${href}"]`).first()).toBeVisible();
+    }
+    await expect(page.locator('[data-testid="kiosk-inventory-link"]')).toHaveCount(1);
+
+    await createCashier(page);
+    await loginAsCashier(page);
+
+    // The sale screen: rail has Sell/Menu/Orders but no Stock.
+    await page.goto('/');
+    await expect(page.locator('[data-testid="nav-till"]')).toBeVisible();
+    await expect(page.locator('[data-testid="kiosk-inventory-link"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="kiosk-inventory-link-phone"]')).toHaveCount(0);
+
+    // The Menu grid: sale-flow tiles only.
+    await page.goto('/menu');
+    await expect(page.locator('main a[href="/journal"]').first()).toBeVisible();
+    for (const href of ['/reports', '/settings', '/plugins', '/inventory']) {
+      await expect(page.locator(`a[href="${href}"]`)).toHaveCount(0);
+    }
+
+    // Direct URLs: 403, the localized refusal, the rail still there.
+    for (const path of ['/settings', '/reports', '/inventory', '/plugins', '/plugins/store']) {
+      const resp = await page.goto(path);
+      expect(resp?.status(), `cashier GET ${path}`).toBe(403);
+      await expect(page.locator('body')).toContainText('Manager or admin required');
+      await expect(page.locator('[data-testid="nav-till"]')).toBeVisible();
+    }
+
+    // The two stock writes that had no check at all.
+    for (const path of ['/api/inventory/receipt', '/api/inventory/override']) {
+      const resp = await page.request.post(path, { form: { item_id: 'x', location_id: 'x', quantity: '1', type: 'receive' } });
+      expect(resp.status(), `cashier POST ${path}`).toBe(403);
+    }
+  });
+});

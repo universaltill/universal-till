@@ -27,6 +27,7 @@ import (
 // exercises the banner's OWN branching logic against both possible answers,
 // independent of whatever OS the suite happens to run on.
 func TestInventoryReplicaBannerNeverLinksAcrossDevices(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: the route is now permission-gated; this test is about rendering/behaviour past the gate (gate: cashier_sale_only_test.go).
 	chdirRoot(t)
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -91,6 +92,7 @@ func TestInventoryReplicaBannerNeverLinksAcrossDevices(t *testing.T) {
 // standalone/primary till (no sync.primary_url set) must not render the
 // banner at all.
 func TestInventoryNonReplicaHasNoSyncBanner(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: the route is now permission-gated; this test is about rendering/behaviour past the gate (gate: cashier_sale_only_test.go).
 	chdirRoot(t)
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })

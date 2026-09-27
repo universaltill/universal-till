@@ -22,6 +22,7 @@ import (
 )
 
 func TestStorePageShowsLifecycleStatusAndInstalledSplit(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: the route is now permission-gated; this test is about rendering/behaviour past the gate (gate: cashier_sale_only_test.go).
 	chdirRoot(t)
 	initPagesI18n(t)
 

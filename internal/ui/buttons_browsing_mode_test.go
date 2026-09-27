@@ -226,6 +226,7 @@ func TestButtonsHTTPList_StripOverflowNoQuickButtonsIsEmptyState(t *testing.T) {
 	mustExec(t, db, `DELETE FROM shortcut_buttons`)
 	mustExec(t, db, `UPDATE items SET is_active = 0`)
 	h.BrowsingMode = "strip_overflow"
+	h.Granted = true // the "+ add" link is for catalog_management only (ut-docs#3079)
 	body := renderList(t, h)
 	mustContainAll(t, body, "products.empty<", `data-testid="products-add-link"`)
 	mustContainNone(t, body, `class="tab-bar"`, `id="cat-tab-all"`, `id="buttons-grid-all"`, `data-name="Bread"`)

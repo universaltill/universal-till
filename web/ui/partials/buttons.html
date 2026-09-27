@@ -100,7 +100,9 @@
          like SumUp's own item grid has (naming-rule:allow — a code comment
          recording the comparison, not shop-facing copy) — the empty state used to just say
          "add some in Quick Buttons" with no actual link to get there. -->
-    <a class="btn primary compact products-add" href="/designer" data-testid="products-add-link">+ {{ T "products.add" }}</a>
+    {{/* ut-docs#3079: /designer needs catalog_management -- a cashier
+         (.Locked) gets no link to a page that refuses them. */}}
+    {{ if not $.Locked }}<a class="btn primary compact products-add" href="/designer" data-testid="products-add-link">+ {{ T "products.add" }}</a>{{ end }}
   </div>
     <p class="empty">{{ T "products.empty" }}</p>
   {{ else }}
@@ -775,11 +777,13 @@
                 @click="openSearch()">
           <span class="btn-ico" aria-hidden="true">{{ icon "search" }}</span>
         </button>
+        {{ if not $.Locked }}
         <a href="/designer" x-show="!searching"
            class="btn secondary compact btn-icon products-strip-edit" data-testid="products-add-link"
            aria-label="{{ T "products.edit" }}" title="{{ T "products.edit" }}">
           <span class="btn-ico" aria-hidden="true">{{ icon "pencil" }}</span>
         </a>
+        {{ end }}
         {{ end }}
       </div>
       {{/* ut-docs#2339: the jiggle edit mode's Done bar. Hidden at rest;

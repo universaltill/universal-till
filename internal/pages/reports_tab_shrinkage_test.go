@@ -67,6 +67,13 @@ VALUES ('evt1', 'waste', 'itm-shrink', 'Shrinkage Apple', 'SKU-SHRINK', 2, 150, 
 // every other canPerform-gated tab.
 func TestReportsTabs_Shrinkage_GatedOnVoidCompWastePermission(t *testing.T) {
 	mux, dp := newReportsPageTestDeps(t)
+	// ut-docs#3079: /reports and its tabs 403 a role without "reports" (a
+	// cashier by default is sale-only). This test is about the FINER gate
+	// inside the page, so the cashier role is granted "reports" here the way
+	// an admin would in Users → Permissions.
+	if _, err := dp.Db.Exec(`INSERT OR REPLACE INTO role_permissions(role, action, granted) VALUES('cashier','reports',1)`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := dp.Db.Exec(`INSERT INTO items(id,sku,name,base_price,is_active) VALUES('itm-shrink','SKU-SHRINK','Shrinkage Apple',150,1)`); err != nil {
 		t.Fatalf("seed item: %v", err)
 	}
@@ -102,7 +109,14 @@ VALUES ('evt1', 'waste', 'itm-shrink', 'Shrinkage Apple', 'SKU-SHRINK', 2, 150, 
 // /reports page itself only renders the Shrinkage & Loss tab BUTTON for a
 // session holding void_comp_waste, same "eod" tab model.
 func TestReportsPage_CanViewShrinkageGatesTabButton(t *testing.T) {
-	mux, _ := newReportsPageTestDeps(t)
+	mux, dp := newReportsPageTestDeps(t)
+	// ut-docs#3079: /reports and its tabs 403 a role without "reports" (a
+	// cashier by default is sale-only). This test is about the FINER gate
+	// inside the page, so the cashier role is granted "reports" here the way
+	// an admin would in Users → Permissions.
+	if _, err := dp.Db.Exec(`INSERT OR REPLACE INTO role_permissions(role, action, granted) VALUES('cashier','reports',1)`); err != nil {
+		t.Fatal(err)
+	}
 
 	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/reports", nil), auth.User{ID: "cashier1", Role: "cashier"})
 	rec := httptest.NewRecorder()

@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"bytes"
+	"net/http"
 	"net/http/httptest"
 	"regexp"
 	"strings"
@@ -71,7 +72,8 @@ func zeroPluginRail() string {
 func resetRail(t *testing.T) {
 	t.Helper()
 	InitRailAmendments(nil)
-	t.Cleanup(func() { InitRailAmendments(nil) })
+	InitRailVisibility(nil)
+	t.Cleanup(func() { InitRailAmendments(nil); InitRailVisibility(nil) })
 }
 
 // ut-docs#1912 AC: a till with no `layout` plugin renders the rail exactly
@@ -95,7 +97,7 @@ func TestNavRail_ZeroPluginRendersIdenticalMarkup(t *testing.T) {
 func TestRailEntries_ZeroAmendmentsAllocatesNothing(t *testing.T) {
 	resetRail(t)
 	var sink []RailEntry
-	allocs := testing.AllocsPerRun(1000, func() { sink = railEntriesFor("en") })
+	allocs := testing.AllocsPerRun(1000, func() { sink = railEntriesFor("en", nil) })
 	if allocs != 0 {
 		t.Fatalf("zero-amendment railEntriesFor allocated %v times per run, want 0 (ADR-0088 Decision I)", allocs)
 	}
@@ -109,11 +111,11 @@ func TestRailEntries_ZeroAmendmentsAllocatesNothing(t *testing.T) {
 // mapped from the key, so an amendment reordering a row never loses them.
 func TestRailEntries_ZeroAmendmentsMatchesCoreRail(t *testing.T) {
 	resetRail(t)
-	got := railEntriesFor("en")
+	got := railEntriesFor("en", nil)
 	want := []RailEntry{
 		{Key: "/", Href: "/", LabelKey: "nav.till", Icon: "shopping-cart", TestID: "nav-till"},
 		{Key: "/menu", Href: "/menu", LabelKey: "nav.menu", Icon: "menu", TestID: "nav-menu"},
-		{Key: "/inventory", Href: "/inventory", LabelKey: "kiosk.inventory", Icon: "package", TestID: "kiosk-inventory-link", RailOnly: true},
+		{Key: "/inventory", Href: "/inventory", LabelKey: "kiosk.inventory", Icon: "package", TestID: "kiosk-inventory-link", RailOnly: true, VisibleIf: "stock_management"},
 		{Key: "/orders", Href: "/orders", LabelKey: "nav.orders", Icon: "bell", TestID: "nav-orders", RailOnly: true},
 	}
 	if len(got) != len(want) {
@@ -237,5 +239,103 @@ func TestCoreRailPresentationCoversEveryKey(t *testing.T) {
 		if _, ok := uislot.CoreRailEntry(key); !ok {
 			t.Errorf("railPresentation names %q, which uislot.CoreRail does not declare", key)
 		}
+	}
+}
+
+// ut-docs#3079: a rail entry whose VisibleIf predicate the viewer fails is
+// dropped (the cashier must not see Stock), keeping the others in order.
+func TestRailEntries_HiddenEntryIsDropped(t *testing.T) {
+	resetRail(t)
+	got := railEntriesFor("en", func(p string) bool { return p != "stock_management" })
+	var keys []string
+	for _, e := range got {
+		keys = append(keys, e.Key)
+	}
+	if strings.Join(keys, ",") != "/,/menu,/orders" {
+		t.Fatalf("rail keys with stock_management denied = %v, want [/ /menu /orders]", keys)
+	}
+	// The shared prebuilt view must not have been mutated by the filter.
+	if len(coreRailView) != len(uislot.CoreRail) || coreRailView[2].Key != "/inventory" {
+		t.Fatalf("filtering mutated coreRailView: %+v", coreRailView)
+	}
+}
+
+// ut-docs#3079: the visibility filter keeps Decision I's zero-alloc path
+// when nothing is hidden (a manager's rail).
+func TestRailEntries_AllVisibleAllocatesNothing(t *testing.T) {
+	resetRail(t)
+	allow := func(string) bool { return true }
+	var sink []RailEntry
+	allocs := testing.AllocsPerRun(1000, func() { sink = railEntriesFor("en", allow) })
+	if allocs != 0 {
+		t.Fatalf("all-visible railEntriesFor allocated %v times per run, want 0", allocs)
+	}
+	if len(sink) != len(uislot.CoreRail) {
+		t.Fatalf("want %d rail entries, got %+v", len(uislot.CoreRail), sink)
+	}
+}
+
+// ut-docs#3079: the checker is bound PER REQUEST in withHelpHref — the
+// same process renders a cashier's rail without Stock and a manager's with
+// it; the per-request `allowed` template func answers the same way.
+func TestNavRail_VisibilityBoundPerRequest(t *testing.T) {
+	InitI18n(realI18n(t), "en")
+	resetRail(t)
+	InitRailVisibility(func(r *http.Request, predicate string) bool {
+		return r.Header.Get("X-Test-Role") == "manager"
+	})
+	render := func(role string) (string, bool) {
+		r := httptest.NewRequest("GET", "/catalog", nil)
+		r.Header.Set("X-Test-Role", role)
+		funcs := withHelpHref(FuncsFor("en"), r)
+		allowed := funcs["allowed"].(func(string) bool)("settings")
+		tpl, err := ClonedTemplate("rail-test:"+t.Name(), "base.html", funcs,
+			"ui/layouts/base.html", "ui/partials/nav.html", "ui/partials/bugreport_panel.html")
+		if err != nil {
+			t.Fatalf("ClonedTemplate: %v", err)
+		}
+		var buf bytes.Buffer
+		if err := tpl.ExecuteTemplate(&buf, "nav", nil); err != nil {
+			t.Fatalf("execute nav: %v", err)
+		}
+		return buf.String(), allowed
+	}
+	cashierNav, cashierAllowed := render("cashier")
+	if strings.Contains(cashierNav, `href="/inventory"`) {
+		t.Fatalf("cashier rail still links /inventory:\n%s", navPrimary(t, cashierNav))
+	}
+	if !strings.Contains(cashierNav, `data-testid="nav-till"`) {
+		t.Fatalf("cashier rail lost Sell:\n%s", navPrimary(t, cashierNav))
+	}
+	if cashierAllowed {
+		t.Fatal(`allowed "settings" = true for the cashier request`)
+	}
+	managerNav, managerAllowed := render("manager")
+	if !strings.Contains(managerNav, `href="/inventory"`) {
+		t.Fatalf("manager rail lost /inventory:\n%s", navPrimary(t, managerNav))
+	}
+	if !managerAllowed {
+		t.Fatal(`allowed "settings" = false for the manager request`)
+	}
+}
+
+// ut-docs#3079: with a checker installed, a render that has no request to
+// evaluate (the baseFuncs/FuncsFor fallbacks) fails closed — gated rail
+// entries and allowed() are hidden, never shown by default.
+func TestRailEntries_UnboundFallbackFailsClosed(t *testing.T) {
+	resetRail(t)
+	InitRailVisibility(func(*http.Request, string) bool { return true })
+	for _, e := range FuncsFor("en")["railEntries"].(func() []RailEntry)() {
+		if e.VisibleIf != "" {
+			t.Fatalf("unbound railEntries showed gated entry %s", e.Key)
+		}
+	}
+	if FuncsFor("en")["allowed"].(func(string) bool)("settings") {
+		t.Fatal("unbound allowed() = true with a checker installed")
+	}
+	// No checker (tests, boot before pages.Init): everything visible.
+	InitRailVisibility(nil)
+	if len(FuncsFor("en")["railEntries"].(func() []RailEntry)()) != len(uislot.CoreRail) {
+		t.Fatal("with no checker wired every rail entry must render")
 	}
 }

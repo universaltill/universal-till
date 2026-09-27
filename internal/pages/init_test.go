@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"encoding/json"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -48,6 +49,7 @@ func TestInit_IdleAndKioskDefaultsSurviveTwoConsecutiveBoots(t *testing.T) {
 		}
 		var wg sync.WaitGroup
 		Init(ctx, ctx, cfg, pm, d.DB, nil, &wg)
+		t.Cleanup(func() { httpx.InitRailVisibility(nil) }) // ut-docs#3079: Init wires a process-global checker bound to this test's DB
 	}
 
 	boot(1) // fresh install: config-derived defaults get persisted for the first time
@@ -116,7 +118,8 @@ func TestInit_ClearsStaleTableClaimLeftByUncleanShutdown(t *testing.T) {
 		t.Fatalf("plugins.Init: %v", err)
 	}
 	var wg sync.WaitGroup
-	Init(pctx, pctx, cfg, pm, d.DB, nil, &wg) // the restart
+	Init(pctx, pctx, cfg, pm, d.DB, nil, &wg)           // the restart
+	t.Cleanup(func() { httpx.InitRailVisibility(nil) }) // ut-docs#3079: Init wires a process-global checker bound to this test's DB
 
 	if ok, err := posRepo.IsTableFree(ctx, tableID, ""); err != nil || !ok {
 		t.Errorf("after restart, T1 must be free again (stale claim swept), got ok=%v err=%v", ok, err)
@@ -171,7 +174,8 @@ func TestInit_ReclaimsHeldOrdersTableClaimOnBoot(t *testing.T) {
 		t.Fatalf("plugins.Init: %v", err)
 	}
 	var wg sync.WaitGroup
-	Init(pctx, pctx, cfg, pm, d.DB, nil, &wg) // the restart
+	Init(pctx, pctx, cfg, pm, d.DB, nil, &wg)           // the restart
+	t.Cleanup(func() { httpx.InitRailVisibility(nil) }) // ut-docs#3079: Init wires a process-global checker bound to this test's DB
 
 	states, err := posRepo.ListTablesWithState(ctx, time.Now().Add(-tillClaimTTL))
 	if err != nil {
@@ -246,7 +250,8 @@ func TestInit_ReleasesOrphanedLiveClaimOnPrimaryAtBootEvenWhenTillStaysOnline(t 
 		t.Fatalf("plugins.Init: %v", err)
 	}
 	var wg sync.WaitGroup
-	Init(pctx, pctx, cfg, pm, d.DB, nil, &wg) // the restart -- till_id is now "seen" again
+	Init(pctx, pctx, cfg, pm, d.DB, nil, &wg)           // the restart -- till_id is now "seen" again
+	t.Cleanup(func() { httpx.InitRailVisibility(nil) }) // ut-docs#3079: Init wires a process-global checker bound to this test's DB
 
 	if free, err := primaryRepo.IsTableFree(ctx, tableID, ""); err != nil || !free {
 		t.Fatalf("after restart, T1 must be free on the primary even though this till is online again and never re-picked it, got free=%v err=%v", free, err)
@@ -351,7 +356,8 @@ func TestInit_HeldOrderClaimSurvivesReleaseAllEvenWhenBootReclaimFails(t *testin
 		t.Fatalf("plugins.Init: %v", err)
 	}
 	var wg sync.WaitGroup
-	Init(pctx, pctx, cfg, pm, d.DB, nil, &wg) // the restart -- re-claim's /claim call fails throughout
+	Init(pctx, pctx, cfg, pm, d.DB, nil, &wg)           // the restart -- re-claim's /claim call fails throughout
+	t.Cleanup(func() { httpx.InitRailVisibility(nil) }) // ut-docs#3079: Init wires a process-global checker bound to this test's DB
 
 	if free, err := primaryRepo.IsTableFree(ctx, tableID, ""); err != nil || free {
 		t.Fatalf("the held order's claim must survive on the primary even though the boot re-claim failed, free=%v err=%v", free, err)
@@ -393,7 +399,8 @@ func TestInit_ReconcilesBuiltinLayoutForPreExistingShopType(t *testing.T) {
 		t.Fatalf("plugins.Init: %v", err)
 	}
 	var wg sync.WaitGroup
-	_, dp := Init(pctx, pctx, cfg, pm, d.DB, nil, &wg) // first boot after the setting was already there
+	_, dp := Init(pctx, pctx, cfg, pm, d.DB, nil, &wg)  // first boot after the setting was already there
+	t.Cleanup(func() { httpx.InitRailVisibility(nil) }) // ut-docs#3079: Init wires a process-global checker bound to this test's DB
 
 	if _, found, err := data.NewPluginRepo(d.DB).GetInstalledPluginVersion(ctx, builtinlayouts.SalonPluginID); err != nil || !found {
 		t.Errorf("after boot, %s must be installed for a pre-existing shop_type=service, found=%v err=%v",
@@ -475,6 +482,7 @@ func TestInit_SteadyStateRebootPopulatesSettingsAmendmentsWithoutReload(t *testi
 		}
 		var wg sync.WaitGroup
 		Init(pctx, pctx, cfg, pm, d.DB, nil, &wg)
+		t.Cleanup(func() { httpx.InitRailVisibility(nil) }) // ut-docs#3079: Init wires a process-global checker bound to this test's DB
 	}()
 
 	if _, found, err := data.NewPluginRepo(d.DB).GetInstalledPluginVersion(ctx, builtinlayouts.SalonPluginID); err != nil || !found {
@@ -494,6 +502,7 @@ func TestInit_SteadyStateRebootPopulatesSettingsAmendmentsWithoutReload(t *testi
 	}
 	var wg2 sync.WaitGroup
 	_, dp2 := Init(pctx2, pctx2, cfg, pm2, d.DB, nil, &wg2)
+	t.Cleanup(func() { httpx.InitRailVisibility(nil) }) // ut-docs#3079: Init wires a process-global checker bound to this test's DB
 
 	var settingsReordersTheme bool
 	for _, a := range dp2.SettingsAmendmentsSnapshot() {
@@ -536,7 +545,8 @@ func TestInit_LeavesNonServiceShopTypeAlone(t *testing.T) {
 		t.Fatalf("plugins.Init: %v", err)
 	}
 	var wg sync.WaitGroup
-	Init(pctx, pctx, cfg, pm, d.DB, nil, &wg) // no shop_type ever set
+	Init(pctx, pctx, cfg, pm, d.DB, nil, &wg)           // no shop_type ever set
+	t.Cleanup(func() { httpx.InitRailVisibility(nil) }) // ut-docs#3079: Init wires a process-global checker bound to this test's DB
 
 	if _, found, err := data.NewPluginRepo(d.DB).GetInstalledPluginVersion(context.Background(), builtinlayouts.SalonPluginID); err != nil || found {
 		t.Errorf("after boot with no shop_type set, %s must NOT be installed, found=%v err=%v",

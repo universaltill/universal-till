@@ -233,6 +233,10 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			// second request after it. Empty (index.html then keeps the lazy
 			// hx-get placeholder) when the render failed.
 			"basketHTML": basketFirstPaint(d, w, r),
+			// ut-docs#3079: the phone-width Stock button leads to the
+			// stock_management-gated /inventory — a cashier (sale-only)
+			// doesn't get it, same as the rail's Stock entry.
+			"canManageStock": canPerform(d, r, "stock_management"),
 		}
 		httpx.Render("ui/pages/index.html", data)(w, r)
 	})

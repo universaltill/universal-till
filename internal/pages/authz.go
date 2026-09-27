@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -42,4 +43,18 @@ func canPerform(d *common.Deps, r *http.Request, action string) bool {
 		return false
 	}
 	return can
+}
+
+// requirePage is the page-level gate (ut-docs#3079, cashier is sale-only):
+// when the operator lacks action it renders the same 403 error page
+// audit_page.go does — base.html with the rail intact, so a cashier who
+// typed the URL still has Sell — and returns false; the caller returns.
+// For an htmx fragment route the 403 is not swapped (htmx leaves 4xx
+// unswapped) and base.html's generic #pos-alert surface reports it.
+func requirePage(d *common.Deps, w http.ResponseWriter, r *http.Request, action string) bool {
+	if canPerform(d, r, action) {
+		return true
+	}
+	httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
+	return false
 }

@@ -121,6 +121,17 @@ func (v *menuVisibility) visible(name string) bool {
 	return got
 }
 
+// menuPredicateChecker adapts menuPredicates to httpx.InitRailVisibility's
+// shape (ut-docs#3079): a fresh menuVisibility per call — httpx memoizes
+// per request on its side — so the rail and the status-bar links answer
+// exactly as the /menu grid does. An unregistered name fails closed.
+func menuPredicateChecker(d *common.Deps) func(r *http.Request, predicate string) bool {
+	return func(r *http.Request, predicate string) bool {
+		v := &menuVisibility{d: d, r: r}
+		return v.visible(predicate)
+	}
+}
+
 // menuPredicates are the visibility predicates a core menu entry may name
 // (ADR-0088 Decision C). A NAME, never an expression, and that is a
 // security decision: these are real authorization and jurisdiction gates,
@@ -169,6 +180,23 @@ func init() {
 		// "settings"'s own doc comment on that distinction).
 		"catalog_management": func(v *menuVisibility) bool {
 			return canPerform(v.d, v.r, "catalog_management")
+		},
+		// ut-docs#3079 (cashier is sale-only): the /reports tile — the page
+		// itself 403s on the same action (requirePage, reports_page.go).
+		"reports": func(v *menuVisibility) bool {
+			return canPerform(v.d, v.r, "reports")
+		},
+		// ut-docs#3079: the /plugins tile and base.html's plugin/language-
+		// pack update links — /plugins and /plugins/store 403 on it too.
+		"plugin_management": func(v *menuVisibility) bool {
+			return canPerform(v.d, v.r, "plugin_management")
+		},
+		// ut-docs#3079: the rail's Stock entry and the sell screen's phone
+		// stock link (migration 052) — /inventory and the goods-in /
+		// override writes 403 on it. Used by uislot.CoreRail, evaluated
+		// through httpx.InitRailVisibility (wired in init.go).
+		"stock_management": func(v *menuVisibility) bool {
+			return canPerform(v.d, v.r, "stock_management")
 		},
 		// §146a Abs. 4 AO fiscal register (ut-docs#665): the nav TILE is
 		// Germany-only -- no other market has this obligation, so

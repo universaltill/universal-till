@@ -366,6 +366,10 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// than a page handler threading them in — internal/httpx can't import
 	// common (common imports httpx), so the accessor is handed over here.
 	httpx.InitRailAmendments(dp.RailAmendmentsSnapshot)
+	// ut-docs#3079: the rail's VisibleIf entries (Stock) and base.html's
+	// `allowed` status-bar links are evaluated per request against the same
+	// menuPredicates the /menu grid uses — so a cashier sees neither.
+	httpx.InitRailVisibility(menuPredicateChecker(dp))
 
 	// ut-docs#2001 (follow-up from the ut-docs#1902 independent review,
 	// finding 4): builtinlayouts.Sync was previously only called from the

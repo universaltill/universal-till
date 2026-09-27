@@ -43,7 +43,7 @@
             hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
             onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus({ preventScroll: true });}, 150)">
       <span class="btn-ico" aria-hidden="true">{{ icon "shopping-cart" }}</span> {{ T "kiosk.checkout_start" }}</button>
-    <a class="btn secondary compact" data-testid="kiosk-inventory-link-phone" href="/inventory"><span class="btn-ico" aria-hidden="true">{{ icon "package" }}</span> {{ T "kiosk.inventory" }}</a>
+    {{ if .canManageStock }}<a class="btn secondary compact" data-testid="kiosk-inventory-link-phone" href="/inventory"><span class="btn-ico" aria-hidden="true">{{ icon "package" }}</span> {{ T "kiosk.inventory" }}</a>{{ end }}
   </div>
 </div>
 

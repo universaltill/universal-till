@@ -655,6 +655,7 @@ func TestBasketPanelWidthSettings(t *testing.T) {
 // manager-gated (ut-docs#179) store-wide settings. All validate and reflect
 // into runtime state for a manager.
 func TestDisplayAndStoreSettings(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // behaviour, not the ut-docs#3079 permission gate
 	mux, _, d := newFullAuthDeps(t)
 
 	// UI scale bounds (0.5..2.0).
@@ -1373,12 +1374,15 @@ func TestSettingsPage_HidesManagerOnlyCardsFromCashier(t *testing.T) {
 		return rec.Body.String()
 	}
 
-	cashierHTML := get(&cashUser)
+	// ut-docs#3079: a cashier no longer gets the page at all (sale-only),
+	// so neither the raw table nor the #867 elevation-wired currency card
+	// reaches them.
+	cashierHTML := settingsRefusedForCashier(t, mux)
 	if strings.Contains(cashierHTML, `id="new-setting"`) {
 		t.Fatal("cashier sees the raw settings.all key/value table")
 	}
-	if !strings.Contains(cashierHTML, `name="currency"`) {
-		t.Fatal("cashier should see the elevation-wired currency card (ut-docs#867)")
+	if strings.Contains(cashierHTML, `name="currency"`) {
+		t.Fatal("cashier's 403 still carries the currency card")
 	}
 
 	managerHTML := get(&mgrUser)
@@ -1669,6 +1673,7 @@ func TestUpsertCountry_RederivesLocale(t *testing.T) {
 // settings page itself never offered an option past 150%, so a shop on
 // that hardware had no way to reach a usable scale through the UI at all.
 func TestSettingsPageOffersHighDensityScaleOption(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: /settings is settings-gated; this test is about rendering, not permissions.
 	mux, _, _ := newFullAuthDeps(t)
 	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
 	rec := httptest.NewRecorder()
@@ -1792,14 +1797,7 @@ func TestSettingsPage_CoreSettingsAndFilterMatchTheRealTemplate(t *testing.T) {
 // manager-only rows too.
 func TestSettingsPage_NavIndexNeverLeaksManagerOnlyRowsToCashier(t *testing.T) {
 	mux, _, _ := newFullAuthDeps(t)
-	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
-	req = auth.WithUser(req, cashUser)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /settings = %d", rec.Code)
-	}
-	body := rec.Body.String()
+	body := settingsRefusedForCashier(t, mux) // ut-docs#3079: now refused outright
 	for _, key := range []string{"settings-issuereport", "settings-menulayout", "settings-all"} {
 		if strings.Contains(body, `data-key="`+key+`"`) {
 			t.Errorf("cashier session must not see manager-only row %q in #settings-nav-index:\n%s", key, body)
@@ -1814,6 +1812,7 @@ func TestSettingsPage_NavIndexNeverLeaksManagerOnlyRowsToCashier(t *testing.T) {
 // at the actual HTTP-render level (settingsnav's own package tests already
 // pin Resolve directly; this proves the handler actually wires it through).
 func TestSettingsPage_NavIndexResolvesCoreOrderWithNoPlugin(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: /settings is settings-gated; this test is about rendering, not permissions.
 	mux, _, _ := newFullAuthDeps(t)
 	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
 	rec := httptest.NewRecorder()
@@ -1900,6 +1899,7 @@ func TestSettingsPage_NavIndexReflectsSalonLayoutAmendment(t *testing.T) {
 // criterion is "no bare locale code shown anywhere (wizard or settings)", and
 // settings is the half the wizard's own test cannot cover.
 func TestSettingsPageDefaultLocalePickerShowsNativeNamesNotBareCodes(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: /settings is settings-gated; this test is about rendering, not permissions.
 	mux, _, _ := newFullAuthDeps(t)
 	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
 	rec := httptest.NewRecorder()
@@ -2316,10 +2316,14 @@ func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 		`id="new-setting"`,                         // raw upsert browser's add form
 	}
 
-	cashierHTML := get(cashUser)
+	// ut-docs#3079 supersedes #867's cashier half: a cashier is sale-only
+	// and gets the 403 page, so NONE of these forms reach them any more (a
+	// manager signs in, or an admin grants "settings" in Users →
+	// Permissions). The manager half below is unchanged.
+	cashierHTML := settingsRefusedForCashier(t, mux)
 	for _, marker := range elevationWired {
-		if !strings.Contains(cashierHTML, marker) {
-			t.Errorf("cashier render is missing elevation-wired site %s — the in-place PIN dialog can never be reached from the UI", marker)
+		if strings.Contains(cashierHTML, marker) {
+			t.Errorf("cashier's 403 still carries elevation-wired site %s", marker)
 		}
 	}
 	for _, marker := range managerOnly {
@@ -2394,14 +2398,7 @@ func TestSettingsPage_DataCardHiddenFromCashierWhenNothingPending(t *testing.T) 
 	mux, _, d := newFullAuthDeps(t)
 	_ = d
 
-	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
-	req = auth.WithUser(req, cashUser)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /settings = %d", rec.Code)
-	}
-	body := rec.Body.String()
+	body := settingsRefusedForCashier(t, mux) // ut-docs#3079: now refused outright
 	if strings.Contains(body, "Data management") {
 		t.Errorf("cashier with no pending demo/restore/plugin data still sees the Data management card heading")
 	}
@@ -2422,16 +2419,11 @@ func TestSettingsPage_PrinterCardHidesTestPrintAndDesignerLinkFromCashier(t *tes
 	mux, _, d := newFullAuthDeps(t)
 	_ = d
 
-	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
-	req = auth.WithUser(req, cashUser)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /settings = %d", rec.Code)
-	}
-	body := rec.Body.String()
-	if !strings.Contains(body, `hx-post="/api/settings/printer"`) {
-		t.Fatal("cashier render is missing the elevation-wired printer form itself")
+	// ut-docs#3079: a cashier now gets the 403 page — not even the
+	// elevation-wired printer form (#866) reaches them.
+	body := settingsRefusedForCashier(t, mux)
+	if strings.Contains(body, `hx-post="/api/settings/printer"`) {
+		t.Fatal("cashier's 403 still carries the printer form")
 	}
 	if strings.Contains(body, `hx-post="/api/print/test"`) {
 		t.Error("cashier render leaks the flat-denied Test print button")
@@ -3247,4 +3239,22 @@ func TestShopTypeEndpoint_FailedReinstall_StillReloadsPlugins(t *testing.T) {
 	if hasSalonAmendment() {
 		t.Fatal("a failed reinstall must still trigger ReloadPlugins — d.Pm kept serving the stale (now-uninstalled) plugin's amendment instead of reflecting the DB's real post-removal state")
 	}
+}
+
+// settingsRefusedForCashier (ut-docs#3079): GET /settings as the default
+// cashier must be the 403 error page — a cashier is sale-only. Returns the
+// body so a caller can also assert none of the page's content leaked.
+func settingsRefusedForCashier(t *testing.T, mux *http.ServeMux) string {
+	t.Helper()
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/settings", nil), cashUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cashier GET /settings = %d, want 403 (ut-docs#3079)", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, `id="settings-shell"`) {
+		t.Fatal("cashier's 403 on /settings still carries the settings page")
+	}
+	return body
 }

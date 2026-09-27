@@ -190,7 +190,9 @@ func TestPluginStoreEndpoints_RealSessionGatesByRole(t *testing.T) {
 // The read-only catalog-browsing and update-check endpoints must NOT be
 // manager-gated — a cashier browsing the marketplace or checking for
 // updates is harmless and shouldn't need a manager PIN.
-func TestPluginCatalogBrowsing_DoesNotRequireManagerAuth(t *testing.T) {
+// ut-docs#3079 reversed this: the cashier is sale-only, so the marketplace
+// proxy (like /plugins/store) now needs plugin_management.
+func TestPluginCatalogBrowsing_RequiresPluginManagement(t *testing.T) {
 	chdirRoot(t)
 	db := openPagesTestDB(t)
 	defer db.Close()
@@ -202,7 +204,7 @@ func TestPluginCatalogBrowsing_DoesNotRequireManagerAuth(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/plugins/marketplace", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if rec.Code == http.StatusForbidden {
-		t.Fatal("marketplace browsing must not require a manager session")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("marketplace browsing with no session = %d, want 403", rec.Code)
 	}
 }

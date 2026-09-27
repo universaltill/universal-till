@@ -247,9 +247,12 @@ var CoreMenu = []Entry{
 	{Key: "/shifts", Href: "/shifts", LabelKey: "nav.shifts", Icon: "clock", Order: 200, InNav: true},
 	{Key: "/journal", Href: "/journal", LabelKey: "nav.journal", Icon: "book-open", Order: 300, InNav: true},
 	{Key: "/orders", Href: "/orders", LabelKey: "nav.orders", Icon: "bell", Order: 400, InNav: true},
-	{Key: "/reports", Href: "/reports", LabelKey: "nav.reports", Icon: "chart-column", Order: 500, InNav: true},
-	{Key: "/settings", Href: "/settings", LabelKey: "nav.settings", Icon: "settings", Order: 600, InNav: true},
-	{Key: "/plugins", Href: "/plugins", LabelKey: "nav.plugins", Icon: "puzzle", Order: 700, InNav: true},
+	// ut-docs#3079: a cashier is sale-only — Reports, Settings and Plugins
+	// are hidden unless the viewer holds that action (the pages themselves
+	// now 403 on the same action, requirePage in internal/pages/authz.go).
+	{Key: "/reports", Href: "/reports", LabelKey: "nav.reports", Icon: "chart-column", Order: 500, InNav: true, VisibleIf: "reports"},
+	{Key: "/settings", Href: "/settings", LabelKey: "nav.settings", Icon: "settings", Order: 600, InNav: true, VisibleIf: "settings"},
+	{Key: "/plugins", Href: "/plugins", LabelKey: "nav.plugins", Icon: "puzzle", Order: 700, InNav: true, VisibleIf: "plugin_management"},
 	// ut-docs#1897: the "Items" tile that replaced the flat "Catalog" one.
 	// ut-docs#2312: VisibleIf "catalog_management" -- see /designer's
 	// identical comment above; /items is the rail entry point to the same
@@ -423,12 +426,15 @@ func CoreItemsEntry(key string) (Entry, bool) {
 // Declared ascending Order so the zero-amendment path never sorts
 // (Decision I) — this table renders on EVERY page, more than CoreMenu or
 // CoreItems combined, so the zero-alloc guarantee matters more here.
-// No Group/SubtitleKey/VisibleIf/InNav: nav.html draws no heading, no
-// subtitle line, and every entry is unconditionally visible.
+// No Group/SubtitleKey/InNav: nav.html draws no heading and no subtitle
+// line. VisibleIf is honoured per request (ut-docs#3079): httpx's
+// railEntriesFor drops an entry whose predicate the viewer fails, via the
+// checker pages.Init installs with httpx.InitRailVisibility — so a cashier's
+// rail has no Stock. Sell/Menu/Orders stay ungated (the sale flow).
 var CoreRail = []Entry{
 	{Key: "/", Href: "/", LabelKey: "nav.till", Icon: "shopping-cart", Order: 100},
 	{Key: "/menu", Href: "/menu", LabelKey: "nav.menu", Icon: "menu", Order: 200},
-	{Key: "/inventory", Href: "/inventory", LabelKey: "kiosk.inventory", Icon: "package", Order: 300},
+	{Key: "/inventory", Href: "/inventory", LabelKey: "kiosk.inventory", Icon: "package", Order: 300, VisibleIf: "stock_management"},
 	{Key: "/orders", Href: "/orders", LabelKey: "nav.orders", Icon: "bell", Order: 400},
 }
 

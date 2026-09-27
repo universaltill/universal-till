@@ -19,6 +19,7 @@ import (
 // sales: a fast seller with little stock gets the ⚠ running-out flag; an
 // item with no sales history shows no prediction.
 func TestInventoryPredictsDaysLeft(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: the route is now permission-gated; this test is about rendering/behaviour past the gate (gate: cashier_sale_only_test.go).
 	chdirRoot(t)
 	// Real migrations: the query spans sales + sale_lines + inventory.
 	d := openPagesTestDB(t)
@@ -117,6 +118,7 @@ func TestInventoryPredictsDaysLeft(t *testing.T) {
 // exact same fixture pattern (2/day over 14 sales, low stock -> ~3 days
 // left) duplicated for a second item.
 func TestInventoryRunningOutChip_PluralWording(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: the route is now permission-gated; this test is about rendering/behaviour past the gate (gate: cashier_sale_only_test.go).
 	chdirRoot(t)
 	d := openPagesTestDB(t)
 	defer d.Close()
@@ -189,6 +191,7 @@ func TestInventoryRunningOutChip_PluralWording(t *testing.T) {
 // variant's own 20-unit qty individually: floor(20/3)=6 <= the 7-day warn
 // default → every variant misreported as running out.
 func TestInventoryVariantSellRateIsPerVariantNotItemCombined(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: the route is now permission-gated; this test is about rendering/behaviour past the gate (gate: cashier_sale_only_test.go).
 	chdirRoot(t)
 	d := openPagesTestDB(t)
 	defer d.Close()
@@ -260,6 +263,7 @@ func TestInventoryVariantSellRateIsPerVariantNotItemCombined(t *testing.T) {
 // window (and the reorder-suggestion target) track the item's own lead
 // time instead of the flat default.
 func TestInventoryLeadTimeAwareWarnAndReorder(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: the route is now permission-gated; this test is about rendering/behaviour past the gate (gate: cashier_sale_only_test.go).
 	chdirRoot(t)
 	d := openPagesTestDB(t)
 	defer d.Close()

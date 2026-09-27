@@ -54,12 +54,17 @@ func newMenuPageTestDeps(t *testing.T, menu []common.MenuItem) (*http.ServeMux, 
 	// source never leaks one test's deps into another's.
 	httpx.InitRailAmendments(dp.RailAmendmentsSnapshot)
 	t.Cleanup(func() { httpx.InitRailAmendments(nil) })
+	// ut-docs#3079: and no rail-visibility checker another test's
+	// pages.Init left behind (bound to that test's, now closed, DB).
+	httpx.InitRailVisibility(nil)
+	t.Cleanup(func() { httpx.InitRailVisibility(nil) })
 	mux := http.NewServeMux()
 	registerMenu(mux, dp)
 	return mux, dp
 }
 
 func TestMenuPage_RendersConfiguredTilesWithMappedIcons(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: /reports is reports-gated; this test is about icons, not permissions.
 	mux, _ := newMenuPageTestDeps(t, []common.MenuItem{
 		{Href: "/inventory", Label: "nav.inventory"},
 		{Href: "/reports", Label: "nav.reports"},

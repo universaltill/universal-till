@@ -44,6 +44,7 @@ func pollThemeSync(t *testing.T, mux *http.ServeMux) string {
 // asserts the poll never reports anything but the replica's own theme, so
 // the stylesheet is never re-applied and no reload is ever provoked.
 func TestReplicaTheme_SurvivesMovingAdminPullsAndThePollNeverFlips(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // behaviour, not the ut-docs#3079 permission gate
 	primary := newPullTestPrimary(t)
 	ctx := t.Context()
 	primaryTheme := primary.dp.CurrentState()
