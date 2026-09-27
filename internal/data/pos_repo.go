@@ -8060,8 +8060,11 @@ const itemIDCodePrefix = "item:"
 // see itemIDCodePrefix's doc comment for why this exists alongside the
 // barcode/shortcut/SKU/name tiers above.
 func (r *POSRepo) resolveItemByID(ctx context.Context, itemID string) (shortcutPriceRow, bool) {
+	// COALESCE (ut-docs#3072): this tier exists for items with no SKU, and a
+	// missing SKU is stored as NULL — scanning it raw into a string failed
+	// the Scan and made every such tile read as stale.
 	row := r.db.QueryRowContext(ctx, `
-SELECT i.id, i.sku, i.name, i.base_price, i.is_weighed,
+SELECT i.id, COALESCE(i.sku, ''), i.name, i.base_price, i.is_weighed,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
        COALESCE(t.rate_basis_points, 0), i.tax_code_id
 FROM items i
@@ -8071,6 +8074,11 @@ LIMIT 1
 `, itemID)
 	var res shortcutPriceRow
 	if err := row.Scan(&res.ItemID, &res.SKU, &res.ItemName, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
+		// A miss is normal; any other error is a bug that would otherwise
+		// surface only as a "quick button was out of date" toast (#3072).
+		if !errors.Is(err, sql.ErrNoRows) {
+			logging.L().Errorf("data: resolve item %s by id: %v", itemID, err)
+		}
 		return shortcutPriceRow{}, false
 	}
 	return res, true
