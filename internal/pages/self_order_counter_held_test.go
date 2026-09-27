@@ -693,7 +693,7 @@ func TestKioskSaleLinesAndTotal_UsesGivenLines(t *testing.T) {
 	dp, _ := setupSelfOrderShopDeps(t)
 	eng := pos.NewServiceWithResolver(pos.Config{}, nil) // empty engine: any line must come from the slice
 	lines := []pos.BasketLine{{SKU: "A", Name: "Flat White", Qty: 1, PriceCents: money.FromMinor(300)}}
-	saleLines, _, blocked := kioskSaleLinesAndTotal(dp, eng, lines, "loc")
+	saleLines, _, _, blocked := kioskSaleLinesAndTotal(dp, eng, lines, "loc")
 	if blocked || len(saleLines) != 1 || saleLines[0].SKU != "A" {
 		t.Fatalf("sale lines = %+v blocked=%v, want the given line", saleLines, blocked)
 	}

@@ -233,6 +233,16 @@ func remoteTillSettingsReport(ctx context.Context, d *common.Deps) map[string]st
 // EXACTLY the till's current button set (missing or unknown barcodes
 // both refused, named in the error) rather than silently applying a
 // partial reorder.
+//
+// ut-docs#2709: "the till's current button set" is the VISIBLE set — the
+// cloud only ever sees LoadButtons (remoteQuickButtonsReport), which leaves
+// out a hidden item's tile. That tile's row is kept on purpose, holding its
+// slot for when the item is unhidden (ut-docs#2541), so it is not in the
+// payload and a payload naming it is refused. The write then covers EVERY
+// row edit mode shows (LoadGridButtons): hidden rows stay in their current
+// slots, the listed barcodes fill the other slots in the given order, and
+// the whole list is renumbered 0..n-1 — rewriting only the listed rows left
+// a hidden row's old sort_order colliding with a visible tile's new one.
 func cloudSetQuickButtonLayout(ctx context.Context, d *common.Deps, barcodes []string) (string, error) {
 	if len(barcodes) == 0 {
 		return "", fmt.Errorf("missing barcodes")
@@ -241,12 +251,17 @@ func cloudSetQuickButtonLayout(ctx context.Context, d *common.Deps, barcodes []s
 		return "", err
 	}
 	repo := data.NewShortcutsRepo(d.Db)
-	current, err := repo.LoadButtons(ctx)
+	grid, err := repo.LoadGridButtons(ctx)
 	if err != nil {
 		return "", err
 	}
-	currentSet := make(map[string]bool, len(current))
-	for _, b := range current {
+	currentSet := make(map[string]bool, len(grid))
+	hiddenSet := make(map[string]bool)
+	for _, b := range grid {
+		if b.Hidden {
+			hiddenSet[b.Barcode] = true
+			continue
+		}
 		currentSet[b.Barcode] = true
 	}
 	given := make(map[string]bool, len(barcodes))
@@ -255,6 +270,9 @@ func cloudSetQuickButtonLayout(ctx context.Context, d *common.Deps, barcodes []s
 			return "", fmt.Errorf("duplicate barcode %q in the new layout", bc)
 		}
 		given[bc] = true
+		if hiddenSet[bc] {
+			return "", fmt.Errorf("barcode %q is hidden on this till's sell screen — the layout lists visible quick buttons only", bc)
+		}
 		if !currentSet[bc] {
 			return "", fmt.Errorf("barcode %q is not one of this till's quick buttons", bc)
 		}
@@ -264,11 +282,29 @@ func cloudSetQuickButtonLayout(ctx context.Context, d *common.Deps, barcodes []s
 			return "", fmt.Errorf("the new layout is missing barcode %q — it must list every current quick button", bc)
 		}
 	}
-	if err := repo.UpdateOrder(ctx, barcodes); err != nil {
+	if err := repo.UpdateOrder(ctx, layoutWithHiddenSlots(grid, barcodes)); err != nil {
 		return "", err
 	}
 	auditCloudDirective(ctx, d, "quick_buttons", "-", "quick_button_layout_set", map[string]any{"barcodes": barcodes})
 	return fmt.Sprintf("layout applied to %d buttons", len(barcodes)), nil
+}
+
+// layoutWithHiddenSlots merges a validated visible-only layout into the full
+// edit-mode list (ut-docs#2709): each hidden row keeps its index in grid,
+// every other index takes the next barcode from visible, in order. The
+// result lists every row, so UpdateOrder renumbers them all 0..n-1.
+func layoutWithHiddenSlots(grid []data.ShortcutButton, visible []string) []string {
+	out := make([]string, 0, len(grid))
+	next := 0
+	for _, b := range grid {
+		if b.Hidden {
+			out = append(out, b.Barcode)
+			continue
+		}
+		out = append(out, visible[next])
+		next++
+	}
+	return out
 }
 
 // remoteQuickButtonsReport is the read side for DeviceExtra: the currently

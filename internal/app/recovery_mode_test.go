@@ -16,8 +16,7 @@ import (
 // to — a fixed, known address rather than UT_LISTEN_ADDR=127.0.0.1:0 (what
 // every other Run test in this package uses), because this test needs to
 // poll and POST against recovery mode's own listener while Run is still
-// inside its boot loop, before cfg.ListenAddr would ever be echoed back
-// anywhere a test could read it.
+// inside its boot loop.
 func freeAddr(t *testing.T) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
