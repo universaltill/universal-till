@@ -121,6 +121,7 @@ async function capture(page: Page, id: string, locale: string, route: string) {
     });
   }
   await page.goto(url, { waitUntil: 'networkidle' });
+  if (process.env.DOCS_SHOTS_EXP_CSS) await page.addStyleTag({ content: process.env.DOCS_SHOTS_EXP_CSS });
 
   // The locale actually took: RTL locales must render flipped, same
   // assertion as rtl.spec.ts — a screenshot of the wrong locale (or of a
