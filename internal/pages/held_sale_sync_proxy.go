@@ -545,14 +545,20 @@ func mergeHeldSales(local, primary []data.HeldSale) []data.HeldSale {
 // as before. Reconciled BEFORE the local read so the merge sees the
 // cleaned table; a reconcile failure is logged and the merge proceeds on
 // whatever is there -- never a blocking error for the page.
+//
+// fetchStartedAt is read BEFORE the request goes out (ut-docs#3038): the
+// list can be stale by the time it lands, and a row this till wrote
+// local-only meanwhile (a failed resume's give-back) must not be confirmed
+// by it -- see ReconcileWithPrimary.
 func heldSalesForDisplay(ctx context.Context, d *common.Deps, repo *data.HeldSalesRepo) ([]data.HeldSale, error) {
+	fetchStartedAt := time.Now()
 	primary, ok := fetchHeldSalesFromPrimary(ctx, d, heldSaleProxyClient)
 	if ok {
 		ids := make([]string, 0, len(primary))
 		for _, p := range primary {
 			ids = append(ids, p.ID)
 		}
-		if dropped, err := repo.ReconcileWithPrimary(ctx, ids); err != nil {
+		if dropped, err := repo.ReconcileWithPrimary(ctx, ids, fetchStartedAt); err != nil {
 			logging.L().Debugf("held sale proxy: reconcile against primary list failed: %v", err)
 		} else if dropped > 0 {
 			logging.L().Infof("held sale proxy: dropped %d local mirror(s) the primary no longer lists — resolved on another till (ADR-0093 Amendment A)", dropped)

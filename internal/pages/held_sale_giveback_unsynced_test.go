@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -81,7 +82,7 @@ func TestResumeOnReplica_GiveBackAfterUpsertFailureDoesNotStickPrimarySynced(t *
 	// The card's actual AC: the next successful primary list (this order is
 	// gone from it -- it was claimed off the primary and never landed back
 	// there) must NOT drop the only surviving copy.
-	dropped, err := repo.ReconcileWithPrimary(ctx, nil)
+	dropped, err := repo.ReconcileWithPrimary(ctx, nil, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

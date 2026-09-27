@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/testsupport"
@@ -978,8 +979,12 @@ func TestHeldSalesRepo_ReconcileWithPrimary(t *testing.T) {
 	seed("still-open", true)  // mirrored, still listed
 	seed("outage", false)     // never confirmed, not listed: keep
 	seed("newly-seen", false) // never confirmed, but the primary lists it now
+	// A fetch that started after the seeds were written (updated_at is
+	// second-truncated, and the raise needs updated_at strictly before the
+	// fetch start -- ut-docs#3038).
+	fetchAfterSeeds := time.Now().Add(time.Second)
 
-	dropped, err := repo.ReconcileWithPrimary(ctx, []string{"still-open", "newly-seen", "primary-only-id"})
+	dropped, err := repo.ReconcileWithPrimary(ctx, []string{"still-open", "newly-seen", "primary-only-id"}, fetchAfterSeeds)
 	if err != nil {
 		t.Fatalf("ReconcileWithPrimary: %v", err)
 	}
@@ -1004,7 +1009,7 @@ func TestHeldSalesRepo_ReconcileWithPrimary(t *testing.T) {
 
 	// An EMPTY (but successful) list: every confirmed mirror is gone from
 	// the primary; every never-confirmed row stays.
-	dropped, err = repo.ReconcileWithPrimary(ctx, nil)
+	dropped, err = repo.ReconcileWithPrimary(ctx, nil, time.Now())
 	if err != nil || dropped != 2 {
 		t.Fatalf("empty list must drop the two confirmed rows only: dropped=%d err=%v", dropped, err)
 	}
