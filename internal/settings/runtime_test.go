@@ -8,6 +8,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/enroll"
 )
 
 // openMigratedDB gives the test a real, fully migrated schema — same
@@ -275,5 +276,23 @@ BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
 	}
 	if curr != "GBP" {
 		t.Fatalf("store.currency = %q after failed save, want seeded %q (partial write not rolled back)", curr, "GBP")
+	}
+}
+
+// TestLoadRuntimeConfigReadsEnrollStoreNameKey guards
+// enroll.StoreNameSettingsKey against drifting from the key this package
+// loads the shop name from (ut-docs#2776): registration reads the name live
+// under enroll's copy of the key, so a silent rename on either side would
+// send the "My Store" default to the cloud again, with green CI.
+func TestLoadRuntimeConfigReadsEnrollStoreNameKey(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	if err := s.Set(ctx, enroll.StoreNameSettingsKey, "Corner Café"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	cfg := baseCfg()
+	s.LoadRuntimeConfig(ctx, cfg)
+	if cfg.StoreName != "Corner Café" {
+		t.Fatalf("StoreName = %q after setting %q; enroll.StoreNameSettingsKey no longer matches the key LoadRuntimeConfig reads", cfg.StoreName, enroll.StoreNameSettingsKey)
 	}
 }

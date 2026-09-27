@@ -90,6 +90,16 @@ const (
 // a silent drift here means the region hint is never sent, with green CI.
 const StoreCountrySettingsKey = "store.country"
 
+// StoreNameSettingsKey is the settings.key the shop's name lives under (the
+// setup wizard and Settings write it; settings.LoadRuntimeConfig reads it
+// into cfg.StoreName, but only at boot). Registration reads it live
+// (ut-docs#2776): the wizard saves the name and registers in the same
+// request, so cfg.StoreName still holds the "My Store" env default then,
+// and every fresh install created another cloud shop called "My Store".
+// internal/settings' TestLoadRuntimeConfigReadsEnrollStoreNameKey keeps the
+// two from drifting apart.
+const StoreNameSettingsKey = "store.name"
+
 type identity struct {
 	DeviceID   string
 	StoreID    string
@@ -211,7 +221,7 @@ func RegisterNow(ctx context.Context, cfg *config.Config, kv Settings) (Status, 
 		// A replica never creates its own anonymous store — that would split
 		// the shop in the cloud; its credential comes from the main till
 		// (ut-docs#2730).
-		registerFn := func() error { return register(ctx, m, cfg.StoreName, kv) }
+		registerFn := func() error { return register(ctx, m, shopName(ctx, cfg, kv), kv) }
 		if isReplica(ctx, kv) {
 			registerFn = func() error { return registerOnReplica(ctx, m, kv) }
 		}
@@ -457,6 +467,18 @@ func regionForCountry(country string) string {
 		return "de"
 	}
 	return ""
+}
+
+// shopName is the name registration sends: the live store.name setting,
+// falling back to cfg.StoreName when it is unset, blank or unreadable
+// (ut-docs#2776). A failed read never fails registration.
+func shopName(ctx context.Context, cfg *config.Config, kv Settings) string {
+	if v, _, err := kv.Get(ctx, StoreNameSettingsKey); err == nil {
+		if name := strings.TrimSpace(v); name != "" {
+			return name
+		}
+	}
+	return cfg.StoreName
 }
 
 // register performs the anonymous enrolment call and persists the returned
