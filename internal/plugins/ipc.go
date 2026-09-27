@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // EventDispatchMode defines how events are delivered to plugins
@@ -526,7 +527,7 @@ func (eb *EventBus) publishWithID(ctx context.Context, id, eventType string, pay
 		if redactedPayloadBytes != nil {
 			granted, _, permErr := data.NewPluginRepo(db).CheckPermission(ctx, sub.PluginID, "payments:reconciliation")
 			if permErr != nil {
-				fmt.Printf("warning: payments:reconciliation check failed for plugin %s: %v\n", sub.PluginID, permErr)
+				logging.L().Warnf("payments:reconciliation check failed for plugin %s: %v", sub.PluginID, permErr)
 			}
 			if !granted {
 				subEvent.Payload = redactedPayloadBytes
@@ -586,14 +587,14 @@ func (eb *EventBus) publishWithID(ctx context.Context, id, eventType string, pay
 					// longer a safe inference.
 					reason := fmt.Sprintf("channel full (further drops within %s coalesced into this entry)", channelFullWarnInterval)
 					eb.auditDispatchWithDB(ctx, db, event.ID, eventType, sub.PluginID, "dropped", reason)
-					fmt.Printf("warning: event channel full for plugin %s (further drops within %s suppressed)\n", sub.PluginID, channelFullWarnInterval)
+					logging.L().Warnf("event channel full for plugin %s (further drops within %s suppressed)", sub.PluginID, channelFullWarnInterval)
 				}
 			}
 		}
 	}
 
 	if err := eb.auditEventWithDB(ctx, db, event.ID, eventType, dispatched); err != nil {
-		fmt.Printf("warning: failed to audit event: %v\n", err)
+		logging.L().Warnf("failed to audit event: %v", err)
 	}
 
 	return event.ID, resp, nil
@@ -727,7 +728,7 @@ func (eb *EventBus) auditDispatchWithDB(ctx context.Context, db *sql.DB, eventID
 	}
 
 	if err := data.NewPluginRepo(db).InsertAuditRaw(ctx, nil, "event_dispatch", "plugin", pluginID, details, time.Now()); err != nil {
-		fmt.Printf("warning: failed to audit dispatch: %v\n", err)
+		logging.L().Warnf("failed to audit dispatch: %v", err)
 	}
 }
 

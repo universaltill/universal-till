@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // UninstallPlugin removes a plugin and its entries
@@ -41,12 +42,12 @@ func UninstallPlugin(ctx context.Context, db *sql.DB, pluginID string) error {
 	// records purged, that is a separate, deliberate, explicit action this
 	// card does not build.
 	if err := repo.DeleteStorageExceptPrefix(ctx, pluginID, data.FiscalRegisterDEKeyPrefix); err != nil {
-		fmt.Printf("warning: failed to clear plugin storage: %v\n", err)
+		logging.L().Warnf("failed to clear plugin storage: %v", err)
 	}
 
 	// Record uninstall event
 	if err := repo.InsertAudit(ctx, nil, "plugin_uninstall", pluginID, map[string]any{}, time.Now()); err != nil {
-		fmt.Printf("warning: failed to record uninstall audit: %v\n", err)
+		logging.L().Warnf("failed to record uninstall audit: %v", err)
 	}
 
 	return nil
@@ -72,7 +73,7 @@ func UpdatePluginTrustLevel(ctx context.Context, db *sql.DB, pluginID, trustLeve
 
 	// Audit the trust change
 	if err := repo.InsertAudit(ctx, nil, "plugin_trust_change", pluginID, fmt.Sprintf("trust_level=%s", trustLevel), time.Now()); err != nil {
-		fmt.Printf("warning: failed to record trust change audit: %v\n", err)
+		logging.L().Warnf("failed to record trust change audit: %v", err)
 	}
 
 	return nil
