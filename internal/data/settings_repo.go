@@ -217,6 +217,13 @@ func (r *SettingsRepo) Delete(ctx context.Context, key string) error {
 // (enroll.DeviceName) and lose its own name entirely. So before the delete,
 // a non-blank sync.till_name is copied into till.name; the promoted till
 // keeps its own name (ut-docs#3025).
+//
+// When the trimmed sync.till_name is blank (the row is missing or
+// whitespace-only), there is no name to carry over, so till.name is set
+// blank instead of left standing: leaving it would make the promoted till
+// keep reporting the OLD main till's name forever. Blank, the till falls
+// back to its translated default name (every reader trims) and
+// enroll.DeviceName reports "" (ut-docs#3030).
 func (r *SettingsRepo) ClearReplicaIdentity(ctx context.Context) error {
 	var err error
 	done := settingsObs.trace("clear_replica_identity")
@@ -236,16 +243,18 @@ func (r *SettingsRepo) ClearReplicaIdentity(ctx context.Context) error {
 	if err == sql.ErrNoRows {
 		err = nil
 	}
-	if trimmed := strings.TrimSpace(tillName); trimmed != "" {
-		if _, err = tx.ExecContext(ctx, `
+	// Always written, blank included (ut-docs#3030): a blank value, not a
+	// deleted row, because shop-wide settings reach joined tills only as
+	// upserts (ApplyAdmin never prunes settings) — a delete would leave any
+	// till later pointed at this one showing the old main till's name.
+	if _, err = tx.ExecContext(ctx, `
 INSERT INTO settings (key, value, updated_at)
 VALUES ('till.name', ?, ?)
 ON CONFLICT(key) DO UPDATE SET
 	value = excluded.value,
 	updated_at = excluded.updated_at
-`, trimmed, time.Now().UTC()); err != nil {
-			return settingsObs.wrapf("clear_replica_identity", "set setting %s", err, "till.name")
-		}
+`, strings.TrimSpace(tillName), time.Now().UTC()); err != nil {
+		return settingsObs.wrapf("clear_replica_identity", "set setting %s", err, "till.name")
 	}
 
 	if _, err = tx.ExecContext(ctx,
