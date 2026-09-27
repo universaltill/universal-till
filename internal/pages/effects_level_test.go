@@ -25,8 +25,12 @@ func withFxSignals(t *testing.T, s fxlevel.Signals) {
 }
 
 var (
-	piSignals      = fxlevel.Signals{Cores: 4, RAMBytes: 8 * testGiB, PiModel: "Raspberry Pi 5 Model B Rev 1.0", GOOS: "linux", GOARCH: "arm64"}
-	desktopSignals = fxlevel.Signals{Cores: 16, RAMBytes: 32 * testGiB, GOOS: "linux", GOARCH: "amd64"}
+	// Both are GOOS=linux tills, so both really carry the WebKitGTK shell
+	// engine (ADR-0119 §4, ut-docs#2992): ReadSignals derives it from GOOS,
+	// so these fixtures — which bypass ReadSignals via the readFxSignals
+	// seam — set it explicitly to match what the real host would report.
+	piSignals      = fxlevel.Signals{Cores: 4, RAMBytes: 8 * testGiB, PiModel: "Raspberry Pi 5 Model B Rev 1.0", GOOS: "linux", GOARCH: "arm64", Engine: fxlevel.EngineWebKitGTK}
+	desktopSignals = fxlevel.Signals{Cores: 16, RAMBytes: 32 * testGiB, GOOS: "linux", GOARCH: "amd64", Engine: fxlevel.EngineWebKitGTK}
 )
 
 func fxGet(t *testing.T, s *settings.Store, key string) string {
@@ -49,7 +53,7 @@ func TestResolveEffectsLevel_AutoDetectsAndStores(t *testing.T) {
 	if v := fxGet(t, d.Settings, fxlevel.KeyDetected); v != fxlevel.Light {
 		t.Errorf("stored detected = %q", v)
 	}
-	if v := fxGet(t, d.Settings, fxlevel.KeyReason); v != "pi,cores=4,ram=8g" {
+	if v := fxGet(t, d.Settings, fxlevel.KeyReason); v != "pi,webkitgtk,cores=4,ram=8g" {
 		t.Errorf("stored reason = %q", v)
 	}
 	if v := fxGet(t, d.Settings, fxlevel.KeyFingerprint); v != piSignals.Fingerprint() {
@@ -78,22 +82,73 @@ func TestResolveEffectsLevel_SameFingerprintKeepsStoredDetection(t *testing.T) {
 	}
 }
 
-// A changed machine (different fingerprint) re-detects at boot.
+// A changed machine (different fingerprint) re-detects at boot. Both
+// fixtures are GOOS=linux, so both are WebKitGTK — this proves detection
+// re-runs on the new hardware, not that the level happens to change too.
 func TestResolveEffectsLevel_ChangedFingerprintRedetects(t *testing.T) {
 	_, _, d := newFullAuthDeps(t)
 	withFxSignals(t, desktopSignals)
 	if err := d.Settings.SetMany(t.Context(), map[string]string{
 		fxlevel.KeyDetected:    fxlevel.Light,
-		fxlevel.KeyReason:      "pi,cores=4,ram=8g",
+		fxlevel.KeyReason:      "pi,webkitgtk,cores=4,ram=8g",
 		fxlevel.KeyFingerprint: piSignals.Fingerprint(),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if got := resolveEffectsLevel(t.Context(), d.Settings); got != fxlevel.Full {
-		t.Fatalf("resolved = %q after moving to a desktop, want full", got)
+	if got := resolveEffectsLevel(t.Context(), d.Settings); got != fxlevel.Light {
+		t.Fatalf("resolved = %q after moving to a linux desktop, want light (WebKitGTK)", got)
 	}
-	if v := fxGet(t, d.Settings, fxlevel.KeyReason); v != "cores=16,ram=32g" {
+	if v := fxGet(t, d.Settings, fxlevel.KeyReason); v != "webkitgtk,cores=16,ram=32g" {
 		t.Errorf("reason not re-detected: %q", v)
+	}
+}
+
+// ADR-0119 §4 shell-engine signal (ut-docs#2992): a till whose stored
+// fingerprint predates the WebKitGTK signal (no |engine= token) re-detects
+// at the next boot on GOOS=linux, moving from a stale "full" to light —
+// but an explicit operator level is never overwritten by that re-detection.
+func TestResolveEffectsLevel_OldFingerprintFormatRedetectsLinuxToLight(t *testing.T) {
+	_, _, d := newFullAuthDeps(t)
+	withFxSignals(t, desktopSignals)
+	preEngineFingerprint := "cores=16|ram=32g|model=-|linux/amd64" // no |engine= suffix
+	if err := d.Settings.SetMany(t.Context(), map[string]string{
+		fxlevel.KeyDetected:    fxlevel.Full,
+		fxlevel.KeyReason:      "cores=16,ram=32g",
+		fxlevel.KeyFingerprint: preEngineFingerprint,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveEffectsLevel(t.Context(), d.Settings); got != fxlevel.Light {
+		t.Fatalf("resolved = %q on a linux till with a pre-2992 fingerprint, want light", got)
+	}
+	if v := fxGet(t, d.Settings, fxlevel.KeyReason); v != "webkitgtk,cores=16,ram=32g" {
+		t.Errorf("stored reason not re-detected with the webkitgtk token: %q", v)
+	}
+	if v := fxGet(t, d.Settings, fxlevel.KeyFingerprint); v != desktopSignals.Fingerprint() {
+		t.Errorf("stored fingerprint not refreshed: %q", v)
+	}
+}
+
+func TestResolveEffectsLevel_OldFingerprintFormatNeverOverwritesExplicitLevel(t *testing.T) {
+	_, _, d := newFullAuthDeps(t)
+	withFxSignals(t, desktopSignals)
+	preEngineFingerprint := "cores=16|ram=32g|model=-|linux/amd64"
+	if err := d.Settings.SetMany(t.Context(), map[string]string{
+		fxlevel.KeyLevel:       fxlevel.Full,
+		fxlevel.KeyDetected:    fxlevel.Full,
+		fxlevel.KeyReason:      "cores=16,ram=32g",
+		fxlevel.KeyFingerprint: preEngineFingerprint,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveEffectsLevel(t.Context(), d.Settings); got != fxlevel.Full {
+		t.Fatalf("resolved = %q, want the operator's explicit full even though detection re-ran", got)
+	}
+	if v := fxGet(t, d.Settings, fxlevel.KeyLevel); v != fxlevel.Full {
+		t.Errorf("explicit level overwritten: %q", v)
+	}
+	if v := fxGet(t, d.Settings, fxlevel.KeyDetected); v != fxlevel.Light {
+		t.Errorf("detection not re-run/stored next to the explicit level: %q", v)
 	}
 }
 
@@ -195,13 +250,14 @@ func TestEffectsLevelHandler(t *testing.T) {
 func TestEffectsLevelViewFrom(t *testing.T) {
 	v := effectsLevelViewFrom(map[string]string{
 		fxlevel.KeyDetected: "light",
-		fxlevel.KeyReason:   "pi,cores=4,ram=8g,bogus",
+		fxlevel.KeyReason:   "pi,webkitgtk,cores=4,ram=8g,bogus",
 	})
 	if v.Level != fxlevel.Auto || v.Detected != fxlevel.Light {
 		t.Fatalf("view = %+v", v)
 	}
 	want := []effectsReasonPart{
 		{Key: "settings.display.effects_reason_pi"},
+		{Key: "settings.display.effects_reason_webkitgtk"},
 		{Key: "settings.display.effects_reason_cores", Arg: 4},
 		{Key: "settings.display.effects_reason_ram", Arg: 8},
 	}
@@ -242,7 +298,7 @@ func TestSettingsPage_EffectsLevelCard(t *testing.T) {
 	if !regexp.MustCompile(`<option value="balanced"\s+selected>`).MatchString(body) {
 		t.Errorf("the stored level (balanced) is not the selected option")
 	}
-	if !strings.Contains(body, "Detected for this till: Light (Raspberry Pi, 4 CPU cores, 8 GB memory)") {
+	if !strings.Contains(body, "Detected for this till: Light (Raspberry Pi, WebKitGTK, 4 CPU cores, 8 GB memory)") {
 		i := strings.Index(body, `data-testid="effects-detected"`)
 		t.Errorf("detection not shown in words; got: %.300s", body[max(i, 0):])
 	}
