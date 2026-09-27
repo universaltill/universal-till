@@ -452,7 +452,18 @@ func (d *Deps) SyncPrimaryURL(ctx context.Context) string {
 // no-op, matching cloudRemovePlugin's historical check). The returned error
 // is the reload's — the menu is still rebuilt from whatever loaded, matching
 // every call site's historical log-and-continue behavior.
+//
+// Also refreshes the status-bar "Plugin updates available" chip
+// (RefreshPendingUpdates, ut-docs#2787): every lifecycle change funnels
+// through here, including ones a background tick would otherwise leave the
+// chip stale about for up to 15 minutes (a manual install/update/uninstall/
+// rollback/import, a cloud-directed install/uninstall, or a store install).
+// Declared as the FIRST defer, before PluginMu's Unlock defer below, so it
+// runs LAST — i.e. after the unlock, never while PluginMu is held — and
+// unconditionally, even when d.Pm == nil (a bare Deps still has a DB/catalog
+// worth refreshing against).
 func (d *Deps) ReloadPlugins(ctx context.Context) error {
+	defer d.RefreshPendingUpdates(ctx)
 	// Every plugin lifecycle change passes here: tell linked tills to
 	// re-read the plugin registry (ADR-0114 §2).
 	defer d.NudgeLink(fleetlink.ScopePlugins)
