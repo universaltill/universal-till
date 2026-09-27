@@ -1,12 +1,13 @@
 // Package fxlevel is the per-till visual effects level (ADR-0119,
 // ut-docs#2859): the setting's values and keys, and the host detection that
 // resolves "auto" from the device's own hardware — CPU cores, total RAM
-// where the platform exposes it, and whether it is a Raspberry Pi.
+// where the platform exposes it, whether it is a Raspberry Pi, and the
+// desktop shell engine (WebKitGTK on GOOS=linux, ut-docs#2992).
 //
 // Detection is local only (a couple of small file reads), never touches the
-// network and never blocks startup. The in-page frame-time probe and the
-// shell-engine signal of ADR-0119 §4 are a follow-up card; until then host
-// detection alone decides, and it never yields Balanced.
+// network and never blocks startup. The in-page frame-time probe of
+// ADR-0119 §4 is a follow-up card; until then host detection alone decides,
+// and it never yields Balanced.
 package fxlevel
 
 import (
@@ -61,13 +62,28 @@ const (
 	lightMaxRAMBytes = uint64(2) << 30
 )
 
+// EngineWebKitGTK is the desktop shell engine on GOOS=linux (ADR-0119 §4,
+// ut-docs#2992): the till's own window is WebKitGTK there, the slowest
+// engine the till runs in, so it is always a Light trigger.
+const EngineWebKitGTK = "webkitgtk"
+
 // Signals are the host facts detection reads. Zero means unknown.
 type Signals struct {
 	Cores    int
 	RAMBytes uint64
 	PiModel  string // device-tree model when this is a Raspberry Pi, else ""
+	Engine   string // shell engine derived on the host; "" = unknown/not a Light trigger
 	GOOS     string
 	GOARCH   string
+}
+
+// shellEngine returns the desktop shell engine for goos, or "" when it is
+// not (yet) a known Light trigger.
+func shellEngine(goos string) string {
+	if goos == "linux" {
+		return EngineWebKitGTK
+	}
+	return ""
 }
 
 // Result is a detected level and its machine-readable reason
@@ -95,6 +111,7 @@ func ReadSignals() Signals {
 		GOOS:    hostGOOS,
 		GOARCH:  hostGOARCH,
 	}
+	s.Engine = shellEngine(s.GOOS)
 	if s.GOOS == "linux" || s.GOOS == "android" {
 		if b, err := os.ReadFile(meminfoPath); err == nil {
 			s.RAMBytes, _ = parseMemTotal(b)
@@ -131,14 +148,18 @@ func ramGiB(b uint64) uint64 {
 	return g
 }
 
-// Detect applies the host rule: Light on a Raspberry Pi, with ≤ 2 cores, or
+// Detect applies the host rule: Light on a Raspberry Pi, on a WebKitGTK
+// shell (every GOOS=linux till, whatever its cores/RAM), with ≤ 2 cores, or
 // with ≤ 2 GiB of known RAM; Full otherwise. Unknown values are never a
 // signal.
 func Detect(s Signals) Result {
-	light := s.PiModel != ""
+	light := s.PiModel != "" || s.Engine == EngineWebKitGTK
 	var reason []string
 	if s.PiModel != "" {
 		reason = append(reason, "pi")
+	}
+	if s.Engine == EngineWebKitGTK {
+		reason = append(reason, "webkitgtk")
 	}
 	if s.Cores > 0 {
 		reason = append(reason, "cores="+strconv.Itoa(s.Cores))
@@ -156,8 +177,10 @@ func Detect(s Signals) Result {
 }
 
 // Fingerprint identifies the hardware a detection was made on: cores, RAM
-// bucket, Pi model and OS/arch. A changed fingerprint at boot re-runs
-// detection (a joined replica, a moved disk, a RAM upgrade).
+// bucket, Pi model, shell engine and OS/arch. A changed fingerprint at boot
+// re-runs detection (a joined replica, a moved disk, a RAM upgrade, or —
+// ut-docs#2992 — a till whose stored detection predates the shell-engine
+// signal).
 func (s Signals) Fingerprint() string {
 	ram := "unknown"
 	if s.RAMBytes > 0 {
@@ -167,7 +190,11 @@ func (s Signals) Fingerprint() string {
 	if model == "" {
 		model = "-"
 	}
-	return "cores=" + strconv.Itoa(s.Cores) + "|ram=" + ram + "|model=" + model + "|" + s.GOOS + "/" + s.GOARCH
+	engine := s.Engine
+	if engine == "" {
+		engine = "-"
+	}
+	return "cores=" + strconv.Itoa(s.Cores) + "|ram=" + ram + "|model=" + model + "|" + s.GOOS + "/" + s.GOARCH + "|engine=" + engine
 }
 
 // ReasonToken is one parsed reason entry: a flag ("pi") or a count
@@ -186,6 +213,8 @@ func ParseReason(reason string) []ReasonToken {
 		switch {
 		case name == "pi" && !hasVal:
 			out = append(out, ReasonToken{Name: "pi"})
+		case name == "webkitgtk" && !hasVal:
+			out = append(out, ReasonToken{Name: "webkitgtk"})
 		case name == "cores" && hasVal:
 			if n, err := strconv.Atoi(val); err == nil && n > 0 {
 				out = append(out, ReasonToken{Name: "cores", Value: n})
