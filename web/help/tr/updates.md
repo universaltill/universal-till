@@ -13,7 +13,7 @@ Kasa yeni sürümleri denetler ve çıktığında haber verir; çoğu platformda
 ## Nasıl kullanılır
 
 1. Ayarlar → Yazılım güncelleme → Şimdi denetle güncel olup olmadığınızı gösterir.
-2. Güncelleme önerildiğinde Şimdi güncelle'ye tıklayın — uygulama yeni sürümle yeniden başlar.
+2. Güncelleme önerildiğinde Şimdi güncelle'ye tıklayın — uygulama yeni sürümle yeniden başlar. Linux bilgisayarda masaüstü uygulaması, bir sistem yükseltmesi (apt) yeni bir sürüm kurduğunda yaklaşık bir dakika içinde kendini de yeniden başlatır; kasanın sayfası penceresinde görünmez olursa, kasa yeniden yanıt verene kadar sayfayı kendiliğinden yeniden yükler.
 3. Durum çubuğundaki güncelleme rozeti de aynısını gösterir. Kasanın güncellemeyi kendisi kuramadığı durumlarda (taşınabilir Windows zip'i veya Intel Mac) bunun yerine indirme sayfasını açar. Uygulama içi güncellemesi olmayan bir kioskta sadece bağlantısız bilgilendirme metni gösterilir.
 
 ## Otomatik güncellemeler

@@ -14,7 +14,7 @@ Die Kasse prüft auf neue Versionen und teilt mit, wenn eine verfügbar ist; auf
 ## Verwendung
 
 1. Einstellungen → Software-Update → Jetzt prüfen zeigt, ob Sie auf dem neuesten Stand sind.
-2. Wird ein Update angeboten, klicken Sie auf „Jetzt aktualisieren“ — die App startet mit der neuen Version neu.
+2. Wird ein Update angeboten, klicken Sie auf „Jetzt aktualisieren“ — die App startet mit der neuen Version neu. Auf einem Linux-Rechner startet sich die Desktop-App außerdem innerhalb etwa einer Minute selbst neu, wenn ein System-Upgrade (apt) eine neue Version installiert, und wird die Seite der Kasse in ihrem Fenster nicht mehr angezeigt, lädt die App sie von selbst neu, bis die Kasse wieder antwortet.
 3. Der Update-Chip in der Statusleiste spiegelt dies wider. Wo die Kasse ein Update nicht selbst installieren kann (ein portables Windows-ZIP oder ein Intel-Mac), führt er stattdessen zur Download-Seite. Auf einem Kiosk ohne App-internes Update ist er einfach reiner Text ohne etwas zum Antippen.
 
 ## Automatische Updates
