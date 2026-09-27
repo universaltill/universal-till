@@ -612,7 +612,9 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 				val = ""
 			}
 		}
+		// settings-write:allow update.auto_enabled is shop-wide but still written locally on an additional till (reported with ut-docs#2979 for a follow-up card)
 		_ = d.Settings.Set(r.Context(), keyAutoUpdateEnabled, val)
+		// settings-write:allow update.auto_time is shop-wide but still written locally on an additional till (reported with ut-docs#2979 for a follow-up card)
 		_ = d.Settings.Set(r.Context(), keyAutoUpdateTime, hhmm)
 		w.WriteHeader(http.StatusNoContent)
 	})

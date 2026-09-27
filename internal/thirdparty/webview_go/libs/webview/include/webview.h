@@ -360,6 +360,13 @@ WEBVIEW_API void webview_return(webview_t w, const char *seq, int status,
  */
 WEBVIEW_API const webview_version_info_t *webview_version(void);
 
+/**
+ * universal-till patch (ut-docs#2761): the HRESULT of this process's last
+ * failed WebView2 initialisation, 0 when there was none or it is unknown.
+ * Always 0 on non-Windows backends.
+ */
+WEBVIEW_API long webview_last_init_error(void);
+
 #ifdef __cplusplus
 }
 
@@ -425,6 +432,12 @@ constexpr const webview_version_info_t library_version_info{
     WEBVIEW_VERSION_NUMBER,
     WEBVIEW_VERSION_PRE_RELEASE,
     WEBVIEW_VERSION_BUILD_METADATA};
+
+// universal-till patch (ut-docs#2761): see webview_last_init_error().
+inline std::atomic<long> &last_init_error() {
+  static std::atomic<long> err{0};
+  return err;
+}
 
 #if defined(_WIN32)
 // Converts a narrow (UTF-8-encoded) string into a wide (UTF-16-encoded) string.
@@ -2867,18 +2880,25 @@ public:
         return S_OK;
       }
     }
+    last_init_error() = static_cast<long>(res);
     try_create_environment();
     return S_OK;
   }
   HRESULT STDMETHODCALLTYPE Invoke(HRESULT res,
                                    ICoreWebView2Controller *controller) {
     if (FAILED(res)) {
+      last_init_error() = static_cast<long>(res);
       // See try_create_environment() regarding
       // HRESULT_FROM_WIN32(ERROR_INVALID_STATE).
       // The result is E_ABORT if the parent window has been destroyed already.
+      // universal-till patch (ut-docs#2761): neither is retryable, so give up
+      // (m_cb(nullptr, nullptr) ends embed()'s wait with a failure) instead of
+      // returning without a callback, which left embed() pumping messages
+      // forever behind an empty window.
       switch (res) {
       case HRESULT_FROM_WIN32(ERROR_INVALID_STATE):
       case E_ABORT:
+        give_up();
         return S_OK;
       }
       try_create_environment();
@@ -2953,16 +2973,42 @@ public:
       if (SUCCEEDED(res)) {
         return;
       }
+      last_init_error() = static_cast<long>(res);
       // Not entirely sure if this error code only applies to
       // CreateCoreWebView2Controller so we check here as well.
+      // universal-till patch (ut-docs#2761): give up rather than return
+      // without a callback (see the controller-completed Invoke above).
       if (res == HRESULT_FROM_WIN32(ERROR_INVALID_STATE)) {
+        give_up();
         return;
       }
       try_create_environment();
       return;
     }
     // Give up.
-    m_cb(nullptr, nullptr);
+    give_up();
+  }
+
+  // universal-till patch (ut-docs#2761): called by ~win32_edge_engine before
+  // it releases this handler. The WebView2 runtime can still hold a
+  // reference and deliver a completion (e.g. E_ABORT after the window was
+  // closed mid-initialisation) after the engine is gone; every callback
+  // into the engine becomes a no-op and no further attempt is started.
+  void detach() noexcept {
+    m_gave_up = true;
+    m_attempts = m_max_attempts;
+    m_cb = [](ICoreWebView2Controller *, ICoreWebView2 *) {};
+    m_msgCb = [](const std::string) {};
+    m_attempt_handler = [] { return E_ABORT; };
+  }
+
+  // universal-till patch (ut-docs#2761): report failure exactly once, however
+  // many failure paths fire (a retry chain can end in more than one).
+  void give_up() noexcept {
+    if (!m_gave_up) {
+      m_gave_up = true;
+      m_cb(nullptr, nullptr);
+    }
   }
 
 private:
@@ -2973,12 +3019,17 @@ private:
   std::function<HRESULT()> m_attempt_handler;
   unsigned int m_max_attempts = 5;
   unsigned int m_attempts = 0;
+  bool m_gave_up = false;
 };
 
 class win32_edge_engine : public engine_base {
 public:
   win32_edge_engine(bool debug, void *window) : m_owns_window{!window} {
+    // universal-till patch (ut-docs#2761): report this attempt's outcome
+    // only, and name the most common failure (no runtime installed).
+    last_init_error() = 0;
     if (!is_webview2_available()) {
+      last_init_error() = static_cast<long>(HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND));
       return;
     }
 
@@ -3187,11 +3238,46 @@ public:
     auto cb =
         std::bind(&win32_edge_engine::on_message, this, std::placeholders::_1);
 
-    embed(m_widget, debug, cb);
+    // universal-till patch (ut-docs#2761): upstream ignored embed()'s result,
+    // so a WebView2 that failed to start (e.g. stale msedgewebview2.exe
+    // processes holding the user data folder after a runtime self-update)
+    // still yielded a window with m_webview == nullptr, and the first
+    // navigate() crashed with 0xc0000005. Drop the window instead so
+    // window() is null and webview_create() returns nullptr, the documented
+    // failure signal the Go binding (and unitill-desktop's browser fallback)
+    // act on. The destructor, run by webview_create's delete, releases the
+    // rest.
+    if (!embed(m_widget, debug, cb)) {
+      if (last_init_error() == 0) {
+        last_init_error() = static_cast<long>(E_FAIL);
+      }
+      discard_window();
+    }
+  }
+
+  // Destroys the top-level window without running its wndproc (whose
+  // WM_DESTROY would post WM_QUIT to this thread), mirroring the
+  // destructor's teardown order. Only used when construction fails.
+  void discard_window() {
+    if (!m_window) {
+      return;
+    }
+    if (m_owns_window) {
+      SetWindowLongPtrW(m_window, GWLP_WNDPROC,
+                        reinterpret_cast<LONG_PTR>(+[](HWND hwnd, UINT msg,
+                                                       WPARAM wp, LPARAM lp)
+                                                       -> LRESULT {
+                          return DefWindowProcW(hwnd, msg, wp, lp);
+                        }));
+      DestroyWindow(m_window);
+      on_window_destroyed(true);
+    }
+    m_window = nullptr;
   }
 
   virtual ~win32_edge_engine() {
     if (m_com_handler) {
+      m_com_handler->detach();
       m_com_handler->Release();
       m_com_handler = nullptr;
     }
@@ -3291,66 +3377,95 @@ public:
     }
   }
 
+  // universal-till patch (ut-docs#2761): defence in depth — never
+  // dereference a browser that failed to initialise.
   void navigate_impl(const std::string &url) override {
+    if (!m_webview) {
+      return;
+    }
     auto wurl = widen_string(url);
     m_webview->Navigate(wurl.c_str());
   }
 
   void init_impl(const std::string &js) override {
+    if (!m_webview) {
+      return;
+    }
     auto wjs = widen_string(js);
     m_webview->AddScriptToExecuteOnDocumentCreated(wjs.c_str(), nullptr);
   }
 
   void eval_impl(const std::string &js) override {
+    if (!m_webview) {
+      return;
+    }
     auto wjs = widen_string(js);
     m_webview->ExecuteScript(wjs.c_str(), nullptr);
   }
 
   void set_html_impl(const std::string &html) override {
+    if (!m_webview) {
+      return;
+    }
     m_webview->NavigateToString(widen_string(html).c_str());
   }
 
 private:
   bool embed(HWND wnd, bool debug, msg_cb_t cb) {
-    std::atomic_flag flag = ATOMIC_FLAG_INIT;
-    flag.test_and_set();
+    // universal-till patch (ut-docs#2761): the completion flag and the user
+    // data folder are members, not embed()'s locals, so a completion
+    // delivered after embed() returned (it breaks out on WM_QUIT) can never
+    // write to a dead stack frame; the destructor detach()es the handler.
+    m_embed_pending = true;
 
-    wchar_t currentExePath[MAX_PATH];
-    GetModuleFileNameW(nullptr, currentExePath, MAX_PATH);
-    wchar_t *currentExeName = PathFindFileNameW(currentExePath);
+    // universal-till patch (ut-docs#2761): honour WEBVIEW2_USER_DATA_FOLDER.
+    // Microsoft's WebView2Loader.dll applies that override, but this
+    // library's built-in loader passes userDataFolder straight through, so
+    // read it here; unitill-desktop sets it to <data dir>\webview2.
+    wchar_t envFolder[MAX_PATH];
+    DWORD envLen = GetEnvironmentVariableW(L"WEBVIEW2_USER_DATA_FOLDER",
+                                           envFolder, MAX_PATH);
+    if (envLen > 0 && envLen < MAX_PATH) {
+      m_user_data_folder = envFolder;
+    } else {
+      wchar_t currentExePath[MAX_PATH];
+      GetModuleFileNameW(nullptr, currentExePath, MAX_PATH);
+      wchar_t *currentExeName = PathFindFileNameW(currentExePath);
 
-    wchar_t dataPath[MAX_PATH];
-    if (!SUCCEEDED(
-            SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, dataPath))) {
-      return false;
+      wchar_t dataPath[MAX_PATH];
+      if (!SUCCEEDED(
+              SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, dataPath))) {
+        return false;
+      }
+      wchar_t userDataFolder[MAX_PATH];
+      PathCombineW(userDataFolder, dataPath, currentExeName);
+      m_user_data_folder = userDataFolder;
     }
-    wchar_t userDataFolder[MAX_PATH];
-    PathCombineW(userDataFolder, dataPath, currentExeName);
 
     m_com_handler = new webview2_com_handler(
         wnd, cb,
-        [&](ICoreWebView2Controller *controller, ICoreWebView2 *webview) {
+        [this](ICoreWebView2Controller *controller, ICoreWebView2 *webview) {
           if (!controller || !webview) {
-            flag.clear();
+            m_embed_pending = false;
             return;
           }
           controller->AddRef();
           webview->AddRef();
           m_controller = controller;
           m_webview = webview;
-          flag.clear();
+          m_embed_pending = false;
         });
 
-    m_com_handler->set_attempt_handler([&] {
+    m_com_handler->set_attempt_handler([this] {
       return m_webview2_loader.create_environment_with_options(
-          nullptr, userDataFolder, nullptr, m_com_handler);
+          nullptr, m_user_data_folder.c_str(), nullptr, m_com_handler);
     });
     m_com_handler->try_create_environment();
 
     // Pump the message loop until WebView2 has finished initialization.
     bool got_quit_msg = false;
     MSG msg;
-    while (flag.test_and_set() && GetMessageW(&msg, nullptr, 0, 0) >= 0) {
+    while (m_embed_pending && GetMessageW(&msg, nullptr, 0, 0) >= 0) {
       if (msg.message == WM_QUIT) {
         got_quit_msg = true;
         break;
@@ -3480,6 +3595,9 @@ private:
   DWORD m_main_thread = GetCurrentThreadId();
   ICoreWebView2 *m_webview = nullptr;
   ICoreWebView2Controller *m_controller = nullptr;
+  // universal-till patch (ut-docs#2761): see embed().
+  bool m_embed_pending = false;
+  std::wstring m_user_data_folder;
   webview2_com_handler *m_com_handler = nullptr;
   mswebview2::loader m_webview2_loader;
   int m_dpi{};
@@ -3587,6 +3705,10 @@ WEBVIEW_API void webview_unbind(webview_t w, const char *name) {
 WEBVIEW_API void webview_return(webview_t w, const char *seq, int status,
                                 const char *result) {
   static_cast<webview::webview *>(w)->resolve(seq, status, result);
+}
+
+WEBVIEW_API long webview_last_init_error(void) {
+  return webview::detail::last_init_error();
 }
 
 WEBVIEW_API const webview_version_info_t *webview_version(void) {

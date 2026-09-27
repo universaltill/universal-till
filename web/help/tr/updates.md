@@ -13,7 +13,7 @@ Kasa yeni sürümleri denetler ve çıktığında haber verir; çoğu platformda
 ## Nasıl kullanılır
 
 1. Ayarlar → Yazılım güncelleme → Şimdi denetle güncel olup olmadığınızı gösterir.
-2. Güncelleme önerildiğinde Şimdi güncelle'ye tıklayın — uygulama yeni sürümle yeniden başlar.
+2. Güncelleme önerildiğinde Şimdi güncelle'ye tıklayın — uygulama yeni sürümle yeniden başlar. Linux bilgisayarda masaüstü uygulaması, bir sistem yükseltmesi (apt) yeni bir sürüm kurduğunda yaklaşık bir dakika içinde kendini de yeniden başlatır; kasanın sayfası penceresinde görünmez olursa, kasa yeniden yanıt verene kadar sayfayı kendiliğinden yeniden yükler.
 3. Durum çubuğundaki güncelleme rozeti de aynısını gösterir. Kasanın güncellemeyi kendisi kuramadığı durumlarda (taşınabilir Windows zip'i veya Intel Mac) bunun yerine indirme sayfasını açar. Uygulama içi güncellemesi olmayan bir kioskta sadece bağlantısız bilgilendirme metni gösterilir.
 
 ## Otomatik güncellemeler
@@ -24,7 +24,7 @@ Kasa, siz kapatmadıkça gece kendini günceller.
 2. Bir satışın ortasında asla yeniden başlamaz. Bir sepette (self servis veya masa siparişi dahil) hâlâ ürün varsa, sepet boşalana kadar bekler. Bu yarım saat içinde olmazsa ya da kasa o sırada kapalıysa, ertesi gece yeniden dener.
 3. Otomatik güncellemeleri durdurmak için Otomatik güncelle işaretini kaldırıp Kaydet'e tıklayın. Kasa bu seçimi korur. Ana kasada bu, ek kasaların onu izlemesini de durdurur; ek kasa bu seçimi her zaman ana kasasından alır.
 4. Ek kasa ana kasayı izler: ana kasa daha yeni bir sürüm çalıştırdığında, ek kasa tam olarak o sürümü açık satışın olmadığı ilk anda kurar. Android ek kasalar ve taşınabilir Windows zip'inden kurulan ek kasalar, kendi başlarına kurabilene kadar bunun yerine bir 'gerekli' notu gösterir.
-5. Windows'ta kasa imzalı kurulum programını indirir ve denetler. Ardından kasa kapanır, güncellemeyi kurar ve kendiliğinden yeniden açılır. Bu yaklaşık bir dakika sürer. Android kasalar güncellemeleri henüz kendi başına kuramaz. Onları yukarıda anlatıldığı gibi elle güncelleyin.
+5. Windows'ta kasa imzalı kurulum programını indirir ve denetler. Ardından kasa kapanır, güncellemeyi kurar ve kendiliğinden yeniden açılır. Bu yaklaşık bir dakika sürer. Android kasalar güncellemeleri henüz kendi başına kuramaz. Onları yukarıda anlatıldığı gibi elle güncelleyin. Windows yükleyicisini kendiniz çalıştırırsanız, Universal Till hâlâ açıksa önce onu kapatır; bu yüzden başlatmadan önce devam eden satışı tamamlayın.
 
 ## Android kasalarda
 

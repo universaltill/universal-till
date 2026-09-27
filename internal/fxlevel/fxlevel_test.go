@@ -32,6 +32,9 @@ func TestDetect(t *testing.T) {
 		{"unknown RAM is never a light signal", Signals{Cores: 8}, Full, "cores=8"},
 		{"unknown RAM with few cores still light on cores", Signals{Cores: 2}, Light, "cores=2"},
 		{"unknown cores (0) is not a signal", Signals{RAMBytes: 8 * gib}, Full, "ram=8g"},
+		{"linux desktop (webkitgtk) is light whatever its cores/RAM", Signals{Cores: 8, RAMBytes: 16 * gib, Engine: EngineWebKitGTK}, Light, "webkitgtk,cores=8,ram=16g"},
+		{"pi with the webkitgtk engine puts the token right after pi", Signals{Cores: 4, RAMBytes: 16 * gib, PiModel: "Raspberry Pi 5 Model B Rev 1.0", Engine: EngineWebKitGTK}, Light, "pi,webkitgtk,cores=4,ram=16g"},
+		{"empty engine is not a signal (unchanged behaviour)", Signals{Cores: 16, RAMBytes: 32 * gib, Engine: ""}, Full, "cores=16,ram=32g"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -50,9 +53,9 @@ func TestDetect(t *testing.T) {
 }
 
 func TestFingerprint(t *testing.T) {
-	a := Signals{Cores: 4, RAMBytes: 8 * gib, PiModel: "Raspberry Pi 5 Model B Rev 1.0", GOOS: "linux", GOARCH: "arm64"}
+	a := Signals{Cores: 4, RAMBytes: 8 * gib, PiModel: "Raspberry Pi 5 Model B Rev 1.0", GOOS: "linux", GOARCH: "arm64", Engine: EngineWebKitGTK}
 	fp := a.Fingerprint()
-	for _, want := range []string{"cores=4", "ram=8g", "Raspberry Pi 5 Model B Rev 1.0", "linux/arm64"} {
+	for _, want := range []string{"cores=4", "ram=8g", "Raspberry Pi 5 Model B Rev 1.0", "linux/arm64", "engine=webkitgtk"} {
 		if !strings.Contains(fp, want) {
 			t.Errorf("fingerprint %q lacks %q", fp, want)
 		}
@@ -68,12 +71,19 @@ func TestFingerprint(t *testing.T) {
 		"model":  func(s *Signals) { s.PiModel = "Raspberry Pi 4 Model B Rev 1.4" },
 		"goos":   func(s *Signals) { s.GOOS = "android" },
 		"goarch": func(s *Signals) { s.GOARCH = "amd64" },
+		"engine": func(s *Signals) { s.Engine = "" },
 	} {
 		b := a
 		mut(&b)
 		if b.Fingerprint() == fp {
 			t.Errorf("changing %s did not change the fingerprint", name)
 		}
+	}
+	// A pre-2992 fingerprint (no |engine= token at all) must differ from
+	// today's, so a stored detection from before this card re-detects.
+	old := "cores=4|ram=8g|model=Raspberry Pi 5 Model B Rev 1.0|linux/arm64"
+	if fp == old {
+		t.Errorf("fingerprint unchanged from the pre-engine format: %q", fp)
 	}
 }
 
@@ -123,6 +133,9 @@ func TestReadSignals(t *testing.T) {
 	if s.Cores != 4 || s.RAMBytes != 2*gib || s.PiModel != "Raspberry Pi 4 Model B" || s.GOOS != "linux" || s.GOARCH != "arm64" {
 		t.Fatalf("ReadSignals = %+v", s)
 	}
+	if s.Engine != EngineWebKitGTK {
+		t.Errorf("ReadSignals on linux: Engine = %q, want %q", s.Engine, EngineWebKitGTK)
+	}
 }
 
 func TestReadSignals_AndroidReadsMeminfo(t *testing.T) {
@@ -143,8 +156,38 @@ func TestReadSignals_OtherOSRAMUnknown(t *testing.T) {
 	}
 }
 
+// ADR-0119 §4 shell-engine signal: a till on GOOS=linux is WebKitGTK and
+// therefore Light, whatever its cores/RAM; every other GOOS keeps Engine
+// unknown and is unaffected.
+func TestReadSignals_LinuxIsWebKitGTKAndForcesLight(t *testing.T) {
+	withSeams(t, 16, "MemTotal: 33554432 kB\n", "", "linux") // fast box, no pi
+	s := ReadSignals()
+	if s.Engine != EngineWebKitGTK {
+		t.Fatalf("linux: Engine = %q, want %q", s.Engine, EngineWebKitGTK)
+	}
+	if got := Detect(s).Level; got != Light {
+		t.Fatalf("fast linux machine resolved = %q, want light (WebKitGTK shell)", got)
+	}
+}
+
+func TestReadSignals_OtherOSEngineUnknownAndUnaffected(t *testing.T) {
+	for _, goos := range []string{"android", "windows", "darwin"} {
+		withSeams(t, 16, "MemTotal: 33554432 kB\n", "", goos) // fast box, no pi
+		s := ReadSignals()
+		if s.Engine != "" {
+			t.Errorf("%s: Engine = %q, want unknown", goos, s.Engine)
+		}
+		if got := Detect(s).Level; got != Full {
+			t.Errorf("%s: fast machine resolved = %q, want full", goos, got)
+		}
+	}
+}
+
+// android (not linux: a linux till is always WebKitGTK/Light regardless of
+// RAM, see TestReadSignals_LinuxIsWebKitGTKAndForcesLight) isolates the
+// unknown-RAM case.
 func TestReadSignals_MissingMeminfoIsUnknown(t *testing.T) {
-	withSeams(t, 8, "", "", "linux")
+	withSeams(t, 8, "", "", "android")
 	s := ReadSignals()
 	if s.RAMBytes != 0 {
 		t.Fatalf("RAM = %d, want unknown", s.RAMBytes)
@@ -176,8 +219,8 @@ func TestValid(t *testing.T) {
 }
 
 func TestReasonTokens(t *testing.T) {
-	got := ParseReason("pi,cores=4,ram=8g")
-	want := []ReasonToken{{Name: "pi"}, {Name: "cores", Value: 4}, {Name: "ram", Value: 8}}
+	got := ParseReason("pi,webkitgtk,cores=4,ram=8g")
+	want := []ReasonToken{{Name: "pi"}, {Name: "webkitgtk"}, {Name: "cores", Value: 4}, {Name: "ram", Value: 8}}
 	if len(got) != len(want) {
 		t.Fatalf("ParseReason = %+v", got)
 	}
@@ -186,8 +229,12 @@ func TestReasonTokens(t *testing.T) {
 			t.Errorf("token %d = %+v, want %+v", i, got[i], want[i])
 		}
 	}
+	// webkitgtk parses standalone too, same shape as pi: a flag, no value.
+	if got := ParseReason("webkitgtk,cores=8,ram=16g"); len(got) != 3 || got[0] != (ReasonToken{Name: "webkitgtk"}) {
+		t.Errorf("ParseReason(webkitgtk,...) = %+v", got)
+	}
 	// Unknown or malformed tokens are dropped, never rendered raw.
-	if got := ParseReason("webkitgtk,cores=x,ram=8,bogus=3,"); len(got) != 0 {
+	if got := ParseReason("cores=x,ram=8,bogus=3,webkitgtk=1,"); len(got) != 0 {
 		t.Errorf("malformed reason parsed to %+v, want nothing", got)
 	}
 }

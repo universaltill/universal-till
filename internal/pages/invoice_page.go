@@ -265,9 +265,19 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 				}, elev)
 			return
 		}
-		_ = d.Settings.Set(r.Context(), keyInvoiceSellerName, sellerName)
-		_ = d.Settings.Set(r.Context(), keyInvoiceSellerAddress, sellerAddress)
-		_ = d.Settings.Set(r.Context(), keyInvoiceSellerVATNo, sellerVATNo)
+		// ut-docs#2979: shop-wide -- one batch through the main till on an
+		// additional till; a refusal writes nothing and is not audited.
+		if err := saveShopSettings(r.Context(), d, elev, map[string]string{
+			keyInvoiceSellerName:    sellerName,
+			keyInvoiceSellerAddress: sellerAddress,
+			keyInvoiceSellerVATNo:   sellerVATNo,
+		}); err != nil {
+			if respondSettingsSyncError(w, r, err) {
+				return
+			}
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "invoice_settings", err)
+			return
+		}
 		settingsAudit(r, posRepo, elev, "settings", "invoice", "invoice_seller_updated", nil)
 		settingsRespondSaved(w, r, elev)
 	})

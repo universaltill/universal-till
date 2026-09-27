@@ -5,10 +5,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"os/exec"
-	"runtime"
-	"time"
 
 	"github.com/universaltill/universal-till/internal/logging"
 
@@ -20,16 +16,43 @@ import (
 // default, overridden by webkit_linux.go's init() on Linux, the only
 // platform whose engine (webview_go's GTK/WebKit2 backend) defaults to an
 // in-memory-only cookie jar. Windows's WebView2 already persists cookies
-// to its own per-app user-data folder out of the box, same as macOS's
-// WKWebView (webkit_darwin.go), so both stay this no-op.
+// to its user data folder, which webview2_windows.go's init() pins to this
+// install's data directory (ut-docs#2761); macOS's WKWebView
+// (webkit_darwin.go) persists out of the box and stays this no-op.
 var setupPersistentCookies = func() error { return nil }
+
+// installWebKitRecovery hooks the shell's own recovery onto the native
+// view's crash/load-failure signals (ut-docs#2991) and returns the stop
+// func that must run on the UI thread before w.Destroy(). A no-op by
+// default; webkit_recovery_linux.go's init() overrides it — the reported
+// dead end (WebKit's built-in "internal error" page) is WebKitGTK's.
+var installWebKitRecovery = func(webview.WebView, string) (stop func()) { return func() {} }
+
+// startSelfReexecWatch re-execs the shell once its own binary on disk was
+// replaced (ut-docs#2991: an apt upgrade leaves the old shell running the
+// deleted image) until ctx ends; childPid > 0 is the spawned till server to
+// stop first. A no-op by default; exe_reexec_linux.go's init() overrides it.
+var startSelfReexecWatch = func(context.Context, int) {}
+
+// newWebView creates the native window — webview.New, a seam so a test can
+// inject a creation failure (ut-docs#2761). webview.New returns nil when the
+// system WebView cannot be created.
+var newWebView = func(debug bool) webview.WebView { return webview.New(debug) }
+
+// webViewRuntimeVersion reports the installed system WebView version for
+// the failure log line, "" when unknown — overridden on Windows
+// (webview2_windows.go) to read the WebView2 runtime's version.
+var webViewRuntimeVersion = func() string { return "" }
 
 // showWindow opens the webview_go window (Windows: Edge WebView2, Linux: GTK
 // WebKit) and blocks until it closes. Run() returns on close, so main's
-// deferred Kill stops the server; childPid is unused here.
+// deferred Kill stops the server. childPid (> 0 in spawn mode) only
+// matters to the Linux self re-exec watch, which must stop that server
+// before exec'ing (ut-docs#2991).
 //
-// When the system WebView is unavailable (typically a Windows box without the
-// WebView2 runtime), webview.New returns nil — fall back to the default
+// When the system WebView is unavailable (a Windows box without the WebView2
+// runtime, or one whose WebView2 fails to start — ut-docs#2761; see
+// browserFallback), webview.New returns nil — fall back to the default
 // browser and keep serving until the server itself exits, which is exactly
 // the pre-shell behaviour. ctl is still very much non-nil here (main starts
 // the control listener before it even knows whether webview.New will
@@ -41,7 +64,6 @@ var setupPersistentCookies = func() error { return nil }
 // failed to bind (newControlServer's error case in desktop.go) — no live
 // channel to wire either way.
 func showWindow(url, title string, childPid int, ctl *controlServer) {
-	_ = childPid
 	// Must run BEFORE the window exists: ut-docs#1093 is a defect in the
 	// compositing surface WebKit creates at window construction, so once
 	// webview.New has returned it is already too late.
@@ -49,20 +71,33 @@ func showWindow(url, title string, childPid int, ctl *controlServer) {
 	if err := setupPersistentCookies(); err != nil {
 		fmt.Fprintln(logging.Stderr(), "unitill: persistent cookie storage setup failed, language/login choices won't survive a restart:", err)
 	}
-	w := webview.New(false)
+	w := newWebView(false)
 	if w == nil {
-		if ctl != nil {
-			ctl.SetOps(&windowOps{
-				ExitToOS:  func() error { return nil },
-				ApplyMode: func(string) error { return nil },
-			})
-			defer ctl.Close()
-		}
-		openBrowser(url)
-		waitForServer(url)
+		// ut-docs#2761: before the vendored webview_go was fixed, this branch
+		// was unreachable — New never returned nil, and a WebView2 that
+		// failed to start left a window with no browser inside, so the
+		// first Navigate crashed (0xc0000005) with nothing in any log.
+		browserFallback(url, ctl, webViewInitFailureReason(webview.LastInitError(), webViewRuntimeVersion()), fallbackOpen, fallbackWait)
 		return
 	}
 	defer w.Destroy()
+
+	// WebKit crash/load-failure recovery (ut-docs#2991), installed before
+	// the first Navigate so even that load is covered. Its stop is deferred
+	// AFTER w.Destroy() above, so LIFO runs it first: the reload scheduler
+	// is closed (no timer can Dispatch any more) and the signals are
+	// disconnected before the view is freed — same ordering reasoning as
+	// ctl.Close below (ut-docs#882 review m1).
+	stopRecovery := installWebKitRecovery(w, url)
+	defer stopRecovery()
+
+	// Self re-exec once an apt upgrade replaced this binary (ut-docs#2991),
+	// only while a window exists — the browser-fallback branch above has
+	// no window to go stale. Cancelled when showWindow returns, so a
+	// closing shell never re-execs on its way out.
+	reexecCtx, cancelReexec := context.WithCancel(context.Background())
+	defer cancelReexec()
+	startSelfReexecWatch(reexecCtx, childPid)
 
 	// Live, no-relaunch channel (ut-docs#882), wired as early as possible —
 	// right after the window exists, before the (network-bound)
@@ -198,35 +233,5 @@ func desktopWindowOps(w webview.WebView, ctl *controlServer) *windowOps {
 			w.Dispatch(func() { applyWindowMode(w, mode) })
 			return nil
 		},
-	}
-}
-
-// openBrowser opens the OS default browser on url, best-effort.
-func openBrowser(url string) {
-	switch runtime.GOOS {
-	case "windows":
-		_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
-	default:
-		_ = exec.Command("xdg-open", url).Start()
-	}
-}
-
-// waitForServer blocks while the till still answers; when it stops (server
-// quit or crashed) the shell exits too instead of lingering invisibly.
-func waitForServer(url string) {
-	client := &http.Client{Timeout: 5 * time.Second}
-	misses := 0
-	for {
-		time.Sleep(15 * time.Second)
-		resp, err := client.Get(url)
-		if err != nil {
-			misses++
-			if misses >= 2 {
-				return
-			}
-			continue
-		}
-		resp.Body.Close()
-		misses = 0
 	}
 }
