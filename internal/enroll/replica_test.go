@@ -115,7 +115,7 @@ func TestInitReplicaWithCopiedIdentityMintsOwnDevice(t *testing.T) {
 	cfg := &config.Config{}                     // no marketplace endpoint: no network at all
 	logging.ResetRecent()
 
-	Init(context.Background(), cfg, kv, &sync.WaitGroup{})
+	initForTest(t, cfg, kv)
 
 	// ut-docs#2798: a successful self-repair is not a problem — it must not
 	// reach the heartbeat's Problems ring (my.'s "Attention needed").
@@ -148,7 +148,7 @@ func TestInitReplicaWithCopiedIdentityMintsOwnDevice(t *testing.T) {
 
 	// Stable across restarts: the repair runs once.
 	resetState()
-	Init(context.Background(), &config.Config{}, kv, &sync.WaitGroup{})
+	initForTest(t, &config.Config{}, kv)
 	if again := kv.get(keyDeviceID); again != got {
 		t.Fatalf("second boot re-minted the device id: %q -> %q", got, again)
 	}
@@ -159,7 +159,7 @@ func TestInitMainTillIdentityUntouched(t *testing.T) {
 	resetState()
 	kv := newFakeKV()
 	seedCopiedReplica(kv, "")
-	Init(context.Background(), &config.Config{}, kv, &sync.WaitGroup{})
+	initForTest(t, &config.Config{}, kv)
 	if kv.get(keyDeviceID) != mainDeviceID || kv.get(keyDeviceRegistered) != mainDeviceID || kv.get(keyDeviceTillID) != "" {
 		t.Fatalf("main till identity changed: id=%q registered=%q till=%q", kv.get(keyDeviceID), kv.get(keyDeviceRegistered), kv.get(keyDeviceTillID))
 	}
@@ -171,7 +171,7 @@ func TestInitReplicaExplicitDeviceIDNotRepaired(t *testing.T) {
 	kv := newFakeKV()
 	seedCopiedReplica(kv, "http://127.0.0.1:1")
 	cfg := &config.Config{Marketplace: config.MarketplaceConfig{DeviceID: mainDeviceID}}
-	Init(context.Background(), cfg, kv, &sync.WaitGroup{})
+	initForTest(t, cfg, kv)
 	if kv.get(keyDeviceID) != mainDeviceID {
 		t.Fatalf("explicit device id replaced: %q", kv.get(keyDeviceID))
 	}
@@ -307,6 +307,7 @@ func TestReplicaVouchLoopStopsOnShutdown(t *testing.T) {
 	seedCopiedReplica(kv, "http://127.0.0.1:1")
 	cfg := &config.Config{Marketplace: config.MarketplaceConfig{EndpointURL: "http://127.0.0.1:1/api"}}
 	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	var wg sync.WaitGroup
 	Init(ctx, cfg, kv, &wg)
 	time.Sleep(30 * time.Millisecond)
@@ -368,7 +369,7 @@ func TestRegisterNowOnReplicaUsesMainTillNotAnonymousStore(t *testing.T) {
 	}
 	cfg := freshConfig(srv.URL)
 	cfg.Marketplace.PublicKey = pinnedKey
-	Init(context.Background(), &config.Config{}, kv, &sync.WaitGroup{}) // identity only, no loop
+	initForTest(t, &config.Config{}, kv) // identity only, no loop
 
 	if _, err := RegisterNow(context.Background(), cfg, kv); err != nil {
 		t.Fatalf("RegisterNow: %v", err)
@@ -403,7 +404,7 @@ func TestVouchForReplicaRegistersDeviceWithoutHandingOverToken(t *testing.T) {
 	cfg := mainTillCfg(cloud.srv.URL)
 	kv := newFakeKV()
 	_ = kv.Set(context.Background(), keyDeviceRegistered, mainDeviceID) // no own-device registration racing the capture
-	Init(context.Background(), cfg, kv, &sync.WaitGroup{})
+	initForTest(t, cfg, kv)
 
 	v, err := VouchForReplica(context.Background(), cfg, ReplicaRequest{TillID: "till-row-2", DeviceID: "till-replica", DeviceName: "Back office", Version: "0.23.0"})
 	if err != nil {
@@ -429,14 +430,14 @@ func TestVouchForReplicaRefusals(t *testing.T) {
 
 	// Not registered yet: nothing to vouch with.
 	unreg := &config.Config{Marketplace: config.MarketplaceConfig{EndpointURL: cloud.URL + "/api"}}
-	Init(context.Background(), unreg, newFakeKV(), &sync.WaitGroup{})
+	initForTest(t, unreg, newFakeKV())
 	if _, err := VouchForReplica(context.Background(), unreg, ReplicaRequest{TillID: "t2", DeviceID: "till-x"}); !errors.Is(err, ErrNotRegistered) {
 		t.Fatalf("unregistered main till: err = %v, want ErrNotRegistered", err)
 	}
 
 	resetState()
 	cfg := mainTillCfg(cloud.URL)
-	Init(context.Background(), cfg, newFakeKV(), &sync.WaitGroup{})
+	initForTest(t, cfg, newFakeKV())
 	for _, req := range []ReplicaRequest{
 		{TillID: "t2", DeviceID: mainDeviceID}, // a replica may not claim the main till's device
 		{TillID: "t2", DeviceID: ""},

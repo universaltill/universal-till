@@ -68,7 +68,7 @@ func initEnrolledTill(t *testing.T, cfg *config.Config) *countingKV {
 	} {
 		_ = kv.fakeKV.Set(context.Background(), k, v)
 	}
-	Init(context.Background(), cfg, kv, &sync.WaitGroup{})
+	initForTest(t, cfg, kv)
 	t.Cleanup(resetState)
 	return kv
 }
@@ -129,7 +129,7 @@ func TestRotatedCredential_OwnDeviceIsPersistedAndUsedWithoutRestart(t *testing.
 	// A restart loads it from marketplace.token like any stored token.
 	cfg2 := freshConfig("http://cloud.invalid")
 	resetState()
-	Init(context.Background(), cfg2, kv, &sync.WaitGroup{})
+	initForTest(t, cfg2, kv)
 	if got := Effective(cfg2).Marketplace.MerchantToken; got != rotNew {
 		t.Fatalf("after restart effective token = %q, want the rotated credential", got)
 	}
