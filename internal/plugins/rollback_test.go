@@ -758,3 +758,199 @@ func TestRollback_RefusedValidationDoesNotLeaveOrphanedLiveDir(t *testing.T) {
 		t.Fatalf("live target dir must not exist after a refused rollback, stat err = %v", err)
 	}
 }
+
+// ut-docs#3032: Rollback used to snapshot the version it's leaving (via
+// StoreVersion, which runs cleanupOldVersions) BEFORE ever opening the
+// rollback target's manifest. cleanupOldVersions keeps only maxVersions=3
+// snapshots, oldest by mtime evicted — so if the rollback TARGET happened to
+// be the oldest snapshot on disk, that pre-target StoreVersion call evicted
+// it out from under the rollback that was about to read it, and Rollback
+// failed with "failed to open manifest: .../versions/1.0.0/manifest.json: no
+// such file or directory" despite the target existing when Rollback was
+// called. The snapshot-the-version-we're-leaving step must happen only after
+// tx.Commit() succeeds, and cleanupOldVersions must never evict the rollback
+// target regardless of ordering.
+func TestRollback_ToOldestSnapshotKeepsTarget(t *testing.T) {
+	db := managerTestDB(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	rm := NewRollbackManager(db, base)
+	pluginID := "com.test.oldest"
+
+	// Three existing snapshots, 1.0.0 strictly the oldest by mtime — the
+	// rollback target.
+	now := time.Now()
+	for i, v := range []string{"1.0.0", "1.1.0", "1.2.0"} {
+		dir := writeVersionDir(t, base, pluginID, v, true)
+		mtime := now.Add(time.Duration(i-10) * time.Hour)
+		if err := os.Chtimes(dir, mtime, mtime); err != nil {
+			t.Fatalf("chtimes %s: %v", v, err)
+		}
+	}
+
+	// Live, active install at 2.0.0 — never itself snapshotted yet, so
+	// rolling back triggers a "snapshot the version we're leaving" write.
+	liveDir := filepath.Join(base, pluginID, "2.0.0")
+	if err := os.MkdirAll(liveDir, 0o755); err != nil {
+		t.Fatalf("mkdir live dir: %v", err)
+	}
+	manifest := `{"id":"` + pluginID + `","name":"OLD","version":"2.0.0","entrypoint":"./run","runtime":"none","canonical_type":"page","device_arch":"any","entries":[]}`
+	if err := os.WriteFile(filepath.Join(liveDir, "manifest.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("write live manifest: %v", err)
+	}
+	seedInstalledPlugin(t, db, pluginID, "OLD", "2.0.0", "none", true)
+	seedCatalogRow(t, db, pluginID, "OLD", "1.0.0", "")
+
+	if err := rm.Rollback(ctx, pluginID, "1.0.0", "tester"); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(base, pluginID, "versions", "1.0.0", "manifest.json")); err != nil {
+		t.Fatalf("rollback target snapshot must survive its own rollback: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(base, pluginID, "versions", "2.0.0")); err != nil {
+		t.Fatalf("roll-forward snapshot of the version just left must exist: %v", err)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(base, pluginID, "versions"))
+	if err != nil {
+		t.Fatalf("readdir versions: %v", err)
+	}
+	var real int
+	for _, e := range entries {
+		if e.IsDir() && !isTempVersionDirName(e.Name()) {
+			real++
+		}
+	}
+	if real > 3 {
+		t.Fatalf("real snapshot count = %d, want <= 3 (maxVersions): %v", real, entries)
+	}
+}
+
+// ut-docs#3032: a rollback refused by a validator must leave the versions/
+// directory exactly as it found it — no snapshot of the version being left,
+// nothing evicted. The pre-fix code ran StoreVersion (and its
+// cleanupOldVersions side effect) before any validation, so a refused
+// rollback still mutated versions/ on disk.
+func TestRollback_RefusedDoesNotTouchVersionsDir(t *testing.T) {
+	db := managerTestDB(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	rm := NewRollbackManager(db, base)
+	pluginID := "com.test.refusedversions"
+
+	seedInstalledPlugin(t, db, pluginID, "RV", "2.0.0", "none", true)
+
+	// Live install for the current, active version — present, but never
+	// itself snapshotted yet (so a pre-validation StoreVersion call would
+	// write a new versions/2.0.0 entry).
+	liveDir := filepath.Join(base, pluginID, "2.0.0")
+	if err := os.MkdirAll(liveDir, 0o755); err != nil {
+		t.Fatalf("mkdir live dir: %v", err)
+	}
+	liveManifest := `{"id":"` + pluginID + `","name":"RV","version":"2.0.0","entrypoint":"./run","runtime":"none","canonical_type":"page","device_arch":"any","entries":[]}`
+	if err := os.WriteFile(filepath.Join(liveDir, "manifest.json"), []byte(liveManifest), 0o644); err != nil {
+		t.Fatalf("write live manifest: %v", err)
+	}
+
+	// Three existing snapshots already at maxVersions, distinct mtimes —
+	// the rollback target (1.0.0, newest of the three) has a broken
+	// manifest, so validation refuses before parsing succeeds.
+	now := time.Now()
+	for i, v := range []string{"0.8.0", "0.9.0", "1.0.0"} {
+		dir := writeVersionDir(t, base, pluginID, v, false)
+		mtime := now.Add(time.Duration(i-10) * time.Hour)
+		if err := os.Chtimes(dir, mtime, mtime); err != nil {
+			t.Fatalf("chtimes %s: %v", v, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(base, pluginID, "versions", "1.0.0", "manifest.json"), []byte("{not valid json"), 0o644); err != nil {
+		t.Fatalf("write broken manifest: %v", err)
+	}
+
+	before, err := os.ReadDir(filepath.Join(base, pluginID, "versions"))
+	if err != nil {
+		t.Fatalf("readdir versions before: %v", err)
+	}
+	beforeNames := map[string]bool{}
+	for _, e := range before {
+		beforeNames[e.Name()] = true
+	}
+
+	err = rm.Rollback(ctx, pluginID, "1.0.0", "tester")
+	if err == nil || !strings.Contains(err.Error(), "manifest") {
+		t.Fatalf("Rollback(broken manifest) = %v, want a manifest error", err)
+	}
+
+	after, err := os.ReadDir(filepath.Join(base, pluginID, "versions"))
+	if err != nil {
+		t.Fatalf("readdir versions after: %v", err)
+	}
+	afterNames := map[string]bool{}
+	for _, e := range after {
+		afterNames[e.Name()] = true
+	}
+	if len(beforeNames) != len(afterNames) {
+		t.Fatalf("versions/ entry count changed after a refused rollback: before=%v after=%v", beforeNames, afterNames)
+	}
+	for name := range beforeNames {
+		if !afterNames[name] {
+			t.Fatalf("versions/%s was removed by a refused rollback: before=%v after=%v", name, beforeNames, afterNames)
+		}
+	}
+	for name := range afterNames {
+		if !beforeNames[name] {
+			t.Fatalf("versions/%s was added by a refused rollback: before=%v after=%v", name, beforeNames, afterNames)
+		}
+	}
+}
+
+// ut-docs#3032: cleanupOldVersions' keep set must protect a snapshot from
+// eviction regardless of its age — Rollback relies on this to pass the
+// rollback target as a must-keep name for its post-commit "snapshot the
+// version we're leaving" cleanup pass.
+func TestCleanupOldVersions_KeepProtectsFromEviction(t *testing.T) {
+	db := managerTestDB(t)
+	base := t.TempDir()
+	rm := NewRollbackManager(db, base)
+	pluginID := "com.test.keepcleanup"
+
+	now := time.Now()
+	versions := []string{"1.0.0", "1.1.0", "1.2.0", "1.3.0"} // oldest first
+	for i, v := range versions {
+		dir := writeVersionDir(t, base, pluginID, v, false)
+		mtime := now.Add(time.Duration(i-10) * time.Hour)
+		if err := os.Chtimes(dir, mtime, mtime); err != nil {
+			t.Fatalf("chtimes %s: %v", v, err)
+		}
+	}
+
+	// Keep the oldest (1.0.0) — without a keep set it would normally be the
+	// first evicted. With 4 real snapshots and maxVersions=3, one deletion
+	// is needed; since 1.0.0 is protected, the next-oldest (1.1.0) is the
+	// one removed instead.
+	if err := rm.cleanupOldVersions(pluginID, "1.0.0"); err != nil {
+		t.Fatalf("cleanupOldVersions: %v", err)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(base, pluginID, "versions"))
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	names := map[string]bool{}
+	for _, e := range entries {
+		names[e.Name()] = true
+	}
+	if !names["1.0.0"] {
+		t.Fatalf("kept version 1.0.0 was evicted: %v", names)
+	}
+	if names["1.1.0"] {
+		t.Fatalf("second-oldest version 1.1.0 should have been evicted in place of the kept oldest: %v", names)
+	}
+	if !names["1.2.0"] || !names["1.3.0"] {
+		t.Fatalf("newer versions missing: %v", names)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("kept %d versions, want 3: %v", len(entries), names)
+	}
+}
