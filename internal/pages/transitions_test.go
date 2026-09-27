@@ -714,6 +714,16 @@ func TestAppCSSHasNoPersistentPanelEase(t *testing.T) {
 	if !strings.Contains(bal, "--ut-zoom-small-ms: 200ms") {
 		t.Errorf("html.fx-balanced must cut --ut-zoom-small-ms to 200ms (ADR-0122 §1), got: %s", bal)
 	}
+	// ut-docs#2987 / ADR-0123: the close shrink alone gets a longer, slower
+	// duration than the open (400ms Full / 240ms Balanced) so it is visible
+	// before opacity fades -- a separate token from --ut-zoom-small-ms,
+	// which stays exactly as it was for the open.
+	if !strings.Contains(css, "--ut-zoom-close-ms: 400ms") {
+		t.Errorf("app.css must define --ut-zoom-close-ms: 400ms on :root (ADR-0123)")
+	}
+	if !strings.Contains(bal, "--ut-zoom-close-ms: 240ms") {
+		t.Errorf("html.fx-balanced must set --ut-zoom-close-ms to 240ms (ADR-0123), got: %s", bal)
+	}
 }
 
 func TestAppJSZoomsTheTreePaneTransiently(t *testing.T) {

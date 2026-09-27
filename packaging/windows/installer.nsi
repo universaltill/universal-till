@@ -105,6 +105,8 @@ Section "Uninstall"
   Delete "$INSTDIR\LICENSE"
   Delete "$INSTDIR\pos.env.example"
   Delete "$INSTDIR\run-unitill.bat"
+  ; The in-app updater's restart marker (internal/selfupdate, ut-docs#160).
+  Delete "$INSTDIR\.unitill-update-pending"
   RMDir /r "$INSTDIR\web"
 
   Delete "$DESKTOP\${APPNAME}.lnk"

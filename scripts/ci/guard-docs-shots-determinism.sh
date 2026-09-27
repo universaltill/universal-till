@@ -96,11 +96,37 @@ while IFS= read -r -d '' f; do
 done < <(find "$RUN_B" -type f -print0)
 
 if [ "$fail" -ne 0 ]; then
+  # ut-docs#2929: say WHERE each differing PNG differs (pixel count and
+  # bounding box, via scripts/ci/pngdiff) right in the log, and keep both
+  # runs' copies of each byte-differing file in $DOCS_SHOTS_DIFF_DIR (the workflow uploads it as an artifact)
+  # — WORK is removed on exit, so this is the last chance to keep them.
+  pngdiff_bin="$WORK/pngdiff"
+  if ! go build -o "$pngdiff_bin" ./scripts/ci/pngdiff >&2; then
+    echo "guard-docs-shots-determinism: pngdiff unavailable (go build failed) — no per-pixel detail below" >&2
+    pngdiff_bin=""
+  fi
   {
     echo "guard-docs-shots-determinism: FAIL — docs-shots is not deterministic."
     echo "Two consecutive runs on an identical tree (no source change)"
     echo "produced different output for ${#mismatches[@]} file(s):"
-    for m in "${mismatches[@]}"; do echo "  - $m"; done
+    for m in "${mismatches[@]}"; do
+      echo "  - $m"
+      rel="${m%%: *}"
+      case "$m" in
+        *": differs between run A and run B")
+          if [ -n "${DOCS_SHOTS_DIFF_DIR:-}" ]; then
+            # Best effort: a copy failure must not cut the report short.
+            { mkdir -p "$DOCS_SHOTS_DIFF_DIR/run-a/$(dirname "$rel")" "$DOCS_SHOTS_DIFF_DIR/run-b/$(dirname "$rel")" &&
+              cp "$RUN_A/$rel" "$DOCS_SHOTS_DIFF_DIR/run-a/$rel" &&
+              cp "$RUN_B/$rel" "$DOCS_SHOTS_DIFF_DIR/run-b/$rel"; } ||
+              echo "    (could not copy to $DOCS_SHOTS_DIFF_DIR)"
+          fi
+          if [ -n "$pngdiff_bin" ] && [ "${rel##*.}" = "png" ]; then
+            "$pngdiff_bin" "$RUN_A/$rel" "$RUN_B/$rel" || true
+          fi
+          ;;
+      esac
+    done
     echo
     echo "This is the ut-docs#2184 property: byte-identical output across"
     echo "repeated runs. Look for a rendering-nondeterminism source (GPU"

@@ -15,7 +15,7 @@ The till checks for new versions and tells you when one is available; on most pl
 
 1. Settings → Software update → Check now shows whether you are up to date.
 2. When an update is offered, click Update now — the app restarts on the new version.
-3. The status bar's update chip mirrors this: on Windows and macOS it links straight to the download page; on installs where in-app update isn't available (for example a kiosk), it's just plain text with nothing to tap.
+3. The status bar's update chip mirrors this. Where the till can't install an update itself — a portable Windows zip, or an Intel Mac — it links to the download page instead. On a kiosk without in-app update it's just plain text with nothing to tap.
 
 ## Automatic updates
 
@@ -24,8 +24,8 @@ The till updates itself overnight unless you switch it off.
 1. Settings → Software update → Update automatically is on from the start, at 03:00. Each till picks its own moment in the 30 minutes after that time, so several tills don't all restart at once.
 2. It never restarts in the middle of a sale. If a basket (including a self-order or table order) still has items, it waits until the basket is empty. If that doesn't happen within half an hour, or the till was switched off at the time, it tries again the next night.
 3. To stop automatic updates, untick Update automatically and click Save. The till keeps that choice. On the main till, this also stops its additional tills from following it; an additional till always takes this choice from its main till.
-4. An additional till follows the main till: when the main till runs a newer version, the additional till installs exactly that version at the next moment with no open sale. Windows and Android additional tills show a 'needed' note instead, until they can install by themselves.
-5. Windows and Android tills can't install updates by themselves yet. Update them by hand as described above.
+4. An additional till follows the main till: when the main till runs a newer version, the additional till installs exactly that version at the next moment with no open sale. Android additional tills, and Windows ones installed from the portable zip, show a 'needed' note instead, until they can install by themselves.
+5. On Windows the till downloads the signed installer and checks it. Then the till closes, installs the update and opens again by itself, which takes about a minute. Android tills can't install updates by themselves yet. Update them by hand as described above.
 
 ## On an Android till
 
