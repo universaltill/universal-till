@@ -60,6 +60,10 @@ the Windows till only showed a download link or "Update to vX needed".
 - **Not verified:** a real Windows run (AC 6). No Windows host is reachable from a cloud lane, so the PowerShell helper, the Authenticode script and the process flags are unexecuted. Follow-up card (blocked:env, lane:local): update the Windows VM 0.x → next, manually and via auto-update, and confirm it comes back paired.
 - No UI surface changed: the status-bar flow (Downloading… → Restarting… → poll `/api/update/status`) is unchanged, so there are no screenshots.
 
+## CI follow-up
+
+The first push was red on `desktop-shell` → `guard-deadcode-baseline.sh`. That analysis runs whole-program on Linux, and `checkAuthenticodeResult` was only called from `authenticode_windows.go`. Fixed without growing the baseline: the platform-neutral `verifyAuthenticode` (in `wininstaller.go`) calls it, and only `queryAuthenticode` is per-OS.
+
 ## Verdict
 
 Safe to merge. The behaviour change is limited to Windows installer installs, and every failure before the helper starts keeps the running version. The device run is the remaining gate before the Windows update can be called proven.

@@ -4,5 +4,5 @@ package selfupdate
 
 import "context"
 
-// verifyAuthenticode only runs on Windows; Apply never routes here elsewhere.
-func verifyAuthenticode(_ context.Context, _, _ string) error { return errNotWindows }
+// queryAuthenticode only runs on Windows; Apply never routes here elsewhere.
+func queryAuthenticode(_ context.Context, _ string) ([]byte, error) { return nil, errNotWindows }

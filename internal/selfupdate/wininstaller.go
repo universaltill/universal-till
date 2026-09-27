@@ -40,8 +40,8 @@ const windowsPublisher = "TASK RUNNER TECHNOLOGY LTD"
 const windowsUninstaller = "uninstall.exe"
 
 var (
-	// verifyAuthenticodeFn checks the installer's signature
-	// (authenticode_windows.go; an error everywhere else).
+	// verifyAuthenticodeFn checks the installer's signature (the query is
+	// in authenticode_windows.go; an error everywhere else).
 	verifyAuthenticodeFn = verifyAuthenticode
 	// startWindowsHelperFn starts the detached helper
 	// (winhelper_windows.go; an error everywhere else).
@@ -218,6 +218,16 @@ type authenticodeResult struct {
 	Status  string `json:"status"`
 	Signer  string `json:"signer"`  // the certificate's simple name (CN)
 	Subject string `json:"subject"` // the full distinguished name
+}
+
+// verifyAuthenticode accepts path only when Windows reports a valid
+// signature from publisher (queryAuthenticode is the per-OS part).
+func verifyAuthenticode(ctx context.Context, path, publisher string) error {
+	out, err := queryAuthenticode(ctx, path)
+	if err != nil {
+		return err
+	}
+	return checkAuthenticodeResult(out, publisher)
 }
 
 // checkAuthenticodeResult accepts only a Valid signature whose signer (the

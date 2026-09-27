@@ -23,10 +23,9 @@ if ($s.SignerCertificate) {
 }
 [pscustomobject]@{ status = $s.Status.ToString(); signer = $signer; subject = $subject } | ConvertTo-Json -Compress`
 
-// verifyAuthenticode asks Windows (WinVerifyTrust, through
-// Get-AuthenticodeSignature) whether path carries a valid signature from
-// publisher.
-func verifyAuthenticode(ctx context.Context, path, publisher string) error {
+// queryAuthenticode asks Windows (WinVerifyTrust, through
+// Get-AuthenticodeSignature) for path's signature status and signer.
+func queryAuthenticode(ctx context.Context, path string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, powershellExe(), "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", authenticodeScript)
@@ -34,7 +33,7 @@ func verifyAuthenticode(ctx context.Context, path, publisher string) error {
 	configureHidden(cmd)
 	out, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("Get-AuthenticodeSignature: %w: %s", err, strings.TrimSpace(string(out)))
+		return nil, fmt.Errorf("Get-AuthenticodeSignature: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	return checkAuthenticodeResult(out, publisher)
+	return out, nil
 }
