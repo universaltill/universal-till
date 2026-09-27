@@ -584,7 +584,7 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 ### In progress / partially built
 - [ ] **ERP integration plugins** — the webhook connector (above) is a working *template*; real per-system connectors (`core-universaltill`/Universal Core, SAP, Dynamics/LS Central) aren't built yet (ADR-0014)
 - [ ] **Payment orchestration / least-cost routing** — target markets decided (UK, UAE, Qatar, +), but which providers to route between and build-vs-buy for the multi-acquirer connections are still open (ADR-0016)
-- [ ] **iOS app** — Android is real and shipped; iOS is untouched (ADR-0023)
+- [ ] **iOS app** — the iPhone/iPad shell builds and starts the till on simulators in CI (`ios/`, [ut-docs#3046](https://github.com/universaltill/ut-docs/issues/3046)); signing/TestFlight and a real-device check are still to do (ADR-0023)
 - [ ] **Delivery-platform integrations** (Deliveroo, Uber Eats, Just Eat) — the plugin taxonomy already has a `delivery` type and kitchen ticket printing already understands an order-type/table concept, but no actual provider plugin exists yet
 - [ ] Advanced inventory management
 - [ ] Multi-location support
@@ -604,7 +604,7 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 ### Long-term
 - [ ] Employee scheduling, customer loyalty programs
 - [x] Kitchen display system — HDMI-local slice ([ut-docs#544](https://github.com/universaltill/ut-docs/issues/544)): a kitchen station can be a printer, a display, or both; a display-capable station gets a live per-station order screen at `/kitchen-display/{station_id}` (the `/orders` board scoped by the same item-over-category routing that decides tickets, same one-tap status endpoint, same 15s poll + SSE refresh) meant for a second monitor on the machine already running the till. Still to come: the LAN-paired standalone KDS device (its own pairing/auth/liveness), the cross-till proxy so a replica's screen reads the primary's board, and per-line status (today status is per order, so a split order shows on both screens and clears from both)
-- [ ] iOS app, further mobile platform work
+- [ ] Further mobile platform work (iOS signing/TestFlight, device checks and Android-parity bridges — [ut-docs#3046](https://github.com/universaltill/ut-docs/issues/3046))
 - [ ] Advanced analytics and BI
 - [ ] Hardware manufacturer partnerships, white-label licensing
 

@@ -1,0 +1,87 @@
+name: ios-ci
+# ut-docs#3068: builds the iOS/iPadOS till shell (ios/) against the
+# gomobile-bound Go server (mobile/) and proves the server actually starts
+# inside the app on an iPhone and an iPad simulator. Same shape as
+# android-ci.yml: always triggered (path-filtered triggers skipped real
+# pushes there, ut-docs#1658), with the expensive steps gated on an in-job
+# `git diff`, so a PR that touches neither ios/** nor mobile/** pays only
+# for a checkout.
+#
+# Unsigned and simulator-only: no Apple credentials exist in CI yet.
+# Signing and TestFlight are ut-docs#3069. universal-till is public, so
+# the macOS runner minutes are free.
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  simulator:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch diff base
+        # `|| true`: a new branch or a force-pushed `before` has nothing to
+        # fetch — handled as "can't prove it's unrelated" below.
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+          echo "BASE=$BASE" >> "$GITHUB_ENV"
+          git fetch --depth=1 origin "$BASE" || true
+      - name: Determine whether this change touches the iOS app
+        id: filter
+        run: |
+          set -euo pipefail
+          if git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            changed="$(git diff --name-only "$BASE" "${{ github.sha }}")"
+          else
+            changed="ios/unknown-cannot-diff"
+          fi
+          echo "$changed"
+          if printf '%s\n' "$changed" | grep -qE '^(ios|mobile)/|^\.github/workflows/ios-ci\.yml$|^scripts/ci/ios-'; then
+            echo "match=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "match=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-go@v5
+        if: steps.filter.outputs.match == 'true'
+        with:
+          go-version-file: go.mod
+      - name: Install gomobile/gobind and XcodeGen
+        if: steps.filter.outputs.match == 'true'
+        run: |
+          set -euo pipefail
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          brew install xcodegen
+      - name: Bind the Go till server (gomobile bind -target=ios,iossimulator)
+        if: steps.filter.outputs.match == 'true'
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          gomobile bind -target=ios,iossimulator -o ios/build/Mobile.xcframework ./mobile
+      - name: Build the app for the simulator (unsigned)
+        if: steps.filter.outputs.match == 'true'
+        run: |
+          set -euo pipefail
+          cd ios
+          xcodegen generate
+          xcodebuild -project UniversalTill.xcodeproj -scheme UniversalTill \
+            -configuration Debug -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build/dd CODE_SIGNING_ALLOWED=NO build
+      - name: Launch smoke on iPhone and iPad simulators
+        if: steps.filter.outputs.match == 'true'
+        run: bash scripts/ci/ios-sim-smoke.sh ios/build/dd/Build/Products/Debug-iphonesimulator/UniversalTill.app ios/build/shots
+      - name: Upload simulator screenshots
+        if: always() && steps.filter.outputs.match == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-simulator-screenshots
+          path: ios/build/shots
+          if-no-files-found: ignore
