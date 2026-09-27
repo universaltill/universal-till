@@ -1360,6 +1360,30 @@ document.addEventListener('click', function(e){
     // The swapped-in markup (the new item) still replaces the old one first.
     if (m && !m.open) m.showModal();
   });
+  // ut-docs#3000: a modifier/variant product tile (buttons.html
+  // product-tile / product-tile-result: sale grid, category popup, search
+  // results) GETs its picker into #modifier-modal; open it only when that
+  // swap really landed there (ut-docs#2525: a stale tile's answer is
+  // retargeted onto #basket). This used to be an identical
+  // hx-on::after-request on every such tile -- one delegated listener keeps
+  // the grid markup small. Scoped to those tiles exactly (their own
+  // hx-target), so the variant-scan retarget above and app.js's own
+  // htmx.ajax picker path keep their own openers. It listens for the SWAP,
+  // not the request: afterSwap fires on the target (#modifier-modal, always
+  // in the document), whereas afterRequest fires on the issuing tile and
+  // never reaches body when that tile was swapped out mid-request (a grid
+  // refetch, a late search refresh) -- measured in
+  // e2e/tests/tap-feedback-3000.spec.ts (review of #3000). The issuer is
+  // htmx's requestConfig.elt.
+  document.body.addEventListener('htmx:afterSwap', function (ev) {
+    var d = ev.detail;
+    if (!d || !d.target || d.target.id !== 'modifier-modal') return;
+    if (d.xhr && d.xhr.status >= 400) return;
+    var src = (d.requestConfig && d.requestConfig.elt) || d.elt;
+    if (!src || !src.matches || !src.matches('.btn-tile[hx-target="#modifier-modal"]')) return;
+    var m = document.getElementById('modifier-modal');
+    if (m && !m.open) m.showModal();
+  });
   // Self-heal: the first successful request clears a stale alert, so an
   // intermittent-connectivity till doesn't wear a permanent red banner
   // (offline-first: transient failure must not leave persistent chrome).
@@ -2771,9 +2795,10 @@ window.utTabBarFade = function (el) {
   // filtering and bails in one line the moment any condition doesn't
   // hold.
   function maybePromptAtSaleStart() {
-    // The sell screen ships a PLACEHOLDER basket (index.html: <div
-    // class="basket" hx-get="/ui/basket" hx-trigger="load">) that only
-    // becomes #basket, with its data-lines-count/data-order-type-chosen
+    // The sell screen renders #basket inline (ut-docs#3000), but falls back
+    // to a PLACEHOLDER basket (index.html: <div class="basket"
+    // hx-get="/ui/basket" hx-trigger="load">) when that render fails, which
+    // only becomes #basket, with its data-lines-count/data-order-type-chosen
     // bridge, once that load swap lands. Until then there is nothing to
     // read -- basketEmpty() would answer "empty" for a basket that hasn't
     // arrived, and a prompt opened on that guess stays open even when the
@@ -2865,7 +2890,7 @@ window.utTabBarFade = function (el) {
       // htmx.values(elt, 'get') is deliberately NOT passed here, so
       // nothing gets double-appended onto the query string. Re-run the
       // exact GET the tile itself would have issued, then open the
-      // picker exactly the way its own hx-on::after-request does.
+      // picker exactly the way the tile's delegated afterRequest opener does.
       showOrderTypePromptModal(function () {
         // ut-docs#2525: a stale tile's GET is retargeted onto #basket, which
         // leaves the (closed) picker holding the PREVIOUS item's markup --
@@ -2874,7 +2899,7 @@ window.utTabBarFade = function (el) {
         if (prev && !prev.open) prev.innerHTML = '';
         htmx.ajax('get', path, { target: '#modifier-modal', swap: 'innerHTML' }).then(function () {
           // htmx 1.9 resolves this promise even when a 4xx swapped nothing
-          // -- don't open an empty picker on it (the tile's own after-request
+          // -- don't open an empty picker on it (the tile's delegated opener
           // has the same edge; this path just closes it for free).
           var m = document.getElementById('modifier-modal');
           if (m && !m.open && m.innerHTML.trim()) m.showModal();

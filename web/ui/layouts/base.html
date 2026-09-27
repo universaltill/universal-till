@@ -1019,6 +1019,87 @@
           var d = e.detail || {};
           if (d.boosted && shellNav(d.elt)) d.headers['UT-Shell-Nav'] = '1';
         });
+        // ut-docs#3000: instant tap feedback on navigation. Measured on the
+        // Android tablet, a rail tap showed nothing for 200-650 ms: the page
+        // motion (ADR-0122) only starts once the fetched page is swapped in.
+        // (1) Capture-phase pointerdown marks the pressed navigation target
+        // `.ut-pressed` synchronously; it clears on release (next frame, so
+        // the click has already dispatched), cancel, a move past the slop
+        // (a scroll never flashes pressed) or a 1 s backstop. (2) A boosted
+        // shell navigation marks its link `.ut-nav-pending` the moment the
+        // request starts, until the new page (and its fresh rail) replaces
+        // it, or the request ends without one. Colour-only styles (app.css),
+        // so both stay under Light effects and reduced motion (ADR-0119).
+        // Capture listeners that only toggle a class: nothing here stops,
+        // delays or re-targets the press the ADR-0122 listeners above see.
+        var PRESS_SLOP = 10, pressEl = null, pressX = 0, pressY = 0, pressTimer = 0;
+        function pressTarget(t) {
+          var el = t && t.closest ? t.closest('a[href], .nav-toggle') : null;
+          if (!el) return null;
+          if (el.classList.contains('nav-toggle')) return el;
+          // A link htmx would boost as a page navigation: same origin, not a
+          // fragment, no target/download, inside a boosted region, and not a
+          // product tile or anything inside a dialog.
+          var href = el.getAttribute('href') || '';
+          if (!href || href.charAt(0) === '#' || el.hasAttribute('target') || el.hasAttribute('download')) return null;
+          if (el.closest('#buttons-grid, dialog')) return null;
+          var owner = el.closest('[hx-boost]');
+          if (!owner || owner.getAttribute('hx-boost') !== 'true') return null;
+          try { if (new URL(href, location.href).origin !== location.origin) return null; } catch (err) { return null; }
+          return el;
+        }
+        function clearPress() {
+          if (pressTimer) { clearTimeout(pressTimer); pressTimer = 0; }
+          if (pressEl) { pressEl.classList.remove('ut-pressed'); pressEl = null; }
+        }
+        window.addEventListener('pointerdown', function (e) {
+          try {
+            // A second finger landing elsewhere never cancels the first
+            // finger's feedback (review of #3000).
+            if (e.isPrimary === false) return;
+            clearPress();
+            if (e.button !== 0 && e.pointerType === 'mouse') return;
+            var el = pressTarget(e.target);
+            if (!el) return;
+            pressEl = el; pressX = e.clientX; pressY = e.clientY;
+            el.classList.add('ut-pressed');
+            pressTimer = setTimeout(clearPress, 1000);
+          } catch (err) { /* feedback only */ }
+        }, true);
+        window.addEventListener('pointermove', function (e) {
+          if (!pressEl) return;
+          if (Math.abs(e.clientX - pressX) > PRESS_SLOP || Math.abs(e.clientY - pressY) > PRESS_SLOP) clearPress();
+        }, true);
+        window.addEventListener('pointerup', function () {
+          if (!pressEl) return;
+          var el = pressEl;
+          (window.requestAnimationFrame || setTimeout)(function () { if (pressEl === el) clearPress(); });
+        }, true);
+        window.addEventListener('pointercancel', clearPress, true);
+        document.addEventListener('htmx:beforeRequest', function (e) {
+          // A listener that cancelled the request means htmx fires no
+          // afterRequest, so never mark it pending (review of #3000).
+          if (e.defaultPrevented) return;
+          var d = e.detail || {};
+          if (!d.boosted || !shellNav(d.elt) || !d.elt.classList) return;
+          // One pending item on the rail: a second tap before the first page
+          // arrived moves the marker (htmx replaces the first request).
+          if (d.elt.closest('.nav')) {
+            Array.prototype.forEach.call(document.querySelectorAll('.nav .ut-nav-pending'), function (n) {
+              if (n !== d.elt) n.classList.remove('ut-nav-pending');
+            });
+          }
+          d.elt.classList.add('ut-nav-pending');
+        });
+        // A successful navigation swaps the whole rail out (the link goes with
+        // it -- under a View Transition that swap lands AFTER afterRequest,
+        // so the marker stays into the old-page snapshot); a failed, aborted
+        // or refused one must not leave the marker behind.
+        document.addEventListener('htmx:afterRequest', function (e) {
+          var d = e.detail || {};
+          if (d.successful || !d.elt || !d.elt.classList) return;
+          d.elt.classList.remove('ut-nav-pending');
+        });
         document.addEventListener('htmx:beforeSwap', function (e) {
           var d = e.detail || {};
           var rc = d.requestConfig || {};
@@ -1043,6 +1124,11 @@
             // ended up. (A base.html error page -- RenderError's 403/404/500
             // -- carries the signature and swaps in place below, rail intact.)
             d.shouldSwap = false;
+            // A non-page answer (a download) leaves this page in place, so
+            // the tapped link's pending marker must go (review of #3000).
+            if (ct.indexOf('text/html') !== 0) {
+              Array.prototype.forEach.call(document.querySelectorAll('.ut-nav-pending'), function (n) { n.classList.remove('ut-nav-pending'); });
+            }
             document.documentElement.setAttribute('data-shell-fallback', theirs ? 'signature' : 'no-shell');
             UT.noteNav('shell-fallback:' + (theirs ? 'signature' : 'no-shell'));
             window.location.assign(url);

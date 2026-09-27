@@ -622,6 +622,12 @@ html.ut-scrim-on .nav .session-lock { position: relative; z-index: 1; pointer-ev
   font-weight: 600; cursor: pointer; text-align: center;
 }
 .nav-toggle:hover, .nav-toggle:active { background: rgba(255,255,255,.22); }
+/* ut-docs#3000: instant tap feedback (base.html's shell script). .ut-pressed
+   is set synchronously on pointerdown -- a touch :active can lag or never
+   show on a quick tap -- and .ut-nav-pending holds the tapped item while its
+   boosted page loads. Colour only, no transform/animation, so it is the
+   same under Light effects and reduced motion (ADR-0119). */
+.nav-toggle.ut-pressed, .nav-toggle.ut-nav-pending { background: rgba(255,255,255,.22); }
 /* 2026-09-02 (ut-docs#1423, seen on the tablet next to the icon-size
    report): the two rail items that are <button>s (bug-report toggle, Lock)
    rendered ~48px wide against ~60px for the <a> tiles — a <button>
@@ -759,6 +765,7 @@ body.menu-screen .session-admin-link { display: none; }
   transition: transform .06s ease, border-color .15s ease;
 }
 .menu-tile:hover, .menu-tile:active { border-color: var(--brand); transform: translateY(-2px); }
+.menu-tile.ut-pressed, .menu-tile.ut-nav-pending { border-color: var(--brand); }
 .menu-ico { font-size: 2.9rem; line-height: 1; }
 /* ut-docs#1720/#1845: every tile icon is a drawn glyph now (menu_page.go's
    iconSVGFor), never an emoji. Sized in absolute units rather than in em,
