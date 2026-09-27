@@ -261,8 +261,11 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 
 	// Bind the configured port, or the next free one if it's already taken (a
 	// second till on the same machine, or another app on :8080) so a busy port
-	// never blocks startup. cfg.ListenAddr is updated to what we actually bound
-	// so the browser-open below points at the right place.
+	// never blocks startup. The address actually bound stays local: cfg is
+	// shared with background goroutines pages.Init already started (the cloud
+	// link copies *cfg via enroll.Effective), so writing it back here was a
+	// data race on every boot (ut-docs#2990). The log line, the browser-open
+	// and plugins.SetTillListenAddr below all take actualAddr instead.
 	ln, actualAddr, err := bindListener(cfg.ListenAddr, cfg.Demo)
 	if err != nil {
 		return err
@@ -270,7 +273,6 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 	if movedOffConfiguredAddr(cfg.ListenAddr, actualAddr) {
 		log.Printf("port %s was busy — listening on %s instead", cfg.ListenAddr, actualAddr)
 	}
-	cfg.ListenAddr = actualAddr
 	// A fallback bind may have moved the port; plugin egress must refuse
 	// the one really serving (ut-docs#2891).
 	plugins.SetTillListenAddr(actualAddr)
@@ -306,13 +308,13 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 		}
 	}()
 
-	log.Printf("listening on %s", cfg.ListenAddr)
+	log.Printf("listening on %s", actualAddr)
 
 	// Convenience: open the setup/sale page in the operator's browser once the
 	// server accepts connections. Skipped on kiosk tills (they launch their own
 	// browser) and when UT_OPEN_BROWSER is set falsy.
 	if openBrowserFor(cfg.Demo) {
-		go openSetupPage(cfg.ListenAddr)
+		go openSetupPage(actualAddr)
 	}
 
 	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
