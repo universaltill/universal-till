@@ -729,8 +729,7 @@ func syncPushTick(ctx context.Context, d *common.Deps, client *http.Client) {
 		return
 	}
 	_ = d.Settings.Set(ctx, "sync.push_cursor", maxCreated)
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := recordMainContact(ctx, d, time.Now())
 	_ = d.Settings.Set(ctx, "sync.last_push_at", now)
-	_ = d.Settings.Set(ctx, "sync.last_contact_at", now)
 	logging.L().Infof("sync push: %d sale(s) journaled to the primary", len(batch))
 }
