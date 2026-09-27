@@ -1351,6 +1351,11 @@ func TestSyncPullTick_VersionMismatchOnUpgradePreservesPriorGoodVersion(t *testi
 	if state, ok := installStatusState(t, replica.dp, "listing-alpha"); !ok || state != string(plugins.InstallStateActive) {
 		t.Fatalf("expected install status Active (the plugin is genuinely still active, just at the old version), got (%q, %v)", state, ok)
 	}
+	// ut-docs#3035 gap 3: the mismatched version it rolled away from is
+	// deleted, so it must not also take a rollback snapshot slot.
+	if _, err := os.Stat(filepath.Join(replica.dataDir, "plugins", "com.test.sync-alpha", "versions", "9.9.9")); !os.IsNotExist(err) {
+		t.Fatalf("the mismatched 9.9.9 was snapshotted into versions/ (err=%v)", err)
+	}
 
 	// Regression coverage for the sibling fresh-install case (#479): still
 	// covered by TestSyncPullTick_VersionMismatchFromMarketplaceFailsConvergence

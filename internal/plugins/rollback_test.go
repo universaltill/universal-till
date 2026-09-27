@@ -954,3 +954,176 @@ func TestCleanupOldVersions_KeepProtectsFromEviction(t *testing.T) {
 		t.Fatalf("kept %d versions, want 3: %v", len(entries), names)
 	}
 }
+
+// ut-docs#3035 gap 2: after a rollback to the oldest snapshot, that snapshot
+// keeps its old mtime and is the ACTIVE version. The next StoreVersion from
+// any caller (update, sync) must never evict it, whatever its age.
+func TestStoreVersion_NeverEvictsActiveVersionSnapshot(t *testing.T) {
+	db := managerTestDB(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	rm := NewRollbackManager(db, base)
+	pluginID := "com.test.active"
+
+	now := time.Now()
+	for i, v := range []string{"1.0.0", "1.1.0", "1.2.0"} {
+		dir := writeVersionDir(t, base, pluginID, v, true)
+		mtime := now.Add(time.Duration(i-10) * time.Hour)
+		if err := os.Chtimes(dir, mtime, mtime); err != nil {
+			t.Fatalf("chtimes %s: %v", v, err)
+		}
+	}
+	// Active at the oldest snapshot, as a rollback to it leaves things.
+	seedInstalledPlugin(t, db, pluginID, "ACT", "1.0.0", "none", true)
+
+	if err := rm.StoreVersion(pluginID, "1.3.0", ""); err != nil {
+		t.Fatalf("StoreVersion: %v", err)
+	}
+	if !rm.HasVersion(pluginID, "1.0.0") {
+		t.Fatalf("the active version's snapshot was evicted by StoreVersion")
+	}
+	if _, err := os.Stat(filepath.Join(base, pluginID, "versions", "1.1.0")); !os.IsNotExist(err) {
+		t.Fatalf("oldest non-active snapshot 1.1.0 should have been evicted instead: %v", err)
+	}
+	history, err := rm.GetVersionHistory(ctx, pluginID)
+	if err != nil {
+		t.Fatalf("GetVersionHistory: %v", err)
+	}
+	if len(history) != 3 {
+		t.Fatalf("history len = %d, want 3 (maxVersions): %+v", len(history), history)
+	}
+}
+
+// ut-docs#3035 gap 2, fail-safe half: if the active version can't be read
+// from the DB, eviction must not guess — it keeps every snapshot rather than
+// risk deleting the active one.
+func TestStoreVersion_DBErrorSkipsEviction(t *testing.T) {
+	db := managerTestDB(t)
+	base := t.TempDir()
+	rm := NewRollbackManager(db, base)
+	pluginID := "com.test.dberr"
+
+	now := time.Now()
+	for i, v := range []string{"1.0.0", "1.1.0", "1.2.0"} {
+		dir := writeVersionDir(t, base, pluginID, v, true)
+		mtime := now.Add(time.Duration(i-10) * time.Hour)
+		if err := os.Chtimes(dir, mtime, mtime); err != nil {
+			t.Fatalf("chtimes %s: %v", v, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+	if err := rm.StoreVersion(pluginID, "1.3.0", ""); err != nil {
+		t.Fatalf("StoreVersion: %v", err)
+	}
+	for _, v := range []string{"1.0.0", "1.1.0", "1.2.0", "1.3.0"} {
+		if _, err := os.Stat(filepath.Join(base, pluginID, "versions", v)); err != nil {
+			t.Fatalf("snapshot %s evicted although the active version was unknown: %v", v, err)
+		}
+	}
+}
+
+// ut-docs#3035 gap 1: a StoreVersion for the same plugin (update or sync
+// path) that lands between Rollback's target stat and its manifest open
+// must not evict the target. The hook fires three newer StoreVersion calls
+// at exactly that point; they must wait for Rollback to finish.
+func TestRollback_ConcurrentStoreVersionCannotEvictTarget(t *testing.T) {
+	db := managerTestDB(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	rm := NewRollbackManager(db, base)
+	pluginID := "com.test.race"
+
+	now := time.Now()
+	for i, v := range []string{"1.0.0", "1.1.0", "1.2.0"} {
+		dir := writeVersionDir(t, base, pluginID, v, true)
+		mtime := now.Add(time.Duration(i-10) * time.Hour)
+		if err := os.Chtimes(dir, mtime, mtime); err != nil {
+			t.Fatalf("chtimes %s: %v", v, err)
+		}
+	}
+	seedInstalledPlugin(t, db, pluginID, "RACE", "2.0.0", "none", true)
+	seedCatalogRow(t, db, pluginID, "RACE", "1.0.0", "")
+
+	storesDone := make(chan error, 1)
+	storesStarting := make(chan struct{})
+	rollbackAfterTargetStat = func() {
+		go func() {
+			close(storesStarting)
+			var firstErr error
+			for _, v := range []string{"3.0.0", "3.1.0", "3.2.0"} {
+				if err := rm.StoreVersion(pluginID, v, ""); err != nil && firstErr == nil {
+					firstErr = err
+				}
+			}
+			storesDone <- firstErr
+		}()
+		// Wait until the stores are really under way, then give them every
+		// chance to run before Rollback continues; with a per-plugin lock
+		// they block until it returns.
+		<-storesStarting
+		select {
+		case <-storesDone:
+			storesDone <- nil
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	t.Cleanup(func() { rollbackAfterTargetStat = nil })
+
+	if err := rm.Rollback(ctx, pluginID, "1.0.0", "tester"); err != nil {
+		t.Fatalf("Rollback raced with StoreVersion: %v", err)
+	}
+	if err := <-storesDone; err != nil {
+		t.Fatalf("concurrent StoreVersion: %v", err)
+	}
+	active, _, err := data.NewPluginRepo(db).GetActivePluginVersion(ctx, pluginID)
+	if err != nil || active != "1.0.0" {
+		t.Fatalf("active = %q, %v; want 1.0.0", active, err)
+	}
+	if !rm.HasVersion(pluginID, "1.0.0") {
+		t.Fatalf("active rollback target evicted by the concurrent StoreVersion calls")
+	}
+}
+
+// ut-docs#3035 gap 3: the cloudsync auto-rollback after a version mismatch
+// leaves a version it is about to delete; snapshotting it would spend one of
+// the maxVersions slots on a known-bad version (and evict a good one).
+func TestRollbackDiscardingCurrent_DoesNotSnapshotTheVersionLeft(t *testing.T) {
+	db := managerTestDB(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	rm := NewRollbackManager(db, base)
+	pluginID := "com.test.discard"
+
+	now := time.Now()
+	for i, v := range []string{"1.0.0", "1.1.0", "1.2.0"} {
+		dir := writeVersionDir(t, base, pluginID, v, true)
+		mtime := now.Add(time.Duration(i-10) * time.Hour)
+		if err := os.Chtimes(dir, mtime, mtime); err != nil {
+			t.Fatalf("chtimes %s: %v", v, err)
+		}
+	}
+	liveDir := filepath.Join(base, pluginID, "9.9.9")
+	if err := os.MkdirAll(liveDir, 0o755); err != nil {
+		t.Fatalf("mkdir live dir: %v", err)
+	}
+	manifest := `{"id":"` + pluginID + `","name":"BAD","version":"9.9.9","entrypoint":"./run","runtime":"none","canonical_type":"page","device_arch":"any","entries":[]}`
+	if err := os.WriteFile(filepath.Join(liveDir, "manifest.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatalf("write live manifest: %v", err)
+	}
+	seedInstalledPlugin(t, db, pluginID, "BAD", "9.9.9", "none", true)
+	seedCatalogRow(t, db, pluginID, "BAD", "1.2.0", "")
+
+	if err := rm.RollbackDiscardingCurrent(ctx, pluginID, "1.2.0", "system"); err != nil {
+		t.Fatalf("RollbackDiscardingCurrent: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(base, pluginID, "versions", "9.9.9")); !os.IsNotExist(err) {
+		t.Fatalf("the discarded version was snapshotted: %v", err)
+	}
+	for _, v := range []string{"1.0.0", "1.1.0", "1.2.0"} {
+		if !rm.HasVersion(pluginID, v) {
+			t.Fatalf("good snapshot %s was evicted", v)
+		}
+	}
+}
