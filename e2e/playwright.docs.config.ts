@@ -111,6 +111,19 @@ export default defineConfig({
           //   --force-color-profile=srgb: pins color management so the
           //     result can't depend on a monitor/profile-store difference
           //     between the two headless processes' environments.
+          //   --default-tile-width/--default-tile-height=1024 (ut-docs#2929):
+          //     one raster tile per layer covers the whole 1024x600
+          //     viewport, so no shape inside the frame can straddle a tile
+          //     edge (effective only on the software raster path the flags
+          //     above already force). With the default 256px tiles
+          //     the rail's Orders button (y 233-281) and Help button
+          //     (y 468-516) are exactly the two rail items that cross the
+          //     y=256 / y=512 boundaries, and they were the only pixels that
+          //     flipped between runs on the CI runner (25 px, anti-aliased
+          //     arcs, ~70% of run pairs; never reproduced locally). Every
+          //     other rail button sits wholly inside one tile and never
+          //     differed. Pinned: 10/10 dispatch runs byte-identical, vs
+          //     main failing on the same runners at the same time.
           // Scoped to THIS config only — never merged into
           // playwright.config.ts's launchOptions, so the real e2e suite (and
           // any interactive/manual Chromium run) keeps normal GPU-accelerated
@@ -124,6 +137,8 @@ export default defineConfig({
             '--disable-skia-runtime-opts',
             '--run-all-compositor-stages-before-draw',
             '--force-color-profile=srgb',
+            '--default-tile-width=1024',
+            '--default-tile-height=1024',
           ],
           // Set by scripts/docs-shots.sh only when resolve-chromium.sh found
           // a pre-installed browser worth reusing (ut-docs#622) — unset (and

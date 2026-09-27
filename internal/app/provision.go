@@ -22,7 +22,6 @@ import (
 	"context"
 	"database/sql"
 	"flag"
-	"fmt"
 	"os"
 	"time"
 
@@ -30,6 +29,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -191,9 +191,9 @@ func ProvisionDesktopKioskDefaults(ctx context.Context, args []string) error {
 		return err
 	}
 	if did {
-		fmt.Println("desktop-kiosk-overlay defaults provisioned: window_mode=kiosk, launch_on_startup=true (recorded in the audit trail)")
+		logging.L().Infof("desktop-kiosk-overlay defaults provisioned: window_mode=kiosk, launch_on_startup=true (recorded in the audit trail)")
 	} else {
-		fmt.Println("desktop-kiosk-overlay defaults already provisioned — nothing to do")
+		logging.L().Infof("desktop-kiosk-overlay defaults already provisioned — nothing to do")
 	}
 	return nil
 }

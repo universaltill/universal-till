@@ -125,7 +125,7 @@ func followDecision(in followInputs) (act bool, why string) {
 
 // followCanInstall is what the chip says about a newer target: true when
 // this till will install it by itself (now, or once the sale is done),
-// false when someone has to — Windows/Android/unwritable, switched off, or
+// false when someone has to — Android/portable Windows zip/unwritable, switched off, or
 // this target's attempt failed or didn't take.
 func followCanInstall(in followInputs) bool {
 	if !in.Supported || in.AutoEnabled == "false" || !in.ChecksOn {

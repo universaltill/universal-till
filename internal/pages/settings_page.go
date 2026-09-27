@@ -2555,6 +2555,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// is the one that actually matters for the real UI.
 			extra[common.KeyCurrencyConfirmed] = "true"
 		}
+		countryChanged := false
 		if v := strings.TrimSpace(r.Form.Get("country")); v != "" {
 			// ut-docs#1750: the second writer of store.country. A reviewer
 			// reproduced a manager-only bypass through THIS handler after
@@ -2562,17 +2563,17 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			if !requireFiscalAuthorityForCountryChange(w, r, d, v) {
 				return
 			}
-			// ut-docs#2948: the main till's write-through refuses
-			// store.country (ut-docs#2980), as the upsert handler does -- refuse it here,
-			// before the reset below touches this till's own fiscal state.
-			if follows {
-				respondSettingsSyncError(w, r, &errSettingsSync{Status: http.StatusBadRequest, Code: "not_supported_via_sync"})
-				return
+			// ut-docs#2980: on an additional till the country travels to
+			// the main till with the save below, and the main till resets
+			// ITS posture and decides the owner check with its own roles;
+			// this till's fiscal state changes only through its next pull.
+			if !follows {
+				if err := clearFiscalStateForCountryChange(r.Context(), d, actorIDFor(r), v); err != nil {
+					common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings", err) // page-error:allow /api/ route
+					return
+				}
 			}
-			if err := clearFiscalStateForCountryChange(r.Context(), d, actorIDFor(r), v); err != nil {
-				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings", err) // page-error:allow /api/ route
-				return
-			}
+			countryChanged = countryChanging(d, v)
 			st.Country = v
 			auditPayload["country"] = v
 			// ut-docs#1027: re-derive locale from the new country when the
@@ -2673,6 +2674,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		d.SetState(st)
+		// ut-docs#2980: on an additional till the main till queues them
+		// (setup.pending_base_plugins is shop-wide and reaches this till
+		// with the next pull).
+		if countryChanged && !follows {
+			// ut-docs#1068: the new country's base plugins, as the wizard queues them.
+			queueBasePluginsForCountryChange(r.Context(), d, st.Country)
+		}
 		httpx.InitCurrency(st.Currency)
 		// Live-apply, no restart (ut-docs#861) — st.Locale is always the
 		// current-or-just-changed value (CurrentState() seeds it when the
@@ -2856,21 +2864,23 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// ADR-0083 the posture rows are per country, so this is
 		// shop-configuration hygiene plus an owner check on changing a
 		// live shop's tax jurisdiction, no longer a shared-key guard.
+		countryChanged := false
 		if key == common.KeyCountry {
 			if !requireFiscalAuthorityForCountryChange(w, r, d, value) {
 				return
 			}
-			// ut-docs#2791: the main till's write-through endpoint refuses
-			// store.country (its fiscal-authority check and posture reset
-			// are ut-docs#2980) -- refuse it here, before the reset below
-			// touches this till's own fiscal state.
-			if tillFollowsMain(r.Context(), d) {
-				respondSettingsSyncError(w, r, &errSettingsSync{Status: http.StatusBadRequest, Code: "not_supported_via_sync"})
-				return
-			}
-			if err := clearFiscalStateForCountryChange(r.Context(), d, actorIDFor(r), value); err != nil {
-				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings", err) // page-error:allow /api/ route
-				return
+			// ut-docs#1068: decided before the write -- a rederive reloading
+			// state from the DB afterwards would hide the change.
+			countryChanged = countryChanging(d, value)
+			// ut-docs#2980: on an additional till the country goes through
+			// the main till (saveShopSettings below), which resets ITS
+			// posture and decides the owner check with its own roles; this
+			// till's fiscal state changes only through its next pull.
+			if !tillFollowsMain(r.Context(), d) {
+				if err := clearFiscalStateForCountryChange(r.Context(), d, actorIDFor(r), value); err != nil {
+					common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings", err) // page-error:allow /api/ route
+					return
+				}
 			}
 		}
 		// Read the prior value first so the fiscal-toggle audit below can
@@ -3068,6 +3078,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// derivedLocale above didn't fire) — same reasoning as the
 			// KeyLocale case just above.
 			httpx.SetDefaultLocale(st.Locale)
+			// ut-docs#2980: on an additional till the main till queues them.
+			if countryChanged && !tillFollowsMain(r.Context(), d) {
+				// ut-docs#1068: the new country's base plugins, as the wizard queues them.
+				queueBasePluginsForCountryChange(r.Context(), d, value)
+			}
 			newCfg := pos.Config{
 				TaxInclusive:                 st.TaxInclusive,
 				TaxRateBasisPoints:           st.TaxRatePct * 100,

@@ -410,14 +410,19 @@ html[data-nav-dir="pop"]::view-transition-new(root) { animation-name: ut-page-re
    rule here: a persistent transform on a pane would make it the containing
    block of its position:fixed dialogs (#2338's hazard, which
    TestAppCSSNamesOnlyTheFixedRailAndStatusbar still guards). Panes and
-   popups use the shorter small-zoom duration (ADR-0122 §1). */
-:root { --ut-zoom-small-ms: 300ms; }
+   popups use the shorter small-zoom duration (ADR-0122 §1). The
+   CLOSE alone uses --ut-zoom-close-ms, not this one (ADR-0123, #2987): the
+   open and close eased on the same fast duration left the popup 2/3 shrunk
+   and 2/3 transparent after 60ms, so the shrink needed a longer duration of
+   its own -- the open is unchanged. */
+:root { --ut-zoom-small-ms: 300ms; --ut-zoom-close-ms: 400ms; }
 
 /* ADR-0122 §5 (ut-docs#2944): every popup (<dialog>, sheet, picker) grows
    from the tapped element and shrinks back into it -- base.html's ONE
    shared popup motion, a transient Web Animations transform, never a CSS
    rule here. After the native close (the page already takes input) the
-   SAME element is painted again for at most --ut-zoom-small-ms with
+   SAME element is painted again for at most --ut-zoom-close-ms (ADR-0123,
+   #2987 -- its own, slower duration/ease than the open) with
    data-ut-closing, inert and aria-hidden while it shrinks: fixed at the box
    it last had open (the custom properties base.html sets), in its open
    display type, no pointer events, above the rail (100) and the on-screen
@@ -533,7 +538,7 @@ html.fx-light .jiggle-mode .tile-cell > .btn-tile.dragging { transform: none; }
    jiggle (the one decorative looping animation). `filter` itself is left
    alone: core uses it only for the hidden-tile grayscale and hover
    brightness, neither of them a blur. */
-html.fx-balanced { --ut-motion-ms: 200ms; --ut-zoom-small-ms: 200ms; --shadow: 0 1px 2px rgba(15, 23, 42, .08); }
+html.fx-balanced { --ut-motion-ms: 200ms; --ut-zoom-small-ms: 200ms; --ut-zoom-close-ms: 240ms; --shadow: 0 1px 2px rgba(15, 23, 42, .08); }
 html.fx-balanced *, html.fx-balanced *::before, html.fx-balanced *::after {
   -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
 }
@@ -622,6 +627,12 @@ html.ut-scrim-on .nav .session-lock { position: relative; z-index: 1; pointer-ev
   font-weight: 600; cursor: pointer; text-align: center;
 }
 .nav-toggle:hover, .nav-toggle:active { background: rgba(255,255,255,.22); }
+/* ut-docs#3000: instant tap feedback (base.html's shell script). .ut-pressed
+   is set synchronously on pointerdown -- a touch :active can lag or never
+   show on a quick tap -- and .ut-nav-pending holds the tapped item while its
+   boosted page loads. Colour only, no transform/animation, so it is the
+   same under Light effects and reduced motion (ADR-0119). */
+.nav-toggle.ut-pressed, .nav-toggle.ut-nav-pending { background: rgba(255,255,255,.22); }
 /* 2026-09-02 (ut-docs#1423, seen on the tablet next to the icon-size
    report): the two rail items that are <button>s (bug-report toggle, Lock)
    rendered ~48px wide against ~60px for the <a> tiles — a <button>
@@ -759,6 +770,7 @@ body.menu-screen .session-admin-link { display: none; }
   transition: transform .06s ease, border-color .15s ease;
 }
 .menu-tile:hover, .menu-tile:active { border-color: var(--brand); transform: translateY(-2px); }
+.menu-tile.ut-pressed, .menu-tile.ut-nav-pending { border-color: var(--brand); }
 .menu-ico { font-size: 2.9rem; line-height: 1; }
 /* ut-docs#1720/#1845: every tile icon is a drawn glyph now (menu_page.go's
    iconSVGFor), never an emoji. Sized in absolute units rather than in em,

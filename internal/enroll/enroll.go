@@ -320,7 +320,7 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 	// (replicaLoop, ut-docs#2730); only a main/standalone till registers its
 	// own device under the store here.
 	needDevice := !replica && !clientIDExplicit && m.StoreID != "" && m.MerchantToken != "" && get(keyDeviceRegistered) != id.DeviceID
-	deviceName := get("sync.till_name")
+	deviceName := DeviceName(ctx, kv)
 	if replica && !clientIDExplicit {
 		wg.Add(1)
 		go func() {
@@ -472,9 +472,10 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 	}
 
 	fields := map[string]string{
-		"store_name": storeName,
-		"device_id":  deviceID,
-		"version":    buildinfo.Version,
+		"store_name":  storeName,
+		"device_id":   deviceID,
+		"device_name": DeviceName(ctx, kv),
+		"version":     buildinfo.Version,
 	}
 	if region != "" {
 		fields["region"] = region

@@ -2,12 +2,23 @@ package plugins
 
 import "sync/atomic"
 
+// CanonicalTypeLanguage is the "language" canonical type (ADR-0002's plugin
+// taxonomy) — the one type StartPluginUpdateScheduler's tick auto-applies
+// without asking (ut-docs#1953) and common.Deps.RefreshPendingUpdates
+// (ut-docs#2787) excludes from its main-till count for the same reason, so
+// both packages key off one shared constant instead of two string literals
+// that could drift.
+const CanonicalTypeLanguage = "language"
+
 // PendingUpdateStatus is the last-known count of installed-plugin updates
-// still waiting on a merchant decision — i.e. every update
-// StartPluginUpdateScheduler's last tick found MINUS any it auto-applied
-// itself (a language pack is content, not code, and auto-applies silently;
-// see ut-docs#1953). Mirrors internal/updates.Status's atomic-value pattern
-// so the till can show a status-bar chip without a per-request DB query.
+// still waiting on a merchant decision — i.e. every update the last
+// StartPluginUpdateScheduler tick or common.Deps.RefreshPendingUpdates call
+// found MINUS any the scheduler auto-applied itself (a language pack is
+// content, not code, and auto-applies silently; see ut-docs#1953).
+// RefreshPendingUpdates (ut-docs#2787) republishes this right after every
+// plugin lifecycle change, so it's usually fresher than the scheduler's own
+// tick. Mirrors internal/updates.Status's atomic-value pattern so the till
+// can show a status-bar chip without a per-request DB query.
 type PendingUpdateStatus struct {
 	Count int
 	// LanguagePending is true when at least one pending update (Count > 0)
@@ -38,14 +49,16 @@ func CurrentPendingUpdates() PendingUpdateStatus {
 	return PendingUpdateStatus{}
 }
 
-// PublishPendingUpdates records the outcome of one scheduler tick. Exported
-// so internal/pages' StartPluginUpdateScheduler (which owns the DB/catalog
-// access needed to actually run the check) can publish the result here for
-// the status-chip template funcs to read. A joined till publishes its
-// MainTillURL alongside the count (ut-docs#2783; this replaced
-// SetPendingUpdates(count, languagePending)). A negative count is clamped to
-// zero, and LanguagePending is forced false when nothing is pending, so the
-// fields can never disagree about there being anything pending at all.
+// PublishPendingUpdates records the outcome of one scheduler tick or refresh.
+// Exported so internal/pages' StartPluginUpdateScheduler and
+// internal/pages/common's RefreshPendingUpdates (ut-docs#2787) — both of
+// which own the DB/catalog access needed to actually run the check — can
+// publish the result here for the status-chip template funcs to read. A
+// joined till publishes its MainTillURL alongside the count (ut-docs#2783;
+// this replaced SetPendingUpdates(count, languagePending)). A negative count
+// is clamped to zero, and LanguagePending is forced false when nothing is
+// pending, so the fields can never disagree about there being anything
+// pending at all.
 func PublishPendingUpdates(s PendingUpdateStatus) {
 	if s.Count < 0 {
 		s.Count = 0
@@ -54,32 +67,4 @@ func PublishPendingUpdates(s PendingUpdateStatus) {
 		s.LanguagePending = false
 	}
 	pendingUpdateState.Store(s)
-}
-
-// NotePendingUpdateApplied decrements the published count by one, never
-// below zero. The scheduler only recomputes every 15 minutes, so without
-// this the merchant who taps the chip, lands on /plugins and applies the
-// one pending update keeps being nagged by a green "Plugin updates
-// available (1)" for the rest of that interval — the chip contradicting
-// the thing they just did (ut-docs#1953 review). Compare-and-swap rather
-// than load-modify-store: a scheduler tick may publish a fresh count
-// concurrently, and the loser of that race must not clobber the winner.
-// Worst case this under-counts by one until the next tick corrects it,
-// which is the right direction to be wrong in: a chip that disappears a
-// little early is a far smaller sin on a till than one that won't go away.
-func NotePendingUpdateApplied() {
-	for {
-		current := CurrentPendingUpdates()
-		if current.Count <= 0 {
-			return
-		}
-		next := current
-		next.Count--
-		if next.Count == 0 {
-			next.LanguagePending = false
-		}
-		if pendingUpdateState.CompareAndSwap(current, next) {
-			return
-		}
-	}
 }

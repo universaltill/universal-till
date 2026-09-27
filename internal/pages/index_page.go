@@ -228,6 +228,11 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			// (index.html then keeps the lazy hx-get placeholder) when the
 			// render failed.
 			"productsHTML": saleGridFirstPaint(d, w, r),
+			// ut-docs#3000: the basket, inline in this first paint through
+			// the exact /ui/basket render path (basket_page.go) instead of a
+			// second request after it. Empty (index.html then keeps the lazy
+			// hx-get placeholder) when the render failed.
+			"basketHTML": basketFirstPaint(d, w, r),
 		}
 		httpx.Render("ui/pages/index.html", data)(w, r)
 	})
