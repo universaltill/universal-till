@@ -70,7 +70,7 @@ jobs:
       # Prints exactly which file(s) differed on failure, with each PNG's
       # differing-pixel count and bounding box (scripts/ci/pngdiff,
       # ut-docs#2929). The script restores web/help/img/ to its pre-run state
-      # on exit, so it copies both runs' copies of every differing file into
+      # on exit, so it copies both runs' copies of every byte-differing file into
       # DOCS_SHOTS_DIFF_DIR first; the next step uploads them to open side by
       # side.
       - name: Two-run byte-identical determinism check

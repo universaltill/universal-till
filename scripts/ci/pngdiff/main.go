@@ -110,7 +110,11 @@ func main() {
 		fmt.Printf("    size differs: A %dx%d, B %dx%d (compared the overlap)\n", d.SizeA.X, d.SizeA.Y, d.SizeB.X, d.SizeB.Y)
 	}
 	if d.Pixels == 0 {
-		fmt.Println("    pixels identical (bytes differ only in PNG encoding/metadata)")
+		if d.SizeA == d.SizeB {
+			fmt.Println("    pixels identical (bytes differ only in PNG encoding/metadata)")
+		} else {
+			fmt.Println("    overlap identical")
+		}
 		return
 	}
 	fmt.Printf("    %d pixel(s) differ, max channel delta %d/255, box x=%d..%d y=%d..%d\n",

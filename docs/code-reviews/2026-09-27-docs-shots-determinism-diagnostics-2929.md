@@ -61,7 +61,20 @@ whether the two arcs stop flipping.
 
 ## Review findings
 
-(filled in below from the Fable review)
+Fable ran gofmt/vet/tests/golangci-lint/shellcheck, the scripts guards, and
+simulated the FAIL block under `set -euo pipefail` (DIFF_DIR set/unset/
+unwritable, `go` absent, corrupt PNG, no mismatches): exit 1 in every failing
+case, 0 only on no mismatch. Verdict: nothing blocking.
+
+| # | Severity | Finding | Outcome |
+|---|---|---|---|
+| 1 | Low | A failing `mkdir`/`cp` into `DOCS_SHOTS_DIFF_DIR` aborted the FAIL report under `set -e` (still exit ≠ 0, but lost the remaining lines) | Fixed: best-effort copy, prints "could not copy" |
+| 2 | Low | `go build … 2>/dev/null` hid why pngdiff output was missing | Fixed: compiler output reaches the log plus an explicit "pngdiff unavailable" line |
+| 3 | Low | Size mismatch with identical overlap printed "bytes differ only in encoding" | Fixed: prints "overlap identical" |
+| 4 | Nit | Comments said "every differing file"; MISSING-in-one-run files aren't copied | Fixed wording ("byte-differing") |
+| 5 | Nit | No tests at the bandGap boundary / alpha-only / `main()` | Accepted — reviewer verified by hand; diagnostic tool |
+
+Verdict: safe to merge as diagnostics. #2929 itself stays open.
 
 ## Verified beyond automated tests
 
