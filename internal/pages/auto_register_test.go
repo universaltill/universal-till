@@ -1,10 +1,12 @@
 package pages
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -48,6 +50,33 @@ func TestSetupWizardAutoRegisterOptInPersistsAndAttemptsRegistration(t *testing.
 	// signed the admin in: registration is best-effort, never a gate.
 	if sessionCookie(rec) == "" {
 		t.Fatal("wizard did not sign the admin in despite the failed (best-effort) registration")
+	}
+}
+
+// ut-docs#2776: the wizard saves the shop name and registers in the same
+// request, while d.Cfg.StoreName still holds the boot-time default. The
+// registration must carry the name the owner just typed — otherwise every
+// fresh install creates another cloud shop called "My Store".
+func TestSetupWizardAutoRegisterSendsTheTypedShopName(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	mkt := newFakeMarketplace(t, nil)
+	d.Cfg.Marketplace = mkt.config()
+	d.Cfg.StoreName = "My Store" // boot-time default; the wizard never refreshes it
+
+	rec := postForm(mux, "/api/setup", url.Values{
+		"pin":           {"2468"},
+		"pin_confirm":   {"2468"},
+		"country":       {"GB"},
+		"currency":      {"GBP"},
+		"store_name":    {"Corner Café"},
+		"auto_register": {"on"},
+	}, nil)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("wizard setup: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	names := mkt.storeRegisterNames()
+	if len(names) != 1 || names[0] != "Corner Café" {
+		t.Fatalf("register store_name(s) = %q, want exactly [\"Corner Café\"]", names)
 	}
 }
 
@@ -120,6 +149,55 @@ func TestSetupWizardNoAutoRegisterByDefaultMakesNoAttempt(t *testing.T) {
 				t.Fatalf("register attempts = %d, want 0 without an explicit opt-in", hits)
 			}
 		})
+	}
+}
+
+// ut-docs#3019: the wizard's opt-in register attempt posts the typed
+// till_name as device_name. Its own stub records the /v1/stores/register
+// body; answering 500 keeps enroll's process globals untouched, like
+// newFakeMarketplace.
+func TestSetupWizardAutoRegisterPostsTypedTillName(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	var mu sync.Mutex
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/stores/register" {
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			mu.Lock()
+			gotBody = body
+			mu.Unlock()
+			http.Error(w, "stub does not enrol", http.StatusInternalServerError)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	d.Cfg.Marketplace.EndpointURL = srv.URL
+
+	rec := postForm(mux, "/api/setup", url.Values{
+		"pin":           {"2468"},
+		"pin_confirm":   {"2468"},
+		"country":       {"GB"},
+		"currency":      {"GBP"},
+		"store_name":    {"Corner Shop"},
+		"till_name":     {"Front Register"},
+		"auto_register": {"on"},
+	}, nil)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("wizard setup with auto_register=on: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if v, ok, _ := d.Settings.Get(t.Context(), "till.name"); !ok || v != "Front Register" {
+		t.Fatalf("till.name = %q ok=%v, want \"Front Register\" persisted", v, ok)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if gotBody == nil {
+		t.Fatal("wizard never attempted /v1/stores/register despite auto_register=on")
+	}
+	if got := gotBody["device_name"]; got != "Front Register" {
+		t.Fatalf("device_name = %v, want %q", got, "Front Register")
 	}
 }
 

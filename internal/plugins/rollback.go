@@ -3,15 +3,26 @@ package plugins
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
 )
+
+// ErrVersionSourceMissing is returned by StoreVersion when a non-empty,
+// non-versionDir sourcePath doesn't exist or isn't a directory (ut-docs#2799)
+// — the live per-version install dir a snapshot would be taken from can go
+// missing (disk cleanup, a partial delete, anything short of the happy path)
+// without that meaning there was never a good version to protect. Callers
+// distinguish this from "no rollback target at all" via HasVersion.
+var ErrVersionSourceMissing = errors.New("plugin rollback: version source directory missing")
 
 // RollbackManager handles plugin version rollback operations
 type RollbackManager struct {
@@ -79,6 +90,12 @@ func (rm *RollbackManager) GetVersionHistory(ctx context.Context, pluginID strin
 	var versions []VersionInfo
 	for _, entry := range entries {
 		if entry.IsDir() {
+			// A `.store-*` crash leftover from an interrupted StoreVersion
+			// (ut-docs#3016) is not a version snapshot — never list it as
+			// one. cleanupOldVersions applies the same filter.
+			if isTempVersionDirName(entry.Name()) {
+				continue
+			}
 			versionPath := filepath.Join(pluginDir, entry.Name())
 			info, err := os.Stat(versionPath)
 			if err != nil {
@@ -116,6 +133,38 @@ func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion
 	targetPath := filepath.Join(rm.pluginBaseDir, pluginID, "versions", targetVersion)
 	if _, err := os.Stat(targetPath); os.IsNotExist(err) {
 		return fmt.Errorf("target version %s not found for plugin %s", targetVersion, pluginID)
+	}
+
+	// Decide now whether the live per-version install dir needs restoring
+	// from the snapshot (ut-docs#2799 review M1). Every consumer of an
+	// installed plugin's files — wasm_runtime.go, plugins.go's locale
+	// loader, plugin_page.go, themes.go, plugin_icons.go — reads from
+	// pluginBaseDir/id/version/, never from versions/version/. The
+	// HasVersion branch in cloudInstallPluginVersion means Rollback can be
+	// reached with a real target whose live dir has gone missing (that's
+	// exactly what StoreVersion's ErrVersionSourceMissing + HasVersion
+	// combination is for) — without eventually restoring, such a rollback
+	// would mark the plugin "installed" in the DB while leaving it with
+	// zero files on disk. If the live dir already exists, it's left alone
+	// either way, so the stat here — read-only, and a non-NotExist error is
+	// still a real problem worth failing on immediately — is all that
+	// happens now.
+	//
+	// The actual restore is deferred until immediately before tx.Commit()
+	// (ut-docs#3016), well after this point: it used to run right here,
+	// before the manifest was even opened, so a rollback later refused by
+	// ParseManifest or any validate* check (a bad manifest, a colliding
+	// payment/page/route key, an exclusive-preset conflict, ...) still left
+	// a freshly-restored live dir behind as an orphan — disk state for a
+	// rollback that never took effect. See the restore call further down
+	// for the failure handling that placement requires.
+	liveTargetDir := filepath.Join(rm.pluginBaseDir, pluginID, targetVersion)
+	needRestore := false
+	if _, err := os.Stat(liveTargetDir); err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("failed to check live install dir for %s: %w", targetVersion, err)
+		}
+		needRestore = true
 	}
 
 	// Get current version
@@ -259,8 +308,25 @@ func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion
 		return err
 	}
 
+	// Restore the live per-version install dir from the snapshot now, only
+	// once every validator above and the DB writes just above have already
+	// succeeded (ut-docs#3016; see needRestore's computation for why this
+	// moved here). If this fails, the deferred tx.Rollback() above undoes
+	// the DB writes, so nothing is left half-applied.
+	if needRestore {
+		if err := restoreLiveDirFromSnapshot(targetPath, liveTargetDir); err != nil {
+			return fmt.Errorf("failed to restore live install dir for %s from snapshot: %w", targetVersion, err)
+		}
+	}
+
 	// Commit transaction
 	if err := tx.Commit(); err != nil {
+		if needRestore {
+			// The DB half didn't take, so don't leave the just-restored live
+			// dir behind either — best-effort, matching every other cleanup
+			// in this file (ut-docs#3016).
+			_ = os.RemoveAll(liveTargetDir)
+		}
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
@@ -289,14 +355,56 @@ func (rm *RollbackManager) StoreVersion(pluginID, version, sourcePath string) er
 	versionDir := filepath.Join(rm.pluginBaseDir, pluginID, "versions", version)
 
 	if sourcePath != "" && filepath.Clean(sourcePath) != filepath.Clean(versionDir) {
-		// Fresh snapshot every time: an interrupted previous StoreVersion
-		// call (partial copy) must never be trusted as complete.
+		// Check the source exists and is a directory BEFORE touching
+		// anything below (ut-docs#2799). The old code went straight to
+		// os.RemoveAll(versionDir) — clearing out any existing, good
+		// snapshot — and only then discovered the copy had nothing to read
+		// from, leaving neither the old snapshot nor a new one. Rollback()
+		// below already guards its own StoreVersion call with exactly this
+		// os.Stat, for exactly this reason; this makes every caller safe,
+		// not just that one.
+		//
+		// Only "doesn't exist" or "exists but isn't a directory" maps to
+		// the sentinel (ut-docs#2799 review M-minor 3) — any other os.Stat
+		// error (permissions, a malformed path, ...) is a real problem, so
+		// it stays a plain wrapped error and keeps callers' Warn logging.
+		srcInfo, statErr := os.Stat(sourcePath)
+		switch {
+		case statErr == nil && srcInfo.IsDir():
+			// Source is good; fall through to the copy below.
+		case statErr == nil, errors.Is(statErr, fs.ErrNotExist):
+			return fmt.Errorf("plugin %s version %s: source %s: %w", pluginID, version, sourcePath, ErrVersionSourceMissing)
+		default:
+			return fmt.Errorf("plugin %s version %s: failed to check source %s: %w", pluginID, version, sourcePath, statErr)
+		}
+		// Copy into a temp sibling under versions/ first and only swap it
+		// in on success (ut-docs#2799 review M-minor 2). The old code
+		// RemoveAll'd versionDir BEFORE copying, so any copy failure
+		// (a symlinked source root, an unreadable file, a full disk, ...)
+		// destroyed an already-good existing snapshot and left nothing in
+		// its place. An interrupted previous StoreVersion call (partial
+		// copy) must never be trusted as complete either way, so the old
+		// versionDir is still cleared — just only once the replacement is
+		// known-good.
+		versionsParent := filepath.Join(rm.pluginBaseDir, pluginID, "versions")
+		if err := os.MkdirAll(versionsParent, 0755); err != nil {
+			return fmt.Errorf("failed to create versions directory: %w", err)
+		}
+		tmpDir, err := os.MkdirTemp(versionsParent, ".store-*")
+		if err != nil {
+			return fmt.Errorf("failed to create temp version directory: %w", err)
+		}
+		if err := copyVersionFiles(sourcePath, tmpDir); err != nil {
+			_ = os.RemoveAll(tmpDir)
+			return fmt.Errorf("failed to copy plugin files from %s: %w", sourcePath, err)
+		}
 		if err := os.RemoveAll(versionDir); err != nil {
+			_ = os.RemoveAll(tmpDir)
 			return fmt.Errorf("failed to clear stale version directory: %w", err)
 		}
-		if err := copyVersionFiles(sourcePath, versionDir); err != nil {
-			_ = os.RemoveAll(versionDir)
-			return fmt.Errorf("failed to copy plugin files from %s: %w", sourcePath, err)
+		if err := os.Rename(tmpDir, versionDir); err != nil {
+			_ = os.RemoveAll(tmpDir)
+			return fmt.Errorf("failed to move new version directory into place: %w", err)
 		}
 	} else if err := os.MkdirAll(versionDir, 0755); err != nil {
 		return fmt.Errorf("failed to create version directory: %w", err)
@@ -309,6 +417,98 @@ func (rm *RollbackManager) StoreVersion(pluginID, version, sourcePath string) er
 		log.Warnf("[Rollback] Failed to cleanup old versions: %v", err)
 	}
 
+	return nil
+}
+
+// HasVersion reports whether a rollback snapshot for pluginID/version
+// already exists under this manager's versions/ tree — the same directory
+// StoreVersion writes into and Rollback reads from. Callers use it to tell
+// "StoreVersion just failed to refresh the snapshot" apart from "there was
+// never a snapshot to roll back to" (ut-docs#2799): a live per-version
+// install dir can go missing without the snapshot itself being lost.
+//
+// Requires versions/<version>/manifest.json specifically, as a regular
+// file, not just the directory (ut-docs#2799 review M-minor 4) — a
+// crash-partial StoreVersion (interrupted mid-copy) or an empty dir left by
+// the sourcePath == "" marker-only path is not a real rollback target;
+// Rollback itself would fail to open that manifest.
+func (rm *RollbackManager) HasVersion(pluginID, version string) bool {
+	if err := validatePluginID(pluginID); err != nil {
+		return false
+	}
+	if err := validatePluginVersion(version); err != nil {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(rm.pluginBaseDir, pluginID, "versions", version, "manifest.json"))
+	return err == nil && info.Mode().IsRegular()
+}
+
+// isTempVersionDirName reports whether name is one of the temp working dirs
+// StoreVersion (".store-*") or restoreLiveDirFromSnapshot (".restore-*")
+// create via os.MkdirTemp — a real version or snapshot directory name never
+// starts with a dot. GetVersionHistory and cleanupOldVersions both skip
+// these: a crash between MkdirTemp and the final Rename leaves one behind,
+// and it must never be listed as a version or counted toward maxVersions
+// (ut-docs#3016).
+func isTempVersionDirName(name string) bool {
+	return strings.HasPrefix(name, ".")
+}
+
+// staleTempDirAge is the ModTime age sweepStaleTempDirs requires before it
+// will remove a leftover temp dir (ut-docs#3016). An hour comfortably
+// exceeds how long a real StoreVersion copy or restoreLiveDirFromSnapshot
+// takes, so anything still that old is a crash leftover, not a call still
+// in flight.
+const staleTempDirAge = time.Hour
+
+// sweepStaleTempDirs best-effort removes entries directly under dir whose
+// name starts with prefix and whose ModTime is older than olderThan — the
+// `.store-*` (StoreVersion) and `.restore-*` (restoreLiveDirFromSnapshot)
+// temp dirs a crash between os.MkdirTemp and the matching os.Rename leaves
+// behind (ut-docs#3016). Only ever touches entries under dir itself whose
+// name starts with the exact prefix; a failure to list dir or remove an
+// entry is ignored — sweeping stale leftovers must never fail the call it's
+// cleaning up after.
+func sweepStaleTempDirs(dir, prefix string, olderThan time.Duration) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-olderThan)
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), prefix) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			continue
+		}
+		_ = os.RemoveAll(filepath.Join(dir, entry.Name()))
+	}
+}
+
+// restoreLiveDirFromSnapshot recreates the live per-version install dir at
+// liveDir by copying snapshotDir's contents into a temp sibling directory
+// and atomically renaming it into place (ut-docs#2799 review M1) — never
+// copying (or partially copying) straight into liveDir itself, which would
+// leave a half-restored directory behind if the copy failed partway through.
+func restoreLiveDirFromSnapshot(snapshotDir, liveDir string) error {
+	parent := filepath.Dir(liveDir)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return fmt.Errorf("failed to create plugin directory: %w", err)
+	}
+	tmpDir, err := os.MkdirTemp(parent, ".restore-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp restore directory: %w", err)
+	}
+	if err := copyVersionFiles(snapshotDir, tmpDir); err != nil {
+		_ = os.RemoveAll(tmpDir)
+		return fmt.Errorf("failed to copy snapshot files: %w", err)
+	}
+	if err := os.Rename(tmpDir, liveDir); err != nil {
+		_ = os.RemoveAll(tmpDir)
+		return fmt.Errorf("failed to move restored files into place: %w", err)
+	}
 	return nil
 }
 
@@ -343,13 +543,40 @@ func copyVersionFiles(sourceDir, destDir string) error {
 func (rm *RollbackManager) cleanupOldVersions(pluginID string) error {
 	versionsDir := filepath.Join(rm.pluginBaseDir, pluginID, "versions")
 
+	// Best-effort sweep of crash leftovers before counting anything
+	// (ut-docs#3016): a `.store-*` dir under versions/ (StoreVersion,
+	// interrupted between its os.MkdirTemp and final os.Rename) or a
+	// `.restore-*` dir directly under the plugin's own dir
+	// (restoreLiveDirFromSnapshot, same failure shape) from an earlier
+	// crash must eventually be reclaimed. Age-gated at staleTempDirAge so a
+	// concurrent, still-running StoreVersion/restore call is never swept
+	// out from under itself. Sweep failures are ignored — this is cleanup
+	// riding along on a version store, never something that should fail it.
+	sweepStaleTempDirs(versionsDir, ".store-", staleTempDirAge)
+	sweepStaleTempDirs(filepath.Join(rm.pluginBaseDir, pluginID), ".restore-", staleTempDirAge)
+
 	entries, err := os.ReadDir(versionsDir)
 	if err != nil {
 		return err
 	}
 
+	// A `.store-*` leftover is never a real snapshot, however fresh, and a
+	// stray file is not a snapshot at all — drop both before the
+	// maxVersions count below, so it can neither occupy one
+	// of the "kept" slots nor push a real snapshot out of them
+	// (ut-docs#3016). Filtering only inside the loop that builds the sort
+	// list would still leave len(entries) itself (the check just below)
+	// counting leftovers toward maxVersions.
+	var realEntries []os.DirEntry
+	for _, entry := range entries {
+		if !entry.IsDir() || isTempVersionDirName(entry.Name()) {
+			continue
+		}
+		realEntries = append(realEntries, entry)
+	}
+
 	// If we have more than maxVersions, delete oldest
-	if len(entries) > rm.maxVersions {
+	if len(realEntries) > rm.maxVersions {
 		// Get modification times
 		type versionEntry struct {
 			name    string
@@ -357,7 +584,7 @@ func (rm *RollbackManager) cleanupOldVersions(pluginID string) error {
 		}
 
 		var versions []versionEntry
-		for _, entry := range entries {
+		for _, entry := range realEntries {
 			if entry.IsDir() {
 				info, err := entry.Info()
 				if err != nil {

@@ -90,6 +90,16 @@ const (
 // a silent drift here means the region hint is never sent, with green CI.
 const StoreCountrySettingsKey = "store.country"
 
+// StoreNameSettingsKey is the settings.key the shop's name lives under (the
+// setup wizard and Settings write it; settings.LoadRuntimeConfig reads it
+// into cfg.StoreName, but only at boot). Registration reads it live
+// (ut-docs#2776): the wizard saves the name and registers in the same
+// request, so cfg.StoreName still holds the "My Store" env default then,
+// and every fresh install created another cloud shop called "My Store".
+// internal/settings' TestLoadRuntimeConfigReadsEnrollStoreNameKey keeps the
+// two from drifting apart.
+const StoreNameSettingsKey = "store.name"
+
 type identity struct {
 	DeviceID   string
 	StoreID    string
@@ -99,6 +109,8 @@ type identity struct {
 }
 
 var (
+	// mu guards cur and every var below it through tokenExplicit
+	// (ut-docs#3021).
 	mu  sync.RWMutex
 	cur identity
 	// storeIDExplicit records whether UT_MARKETPLACE_STORE_ID was set in the
@@ -209,7 +221,7 @@ func RegisterNow(ctx context.Context, cfg *config.Config, kv Settings) (Status, 
 		// A replica never creates its own anonymous store — that would split
 		// the shop in the cloud; its credential comes from the main till
 		// (ut-docs#2730).
-		registerFn := func() error { return register(ctx, m, cfg.StoreName, kv) }
+		registerFn := func() error { return register(ctx, m, shopName(ctx, cfg, kv), kv) }
 		if isReplica(ctx, kv) {
 			registerFn = func() error { return registerOnReplica(ctx, m, kv) }
 		}
@@ -238,13 +250,15 @@ func RegisterNow(ctx context.Context, cfg *config.Config, kv Settings) (Status, 
 // callers can wait out shutdown instead of returning while it still runs.
 func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGroup) {
 	log := logging.L()
-	storeIDExplicit = os.Getenv("UT_MARKETPLACE_STORE_ID") != ""
+	// Locals here; the mu-guarded globals are set under the lock below
+	// (ut-docs#3021).
+	storeIDExplicitLocal := os.Getenv("UT_MARKETPLACE_STORE_ID") != ""
 	// At this point cfg.Marketplace.ClientID can only have come from the
 	// environment; a non-empty value means the operator configured a merchant
 	// identity themselves, so auto-enrolment must not mint another one.
 	clientIDExplicit := cfg.Marketplace.ClientID != ""
 	// Same for the merchant token: only the environment can have set it yet.
-	tokenExplicit = cfg.Marketplace.MerchantToken != ""
+	tokenExplicitLocal := cfg.Marketplace.MerchantToken != ""
 
 	get := func(key string) string {
 		v, _, err := kv.Get(ctx, key)
@@ -279,6 +293,8 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 	mu.Lock()
 	cur = id
 	explicitConfigured = clientIDExplicit
+	storeIDExplicit = storeIDExplicitLocal
+	tokenExplicit = tokenExplicitLocal
 	if clientIDExplicit {
 		displayStoreID = cfg.Marketplace.StoreID
 	} else {
@@ -295,7 +311,7 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 	if m.ClientID == "" {
 		m.ClientID = id.MerchantID
 	}
-	if id.StoreID != "" && !storeIDExplicit {
+	if id.StoreID != "" && !storeIDExplicitLocal {
 		m.StoreID = id.StoreID
 	}
 	if m.PublicKey == "" {
@@ -320,7 +336,7 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 	// (replicaLoop, ut-docs#2730); only a main/standalone till registers its
 	// own device under the store here.
 	needDevice := !replica && !clientIDExplicit && m.StoreID != "" && m.MerchantToken != "" && get(keyDeviceRegistered) != id.DeviceID
-	deviceName := get("sync.till_name")
+	deviceName := DeviceName(ctx, kv)
 	if replica && !clientIDExplicit {
 		wg.Add(1)
 		go func() {
@@ -453,6 +469,18 @@ func regionForCountry(country string) string {
 	return ""
 }
 
+// shopName is the name registration sends: the live store.name setting,
+// falling back to cfg.StoreName when it is unset, blank or unreadable
+// (ut-docs#2776). A failed read never fails registration.
+func shopName(ctx context.Context, cfg *config.Config, kv Settings) string {
+	if v, _, err := kv.Get(ctx, StoreNameSettingsKey); err == nil {
+		if name := strings.TrimSpace(v); name != "" {
+			return name
+		}
+	}
+	return cfg.StoreName
+}
+
 // register performs the anonymous enrolment call and persists the returned
 // identity (ADR-0013 layer 1; marketplace handler: /api/v1/stores/register).
 // The shop's chosen country (StoreCountrySettingsKey, read from kv) is
@@ -472,9 +500,10 @@ func register(ctx context.Context, m config.MarketplaceConfig, storeName string,
 	}
 
 	fields := map[string]string{
-		"store_name": storeName,
-		"device_id":  deviceID,
-		"version":    buildinfo.Version,
+		"store_name":  storeName,
+		"device_id":   deviceID,
+		"device_name": DeviceName(ctx, kv),
+		"version":     buildinfo.Version,
 	}
 	if region != "" {
 		fields["region"] = region

@@ -21,6 +21,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	appdb "github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -1712,6 +1713,49 @@ func TestSyncPromote_ClearIdentityFailureIsLocalized(t *testing.T) {
 	}
 	if strings.Contains(body, "readonly database") {
 		t.Fatalf("raw SQL error leaked into the response: %q", body)
+	}
+}
+
+// TestSyncPromote_KeepsOwnTillName covers ut-docs#3025: promoting a replica
+// used to delete sync.till_name outright, leaving till.name (shop-wide,
+// data.ShopWideSettingPrefixes) holding the OLD main till's name that had
+// synced down. After promotion the till must report its OWN name, not the
+// old main till's.
+func TestSyncPromote_KeepsOwnTillName(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	ctx := context.Background()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed replica identity: %v", err)
+	}
+	if err := dp.Settings.Set(ctx, "sync.till_name", "Back Office"); err != nil {
+		t.Fatalf("seed sync.till_name: %v", err)
+	}
+	// The shop-wide till.name still holds the old main till's name, synced
+	// down before this replica was promoted.
+	if err := dp.Settings.Set(ctx, "till.name", "Front Counter"); err != nil {
+		t.Fatalf("seed till.name: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/promote", strings.NewReader("confirm=PROMOTE"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if val, ok, err := dp.Settings.Get(ctx, "till.name"); err != nil || !ok || val != "Back Office" {
+		t.Fatalf("expected till.name = %q after promote, got val=%q ok=%v err=%v", "Back Office", val, ok, err)
+	}
+	if _, ok, _ := dp.Settings.Get(ctx, "sync.primary_url"); ok {
+		t.Fatal("expected sync.primary_url cleared after promote")
+	}
+	if _, ok, _ := dp.Settings.Get(ctx, "sync.till_name"); ok {
+		t.Fatal("expected sync.till_name cleared after promote")
+	}
+	if name := enroll.DeviceName(ctx, dp.Settings); name != "Back Office" {
+		t.Fatalf("expected enroll.DeviceName = %q after promote, got %q", "Back Office", name)
 	}
 }
 

@@ -26,6 +26,10 @@ builds:
     goos: [windows]
     goarch: [amd64]
     hooks:
+      pre:
+        # Icon + VERSIONINFO resource (ut-docs#2786): writes the gitignored
+        # rsrc_windows_amd64.syso the linker picks up for this build only.
+        - cmd: packaging/windows/winres.sh server "{{ .Version }}"
       post:
         # Code-sign the Windows binaries before they are archived, so the
         # portable zip and checksums.txt carry the signed files (ut-docs#2610).
@@ -46,6 +50,13 @@ builds:
     goos: [windows]
     goarch: [amd64]
     hooks:
+      pre:
+        # Same resource hook as the windows build above (ut-docs#2786); the
+        # icon ID 32512 also gives the webview window its title-bar icon.
+        # Hooks inherit this build's CGO_ENABLED=1/CC=mingw env, which only
+        # works because go-winres is cgo-free (no net, os/user) — keep it so
+        # on any go-winres bump.
+        - cmd: packaging/windows/winres.sh desktop "{{ .Version }}"
       post:
         # Same signing hook as the windows build above (ut-docs#2610).
         - cmd: sh -c 'if [ "${UT_WINDOWS_SIGN:-}" = 1 ]; then packaging/windows/sign-exe.sh "{{ .Path }}"; fi'

@@ -64,7 +64,10 @@ var (
 // AttachFile starts writing every log line — this package's logger AND the
 // standard library "log" package many till packages still use — to a
 // rotating, redacted file at path, in addition to stdout/stderr. Calling it
-// again switches files.
+// again switches files. app.go attaches the log file before taking the
+// data-dir lock (ut-docs#1097), so a second instance that is about to be
+// refused briefly appends to the same till.log — harmless (both writes are
+// whole lines; the refused process exits), noted by ut-docs#2728.
 func AttachFile(path string) error {
 	w, err := NewRotatingWriter(path, DefaultMaxFileBytes, DefaultMaxFiles)
 	if err != nil {

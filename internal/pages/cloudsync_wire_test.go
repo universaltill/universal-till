@@ -1588,6 +1588,100 @@ func TestCloudSetQuickButtonLayout_DuplicateBarcodeRefused(t *testing.T) {
 	}
 }
 
+// ut-docs#2709: the cloud's layout panel only sees VISIBLE quick buttons
+// (the report and the validation both read LoadButtons, which leaves out a
+// hidden item's tile), so a directive never lists a hidden row's barcode.
+// That row is kept on purpose — it holds the tile's slot for when the item
+// is unhidden (ut-docs#2541) — so it must keep its slot relative to the
+// visible tiles, and the whole list must end up renumbered with no two rows
+// sharing a sort_order. Before the fix UpdateOrder rewrote only the listed
+// rows, leaving the hidden one on its old value, colliding with whichever
+// visible tile landed on the same index (edit mode then ordered the pair by
+// label, not by the layout the owner set).
+func TestCloudSetQuickButtonLayout_HiddenRowKeepsSlotNoCollision(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	for _, s := range []string{
+		`INSERT INTO items(id,sku,name,base_price,tax_code_id,is_active,sell_screen_hidden) VALUES('itmH','HID','Hidden',100,'tax_std',1,1)`,
+		`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('b1','Alpha','itm1',0)`,
+		`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('h1','Hidden','itmH',1)`,
+		`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('b2','Beta','itm1',2)`,
+		`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('b3','Gamma','itm1',3)`,
+	} {
+		if _, err := dp.Db.Exec(s); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+
+	// The directive lists every visible button — and only those.
+	if _, err := cloudSetQuickButtonLayout(ctx, dp, []string{"b3", "b1", "b2"}); err != nil {
+		t.Fatalf("cloudSetQuickButtonLayout: %v", err)
+	}
+
+	rows, err := dp.Db.Query(`SELECT barcode, sort_order FROM shortcut_buttons ORDER BY sort_order, barcode`)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+	seen := map[int]string{}
+	var got []string
+	for rows.Next() {
+		var bc string
+		var so int
+		if err := rows.Scan(&bc, &so); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if prev, dup := seen[so]; dup {
+			t.Fatalf("sort_order %d shared by %q and %q — hidden row collides with a visible one", so, prev, bc)
+		}
+		seen[so] = bc
+		got = append(got, bc)
+	}
+	// h1 sat in slot 1 of 4 before; it stays in slot 1, the visible tiles
+	// fill the other slots in the directive's order.
+	want := []string{"b3", "h1", "b1", "b2"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("order = %v, want %v", got, want)
+	}
+
+	// Edit mode (LoadGridButtons, hidden included) shows the same order.
+	grid, err := data.NewShortcutsRepo(dp.Db).LoadGridButtons(ctx)
+	if err != nil {
+		t.Fatalf("LoadGridButtons: %v", err)
+	}
+	var gridCodes []string
+	for _, b := range grid {
+		gridCodes = append(gridCodes, b.Barcode)
+	}
+	if strings.Join(gridCodes, ",") != strings.Join(want, ",") {
+		t.Fatalf("edit-mode order = %v, want %v", gridCodes, want)
+	}
+}
+
+// A directive may not name a hidden row: the cloud never sees it, so a
+// barcode it lists that turns out hidden is as unknown to it as a made-up
+// one, and moving it would break the slot the row is holding.
+func TestCloudSetQuickButtonLayout_HiddenBarcodeRefused(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	seedQuickButtons(t, dp)
+	for _, s := range []string{
+		`INSERT INTO items(id,sku,name,base_price,tax_code_id,is_active,sell_screen_hidden) VALUES('itmH','HID','Hidden',100,'tax_std',1,1)`,
+		`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('h1','Hidden','itmH',3)`,
+	} {
+		if _, err := dp.Db.Exec(s); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	_, err := cloudSetQuickButtonLayout(ctx, dp, []string{"h1", "b3", "b1", "b2"})
+	if err == nil || !strings.Contains(err.Error(), "is hidden on this till") {
+		t.Fatalf("expected the hidden barcode to be refused as hidden, got %v", err)
+	}
+	if got := strings.Join(quickButtonOrder(t, dp), ","); got != "b1,b2,b3,h1" {
+		t.Fatalf("refused layout still wrote: order = %s", got)
+	}
+}
+
 // The hook set StartCloudSync wires carries SetQuickButtonLayout, and the
 // DeviceExtra report includes the applied layout (barcode + label, in sort
 // order) so the cloud's layout panel can pre-fill from real state.

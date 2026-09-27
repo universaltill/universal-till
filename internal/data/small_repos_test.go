@@ -681,6 +681,92 @@ func TestSettingsRepo_DeleteAndClearReplicaIdentity(t *testing.T) {
 	}
 }
 
+// TestSettingsRepo_ClearReplicaIdentityKeepsOwnTillName covers ut-docs#3025:
+// promoting a replica deletes sync.till_name, but till.name is shop-wide
+// (data.ShopWideSettingPrefixes) and still holds the OLD main till's name,
+// synced down. Without copying sync.till_name into till.name first, the
+// promoted till would report the wrong name to the cloud
+// (enroll.DeviceName) and lose its own typed name entirely.
+func TestSettingsRepo_ClearReplicaIdentityKeepsOwnTillName(t *testing.T) {
+	newRepo := func(t *testing.T) *SettingsRepo {
+		t.Helper()
+		dbc, err := sql.Open("sqlite", ":memory:")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = dbc.Close() })
+		if _, err := dbc.Exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)`); err != nil {
+			t.Fatal(err)
+		}
+		return NewSettingsRepo(dbc)
+	}
+	ctx := context.Background()
+
+	t.Run("sync.till_name copied into till.name, replaces the old main till's name", func(t *testing.T) {
+		repo := newRepo(t)
+		if err := repo.Set(ctx, "sync.till_name", "Back Office"); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.Set(ctx, "till.name", "Front Counter"); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.ClearReplicaIdentity(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if val, ok, err := repo.Get(ctx, "till.name"); err != nil || !ok || val != "Back Office" {
+			t.Fatalf("expected till.name = %q, got val=%q ok=%v err=%v", "Back Office", val, ok, err)
+		}
+		if _, ok, _ := repo.Get(ctx, "sync.till_name"); ok {
+			t.Fatal("expected sync.till_name cleared")
+		}
+	})
+
+	t.Run("no sync.till_name leaves till.name untouched", func(t *testing.T) {
+		repo := newRepo(t)
+		if err := repo.Set(ctx, "till.name", "Front Counter"); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.ClearReplicaIdentity(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if val, ok, err := repo.Get(ctx, "till.name"); err != nil || !ok || val != "Front Counter" {
+			t.Fatalf("expected till.name unchanged at %q, got val=%q ok=%v err=%v", "Front Counter", val, ok, err)
+		}
+	})
+
+	t.Run("whitespace-only sync.till_name leaves till.name untouched", func(t *testing.T) {
+		repo := newRepo(t)
+		if err := repo.Set(ctx, "sync.till_name", "   "); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.Set(ctx, "till.name", "Front Counter"); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.ClearReplicaIdentity(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if val, ok, err := repo.Get(ctx, "till.name"); err != nil || !ok || val != "Front Counter" {
+			t.Fatalf("expected till.name unchanged at %q, got val=%q ok=%v err=%v", "Front Counter", val, ok, err)
+		}
+		if _, ok, _ := repo.Get(ctx, "sync.till_name"); ok {
+			t.Fatal("expected sync.till_name cleared")
+		}
+	})
+
+	t.Run("surrounding whitespace on sync.till_name is trimmed", func(t *testing.T) {
+		repo := newRepo(t)
+		if err := repo.Set(ctx, "sync.till_name", "  Back Office  "); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.ClearReplicaIdentity(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if val, ok, err := repo.Get(ctx, "till.name"); err != nil || !ok || val != "Back Office" {
+			t.Fatalf("expected till.name = %q (trimmed), got val=%q ok=%v err=%v", "Back Office", val, ok, err)
+		}
+	})
+}
+
 func TestInvoiceRepo_List(t *testing.T) {
 	dbo, err := db.Open(testsupport.MigratedDBFile(t, "invoices.db"))
 	if err != nil {

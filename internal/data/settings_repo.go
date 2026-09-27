@@ -192,14 +192,52 @@ func (r *SettingsRepo) Delete(ctx context.Context, key string) error {
 // ClearReplicaIdentity promotes a replica (ADR-0011 D4): every sync.* key
 // goes EXCEPT the receipt prefix — the till keeps stamping T<n>- receipts
 // so its numbering never collides with the old primary's.
+//
+// till.name is shop-wide (ShopWideSettingPrefixes), so on a replica it still
+// holds the OLD main till's name, synced down — not this till's own typed
+// name, which lived only in sync.till_name. Deleting sync.till_name outright
+// would make the newly-promoted till report the wrong name to the cloud
+// (enroll.DeviceName) and lose its own name entirely. So before the delete,
+// a non-blank sync.till_name is copied into till.name; the promoted till
+// keeps its own name (ut-docs#3025).
 func (r *SettingsRepo) ClearReplicaIdentity(ctx context.Context) error {
 	var err error
 	done := settingsObs.trace("clear_replica_identity")
 	defer func() { done(err) }()
-	_, err = r.db.ExecContext(ctx,
-		`DELETE FROM settings WHERE key LIKE 'sync.%' AND key != 'sync.receipt_prefix'`)
+
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
+		return settingsObs.wrap("clear_replica_identity", err)
+	}
+	defer tx.Rollback()
+
+	var tillName string
+	err = tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = 'sync.till_name'`).Scan(&tillName)
+	if err != nil && err != sql.ErrNoRows {
+		return settingsObs.wrapf("clear_replica_identity", "read sync.till_name", err)
+	}
+	if err == sql.ErrNoRows {
+		err = nil
+	}
+	if trimmed := strings.TrimSpace(tillName); trimmed != "" {
+		if _, err = tx.ExecContext(ctx, `
+INSERT INTO settings (key, value, updated_at)
+VALUES ('till.name', ?, ?)
+ON CONFLICT(key) DO UPDATE SET
+	value = excluded.value,
+	updated_at = excluded.updated_at
+`, trimmed, time.Now().UTC()); err != nil {
+			return settingsObs.wrapf("clear_replica_identity", "set setting %s", err, "till.name")
+		}
+	}
+
+	if _, err = tx.ExecContext(ctx,
+		`DELETE FROM settings WHERE key LIKE 'sync.%' AND key != 'sync.receipt_prefix'`); err != nil {
 		return settingsObs.wrapf("clear_replica_identity", "clear replica identity", err)
+	}
+
+	if err = tx.Commit(); err != nil {
+		return settingsObs.wrap("clear_replica_identity", err)
 	}
 	return nil
 }

@@ -85,7 +85,10 @@ type fakeMarketplace struct {
 	// (ADR-0015 lazy registration; only a download/install or an explicit
 	// "Register now" may do that).
 	registerHits int
-	listings     map[string]*fakeMktListing
+	// registerNames records each register request's store_name — the name
+	// the cloud would give the shop (ut-docs#2776).
+	registerNames []string
+	listings      map[string]*fakeMktListing
 	// catalog backs GET /v1/catalog/plugins for the country base-plugin
 	// resolve step (ut-docs#591) — empty by default (a 404/unserved route
 	// would be indistinguishable from "no catalog entries"; an explicit
@@ -150,6 +153,12 @@ func (m *fakeMarketplace) catalogHitsFor(capability string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.catHitsByCapability[capability]
+}
+
+func (m *fakeMarketplace) storeRegisterNames() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.registerNames...)
 }
 
 func (m *fakeMarketplace) storeRegisterHits() int {
@@ -430,8 +439,13 @@ func newFakeMarketplace(t *testing.T, pluginIDByListing map[string]string) *fake
 			// Counted, then refused: enrolment is best-effort everywhere, so
 			// a 500 here keeps the till unenrolled (as a first-boot till is)
 			// while still recording that something tried.
+			var body struct {
+				StoreName string `json:"store_name"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
 			m.mu.Lock()
 			m.registerHits++
+			m.registerNames = append(m.registerNames, body.StoreName)
 			m.mu.Unlock()
 			http.Error(w, "stub does not enrol", http.StatusInternalServerError)
 		default:
@@ -1341,6 +1355,103 @@ func TestSyncPullTick_VersionMismatchOnUpgradePreservesPriorGoodVersion(t *testi
 	// Regression coverage for the sibling fresh-install case (#479): still
 	// covered by TestSyncPullTick_VersionMismatchFromMarketplaceFailsConvergence
 	// above, unchanged.
+}
+
+// ut-docs#2799: StoreVersion used to os.RemoveAll() an existing versions/<v>
+// snapshot BEFORE checking whether the live per-version source directory it
+// was about to copy from even existed. When that live dir is missing (disk
+// cleanup, a partial delete — anything short of the happy path), the
+// unconditional RemoveAll destroyed an already-good prior snapshot and then
+// had nothing to replace it with — turning what should have been a rollback
+// into a full uninstall on the very next version-mismatch. This mirrors
+// TestSyncPullTick_VersionMismatchOnUpgradePreservesPriorGoodVersion above,
+// but with the live 1.0.0 install dir removed after convergence and a
+// versions/1.0.0 snapshot seeded in its place — the exact shape that made
+// the till log the ut-docs#2799 WARN ("failed to copy...") while the
+// (unrelated) install itself still succeeded.
+func TestSyncPullTick_VersionMismatchRollsBackEvenWhenLiveSourceDirMissing(t *testing.T) {
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-alpha": "com.test.sync-alpha"})
+	primary := newSyncPluginsPrimary(t, mkt)
+	replica := newSyncPluginsReplica(t, mkt, primary.server.URL)
+	client := &http.Client{Timeout: 5 * time.Second}
+	const pluginID = "com.test.sync-alpha"
+	pluginsDir := filepath.Join(replica.dataDir, "plugins")
+
+	// Primary installs 1.0.0 for real; replica converges to it.
+	primary.install(t, "listing-alpha")
+	replica.tick(t, client)
+	if v, ok := pluginInstalledVersion(t, replica.dp, pluginID); !ok || v != "1.0.0" {
+		t.Fatalf("precondition: replica should be converged at 1.0.0, got (%q, %v)", v, ok)
+	}
+	liveDir := filepath.Join(pluginsDir, pluginID, "1.0.0")
+	if _, err := os.Stat(liveDir); err != nil {
+		t.Fatalf("precondition: live install dir missing before seeding snapshot: %v", err)
+	}
+
+	// A versions/1.0.0 snapshot already exists — the shape a real prior
+	// upgrade-and-rollback cycle leaves, taken here directly off the live
+	// dir the replica just converged to (real manifest, real content).
+	rm := plugins.NewRollbackManager(replica.dp.Db, pluginsDir)
+	if err := rm.StoreVersion(pluginID, "1.0.0", liveDir); err != nil {
+		t.Fatalf("seed versions/1.0.0 snapshot: %v", err)
+	}
+	snapshotManifest := filepath.Join(pluginsDir, pluginID, "versions", "1.0.0", "manifest.json")
+	before, err := os.ReadFile(snapshotManifest)
+	if err != nil {
+		t.Fatalf("read seeded snapshot manifest: %v", err)
+	}
+	if len(before) == 0 {
+		t.Fatal("sanity: seeded snapshot manifest is empty")
+	}
+
+	// Delete the LIVE per-version install dir — the exact precondition
+	// ut-docs#2799 hit in production (the till logged the WARN; the install
+	// itself still succeeded, since Install never touches this directory).
+	if err := os.RemoveAll(liveDir); err != nil {
+		t.Fatalf("remove live version dir: %v", err)
+	}
+
+	// The marketplace publishes a real 2.0.0 and the primary genuinely
+	// upgrades to it, then the marketplace is made to answer a PINNED
+	// "2.0.0" request with the wrong release — same shape as the sibling
+	// mismatch tests above, but now with no live source dir for StoreVersion
+	// to snapshot the prior good version from.
+	mkt.publishVersion(t, "listing-alpha", pluginID, "2.0.0")
+	primary.install(t, "listing-alpha")
+	mkt.publishMismatchedRelease(t, "listing-alpha", pluginID, "2.0.0", "9.9.9")
+
+	replica.tick(t, client) // attempts the pinned upgrade, hits the mismatch
+
+	after, err := os.ReadFile(snapshotManifest)
+	if err != nil {
+		t.Fatalf("pre-existing versions/1.0.0 snapshot must survive a failed StoreVersion, got: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("existing snapshot content changed:\nbefore=%q\nafter=%q", before, after)
+	}
+
+	if v, ok := pluginInstalledVersion(t, replica.dp, pluginID); !ok || v != "1.0.0" {
+		t.Fatalf("expected rollback to the prior good version 1.0.0 despite the missing live source dir, got (%q, %v)", v, ok)
+	}
+	if state, ok := installStatusState(t, replica.dp, "listing-alpha"); !ok || state != string(plugins.InstallStateActive) {
+		t.Fatalf("expected install status Active after rolling back (the plugin is genuinely still active), got (%q, %v)", state, ok)
+	}
+
+	// ut-docs#2799 review M1: rolling back to a version whose live
+	// per-version install dir is missing must restore that dir from the
+	// versions/ snapshot — everything that loads an installed plugin's
+	// files (wasm_runtime.go, plugins.go's locale loader, plugin_page.go,
+	// themes.go, plugin_icons.go) reads from pluginBaseDir/id/version/,
+	// never from versions/version/. Without the restore, this rollback
+	// would leave the plugin "Active" in the DB with zero files on disk.
+	restoredManifest, err := os.ReadFile(filepath.Join(liveDir, "manifest.json"))
+	if err != nil {
+		t.Fatalf("expected the live install dir %s to be restored by the rollback, got: %v", liveDir, err)
+	}
+	if len(restoredManifest) == 0 {
+		t.Fatal("restored live manifest.json is empty")
+	}
 }
 
 // ut-docs#495 round 1 review: the sync-pull loop retries every ~30s, so a

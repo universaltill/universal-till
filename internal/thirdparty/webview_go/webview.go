@@ -2,8 +2,12 @@
 // (v0.0.0-20240831120633-6173450d4dd6, upstream unmaintained — no newer
 // release exists to bump to). Patched for ADR-0028: the Linux pkg-config
 // target below is webkit2gtk-4.1, not upstream's 4.0, which Debian 13
-// trixie (current Raspberry Pi OS) dropped entirely. Wired in via go.mod's
-// `replace` directive; re-sync manually if upstream ever changes.
+// trixie (current Raspberry Pi OS) dropped entirely. Also patched for
+// ut-docs#2761: NewWindow returns nil on failure, the Windows engine fails
+// creation when WebView2 does not start (libs/webview/include/webview.h,
+// "universal-till patch"), and LastInitError exposes its HRESULT. Wired in
+// via go.mod's `replace` directive; re-sync manually if upstream ever
+// changes, keeping every "universal-till patch".
 package webview
 
 /*
@@ -158,10 +162,25 @@ func New(debug bool) WebView { return NewWindow(debug, nil) }
 // embedded into the given parent window. Otherwise a new window is created.
 // Depending on the platform, a GtkWindow, NSWindow or HWND pointer can be passed
 // here.
+//
+// Returns nil when the window or webview could not be created (for example no
+// display, or on Windows a missing or failing WebView2 runtime).
+// universal-till patch (ut-docs#2761): upstream wrapped the C library's
+// nullptr in a non-nil *webview, so callers could never see the failure and
+// the next call on it crashed.
 func NewWindow(debug bool, window unsafe.Pointer) WebView {
-	w := &webview{}
-	w.w = C.webview_create(boolToInt(debug), window)
-	return w
+	cw := C.webview_create(boolToInt(debug), window)
+	if cw == nil {
+		return nil
+	}
+	return &webview{w: cw}
+}
+
+// LastInitError returns the HRESULT of this process's last failed WebView2
+// initialisation, 0 when there was none or it is unknown; always 0 on
+// non-Windows platforms. universal-till patch (ut-docs#2761).
+func LastInitError() int32 {
+	return int32(C.webview_last_init_error())
 }
 
 func (w *webview) Destroy() {

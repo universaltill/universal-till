@@ -70,6 +70,9 @@ const (
 	keySyncBearer     = "sync.bearer"
 	keySyncTillID     = "sync.till_id"
 	keySyncTillName   = "sync.till_name"
+
+	// keyTillName is shop-wide: on a replica it holds the main till's name.
+	keyTillName = "till.name"
 )
 
 var (
@@ -271,7 +274,7 @@ func replicaAttempt(ctx context.Context, m config.MarketplaceConfig, kv Settings
 		m.StoreID, m.MerchantToken = currentStoreAuth(m)
 		var rerr error
 		if m.StoreID != "" && m.MerchantToken != "" {
-			rerr = registerDevice(ctx, m, deviceName(ctx, kv), kv)
+			rerr = registerDevice(ctx, m, DeviceName(ctx, kv), kv)
 		}
 		releaseAttempt()
 		if rerr != nil {
@@ -285,9 +288,28 @@ func replicaAttempt(ctx context.Context, m config.MarketplaceConfig, kv Settings
 	}
 }
 
-func deviceName(ctx context.Context, kv Settings) string {
-	v, _, _ := kv.Get(ctx, keySyncTillName)
-	return v
+// DeviceName is the name this till registers with the cloud for itself
+// (ut-docs#3019). The owner types it into till.name, but till.name is
+// shop-wide (data.ShopWideSettingPrefixes): on a replica it holds the main
+// till's name. So:
+//   - replica: sync.till_name only, never till.name;
+//   - main/standalone: till.name, else sync.till_name.
+//
+// Promoting a replica (data.SettingsRepo.ClearReplicaIdentity, ut-docs#3025)
+// copies sync.till_name into till.name before clearing it, so the newly
+// promoted till keeps reporting its own name here, not the old main till's.
+func DeviceName(ctx context.Context, kv Settings) string {
+	get := func(key string) string {
+		v, _, _ := kv.Get(ctx, key)
+		return strings.TrimSpace(v)
+	}
+	if isReplica(ctx, kv) {
+		return get(keySyncTillName)
+	}
+	if name := get(keyTillName); name != "" {
+		return name
+	}
+	return get(keySyncTillName)
 }
 
 // registerOnReplica is RegisterNow's replica branch: a replica never creates

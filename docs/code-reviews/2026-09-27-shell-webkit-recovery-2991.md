@@ -48,3 +48,12 @@ The reviewer also confirmed:
 
 ## Verdict
 Safe to merge.
+
+## Merge with main (2026-09-27, lane:local)
+
+After #1414 (#2761) and #1439 (#2760) merged, two files conflicted:
+`cmd/unitill-desktop/README.md` (two new sections) and
+`webview_fallback.go` (two new package-level seams each side). Resolved as a
+union — no line of either side removed (checked: `git diff` against both
+parents deletes nothing). `go build ./...`, `go test ./cmd/unitill-desktop/`,
+and `go vet` for linux/windows/darwin pass; CI re-runs on the merge commit.
