@@ -1,0 +1,6 @@
+"status_starting" = "جارٍ تشغيل الصندوق…";
+"status_failed" = "فشل بدء التشغيل: %@";
+"action_retry" = "إعادة المحاولة";
+"error_bar_message" = "تعذّر تحميل هذه الصفحة.";
+"error_bar_action" = "العودة إلى الصندوق";
+"external_link_failed" = "تعذّر فتح الرابط في المتصفح.";

@@ -1,0 +1,7 @@
+/* Shell strings (ut-docs#3068). Wording mirrors android/app/src/main/res/values/strings.xml. */
+"status_starting" = "Starting the till…";
+"status_failed" = "Failed to start: %@";
+"action_retry" = "Try again";
+"error_bar_message" = "This page couldn’t load.";
+"error_bar_action" = "Back to till";
+"external_link_failed" = "Couldn’t open the link in a browser.";

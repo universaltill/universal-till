@@ -1,0 +1,70 @@
+# XcodeGen spec for the iOS/iPadOS till shell (ut-docs#3068, ADR-0023 §1).
+# The .xcodeproj is generated from this file (`xcodegen generate`) and is
+# never committed — a hand-kept .pbxproj is unreviewable in a PR.
+#
+# build/Mobile.xcframework is the Go till server, produced by
+#   gomobile bind -target=ios,iossimulator -o ios/build/Mobile.xcframework ./mobile
+# (see README.md and .github/workflows/ios-ci.yml).
+name: UniversalTill
+options:
+  bundleIdPrefix: com.universaltill
+  developmentLanguage: en
+  deploymentTarget:
+    iOS: "15.0"
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+targets:
+  UniversalTill:
+    type: application
+    platform: iOS
+    sources:
+      - path: UniversalTill
+    dependencies:
+      # gomobile builds a static framework: link it, never embed it.
+      - framework: build/Mobile.xcframework
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.universaltill.pos
+        PRODUCT_NAME: UniversalTill
+        TARGETED_DEVICE_FAMILY: "1,2" # iPhone and iPad
+        # Go's net package resolves DNS through libresolv on Apple
+        # platforms; the static Go archive references it but can't link it.
+        OTHER_LDFLAGS: ["-lresolv"]
+        ENABLE_BITCODE: NO
+        GENERATE_INFOPLIST_FILE: NO
+    info:
+      path: UniversalTill/Info.plist
+      properties:
+        CFBundleDisplayName: Universal Till
+        CFBundleDevelopmentRegion: en
+        CFBundleAllowMixedLocalizations: true
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        # A till is used in whichever orientation its stand holds it
+        # (ut-docs#3050); iPad multitasking also requires all four.
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        # The WebView loads the in-process server over plain http on
+        # 127.0.0.1; this allows ONLY local-network/loopback http, not
+        # arbitrary cleartext.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        # The server binds every interface so other tills can pair and sync
+        # with this one (ADR-0033, ut-docs#1256) and advertises over mDNS.
+        # Texts are translated in <lang>.lproj/InfoPlist.strings.
+        NSLocalNetworkUsageDescription: Universal Till finds and syncs with the other tills in your shop over the local network.
+        NSBonjourServices:
+          - _unitill-sync._tcp
+        # Barcode scanning with the camera from the web UI.
+        NSCameraUsageDescription: Universal Till uses the camera to scan barcodes.
