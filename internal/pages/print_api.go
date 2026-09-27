@@ -600,13 +600,24 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 				}, elev)
 			return
 		}
-		_ = d.Settings.Set(r.Context(), keyPrinterMode, mode)
-		_ = d.Settings.Set(r.Context(), keyPrinterAddress, address)
-		_ = d.Settings.Set(r.Context(), keyPrinterDevice, device)
-		_ = d.Settings.Set(r.Context(), keyPrinterCharset, charset)
-		_ = d.Settings.Set(r.Context(), keyPrinterKitchen, kitchenAddr)
-		_ = d.Settings.Set(r.Context(), keyPrinterReceiptPolicy, receiptPolicy)
-		_ = d.Settings.Set(r.Context(), keyPrinterDrawerPin, drawerPin)
+		// ut-docs#2979: printer.* is per-till, so this is a local write on
+		// every till today; routed through saveShopSettings as one batch so
+		// a shop-wide key added to this card later is written through too.
+		if err := saveShopSettings(r.Context(), d, elev, map[string]string{
+			keyPrinterMode:          mode,
+			keyPrinterAddress:       address,
+			keyPrinterDevice:        device,
+			keyPrinterCharset:       charset,
+			keyPrinterKitchen:       kitchenAddr,
+			keyPrinterReceiptPolicy: receiptPolicy,
+			keyPrinterDrawerPin:     drawerPin,
+		}); err != nil {
+			if respondSettingsSyncError(w, r, err) {
+				return
+			}
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "printer_settings", err)
+			return
+		}
 		// ut-docs#866 review (N4): payload is deliberately partial — mode/
 		// charset/receipt_policy only, not address/device/kitchenAddr. Those
 		// are LAN network/device identifiers, not shop-config content worth

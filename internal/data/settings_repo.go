@@ -19,6 +19,18 @@ func NewSettingsRepo(db *sql.DB) *SettingsRepo {
 
 var settingsObs = newRepoObservability("settings")
 
+// invalidateCachedSetting drops any in-process cache of key after a generic
+// write (Set, SetMany, Delete). Today only the barcode symbology set is
+// cached (barcode_settings.go); without this a write through the generic
+// path -- the additional-till mirror of a write-through, the main till's
+// /api/sync/settings/apply, a cloud directive -- left the cached set stale
+// until the next dedicated write (ut-docs#2979).
+func invalidateCachedSetting(db *sql.DB, key string) {
+	if key == BarcodeEnabledSymbologiesKey {
+		invalidateBarcodeSymbologyCache(db)
+	}
+}
+
 func (r *SettingsRepo) Get(ctx context.Context, key string) (string, bool, error) {
 	var err error
 	done := settingsObs.trace("get")
@@ -51,6 +63,7 @@ ON CONFLICT(key) DO UPDATE SET
 	if err != nil {
 		return settingsObs.wrapf("set", "set setting %s", err, key)
 	}
+	invalidateCachedSetting(r.db, key)
 	return nil
 }
 
@@ -174,6 +187,9 @@ ON CONFLICT(key) DO UPDATE SET
 	if err = tx.Commit(); err != nil {
 		return settingsObs.wrap("set_many", err)
 	}
+	for _, k := range keys {
+		invalidateCachedSetting(r.db, k)
+	}
 	return nil
 }
 
@@ -186,6 +202,7 @@ func (r *SettingsRepo) Delete(ctx context.Context, key string) error {
 	if err != nil {
 		return settingsObs.wrapf("delete", "delete setting %s", err, key)
 	}
+	invalidateCachedSetting(r.db, key)
 	return nil
 }
 
