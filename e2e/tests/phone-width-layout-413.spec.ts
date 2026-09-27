@@ -400,4 +400,57 @@ test.describe('phone-width layout (ut-docs#413)', () => {
     expect(style!.textOverflow, 'barcode input must use ellipsis, not a hard mid-character clip').toBe('ellipsis');
     expect(style!.whiteSpace, 'barcode input must not wrap (ellipsis requires nowrap)').toBe('nowrap');
   });
+
+  // ut-docs#3036: the scan field sits just below .pos-container's fold at
+  // 360x640, and its load-time `autofocus` scrolled .pos-container to bring
+  // it into view -- or didn't, depending on whether layout had settled when
+  // the browser ran autofocus, so the New Sale spec above flaked on slow
+  // runners (scrollTop 9/35). The scan field must still own focus at load
+  // (wedge scanners type into it), just without scrolling anything. Every
+  // scroll event is recorded from the first byte of the page, so this fails
+  // deterministically whenever ANYTHING scrolls .pos-container, instead of
+  // depending on when scrollTop happens to be sampled.
+  test('nothing scrolls .pos-container at load, and the scan field still takes focus', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.addInitScript(() => {
+      (window as any).__posScrolls = [];
+      document.addEventListener('scroll', (e) => {
+        const t = e.target as Element;
+        if (t && t.classList && t.classList.contains('pos-container')) {
+          (window as any).__posScrolls.push(t.scrollTop);
+        }
+      }, true);
+    });
+    await page.goto('/');
+    await page.waitForSelector('.pos-container');
+    await expect(page.locator('input[name=code]')).toBeFocused();
+    // Let late layout (fonts, htmx load swaps, the ADR-0122 zoom settle) land.
+    await page.waitForTimeout(1000);
+    const seen = await page.evaluate(() => ({
+      scrolls: (window as any).__posScrolls as number[],
+      scrollTop: document.querySelector('.pos-container')!.scrollTop,
+    }));
+    expect(seen.scrolls, 'no scroll event on .pos-container during load').toEqual([]);
+    expect(seen.scrollTop).toBe(0);
+    assertClean();
+  });
+
+  // ut-docs#3036: the phone New Sale button re-focuses the scan field for
+  // the scanner 150ms after the tap; that focus must not jump the sale
+  // screen down to the (below-the-fold) scan row either.
+  test('phone New Sale re-focuses the scan field without scrolling .pos-container', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.goto('/');
+    await page.waitForSelector('.pos-container');
+    await page.evaluate(() => {
+      const c = document.querySelector('.pos-container')!;
+      c.scrollTop = 0;
+      (document.activeElement as HTMLElement | null)?.blur();
+    });
+    await page.getByTestId('kiosk-checkout-start-phone').click();
+    await expect(page.locator('input[name=code]')).toBeFocused();
+    const scrollTop = await page.evaluate(() => document.querySelector('.pos-container')!.scrollTop);
+    expect(scrollTop, '.pos-container must stay at the top after New Sale').toBe(0);
+    assertClean();
+  });
 });
