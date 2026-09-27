@@ -24,13 +24,13 @@ import (
 // and behaves exactly as before ADR-0059.
 //
 // ut-docs#1361 review note: this key's value is cached in-process (see
-// barcodeSymbologyCache below) and the cache is invalidated only by
-// SetEnabledBarcodeSymbologies/SetBarcodeSymbologyEnabled. A future write
-// to this key through a generic path instead — SettingsRepo.Delete,
-// SetMany, or a raw Set(BarcodeEnabledSymbologiesKey, ...) — would bypass
-// that invalidation and leave a stale cached value in place; route any new
-// write through one of the two methods above, or call
-// invalidateBarcodeSymbologyCache explicitly.
+// barcodeSymbologyCache below). Every write path drops the cache: the two
+// dedicated methods below, and since ut-docs#2979 the generic
+// SettingsRepo.Set/SetMany/Delete (invalidateCachedSetting) and
+// SyncAdminRepo.ApplyAdmin -- the additional-till write-through mirrors the
+// value with SetMany, the main till applies it with SetMany, and the admin
+// pull writes the settings table directly. A new raw-SQL write to this key
+// must call invalidateBarcodeSymbologyCache too.
 const BarcodeEnabledSymbologiesKey = "barcode_enabled_symbologies"
 
 // CatalogImportBarcodeFromSKUDefaultKey is the settings-table key holding
@@ -247,39 +247,20 @@ func (r *SettingsRepo) SetBarcodeSymbologyEnabled(ctx context.Context, id string
 	}
 	defer tx.Rollback()
 
-	defaults := DefaultEnabledBarcodeSymbologyIDs()
-	ids := defaults
 	var val string
 	scanErr := tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, BarcodeEnabledSymbologiesKey).Scan(&val)
+	found := true
 	switch {
 	case errors.Is(scanErr, sql.ErrNoRows):
-		// No row yet: this toggle is the shop's first-ever change, applied
-		// on top of the ADR-0059 §2 defaults — same starting point
-		// EnabledBarcodeSymbologies would return.
+		found = false
 	case scanErr != nil:
 		err = fmt.Errorf("set barcode symbology %s: %w", id, scanErr)
 		return nil, err
-	default:
-		// A corrupt row must not brick this write: fall back to the
-		// defaults, same posture as EnabledBarcodeSymbologies. Unmarshal
-		// into a fresh variable rather than &ids directly — a stored
-		// "null"/"[]" parses with NO error and would silently overwrite
-		// the "ids := defaults" starting point above with a nil/empty
-		// slice (ut-docs#959), contradicting this comment's own stated
-		// intent. Only adopt the parsed value when it actually contains
-		// at least one non-blank id; otherwise ids keeps the defaults.
-		var parsed []string
-		if json.Unmarshal([]byte(val), &parsed) == nil {
-			parsed = nonBlankSymbologyIDs(parsed)
-			if len(parsed) > 0 {
-				ids = parsed
-			}
-		}
 	}
 
-	newIDs := toggleSymbologyID(ids, id, enabled)
-	if len(newIDs) == 0 {
-		return nil, ErrEmptyBarcodeSymbologySet
+	newIDs, nextErr := nextBarcodeSymbologySet(val, found, id, enabled)
+	if nextErr != nil {
+		return nil, nextErr
 	}
 
 	b, marshalErr := json.Marshal(newIDs)
@@ -302,6 +283,53 @@ ON CONFLICT(key) DO UPDATE SET
 		return nil, err
 	}
 	invalidateBarcodeSymbologyCache(r.db)
+	return newIDs, nil
+}
+
+// NextBarcodeSymbologySet returns the enabled set SetBarcodeSymbologyEnabled
+// would write for this toggle, without writing it (ut-docs#2979): an
+// additional till sends that set through its main till instead of writing
+// the shop-wide key locally. ErrEmptyBarcodeSymbologySet when the toggle
+// would leave the set empty -- refused before anything is sent. Not atomic
+// against a concurrent toggle; the main till's copy is the one that sticks
+// either way.
+func (r *SettingsRepo) NextBarcodeSymbologySet(ctx context.Context, id string, enabled bool) ([]string, error) {
+	val, found, err := r.Get(ctx, BarcodeEnabledSymbologiesKey)
+	if err != nil {
+		return nil, fmt.Errorf("next barcode symbology set %s: %w", id, err)
+	}
+	return nextBarcodeSymbologySet(val, found, id, enabled)
+}
+
+// nextBarcodeSymbologySet applies one toggle to the stored value val (found
+// false: no row yet). Shared by SetBarcodeSymbologyEnabled and
+// NextBarcodeSymbologySet.
+func nextBarcodeSymbologySet(val string, found bool, id string, enabled bool) ([]string, error) {
+	// No row yet: this toggle is the shop's first-ever change, applied on
+	// top of the ADR-0059 §2 defaults — same starting point
+	// EnabledBarcodeSymbologies would return.
+	ids := DefaultEnabledBarcodeSymbologyIDs()
+	if found {
+		// A corrupt row must not brick this write: fall back to the
+		// defaults, same posture as EnabledBarcodeSymbologies. Unmarshal
+		// into a fresh variable rather than &ids directly — a stored
+		// "null"/"[]" parses with NO error and would silently overwrite
+		// the defaults starting point above with a nil/empty slice
+		// (ut-docs#959). Only adopt the parsed value when it actually
+		// contains at least one non-blank id; otherwise ids keeps the
+		// defaults.
+		var parsed []string
+		if json.Unmarshal([]byte(val), &parsed) == nil {
+			parsed = nonBlankSymbologyIDs(parsed)
+			if len(parsed) > 0 {
+				ids = parsed
+			}
+		}
+	}
+	newIDs := toggleSymbologyID(ids, id, enabled)
+	if len(newIDs) == 0 {
+		return nil, ErrEmptyBarcodeSymbologySet
+	}
 	return newIDs, nil
 }
 

@@ -1251,6 +1251,7 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		_ = d.Settings.Set(r.Context(), keyEODEnabled, fmt.Sprintf("%t", enabled))
 		_ = d.Settings.Set(r.Context(), keyEODTime, hhmm)
+		// settings-write:allow reports.business_day_start is shop-wide but still written locally on an additional till (reported with ut-docs#2979 for a follow-up card); the other four keys here are per-till
 		_ = d.Settings.Set(r.Context(), keyReportsBusinessDayStart, bizDayStart)
 		_ = d.Settings.Set(r.Context(), keyEODArticlePrintMode, articlePrintMode)
 		_ = d.Settings.Set(r.Context(), keyEODArticlePrintCap, articlePrintCapRaw)
@@ -1329,6 +1330,7 @@ func registerReportArchiveAPI(mux *http.ServeMux, d *common.Deps) {
 		if elev.Outcome == elevated {
 			actorID = elev.ApproverID
 		}
+		// settings-write:allow store.report_retention_mode is shop-wide but still written locally on an additional till (reported with ut-docs#2979 for a follow-up card)
 		if err := d.Settings.Set(r.Context(), common.KeyReportRetentionMode, mode); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "eod.err.retention_save_failed", "eod_retention_save", err)
 			return

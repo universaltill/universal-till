@@ -208,7 +208,15 @@ func registerFiscalDeviceTR(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "fiscaldevice.error.server", nil)
 			return
 		}
-		if err := d.Settings.Set(r.Context(), fiscal.SigningDeviceConfiguredKey(d.CurrentState().Country), "true"); err != nil {
+		// ut-docs#2979: the posture row is shop-wide -- written through the
+		// main till on an additional till (which re-checks
+		// fiscal_tse_override on the actor); a refusal writes nothing and
+		// is not audited.
+		if err := saveShopSettings(r.Context(), d, elevationCheck{Outcome: allowed, ActorID: actor.ID},
+			map[string]string{fiscal.SigningDeviceConfiguredKey(d.CurrentState().Country): "true"}); err != nil {
+			if respondSettingsSyncPage(w, r, err) {
+				return
+			}
 			httpx.RenderError(w, r, http.StatusInternalServerError, "fiscaldevice.error.server", err)
 			return
 		}
@@ -248,7 +256,15 @@ func registerFiscalDeviceTR(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "fiscaldevice.error.server", nil)
 			return
 		}
-		if err := d.Settings.Set(r.Context(), fiscal.SigningDeviceConfiguredKey(d.CurrentState().Country), "false"); err != nil {
+		// ut-docs#2979: the posture row is shop-wide -- written through the
+		// main till on an additional till (which re-checks
+		// fiscal_tse_override on the actor); a refusal writes nothing and
+		// is not audited.
+		if err := saveShopSettings(r.Context(), d, elevationCheck{Outcome: allowed, ActorID: actor.ID},
+			map[string]string{fiscal.SigningDeviceConfiguredKey(d.CurrentState().Country): "false"}); err != nil {
+			if respondSettingsSyncPage(w, r, err) {
+				return
+			}
 			httpx.RenderError(w, r, http.StatusInternalServerError, "fiscaldevice.error.server", err)
 			return
 		}

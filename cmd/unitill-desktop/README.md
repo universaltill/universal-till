@@ -58,9 +58,33 @@ manager at a persistent SQLite file under
 `$XDG_DATA_HOME`, see `webkit_datadir_linux.go`/`webkit_linux.go`) —
 without it, `webview_go`'s GTK/WebKit2 backend keeps an in-memory-only
 cookie jar that dies with the process, so the language choice (`ut_lang`)
-and login session both reset on every restart/reboot. Windows (WebView2)
-and macOS (`webkit_darwin.go`'s `WKWebView`) already persist cookies to
-their own per-app data store by default and need no equivalent wiring.
+and login session both reset on every restart/reboot. macOS
+(`webkit_darwin.go`'s `WKWebView`) persists cookies to its own per-app data
+store by default and needs no equivalent wiring. Windows (WebView2)
+persists them too; since ut-docs#2761 its user data folder is pinned to
+`<data dir>\webview2` (`UT_DATA_DIR`, default
+`%LOCALAPPDATA%\UniversalTill`) — see the next section.
+
+## Windows WebView2 failure → browser fallback (ut-docs#2761)
+
+If WebView2 cannot start — no runtime installed, or stale
+`msedgewebview2.exe` processes still holding the user data folder after a
+runtime self-update (a reboot clears them) — the shell no longer crashes
+(`0xc0000005` in `webview_navigate`). It opens the till in the default
+browser instead and keeps serving until the till stops, and `desktop.log`
+records why: the WebView2 `HRESULT` and the installed runtime version
+(logged at every start as `WebView2 runtime version=…`).
+
+This needed patches to the vendored `internal/thirdparty/webview_go`
+(each marked `universal-till patch`): `webview.NewWindow` returns `nil` on
+failure (upstream never did, so `showWindow`'s fallback was unreachable);
+the Windows engine fails creation when WebView2 embedding fails, and gives
+up instead of waiting forever on `ERROR_INVALID_STATE`; `LastInitError`
+exposes the `HRESULT` (`ERROR_FILE_NOT_FOUND` = no runtime installed).
+The user data folder is set through `WEBVIEW2_USER_DATA_FOLDER`
+(`webview2_windows.go`), which the patched `embed()` reads itself — the
+library's built-in loader otherwise ignores it; an operator-set value
+wins.
 
 ## Attach-vs-spawn cold-boot race (ut-docs#1199)
 
@@ -110,6 +134,45 @@ clean on the systemd service's own DB (accepting the desktop-user copy's
 sales are lost) or manually reconcile the two before restarting — there is
 no automated merge tool for this, it's a one-off recovery, not a shipped
 feature.
+
+## Server outlives a crashed shell (Windows, ut-docs#2760)
+
+When the shell died without running its deferred `cmd.Process.Kill()` — the
+WebView2 crash of ut-docs#2761, or a `taskkill` — the `unitill-pos.exe` it had
+spawned kept running. The orphan held the data directory, so a relaunch
+either attached to it or started a second server that exited with
+`db.ErrDataDirLocked`, and the installer failed with "Error opening file for
+writing" on `unitill-pos.exe`. Three changes close this:
+
+- **Kill-on-close job** (`internal/procjob`): right after `cmd.Start()` the
+  child goes into a Windows Job object with
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. The shell never closes the handle;
+  the OS does when the shell exits for any reason, and kills the server (and
+  the hardware plugins it started) with it. Only the child is in the job —
+  not the shell — so a browser opened by the WebView2 fallback survives. The
+  job also sets `JOB_OBJECT_LIMIT_BREAKAWAY_OK`: the in-app updater's helper
+  (`internal/selfupdate`, ut-docs#160) starts with
+  `CREATE_BREAKAWAY_FROM_JOB` so it outlives the shell and server it stops,
+  and refuses to start inside a kill-on-close job without it. A
+  failure to create/assign the job is a warning in `desktop.log`, never
+  fatal. No-op on other platforms.
+- **Early exit is logged** (`child_wait.go`): the ~10s wait for the server
+  stops as soon as the child exits and `desktop.log` records its exit
+  status, instead of polling a dead port and recording nothing. Not on
+  macOS: reaping the child there would let its PID be reused before the
+  window-close handler SIGTERMs it.
+- **Installer/uninstaller** (`packaging/windows/installer.nsi`,
+  `StopRunningTill`): before extracting or deleting, stop any
+  `unitill-desktop.exe`/`unitill-pos.exe` whose image lives under
+  `$INSTDIR` (PowerShell + WMI `Win32_Process.ExecutablePath` — the 32-bit
+  installer's PowerShell can't read a 64-bit process's `Get-Process` path —
+  path passed via an env var), wait for them to exit, and say so in the
+  install log.
+
+`GOOS=windows go vet ./internal/procjob/` runs in `ci.yml`'s `build` job;
+`procjob_windows_test.go` (kill the parent → its child dies; a member can
+start a process with `CREATE_BREAKAWAY_FROM_JOB`) runs only on Windows —
+both pass under Wine and fail without the respective flag.
 
 ## Status & follow-ups
 

@@ -626,12 +626,18 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					http.Error(w, T("import.error.invalid_file"), http.StatusBadRequest)
 					return
 				}
-				st := d.CurrentState()
+				base := d.CurrentState()
+				st := base
 				fromCurrency := active.Code
 				st.Currency = chosen.Code
-				if serr := common.SaveState(r.Context(), d.Settings, st); serr != nil {
-					log.Printf("[import] save switched currency: %v", serr)
-					http.Error(w, T("import.error.invalid_file"), http.StatusInternalServerError)
+				// ut-docs#2979: the switch and its confirmation are one
+				// write -- one batch through the main till on a till that
+				// follows one (unreachable today: the commit is refused on
+				// such a till above, ut-docs#1696), nothing local on a
+				// refusal. The live state follows only a successful save.
+				if serr := saveStateThrough(r.Context(), d, importCurrencyActor(r), base, st,
+					map[string]string{common.KeyCurrencyConfirmed: "true"}); serr != nil {
+					respondImportCurrencySaveError(w, r, T, serr)
 					return
 				}
 				d.SetState(st)
@@ -648,10 +654,17 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				}
 				httpx.InitCurrency(st.Currency)
 			}
-			if serr := d.Settings.Set(r.Context(), common.KeyCurrencyConfirmed, "true"); serr != nil {
-				log.Printf("[import] mark currency confirmed: %v", serr)
-				http.Error(w, T("import.error.invalid_file"), http.StatusInternalServerError)
-				return
+			// Same currency: only the confirmation is written (through the
+			// main till on a till that follows one, as above). On a main
+			// till it is also written after a switch, strictly, as before
+			// ut-docs#2979 (saveStateThrough writes its extra keys
+			// best-effort there).
+			if chosen.Code == active.Code || !tillFollowsMain(r.Context(), d) {
+				if serr := saveShopSettings(r.Context(), d, importCurrencyActor(r),
+					map[string]string{common.KeyCurrencyConfirmed: "true"}); serr != nil {
+					respondImportCurrencySaveError(w, r, T, serr)
+					return
+				}
 			}
 			currencyConfirmed = true
 			justConfirmedCurrency = true
@@ -2132,4 +2145,24 @@ func minorToDecimal(minor int64, decimals int) string {
 func htmlEscape(s string) string {
 	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;")
 	return r.Replace(s)
+}
+
+// importCurrencyActor is the write-through actor of the import's currency
+// confirmation (ut-docs#2979): the handler's flat import_export gate is its
+// whole authorization, so the session user travels as an allowed actor.
+func importCurrencyActor(r *http.Request) elevationCheck {
+	return elevationCheck{Outcome: allowed, ActorID: getSessionUserID(r)}
+}
+
+// respondImportCurrencySaveError answers a failed currency switch or
+// confirmation in the import handler's plain-text error shape: the
+// write-through's own message and status when the main till refused or was
+// away, otherwise the handler's generic 500.
+func respondImportCurrencySaveError(w http.ResponseWriter, r *http.Request, T func(string) string, err error) {
+	if se, ok := settingsSyncFailure(err); ok {
+		http.Error(w, settingsSyncMessage(r, w, se), settingsSyncStatus(se))
+		return
+	}
+	log.Printf("[import] save currency confirmation: %v", err)
+	http.Error(w, T("import.error.invalid_file"), http.StatusInternalServerError)
 }

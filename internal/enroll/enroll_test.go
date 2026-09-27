@@ -44,10 +44,9 @@ func (f *fakeKV) get(key string) string {
 // resetState clears the package-level identity between tests.
 //
 // Deliberately does NOT touch attemptSem. A drain here looks like harmless
-// cleanup but isn't: several tests in this file call Init with
-// context.Background() and never cancel it, so its background loop
-// goroutine can genuinely still be running — holding attemptSem mid
-// critical-section — well after the test that started it has returned.
+// cleanup but isn't: a test's background loop goroutine can still be
+// running — holding attemptSem mid critical-section — when resetState runs
+// (e.g. from a cleanup registered before the loop's own cancel+wait).
 // A non-blocking receive can't tell "stale token left behind" from
 // "another goroutine's live token"; it drains either one. Stealing a live
 // token lets a second goroutine wrongly believe it has exclusive access
@@ -109,6 +108,23 @@ func testMarketplace(t *testing.T, failures int) (*httptest.Server, *int) {
 	return srv, calls
 }
 
+// initForTest runs Init with a context cancelled at test cleanup and waits
+// for any background registration loop to exit, so no goroutine outlives
+// its test (ut-docs#3021). Cleanup runs before any t.Cleanup registered
+// earlier in the same test (e.g. an httptest.Server's own Close), since
+// testing.T runs cleanups LIFO — so the loop is always stopped before
+// resources it might still be using are torn down.
+func initForTest(t *testing.T, cfg *config.Config, kv Settings) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	Init(ctx, cfg, kv, &wg)
+	t.Cleanup(func() {
+		cancel()
+		wg.Wait()
+	})
+}
+
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -140,7 +156,7 @@ func TestInitFreshTillDoesNotRegisterStore(t *testing.T) {
 	kv := newFakeKV()
 	cfg := freshConfig(srv.URL)
 
-	Init(context.Background(), cfg, kv, &sync.WaitGroup{})
+	initForTest(t, cfg, kv)
 
 	deviceID := kv.get(keyDeviceID)
 	if !strings.HasPrefix(deviceID, "till-") {
@@ -263,7 +279,7 @@ func TestInitAlreadyEnrolledSkipsRegistration(t *testing.T) {
 	}
 	cfg := freshConfig(srv.URL)
 
-	Init(context.Background(), cfg, kv, &sync.WaitGroup{})
+	initForTest(t, cfg, kv)
 
 	if cfg.Marketplace.ClientID != "store-old" || cfg.Marketplace.StoreID != "store-old" {
 		t.Fatalf("cfg not filled from persisted enrolment: %q/%q", cfg.Marketplace.ClientID, cfg.Marketplace.StoreID)
@@ -288,7 +304,7 @@ func TestInitExplicitConfigWinsAndSkipsEnrolment(t *testing.T) {
 	cfg.Marketplace.PublicKey = strings.Repeat("ef", 32)
 	t.Setenv("UT_MARKETPLACE_STORE_ID", "store-1")
 
-	Init(context.Background(), cfg, kv, &sync.WaitGroup{})
+	initForTest(t, cfg, kv)
 
 	time.Sleep(50 * time.Millisecond)
 	if *calls != 0 {
@@ -311,7 +327,7 @@ func TestEnsureRegisteredRetriesAcrossAttempts(t *testing.T) {
 	srv, calls := testMarketplace(t, 2) // first two register calls fail
 	kv := newFakeKV()
 	cfg := freshConfig(srv.URL)
-	Init(context.Background(), cfg, kv, &sync.WaitGroup{})
+	initForTest(t, cfg, kv)
 
 	for i := 1; i <= 3; i++ {
 		eff := EnsureRegistered(context.Background(), cfg, kv)
@@ -334,7 +350,7 @@ func TestInitKeylessExplicitTillStillFetchesSigningKey(t *testing.T) {
 	cfg := freshConfig(srv.URL)
 	cfg.Marketplace.ClientID = "merchant-1" // explicit merchant, but no public key
 
-	Init(context.Background(), cfg, kv, &sync.WaitGroup{})
+	initForTest(t, cfg, kv)
 
 	waitFor(t, "signing key", func() bool { return kv.get(keyPublicKey) != "" })
 	time.Sleep(50 * time.Millisecond)
@@ -378,6 +394,7 @@ func TestInit_BackgroundLoopJoinsOnCancel(t *testing.T) {
 	kv := newFakeKV()
 	cfg := freshConfig(srv.URL)
 	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	var wg sync.WaitGroup
 
 	Init(ctx, cfg, kv, &wg)
@@ -601,8 +618,8 @@ func TestInitRegistersDeviceWithTillName(t *testing.T) {
 	}
 	cfg := freshConfig(srv.URL)
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	var wg sync.WaitGroup
+	t.Cleanup(func() { cancel(); wg.Wait() })
 
 	Init(ctx, cfg, kv, &wg)
 
@@ -709,7 +726,7 @@ func TestBackgroundLoopStillAcquiresAttemptSlotOnceFree(t *testing.T) {
 		releaseAttempt()
 	}()
 
-	Init(context.Background(), cfg, kv, &sync.WaitGroup{})
+	initForTest(t, cfg, kv)
 	waitFor(t, "signing key", func() bool { return kv.get(keyPublicKey) != "" })
 }
 
@@ -732,6 +749,7 @@ func TestBackgroundLoopExitsPromptlyWhenCancelledWhileQueuedOnAttemptSlot(t *tes
 	kv := newFakeKV()
 	cfg := freshConfig(srv.URL) // no PublicKey configured -> Init's loop needs the key
 	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	var wg sync.WaitGroup
 
 	Init(ctx, cfg, kv, &wg)
@@ -756,4 +774,51 @@ func TestBackgroundLoopExitsPromptlyWhenCancelledWhileQueuedOnAttemptSlot(t *tes
 	case <-time.After(2 * time.Second):
 		t.Fatal("run() did not exit promptly after ctx cancel while queued on the attempt slot")
 	}
+}
+
+// TestInitWritesExplicitFlagsUnderMu pins ut-docs#3021: Init must write
+// storeIDExplicit/tokenExplicit under mu, because a background loop (or any
+// Effective caller) reads them under mu.RLock concurrently. Only the race
+// detector sees this, so it proves something only under `go test -race`
+// (CI runs this package that way).
+func TestInitWritesExplicitFlagsUnderMu(t *testing.T) {
+	resetState()
+	t.Cleanup(resetState)
+	// A store id in cur plus a token copy make Effective read both flags
+	// (it short-circuits past them otherwise).
+	mu.Lock()
+	cur.StoreID = "store-1"
+	mu.Unlock()
+	probe := func() {
+		cfg := &config.Config{}
+		cfg.Marketplace.MerchantToken = "startup-copy"
+		_ = Effective(cfg)
+	}
+	stop := make(chan struct{})
+	started := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		probe()
+		close(started)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				probe()
+			}
+		}
+	}()
+	<-started // the reader is running before Init writes
+	for i := 0; i < 20; i++ {
+		cfg := &config.Config{}
+		cfg.Marketplace.ClientID = "merchant-pinned" // explicit: no background loop
+		cfg.Marketplace.MerchantToken = "pinned-token"
+		kv := newFakeKV()
+		kv.m[keyStoreID] = "store-1"
+		initForTest(t, cfg, kv)
+	}
+	close(stop)
+	<-done
 }

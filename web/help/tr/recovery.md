@@ -49,6 +49,17 @@ Kasa, desteğin isteyebileceği teknik bir günlük yazar:
 
 `till.log` en yeni dosyadır, `till.log.1` ile `till.log.4` arası daha eskileridir ve `desktop.log` uygulama penceresinin kendi günlüğüdür. Herhangi bir şey yazılmadan önce parolalar ve belirteçler çıkarılır ve klasör hiçbir zaman yaklaşık 25 MB'ı aşmaz. Kasa çalışırken bir yönetici klasörü Ayarlar → Tanılama modu → **Günlük dosyaları** altında da bulabilir; orada yolu ve desteğe gönderilecek bir tanılama özetini kopyalama düğmeleri vardır. Android uygulaması bu dosyaları yazmaz.
 
+## Windows'ta: kasa kendi penceresi yerine web tarayıcısında açılıyor
+
+Kasanın Windows'taki penceresini WebView2 adlı bir Windows bileşeni
+çizer. WebView2 başlayamazsa — çoğunlukla Windows onu arka planda
+güncelledikten hemen sonra, eski bir kopyası hâlâ çalışırken — kasa artık
+hemen kapanmaz. Bunun yerine varsayılan web tarayıcınızda aynı adreste
+açılır ve orada normal şekilde çalışır. Uygun olduğunda bilgisayarı yeniden
+başlatın; yeniden başlatmadan sonra kasanın kendi penceresi geri gelir.
+Gelmezse, yukarıdaki günlük klasöründeki `desktop.log` dosyasını desteğe
+gönderin: pencerenin neden açılamadığını kaydeder.
+
 ## Android kasada: tek bir sayfa yüklenmiyor
 
 Bu, yukarıdaki **tüm kasanın** başlamamasıyla ilgili kurtarma ekranından

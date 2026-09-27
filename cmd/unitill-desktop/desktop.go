@@ -34,6 +34,7 @@ import (
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/paths"
+	"github.com/universaltill/universal-till/internal/procjob"
 
 	"github.com/universaltill/universal-till/internal/recovery"
 )
@@ -195,13 +196,39 @@ func main() {
 	}
 	defer func() { _ = cmd.Process.Kill() }()
 
-	// Wait (up to ~10s) for the server to accept connections.
-	for range 100 {
-		if c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond); err == nil {
-			_ = c.Close()
-			break
+	// ut-docs#2760: the deferred Kill above never runs when this process
+	// crashes or is killed, which orphaned unitill-pos.exe on Windows (it
+	// then held the data directory and blocked the installer). A
+	// kill-on-close job makes the OS stop the server whenever this process
+	// ends. A failure is logged and the till opens anyway.
+	if err := procjob.KillWithParent(cmd.Process); err != nil {
+		logging.L().Warnf("till server %d is not tied to the shell's lifetime (it may outlive a crash): %v", cmd.Process.Pid, err)
+	}
+	// Reap the child to notice an early exit — except on macOS, where
+	// showWindow's close handler SIGTERMs the server by PID: a reaped PID
+	// can be reused by an unrelated process, while an unreaped zombie
+	// cannot. A nil channel there keeps the old wait-only behaviour.
+	var exited chan error
+	if runtime.GOOS != "darwin" {
+		exited = make(chan error, 1)
+		go func() { exited <- cmd.Wait() }()
+	}
+
+	// Wait (up to ~10s) for the server to accept connections, stopping early
+	// if it exits first (ut-docs#2760) so desktop.log says why.
+	outcome, exitErr := waitForChild(func() bool {
+		c, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err != nil {
+			return false
 		}
-		time.Sleep(100 * time.Millisecond)
+		_ = c.Close()
+		return true
+	}, exited, 100, 100*time.Millisecond, time.Sleep)
+	switch outcome {
+	case childExited:
+		logging.L().Errorf("till server exited before it accepted connections (%v); see till.log in the data folder for the reason — another Universal Till may already be running against the same data", exitErr)
+	case childTimedOut:
+		logging.L().Warnf("till server not answering on %s after 10s; opening the window anyway", addr)
 	}
 
 	// Blocks until the window closes. On macOS closing the window terminates the

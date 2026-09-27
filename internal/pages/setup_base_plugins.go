@@ -315,6 +315,7 @@ func applyDerivedLocaleIfLanguagePackNowAvailable(ctx context.Context, d *common
 	// currency/locale handlers).
 	cand := st
 	cand.Locale = cs.DefaultLocale
+	// settings-write:allow derived store.locale after a language-pack install; still local on an additional till (a manual pack install there reaches this -- reported with ut-docs#2979)
 	if err := common.SaveState(ctx, d.Settings, cand); err != nil {
 		logging.L().Errorf("base plugin install: persist derived locale: %v", err)
 		return
@@ -437,6 +438,7 @@ func backfillLocaleConfirmedForDivergedPendingTills(ctx context.Context, d *comm
 			// comment above.
 		}
 	}
+	// settings-write:allow one-time boot backfill of a flag derived from this till's own locale; on an additional till the main till's value wins at the next pull (reported with ut-docs#2979)
 	if err := d.Settings.Set(ctx, common.KeyLocaleConfirmed, "true"); err != nil {
 		logging.L().Errorf("locale-confirmed backfill: persist %s: %v", common.KeyLocaleConfirmed, err)
 		return
@@ -541,12 +543,14 @@ func loadPendingBasePlugins(ctx context.Context, d *common.Deps) ([]basePluginSp
 
 func savePendingBasePlugins(ctx context.Context, d *common.Deps, specs []basePluginSpec) error {
 	if len(specs) == 0 {
+		// settings-write:allow this till's own base-plugin install-retry queue (setup.pending_base_plugins is classified shop-wide; reported with ut-docs#2979)
 		return d.Settings.Set(ctx, common.KeyPendingBasePlugins, "")
 	}
 	raw, err := json.Marshal(specs)
 	if err != nil {
 		return err
 	}
+	// settings-write:allow this till's own base-plugin install-retry queue (setup.pending_base_plugins is classified shop-wide; reported with ut-docs#2979)
 	return d.Settings.Set(ctx, common.KeyPendingBasePlugins, string(raw))
 }
 

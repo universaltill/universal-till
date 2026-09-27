@@ -168,6 +168,7 @@ func recordFiscalDeviceEvidence(ctx context.Context, d *common.Deps, repo *data.
 	if err != nil || settingIsTrue(configured) {
 		return
 	}
+	// settings-write:allow sale-time auto-confirm after the first real fiscal receipt: checkout never waits on the main till (offline-first); reviewed exception, ut-docs#2979
 	if err := d.Settings.Set(ctx, configuredKey, "true"); err != nil {
 		logging.L().Errorf("fiscal device: mark device confirmed after first receipt: %v", err)
 		return
