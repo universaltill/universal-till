@@ -929,7 +929,10 @@ func completeCounterOrderCheckout(w http.ResponseWriter, r *http.Request, d *com
 	// (so it is listed and payable there, like any parked order); any
 	// failure reaching it keeps the row local -- the checkout never waits
 	// on the network beyond the proxy's own short budget.
-	if outcome, err := heldSaleWriteThrough(ctx, d, data.NewHeldSalesRepo(d.Db), held); err != nil {
+	// ut-docs#3034: a kiosk counter checkout is always a first park, never a
+	// claimed-id re-park, so its local-only fallback keeps the ordinary
+	// MAX-sticky Upsert.
+	if outcome, err := heldSaleWriteThrough(ctx, d, data.NewHeldSalesRepo(d.Db), held, false); err != nil {
 		// ut-docs#2714: delete the "held" counter row created above, so no
 		// orphan is left that nothing lists or ever cleans up; since it held
 		// the max, the customer's retry gets the same C-number. (If that
