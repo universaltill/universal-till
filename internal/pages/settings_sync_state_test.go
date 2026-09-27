@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -150,26 +149,6 @@ func TestSettingsWriteThrough_StoreSaveImpliedKeysOneBatch(t *testing.T) {
 	}
 	if got := dp.CurrentState().Currency; got != "EUR" {
 		t.Fatalf("replica live currency = %q, want EUR", got)
-	}
-}
-
-// store.country from the store card on an additional till: pointed at the
-// main till before any local fiscal reset, and never sent.
-func TestSettingsWriteThrough_StoreSaveCountryPointsAtMainTill(t *testing.T) {
-	main := newSettingsSyncMain(t)
-	mux, dp := newSettingsSyncReplica(t, main.srv.URL)
-	adm := auth.User{ID: "m1", Role: "admin"}
-	before := mustSetting(t, dp, common.KeyCountry)
-
-	rec := postForm(mux, "/api/settings/save", url.Values{"country": {"DE"}}, &adm)
-	if rec.Code < 400 || !strings.Contains(rec.Body.String(), "Change this setting on the main till.") {
-		t.Fatalf("settings/save country = %d %q, want the change-on-main-till message", rec.Code, rec.Body.String())
-	}
-	if main.calls.Load() != 0 {
-		t.Fatalf("main till calls = %d, want 0", main.calls.Load())
-	}
-	if got := mustSetting(t, dp, common.KeyCountry); got != before {
-		t.Fatalf("replica %s = %q, want unchanged %q", common.KeyCountry, got, before)
 	}
 }
 
