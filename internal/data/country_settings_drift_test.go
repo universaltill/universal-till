@@ -2,11 +2,12 @@ package data
 
 // Drift guards for the per-country defaults (ut-docs#659).
 //
-// The shipped defaults exist in two places by necessity: migration 041 seeds a
-// fresh database, and builtinCountryDefaults is what Delete restores a builtin
-// country to. Neither can be removed — a migration cannot call Go, and a
-// restore cannot re-run a migration — so the honest protection is a test that
-// makes them impossible to diverge silently.
+// The shipped defaults exist in two places by necessity: the migration seed
+// (001_init.sql, plus 051 for PT) fills a fresh database, and
+// builtinCountryDefaults is what Delete restores a builtin country to.
+// Neither can be removed — a migration cannot call Go, and a restore cannot
+// re-run a migration — so the honest protection is a test that makes them
+// impossible to diverge silently.
 
 import (
 	"context"
@@ -28,14 +29,14 @@ func TestBuiltinDefaultsMatchMigrationSeed(t *testing.T) {
 
 	defaults := BuiltinCountryDefaults()
 	if len(defaults) != len(seeded) {
-		t.Fatalf("builtinCountryDefaults has %d entries, migration 041 seeded %d — they must match exactly",
+		t.Fatalf("builtinCountryDefaults has %d entries, the migrations seeded %d — they must match exactly",
 			len(defaults), len(seeded))
 	}
 
 	for _, want := range defaults {
 		got, ok := byCode[want.Code]
 		if !ok {
-			t.Errorf("%s is in builtinCountryDefaults but not seeded by migration 041", want.Code)
+			t.Errorf("%s is in builtinCountryDefaults but not seeded by any migration", want.Code)
 			continue
 		}
 		if got.NameKey != want.NameKey ||
@@ -46,7 +47,7 @@ func TestBuiltinDefaultsMatchMigrationSeed(t *testing.T) {
 			got.ArchiveMinDays != want.ArchiveMinDays ||
 			got.DefaultLocale != want.DefaultLocale ||
 			!got.IsBuiltin {
-			t.Errorf("%s drifted between migration 041 and builtinCountryDefaults:\n  seeded=%+v\n  go    =%+v", want.Code, got, want)
+			t.Errorf("%s drifted between the migration seed and builtinCountryDefaults:\n  seeded=%+v\n  go    =%+v", want.Code, got, want)
 		}
 	}
 }
@@ -61,7 +62,7 @@ func TestSeededRetentionMatchesGlobalFloorConstant(t *testing.T) {
 	}
 	for _, c := range seeded {
 		if c.ArchiveMinDays != GlobalArchiveMinDays {
-			t.Fatalf("migration 041 seeds %s at %d days but GlobalArchiveMinDays is %d — update both",
+			t.Fatalf("the migration seed puts %s at %d days but GlobalArchiveMinDays is %d — update both",
 				c.Code, c.ArchiveMinDays, GlobalArchiveMinDays)
 		}
 	}

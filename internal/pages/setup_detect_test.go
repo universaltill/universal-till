@@ -138,6 +138,13 @@ func TestDetectCountry(t *testing.T) {
 		{"Germany by timezone", "de_DE.UTF-8", "Europe/Berlin", "DE"},
 		{"Turkey by timezone", "tr_TR.UTF-8", "Europe/Istanbul", "TR"},
 		{"UK by timezone", "en_GB.UTF-8", "Europe/London", "GB"},
+		// A non-PT locale, so only the timezone map can produce PT.
+		{"Portugal mainland by timezone", "en_GB.UTF-8", "Europe/Lisbon", "PT"},
+		// Azores/Madeira carry their own IVA rates (ut-docs#2961): detection
+		// stops there, and must not fall back to a pt_PT locale's region and
+		// prefill the mainland rate.
+		{"Azores detects nothing", "pt_PT.UTF-8", "Atlantic/Azores", ""},
+		{"Madeira detects nothing", "pt_PT.UTF-8", "Atlantic/Madeira", ""},
 		{"unmapped timezone falls back to locale region", "de_AT.UTF-8", "Europe/Vienna", ""},
 		{"locale region backs a country when timezone is ambiguous", "en_US.UTF-8", "America/New_York", "US"},
 		{"nothing detectable at all", "ja_JP.UTF-8", "Asia/Tokyo", ""},

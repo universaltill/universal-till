@@ -67,7 +67,8 @@ type CountrySetting struct {
 }
 
 // builtinCountryDefaults is what Delete restores a builtin country to. It
-// mirrors migration 041's seed exactly; TestBuiltinDefaultsMatchMigrationSeed
+// mirrors the migration seed exactly (001_init.sql, plus PT from
+// 051_builtin_country_pt.sql, ut-docs#2963); TestBuiltinDefaultsMatchMigrationSeed
 // asserts the two cannot drift, so this stays a restore source rather than a
 // second source of truth.
 var builtinCountryDefaults = []CountrySetting{
@@ -79,6 +80,7 @@ var builtinCountryDefaults = []CountrySetting{
 	{Code: "ES", NameKey: "setup.country.es", Currency: "EUR", CurrencySymbol: "€", TaxRateBP: 2100, TaxInclusive: true, DefaultLocale: "es-ES"},
 	{Code: "IT", NameKey: "setup.country.it", Currency: "EUR", CurrencySymbol: "€", TaxRateBP: 2200, TaxInclusive: true, DefaultLocale: "it-IT"},
 	{Code: "NL", NameKey: "setup.country.nl", Currency: "EUR", CurrencySymbol: "€", TaxRateBP: 2100, TaxInclusive: true, DefaultLocale: "nl-NL"},
+	{Code: "PT", NameKey: "setup.country.pt", Currency: "EUR", CurrencySymbol: "€", TaxRateBP: 2300, TaxInclusive: true, DefaultLocale: "pt-PT"},
 	{Code: "TR", NameKey: "setup.country.tr", Currency: "TRY", CurrencySymbol: "₺", TaxRateBP: 2000, TaxInclusive: true, DefaultLocale: "tr-TR"},
 	{Code: "AE", NameKey: "setup.country.ae", Currency: "AED", TaxRateBP: 500, TaxInclusive: true, DefaultLocale: "ar-AE"},
 	{Code: "SA", NameKey: "setup.country.sa", Currency: "SAR", TaxRateBP: 1500, TaxInclusive: true, DefaultLocale: "ar-SA"},

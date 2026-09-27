@@ -298,6 +298,10 @@ func replicaAttempt(ctx context.Context, m config.MarketplaceConfig, kv Settings
 // Promoting a replica (data.SettingsRepo.ClearReplicaIdentity, ut-docs#3025)
 // copies sync.till_name into till.name before clearing it, so the newly
 // promoted till keeps reporting its own name here, not the old main till's.
+// When sync.till_name is blank or missing, there is nothing to carry over,
+// so till.name is set blank instead: the till falls back to its translated
+// default name (shown by tillNameOrDefault) and this function reports ""
+// rather than keep the old main till's name (ut-docs#3030).
 func DeviceName(ctx context.Context, kv Settings) string {
 	get := func(key string) string {
 		v, _, _ := kv.Get(ctx, key)
