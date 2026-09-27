@@ -111,6 +111,28 @@ async function capture(page: Page, id: string, locale: string, route: string) {
   // spec that navigates to /orders with `networkidle` needs the same
   // treatment (none in e2e/tests/ does today).
   await page.route('**/api/orders/stream', (r) => r.fulfill({ status: 204 }));
+  if (process.env.DOCS_SHOTS_EXP_SERIAL_CHIPS) {
+    // Answer the rail chips in one fixed order, each after the previous one.
+    const order = ['bugreport-chip', 'sync-chip', 'fiscal-chip', 'diagnostics-chip', 'session-chip'];
+    let chain: Promise<void> = Promise.resolve();
+    const gates: Record<string, Promise<void>> = {};
+    const opens: Record<string, () => void> = {};
+    for (const c of order) gates[c] = new Promise<void>((res) => (opens[c] = res));
+    let prev: Promise<void> = Promise.resolve();
+    for (const c of order) {
+      const before = prev;
+      await page.route(`**/ui/${c}`, async (r) => {
+        await before;
+        const resp = await r.fetch();
+        await r.fulfill({ response: resp });
+        await new Promise((x) => setTimeout(x, 60));
+        opens[c]();
+      });
+      prev = gates[c];
+    }
+    void chain;
+  }
+  if (process.env.DOCS_SHOTS_EXP_BOUNCE) (page as any).__bounce = true;
   if (process.env.DOCS_SHOTS_TRACE) {
     await page.addInitScript(() => {
       (window as any).__swaps = [];
@@ -173,6 +195,12 @@ async function capture(page: Page, id: string, locale: string, route: string) {
       ),
   );
 
+  if (process.env.DOCS_SHOTS_EXP_BOUNCE) {
+    await page.setViewportSize({ width: 1024, height: 601 });
+    await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
+    await page.setViewportSize({ width: 1024, height: 600 });
+    await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
+  }
   if (process.env.DOCS_SHOTS_TRACE) {
     const st = await page.evaluate(() => {
       const nav = document.querySelector('nav.nav') as HTMLElement | null;

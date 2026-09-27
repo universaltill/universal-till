@@ -124,6 +124,7 @@ export default defineConfig({
             '--disable-skia-runtime-opts',
             '--run-all-compositor-stages-before-draw',
             '--force-color-profile=srgb',
+            ...(process.env.DOCS_SHOTS_EXP_ARGS ? process.env.DOCS_SHOTS_EXP_ARGS.split(' ') : []),
           ],
           // Set by scripts/docs-shots.sh only when resolve-chromium.sh found
           // a pre-installed browser worth reusing (ut-docs#622) — unset (and
