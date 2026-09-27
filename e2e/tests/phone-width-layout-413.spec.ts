@@ -453,4 +453,21 @@ test.describe('phone-width layout (ut-docs#413)', () => {
     expect(scrollTop, '.pos-container must stay at the top after New Sale').toBe(0);
     assertClean();
   });
+
+  // ut-docs#3036 review: a boosted rail navigation back to the sale screen
+  // re-runs the focus script in the swapped content (htmx evaluates
+  // scripts on swap), so arriving from Menu must focus the scan field for
+  // the scanner without scrolling .pos-container either.
+  test('boosted Menu -> Till arrival focuses the scan field without scrolling .pos-container', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.goto('/menu');
+    const boot = await page.evaluate(() => (window as any).UT.shellBootAt as number);
+    await page.getByTestId('nav-till').click();
+    await expect(page).toHaveURL(/\/$/);
+    expect(await page.evaluate(() => (window as any).UT.shellBootAt as number), 'must be a boosted swap, not a full load').toBe(boot);
+    await expect(page.locator('input[name=code]')).toBeFocused();
+    const scrollTop = await page.evaluate(() => document.querySelector('.pos-container')!.scrollTop);
+    expect(scrollTop, '.pos-container must stay at the top after a boosted arrival').toBe(0);
+    assertClean();
+  });
 });

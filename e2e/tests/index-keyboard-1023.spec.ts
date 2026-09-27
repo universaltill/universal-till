@@ -4,8 +4,9 @@ import { watchConsole, setOskMode } from './helpers';
 // ut-docs#1023 ("this is the second time it has come back" — ut-docs#155
 // was the first): the till main page (`/`) popped the native OS keyboard
 // again. Two sites were implicated:
-//   1. the tender scan-barcode input, whose `autofocus` is the page's
-//      effective load-time focus target (index.html's own static
+//   1. the tender scan-barcode input, the page's effective load-time
+//      focus target (focused by a preventScroll script right after it
+//      since ut-docs#3036, formerly `autofocus`) (index.html's own static
 //      `{{ if ne (oskmode) "off" }}inputmode="none"{{ end }}` guard, from
 //      ut-docs#155, already covers this — Go-level coverage already exists
 //      in internal/pages/index_osk_test.go's TestIndexScanRowKeyboardIsOnDemand;
@@ -48,18 +49,18 @@ test.afterEach(async ({ page }) => {
   await setOskMode(page, 'auto');
 });
 
-test('till main page load: the field that gets autofocus already carries inputmode="none"', async ({ page }) => {
+test('till main page load: the field focused at load already carries inputmode="none"', async ({ page }) => {
   const assertClean = watchConsole(page);
   await setOskMode(page, 'auto');
 
   await page.goto('/');
 
   const scan = page.locator('input[name=code]');
-  // This is the page's one effective autofocus target: the hold-modal's
-  // own autofocus field lives inside a closed <dialog>, which HTML's
-  // autofocus processing skips (not focusable while the dialog is closed),
-  // so the browser lands on this field instead — asserting that here keeps
-  // the test honest about which field is actually load-bearing.
+  // This is the page's one load-time focus target (index.html focuses it
+  // with preventScroll right after the input — ut-docs#3036; the
+  // hold-modal's autofocus field lives inside a closed <dialog>, which
+  // autofocus processing skips) — asserting that here keeps the test
+  // honest about which field is actually load-bearing.
   await expect(scan).toBeFocused();
   await expect(scan).toHaveAttribute('inputmode', 'none');
 
