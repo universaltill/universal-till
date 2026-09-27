@@ -27,7 +27,8 @@ import (
 const (
 	keyEODEnabled = "reports.eod_enabled"
 	keyEODTime    = "reports.eod_time" // local "HH:MM"
-	// keyReportsBusinessDayStart is the per-till business-day boundary used
+	// keyReportsBusinessDayStart is the shop-wide business-day boundary
+	// (written through the main till on an additional till, ut-docs#2997) used
 	// by /reports' calendar-aligned period picker (ut-docs#519):
 	// day/week/month/year periods cross over at this local "HH:MM" instead
 	// of naive midnight, so a bar (or any shop trading past midnight) can
@@ -1249,12 +1250,23 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 		if elev.Outcome == elevated {
 			actorID = elev.ApproverID
 		}
-		_ = d.Settings.Set(r.Context(), keyEODEnabled, fmt.Sprintf("%t", enabled))
-		_ = d.Settings.Set(r.Context(), keyEODTime, hhmm)
-		// settings-write:allow reports.business_day_start is shop-wide but still written locally on an additional till (reported with ut-docs#2979 for a follow-up card); the other four keys here are per-till
-		_ = d.Settings.Set(r.Context(), keyReportsBusinessDayStart, bizDayStart)
-		_ = d.Settings.Set(r.Context(), keyEODArticlePrintMode, articlePrintMode)
-		_ = d.Settings.Set(r.Context(), keyEODArticlePrintCap, articlePrintCapRaw)
+		// ut-docs#2997: one batch. reports.business_day_start is shop-wide
+		// and goes through the main till on an additional till; the other
+		// four keys are per-till and are written here only after the main
+		// till accepted it. A refusal writes nothing and is not audited.
+		if err := saveShopSettings(r.Context(), d, elev, map[string]string{
+			keyEODEnabled:              fmt.Sprintf("%t", enabled),
+			keyEODTime:                 hhmm,
+			keyReportsBusinessDayStart: bizDayStart,
+			keyEODArticlePrintMode:     articlePrintMode,
+			keyEODArticlePrintCap:      articlePrintCapRaw,
+		}); err != nil {
+			if respondSettingsSyncError(w, r, err) {
+				return
+			}
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "eod_settings_save", err)
+			return
+		}
 		now := time.Now().UTC().Format(time.RFC3339)
 		payload := map[string]any{
 			"enabled": enabled, "time": hhmm, "business_day_start": bizDayStart,
@@ -1330,8 +1342,12 @@ func registerReportArchiveAPI(mux *http.ServeMux, d *common.Deps) {
 		if elev.Outcome == elevated {
 			actorID = elev.ApproverID
 		}
-		// settings-write:allow store.report_retention_mode is shop-wide but still written locally on an additional till (reported with ut-docs#2979 for a follow-up card)
-		if err := d.Settings.Set(r.Context(), common.KeyReportRetentionMode, mode); err != nil {
+		// ut-docs#2997: shop-wide -- through the main till on an additional
+		// till; a refusal writes nothing and is not audited.
+		if err := saveShopSettings(r.Context(), d, elev, map[string]string{common.KeyReportRetentionMode: mode}); err != nil {
+			if respondSettingsSyncError(w, r, err) {
+				return
+			}
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "eod.err.retention_save_failed", "eod_retention_save", err)
 			return
 		}

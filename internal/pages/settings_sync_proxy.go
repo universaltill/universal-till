@@ -39,11 +39,13 @@ import (
 // (ut-docs#2948). Since ut-docs#2979 the receipt designer, the invoice
 // seller details, the signing-device confirm/unpair, the printer card, the
 // import's currency confirmation and the barcode-type checklist go through
-// here too, and settings_write_guard_test.go fails on any new direct
-// settings write in this package that is not per-till, main-till-only or
-// annotated `// settings-write:allow <reason>`. store.country travels like
-// any other shop-wide key (ut-docs#2980): the main till runs the owner
-// check and the old country's posture reset, never this till. Not covered
+// here too (and since ut-docs#2997 the EOD card's business-day start, the
+// report retention mode and the auto-update schedule), and
+// settings_write_guard_test.go fails on any new direct settings write in
+// this package that is not per-till, main-till-only or annotated
+// `// settings-write:allow <reason>`. store.country travels like any other
+// shop-wide key (ut-docs#2980): the main till runs the owner check and the
+// old country's posture reset, never this till. Not covered
 // yet: read-only rendering while the main till is away (ut-docs#2981).
 
 // settingsSyncProxyClient is the additional-till -> main-till client; same

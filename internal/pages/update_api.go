@@ -601,21 +601,25 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "time must be HH:MM", http.StatusBadRequest)
 			return
 		}
-		// On a main/standalone till, "on" is stored as the default (unset),
-		// not "true" (ut-docs#2726 review): the setting replicates shop-wide,
-		// and an explicit "true" would switch every replica on too — with no
-		// replica version cap yet (ut-docs#2732), a replica must stay off.
-		// "Off" is still stored explicitly and applies to the whole shop.
-		val := fmt.Sprintf("%t", enabled)
-		if enabled {
-			if primary, _, _ := d.Settings.Get(r.Context(), "sync.primary_url"); strings.TrimSpace(primary) == "" {
-				val = ""
-			}
+		// "On" is stored as the default (unset), not "true" (ut-docs#2726
+		// review): the setting replicates shop-wide, and an explicit "true"
+		// would read as on for every replica too. "Off" is stored
+		// explicitly and applies to the whole shop. Since ut-docs#2997 an
+		// additional till sends the pair to its main till -- the value a
+		// main till stores for itself, never the "true" it used to keep
+		// locally until the next pull reverted it. A refusal writes nothing.
+		val := ""
+		if !enabled {
+			val = "false"
 		}
-		// settings-write:allow update.auto_enabled is shop-wide but still written locally on an additional till (reported with ut-docs#2979 for a follow-up card)
-		_ = d.Settings.Set(r.Context(), keyAutoUpdateEnabled, val)
-		// settings-write:allow update.auto_time is shop-wide but still written locally on an additional till (reported with ut-docs#2979 for a follow-up card)
-		_ = d.Settings.Set(r.Context(), keyAutoUpdateTime, hhmm)
+		if err := saveShopSettings(r.Context(), d, elevationCheck{Outcome: allowed, ActorID: getSessionUserID(r)},
+			map[string]string{keyAutoUpdateEnabled: val, keyAutoUpdateTime: hhmm}); err != nil {
+			if respondSettingsSyncError(w, r, err) {
+				return
+			}
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "update_schedule_save", err)
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 }
