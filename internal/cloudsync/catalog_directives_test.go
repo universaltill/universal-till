@@ -227,6 +227,44 @@ func TestTickSatelliteSkipsMainTillOnlyTypes(t *testing.T) {
 	}
 }
 
+// ut-docs#3039 (ADR-0053): fiscal_tse_ready is main-till only. A satellite
+// that applied it would spend the single-use credential handoff on its own
+// disk; one that failed it would resolve it before the main till saw it.
+// It is skipped with no result post, and still applies on the main till.
+func TestTickFiscalTSEReadyIsMainTillOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		primary   string
+		wantRuns  int
+		wantPosts int
+	}{
+		{"satellite", "http://10.0.0.2:8080", 0, 0},
+		{"main till", "", 1, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cloud := &fakeCloud{directives: []map[string]any{
+				{"id": "d1", "type": "fiscal_tse_ready", "payload": map[string]any{}},
+			}}
+			srv := httptest.NewServer(cloud.handler())
+			defer srv.Close()
+			db := testDB(t)
+			if tc.primary != "" {
+				if _, err := db.Exec(`INSERT INTO settings (key, value) VALUES ('sync.primary_url', ?)`, tc.primary); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ran := 0
+			hooks := Hooks{FiscalTSEReady: func(context.Context) (string, error) { ran++; return "stored", nil }}
+			if err := Tick(context.Background(), testCfg(srv.URL), db, hooks); err != nil {
+				t.Fatalf("tick: %v", err)
+			}
+			if ran != tc.wantRuns || len(cloud.results) != tc.wantPosts {
+				t.Fatalf("hook runs = %d, result posts = %+v; want %d runs, %d posts", ran, cloud.results, tc.wantRuns, tc.wantPosts)
+			}
+		})
+	}
+}
+
 // §3.6 + §3.7: after at least one catalog directive is APPLIED, the same
 // tick pushes the snapshot again (schema 2), so the cloud grid converges
 // without waiting a tick.

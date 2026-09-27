@@ -30,6 +30,10 @@ var mainTillOnlyTypes = map[string]bool{
 	"save_user":       true,
 	"set_user_pin":    true,
 	"deactivate_user": true,
+	// TSE ready signal (ADR-0053, ut-docs#3039): one TSE per store, from
+	// the main till — the till that applies it spends the single-use
+	// credential handoff and keeps the credential on its own disk.
+	"fiscal_tse_ready": true,
 }
 
 // catalogTypes are the directive types that change what the catalog

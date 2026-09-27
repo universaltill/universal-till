@@ -15,7 +15,10 @@
      ut-docs#1174: Retry only for a retryable failure (kickoff_rejected /
      credential_failed); the dismiss button is OMITTED — not just refused
      server-side — while a hard-gated market's failure is unresolved, with a
-     hint saying why instead. -->
+     hint saying why instead.
+     ut-docs#3039: on a till that follows a main till (tseFollowsMain) the
+     record is the main till's synced one and both actions answer 409, so
+     neither button renders — only a hint to act on the main till. -->
 {{ if .tseProvisioning }}
 <div class="tse-provisioning-block" data-testid="tse-provisioning" style="margin:.3rem 0">
   {{ if .tseProvisioning.ReasonKey }}
@@ -23,6 +26,9 @@
   {{ else }}
   <p class="notice-block-warn"><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ T .tseProvisioning.MessageKey }}</p>
   {{ end }}
+  {{ if .tseFollowsMain }}
+  <p class="muted" data-testid="tse-provisioning-main-till-only">{{ T "settings.error.change_on_main_till" }}</p>
+  {{ else }}
   {{ if .tseRetryable }}
   <button class="btn secondary" data-testid="tse-provisioning-retry"
           hx-post="/api/settings/retry-tse-provisioning"
@@ -36,6 +42,7 @@
           hx-disabled-elt="this">{{ T "settings.tse.dismiss_btn" }}</button>
   {{ else }}
   <p class="muted" data-testid="tse-provisioning-dismiss-blocked">{{ T "settings.tse.dismiss_blocked" }}</p>
+  {{ end }}
   {{ end }}
 </div>
 {{ end }}
