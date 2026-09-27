@@ -3,6 +3,7 @@ package data_test
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 // ut-docs#3034 (follow-up of #2723): UpsertLocalOnly is the one write
@@ -77,7 +78,7 @@ func TestHeldSalesRepo_UpsertLocalOnly_UpdateDemotesAndUpdatesContent(t *testing
 	// this id (it was claimed off the primary and never landed back there) --
 	// the row must survive as a genuinely local-only order, not be dropped as
 	// "resolved elsewhere".
-	dropped, err := repo.ReconcileWithPrimary(ctx, nil)
+	dropped, err := repo.ReconcileWithPrimary(ctx, nil, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

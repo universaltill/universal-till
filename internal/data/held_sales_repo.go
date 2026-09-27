@@ -4,7 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"strings"
+	"time"
 )
+
+// heldSaleTimeLayout is the text shape of held_sales.created_at/updated_at
+// (SQLite datetime('now'), UTC).
+const heldSaleTimeLayout = "2006-01-02 15:04:05"
 
 // HeldSale is a parked in-progress sale (basket snapshot) waiting to be resumed.
 type HeldSale struct {
@@ -37,7 +42,8 @@ type HeldSale struct {
 	// till has confirmed the row exists on the primary: the replica
 	// write-through sets it when it mirrors a primary-applied write, and
 	// ReconcileWithPrimary sets it for every local id a successful primary
-	// list returned. A row taken purely through the local-only fallback
+	// list returned whose updated_at predates that fetch's start
+	// (ut-docs#3038). A row taken purely through the local-only fallback
 	// (primary unreachable) stays false. Sticky: once confirmed, a later
 	// local-only write to the same row does not clear it -- the primary
 	// still knows the id, so its later absence from the primary's list
@@ -216,7 +222,32 @@ FROM held_sales WHERE id = ?
 // failed / partial fetch must never reach here, or every mirror would be
 // dropped as "resolved". Returns how many ghosts were dropped, for the
 // caller's log line. Nothing here touches the primary.
-func (r *HeldSalesRepo) ReconcileWithPrimary(ctx context.Context, presentIDs []string) (dropped int64, err error) {
+//
+// fetchStartedAt (ut-docs#3038) is when the caller STARTED the fetch that
+// produced presentIDs, read from this till's clock before the request went
+// out. The list describes the primary as of some moment after that, so a
+// row this till wrote locally at primary_synced = 0 after the fetch started
+// is newer than the list and must not be raised to 1 by it: the concrete
+// case is a resume that claims the order off the primary (taking it out of
+// the primary's list) and then gives it back local-only (UpsertLocalOnly)
+// while an Open orders render's fetch is still in flight. Raising that row
+// on the stale sighting would make the next successful reconcile drop the
+// only copy of an open order as "resolved elsewhere". So the raise only
+// applies to a row whose updated_at is strictly BEFORE fetchStartedAt,
+// compared as this repo's UTC "2006-01-02 15:04:05" text: every
+// primary_synced = 0 row carries a local-clock updated_at (Upsert and
+// UpsertLocalOnly stamp datetime('now'); primary-clock stamps only arrive
+// with primary_synced = 1 via mirrorHeldSaleFromPrimary), so both sides
+// are the same clock. Strictly before, because both are truncated to the
+// second: a write in the same second as the fetch start is left for the
+// next reconcile, which is harmless -- a row that stays at 0 one render
+// longer is only ever kept, never dropped. The drop branch is unchanged: it
+// only touches rows already at 1, which a local-only write never produces.
+// Accepted residual: a wall clock stepped backwards (an NTP correction)
+// between the fetch start and a local-only write can stamp that write
+// before fetchStartedAt, reopening the window for that one render; closing
+// it would need a monotonic write-generation column.
+func (r *HeldSalesRepo) ReconcileWithPrimary(ctx context.Context, presentIDs []string, fetchStartedAt time.Time) (dropped int64, err error) {
 	done := heldSalesObs.trace("reconcile_with_primary")
 	defer func() { done(err) }()
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -230,7 +261,8 @@ func (r *HeldSalesRepo) ReconcileWithPrimary(ctx context.Context, presentIDs []s
 	}
 	inList := "(" + strings.TrimSuffix(strings.Repeat("?,", len(presentIDs)), ",") + ")"
 	if len(presentIDs) > 0 {
-		if _, err = tx.ExecContext(ctx, `UPDATE held_sales SET primary_synced = 1 WHERE id IN `+inList, args...); err != nil {
+		markArgs := append([]any{fetchStartedAt.UTC().Format(heldSaleTimeLayout)}, args...)
+		if _, err = tx.ExecContext(ctx, `UPDATE held_sales SET primary_synced = 1 WHERE primary_synced = 0 AND updated_at < ? AND id IN `+inList, markArgs...); err != nil {
 			return 0, heldSalesObs.wrapf("reconcile_with_primary", "mark synced", err)
 		}
 	}

@@ -1,0 +1,3 @@
+"CFBundleDisplayName" = "Universal Till";
+"NSLocalNetworkUsageDescription" = "Universal Till, mağazanızdaki diğer kasaları yerel ağ üzerinden bulur ve onlarla eşitlenir.";
+"NSCameraUsageDescription" = "Universal Till, barkod taramak için kamerayı kullanır.";
