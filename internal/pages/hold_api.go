@@ -237,7 +237,16 @@ func parkCurrentBasket(ctx context.Context, d *common.Deps, repo *data.HeldSales
 	// edit of this same order) or any failure reaching the primary keeps
 	// the park local-only, silently -- offline-first, never a frozen or
 	// failed tap.
-	if origin := d.Engine.HeldOrigin(); !origin.IsZero() {
+	origin := d.Engine.HeldOrigin()
+	// ut-docs#3034: origin.Claimed carries through to heldSaleWriteThrough
+	// below, so its local-only fallback (the primary unreachable -- a refusal
+	// proves the primary holds the id and stays a confirmed mirror) picks the right statement -- a re-park of an order
+	// this till claimed off the primary when it resumed it must never let a
+	// stale primary_synced=1 row survive that fallback (UpsertLocalOnly); a
+	// first park or a re-park that was never claimed keeps the ordinary,
+	// MAX-sticky Upsert. False here for a first park (origin is zero).
+	claimed := origin.Claimed
+	if !origin.IsZero() {
 		held.ID = origin.ID
 		held.Label = origin.Label
 		if typedLabel != "" {
@@ -267,7 +276,7 @@ func parkCurrentBasket(ctx context.Context, d *common.Deps, repo *data.HeldSales
 		held.ID = fmt.Sprintf("hold-%d", time.Now().UnixNano())
 		held.Label = label
 	}
-	if _, err := heldSaleWriteThrough(ctx, d, repo, held); err != nil {
+	if _, err := heldSaleWriteThrough(ctx, d, repo, held, claimed); err != nil {
 		return err
 	}
 	// ut-docs#1704: the live claim the table pick wrote (ut-docs#1390) is
@@ -409,7 +418,7 @@ func resumeHeldSale(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 	// handler below). Remembered on the engine, not by skipping the
 	// Delete below: the row still goes away while the order is live,
 	// exactly as before, and comes back under the same id on re-park.
-	d.Engine.RestoreHeld(snap, pos.HeldOrigin{ID: held.ID, Label: held.Label, CreatedAt: held.CreatedAt})
+	d.Engine.RestoreHeld(snap, pos.HeldOrigin{ID: held.ID, Label: held.Label, CreatedAt: held.CreatedAt, Claimed: claimed})
 	restoredTable := d.Engine.TableID()
 	if restoredTable != "" && restoredTable != prevTable {
 		if claimed, err := claimTableWriteThrough(ctx, d, posRepo, restoredTable, false); err != nil || !claimed {
@@ -787,7 +796,10 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 			moved := held
 			moved.TableID = tableID
 			moved.UpdatedAt = ""
-			if _, err := heldSaleWriteThrough(ctx, d, repo, moved); err != nil {
+			// ut-docs#3034: a table move is never a claimed-id re-park (it
+			// never goes through resumeHeldSale's claim), so its local-only
+			// fallback keeps the ordinary MAX-sticky Upsert.
+			if _, err := heldSaleWriteThrough(ctx, d, repo, moved, false); err != nil {
 				if tableID != "" {
 					// Commit failed after the claim was already taken -- undo
 					// it, mirroring pos_api.go's own "SetTable refused: undo

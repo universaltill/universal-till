@@ -151,7 +151,7 @@ func TestHeldSaleWriteThrough_NotAReplicaUsesLocalOnly(t *testing.T) {
 	primary := newHeldSaleProxyPrimary(t, true)
 	// sync.primary_url unset: never a replica, never a call.
 
-	outcome, err := heldSaleWriteThrough(context.Background(), dp, repo, proxyTestHeldSale)
+	outcome, err := heldSaleWriteThrough(context.Background(), dp, repo, proxyTestHeldSale, false)
 	if err != nil || outcome != heldSaleSyncedLocalOnly {
 		t.Fatalf("not a replica must write locally only: outcome=%v err=%v", outcome, err)
 	}
@@ -180,7 +180,7 @@ func TestHeldSaleWriteThrough_ReplicaUpsertsOnPrimaryAndMirrorsLocally(t *testin
 	primary := newHeldSaleProxyPrimary(t, true)
 	setReplicaSettings(t, dp.Settings, primary.srv.URL, "b-123")
 
-	outcome, err := heldSaleWriteThrough(context.Background(), dp, repo, proxyTestHeldSale)
+	outcome, err := heldSaleWriteThrough(context.Background(), dp, repo, proxyTestHeldSale, false)
 	if err != nil || outcome != heldSaleSyncedPrimary {
 		t.Fatalf("expected the primary to take the write: outcome=%v err=%v", outcome, err)
 	}
@@ -252,7 +252,7 @@ func TestHeldSaleWriteThrough_FirstParkCreatedAtIsByteIdenticalOnBothSides(t *te
 	// A genuine first park: CreatedAt blank, same as every real caller.
 	firstPark := proxyTestHeldSale
 	firstPark.CreatedAt = ""
-	outcome, err := heldSaleWriteThrough(context.Background(), dp, repo, firstPark)
+	outcome, err := heldSaleWriteThrough(context.Background(), dp, repo, firstPark, false)
 	if err != nil || outcome != heldSaleSyncedPrimary {
 		t.Fatalf("expected the primary to take the write: outcome=%v err=%v", outcome, err)
 	}
@@ -276,7 +276,7 @@ func TestHeldSaleWriteThrough_ReplicaRefusedByPrimaryIsReportedAndFallsBackLocal
 	primary := newHeldSaleProxyPrimary(t, false)
 	setReplicaSettings(t, dp.Settings, primary.srv.URL, "b-123")
 
-	outcome, err := heldSaleWriteThrough(context.Background(), dp, repo, proxyTestHeldSale)
+	outcome, err := heldSaleWriteThrough(context.Background(), dp, repo, proxyTestHeldSale, false)
 	if err != nil {
 		t.Fatalf("a refusal is not an error: %v", err)
 	}
@@ -296,7 +296,7 @@ func TestHeldSaleWriteThrough_ReplicaFallsBackToLocalWhenPrimaryUnreachable(t *t
 	repo := data.NewHeldSalesRepo(dp.Db)
 	setReplicaSettings(t, dp.Settings, deadPrimaryURL(), "b-123")
 
-	outcome, err := heldSaleWriteThrough(context.Background(), dp, repo, proxyTestHeldSale)
+	outcome, err := heldSaleWriteThrough(context.Background(), dp, repo, proxyTestHeldSale, false)
 	if err != nil || outcome != heldSaleSyncedLocalOnly {
 		t.Fatalf("fallback must be silent: outcome=%v err=%v", outcome, err)
 	}
@@ -325,7 +325,7 @@ func TestHeldSaleWriteThrough_ReplicaFallsBackWhenPrimaryAnswersNon200(t *testin
 	defer primary.Close()
 	setReplicaSettings(t, dp.Settings, primary.URL, "b-123")
 
-	outcome, err := heldSaleWriteThrough(context.Background(), dp, repo, proxyTestHeldSale)
+	outcome, err := heldSaleWriteThrough(context.Background(), dp, repo, proxyTestHeldSale, false)
 	if err != nil || outcome != heldSaleSyncedLocalOnly {
 		t.Fatalf("fallback must be silent: outcome=%v err=%v", outcome, err)
 	}
@@ -347,7 +347,7 @@ func TestHeldSaleWriteThrough_ReplicaFallsBackWhenPrimaryAnswersMalformedBody(t 
 	defer primary.Close()
 	setReplicaSettings(t, dp.Settings, primary.URL, "b-123")
 
-	outcome, err := heldSaleWriteThrough(context.Background(), dp, repo, proxyTestHeldSale)
+	outcome, err := heldSaleWriteThrough(context.Background(), dp, repo, proxyTestHeldSale, false)
 	if err != nil || outcome != heldSaleSyncedLocalOnly {
 		t.Fatalf("fallback must be silent: outcome=%v err=%v", outcome, err)
 	}
@@ -397,7 +397,7 @@ func TestHeldSaleWriteThrough_PreFixPrimaryOmittingUpdatedAtStillMirrors(t *test
 	defer old.Close()
 	setReplicaSettings(t, dp.Settings, old.URL, "b-123")
 
-	outcome, err := heldSaleWriteThrough(context.Background(), dp, repo, proxyTestHeldSale)
+	outcome, err := heldSaleWriteThrough(context.Background(), dp, repo, proxyTestHeldSale, false)
 	if err != nil || outcome != heldSaleSyncedPrimary {
 		t.Fatalf("an applied write must still report synced-on-primary: outcome=%v err=%v", outcome, err)
 	}
@@ -436,7 +436,7 @@ func TestHeldSaleWriteThrough_PreFixPrimaryOmittingUpdatedAtStillMirrors(t *test
 	explicit := proxyTestHeldSale
 	explicit.ID = "h-explicit"
 	explicit.UpdatedAt = "2026-09-15 10:00:00"
-	if _, err := heldSaleWriteThrough(context.Background(), dp, repo, explicit); err != nil {
+	if _, err := heldSaleWriteThrough(context.Background(), dp, repo, explicit, false); err != nil {
 		t.Fatal(err)
 	}
 	gotExplicit, ok := heldSaleRowOnLocal(t, dp, "h-explicit")
@@ -457,7 +457,7 @@ func TestHeldSaleClaimForResume_ReplicaClaimsOnPrimary(t *testing.T) {
 	primary := newHeldSaleProxyPrimary(t, true, syncHeldSaleRow{ID: "h1", Label: "Table 4", Payload: `{"v":"claimed"}`})
 	setReplicaSettings(t, dp.Settings, primary.srv.URL, "b-123")
 
-	if _, err := heldSaleWriteThrough(context.Background(), dp, repo, proxyTestHeldSale); err != nil {
+	if _, err := heldSaleWriteThrough(context.Background(), dp, repo, proxyTestHeldSale, false); err != nil {
 		t.Fatal(err)
 	}
 	got, found, claimed := heldSaleClaimForResume(context.Background(), dp, repo, "h1")
@@ -1110,7 +1110,7 @@ func TestHeldSaleWriteThrough_RefusalStillMarksPrimarySynced(t *testing.T) {
 
 	stale := local
 	stale.UpdatedAt = time.Now().UTC().Format(heldSaleTimeLayout) // older than newer's +1min
-	outcome, err := heldSaleWriteThrough(ctx, ct.dp, data.NewHeldSalesRepo(ct.dp.Db), stale)
+	outcome, err := heldSaleWriteThrough(ctx, ct.dp, data.NewHeldSalesRepo(ct.dp.Db), stale, false)
 	if err != nil || outcome != heldSaleSyncRefused {
 		t.Fatalf("precondition: this write must be refused by the primary's guard: outcome=%v err=%v", outcome, err)
 	}
