@@ -45,6 +45,7 @@ on:
       - 'e2e/package-lock.json'
       - 'Makefile'
       - 'scripts/ci/guard-docs-shots-determinism.sh'
+      - 'scripts/ci/pngdiff/**'
       - '.github/workflows/docs-shots-determinism.yml'
   schedule:
     - cron: '0 4 * * 1' # 04:00 UTC every Monday
@@ -66,11 +67,21 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # Prints exactly which file(s) differed and why on failure (see the
-      # script's own FAIL block) — no artifact upload needed. The script
-      # restores web/help/img/ to its pre-run state on exit either way (both
-      # of its own two internal runs happen in place, in the real working
-      # tree), so there is nothing left on disk at this point worth
-      # archiving; the failure detail is all in the step's own log output.
+      # Prints exactly which file(s) differed on failure, with each PNG's
+      # differing-pixel count and bounding box (scripts/ci/pngdiff,
+      # ut-docs#2929). The script restores web/help/img/ to its pre-run state
+      # on exit, so it copies both runs' copies of every differing file into
+      # DOCS_SHOTS_DIFF_DIR first; the next step uploads them to open side by
+      # side.
       - name: Two-run byte-identical determinism check
+        env:
+          DOCS_SHOTS_DIFF_DIR: ${{ runner.temp }}/docs-shots-diff
         run: bash scripts/ci/guard-docs-shots-determinism.sh
+      - name: Upload the differing PNGs (run A and run B)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-shots-diff
+          path: ${{ runner.temp }}/docs-shots-diff
+          if-no-files-found: ignore
+          retention-days: 14
