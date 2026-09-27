@@ -19,14 +19,16 @@
 --
 -- INSERT OR IGNORE throughout: re-seeding over a partially-removed or
 -- already-seeded catalogue must be idempotent. A clash with an operator's
--- own row (same SKU/barcode/tax-code name) makes that one demo row's
--- INSERT OR IGNORE a no-op, never a failure (known gap: a brand-name clash
--- still FK-fails the items insert — ut-docs#2697) — and it must not take the rest
+-- own row (same SKU/barcode/brand/tax-code name) makes that one demo row's
+-- INSERT OR IGNORE a no-op, never a failure — and it must not take the rest
 -- of the catalogue down with it: every dependent insert below (barcodes,
 -- images, variants, variant_barcodes, inventory, price_history, shortcut
 -- buttons) is gated by a `WHERE EXISTS` check against the parent row it
 -- references, so a skipped demo item or variant skips only its own
 -- dependents too, leaving everything else to seed normally (ut-docs#2639).
+-- brands.name is UNIQUE too, but a brand is optional metadata rather than
+-- a parent to skip: an item whose demo brand didn't land seeds with
+-- brand_id NULL, never re-pointed at the operator's own brand (ut-docs#2697).
 -- Every item row carries is_sample_data = 1 so the UI can badge it and the
 -- removal path can target it.
 
@@ -65,8 +67,14 @@ INSERT OR IGNORE INTO brands (id, name) VALUES
 INSERT OR IGNORE INTO tax_codes (id, name, rate_basis_points, is_active, takeaway_rate_basis_points) VALUES
   ('tax_demo_cafe', 'Café dine-in 20% / takeaway 5%', 2000, 1, 500);
 
--- items
-INSERT OR IGNORE INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, cost_price, tax_code_id, is_active, is_weighed, is_sample_data) VALUES
+-- items. brand_id is looked up rather than passed through, so a demo brand
+-- skipped by an operator's same-named brand yields NULL, not an FK failure
+-- that rolls back the whole catalogue (ut-docs#2697).
+INSERT OR IGNORE INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, cost_price, tax_code_id, is_active, is_weighed, is_sample_data)
+SELECT column1, column2, column3, column4, column5,
+       (SELECT b.id FROM brands b WHERE b.id = column6),
+       column7, column8, column9, column10, column11, column12, column13
+FROM (VALUES
   ('itm001', 'SKU-0001', 'Coca-Cola Can 330ml', 'Classic cola can', 'cat_drink', 'br_coca', 'each', 120, 60, 'tax_std', 1, 0, 1),
   ('itm002', 'SKU-0002', 'Pepsi Can 330ml', 'Cola can', 'cat_drink', 'br_pepsi', 'each', 115, 58, 'tax_std', 1, 0, 1),
   ('itm003', 'SKU-0003', 'Sparkling Water 500ml', 'Carbonated water', 'cat_drink', 'br_generic', 'each', 85, 30, 'tax_zero', 1, 0, 1),
@@ -116,16 +124,20 @@ INSERT OR IGNORE INTO items (id, sku, name, description, category_id, brand_id, 
   ('itm047', 'SKU-0047', 'Protein Bar 60g', 'Chocolate protein bar', 'cat_snack', 'br_generic', 'each', 210, 120, 'tax_std', 1, 0, 1),
   ('itm048', 'SKU-0048', 'Instant Coffee 200g', 'Freeze dried coffee', 'cat_drink', 'br_nestle', 'each', 460, 310, 'tax_zero', 1, 0, 1),
   ('itm049', 'SKU-0049', 'Tea Bags x80', 'Black tea', 'cat_drink', 'br_generic', 'each', 295, 180, 'tax_zero', 1, 0, 1),
-  ('itm050', 'SKU-0050', 'Sugar 1kg', 'Granulated sugar', 'cat_food', 'br_generic', 'each', 135, 75, 'tax_zero', 1, 0, 1);
+  ('itm050', 'SKU-0050', 'Sugar 1kg', 'Granulated sugar', 'cat_food', 'br_generic', 'each', 135, 75, 'tax_zero', 1, 0, 1));
 
 -- café items (ut-docs#167) on the dine-in/takeaway demo tax code. Made to
 -- order: no barcode, image, stock or variant rows, and stock_untracked = 1
 -- (ut-docs#1850) so a sale is never refused for "not enough stock". tax_codes.name is
 -- UNIQUE: if an operator's own code already has the demo code's name, the
 -- tax-code INSERT above is ignored and these fall back to tax_std rather
--- than FK-failing (and rolling back) the whole catalogue.
+-- than FK-failing (and rolling back) the whole catalogue. brand_id gets the
+-- same clash fallback as the main items INSERT above (ut-docs#2697):
+-- br_generic missing (operator brand named "Generic") falls back to NULL.
 INSERT OR IGNORE INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, cost_price, tax_code_id, is_active, is_weighed, is_sample_data, stock_untracked)
-SELECT column1, column2, column3, column4, column5, column6, column7, column8, column9,
+SELECT column1, column2, column3, column4, column5,
+       (SELECT b.id FROM brands b WHERE b.id = column6),
+       column7, column8, column9,
        COALESCE((SELECT t.id FROM tax_codes t WHERE t.id = column10), 'tax_std'), column11, column12, column13, column14
 FROM (VALUES
   ('itm051', 'SKU-0051', 'Caffè Latte', 'Espresso with steamed milk', 'cat_drink', 'br_generic', 'each', 320, 90, 'tax_demo_cafe', 1, 0, 1, 1),
