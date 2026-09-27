@@ -3237,6 +3237,70 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
   .line-item { max-width: none; }
 }
 
+/* ut-docs#3050: upright tablets (a 10in tablet held upright is ~800x1280).
+   The stacked `max-width: 900px` tier gives the basket the full width, so the
+   narrow landscape column's reason for stacking qty / -+ / discount in three
+   rows (no horizontal slack for the item name, ut-docs#2217) can go. What
+   decides the line layout is the basket's own width in rem, so it's a
+   container query: its rem is the root font size, which carries --ui-scale,
+   so a scaled-up till drops to a roomier shape by itself (a viewport query
+   would overflow at scale 1.5-2). min-height instead of orientation: the
+   Android keyboard shrinks the viewport, and orientation would flip the
+   layout mid-typing. The short stacked landscape windows in this range
+   (900x600, 768x600) get the shorter lines too; landscape phones (height
+   < 481px, ut-docs#2918) and the <=480px tier (ut-docs#3059) are out. A
+   browser without container queries keeps the stacked tier as it was.
+   Only this element may be a container (TestAppCSSContainerOnlyOnTheBasket).
+   Regression test: portrait-tablet-sale-3050.spec.ts. */
+@media (min-width: 481px) and (max-width: 900px) and (min-height: 481px) {
+  .pos-container > .basket { container: basket / inline-size; }
+}
+/* Upright only (landscape in this width range is never this tall): products
+   get the height back. A long basket scrolls inside .basket-scroll. */
+@media (min-width: 481px) and (max-width: 900px) and (min-height: 900px) {
+  .pos-container > .basket { max-height: 38dvh; }
+}
+/* Tier 1 -- room for everything on one row (800px at scale 1). Tier 2 --
+   the name gets its own row above the controls (600px at scale 1, 800px at
+   scale 1.25), the same table-to-grid shape the <=480px tier uses. Below
+   tier 2 (800px at scale 1.5-2) the stacked tier stays as it was. */
+@container basket (min-width: 24rem) {
+  .line-item { max-width: none; }
+  .line-inputs { flex-direction: row; align-items: center; justify-content: flex-end; gap: .3rem; }
+  .qty-stepper { width: auto; gap: .3rem; }
+  .qty-step-btn { flex: 0 0 auto; min-width: 46px; min-height: 46px; }
+  /* The steppers beside these are 46px, so match them. body.kiosk's own
+     2.1rem floor comes later in this file, so kiosk needs one more class
+     to outrank it. */
+  .qty-input, .disc-input,
+  body.kiosk .line-inputs .qty-input, body.kiosk .line-inputs .disc-input { min-height: 46px; }
+  /* qty + disc inputs, two 46px steppers, three gaps, the cell's padding. */
+  .basket th:nth-child(2), .basket td:nth-child(2) { width: calc(7.9rem + 92px); }
+}
+@container basket (min-width: 38rem) {
+  .basket td { padding-block: .35rem; }
+}
+@container basket (min-width: 24rem) and (max-width: 37.99rem) {
+  .basket table, .basket thead, .basket tbody { display: block; }
+  .basket tr {
+    display: grid;
+    grid-template-columns: 1fr auto 4rem 4rem 2.8rem;
+    grid-template-areas: "name name  name  name  name"
+                         ".    qty   price total remove";
+    border-bottom: 1px solid var(--border);
+  }
+  /* The header needs no name row of its own: "Item" sits in the spacer
+     cell left of Qty/Price/Total, saving a row for the products. */
+  .basket thead tr { border-bottom-width: 2px; grid-template-areas: "name qty price total remove"; }
+  .basket tbody tr:last-child { border-bottom: none; }
+  /* Tighter than tier 1's .35rem: this line already spends two rows. */
+  .basket th, .basket td { display: block; border-bottom: none; padding-block: .2rem; }
+  .basket th:nth-child(1), .basket td:nth-child(1) { grid-area: name; }
+  .basket th:nth-child(2), .basket td:nth-child(2) { grid-area: qty; width: auto; }
+  .basket th:nth-child(3), .basket td:nth-child(3) { grid-area: price; }
+  .basket th:nth-child(4), .basket td:nth-child(4) { grid-area: total; }
+  .basket th:nth-child(5), .basket td:nth-child(5) { grid-area: remove; }
+}
 /* ---------- Sale-screen notices (ut-docs#213) ----------
    THE notification surface for the sale screen — one component, two slots:
    server-rendered inside #basket (partials/basket.html) and the client-side
@@ -4378,6 +4442,10 @@ body.login-screen {
      pages, sticky keeps it visible when a page scrolls. */
   position: sticky; bottom: 0; z-index: 90;
   display: flex; align-items: center; gap: 1rem;
+  /* ut-docs#3050: an upright tablet (600px) with the Update chip showing
+     overflowed to 712px and scrolled the whole page sideways. Wrap to a
+     second row instead; at 1024px and up everything still fits one row. */
+  flex-wrap: wrap; row-gap: .2rem;
   padding: .28rem 1rem; font-size: .78rem;
   background: #0f172a; color: #94a3b8;
   border-top: 1px solid rgba(255,255,255,.08);
