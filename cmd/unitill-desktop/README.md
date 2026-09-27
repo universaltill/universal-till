@@ -58,9 +58,33 @@ manager at a persistent SQLite file under
 `$XDG_DATA_HOME`, see `webkit_datadir_linux.go`/`webkit_linux.go`) —
 without it, `webview_go`'s GTK/WebKit2 backend keeps an in-memory-only
 cookie jar that dies with the process, so the language choice (`ut_lang`)
-and login session both reset on every restart/reboot. Windows (WebView2)
-and macOS (`webkit_darwin.go`'s `WKWebView`) already persist cookies to
-their own per-app data store by default and need no equivalent wiring.
+and login session both reset on every restart/reboot. macOS
+(`webkit_darwin.go`'s `WKWebView`) persists cookies to its own per-app data
+store by default and needs no equivalent wiring. Windows (WebView2)
+persists them too; since ut-docs#2761 its user data folder is pinned to
+`<data dir>\webview2` (`UT_DATA_DIR`, default
+`%LOCALAPPDATA%\UniversalTill`) — see the next section.
+
+## Windows WebView2 failure → browser fallback (ut-docs#2761)
+
+If WebView2 cannot start — no runtime installed, or stale
+`msedgewebview2.exe` processes still holding the user data folder after a
+runtime self-update (a reboot clears them) — the shell no longer crashes
+(`0xc0000005` in `webview_navigate`). It opens the till in the default
+browser instead and keeps serving until the till stops, and `desktop.log`
+records why: the WebView2 `HRESULT` and the installed runtime version
+(logged at every start as `WebView2 runtime version=…`).
+
+This needed patches to the vendored `internal/thirdparty/webview_go`
+(each marked `universal-till patch`): `webview.NewWindow` returns `nil` on
+failure (upstream never did, so `showWindow`'s fallback was unreachable);
+the Windows engine fails creation when WebView2 embedding fails, and gives
+up instead of waiting forever on `ERROR_INVALID_STATE`; `LastInitError`
+exposes the `HRESULT` (`ERROR_FILE_NOT_FOUND` = no runtime installed).
+The user data folder is set through `WEBVIEW2_USER_DATA_FOLDER`
+(`webview2_windows.go`), which the patched `embed()` reads itself — the
+library's built-in loader otherwise ignores it; an operator-set value
+wins.
 
 ## Attach-vs-spawn cold-boot race (ut-docs#1199)
 

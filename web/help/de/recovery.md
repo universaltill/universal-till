@@ -52,6 +52,19 @@ Die Kasse schreibt ein technisches Protokoll, nach dem der Support fragen kann:
 
 `till.log` ist die neueste Datei, `till.log.1` bis `till.log.4` sind ältere, und `desktop.log` ist das Protokoll des App-Fensters selbst. Passwörter und Tokens werden entfernt, bevor irgendetwas geschrieben wird, und der Ordner wird nie größer als etwa 25 MB. Solange die Kasse läuft, findet ein Manager den Ordner auch unter Einstellungen → Diagnosemodus → **Protokolldateien**, mit Schaltflächen zum Kopieren des Pfads und einer Diagnose-Zusammenfassung für den Support. Die Android-App schreibt diese Dateien nicht.
 
+## Unter Windows: Die Kasse öffnet sich im Webbrowser statt im eigenen Fenster
+
+Das Fenster der Kasse wird unter Windows von einer Windows-Komponente
+namens WebView2 gezeichnet. Kann WebView2 nicht starten – meist direkt
+nachdem Windows sie im Hintergrund aktualisiert hat, während noch eine
+alte Kopie lief –, schließt sich die Kasse nicht mehr sofort wieder.
+Stattdessen öffnet sie sich in Ihrem Standard-Webbrowser unter derselben
+Adresse und funktioniert dort ganz normal. Starten Sie den Computer bei
+Gelegenheit neu; danach erscheint wieder das eigene Fenster der Kasse.
+Falls nicht, schicken Sie dem Support die Datei `desktop.log` aus dem
+oben genannten Protokollordner: Sie hält fest, warum sich das Fenster
+nicht öffnen ließ.
+
 ## Auf einer Android-Kasse: eine einzelne Seite lädt nicht
 
 Das ist etwas anderes als der Wiederherstellungsbildschirm oben, bei dem
