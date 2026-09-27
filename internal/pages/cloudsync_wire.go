@@ -863,15 +863,36 @@ func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, v
 	if version != "" && priorInstalled && prior.CurrentVersion != "" {
 		priorGood = prior
 		hasPriorGood = true
+		rollbackMgr := plugins.NewRollbackManager(d.Db, paths.Plugins())
 		sourcePath := filepath.Join(paths.Plugins(), prior.PluginID, prior.CurrentVersion)
-		if err := plugins.NewRollbackManager(d.Db, paths.Plugins()).StoreVersion(prior.PluginID, prior.CurrentVersion, sourcePath); err != nil {
-			logging.L().Warnf("plugin sync: failed to snapshot %s@%s before pinned install (rollback to it won't be possible if this mismatches): %v",
-				prior.PluginID, prior.CurrentVersion, err)
-			// Don't rely on Rollback's own os.Stat failure as the safety
-			// net for a snapshot that was never actually taken — that
-			// safety is accidental, living in the callee, not a decision
-			// made here.
-			hasPriorGood = false
+		if err := rollbackMgr.StoreVersion(prior.PluginID, prior.CurrentVersion, sourcePath); err != nil {
+			switch {
+			case errors.Is(err, plugins.ErrVersionSourceMissing) && rollbackMgr.HasVersion(prior.PluginID, prior.CurrentVersion):
+				// The live per-version dir is gone (ut-docs#2799), but a
+				// snapshot from an earlier StoreVersion is still sitting in
+				// versions/ untouched — there's still a real rollback
+				// target, just not a freshly refreshed one. Not warning
+				// material: nothing here needs an owner's attention.
+				logging.L().Infof("plugin sync: %s@%s has no live files on disk to refresh its rollback snapshot, but an existing snapshot from an earlier version is still available",
+					prior.PluginID, prior.CurrentVersion)
+			case errors.Is(err, plugins.ErrVersionSourceMissing):
+				// No live dir AND no existing snapshot: there really is
+				// nothing to roll back to. Expected and unremarkable enough
+				// (e.g. a version that was never anything but a DB row) to
+				// log in plain words at Info, not surface as a WARN on the
+				// owner's problems list.
+				hasPriorGood = false
+				logging.L().Infof("plugin sync: %s@%s has no files on disk, so no rollback snapshot was taken; a failed upgrade will uninstall instead of rolling back",
+					prior.PluginID, prior.CurrentVersion)
+			default:
+				logging.L().Warnf("plugin sync: failed to snapshot %s@%s before pinned install (rollback to it won't be possible if this mismatches): %v",
+					prior.PluginID, prior.CurrentVersion, err)
+				// Don't rely on Rollback's own os.Stat failure as the safety
+				// net for a snapshot that was never actually taken — that
+				// safety is accidental, living in the callee, not a decision
+				// made here.
+				hasPriorGood = false
+			}
 		}
 	}
 
