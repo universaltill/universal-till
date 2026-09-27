@@ -180,26 +180,6 @@ func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion
 		return fmt.Errorf("plugin is already at version %s", targetVersion)
 	}
 
-	// Snapshot the version we're leaving, same as an update does (ut-docs#2239
-	// review) — without this, a rollback silently sheds the ability to roll
-	// forward again: the version being left was never necessarily stored
-	// (e.g. it was itself the very first install, never previously rolled
-	// away from), so if this call is skipped a shop that rolls back and then
-	// decides the earlier version was wrong too has nowhere to go back to.
-	// Only attempt it when the live per-version install directory actually
-	// exists — StoreVersion unconditionally clears any existing snapshot
-	// before copying, so calling it against a missing source would destroy
-	// an already-good prior snapshot instead of leaving it alone. Warn-only
-	// on failure either way, same as the update handler's own StoreVersion
-	// call — a snapshot failure must never block the rollback the operator
-	// is here to complete.
-	currentSourcePath := filepath.Join(rm.pluginBaseDir, pluginID, currentVersion)
-	if _, statErr := os.Stat(currentSourcePath); statErr == nil {
-		if err := rm.StoreVersion(pluginID, currentVersion, currentSourcePath); err != nil {
-			log.Warnf("[Rollback] Failed to store version %s for plugin %s before rolling back to %s: %v", currentVersion, pluginID, targetVersion, err)
-		}
-	}
-
 	// Load manifest from target version
 	manifestPath := filepath.Join(targetPath, "manifest.json")
 	manifestFile, err := os.Open(manifestPath)
@@ -330,6 +310,40 @@ func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
+	// Snapshot the version we're leaving, same as an update does (ut-docs#2239
+	// review) — without this, a rollback silently sheds the ability to roll
+	// forward again: the version being left was never necessarily stored
+	// (e.g. it was itself the very first install, never previously rolled
+	// away from), so if this call is skipped a shop that rolls back and then
+	// decides the earlier version was wrong too has nowhere to go back to.
+	//
+	// Deliberately AFTER tx.Commit() has already succeeded (ut-docs#3032): it
+	// used to run before the target manifest was even opened, which meant its
+	// cleanupOldVersions side effect (evict the oldest of maxVersions
+	// snapshots by mtime) could evict the rollback TARGET itself — a
+	// rollback to the oldest snapshot on disk failed with "failed to open
+	// manifest: .../versions/<target>/manifest.json: no such file or
+	// directory" even though the target existed when Rollback was called.
+	// It also meant a rollback later refused by any validate* check still
+	// mutated versions/ on disk for a rollback that never took effect. The
+	// currentVersion's live per-version dir (pluginBaseDir/id/currentVersion)
+	// is never deleted by Rollback, so it's still there to snapshot from
+	// here, after commit. cleanupOldVersions is passed targetVersion as a
+	// must-keep name so this snapshot pass can never evict the version the
+	// rollback just landed on. Only attempt it when the live per-version
+	// install directory actually exists — StoreVersion unconditionally
+	// clears any existing snapshot before copying, so calling it against a
+	// missing source would destroy an already-good prior snapshot instead of
+	// leaving it alone. Warn-only on failure either way, same as the update
+	// handler's own StoreVersion call — a snapshot failure must never
+	// retroactively fail a rollback that has already committed.
+	currentSourcePath := filepath.Join(rm.pluginBaseDir, pluginID, currentVersion)
+	if _, statErr := os.Stat(currentSourcePath); statErr == nil {
+		if err := rm.storeVersion(pluginID, currentVersion, currentSourcePath, targetVersion); err != nil {
+			log.Warnf("[Rollback] Failed to store version %s for plugin %s after rolling back to %s: %v", currentVersion, pluginID, targetVersion, err)
+		}
+	}
+
 	log.Infof("[Rollback] Plugin %s rolled back from %s to %s", pluginID, currentVersion, targetVersion)
 	return nil
 }
@@ -341,7 +355,18 @@ func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion
 // version/), which Rollback reads from later. sourcePath == "" keeps the
 // pre-ut-docs#495 no-op-copy behavior (directory created, nothing to copy —
 // some callers store a version marker with no known source location yet).
+//
+// Delegates to storeVersion with no must-keep names — this public signature
+// must not change, since internal/pages calls it directly (ut-docs#3032).
 func (rm *RollbackManager) StoreVersion(pluginID, version, sourcePath string) error {
+	return rm.storeVersion(pluginID, version, sourcePath)
+}
+
+// storeVersion is StoreVersion's implementation, plus a must-keep set passed
+// straight through to cleanupOldVersions (ut-docs#3032) — Rollback's
+// post-commit "snapshot the version we're leaving" call uses this to protect
+// the rollback target from the eviction that snapshot write can trigger.
+func (rm *RollbackManager) storeVersion(pluginID, version, sourcePath string, keep ...string) error {
 	log := logging.L()
 
 	// StoreVersion RemoveAll()s versionDir before copying — never let an id
@@ -360,9 +385,9 @@ func (rm *RollbackManager) StoreVersion(pluginID, version, sourcePath string) er
 		// os.RemoveAll(versionDir) — clearing out any existing, good
 		// snapshot — and only then discovered the copy had nothing to read
 		// from, leaving neither the old snapshot nor a new one. Rollback()
-		// below already guards its own StoreVersion call with exactly this
-		// os.Stat, for exactly this reason; this makes every caller safe,
-		// not just that one.
+		// above already guards its own post-commit storeVersion call with
+		// exactly this os.Stat, for exactly this reason; this makes every
+		// caller safe, not just that one.
 		//
 		// Only "doesn't exist" or "exists but isn't a directory" maps to
 		// the sentinel (ut-docs#2799 review M-minor 3) — any other os.Stat
@@ -413,7 +438,7 @@ func (rm *RollbackManager) StoreVersion(pluginID, version, sourcePath string) er
 	log.Infof("[Rollback] Stored version %s for plugin %s", version, pluginID)
 
 	// Clean up old versions
-	if err := rm.cleanupOldVersions(pluginID); err != nil {
+	if err := rm.cleanupOldVersions(pluginID, keep...); err != nil {
 		log.Warnf("[Rollback] Failed to cleanup old versions: %v", err)
 	}
 
@@ -539,9 +564,20 @@ func copyVersionFiles(sourceDir, destDir string) error {
 	})
 }
 
-// cleanupOldVersions removes old plugin versions, keeping only maxVersions
-func (rm *RollbackManager) cleanupOldVersions(pluginID string) error {
+// cleanupOldVersions removes old plugin versions, keeping only maxVersions.
+// Any name in keep is never deleted, regardless of age or how many real
+// snapshots exist — Rollback's post-commit snapshot pass (ut-docs#3032)
+// passes the rollback target here so its own eviction can never remove the
+// version the rollback just landed on. Non-kept candidates are still
+// deleted, oldest first, until the real-snapshot count is at most
+// maxVersions or there are no more non-kept candidates left to delete (a
+// keep set larger than maxVersions is honored in full, not truncated).
+func (rm *RollbackManager) cleanupOldVersions(pluginID string, keep ...string) error {
 	versionsDir := filepath.Join(rm.pluginBaseDir, pluginID, "versions")
+	kept := make(map[string]bool, len(keep))
+	for _, k := range keep {
+		kept[k] = true
+	}
 
 	// Best-effort sweep of crash leftovers before counting anything
 	// (ut-docs#3016): a `.store-*` dir under versions/ (StoreVersion,
@@ -575,43 +611,51 @@ func (rm *RollbackManager) cleanupOldVersions(pluginID string) error {
 		realEntries = append(realEntries, entry)
 	}
 
-	// If we have more than maxVersions, delete oldest
+	// If we have more than maxVersions, delete oldest — but never a kept one.
 	if len(realEntries) > rm.maxVersions {
-		// Get modification times
+		// Get modification times, excluding kept names: a kept snapshot must
+		// never become a deletion candidate, however old it is.
 		type versionEntry struct {
 			name    string
 			modTime time.Time
 		}
 
-		var versions []versionEntry
+		var candidates []versionEntry
 		for _, entry := range realEntries {
-			if entry.IsDir() {
-				info, err := entry.Info()
-				if err != nil {
-					continue
-				}
-				versions = append(versions, versionEntry{
-					name:    entry.Name(),
-					modTime: info.ModTime(),
-				})
+			if kept[entry.Name()] {
+				continue
 			}
+			info, err := entry.Info()
+			if err != nil {
+				continue
+			}
+			candidates = append(candidates, versionEntry{
+				name:    entry.Name(),
+				modTime: info.ModTime(),
+			})
 		}
 
 		// Sort by modification time (oldest first)
-		for i := 0; i < len(versions)-1; i++ {
-			for j := i + 1; j < len(versions); j++ {
-				if versions[i].modTime.After(versions[j].modTime) {
-					versions[i], versions[j] = versions[j], versions[i]
+		for i := 0; i < len(candidates)-1; i++ {
+			for j := i + 1; j < len(candidates); j++ {
+				if candidates[i].modTime.After(candidates[j].modTime) {
+					candidates[i], candidates[j] = candidates[j], candidates[i]
 				}
 			}
 		}
 
-		// Delete oldest versions
-		toDelete := len(versions) - rm.maxVersions
+		// Delete oldest candidates until the real count is back at
+		// maxVersions, or until there are no more non-kept candidates left
+		// — a keep set that itself exceeds maxVersions is honored in full,
+		// not truncated.
+		toDelete := len(realEntries) - rm.maxVersions
+		if toDelete > len(candidates) {
+			toDelete = len(candidates)
+		}
 		for i := 0; i < toDelete; i++ {
-			dirPath := filepath.Join(versionsDir, versions[i].name)
+			dirPath := filepath.Join(versionsDir, candidates[i].name)
 			if err := os.RemoveAll(dirPath); err != nil {
-				return fmt.Errorf("failed to remove old version %s: %w", versions[i].name, err)
+				return fmt.Errorf("failed to remove old version %s: %w", candidates[i].name, err)
 			}
 		}
 	}
