@@ -30,7 +30,7 @@ TDD re-verified by the reviewer: reverting `app.css` makes the spec fail (`baske
 
 ## Verified
 - New spec `e2e/tests/portrait-tablet-sale-3050.spec.ts`, 14 cases:
-  - 800×1280 and 600×960 × en/fa × light/dark: page doesn't scroll either way; line height; steppers ≥ 46px; name ≥ 120px; products' share; Pay in view and hit-testable with 9 lines;
+  - 800×1280 and 600×960 × en/fa × light/dark: page doesn't scroll either way; line height; steppers ≥ 46px; name cell ≥ 160px; products' share; Pay in view and hit-testable with 9 lines;
   - kiosk; scale 1.25 and 1.5; keyboard resize; full status bar; landscape no-leak.
 - Related specs green: #416, #1314, #1338, #391, #213, #2702, ui-scale-basket (65 passed).
 - Full e2e suite:
@@ -38,6 +38,7 @@ TDD re-verified by the reviewer: reverting `app.css` makes the spec fail (`baske
   - After the fixes: 792 passed, 2 failed.
     - `money-comma-2925` timed out under load; it passes alone and passed in the first run.
     - The 600×960 products floor measured 38.9% when the status bar wrapped to 2 rows, so the floor is now 37% with the reason in the spec.
+- PR CI caught a font-dependent check: `.line-name` shrinks to fit its text, so "name ≥ 120px" read 118.9px on the Linux runner's fonts. The spec now measures the name cell's available width: 230px at 800, 440px at 600; floor 160px.
 - `go build`, `go vet`, and every `ci.yml` build-job guard. Local-only exceptions: shellcheck 0.11 vs the pinned 0.9, and deadcode skipping `cmd/unitill-desktop` without GTK headers. Both are environment-only.
 - docs-shots: the manual's screenshots are 1024×600 landscape, which none of these rules reach. The surface hash was refreshed and the guard is green.
 - Screenshots looked at: 800×1280 en, 600×960 fa (RTL), 1024×600 and 1280×800 en.

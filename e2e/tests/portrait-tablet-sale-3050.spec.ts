@@ -66,7 +66,12 @@ async function measure(page: Page) {
       productsH: products.height,
       payBottom: payRect ? payRect.bottom : -1,
       payHit: !!(pay && hit && (hit === pay || pay.contains(hit))),
-      nameW: Math.min(...[...document.querySelectorAll('#basket .line-name')].map((n) => r(n)!.width)),
+      // The name cell's room, not the name text's own width (.line-name
+      // shrinks to fit, so its width depends on the fonts installed).
+      nameW: Math.min(...[...document.querySelectorAll('#basket tbody td:first-child')].map((td) => {
+        const cs = getComputedStyle(td);
+        return td.clientWidth - parseFloat(cs.paddingInlineStart) - parseFloat(cs.paddingInlineEnd);
+      })),
     };
   });
 }
@@ -108,7 +113,7 @@ test.describe('portrait tablet sale screen (ut-docs#3050)', () => {
             expect(s.h, 'stepper button height').toBeGreaterThanOrEqual(46);
             expect(s.w, 'stepper button width').toBeGreaterThanOrEqual(46);
           }
-          expect(m.nameW, 'item name keeps a usable width').toBeGreaterThanOrEqual(120);
+          expect(m.nameW, 'the name cell keeps a usable width').toBeGreaterThanOrEqual(160);
           expect(m.productsH / vp.height, 'products share of the screen').toBeGreaterThanOrEqual(vp.minProducts);
 
           // A long basket scrolls inside itself; Pay stays on screen.
@@ -154,12 +159,15 @@ test.describe('portrait tablet sale screen (ut-docs#3050)', () => {
         const sc = document.querySelector('.basket-scroll')!;
         return {
           over: sc.scrollWidth - sc.clientWidth,
-          name: Math.min(...[...document.querySelectorAll('#basket .line-name')].map((n) => n.getBoundingClientRect().width)),
+          name: Math.min(...[...document.querySelectorAll('#basket tbody td:first-child')].map((td) => {
+            const cs = getComputedStyle(td);
+            return td.clientWidth - parseFloat(cs.paddingInlineStart) - parseFloat(cs.paddingInlineEnd);
+          })),
           removeRight: Math.max(...[...document.querySelectorAll('#basket tbody .btn-x')].map((n) => n.getBoundingClientRect().right)),
         };
       });
       expect(m.over, 'basket must not scroll sideways').toBeLessThanOrEqual(0);
-      expect(m.name, 'item name width').toBeGreaterThanOrEqual(80);
+      expect(m.name, 'name cell width').toBeGreaterThanOrEqual(100);
       expect(m.removeRight, 'remove button on screen').toBeLessThanOrEqual(800);
     });
   }
