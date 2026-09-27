@@ -2,6 +2,7 @@ package plugins
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -322,5 +323,258 @@ func TestRollbackRefusesTraversalVersion(t *testing.T) {
 	}
 	if err := rm.StoreVersion(pluginID, "../escape", filepath.Join(base, pluginID, "versions", "2.0.0")); err == nil {
 		t.Error("StoreVersion accepted a traversal version")
+	}
+}
+
+// ut-docs#2799: the live per-version install dir a snapshot is taken FROM
+// can go missing (disk cleanup, a partial delete — anything short of the
+// happy path) without that meaning a good version was never installed. The
+// old code went straight to os.RemoveAll(versionDir) before ever checking
+// the source existed, so a missing source destroyed an already-good
+// existing snapshot and left nothing behind. StoreVersion must now refuse
+// before touching the existing snapshot, and report ErrVersionSourceMissing
+// so callers can tell this apart from "there was never a snapshot at all".
+func TestStoreVersion_MissingSourceKeepsExistingSnapshotIntact(t *testing.T) {
+	db := managerTestDB(t)
+	base := t.TempDir()
+	rm := NewRollbackManager(db, base)
+	pluginID := "com.test.missingsrc"
+
+	// A real, good snapshot already on disk from an earlier StoreVersion.
+	existingSourceDir := filepath.Join(base, pluginID, "1.0.0")
+	if err := os.MkdirAll(existingSourceDir, 0o755); err != nil {
+		t.Fatalf("mkdir source: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(existingSourceDir, "manifest.json"), []byte(`{"id":"com.test.missingsrc","version":"1.0.0"}`), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	if err := rm.StoreVersion(pluginID, "1.0.0", existingSourceDir); err != nil {
+		t.Fatalf("seed snapshot: %v", err)
+	}
+	snapshotManifest := filepath.Join(base, pluginID, "versions", "1.0.0", "manifest.json")
+	before, err := os.ReadFile(snapshotManifest)
+	if err != nil {
+		t.Fatalf("seeded snapshot missing: %v", err)
+	}
+
+	// The live per-version dir is now gone — StoreVersion is asked to
+	// refresh a snapshot it can no longer read from.
+	if err := os.RemoveAll(existingSourceDir); err != nil {
+		t.Fatalf("remove live source dir: %v", err)
+	}
+
+	err = rm.StoreVersion(pluginID, "1.0.0", existingSourceDir)
+	if err == nil {
+		t.Fatal("StoreVersion succeeded against a missing source, want an error")
+	}
+	if !errors.Is(err, ErrVersionSourceMissing) {
+		t.Fatalf("StoreVersion error = %v, want it to wrap ErrVersionSourceMissing", err)
+	}
+
+	after, err := os.ReadFile(snapshotManifest)
+	if err != nil {
+		t.Fatalf("existing snapshot must survive a failed StoreVersion, but it's gone: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("existing snapshot content changed: before=%q after=%q", before, after)
+	}
+}
+
+// Same sentinel, different bad source: a FILE where a directory was
+// expected (e.g. a stray marker) must not be treated as valid either.
+func TestStoreVersion_SourceIsFileNotDirReturnsSentinel(t *testing.T) {
+	db := managerTestDB(t)
+	base := t.TempDir()
+	rm := NewRollbackManager(db, base)
+	pluginID := "com.test.filesrc"
+
+	notADir := filepath.Join(base, "stray-file")
+	if err := os.WriteFile(notADir, []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("write stray file: %v", err)
+	}
+
+	err := rm.StoreVersion(pluginID, "1.0.0", notADir)
+	if !errors.Is(err, ErrVersionSourceMissing) {
+		t.Fatalf("StoreVersion(file source) error = %v, want it to wrap ErrVersionSourceMissing", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(base, pluginID, "versions", "1.0.0")); statErr == nil {
+		t.Fatal("a versions/1.0.0 dir must not be created when the source is invalid")
+	}
+}
+
+func TestHasVersion(t *testing.T) {
+	db := managerTestDB(t)
+	base := t.TempDir()
+	rm := NewRollbackManager(db, base)
+	pluginID := "com.test.hasversion"
+
+	if rm.HasVersion(pluginID, "1.0.0") {
+		t.Fatal("HasVersion true before any snapshot exists")
+	}
+
+	// A crash-partial or empty versions/<v> dir (StoreVersion interrupted
+	// before ever writing a manifest, or just os.MkdirAll'd for a
+	// sourcePath == "" marker call) is not a real rollback target
+	// (ut-docs#2799 review M-minor 4).
+	emptyDir := filepath.Join(base, pluginID, "versions", "0.9.0")
+	if err := os.MkdirAll(emptyDir, 0o755); err != nil {
+		t.Fatalf("mkdir empty version dir: %v", err)
+	}
+	if rm.HasVersion(pluginID, "0.9.0") {
+		t.Fatal("HasVersion true for an empty versions/<v> dir with no manifest.json")
+	}
+
+	writeVersionDir(t, base, pluginID, "1.0.0", true)
+	if !rm.HasVersion(pluginID, "1.0.0") {
+		t.Fatal("HasVersion false for an existing versions/<v> directory with a manifest.json")
+	}
+	if rm.HasVersion(pluginID, "9.9.9") {
+		t.Fatal("HasVersion true for a version never stored")
+	}
+	if rm.HasVersion("../escape", "1.0.0") {
+		t.Fatal("HasVersion true for an invalid plugin id")
+	}
+	if rm.HasVersion(pluginID, "../escape") {
+		t.Fatal("HasVersion true for an invalid version")
+	}
+}
+
+// ut-docs#2799 review M1 (MAJOR): the HasVersion branch in
+// cloudInstallPluginVersion means Rollback can now be reached with a real
+// rollback target (a versions/<target> snapshot) whose LIVE per-version
+// install dir is missing. Rollback used to only touch the DB — never
+// restoring pluginBaseDir/id/target/ — so the plugin ended up "installed"
+// with zero files on disk (wasm_runtime.go, plugins.go's locale loader,
+// plugin_page.go, themes.go and plugin_icons.go all read from that live
+// dir, never from versions/). It must now restore the live dir from the
+// snapshot before completing.
+func TestRollback_RestoresMissingLiveDirFromSnapshot(t *testing.T) {
+	db := managerTestDB(t)
+	ctx := context.Background()
+	base := t.TempDir()
+	rm := NewRollbackManager(db, base)
+	pluginID := "com.test.restore"
+
+	// Installed at 2.0.0. 1.0.0 has a versions/ snapshot but deliberately
+	// NO live per-version install dir — the shape a snapshot-but-no-live-dir
+	// rollback target has after ut-docs#2799's HasVersion fix.
+	seedInstalledPlugin(t, db, pluginID, "RS", "2.0.0", "none", true)
+	writeVersionDir(t, base, pluginID, "2.0.0", true)
+	writeVersionDir(t, base, pluginID, "1.0.0", true)
+	seedCatalogRow(t, db, pluginID, "RS", "1.0.0", "")
+
+	liveTargetDir := filepath.Join(base, pluginID, "1.0.0")
+	if _, err := os.Stat(liveTargetDir); err == nil {
+		t.Fatal("precondition: live target dir must not already exist")
+	}
+
+	if err := rm.Rollback(ctx, pluginID, "1.0.0", "tester"); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+
+	restored, err := os.ReadFile(filepath.Join(liveTargetDir, "manifest.json"))
+	if err != nil {
+		t.Fatalf("live target dir must be restored from the snapshot after Rollback: %v", err)
+	}
+	snapshot, err := os.ReadFile(filepath.Join(base, pluginID, "versions", "1.0.0", "manifest.json"))
+	if err != nil {
+		t.Fatalf("read snapshot manifest: %v", err)
+	}
+	if string(restored) != string(snapshot) {
+		t.Fatalf("restored manifest = %q, want snapshot content %q", restored, snapshot)
+	}
+}
+
+// ut-docs#2799 review M-minor 2: StoreVersion used to os.RemoveAll(versionDir)
+// unconditionally before copying, so ANY copy failure destroyed an
+// already-good existing snapshot and left nothing in its place. It must now
+// copy into a temp sibling under versions/ first and only swap it in on
+// success.
+//
+// The failure mechanism here is a symlinked source ROOT: filepath.WalkDir
+// lstats the root itself, so a symlink there is walked as a single
+// non-directory entry, and copyVersionFiles then calls os.ReadFile on a
+// path that resolves to a directory — a copy failure confirmed in review
+// and independent of uid/permissions (chmod 000 is ignored when running as
+// root, which this sandbox does — id -u == 0).
+func TestStoreVersion_CopyFailureKeepsExistingSnapshotIntact(t *testing.T) {
+	db := managerTestDB(t)
+	base := t.TempDir()
+	rm := NewRollbackManager(db, base)
+	pluginID := "com.test.copyfail"
+
+	goodSourceDir := filepath.Join(base, pluginID, "1.0.0")
+	if err := os.MkdirAll(goodSourceDir, 0o755); err != nil {
+		t.Fatalf("mkdir source: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(goodSourceDir, "manifest.json"), []byte(`{"id":"com.test.copyfail","version":"1.0.0"}`), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	if err := rm.StoreVersion(pluginID, "1.0.0", goodSourceDir); err != nil {
+		t.Fatalf("seed snapshot: %v", err)
+	}
+	snapshotManifest := filepath.Join(base, pluginID, "versions", "1.0.0", "manifest.json")
+	before, err := os.ReadFile(snapshotManifest)
+	if err != nil {
+		t.Fatalf("seeded snapshot missing: %v", err)
+	}
+
+	realDir := filepath.Join(base, "real-target-dir")
+	if err := os.MkdirAll(filepath.Join(realDir, "sub"), 0o755); err != nil {
+		t.Fatalf("mkdir real dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(realDir, "sub", "file.txt"), []byte("data"), 0o644); err != nil {
+		t.Fatalf("write real file: %v", err)
+	}
+	symlinkSource := filepath.Join(base, "symlinked-source")
+	if err := os.Symlink(realDir, symlinkSource); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	if err := rm.StoreVersion(pluginID, "1.0.0", symlinkSource); err == nil {
+		t.Fatal("StoreVersion succeeded copying from a symlinked source root, want an error")
+	}
+
+	after, err := os.ReadFile(snapshotManifest)
+	if err != nil {
+		t.Fatalf("existing snapshot must survive a failed copy, but it's gone: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("existing snapshot content changed: before=%q after=%q", before, after)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(base, pluginID, "versions"))
+	if err != nil {
+		t.Fatalf("readdir versions: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "1.0.0" {
+		t.Fatalf("versions/ dir has unexpected entries after failed copy (leftover temp dir?): %v", entries)
+	}
+}
+
+// ut-docs#2799 review M-minor 3: StoreVersion used to map EVERY os.Stat
+// error on sourcePath to ErrVersionSourceMissing. Only "doesn't exist" or
+// "exists but isn't a directory" should map to the sentinel — any other
+// stat error (permissions, a malformed path, ...) is a real problem a
+// caller should still Warn about, not silently treat as "no source, as
+// expected".
+//
+// A NUL byte in the path makes os.Stat fail with a plain "invalid argument"
+// syscall error on every platform, which is NOT fs.ErrNotExist — and unlike
+// a permissions probe, it doesn't depend on running as non-root.
+func TestStoreVersion_OtherStatErrorIsNotSentinel(t *testing.T) {
+	db := managerTestDB(t)
+	base := t.TempDir()
+	rm := NewRollbackManager(db, base)
+	pluginID := "com.test.staterr"
+
+	badSourcePath := filepath.Join(base, "bad\x00path")
+
+	err := rm.StoreVersion(pluginID, "1.0.0", badSourcePath)
+	if err == nil {
+		t.Fatal("StoreVersion succeeded against an invalid source path, want an error")
+	}
+	if errors.Is(err, ErrVersionSourceMissing) {
+		t.Fatalf("StoreVersion error = %v, want a plain error, not the ErrVersionSourceMissing sentinel", err)
 	}
 }
