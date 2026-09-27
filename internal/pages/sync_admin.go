@@ -757,6 +757,12 @@ const (
 	brokenRefetchBackoffTicks = 10
 )
 
+// pluginSyncInstall is convergePluginSet's marketplace install call — a
+// package-level seam so tests can drive the follow path without the network
+// (ut-docs#2984). Restore the original value (e.g. via t.Cleanup) after
+// swapping it.
+var pluginSyncInstall = cloudInstallPluginVersion
+
 // convergePluginSet makes this till's marketplace-installed plugin set match
 // the given primary registry rows — the shared diff loop of both the
 // changed-bundle and steady-state (cached rows) paths of syncPullPlugins.
@@ -769,6 +775,7 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 	repo := data.NewSyncPluginsRepo(d.Db)
 	statusStore := plugins.NewInstallStatusStore(d.Db)
 	converged := true
+	changed := false // any install/uninstall landed: recompute the chip count
 
 	// Installs/updates: listing active on the primary, missing, at a
 	// different version locally, or locally BROKEN (right version, files
@@ -809,7 +816,7 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 			logging.L().Warnf("plugin sync: %s (%s@%s) is broken locally (registered but not loadable) — re-fetching from the marketplace",
 				row.PluginName, row.ListingID, row.Version)
 		}
-		if _, err := cloudInstallPluginVersion(ctx, d, row.ListingID, row.Version); err != nil {
+		if _, err := pluginSyncInstall(ctx, d, row.ListingID, row.Version); err != nil {
 			logging.L().Warnf("plugin sync: install %s (%s@%s) from the marketplace failed (will retry): %v",
 				row.PluginName, row.ListingID, row.Version, err)
 			converged = false
@@ -817,6 +824,7 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 		}
 		logging.L().Infof("plugin sync: installed %s (%s@%s) to follow the primary",
 			row.PluginName, row.ListingID, row.Version)
+		changed = true
 	}
 
 	// Uninstalls: a listing this till holds as active that the primary no
@@ -849,6 +857,16 @@ func convergePluginSet(ctx context.Context, d *common.Deps, rows []data.PluginSy
 		// healthy-reconvergence path is the only other place that clears it.
 		clearBrokenRefetch(d, listingID)
 		logging.L().Infof("plugin sync: uninstalled %s to follow the primary", rec.PluginID)
+		changed = true
+	}
+	if changed {
+		// The status-bar chip's pending count ("Updates are installed from
+		// the main till (N)") is the scheduler's marketplace-vs-installed
+		// check, recomputed every 15 min; following just changed what is
+		// installed, so recompute it now rather than show a stale count
+		// (ut-docs#2984). On a replica the tick only counts — it never
+		// applies an update (ut-docs#460).
+		pluginUpdateTickFn(ctx, d)
 	}
 	return converged
 }

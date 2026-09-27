@@ -186,7 +186,9 @@ func TestButtonsPartial_EditMode(t *testing.T) {
 			t.Fatalf("plain /ui/buttons must not carry edit-mode markup %q", unwanted)
 		}
 	}
-	for _, want := range []string{`hx-post="/api/pos/scan"`, `href="/designer"`, `href="/catalog?item=itm-btn&return=/"`,
+	// ut-docs#2989: the sale screen's badges come from its one template
+	// (placeholder item id), filled per cell from data-item-id by app.js.
+	for _, want := range []string{`hx-post="/api/pos/scan"`, `href="/designer"`, `href="/catalog?item=` + ui.TileBadgeItemPlaceholder + `&return=/"`, `data-item-id="itm-btn"`,
 		// ut-docs#2174 review: the sale screen keeps its own search results
 		// region and restores a persisted search -- only edit mode drops them.
 		`id="search-results"`, `this.q = st.q`} {

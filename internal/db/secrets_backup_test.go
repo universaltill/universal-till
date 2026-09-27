@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/directivekey"
 	"github.com/universaltill/universal-till/internal/secrets"
 )
 
@@ -19,7 +20,9 @@ import (
 // (production layout) and a sealed value actually stored in
 // plugin_settings, a Snapshot() (VACUUM INTO) must contain the ciphertext
 // but not the key in any encoding, and the key file must sit outside the
-// backup directory.
+// backup directory. The main till's directive key (ADR-0115 amendment
+// 2026-09-25, ut-docs#2810) lives in the same secrets/ directory and gets
+// the same assertions.
 func TestSecretsKeyExcludedFromBackupSnapshot(t *testing.T) {
 	dataDir := t.TempDir()
 	dbPath := filepath.Join(dataDir, "unitill-pos.db")
@@ -31,6 +34,12 @@ func TestSecretsKeyExcludedFromBackupSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
+	dk := directivekey.NewAt(filepath.Join(dataDir, "secrets", "directive-x25519.key"))
+	dkPriv, err := dk.LoadOrCreate()
+	if err != nil {
+		t.Fatalf("directive key: %v", err)
+	}
+	directiveKey := dkPriv.Bytes()
 	const probe = `"sk_live_backup_probe_XYZZY"`
 	sealed, err := secrets.Seal(key, []byte(probe))
 	if err != nil {
@@ -62,13 +71,16 @@ func TestSecretsKeyExcludedFromBackupSnapshot(t *testing.T) {
 	if bytes.Contains(blob, []byte(probe)) || bytes.Contains(blob, []byte("backup_probe")) {
 		t.Fatal("the snapshot contains the plaintext credential")
 	}
-	for name, enc := range map[string][]byte{
-		"raw":    key,
-		"base64": []byte(base64.StdEncoding.EncodeToString(key)),
-		"hex":    []byte(hex.EncodeToString(key)),
-	} {
-		if bytes.Contains(blob, enc) {
-			t.Fatalf("the snapshot contains the encryption key (%s encoding)", name)
+	for label, k := range map[string][]byte{"plugin-settings key": key, "directive key": directiveKey} {
+		for name, enc := range map[string][]byte{
+			"raw":       k,
+			"base64":    []byte(base64.StdEncoding.EncodeToString(k)),
+			"base64url": []byte(base64.RawURLEncoding.EncodeToString(k)),
+			"hex":       []byte(hex.EncodeToString(k)),
+		} {
+			if bytes.Contains(blob, enc) {
+				t.Fatalf("the snapshot contains the %s (%s encoding)", label, name)
+			}
 		}
 	}
 
@@ -78,9 +90,11 @@ func TestSecretsKeyExcludedFromBackupSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rel, err := filepath.Rel(backupDir, ks.Path())
-	if err == nil && !strings.HasPrefix(rel, "..") {
-		t.Fatalf("key file %q is INSIDE the backup dir %q", ks.Path(), backupDir)
+	for _, p := range []string{ks.Path(), dk.Path()} {
+		rel, err := filepath.Rel(backupDir, p)
+		if err == nil && !strings.HasPrefix(rel, "..") {
+			t.Fatalf("key file %q is INSIDE the backup dir %q", p, backupDir)
+		}
 	}
 	if err := filepath.WalkDir(backupDir, func(p string, e os.DirEntry, err error) error {
 		if err != nil || e.IsDir() {
@@ -90,8 +104,11 @@ func TestSecretsKeyExcludedFromBackupSnapshot(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if bytes.Equal(b, key) || bytes.Contains(b, key) {
+		if bytes.Contains(b, key) {
 			t.Fatalf("backup file %s carries the encryption key", p)
+		}
+		if bytes.Contains(b, directiveKey) {
+			t.Fatalf("backup file %s carries the directive key", p)
 		}
 		return nil
 	}); err != nil {

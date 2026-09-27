@@ -132,7 +132,7 @@ scan_file() {
   while IFS= read -r m; do
     lineno="${m%%:*}"
     content="${m#*:}"
-    if [ "$allow_hatch" = "1" ] && printf '%s' "$content" | grep -qF -- "$ALLOW_MARKER"; then
+    if [ "$allow_hatch" = "1" ] && grep -qF -- "$ALLOW_MARKER" <<<"$content"; then
       continue
     fi
     echo "❌ compliance-claims guard: ${rel}:${lineno} contains a forbidden compliance claim:" >&2

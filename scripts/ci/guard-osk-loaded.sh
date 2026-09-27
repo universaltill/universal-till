@@ -118,7 +118,7 @@ while IFS= read -r -d '' tpl; do
   # Whole documents only: a partial has no <html> and inherits from its
   # layout (web/ui/layouts/base.html), which is checked as one of these
   # documents in its own right.
-  printf '%s' "$stripped" | grep -qE '^[[:space:]]*(<!DOCTYPE|<html\b)' || continue
+  grep -qE '^[[:space:]]*(<!DOCTYPE|<html\b)' <<<"$stripped" || continue
 
   checked=$((checked + 1))
 
@@ -127,7 +127,7 @@ while IFS= read -r -d '' tpl; do
   fi
   required=$((required + 1))
 
-  if ! printf '%s' "$stripped" | grep -qE '<script[^>]*src="[^"]*\bosk\.js'; then
+  if ! grep -qE '<script[^>]*src="[^"]*\bosk\.js' <<<"$stripped"; then
     rel="${tpl#"${ROOT_DIR}/"}"
     echo "❌ osk guard: ${rel} is a standalone document with a text-like" >&2
     echo "   input but never loads osk.js — the on-screen keyboard would" >&2
@@ -148,7 +148,7 @@ fi
 
 stripped_js="$(strip_js_comments "$OSK_JS")"
 for marker in 'wantsOSK' 'guardSweep' 'MutationObserver' 'LAYOUTS'; do
-  if ! printf '%s' "$stripped_js" | grep -qF -- "$marker"; then
+  if ! grep -qF -- "$marker" <<<"$stripped_js"; then
     echo "❌ osk guard: ${OSK_JS} is missing '${marker}' (outside comments)" >&2
     echo "   — part of the on-screen keyboard's own machinery looks to have" >&2
     echo "   been removed or renamed. See e2e/tests/osk-central-guard.spec.ts" >&2

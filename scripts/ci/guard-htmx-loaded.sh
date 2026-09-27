@@ -65,13 +65,13 @@ while IFS= read -r -d '' tpl; do
   # Anchored, not a substring search: a partial whose comment merely mentions
   # "<html" must not be misclassified as standalone — that fails CI with no
   # sane fix available, since you cannot add htmx to a partial.
-  printf '%s' "$stripped" | grep -qE '^[[:space:]]*(<!DOCTYPE|<html\b)' || continue
+  grep -qE '^[[:space:]]*(<!DOCTYPE|<html\b)' <<<"$stripped" || continue
 
-  printf '%s' "$stripped" | grep -qE "$HX_ATTR" || continue
+  grep -qE "$HX_ATTR" <<<"$stripped" || continue
 
   checked=$((checked + 1))
 
-  if ! printf '%s' "$stripped" | grep -qE '<script[^>]*src="[^"]*htmx\.min\.js'; then
+  if ! grep -qE '<script[^>]*src="[^"]*htmx\.min\.js' <<<"$stripped"; then
     rel="${tpl#"${ROOT_DIR}/"}"
     echo "❌ htmx guard: ${rel} uses hx-* attributes but never loads htmx.min.js" >&2
     echo "   Those attributes are inert without it. If the element also has no" >&2

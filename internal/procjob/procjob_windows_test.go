@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -77,5 +78,52 @@ func TestChildDiesWhenItsParentIsKilled(t *testing.T) {
 	if ev, _ := windows.WaitForSingleObject(srv, 10_000); ev != windows.WAIT_OBJECT_0 {
 		_ = windows.TerminateProcess(srv, 1)
 		t.Fatal("server still running 10s after its shell was killed")
+	}
+}
+
+// TestJobLetsAChildBreakAway: the in-app updater (internal/selfupdate,
+// ut-docs#160) starts its helper with CREATE_BREAKAWAY_FROM_JOB so the
+// helper outlives the shell and server it stops; it refuses to start at all
+// when the server sits in a kill-on-close job that forbids breakaway. So the
+// job must carry JOB_OBJECT_LIMIT_BREAKAWAY_OK. The bound child does what the
+// updater does — start a process with that flag — and reports the result;
+// without BREAKAWAY_OK, CreateProcess fails with ERROR_ACCESS_DENIED.
+func TestJobLetsAChildBreakAway(t *testing.T) {
+	switch os.Getenv("PROCJOB_ROLE") {
+	case "leaf":
+		os.Exit(0)
+	case "probe":
+		_, _ = bufio.NewReader(os.Stdin).ReadString('\n') // wait until bound
+		leaf := exec.Command(os.Args[0], "-test.run=^TestJobLetsAChildBreakAway$")
+		leaf.Env = append(os.Environ(), "PROCJOB_ROLE=leaf")
+		leaf.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x01000000} // CREATE_BREAKAWAY_FROM_JOB
+		if err := leaf.Run(); err != nil {
+			fmt.Println("error", err)
+			os.Exit(1)
+		}
+		fmt.Println("ok")
+		os.Exit(0)
+	}
+	probe := exec.Command(os.Args[0], "-test.run=^TestJobLetsAChildBreakAway$")
+	probe.Env = append(os.Environ(), "PROCJOB_ROLE=probe")
+	in, err := probe.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := probe.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := probe.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = probe.Process.Kill(); _ = probe.Wait() }()
+	if err := KillWithParent(probe.Process); err != nil {
+		t.Fatalf("KillWithParent: %v", err)
+	}
+	_, _ = in.Write([]byte("go\n"))
+	line, err := bufio.NewReader(out).ReadString('\n')
+	if err != nil || strings.TrimSpace(line) != "ok" {
+		t.Fatalf("breakaway start from inside the job: %q, %v; want \"ok\"", strings.TrimSpace(line), err)
 	}
 }

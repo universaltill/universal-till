@@ -113,5 +113,5 @@ must_not_contain "old wordmark asset must not be referenced" 'ut-logo-name.svg' 
 # unrelated rules would also satisfy) — a plate reappearing here silently
 # reintroduces the patch-on-white-card regression this guard exists to
 # catch.
-awk '/^\.login-logo, \.selforder-logo \{/{f=1} f{print; if (/\}/) exit}' "$root/web/public/app.css" \
-  | grep -Fq 'background: transparent'
+logo_rule="$(awk '/^\.login-logo, \.selforder-logo \{/{f=1} f{print; if (/\}/) exit}' "$root/web/public/app.css")"
+grep -Fq 'background: transparent' <<<"$logo_rule"

@@ -11,6 +11,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -215,14 +216,6 @@ func TestSettingsWriteThrough_Upsert(t *testing.T) {
 		t.Fatal("a per-till key must never reach the main till")
 	}
 
-	if err := dp.Settings.Set(t.Context(), common.KeyCountry, "GB"); err != nil {
-		t.Fatal(err)
-	}
-	adm := auth.User{ID: "m1", Role: "admin"}
-	rec = postForm(mux, "/api/settings/upsert", url.Values{"key": {common.KeyCountry}, "value": {"DE"}}, &adm)
-	if rec.Code < 400 || mustSetting(t, dp, common.KeyCountry) != "GB" {
-		t.Fatalf("store.country on an additional till = %d, local %q; want refused and unchanged", rec.Code, mustSetting(t, dp, common.KeyCountry))
-	}
 }
 
 // A PIN-elevated change carries the approver: the main till decides with
@@ -315,18 +308,141 @@ func TestSettingsWriteThrough_UpsertImpliedKeysOneBatch(t *testing.T) {
 	}
 }
 
-// store.country on an additional till is not sent at all (ut-docs#2948), so
-// the operator is told to change it on the main till, not that the main
-// till refused it.
-func TestSettingsWriteThrough_CountryPointsAtMainTill(t *testing.T) {
+// ut-docs#2980: store.country from an additional till goes through the
+// main till, which runs the owner check and the posture reset against its
+// own state; the additional till's fiscal state is left for its next pull.
+func newCountrySyncPair(t *testing.T) (*settingsSyncMain, *http.ServeMux, *common.Deps) {
+	t.Helper()
 	main := newSettingsSyncMain(t)
-	mux, _ := newSettingsSyncReplica(t, main.srv.URL)
-	adm := auth.User{ID: "m1", Role: "admin"}
-	rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {common.KeyCountry}, "value": {"DE"}}, &adm)
+	seedMainCountry(t, main.dp, "GB", true)
+	mux, dp := newSettingsSyncReplica(t, main.srv.URL)
+	insertTestUserWithPIN(t, dp.Db, "adm-1", "adm1", "Admin One", "admin", "")
+	for k, v := range map[string]string{common.KeyCountry: "GB", fiscal.SigningDeviceConfiguredKey("GB"): "true"} {
+		if err := dp.Settings.Set(t.Context(), k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "GB" })
+	return main, mux, dp
+}
+
+var ownerOnReplica = auth.User{ID: "adm-1", Role: "admin", DisplayName: "Admin One"}
+
+func wantCountryThroughMain(t *testing.T, main *settingsSyncMain, dp *common.Deps) {
+	t.Helper()
+	if got := mustSetting(t, main.dp, common.KeyCountry); got != "DE" {
+		t.Fatalf("main till %s = %q, want DE", common.KeyCountry, got)
+	}
+	if got := mustSetting(t, main.dp, fiscal.SigningDeviceConfiguredKey("GB")); got != "" {
+		t.Fatalf("main till kept the old country's posture %q", got)
+	}
+	if got := mustSetting(t, dp, common.KeyCountry); got != "DE" {
+		t.Fatalf("replica %s = %q, want the mirrored DE", common.KeyCountry, got)
+	}
+	if got := dp.CurrentState().Country; got != "DE" {
+		t.Fatalf("replica live country = %q, want DE", got)
+	}
+	// The replica never resets its own fiscal state: the main till's reset
+	// reaches it through the next pull.
+	if got := mustSetting(t, dp, fiscal.SigningDeviceConfiguredKey("GB")); got != "true" {
+		t.Fatalf("replica posture = %q, want it untouched until the pull", got)
+	}
+	if got := mustSetting(t, main.dp, common.KeyLocale); got != "de-DE" || mustSetting(t, dp, common.KeyLocale) != "de-DE" {
+		t.Fatalf("locale main=%q replica=%q, want de-DE on both", got, mustSetting(t, dp, common.KeyLocale))
+	}
+	// The main till queues the new country's base plugins; this till
+	// gets them with the next pull, never by installing on its own.
+	wantPending(t, main.dp, specDE)
+	wantPending(t, dp)
+}
+
+func TestSettingsWriteThrough_CountryUpsertGoesThroughMain(t *testing.T) {
+	main, mux, dp := newCountrySyncPair(t)
+	rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {common.KeyCountry}, "value": {"DE"}}, &ownerOnReplica)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("upsert store.country = %d %q", rec.Code, rec.Body.String())
+	}
+	if main.calls.Load() != 1 {
+		t.Fatalf("main till calls = %d, want 1", main.calls.Load())
+	}
+	wantCountryThroughMain(t, main, dp)
+	assertSettingSyncAudit(t, main.dp, "adm-1", common.KeyCountry, "DE", "Till 2")
+}
+
+func TestSettingsWriteThrough_CountrySaveGoesThroughMain(t *testing.T) {
+	main, mux, dp := newCountrySyncPair(t)
+	rec := postForm(mux, "/api/settings/save", url.Values{"country": {"DE"}}, &ownerOnReplica)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("save country = %d %q", rec.Code, rec.Body.String())
+	}
+	if main.calls.Load() != 1 {
+		t.Fatalf("main till calls = %d, want 1", main.calls.Load())
+	}
+	wantCountryThroughMain(t, main, dp)
+}
+
+// A manager may not move a shop whose signing device is confirmed: refused,
+// nothing changes on either till.
+func TestSettingsWriteThrough_CountryByManagerRefusedWhileConfigured(t *testing.T) {
+	main, mux, dp := newCountrySyncPair(t)
+	for _, path := range []string{"/api/settings/upsert", "/api/settings/save"} {
+		form := url.Values{"key": {common.KeyCountry}, "value": {"DE"}}
+		if path == "/api/settings/save" {
+			form = url.Values{"country": {"DE"}}
+		}
+		if rec := postForm(mux, path, form, &mgrUser); rec.Code != http.StatusForbidden {
+			t.Fatalf("%s by a manager = %d %q, want 403", path, rec.Code, rec.Body.String())
+		}
+	}
+	for _, d := range []*common.Deps{main.dp, dp} {
+		if got := mustSetting(t, d, common.KeyCountry); got != "GB" {
+			t.Fatalf("refused change moved the country to %q", got)
+		}
+		if got := mustSetting(t, d, fiscal.SigningDeviceConfiguredKey("GB")); got != "true" {
+			t.Fatalf("refused change touched the posture: %q", got)
+		}
+	}
+	wantPending(t, dp)
+}
+
+// The main till decides with its own posture: a replica whose copy says no
+// device is confirmed still cannot let a manager move the country.
+func TestSettingsWriteThrough_CountryMainTillDecidesAuthority(t *testing.T) {
+	main, mux, dp := newCountrySyncPair(t)
+	if err := dp.Settings.Set(t.Context(), fiscal.SigningDeviceConfiguredKey("GB"), ""); err != nil {
+		t.Fatal(err)
+	}
+	rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {common.KeyCountry}, "value": {"DE"}}, &mgrUser)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("upsert by a manager = %d %q, want the main till's 403", rec.Code, rec.Body.String())
+	}
+	if main.calls.Load() != 1 {
+		t.Fatalf("main till calls = %d, want 1", main.calls.Load())
+	}
+	if mustSetting(t, main.dp, common.KeyCountry) != "GB" || mustSetting(t, dp, common.KeyCountry) != "GB" {
+		t.Fatal("a refused change moved the country")
+	}
+	wantPending(t, dp) // ut-docs#1068: a refused change queues no base plugins
+}
+
+// A main till still on an older version answers not_supported_via_sync:
+// the operator is told to change it there, and nothing is written here.
+func TestSettingsWriteThrough_CountryOlderMainPointsAtMainTill(t *testing.T) {
+	old := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeSyncOrdersJSON(w, http.StatusBadRequest, nil, syncUserError{Code: "not_supported_via_sync", Message: "store.country cannot be changed from another till yet"})
+	}))
+	t.Cleanup(old.Close)
+	mux, dp := newSettingsSyncReplica(t, old.URL)
+	if err := dp.Settings.Set(t.Context(), common.KeyCountry, "GB"); err != nil {
+		t.Fatal(err)
+	}
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "GB" })
+	rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {common.KeyCountry}, "value": {"DE"}}, &mgrUser)
 	if rec.Code < 400 || !strings.Contains(rec.Body.String(), "Change this setting on the main till.") {
 		t.Fatalf("store.country = %d %q, want the change-on-main-till message", rec.Code, rec.Body.String())
 	}
-	if main.calls.Load() != 0 {
-		t.Fatalf("main till calls = %d, want 0", main.calls.Load())
+	if got := mustSetting(t, dp, common.KeyCountry); got != "GB" {
+		t.Fatalf("replica country = %q, want GB unchanged", got)
 	}
+	wantPending(t, dp)
 }

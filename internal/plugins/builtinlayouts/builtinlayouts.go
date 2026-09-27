@@ -21,6 +21,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sync"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -45,6 +46,11 @@ func pluginForShopType(shopType string) string {
 	}
 	return ""
 }
+
+// syncMu serializes Sync: boot, the two shop_type handlers and the
+// background reconcile (pages.StartShopTypeLayoutReconcile, ut-docs#2793)
+// can otherwise race a remove against an install of the same plugin.
+var syncMu sync.Mutex
 
 // Sync ensures exactly the builtin layout plugin (if any) matching shopType
 // is installed at its current (embedded) version, installing, upgrading or
@@ -81,6 +87,8 @@ func pluginForShopType(shopType string) string {
 // regardless (see setup_page.go/settings_page.go's shop_type handlers for
 // the pattern: reload unless err == nil && !changed).
 func Sync(ctx context.Context, db *sql.DB, shopType string) (changed bool, err error) {
+	syncMu.Lock()
+	defer syncMu.Unlock()
 	want := pluginForShopType(shopType)
 	repo := data.NewPluginRepo(db)
 

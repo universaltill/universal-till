@@ -1360,6 +1360,30 @@ document.addEventListener('click', function(e){
     // The swapped-in markup (the new item) still replaces the old one first.
     if (m && !m.open) m.showModal();
   });
+  // ut-docs#3000: a modifier/variant product tile (buttons.html
+  // product-tile / product-tile-result: sale grid, category popup, search
+  // results) GETs its picker into #modifier-modal; open it only when that
+  // swap really landed there (ut-docs#2525: a stale tile's answer is
+  // retargeted onto #basket). This used to be an identical
+  // hx-on::after-request on every such tile -- one delegated listener keeps
+  // the grid markup small. Scoped to those tiles exactly (their own
+  // hx-target), so the variant-scan retarget above and app.js's own
+  // htmx.ajax picker path keep their own openers. It listens for the SWAP,
+  // not the request: afterSwap fires on the target (#modifier-modal, always
+  // in the document), whereas afterRequest fires on the issuing tile and
+  // never reaches body when that tile was swapped out mid-request (a grid
+  // refetch, a late search refresh) -- measured in
+  // e2e/tests/tap-feedback-3000.spec.ts (review of #3000). The issuer is
+  // htmx's requestConfig.elt.
+  document.body.addEventListener('htmx:afterSwap', function (ev) {
+    var d = ev.detail;
+    if (!d || !d.target || d.target.id !== 'modifier-modal') return;
+    if (d.xhr && d.xhr.status >= 400) return;
+    var src = (d.requestConfig && d.requestConfig.elt) || d.elt;
+    if (!src || !src.matches || !src.matches('.btn-tile[hx-target="#modifier-modal"]')) return;
+    var m = document.getElementById('modifier-modal');
+    if (m && !m.open) m.showModal();
+  });
   // Self-heal: the first successful request clears a stale alert, so an
   // intermittent-connectivity till doesn't wear a permanent red banner
   // (offline-first: transient failure must not leave persistent chrome).
@@ -1733,9 +1757,12 @@ function initOfflineOverride(updateFn){
 // >10px movement) or a right-click/contextmenu on a tile puts the WHOLE
 // #buttons-grid into .jiggle-mode: every tile wobbles in place (app.css's
 // ut-jiggle), grows two corner badges (edit = a plain link into the
-// catalog, remove = an hx-post/hx-confirm button -- both server-rendered in
-// buttons.html's product-tile, so entering the mode is a pure class toggle
-// with ZERO network calls), and can be dragged to reorder. Done / Escape /
+// catalog, remove = an hx-post/hx-confirm button), and can be dragged to
+// reorder. Entering the mode makes ZERO network calls: on the Designer the
+// badges are server-rendered per tile (buttons.html's product-tile); on the
+// sale screen (ut-docs#2989) the grid ships them once, as
+// <template id="tile-badges-tpl">, and materialiseBadges() below clones it
+// into every cell -- they were over half the bytes of a 230-tile grid. Done / Escape /
 // a tap outside the grid exits, and THAT is the one moment the new order
 // is POSTed to /api/buttons/reorder -- never per drag step.
 //
@@ -1857,10 +1884,59 @@ function initOfflineOverride(updateFn){
     window.utSaleGridState = Object.assign({}, window.utSaleGridState, { jiggle: on });
     window.dispatchEvent(new CustomEvent('ut-jiggle-change', { detail: { active: on } }));
   }
+  // ut-docs#2989: fill every #buttons-grid cell that has no badges yet from
+  // the sale screen's one <template id="tile-badges-tpl"> (buttons.html
+  // "tile-badges-template": lock state and every translated string already
+  // resolved server-side). The item id and label come from the cell's own
+  // data-item-id/data-name and replace the template's placeholders one
+  // attribute at a time via setAttribute -- never innerHTML, so item data is
+  // never parsed as markup. A hidden cell (data-hidden) keeps Unhide and
+  // drops Hide; a visible one the reverse. The Designer renders its badges
+  // server-side (and has no template), so this skips it. Idempotent: run on
+  // enter and after any swap while the mode is on (a refetch, a load-more).
+  function materialiseBadges() {
+    var g = grid();
+    var tpl = document.getElementById('tile-badges-tpl');
+    if (!g || !tpl || !tpl.content) return;
+    var idPH = tpl.getAttribute('data-item-ph');
+    var labelPH = tpl.getAttribute('data-label-ph');
+    if (!idPH || !labelPH) return;
+    Array.prototype.forEach.call(g.querySelectorAll('.tile-cell[data-item-id]'), function (cell) {
+      if (inAllGrid(cell) || cell.querySelector(':scope > .tile-badges')) return;
+      var id = cell.getAttribute('data-item-id') || '';
+      var label = cell.getAttribute('data-name') || '';
+      var frag = tpl.content.cloneNode(true);
+      var drop = cell.hasAttribute('data-hidden') ? '.tile-badge-hide:not(.tile-badge-unhide)' : '.tile-badge-unhide';
+      Array.prototype.forEach.call(frag.querySelectorAll(drop), function (n) { n.remove(); });
+      Array.prototype.forEach.call(frag.querySelectorAll('*'), function (el) {
+        Array.prototype.slice.call(el.attributes).forEach(function (a) {
+          var v = a.value;
+          if (v.indexOf(idPH) === -1 && v.indexOf(labelPH) === -1) return;
+          if (a.name === 'hx-vals') {
+            // Parse and fill each string value, so a badge whose hx-vals
+            // gains another key keeps it (review of #2989).
+            var vals;
+            try { vals = JSON.parse(v); } catch (e) { return; }
+            Object.keys(vals).forEach(function (k) {
+              if (typeof vals[k] === 'string') vals[k] = vals[k].split(idPH).join(id).split(labelPH).join(label);
+            });
+            el.setAttribute(a.name, JSON.stringify(vals));
+          } else if (a.name === 'href') {
+            el.setAttribute(a.name, v.split(idPH).join(encodeURIComponent(id)));
+          } else {
+            el.setAttribute(a.name, v.split(idPH).join(id).split(labelPH).join(label));
+          }
+        });
+      });
+      cell.appendChild(frag);
+      if (window.htmx) window.htmx.process(cell);
+    });
+  }
   function enter() {
     var g = grid(), b = bar();
     if (!g) return;
     active = true;
+    materialiseBadges();
     g.classList.add('jiggle-mode');
     if (b) b.hidden = false;
     markFinder(true);
@@ -2257,8 +2333,12 @@ function initOfflineOverride(updateFn){
   // inside the mode does exactly that): the fresh render has no
   // .jiggle-mode class and a hidden bar, so put the mode back -- iOS keeps
   // jiggling after a delete too. Idempotent, so any settle is fine.
+  // ut-docs#2989: a swap that kept the grid (tiles added into it) still
+  // needs badges on its new cells, so materialise either way.
   document.body.addEventListener('htmx:afterSettle', function () {
-    if (active && grid() && !grid().classList.contains('jiggle-mode')) enter();
+    if (!active || !grid()) return;
+    if (!grid().classList.contains('jiggle-mode')) enter();
+    else materialiseBadges();
   });
 })();
 
@@ -2715,9 +2795,10 @@ window.utTabBarFade = function (el) {
   // filtering and bails in one line the moment any condition doesn't
   // hold.
   function maybePromptAtSaleStart() {
-    // The sell screen ships a PLACEHOLDER basket (index.html: <div
-    // class="basket" hx-get="/ui/basket" hx-trigger="load">) that only
-    // becomes #basket, with its data-lines-count/data-order-type-chosen
+    // The sell screen renders #basket inline (ut-docs#3000), but falls back
+    // to a PLACEHOLDER basket (index.html: <div class="basket"
+    // hx-get="/ui/basket" hx-trigger="load">) when that render fails, which
+    // only becomes #basket, with its data-lines-count/data-order-type-chosen
     // bridge, once that load swap lands. Until then there is nothing to
     // read -- basketEmpty() would answer "empty" for a basket that hasn't
     // arrived, and a prompt opened on that guess stays open even when the
@@ -2809,7 +2890,7 @@ window.utTabBarFade = function (el) {
       // htmx.values(elt, 'get') is deliberately NOT passed here, so
       // nothing gets double-appended onto the query string. Re-run the
       // exact GET the tile itself would have issued, then open the
-      // picker exactly the way its own hx-on::after-request does.
+      // picker exactly the way the tile's delegated afterRequest opener does.
       showOrderTypePromptModal(function () {
         // ut-docs#2525: a stale tile's GET is retargeted onto #basket, which
         // leaves the (closed) picker holding the PREVIOUS item's markup --
@@ -2818,7 +2899,7 @@ window.utTabBarFade = function (el) {
         if (prev && !prev.open) prev.innerHTML = '';
         htmx.ajax('get', path, { target: '#modifier-modal', swap: 'innerHTML' }).then(function () {
           // htmx 1.9 resolves this promise even when a 4xx swapped nothing
-          // -- don't open an empty picker on it (the tile's own after-request
+          // -- don't open an empty picker on it (the tile's delegated opener
           // has the same edge; this path just closes it for free).
           var m = document.getElementById('modifier-modal');
           if (m && !m.open && m.innerHTML.trim()) m.showModal();

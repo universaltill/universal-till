@@ -2643,6 +2643,8 @@
   "tills.cloud_link.hint_paused_not_main": "The cloud says another till is this shop's main till now. This pauses until the next check-in.",
   "tills.cloud_link.state_paused_tier": "Paused: tier changed",
   "tills.cloud_link.hint_paused_tier": "The shop's cloud plan changed. This pauses until the next check-in confirms the new plan.",
+  "tills.cloud_link.state_paused_credential": "Paused: needs its own credential",
+  "tills.cloud_link.hint_paused_credential": "Waiting for this till's own cloud credential. It normally arrives with the next check-in; if this stays, contact support.",
   "tills.cloud_link.state_paused_busy": "Paused: cloud busy",
   "tills.cloud_link.hint_paused_busy": "The cloud asked this till to wait. It retries after the next check-in.",
   "tills.cloud_link.hint_paused_busy_retry": "The cloud asked this till to wait. It tries again by itself at %s.",

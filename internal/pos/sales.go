@@ -196,7 +196,17 @@ type SaleInput struct {
 	// data.DebitVoucherForRedemption). Every direct-sale path leaves it
 	// false — the live balance gate is unchanged.
 	AllowVoucherOverdraft bool
-	Offline               bool
+	// LegacyTipCoverage (ut-docs#2975), when true, counts a payment's tip
+	// toward covering the total (coverage = Amount - ChangeGiven) instead of
+	// the strict Amount - ChangeGiven - TipAmount every live tender path
+	// uses. Set true ONLY by the LAN-sync journal replay path
+	// (internal/pages/sync_sales.go's applyJournal), same precedent as
+	// AllowNegativeInventory/AllowVoucherOverdraft above: the remote sale
+	// already happened, and a replica older than ut-docs#2571 stored a
+	// reader-reported tip OUTSIDE Amount, so the strict rule would refuse
+	// that replay and stall the replica's journal cursor on a poison entry.
+	LegacyTipCoverage bool
+	Offline           bool
 	// VoucherIssues (ut-docs#1008) are multi-purpose vouchers sold in this
 	// sale. A voucher is NOT an article: it never becomes a sale_lines row
 	// (the CHECK constraint there requires a catalog identity, and a fake
@@ -289,7 +299,8 @@ type PaymentInput struct {
 	// the tip and TipAmount is its breakdown, whether the tender request
 	// carried the tip or a payment plugin reported it on authorize
 	// (pages.applyPluginReportedTip). netPayments counts Amount - ChangeGiven
-	// and does not subtract TipAmount. Zero for tenders with no tip (e.g. cash).
+	// - TipAmount toward the total, so a tip never covers sale money
+	// (ut-docs#2975). Zero for tenders with no tip (e.g. cash).
 	TipAmount money.Money `json:"tip_amount"`
 	// TipRecipient (ADR-0061 Decision 3) is whose money the tip is for tax
 	// purposes: TipRecipientEmployee or TipRecipientBusiness. Persisted per
@@ -660,7 +671,14 @@ func summarizeLineInputs(lines []SaleLineInput) string {
 // `total` (the sale's computed total, passed in so a tracked voucher
 // redemption can be capped at what the sale still needs at its point in the
 // list — review F4).
-func netPayments(payments []PaymentInput, total money.Money) (money.Money, error) {
+//
+// Coverage is Σ(Amount - ChangeGiven - TipAmount) (ut-docs#2975): Amount
+// includes any tip (ut-docs#2571), and a tip is the customer's gratuity, not
+// sale money, so it never covers the total — the same net the per-method
+// tax-band queries in internal/data/pos_repo.go use. legacyTipCoverage
+// (SaleInput.LegacyTipCoverage, journal replay only) keeps the pre-#2975
+// Amount - ChangeGiven.
+func netPayments(payments []PaymentInput, total money.Money, legacyTipCoverage bool) (money.Money, error) {
 	var sum money.Money
 	if len(payments) == 0 {
 		// ut-docs#1561: a marginal (per-request) net can legitimately compute
@@ -728,12 +746,58 @@ func netPayments(payments []PaymentInput, total money.Money) (money.Money, error
 				return 0, fmt.Errorf("payment %d (amount %d, outstanding %d): %w", i+1, p.Amount.Minor(), outstanding.Minor(), ErrVoucherOvertender)
 			}
 		}
-		// Coverage is Amount - ChangeGiven. Amount includes any tip
-		// (ut-docs#2571), and TipAmount is not subtracted here, so a tip
-		// does count toward covering the total — tracked on ut-docs#2975.
-		sum = sum.Add(p.Amount.Sub(p.ChangeGiven))
+		applied := p.Amount.Sub(p.ChangeGiven)
+		if !legacyTipCoverage {
+			if p.TipAmount > applied {
+				return 0, fmt.Errorf("payment %d tip cannot exceed amount less change", i+1)
+			}
+			applied = applied.Sub(p.TipAmount)
+		}
+		if applied > money.FromMinor(math.MaxInt64).Sub(sum) {
+			return 0, fmt.Errorf("payment %d amount overflows the payment total", i+1)
+		}
+		sum = sum.Add(applied)
 	}
 	return sum, nil
+}
+
+// CheckPaymentCoverage runs CompleteSale's per-payment validation and
+// coverage check (netPayments against the computed total) without touching
+// the database — only those; CompleteSale's other checks (returns, voucher
+// issues, duplicate voucher legs) still run where they always did — so a tender path can refuse a sale whose payments can't cover
+// it BEFORE any payment plugin authorizes (charges) a card (ut-docs#2975).
+// CompleteSale still runs the same check itself; this is an earlier copy of
+// it, never a replacement.
+func CheckPaymentCoverage(in SaleInput) error {
+	// Same variant normalization CompleteSale applies before its own
+	// computeSaleTotals (a variant line's ItemID is cleared), on a copy so
+	// the caller's Lines are untouched.
+	lines := make([]SaleLineInput, len(in.Lines))
+	copy(lines, in.Lines)
+	for i := range lines {
+		if lines[i].VariantID != "" {
+			lines[i].ItemID = ""
+		}
+	}
+	in.Lines = lines
+	_, _, _, _, total, err := computeSaleTotals(in)
+	if err != nil {
+		return err
+	}
+	return checkCoverage(in.Payments, total, in.LegacyTipCoverage)
+}
+
+// checkCoverage is the one coverage rule CompleteSale and
+// CheckPaymentCoverage share.
+func checkCoverage(payments []PaymentInput, total money.Money, legacyTipCoverage bool) error {
+	netPaid, err := netPayments(payments, total, legacyTipCoverage)
+	if err != nil {
+		return err
+	}
+	if netPaid < total {
+		return fmt.Errorf("payments (%d) do not cover total (%d)", netPaid, total)
+	}
+	return nil
 }
 
 func deriveTenderType(payments []PaymentInput) string {
@@ -910,12 +974,8 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 	if err != nil {
 		return "", err
 	}
-	netPaid, err := netPayments(in.Payments, total)
-	if err != nil {
+	if err := checkCoverage(in.Payments, total, in.LegacyTipCoverage); err != nil {
 		return "", err
-	}
-	if netPaid < total {
-		return "", fmt.Errorf("payments (%d) do not cover total (%d)", netPaid, total)
 	}
 	saleID := in.SaleID
 	if saleID == "" {

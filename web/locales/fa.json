@@ -2658,6 +2658,8 @@
   "tills.cloud_link.hint_paused_not_main": "ابر می‌گوید صندوق دیگری اکنون صندوق اصلی این فروشگاه است. این تا سرکشی بعدی متوقف می‌ماند.",
   "tills.cloud_link.state_paused_tier": "متوقف‌شده: سطح تغییر کرد",
   "tills.cloud_link.hint_paused_tier": "طرح ابری این فروشگاه تغییر کرد. این تا زمانی که سرکشی بعدی طرح جدید را تأیید کند متوقف می‌ماند.",
+  "tills.cloud_link.state_paused_credential": "متوقف‌شده: به مجوز اختصاصی خود نیاز دارد",
+  "tills.cloud_link.hint_paused_credential": "در انتظار مجوز ابری اختصاصی این صندوق. این مجوز معمولاً با سرکشی بعدی می‌رسد؛ اگر این وضعیت ادامه داشت، با پشتیبانی تماس بگیرید.",
   "tills.cloud_link.state_paused_busy": "متوقف‌شده: ابر مشغول است",
   "tills.cloud_link.hint_paused_busy": "ابر از این صندوق خواست منتظر بماند. پس از سرکشی بعدی دوباره تلاش می‌کند.",
   "tills.cloud_link.hint_paused_busy_retry": "ابر از این صندوق خواست منتظر بماند. خودش در %s دوباره تلاش می‌کند.",

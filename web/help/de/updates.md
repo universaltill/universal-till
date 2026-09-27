@@ -15,7 +15,7 @@ Die Kasse prüft auf neue Versionen und teilt mit, wenn eine verfügbar ist; auf
 
 1. Einstellungen → Software-Update → Jetzt prüfen zeigt, ob Sie auf dem neuesten Stand sind.
 2. Wird ein Update angeboten, klicken Sie auf „Jetzt aktualisieren“ — die App startet mit der neuen Version neu.
-3. Der Update-Chip in der Statusleiste spiegelt dies wider: Unter Windows und macOS führt er direkt zur Download-Seite; bei Installationen ohne App-internes Update (zum Beispiel einem Kiosk) ist er einfach reiner Text ohne etwas zum Antippen.
+3. Der Update-Chip in der Statusleiste spiegelt dies wider. Wo die Kasse ein Update nicht selbst installieren kann (ein portables Windows-ZIP oder ein Intel-Mac), führt er stattdessen zur Download-Seite. Auf einem Kiosk ohne App-internes Update ist er einfach reiner Text ohne etwas zum Antippen.
 
 ## Automatische Updates
 
@@ -24,8 +24,8 @@ Die Kasse aktualisiert sich nachts selbst, solange Sie das nicht ausschalten.
 1. Einstellungen → Software-Update → „Automatisch aktualisieren“ ist von Anfang an eingeschaltet, um 03:00 Uhr. Jede Kasse wählt ihren eigenen Zeitpunkt innerhalb der 30 Minuten danach, damit nicht mehrere Kassen gleichzeitig neu starten.
 2. Sie startet nie mitten in einem Verkauf neu. Liegen noch Artikel in einem Warenkorb (auch in einer Selbstbedienungs- oder Tischbestellung), wartet sie, bis der Warenkorb leer ist. Geschieht das nicht innerhalb einer halben Stunde oder war die Kasse zu dieser Zeit ausgeschaltet, versucht sie es in der nächsten Nacht erneut.
 3. Um automatische Updates zu beenden, entfernen Sie das Häkchen bei „Automatisch aktualisieren“ und klicken Sie auf Speichern. Die Kasse behält diese Einstellung. Auf der Hauptkasse beendet das auch das Nachziehen ihrer zusätzlichen Kassen; eine zusätzliche Kasse übernimmt diese Einstellung immer von ihrer Hauptkasse.
-4. Eine zusätzliche Kasse folgt der Hauptkasse: Läuft auf der Hauptkasse eine neuere Version, installiert die zusätzliche Kasse genau diese Version im nächsten Moment, in dem kein Verkauf offen ist. Zusätzliche Kassen unter Windows und Android zeigen stattdessen einen Hinweis „erforderlich“, bis sie selbst installieren können.
-5. Kassen unter Windows und Android können Updates noch nicht selbst installieren. Aktualisieren Sie sie von Hand wie oben beschrieben. Unter Windows schließt das Installationsprogramm Universal Till zuerst, falls es noch geöffnet ist. Schließen Sie also einen laufenden Verkauf ab, bevor Sie es starten.
+4. Eine zusätzliche Kasse folgt der Hauptkasse: Läuft auf der Hauptkasse eine neuere Version, installiert die zusätzliche Kasse genau diese Version im nächsten Moment, in dem kein Verkauf offen ist. Zusätzliche Kassen unter Android und aus dem portablen Windows-ZIP installierte zeigen stattdessen einen Hinweis „erforderlich“, bis sie selbst installieren können.
+5. Unter Windows lädt die Kasse das signierte Installationsprogramm herunter und prüft es. Dann schließt sich die Kasse, installiert das Update und öffnet sich von selbst wieder. Das dauert etwa eine Minute. Kassen unter Android können Updates noch nicht selbst installieren. Aktualisieren Sie sie von Hand wie oben beschrieben. Wenn Sie das Windows-Installationsprogramm selbst ausführen, schließt es Universal Till zuerst, falls es noch geöffnet ist. Schließen Sie also einen laufenden Verkauf ab, bevor Sie es starten.
 
 ## Auf einer Android-Kasse
 

@@ -73,11 +73,11 @@ while IFS= read -r -d '' tpl; do
   # Whole documents only: a partial has no <html> and inherits from its
   # layout (web/ui/layouts/base.html), which is checked as one of these
   # documents in its own right.
-  printf '%s' "$stripped" | grep -qE '^[[:space:]]*(<!DOCTYPE|<html\b)' || continue
+  grep -qE '^[[:space:]]*(<!DOCTYPE|<html\b)' <<<"$stripped" || continue
 
   checked=$((checked + 1))
 
-  if ! printf '%s' "$stripped" | grep -qE '<script[^>]*src="[^"]*\bautofill\.js'; then
+  if ! grep -qE '<script[^>]*src="[^"]*\bautofill\.js' <<<"$stripped"; then
     rel="${tpl#"${ROOT_DIR}/"}"
     echo "❌ autofill guard: ${rel} is a standalone document but never loads" >&2
     echo "   autofill.js — the ut-docs#400 suppression sweep would never run" >&2
@@ -98,7 +98,7 @@ fi
 
 stripped_js="$(strip_js_comments "$AUTOFILL_JS")"
 for marker in 'MutationObserver' 'TEXTY_TYPES' 'data-allow-autofill' 'htmx:afterSwap'; do
-  if ! printf '%s' "$stripped_js" | grep -qF -- "$marker"; then
+  if ! grep -qF -- "$marker" <<<"$stripped_js"; then
     echo "❌ autofill guard: ${AUTOFILL_JS} is missing '${marker}' (outside" >&2
     echo "   comments) — part of the ut-docs#400 suppression sweep looks to" >&2
     echo "   have been removed or renamed. See" >&2

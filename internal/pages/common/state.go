@@ -526,6 +526,21 @@ func EffectiveServiceChargeRateBP(st RuntimeState) int {
 // exactly the "shell reads launch_on_startup=false and deletes its own
 // autostart entry" failure postinstall.sh's own comment already documents.
 func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) error {
+	// The Get-then-SetMany is NOT one transaction (ut-docs#1555 review
+	// finding F4): a deliberate window-mode/launch-on-startup change racing
+	// a concurrent unrelated Settings save could theoretically interleave
+	// and lose the deliberate change. Narrow in practice (Settings writes
+	// are operator-paced, one operator per till) and accepted rather than
+	// wrapped in an explicit store-level transaction for two single-key
+	// reads.
+	return store.SetMany(ctx, StateKV(ctx, store, st))
+}
+
+// StateKV is the settings rows SaveState writes for st, with SaveState's
+// window-mode/launch-on-startup read-back already applied. Split out for
+// the additional-till write-through (ut-docs#2948), which must route the
+// shop-wide rows through the main till instead of writing them here.
+func StateKV(ctx context.Context, store *settings.Store, st RuntimeState) map[string]string {
 	// writeWindowMode/writeLaunchOnStartup: normally always true (both keys
 	// are always part of this transaction, like every other field here).
 	// Set false only on a transient store.Get error for a field this call
@@ -591,14 +606,7 @@ func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) erro
 	if st.OSKMode != "" {
 		kv[KeyOSK] = st.OSKMode
 	}
-	// The Get-then-SetMany above is NOT one transaction (ut-docs#1555 review
-	// finding F4): a deliberate window-mode/launch-on-startup change racing
-	// a concurrent unrelated Settings save could theoretically interleave
-	// and lose the deliberate change. Narrow in practice (Settings writes
-	// are operator-paced, one operator per till) and accepted rather than
-	// wrapped in an explicit store-level transaction for two single-key
-	// reads.
-	return store.SetMany(ctx, kv)
+	return kv
 }
 
 func BuildMenu(base []MenuItem, pm *plugins.Manager) []MenuItem {

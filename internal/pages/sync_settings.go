@@ -34,8 +34,20 @@ import (
 //     a non-empty signing override and signing_device_failing_since are
 //     never settable here; clearing an override and the two posture flags
 //     need fiscal_tse_override on the ACTOR (an elevated settings approval
-//     never grants it). store.country is refused (not_supported_via_sync):
-//     its local fiscal-authority check and posture reset are ut-docs#2948.
+//     never grants it).
+//   - store.country (ut-docs#2980) runs the country-change invariant every
+//     local writer runs (fiscal_country_change.go), against THIS till's
+//     posture and roles: while the country being left has a confirmed
+//     signing device, the ACTOR needs fiscal_tse_override (the upsert
+//     handler checks the session user, never an approver); the old
+//     country's posture is reset here before the write and audited on its
+//     row; ut-docs#1027's locale re-derive runs unless store.locale_confirmed
+//     is set or the batch names store.locale itself, and the derived
+//     store.locale is written in the same transaction and answered, so the
+//     additional till mirrors the pair together. The posture reset is NOT
+//     answered: the additional till's own fiscal state changes only through
+//     its next pull. The new country's base plugins are queued here
+//     (ut-docs#1068).
 //   - All keys are written in one transaction (settings.Store.SetMany),
 //     each audited as setting_changed_via_till with provenance
 //     {via: till-sync, till}, then this till's cached process globals are
@@ -117,6 +129,7 @@ func registerSyncSettings(mux *http.ServeMux, d *common.Deps, refresh func(conte
 
 		kv := make(map[string]string, len(in.Settings))
 		needsFiscalAuthority := false
+		country, countryInBatch, localeInBatch := "", false, false
 		for i := range in.Settings {
 			s := &in.Settings[i]
 			s.Key = strings.TrimSpace(s.Key)
@@ -131,11 +144,11 @@ func registerSyncSettings(mux *http.ServeMux, d *common.Deps, refresh func(conte
 			}
 			switch logical {
 			case common.KeyCountry:
-				// ut-docs#2948: the upsert handler's country change runs
-				// requireFiscalAuthorityForCountryChange and resets the old
-				// country's posture before persisting; not mirrored yet.
-				fail(http.StatusBadRequest, "not_supported_via_sync", "store.country cannot be changed from another till yet")
-				return
+				// Trimmed as the local handlers trim it.
+				s.Value = strings.TrimSpace(s.Value)
+				country, countryInBatch = s.Value, true
+			case common.KeyLocale:
+				localeInBatch = true
 			case fiscal.KeyOverrideUntil, fiscal.KeyOverrideReason, fiscal.KeyOverrideActor:
 				// The upsert handler's ADR-0048 gates: fabricating an
 				// override is refused for everyone; clearing one is
@@ -219,6 +232,40 @@ func registerSyncSettings(mux *http.ServeMux, d *common.Deps, refresh func(conte
 			}
 		}
 
+		// ut-docs#2980: decided before anything is written -- the refresh
+		// below reloads state from the database and would hide the change.
+		countryChanged := countryInBatch && countryChanging(d, country)
+		if countryChanged {
+			// requireFiscalAuthorityForCountryChange's rule, with the actor
+			// decided in THIS till's role table.
+			if signingDeviceConfigured(ctx, d) {
+				if ok, err := may(actor, "fiscal_tse_override"); err != nil {
+					serverError("permission check", err)
+					return
+				} else if !ok {
+					forbidden(actor, "fiscal_tse_override")
+					return
+				}
+			}
+			if !localeInBatch {
+				locale, err := derivedLocaleForCountry(ctx, d, country)
+				if err != nil {
+					serverError("locale re-derive", err)
+					return
+				}
+				if locale != "" {
+					kv[common.KeyLocale] = locale
+					in.Settings = append(in.Settings, syncSettingKV{Key: common.KeyLocale, Value: locale})
+				}
+			}
+			// Before the write, so a failure can never leave the country
+			// moved with the old country's posture still set.
+			if err := clearFiscalStateForCountryChange(ctx, d, actor.ID, country); err != nil {
+				serverError("fiscal reset", err)
+				return
+			}
+		}
+
 		if err := d.Settings.SetMany(ctx, kv); err != nil {
 			serverError("write", err)
 			return
@@ -241,6 +288,11 @@ func registerSyncSettings(mux *http.ServeMux, d *common.Deps, refresh func(conte
 		if refresh != nil {
 			refresh(ctx)
 		}
+		if countryChanged {
+			// ut-docs#1068: the new country's base plugins, as the local
+			// handlers queue them.
+			queueBasePluginsForCountryChange(ctx, d, country)
+		}
 		d.NudgeLink(fleetlink.ScopeAdmin)
 		keys := make([]string, 0, len(in.Settings))
 		for _, s := range in.Settings {
@@ -249,4 +301,31 @@ func registerSyncSettings(mux *http.ServeMux, d *common.Deps, refresh func(conte
 		logging.L().Infof("sync settings: %s applied from %s by %s (ut-docs#2791)", strings.Join(keys, ", "), till.Name, holder.ID)
 		writeSyncOrdersJSON(w, http.StatusOK, syncSettingsApplyAnswer{Settings: in.Settings}, nil)
 	})
+}
+
+// derivedLocaleForCountry is ut-docs#1027's country-change locale
+// re-derive, as the local Settings handlers run it: the new country's
+// default locale, or "" when the operator confirmed a locale
+// (ut-docs#1074), the country has no safe default, or the shop already
+// uses it.
+func derivedLocaleForCountry(ctx context.Context, d *common.Deps, country string) (string, error) {
+	confirmed, _, err := d.Settings.Get(ctx, common.KeyLocaleConfirmed)
+	if err != nil {
+		return "", err
+	}
+	if confirmed == "true" {
+		return "", nil
+	}
+	cs, ok, err := data.NewCountrySettingsRepo(d.Db).Get(ctx, strings.TrimSpace(country))
+	if err != nil || !ok || !localeSafeToPreset(cs.DefaultLocale) {
+		return "", err
+	}
+	current, _, err := d.Settings.Get(ctx, common.KeyLocale)
+	if err != nil {
+		return "", err
+	}
+	if current == cs.DefaultLocale {
+		return "", nil
+	}
+	return cs.DefaultLocale, nil
 }

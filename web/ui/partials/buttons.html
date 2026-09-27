@@ -53,7 +53,13 @@
      on the Designer for free because the markup is the same. A constant
      hx-vals literal, not {{ "jsonVals" }}: nothing interpolated (guard-i18n
      check 4 only flags a literal with a template action inside it). */}}
-<div class="products{{ if .EditMode }} products--edit{{ end }}" hx-get="/ui/buttons"{{ if .EditMode }} hx-vals='{"mode":"edit"}'{{ end }} hx-trigger="modifiers-changed from:body, buttons-changed from:body" hx-swap="outerHTML">
+<div class="products{{ if .EditMode }} products--edit{{ end }}" hx-get="/ui/buttons"{{ if .EditMode }} hx-vals='{"mode":"edit"}'{{ end }} hx-trigger="modifiers-changed from:body, buttons-changed from:body" hx-swap="outerHTML"{{ with .SellVersion }} data-sell-version="{{ . }}"{{ end }}>
+  {{/* ut-docs#2989: data-sell-version is the catalog generation this grid
+       was rendered at (ui.serveSellScreen) -- the X-UT-Sell-Version header's
+       value, carried in the markup too because GET / now inlines this
+       fragment and a page has no such header; sell-screen-watch.js seeds
+       from it. The badge template sits first, outside #buttons-grid. */}}
+  {{ if not .EditMode }}{{ template "tile-badges-template" . }}{{ end }}
   {{/* ut-docs#2613: the strip has no All tab any more (ut-docs#2212 added
        one, ut-docs#2294 gave it its own grid of every active item, and
        both are retired here) -- it shows only category tabs plus the
@@ -688,8 +694,14 @@
              this dialog sits earlier in the DOM. app.css shares the
              visual ruleset across both class names by selector list
              instead, so the two never look different by accident. */}}
+        {{/* data-ut-scrim-dismiss (ut-docs#2873): a pure picker (choose a
+             category tab; nothing typed, no money) -- a tap on the popup
+             scrim closes it; @close keeps categoryOverflowOpen in step with
+             that (and any other) native close and returns lost focus to
+             the More button, as closeCategoryOverflow() does. */}}
         <dialog id="category-overflow-dialog" x-ref="overflowDialog" class="modifier-modal category-overflow-dialog"
-                aria-labelledby="category-overflow-dialog-title"
+                aria-labelledby="category-overflow-dialog-title" data-ut-scrim-dismiss
+                @close="categoryOverflowOpen = false; if (!document.activeElement || document.activeElement === document.body || $el.contains(document.activeElement)) { $refs.moreBtn && $refs.moreBtn.focus() }"
                 @keydown.escape.prevent="closeCategoryOverflow()" @keydown.tab="trapOverflowTab($event)">
           <div class="category-filter-dialog-head">
             <h3 id="category-overflow-dialog-title">{{ T "products.categories" }}</h3>
@@ -1431,7 +1443,7 @@
 
 {{ define "product-tile" }}
   {{ $colored := and (not .ImageURL) .Color }}
-  <div class="tile-cell{{ if .Hidden }} tile--hidden{{ if not .Editing }} tile--rest-hidden{{ end }}{{ end }}" data-name="{{ .Label }}" x-show="matches($el)">
+  <div class="tile-cell{{ if .Hidden }} tile--hidden{{ if not .Editing }} tile--rest-hidden{{ end }}{{ end }}" data-name="{{ .Label }}" data-item-id="{{ .ItemID }}"{{ if .Hidden }} data-hidden{{ end }} x-show="matches($el)">
   {{/* ut-docs#2174: on the Designer's live replica (.Editing, see
        ui.ButtonVM.Editing) the tile is INERT -- same class, data-code/
        data-item-id/data-pos and body as a live tile (so utTileJiggle's
@@ -1459,17 +1471,19 @@
        "buttons were out of date" basket toast plus buttons-changed (the
        grid re-fetches) instead of "Item not found". That answer is
        retargeted onto #basket, so the picker opens only when the swap
-       really landed in #modifier-modal. Same in product-tile-result. */}}
+       really landed in #modifier-modal. Same in product-tile-result.
+       ut-docs#3000: that open is ONE delegated htmx:afterRequest listener
+       in app.js (it used to be an hx-on::after-request on every such tile),
+       and the tiles carry no hx-trigger: click is htmx's default for a
+       <button>. */}}
   <button
     class="btn-tile{{ if $colored }} tile-colored{{ end }}"
     data-name="{{ .Label }}"
     data-code="{{ .Code }}" data-item-id="{{ .ItemID }}" data-pos="{{ .Pos }}"{{ if .Hidden }} data-hidden{{ end }}
     {{ if $colored }}style="--tile-color: {{ .Color }}"{{ end }}
     hx-get="/ui/pos/modifiers?item={{ .ItemID }}&code={{ .Code }}&src=tile"
-    hx-trigger="click"
     hx-target="#modifier-modal"
-    hx-swap="innerHTML"
-    hx-on::after-request="if (event.detail.successful && event.detail.target.id === 'modifier-modal') document.getElementById('modifier-modal').showModal()">
+    hx-swap="innerHTML">
     {{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}
     <span class="tile-name">{{ .Label }}</span>
     {{ if .Price }}<span class="tile-price">{{ money .Price }}</span>{{ end }}
@@ -1483,7 +1497,6 @@
     {{ if $colored }}style="--tile-color: {{ .Color }}"{{ end }}
     hx-post="/api/pos/scan"
     hx-vals='{{ jsonVals "code" .Code "src" "tile" }}'
-    hx-trigger="click"
     hx-target="#basket"
     hx-swap="outerHTML"
     hx-sync="#basket:replace">
@@ -1493,6 +1506,25 @@
     {{ template "tile-hidden-mark" . }}
   </button>
   {{ end }}
+    {{/* ut-docs#2989: on the sale screen the badges are NOT rendered per
+         tile -- they were over half of a 230-tile grid's bytes and only
+         show in jiggle mode. The grid ships them once, as the
+         "tile-badges-template" <template>, and app.js's utTileJiggle clones
+         it into every cell on entering edit mode (data-item-id/data-name/
+         data-hidden on the cell above fill it in). The Designer (.Editing)
+         still renders them here, server-side. */}}
+    {{ if .Editing }}{{ template "tile-badges" (dict "ItemID" .ItemID "Label" .Label "Locked" .Locked "Editing" true "Hidden" .Hidden "Both" false) }}{{ end }}
+  </div>
+{{ end }}
+
+{{/* tile-badges (ut-docs#2339/#2361/#2541/#2698; a define since
+     ut-docs#2989): one tile's jiggle-mode badge set. A dict: ItemID, Label,
+     Locked, Editing (the Designer's replica: edit returns to /designer),
+     Hidden (Unhide in place of Hide) and Both -- true only for the sale
+     screen's "tile-badges-template", which carries BOTH hide variants for
+     app.js to pick from per cell, with ItemID/Label set to the
+     ui.TileBadge*Placeholder strings. */}}
+{{ define "tile-badges" }}
     {{/* ut-docs#2361: a non-granted (cashier) session sees a lock dot on
          each badge BEFORE tapping it -- the server-side catalog_management
          gate (ut-docs#2312) already exists and is unaffected; this is
@@ -1539,7 +1571,7 @@
         <span class="tile-badge-dot" aria-hidden="true">{{ icon "trash-2" }}</span>
         {{ if .Locked }}<span class="tile-badge-dot tile-badge-lock" data-testid="tile-badge-lock-remove" aria-hidden="true">{{ icon "lock" }}</span>{{ end }}
       </button>
-      {{ if .Hidden }}
+      {{ if or .Both .Hidden }}
       {{/* ut-docs#2698: a hidden tile's Unhide badge, in the Hide badge's
            own corner (inline-end bottom, logical properties) -- the same
            44x44 hit area as every badge, an accent dot so it reads as the
@@ -1554,7 +1586,8 @@
         <span class="tile-badge-dot" aria-hidden="true">{{ icon "eye" }}</span>
         {{ if .Locked }}<span class="tile-badge-dot tile-badge-lock" data-testid="tile-badge-lock-unhide" aria-hidden="true">{{ icon "lock" }}</span>{{ end }}
       </button>
-      {{ else }}
+      {{ end }}
+      {{ if or .Both (not .Hidden) }}
       {{/* ut-docs#2541: third badge, inline-END BOTTOM corner (logical CSS
            properties -- app.css's .tile-badge-hide sets inset-inline-end/
            inset-block-end, never left/right/bottom, so it mirrors correctly
@@ -1574,7 +1607,16 @@
       </button>
       {{ end }}
     </span>
-  </div>
+{{ end }}
+
+{{/* tile-badges-template (ut-docs#2989): the sale screen's ONE copy of the
+     badge markup, cloned per cell by app.js's utTileJiggle on entering jiggle
+     mode (and on any grid swap while in it). Lock state and every
+     translated string are resolved here, server-side; the item id and label
+     are placeholders (data-item-ph/data-label-ph) that the client replaces
+     attribute by attribute with setAttribute -- never innerHTML. */}}
+{{ define "tile-badges-template" }}
+<template id="tile-badges-tpl" data-item-ph="{{ .BadgeItemPH }}" data-label-ph="{{ .BadgeLabelPH }}">{{ template "tile-badges" (dict "ItemID" .BadgeItemPH "Label" .BadgeLabelPH "Locked" .Locked "Editing" false "Hidden" false "Both" true) }}</template>
 {{ end }}
 
 {{/* ut-docs#2294: the sell-screen live search's own results — ButtonsHTTP.
@@ -1630,10 +1672,8 @@
     data-name="{{ .Label }}"
     {{ if $colored }}style="--tile-color: {{ .Color }}"{{ end }}
     hx-get="/ui/pos/modifiers?item={{ .ItemID }}&code={{ .Code }}&src=tile"
-    hx-trigger="click"
     hx-target="#modifier-modal"
-    hx-swap="innerHTML"
-    hx-on::after-request="if (event.detail.successful && event.detail.target.id === 'modifier-modal') document.getElementById('modifier-modal').showModal()">
+    hx-swap="innerHTML">
     {{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}
     <span class="tile-name">{{ .Label }}</span>
     {{ if .Price }}<span class="tile-price">{{ money .Price }}</span>{{ end }}
@@ -1645,7 +1685,6 @@
     {{ if $colored }}style="--tile-color: {{ .Color }}"{{ end }}
     hx-post="/api/pos/scan"
     hx-vals='{{ jsonVals "code" .Code "src" "tile" }}'
-    hx-trigger="click"
     hx-target="#basket"
     hx-swap="outerHTML"
     hx-sync="#basket:replace">

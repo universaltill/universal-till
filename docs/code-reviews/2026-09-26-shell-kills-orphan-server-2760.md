@@ -83,6 +83,25 @@ On the Windows VM:
 2. With the till running, re-run the installer. The details show
    "Stopping unitill-…", and the install succeeds.
 
+## Follow-up after merging `main` (2026-09-27)
+
+`main` gained Windows in-app update (ut-docs#160, universal-till#1456) while
+this PR waited. Its helper starts with `CREATE_BREAKAWAY_FROM_JOB` and
+refuses to run when the server is in a kill-on-close job that forbids
+breakaway, so this PR as first written would have stopped every Windows
+self-update. The job now also sets `JOB_OBJECT_LIMIT_BREAKAWAY_OK`. That
+only lets a member leave the job when it asks; hardware plugins and
+anything else still join.
+
+New test `TestJobLetsAChildBreakAway`: the bound child starts a process with
+the breakaway flag, as the updater does. Under Wine it failed with
+"Access denied" without the flag and passes with it. (A self-query of the job
+limits reads 0 under Wine, so the test checks behaviour, not flags.) The help
+conflict in `updates` step 5 (5 languages) was resolved by keeping `main`'s
+new self-update wording and appending this PR's sentence, reworded for
+running the installer by hand. The review round wasn't repeated: this is a
+one-flag change to the job, covered by a new red/green test.
+
 ## Verdict
 
 Safe to merge.

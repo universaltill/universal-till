@@ -1,0 +1,28 @@
+{
+  "description": "Shared cross-repo test vector for the till-user PIN seal (reference/till-user-directives.md §2). ut-cloud seals deterministically with the fixed ephemeral key and must reproduce every value below; universal-till opens pin_sealed with the fixed recipient key and must get the PIN. Suite: RFC 9180 HPKE mode_base, DHKEM(X25519, HKDF-SHA256) / HKDF-SHA256 / AES-128-GCM, single-shot (sequence 0). Byte values are lowercase hex; info and aad are exact UTF-8 strings (aad fields joined by a single \\n); kid is the first 16 hex chars of SHA-256 over the 32 raw recipient public-key bytes; pin_sealed is v1.<kid>.<base64url(enc)>.<base64url(ciphertext)> without padding. Test keys only.",
+  "suite": {
+    "mode": 0,
+    "kem_id": 32,
+    "kdf_id": 1,
+    "aead_id": 1
+  },
+  "recipient_sk": "2c4de1efe6892dddf56b803a811b7d67c56ac259d5c6f19e7bd07270231a9072",
+  "recipient_pk": "53af0a4655961bf347d18d0e99057653c33c37db50ac40880d9959e43a9e1849",
+  "public_key_b64url": "U68KRlWWG_NH0Y0OmQV2U8M8N9tQrECIDZlZ5DqeGEk",
+  "kid": "26939fd751b5ff5e",
+  "ephemeral_sk": "02b1099ca3e0411444b8b75fe73f43e8c87189f4b10406aca2fbcbabd3e75da8",
+  "ephemeral_pk": "1a59be1c12642df84b294716c27793e15f42c4390b1c1e4bc0b45dece82c5b5d",
+  "store_external_id": "c46192e1-a703-4025-8e64-6ff56481dcfa",
+  "directive_id": "9320b7e6-d8cb-4a55-95e9-1a78ecd52796",
+  "type": "set_user_pin",
+  "user_id": "439abbfe-d75d-4391-90db-a6b9981857b6",
+  "pin": "4821",
+  "info": "universaltill/till-user-pin/v1",
+  "aad": "c46192e1-a703-4025-8e64-6ff56481dcfa\n9320b7e6-d8cb-4a55-95e9-1a78ecd52796\nset_user_pin\n439abbfe-d75d-4391-90db-a6b9981857b6",
+  "shared_secret": "5f84559dde1aec75e5763300bf936ea15dde834ae168fa7d7392816aaee5359f",
+  "key": "871759486a5b68552399b23b0b20363c",
+  "base_nonce": "2655731b2d0df77eb6404705",
+  "enc": "1a59be1c12642df84b294716c27793e15f42c4390b1c1e4bc0b45dece82c5b5d",
+  "ciphertext": "3e3f2f0ae66e5bb2ad7e64d27c54cbaa1926d0e2",
+  "pin_sealed": "v1.26939fd751b5ff5e.Glm-HBJkLfhLKUcWwneT4V9CxDkLHB5LwLRd7OgsW10.Pj8vCuZuW7KtfmTSfFTLqhkm0OI"
+}

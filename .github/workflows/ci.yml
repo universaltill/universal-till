@@ -79,6 +79,10 @@ jobs:
         run: bash scripts/ci/guard-e2e-no-browser.sh
       - name: e2e no-browser guard regression test
         run: bash scripts/ci/guard-e2e-no-browser_test.sh
+      - name: CI scripts never pipe into grep -q under pipefail (ut-docs#2946)
+        run: bash scripts/ci/guard-pipefail-grep-q.sh
+      - name: pipefail grep -q guard regression test
+        run: bash scripts/ci/guard-pipefail-grep-q_test.sh
       - name: Data-access policy guard
         run: bash scripts/ci/guard-data-access.sh
       - name: Data-access policy guard regression test

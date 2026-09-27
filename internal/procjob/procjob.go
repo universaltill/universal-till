@@ -16,7 +16,10 @@
 // open the default browser (ut-docs#2761's fallback), and a browser started
 // from inside a kill-on-close job would be killed along with the shell.
 // Processes the child itself starts (hardware plugins) join the job
-// automatically, which is what we want — they die with their server.
+// automatically, which is what we want — they die with their server. The
+// job also allows breakaway on request (JOB_OBJECT_LIMIT_BREAKAWAY_OK): the
+// in-app updater's helper (internal/selfupdate, ut-docs#160) asks for it, so
+// it survives stopping the shell and server to run the installer.
 //
 // Other platforms: a no-op. The Linux till normally runs unitill-pos as a
 // systemd service the shell only attaches to, and macOS stops the server

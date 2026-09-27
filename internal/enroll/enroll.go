@@ -110,6 +110,12 @@ var (
 	explicitConfigured bool
 	// displayStoreID is what UI surfaces show as this till's store identity.
 	displayStoreID string
+	// tokenExplicit records whether UT_MARKETPLACE_MERCHANT_TOKEN pinned the
+	// cloud bearer. When it did, that value always wins; otherwise the live
+	// persisted token (cur.Token) does — including one the cloud rotated to
+	// this till after boot (ADR-0116 D4, ut-docs#2769), which the startup
+	// copy in cfg would otherwise shadow until a restart.
+	tokenExplicit bool
 
 	// attemptSem serializes registration attempts (background loop + the
 	// Settings "Register now" button) so the marketplace never sees two
@@ -237,6 +243,8 @@ func Init(ctx context.Context, cfg *config.Config, kv Settings, wg *sync.WaitGro
 	// environment; a non-empty value means the operator configured a merchant
 	// identity themselves, so auto-enrolment must not mint another one.
 	clientIDExplicit := cfg.Marketplace.ClientID != ""
+	// Same for the merchant token: only the environment can have set it yet.
+	tokenExplicit = cfg.Marketplace.MerchantToken != ""
 
 	get := func(key string) string {
 		v, _, err := kv.Get(ctx, key)
@@ -366,10 +374,18 @@ func Effective(cfg *config.Config) config.Config {
 	if m.PublicKey == "" {
 		m.PublicKey = cur.PublicKey
 	}
-	if m.MerchantToken == "" {
-		m.MerchantToken = cur.Token
-	}
+	m.MerchantToken = liveToken(m.MerchantToken)
 	return out
+}
+
+// liveToken is the bearer to send given the caller's (possibly startup)
+// copy: the env-pinned token when there is one, else the live persisted
+// token, else the copy. Callers hold mu (read).
+func liveToken(copyToken string) string {
+	if copyToken == "" || (!tokenExplicit && cur.Token != "") {
+		return cur.Token
+	}
+	return copyToken
 }
 
 // run retries the signing-key fetch and/or the device-under-store
@@ -666,11 +682,7 @@ func currentStoreAuth(m config.MarketplaceConfig) (string, string) {
 	if cur.StoreID != "" && !storeIDExplicit {
 		storeID = cur.StoreID
 	}
-	token := m.MerchantToken
-	if token == "" {
-		token = cur.Token
-	}
-	return storeID, token
+	return storeID, liveToken(m.MerchantToken)
 }
 
 // registerDevice adds this till as a device under its (already-registered)

@@ -7,7 +7,10 @@
      (/ui/bugreport-chip); rendered already open by /report-issue via the
      openBugReportPanel flag. Positioned/styled with logical properties only
      (app.css .bugreport-panel) so RTL locales mirror it for free. -->
-<section id="bugreport-panel" data-testid="bugreport-panel"
+{{/* data-ut-no-scrim (ut-docs#2873): a capture panel the operator keeps
+     working beside (the page underneath keeps every tap, see above), so it
+     never raises the shared popup scrim. */}}
+<section id="bugreport-panel" data-testid="bugreport-panel" data-ut-no-scrim
          class="bugreport-panel{{ if .openBugReportPanel }} open{{ end }}"
          role="region" aria-label="{{ T "issuereport.panel_title" }}">
   <div class="bugreport-head">

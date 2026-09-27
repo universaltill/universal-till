@@ -7,8 +7,8 @@ import (
 )
 
 // supportedFor is the OS/location POLICY gate (pure, no filesystem access):
-// which install shapes can ever self-update. Windows uses its installer;
-// android/ios have no self-swap; apt owns /usr. macOS is always
+// which install shapes can ever self-update. Windows runs its signed
+// installer (ut-docs#160); android/ios have no self-swap; apt owns /usr. macOS is always
 // location-eligible here (the .dmg whole-bundle replace via applyMacApp) —
 // the arch gate (only arm64 .dmgs are ever published, ut-docs#18) is applied
 // by Supported() via macAppBundleSupported, NOT here, same split as the
@@ -31,19 +31,13 @@ func TestSupportedFor(t *testing.T) {
 		{"linux portable archive", "/home/ali/unitill/unitill-pos", "linux", true},
 		{"linux /opt kiosk install (writability decides in Supported)", "/opt/unitill/bin/unitill-pos", "linux", true},
 		{"deb /usr (apt's domain)", "/usr/bin/unitill-pos", "linux", false},
-		{"windows", `C:\Program Files\UniversalTill\unitill-pos.exe`, "windows", false},
-		// The shipped installer (packaging/windows/installer.nsi) is a
-		// per-user, non-admin install to %LOCALAPPDATA% specifically because
-		// that directory IS writable by the running process — unlike Program
-		// Files above. supportedFor must still refuse windows here: the
-		// blocker is re-executing/overwriting a currently-running .exe (ut-docs#152
-		// field report, v0.2.14), not directory writability, so the
-		// dirWritable() carve-out that lets a service-writable /opt/unitill
-		// self-update on linux must never extend to windows.
-		{"windows per-user LOCALAPPDATA install (writable, still no self-swap)", `C:\Users\ali\AppData\Local\Programs\Universal Till\unitill-pos.exe`, "windows", false},
-		// Same point for the portable .zip + run-unitill.bat layout, extracted
-		// anywhere writable by the user (Desktop, Downloads, …).
-		{"windows portable zip extraction (writable, still no self-swap)", `C:\Users\ali\Downloads\unitill-pos_0.2.51_windows_amd64\unitill-pos.exe`, "windows", false},
+		// ut-docs#160: Windows is location-eligible; the release's signed
+		// installer does the update once this process has stopped, so the
+		// running-.exe rename problem (ut-docs#152) never arises. Supported()
+		// adds the precondition — a writable installer install
+		// (uninstall.exe), not a portable zip (wininstaller_test.go).
+		{"windows per-user LOCALAPPDATA install", `C:\Users\ali\AppData\Local\Programs\Universal Till\unitill-pos.exe`, "windows", true},
+		{"windows portable zip (Supported refuses: no uninstall.exe)", `C:\Users\ali\Downloads\unitill-pos_0.2.51_windows_amd64\unitill-pos.exe`, "windows", true},
 		{"android", "/data/app/com.universaltill.pos/lib/arm64/libmobile.so", "android", false},
 		{"ios", "/var/containers/Bundle/Application/x/Universal Till.app/unitill-pos", "ios", false},
 	}

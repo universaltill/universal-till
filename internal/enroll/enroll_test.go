@@ -65,7 +65,10 @@ func resetState() {
 	storeIDExplicit = false
 	explicitConfigured = false
 	displayStoreID = ""
+	tokenExplicit = false
 	mu.Unlock()
+	envPinWarned.Store(false)
+	unsavedToken.Store(false)
 }
 
 // testMarketplace serves the register + signing-key endpoints the way the real

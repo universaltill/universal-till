@@ -79,6 +79,10 @@
   --pos-basket-max-w: 60rem;      /* generous sanity ceiling; real day-to-day limit is whatever leaves --pos-products-min-w free */
   --pos-products-min-w: 16.5rem;  /* two 7rem .grid tiles + .5rem gap + .products' own .7rem/.8rem padding, plus a small margin */
   --pos-divider-w: 1.5rem;        /* >=24px hit area even though the visible grip is thinner (ut-docs#2308 AC2) */
+  /* ut-docs#2873: the ONE popup backdrop colour -- every modal dialog's
+     native ::backdrop and the shared #ut-scrim behind every non-modal
+     popup (base.html) read it. A theme retunes it here (dark.css does). */
+  --ut-scrim: rgba(15, 23, 42, .45);
 }
 
 /* ---------- Base ---------- */
@@ -406,14 +410,19 @@ html[data-nav-dir="pop"]::view-transition-new(root) { animation-name: ut-page-re
    rule here: a persistent transform on a pane would make it the containing
    block of its position:fixed dialogs (#2338's hazard, which
    TestAppCSSNamesOnlyTheFixedRailAndStatusbar still guards). Panes and
-   popups use the shorter small-zoom duration (ADR-0122 §1). */
-:root { --ut-zoom-small-ms: 300ms; }
+   popups use the shorter small-zoom duration (ADR-0122 §1). The
+   CLOSE alone uses --ut-zoom-close-ms, not this one (ADR-0123, #2987): the
+   open and close eased on the same fast duration left the popup 2/3 shrunk
+   and 2/3 transparent after 60ms, so the shrink needed a longer duration of
+   its own -- the open is unchanged. */
+:root { --ut-zoom-small-ms: 300ms; --ut-zoom-close-ms: 400ms; }
 
 /* ADR-0122 §5 (ut-docs#2944): every popup (<dialog>, sheet, picker) grows
    from the tapped element and shrinks back into it -- base.html's ONE
    shared popup motion, a transient Web Animations transform, never a CSS
    rule here. After the native close (the page already takes input) the
-   SAME element is painted again for at most --ut-zoom-small-ms with
+   SAME element is painted again for at most --ut-zoom-close-ms (ADR-0123,
+   #2987 -- its own, slower duration/ease than the open) with
    data-ut-closing, inert and aria-hidden while it shrinks: fixed at the box
    it last had open (the custom properties base.html sets), in its open
    display type, no pointer events, above the rail (100) and the on-screen
@@ -529,7 +538,7 @@ html.fx-light .jiggle-mode .tile-cell > .btn-tile.dragging { transform: none; }
    jiggle (the one decorative looping animation). `filter` itself is left
    alone: core uses it only for the hidden-tile grayscale and hover
    brightness, neither of them a blur. */
-html.fx-balanced { --ut-motion-ms: 200ms; --ut-zoom-small-ms: 200ms; --shadow: 0 1px 2px rgba(15, 23, 42, .08); }
+html.fx-balanced { --ut-motion-ms: 200ms; --ut-zoom-small-ms: 200ms; --ut-zoom-close-ms: 240ms; --shadow: 0 1px 2px rgba(15, 23, 42, .08); }
 html.fx-balanced *, html.fx-balanced *::before, html.fx-balanced *::after {
   -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
 }
@@ -546,6 +555,41 @@ html.fx-balanced .jiggle-mode .tile-cell > .btn-tile { animation: none; }
 html.fx-balanced .jiggle-mode .tile-cell > .btn-tile.dragging { transform: none; box-shadow: 0 1px 3px rgba(15, 23, 42, .18); }
 html.fx-balanced .designer-cat.is-dragging { transform: none; box-shadow: inset 0 0 0 1px var(--accent); }
 /* ============================================================================ */
+
+/* ut-docs#2873: every till popup gets a full-screen dimmed backdrop that
+   blocks taps behind it. Two families, one colour (--ut-scrim, :root):
+   - a showModal() dialog: its native ::backdrop (top layer; the rest of
+     the page is already inert). The fallback is for an engine whose
+     ::backdrop does not inherit custom properties yet.
+   - a non-modal .show() dialog (the #1385 on-screen-keyboard family, z
+     500/550) or a UT.popupOpened() panel: the ONE shared #ut-scrim
+     (base.html), shown by base.html's popup hooks while any such popup is
+     open. z 450: above the page and the nav rail (100), below every
+     non-modal popup (>=500), the on-screen keyboard (#osk, 1000) and
+     toasts. No blur, no fade (ADR-0119: the cheapest possible paint).
+   The status bar stays reachable (CLAUDE.md "Offline-first", ut-docs#1999):
+   while the scrim is up it is lifted to 460 -- above the scrim, still
+   below every popup. So does Lock: the nav rail is lifted to 460 too,
+   dimmed by its own ::after and click-through (pointer-events: none, so
+   a tap on it lands on the scrim) -- except the Lock form, which stays
+   live (ut-docs#1999/#2873; exit-to-OS lives in Settings, not the rail;
+   self-order kiosk pages have no rail). Tap rule: a tap on the scrim does nothing unless the
+   topmost popup opts in with data-ut-scrim-dismiss; a popup the cashier
+   keeps working beside opts out with data-ut-no-scrim. */
+/* An engine whose ::backdrop does not inherit custom properties
+   (Chromium < 122, WebKit < 17.4) gets the light fallback in every theme. */
+dialog::backdrop { background: var(--ut-scrim, rgba(15, 23, 42, .45)); }
+#ut-scrim { position: fixed; inset: 0; z-index: 450; background: var(--ut-scrim); touch-action: none; }
+#ut-scrim[hidden] { display: none; }
+html.ut-scrim-on .statusbar { z-index: 460; }
+/* The docked payment panel opts out (data-ut-no-scrim) so the cashier works
+   beside it -- but a popup opened FROM it (its Hold button) must block it
+   too: while the scrim is up it drops just under it (review, ut-docs#2873).
+   Its own content holds no dialog, so nothing nested is pushed under. */
+html.ut-scrim-on #payment-overlay[data-ut-no-scrim] { z-index: 449; }
+html.ut-scrim-on .nav { z-index: 460; pointer-events: none; }
+html.ut-scrim-on .nav::after { content: ""; position: absolute; inset: 0; background: var(--ut-scrim); pointer-events: none; }
+html.ut-scrim-on .nav .session-lock { position: relative; z-index: 1; pointer-events: auto; }
 
 /* ut-docs#298: .nav's background is always var(--brand) — dark in every
    shipped theme (fresh/slate/amber/monarch all set it near-black/navy) — so
@@ -583,6 +627,12 @@ html.fx-balanced .designer-cat.is-dragging { transform: none; box-shadow: inset 
   font-weight: 600; cursor: pointer; text-align: center;
 }
 .nav-toggle:hover, .nav-toggle:active { background: rgba(255,255,255,.22); }
+/* ut-docs#3000: instant tap feedback (base.html's shell script). .ut-pressed
+   is set synchronously on pointerdown -- a touch :active can lag or never
+   show on a quick tap -- and .ut-nav-pending holds the tapped item while its
+   boosted page loads. Colour only, no transform/animation, so it is the
+   same under Light effects and reduced motion (ADR-0119). */
+.nav-toggle.ut-pressed, .nav-toggle.ut-nav-pending { background: rgba(255,255,255,.22); }
 /* 2026-09-02 (ut-docs#1423, seen on the tablet next to the icon-size
    report): the two rail items that are <button>s (bug-report toggle, Lock)
    rendered ~48px wide against ~60px for the <a> tiles — a <button>
@@ -720,6 +770,7 @@ body.menu-screen .session-admin-link { display: none; }
   transition: transform .06s ease, border-color .15s ease;
 }
 .menu-tile:hover, .menu-tile:active { border-color: var(--brand); transform: translateY(-2px); }
+.menu-tile.ut-pressed, .menu-tile.ut-nav-pending { border-color: var(--brand); }
 .menu-ico { font-size: 2.9rem; line-height: 1; }
 /* ut-docs#1720/#1845: every tile icon is a drawn glyph now (menu_page.go's
    iconSVGFor), never an emoji. Sized in absolute units rather than in em,
@@ -2351,7 +2402,7 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
   border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow);
   padding: 1.25rem; max-width: 28rem; width: 90vw;
 }
-.modifier-modal::backdrop { background: rgba(15, 23, 42, .45); }
+.modifier-modal::backdrop { background: var(--ut-scrim, rgba(15, 23, 42, .45)); }
 .modifier-modal:not([open]) { display: none; }
 /* ut-docs#1356: the barcode-backfill dialog reuses .modifier-modal's frame
    but holds a 3-column data table (name/SKU/derived barcode), which the
@@ -2838,8 +2889,10 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
    would re-trap a fixed-position descendant) — this is what the comment
    above originally claimed happened for free and didn't. inset-inline
    (not left/right) keeps this RTL-correct with no separate ruleset. */
+/* z-index 500 (ut-docs#2873): the non-modal popup family's layer, above
+   the shared popup scrim (450) -- without it the sheet painted under it. */
 .shrinkage-sheet {
-  position: fixed; inset-block-start: 50%; inset-inline: 0;
+  position: fixed; inset-block-start: 50%; inset-inline: 0; z-index: 500;
   transform: translateY(-50%); margin-inline: auto;
   max-height: min(80vh, 32rem); overflow-y: auto;
 }

@@ -277,7 +277,7 @@ assert_pass() {
         FAILS=$((FAILS + 1))
         return
     fi
-    if echo "$out" | grep -q "pack(s) needing a follow-up PR"; then
+    if grep -q "pack(s) needing a follow-up PR" <<<"$out"; then
         echo "FAIL [$name]: exit 0 but still printed a follow-up-PR block. Output:"
         echo "$out"
         FAILS=$((FAILS + 1))

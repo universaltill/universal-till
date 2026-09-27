@@ -24,7 +24,9 @@ func TestRequireFiscalAuthorityForCountryChange_RefusalIsTranslatedFullLayout(t 
 	// mgrUser is a manager, not admin/super_admin — fiscal_tse_override
 	// (ADR-0048 Decision 3) refuses it, so the country change must be
 	// blocked while DE's signing device is confirmed.
-	rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.country"}, "value": {"TR"}}, &mgrUser)
+	// ES, not TR: a country with base plugins, so the ut-docs#1068 check
+	// below would catch a refused change that still queued them.
+	rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.country"}, "value": {"ES"}}, &mgrUser)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("code = %d, want 403: %s", rec.Code, rec.Body.String())
 	}
@@ -40,4 +42,5 @@ func TestRequireFiscalAuthorityForCountryChange_RefusalIsTranslatedFullLayout(t 
 	if got := d.CurrentState().Country; got != "DE" {
 		t.Fatalf("country = %q, want unchanged DE", got)
 	}
+	wantPending(t, d)
 }

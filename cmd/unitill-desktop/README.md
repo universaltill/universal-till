@@ -125,7 +125,11 @@ writing" on `unitill-pos.exe`. Three changes close this:
   `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. The shell never closes the handle;
   the OS does when the shell exits for any reason, and kills the server (and
   the hardware plugins it started) with it. Only the child is in the job —
-  not the shell — so a browser opened by the WebView2 fallback survives. A
+  not the shell — so a browser opened by the WebView2 fallback survives. The
+  job also sets `JOB_OBJECT_LIMIT_BREAKAWAY_OK`: the in-app updater's helper
+  (`internal/selfupdate`, ut-docs#160) starts with
+  `CREATE_BREAKAWAY_FROM_JOB` so it outlives the shell and server it stops,
+  and refuses to start inside a kill-on-close job without it. A
   failure to create/assign the job is a warning in `desktop.log`, never
   fatal. No-op on other platforms.
 - **Early exit is logged** (`child_wait.go`): the ~10s wait for the server
@@ -142,8 +146,9 @@ writing" on `unitill-pos.exe`. Three changes close this:
   install log.
 
 `GOOS=windows go vet ./internal/procjob/` runs in `ci.yml`'s `build` job;
-`procjob_windows_test.go` (kill the parent → its child dies) runs only on
-Windows.
+`procjob_windows_test.go` (kill the parent → its child dies; a member can
+start a process with `CREATE_BREAKAWAY_FROM_JOB`) runs only on Windows —
+both pass under Wine and fail without the respective flag.
 
 ## Status & follow-ups
 

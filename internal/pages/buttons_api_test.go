@@ -935,29 +935,41 @@ func TestModifierGroupDetach_LastLinkSucceedsAndFiresTrigger(t *testing.T) {
 // remove = the same hx-post/hx-confirm the ut-docs#2285 sheet's Remove
 // used), and the grid has a Done control. Revert buttons.html's
 // product-tile/jiggle-bar markup to reproduce (red).
+//
+// ut-docs#2989: on the sale screen the badges are no longer per tile but one
+// <template> that app.js clones into each cell on entering the mode (still
+// zero network calls); the Designer keeps them server-rendered per tile.
 func TestButtonsPartial_JiggleModeMarkup(t *testing.T) {
 	mux, d := newButtonsMux(t)
 	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES ('J1','First','itm1',0),('J2','Second','itm1',1)`); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/buttons", nil))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("/ui/buttons = %d (%s)", rec.Code, rec.Body.String())
+	get := func(path string) string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s = %d (%s)", path, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
 	}
-	body := rec.Body.String()
+	body := get("/ui/buttons")
+	// ut-docs#2989: the sale screen ships the badge markup ONCE, in
+	// <template id="tile-badges-tpl">, with placeholders; each .tile-cell
+	// carries the item id (and label via data-name) app.js fills it with.
 	for _, want := range []string{
 		`data-code="J1" data-item-id="itm1" data-pos="0"`,
 		`data-code="J2" data-item-id="itm1" data-pos="1"`,
-		`class="tile-cell"`,
+		`<div class="tile-cell" data-name="First" data-item-id="itm1"`,
+		`<template id="tile-badges-tpl" data-item-ph="` + ui.TileBadgeItemPlaceholder + `" data-label-ph="` + ui.TileBadgeLabelPlaceholder + `">`,
 		`class="tile-badge tile-badge-edit"`,
-		`href="/catalog?item=itm1&return=/"`,
+		`href="/catalog?item=` + ui.TileBadgeItemPlaceholder + `&return=/"`,
 		`class="tile-badge tile-badge-remove"`,
 		// ut-docs#2698: the trash badge removes the item from the quick
 		// buttons only (#2541 had made it delete the item itself).
 		`hx-post="/api/buttons/remove-from-grid"`,
-		`hx-confirm="Remove “First” from the quick buttons? The item stays in the catalog and still sells by scan or search — add it back any time from search."`,
-		// ut-docs#2541: the new third, bottom-corner Hide badge.
+		`hx-confirm="Remove “` + ui.TileBadgeLabelPlaceholder + `” from the quick buttons? The item stays in the catalog and still sells by scan or search — add it back any time from search."`,
+		// ut-docs#2541: the third, bottom-corner Hide badge.
 		`class="tile-badge tile-badge-hide"`,
 		`hx-post="/api/buttons/hide"`,
 		`data-testid="jiggle-done"`,
@@ -966,28 +978,52 @@ func TestButtonsPartial_JiggleModeMarkup(t *testing.T) {
 			t.Fatalf("/ui/buttons missing %q: %.1500s", want, body)
 		}
 	}
-	// The edit badge is a real link, the remove badge a real <button>: both
-	// are keyboard-reachable siblings of the tile inside .tile-cell, never
-	// nested INSIDE the tile's own <button>. A nested interactive element is
-	// invalid HTML the parser actively RESTRUCTURES (it closes the outer
-	// button at the nested start tag), so the nesting wouldn't show up as a
-	// broken render — it would silently detach the badge from its tile.
-	//
-	// Asserted against a real parse, deliberately. This check first shipped
-	// as a pair of strings.Contains calls, and independent review (2026-09-17)
-	// found it could never fire: it looked for `<button class="btn-tile`,
-	// while product-tile renders that class on the NEXT line, so the guard
-	// short-circuited to false and nesting the badges inside the tile button
-	// still passed green. golang.org/x/net/html runs the same WHATWG
-	// tree-construction algorithm a browser's parser does — the same reason
-	// elevation_test.go reaches for it rather than string matching.
 	doc, err := xhtml.Parse(strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("parse /ui/buttons: %v", err)
 	}
+	for _, class := range []string{"tile-badges", "tile-badge"} {
+		for _, n := range nodesWithClass(doc, class) {
+			if !isDescendantOfTag(n, "template") {
+				t.Fatalf("sale-screen .%s outside the badge template — badges are materialised client-side (ut-docs#2989)", class)
+			}
+		}
+	}
+
+	// The Designer's replica keeps them server-rendered per tile.
+	assertPerTileBadges(t, get("/ui/buttons?mode=edit"), 2)
+	// The ut-docs#2285 sheet is gone: nothing on the sale screen should
+	// still reference its route.
+	if strings.Contains(body, "/ui/pos/tile-sheet") || strings.Contains(body, "/api/buttons/move") {
+		t.Fatalf("buttons fragment still references the retired tile sheet: %.800s", body)
+	}
+}
+
+// assertPerTileBadges: the edit badge is a real link, the remove badge a real
+// <button>: both are keyboard-reachable siblings of the tile inside
+// .tile-cell, never nested INSIDE the tile's own <button>. A nested
+// interactive element is invalid HTML the parser actively RESTRUCTURES (it
+// closes the outer button at the nested start tag), so the nesting wouldn't
+// show up as a broken render — it would silently detach the badge from its
+// tile.
+//
+// Asserted against a real parse, deliberately. This check first shipped as a
+// pair of strings.Contains calls, and independent review (2026-09-17) found
+// it could never fire: it looked for `<button class="btn-tile`, while
+// product-tile renders that class on the NEXT line, so the guard
+// short-circuited to false and nesting the badges inside the tile button
+// still passed green. golang.org/x/net/html runs the same WHATWG
+// tree-construction algorithm a browser's parser does — the same reason
+// elevation_test.go reaches for it rather than string matching.
+func assertPerTileBadges(t *testing.T, body string, wantTiles int) {
+	t.Helper()
+	doc, err := xhtml.Parse(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
 	tiles := nodesWithClass(doc, "btn-tile")
-	if len(tiles) != 2 {
-		t.Fatalf("want 2 .btn-tile nodes in the parsed tree, got %d", len(tiles))
+	if len(tiles) != wantTiles {
+		t.Fatalf("want %d .btn-tile nodes in the parsed tree, got %d", wantTiles, len(tiles))
 	}
 	for _, tile := range tiles {
 		// findAllTag counts the node it's given, and the tile IS a <button> —
@@ -1000,11 +1036,11 @@ func TestButtonsPartial_JiggleModeMarkup(t *testing.T) {
 			}
 		}
 	}
-	// ut-docs#2541: a third badge (Hide) joins edit/remove(delete) per tile.
+	// ut-docs#2541: a third badge (Hide) joins edit/remove per tile.
 	badges := append(nodesWithClass(doc, "tile-badge-edit"), nodesWithClass(doc, "tile-badge-remove")...)
 	badges = append(badges, nodesWithClass(doc, "tile-badge-hide")...)
-	if len(badges) != 6 {
-		t.Fatalf("want 6 badges (2 tiles x edit+remove+hide), got %d", len(badges))
+	if len(badges) != 3*wantTiles {
+		t.Fatalf("want %d badges (%d tiles x edit+remove+hide), got %d", 3*wantTiles, wantTiles, len(badges))
 	}
 	for _, b := range badges {
 		if isDescendantOfClass(b, "btn-tile") {
@@ -1014,11 +1050,6 @@ func TestButtonsPartial_JiggleModeMarkup(t *testing.T) {
 			b.Parent.Parent == nil || !hasClass(b.Parent.Parent, "tile-cell") {
 			t.Fatalf("badge %q must sit in .tile-cell > .tile-badges", b.Data)
 		}
-	}
-	// The ut-docs#2285 sheet is gone: nothing on the sale screen should
-	// still reference its route.
-	if strings.Contains(body, "/ui/pos/tile-sheet") || strings.Contains(body, "/api/buttons/move") {
-		t.Fatalf("buttons fragment still references the retired tile sheet: %.800s", body)
 	}
 }
 

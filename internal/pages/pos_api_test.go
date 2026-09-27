@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -745,6 +746,93 @@ func TestTenderHandler_AppliesPluginReportedTipFromAuthorizeResponse(t *testing.
 	// the 120 it was asked for plus the 150 the customer added on it.
 	if amount != 120+150 {
 		t.Fatalf("want amount 270 (tendered 120 + reader-reported tip 150, ut-docs#2571), got %d", amount)
+	}
+}
+
+// ut-docs#2975: a tender whose requested legs can't cover the total is
+// refused BEFORE payment.<key>.authorize runs, so a card is never charged
+// for a sale CompleteSale would then refuse. Here the leg is 100 against a
+// 120 basket; the reader would add a 150 tip on authorize, but a tip is not
+// sale money, so it must not rescue the tender either.
+func TestTenderHandler_UncoveredTenderRefusedBeforeAuthorize(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated, min_pos_version, api_version, published_at)
+	          VALUES ('com.universaltill.payment-demo', '1.0.0', 'Demo Pay', 'demo', 'wasm', 'demo.wasm', 'https://example.test/demo.wasm', 'deadbeef', 'auth', 'site', '[]', 0, '0.0.0', '1', datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.payment-demo', 'Demo Pay', '1.0.0', 'demo.wasm', 'wasm', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
+	          VALUES ('e1', 'com.universaltill.payment-demo', 'demopay', 'Demo Pay', 'payment', 'payment.demopay.requested', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+	          VALUES ('h1', 'com.universaltill.payment-demo', 'payment.demopay.authorize', 'handle_authorize', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+	          VALUES ('p1', 'com.universaltill.payment-demo', 'events:receive', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.demopay.authorize", plugins.Blocking)
+	var authorizeCalls atomic.Int32
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.payment-demo",
+		[]string{"payment.demopay.authorize"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			authorizeCalls.Add(1)
+			return json.RawMessage(`{"provider":"demopay","outcome":"approved","tip_amount":150}`), nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"demopay","amount":100}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if n := authorizeCalls.Load(); n != 0 {
+		t.Fatalf("an uncovered tender must be refused before authorize charges the card; authorize ran %d time(s)", n)
+	}
+	if strings.Contains(rec.Body.String(), `"error":null`) {
+		t.Fatalf("want the tender refused, got success: %d %s", rec.Code, rec.Body.String())
+	}
+	var sales int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&sales); err != nil || sales != 0 {
+		t.Fatalf("a refused tender must persist no sale: count=%d err=%v", sales, err)
+	}
+}
+
+// ut-docs#2975 (review): a tip larger than the money its leg took is refused
+// at the request boundary with a 400, like an impossible change (#1764).
+func TestTenderHandler_RejectsTipExceedingAmountLessChange(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	for _, body := range []string{
+		`{"payments":[{"method":"cash","amount":200,"change":80,"tip":130}],"offline":true}`,
+		`{"payments":[{"method":"cash","amount":200,"tip":-5}],"offline":true}`,
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/api/pos/tender", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: want 400, got %d: %s", body, rec.Code, rec.Body.String())
+		}
+	}
+	var sales int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&sales); err != nil || sales != 0 {
+		t.Fatalf("a refused tender must persist no sale: count=%d err=%v", sales, err)
 	}
 }
 
@@ -2470,9 +2558,11 @@ func TestTenderHandler_ChangedPaymentOnSameBasketGetsDifferentIdempotencyKey(t *
 
 	// First attempt: 120. Declined, basket survives untouched (same as the
 	// sibling test above). Second attempt, SAME basket, but the operator
-	// changed the tendered amount to 90 before retrying -- a genuinely
-	// different payment, not a retry of the first.
-	for _, amount := range []int{120, 90} {
+	// changed the tendered amount to 130 before retrying -- a genuinely
+	// different payment, not a retry of the first. (Both cover the 120
+	// total: since ut-docs#2975 an underpaying amount is refused before
+	// authorize and would never reach the plugin gate this test probes.)
+	for _, amount := range []int{120, 130} {
 		req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
 			strings.NewReader(fmt.Sprintf(`{"payments":[{"method":"demopay","amount":%d}],"offline":true}`, amount)))
 		req.Header.Set("Content-Type", "application/json")

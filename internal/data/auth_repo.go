@@ -337,6 +337,98 @@ func (r *AuthRepo) SetUserRoleGuarded(ctx context.Context, tx *sql.Tx, userID, r
 	return "", nil
 }
 
+// The transaction-taking writes behind the cloud user directives (ut-docs
+// reference/till-user-directives.md §4, ADR-0115 amendment 2026-09-25):
+// the main till applies one directive in ONE write transaction, so every
+// read and write it makes goes through tx. A nil tx runs against the DB
+// directly (SetUserPINTx / RevokeUserSessionsTx only).
+
+// authExec returns tx when non-nil, the DB otherwise.
+func (r *AuthRepo) authExec(tx *sql.Tx) execer {
+	if tx != nil {
+		return tx
+	}
+	return r.db
+}
+
+// GetUserTx is GetUser read inside tx.
+func (r *AuthRepo) GetUserTx(ctx context.Context, tx *sql.Tx, id string) (UserRow, bool, error) {
+	u, err := scanUser(tx.QueryRowContext(ctx, `SELECT `+userCols+` FROM users WHERE id = ?`, id).Scan)
+	if err == sql.ErrNoRows {
+		return UserRow{}, false, nil
+	}
+	if err != nil {
+		return UserRow{}, false, fmt.Errorf("get user: %w", err)
+	}
+	return u, true, nil
+}
+
+// CreateUserWithID inserts an active operator under a caller-chosen id (the
+// cloud mints the user_id so a re-applied directive is idempotent). No PIN
+// yet — SetUserPINTx in the same tx.
+func (r *AuthRepo) CreateUserWithID(ctx context.Context, tx *sql.Tx, id, username, displayName, role string) error {
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO users (id, username, display_name, role, is_active) VALUES (?, ?, ?, ?, 1)`,
+		id, username, displayName, role); err != nil {
+		return fmt.Errorf("create user %s: %w", id, err)
+	}
+	return nil
+}
+
+// UpdateUserProfile sets a user's username and/or display name; a nil
+// pointer keeps that field. Errors when the user does not exist.
+func (r *AuthRepo) UpdateUserProfile(ctx context.Context, tx *sql.Tx, id string, username, displayName *string) error {
+	res, err := tx.ExecContext(ctx,
+		`UPDATE users SET username = COALESCE(?, username), display_name = COALESCE(?, display_name) WHERE id = ?`,
+		nullableStr(username), nullableStr(displayName), id)
+	if err != nil {
+		return fmt.Errorf("update user profile %s: %w", id, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("update user profile: user %s not found", id)
+	}
+	return nil
+}
+
+func nullableStr(s *string) any {
+	if s == nil {
+		return nil
+	}
+	return *s
+}
+
+// UsernameTakenByOther reports, inside tx, whether a user other than
+// excludeID holds username (the users.username UNIQUE constraint).
+func (r *AuthRepo) UsernameTakenByOther(ctx context.Context, tx *sql.Tx, username, excludeID string) (bool, error) {
+	var n int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE username = ? AND id != ?`, username, excludeID).Scan(&n); err != nil {
+		return false, fmt.Errorf("username taken: %w", err)
+	}
+	return n > 0, nil
+}
+
+// SetUserPINTx is SetUserPIN inside tx.
+func (r *AuthRepo) SetUserPINTx(ctx context.Context, tx *sql.Tx, userID, pinHash string) error {
+	res, err := r.authExec(tx).ExecContext(ctx, `UPDATE users SET pin_hash = ? WHERE id = ?`, pinHash, userID)
+	if err != nil {
+		return fmt.Errorf("set pin: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("set pin: user %s not found", userID)
+	}
+	return nil
+}
+
+// RevokeUserSessionsTx is RevokeUserSessions inside tx.
+func (r *AuthRepo) RevokeUserSessionsTx(ctx context.Context, tx *sql.Tx, userID string) error {
+	if _, err := r.authExec(tx).ExecContext(ctx,
+		`UPDATE sessions SET revoked_at = datetime('now') WHERE user_id = ? AND revoked_at IS NULL`,
+		userID); err != nil {
+		return fmt.Errorf("revoke user sessions: %w", err)
+	}
+	return nil
+}
+
 // InsertSession stores a new session (token already hashed by the caller).
 func (r *AuthRepo) InsertSession(ctx context.Context, tokenHash, userID string, expiresAt time.Time) (string, error) {
 	id := uuid.NewString()

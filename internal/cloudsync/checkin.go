@@ -96,6 +96,9 @@ type checkinPlan struct {
 // hashFailed (the body didn't marshal) means the state can't be compared,
 // so a 304 still POSTs.
 func planCheckin(ctx context.Context, cfg *config.Config, settings *data.SettingsRepo, stateSum [sha256.Size]byte, hashFailed bool, linkVersion func() int64) (checkinPlan, error) {
+	if settings != nil {
+		enroll.RetryUnsavedCredential(ctx, settings)
+	}
 	m := enroll.Effective(cfg).Marketplace
 	key := strings.TrimRight(m.EndpointURL, "/") + "|" + m.StoreID
 	now := checkinNow()

@@ -29,6 +29,11 @@ import (
 func newCloudSyncTestDeps(t *testing.T) *common.Deps {
 	t.Helper()
 	chdirRoot(t)
+	// DeviceExtra creates the main till's directive key under paths.Data
+	// (ut-docs#2810): keep it out of the repo root.
+	origData := paths.DataDir()
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init(origData) })
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)

@@ -251,8 +251,15 @@
        data map does not carry this key — caught by
        internal/ui.TestButtonsNewRenderer_WorksFromAnyWorkingDirectory. */}}
   <div class="pos-container" data-currency="{{ or .currency "GBP" }}"{{ if gt (or .basketPanelWidthRem 0.0) 0.0 }} style="--basket-col-width: {{ .basketPanelWidthRem }}rem;"{{ end }}>
+    {{/* ut-docs#3000: the basket is inlined into this first paint
+         (index_page.go basketHTML -- the very fragment GET /ui/basket
+         serves, whose #basket root every basket update swaps outerHTML).
+         Only when that render failed does the page fall back to fetching it
+         after load. Same missing-key-is-falsy rule as .productsHTML below. */}}
+    {{ if .basketHTML }}{{ .basketHTML }}{{ else }}
     <!-- Basket loads on page load -->
     <div class="basket" hx-get="/ui/basket" hx-trigger="load" hx-swap="outerHTML"></div>
+    {{ end }}
 
     <!-- ut-docs#2308: the basket/products divider. Touch-and-hold (~300ms)
          then drag horizontally (mouse: plain drag, no hold) resizes both
@@ -278,8 +285,17 @@
       <span class="pos-divider-grip" aria-hidden="true"></span>
     </div>
 
+    {{/* ut-docs#2989: the product grid is inlined into this first paint
+         (index_page.go saleGridFirstPaint -- the very fragment GET
+         /ui/buttons serves, whose root refetches itself on buttons-changed/
+         modifiers-changed). Only when that render failed does the page fall
+         back to fetching it after load. .productsHTML is absent when
+         ui.NewRenderer renders this block for /ui/buttons: a missing key is
+         falsy here, never a template error. */}}
+    {{ if .productsHTML }}{{ .productsHTML }}{{ else }}
     <!-- Product buttons panel loads on page load -->
     <div class="products" hx-get="/ui/buttons" hx-trigger="load" hx-swap="outerHTML"></div>
+    {{ end }}
 
   <!-- Tender and Scan: fixed-height panel, tabs instead of stacked cards so
        it never scrolls. Split-tender element IDs are load-bearing (app.js). -->
@@ -462,7 +478,11 @@
       <span id="open-orders-watch" hidden aria-hidden="true"></span>
     </div>
 
-    <dialog id="payment-overlay" class="payment-overlay" aria-labelledby="payment-overlay-title">
+    <!-- data-ut-no-scrim (ut-docs#2873): a panel docked beside the basket,
+         which stays visible, undimmed and live while paying (New sale/Hold
+         in the footer beside it, ut-docs#1386/#1542) -- not a blocking
+         popup, so no shared scrim behind it. -->
+    <dialog id="payment-overlay" class="payment-overlay" aria-labelledby="payment-overlay-title" data-ut-no-scrim>
       <div class="payment-overlay-body">
         <div class="payment-overlay-header">
           <h3 id="payment-overlay-title">{{ T "tender.title" }}</h3>
