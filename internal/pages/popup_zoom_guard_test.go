@@ -328,6 +328,65 @@ func TestPopupCloseGuardsAndCloseTarget(t *testing.T) {
 	}
 }
 
+// ut-docs#2987 / ADR-0123: the close shrink keeps popupOpen's easing and
+// duration for the OPEN, but uses its own, slower duration and an
+// ease-in-out curve for the CLOSE, and holds opacity at 1 for the first
+// part of that motion so the owner sees the shrink before it fades (the
+// popup was 2/3 shrunk and 2/3 transparent after 60ms under the old,
+// shared open curve/duration).
+func TestPopupCloseUsesCloseMsAndEase(t *testing.T) {
+	b := popupBlock(t, readBaseHTML(t))
+	if !strings.Contains(b, "var POPUP_CLOSE_EASE = 'cubic-bezier(.4, 0, .6, 1)';") {
+		t.Errorf("shared popup section must define POPUP_CLOSE_EASE next to POPUP_EASE (ADR-0123)")
+	}
+	if !strings.Contains(b, "function closeMs()") {
+		t.Fatalf("shared popup section must define closeMs() next to smallMs() (ADR-0123)")
+	}
+	cm := b[strings.Index(b, "function closeMs()"):]
+	if e := strings.Index(cm, "\n        }\n"); e > 0 {
+		cm = cm[:e]
+	}
+	if !strings.Contains(cm, "--ut-zoom-close-ms") {
+		t.Errorf("closeMs() must read --ut-zoom-close-ms, got: %s", cm)
+	}
+	if !strings.Contains(cm, "smallMs()") {
+		t.Errorf("closeMs() must fall back to smallMs() when --ut-zoom-close-ms is unset/invalid, got: %s", cm)
+	}
+
+	i := strings.Index(b, "function popupClose(")
+	if i < 0 {
+		t.Fatalf("no popupClose in the shared section")
+	}
+	pc := b[i:]
+	if e := strings.Index(pc, "UT.popupOpened = function"); e > 0 {
+		pc = pc[:e]
+	}
+	if strings.Contains(pc, "smallMs()") {
+		t.Errorf("popupClose must use closeMs(), not smallMs() (ADR-0123) -- got: %s", pc)
+	}
+	if !strings.Contains(pc, "var ms = closeMs();") {
+		t.Errorf("popupClose must set ms from closeMs(), got: %s", pc)
+	}
+	if strings.Contains(pc, "easing: POPUP_EASE") {
+		t.Errorf("popupClose must not animate with the open's POPUP_EASE (ADR-0123) -- got: %s", pc)
+	}
+	if !strings.Contains(pc, "easing: POPUP_CLOSE_EASE") {
+		t.Errorf("popupClose must animate with POPUP_CLOSE_EASE, got: %s", pc)
+	}
+	if !strings.Contains(pc, "ms + 250") {
+		t.Errorf("popupClose's backstop timer must stay ms + 250 (now closeMs()'s ms), got: %s", pc)
+	}
+	// Opacity holds at 1 for the first 55% of the eased motion (the middle
+	// keyframe has no transform: WAAPI interpolates it between the ends),
+	// then fades to 0 alongside the shrink's last part.
+	if !regexp.MustCompile(`\{\s*transform:\s*'none',\s*opacity:\s*1\s*\}\s*,\s*\{\s*opacity:\s*1,\s*offset:\s*0\.55\s*\}\s*,\s*\{\s*transform:\s*zoomFrom\(`).MatchString(pc) {
+		t.Errorf("popupClose's keyframes must hold opacity 1 to offset 0.55 before fading with the shrink (ADR-0123), got: %s", pc)
+	}
+	if !strings.Contains(pc, "fill: 'none'") {
+		t.Errorf("popupClose's animate() must keep fill: 'none', got: %s", pc)
+	}
+}
+
 // ADR-0122 §7: UT.finishZooms() reports only NON-passive zooms, so a
 // passive one (the closing shrink) never arms the click re-dispatch.
 func TestFinishZoomsIgnoresPassiveForReDispatch(t *testing.T) {

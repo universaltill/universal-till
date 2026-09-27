@@ -1,10 +1,11 @@
 // Package selfupdate applies an in-place update for any install whose tree is
 // writable by the running user: it downloads the latest release for this
 // OS/arch, verifies its SHA-256 against the release checksums, swaps the
-// binary + web/ assets (keeping a backup for rollback), and re-execs. It is
-// always triggered explicitly (never silently) and refuses to run on Windows
-// (→ run the installer) or for a non-writable install — e.g. a .deb install
-// whose postinstall left the tree root-owned — where a reinstall is the right
+// binary + web/ assets (keeping a backup for rollback), and re-execs. A
+// Windows installer install instead runs the release's signed installer
+// through a detached helper (wininstaller.go, ut-docs#160). It refuses to run
+// for a non-writable install — e.g. a .deb install whose postinstall left the
+// tree root-owned — or a portable Windows zip, where a reinstall is the right
 // path instead. A .deb install IS self-updatable once its tree is
 // service-user-owned (ut-docs#151's `chown -R pos:pos /opt/unitill`).
 //
@@ -65,6 +66,10 @@ var (
 	// could drift apart. Declared here (not macapp_darwin.go) because
 	// Supported() needs it on every platform's build, not just darwin's.
 	goarch = runtime.GOARCH
+	// hostGOOS is a test seam for runtime.GOOS in the install-shape
+	// decisions (Supported, and which Apply path runs), so the Windows
+	// installer flow is tested on every OS (ut-docs#160).
+	hostGOOS = runtime.GOOS
 )
 
 // beforeRestart runs concurrently with Apply's flush-delay sleep — started
@@ -89,7 +94,7 @@ func SetBeforeRestart(fn func(context.Context)) {
 }
 
 // ErrUnsupported means this install type updates via a native mechanism.
-var ErrUnsupported = errors.New("in-app update isn't available for this install; use the installer (Windows) or reinstall (this install's directory isn't self-update-writable)")
+var ErrUnsupported = errors.New("in-app update isn't available for this install; run the installer (a portable Windows zip) or reinstall (this install's directory isn't self-update-writable)")
 
 // Supported reports whether Apply can run for this build/install.
 func Supported() bool {
@@ -97,14 +102,19 @@ func Supported() bool {
 	if err != nil {
 		return false
 	}
-	if !supportedFor(exe, runtime.GOOS) {
+	if !supportedFor(exe, hostGOOS) {
 		return false
+	}
+	// Windows: the signed installer does the update, so the install must be
+	// one it made (ut-docs#160).
+	if hostGOOS == "windows" {
+		return windowsInstallerInstall(exe)
 	}
 	// A macOS .app updates the whole bundle via the .dmg (applyMacApp handles
 	// its own privilege/relaunch path), so it isn't gated on plain
 	// dir-writability. A *portable* darwin binary outside a bundle still does
 	// the tar.gz swap below, so it needs a writable dir just like linux.
-	if runtime.GOOS == "darwin" && appBundlePath(exe) != "" {
+	if hostGOOS == "darwin" && appBundlePath(exe) != "" {
 		return macAppBundleSupported(goarch)
 	}
 	// The real precondition for a portable unix install: Apply's swaps are
@@ -177,7 +187,10 @@ func InstallBridgeAvailableNow() bool {
 func supportedFor(exe, goos string) bool {
 	switch goos {
 	case "windows":
-		return false // updates via the installer
+		// The release's signed installer, run by a detached helper once this
+		// process has stopped (wininstaller.go, ut-docs#160). Supported()
+		// adds the precondition: an installer install, not a portable zip.
+		return true
 	case "android", "ios":
 		// Neither has a real self-update mechanism. Apply() only ever fetches
 		// a unitill-pos_<version>_<goos>_<arch>.tar.gz archive (or, on darwin,
@@ -225,7 +238,7 @@ func dirWritable(dir string) bool {
 // self-update via the .dmg whole-bundle replace (applyMacApp). Only arm64
 // dmgs are ever published (.goreleaser.yaml + the macos-app release job both
 // build arm64 only) — an Intel Mac must never see the "Update now" button,
-// only the plain download-page chip (the same treatment Windows already
+// only the plain download-page chip (the same treatment a portable Windows zip
 // gets, ut-docs#152), since clicking it would only ever fail at
 // applyMacApp's own Intel refusal (macapp_darwin.go) with a confusing
 // "no macOS .dmg" style error.
@@ -308,7 +321,9 @@ func applyVersion(ctx context.Context, version string, idle func() bool) error {
 			return fmt.Errorf("v%s is not newer than this build (v%s)", version, buildinfo.Version)
 		}
 	}
-	if !applyMu.TryLock() {
+	// windowsHandover: a Windows update already handed to the installer
+	// helper outlives applyMu (wininstaller.go).
+	if windowsHandover.Load() || !applyMu.TryLock() {
 		return errors.New("an update is already being applied")
 	}
 	defer applyMu.Unlock()
@@ -324,7 +339,10 @@ func applyVersion(ctx context.Context, version string, idle func() bool) error {
 
 	// macOS .app: replace the whole bundle from the .dmg and relaunch, instead
 	// of swapping the inner (signed) binary with an unsigned archive one.
-	if runtime.GOOS == "darwin" {
+	if hostGOOS == "windows" {
+		return applyWindowsInstaller(ctx, exe, version, idle)
+	}
+	if hostGOOS == "darwin" {
 		if app := appBundlePath(exe); app != "" {
 			return applyMacApp(ctx, app, version, idle)
 		}

@@ -41,9 +41,10 @@ import (
 // import's currency confirmation and the barcode-type checklist go through
 // here too, and settings_write_guard_test.go fails on any new direct
 // settings write in this package that is not per-till, main-till-only or
-// annotated `// settings-write:allow <reason>`. Not covered yet:
-// store.country from another till (ut-docs#2980) and read-only rendering
-// while the main till is away (ut-docs#2981).
+// annotated `// settings-write:allow <reason>`. store.country travels like
+// any other shop-wide key (ut-docs#2980): the main till runs the owner
+// check and the old country's posture reset, never this till. Not covered
+// yet: read-only rendering while the main till is away (ut-docs#2981).
 
 // settingsSyncProxyClient is the additional-till -> main-till client; same
 // admin-screen budget as the users write-through.
@@ -77,6 +78,8 @@ func settingsSyncMessageKey(se *errSettingsSync) string {
 	case "":
 		return "settings.error.main_till_unreachable"
 	case "not_supported_via_sync":
+		// A main till older than ut-docs#2980 still answers this for
+		// store.country.
 		return "settings.error.change_on_main_till"
 	default:
 		return "settings.error.main_till_refused"

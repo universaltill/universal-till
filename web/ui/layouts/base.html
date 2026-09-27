@@ -282,8 +282,10 @@
         // in front of it, assuming the default centred transform-origin.
         // Nothing here may throw into the page, and under UT.motionOff()
         // (reduced motion or Light, ADR-0119) no animate() call is made and
-        // no closing popup is re-shown (§6).
+        // no closing popup is re-shown (§6). The close has its own timing:
+        // POPUP_CLOSE_EASE/closeMs() (ADR-0123, ut-docs#2987).
         var POPUP_EASE = 'cubic-bezier(.32, .72, 0, 1)';
+        var POPUP_CLOSE_EASE = 'cubic-bezier(.4, 0, .6, 1)';
         var CLOSING_VARS = ['--ut-closing-t', '--ut-closing-is', '--ut-closing-w', '--ut-closing-h', '--ut-closing-display'];
         // el -> { origin, box, display, opening, closing }
         var popups = typeof WeakMap === 'function' ? new WeakMap() : null;
@@ -294,6 +296,13 @@
         function smallMs() {
           var ms = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ut-zoom-small-ms'));
           return ms > 0 ? ms : 300;
+        }
+        // ADR-0123 (ut-docs#2987): the close shrink's own, longer duration
+        // (--ut-zoom-close-ms) -- falls back to smallMs() (not its own
+        // literal) when unset/invalid, so an old token still animates.
+        function closeMs() {
+          var ms = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ut-zoom-close-ms'));
+          return ms > 0 ? ms : smallMs();
         }
         function popupState(el) {
           var st = popups.get(el);
@@ -454,14 +463,21 @@
           el.setAttribute('data-ut-closing', '');
           el.setAttribute('inert', '');
           el.setAttribute('aria-hidden', 'true');
-          var ms = smallMs();
+          // ADR-0123: the shrink's own, longer duration and ease-in-out
+          // curve -- opacity holds at 1 to offset .55 of that eased motion,
+          // then fades with the rest of the shrink (the middle keyframe has
+          // no transform: WAAPI interpolates it between the ends), so the
+          // owner sees the shape shrinking before it fades, not both at once
+          // from frame one.
+          var ms = closeMs();
           var done = function () { if (st.closing === c) endClosing(el); };
           c.timer = setTimeout(done, ms + 250); // backstop: never left painted
           try {
             c.anim = el.animate([
               { transform: 'none', opacity: 1 },
+              { opacity: 1, offset: 0.55 },
               { transform: zoomFrom(box, r, { css: '', x: 0, y: 0 }), opacity: 0 }
-            ], { duration: ms, easing: POPUP_EASE, fill: 'none' });
+            ], { duration: ms, easing: POPUP_CLOSE_EASE, fill: 'none' });
             c.anim.addEventListener('finish', done);
             c.anim.addEventListener('cancel', done);
             UT.trackZoom(c.anim, { passive: true });
