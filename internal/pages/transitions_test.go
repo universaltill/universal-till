@@ -754,10 +754,57 @@ func TestAppJSZoomsTheTreePaneTransiently(t *testing.T) {
 	if strings.Contains(body, "scaleX") || strings.Contains(body, "scaleY") || strings.Contains(body, "clip-path") {
 		t.Errorf("zoomPane() must use one uniform scale, no scaleX/scaleY/clip-path (ADR-0122 §1)")
 	}
+	// ut-docs#2988: Catalog/Inventory panes are routinely taller than the
+	// viewport, so the "grow from" maths must be measured against the part
+	// of the pane that is actually on screen (`box` clipped to the
+	// viewport), not the whole (possibly off-screen-centred) box -- and it
+	// must give up rather than zoom around nothing when that intersection
+	// is empty.
+	for _, want := range []string{
+		"Math.max(box.left, 0)",   // visible-box left, clipped to the viewport
+		"Math.min(box.right, vw)", // visible-box right, clipped to the viewport
+		"Math.max(box.top, 0)",
+		"Math.min(box.bottom, vh)",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("zoomPane() must clip the pane's box to the viewport before measuring, missing %q, got: %s", want, body)
+		}
+	}
+	if !strings.Contains(body, "if (visW <= 0 || visH <= 0) return;") {
+		t.Errorf("zoomPane() must skip the zoom entirely when no part of the pane is on screen, got: %s", body)
+	}
+	// Scale is r.width over the VISIBLE width now, not the full pane width.
+	if !strings.Contains(body, "r.width / visW") {
+		t.Errorf("zoomPane() must scale from the origin width over the visible pane width, got: %s", body)
+	}
+	if strings.Contains(body, "r.width / box.width") {
+		t.Errorf("zoomPane() must no longer scale from the full (possibly off-screen) pane width, got: %s", body)
+	}
 	// Only an activation zooms; a debounced input/change swap into a pane
 	// (the /help search box) keeps the generic ease (review, ut-docs#2943).
-	if !strings.Contains(js, "(how === 'click' || how === 'submit')) { zoomPane(t); return; }") {
+	if !strings.Contains(js, "(how === 'click' || how === 'submit')) {") {
 		t.Errorf("app.js must zoom a pane only for a click/submit-triggered swap")
+	}
+	// ut-docs#2988: the OOB #items-rail swap riding the same response
+	// settles too and shares htmx's `detail` object with the pane's own
+	// settle (`d.target`/`t` reads as the pane either way), so gating only
+	// on that would zoom the pane TWICE per tap. `evt.target` is the
+	// element THIS settle actually fired on -- zoomPane must run at most
+	// once per settle, only when that is the pane itself, and the pane
+	// branch must return unconditionally so the OOB duplicate never falls
+	// through to the generic `ut-swap-fx` ease below it.
+	paneBranch := js[strings.Index(js, "(how === 'click' || how === 'submit')) {"):]
+	if end := strings.Index(paneBranch, "\n    }\n"); end > 0 {
+		paneBranch = paneBranch[:end]
+	}
+	if !strings.Contains(paneBranch, "evt.target === t") {
+		t.Errorf("the pane branch must gate zoomPane() on evt.target === t (the pane's own settle, not the OOB rail's), got: %s", paneBranch)
+	}
+	if n := strings.Count(paneBranch, "zoomPane(t)"); n != 1 {
+		t.Errorf("the pane branch must call zoomPane(t) at most once per settle, found %d call(s) in: %s", n, paneBranch)
+	}
+	if !strings.Contains(paneBranch, "return;") {
+		t.Errorf("the pane branch must return unconditionally (even when it skips zoomPane) so the OOB duplicate never falls through to the generic ease, got: %s", paneBranch)
 	}
 	// A pane about to be swapped again finishes its running zoom first.
 	if !strings.Contains(js, "htmx:beforeSwap") || !strings.Contains(js, "UT.finishZooms()") {

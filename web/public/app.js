@@ -2586,7 +2586,21 @@ window.utTabBarFade = function (el) {
     // keeps the generic ease -- a zoom per keystroke would be noise
     // (ut-docs#2943 review).
     var how = rc.triggeringEvent.type;
-    if (PANES.indexOf(t.id) !== -1 && (how === 'click' || how === 'submit')) { zoomPane(t); return; }
+    // ut-docs#2988: the rail's response also carries an out-of-band swap
+    // of #items-rail (itemsnav.WriteRailOOB), which settles too. htmx
+    // fires one "htmx:afterSettle" per settled element but hands every one
+    // of them the SAME shared `detail` object (traced in the vendored
+    // htmx.min.js: the settle step does `oe(n.elts, function(e){ ...
+    // ce(e, "htmx:afterSettle", u) })` -- `u` is one object reused across
+    // the loop), so `d.target`/`t` reads as the pane for the OOB rail's
+    // settle too. `evt.target` is what THIS event actually fired on --
+    // only when that is the pane itself is this a real activation. The
+    // OOB duplicate still returns here (never falls through to the
+    // generic ease below), it just skips zoomPane.
+    if (PANES.indexOf(t.id) !== -1 && (how === 'click' || how === 'submit')) {
+      if (evt.target === t) zoomPane(t);
+      return;
+    }
     // Restart only when an ease is still running (a second swap inside
     // 150 ms) — the forced reflow is not free on the sale screen's basket.
     if (t.classList.contains('ut-swap-fx')) { t.classList.remove('ut-swap-fx'); void t.offsetWidth; }
@@ -2622,15 +2636,41 @@ window.utTabBarFade = function (el) {
     var box = el.getBoundingClientRect();
     if (!box.width || !box.height) return;
     var vw = window.innerWidth, vh = window.innerHeight;
+    // ut-docs#2988: scale is still about the element's own centre (no
+    // inline transform-origin -- CSS default stays 50%/50% of `box`), but
+    // Catalog (a real item list) and Inventory (several cards) routinely
+    // make the pane far taller than the viewport, so `box`'s centre sits
+    // well below the fold. Anchoring the "grow from" maths to that centre
+    // made the visible top of the pane slide in from off-screen instead of
+    // reading as a zoom out of the tapped row. `vis` is `box` clipped to
+    // the viewport -- what a shop owner can actually see growing. (The
+    // window only: a pane inside its own clipping scroller would need that
+    // ancestor's box here too; none of the three panes is one today.)
+    var visLeft = Math.max(box.left, 0);
+    var visTop = Math.max(box.top, 0);
+    var visRight = Math.min(box.right, vw);
+    var visBottom = Math.min(box.bottom, vh);
+    var visW = visRight - visLeft;
+    var visH = visBottom - visTop;
+    if (visW <= 0 || visH <= 0) return; // no part of the pane is on screen
     var r = o && o.rect;
     // No origin, or one that is zero-sized or off screen: the bottom
     // centre of the viewport (ADR-0122 §2).
     if (!r || !r.width || !r.height || r.left + r.width <= 0 || r.top + r.height <= 0 || r.left >= vw || r.top >= vh) {
       r = { left: vw / 2, top: vh, width: 0, height: 0 };
     }
-    var s = Math.min(1, Math.max(0.1, r.width / box.width));
-    var dx = (r.left + r.width / 2) - (box.left + box.width / 2);
-    var dy = (r.top + r.height / 2) - (box.top + box.height / 2);
+    var s = Math.min(1, Math.max(0.1, r.width / visW));
+    // With `transform: translate(dx,dy) scale(s)` about the element's
+    // centre C, a point P maps to C + d + s(P - C). Solving that for the
+    // ON-SCREEN centre V to land exactly on the origin's centre O gives
+    // dx/dy below (ut-docs#2988) -- for a pane that's fully on screen,
+    // V === C and this reduces to the plain "origin centre minus pane
+    // centre" this had before.
+    var Cx = box.left + box.width / 2, Cy = box.top + box.height / 2;
+    var Vx = visLeft + visW / 2, Vy = visTop + visH / 2;
+    var Ox = r.left + r.width / 2, Oy = r.top + r.height / 2;
+    var dx = Ox - Cx - s * (Vx - Cx);
+    var dy = Oy - Cy - s * (Vy - Cy);
     var ms = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ut-zoom-small-ms')) || 300;
     try {
       var anim = el.animate([

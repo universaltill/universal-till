@@ -19,10 +19,18 @@ async function setLevel(page: Page, level: string) {
   expect(res.status(), `POST effects-level=${level}`).toBe(204);
 }
 
-type Rec = { first: string; opacity: number; fill: string; duration: number; pane: { l: number; t: number; w: number; h: number } };
+type Rec = {
+  first: string; opacity: number; fill: string; duration: number;
+  pane: { l: number; t: number; w: number; h: number };
+  // ut-docs#2988: the viewport size at the moment of the call, needed to
+  // reproduce zoomPane()'s own viewport-clipped ("visible box") maths --
+  // Catalog/Inventory panes are routinely taller than the viewport.
+  vw: number; vh: number;
+};
 
 // Record every Element.animate() call on the pane: its first keyframe and
-// timing, plus the pane's own (untransformed) box when the call was made.
+// timing, plus the pane's own (untransformed) box and the viewport size
+// when the call was made.
 async function instrument(page: Page) {
   await page.evaluate(() => {
     const w = window as unknown as { __zooms: Rec[] };
@@ -35,6 +43,7 @@ async function instrument(page: Page) {
         w.__zooms.push({
           first: String(kf[0].transform), opacity: Number(kf[0].opacity), fill: String(o.fill), duration: Number(o.duration),
           pane: { l: r.left, t: r.top, w: r.width, h: r.height },
+          vw: window.innerWidth, vh: window.innerHeight,
         });
       }
       return orig.call(this, kf, opts as KeyframeAnimationOptions);
@@ -57,6 +66,34 @@ function parse(first: string) {
   return { dx: Number(m![1]), dy: Number(m![2]), s: Number(m![3]) };
 }
 
+// ut-docs#2988: mirrors app.js's zoomPane() maths exactly -- scale about
+// the pane's own centre C, but measured/anchored against the part of the
+// pane clipped to the viewport (`vis`), since a tall pane's full centre can
+// sit off screen. With `translate(dx,dy) scale(s)` about C, a point P maps
+// to C + d + s(P - C); solving that for the visible centre V to land on the
+// origin centre O gives dx/dy below. For a pane that's fully on screen,
+// V === C and this is just "origin centre minus pane centre", same as
+// before ut-docs#2988.
+function expectedZoom(
+  pane: { l: number; t: number; w: number; h: number },
+  vw: number, vh: number,
+  origin: { x: number; y: number; w: number; h: number },
+) {
+  const visLeft = Math.max(pane.l, 0);
+  const visTop = Math.max(pane.t, 0);
+  const visRight = Math.min(pane.l + pane.w, vw);
+  const visBottom = Math.min(pane.t + pane.h, vh);
+  const visW = visRight - visLeft;
+  const visH = visBottom - visTop;
+  expect(visW, 'pane has a non-empty on-screen intersection').toBeGreaterThan(0);
+  expect(visH, 'pane has a non-empty on-screen intersection').toBeGreaterThan(0);
+  const s = Math.min(1, Math.max(0.1, origin.w / visW));
+  const cx = pane.l + pane.w / 2, cy = pane.t + pane.h / 2;
+  const vx = visLeft + visW / 2, vy = visTop + visH / 2;
+  const ox = origin.x + origin.w / 2, oy = origin.y + origin.h / 2;
+  return { dx: ox - cx - s * (vx - cx), dy: oy - cy - s * (vy - cy), s };
+}
+
 test.describe('tree-pane zoom (ut-docs#2943, ADR-0122 §4)', () => {
   test.afterEach(async ({ page }) => {
     await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -75,11 +112,15 @@ test.describe('tree-pane zoom (ut-docs#2943, ADR-0122 §4)', () => {
     const rec = await page.evaluate(() => (window as unknown as { __zooms: Rec[] }).__zooms[0]);
 
     const { dx, dy, s } = parse(rec.first);
-    // Centred on the tapped item's centre (ADR-0122 §1), within a pixel.
-    expect(Math.abs(rec.pane.l + rec.pane.w / 2 + dx - (src!.x + src!.width / 2))).toBeLessThan(1.5);
-    expect(Math.abs(rec.pane.t + rec.pane.h / 2 + dy - (src!.y + src!.height / 2))).toBeLessThan(1.5);
-    // Uniform start scale = source width / pane width, clamped 0.1..1.
-    expect(s).toBeCloseTo(Math.min(1, Math.max(0.1, src!.width / rec.pane.w)), 3);
+    // Centred on the tapped item's centre (ADR-0122 §1), within a pixel --
+    // via the viewport-clipped visible-centre formula (ut-docs#2988). Even
+    // the Categories pane runs past the bottom of the 720px viewport, which
+    // is why the old pane-centre maths was ~64px off here.
+    const exp = expectedZoom(rec.pane, rec.vw, rec.vh, { x: src!.x, y: src!.y, w: src!.width, h: src!.height });
+    expect(Math.abs(dx - exp.dx)).toBeLessThan(1.5);
+    expect(Math.abs(dy - exp.dy)).toBeLessThan(1.5);
+    // Uniform start scale = source width / VISIBLE pane width, clamped 0.1..1.
+    expect(s).toBeCloseTo(exp.s, 3);
     expect(rec.opacity).toBeGreaterThanOrEqual(0.4);
     expect(rec.fill).toBe('none');
     expect(rec.duration).toBe(300);
@@ -91,6 +132,60 @@ test.describe('tree-pane zoom (ut-docs#2943, ADR-0122 §4)', () => {
     }));
     expect(after.running).toBe(0);
     expect(after.transform).toBe('none');
+    assertClean();
+  });
+
+  // ut-docs#2988: every rail row's response carries an out-of-band swap of
+  // #items-rail (itemsnav.WriteRailOOB) alongside the pane's own swap, and
+  // htmx 1.9.12 fires one htmx:afterSettle per settled element -- both
+  // sharing the SAME detail.target -- so before this fix EVERY tap zoomed
+  // the pane TWICE: once from the tapped row's real origin, then again
+  // (the later, visually-winning animation) from the bottom-centre fallback
+  // at scale 0.1, because the origin had already been consumed by the
+  // first call. Catalog and Inventory additionally made the pane taller
+  // than the viewport, so even the first call's "grow from" math was
+  // anchored on a centre that was off screen. This covers all five rail
+  // destinations, not just Categories (the only one short enough that
+  // ADR-0122 §4's original assertions happened to look right).
+  test('every rail row zooms exactly once, from its own on-screen visible centre', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await openItems(page, 'full');
+    const rows: Array<{ href: string; other: string }> = [
+      { href: '/catalog', other: '/categories' },
+      { href: '/categories', other: '/catalog' },
+      { href: '/inventory', other: '/categories' },
+      { href: '/modifiers', other: '/categories' },
+      { href: '/catalog/option-sets', other: '/categories' },
+    ];
+    for (const { href, other } of rows) {
+      // A rail row is a plain <a href>: going straight from /items to e.g.
+      // /categories renders that standalone page with no #items-panel at
+      // all (task note), and re-tapping the row already showing is a
+      // same-page no-op, not a fresh activation -- so land on a DIFFERENT
+      // row first, then tap the one under test.
+      await page.locator(`#items-rail a[href="${other}"]`).click();
+      await expect(page).toHaveURL(new RegExp(`${other.replace(/\//g, '\\/')}$`));
+      await page.evaluate(() => { (window as unknown as { __zooms: Rec[] }).__zooms = []; });
+
+      const link = page.locator(`#items-rail a[href="${href}"]`);
+      const src = await link.boundingBox();
+      expect(src, `${href}: rail row has a box`).not.toBeNull();
+      await link.click();
+      await expect(page).toHaveURL(new RegExp(`${href.replace(/\//g, '\\/')}$`));
+      await expect.poll(() => page.evaluate(() => (window as unknown as { __zooms: Rec[] }).__zooms.length),
+        `${href}: at least one zoom is recorded`).toBeGreaterThan(0);
+      // Give a (buggy) second animate() call -- the OOB rail's own settle
+      // re-triggering zoomPane -- a moment to land before counting.
+      await page.waitForTimeout(100);
+      const zooms = await page.evaluate(() => (window as unknown as { __zooms: Rec[] }).__zooms);
+      expect(zooms.length, `${href}: exactly one zoom per tap (ut-docs#2988)`).toBe(1);
+
+      const { dx, dy, s } = parse(zooms[0].first);
+      const exp = expectedZoom(zooms[0].pane, zooms[0].vw, zooms[0].vh, { x: src!.x, y: src!.y, w: src!.width, h: src!.height });
+      expect(Math.abs(dx - exp.dx), `${href}: dx`).toBeLessThan(1.5);
+      expect(Math.abs(dy - exp.dy), `${href}: dy`).toBeLessThan(1.5);
+      expect(s, `${href}: scale`).toBeCloseTo(exp.s, 3);
+    }
     assertClean();
   });
 
