@@ -111,6 +111,15 @@ async function capture(page: Page, id: string, locale: string, route: string) {
   // spec that navigates to /orders with `networkidle` needs the same
   // treatment (none in e2e/tests/ does today).
   await page.route('**/api/orders/stream', (r) => r.fulfill({ status: 204 }));
+  if (process.env.DOCS_SHOTS_TRACE) {
+    await page.addInitScript(() => {
+      (window as any).__swaps = [];
+      document.addEventListener('htmx:afterSwap', (e: any) => {
+        const t = e.detail && e.detail.target;
+        (window as any).__swaps.push(`${Math.round(performance.now())}:${t ? t.id || t.className : '?'}`);
+      });
+    });
+  }
   await page.goto(url, { waitUntil: 'networkidle' });
 
   // The locale actually took: RTL locales must render flipped, same
@@ -151,6 +160,22 @@ async function capture(page: Page, id: string, locale: string, route: string) {
         requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
       ),
   );
+
+  if (process.env.DOCS_SHOTS_TRACE) {
+    const st = await page.evaluate(() => {
+      const nav = document.querySelector('nav.nav') as HTMLElement | null;
+      const rects = nav
+        ? [...nav.querySelectorAll('.nav-toggle, #bugreport-chip, #sync-chip, #fiscal-chip, #diagnostics-chip, #session-chip, .logo')]
+            .map((el) => { const b = el.getBoundingClientRect(); return `${el.id || (el as HTMLElement).dataset.testid || el.className}@${b.left.toFixed(2)},${b.top.toFixed(2)},${b.width.toFixed(2)}x${b.height.toFixed(2)}`; })
+            .join(' ')
+        : 'no-nav';
+      const anims = document.getAnimations().map((a: any) => `${a.animationName || a.transitionProperty || a.constructor.name}:${a.playState}:${a.effect && a.effect.target ? a.effect.target.id || a.effect.target.className : ''}`).join(',');
+      const hov = [...document.querySelectorAll(':hover')].map((e) => e.tagName + '.' + e.className).join('>');
+      const act = document.activeElement ? document.activeElement.tagName + '#' + document.activeElement.id : '';
+      return `html=${document.documentElement.className} navScroll=${nav ? nav.scrollTop + '/' + nav.scrollHeight + '/' + nav.clientHeight : ''} t=${Math.round(performance.now())} swaps=${((window as any).__swaps || []).join(',')} anims=${anims} hover=${hov} active=${act} rects=${rects}`;
+    });
+    console.log(`TRACE ${locale}/${id} ${st}`);
+  }
 
   const out = path.join(imgRoot, locale, `${id}.png`);
   fs.mkdirSync(path.dirname(out), { recursive: true });

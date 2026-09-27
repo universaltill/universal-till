@@ -76,6 +76,7 @@ jobs:
       - name: Two-run byte-identical determinism check
         env:
           DOCS_SHOTS_DIFF_DIR: ${{ runner.temp }}/docs-shots-diff
+          DOCS_SHOTS_TRACE: '1'
         run: bash scripts/ci/guard-docs-shots-determinism.sh
       - name: Upload the differing PNGs (run A and run B)
         if: failure()
