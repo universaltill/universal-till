@@ -2,8 +2,9 @@
 
 package selfupdate
 
-// Windows is filtered out by Supported() (it updates via the installer), so
-// this never runs; it exists only so the package compiles on Windows.
+// Windows never re-execs: Apply hands over to the installer helper instead
+// (wininstaller.go), so this never runs; it exists only so the package
+// compiles on Windows.
 func reexec(_ string) error {
 	return ErrUnsupported
 }
