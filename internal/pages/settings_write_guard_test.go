@@ -41,7 +41,6 @@ var settingsWriteGuardFileAllowlist = map[string]string{
 	"sync_settings.go":       "main-till side of the write-through (/api/sync/settings/apply); refuses on a till that follows one",
 	"init.go":                "boot: persists the state just loaded from this till's own rows (no change to send)",
 	"setup_page.go":          "first-boot wizard: runs before this till follows a main till; a joining till takes the main till's settings from its first pull",
-	"setup_base_plugins.go":  "first-boot wizard's base-plugin step (pre-join, like setup_page.go)",
 	"setup_tse.go":           "TSE provisioning: one TSE per store, run from the main till's wizard (ADR-0053)",
 }
 

@@ -649,6 +649,11 @@ var PerTillSettingPrefixes = []string{
 	// till snapshot moved the admin fingerprint (the #2792 churn). install.*
 	// is this machine's one-time OS provisioning marker (internal/app).
 	"diagnostics.", "cloudsync.", "install.",
+	// ut-docs#2998: this till's own base-plugin install-retry queue
+	// (pages/setup_base_plugins.go). Plugins install per machine; synced,
+	// the main till's queue overwrote a replica's at every pull. A full key
+	// used as a prefix; the rest of setup.* stays shop-wide.
+	"setup.pending_base_plugins",
 }
 
 func perTillSetting(key string) bool {

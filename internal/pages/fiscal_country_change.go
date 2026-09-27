@@ -129,7 +129,7 @@ func clearFiscalStateForCountryChange(ctx context.Context, d *common.Deps, actor
 		return err
 	}
 	for _, k := range []string{configuredKey, fiscal.SigningDeviceFailingSinceKey(prevCountry)} {
-		// settings-write:allow clears the old country's posture ahead of a store.country change; an additional till refuses that change before it gets here (ut-docs#2980), except the cloud directive path (reported with ut-docs#2979)
+		// settings-write:allow clears the old country's posture ahead of a store.country change; an additional till refuses that change before it gets here, on the Settings screens (ut-docs#2980) and on a cloud directive (ut-docs#2998)
 		if err := d.Settings.Set(ctx, k, ""); err != nil {
 			return err
 		}

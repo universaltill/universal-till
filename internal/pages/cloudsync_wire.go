@@ -55,6 +55,21 @@ import (
 // handler used to write it verbatim as a dead, un-suffixed key — fail-open
 // in exactly the direction that matters, since the till keeps selling on
 // the stale "true" row).
+// refuseShopWideDirectiveOnAdditionalTill (ut-docs#2998): a cloud
+// set_setting / set_till_setting for a key that is not per-till is main-till
+// only, like the catalog directives (requirePrimaryDirective): on a till
+// that follows a main till a local write would be reverted by the next admin
+// pull, so it is refused with nothing written -- the till's fail-closed half
+// of the cloud withholding both types from satellites (ut-cloud
+// anyTillDirectiveTypes, ut-docs#2633). Not a write-through: a directive has
+// no operator for the main till to authorise.
+func refuseShopWideDirectiveOnAdditionalTill(ctx context.Context, d *common.Deps, key string) error {
+	if data.SettingScope(key) == data.SettingPerTill {
+		return nil
+	}
+	return requirePrimaryDirective(ctx, d)
+}
+
 func rejectRemoteFiscalPostureWrite(d *common.Deps, key string) error {
 	logicalKey, _ := resolveFiscalPostureKey(d, key)
 	if logicalKey == wireKeySigningDeviceConfigured || logicalKey == wireKeySigningDeviceFailingSince {
@@ -112,6 +127,9 @@ var allowedRemoteTillSettingKeys = map[string]bool{
 func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(context.Context), key, value string) (string, error) {
 	if !allowedRemoteTillSettingKeys[key] {
 		return "", fmt.Errorf("%s is not a remote-configurable till setting", key)
+	}
+	if err := refuseShopWideDirectiveOnAdditionalTill(ctx, d, key); err != nil {
+		return "", err
 	}
 	value = strings.TrimSpace(value)
 	switch key {
@@ -185,7 +203,7 @@ func cloudSetTillSetting(ctx context.Context, d *common.Deps, rederive func(cont
 		// other.
 		return "", fmt.Errorf("%s has no remote validation rule on this till", key)
 	}
-	// settings-write:allow a cloud set_till_setting directive addressed to THIS till; not written through to a main till yet (a replica can receive one -- reported with ut-docs#2979)
+	// settings-write:allow a cloud set_till_setting directive: a shop-wide key reaches this only on a main till (refuseShopWideDirectiveOnAdditionalTill, ut-docs#2998); a per-till key is local by definition
 	if err := d.Settings.Set(ctx, key, value); err != nil {
 		return "", err
 	}
@@ -626,6 +644,11 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 	directiveKeys := directivekey.New()
 	return cloudsync.Hooks{
 		SetSetting: func(ctx context.Context, key, value string) (string, error) {
+			// First, so a refused store.country never reaches the fiscal
+			// posture reset below.
+			if err := refuseShopWideDirectiveOnAdditionalTill(ctx, d, key); err != nil {
+				return "", err
+			}
 			if err := rejectRemoteFiscalPostureWrite(d, key); err != nil {
 				return "", err
 			}
@@ -641,7 +664,7 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 					return "", err
 				}
 			}
-			// settings-write:allow a cloud set_setting directive addressed to THIS till; not written through to a main till yet (a replica can receive one -- reported with ut-docs#2979)
+			// settings-write:allow a cloud set_setting directive: a shop-wide key reaches this only on a main till (refuseShopWideDirectiveOnAdditionalTill, ut-docs#2998); a per-till key is local by definition
 			if err := d.Settings.Set(ctx, key, value); err != nil {
 				return "", err
 			}
