@@ -124,6 +124,8 @@ export default defineConfig({
             '--disable-skia-runtime-opts',
             '--run-all-compositor-stages-before-draw',
             '--force-color-profile=srgb',
+            '--default-tile-width=1024',
+            '--default-tile-height=1024',
           ],
           // Set by scripts/docs-shots.sh only when resolve-chromium.sh found
           // a pre-installed browser worth reusing (ut-docs#622) — unset (and
