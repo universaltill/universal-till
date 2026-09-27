@@ -1,0 +1,27 @@
+{
+  "RT_GROUP_ICON": {
+    "#32512": {
+      "0000": "../../../web/public/assets/logo/ut-logo.ico"
+    }
+  },
+  "RT_VERSION": {
+    "#1": {
+      "0000": {
+        "fixed": {
+          "file_version": "0.0.0.0",
+          "product_version": "0.0.0.0"
+        },
+        "info": {
+          "0409": {
+            "CompanyName": "Task Runner Technology LTD",
+            "FileDescription": "Universal Till server",
+            "InternalName": "unitill-pos",
+            "LegalCopyright": "© Task Runner Technology LTD",
+            "OriginalFilename": "unitill-pos.exe",
+            "ProductName": "Universal Till"
+          }
+        }
+      }
+    }
+  }
+}
