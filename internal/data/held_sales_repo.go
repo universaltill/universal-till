@@ -371,25 +371,45 @@ func (r *HeldSalesRepo) DeleteAndTombstone(ctx context.Context, id, till string)
 	return nil
 }
 
-// MarkLocalOnly (ut-docs#2723) is the one write allowed to LOWER
-// primary_synced back to 0 -- Upsert's own primary_synced =
+// UpsertLocalOnly (ut-docs#3034, follow-up of #2723) is the one write
+// allowed to LOWER primary_synced back to 0 -- Upsert's own primary_synced =
 // MAX(held_sales.primary_synced, excluded.primary_synced) deliberately never
-// can (other callers rely on that stickiness, see HeldSale.PrimarySynced),
-// so this exists purely for the one caller that must demote it: a held-sale
-// give-back (heldSaleGiveBack) whose OWN write-through to the primary
-// failed. That row's id was just claimed OFF the primary, so any earlier
-// primary_synced=1 confirmation for it is stale the moment the claim
-// succeeds -- if the give-back's local fallback write left it at 1 (Upsert's
-// MAX would), the next successful ReconcileWithPrimary would drop it as
-// "resolved elsewhere" and the order would be lost outright, even though
-// this till alone now holds it. Idempotent; a missing row is a no-op.
-func (r *HeldSalesRepo) MarkLocalOnly(ctx context.Context, id string) error {
+// can (other callers rely on that stickiness, see HeldSale.PrimarySynced).
+// It is otherwise the IDENTICAL statement to Upsert (same created_at/
+// updated_at handling), so it exists purely for callers that must demote
+// the flag while writing the row -- never as a separate follow-up statement:
+// #2723's own fix (heldSaleGiveBack) shipped Upsert-then-MarkLocalOnly as
+// two statements, which left a window between them where a concurrent
+// ReconcileWithPrimary could see the row committed at primary_synced=1 (a
+// "confirmed mirror") and drop it as resolved elsewhere before the second
+// statement ever ran -- losing the order outright even though this till
+// alone held it. One statement closes that window: no intermediate commit of
+// this write exposes the row at 1. Idempotent-by-id like Upsert; a missing row
+// is inserted at primary_synced=0.
+//
+// Every write-through that falls back to local-only for an id THIS TILL
+// holds a pos.HeldOrigin.Claimed confirmation for (it took the order off the
+// shop's authority when resuming it, so no other copy is confirmed anywhere
+// any more) must end here, not in Upsert -- see HeldOrigin.Claimed's own
+// doc comment.
+func (r *HeldSalesRepo) UpsertLocalOnly(ctx context.Context, h HeldSale) error {
 	var err error
-	done := heldSalesObs.trace("mark_local_only")
+	done := heldSalesObs.trace("upsert_local_only")
 	defer func() { done(err) }()
-	_, err = r.db.ExecContext(ctx, `UPDATE held_sales SET primary_synced = 0 WHERE id = ?`, id)
+	_, err = r.db.ExecContext(ctx, `
+INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id, created_at, updated_at, primary_synced)
+VALUES (?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), datetime('now')), datetime('now'), 0)
+ON CONFLICT(id) DO UPDATE SET
+	label = excluded.label,
+	total_minor = excluded.total_minor,
+	line_count = excluded.line_count,
+	payload = excluded.payload,
+	table_id = excluded.table_id,
+	updated_at = datetime('now'),
+	primary_synced = 0
+`, h.ID, h.Label, h.TotalMinor, h.LineCount, h.Payload, nullIfEmpty(h.TableID), h.CreatedAt)
 	if err != nil {
-		return heldSalesObs.wrapf("mark_local_only", "mark held sale %s local-only", err, id)
+		return heldSalesObs.wrapf("upsert_local_only", "upsert held sale %s local-only", err, h.ID)
 	}
 	return nil
 }

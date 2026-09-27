@@ -100,7 +100,7 @@ func TestReplicaLink_HeldOrderResolvedOnMainClearsTheSatelliteBadge(t *testing.T
 	rrepo := data.NewHeldSalesRepo(replica.Db)
 	if out, err := heldSaleWriteThrough(ctx, replica, rrepo, data.HeldSale{
 		ID: "hold-pi-1", Label: "Table 4", TotalMinor: 1250, LineCount: 2, Payload: `{}`,
-	}); err != nil || out != heldSaleSyncedPrimary {
+	}, false); err != nil || out != heldSaleSyncedPrimary {
 		t.Fatalf("park on the satellite: outcome %v, err %v", out, err)
 	}
 	// Two moves: this till's own write-through, and the main till's nudge

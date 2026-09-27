@@ -118,6 +118,23 @@ type HeldOrigin struct {
 	ID        string
 	Label     string
 	CreatedAt string
+	// Claimed (ut-docs#3034) records that resuming this order took it OFF
+	// the shop's authority (ADR-0093 Amendment B: heldSaleClaimForResume's
+	// claim on the primary, or the equivalent local claim on a standalone/
+	// primary till) -- so no OTHER copy of this order is confirmed anywhere
+	// any more, however stale a previously-confirmed local mirror might
+	// read. A re-park of this same order that falls back to writing
+	// LOCAL-ONLY (the primary unreachable; a refusal is not local-only --
+	// it proves the primary holds a newer copy, so that row stays confirmed) must
+	// therefore never keep a stale confirmed-mirror (primary_synced=1)
+	// flag: doing so would be indistinguishable from a genuinely still-
+	// confirmed row, and the next successful ReconcileWithPrimary would
+	// drop it as "resolved elsewhere" -- losing the order outright even
+	// though this till alone now holds it. False for a basket that was
+	// never resumed from a claim (a first park, or a resume that fell back
+	// to a local, never-claimed row): that re-park's own local-only
+	// fallback keeps the ordinary MAX-sticky Upsert behaviour, unchanged.
+	Claimed bool
 }
 
 // IsZero reports whether this basket has no held-sale origin, i.e. it was
