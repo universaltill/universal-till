@@ -841,7 +841,7 @@ func buildSyncRequest(ctx context.Context, cfg *config.Config, settings *data.Se
 		v, _, _ := settings.Get(ctx, k)
 		return v
 	}
-	name := strings.TrimSpace(get("sync.till_name"))
+	name := enroll.DeviceName(ctx, settings)
 	if name == "" {
 		name = "Till"
 	}
