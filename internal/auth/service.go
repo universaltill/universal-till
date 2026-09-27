@@ -235,8 +235,9 @@ func touchInterval(window time.Duration) time.Duration {
 }
 
 // Resolve returns the operator for a session token, if the session is live.
-// A session idle for longer than the configured window is revoked here —
-// the server is authoritative; the client-side timer is cosmetic.
+// A session idle for longer than the configured window is revoked here. The
+// till's own timer (app.js) also revokes on its verdict via IdleLock, because
+// this clock trails it after a page load (ut-docs#3005); either one locks.
 func (s *Service) Resolve(ctx context.Context, token string) (User, bool) {
 	return s.resolve(ctx, token, true)
 }
@@ -271,6 +272,29 @@ func (s *Service) resolve(ctx context.Context, token string, touch bool) (User, 
 		_ = s.repo.TouchSession(ctx, hash)
 	}
 	return User{ID: row.UserID, Username: row.Username, DisplayName: row.DisplayName, Role: row.Role}, true
+}
+
+// IdleLock revokes the session behind the token on the client's idle verdict
+// and records it as an idle lock (ut-docs#3005). The till's own idle timer
+// counts from the last real input, but the server's LastSeenAt is also moved
+// by a page load's own requests, so after any navigation the server trails
+// the client by a moment: resolve's "idle > window" check then said "still
+// fresh" and GET /login bounced the till back to "/" every 10 min, forever.
+// Signing yourself out never raises privilege, so trusting the client here
+// is safe. A missing, unknown or already-revoked token is a no-op.
+func (s *Service) IdleLock(ctx context.Context, token string) {
+	if token == "" {
+		return
+	}
+	hash := hashToken(token)
+	row, ok, err := s.repo.LookupSession(ctx, hash)
+	if err != nil || !ok {
+		return
+	}
+	_ = s.repo.RevokeSession(ctx, hash)
+	if fn, k := s.onIdleLock.Load().(func(context.Context, string)); k {
+		fn(ctx, row.UserID)
+	}
 }
 
 // Logout revokes the session behind the token (lock / sign out).

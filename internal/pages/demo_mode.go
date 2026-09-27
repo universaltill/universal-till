@@ -381,12 +381,13 @@ var demoAllowedRoutes = map[string]bool{
 	"GET /themes/{file}":                             true,
 	"GET /ui/theme-sync":                             true,
 	// Sign-in, lock and session.
-	"GET /login":            true,
-	"GET /pin":              true,
-	"GET /ui/session-chip":  true,
-	"POST /api/auth/login":  true,
-	"POST /api/auth/logout": true,
-	"POST /api/pin/change":  true,
+	"GET /login":               true,
+	"GET /pin":                 true,
+	"GET /ui/session-chip":     true,
+	"POST /api/auth/login":     true,
+	"POST /api/auth/logout":    true,
+	"POST /api/auth/idle-lock": true,
+	"POST /api/pin/change":     true,
 	// Selling: sale screen ("/" — the root path only; see
 	// demoRouteAllowed), basket, scan, lines, discounts, tenders (the
 	// tender route is shared; card-terminal tenders are a later card),

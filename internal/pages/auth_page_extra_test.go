@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
@@ -417,5 +418,72 @@ func TestSetupPostRedirectsToAWorkingLoginWhenTheDatabaseIsUnreachable(t *testin
 	mux.ServeHTTP(frec, follow)
 	if frec.Code != http.StatusOK || !strings.Contains(frec.Body.String(), "login-error") {
 		t.Fatalf("the redirect target must render the explained login page, got %d: %s", frec.Code, frec.Body.String())
+	}
+}
+
+// ut-docs#3005: the idle timer's POST /api/auth/idle-lock revokes the caller's
+// session even while the server still counts it as fresh, clears the cookie
+// and answers 204 -- so the GET /login that follows shows the keypad instead
+// of bouncing back to "/" (the every-10-minutes reload loop). GET is refused.
+func TestIdleLockEndpointRevokesAndLandsOnKeypad(t *testing.T) {
+	mux, svc, _ := newFullAuthDeps(t)
+	seedOperator(t, svc, "cash", "cashier", "4321")
+	seedOperator(t, svc, "mgr", "manager", "8765")
+	_, token, err := svc.Login(t.Context(), "4321")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, other, err := svc.Login(t.Context(), "8765")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var audited []string
+	svc.SetIdleLockAudit(func(_ context.Context, userID string) { audited = append(audited, userID) })
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/idle-lock", nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("idle-lock: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var cleared bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == auth.CookieName && c.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Fatal("idle-lock did not expire the session cookie")
+	}
+	if _, ok := svc.ResolveNoTouch(t.Context(), token); ok {
+		t.Fatal("session still resolves after idle-lock")
+	}
+	if len(audited) != 1 {
+		t.Fatalf("idle-lock audits = %v, want exactly one", audited)
+	}
+	if _, ok := svc.ResolveNoTouch(t.Context(), other); !ok {
+		t.Fatal("another operator's session must survive")
+	}
+
+	// The navigation that follows now renders the keypad, not a 303 to "/".
+	req = httptest.NewRequest(http.MethodGet, "/login", nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: token})
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /login after idle-lock: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+
+	// GET must never lock a till (an <img src> on any page could).
+	req = httptest.NewRequest(http.MethodGet, "/api/auth/idle-lock", nil)
+	req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: other})
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code == http.StatusNoContent {
+		t.Fatal("GET /api/auth/idle-lock must not lock")
+	}
+	if _, ok := svc.ResolveNoTouch(t.Context(), other); !ok {
+		t.Fatal("a GET revoked a session")
 	}
 }
