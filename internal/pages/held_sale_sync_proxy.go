@@ -407,11 +407,31 @@ func heldSaleClaimForResume(ctx context.Context, d *common.Deps, repo *data.Held
 // created_at kept so the order's age survives; its tombstone is harmless,
 // since a claim only consults one when the row is absent. Best-effort: a
 // failure is logged, never surfaced over the resume's own outcome.
+//
+// ut-docs#2723: when the write-through's own upsert to the primary ALSO
+// fails, it falls back to the plain local repo.Upsert -- whose
+// primary_synced = MAX(current, incoming) never lowers the flag. This id
+// was just claimed OFF the primary, so a primary_synced=1 row left over
+// from an earlier, now-stale confirmation must not survive as "still
+// confirmed": it would be indistinguishable from a genuinely synced mirror
+// and the next successful ReconcileWithPrimary would drop it as "resolved
+// elsewhere", losing the order outright even though this till alone now
+// holds it. MarkLocalOnly is the one call allowed to demote it back to 0;
+// best-effort like the write-through itself, logged and never surfaced.
 func heldSaleGiveBack(ctx context.Context, d *common.Deps, repo *data.HeldSalesRepo, h data.HeldSale) {
 	h.UpdatedAt = ""
 	h.PrimarySynced = false
-	if _, err := heldSaleWriteThrough(ctx, d, repo, h); err != nil {
+	outcome, err := heldSaleWriteThrough(ctx, d, repo, h)
+	if err != nil {
 		logging.L().Errorf("held sale proxy: giving back claimed order %s after a failed resume: %v", h.ID, err)
+	}
+	// Demote even when the local fallback write itself failed: an older
+	// primary_synced=1 row for this id may still be there, and it is just as
+	// stale.
+	if outcome == heldSaleSyncedLocalOnly {
+		if err := repo.MarkLocalOnly(ctx, h.ID); err != nil {
+			logging.L().Errorf("held sale proxy: clearing stale primary_synced on given-back order %s: %v", h.ID, err)
+		}
 	}
 }
 
