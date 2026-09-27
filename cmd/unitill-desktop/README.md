@@ -111,6 +111,45 @@ sales are lost) or manually reconcile the two before restarting — there is
 no automated merge tool for this, it's a one-off recovery, not a shipped
 feature.
 
+## Linux self-healing: upgrade re-exec and WebKit recovery (ut-docs#2991)
+
+Field report (Pi 5, `.deb`, attach mode): the shell kept running through an
+apt upgrade that replaced `/opt/unitill/bin/unitill-desktop` on disk
+(`/proc/<pid>/exe -> … (deleted)`), and later its WebKit web process died,
+leaving WebKit's built-in "WebKit encountered an internal error" page on
+screen — a dead end on a till with no browser chrome. Two Linux-only fixes:
+
+- **Re-exec after an upgrade.** Every 30s the shell stats its own
+  executable (`watchOwnBinary`, `exe_watch.go`; glue in
+  `exe_reexec_linux.go`). Once the path names a different file than the one
+  running (baseline taken from `/proc/self/exe`) and that new file looked
+  identical on two consecutive checks — so a half-written file is never
+  exec'd — it logs the reason and `exec`s the new binary with the same
+  arguments and environment. In spawn mode it first stops the `unitill-pos`
+  it started (SIGTERM, SIGKILL after 10s) so nothing is orphaned; the fresh
+  shell then attaches/spawns as on any launch — typically 30–90s after dpkg
+  finishes. A replaced file that isn't executable is logged and the old
+  shell keeps running; an exec that still fails after the server was
+  stopped restarts the running image via `/proc/self/exe` instead, so a
+  fresh server is spawned. `internal/selfupdate` never replaces this
+  binary (only `unitill-pos` + `web/`, after which the web UI reloads
+  itself), so in practice this is the apt/`.deb` upgrade path.
+- **WebKit crash / load-failure recovery.** `web-process-terminated`
+  reloads the page the view was on; a main-frame `load-failed` on the
+  till's own origin (scheme+host+port) reloads the failing URL and
+  suppresses WebKit's error page; cancellations (`WebKitNetworkError` 302),
+  policy interruptions such as downloads (`WebKitPolicyError` 102) and
+  `WebKitPluginError` 204 are left alone. Retries back off 0s, 1s, 2s … 30s
+  and continue at 30s until the till answers again (a server that is down
+  for minutes heals by itself); a successful commit resets the backoff.
+  Policy in `webkit_recovery.go` (untagged, tested), wiring in
+  `webkit_recovery_linux.go` / `webkit_recovery_cgo_linux.go`. Every attempt
+  logs one `webkit recovery:` line to `desktop.log`.
+
+While the till is unreachable the window shows the last page or a blank
+view, not an error screen. A proper recovery page with **Reload** /
+**Return to desktop** is a follow-up card. macOS and Windows are unchanged.
+
 ## Status & follow-ups
 
 Proof of concept — validated to build on macOS (arm64). Still to do:

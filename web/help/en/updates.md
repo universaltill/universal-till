@@ -14,7 +14,7 @@ The till checks for new versions and tells you when one is available; on most pl
 ## How to use it
 
 1. Settings → Software update → Check now shows whether you are up to date.
-2. When an update is offered, click Update now — the app restarts on the new version.
+2. When an update is offered, click Update now — the app restarts on the new version. On a Linux computer, the desktop app also restarts itself within about a minute when a system upgrade (apt) installs a new version, and if the till's page stops showing in its window, the app reloads it by itself until the till answers again.
 3. The status bar's update chip mirrors this: on Windows and macOS it links straight to the download page; on installs where in-app update isn't available (for example a kiosk), it's just plain text with nothing to tap.
 
 ## Automatic updates

@@ -24,9 +24,24 @@ import (
 // WKWebView (webkit_darwin.go), so both stay this no-op.
 var setupPersistentCookies = func() error { return nil }
 
+// installWebKitRecovery hooks the shell's own recovery onto the native
+// view's crash/load-failure signals (ut-docs#2991) and returns the stop
+// func that must run on the UI thread before w.Destroy(). A no-op by
+// default; webkit_recovery_linux.go's init() overrides it — the reported
+// dead end (WebKit's built-in "internal error" page) is WebKitGTK's.
+var installWebKitRecovery = func(webview.WebView, string) (stop func()) { return func() {} }
+
+// startSelfReexecWatch re-execs the shell once its own binary on disk was
+// replaced (ut-docs#2991: an apt upgrade leaves the old shell running the
+// deleted image) until ctx ends; childPid > 0 is the spawned till server to
+// stop first. A no-op by default; exe_reexec_linux.go's init() overrides it.
+var startSelfReexecWatch = func(context.Context, int) {}
+
 // showWindow opens the webview_go window (Windows: Edge WebView2, Linux: GTK
 // WebKit) and blocks until it closes. Run() returns on close, so main's
-// deferred Kill stops the server; childPid is unused here.
+// deferred Kill stops the server. childPid (> 0 in spawn mode) only
+// matters to the Linux self re-exec watch, which must stop that server
+// before exec'ing (ut-docs#2991).
 //
 // When the system WebView is unavailable (typically a Windows box without the
 // WebView2 runtime), webview.New returns nil — fall back to the default
@@ -41,7 +56,6 @@ var setupPersistentCookies = func() error { return nil }
 // failed to bind (newControlServer's error case in desktop.go) — no live
 // channel to wire either way.
 func showWindow(url, title string, childPid int, ctl *controlServer) {
-	_ = childPid
 	// Must run BEFORE the window exists: ut-docs#1093 is a defect in the
 	// compositing surface WebKit creates at window construction, so once
 	// webview.New has returned it is already too late.
@@ -63,6 +77,23 @@ func showWindow(url, title string, childPid int, ctl *controlServer) {
 		return
 	}
 	defer w.Destroy()
+
+	// WebKit crash/load-failure recovery (ut-docs#2991), installed before
+	// the first Navigate so even that load is covered. Its stop is deferred
+	// AFTER w.Destroy() above, so LIFO runs it first: the reload scheduler
+	// is closed (no timer can Dispatch any more) and the signals are
+	// disconnected before the view is freed — same ordering reasoning as
+	// ctl.Close below (ut-docs#882 review m1).
+	stopRecovery := installWebKitRecovery(w, url)
+	defer stopRecovery()
+
+	// Self re-exec once an apt upgrade replaced this binary (ut-docs#2991),
+	// only while a window exists — the browser-fallback branch above has
+	// no window to go stale. Cancelled when showWindow returns, so a
+	// closing shell never re-execs on its way out.
+	reexecCtx, cancelReexec := context.WithCancel(context.Background())
+	defer cancelReexec()
+	startSelfReexecWatch(reexecCtx, childPid)
 
 	// Live, no-relaunch channel (ut-docs#882), wired as early as possible —
 	// right after the window exists, before the (network-bound)
