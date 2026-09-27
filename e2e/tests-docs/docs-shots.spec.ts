@@ -71,11 +71,9 @@ const pinnedQuery: Record<string, string> = {
 // `display`, always in a Chromium build this repo's own dev sandbox could
 // not exactly reproduce): a dramatic reduction from the pre-fix 43+, not a
 // proven zero. See docs/code-reviews/2026-09-12-docs-shots-determinism-2184.md's
-// "Update after pushing to CI" section for the honest full account.
-// ut-docs#2929 traced that residual to the rail (always the same 25 pixels,
-// whichever page) and removed it with the viewport bounce in capture()
-// below — see its comment. The check stays non-required for the paths:
-// reason in the workflow's own comment.
+// "Update after pushing to CI" section for the honest full account. The
+// check stays deliberately non-required (see the workflow's own comment)
+// precisely because of this residual.
 //
 // THE MANIFEST-vs-PNG CONTRACT (ut-docs#930 AC, still true): guard-docs-shots.sh
 // checks freshness from SOURCE-surface hashes recorded in manifest.json, and
@@ -153,32 +151,6 @@ async function capture(page: Page, id: string, locale: string, route: string) {
         requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
       ),
   );
-
-  // ut-docs#2929: repaint the whole page from scratch before the shot. The
-  // rail's chips (bugreport/sync/fiscal/diagnostics/session) and the other
-  // hx-trigger="load" fragments land in a different order and frame on every
-  // run, and the pixels the CI runner's Chromium produced depended on that
-  // history, not only on the final page: with byte-identical DOM, geometry
-  // and styles in both runs (traced), the same 25 anti-aliased pixels on the
-  // rail — the Orders button's corner and the help icon's lower arc — came
-  // out in one of two states, so a random 0-3 of the 124 PNGs differed per
-  // run pair. Re-laying out the rail or <body>, promoting the rail to its
-  // own layer, answering the chips in a fixed order, one raster thread and
-  // the headless determinism flags all left it failing; a viewport resize,
-  // which invalidates and re-rasters every tile and rebuilds the compositor
-  // frame, is what made the capture independent of how the page got there.
-  // One pixel taller and back, a real frame in between each way.
-  const vp = page.viewportSize();
-  if (vp) {
-    const frames = () =>
-      page.evaluate(
-        () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
-      );
-    await page.setViewportSize({ width: vp.width, height: vp.height + 1 });
-    await frames();
-    await page.setViewportSize(vp);
-    await frames();
-  }
 
   const out = path.join(imgRoot, locale, `${id}.png`);
   fs.mkdirSync(path.dirname(out), { recursive: true });
