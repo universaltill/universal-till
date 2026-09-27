@@ -1246,3 +1246,144 @@ func TestIndexTSEBanner_RequiresRealRejectedState(t *testing.T) {
 		t.Fatal("banner rendered from the query param alone, without a rejected state stored")
 	}
 }
+
+// --- main till only (ut-docs#3039, #2969) ---
+
+// seedTSEStateOnReplica makes d a till that follows a main till and gives it
+// the main till's synced provisioning record, the way the admin pull would.
+// The record is written straight to the store: saveTSEProvisioningState
+// itself refuses on a replica.
+func seedTSEStateOnReplica(t *testing.T, d *common.Deps, st tseProvisioningState) {
+	t.Helper()
+	raw, err := json.Marshal(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Settings.Set(t.Context(), common.KeyTSEProvisioningState, string(raw)); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Settings.Set(t.Context(), "sync.primary_url", "http://main-till.local:8080"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func tseStateRaw(t *testing.T, d *common.Deps) string {
+	t.Helper()
+	v, _, err := d.Settings.Get(t.Context(), common.KeyTSEProvisioningState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+// ADR-0053 provisions one TSE per store, from the main till. A replica that
+// receives fiscal_tse_ready must neither spend the single-use credential
+// handoff nor write either shop-wide key: the credential would sit on the
+// replica's disk, so "configured" would be false, and the next admin pull
+// would revert both writes anyway.
+func TestApplyFiscalTSEReady_ReplicaWritesNeitherKey(t *testing.T) {
+	d := newTSEReadyDeps(t)
+	initTestPaths(t)
+	cloud := newFakeTSECloud(t)
+	configureTSECloud(d, cloud.server.URL)
+	seedTSEStateOnReplica(t, d, tseProvisioningState{
+		Status: tseStatusAwaitingReady, Country: "DE",
+		Identity: tseBusinessIdentity{LegalName: "L", OwnerName: "O", TaxNumber: "DE123456789", Address: "A"},
+	})
+	before := tseStateRaw(t, d)
+
+	if _, err := applyFiscalTSEReady(t.Context(), d); err == nil {
+		t.Fatal("applyFiscalTSEReady on a replica succeeded, want a refusal")
+	}
+	if n := cloud.credentialCount(); n != 0 {
+		t.Fatalf("replica fetched the single-use credential (%d calls)", n)
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), fiscal.SigningDeviceConfiguredKey("DE")); v != "" {
+		t.Fatalf("replica wrote %s = %q", fiscal.SigningDeviceConfiguredKey("DE"), v)
+	}
+	if after := tseStateRaw(t, d); after != before {
+		t.Fatalf("replica rewrote %s: %q -> %q", common.KeyTSEProvisioningState, before, after)
+	}
+	if _, ok, _ := fiscal.NewSigningDeviceCredentialStore().Load(); ok {
+		t.Fatal("replica stored a TSE credential")
+	}
+}
+
+// The same holds when the replica already has a credential file on disk
+// (the idempotent re-serve fast path): it must not flip the shop-wide row.
+func TestApplyFiscalTSEReady_ReplicaWithLocalCredentialStillRefuses(t *testing.T) {
+	d := newTSEReadyDeps(t)
+	initTestPaths(t)
+	if err := fiscal.NewSigningDeviceCredentialStore().Save(map[string]any{"api_key": "k"}); err != nil {
+		t.Fatal(err)
+	}
+	seedTSEStateOnReplica(t, d, tseProvisioningState{Status: tseStatusAwaitingReady, Country: "DE"})
+
+	if _, err := applyFiscalTSEReady(t.Context(), d); err == nil {
+		t.Fatal("applyFiscalTSEReady on a replica succeeded, want a refusal")
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), fiscal.SigningDeviceConfiguredKey("DE")); v != "" {
+		t.Fatalf("replica wrote %s = %q", fiscal.SigningDeviceConfiguredKey("DE"), v)
+	}
+}
+
+// ut-docs#2969: the retry tick reads the synced pending_kickoff state; on a
+// replica it must not POST a kickoff for the store or rewrite the state.
+func TestTSEProvisionRetryTick_SkipsOnReplica(t *testing.T) {
+	_, _, d := newFullAuthDeps(t)
+	initTestPaths(t)
+	cloud := newFakeTSECloud(t)
+	configureTSECloud(d, cloud.server.URL)
+	seedTSEStateOnReplica(t, d, tseProvisioningState{
+		Status: tseStatusPendingKickoff, Country: "DE",
+		Identity: tseBusinessIdentity{LegalName: "L", OwnerName: "O", TaxNumber: "DE123456789", Address: "A"},
+	})
+	before := tseStateRaw(t, d)
+
+	tseProvisionRetryTick(t.Context(), d)
+
+	if n := cloud.provisionCount(); n != 0 {
+		t.Fatalf("replica posted %d kickoff(s)", n)
+	}
+	if after := tseStateRaw(t, d); after != before {
+		t.Fatalf("replica rewrote the provisioning state: %q -> %q", before, after)
+	}
+}
+
+// Settings on a replica shows the main till's synced record; its retry and
+// dismiss answer 409 "change this on the main till" and change nothing.
+func TestTSEProvisioningSettingsActions_RefusedOnReplica(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	initTestPaths(t)
+	cloud := newFakeTSECloud(t)
+	configureTSECloud(d, cloud.server.URL)
+	seedTSEStateOnReplica(t, d, tseProvisioningState{
+		Status: tseStatusKickoffRejected, Country: "GB", ErrorCode: "subscription_inactive",
+		Identity: tseBusinessIdentity{LegalName: "L", OwnerName: "O", TaxNumber: "DE123456789", Address: "A"},
+	})
+	before := tseStateRaw(t, d)
+	want := httpx.T("en", "settings.error.change_on_main_till")
+
+	page := getSettingsAs(t, mux, mgrUser)
+	if !strings.Contains(page, `data-testid="tse-provisioning-main-till-only"`) {
+		t.Fatal("replica Settings lacks the act-on-the-main-till hint")
+	}
+	for _, id := range []string{"tse-provisioning-retry", "tse-provisioning-dismiss"} {
+		if strings.Contains(page, `data-testid="`+id+`"`) {
+			t.Fatalf("replica Settings renders %s, which can only answer 409", id)
+		}
+	}
+
+	for _, path := range []string{"/api/settings/retry-tse-provisioning", "/api/settings/dismiss-tse-provisioning"} {
+		rec := postForm(mux, path, url.Values{}, &mgrUser)
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("%s on a replica: code=%d body=%q, want 409 %q", path, rec.Code, rec.Body.String(), want)
+		}
+	}
+	if n := cloud.provisionCount(); n != 0 {
+		t.Fatalf("replica posted %d kickoff(s)", n)
+	}
+	if after := tseStateRaw(t, d); after != before {
+		t.Fatalf("replica rewrote the provisioning state: %q -> %q", before, after)
+	}
+}

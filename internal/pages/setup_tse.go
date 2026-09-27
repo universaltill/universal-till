@@ -204,16 +204,37 @@ func loadTSEProvisioningState(ctx context.Context, d *common.Deps) (*tseProvisio
 }
 
 func saveTSEProvisioningState(ctx context.Context, d *common.Deps, st *tseProvisioningState) error {
+	if err := tseRequireMainTill(ctx, d); err != nil {
+		return err
+	}
 	if st == nil {
-		// settings-write:allow TSE provisioning state, written on the till running the provisioning (the main till, ADR-0053); not gated to it in code -- reported with ut-docs#2979
+		// settings-write:allow TSE provisioning state: main till only, gated by tseRequireMainTill above (ADR-0053, ut-docs#3039)
 		return d.Settings.Set(ctx, common.KeyTSEProvisioningState, "")
 	}
 	raw, err := json.Marshal(st)
 	if err != nil {
 		return err
 	}
-	// settings-write:allow TSE provisioning state, written on the till running the provisioning (the main till, ADR-0053); not gated to it in code -- reported with ut-docs#2979
+	// settings-write:allow TSE provisioning state: main till only, gated by tseRequireMainTill above (ADR-0053, ut-docs#3039)
 	return d.Settings.Set(ctx, common.KeyTSEProvisioningState, string(raw))
+}
+
+// errTSENotMainTill: TSE provisioning ran on a till that follows a main
+// till. ADR-0053 provisions one TSE per store, from the main till: its
+// state keys are shop-wide (the next admin pull would revert a replica's
+// write), and the operational credential lives on the disk of the till
+// that fetched it, so "configured" on a replica would be false.
+var errTSENotMainTill = errors.New("TSE provisioning runs on the main till only")
+
+// tseRequireMainTill is the one main-till gate for every TSE provisioning
+// write and network call in this file (ut-docs#3039) — the same
+// "sync.primary_url is set" test as tillFollowsMain. The wizard runs
+// before a till joins a main till, so it always passes there.
+func tseRequireMainTill(ctx context.Context, d *common.Deps) error {
+	if tillFollowsMain(ctx, d) {
+		return errTSENotMainTill
+	}
+	return nil
 }
 
 // tseSystemActor is the audit actor for TSE provisioning transitions nobody
@@ -251,7 +272,14 @@ func startTSEProvisioningForSetup(ctx context.Context, d *common.Deps, country s
 		return
 	}
 	st := &tseProvisioningState{Status: tseStatusPendingKickoff, Country: tseProvisionCountry, Identity: id}
-	if err := saveTSEProvisioningState(ctx, d, st); err != nil {
+	if err := saveTSEProvisioningState(ctx, d, st); errors.Is(err, errTSENotMainTill) {
+		// The wizard runs before a till joins a main till, so this should
+		// not happen; if it ever does, fail closed: a kickoff from a
+		// replica would re-mint the store's credential and revoke the main
+		// till's working key (ut-docs#3039 review).
+		logging.L().Warnf("setup wizard: TSE provisioning skipped: %v", err)
+		return
+	} else if err != nil {
 		logging.L().Errorf("setup wizard: persist pending TSE provisioning: %v", err)
 	}
 	attemptCtx, cancel := context.WithTimeout(ctx, tseKickoffAttemptTimeout)
@@ -334,6 +362,11 @@ func tseKickoffRejected(status int) bool {
 // fiscal_tse_ready directive, credential_failed via the cloud re-serving
 // that directive, kickoff_rejected is terminal).
 func tseProvisionRetryTick(ctx context.Context, d *common.Deps) {
+	// A replica reads the main till's synced pending_kickoff state; it must
+	// not POST its own kickoff for the store (ut-docs#2969, #3039).
+	if tseRequireMainTill(ctx, d) != nil {
+		return
+	}
 	st, err := loadTSEProvisioningState(ctx, d)
 	if err != nil {
 		logging.L().Warnf("tse provisioning retry: load state: %v", err)
@@ -383,6 +416,13 @@ func StartTSEProvisionRetry(ctx context.Context, d *common.Deps, wg *sync.WaitGr
 // disk, and only then does fiscal.signing_device_configured flip true (binding,
 // ut-docs#802 item 4).
 func applyFiscalTSEReady(ctx context.Context, d *common.Deps) (string, error) {
+	// Main till only, before anything else (ut-docs#3039): fetching here
+	// would spend the single-use handoff on a replica's disk. cloudsync
+	// already leaves this type pending on a satellite (mainTillOnlyTypes)
+	// and the cloud no longer serves it to one; this is the backstop.
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
 	store := fiscal.NewSigningDeviceCredentialStore()
 	// Idempotent re-serve: a directive whose ack never reached the cloud
 	// re-applies after the credential already landed — never a second fetch
@@ -478,7 +518,10 @@ func finishTSEProvisioning(ctx context.Context, d *common.Deps, msg string) (str
 		provisionedCountry = st.Country
 	}
 	configuredKey := fiscal.SigningDeviceConfiguredKey(provisionedCountry)
-	// settings-write:allow TSE provisioning directive: one TSE per store, provisioned from the main till (ADR-0053); not gated to it in code -- reported with ut-docs#2979
+	if err := tseRequireMainTill(ctx, d); err != nil {
+		return "", err
+	}
+	// settings-write:allow TSE provisioning: main till only, gated by tseRequireMainTill above (ADR-0053, ut-docs#3039)
 	if err := d.Settings.Set(ctx, configuredKey, "true"); err != nil {
 		// Leave the directive un-acked: the re-serve is idempotent (the
 		// store.Load() fast path above) and will retry this write.
@@ -599,6 +642,9 @@ var errNoTSERetry = errors.New("no retryable TSE provisioning state")
 // which a real backend would reject as invalid_request, permanently and
 // undismissibly, with no UI path back to re-entering the details.
 func retryTSEProvisioning(ctx context.Context, d *common.Deps, actorID string) (*tseProvisioningState, error) {
+	if err := tseRequireMainTill(ctx, d); err != nil {
+		return nil, err
+	}
 	st, err := loadTSEProvisioningState(ctx, d)
 	if err != nil {
 		return nil, err

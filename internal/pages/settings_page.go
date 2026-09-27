@@ -739,6 +739,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"tseProvisioning":        tseProvisioningViewFor(tseState),
 			"tseRetryable":           tseProvisioningRetryable(tseState),
 			"tseCanDismiss":          !tseProvisioningDismissBlocked(tseState),
+			"tseFollowsMain":         tseRequireMainTill(r.Context(), d) != nil,
 			"missingFiscalSigner":    missingSigner,
 			"missingTaxRateSwitcher": missingSwitcher,
 			"resetBatches":           resetBatches,
@@ -2382,7 +2383,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, httpx.T(locale, "settings.tse.dismiss_blocked"), http.StatusConflict)
 			return
 		}
-		if err := saveTSEProvisioningState(r.Context(), d, nil); err != nil {
+		if err := saveTSEProvisioningState(r.Context(), d, nil); errors.Is(err, errTSENotMainTill) {
+			locale := httpx.ResolveLocale(w, r)
+			http.Error(w, httpx.T(locale, "settings.error.change_on_main_till"), http.StatusConflict)
+			return
+		} else if err != nil {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
@@ -2411,6 +2416,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if errors.Is(err, errNoTSERetry) {
 			locale := httpx.ResolveLocale(w, r)
 			http.Error(w, httpx.T(locale, "settings.tse.nothing_to_retry"), http.StatusConflict)
+			return
+		}
+		if errors.Is(err, errTSENotMainTill) {
+			locale := httpx.ResolveLocale(w, r)
+			http.Error(w, httpx.T(locale, "settings.error.change_on_main_till"), http.StatusConflict)
 			return
 		}
 		if err != nil {
