@@ -28,8 +28,8 @@ func openCountryTestDB(t *testing.T) (*db.DB, *CountrySettingsRepo) {
 	return dbo, NewCountrySettingsRepo(dbo.DB)
 }
 
-// The migration seeds the same 14 countries the wizard hardcoded, with their
-// currency/tax values unchanged — a regression here means the wizard's
+// The migrations seed the 14 countries the wizard hardcoded, with their
+// currency/tax values unchanged, plus PT (051, ut-docs#2963) — a regression here means the wizard's
 // prefill silently changed for a real country.
 func TestCountrySettingsSeedPreservesWizardDefaults(t *testing.T) {
 	_, repo := openCountryTestDB(t)
@@ -39,8 +39,8 @@ func TestCountrySettingsSeedPreservesWizardDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(all) != 14 {
-		t.Fatalf("seeded countries = %d, want 14", len(all))
+	if len(all) != 15 {
+		t.Fatalf("seeded countries = %d, want 15", len(all))
 	}
 
 	// Spot-check the values that came from setup_page.go's setupCountries,
@@ -54,6 +54,7 @@ func TestCountrySettingsSeedPreservesWizardDefaults(t *testing.T) {
 		"DE": {"EUR", 1900, true},
 		"US": {"USD", 0, false},
 		"TR": {"TRY", 2000, true},
+		"PT": {"EUR", 2300, true},
 		// "OTHER" keeps the wizard's empty-currency/no-tax defaults.
 		"OTHER": {"", 0, true},
 	}

@@ -275,7 +275,10 @@ var adminTables = []adminTable{
 	// like settings above — no is_active/soft-delete column, and none is
 	// needed: CountrySettingsRepo.Delete() already restores a BUILTIN
 	// country to its shipped defaults instead of removing the row (so a
-	// builtin row is never actually absent from a primary's dump), and a
+	// builtin row is never actually absent from a primary's dump — except
+	// across versions: a primary that predates a builtin-adding migration
+	// such as 051 (PT, ut-docs#2963) prunes that row on a newer satellite
+	// until the primary upgrades too), and a
 	// genuinely operator-created country being hard-deleted shop-wide on
 	// prune is the correct behavior, not a gap to guard against. The
 	// ADR-0040 archive_min_days floor is re-enforced separately in

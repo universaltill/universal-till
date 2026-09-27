@@ -1890,7 +1890,7 @@ func TestAdminDumpApplyRoundTrip_FiscalRegisterStorage(t *testing.T) {
 // (per-jurisdiction tax/currency/retention defaults) is shop-wide config, same
 // shape as settings/tax_codes, and must sync like them now that #1586's
 // schema-drift guard flagged it as unclassified. Every migrated DB already
-// seeds the 14 builtin countries (001_init.sql), so this exercises real
+// seeds the builtin countries (001_init.sql, plus PT from 051), so this exercises real
 // UPDATE/prune paths against pre-existing rows rather than fresh INSERTs.
 func TestAdminDumpApplyRoundTrip_CountrySettings(t *testing.T) {
 	ctx := context.Background()

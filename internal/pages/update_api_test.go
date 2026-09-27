@@ -339,7 +339,9 @@ func TestAutoUpdateJitter_SeedIsPerTill(t *testing.T) {
 // Review finding 2: ticking "Update automatically" on the MAIN till must not
 // write an explicit "true" — that replicates and would switch every replica
 // on without a version cap. On a main till "on" is the default (unset);
-// "off" is explicit. On a replica, "on" is explicit.
+// "off" is explicit. On a replica the pair goes to the main till instead
+// (ut-docs#2997, settings_write_through_eod_update_test.go): with no main
+// till to answer, it is refused and nothing is written locally.
 func TestPostSettingsUpdateSchedule_OnIsDefaultOnMainTill(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	dp := newEODTestDeps(t)
@@ -376,9 +378,15 @@ func TestPostSettingsUpdateSchedule_OnIsDefaultOnMainTill(t *testing.T) {
 	}
 
 	_ = dp.Settings.Set(t.Context(), "sync.primary_url", "http://main.local:8080")
-	post("enabled=on&time=02:00")
-	if stored() != "true" {
-		t.Fatalf("replica: on must be stored explicitly, got %q", stored())
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/update-schedule", strings.NewReader("enabled=off&time=02:00"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("replica with no main till: POST = %d %q, want 502", rec.Code, rec.Body.String())
+	}
+	if stored() != "" {
+		t.Fatalf("replica: a refused change must not be written locally, got %q", stored())
 	}
 }
 
