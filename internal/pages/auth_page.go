@@ -254,6 +254,22 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 	})
 
+	// ut-docs#3005: the idle auto-lock's own timer (app.js) posts here before
+	// it navigates to /login. The server's idle check trails the client after
+	// a page load (that load's own requests touch the session), so without
+	// this GET /login found the session "fresh", bounced back to "/", and the
+	// till reloaded every 10 minutes without ever locking. POST only: a GET
+	// (an <img src> on any page) must never lock a till, and the session
+	// cookie is SameSite=Lax, so a cross-site form can't send it. Revokes
+	// only the caller's session and records it as an idle lock.
+	mux.HandleFunc("POST /api/auth/idle-lock", func(w http.ResponseWriter, r *http.Request) {
+		if c, err := r.Cookie(auth.CookieName); err == nil {
+			svc.IdleLock(r.Context(), c.Value)
+		}
+		setSessionCookie(w, "", -1)
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	// Self-service PIN change (pos-auth follow-up): any operator, own PIN
 	// only; wrong current PIN counts against the shared device lockout;
 	// success revokes the user's sessions → sign back in with the new PIN.

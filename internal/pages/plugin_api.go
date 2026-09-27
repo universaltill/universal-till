@@ -18,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -684,7 +685,14 @@ func applyPluginUpdate(ctx context.Context, d *common.Deps, pluginID string) (fr
 	rollbackMgr := plugins.NewRollbackManager(d.Db, paths.Plugins())
 	sourcePath := filepath.Join(paths.Plugins(), pluginID, currentPlugin.Version)
 	if err := rollbackMgr.StoreVersion(pluginID, currentPlugin.Version, sourcePath); err != nil {
-		log.Printf("Warning: Failed to store version for rollback: %v", err)
+		if errors.Is(err, plugins.ErrVersionSourceMissing) {
+			// The live per-version dir is simply gone (ut-docs#2799) — not a
+			// failure worth a "Warning" line; an existing snapshot (if any)
+			// was left untouched by StoreVersion itself.
+			logging.L().Infof("plugin update: %s@%s has no files on disk, so its rollback snapshot could not be refreshed: %v", pluginID, currentPlugin.Version, err)
+		} else {
+			logging.L().Warnf("Failed to store version for rollback: %v", err)
+		}
 	}
 
 	effCfg := enroll.EnsureRegistered(ctx, d.Cfg, d.Settings)

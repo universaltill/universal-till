@@ -49,6 +49,15 @@ VIAddVersionKey "FileVersion" "${VERSION}"
 VIAddVersionKey "LegalCopyright" "© ${PUBLISHER}"
 
 !define MUI_ABORTWARNING
+; Setup.exe and uninstall.exe show the app logo, not the NSIS default
+; (ut-docs#2786). The default resolves relative to this script's folder;
+; a build that compiles a copy elsewhere passes -DAPP_ICON=<path>. The
+; installed exes get theirs from packaging/windows/winres.sh.
+!ifndef APP_ICON
+  !define APP_ICON "..\..\web\public\assets\logo\ut-logo.ico"
+!endif
+!define MUI_ICON "${APP_ICON}"
+!define MUI_UNICON "${APP_ICON}"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\${SHELLEXE}"
 !define MUI_FINISHPAGE_RUN_TEXT "Start ${APPNAME} now"
 !define MUI_FINISHPAGE_LINK "universaltill.com"
