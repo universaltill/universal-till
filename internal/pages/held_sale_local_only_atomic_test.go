@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -127,7 +128,7 @@ BEGIN INSERT INTO held_sale_atomic_exposures (id, op) VALUES (NEW.id, 'update');
 		t.Fatalf("the give-back's final row must be primary_synced=false, got ok=%v %+v err=%v", ok, got, err)
 	}
 
-	dropped, err := repo.ReconcileWithPrimary(ctx, nil)
+	dropped, err := repo.ReconcileWithPrimary(ctx, nil, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +224,7 @@ BEGIN SELECT RAISE(ABORT, 'delete blocked'); END`); err != nil {
 		t.Fatalf("ut-docs#3034: a local-only re-park of an id THIS TILL just claimed off the primary must not keep a stale confirmed-mirror flag stuck at true -- got %+v", got)
 	}
 
-	dropped, err := repo.ReconcileWithPrimary(ctx, nil)
+	dropped, err := repo.ReconcileWithPrimary(ctx, nil, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
