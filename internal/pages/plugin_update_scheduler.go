@@ -11,15 +11,15 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
 
-const (
-	// pluginUpdateCanonicalTypeLanguage is the one canonical type (per
-	// ADR-0002's plugin taxonomy) this scheduler auto-applies without asking. A
-	// language pack is content, not code, and a stale one silently degrades
-	// the product for exactly the non-English merchants we are trying to
-	// win (ut-docs#1953) — every other type only ever surfaces as a pending
-	// count; the merchant still applies those manually from /plugins.
-	pluginUpdateCanonicalTypeLanguage = "language"
-)
+// pluginUpdateCanonicalTypeLanguage is the one canonical type (per
+// ADR-0002's plugin taxonomy) this scheduler auto-applies without asking. A
+// language pack is content, not code, and a stale one silently degrades
+// the product for exactly the non-English merchants we are trying to
+// win (ut-docs#1953) — every other type only ever surfaces as a pending
+// count; the merchant still applies those manually from /plugins. Shared
+// with common.Deps.RefreshPendingUpdates (ut-docs#2787) via
+// plugins.CanonicalTypeLanguage so the two packages can't drift apart.
+const pluginUpdateCanonicalTypeLanguage = plugins.CanonicalTypeLanguage
 
 // pluginUpdateCheckInitialDelay/pluginUpdateCheckInterval are vars, not
 // consts, so a test can shrink both to observe StartPluginUpdateScheduler's

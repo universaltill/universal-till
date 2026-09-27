@@ -509,9 +509,9 @@ func stubBrowser(t *testing.T) chan string {
 }
 
 // Start serves the handler on the configured (here: ephemeral) port, opens the
-// operator's browser at the bound address once accepting, records the actual
-// address into cfg.ListenAddr, and shuts down cleanly (returning nil) when the
-// context is cancelled.
+// operator's browser at the address actually bound once accepting, leaves the
+// shared cfg untouched (ut-docs#2990), and shuts down cleanly (returning nil)
+// when the context is cancelled.
 func TestStart_ServesOpensBrowserAndShutsDown(t *testing.T) {
 	t.Setenv("UT_OPEN_BROWSER", "true")
 	urls := stubBrowser(t)
@@ -565,13 +565,56 @@ func TestStart_ServesOpensBrowserAndShutsDown(t *testing.T) {
 	if !waitWithin(&wg, 2*time.Second) {
 		t.Fatal("wg did not reach zero within 2s of Start returning — shutdown goroutine not joined")
 	}
-	// Safe to read cfg now that Start has returned: it must hold the address
-	// actually bound (an ephemeral port, not the :0 we asked for).
-	if cfg.ListenAddr == "127.0.0.1:0" {
-		t.Fatal("cfg.ListenAddr was not updated to the bound address")
+	// The browser must have been sent to the port actually bound (an
+	// ephemeral one), not the :0 we asked for.
+	if url == "http://127.0.0.1:0" || !strings.HasPrefix(url, "http://127.0.0.1:") {
+		t.Fatalf("browser opened %q, want the bound 127.0.0.1:<port> address", url)
 	}
-	if url != "http://"+cfg.ListenAddr {
-		t.Fatalf("browser opened %q but the server bound %q", url, cfg.ListenAddr)
+	// ut-docs#2990: Start must not write the bound address back into the
+	// shared config. Background goroutines started before Start (the cloud
+	// link, via enroll.Effective) copy *cfg concurrently, so a write here is
+	// a data race on every boot.
+	if cfg.ListenAddr != "127.0.0.1:0" {
+		t.Fatalf("Start rewrote cfg.ListenAddr to %q; the shared config must stay read-only", cfg.ListenAddr)
+	}
+}
+
+// ut-docs#2990: goroutines started before Start read the shared config while
+// Start binds. Under -race this fails if Start writes any field of *cfg.
+func TestStart_DoesNotWriteSharedConfigWhileOthersReadIt(t *testing.T) {
+	t.Setenv("UT_OPEN_BROWSER", "false")
+	cfg := &config.Config{ListenAddr: "127.0.0.1:0"}
+	ctx, cancel := context.WithCancel(context.Background())
+	stop := make(chan struct{})
+	readerDone := make(chan struct{})
+	go func() {
+		defer close(readerDone)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				c := *cfg // what enroll.Effective does per call
+				_ = c
+				runtime.Gosched()
+			}
+		}
+	}()
+	errCh := make(chan error, 1)
+	var wg sync.WaitGroup
+	go func() {
+		errCh <- Start(ctx, cfg, http.NotFoundHandler(), nil, nil, nil, &wg)
+	}()
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	if err := <-errCh; err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	close(stop)
+	<-readerDone
+	wg.Wait()
+	if cfg.ListenAddr != "127.0.0.1:0" {
+		t.Fatalf("Start rewrote cfg.ListenAddr to %q", cfg.ListenAddr)
 	}
 }
 

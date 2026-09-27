@@ -36,10 +36,11 @@ import (
 // The handlers that persist through common.SaveState (the store card, the
 // kiosk and sell-screen policies, the per-till display cards) call
 // saveStateThrough, which sends only the fields the handler changed
-// (ut-docs#2948). Not covered yet: store.country from another till
-// (ut-docs#2980), shop-wide writes made outside these handlers
-// (ut-docs#2979) and read-only rendering while the main till is away
-// (ut-docs#2981).
+// (ut-docs#2948). store.country travels like any other shop-wide key
+// (ut-docs#2980): the main till runs the owner check and the old country's
+// posture reset, never this till. Not covered yet: shop-wide writes made
+// outside these handlers (ut-docs#2979) and read-only rendering while the
+// main till is away (ut-docs#2981).
 
 // settingsSyncProxyClient is the additional-till -> main-till client; same
 // admin-screen budget as the users write-through.
@@ -73,6 +74,8 @@ func settingsSyncMessage(r *http.Request, w http.ResponseWriter, se *errSettings
 	switch se.Code {
 	case "":
 	case "not_supported_via_sync":
+		// A main till older than ut-docs#2980 still answers this for
+		// store.country.
 		key = "settings.error.change_on_main_till"
 	default:
 		key = "settings.error.main_till_refused"
