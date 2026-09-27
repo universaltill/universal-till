@@ -587,3 +587,28 @@ func TestResolveCurrentPrice_ValidationAndNotFound(t *testing.T) {
 		t.Fatal("expected an error for an inactive item (base_price lookup filters is_active=1)")
 	}
 }
+
+// TestResolveShortcutLine_ItemIDCodePrefixResolvesNullSKU (ut-docs#3072): the
+// test above seeds SKU "" — but a real imported item with no SKU stores NULL
+// (items.sku is UNIQUE, so a blank is stored as NULL), and resolveItemByID
+// scanned i.sku straight into a string. The NULL made Scan fail, the tier
+// reported not-found, and the sell screen answered every tap on such a tile
+// with the #2525 "quick button was out of date" toast plus a grid refresh.
+// 125 of a pilot café's 231 items were unsellable from a tile this way.
+func TestResolveShortcutLine_ItemIDCodePrefixResolvesNullSKU(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	repo := data.NewPOSRepo(db)
+	ctx := context.Background()
+
+	if _, err := db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('null-sku-1', NULL, 'Almond Cake', 490, 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	line, ok := repo.ResolveShortcutLine(ctx, "item:null-sku-1")
+	if !ok {
+		t.Fatal("expected the item:<id> code of a NULL-SKU item to resolve")
+	}
+	if line.ItemID != "null-sku-1" || line.Name != "Almond Cake" || line.Price != 490 {
+		t.Fatalf("unexpected resolved line: %+v", line)
+	}
+}
