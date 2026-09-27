@@ -92,6 +92,7 @@ var setupTimezoneCountry = map[string]string{
 	"Europe/Madrid":       "ES",
 	"Europe/Rome":         "IT",
 	"Europe/Amsterdam":    "NL",
+	"Europe/Lisbon":       "PT", // mainland only; see setupTimezoneNoCountry
 	"Europe/Istanbul":     "TR",
 	"Europe/Ankara":       "TR", // deprecated tzdata alias for Europe/Istanbul
 	"Asia/Dubai":          "AE",
@@ -130,6 +131,16 @@ func parseLocaleEnv(v string) (lang, region string) {
 	return lang, region
 }
 
+// setupTimezoneNoCountry lists zones inside a country whose builtin row
+// would prefill the wrong tax: Portugal's autonomous regions carry their own
+// IVA rates, while the PT row holds the 23% mainland default (ut-docs#2963,
+// rates in ut-docs#2961). Detection stops there instead of falling back to
+// the locale region, whose pt_PT would otherwise pick the mainland row.
+var setupTimezoneNoCountry = map[string]bool{
+	"Atlantic/Azores":  true,
+	"Atlantic/Madeira": true,
+}
+
 // detectCountry returns a country_settings code from the OS timezone,
 // falling back to the locale's own region if the timezone doesn't resolve
 // (e.g. a timezone spanning several countries). Returns "" — never a guess —
@@ -143,7 +154,11 @@ func parseLocaleEnv(v string) (lang, region string) {
 // "OTHER" is expected to already be excluded by the caller, same contract
 // detectCountry has always had.
 func detectCountry(codes []string) string {
-	if c := setupTimezoneCountry[osTimezoneName()]; c != "" && containsCode(codes, c) {
+	tz := osTimezoneName()
+	if setupTimezoneNoCountry[tz] {
+		return ""
+	}
+	if c := setupTimezoneCountry[tz]; c != "" && containsCode(codes, c) {
 		return c
 	}
 	_, region := parseLocaleEnv(osLocaleEnv())
