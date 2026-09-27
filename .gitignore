@@ -93,3 +93,7 @@ cmd/unitill-desktop/zzz_guard_test_fixture.go
 # state, not repo content.
 data/.unitill.lock
 test-results/
+
+# Windows icon/VERSIONINFO objects, generated at release time by
+# packaging/windows/winres.sh (ut-docs#2786)
+rsrc_windows_*.syso

@@ -1,10 +1,12 @@
 package pages
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -120,6 +122,55 @@ func TestSetupWizardNoAutoRegisterByDefaultMakesNoAttempt(t *testing.T) {
 				t.Fatalf("register attempts = %d, want 0 without an explicit opt-in", hits)
 			}
 		})
+	}
+}
+
+// ut-docs#3019: the wizard's opt-in register attempt posts the typed
+// till_name as device_name. Its own stub records the /v1/stores/register
+// body; answering 500 keeps enroll's process globals untouched, like
+// newFakeMarketplace.
+func TestSetupWizardAutoRegisterPostsTypedTillName(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	var mu sync.Mutex
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/stores/register" {
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			mu.Lock()
+			gotBody = body
+			mu.Unlock()
+			http.Error(w, "stub does not enrol", http.StatusInternalServerError)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	d.Cfg.Marketplace.EndpointURL = srv.URL
+
+	rec := postForm(mux, "/api/setup", url.Values{
+		"pin":           {"2468"},
+		"pin_confirm":   {"2468"},
+		"country":       {"GB"},
+		"currency":      {"GBP"},
+		"store_name":    {"Corner Shop"},
+		"till_name":     {"Front Register"},
+		"auto_register": {"on"},
+	}, nil)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("wizard setup with auto_register=on: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if v, ok, _ := d.Settings.Get(t.Context(), "till.name"); !ok || v != "Front Register" {
+		t.Fatalf("till.name = %q ok=%v, want \"Front Register\" persisted", v, ok)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if gotBody == nil {
+		t.Fatal("wizard never attempted /v1/stores/register despite auto_register=on")
+	}
+	if got := gotBody["device_name"]; got != "Front Register" {
+		t.Fatalf("device_name = %v, want %q", got, "Front Register")
 	}
 }
 

@@ -40,6 +40,8 @@
 # icon's box vs. every other rail icon), so it is auth-project-only too and
 # the reset fixture would 401 there the same way.
 #
+# session-idle-lock-loop-3005.spec.ts (ut-docs#3005) is an auth-project spec
+# too (real PIN session, idle-lock revocation), exempt for the same reason.
 # session-expiry-redirect-2144.spec.ts (ut-docs#2144) is exempt on the same
 # objective criterion, not a copy-paste of it: it proves that an htmx-driven
 # /api/pos/* request on a REVOKED session redirects to /login instead of
@@ -83,7 +85,7 @@ if [ ! -d "$TESTS_DIR" ]; then
   exit 1
 fi
 
-EXEMPT_FILES=('login.spec.ts' 'nav-rail-lock-reachable-1346.spec.ts' 'nav-rail-svg-icons-lock-1423.spec.ts' 'session-expiry-redirect-2144.spec.ts' 'session-expiry-redirect-admin-2157.spec.ts')
+EXEMPT_FILES=('login.spec.ts' 'nav-rail-lock-reachable-1346.spec.ts' 'nav-rail-svg-icons-lock-1423.spec.ts' 'session-expiry-redirect-2144.spec.ts' 'session-expiry-redirect-admin-2157.spec.ts' 'session-idle-lock-loop-3005.spec.ts')
 
 is_exempt() {
   local base="$1" f

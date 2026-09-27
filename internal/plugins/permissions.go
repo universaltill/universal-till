@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // CheckPermission verifies if a plugin has a granted permission
@@ -19,13 +20,13 @@ func CheckPermission(ctx context.Context, db *sql.DB, pluginID, permission strin
 	if !exists {
 		// Permission not defined in manifest
 		if err := auditPermissionDenial(ctx, db, pluginID, permission, "permission not declared"); err != nil {
-			fmt.Printf("warning: failed to audit permission denial: %v\n", err)
+			logging.L().Warnf("failed to audit permission denial: %v", err)
 		}
 		return fmt.Errorf("permission denied: %s not declared for plugin %s", permission, pluginID)
 	}
 	if !granted {
 		if err := auditPermissionDenial(ctx, db, pluginID, permission, "permission not granted"); err != nil {
-			fmt.Printf("warning: failed to audit permission denial: %v\n", err)
+			logging.L().Warnf("failed to audit permission denial: %v", err)
 		}
 		return fmt.Errorf("permission denied: %s not granted for plugin %s", permission, pluginID)
 	}
@@ -48,13 +49,13 @@ func CheckPermissionGranted(ctx context.Context, db *sql.DB, pluginID, permissio
 	}
 	if !exists {
 		if err := auditPermissionDenial(ctx, db, pluginID, permission, "permission not declared"); err != nil {
-			fmt.Printf("warning: failed to audit permission denial: %v\n", err)
+			logging.L().Warnf("failed to audit permission denial: %v", err)
 		}
 		return false, nil
 	}
 	if !granted {
 		if err := auditPermissionDenial(ctx, db, pluginID, permission, "permission not granted"); err != nil {
-			fmt.Printf("warning: failed to audit permission denial: %v\n", err)
+			logging.L().Warnf("failed to audit permission denial: %v", err)
 		}
 		return false, nil
 	}
@@ -70,7 +71,7 @@ func GrantPermission(ctx context.Context, db *sql.DB, pluginID, permission strin
 
 	// Audit the grant
 	if err := auditPermissionGrant(ctx, db, pluginID, permission); err != nil {
-		fmt.Printf("warning: failed to audit permission grant: %v\n", err)
+		logging.L().Warnf("failed to audit permission grant: %v", err)
 	}
 
 	return nil
@@ -85,7 +86,7 @@ func RevokePermission(ctx context.Context, db *sql.DB, pluginID, permission stri
 
 	// Audit the revocation
 	if err := auditPermissionRevoke(ctx, db, pluginID, permission); err != nil {
-		fmt.Printf("warning: failed to audit permission revoke: %v\n", err)
+		logging.L().Warnf("failed to audit permission revoke: %v", err)
 	}
 
 	return nil

@@ -178,11 +178,14 @@ else
   cp LICENSE "$T/nsis/stage/"
   cp "$T/app.exe" "$T/nsis/stage/unitill-pos.exe"
   cp packaging/windows/installer.nsi "$T/nsis/"
+  # The copied script can't reach the repo's logo by its default relative
+  # path (ut-docs#2786), so hand it the absolute one.
+  ROOT_ICON="$PWD/web/public/assets/logo/ut-logo.ico"
   : > "$T/java-argv.log"
   mk() {
     (cd "$T/nsis" && env PATH="$T/bin:$PATH" JSIGN_JAR="$T/jsign.jar" SIGN_ENDPOINT=example.invalid \
       SIGN_ALIAS=acct/profile SIGN_TOKEN_FILE="$T/token" SIGN_PUBLISHER="UT TEST SIGNER LTD" \
-      SIGN_CA_BUNDLE="$T/bundle.pem" "$@" makensis -V1 -DVERSION=1.2.3 -DSRCDIR="$T/nsis/stage" \
+      SIGN_CA_BUNDLE="$T/bundle.pem" "$@" makensis -V1 -DVERSION=1.2.3 -DSRCDIR="$T/nsis/stage" -DAPP_ICON="$ROOT_ICON" \
       -DUNINST_SIGN_CMD="$SIGN" installer.nsi) >"$T/nsis.log" 2>&1
   }
   if mk; then
