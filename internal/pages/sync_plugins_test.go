@@ -85,7 +85,10 @@ type fakeMarketplace struct {
 	// (ADR-0015 lazy registration; only a download/install or an explicit
 	// "Register now" may do that).
 	registerHits int
-	listings     map[string]*fakeMktListing
+	// registerNames records each register request's store_name — the name
+	// the cloud would give the shop (ut-docs#2776).
+	registerNames []string
+	listings      map[string]*fakeMktListing
 	// catalog backs GET /v1/catalog/plugins for the country base-plugin
 	// resolve step (ut-docs#591) — empty by default (a 404/unserved route
 	// would be indistinguishable from "no catalog entries"; an explicit
@@ -150,6 +153,12 @@ func (m *fakeMarketplace) catalogHitsFor(capability string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.catHitsByCapability[capability]
+}
+
+func (m *fakeMarketplace) storeRegisterNames() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.registerNames...)
 }
 
 func (m *fakeMarketplace) storeRegisterHits() int {
@@ -430,8 +439,13 @@ func newFakeMarketplace(t *testing.T, pluginIDByListing map[string]string) *fake
 			// Counted, then refused: enrolment is best-effort everywhere, so
 			// a 500 here keeps the till unenrolled (as a first-boot till is)
 			// while still recording that something tried.
+			var body struct {
+				StoreName string `json:"store_name"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
 			m.mu.Lock()
 			m.registerHits++
+			m.registerNames = append(m.registerNames, body.StoreName)
 			m.mu.Unlock()
 			http.Error(w, "stub does not enrol", http.StatusInternalServerError)
 		default:

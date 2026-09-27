@@ -51,6 +51,33 @@ func TestSetupWizardAutoRegisterOptInPersistsAndAttemptsRegistration(t *testing.
 	}
 }
 
+// ut-docs#2776: the wizard saves the shop name and registers in the same
+// request, while d.Cfg.StoreName still holds the boot-time default. The
+// registration must carry the name the owner just typed — otherwise every
+// fresh install creates another cloud shop called "My Store".
+func TestSetupWizardAutoRegisterSendsTheTypedShopName(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	mkt := newFakeMarketplace(t, nil)
+	d.Cfg.Marketplace = mkt.config()
+	d.Cfg.StoreName = "My Store" // boot-time default; the wizard never refreshes it
+
+	rec := postForm(mux, "/api/setup", url.Values{
+		"pin":           {"2468"},
+		"pin_confirm":   {"2468"},
+		"country":       {"GB"},
+		"currency":      {"GBP"},
+		"store_name":    {"Corner Café"},
+		"auto_register": {"on"},
+	}, nil)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("wizard setup: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	names := mkt.storeRegisterNames()
+	if len(names) != 1 || names[0] != "Corner Café" {
+		t.Fatalf("register store_name(s) = %q, want exactly [\"Corner Café\"]", names)
+	}
+}
+
 // Offline case: the marketplace is unreachable at wizard-completion time.
 // The wizard must still complete, still persist the opt-in choice (persisted
 // BEFORE the network attempt, so it survives), and still sign the admin in.
