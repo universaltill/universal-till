@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
@@ -687,6 +688,11 @@ func TestSettingsRepo_DeleteAndClearReplicaIdentity(t *testing.T) {
 // synced down. Without copying sync.till_name into till.name first, the
 // promoted till would report the wrong name to the cloud
 // (enroll.DeviceName) and lose its own typed name entirely.
+//
+// When sync.till_name is missing or whitespace-only, there is no name to
+// carry over, so till.name (the old main till's name) is set blank instead of
+// left standing — the promoted till falls back to its translated default
+// name rather than keep reporting the old main till's name (ut-docs#3030).
 func TestSettingsRepo_ClearReplicaIdentityKeepsOwnTillName(t *testing.T) {
 	newRepo := func(t *testing.T) *SettingsRepo {
 		t.Helper()
@@ -721,7 +727,7 @@ func TestSettingsRepo_ClearReplicaIdentityKeepsOwnTillName(t *testing.T) {
 		}
 	})
 
-	t.Run("no sync.till_name leaves till.name untouched", func(t *testing.T) {
+	t.Run("no sync.till_name clears till.name so the till falls back to its default name", func(t *testing.T) {
 		repo := newRepo(t)
 		if err := repo.Set(ctx, "till.name", "Front Counter"); err != nil {
 			t.Fatal(err)
@@ -729,12 +735,12 @@ func TestSettingsRepo_ClearReplicaIdentityKeepsOwnTillName(t *testing.T) {
 		if err := repo.ClearReplicaIdentity(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if val, ok, err := repo.Get(ctx, "till.name"); err != nil || !ok || val != "Front Counter" {
-			t.Fatalf("expected till.name unchanged at %q, got val=%q ok=%v err=%v", "Front Counter", val, ok, err)
+		if val, _, err := repo.Get(ctx, "till.name"); err != nil || strings.TrimSpace(val) != "" {
+			t.Fatalf("expected till.name blank, got val=%q err=%v", val, err)
 		}
 	})
 
-	t.Run("whitespace-only sync.till_name leaves till.name untouched", func(t *testing.T) {
+	t.Run("whitespace-only sync.till_name clears till.name so the till falls back to its default name", func(t *testing.T) {
 		repo := newRepo(t)
 		if err := repo.Set(ctx, "sync.till_name", "   "); err != nil {
 			t.Fatal(err)
@@ -745,8 +751,8 @@ func TestSettingsRepo_ClearReplicaIdentityKeepsOwnTillName(t *testing.T) {
 		if err := repo.ClearReplicaIdentity(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if val, ok, err := repo.Get(ctx, "till.name"); err != nil || !ok || val != "Front Counter" {
-			t.Fatalf("expected till.name unchanged at %q, got val=%q ok=%v err=%v", "Front Counter", val, ok, err)
+		if val, _, err := repo.Get(ctx, "till.name"); err != nil || strings.TrimSpace(val) != "" {
+			t.Fatalf("expected till.name blank, got val=%q err=%v", val, err)
 		}
 		if _, ok, _ := repo.Get(ctx, "sync.till_name"); ok {
 			t.Fatal("expected sync.till_name cleared")

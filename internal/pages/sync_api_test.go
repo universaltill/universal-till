@@ -1759,6 +1759,48 @@ func TestSyncPromote_KeepsOwnTillName(t *testing.T) {
 	}
 }
 
+// TestSyncPromote_BlankTillNameClearsOldMainName covers ut-docs#3030: with no
+// sync.till_name to carry over, the shop-wide till.name (still the OLD main
+// till's name, synced down) must be cleared rather than left standing, so
+// the newly promoted till falls back to its translated default name instead
+// of continuing to report the old main till's name.
+func TestSyncPromote_BlankTillNameClearsOldMainName(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	ctx := context.Background()
+	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("seed replica identity: %v", err)
+	}
+	// The shop-wide till.name still holds the old main till's name, synced
+	// down before this replica was promoted. No sync.till_name is seeded.
+	if err := dp.Settings.Set(ctx, "till.name", "Front Counter"); err != nil {
+		t.Fatalf("seed till.name: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/promote", strings.NewReader("confirm=PROMOTE"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Blank, not deleted: shop-wide settings reach joined tills only as
+	// upserts, so a blank value propagates where a deleted row would not.
+	if val, ok, _ := dp.Settings.Get(ctx, "till.name"); !ok || val != "" {
+		t.Fatalf("expected till.name set blank after promote, got val=%q ok=%v", val, ok)
+	}
+	if got, want := tillNameOrDefault(ctx, dp, "en"), httpx.T("en", "setup.till_name.default"); got != want {
+		t.Fatalf("expected tillNameOrDefault = %q after promote, got %q", want, got)
+	}
+	if _, ok, _ := dp.Settings.Get(ctx, "sync.primary_url"); ok {
+		t.Fatal("expected sync.primary_url cleared after promote")
+	}
+	if name := enroll.DeviceName(ctx, dp.Settings); name != "" {
+		t.Fatalf("expected enroll.DeviceName = %q after promote, got %q", "", name)
+	}
+}
+
 // --- ut-docs#1501: the "show pairing code" half of the pairing failure.
 //
 // The comment above (ut-docs#946) recorded this path as untestable without
