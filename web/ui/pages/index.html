@@ -41,7 +41,7 @@
   <div class="kiosk-actions">
     <button class="btn secondary compact" type="button" data-testid="kiosk-checkout-start-phone"
             hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-            onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus();}, 150)">
+            onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus({ preventScroll: true });}, 150)">
       <span class="btn-ico" aria-hidden="true">{{ icon "shopping-cart" }}</span> {{ T "kiosk.checkout_start" }}</button>
     <a class="btn secondary compact" data-testid="kiosk-inventory-link-phone" href="/inventory"><span class="btn-ico" aria-hidden="true">{{ icon "package" }}</span> {{ T "kiosk.inventory" }}</a>
   </div>
@@ -346,7 +346,13 @@
            load (ut-docs#155) — the OSK/toggle covers deliberate typing.
            NOT when the OSK is off: a touch till with the OSK disabled would
            otherwise have no way to type a barcode at all. -->
-      <input type="text" name="code" {{ if ne (oskmode) "off" }}inputmode="none" {{ end }}placeholder="{{ T "tender.scan.barcode" }}" aria-label="{{ T "tender.scan.barcode" }}" autofocus required>
+      <input type="text" name="code" {{ if ne (oskmode) "off" }}inputmode="none" {{ end }}placeholder="{{ T "tender.scan.barcode" }}" aria-label="{{ T "tender.scan.barcode" }}" required>
+      <!-- ut-docs#3036: focused at load for wedge scanners, but with
+           preventScroll -- NOT `autofocus`. At phone width this row sits
+           just below .pos-container's fold, and autofocus scrolled the
+           sale screen to it (or didn't, depending on whether layout had
+           settled), hiding the top of the screen on load. -->
+      <script>(function (f) { if (f) f.focus({ preventScroll: true }); })(document.currentScript.parentNode.querySelector('input[name=code]'));</script>
       <input type="number" name="qty" value="1" min="1" step="1" required title="{{ T "tender.scan.qty" }}" aria-label="{{ T "tender.scan.qty" }}">
       <button class="btn tender-icon-btn" type="submit" title="{{ T "tender.scan.add" }}">
         <span class="btn-ico" aria-hidden="true">{{ icon "plus" }}</span><span class="visually-hidden">{{ T "tender.scan.add" }}</span></button>
@@ -446,7 +452,7 @@
       <button class="btn secondary tender-icon-btn" type="button" data-testid="kiosk-checkout-start"
               title="{{ T "kiosk.checkout_start" }}"
               hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-              onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus();}, 150)"
+              onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus({ preventScroll: true });}, 150)"
               hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">
         <span class="btn-ico" aria-hidden="true">{{ icon "shopping-cart" }}</span><span class="visually-hidden">{{ T "kiosk.checkout_start" }}</span></button>
       <!-- ut-docs#2137: the parked-orders popup. Always rendered (a control
@@ -1063,7 +1069,7 @@
       <button class="btn secondary" type="button" data-testid="payment-overlay-new-sale"
               aria-label="{{ T "tender.overlay_new_sale_action" }}"
               hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-              onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus();}, 150)"
+              onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus({ preventScroll: true });}, 150)"
               hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">
         <span class="btn-ico" aria-hidden="true">{{ icon "shopping-cart" }}</span> {{ T "kiosk.checkout_start" }}</button>
       <button class="btn secondary" type="button" data-testid="payment-overlay-hold"

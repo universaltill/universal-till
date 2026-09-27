@@ -13,7 +13,7 @@ import (
 	"github.com/universaltill/universal-till/internal/settings"
 )
 
-// ut-docs#155: the sale screen's autofocused scan input used to pop the
+// ut-docs#155: the sale screen's load-focused scan input used to pop the
 // on-screen keyboard (and Android's IME) the moment the page loaded. The
 // keyboard is on-demand now: the scan input carries a static
 // inputmode="none" so no IME opens at load, and the scan row ships a
@@ -63,8 +63,22 @@ func TestIndexScanRowKeyboardIsOnDemand(t *testing.T) {
 	if !strings.Contains(tag, `inputmode="none"`) {
 		t.Errorf("scan input must carry inputmode=\"none\" so no IME auto-opens at load; got: %s", tag)
 	}
-	if !strings.Contains(tag, "autofocus") {
-		t.Errorf("scan input must keep autofocus (wedge scanners rely on it); got: %s", tag)
+	// ut-docs#3036: wedge scanners still need the scan input focused at
+	// load, but via focus({ preventScroll: true }) right after it, never
+	// `autofocus` — at phone width autofocus scrolled .pos-container down
+	// to this below-the-fold row.
+	if strings.Contains(tag, "autofocus") {
+		t.Errorf("scan input must not use autofocus (it scrolls .pos-container at phone width); got: %s", tag)
+	}
+	// The focusing script must sit before the scan row's next field, so it
+	// runs as soon as the input is parsed.
+	afterTag := body[strings.Index(body, tag)+len(tag):]
+	nextInput := strings.Index(afterTag, "<input")
+	script := strings.Index(afterTag, "<script>")
+	if script < 0 || nextInput < 0 || script > nextInput ||
+		!strings.Contains(afterTag[script:nextInput], "preventScroll") ||
+		!strings.Contains(afterTag[script:nextInput], "input[name=code]") {
+		t.Errorf("scan input must be focused at load by a preventScroll focus script right after it")
 	}
 	if !strings.Contains(body, "data-osk-toggle") {
 		t.Error("sale screen must ship a data-osk-toggle button for on-demand keyboard")

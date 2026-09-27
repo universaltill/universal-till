@@ -47,11 +47,13 @@ test('forcing the OSK on shows a real keyboard', async ({ page }) => {
 });
 
 // ut-docs#155 REVERSED an earlier decision: the OSK used to catch up with
-// the autofocused scan field at init (so it auto-opened on every sale-screen
+// the load-focused scan field at init (so it auto-opened on every sale-screen
 // load on touch tills — the exact behavior the field report rejects). Now
-// programmatic focus (autofocus, .focus() calls) must NEVER open the OSK;
+// programmatic focus (the scan field's load-time focus — a preventScroll
+// .focus() since ut-docs#3036, formerly autofocus — and other .focus()
+// calls) must NEVER open the OSK;
 // only a deliberate tap on a field, or the data-osk-toggle button, does.
-// The delayed-osk.js trick stays: even when autofocus wins the load race,
+// The delayed-osk.js trick stays: even when the load-time focus wins the race,
 // the keyboard must stay closed — while the field itself stays focused so
 // keyboard-wedge scanners keep working.
 test('the OSK does NOT auto-open at load, even when the autofocused field wins the load race', async ({ page }) => {
