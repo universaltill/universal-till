@@ -61,11 +61,11 @@ restore_original() {
 trap restore_original EXIT
 
 echo "guard-docs-shots-determinism: run A — bash e2e/scripts/docs-shots.sh"
-bash e2e/scripts/docs-shots.sh
+bash e2e/scripts/docs-shots.sh 2>&1 | tee "$WORK/log-a"
 cp -r "$IMG_DIR"/. "$RUN_A"/
 
 echo "guard-docs-shots-determinism: run B — bash e2e/scripts/docs-shots.sh"
-bash e2e/scripts/docs-shots.sh
+bash e2e/scripts/docs-shots.sh 2>&1 | tee "$WORK/log-b"
 cp -r "$IMG_DIR"/. "$RUN_B"/
 
 fail=0
@@ -120,6 +120,8 @@ if [ "$fail" -ne 0 ]; then
           fi
           if [ -n "$pngdiff_bin" ] && [ "${rel##*.}" = "png" ]; then
             "$pngdiff_bin" "$RUN_A/$rel" "$RUN_B/$rel" || true
+            echo "    A: $(grep -F "TRACE ${rel%.png} " "$WORK/log-a" | cut -c1-2500)"
+            echo "    B: $(grep -F "TRACE ${rel%.png} " "$WORK/log-b" | cut -c1-2500)"
           fi
           ;;
       esac

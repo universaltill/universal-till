@@ -172,7 +172,8 @@ async function capture(page: Page, id: string, locale: string, route: string) {
       const anims = document.getAnimations().map((a: any) => `${a.animationName || a.transitionProperty || a.constructor.name}:${a.playState}:${a.effect && a.effect.target ? a.effect.target.id || a.effect.target.className : ''}`).join(',');
       const hov = [...document.querySelectorAll(':hover')].map((e) => e.tagName + '.' + e.className).join('>');
       const act = document.activeElement ? document.activeElement.tagName + '#' + document.activeElement.id : '';
-      return `html=${document.documentElement.className} navScroll=${nav ? nav.scrollTop + '/' + nav.scrollHeight + '/' + nav.clientHeight : ''} t=${Math.round(performance.now())} swaps=${((window as any).__swaps || []).join(',')} anims=${anims} hover=${hov} active=${act} rects=${rects}`;
+      const attrs = [...document.documentElement.attributes].map((a) => a.name + '=' + a.value).join(';') + ' body=' + document.body.className + ' navcs=' + (nav ? (() => { const c = getComputedStyle(nav); return [c.transform, c.opacity, c.filter, c.willChange, c.zIndex, c.contain, c.viewTransitionName].join('|'); })() : '');
+      return `attrs=${attrs} html=${document.documentElement.className} navScroll=${nav ? nav.scrollTop + '/' + nav.scrollHeight + '/' + nav.clientHeight : ''} t=${Math.round(performance.now())} swaps=${((window as any).__swaps || []).join(',')} anims=${anims} hover=${hov} active=${act} rects=${rects}`;
     });
     console.log(`TRACE ${locale}/${id} ${st}`);
   }
