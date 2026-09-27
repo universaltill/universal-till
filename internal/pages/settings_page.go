@@ -2693,9 +2693,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		d.SetState(st)
-		// ut-docs#2980: on an additional till the main till queues them
-		// (setup.pending_base_plugins is shop-wide and reaches this till
-		// with the next pull).
+		// ut-docs#2980: on an additional till the main till queues them.
+		// The queue itself is per-till (ut-docs#2998); this till gets the
+		// packs through the plugin-set sync once the main till has
+		// installed them (ut-docs#460, syncPullPlugins).
 		if countryChanged && !follows {
 			// ut-docs#1068: the new country's base plugins, as the wizard queues them.
 			queueBasePluginsForCountryChange(r.Context(), d, st.Country)
