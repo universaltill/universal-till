@@ -34,4 +34,4 @@ Bu sayfanın internete hiç ihtiyacı yoktur: her zaman mağazanın son çevrimi
 
 Eğer bu kasa bir raporun kendi kopyasını kaydedemezse — örneğin depolaması dolmuşsa — yeniden denemeye devam eder, ama sadece bir süre. Birkaç başarısız denemeden sonra raporu yerel olarak hatırlamayı bırakır. Raporun kendisi her halükarda desteğe ulaşır; sadece burada listelenmez.
 
-Sayfayı bildirim panelindeki **Raporlarımı görüntüle** bağlantısından açın (yan menüdeki 🐞 düğmesi — Sorun bildirme konusuna bakın).
+Sayfayı bildirim panelindeki **Raporlarımı görüntüle** bağlantısından açın (yan menüdeki 🐞 düğmesi — Sorun bildirme konusuna bakın). Bu bağlantıyı ve sayfayı yalnızca müdürler ve yöneticiler görür: sayfa yalnızca sizinkileri değil, bu kasanın gönderdiği tüm raporları listeler.

@@ -34,4 +34,4 @@ Die Seite benötigt nie das Netzwerk: Sie zeigt immer die Status vom letzten Mal
 
 Kann diese Kasse keine eigene Kopie eines Berichts speichern — zum Beispiel weil ihr Speicher voll ist —, versucht sie es weiter, aber nur eine Weile. Nach mehreren fehlgeschlagenen Versuchen gibt sie auf, sich den Bericht lokal zu merken. Der Bericht selbst erreicht den Support trotzdem; er wird hier nur nicht aufgeführt.
 
-Öffnen Sie es über den Link **Meine Berichte ansehen** im Berichtsfenster (🐞-Schaltfläche im linken Menü — siehe das Thema „Ein Problem melden“).
+Öffnen Sie es über den Link **Meine Berichte ansehen** im Berichtsfenster (🐞-Schaltfläche im linken Menü — siehe das Thema „Ein Problem melden“). Nur Manager und Administratoren sehen diesen Link und die Seite: Sie listet alle Berichte, die diese Kasse gesendet hat, nicht nur Ihre eigenen.
