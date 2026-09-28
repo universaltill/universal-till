@@ -166,7 +166,6 @@ func TestDesignerCategories_Rows_NoPencilNoChevrons_DragWired_2699(t *testing.T)
 	for _, want := range []string{
 		`data-reorder-list`,
 		`data-reorder-url="/api/designer/categories/reorder"`,
-		`data-reorder-refresh="buttons-changed"`,
 		`data-reorder-live="designer-categories-live"`,
 		`id="designer-categories-live"`,
 		`data-reorder-id="c-icon"`,
@@ -180,6 +179,13 @@ func TestDesignerCategories_Rows_NoPencilNoChevrons_DragWired_2699(t *testing.T)
 		if !strings.Contains(section, want) {
 			t.Errorf("designer categories missing %q", want)
 		}
+	}
+	// ut-docs#3074: a saved reorder updates the replica in place
+	// (designer.html's list-reorder:saved listener) -- never a
+	// buttons-changed re-render, which repainted the whole root and lost the
+	// operator's scroll position.
+	if strings.Contains(section, `data-reorder-refresh`) {
+		t.Errorf("designer category list still asks for a re-render after a reorder (data-reorder-refresh)")
 	}
 	// The help text describes the LIST once, never each row's button.
 	if !strings.Contains(section, `<ol class="designer-cat-list" aria-describedby="designer-categories-help"`) {
