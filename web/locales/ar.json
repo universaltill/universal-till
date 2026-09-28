@@ -2875,10 +2875,10 @@
   "elevation.summary.staff_languages": "تعيين اللغات المتاحة للموظفين إلى: %s",
   "settings.about.title": "حول",
   "settings.about.installed_version": "الإصدار المثبّت:",
-  "settings.about.first_run": "أول تشغيل على نقطة البيع هذه:",
+  "settings.about.first_run": "أول تشغيل على هذا الصندوق:",
   "settings.about.whats_new": "ما الجديد",
   "settings.about.english_only": "لم تُترجم بعد — معروضة بالإنجليزية.",
   "settings.about.no_notes": "لا تتوفر ملاحظات إصدار لهذا الإصدار.",
   "status.release_notes_updated": "تم التحديث إلى %s — اطّلع على الجديد",
-  "status.release_notes_dismiss": "إخفاء"
+  "status.release_notes_dismiss": "إغلاق"
 }
