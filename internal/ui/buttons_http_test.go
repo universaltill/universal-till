@@ -331,6 +331,48 @@ func TestButtonsHTTPList_FlatWhenNoCategoriesConfigured(t *testing.T) {
 	if !strings.Contains(body, "Loose Sweet") {
 		t.Fatalf("expected the tile to still render, got: %s", body)
 	}
+	// ut-docs#2320: zero categories means flat -- the tab bar must not
+	// render at all, not even a lone "Uncategorized" tab.
+	if strings.Contains(body, `class="tab-bar"`) {
+		t.Fatalf("did not expect a tab bar when no categories exist, got: %s", body)
+	}
+}
+
+// TestButtonsHTTPList_TabBarWhenCategoryAndUncategorizedButtonCoexist pins
+// the other half of ut-docs#2320 (owner decision: flat with zero
+// categories, tabs once one real category exists alongside uncategorised
+// buttons): one real category plus a quick button whose item has no
+// category makes TWO groups (the category and the synthetic uncategorised
+// bucket), so the tab bar renders with one tab for each. The
+// one-category-only case is TestButtonsHTTPList_NoTabBarWithOneCategory.
+func TestButtonsHTTPList_TabBarWhenCategoryAndUncategorizedButtonCoexist(t *testing.T) {
+	h, db := newButtonsHTTPWithDB(t, "buttons.html")
+
+	mustExec(t, db, `INSERT INTO categories(id,name,parent_id,sort_order,color) VALUES('drinks','Drinks',NULL,0,NULL)`)
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active, category_id) VALUES('itm1','S1','Cola', 150, 1, 'drinks')`)
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm2','S2','Loose Sweet', 10, 1)`)
+	mustExec(t, db, `INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('B1','Cola','itm1',0)`)
+	mustExec(t, db, `INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('B2','Loose Sweet','itm2',1)`)
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest("GET", "/ui/buttons", nil))
+	if rec.Code != 200 {
+		t.Fatalf("List = %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	if !strings.Contains(body, `class="tab-bar"`) {
+		t.Fatalf("expected a tab bar with one category plus uncategorised buttons, got: %s", body)
+	}
+	if n := strings.Count(body, `data-cat-tab `); n != 2 {
+		t.Fatalf("expected exactly 2 tabs (category + uncategorised), got %d: %s", n, body)
+	}
+	if !strings.Contains(body, `id="cat-tab-drinks"`) || !strings.Contains(body, ">Drinks<") {
+		t.Fatalf("expected a tab for the real category, got: %s", body)
+	}
+	if !strings.Contains(body, `id="cat-tab-uncategorized"`) || !strings.Contains(body, ">"+httpx.T("en", "products.uncategorized")+"<") {
+		t.Fatalf("expected the uncategorised tab, got: %s", body)
+	}
 }
 
 // TestButtonsHTTPList_RendersTabBarAndSearchWithMultipleCategories pins

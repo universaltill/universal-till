@@ -125,12 +125,27 @@ function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
   });
 }
 
-export async function startWorkerTill(parallelIndex: number): Promise<WorkerTill> {
-  const port = workerPort(parallelIndex);
+// ut-docs#2320: `fresh` boots a till with NO seeds (no demo catalogue, so no
+// categories, no FAQ) on its own port band (worker port + FRESH_PORT_OFFSET),
+// for a spec that needs a genuinely empty shop and must not touch the shared
+// per-worker till other specs assume is demo-seeded. Never reuses a till
+// already listening there -- a reused one could carry state from an earlier
+// run, which defeats the point of an empty shop.
+// Locally, keep per-session UT_E2E_WORKER_PORT_BASE values more than
+// FRESH_PORT_OFFSET + workers apart, or one session's regular till could
+// reuse another's unseeded fresh till.
+export const FRESH_PORT_OFFSET = 50;
+
+export async function startWorkerTill(parallelIndex: number, opts: { fresh?: boolean } = {}): Promise<WorkerTill> {
+  const fresh = opts.fresh === true;
+  const port = workerPort(parallelIndex) + (fresh ? FRESH_PORT_OFFSET : 0);
   const url = `http://127.0.0.1:${port}`;
   const tag = `[till:${port}]`;
 
-  if (await isHealthy(url)) {
+  if (fresh && (await isHealthy(url))) {
+    throw new Error(`${tag} something is already listening on ${url}; a fresh till never reuses one`);
+  }
+  if (!fresh && (await isHealthy(url))) {
     // Same semantics as the `webServer` entries' `reuseExistingServer:
     // !process.env.CI`: locally, a till a developer left running on this
     // worker's port is reused as-is (fast edit/test loop, single-spec
@@ -162,8 +177,10 @@ export async function startWorkerTill(parallelIndex: number): Promise<WorkerTill
 
   try {
     // Same two seeds run-till.sh runs, against this worker's data dir.
-    execFileSync('go', ['run', './e2e/seed_faq'], goOpts);
-    execFileSync('go', ['run', './e2e/seed_demo'], goOpts);
+    if (!fresh) {
+      execFileSync('go', ['run', './e2e/seed_faq'], goOpts);
+      execFileSync('go', ['run', './e2e/seed_demo'], goOpts);
+    }
 
     let bin = PREBUILT_BIN;
     if (!fs.existsSync(bin)) {
