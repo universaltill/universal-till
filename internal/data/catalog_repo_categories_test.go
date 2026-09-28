@@ -2,6 +2,8 @@ package data_test
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -480,10 +482,11 @@ func TestUpdateCategory_WritesNameAndColor(t *testing.T) {
 	}
 }
 
-// CategoryIDsNotFound backs set_category_order's "category X is not on this
-// till" check (ut-docs#3075): it names every id with no categories row,
-// in input order, and counts an INACTIVE category as present.
-func TestCategoryIDsNotFound(t *testing.T) {
+// SetCategorySortOrderKnown backs set_category_order (ut-docs#3075, §3.8):
+// an id with no categories row (active and inactive both count as present)
+// refuses the whole list inside the write transaction, so nothing changes,
+// and the error names the first unknown id in input order.
+func TestSetCategorySortOrderKnown(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
 	defer db.Close()
 	repo := data.NewCatalogRepo(db)
@@ -499,14 +502,29 @@ func TestCategoryIDsNotFound(t *testing.T) {
 	if err := repo.SetCategoryActive(ctx, inactive, false); err != nil {
 		t.Fatal(err)
 	}
-	missing, err := repo.CategoryIDsNotFound(ctx, []string{"ghost-2", active, inactive, "ghost-1"})
-	if err != nil {
+	order := func() []string {
+		cats, err := repo.ListCategories(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, c := range cats {
+			out = append(out, c.ID)
+		}
+		return out
+	}
+	before := order()
+	err = repo.SetCategorySortOrderKnown(ctx, []string{inactive, "ghost-2", active, "ghost-1"})
+	if !errors.Is(err, data.ErrCategoryNotFound) || !strings.Contains(err.Error(), "ghost-2") {
+		t.Fatalf("err = %v, want ErrCategoryNotFound naming ghost-2", err)
+	}
+	if after := order(); strings.Join(after, ",") != strings.Join(before, ",") {
+		t.Fatalf("a refused order changed the till: %v -> %v", before, after)
+	}
+	if err := repo.SetCategorySortOrderKnown(ctx, []string{inactive, active}); err != nil {
 		t.Fatal(err)
 	}
-	if len(missing) != 2 || missing[0] != "ghost-2" || missing[1] != "ghost-1" {
-		t.Fatalf("missing = %v, want [ghost-2 ghost-1]", missing)
-	}
-	if missing, err := repo.CategoryIDsNotFound(ctx, []string{active, inactive}); err != nil || len(missing) != 0 {
-		t.Fatalf("all present: %v %v", missing, err)
+	if got := order(); len(got) < 2 || got[0] != inactive || got[1] != active {
+		t.Fatalf("order = %v, want %s then %s first", got, inactive, active)
 	}
 }

@@ -1834,37 +1834,6 @@ func (r *CatalogRepo) SetCategoryActive(ctx context.Context, id string, active b
 	return nil
 }
 
-// CategoryIDsNotFound returns, in input order, every id in ids that has no
-// categories row — active and inactive rows both count as present. It backs
-// the set_category_order directive's "category X is not on this till"
-// refusal (ut-docs#3075, manage-shop contract §3.8), checked before
-// SetCategorySortOrder writes anything.
-func (r *CatalogRepo) CategoryIDsNotFound(ctx context.Context, ids []string) ([]string, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id FROM categories`)
-	if err != nil {
-		return nil, fmt.Errorf("category ids: %w", err)
-	}
-	defer rows.Close()
-	present := make(map[string]bool)
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("category ids: %w", err)
-		}
-		present[id] = true
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("category ids: %w", err)
-	}
-	var missing []string
-	for _, id := range ids {
-		if !present[id] {
-			missing = append(missing, id)
-		}
-	}
-	return missing, nil
-}
-
 // SetCategorySortOrder persists a full reorder — one UPDATE per position,
 // in a transaction — mirroring ShortcutsRepo.UpdateOrder's shape
 // (internal/data/shortcuts_repo.go), the repo-side counterpart of
@@ -1880,6 +1849,21 @@ func (r *CatalogRepo) CategoryIDsNotFound(ctx context.Context, ids []string) ([]
 // not: a category created on the till after the owner loaded my. is left
 // out, and lands here after the listed ones.
 func (r *CatalogRepo) SetCategorySortOrder(ctx context.Context, orderedIDs []string) error {
+	return r.setCategorySortOrder(ctx, orderedIDs, false)
+}
+
+// SetCategorySortOrderKnown is SetCategorySortOrder for the set_category_order
+// cloud directive (ut-docs#3075, manage-shop contract §3.8): an id with no
+// categories row (active or inactive) refuses the whole list with
+// ErrCategoryNotFound naming the first such id, and nothing is written. The
+// check reads the same rows inside the same write transaction (the DSN's
+// _txlock=immediate makes it BEGIN IMMEDIATE), so no concurrent write can
+// slip between the check and the UPDATEs.
+func (r *CatalogRepo) SetCategorySortOrderKnown(ctx context.Context, orderedIDs []string) error {
+	return r.setCategorySortOrder(ctx, orderedIDs, true)
+}
+
+func (r *CatalogRepo) setCategorySortOrder(ctx context.Context, orderedIDs []string, knownOnly bool) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("set category sort order: %w", err)
@@ -1895,12 +1879,14 @@ func (r *CatalogRepo) SetCategorySortOrder(ctx context.Context, orderedIDs []str
 		posted[id] = true
 	}
 	var missing []string
+	present := make(map[string]bool)
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
 			return fmt.Errorf("set category sort order: %w", err)
 		}
+		present[id] = true
 		if !posted[id] {
 			missing = append(missing, id)
 		}
@@ -1910,6 +1896,13 @@ func (r *CatalogRepo) SetCategorySortOrder(ctx context.Context, orderedIDs []str
 	}
 	if err := rows.Close(); err != nil {
 		return fmt.Errorf("set category sort order: %w", err)
+	}
+	if knownOnly {
+		for _, id := range orderedIDs {
+			if !present[id] {
+				return fmt.Errorf("%w: %s", ErrCategoryNotFound, id)
+			}
+		}
 	}
 	full := append(append(make([]string, 0, len(orderedIDs)+len(missing)), orderedIDs...), missing...)
 

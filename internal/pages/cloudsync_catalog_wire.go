@@ -96,8 +96,9 @@ func cloudSaveCategory(ctx context.Context, d *common.Deps, p data.CategorySave)
 // The cloud-side decode already refuses a blank or duplicate id; this
 // re-checks, because nothing else validates a directive against the till.
 // An id with no categories row (active or inactive) refuses the whole list
-// before anything is written — SetCategorySortOrder would otherwise run
-// an UPDATE matching no row and report success for an order it didn't set.
+// before anything is written (SetCategorySortOrderKnown, in the write
+// transaction) — a plain UPDATE would match no row and report success for
+// an order it didn't set.
 // Every category the list leaves out keeps its relative order after the
 // listed ones (SetCategorySortOrder, ut-docs#2482). Idempotent: when the
 // till already shows exactly the order this list produces (a lost-result
@@ -122,13 +123,6 @@ func cloudSetCategoryOrder(ctx context.Context, d *common.Deps, ids []string) (s
 		return "", err
 	}
 	repo := data.NewCatalogRepo(d.Db)
-	missing, err := repo.CategoryIDsNotFound(ctx, ids)
-	if err != nil {
-		return "", err
-	}
-	if len(missing) > 0 {
-		return "", fmt.Errorf("category %s is not on this till", missing[0])
-	}
 	msg := fmt.Sprintf("category order applied to %d categories", len(ids))
 	current, err := repo.ListCategories(ctx)
 	if err != nil {
@@ -137,7 +131,14 @@ func cloudSetCategoryOrder(ctx context.Context, d *common.Deps, ids []string) (s
 	if categoryOrderAlreadyApplied(current, ids) {
 		return msg, nil
 	}
-	if err := repo.SetCategorySortOrder(ctx, ids); err != nil {
+	// The unknown-id refusal happens inside the write transaction
+	// (SetCategorySortOrderKnown), so the check and the UPDATEs can't be
+	// split by a concurrent write (review of ut-docs#3075).
+	if err := repo.SetCategorySortOrderKnown(ctx, ids); err != nil {
+		if errors.Is(err, data.ErrCategoryNotFound) {
+			id := strings.TrimPrefix(err.Error(), data.ErrCategoryNotFound.Error()+": ")
+			return "", fmt.Errorf("category %s is not on this till", id)
+		}
 		return "", err
 	}
 	auditCloudDirective(ctx, d, "category", "-", "cloud_category_order_set", map[string]any{"category_ids": ids})

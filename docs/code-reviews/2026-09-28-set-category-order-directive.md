@@ -1,0 +1,52 @@
+# Review: `set_category_order` cloud directive (ut-docs#3075)
+
+- **Date:** 2026-09-28 · **Lane:** lane:cloud-54
+- **Author:** Opus 5.5 (dev subagent) · **Reviewer:** Fable (independent, different model)
+- **Contract:** ut-docs `reference/manage-shop-catalog-api.md` §3 intro, §3.8
+
+## What shipped
+
+- New main-till-only directive `set_category_order {category_ids}` (JSON-encoded
+  string array), strict decode (missing/blank/duplicate/wrong shape fail with
+  nothing applied), skipped on satellite tills (`mainTillOnlyTypes`), listed
+  in `catalogTypes`.
+- Hook `cloudSetCategoryOrder`: `requirePrimaryDirective`; an unknown id fails
+  "category X is not on this till" with nothing written; otherwise
+  `CatalogRepo.SetCategorySortOrderKnown` (unlisted categories keep their
+  relative order after the listed ones); audit `cloud_category_order_set`;
+  a replay of an order that is already in place writes nothing.
+- Help: `web/help/{en,de,ar,fa,tr}/categories.md` step 4 says the order can
+  also be set from the cloud manage page and the last reorder wins.
+
+## Findings
+
+| # | Sev | Finding | Outcome |
+|---|---|---|---|
+| 1 | minor | Existence check and UPDATEs ran in separate transactions, not the one BEGIN IMMEDIATE §3 asks for; a row vanishing in between would report success for an unset id | **Fixed:** new `SetCategorySortOrderKnown` does the check on the rows read inside the write transaction; `CategoryIDsNotFound` removed; new `TestSetCategorySortOrderKnown` (mutation-checked: disabling the check fails it) |
+| 2 | minor | Audit row written after commit (crash between loses it) | Accepted: same as every existing cloud hook; pattern-level |
+| 3 | nit | `catalogTypes` re-push of an items-only snapshot is a no-op | Accepted: harmless, hash-gated; the order reaches the cloud via the config report |
+| 4 | nit | Hook re-validation keys duplicates on untrimmed ids | Accepted: the decoder already trims and dedupes |
+| 5 | nit | ut-docs §3 intro still says "All five types" | Fixed in the ut-docs contract PR |
+
+Claims verified by the dev and re-checked by the reviewer: the local reorder
+routes already audit (`category_reorder`), and `categories.sort_order`
+replicates to satellites (`adminTables`, `SELECT *`, update trigger bumps the
+admin-sync generation).
+
+## Verified beyond the unit tests
+
+- Reviewer TDD re-run: disabling the unknown-id check fails
+  `TestCloudSetCategoryOrder_Refusals` (both the error and the "a refused order
+  changed the till" assertion); restored → pass.
+- No `IN (…)` query, so 1000 ids can't hit SQLite's variable limit.
+- Full gate after the fix: gofmt clean, build, vet, `go test ./...` exit 0,
+  golangci-lint 0 issues, guards (data-access, core-neutral, i18n,
+  help-topics, help-drift, compliance-claims, competitor-naming,
+  kiosk-engine) pass. shellcheck not installed here; no shell file changed.
+  `guard-deadcode-baseline.sh` fails identically on clean `origin/main`
+  (`internal/logging/file.go`), unrelated.
+- No UI change on the till, so no screenshots.
+
+## Verdict
+
+Safe to merge.
