@@ -31,6 +31,26 @@
     </div>
     {{ end }}
   {{ end }}
+  {{/* ut-docs#2703 (reopened): lines of a legacy pay-at-counter order that
+       matched nothing in the catalog when it was opened. They ride in the
+       held sale's payload (pos.BasketSnapshot.AddByHand), so this shows on
+       every resume of that order, from any till, and on every basket render
+       until the sale is paid or cleared or the cashier dismisses it -- the
+       dismiss clears it on the server too (POST /api/pos/add-by-hand/dismiss),
+       so it never comes back on the next render or resume. "error" level:
+       it must stay until acted on (info/success auto-expire). */}}
+  {{ if .AddByHand }}
+  {{- $byHand := "" -}}
+  {{- range $i, $l := .AddByHand -}}
+    {{- if $i }}{{ $byHand = printf "%s, " $byHand }}{{ end -}}
+    {{- $byHand = printf "%s%s × %s" $byHand $l.Label (qty $l.Qty) -}}
+  {{- end }}
+  <div class="pos-notice error" role="alert" data-testid="counter-unmatched-notice">
+    <span class="notice-text">{{ printf (T "open_orders.counter.add_by_hand") $byHand }}</span>
+    <button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}"
+            hx-post="/api/pos/add-by-hand/dismiss" hx-swap="none">✕</button>
+  </div>
+  {{ end }}
   <h2>{{ T "basket.title" }}
     <span class="basket-count" data-testid="basket-count" title="{{ T "basket.count_label" }}">{{ .ItemCount }}</span>
     <span class="visually-hidden">{{ T "basket.count_label" }}</span>

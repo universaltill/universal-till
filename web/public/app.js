@@ -1192,6 +1192,31 @@ document.addEventListener('click', function(e){
   setTimeout(function(){ if (notice.parentNode) notice.parentNode.removeChild(notice); }, 250);
 });
 
+// Arrow-key tab switching (WAI-ARIA tabs, ut-docs#2703 review) for a
+// server-rendered tablist that opts in with data-arrow-tabs -- the sale
+// screen's Open orders popup, whose body htmx re-fetches, so the handler is
+// delegated rather than bound to elements a swap replaces. Left/Right move
+// to the previous/next tab (mirrored in RTL, like the Alpine tablists'
+// focusTab), Home/End to the first/last, wrapping; the tab is selected on
+// focus (click -> its hx-get), matching automatic activation.
+document.addEventListener('keydown', function(e){
+  var tab = e.target.closest ? e.target.closest('[data-arrow-tabs] [role=tab]') : null;
+  if (!tab) return;
+  var list = tab.closest('[data-arrow-tabs]');
+  var tabs = Array.prototype.slice.call(list.querySelectorAll('[role=tab]'));
+  var i = tabs.indexOf(tab), n = tabs.length, next;
+  var rtl = getComputedStyle(list).direction === 'rtl';
+  if (e.key === 'ArrowRight') next = (i + (rtl ? -1 : 1) + n) % n;
+  else if (e.key === 'ArrowLeft') next = (i + (rtl ? 1 : -1) + n) % n;
+  else if (e.key === 'Home') next = 0;
+  else if (e.key === 'End') next = n - 1;
+  else return;
+  e.preventDefault();
+  if (next === i) return;
+  tabs[next].focus();
+  tabs[next].click();
+});
+
 // Copy-to-clipboard buttons (ut-docs#2720: Settings → Diagnostic mode's
 // "Copy folder path" / "Copy diagnostics"). Delegated so it survives the
 // card's htmx outerHTML swaps. navigator.clipboard needs a secure context

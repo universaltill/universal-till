@@ -5,3 +5,6 @@
 /UniversalTill.xcodeproj/
 # Written by `xcodegen generate` from project.yml's `info:` block.
 /UniversalTill/Info.plist
+# Written by scripts/make-app-icon.sh from the canonical brand mark
+# (ut-docs#3069).
+/UniversalTill/Assets.xcassets/

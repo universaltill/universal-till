@@ -1058,6 +1058,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # ut-docs#3069: dispatch ios-testflight.yml below. A `release:
+      # published` trigger there would never fire -- GitHub starts no
+      # workflow from events made with GITHUB_TOKEN (this undraft), except
+      # workflow_dispatch / repository_dispatch.
+      actions: write
     steps:
       - uses: actions/checkout@v4
       - name: Publish the release (undraft) now that every pre-publish platform succeeded
@@ -1065,6 +1070,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.prepare.outputs.tag }}
         run: gh release edit "$TAG" --draft=false --latest
+      - name: Start the iOS TestFlight upload for this release (ut-docs#3069)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        # A TestFlight problem must never fail or roll back a published
+        # release: warn, and a maintainer re-dispatches ios-testflight.yml.
+        run: |
+          gh workflow run ios-testflight.yml --ref "$TAG" -f version="${TAG#v}" \
+            || echo "::warning::could not dispatch ios-testflight.yml for $TAG; run it by hand"
 
   # Attaches the notarized .dmg to the already-published release (ut-docs#2917)
   # and folds its line into checksums.txt — internal/selfupdate's mac update

@@ -449,6 +449,14 @@ type Basket struct {
 	// recompute untouched until explicitly changed.
 	VoucherID      string      `json:"voucherId,omitempty"`
 	VoucherBalance money.Money `json:"voucherBalance,omitempty"`
+	// AddByHand (ut-docs#2703, reopened) is BasketSnapshot.AddByHand of the
+	// held sale this basket was resumed from: customer-ordered lines the
+	// cashier must ring up by hand, shown as a sticky notice on every basket
+	// render. Not totals-relevant (commitTotalsLocked never touches it);
+	// cleared by resetLocked/Tender (s.basket = Basket{}) and
+	// DismissAddByHand only -- deliberately NOT by voiding every line, since
+	// the cashier may be about to add exactly these.
+	AddByHand []ByHandLine `json:"addByHand,omitempty"`
 }
 
 // HasDineInLine reports whether any line is consumed on the premises --

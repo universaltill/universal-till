@@ -421,9 +421,11 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /api/pos/held/table":          true,
 	"POST /api/pos/hold":                true,
 	"POST /api/pos/resume":              true,
+	"POST /api/pos/add-by-hand/dismiss": true,
 	"POST /api/pos/scan-with-modifiers": true,
 	"POST /api/vouchers/{id}/redeem":    true,
 	"POST /open-orders/resume":          true,
+	"POST /open-orders/counter/open":    true,
 	// Status chips every page loads (local reads only; denying them would
 	// stamp the demo message into the nav).
 	"GET /ui/bugreport-chip":   true,
@@ -502,18 +504,14 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /api/inventory/override":                  true,
 	"POST /api/inventory/receipt":                   true,
 	"POST /api/inventory/return":                    true,
-	// Orders, kitchen display and routing, kiosk counter-order board (staff
-	// side, local).
-	"GET /api/orders/stream":                                    true,
-	"GET /kiosk-counter-orders":                                 true,
-	"GET /kitchen-display/{station_id}":                         true,
-	"GET /kitchen-stations":                                     true,
-	"GET /orders":                                               true,
-	"GET /orders/{receipt}":                                     true,
-	"GET /ui/kiosk-counter-orders":                              true,
-	"GET /ui/kitchen-display/{station_id}":                      true,
-	"GET /ui/orders":                                            true,
-	"POST /api/kiosk-counter-orders/{id}/collect":               true,
+	// Orders, kitchen display and routing (staff side, local).
+	"GET /api/orders/stream":               true,
+	"GET /kitchen-display/{station_id}":    true,
+	"GET /kitchen-stations":                true,
+	"GET /orders":                          true,
+	"GET /orders/{receipt}":                true,
+	"GET /ui/kitchen-display/{station_id}": true,
+	"GET /ui/orders":                       true,
 	"POST /api/kitchen-stations/routes/categories/{categoryID}": true,
 	"POST /api/kitchen-stations/routes/items/{itemID}":          true,
 	"POST /api/kitchen-stations/{id}/active":                    true,

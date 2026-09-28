@@ -43,8 +43,8 @@ import (
 // which costs it one redundant badge re-fetch -- accepted over teaching the
 // hub who caused each nudge.
 //
-// Held sales only for now; ut-docs#2703 extends "open orders" to include
-// pay-at-counter kiosk orders and will extend this count with them.
+// Pay-at-counter kiosk orders are held sales too (ut-docs#2703), so they
+// are in this count; so are legacy open counter orders (reopened #2703).
 func registerOpenOrdersBadge(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewHeldSalesRepo(d.Db)
 	mux.HandleFunc("GET /ui/open-orders-badge", func(w http.ResponseWriter, r *http.Request) {
@@ -60,6 +60,15 @@ func registerOpenOrdersBadge(mux *http.ServeMux, d *common.Deps) {
 			logging.L().Warnf("open-orders badge: list held sales: %v", err)
 		} else {
 			n = len(items)
+		}
+		// ut-docs#2703 (reopened): Open orders' "Pay at the counter" tab
+		// also lists legacy open counter orders (placed before such orders
+		// were held sales), so the badge counts them too -- the badge is
+		// the number of orders the popup's two tabs hold together.
+		if legacy, err := data.NewKioskCounterOrdersRepo(d.Db).ListOpen(r.Context()); err != nil {
+			logging.L().Warnf("open-orders badge: list legacy counter orders: %v", err)
+		} else {
+			n += len(legacy)
 		}
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

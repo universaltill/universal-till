@@ -7,9 +7,10 @@ name: ios-ci
 # `git diff`, so a PR that touches neither ios/** nor mobile/** pays only
 # for a checkout.
 #
-# Unsigned and simulator-only: no Apple credentials exist in CI yet.
-# Signing and TestFlight are ut-docs#3069. universal-till is public, so
-# the macOS runner minutes are free.
+# Unsigned and simulator-only: no Apple credentials are used here. Signing
+# and the TestFlight upload are ios-testflight.yml (ut-docs#3069), which
+# only a maintainer's dispatch or a published release can start.
+# universal-till is public, so the macOS runner minutes are free.
 on:
   push:
     branches: [main]
@@ -42,7 +43,7 @@ jobs:
             changed="ios/unknown-cannot-diff"
           fi
           echo "$changed"
-          if printf '%s\n' "$changed" | grep -qE '^(ios|mobile)/|^\.github/workflows/ios-ci\.yml$|^scripts/ci/ios-'; then
+          if printf '%s\n' "$changed" | grep -qE '^(ios|mobile)/|^\.github/workflows/ios-(ci|testflight)\.yml$|^scripts/ci/ios-|^web/public/assets/logo/unitill-logo\.svg$'; then
             echo "match=true" >> "$GITHUB_OUTPUT"
           else
             echo "match=false" >> "$GITHUB_OUTPUT"
@@ -65,6 +66,14 @@ jobs:
           set -euo pipefail
           xcodebuild -version
           gomobile bind -target=ios,iossimulator -o ios/build/Mobile.xcframework ./mobile
+      - name: App icon regression test (1024x1024, no alpha — ut-docs#3069)
+        if: steps.filter.outputs.match == 'true'
+        env:
+          UT_REQUIRE_IOS_ICON_TOOLS: "1"
+        run: bash scripts/ci/ios-app-icon_test.sh
+      - name: Generate the app icon asset catalog
+        if: steps.filter.outputs.match == 'true'
+        run: bash ios/scripts/make-app-icon.sh
       - name: Build the app for the simulator (unsigned)
         if: steps.filter.outputs.match == 'true'
         run: |

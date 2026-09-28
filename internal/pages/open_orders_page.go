@@ -22,18 +22,70 @@ type openOrderRow struct {
 	TableLabel string
 	LineCount  int
 	Total      money.Money
-	// AgeMinutes is elapsedMinutes(created_at) -- since ut-docs#1918 a
-	// re-park keeps the original created_at, so this is genuinely "how long
-	// has this order been open", not "how long since it was last touched".
-	AgeMinutes int
 	// MoveTargets (ut-docs#2702 review) are the free tables the sale
 	// screen's popup offers under "Move table" -- filled only by
 	// renderParkedOrdersPopup, never for the /open-orders page, so that page
 	// pays no cross-till table-state hop it doesn't render.
 	MoveTargets []parkedMoveTarget
+	// AgeText is elapsedMinutes(created_at) as the lists show it
+	// (openOrderAgeText: min, h or d -- ut-docs#2703 reopened). Since
+	// ut-docs#1918 a re-park keeps the original created_at, so it is
+	// genuinely "how long has this order been open".
+	AgeText string
+	// Legacy (ut-docs#2703, reopened) marks a pay-at-counter order placed
+	// before such orders were parked as held sales: not a held sale yet, so
+	// its row posts to /open-orders/counter/open (convert, then resume)
+	// instead of the resume routes. Items is its "Name × Qty" summary;
+	// TotalUnknown because it stored no prices.
+	Legacy       bool
+	Items        string
+	TotalUnknown bool
 
 	tableID string
 	payload string
+	counter bool
+}
+
+// openOrdersView is what both surfaces render (ut-docs#2703, reopened):
+// the two tabs' lists and which one is showing.
+type openOrdersView struct {
+	Tab     string
+	Hold    []openOrderRow
+	Counter []openOrderRow
+}
+
+// Rows is the list of the tab being shown.
+func (v openOrdersView) Rows() []openOrderRow {
+	if v.Tab == openOrdersTabCounter {
+		return v.Counter
+	}
+	return v.Hold
+}
+
+// buildOpenOrdersView splits listOpenOrders into the two tabs and adds the
+// legacy counter orders (ListOpen) to the counter tab, oldest first
+// (legacy orders all predate the held ones). A legacy read failure fails
+// the whole view, like a held-sales read failure: an empty counter tab must
+// never be shown falsely.
+func buildOpenOrdersView(ctx context.Context, d *common.Deps, repo *data.HeldSalesRepo, posRepo *data.POSRepo, locale, tab string) (openOrdersView, error) {
+	rows, err := listOpenOrders(ctx, d, repo, posRepo, locale)
+	if err != nil {
+		return openOrdersView{}, err
+	}
+	legacy, err := data.NewKioskCounterOrdersRepo(d.Db).ListOpen(ctx)
+	if err != nil {
+		return openOrdersView{}, err
+	}
+	v := openOrdersView{Counter: legacyCounterRows(legacy, locale, time.Now().UTC())}
+	for _, row := range rows {
+		if row.counter {
+			v.Counter = append(v.Counter, row)
+		} else {
+			v.Hold = append(v.Hold, row)
+		}
+	}
+	v.Tab = pickOpenOrdersTab(tab, len(v.Hold), len(v.Counter))
+	return v, nil
 }
 
 // parkedMoveTarget is one free table the popup's Move table control offers.
@@ -71,7 +123,7 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 
 	mux.HandleFunc("GET /open-orders", func(w http.ResponseWriter, r *http.Request) {
-		rows, err := listOpenOrders(r.Context(), d, repo, posRepo)
+		view, err := buildOpenOrdersView(r.Context(), d, repo, posRepo, httpx.ResolveLocale(w, r), r.URL.Query().Get("tab"))
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "open_orders.error.load_failed", err)
 			return
@@ -84,7 +136,7 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 			"title":         httpx.T(httpx.RequestLocale(r), "page.title.open_orders"),
 			"theme":         d.CurrentState().Theme,
 			"menuItems":     d.MenuSnapshot(),
-			"orders":        rows,
+			"view":          view,
 			"backToSaleURL": saleScreenReturnURL(mode),
 			// ut-docs#2138: set only by the resume route's redirect below, on
 			// refusal -- the same ?err=<i18n key> + "login-error" banner
@@ -138,6 +190,69 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 		}
 	})
 
+	// Open a legacy pay-at-counter order on the till (ut-docs#2703,
+	// reopened). Such an order was placed before pay-at-counter orders were
+	// parked as held sales, so it has no held sale and no prices; its only
+	// action used to be "Mark collected", which closed it unpaid. Here it is
+	// priced from the current catalog and converted into a held sale under
+	// its own id (legacyCounterOrderHeldSale +
+	// KioskCounterOrdersRepo.ConvertOpenToHeld, one transaction, so a double
+	// tap or a second till makes one sale), then opened through the SAME
+	// resumeHeldSale every other open-orders tap uses -- auto-parking a busy
+	// basket, claiming cross-till, and so on. Lines that could not be
+	// matched are stored IN the held sale (BasketSnapshot.AddByHand), so the
+	// sale screen's "add by hand" notice shows on this resume and on any
+	// later one -- even when this resume fails after the conversion
+	// committed. Same audience as resume: any operator.
+	mux.HandleFunc("POST /open-orders/counter/open", func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		locale := httpx.ResolveLocale(w, r)
+		_ = r.ParseForm()
+		id := strings.TrimSpace(r.Form.Get("id"))
+		back := func(errKey string) {
+			http.Redirect(w, r, "/open-orders?tab=counter&err="+errKey, http.StatusSeeOther)
+		}
+		kiosk := data.NewKioskCounterOrdersRepo(d.Db)
+		order, found, err := kiosk.Get(ctx, id)
+		if err != nil {
+			logging.L().Errorf("open counter order %s: %v", id, err)
+			back("hold.error.failed")
+			return
+		}
+		if !found || id == "" {
+			back("hold.error.not_found")
+			return
+		}
+		if order.Status == data.KioskCounterOrderStatusOpen {
+			held, err := legacyCounterOrderHeldSale(ctx, d, order)
+			if err != nil {
+				logging.L().Errorf("open counter order %s: price from catalog: %v", order.DisplayNo, err)
+				back("hold.error.failed")
+				return
+			}
+			converted, err := kiosk.ConvertOpenToHeld(ctx, held)
+			if err != nil {
+				logging.L().Errorf("open counter order %s: convert to held sale: %v", order.DisplayNo, err)
+				back("hold.error.failed")
+				return
+			}
+			if converted {
+				d.MarkHeldChanged()
+			}
+		}
+		mode, _, _ := d.Settings.Get(ctx, "display.mode")
+		switch resumeHeldSale(ctx, d, repo, posRepo, order.ID, locale) {
+		case resumeNotFound:
+			back("hold.error.not_found")
+		case resumeFailed:
+			back("hold.error.failed")
+		case resumeOKParkedPrior:
+			http.Redirect(w, r, saleScreenReturnURLWithMsg(mode, "hold.toast.parked_and_resumed"), http.StatusSeeOther)
+		default:
+			http.Redirect(w, r, saleScreenReturnURL(mode), http.StatusSeeOther)
+		}
+	})
+
 	// Parked-orders popup body (ut-docs#2137), opened from the button beside
 	// Card on the sale screen. A fragment rather than part of the sale
 	// screen's own render: it is fetched each time the popup opens, so it
@@ -168,7 +283,7 @@ func registerOpenOrders(mux *http.ServeMux, d *common.Deps) {
 // page renders either way, never a blocking error over a primary that
 // happens to be off. On the primary itself, or a standalone till, this
 // IS repo.List.
-func listOpenOrders(ctx context.Context, d *common.Deps, repo *data.HeldSalesRepo, posRepo *data.POSRepo) ([]openOrderRow, error) {
+func listOpenOrders(ctx context.Context, d *common.Deps, repo *data.HeldSalesRepo, posRepo *data.POSRepo, locale string) ([]openOrderRow, error) {
 	items, err := heldSalesForDisplay(ctx, d, repo)
 	if err != nil {
 		return nil, err
@@ -180,14 +295,16 @@ func listOpenOrders(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 	tableLabels := map[string]string{}
 	rows := make([]openOrderRow, 0, len(items))
 	for _, h := range items {
+		age := elapsedMinutes(h.CreatedAt, now)
 		row := openOrderRow{
-			ID:         h.ID,
-			Label:      h.Label,
-			LineCount:  h.LineCount,
-			Total:      money.FromMinor(h.TotalMinor),
-			AgeMinutes: elapsedMinutes(h.CreatedAt, now),
-			tableID:    h.TableID,
-			payload:    h.Payload,
+			ID:        h.ID,
+			Label:     h.Label,
+			LineCount: h.LineCount,
+			Total:     money.FromMinor(h.TotalMinor),
+			AgeText:   openOrderAgeText(age, locale),
+			tableID:   h.TableID,
+			payload:   h.Payload,
+			counter:   heldPayloadIsCounterOrder(h.Payload),
 		}
 		if h.TableID != "" {
 			label, seen := tableLabels[h.TableID]
@@ -220,7 +337,10 @@ func listOpenOrders(ctx context.Context, d *common.Deps, repo *data.HeldSalesRep
 // enforcement point.
 func renderParkedOrdersPopup(w http.ResponseWriter, r *http.Request, d *common.Deps, repo *data.HeldSalesRepo, posRepo *data.POSRepo, toast, level string) {
 	ctx := r.Context()
-	rows, err := listOpenOrders(ctx, d, repo, posRepo)
+	// r.FormValue: the tab rides in the query on GET /ui/parked-orders and
+	// in the form body on a Move table POST (hx-vals), so a move re-renders
+	// the tab it was made from.
+	view, err := buildOpenOrdersView(ctx, d, repo, posRepo, httpx.ResolveLocale(w, r), r.FormValue("tab"))
 	if err != nil {
 		// NEVER fall through to the empty-state body here (ut-docs#2137
 		// review): "No open orders right now" is the one thing a cashier
@@ -234,6 +354,7 @@ func renderParkedOrdersPopup(w http.ResponseWriter, r *http.Request, d *common.D
 		http.Error(w, "could not load parked orders", http.StatusInternalServerError)
 		return
 	}
+	rows := view.Rows()
 	var free []parkedMoveTarget
 	if len(rows) > 0 {
 		if states, err := tablesWithStateForDisplay(ctx, d, posRepo, time.Now().Add(-tillClaimTTL)); err == nil {
@@ -246,7 +367,7 @@ func renderParkedOrdersPopup(w http.ResponseWriter, r *http.Request, d *common.D
 	}
 	if len(free) > 0 {
 		for i := range rows {
-			if !heldSaleMayHaveTable(rows[i].payload) {
+			if rows[i].Legacy || !heldSaleMayHaveTable(rows[i].payload) {
 				continue
 			}
 			// Fresh slice per row -- never alias free's backing array.
@@ -264,6 +385,7 @@ func renderParkedOrdersPopup(w http.ResponseWriter, r *http.Request, d *common.D
 		toastRole = "alert"
 	}
 	httpx.RenderPartial("ui/partials/parked_orders.html", map[string]any{
+		"view":       view,
 		"orders":     rows,
 		"toast":      toast,
 		"toastLevel": level,
