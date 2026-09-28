@@ -2483,6 +2483,40 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
    own -8px offset + its 44px box), so the two never overlap even on the
    smallest tile this grid ever renders (checked at 1024x600 and 360px). */
 .tile-badge-hide { inset-block-start: auto; inset-block-end: -8px; inset-inline-end: -8px; }
+/* ut-docs#2465: Move to category -- the fourth corner, inline-START BOTTOM
+   (mirrors .tile-badge-hide), so no two badges ever share a corner. Shown
+   only when app.js's utTileJiggle marked the grid .recat-enabled (a strip
+   with category tabs for a catalog_management session); otherwise there is
+   nowhere to move to. The arrow in the folder points inline-end, so it
+   flips under RTL. */
+.tile-badge-move { inset-block-start: auto; inset-block-end: -8px; inset-inline-start: -8px; display: none; }
+.recat-enabled .tile-badge-move { display: flex; }
+[dir="rtl"] .tile-badge-move svg { transform: scaleX(-1); }
+/* A category tab the dragged tile would move to on release: an inset
+   outline in the accent colour, a tinted fill and a down-arrow marker --
+   shape and outline, never colour alone. Inset, so it isn't clipped by the
+   tab bar's own overflow. */
+.products-finder .tab-bar .tab.tile-drop-target {
+  outline: 3px dashed var(--accent); outline-offset: -3px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  color: var(--text);
+}
+/* The marker is a masked shape with empty content, so it never joins the
+   tab's accessible name (a text glyph there would be read out). */
+.products-finder .tab-bar .tab.tile-drop-target::after {
+  content: ""; display: inline-block; vertical-align: middle;
+  inline-size: .9em; block-size: .9em; margin-inline-start: .35rem;
+  background: var(--accent);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 4v14'/%3E%3Cpath d='m6 12 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 4v14'/%3E%3Cpath d='m6 12 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+/* The Move to category dialog reuses the overflow sheet's frame/tiles;
+   its own bits are the hint line and the Cancel row. */
+.tile-move-dialog h3 { margin: 0; }
+.tile-move-hint { margin-block: .35rem 0; color: var(--muted); font-size: .9rem; }
+.tile-move-option[hidden] { display: none; }
+.tile-move-actions { display: flex; justify-content: flex-end; }
+.tile-move-actions .btn { min-block-size: 44px; }
 .tile-badge-dot {
   position: relative;
   display: flex; align-items: center; justify-content: center;

@@ -725,6 +725,36 @@
             {{ end }}
           </div>
         </dialog>
+        {{/* ut-docs#2465: the Move to category dialog -- ONE per strip, opened
+             by any tile's Move to category badge (app.js's utTileJiggle fills
+             in the tile's name, hides the tile's own current category and
+             posts /api/buttons/recategorize on a choice). Lists every category
+             tab in tab order (the same .Groups the tab bar ranges, so the
+             Uncategorised bucket too when it is a tab), as large touch
+             targets, plus Cancel. Same non-modal .show() + manual Tab trap as
+             the overflow sheet above (the till's on-screen keyboard stays
+             reachable); Escape and Cancel close it and focus returns to the
+             badge. app.js's stayInEdit() counts it as part of editing, so
+             using it never drops jiggle mode. Not rendered for a Locked
+             (cashier) session -- there is no badge to open it. */}}
+        {{ if not $.Locked }}
+        <dialog id="tile-move-dialog" class="modifier-modal category-overflow-dialog tile-move-dialog"
+                aria-labelledby="tile-move-dialog-title" aria-describedby="tile-move-dialog-hint" data-ut-scrim-dismiss>
+          <h3 id="tile-move-dialog-title">{{ T "tile_sheet.move_category" }}</h3>
+          <p id="tile-move-dialog-hint" class="tile-move-hint" data-hint="{{ T "tile_sheet.move_dialog_hint" }}"></p>
+          <div class="grid category-overflow-grid" role="group" aria-labelledby="tile-move-dialog-title">
+            {{ range $g := .Groups }}
+            <button type="button" class="category-overflow-tile tile-move-option" data-move-cat="{{ $g.ID }}" data-testid="tile-move-option" style="--cat-color: {{ $g.Color }}">
+              {{ if $g.ImageURL }}<img class="category-tile-img" src="{{ imgv $g.ImageURL }}" alt="" loading="lazy">{{ end }}
+              <span class="category-tile-name">{{ if $g.ID }}{{ $g.Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</span>
+            </button>
+            {{ end }}
+          </div>
+          <div class="tile-move-actions">
+            <button type="button" class="btn secondary tile-move-cancel" data-testid="tile-move-cancel">{{ T "common.cancel" }}</button>
+          </div>
+        </dialog>
+        {{ end }}
         {{ end }}
         {{/* ut-docs#2294: search is now a real server round trip (matches
              every active catalog item — barcode/SKU/name — not just what
@@ -906,7 +936,7 @@
              is wired the same way the no-tab-bar branch's is: against
              $el.parentElement, which resolves to #buttons-grid itself
              (this branch's only content). */}}
-        <div class="grid">
+        <div class="grid" data-grid-cat="">
           {{ range (index .Groups 0).Buttons }}{{ template "product-tile" . }}{{ end }}
         </div>
         <p class="empty" x-show="!sectionHasMatch($el.parentElement)">{{ T "products.no_matches" }}</p>
@@ -1249,7 +1279,7 @@
   {{ if .Buttons }}
   <section class="category-group" x-show="sectionHasMatch($el)">
     <h3 class="category-header" x-show="q" x-cloak>{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</h3>
-    <div class="grid">
+    <div class="grid" data-grid-cat="{{ .ID }}">
       {{ range .Buttons }}{{ template "product-tile" . }}{{ end }}
     </div>
   </section>
@@ -1314,7 +1344,7 @@
 <section class="category-group" data-cat-group="{{ .ID }}" style="--cat-color: {{ .Color }}" x-show="sectionHasMatch($el)">
   <h3 class="category-header">{{ if .AncestorName }}<span class="category-header-ancestor" x-show="q" x-cloak>{{ .AncestorName }} › </span>{{ end }}{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}</h3>
   {{ if .Buttons }}
-  <div class="grid">
+  <div class="grid" data-grid-cat="{{ .ID }}">
     {{ range .Buttons }}{{ template "product-tile" . }}{{ end }}
   </div>
   {{ end }}
@@ -1625,6 +1655,25 @@
               title="{{ if .Locked }}{{ T "tile_sheet.locked" }}{{ else }}{{ T "tile_sheet.hide" }}{{ end }}">
         <span class="tile-badge-dot" aria-hidden="true">{{ icon "eye-off" }}</span>
         {{ if .Locked }}<span class="tile-badge-dot tile-badge-lock" data-testid="tile-badge-lock-hide" aria-hidden="true">{{ icon "lock" }}</span>{{ end }}
+      </button>
+      {{ end }}
+      {{/* ut-docs#2465: Move to category -- the inline-START BOTTOM corner
+           (the one corner the edit/remove/hide badges leave free; logical
+           properties in app.css, so it mirrors under RTL). The keyboard,
+           screen-reader and overflow-tab path to what a drag onto a category
+           tab does: it opens the one shared #tile-move-dialog (below the tab
+           bar), wired by app.js's utTileJiggle -- no hx-* here. Changing an
+           item's category is catalog_management work, so a Locked (cashier)
+           session never gets this badge at all (unlike the others, which show
+           a lock and lead to the PIN prompt); the route still refuses one.
+           app.js shows it only where there is somewhere to move to (a strip
+           with category tabs -- #buttons-grid.recat-enabled). */}}
+      {{ if not .Locked }}
+      <button type="button" class="tile-badge tile-badge-move" data-testid="tile-badge-move"
+              aria-haspopup="dialog" aria-controls="tile-move-dialog"
+              aria-label="{{ printf (T "tile_sheet.move_category_named") .Label }}"
+              title="{{ T "tile_sheet.move_category" }}">
+        <span class="tile-badge-dot" aria-hidden="true">{{ icon "folder-input" }}</span>
       </button>
       {{ end }}
     </span>

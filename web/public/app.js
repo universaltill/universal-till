@@ -1805,9 +1805,17 @@ function initOfflineOverride(updateFn){
 // for free) the dragged cell is moved before/after it in the DOM -- the
 // siblings reflow live (FLIP-animated on the .tile-cell wrapper, app.css
 // .shuffling) so it reads as tiles sliding out of the way, iOS-style.
-// Reordering is confined to the tile's own .grid: dragging a tile into
-// ANOTHER category's grid would mean re-categorising the item, which is
-// catalog data, not button order -- the Designer/catalog own that.
+// Reordering is confined to the tile's own .grid. Moving a tile to ANOTHER
+// category (ut-docs#2465) is a different gesture with a different save:
+// dragging it onto another category's TAB in the strip (the tab lights up
+// as a drop target, .tile-drop-target) or choosing a category in the Move
+// to category badge's dialog (#tile-move-dialog -- the keyboard, screen-
+// reader and overflow-tab path) changes the ITEM's category right away via
+// POST /api/buttons/recategorize (catalog_management, like reorder: the
+// route answers a cashier with the PIN prompt, and a Locked session gets no
+// badge or dialog at all), after first saving any pending in-grid reorder,
+// then re-renders the grid. Each tile's current category is its grid's
+// data-grid-cat (buttons.html).
 //
 // Persisting: /api/buttons/reorder rewrites sort_order = index for EVERY
 // code it's given, so it must get the full global list, and this grid's
@@ -1886,6 +1894,109 @@ function initOfflineOverride(updateFn){
     var a = allGrid();
     if (a) a.classList.toggle('all-grid-movable', allGridFiltered());
   }
+  // ---- move to another category (ut-docs#2465) ----
+  // The one shared dialog exists only where there is somewhere to move to (a
+  // strip with category tabs) and only for a catalog_management session
+  // (buttons.html) -- so it doubles as the "recategorising is on" signal.
+  function moveDialog() { return document.getElementById('tile-move-dialog'); }
+  function recatEnabled() { return !!moveDialog(); }
+  // app.css shows the Move to category badge only under this class, so a
+  // strip without tabs (one category, or none) never offers a move nowhere.
+  function syncRecat() {
+    var g = grid();
+    if (g) g.classList.toggle('recat-enabled', recatEnabled());
+  }
+  // A tile's current category: its grid's data-grid-cat ("" = Uncategorised).
+  // null when unknown (the All grid) -- then it is never offered a move.
+  function tileCategory(tile) {
+    var g = tile && tile.closest ? tile.closest('.grid[data-grid-cat]') : null;
+    return g ? g.getAttribute('data-grid-cat') : null;
+  }
+  function catTabs() {
+    return Array.prototype.slice.call(document.querySelectorAll('.products-finder .tab-bar .tab[data-cat-tab]'))
+      .filter(function (t) { return !t.hidden && t.getClientRects().length > 0; });
+  }
+  function inRect(r, x, y) { return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; }
+  // Whether (x, y) is over the strip's tab bar at all -- the in-grid reorder
+  // never runs there.
+  function overTabBar(x, y) {
+    var bar = document.querySelector('.products-finder .tab-bar');
+    return !!(bar && bar.getClientRects().length && inRect(bar.getBoundingClientRect(), x, y));
+  }
+  // The category tab under (x, y) that the dragged tile could move to: any
+  // visible tab but the tile's own category's.
+  function dropTabAt(x, y, tile) {
+    if (!recatEnabled()) return null;
+    var own = tileCategory(tile);
+    if (own === null) return null;
+    var tabs = catTabs();
+    for (var i = 0; i < tabs.length; i++) {
+      if ((tabs[i].getAttribute('data-tab-id') || '') === own) continue;
+      if (inRect(tabs[i].getBoundingClientRect(), x, y)) return tabs[i];
+    }
+    return null;
+  }
+  function setDropTarget(tab) {
+    if (!drag) return;
+    if (drag.dropTab === tab) return;
+    if (drag.dropTab) drag.dropTab.classList.remove('tile-drop-target');
+    drag.dropTab = tab || null;
+    if (tab) tab.classList.add('tile-drop-target');
+  }
+  var moveCtx = null;       // { itemId, cat, badge } while the dialog is open
+  var focusDoneAfterSettle = false;
+  function moveToCategory(itemId, categoryId) {
+    // A pending in-grid reorder is saved first: the recategorize's re-render
+    // would otherwise drop it.
+    var pending = Promise.resolve();
+    if (dirty) { dirty = false; pending = persistOrder(); }
+    return pending.then(function () {
+      var fd = new FormData();
+      fd.append('item_id', itemId);
+      fd.append('category_id', categoryId);
+      return postButtons('/api/buttons/recategorize', fd, refetchGrid);
+    });
+  }
+  function openMoveDialog(badge) {
+    var dlg = moveDialog();
+    var cell = badge.closest('.tile-cell');
+    var tile = cell ? cell.querySelector(':scope > .btn-tile[data-code]') : null;
+    if (!dlg || !tile || dlg.open) return;
+    var cat = tileCategory(tile);
+    if (cat === null) return;
+    moveCtx = { itemId: tile.getAttribute('data-item-id') || '', cat: cat, badge: badge };
+    var hint = dlg.querySelector('.tile-move-hint');
+    if (hint) hint.textContent = (hint.getAttribute('data-hint') || '').split('%s').join(cell.getAttribute('data-name') || '');
+    var first = null;
+    Array.prototype.forEach.call(dlg.querySelectorAll('.tile-move-option'), function (o) {
+      o.hidden = (o.getAttribute('data-move-cat') || '') === cat;
+      if (!o.hidden && !first) first = o;
+    });
+    // Non-modal, like the overflow sheet: the till's on-screen keyboard stays
+    // reachable (buttons.html). Tab is trapped by hand below.
+    dlg.show();
+    (first || dlg.querySelector('.tile-move-cancel')).focus();
+  }
+  function closeMoveDialog(restoreFocus) {
+    var dlg = moveDialog();
+    var ctx = moveCtx;
+    moveCtx = null;
+    if (dlg && dlg.open) dlg.close();
+    if (restoreFocus && ctx && ctx.badge && ctx.badge.isConnected) ctx.badge.focus();
+  }
+  function trapMoveTab(e) {
+    var dlg = moveDialog();
+    var list = Array.prototype.filter.call(dlg.querySelectorAll('button'), function (b) {
+      return !b.hidden && b.getClientRects().length > 0;
+    });
+    if (!list.length) { e.preventDefault(); return; }
+    var i = list.indexOf(document.activeElement);
+    if (e.shiftKey) {
+      if (i <= 0) { e.preventDefault(); list[list.length - 1].focus(); }
+    } else if (i === -1 || i === list.length - 1) {
+      e.preventDefault(); list[0].focus();
+    }
+  }
   function tileFor(el) {
     var t = el && el.closest ? el.closest('#buttons-grid .btn-tile[data-code]') : null;
     return (t && (!inAllGrid(t) || allGridEditable())) ? t : null;
@@ -1903,7 +2014,8 @@ function initOfflineOverride(updateFn){
   function stayInEdit(el) {
     // ut-docs#2534: and the all_filter_chips chip row -- switching the
     // category is how another category's order is reached.
-    return !!el.closest('.products-finder .tab-bar, #category-overflow-dialog, .products-strip-search, .products-strip-back, #products-search, #search-results, #browsing-category-chips');
+    // ut-docs#2465: and the Move to category dialog.
+    return !!el.closest('.products-finder .tab-bar, #category-overflow-dialog, #tile-move-dialog, .products-strip-search, .products-strip-back, #products-search, #search-results, #browsing-category-chips');
   }
   function visibleCells(gridEl) {
     return Array.prototype.filter.call(gridEl.children, function (c) {
@@ -1987,6 +2099,7 @@ function initOfflineOverride(updateFn){
     active = true;
     materialiseBadges();
     syncAllGridMovable();
+    syncRecat();
     g.classList.add('jiggle-mode');
     if (b) b.hidden = false;
     markFinder(true);
@@ -1995,6 +2108,7 @@ function initOfflineOverride(updateFn){
     if (!active) return;
     endDrag(null);
     clearHold();
+    closeMoveDialog(false);
     active = false;
     var g = grid(), b = bar();
     if (g) g.classList.remove('jiggle-mode');
@@ -2131,11 +2245,14 @@ function initOfflineOverride(updateFn){
   // till had changed it, dropping an all_filter_chips category chip back to
   // plain All. A failed or cancelled save only releases the hold (its own
   // refetchGrid() re-renders anyway).
-  function postReorder(fd, onSaved) {
+  function postReorder(fd, onSaved) { return postButtons('/api/buttons/reorder', fd, onSaved); }
+  // ut-docs#2465: /api/buttons/recategorize answers the same way (204 +
+  // X-UT-Sell-Version, the PIN prompt for a cashier), so it shares this.
+  function postButtons(url, fd, onSaved) {
     var watch = window.utSellScreenWatch;
     var saved = (watch && typeof watch.ownWrite === 'function') ? watch.ownWrite() : function () {};
     return new Promise(function (resolve) {
-      window.utPostWithElevation('/api/buttons/reorder', fd, function (res) {
+      window.utPostWithElevation(url, fd, function (res) {
         if (res.ok) { saved(res.headers.get('X-UT-Sell-Version')); onSaved(); resolve(); return; }
         res.text().then(function (text) {
           showAlert((text || '').trim(), 'server');
@@ -2236,7 +2353,11 @@ function initOfflineOverride(updateFn){
     var rect = tile.parentElement.getBoundingClientRect();
     drag = {
       tile: tile, cell: tile.parentElement, pointerId: e.pointerId,
-      offX: e.clientX - rect.left, offY: e.clientY - rect.top, moved: false
+      offX: e.clientX - rect.left, offY: e.clientY - rect.top, moved: false,
+      // ut-docs#2465 review: where the cell started and whether an unsaved
+      // reorder was already pending, so a drop onto a category tab can undo
+      // the shuffles the tile caused on its way to the tab bar.
+      home: tile.parentElement.parentElement, homeNext: tile.parentElement.nextSibling, dirtyBefore: dirty
     };
     capture();
   }
@@ -2258,7 +2379,12 @@ function initOfflineOverride(updateFn){
   function positionDragged(x, y) {
     var rect = drag.cell.getBoundingClientRect();
     var dx = x - drag.offX - rect.left, dy = y - drag.offY - rect.top;
-    drag.tile.style.transform = 'translate(' + dx + 'px,' + dy + 'px) scale(1.06)';
+    // ut-docs#2465: over a category tab the tile shrinks toward the finger
+    // (and fades a little) so the tab it would move to, and its drop-target
+    // outline, stay visible instead of being covered by a full-size tile.
+    drag.tile.style.transformOrigin = drag.dropTab ? (drag.offX + 'px ' + drag.offY + 'px') : '';
+    drag.tile.style.opacity = drag.dropTab ? '.75' : '';
+    drag.tile.style.transform = 'translate(' + dx + 'px,' + dy + 'px) scale(' + (drag.dropTab ? '.4' : '1.06') + ')';
   }
   function onDragMove(e) {
     if (!drag || e.pointerId !== drag.pointerId) return;
@@ -2269,7 +2395,10 @@ function initOfflineOverride(updateFn){
       drag.moved = true;
       drag.tile.classList.add('dragging');
     }
-    reorderAt(x, y);
+    // ut-docs#2465: over the tab bar the drag is aiming at a category, not
+    // a slot -- light up the tab it would move to, and never reorder there.
+    setDropTarget(dropTabAt(x, y, drag.tile));
+    if (!drag.dropTab && !overTabBar(x, y)) reorderAt(x, y);
     positionDragged(x, y);
     edgeScroll(y);
   }
@@ -2330,10 +2459,26 @@ function initOfflineOverride(updateFn){
   function endDrag(e) {
     if (!drag || (e && e.pointerId !== undefined && e.pointerId !== drag.pointerId)) return;
     var d = drag; drag = null;
+    var dropTab = d.dropTab || null;
+    if (dropTab) dropTab.classList.remove('tile-drop-target');
     d.tile.classList.remove('dragging');
     d.tile.style.transform = '';
+    d.tile.style.transformOrigin = '';
+    d.tile.style.opacity = '';
     if (d.tile.hasPointerCapture && d.tile.hasPointerCapture(d.pointerId)) {
       try { d.tile.releasePointerCapture(d.pointerId); } catch (err) { /* already released */ }
+    }
+    // ut-docs#2465: released over another category's tab -- move the item
+    // there. Only a real release (pointerup), never a cancel or exit().
+    if (dropTab && d.moved && e && e.type === 'pointerup' && dropTab.isConnected) {
+      // Crossing sibling tiles on the way to the tab bar reshuffled this
+      // grid; that was travel, not an intended reorder -- put the cell back
+      // and keep only a reorder that was pending before this drag.
+      if (d.home && d.cell.parentElement === d.home) {
+        d.home.insertBefore(d.cell, (d.homeNext && d.homeNext.parentElement === d.home) ? d.homeNext : null);
+        dirty = d.dirtyBefore;
+      }
+      moveToCategory(d.tile.getAttribute('data-item-id') || '', dropTab.getAttribute('data-tab-id') || '');
     }
   }
 
@@ -2343,6 +2488,13 @@ function initOfflineOverride(updateFn){
   // retired sheet offered by keyboard (Move earlier/later) is still there.
   document.addEventListener('keydown', function (e) {
     if (!active) return;
+    // ut-docs#2465: inside the Move to category dialog, Escape closes the
+    // dialog (focus back on the badge), never edit mode; Tab stays in it.
+    if (moveDialog() && moveDialog().open && e.target.closest && e.target.closest('#tile-move-dialog')) {
+      if (e.key === 'Escape') { e.preventDefault(); closeMoveDialog(true); }
+      else if (e.key === 'Tab') trapMoveTab(e);
+      return;
+    }
     // ut-docs#2698: Escape in the search box closes the search (its own
     // handler), not edit mode as well.
     if (e.key === 'Escape' && e.target.closest && e.target.closest('#products-search')) return;
@@ -2366,6 +2518,37 @@ function initOfflineOverride(updateFn){
     var btn = e.target.closest ? e.target.closest('.jiggle-bar .jiggle-done') : null;
     if (btn) exit();
   });
+
+  // ut-docs#2465: the Move to category badge opens the shared dialog; a
+  // choice there posts the move, Cancel closes it. The badge is a sibling of
+  // the tile, so the capture-phase tile-click swallow above never eats it.
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest) return;
+    var badge = e.target.closest('#buttons-grid .tile-badge-move');
+    if (badge && badgeFor(badge)) {
+      e.preventDefault();
+      if (!active) return;
+      openMoveDialog(badge);
+      return;
+    }
+    if (e.target.closest('#tile-move-dialog .tile-move-cancel')) { closeMoveDialog(true); return; }
+    var opt = e.target.closest('#tile-move-dialog .tile-move-option');
+    if (opt && moveCtx) {
+      var ctx = moveCtx;
+      closeMoveDialog(false);
+      focusDoneAfterSettle = true;
+      moveToCategory(ctx.itemId, opt.getAttribute('data-move-cat') || '');
+    }
+  });
+  // A native close (the scrim tap, data-ut-scrim-dismiss) skips
+  // closeMoveDialog -- forget the tile and give focus back to its badge.
+  document.addEventListener('close', function (e) {
+    if (e.target !== moveDialog() || !moveCtx) return;
+    var ctx = moveCtx;
+    moveCtx = null;
+    var a = document.activeElement;
+    if ((!a || a === document.body) && ctx.badge.isConnected) ctx.badge.focus();
+  }, true);
 
   // The edit badge is a plain <a href> into the catalog: following it tears
   // this document down, which would silently discard an unsaved reorder --
@@ -2437,7 +2620,15 @@ function initOfflineOverride(updateFn){
   document.body.addEventListener('htmx:afterSettle', function () {
     if (!active || !grid()) return;
     if (!grid().classList.contains('jiggle-mode')) enter();
-    else { materialiseBadges(); syncAllGridMovable(); }
+    else { materialiseBadges(); syncAllGridMovable(); syncRecat(); }
+    // ut-docs#2465: after a move from the dialog the tile is gone from this
+    // tab -- land keyboard focus on Done (the bar is the live region)
+    // rather than letting it fall to <body>.
+    if (focusDoneAfterSettle) {
+      focusDoneAfterSettle = false;
+      var done = document.querySelector('.products-finder .jiggle-bar .jiggle-done');
+      if (done) done.focus();
+    }
   });
 })();
 

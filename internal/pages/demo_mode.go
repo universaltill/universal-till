@@ -478,6 +478,7 @@ var demoAllowedRoutes = map[string]bool{
 	"GET /catalog/option-sets":                      true,
 	"GET /catalog/tax-codes":                        true,
 	"GET /categories":                               true,
+	"POST /api/buttons/recategorize":                true,
 	"POST /api/buttons/reorder":                     true,
 	"POST /api/catalog/barcode-backfill":            true,
 	"POST /api/catalog/barcode/delete":              true,
