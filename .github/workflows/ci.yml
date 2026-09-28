@@ -71,6 +71,8 @@ jobs:
         # no separate install step — its version is pinned/guarded by the
         # "Shellcheck version guard" step above (ut-docs#1955), not here.
         run: shellcheck scripts/ci/*.sh
+      - name: Release-notes guard regression test (ut-docs#3091)
+        run: bash scripts/ci/guard-release-notes_test.sh
       - name: Release checksums completeness check regression test (ut-docs#2863)
         run: bash scripts/ci/check-release-checksums_test.sh
       - name: macOS notarization never holds a release — wiring test (ut-docs#2917)

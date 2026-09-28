@@ -23,10 +23,48 @@ git checkout main && git pull
 git tag v0.2.1 && git push origin v0.2.1
 ```
 
+## Before tagging: write the release notes (required)
+
+Every release ships an owner-facing "What's new" note (ut-docs#3091). The till
+shows it in **Settings → About** and in a one-time "Updated to vX.Y.Z" chip for
+managers, and the GitHub Release body leads with it.
+
+1. List the cards closed since the previous tag (the pipeline board's **Done**
+   column, or `git log --first-parent <previous-tag>..main`) and read each
+   card's close-out comment.
+2. Write `web/release-notes/en/v<X.Y.Z>.md`:
+   ```markdown
+   ---
+   version: v0.30.7
+   date: 2026-10-02
+   ---
+   ## New
+   - **Short name:** one or two sentences a shop owner understands.
+   ## Improved
+   - ...
+   ## Fixed
+   - ...
+   ```
+   Plain shop-owner language, grouped New / Improved / Fixed (leave out an
+   empty group). No PR numbers, card IDs or internal jargon
+   (`TestBuiltin_NotesAreOwnerLanguage` refuses `#123`, `ut-docs`, `ADR-…`).
+3. Translate it into every help locale — `web/release-notes/{de,ar,fa,tr}/` —
+   the same change (ut-docs `reference/translation.md`). A missing translation
+   falls back to English, but ship them.
+4. Merge to `main`, then release.
+
+**`release.yml` refuses a release without it:** `prepare` runs
+`scripts/ci/guard-release-notes.sh <tag>` — before creating the tag on the
+one-click path, and on the tagged commit for a pushed tag. The goreleaser job
+turns the note into the Release body's "What's new"; goreleaser's generated
+change list follows under **Technical changes**. The guard also takes only
+plain `vX.Y.Z` tags, so a pushed pre-release tag such as `v0.31.0-rc1` is
+refused too — use the nightly pre-release for test builds.
+
 ## What happens
 
-1. **Land your changes on `main`**, CI green. The version comes from the tag —
-   nothing to bump in a file.
+1. **Land your changes on `main`**, CI green — including the release notes
+   above. The version comes from the tag — nothing to bump in a file.
 2. The **Release** workflow runs (tests first; a red test aborts it), then:
 
    To redo a botched release, delete the tag locally and remotely

@@ -13,6 +13,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/ai"
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
@@ -28,6 +29,7 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins/builtinlayouts"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/pos"
+	"github.com/universaltill/universal-till/internal/releasenotes"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/ui"
 	"github.com/universaltill/universal-till/internal/uislot"
@@ -370,6 +372,9 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// `allowed` status-bar links are evaluated per request against the same
 	// menuPredicates the /menu grid uses — so a cashier sees neither.
 	httpx.InitRailVisibility(menuPredicateChecker(dp))
+	// ut-docs#3091: record this till's running version (and when it first
+	// ran it) and publish whether the after-update "what's new" chip shows.
+	recordRunningVersion(ctx, dp.Settings, releasenotes.Builtin(), buildinfo.Version, time.Now())
 
 	// ut-docs#2001 (follow-up from the ut-docs#1902 independent review,
 	// finding 4): builtinlayouts.Sync was previously only called from the

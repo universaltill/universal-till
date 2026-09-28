@@ -4599,6 +4599,26 @@ body.login-screen {
   margin-inline-start: .5rem;
 }
 .statusbar a.sb-language-pack-update:hover { background: #22c55e; }
+/* After-update "what's new" chip (ut-docs#3091) — same green notice pill as
+   sb-update; the link and its × dismiss sit inside one pill. */
+.statusbar .sb-release-notes {
+  color: #052e16; background: #4ade80;
+  padding-block: .05rem; padding-inline: .5rem .25rem; border-radius: 999px; font-weight: 700;
+  margin-inline-start: .5rem; gap: .25rem;
+}
+.statusbar .sb-release-notes a { color: inherit; text-decoration: none; display: inline-flex; align-items: center; gap: .45rem; }
+.statusbar .sb-release-notes a:hover { text-decoration: underline; }
+.statusbar .sb-release-notes-dismiss {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-inline-size: 2.25rem; min-block-size: 2.25rem; padding: 0;
+  border: 0; border-radius: 999px; background: transparent; color: inherit; cursor: pointer;
+}
+.statusbar .sb-release-notes-dismiss:hover { background: #22c55e; }
+/* Settings → About's release notes (ut-docs#3091). */
+.release-note { border-block-start: 1px solid var(--border, #d1d5db); padding-block: .5rem; }
+.release-note h4 { margin-block: .25rem; }
+.release-note h5 { margin-block: .5rem .25rem; font-size: .95rem; }
+.release-note ul { margin-block: .25rem; padding-inline-start: 1.25rem; }
 /* ut-docs#413: confirmed live at 360px — `.statusbar`'s row (conn chip +
    the optional enrol/update pills + the version, none of it wrapping)
    needs more width than a phone viewport has. Wrapping the bar itself
@@ -4630,6 +4650,13 @@ body.login-screen {
   .statusbar .sb-language-pack-update {
     overflow: hidden; text-overflow: ellipsis; max-inline-size: 70vw;
   }
+  /* ut-docs#3091: the what's-new pill holds a link AND its × — clipping the
+     pill itself cut the × off at 360px (tester, 2026-09-28), leaving no way
+     to dismiss. Cap the pill, ellipsise only the link's text, keep the ×. */
+  .statusbar .sb-release-notes { max-inline-size: 70vw; min-inline-size: 0; }
+  .statusbar .sb-release-notes a { min-inline-size: 0; flex: 0 1 auto; }
+  .statusbar .sb-release-notes-text { overflow: hidden; text-overflow: ellipsis; min-inline-size: 0; }
+  .statusbar .sb-release-notes-dismiss { flex: none; }
 }
 
 /* Claim-by-phone QR under the claim code (kiosk/desktop shells can't open a browser) */

@@ -2876,5 +2876,13 @@
   "settings.staff_languages.error_unknown": "That language isn’t installed on this till.",
   "settings.staff_languages.error_empty": "Select at least one language.",
   "settings.staff_languages.error_default": "The shop’s default language can’t be removed from the list.",
-  "elevation.summary.staff_languages": "Set the languages shown to staff to: %s"
+  "elevation.summary.staff_languages": "Set the languages shown to staff to: %s",
+  "settings.about.title": "About",
+  "settings.about.installed_version": "Installed version:",
+  "settings.about.first_run": "First started on this till:",
+  "settings.about.whats_new": "What's new",
+  "settings.about.english_only": "Not translated yet — shown in English.",
+  "settings.about.no_notes": "No release notes are available for this version.",
+  "status.release_notes_updated": "Updated to %s — see what's new",
+  "status.release_notes_dismiss": "Dismiss"
 }

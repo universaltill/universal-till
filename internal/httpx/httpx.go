@@ -27,6 +27,7 @@ import (
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/pihealth"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/releasenotes"
 	"github.com/universaltill/universal-till/internal/selfupdate"
 	"github.com/universaltill/universal-till/internal/updates"
 	uiassets "github.com/universaltill/universal-till/web"
@@ -68,6 +69,11 @@ var baseFuncs = template.FuncMap{
 	"updateavailable": func() bool { return UpdateAvailable() },
 	"latestversion":   func() string { return updates.Current().Latest },
 	"canselfupdate":   func() bool { return selfupdate.Supported() },
+	// releasenoticeversion: the version the after-update "what's new" chip
+	// announces ("v0.30.6"), or "" (ut-docs#3091). Always "" in self-order
+	// kiosk mode — a customer never sees it; base.html also gates it on
+	// `allowed "settings"` so a cashier never does either.
+	"releasenoticeversion": releaseNoticeVersion,
 	// updatedownloadlink: whether the status-bar chip's fallback (when
 	// canselfupdate is false) may show an actionable website link — false on
 	// a unix kiosk, where that link is a dead end (ut-docs#147/#159). Mirrors
@@ -874,6 +880,14 @@ func InitKiosk(on bool) { kioskMode.Store(on) }
 // sites InitOSKMode/oskModeVal already follow for the on-screen-keyboard
 // mode.
 var selfOrderMode atomic.Value // bool
+
+// releaseNoticeVersion backs the "releasenoticeversion" template func.
+func releaseNoticeVersion() string {
+	if on, _ := selfOrderMode.Load().(bool); on {
+		return ""
+	}
+	return releasenotes.NoticeVersion()
+}
 
 // InitSelfOrderMode publishes whether this till is currently in self-order
 // kiosk mode (display.mode="self_order") to templates via the "selforder"
