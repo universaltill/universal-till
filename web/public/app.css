@@ -2186,11 +2186,35 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
    confirmed live at 360x800, the sell screen's own "Add items to pay"
    button painted on top of an item tile inside the open popup. z-index:
    500 matches that same family. */
-.category-items-modal {
-  position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500;
-  max-width: 44rem; width: 94vw;
+/* ut-docs#3073 (product owner + pilot café owner): FULL SCREEN, for room
+   to find the item -- everything from the nav rail's inline-end edge to the
+   viewport's, top to bottom. The rail itself is never covered, so its
+   status chips stay visible and Lock stays live (the scrim's .nav lift
+   above; CLAUDE.md "Offline-first", ut-docs#1999/#2873). Logical insets, so
+   under RTL it sits beside the rail on the right. The heading stays on top,
+   the item list scrolls (flex: 1 -- no more 60vh cap) and Close is pinned
+   at the bottom. The <=480px top-bar layout and the on-screen keyboard's
+   reservation are handled further down (their own blocks). block-/inline-
+   size: auto override the UA dialog's fit-content so both insets stretch it;
+   doubled with .modifier-modal (its frame, further down) so its 28rem/90vw
+   cap -- same specificity, later in the file -- can't win. */
+.modifier-modal.category-items-modal {
+  position: fixed; inset-block: 0; inset-inline: var(--rail-width) 0; margin: 0; z-index: 500;
+  inline-size: auto; max-inline-size: none; block-size: auto; max-block-size: none;
+  box-sizing: border-box; border-radius: 0; border-block: 0; border-inline-end: 0;
 }
-.category-items-modal-body { max-height: 60vh; overflow-y: auto; margin-block: .5rem; }
+.modifier-modal.category-items-modal[open] { display: flex; flex-direction: column; }
+.category-items-modal-body { flex: 1 1 auto; min-block-size: 0; overflow-y: auto; margin-block: .5rem; }
+/* Same reservation as body.osk-padded .payment-overlay: the popup's search
+   box drives the on-screen keyboard, which must not cover Close. */
+body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--osk-reserved-height, 17rem); }
+/* <=480px: the rail is a top bar (see the nav block above), so the popup
+   starts under it instead of beside it; --topbar-h is its measured height,
+   plus the same .5rem .bugreport-panel adds (the bar sits that far down --
+   measured at 360x800: without it the popup covered its bottom 8px). */
+@media (max-width: 480px) {
+  .modifier-modal.category-items-modal { inset-block-start: calc(var(--topbar-h) + .5rem); inset-inline: 0; border-inline-start: 0; }
+}
 /* ut-docs#2499: the category_tabs mode's tile grid and popup, and the
    all_filter_chips mode's chip row (buttons.html). The tile's item count
    shares .category-overflow-count's look (below) — same small muted line,
