@@ -64,6 +64,10 @@ test.describe('Cashier is sale-only (ut-docs#3079)', () => {
     await expect(page.locator('[data-testid="nav-till"]')).toBeVisible();
     await expect(page.locator('[data-testid="kiosk-inventory-link"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="kiosk-inventory-link-phone"]')).toHaveCount(0);
+    // ut-docs#3074 (owner rule): quick-button/category arranging is
+    // catalog_management only -- no pen/add link into the Designer.
+    await expect(page.locator('.products').first()).toBeVisible();
+    await expect(page.locator('[data-testid="products-add-link"]')).toHaveCount(0);
 
     // The Menu grid: sale-flow tiles only.
     await page.goto('/menu');
@@ -73,7 +77,7 @@ test.describe('Cashier is sale-only (ut-docs#3079)', () => {
     }
 
     // Direct URLs: 403, the localized refusal, the rail still there.
-    for (const path of ['/settings', '/reports', '/inventory', '/plugins', '/plugins/store']) {
+    for (const path of ['/settings', '/reports', '/inventory', '/plugins', '/plugins/store', '/designer']) {
       const resp = await page.goto(path);
       expect(resp?.status(), `cashier GET ${path}`).toBe(403);
       await expect(page.locator('body')).toContainText('Manager or admin required');
@@ -85,5 +89,15 @@ test.describe('Cashier is sale-only (ut-docs#3079)', () => {
       const resp = await page.request.post(path, { form: { item_id: 'x', location_id: 'x', quantity: '1', type: 'receive' } });
       expect(resp.status(), `cashier POST ${path}`).toBe(403);
     }
+
+    // ut-docs#3074: the Designer's category reorder is a plain 403; the
+    // quick-button reorder (reachable from the sale screen's jiggle mode,
+    // ut-docs#2312) never succeeds without a manager's PIN -- it answers
+    // with the elevation prompt, not a 204.
+    const catReorder = await page.request.post('/api/designer/categories/reorder', { form: { ids: 'x' } });
+    expect(catReorder.status(), 'cashier POST /api/designer/categories/reorder').toBe(403);
+    const btnReorder = await page.request.post('/api/buttons/reorder', { form: { codes: 'x' } });
+    expect(btnReorder.status(), 'cashier POST /api/buttons/reorder must not succeed').not.toBe(204);
+    expect(await btnReorder.text(), 'cashier POST /api/buttons/reorder asks for a manager PIN').toContain('elevation');
   });
 });

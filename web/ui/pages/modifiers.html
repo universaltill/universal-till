@@ -273,6 +273,18 @@
         opt.value = label;
         dl.appendChild(opt);
       });
+      // ut-docs#3087: every item now has a SKU, so every label is
+      // "name (SKU)". A typed name alone still resolves when exactly one
+      // item has it (a shared name stays ambiguous, so it needs the label).
+      var nameCount = {};
+      items.forEach(function (it) {
+        var n = (it.name || '').toLowerCase();
+        nameCount[n] = (nameCount[n] || 0) + 1;
+      });
+      items.forEach(function (it) {
+        var n = (it.name || '').toLowerCase();
+        if (n && nameCount[n] === 1 && !(n in byLabel)) byLabel[n] = it.id;
+      });
       root.querySelectorAll('.modifiers-item-search').forEach(function (search) {
         var form = search.closest('form');
         var hidden = form && form.querySelector('.modifiers-item-id');

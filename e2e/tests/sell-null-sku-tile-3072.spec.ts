@@ -9,6 +9,13 @@ import { watchConsole, setBrowsingMode } from './helpers';
 // and a grid refresh that reset the category chip to All. The pilot café hit
 // it on 125 of 231 items. #1459's own spec never reached this tier: it taps a
 // Designer quick button, which resolves through its shortcut_buttons row.
+//
+// ut-docs#3087: an import can no longer create a SKU-less item — the row now
+// gets a generated SKU from its category (NUL-0001 here), so the tile carries
+// that SKU instead of "item:<id>". The legacy NULL-sku rows an upgraded till
+// still holds keep their Go coverage in pos_repo_resolve_test.go. This spec
+// now proves the same end-to-end promise for what an import produces today:
+// one basket line, no stale toast, the chip stays selected.
 test.describe('all_filter_chips: a SKU-less item sells from its tile', () => {
   let itemId: string | null = null;
 
@@ -51,7 +58,7 @@ test.describe('all_filter_chips: a SKU-less item sells from its tile', () => {
 
     const tile = page.locator(`#buttons-grid-all .btn-tile[data-name="${name}"]`);
     await expect(tile).toBeVisible();
-    await expect(tile).toHaveAttribute('data-code', /^item:/);
+    await expect(tile).toHaveAttribute('data-code', /^NUL-\d{4}$/);
     await tile.click();
 
     await expect(page.locator('#basket-lines tr', { hasText: name })).toHaveCount(1);
