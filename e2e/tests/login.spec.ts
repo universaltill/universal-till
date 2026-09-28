@@ -425,8 +425,15 @@ test.describe.serial('first-boot setup and PIN login', () => {
     // fix (its own <script> tag, per-document) actually runs here.
     const storeName = page.locator('input[name=store_name]');
     await expect(storeName).toHaveAttribute('autocomplete', /^off-/);
+    // ut-docs#3096: the shop name is required — Next stays disabled while
+    // the field is blank (or only spaces), and enables once a name is typed.
+    const storeNext = step(4).locator('.setup-nav button', { hasText: 'Next' });
+    await expect(storeNext).toBeDisabled();
+    await storeName.fill('   ');
+    await expect(storeNext).toBeDisabled();
     await storeName.fill('E2E Test Shop');
-    await step(4).locator('.setup-nav button', { hasText: 'Next' }).click();
+    await expect(storeNext).toBeEnabled();
+    await storeNext.click();
 
     // Step 5 · shop type + sample-data opt-in (ut-docs#539). Pick a type
     // (tile picker, not a <select> — ut-docs#1095); leave the sample-data

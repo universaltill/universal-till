@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -168,6 +169,10 @@ func wizardCountryCodes(countries []setupCountry) []string {
 // (ut-docs#617) → admin PIN → done. Every step has a sane default; both
 // routes refuse to run once an operator exists (they are auth-exempt for
 // exactly that window).
+// keyStoreNameRequired is the wizard error for a blank or placeholder shop
+// name; it re-opens the wizard on the shop-name step (ut-docs#3096).
+const keyStoreNameRequired = "setup.error.store_name_required"
+
 func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	posRepo := data.NewPOSRepo(d.Db)
 
@@ -339,6 +344,9 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if strings.HasPrefix(errKey, "setup.error.tse_") {
 			errStep = 3
 		}
+		if errKey == keyStoreNameRequired {
+			errStep = 4 // the shop-name step (ut-docs#3096)
+		}
 		data["errStep"] = errStep
 		// startStep is the step the wizard actually opens on: an error
 		// re-render lands on errStep, an explicit tax-plugin skip (ut-docs#1506)
@@ -360,6 +368,15 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			data["tseOwnerName"] = strings.TrimSpace(r.PostFormValue("tse_owner_name"))
 			data["tseTaxNumber"] = strings.TrimSpace(r.PostFormValue("tse_tax_number"))
 			data["tseAddress"] = strings.TrimSpace(r.PostFormValue("tse_address"))
+			// ut-docs#3096: a re-render (any error) keeps the shop and till
+			// names from step 4. Dropping them let a PIN typo end with the
+			// shop still called "My Store".
+			// A refused placeholder ("My Store") is not echoed back, so
+			// Next stays disabled until a real name is typed.
+			if errKey != keyStoreNameRequired {
+				data["storeName"] = strings.TrimSpace(r.PostFormValue("store_name"))
+			}
+			data["tillName"] = strings.TrimSpace(r.PostFormValue("till_name"))
 		}
 		httpx.RenderPartial("ui/pages/setup.html", data)(w, r)
 	}
@@ -527,6 +544,17 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			return
 		}
 
+		// ut-docs#3096: the shop must be named — never left as migration
+		// 001's seeded "My Store", the cloud's default, or the step's own
+		// placeholder text. Checked with the other pre-persist validations,
+		// so a refusal saves nothing.
+		storeName := strings.TrimSpace(r.PostFormValue("store_name"))
+		if config.IsPlaceholderStoreName(storeName) ||
+			strings.EqualFold(storeName, httpx.T(httpx.RequestLocale(r), "setup.store.placeholder")) {
+			renderWizard(w, r, keyStoreNameRequired, "")
+			return
+		}
+
 		// Locale/currency/tax — same application path as /api/settings/save.
 		st := d.CurrentState()
 		// web/ui/pages/setup.html's currencyTouched only flips true on a
@@ -623,11 +651,9 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		d.SelfOrderSessions.SetConfig(newCfg) // every live table-QR session too (ADR-0103); nil-safe
 
-		if name := strings.TrimSpace(r.Form.Get("store_name")); name != "" {
-			if err := d.Settings.Set(r.Context(), "store.name", name); err != nil {
-				http.Error(w, "setup failed", http.StatusInternalServerError)
-				return
-			}
+		if err := d.Settings.Set(r.Context(), "store.name", storeName); err != nil {
+			http.Error(w, "setup failed", http.StatusInternalServerError)
+			return
 		}
 		if name := strings.TrimSpace(r.Form.Get("till_name")); name != "" {
 			if err := d.Settings.Set(r.Context(), "till.name", name); err != nil {

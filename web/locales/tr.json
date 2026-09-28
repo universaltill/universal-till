@@ -2328,6 +2328,7 @@
   "setup.done.hint": "Ürünleri, kasaları ve yazıcıları menüden istediğiniz zaman ekleyebilirsiniz. Kasayı açmak için aşağıya dokunun.",
   "setup.done.title": "Her şey hazır!",
   "setup.error.save_failed": "Ayarlarınız kaydedilemedi — lütfen tekrar deneyin.",
+  "setup.error.store_name_required": "Dükkânınızın adını girin. Her fişe basılır.",
   "setup.error.tse_identity_incomplete": "Lütfen dört işletme alanının tümünü doldurun (veya TSE kurulumunu şimdilik atlamak için hepsini boş bırakın).",
   "setup.error.tse_identity_too_long": "İşletme bilgilerinde her alan en fazla 200 karakter olabilir.",
   "setup.error.tse_tax_number": "Bu bir Alman vergi numarasına benzemiyor — 12/345/67890 (Steuernummer) veya DE123456789 (USt-IdNr.) biçimini deneyin.",

@@ -471,14 +471,18 @@ func regionForCountry(country string) string {
 
 // shopName is the name registration sends: the live store.name setting,
 // falling back to cfg.StoreName when it is unset, blank or unreadable
-// (ut-docs#2776). A failed read never fails registration.
+// (ut-docs#2776). A failed read never fails registration. A placeholder
+// ("My Store", which migration 001 seeds) is never sent: with no real name
+// anywhere it returns "", and the cloud records the shop as unnamed rather
+// than creating another "My Store" (ut-docs#3096).
 func shopName(ctx context.Context, cfg *config.Config, kv Settings) string {
-	if v, _, err := kv.Get(ctx, StoreNameSettingsKey); err == nil {
-		if name := strings.TrimSpace(v); name != "" {
-			return name
-		}
+	if v, _, err := kv.Get(ctx, StoreNameSettingsKey); err == nil && !config.IsPlaceholderStoreName(v) {
+		return strings.TrimSpace(v)
 	}
-	return cfg.StoreName
+	if !config.IsPlaceholderStoreName(cfg.StoreName) {
+		return strings.TrimSpace(cfg.StoreName)
+	}
+	return ""
 }
 
 // register performs the anonymous enrolment call and persists the returned
