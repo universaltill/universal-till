@@ -53,7 +53,17 @@
      on the Designer for free because the markup is the same. A constant
      hx-vals literal, not {{ "jsonVals" }}: nothing interpolated (guard-i18n
      check 4 only flags a literal with a template action inside it). */}}
-<div class="products{{ if .EditMode }} products--edit{{ end }}" hx-get="/ui/buttons"{{ if .EditMode }} hx-vals='{"mode":"edit"}'{{ end }} hx-trigger="modifiers-changed from:body, buttons-changed from:body" hx-swap="outerHTML"{{ with .SellVersion }} data-sell-version="{{ . }}"{{ end }}>
+<div class="products{{ if .EditMode }} products--edit{{ end }}" hx-get="/ui/buttons"{{ if .EditMode }} hx-vals='{"mode":"edit"}'{{ end }} hx-trigger="modifiers-changed from:body, buttons-changed from:body"{{/* ut-docs#3089: the pressed all_filter_chips chip rides along on this
+     same refresh via the chip row's own hidden input (below) -- hx-include
+     keyed on ITS id so the fetch stays ?category=<chip> even though the
+     input isn't a descendant of this root, and left off entirely outside
+     that one mode, and only when the chip row renders (an empty catalog
+     shows the empty state with no input, and htmx logs a console error
+     for an hx-include selector that matches nothing). hx-disinherit: htmx
+     inherits hx-include, so without it every tile/badge/search request
+     inside this root would carry category= too. Placed AFTER
+     hx-trigger, never between hx-get and hx-trigger: buttons_all_tab_test.go
+     pins that exact adjacent pair as one literal substring. */}}{{ if and (eq .BrowsingMode "all_filter_chips") .AllButtons }} hx-include="#browsing-chip-input" hx-disinherit="hx-include"{{ end }} hx-swap="outerHTML"{{ with .SellVersion }} data-sell-version="{{ . }}"{{ end }}>
   {{/* ut-docs#2989: data-sell-version is the catalog generation this grid
        was rendered at (ui.serveSellScreen) -- the X-UT-Sell-Version header's
        value, carried in the markup too because GET / now inlines this
@@ -367,11 +377,18 @@
         if (!modal.open) modal.show();
       },
       /* ut-docs#2499 all_filter_chips mode: which chip is pressed --
-         '' is the All chip (no filter), else a category id. Purely the
-         aria-pressed/checkmark state; the grid itself is swapped by each
-         chip's own hx-get (see the chip row below), so a chip works with
-         a plain Tab + Enter/Space like any button. */
-      chip: '',
+         'all' is the All chip (no filter), '' is the uncategorized bucket,
+         else a category id (ut-docs#3089: 'all' and '' used to collide,
+         both reading as '' -- the uncategorized tile's own ID -- so a
+         refresh could not tell the two apart; these now match the server's
+         own ?category= values exactly, see ButtonsHTTP.resolveChip).
+         Purely the aria-pressed/checkmark state; the grid itself is
+         swapped by each chip's own hx-get (see the chip row below), so a
+         chip works with a plain Tab + Enter/Space like any button.
+         Seeded from the server's own selection (.Chip) so there is no
+         flash of All before Alpine hydrates -- the static aria-pressed on
+         each chip button below is seeded the same way. */
+      chip: '{{ .Chip }}',
       /* ut-docs#2307: the category strip never scrolls any more (product
          owner's card -- see this file's own comment above the .tab-bar
          div below for the full reasoning); instead this measures how many
@@ -913,22 +930,38 @@
              moving is allowed only under a category chip (the fragment's
              data-all-filter marker), saved as that category's own order. */}}
         <div id="browsing-category-chips" class="filter-chips products-cat-chips" role="group" aria-label="{{ T "filter.category_label" }}">
-          <button type="button" class="chip chip-all" data-cat-all aria-pressed="true" :aria-pressed="chip === '' ? 'true' : 'false'"
+          {{/* ut-docs#3089: carries the pressed chip on the root's own
+               buttons-changed/modifiers-changed refresh (its hx-include
+               above) -- server-rendered from .Chip so the very first such
+               refresh, before any @click ever fires, still sends the
+               chip that's actually showing; :value keeps it in sync with
+               every click after that. A hidden input, not the chip row's
+               own hx-vals: a checked chip button has no "value" of its own
+               to serialize, and htmx only includes form-control-shaped
+               elements. */}}
+          <input type="hidden" id="browsing-chip-input" name="category" value="{{ .Chip }}" :value="chip">
+          <button type="button" class="chip chip-all" data-cat-all aria-pressed="{{ if eq .Chip "all" }}true{{ else }}false{{ end }}" :aria-pressed="chip === 'all' ? 'true' : 'false'"
                   hx-get="/ui/buttons/all/more?offset=0&category=all" hx-target="#buttons-grid-all" hx-swap="innerHTML"
-                  @click="chip = ''">
+                  @click="chip = 'all'">
             <span class="chip-check" aria-hidden="true">{{ icon "check" }}</span>{{ T "products.all" }}
           </button>
           {{ range .CategoryTiles }}
-          <button type="button" class="chip" data-cat-id="{{ .ID }}" aria-pressed="false" :aria-pressed="chip === '{{ .ID }}' ? 'true' : 'false'"
+          <button type="button" class="chip" data-cat-id="{{ .ID }}" aria-pressed="{{ if eq $.Chip .ID }}true{{ else }}false{{ end }}" :aria-pressed="chip === '{{ .ID }}' ? 'true' : 'false'"
                   hx-get="/ui/buttons/all/more?offset=0&category={{ .ID }}" hx-target="#buttons-grid-all" hx-swap="innerHTML"
                   @click="chip = '{{ .ID }}'">
             <span class="chip-check" aria-hidden="true">{{ icon "check" }}</span>{{ if .ID }}{{ .Name }}{{ else }}{{ T "products.uncategorized" }}{{ end }}
           </button>
           {{ end }}
         </div>
+        {{/* ut-docs#3089: the SAME "all-more-fragment" AllMore itself
+             renders (see its own doc comment) -- so a chip surviving a
+             buttons-changed/modifiers-changed refresh renders byte-for-byte
+             what tapping that chip would have fetched, filter marker
+             included. .Chip is "all" here whenever .ChipFiltered is false
+             (ButtonsHTTP.renderList), matching the load-more button's own
+             historical hardcoded "all" category exactly. */}}
         <div id="buttons-grid-all" class="grid"{{ if not .Locked }} data-edit-allowed{{ end }}>
-          {{ range .AllButtons }}{{ template "product-tile" . }}{{ end }}
-          {{ if .AllHasMore }}{{ template "all-more-button" (dict "Offset" .AllNextOffset "Category" "all") }}{{ end }}
+          {{ template "all-more-fragment" (dict "Buttons" .AllButtons "HasMore" .AllHasMore "NextOffset" .AllNextOffset "Category" .Chip "Filtered" .ChipFiltered) }}
         </div>
         {{ else if $flat }}
         {{/* No category-group wrapper here to inherit #422's
@@ -1414,7 +1447,7 @@
 {{ define "all-more-button" }}
 {{ $_ := req . "Offset" }}
   <button type="button" class="btn secondary compact all-more-btn" id="buttons-all-more"
-          hx-get="/ui/buttons/all/more?offset={{ .Offset }}{{ with .Category }}&category={{ . }}{{ end }}" hx-target="this" hx-swap="outerHTML"
+          hx-get="/ui/buttons/all/more?offset={{ .Offset }}{{ if .Filtered }}&category={{ .Category }}{{ else }}{{ with .Category }}&category={{ . }}{{ end }}{{ end }}" hx-target="this" hx-swap="outerHTML"
           data-testid="all-more-btn">{{ T "products.load_more" }}</button>
 {{ end }}
 
@@ -1429,7 +1462,7 @@
        swapped fragment. */}}
   {{ if .Filtered }}<span class="all-grid-filter" data-all-filter="{{ .Category }}" hidden></span>{{ end }}
   {{ range .Buttons }}{{ template "product-tile" . }}{{ end }}
-  {{ if .HasMore }}{{ template "all-more-button" (dict "Offset" .NextOffset "Category" .Category) }}{{ end }}
+  {{ if .HasMore }}{{ template "all-more-button" (dict "Offset" .NextOffset "Category" .Category "Filtered" .Filtered) }}{{ end }}
   {{/* ut-docs#2499: a chip whose category has nothing sellable (every
        item deactivated since the row rendered) says so instead of leaving
        a silently blank grid -- only on a filtered first page (a paged

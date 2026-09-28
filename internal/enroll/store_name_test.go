@@ -79,3 +79,42 @@ func TestRegisterNowFallsBackToConfigStoreName(t *testing.T) {
 		})
 	}
 }
+
+// ut-docs#3096: enrolment never sends a placeholder name. With store.name
+// still the migration-seeded "My Store" and no real name in the config
+// either, registration sends a blank name (the cloud then marks the shop as
+// unnamed) instead of creating yet another cloud shop called "My Store".
+// Registration itself still goes ahead — it must never block a plugin install.
+func TestRegisterNowNeverSendsPlaceholderName(t *testing.T) {
+	cases := []struct {
+		name, setting, cfgName, want string
+	}{
+		{"seeded default, default cfg", "My Store", "My Store", ""},
+		{"seeded default, real env name", "My Store", "Corner Shop", "Corner Shop"},
+		{"cloud default in setting", "Universal Till store", "My Store", ""},
+		{"unset, default cfg", "", "my store", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			resetState()
+			var gotBody map[string]any
+			srv := registerTestServer(t, &gotBody)
+			kv := newFakeKV()
+			if c.setting != "" {
+				_ = kv.Set(context.Background(), StoreNameSettingsKey, c.setting)
+			}
+			cfg := freshConfig(srv.URL)
+			cfg.StoreName = c.cfgName
+
+			if _, err := RegisterNow(context.Background(), cfg, kv); err != nil {
+				t.Fatalf("RegisterNow: %v", err)
+			}
+			if got := gotBody["store_name"]; got != c.want {
+				t.Fatalf("store_name = %q, want %q", got, c.want)
+			}
+			if !CurrentStatus().Registered {
+				t.Fatal("registration did not complete")
+			}
+		})
+	}
+}

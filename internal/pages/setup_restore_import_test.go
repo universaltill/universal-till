@@ -123,6 +123,7 @@ func TestWizardRestoreImport_StagedPreviewAutoCommitsOnWizardFinish(t *testing.T
 	rec := postForm(mux, "/api/setup", url.Values{
 		"pin":              {"2468"},
 		"pin_confirm":      {"2468"},
+		"store_name":       {"Test Shop"},
 		"country":          {"GB"},
 		"currency":         {"GBP"},
 		"currency_touched": {"1"},
@@ -155,6 +156,7 @@ func TestWizardRestoreImport_SkipsAutoCommitWhenCurrencyNeverTouched(t *testing.
 	rec := postForm(mux, "/api/setup", url.Values{
 		"pin":              {"2468"},
 		"pin_confirm":      {"2468"},
+		"store_name":       {"Test Shop"},
 		"country":          {"GB"},
 		"currency":         {"GBP"},
 		"tax_rate_pct":     {"20"},
@@ -296,6 +298,7 @@ func TestWizardRestoreImport_FallsBackToImportPageWhenReplayFails(t *testing.T) 
 	rec := postForm(mux, "/api/setup", url.Values{
 		"pin":              {"2468"},
 		"pin_confirm":      {"2468"},
+		"store_name":       {"Test Shop"},
 		"country":          {"GB"},
 		"currency":         {"GBP"},
 		"currency_touched": {"1"},
