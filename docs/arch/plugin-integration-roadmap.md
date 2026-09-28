@@ -27,7 +27,7 @@ picked up in dependency order. Updated 2026-07-16.
 | Demo card terminal | payment | ✅ |
 | QR Pay | payment | ✅ |
 | Themes (midnight, buttons-left, screen-top) | theme | ✅ |
-| Languages (de, es) | language | ✅ |
+| Languages (de, es, pt) | language | ✅ |
 | FAQ | page | ✅ |
 
 ## Build queue (planned) — in dependency order

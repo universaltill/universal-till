@@ -18,7 +18,7 @@
 # Scope: nav.* and designer.title/journal.title (the two screen titles
 # that mirror a nav entry today) across every locale this checkout can
 # see — the core repo's own web/locales/*.json, plus any
-# ut-plugin-language-{de,es} pack cloned as a SIBLING directory next to
+# ut-plugin-language-{de,es,pt} pack cloned as a SIBLING directory next to
 # this repo (best-effort: most checkouts won't have those, so their
 # absence is reported, not treated as a failure).
 set -euo pipefail
@@ -76,8 +76,9 @@ for f in web/locales/*.json; do
   audit_locale "$(basename "$f" .json)" "$f"
 done
 
-echo "-- sibling language packs (../ut-plugin-language-{de,es}) --"
+echo "-- sibling language packs (../ut-plugin-language-{de,es,pt}) --"
 audit_locale "de (pack)" "../ut-plugin-language-de/locales/de.json"
 audit_locale "es (pack)" "../ut-plugin-language-es/locales/es.json"
+audit_locale "pt (pack)" "../ut-plugin-language-pt/locales/pt.json"
 
 echo "== done — review any ⚠ line above; add a reviewed ALLOWLIST entry only for a real loanword =="

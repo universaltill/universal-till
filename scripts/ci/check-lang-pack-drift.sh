@@ -69,6 +69,7 @@ API_BASE="${UT_API_BASE:-https://api.github.com/repos/universaltill}"
 PACKS=(
     "ut-plugin-language-de:de"
     "ut-plugin-language-es:es"
+    "ut-plugin-language-pt:pt"
 )
 
 WORKDIR="$(mktemp -d)"

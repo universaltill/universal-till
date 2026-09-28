@@ -103,6 +103,7 @@ pack_script_source() {
 # propagates as exit 2 (see the comment on that `return` above), not 1.
 pack_script_source ut-plugin-language-de > /dev/null
 pack_script_source ut-plugin-language-es > /dev/null
+pack_script_source ut-plugin-language-pt > /dev/null
 
 FAILS=0
 server_pid=""
@@ -333,6 +334,7 @@ fresh_case
 printf '{"a.b":"Hello","c.d":"World"}' > "$core_json"
 fixture_pack ut-plugin-language-de de sync
 fixture_pack ut-plugin-language-es es sync
+fixture_pack ut-plugin-language-pt pt sync
 start_server
 assert_pass "both packs in sync"
 
@@ -341,6 +343,7 @@ fresh_case
 printf '{"a.b":"Hello","c.d":"World"}' > "$core_json"
 fixture_pack ut-plugin-language-de de drift
 fixture_pack ut-plugin-language-es es sync
+fixture_pack ut-plugin-language-pt pt sync
 start_server
 assert_fail_repos "only de drifts" "https://github.com/universaltill/ut-plugin-language-de"
 
@@ -349,10 +352,21 @@ fresh_case
 printf '{"a.b":"Hello","c.d":"World"}' > "$core_json"
 fixture_pack ut-plugin-language-de de drift
 fixture_pack ut-plugin-language-es es drift
+fixture_pack ut-plugin-language-pt pt sync
 start_server
 assert_fail_repos "both packs drift" \
     "https://github.com/universaltill/ut-plugin-language-de" \
     "https://github.com/universaltill/ut-plugin-language-es"
+
+# --- Case 3b (ut-docs#2964): only pt has new drift -- the third pack is
+# checked too, and the follow-up block names pt ONLY ---
+fresh_case
+printf '{"a.b":"Hello","c.d":"World"}' > "$core_json"
+fixture_pack ut-plugin-language-de de sync
+fixture_pack ut-plugin-language-es es sync
+fixture_pack ut-plugin-language-pt pt drift
+start_server
+assert_fail_repos "only pt drifts" "https://github.com/universaltill/ut-plugin-language-pt"
 
 # --- Case 4: es is unreachable (simulates a deleted/renamed/network-down
 # pack repo) -- this must be a hard failure that STILL names the repo in
@@ -363,6 +377,7 @@ fresh_case
 printf '{"a.b":"Hello","c.d":"World"}' > "$core_json"
 fixture_pack ut-plugin-language-de de sync
 fixture_pack ut-plugin-language-es es unreachable
+fixture_pack ut-plugin-language-pt pt sync
 start_server
 assert_fail_repos "es unreachable" "https://github.com/universaltill/ut-plugin-language-es"
 
@@ -377,6 +392,7 @@ fresh_case
 printf '{"a.b":"Hello","c.d":"World"}' > "$core_json"
 fixture_pack ut-plugin-language-de de sync
 fixture_pack ut-plugin-language-es es sync
+fixture_pack ut-plugin-language-pt pt sync
 _write_pack_content ut-plugin-language-de de drift "${server_root}/ut-plugin-language-de/main"
 start_server
 assert_pass "reads pack content at the resolved commit SHA, not the (possibly stale) main ref"
@@ -389,6 +405,7 @@ assert_pass "reads pack content at the resolved commit SHA, not the (possibly st
 fresh_case
 printf '{"a.b":"Hello","c.d":"World"}' > "$core_json"
 fixture_pack ut-plugin-language-es es sync
+fixture_pack ut-plugin-language-pt pt sync
 _write_pack_content ut-plugin-language-de de sync "${server_root}/ut-plugin-language-de/main"
 start_server
 assert_pass "falls back to the main ref when the commit-SHA lookup itself fails"
