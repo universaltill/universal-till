@@ -271,7 +271,13 @@
         </section>
 
         <!-- Step 4 · shop name -->
-        <section x-show="step === 4" x-cloak data-step="4">
+        <!-- ut-docs#3096: the shop name is required — Next stays disabled
+             while it is blank, and POST /api/setup refuses a blank or
+             placeholder name ("My Store") server-side. aria-required, not
+             required: a native required on a field hidden by x-show would
+             silently block the final submit on step 8. -->
+        <section x-show="step === 4" x-cloak data-step="4" x-data="{ storeName: '' }"
+                 x-init="storeName = $el.querySelector('input[name=store_name]').value">
           <h1>{{ T "setup.store.title" }}</h1>
           <!-- ut-docs#1506: shown once, right after an explicit tax-plugin
                skip landed here (tax_plugin_skip_ack=1) — the operator
@@ -281,13 +287,14 @@
           {{ if .taxPluginSkipped }}
             <p class="login-error" data-tax-plugin-skipped>{{ T "setup.tax_plugin.skip_warning" }}</p>
           {{ end }}
-          <input type="text" name="store_name" maxlength="60" placeholder="{{ T "setup.store.placeholder" }}">
+          <input type="text" name="store_name" maxlength="60" placeholder="{{ T "setup.store.placeholder" }}"
+                 value="{{ .storeName }}" x-model="storeName" aria-required="true">
           <label>{{ T "setup.till_name.title" }}
-            <input type="text" name="till_name" maxlength="60" value="{{ T "setup.till_name.default" }}">
+            <input type="text" name="till_name" maxlength="60" value="{{ if .tillName }}{{ .tillName }}{{ else }}{{ T "setup.till_name.default" }}{{ end }}">
           </label>
           <div class="setup-nav">
             <button type="button" class="btn secondary" @click="step = country === 'DE' ? 3 : 2">{{ T "setup.back" }}</button>
-            <button type="button" class="btn primary" @click="step = 5">{{ T "setup.next" }}</button>
+            <button type="button" class="btn primary" :disabled="storeName.trim() === ''" @click="step = 5">{{ T "setup.next" }}</button>
           </div>
         </section>
 

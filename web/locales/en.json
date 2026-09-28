@@ -2346,6 +2346,7 @@
   "setup.done.hint": "You can add products, tills and printers any time from the menu. Tap below to open the till.",
   "setup.done.title": "All set!",
   "setup.error.save_failed": "Could not save your settings — please try again.",
+  "setup.error.store_name_required": "Enter your shop's name. It is printed on every receipt.",
   "setup.error.tse_identity_incomplete": "Please fill in all four business fields (or leave them all empty to skip TSE setup for now).",
   "setup.error.tse_identity_too_long": "Business details can be at most 200 characters per field.",
   "setup.error.tse_tax_number": "That doesn't look like a German tax number — try the form 12/345/67890 (Steuernummer) or DE123456789 (USt-IdNr.).",
