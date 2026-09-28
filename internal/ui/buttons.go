@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -91,9 +92,11 @@ type ButtonVM struct {
 	// always wins.
 	Color string `json:"color,omitempty"`
 	// Pos (ut-docs#2339) is this button's index in the GLOBAL sort_order
-	// list (the order Load returns) — set by BuildCategoryGroups only, so
-	// it's 0 (meaningless) on a ButtonVM built via ToVM for the Designer's
-	// flat admin grid, where the slice index already IS the global index.
+	// list (the order Load returns) — set by BuildCategoryGroups and, for
+	// the all_filter_chips All grid under a category chip, by
+	// ButtonsHTTP.AllMore (ut-docs#2534); it's 0 (meaningless) on any other
+	// ButtonVM built via ToVM, e.g. the Designer's flat admin grid, where
+	// the slice index already IS the global index, or plain All.
 	// The sale-screen grid groups tiles by category, so its DOM order
 	// stops being the global order the moment categories interleave;
 	// product-tile (buttons.html) renders this as data-pos, and app.js's
@@ -167,7 +170,10 @@ func toButtonVM(x Button) ButtonVM {
 
 // visibleOnly (ut-docs#2698) drops hidden tiles, for every at-rest browse
 // surface that has no edit mode of its own (the All grid, category tiles and
-// popups). It returns a new slice; the input is left untouched.
+// popups). It returns a new slice; the input is left untouched. The All grid
+// gained an edit mode in ut-docs#2534 (pencil + in-category reorder) but it
+// still lists visible items only: hiding/unhiding stays on the quick-button
+// grids and the Designer.
 func visibleOnly(buttons []Button) []Button {
 	out := make([]Button, 0, len(buttons))
 	for _, b := range buttons {
@@ -1281,6 +1287,14 @@ func (s *ButtonStore) UpdateOrder(ctx context.Context, codes []string) error {
 	if err != nil {
 		return err
 	}
+	return s.updateOrderWith(ctx, current, codes)
+}
+
+// updateOrderWith is UpdateOrder against an ALREADY-LOADED current order
+// (Load()'s result) -- UpdateOrderSubset has just loaded it to find the
+// slots, so it passes it on rather than loading the catalog a second time
+// (ut-docs#2534 review).
+func (s *ButtonStore) updateOrderWith(ctx context.Context, current []Button, codes []string) error {
 	lastTouchedIndex := -1
 	for i, code := range codes {
 		var currentCode string
@@ -1330,6 +1344,60 @@ func (s *ButtonStore) UpdateOrder(ctx context.Context, codes []string) error {
 		})
 	}
 	return s.repo.MaterializeAndReorder(ctx, materialize, codes)
+}
+
+// ErrNoKnownCodes is UpdateOrderSubset's refusal when none of the posted
+// codes is in the current quick-button order -- nothing to reorder (the
+// route answers 400).
+var ErrNoKnownCodes = errors.New("no known quick-button codes")
+
+// UpdateOrderSubset (ut-docs#2534) persists a new order for a SUBSET of the
+// tiles: the all_filter_chips All grid under a category chip posts only that
+// category's tiles (possibly only its loaded page), in their new order. The
+// codes are re-dealt into the global slots they already hold in Load()'s
+// current order -- the same "a drag within one category never moves another
+// category's buttons" rule app.js's orderedCodes() applies client-side for
+// the grouped quick-button grids, computed here because the All grid never
+// has the full list to post. Unknown codes are ignored and duplicates kept
+// once (first occurrence); none left is ErrNoKnownCodes. The full resulting
+// list goes through UpdateOrder's own logic (updateOrderWith, reusing this
+// one Load), so implicit tiles materialise exactly as a full-list reorder
+// does.
+func (s *ButtonStore) UpdateOrderSubset(ctx context.Context, codes []string) error {
+	current, err := s.Load()
+	if err != nil {
+		return err
+	}
+	slotOf := make(map[string]int, len(current))
+	for i, b := range current {
+		if _, dup := slotOf[b.Code]; !dup {
+			slotOf[b.Code] = i
+		}
+	}
+	var subset []string
+	var slots []int
+	seen := make(map[string]bool, len(codes))
+	for _, c := range codes {
+		i, ok := slotOf[c]
+		if !ok || seen[c] {
+			continue
+		}
+		seen[c] = true
+		subset = append(subset, c)
+		slots = append(slots, i)
+	}
+	if len(subset) == 0 {
+		return ErrNoKnownCodes
+	}
+	sort.Ints(slots)
+	full := make([]string, len(current))
+	for i, b := range current {
+		full[i] = b.Code
+	}
+	for i, c := range subset {
+		full[slots[i]] = c
+	}
+	return s.updateOrderWith(ctx, current, full)
 }
 
 // synthesizedButtonCodePrefix marks a shortcut-button code that ButtonStore.Add
@@ -1858,6 +1926,14 @@ const (
 // ?category, or ?category=all, is the whole catalog (the chip row's All
 // chip sends category=all; the strip's own All tab, which sent no
 // category, was retired by ut-docs#2613).
+//
+// ut-docs#2534: under a real category the grid is that category's items in
+// the GLOBAL quick-button order (Load's order -- the one the category modes
+// already sell from, quickButtonsFirst), each tile's Pos its index in that
+// order, so a jiggle-mode drag there reorders exactly what the category
+// modes show; the fragment also carries a data-all-filter marker app.js
+// allows drag/arrow-key moves on. Unfiltered All stays alphabetical and
+// edit-only (no marker).
 func (h *ButtonsHTTP) AllMore(w http.ResponseWriter, r *http.Request) {
 	offset := 0
 	if off := r.URL.Query().Get("offset"); off != "" {
@@ -1865,22 +1941,52 @@ func (h *ButtonsHTTP) AllMore(w http.ResponseWriter, r *http.Request) {
 			offset = v
 		}
 	}
-	all, err := h.Store.LoadAllActive(r.Context())
+	// The grid set, hidden items kept (marked) -- exactly what Load() starts
+	// from, so a filtered page's Pos below is computed from the same input
+	// UpdateOrder/UpdateOrderSubset compare against. Display is visible
+	// items only (visibleOnly), like every at-rest browse surface. On error
+	// Load() carries on with nil (explicit rows only); so does this.
+	withHidden, _, err := h.Store.loadAllActive(r.Context())
 	if err != nil {
 		logging.L().Errorf("buttons all-more: load all-active items: %v", err)
+		withHidden = nil
 	}
+	all := visibleOnly(withHidden)
+	var pos map[string]int
 	category, filtered := r.URL.Query().Get("category"), false
 	if _, has := r.URL.Query()["category"]; has && category != "all" {
 		cats, err := h.Store.LoadCategories(r.Context())
 		if err != nil {
 			logging.L().Errorf("buttons all-more: load categories: %v", err)
 		}
-		all = filterButtonsInCategory(all, cats, category)
+		// Load()'s own order: loadWith over the hidden-kept set, so an
+		// implicit hidden item holds its slot here too and every Pos is the
+		// tile's index in Load() -- the slots UpdateOrderSubset re-deals.
+		quick, _, err := h.Store.loadWith(r.Context(), withHidden)
+		if err != nil {
+			logging.L().Errorf("buttons all-more: load quick buttons: %v", err)
+		}
+		pos = make(map[string]int, len(quick))
+		for i, b := range quick {
+			if _, dup := pos[b.Code]; !dup {
+				pos[b.Code] = i
+			}
+		}
+		all = quickButtonsFirst(
+			filterButtonsInCategory(visibleOnly(quick), cats, category),
+			filterButtonsInCategory(all, cats, category),
+		)
 		filtered = true
 	}
 	page, hasMore := pageButtons(all, offset)
+	vms := ToVM(page)
+	for i := range vms {
+		if p, ok := pos[vms[i].Code]; ok {
+			vms[i].Pos = p
+		}
+	}
 	_ = h.View.Render(w, "all-more-fragment", map[string]any{
-		"Buttons":    ToVM(page),
+		"Buttons":    vms,
 		"HasMore":    hasMore,
 		"NextOffset": offset + len(page),
 		"Category":   category,

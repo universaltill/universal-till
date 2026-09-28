@@ -15,8 +15,8 @@ import { watchConsole, setBrowsingMode } from './helpers';
 //                      this file only pins that it is now reached via the
 //                      setting).
 // Search works in every mode; the strip's jiggle edit (ut-docs#2339) is
-// untouched, and the chip mode's All grid still never arms it (app.js's
-// inAllGrid()).
+// untouched. The chip mode's All grid arms it too since ut-docs#2534
+// (edit-only in plain All -- sell-all-grid-jiggle-2534.spec.ts).
 //
 // This file replaced sell-screen-categories-tab-2283.spec.ts: the settings-
 // gated Categories TAB it covered is gone — the category_tabs mode IS that
@@ -348,7 +348,7 @@ test.describe('Sell screen browsing mode (ut-docs#2499)', () => {
     assertClean();
   });
 
-  test('all_filter_chips at 1024x600 with 12+ categories: chips wrap (never clip), carry aria-pressed + a checkmark, filter the grid by tap and by keyboard; search still works; the All grid never arms jiggle', async ({ page }) => {
+  test('all_filter_chips at 1024x600 with 12+ categories: chips wrap (never clip), carry aria-pressed + a checkmark, filter the grid by tap and by keyboard; search still works; plain All arms edit-only jiggle', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.setViewportSize({ width: 1024, height: 600 });
     chipCats = await createChipCategories(page, 'C', 12);
@@ -422,11 +422,15 @@ test.describe('Sell screen browsing mode (ut-docs#2499)', () => {
     // sale-screen-category-tabs-search-418.spec.ts).
     await expect(grid.locator('.btn-tile', { hasText: 'Coca-Cola Can 330ml' })).toBeVisible();
 
-    // The All grid never arms jiggle mode (app.js's inAllGrid() guard,
-    // ut-docs#2402) — a right-click is the mouse-till entry gesture.
+    // ut-docs#2534 (was never-arms, ut-docs#2402): plain All arms the
+    // jiggle mode edit-only -- the pencil badge, no remove/hide -- a
+    // right-click is the mouse-till entry gesture; Escape leaves it.
     const anyTile = grid.locator('.btn-tile').first();
     await anyTile.click({ button: 'right' });
-    await page.waitForTimeout(300);
+    await expect(page.locator('#buttons-grid')).toHaveClass(/jiggle-mode/);
+    await expect(anyTile.locator('xpath=..').locator('[data-testid="tile-badge-edit"]')).toBeVisible();
+    await expect(grid.locator('[data-testid="tile-badge-remove"]')).toHaveCount(0);
+    await page.keyboard.press('Escape');
     await expect(page.locator('#buttons-grid')).not.toHaveClass(/jiggle-mode/);
 
     // Search still works in this mode.

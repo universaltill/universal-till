@@ -454,14 +454,16 @@ test.describe('Sell-screen jiggle edit mode (ut-docs#2339)', () => {
     }
   });
 
-  // ut-docs#2402 independent-review finding: app.js's inAllGrid() guard
-  // (ut-docs#2294 fallout) keeps a long-press on an All-grid tile from
-  // arming jiggle mode. ut-docs#2613 retired the strip's All tab, so the
-  // only All grid left is the all_filter_chips browsing mode's own
-  // #buttons-grid-all -- this test now long-presses there. The seeded item
+  // ut-docs#2402 independent-review finding, revised by ut-docs#2534: the
+  // all_filter_chips All grid (#buttons-grid-all) used to never arm jiggle
+  // mode (app.js's inAllGrid() guard). Since #2534 it does, for a granted
+  // session (this auth-off till is one), but in PLAIN All (no chip) it is
+  // edit-only: the pencil badge and nothing else -- none of the
+  // quick-button remove/hide badges -- and no tile moves. The filtered
+  // (drag) side is sell-all-grid-jiggle-2534.spec.ts. The seeded item
   // renders in it with the SAME data-code the shortcut carries, since
   // seedItems gives the shortcut the item's own barcode.
-  test('a long-press on the all_filter_chips All grid never arms jiggle mode (ut-docs#2402)', async ({ page }) => {
+  test('a long-press on the plain all_filter_chips All grid arms edit-only mode (ut-docs#2402, #2534)', async ({ page }) => {
     const assertClean = watchConsole(page);
     const { A: ITEM_A } = fixture('3');
     await seedItems(page, [ITEM_A]);
@@ -478,13 +480,12 @@ test.describe('Sell-screen jiggle edit mode (ut-docs#2339)', () => {
       await allTile.scrollIntoViewIfNeeded();
 
       await longPress(allTile);
-      await page.waitForTimeout(300);
+      await expect(grid(page)).toHaveClass(/jiggle-mode/);
+      const cell = allTile.locator('xpath=..');
+      await expect(cell.locator('[data-testid="tile-badge-edit"]')).toBeVisible();
+      await expect(cell.locator('[data-testid="tile-badge-remove"], [data-testid="tile-badge-hide"]')).toHaveCount(0);
+      await page.keyboard.press('Escape');
       await expect(grid(page)).not.toHaveClass(/jiggle-mode/);
-      // Badges exist in the DOM for every tile at all times (hidden via
-      // .jiggle-mode, same as the rest of this file's "at rest" checks) --
-      // this one's the tile actually long-pressed, so it's the one whose
-      // badge would have shown if the guard were missing.
-      await expect(allTile.locator('xpath=..').locator('[data-testid="tile-badge-edit"]')).toBeHidden();
 
       assertClean();
     } finally {
