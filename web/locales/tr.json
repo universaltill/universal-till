@@ -2867,5 +2867,12 @@
   "vouchers_import.status.missing_code": "kod eksik",
   "vouchers_import.status.non_positive_balance": "bakiye sıfırdan büyük olmalı",
   "vouchers_import.status.unknown_issue": "içe aktarılamadı",
-  "vouchers_import.title": "Kupon bakiyelerini içe aktar"
+  "vouchers_import.title": "Kupon bakiyelerini içe aktar",
+  "settings.staff_languages.title": "Personele gösterilen diller",
+  "settings.staff_languages.help": "Personelin ☰ Menü’den geçebileceği diller. Mağazanın varsayılan dili her zaman listededir. Yalnızca bir dil seçiliyse Menü’de dil düğmesi gösterilmez.",
+  "settings.staff_languages.default": "varsayılan dil",
+  "settings.staff_languages.error_unknown": "Bu dil bu kasada yüklü değil.",
+  "settings.staff_languages.error_empty": "En az bir dil seçin.",
+  "settings.staff_languages.error_default": "Mağazanın varsayılan dili listeden çıkarılamaz.",
+  "elevation.summary.staff_languages": "Personele gösterilen dilleri şu şekilde ayarla: %s"
 }

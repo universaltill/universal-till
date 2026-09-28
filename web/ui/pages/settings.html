@@ -1961,6 +1961,30 @@
     <span aria-live="polite"></span>
   </form>
 </div>
+<!-- ut-docs#3086: which languages the ☰ Menu offers staff. Every installed
+     language is listed here so the admin can choose; the shop's default
+     language is always on (disabled + a hidden input carrying it), and the
+     server refuses a list without it. -->
+<div class="card" id="settings-staff-languages">
+  <h2>{{ T "settings.staff_languages.title" }}</h2>
+  <p class="muted">{{ T "settings.staff_languages.help" }}</p>
+  <form hx-post="/api/settings/staff-languages" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-save')} } else {var m=document.getElementById('staff-languages-msg'); m.textContent=event.detail.xhr.status===400?event.detail.xhr.responseText:''; if(event.detail.xhr.status!==400){document.getElementById('settings-save-error').hidden=false}}">
+    {{ $sel := .staffLocaleSet }}{{ $def := .defaultStaffLocale }}
+    <fieldset class="staff-lang-list">
+      <legend class="visually-hidden">{{ T "settings.staff_languages.title" }}</legend>
+      {{ range locales }}
+      <label class="staff-lang-opt">
+        <input type="checkbox" name="staff_locales" value="{{ . }}" data-testid="staff-lang-{{ . }}"
+               {{ if index $sel . }}checked{{ end }}{{ if eq . $def }} disabled{{ end }}>
+        {{ nativelocalename . }}{{ if eq . $def }} <span class="muted">({{ T "settings.staff_languages.default" }})</span>{{ end }}
+      </label>
+      {{ end }}
+      {{ if $def }}<input type="hidden" name="staff_locales" value="{{ $def }}">{{ end }}
+    </fieldset>
+    <button class="btn" type="submit">{{ T "common.save" }}</button>
+    <span id="staff-languages-msg" aria-live="polite"></span>
+  </form>
+</div>
 <div class="card" id="settings-shop-type">
   <h2>{{ T "settings.shop_type.title" }}</h2>
   <p class="muted">{{ T "settings.shop_type.help" }}</p>
