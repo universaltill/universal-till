@@ -430,6 +430,7 @@ var demoAllowedRoutes = map[string]bool{
 	"GET /ui/diagnostics-chip": true,
 	"GET /ui/fiscal-chip":      true,
 	"GET /ui/main-till-status": true,
+	"GET /ui/net-status":       true,
 	"GET /ui/pairing-notice":   true,
 	"GET /ui/plugin-buttons":   true,
 	"GET /ui/sync-chip":        true,
