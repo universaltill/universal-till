@@ -19,7 +19,7 @@ tracking stock.
   Items never stocked anywhere keep the old row (empty location, unflagged).
   The #2082 variant guard is kept: a variant-tracked item with no item row
   anywhere gets no phantom item row.
-- `internal/pos/inventory.go`: `LowStockItemsFor` wrapper.
+- `internal/pos/inventory.go`: `LowStockItemsFor` replaces the `GetLowStockItems` wrapper. Only tests called the old wrapper after the handler moved, so CI's `guard-deadcode-baseline.sh` (desktop-shell job) flagged it; its tests now call `LowStockItemsFor(…, false)`.
 - `internal/pages/inventory_api.go`: `GET /api/inventory/low-stock?location_id=`
   passes `AllowNegativeInventory` ("Sell items without tracking stock") and
   adds the escaped `inventory.not_stocked_here` hint to the location cell.

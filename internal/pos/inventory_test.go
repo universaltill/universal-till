@@ -352,7 +352,7 @@ func TestGetLowStockItems(t *testing.T) {
 	execSQL(t, db, `INSERT INTO inventory (id, item_id, location_id, quantity, updated_at) VALUES ('inv2', 'item2', 'loc1', 20, datetime('now'))`)
 	execSQL(t, db, `INSERT INTO inventory (id, item_id, location_id, quantity, updated_at) VALUES ('inv3', 'item3', 'loc1', 5, datetime('now'))`)
 
-	items, err := GetLowStockItems(ctx, db, "")
+	items, err := LowStockItemsFor(ctx, db, "", false)
 	if err != nil {
 		t.Fatalf("GetLowStockItems failed: %v", err)
 	}
