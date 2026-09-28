@@ -58,6 +58,8 @@ type iconStateBody struct {
 		SelectedKey  string `json:"selected_key"`
 		IsCustom     bool   `json:"is_custom"`
 		SuggestedKey string `json:"suggested_key"`
+		// ut-docs#3133: the Item image tab previews the current picture.
+		ThumbnailURL string `json:"thumbnail_url"`
 	} `json:"data"`
 }
 
@@ -83,6 +85,9 @@ func TestIconState_ImagelessItemSuggestsFromNameKeyword(t *testing.T) {
 	if body.Data.SelectedKey != "" || body.Data.IsCustom {
 		t.Errorf("expected no current selection for an imageless item, got selected_key=%q is_custom=%v", body.Data.SelectedKey, body.Data.IsCustom)
 	}
+	if body.Data.ThumbnailURL != "" {
+		t.Errorf("thumbnail_url = %q for an imageless item, want empty", body.Data.ThumbnailURL)
+	}
 }
 
 // TestIconState_ReportsCurrentBuiltinSelection: an item already carrying a
@@ -106,6 +111,9 @@ func TestIconState_ReportsCurrentBuiltinSelection(t *testing.T) {
 	if body.Data.SelectedKey != "drink" || body.Data.IsCustom {
 		t.Errorf("selected_key=%q is_custom=%v, want drink/false", body.Data.SelectedKey, body.Data.IsCustom)
 	}
+	if !strings.HasPrefix(body.Data.ThumbnailURL, "/public/assets/category-icons/drink.svg") {
+		t.Errorf("thumbnail_url = %q, want the built-in icon's path", body.Data.ThumbnailURL)
+	}
 }
 
 // TestIconState_ReportsCustomUpload: a thumbnail path that isn't one of
@@ -128,6 +136,11 @@ func TestIconState_ReportsCustomUpload(t *testing.T) {
 	}
 	if !body.Data.IsCustom || body.Data.SelectedKey != "" {
 		t.Errorf("selected_key=%q is_custom=%v, want \"\"/true for a custom photo", body.Data.SelectedKey, body.Data.IsCustom)
+	}
+	// ut-docs#3133: same URL (and cache-busting ?v=) the catalog row's
+	// <img> uses, so a re-upload to the same path never shows the old one.
+	if !strings.HasPrefix(body.Data.ThumbnailURL, "/public/assets/items/itm1/thumb.png") {
+		t.Errorf("thumbnail_url = %q, want the uploaded photo's URL", body.Data.ThumbnailURL)
 	}
 }
 
