@@ -3,27 +3,36 @@
   <h1>{{ T "permissions.title" }} {{ helpLink "users" }}</h1>
 </div>
 
-<div class="card">
+<div class="card perm-card">
   <p class="muted">{{ T "permissions.intro" }}</p>
-  <div class="table" style="overflow-x:auto">
-    <table class="table">
+  <div class="perm-scroll">
+    <table class="table perm-table">
       <thead>
         <tr>
-          <th>{{ T "permissions.col.action" }}</th>
-          {{ range .Roles }}<th>{{ T (printf "users.role.%s" .) }}</th>{{ end }}
+          <th scope="col" class="perm-action">{{ T "permissions.col.action" }}</th>
+          {{ range .Roles }}<th scope="col" class="perm-cell">{{ T (printf "users.role.%s" .) }}</th>{{ end }}
         </tr>
       </thead>
+      {{ $roles := .Roles }}
+      {{ $cols := .Cols }}
+      {{ range .Groups }}
       <tbody>
-        {{ $roles := .Roles }}
+        <tr class="perm-group">
+          <th scope="rowgroup" colspan="{{ $cols }}" class="perm-group-head"><span class="perm-group-label">{{ T (printf "permissions.group.%s" .Key) }}</span></th>
+        </tr>
         {{ range .Rows }}
         {{ $action := .Action }}
         {{ $cells := .Cells }}
         <tr>
-          <td>{{ T (printf "permissions.action.%s" $action) }}</td>
+          <th scope="row" class="perm-action">
+            <span class="perm-label">{{ T (printf "permissions.action.%s" $action) }}</span>
+            <span class="perm-desc muted">{{ T (printf "permissions.action_desc.%s" $action) }}</span>
+            {{ if .Unlocks }}<span class="perm-unlocks muted">{{ printf (T "permissions.unlocks") .Unlocks }}</span>{{ end }}
+          </th>
           {{ range $roles }}
           {{ $role := . }}
           {{ $cell := index $cells $role }}
-          <td style="text-align:center">
+          <td class="perm-cell">
             {{ if $cell.Locked }}
             <input type="checkbox" {{ if $cell.Granted }}checked{{ end }} disabled title="{{ T "permissions.lockout_hint" }}">
             {{ else }}
@@ -36,6 +45,7 @@
         </tr>
         {{ end }}
       </tbody>
+      {{ end }}
     </table>
   </div>
   <span id="perm-msg" aria-live="polite"></span>
