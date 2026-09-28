@@ -172,7 +172,7 @@ func TestSetupWizardCurrencyConfirmedOnlyWhenOperatorTouchedCountrySelect(t *tes
 	t.Run("no currency_touched field (operator never opened the country step)", func(t *testing.T) {
 		mux, _, d := newFullAuthDeps(t)
 		rec := postForm(mux, "/api/setup", url.Values{
-			"pin": {"2468"}, "pin_confirm": {"2468"},
+			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"},
 			"country": {"GB"}, "currency": {"GBP"}, "tax_rate_pct": {"20"},
 		}, nil)
 		if rec.Code != http.StatusSeeOther {
@@ -185,7 +185,7 @@ func TestSetupWizardCurrencyConfirmedOnlyWhenOperatorTouchedCountrySelect(t *tes
 	t.Run("currency_touched=1 (operator actually used the country select)", func(t *testing.T) {
 		mux, _, d := newFullAuthDeps(t)
 		rec := postForm(mux, "/api/setup", url.Values{
-			"pin": {"2468"}, "pin_confirm": {"2468"},
+			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"},
 			"country": {"GB"}, "currency": {"GBP"}, "tax_rate_pct": {"20"}, "currency_touched": {"1"},
 		}, nil)
 		if rec.Code != http.StatusSeeOther {
@@ -198,7 +198,7 @@ func TestSetupWizardCurrencyConfirmedOnlyWhenOperatorTouchedCountrySelect(t *tes
 	t.Run("currency_touched=1 but an unrecognised currency code is rejected, not confirmed", func(t *testing.T) {
 		mux, _, d := newFullAuthDeps(t)
 		rec := postForm(mux, "/api/setup", url.Values{
-			"pin": {"2468"}, "pin_confirm": {"2468"},
+			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"},
 			"country": {"GB"}, "currency": {"NOTREAL"}, "tax_rate_pct": {"20"}, "currency_touched": {"1"},
 		}, nil)
 		if rec.Code != http.StatusSeeOther {
@@ -221,7 +221,7 @@ func TestSetupWizardDerivesLocaleFromCountry(t *testing.T) {
 	t.Run("DE derives de-DE (non-RTL, safe even with no language pack installed)", func(t *testing.T) {
 		mux, _, d := newFullAuthDeps(t)
 		rec := postForm(mux, "/api/setup", url.Values{
-			"pin": {"2468"}, "pin_confirm": {"2468"},
+			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"},
 			"country": {"DE"}, "currency": {"EUR"}, "tax_rate_pct": {"19"},
 		}, nil)
 		if rec.Code != http.StatusSeeOther {
@@ -234,7 +234,7 @@ func TestSetupWizardDerivesLocaleFromCountry(t *testing.T) {
 	t.Run("GB derives en-GB", func(t *testing.T) {
 		mux, _, d := newFullAuthDeps(t)
 		rec := postForm(mux, "/api/setup", url.Values{
-			"pin": {"2468"}, "pin_confirm": {"2468"},
+			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"},
 			"country": {"GB"}, "currency": {"GBP"}, "tax_rate_pct": {"20"},
 		}, nil)
 		if rec.Code != http.StatusSeeOther {
@@ -247,7 +247,7 @@ func TestSetupWizardDerivesLocaleFromCountry(t *testing.T) {
 	t.Run("AE derives ar-AE (RTL, but ar ships bundled — safe)", func(t *testing.T) {
 		mux, _, d := newFullAuthDeps(t)
 		rec := postForm(mux, "/api/setup", url.Values{
-			"pin": {"2468"}, "pin_confirm": {"2468"},
+			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"},
 			"country": {"AE"}, "currency": {"AED"}, "tax_rate_pct": {"5"},
 		}, nil)
 		if rec.Code != http.StatusSeeOther {
@@ -260,7 +260,7 @@ func TestSetupWizardDerivesLocaleFromCountry(t *testing.T) {
 	t.Run("a posted locale field is ignored — server derives from country, not client text", func(t *testing.T) {
 		mux, _, d := newFullAuthDeps(t)
 		rec := postForm(mux, "/api/setup", url.Values{
-			"pin": {"2468"}, "pin_confirm": {"2468"},
+			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"},
 			"country": {"DE"}, "currency": {"EUR"}, "tax_rate_pct": {"19"}, "locale": {"xx-NOTREAL"},
 		}, nil)
 		if rec.Code != http.StatusSeeOther {
@@ -277,7 +277,7 @@ func TestSetupWizardDerivesLocaleFromCountry(t *testing.T) {
 		// makes this pass even with the guard deleted).
 		d.UpdateState(func(s *common.RuntimeState) { s.Locale = "tr" })
 		rec := postForm(mux, "/api/setup", url.Values{
-			"pin": {"2468"}, "pin_confirm": {"2468"},
+			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"},
 			"country": {"PK"}, "currency": {"PKR"}, "tax_rate_pct": {"18"},
 		}, nil)
 		if rec.Code != http.StatusSeeOther {
@@ -291,7 +291,7 @@ func TestSetupWizardDerivesLocaleFromCountry(t *testing.T) {
 		mux, _, d := newFullAuthDeps(t)
 		d.UpdateState(func(s *common.RuntimeState) { s.Locale = "tr" })
 		rec := postForm(mux, "/api/setup", url.Values{
-			"pin": {"2468"}, "pin_confirm": {"2468"},
+			"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"},
 			"country": {"OTHER"}, "currency": {"USD"}, "tax_rate_pct": {"0"},
 		}, nil)
 		if rec.Code != http.StatusSeeOther {
@@ -393,6 +393,7 @@ func TestSetupWizardRestoreNoIsNoOp(t *testing.T) {
 	rec := postForm(mux, "/api/setup", url.Values{
 		"pin":            {"2468"},
 		"pin_confirm":    {"2468"},
+		"store_name":     {"Test Shop"},
 		"country":        {"GB"},
 		"currency":       {"GBP"},
 		"tax_rate_pct":   {"20"},
@@ -415,6 +416,7 @@ func TestSetupWizardRestoreLaterPersistsDeferredFlag(t *testing.T) {
 	rec := postForm(mux, "/api/setup", url.Values{
 		"pin":            {"2468"},
 		"pin_confirm":    {"2468"},
+		"store_name":     {"Test Shop"},
 		"country":        {"GB"},
 		"currency":       {"GBP"},
 		"tax_rate_pct":   {"20"},
@@ -437,6 +439,7 @@ func TestSetupWizardRestoreCSVExcelRedirectsToImport(t *testing.T) {
 	rec := postForm(mux, "/api/setup", url.Values{
 		"pin":            {"2468"},
 		"pin_confirm":    {"2468"},
+		"store_name":     {"Test Shop"},
 		"country":        {"GB"},
 		"currency":       {"GBP"},
 		"tax_rate_pct":   {"20"},
@@ -1000,5 +1003,68 @@ func TestSetupWizardCountrySettingsReadFailureFallsBackToBuiltins(t *testing.T) 
 	// hardcode pre-#660 — must still be offered.
 	if !strings.Contains(body, `value="GB"`) || !strings.Contains(body, `data-currency="GBP"`) || !strings.Contains(body, `data-tax="20"`) {
 		t.Fatalf("GET /setup?lang=en should still offer the builtin GB option when country_settings can't be read:\n%s", body)
+	}
+}
+
+// ut-docs#3096: the shop name is required. A blank or placeholder name
+// ("My Store" — what migration 001 seeds — the cloud's "Universal Till
+// store", or the step's own "My Shop" placeholder text) is refused before
+// anything is saved, and the wizard re-opens on the shop-name step (4) with
+// both names the operator typed echoed back.
+func TestSetupWizardRefusesBlankOrPlaceholderStoreName(t *testing.T) {
+	for _, name := range []string{"", "   ", "My Store", " my store ", "Universal Till store", "My Shop"} {
+		t.Run(name, func(t *testing.T) {
+			mux, svc, d := newFullAuthDeps(t)
+			rec := postForm(mux, "/api/setup", url.Values{
+				"pin": {"2468"}, "pin_confirm": {"2468"},
+				"country": {"GB"}, "currency": {"GBP"}, "tax_rate_pct": {"20"},
+				"store_name": {name}, "till_name": {"Front counter"},
+			}, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("code=%d loc=%q, want a 200 wizard re-render", rec.Code, rec.Header().Get("Location"))
+			}
+			body := rec.Body.String()
+			if !strings.Contains(body, "Enter your shop") {
+				t.Errorf("re-render lacks the setup.error.store_name_required message: %s", body)
+			}
+			if !strings.Contains(body, "step: 4,") {
+				t.Error("re-render must open on the shop-name step (4)")
+			}
+			if name != "" && strings.Contains(body, `value="`+name+`"`) {
+				t.Errorf("re-render echoes the refused name %q back into the field", name)
+			}
+			if !strings.Contains(body, `value="Front counter"`) {
+				t.Error("re-render must echo the till name the operator typed")
+			}
+			if sessionCookie(rec) != "" {
+				t.Fatal("a refused wizard submit must not sign anyone in")
+			}
+			if fb, _ := svc.NeedsFirstBoot(t.Context()); !fb {
+				t.Fatal("a refused wizard submit must leave the till in first-boot state")
+			}
+			if done, _, _ := d.Settings.Get(t.Context(), "setup.completed"); done == "true" {
+				t.Fatal("a refused wizard submit must not mark setup completed")
+			}
+			if tn, ok, _ := d.Settings.Get(t.Context(), "till.name"); ok && tn == "Front counter" {
+				t.Fatal("a refused wizard submit must not save the till name")
+			}
+		})
+	}
+}
+
+// A PIN error re-render keeps the shop name the operator already typed on
+// step 4. Before ut-docs#3096 it was dropped, so fixing the PIN and
+// finishing silently left the shop called "My Store".
+func TestSetupWizardPINErrorRerenderKeepsStoreName(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+	rec := postForm(mux, "/api/setup", url.Values{
+		"pin": {"2468"}, "pin_confirm": {"8642"},
+		"store_name": {"Corner Café"}, "till_name": {"Bar"},
+	}, nil)
+	body := rec.Body.String()
+	for _, want := range []string{`value="Corner Café"`, `value="Bar"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("PIN-error re-render lacks %s", want)
+		}
 	}
 }
