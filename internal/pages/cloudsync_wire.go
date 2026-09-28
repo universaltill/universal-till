@@ -799,6 +799,12 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 		// set_quick_button_layout: the cloud's quick-sale button layout
 		// panel — same UpdateOrder call the Designer's own reorder makes,
 		// gated to the primary till. See cloudSetQuickButtonLayout.
+		// set_category_order (contract §3.8, ut-docs#3075): the owner's
+		// category order from my., main-till only. See
+		// cloudSetCategoryOrder.
+		SetCategoryOrder: func(ctx context.Context, ids []string) (string, error) {
+			return cloudSetCategoryOrder(ctx, d, ids)
+		},
 		SetQuickButtonLayout: func(ctx context.Context, barcodes []string) (string, error) {
 			return cloudSetQuickButtonLayout(ctx, d, barcodes)
 		},

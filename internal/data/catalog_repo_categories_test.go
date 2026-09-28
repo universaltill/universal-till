@@ -2,6 +2,8 @@ package data_test
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -477,5 +479,52 @@ func TestUpdateCategory_WritesNameAndColor(t *testing.T) {
 		if r.ID == id2 && r.Color != "" {
 			t.Fatalf("CreateCategory must leave colour empty, got %q", r.Color)
 		}
+	}
+}
+
+// SetCategorySortOrderKnown backs set_category_order (ut-docs#3075, §3.8):
+// an id with no categories row (active and inactive both count as present)
+// refuses the whole list inside the write transaction, so nothing changes,
+// and the error names the first unknown id in input order.
+func TestSetCategorySortOrderKnown(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+	active, err := repo.CreateCategory(ctx, "Drinks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inactive, err := repo.CreateCategory(ctx, "Old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetCategoryActive(ctx, inactive, false); err != nil {
+		t.Fatal(err)
+	}
+	order := func() []string {
+		cats, err := repo.ListCategories(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, c := range cats {
+			out = append(out, c.ID)
+		}
+		return out
+	}
+	before := order()
+	err = repo.SetCategorySortOrderKnown(ctx, []string{inactive, "ghost-2", active, "ghost-1"})
+	if !errors.Is(err, data.ErrCategoryNotFound) || !strings.Contains(err.Error(), "ghost-2") {
+		t.Fatalf("err = %v, want ErrCategoryNotFound naming ghost-2", err)
+	}
+	if after := order(); strings.Join(after, ",") != strings.Join(before, ",") {
+		t.Fatalf("a refused order changed the till: %v -> %v", before, after)
+	}
+	if err := repo.SetCategorySortOrderKnown(ctx, []string{inactive, active}); err != nil {
+		t.Fatal(err)
+	}
+	if got := order(); len(got) < 2 || got[0] != inactive || got[1] != active {
+		t.Fatalf("order = %v, want %s then %s first", got, inactive, active)
 	}
 }
