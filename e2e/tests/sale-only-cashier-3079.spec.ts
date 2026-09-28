@@ -68,6 +68,14 @@ test.describe('Cashier is sale-only (ut-docs#3079)', () => {
     // catalog_management only -- no pen/add link into the Designer.
     await expect(page.locator('.products').first()).toBeVisible();
     await expect(page.locator('[data-testid="products-add-link"]')).toHaveCount(0);
+    // ut-docs#2465: moving a quick button to another category is catalog
+    // work -- a cashier gets neither the Move to category badge nor its
+    // dialog (the badge template itself carries none for a Locked session).
+    await expect(page.locator('#tile-move-dialog')).toHaveCount(0);
+    await expect(page.locator('#tile-badges-tpl')).toHaveCount(1); // the check below is not vacuous
+    expect(await page.locator('#tile-badges-tpl').evaluateAll((els) =>
+      els.some((t) => !!(t as HTMLTemplateElement).content.querySelector('.tile-badge-move'))),
+    'cashier badge template has no Move to category badge').toBe(false);
 
     // The Menu grid: sale-flow tiles only.
     await page.goto('/menu');
@@ -99,5 +107,9 @@ test.describe('Cashier is sale-only (ut-docs#3079)', () => {
     const btnReorder = await page.request.post('/api/buttons/reorder', { form: { codes: 'x' } });
     expect(btnReorder.status(), 'cashier POST /api/buttons/reorder must not succeed').not.toBe(204);
     expect(await btnReorder.text(), 'cashier POST /api/buttons/reorder asks for a manager PIN').toContain('elevation');
+    // ut-docs#2465: the same gate for moving an item to another category.
+    const btnRecat = await page.request.post('/api/buttons/recategorize', { form: { item_id: 'x', category_id: '' } });
+    expect(btnRecat.status(), 'cashier POST /api/buttons/recategorize must not succeed').not.toBe(204);
+    expect(await btnRecat.text(), 'cashier POST /api/buttons/recategorize asks for a manager PIN').toContain('elevation');
   });
 });

@@ -356,6 +356,73 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	// Move a quick button's item into another category (ut-docs#2465): the
+	// sell screen's jiggle edit mode and the Designer's live replica of it
+	// (app.js's utTileJiggle) -- a tile dropped on another category's tab, or
+	// a category chosen in the Move to category badge's dialog. Changes the
+	// ITEM's category (catalog data), so it is the same catalog_management
+	// gate as reorder: a cashier gets the manager-PIN prompt, never a 204.
+	// category_id "" is Uncategorised. Same shape as reorder above: primary
+	// till only, 204 + HX-Trigger + X-UT-Sell-Version on success, the
+	// dual-attribution audit only when a PIN approved it.
+	mux.HandleFunc("POST /api/buttons/recategorize", func(w http.ResponseWriter, r *http.Request) {
+		if !requirePrimary(w, r) {
+			return
+		}
+		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+			_ = r.ParseMultipartForm(1 << 20)
+		} else {
+			_ = r.ParseForm()
+		}
+		itemID := strings.TrimSpace(r.Form.Get("item_id"))
+		categoryID := strings.TrimSpace(r.Form.Get("category_id"))
+		if itemID == "" {
+			http.Error(w, "item_id required", http.StatusBadRequest)
+			return
+		}
+		elev := checkOrElevate(d, r, "catalog_management", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			locale := httpx.ResolveLocale(w, r)
+			catName := httpx.T(locale, "products.uncategorized")
+			if categoryID != "" {
+				catName = categoryID
+				if l, err := data.NewCatalogRepo(d.Db).GetLookup(r.Context(), "categories", categoryID); err == nil && strings.TrimSpace(l.Name) != "" {
+					catName = l.Name
+				}
+			}
+			renderElevationPrompt(w, r, "/api/buttons/recategorize", "#buttons-add-error",
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.buttons_recategorize"), buttonsElevationItemName(r.Context(), d, itemID), catName),
+				[]elevationHiddenField{{Name: "item_id", Value: itemID}, {Name: "category_id", Value: categoryID}}, elev)
+			return
+		}
+		err := data.NewCatalogRepo(d.Db).SetItemCategory(r.Context(), itemID, categoryID)
+		switch {
+		case errors.Is(err, data.ErrCategoryNotFound):
+			common.LocalizedError(w, r, http.StatusBadRequest, "designer.error.recategorize_category")
+			return
+		case errors.Is(err, data.ErrItemNotFound):
+			common.LocalizedError(w, r, http.StatusNotFound, "designer.error.recategorize_item")
+			return
+		case err != nil:
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
+			return
+		}
+		if elev.Outcome == elevated {
+			auditButtonsElevated(r, elev.ApproverID, elev.ActorID, itemID, "buttons_recategorize", map[string]any{"item_id": itemID, "category_id": categoryID})
+		}
+		// Same as reorder: the Designer re-renders off HX-Trigger (its
+		// replica is htmx-driven); the sale screen's plain fetch refetches
+		// the grid itself and hands the new generation to
+		// sell-screen-watch.js so its next poll doesn't re-render twice.
+		w.Header().Set("HX-Trigger", "buttons-changed")
+		if v, ok, verr := d.BtnStore.SellGeneration(r.Context()); verr == nil && ok {
+			w.Header().Set(ui.SellVersionHeader, strconv.FormatInt(v, 10))
+		} else if verr != nil {
+			logging.L().Warnf("buttons recategorize: sell version: %v", verr)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	// Admin add/remove
 	mux.HandleFunc("/api/buttons/add", func(w http.ResponseWriter, r *http.Request) {
 		if !requirePrimary(w, r) {
