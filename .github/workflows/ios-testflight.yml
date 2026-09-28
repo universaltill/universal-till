@@ -116,7 +116,11 @@ jobs:
       - name: Bind the Go till server (gomobile bind -target=ios)
         run: |
           set -euo pipefail
-          gomobile bind -target=ios -o ios/build/Mobile.xcframework ./mobile
+          # Stamp the version the footer, the update check and support read; without
+          # it buildinfo.Version stays "dev" (ut-docs#3221).
+          gomobile bind -target=ios \
+            -ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.Version=${MARKETING_VERSION}" \
+            -o ios/build/Mobile.xcframework ./mobile
       - name: Generate the app icon asset catalog
         run: bash ios/scripts/make-app-icon.sh
       - name: Generate the Xcode project

@@ -22,6 +22,8 @@
 #     and removed (with ExportOptions.plist) in an `if: always()` step;
 #   - secrets reach scripts only through env: — no `${{ secrets.` inside
 #     a run: block (script injection / accidental echo);
+#   - gomobile bind stamps buildinfo.Version=$MARKETING_VERSION, resolved
+#     before the bind, so the app never reports "dev" (ut-docs#3221);
 #   - the upload is TestFlight only: export method app-store-connect,
 #     destination upload, and no App Store submission tooling.
 # Self-tested against broken fixtures so each check can actually fail.
@@ -124,6 +126,21 @@ check_wf() {
   for s in ASC_KEY_ID ASC_KEY_P8 ASC_ISSUER_ID MACOS_NOTARY_TEAM_ID; do
     grep -qF "secrets.${s} }}" "$wf" || echo "FAIL:secret ${s} not passed via env"
   done
+  # ut-docs#3221: the bind step must stamp buildinfo.Version with the
+  # resolved marketing version, or the app's footer and updater read "dev".
+  local bind
+  bind="$(awk '/^      - name: /{p = ($0 ~ /^      - name: Bind the Go till server/)} p' "$wf")"
+  # shellcheck disable=SC2016
+  if [ -z "$bind" ] || ! grep -qF -- '-ldflags "-X github.com/universaltill/universal-till/internal/buildinfo.Version=${MARKETING_VERSION}"' <<<"$bind"; then
+    echo "FAIL:gomobile bind does not stamp buildinfo.Version with MARKETING_VERSION (expected exactly -ldflags \"-X github.com/universaltill/universal-till/internal/buildinfo.Version=\${MARKETING_VERSION}\")"
+  fi
+  # ...and the version must be resolved before the bind runs.
+  local resolve_at bind_at
+  resolve_at="$(awk '/^      - name: Resolve marketing and build versions/{print NR; exit}' "$wf")"
+  bind_at="$(awk '/^      - name: Bind the Go till server/{print NR; exit}' "$wf")"
+  if [ -z "$resolve_at" ] || [ -z "$bind_at" ] || [ "$resolve_at" -gt "$bind_at" ]; then
+    echo "FAIL:MARKETING_VERSION is resolved after the gomobile bind"
+  fi
 }
 
 # --- self-test: a broken workflow must trip the checks -----------------------
@@ -153,7 +170,7 @@ YAML
 bad="$(check_wf "$fixture")"
 for want in 'not pinned to a commit SHA' 'archive step is not unsigned' 'forbidden trigger' 'no repository guard' 'macos-26' 'iOS SDK version check' 'self-hosted' \
   'timeout-minutes' 'write permission' 'concurrency' 'secrets expanded inside a run' 'RUNNER_TEMP' \
-  'umask 077' 'if: always()' 'ASC_KEY_P8 printed'; do
+  'umask 077' 'if: always()' 'ASC_KEY_P8 printed' 'stamp buildinfo.Version' 'resolved after the gomobile bind'; do
   if grep -qF -- "$want" <<<"$bad"; then
     pass "self-test: broken fixture trips '${want}'"
   else
