@@ -1557,7 +1557,7 @@
         // the answer and the one interval live on window.__utNet so a
         // navigation neither stacks another poller nor flashes "Online".
         var NET_STATUS_URL = '/ui/net-status';
-        var net = window.__utNet || (window.__utNet = { reach: null, timer: null });
+        var net = window.__utNet || (window.__utNet = { reach: null, timer: null, poll: null });
         function update() {
           var online = navigator.onLine;
           // ut-docs#2742: .has-link (set below while a main-till chip is
@@ -1590,9 +1590,16 @@
         window.addEventListener('offline', update);
         update();
         document.addEventListener('visibilitychange', function () { if (!document.hidden) pollNet(); });
-        pollNet();
-        if (net.timer) clearInterval(net.timer);
-        net.timer = setInterval(pollNet, 10000);
+        // One interval for the shell's life; it calls whichever page's
+        // pollNet is current, so the closure never holds a swapped-away
+        // #sb-conn. Only the first load polls at once — a boosted
+        // navigation fetches just the page (persistent-shell-2224) and
+        // shows the answer already on window.__utNet.
+        net.poll = pollNet;
+        if (!net.timer) {
+          net.timer = setInterval(function () { window.__utNet.poll(); }, 10000);
+          pollNet();
+        }
         // ut-docs#2742: follow the main-till chip — mark the bar while one
         // is shown, and announce a state change (not every 5 s poll) in
         // the polite live region.

@@ -42,6 +42,7 @@ separate worktree), one round.
 | 5 | nit | `http.DefaultClient` + a plain-http non-loopback endpoint: a captive portal's page counts as reachable. | **Accepted, documented** in the package comment. The production endpoint is https, where a portal or proxy fails TLS/CONNECT. Refusing redirects wouldn't help (a 30x is still a response, and would misjudge a cloud http→https redirect). |
 | 6 | nit | Load: ~1 probe per 10 s per till with an open visible page. | Accepted per the card's ≤ 30 s window; the probe is to the unauthenticated `/healthz` only. Noted on the card. |
 | 7 | nit | WIP commit message. | Fixed (squashed). |
+| 8 | CI | `persistent-shell-2224` (a boosted rail tap must fetch only the page) failed: the re-run script polled `/ui/net-status` at once on every navigation. | **Fixed**: one shell-lifetime interval calls the current page's `pollNet` (`window.__utNet.poll`); only the first load polls immediately, and a navigation shows the answer already held. Both specs pass locally (15/15). |
 
 The review's rule checks were clean: no SQL, no money, i18n guard passes,
 envelope and snake_case correct, offline-first (display only), no file writes.
