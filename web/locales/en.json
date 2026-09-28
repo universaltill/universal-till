@@ -163,6 +163,7 @@
   "bluetoothdevices.scanning": "Scanning… this takes about ten seconds.",
   "bluetoothdevices.title": "Bluetooth devices",
   "buttons.edit_mode.title": "Editing quick buttons — drag a tile to reorder",
+  "buttons.edit_mode.title_all_grid": "Editing items — choose a category to drag its items into order; the pencil edits an item",
   "catalog.active": "Active",
   "catalog.add_item_btn": "Add item",
   "catalog.attach_barcode": "Attach Barcode",

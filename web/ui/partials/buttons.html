@@ -803,7 +803,10 @@
            ut-docs#2698: it sits above #search-results, since the search
            stays usable in edit mode -- Done stays at the top either way. */}}
       <div class="jiggle-bar" data-testid="jiggle-bar" role="status" aria-live="polite" hidden>
-        <span class="jiggle-bar-title">{{ T "buttons.edit_mode.title" }}</span>
+        {{/* ut-docs#2534: the all_filter_chips All grid lists every item,
+             not quick buttons, and moves only under a category chip (plain
+             All is pencil-only), so its bar says that instead. */}}
+        <span class="jiggle-bar-title">{{ if eq $mode "all_filter_chips" }}{{ T "buttons.edit_mode.title_all_grid" }}{{ else }}{{ T "buttons.edit_mode.title" }}{{ end }}</span>
         <button type="button" class="btn primary compact jiggle-done" data-testid="jiggle-done">{{ T "common.done" }}</button>
       </div>
       {{/* ut-docs#2294: search results are a SEPARATE view from the tabs/
@@ -872,9 +875,13 @@
              page alone would silently drop everything past it); `chip` in
              x-data above only tracks which one reads as pressed. The All
              chip is data-cat-all, pressed by default (no filter). The grid
-             keeps its #buttons-grid-all id on purpose: app.js's inAllGrid()
-             guard is what keeps long-press from arming jiggle mode on it
-             (AC 6 -- All-grid reorder is a separate card). */}}
+             keeps its #buttons-grid-all id on purpose: app.js's utTileJiggle
+             treats it apart from the quick-button grids (ut-docs#2534):
+             long-press arms edit mode here only when data-edit-allowed is
+             set (a catalog_management session, not .Locked -- a cashier's
+             long press never arms it -- it sells like a tap), badges are the pencil only, and
+             moving is allowed only under a category chip (the fragment's
+             data-all-filter marker), saved as that category's own order. */}}
         <div id="browsing-category-chips" class="filter-chips products-cat-chips" role="group" aria-label="{{ T "filter.category_label" }}">
           <button type="button" class="chip chip-all" data-cat-all aria-pressed="true" :aria-pressed="chip === '' ? 'true' : 'false'"
                   hx-get="/ui/buttons/all/more?offset=0&category=all" hx-target="#buttons-grid-all" hx-swap="innerHTML"
@@ -889,7 +896,7 @@
           </button>
           {{ end }}
         </div>
-        <div id="buttons-grid-all" class="grid">
+        <div id="buttons-grid-all" class="grid"{{ if not .Locked }} data-edit-allowed{{ end }}>
           {{ range .AllButtons }}{{ template "product-tile" . }}{{ end }}
           {{ if .AllHasMore }}{{ template "all-more-button" (dict "Offset" .AllNextOffset "Category" "all") }}{{ end }}
         </div>
@@ -1384,6 +1391,13 @@
 {{/* all-more-fragment: AllMore's own response body — see all-more-button
      above for how its outerHTML swap uses this. */}}
 {{ define "all-more-fragment" }}
+  {{/* ut-docs#2534: a filtered page says so -- app.js's utTileJiggle allows
+       drag/arrow-key moves in the All grid only while this marker is among
+       its children (plain All is edit-only), and it arrives with the very
+       tiles it describes, so the two can never disagree mid-swap. A hidden
+       <span>, not a <template>: htmx drops a top-level <template> from a
+       swapped fragment. */}}
+  {{ if .Filtered }}<span class="all-grid-filter" data-all-filter="{{ .Category }}" hidden></span>{{ end }}
   {{ range .Buttons }}{{ template "product-tile" . }}{{ end }}
   {{ if .HasMore }}{{ template "all-more-button" (dict "Offset" .NextOffset "Category" .Category) }}{{ end }}
   {{/* ut-docs#2499: a chip whose category has nothing sellable (every
