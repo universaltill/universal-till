@@ -33,9 +33,9 @@ test('a catalog item with neither barcode nor SKU can be added as a button and r
     page.getByRole('button', { name: /Import/i }).last().click(),
   ]);
 
-  // Confirm it actually landed with neither identifier -- the catalog row
-  // must show no "Barcodes:"/SKU summary, otherwise this isn't the
-  // codeless case the card describes.
+  // Confirm it actually landed with no barcode -- the catalog row must show
+  // no "Barcodes:" summary. (Since ut-docs#3087 the import gives the row a
+  // generated SKU, so "codeless" now means barcode-less.)
   await page.goto('/catalog');
   const row = page.locator('.catalog-row', { hasText: name });
   await expect(row).toBeVisible();

@@ -3,6 +3,7 @@ package data_test
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/catalogtypes"
@@ -10,13 +11,14 @@ import (
 	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
-// TestCreateItem_NoSKUStoresNullNotUUID is ut-docs#1176: an item created (or
-// imported) without a source SKU used to have its own internal UUID copied
-// into the sku column, which then leaked verbatim into every staff-facing
-// surface that displays SKU. sku is a nullable UNIQUE column (001_init.sql),
-// so storing NULL for "no real SKU" is enough — and, unlike a UUID, a NULL
-// never shows up where a shop operator can see it.
-func TestCreateItem_NoSKUStoresNullNotUUID(t *testing.T) {
+// TestCreateItem_NoSKUGetsReadableSKUNotUUID is ut-docs#1176 as amended by
+// ut-docs#3087: an item created (or imported) without a source SKU used to
+// have its own internal UUID copied into the sku column, which then leaked
+// verbatim into every staff-facing surface that displays SKU. #1176 stored
+// NULL instead; the product owner's rule since #3087 is that no item exists
+// without a SKU, so it now gets a generated, readable one — still never
+// the UUID.
+func TestCreateItem_NoSKUGetsReadableSKUNotUUID(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
 	defer db.Close()
 	repo := data.NewCatalogRepo(db)
@@ -33,14 +35,17 @@ func TestCreateItem_NoSKUStoresNullNotUUID(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT sku FROM items WHERE id = ?`, id).Scan(&sku); err != nil {
 		t.Fatalf("query sku: %v", err)
 	}
-	if sku.Valid {
-		t.Fatalf("expected sku to be NULL for an item with no source SKU, got %q (id=%q) — the UUID must not land in sku", sku.String, id)
+	if !sku.Valid || sku.String == "" {
+		t.Fatalf("an item with no source SKU must get a generated one (ut-docs#3087), got %+v", sku)
+	}
+	if strings.Contains(id, sku.String) || strings.Contains(sku.String, id[:8]) {
+		t.Fatalf("generated sku %q is derived from the item's UUID %q — ut-docs#1176", sku.String, id)
 	}
 }
 
-// TestCreateItemTx_NoSKUStoresNullNotUUID mirrors the above for the
+// TestCreateItemTx_NoSKUGetsReadableSKUNotUUID mirrors the above for the
 // transactional path the .bkp/CSV importer uses.
-func TestCreateItemTx_NoSKUStoresNullNotUUID(t *testing.T) {
+func TestCreateItemTx_NoSKUGetsReadableSKUNotUUID(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
 	defer db.Close()
 	repo := data.NewCatalogRepo(db)
@@ -64,17 +69,18 @@ func TestCreateItemTx_NoSKUStoresNullNotUUID(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT sku FROM items WHERE id = ?`, id).Scan(&sku); err != nil {
 		t.Fatalf("query sku: %v", err)
 	}
-	if sku.Valid {
-		t.Fatalf("expected sku to be NULL for an item with no source SKU, got %q (id=%q) — the UUID must not land in sku", sku.String, id)
+	if !sku.Valid || sku.String == "" {
+		t.Fatalf("an item with no source SKU must get a generated one (ut-docs#3087), got %+v", sku)
+	}
+	if strings.Contains(id, sku.String) || strings.Contains(sku.String, id[:8]) {
+		t.Fatalf("generated sku %q is derived from the item's UUID %q — ut-docs#1176", sku.String, id)
 	}
 }
 
 // TestCreateItem_TwoItemsWithNoSKUDoNotCollide is the reason the old code
 // used the item's own UUID as a sku fallback in the first place: sku is
-// UNIQUE, and two rows both storing the empty string would collide on the
-// second insert. Storing NULL avoids that — SQLite treats NULLs as distinct
-// from each other under a UNIQUE constraint — without needing a display
-// value at all.
+// UNIQUE, and two rows both storing the same value would collide on the
+// second insert. The generator hands each a different SKU (ut-docs#3087).
 func TestCreateItem_TwoItemsWithNoSKUDoNotCollide(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
 	defer db.Close()
@@ -91,8 +97,11 @@ func TestCreateItem_TwoItemsWithNoSKUDoNotCollide(t *testing.T) {
 
 // TestListItems_NoSKUReturnsEmptyStringNotUUID is ut-docs#1176's acceptance
 // criterion for the Inventory/Catalog listing surfaces: ListItems must
-// tolerate the now-nullable sku column (a bare, non-COALESCEd scan would
-// error on every no-SKU row) and must report "" rather than any UUID.
+// tolerate a NULL sku column (a bare, non-COALESCEd scan would error on
+// every no-SKU row) and must report "" rather than any UUID. New items
+// always get a SKU since ut-docs#3087, but tills upgraded from before it
+// still hold NULL-SKU rows until the backfill (ut-docs#3097) runs, so the
+// row is forced to NULL here.
 func TestListItems_NoSKUReturnsEmptyStringNotUUID(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
 	defer db.Close()
@@ -104,6 +113,9 @@ func TestListItems_NoSKUReturnsEmptyStringNotUUID(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("CreateItem: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE items SET sku = NULL WHERE id = ?`, id); err != nil {
+		t.Fatalf("force legacy NULL sku: %v", err)
 	}
 
 	items, err := repo.ListItems(ctx)
