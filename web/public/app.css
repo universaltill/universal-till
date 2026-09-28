@@ -802,6 +802,11 @@ body.menu-screen .session-admin-link { display: none; }
 .menu-lang-label { font-weight: 600; color: var(--muted); display: inline-flex; align-items: center; gap: .35rem; }
 .menu-lang-ico svg { inline-size: 1.1em; block-size: 1.1em; display: block; }
 .menu-lang-btns { display: flex; flex-wrap: wrap; gap: .5rem; }
+/* ut-docs#3086: Settings → Languages shown to staff. Whole label is the
+   touch target; wraps for long native names and many languages. */
+.staff-lang-list { display: flex; flex-wrap: wrap; gap: .5rem 1rem; margin-block: .5rem; border: 0; padding: 0; min-inline-size: 0; }
+.staff-lang-opt { display: inline-flex; align-items: center; gap: .5rem; min-block-size: 44px; padding-inline: .25rem; cursor: pointer; }
+.staff-lang-opt input { inline-size: 1.25rem; block-size: 1.25rem; }
 /* ut-docs#1125: no text-transform/letter-spacing here. Both were written for
    the old two-letter code labels ("EN", "FA"); now that the label is the
    language's own native name they actively damage it — uppercase turns

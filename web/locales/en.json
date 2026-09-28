@@ -2867,5 +2867,12 @@
   "modifiers.unassigned_count": "%d unassigned group(s)",
   "modifiers.delete_unassigned": "Delete all unassigned groups",
   "modifiers.delete_unassigned_confirm": "Delete all %d unassigned modifier group(s) everywhere? Past sales keep the modifiers they recorded.",
-  "modifiers.delete_unassigned_stale": "The unassigned list changed since this page loaded — nothing was deleted. Reload and try again."
+  "modifiers.delete_unassigned_stale": "The unassigned list changed since this page loaded — nothing was deleted. Reload and try again.",
+  "settings.staff_languages.title": "Languages shown to staff",
+  "settings.staff_languages.help": "The languages staff can switch to from the ☰ Menu. The shop’s default language is always included. With just one language selected, the Menu shows no language buttons.",
+  "settings.staff_languages.default": "default language",
+  "settings.staff_languages.error_unknown": "That language isn’t installed on this till.",
+  "settings.staff_languages.error_empty": "Select at least one language.",
+  "settings.staff_languages.error_default": "The shop’s default language can’t be removed from the list.",
+  "elevation.summary.staff_languages": "Set the languages shown to staff to: %s"
 }

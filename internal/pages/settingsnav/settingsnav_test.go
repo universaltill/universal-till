@@ -57,6 +57,7 @@ func TestResolve_ZeroAmendmentsMatchesCoreSettingsExactly(t *testing.T) {
 		{Key: "settings-telemetry", Label: "Plugin telemetry"},
 		{Key: "settings-currency", Label: "Currency"},
 		{Key: "settings-language", Label: "Language"},
+		{Key: "settings-staff-languages", Label: "Languages shown to staff"},
 		{Key: "settings-shop-type", Label: "Shop type"},
 		{Key: "settings-all", Label: "All Settings"},
 	}

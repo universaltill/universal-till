@@ -384,6 +384,7 @@ func registerMenu(mux *http.ServeMux, d *common.Deps) {
 		// doc comment (index_page.go) for why backoffice/self_order need
 		// opposite treatment.
 		mode, _, _ := d.Settings.Get(r.Context(), "display.mode")
+		staffLocales, _, _ := d.Settings.Get(r.Context(), common.KeyStaffLocales)
 		resolved := uislot.Resolve(menuSlotEntries(d.MenuSnapshot()), d.MenuAmendmentsSnapshot())
 		vis := &menuVisibility{d: d, r: r}
 		tiles := make([]menuTile, 0, len(resolved))
@@ -433,6 +434,9 @@ func registerMenu(mux *http.ServeMux, d *common.Deps) {
 			"menuItems":     d.MenuSnapshot(),
 			"Tiles":         tiles,
 			"backToSaleURL": saleScreenReturnURL(mode),
+			// ut-docs#3086: only the languages the shop chose for staff; the
+			// template hides the row when there's just one.
+			"staffLocales": httpx.StaffLocales(staffLocales),
 		})(w, r)
 	})
 }

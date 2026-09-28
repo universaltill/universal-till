@@ -43,7 +43,12 @@ const (
 	// only where an operator genuinely chooses (Settings' Language card, a
 	// store.locale write from the all-settings table, finishing setup);
 	// never by a derivation, for the same reason KeyLocaleConfirmed isn't.
-	KeyLocaleGeneration  = "store.locale_generation"
+	KeyLocaleGeneration = "store.locale_generation"
+	// KeyStaffLocales is the comma-separated list of locale codes the ☰
+	// Menu's language row offers (ut-docs#3086). Unset = the shop's default
+	// language plus English; the default language is always included on
+	// read (httpx.StaffLocalesFor), so no shop needs a migration.
+	KeyStaffLocales      = "store.staff_locales"
 	KeyTaxInclusive      = "store.tax_inclusive"
 	KeyTaxRate           = "store.tax_rate"
 	KeyServiceChargeRate = "store.service_charge_rate_pct"

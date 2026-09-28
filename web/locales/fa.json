@@ -2867,5 +2867,12 @@
   "vouchers_import.status.missing_code": "کد موجود نیست",
   "vouchers_import.status.non_positive_balance": "مانده باید بزرگ‌تر از صفر باشد",
   "vouchers_import.status.unknown_issue": "وارد نشد",
-  "vouchers_import.title": "وارد کردن مانده گواهی‌های هدیه"
+  "vouchers_import.title": "وارد کردن مانده گواهی‌های هدیه",
+  "settings.staff_languages.title": "زبان‌های قابل انتخاب برای کارکنان",
+  "settings.staff_languages.help": "زبان‌هایی که کارکنان می‌توانند از ☰ منو به آن‌ها تغییر دهند. زبان پیش‌فرض فروشگاه همیشه در فهرست است. اگر فقط یک زبان انتخاب شده باشد، منو دکمهٔ زبانی نشان نمی‌دهد.",
+  "settings.staff_languages.default": "زبان پیش‌فرض",
+  "settings.staff_languages.error_unknown": "این زبان روی این صندوق نصب نیست.",
+  "settings.staff_languages.error_empty": "دست‌کم یک زبان انتخاب کنید.",
+  "settings.staff_languages.error_default": "زبان پیش‌فرض فروشگاه را نمی‌توان از فهرست حذف کرد.",
+  "elevation.summary.staff_languages": "تنظیم زبان‌های قابل انتخاب برای کارکنان به: %s"
 }
