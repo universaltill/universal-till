@@ -1375,15 +1375,20 @@ document.addEventListener('click', function(e){
   // #modifier-modal (HX-Retarget/HX-Reswap) when the item has sellable
   // variants, and fires this event via HX-Trigger-After-Swap once the
   // picker markup has actually swapped in -- HX-Trigger alone would fire
-  // before the swap, calling showModal() on a still-empty <dialog>.
+  // before the swap, opening a still-empty <dialog>.
+  // ut-docs#2097: .show(), never .showModal() -- a showModal() dialog makes
+  // the status bar and Lock inert (CLAUDE.md "Offline-first"). app.css gives
+  // #modifier-modal its fixed frame; base.html's #ut-scrim blocks the page
+  // behind it and its data-ut-escape-close (index.html) keeps Escape.
   document.body.addEventListener('open-modifier-modal', function(){
     var m = document.getElementById('modifier-modal');
     // review finding, non-blocker 4: a wedge/HID scanner submits the scan
     // row programmatically regardless of focus, so a second parent-code
     // scan can fire while the picker from a first one is still open --
-    // showModal() on an already-open <dialog> throws InvalidStateError.
-    // The swapped-in markup (the new item) still replaces the old one first.
-    if (m && !m.open) m.showModal();
+    // showModal() on an already-open <dialog> threw InvalidStateError;
+    // .show() is a no-op there, the guard stays for clarity. The swapped-in
+    // markup (the new item) still replaces the old one first.
+    if (m && !m.open) m.show();
   });
   // ut-docs#3000: a modifier/variant product tile (buttons.html
   // product-tile / product-tile-result: sale grid, category popup, search
@@ -1407,7 +1412,7 @@ document.addEventListener('click', function(e){
     var src = (d.requestConfig && d.requestConfig.elt) || d.elt;
     if (!src || !src.matches || !src.matches('.btn-tile[hx-target="#modifier-modal"]')) return;
     var m = document.getElementById('modifier-modal');
-    if (m && !m.open) m.showModal();
+    if (m && !m.open) m.show();
   });
   // ut-docs#3073 (product owner + pilot café owner): the category_tabs
   // popup (#category-items-modal, buttons.html's openCategoryPopup) closes
@@ -3128,16 +3133,17 @@ window.utTabBarFade = function (el) {
   // it. No modal in the DOM (a page that doesn't carry the sale screen's
   // markup) is a same-tick passthrough, never a stuck gate.
   //
-  // ut-docs#2371: showModal(), not show() -- this dialog needs no typing
-  // (see app.css's own comment on the same point), so the on-screen-
-  // keyboard reason #hold-modal/#pfand-modal use .show() for does not
-  // apply here, and a real top-layer modal is what the bug report asked
-  // for (centred, backdropped, everything else inert). Guarded: calling
-  // showModal() on an already-open dialog throws -- this can legitimately
-  // happen now that the prompt can also open unprompted at sale start
-  // (maybePromptAtSaleStart), so a caller racing that with its own gate
-  // re-arms the resolve (its action is the one to continue) and skips only
-  // the showModal() call.
+  // ut-docs#2097: .show(), never .showModal(). ut-docs#2371 had made this
+  // a real top-layer modal (backdropped, nothing behind it tappable, never
+  // under #modifier-modal); a showModal() dialog also makes the status bar
+  // and Lock inert, which the product owner ruled out for every till
+  // dialog. The same guarantees now come from the non-modal pattern:
+  // base.html's #ut-scrim blocks taps on the sale screen, app.css's fixed
+  // frame paints it above #modifier-modal, and its data-ut-escape-close
+  // (index.html) keeps Escape. The already-open guard stays: the prompt
+  // can open unprompted at sale start (maybePromptAtSaleStart), so a
+  // caller racing that with its own gate re-arms the resolve (its action
+  // is the one to continue) and skips only the open call.
   function showOrderTypePromptModal(onChosen) {
     var modal = document.getElementById('order-type-prompt-modal');
     if (!modal) { onChosen(); return; }
@@ -3151,19 +3157,19 @@ window.utTabBarFade = function (el) {
     // silently dropped and the cashier's eventual choice would resume the
     // sale-start no-op instead -- "scan first, look at the screen second"
     // is the common sequence, so the LATEST intercepted action is the one a
-    // choice must continue. Only the showModal() call itself is skipped.
+    // choice must continue. Only the open call itself is skipped.
     window.posOrderTypePromptResolve = function () {
       window.posOrderTypePromptResolve = null;
       choiceMade = true;
       dismissedThisSale = false;
       onChosen();
     };
-    if (!modal.open) modal.showModal();
+    if (!modal.open) modal.show();
   }
 
-  // ut-docs#2371: a close WITHOUT a choice (Cancel's onclick, or the
-  // browser's own Escape handling now that this is a real showModal()
-  // dialog) behaves like Cancel for the rest of THIS sale -- suppress the
+  // ut-docs#2371: a close WITHOUT a choice (Cancel's onclick, or Escape --
+  // base.html's shared data-ut-escape-close handler since ut-docs#2097)
+  // behaves like Cancel for the rest of THIS sale -- suppress the
   // sale-start nag, without touching the per-item/per-Pay gates. `close`
   // does not bubble, so this has to be a capturing document-level
   // listener rather than the usual delegation this file uses elsewhere.
@@ -3299,7 +3305,7 @@ window.utTabBarFade = function (el) {
           // -- don't open an empty picker on it (the tile's delegated opener
           // has the same edge; this path just closes it for free).
           var m = document.getElementById('modifier-modal');
-          if (m && !m.open && m.innerHTML.trim()) m.showModal();
+          if (m && !m.open && m.innerHTML.trim()) m.show();
         });
       });
       return;

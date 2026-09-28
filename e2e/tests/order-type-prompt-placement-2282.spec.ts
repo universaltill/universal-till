@@ -21,6 +21,15 @@ import { setOrderTypePromptMode } from './helpers';
 // sale start too (Cancel/Escape suppress just that sale-start nag for the
 // rest of the sale, never the per-item/per-Pay gates).
 //
+// ut-docs#2097 (product owner, 2026-09-28): showModal() also made the
+// status bar and Lock inert, so the prompt is NON-modal again -- but not
+// the pre-#2371 kind: it is centred in an explicit fixed frame above
+// #modifier-modal (app.css) over the shared #ut-scrim (base.html, #2873),
+// which still keeps the sale screen behind it untappable, and Escape comes
+// from base.html's data-ut-escape-close. The `:modal` pins below now assert
+// the opposite (count 0 while it is open); showmodal-statusbar-reachable-
+// 2097.spec.ts covers the status bar/Lock side.
+//
 // The setting is a SERVER-side value shared by every spec on this server
 // (fixtures.ts's own "one live till, workers: 1" rule) -- every test here
 // restores 'top' in afterEach even on failure, or a failed run leaks
@@ -210,20 +219,21 @@ test.describe('ut-docs#2282 dine-in/takeaway prompt placement', () => {
   });
 
   // ut-docs#2371: the placement's `top`/`at_pay` behaviour is unchanged --
-  // only the dialog itself is now a real modal wherever it opens. This is
-  // the direct, DOM-level pin for that, same `:modal` pseudo-class other
-  // specs (categories-record-dialog-2010.spec.ts, items-shell-catalog-
-  // import-taxcodes-dialog-2095.spec.ts) already use to tell a real
-  // showModal() dialog apart from a merely-`[open]` non-modal one.
-  test('before_item: the prompt opens as a centred modal with a backdrop when the sell screen loads with an empty basket', async ({ page }) => {
+  // only the dialog itself is centred and blocks the screen behind it
+  // wherever it opens. ut-docs#2097: blocking comes from #ut-scrim, not
+  // showModal() -- the `:modal` pin (same pseudo-class categories-record-
+  // dialog-2010.spec.ts uses) now asserts it is NOT a top-layer modal.
+  test('before_item: the prompt opens centred over the scrim when the sell screen loads with an empty basket', async ({ page }) => {
     await setOrderTypePromptMode(page, 'before_item');
     await page.goto('/');
 
     // Visible with NO tap at all -- ut-docs#2371 bug #2 (it used to only
     // ever fire lazily on the first add).
     await expect(page.locator('#order-type-prompt-modal')).toBeVisible();
-    // A real showModal() top-layer modal, not just an `[open]` dialog.
-    await expect(page.locator('#order-type-prompt-modal:modal')).toHaveCount(1);
+    // ut-docs#2097: open, but NOT a top-layer modal (the status bar and Lock
+    // stay reachable); the shared scrim is what blocks the screen behind it.
+    await expect(page.locator('#order-type-prompt-modal:modal')).toHaveCount(0);
+    await expect(page.locator('#ut-scrim')).toBeVisible();
 
     const modalBox = (await page.locator('#order-type-prompt-modal').boundingBox())!;
     const viewport = page.viewportSize()!;
@@ -233,10 +243,10 @@ test.describe('ut-docs#2282 dine-in/takeaway prompt placement', () => {
     expect(modalCenterY).toBeGreaterThan(viewport.height / 3);
     expect(modalCenterY).toBeLessThan((viewport.height * 2) / 3);
 
-    // ut-docs#2371 bug #1/#3: a real modal makes the rest of the document
-    // inert -- a tap at a product tile's own on-screen position must not
-    // reach it (the OLD non-modal .show() left the screen behind it fully
-    // tappable, "locking the popup" by letting a tile add underneath it).
+    // ut-docs#2371 bug #1/#3: a tap at a product tile's own on-screen
+    // position must not reach it. Since ut-docs#2097 the shared scrim
+    // catches it; before #2371 the dialog had no backdrop at all and a tile
+    // underneath could be tapped ("locking the popup").
     const tile = page.locator('.btn-tile').first();
     await expect(tile).toBeVisible();
     const tileBox = (await tile.boundingBox())!;
@@ -270,7 +280,7 @@ test.describe('ut-docs#2282 dine-in/takeaway prompt placement', () => {
     await page.getByTestId('kiosk-checkout-start').click();
     await expect(page.locator('#basket')).toHaveAttribute('data-lines-count', '0');
     await expect(page.locator('#order-type-prompt-modal')).toBeVisible();
-    await expect(page.locator('#order-type-prompt-modal:modal')).toHaveCount(1);
+    await expect(page.locator('#order-type-prompt-modal:modal')).toHaveCount(0);
   });
 
   // ut-docs#2371 bug #1: a modifier/variant tile's OWN picker-opening
@@ -311,10 +321,10 @@ test.describe('ut-docs#2282 dine-in/takeaway prompt placement', () => {
   test('before_item: a wedge scan while the sale-start prompt is open is not lost -- answering adds the scanned item', async ({ page }) => {
     await setOrderTypePromptMode(page, 'before_item');
     await page.goto('/');
-    await expect(page.locator('#order-type-prompt-modal:modal')).toHaveCount(1);
+    await expect(page.locator('#order-type-prompt-modal')).toBeVisible();
 
     // A hardware wedge types the whole code in a burst and finishes with
-    // Enter; focus is wherever showModal() put it (inside the dialog).
+    // Enter; focus is wherever .show() put it (inside the dialog).
     // Driven through window.utScan.submit() (ut-docs#2429) rather than
     // simulated per-keystroke `page.keyboard.type` + Enter: under
     // CI-matching parallel load, a real inter-keystroke gap exceeding
@@ -330,7 +340,7 @@ test.describe('ut-docs#2282 dine-in/takeaway prompt placement', () => {
       scan.submit(code, codeInput);
     }, '5000000000012');
     // Still open (the scan was intercepted, not answered) and nothing landed.
-    await expect(page.locator('#order-type-prompt-modal:modal')).toHaveCount(1);
+    await expect(page.locator('#order-type-prompt-modal')).toBeVisible();
     await expect(page.locator('#basket')).toHaveAttribute('data-lines-count', '0');
 
     await page.getByTestId('order-type-prompt-takeaway').click();
@@ -380,9 +390,9 @@ test.describe('ut-docs#2282 dine-in/takeaway prompt placement', () => {
   });
 
   // ut-docs#2371: Cancel/Escape both dismiss the sale-start prompt for
-  // just this sale (never disabling the per-item gate below), and Escape
-  // only works at all now that this is a real showModal() dialog -- a
-  // non-modal .show() dialog has no native Escape-to-close wiring.
+  // just this sale (never disabling the per-item gate below). A non-modal
+  // .show() dialog has no native Escape-to-close wiring; since ut-docs#2097
+  // base.html's data-ut-escape-close handler provides it.
   test('before_item: Cancel/Escape dismisses the sale-start prompt for this sale, but the first add attempt still asks', async ({ page }) => {
     await setOrderTypePromptMode(page, 'before_item');
     await page.goto('/');

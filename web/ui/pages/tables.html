@@ -130,8 +130,11 @@
      shape as #table-add-modal, just with its content fetched instead of
      a form. */}}
 {{/* data-ut-scrim-dismiss (ut-docs#2873): info only (a QR to print or
-     scan) -- a tap on its backdrop closes it, like its ✕. */}}
-<dialog id="table-qr-modal" class="modifier-modal" aria-labelledby="table-qr-title" data-ut-scrim-dismiss>
+     scan) -- a tap on the scrim beside it closes it, like its ✕.
+     ut-docs#2097: opened with .show(), never .showModal() (the status bar
+     and Lock must stay reachable); app.css gives it a fixed frame and
+     data-ut-escape-close keeps Escape (base.html). */}}
+<dialog id="table-qr-modal" class="modifier-modal" aria-labelledby="table-qr-title" data-ut-scrim-dismiss data-ut-escape-close>
   <div class="modifier-actions" style="justify-content:space-between">
     <h3 id="table-qr-title" style="margin:0">{{ T "tables.qr.title" }}</h3>
     {{/* aria-label (review finding): a bare "✕" has no accessible name —
@@ -219,7 +222,7 @@
             {{ if .Enabled }}
             <button type="button" class="btn secondary" data-testid="table-qr-open"
                     hx-get="/api/tables/{{ .ID }}/qr" hx-target="#table-qr-body" hx-swap="innerHTML"
-                    hx-on::after-request="if (event.detail.successful) { document.getElementById('table-qr-modal').showModal(); }">
+                    hx-on::after-request="if (event.detail.successful) { document.getElementById('table-qr-modal').show(); }">
               {{ T "tables.qr.button" }}
             </button>
             {{ end }}

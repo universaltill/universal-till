@@ -78,14 +78,16 @@
     </button>
     <div id="export-msg" class="muted" aria-live="polite"></div>
     <!-- ut-docs#1356: bulk backfill, preview-before-apply — same
-         hx-get/hx-target/showModal() pattern as #modifier-modal
-         (buttons.html) and #table-modal (table_picker.html). Already a
-         small, closable, non-full-viewport dialog (.modifier-modal), so
-         ut-docs#1999's persistent status/lock/exit-affordance rule for
-         full-screen surfaces doesn't apply here — icon-only styling only. -->
+         hx-get/hx-target/open pattern as #modifier-modal (buttons.html)
+         and #table-modal (table_picker.html). ut-docs#2097: opened with
+         .show(), never .showModal() — "unclickable counts as blocked, no
+         exception for small dialogs": a showModal() dialog made the status
+         bar and Lock inert. app.css gives it a fixed frame; #ut-scrim and
+         data-ut-escape-close (base.html) keep the page blocked behind it
+         and Escape closing it. Icon-only styling. -->
     <button id="catalog-barcode-backfill-btn" class="btn secondary btn-icon"
             hx-get="/api/catalog/barcode-backfill" hx-target="#barcode-backfill-modal" hx-swap="innerHTML"
-            hx-on::after-request="document.getElementById('barcode-backfill-modal').showModal()"
+            hx-on::after-request="document.getElementById('barcode-backfill-modal').show()"
             aria-label="{{ T "catalog.barcode_backfill.btn" }}" title="{{ T "catalog.barcode_backfill.btn" }}">
       <span class="btn-ico" aria-hidden="true">{{ icon "scan-barcode" }}</span>
     </button>
@@ -109,7 +111,7 @@
 
 {{/* data-ut-refresh (ut-docs#2762): the result's Close button refreshes
      only the catalog grid, via UT.refreshRegion (app.js). */}}
-<dialog id="barcode-backfill-modal" class="modifier-modal barcode-backfill-modal" aria-labelledby="catalog-barcode-backfill-btn" data-ut-refresh="#catalog-table"></dialog>
+<dialog id="barcode-backfill-modal" class="modifier-modal barcode-backfill-modal" aria-labelledby="catalog-barcode-backfill-btn" data-ut-refresh="#catalog-table" data-ut-escape-close></dialog>
 
 <!-- ut-docs#2095: Import and Tax codes floating above the /items shell —
      see the Import/Tax codes buttons above for the full reasoning. Empty

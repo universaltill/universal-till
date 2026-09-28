@@ -34,13 +34,18 @@
      Customer already use elsewhere (index.html), swapped to this dialog's
      id -- #table-modal only closes after a successful response with no
      inline error toast. The dismiss ✕ above has no hx-post on it, so it
-     isn't an instance of this bug class and is left as a plain onclick. -->
+     isn't an instance of this bug class and is left as a plain onclick.
+
+     ut-docs#2097: opened with .show(), never .showModal() -- a showModal()
+     dialog makes the status bar and Lock inert. app.css gives #table-modal
+     its fixed frame, base.html's #ut-scrim blocks the sale screen behind
+     it and data-ut-escape-close keeps Escape. -->
 <span id="table-picker">
   {{ if .Configured }}
     <button type="button" class="btn secondary compact table-picker-trigger" data-testid="table-picker-open"
-            onclick="document.getElementById('table-modal').showModal()">
+            onclick="document.getElementById('table-modal').show()">
       🍽️ {{ if .CurrentLabel }}{{ .CurrentLabel }}{{ else }}{{ T "basket.table.label" }}{{ end }}</button>
-    <dialog id="table-modal" class="modifier-modal" aria-labelledby="table-modal-title">
+    <dialog id="table-modal" class="modifier-modal" aria-labelledby="table-modal-title" data-ut-escape-close>
       <div class="modifier-actions" style="justify-content:space-between">
         <h3 id="table-modal-title" style="margin:0">{{ T "basket.table.picker_title" }}</h3>
         <button type="button" class="btn secondary" onclick="document.getElementById('table-modal').close()">✕</button>

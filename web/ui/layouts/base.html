@@ -484,9 +484,10 @@
           } catch (e) { done(); }
         }
         // ut-docs#2873: the shared popup scrim (#ut-scrim, near the end of
-        // <body>; app.css). A showModal() dialog brings its own native
-        // ::backdrop; a NON-modal popup (a .show() dialog -- the #1385
-        // on-screen-keyboard family -- or a UT.popupOpened() panel) gets
+        // <body>; app.css). A showModal() dialog (since ut-docs#2097 only
+        // the self-order kiosk's) brings its own native ::backdrop; a
+        // NON-modal popup (a .show() dialog -- every till dialog -- or a
+        // UT.popupOpened() panel) gets
         // this one div behind it, so a tap beside the popup lands on the
         // scrim, never on the sale screen. Driven by the SAME hooks as the
         // motion (the show/showModal wrapper, the `close` event,
@@ -572,6 +573,74 @@
         }
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', scrimInit);
         else scrimInit();
+        // ut-docs#2097: Escape for a NON-modal dialog. Only a showModal()
+        // dialog gets the browser's own Escape-closes, and those made the
+        // status bar and Lock inert -- so the till's former showModal()
+        // dialogs now open with .show() and opt in here with
+        // data-ut-escape-close. Escape closes the TOPMOST scrim popup, and
+        // only if IT opted in (a dialog opened over it keeps Escape for
+        // itself, or ignores it). Same sequence as the native one: a
+        // cancelable `cancel` event first (the motion's measureLive reads
+        // it; preventDefault keeps the dialog open), then close() -- whose
+        // `close` event is what every existing listener (the popup motion,
+        // the scrim, app.js's order-type prompt treating a no-choice close
+        // as Cancel) already handles. Bubble phase on window: a page's own
+        // handler that consumed Escape (preventDefault) wins.
+        window.addEventListener('keydown', function (e) {
+          if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing) return;
+          try {
+            scrimSync();
+            var top = scrimSet[scrimSet.length - 1];
+            if (!top || top.tagName !== 'DIALOG' || !top.hasAttribute('data-ut-escape-close')) return;
+            e.preventDefault();
+            var cancel = new Event('cancel', { cancelable: true });
+            if (top.dispatchEvent(cancel)) top.close();
+          } catch (err) { /* escape only */ }
+        });
+        // ut-docs#2097 (review): showModal() also made the page behind
+        // inert for the KEYBOARD; the scrim blocks pointer only. So focus
+        // stays in the topmost opted-in dialog: Tab/Shift+Tab wrap inside
+        // it, and focus that lands on the page behind is pulled back. The
+        // status bar, the rail's Lock and the on-screen keyboard stay
+        // focusable (the rule this card enforces). The wedge scanner's
+        // window keydown buffer never depended on focus.
+        function escTop() {
+          scrimSync();
+          var top = scrimSet[scrimSet.length - 1];
+          return top && top.tagName === 'DIALOG' && top.hasAttribute('data-ut-escape-close') ? top : null;
+        }
+        function escFocusables(d) {
+          return Array.prototype.filter.call(
+            d.querySelectorAll('a[href], button, input, select, textarea, [tabindex]'),
+            function (el) { return !el.disabled && el.tabIndex >= 0 && el.getClientRects().length > 0; });
+        }
+        function escAllowed(t) {
+          return !!(t && t.closest && t.closest('.statusbar, .session-lock, #osk'));
+        }
+        window.addEventListener('keydown', function (e) {
+          if (e.key !== 'Tab' || e.defaultPrevented) return;
+          try {
+            var top = escTop();
+            if (!top) return;
+            var list = escFocusables(top);
+            if (!list.length) { e.preventDefault(); return; }
+            var idx = list.indexOf(document.activeElement);
+            if (e.shiftKey) {
+              if (idx <= 0) { e.preventDefault(); list[list.length - 1].focus(); }
+            } else if (idx === -1 || idx === list.length - 1) {
+              e.preventDefault(); list[0].focus();
+            }
+          } catch (err) { /* focus only */ }
+        });
+        document.addEventListener('focusin', function (e) {
+          try {
+            var top = escTop();
+            var t = e.target;
+            if (!top || !t || top.contains(t) || escAllowed(t)) return;
+            var list = escFocusables(top);
+            if (list.length) list[0].focus();
+          } catch (err) { /* focus only */ }
+        });
         // A modal dialog opted in with data-ut-scrim-dismiss closes on a tap
         // on its ::backdrop: the event's target is the dialog itself and
         // the point lies outside its box (a press that started inside and

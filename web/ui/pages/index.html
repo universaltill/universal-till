@@ -48,8 +48,12 @@
 </div>
 
   <!-- Item customization step (ADR-0020): populated by tapping a product
-       with modifier groups; closed by its own Cancel/submit handlers. -->
-  <dialog id="modifier-modal" class="modifier-modal"></dialog>
+       with modifier groups; closed by its own Cancel/submit handlers.
+       ut-docs#2097: opened with .show() (app.js), never .showModal() --
+       the status bar and Lock must stay reachable; #ut-scrim blocks the
+       sale screen behind it and data-ut-escape-close keeps Escape
+       (base.html). -->
+  <dialog id="modifier-modal" class="modifier-modal" data-ut-escape-close></dialog>
 
   <!-- ut-docs#2339: the ut-docs#2285 per-tile long-press sheet
        (<dialog id="tile-sheet">) that used to sit here is gone -- a
@@ -106,13 +110,13 @@
   <!-- ut-docs#2282/#2371: dine-in/takeaway intercept for the "before first
        item" / "at Pay" prompt placements (Settings → Dine-in/takeaway
        prompt). Structure copied verbatim from #hold-modal just above
-       (.modifier-modal/.modifier-actions/.btn primary/.btn secondary) —
-       but unlike #hold-modal, this one IS a real showModal() modal
-       (app.js/app.css): it needs no typing itself, so #hold-modal/
-       #pfand-modal's non-modal .show() on-screen-keyboard reason doesn't
-       apply, and a real top-layer modal is what ut-docs#2371 fixed (it
-       used to open with .show(), which left the sale screen tappable
-       underneath it and let #modifier-modal paint over it). No autofocus
+       (.modifier-modal/.modifier-actions/.btn primary/.btn secondary).
+       ut-docs#2097: opened with .show() like #hold-modal (app.js), never
+       .showModal() -- a showModal() dialog makes the status bar and Lock
+       inert. What ut-docs#2371 fixed (the sale screen tappable underneath
+       it, #modifier-modal painting over it) now comes from #ut-scrim
+       (base.html) and app.css's frame (z-index above #modifier-modal);
+       data-ut-escape-close keeps Escape (base.html). No autofocus
        on either choice button (#hold-modal's same on-screen-keyboard-popup
        caution — irrelevant to typing here, but still the right default
        for a dialog that can now also open unprompted at sale start). The
@@ -126,10 +130,10 @@
        modal is just an earlier, gated way to reach it, not a new one).
        ut-docs#2371 also opens it unprompted at sale start (New Sale,
        when the receipt after a tender is left, page load) via app.js's
-       maybePromptAtSaleStart, and Cancel/Escape (native on a real
-       showModal() dialog now) suppress just that sale-start nag for the
-       rest of the sale, not the per-item/per-Pay gates above. -->
-  <dialog id="order-type-prompt-modal" class="modifier-modal" aria-labelledby="order-type-prompt-title">
+       maybePromptAtSaleStart, and Cancel/Escape (base.html's
+       data-ut-escape-close handler) suppress just that sale-start nag for
+       the rest of the sale, not the per-item/per-Pay gates above. -->
+  <dialog id="order-type-prompt-modal" class="modifier-modal" aria-labelledby="order-type-prompt-title" data-ut-escape-close>
     <h3 id="order-type-prompt-title">{{ T "basket.order_type.prompt_title" }}</h3>
     <div class="modifier-actions">
       <button type="button" class="btn secondary" data-testid="order-type-prompt-cancel"

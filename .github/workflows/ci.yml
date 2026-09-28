@@ -103,6 +103,12 @@ jobs:
         run: bash scripts/ci/guard-kiosk-engine.sh
       - name: Kiosk-engine isolation guard regression test
         run: bash scripts/ci/guard-kiosk-engine_test.sh
+      # ut-docs#2097: no till dialog opens with showModal() -- it makes the
+      # status bar and Lock inert (self-order kiosk's #selforder-modal exempt).
+      - name: No-showModal guard
+        run: bash scripts/ci/guard-no-showmodal.sh
+      - name: No-showModal guard regression test
+        run: bash scripts/ci/guard-no-showmodal_test.sh
       - name: Demo-mode env read guard (ADR-0113)
         run: bash scripts/ci/guard-demo-env.sh
       - name: Demo-mode env read guard regression test

@@ -1,7 +1,7 @@
 {{/* ut-docs#1356: bulk "backfill barcodes from SKU" — preview (dry run)
      and post-commit result fragments, swapped into catalog.html's
-     #barcode-backfill-modal <dialog> (same hx-get/hx-target/showModal()
-     pattern as #modifier-modal in buttons.html). Both templates share this
+     #barcode-backfill-modal <dialog> (same hx-get/hx-target/.show()
+     pattern as #modifier-modal in buttons.html; ut-docs#2097). Both templates share this
      file since they're the same dialog's two states. */}}
 {{ define "catalog_barcode_backfill" }}
 <h3>{{ T "catalog.barcode_backfill.heading" }}</h3>
