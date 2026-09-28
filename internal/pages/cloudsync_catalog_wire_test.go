@@ -186,3 +186,152 @@ func TestRemoteReport_CategoryIconHiddenAndLocale(t *testing.T) {
 		t.Fatalf("locale = %q, want the till's %q", locale, want)
 	}
 }
+
+// categoryOrder is every category id in the till's own display order
+// (ListCategories: sort_order, name), inactive ones included.
+func categoryOrder(t *testing.T, dp *common.Deps) []string {
+	t.Helper()
+	cats, err := data.NewCatalogRepo(dp.Db).ListCategories(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := make([]string, 0, len(cats))
+	for _, c := range cats {
+		out = append(out, c.ID)
+	}
+	return out
+}
+
+func cloudCategoryOrderAudits(t *testing.T, dp *common.Deps) int {
+	t.Helper()
+	var n int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = 'cloud_category_order_set' AND actor_id = 'system'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// §3.8 (ut-docs#3075): set_category_order renumbers the listed categories
+// in the given order, keeps every unlisted one (here an inactive category
+// and the seeded ones) after them in its old relative order, audits the
+// apply, and replays to the same state.
+func TestCloudSetCategoryOrder_AppliesAuditsAndReplays(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	repo := data.NewCatalogRepo(dp.Db)
+	for _, c := range []struct{ id, name string }{{"cat-a", "Alpha"}, {"cat-b", "Bravo"}, {"cat-c", "Charlie"}, {"cat-x", "Xray"}} {
+		if _, err := repo.SaveCategory(ctx, data.CategorySave{ID: c.id, Create: true, Name: sp(c.name)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repo.SetCategoryActive(ctx, "cat-x", false); err != nil {
+		t.Fatal(err)
+	}
+	before := categoryOrder(t, dp)
+	hooks := buildCloudHooks(dp, nil)
+	if hooks.SetCategoryOrder == nil {
+		t.Fatal("SetCategoryOrder hook not wired")
+	}
+	// Deliberately not alphabetical: a no-op write would leave name order.
+	listed := []string{"cat-c", "cat-a", "cat-b"}
+	msg, err := hooks.SetCategoryOrder(ctx, listed)
+	if err != nil || msg != "category order applied to 3 categories" {
+		t.Fatalf("apply: %q %v", msg, err)
+	}
+	want := append([]string{}, listed...)
+	for _, id := range before {
+		if id != "cat-a" && id != "cat-b" && id != "cat-c" {
+			want = append(want, id)
+		}
+	}
+	got := categoryOrder(t, dp)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("order = %v, want %v", got, want)
+	}
+	cats, _ := repo.ListCategories(ctx)
+	for i, c := range cats {
+		if c.SortOrder != i {
+			t.Fatalf("cats[%d] %s sort_order = %d, want %d (distinct, renumbered)", i, c.ID, c.SortOrder, i)
+		}
+	}
+	if n := cloudCategoryOrderAudits(t, dp); n != 1 {
+		t.Fatalf("audit rows = %d, want 1", n)
+	}
+	var payload string
+	if err := dp.Db.QueryRow(`SELECT data_json FROM audit_log WHERE action = 'cloud_category_order_set'`).Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(payload, `"category_ids":["cat-c","cat-a","cat-b"]`) {
+		t.Fatalf("audit payload = %s", payload)
+	}
+	// Lost-result replay: same list, same state, still applied.
+	if msg, err := hooks.SetCategoryOrder(ctx, listed); err != nil || msg != "category order applied to 3 categories" {
+		t.Fatalf("replay: %q %v", msg, err)
+	}
+	if again := categoryOrder(t, dp); strings.Join(again, ",") != strings.Join(want, ",") {
+		t.Fatalf("replay order = %v, want %v", again, want)
+	}
+	// An unchanged replay writes nothing: no second audit row.
+	if n := cloudCategoryOrderAudits(t, dp); n != 1 {
+		t.Fatalf("a no-op replay added audit rows: %d", n)
+	}
+	// A different order applies and audits again (last write wins).
+	if _, err := hooks.SetCategoryOrder(ctx, []string{"cat-a", "cat-b", "cat-c"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := categoryOrder(t, dp); got[0] != "cat-a" || got[1] != "cat-b" || got[2] != "cat-c" {
+		t.Fatalf("second order = %v", got)
+	}
+	if n := cloudCategoryOrderAudits(t, dp); n != 2 {
+		t.Fatalf("audit rows after a real change = %d, want 2", n)
+	}
+}
+
+// §3.8: an unknown id, a duplicate, a blank id or an empty list fails with
+// nothing written; an inactive category is a valid id; a replica refuses.
+func TestCloudSetCategoryOrder_Refusals(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	ctx := t.Context()
+	repo := data.NewCatalogRepo(dp.Db)
+	for _, c := range []struct{ id, name string }{{"cat-a", "Alpha"}, {"cat-b", "Bravo"}, {"cat-x", "Xray"}} {
+		if _, err := repo.SaveCategory(ctx, data.CategorySave{ID: c.id, Create: true, Name: sp(c.name)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repo.SetCategoryActive(ctx, "cat-x", false); err != nil {
+		t.Fatal(err)
+	}
+	before := categoryOrder(t, dp)
+	hooks := buildCloudHooks(dp, nil)
+	for _, c := range []struct {
+		ids  []string
+		want string
+	}{
+		{[]string{"cat-b", "cat-gone", "cat-a"}, "category cat-gone is not on this till"},
+		{[]string{"cat-b", "cat-a", "cat-b"}, "duplicate category id cat-b"},
+		{[]string{"cat-b", ""}, "blank category id"},
+		{nil, "missing category_ids"},
+	} {
+		_, err := hooks.SetCategoryOrder(ctx, c.ids)
+		if err == nil || err.Error() != c.want {
+			t.Errorf("%v: err = %v, want %q", c.ids, err, c.want)
+		}
+	}
+	if after := categoryOrder(t, dp); strings.Join(after, ",") != strings.Join(before, ",") {
+		t.Fatalf("a refused order changed the till: %v -> %v", before, after)
+	}
+	if n := cloudCategoryOrderAudits(t, dp); n != 0 {
+		t.Fatalf("a refused order wrote %d audit rows", n)
+	}
+	// An inactive category is on the till: listing it is fine.
+	if _, err := hooks.SetCategoryOrder(ctx, []string{"cat-x", "cat-b", "cat-a"}); err != nil {
+		t.Fatalf("inactive id refused: %v", err)
+	}
+	if got := categoryOrder(t, dp); got[0] != "cat-x" {
+		t.Fatalf("order = %v, want cat-x first", got)
+	}
+	setReplica(t, dp)
+	if _, err := buildCloudHooks(dp, nil).SetCategoryOrder(ctx, []string{"cat-a", "cat-b"}); err == nil {
+		t.Fatal("set_category_order must be refused on a replica")
+	}
+}

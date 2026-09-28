@@ -1,8 +1,10 @@
 # Restaurant phone orders — voice, translate, kitchen print (BACKLOG)
 
 > Status: **backlog / vision**, not built. Captured 2026-07-16 (Farshid).
-> For hospitality/restaurant users. Self-hosted AI only (see the "AI
-> self-hosted" rule — no paid AI APIs).
+> For hospitality/restaurant users. AI follows ADR-0126: self-hosted by
+> default, and a shop may pick any provider (speech-to-text and
+> text-to-speech included) with its own key — never a Universal Till AI
+> account. Now tracked as ut-docs#3081.
 
 ## The idea
 
@@ -32,8 +34,9 @@ language can still take the order.
 
 ## How it maps to what we have / need
 
-- **Self-hosted AI** — STT + translation + order-parsing run on the shop's own
-  Ollama/Whisper box (never a paid API). The AI plugin already establishes the
+- **AI** — STT + translation + order-parsing run on the provider the shop
+  configures: its own Ollama/Whisper box by default, or a hosted provider with
+  the shop's own key (ADR-0126). The AI plugin already establishes the
   self-hosted endpoint pattern.
 - **Print** — ESC/POS + auto-print exist; add a **kitchen-ticket** template and
   **printer routing** (kitchen vs receipt vs bar) — overlaps the roadmapped

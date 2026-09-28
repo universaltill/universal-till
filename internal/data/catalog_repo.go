@@ -1843,11 +1843,27 @@ func (r *CatalogRepo) SetCategoryActive(ctx context.Context, id string, active b
 // A category orderedIDs leaves out still gets a slot, appended after the
 // posted ones in its own existing relative order, instead of keeping its
 // old sort_order — which could otherwise tie with a renumbered posted id
-// (ut-docs#2482). Both current callers (designer_categories_api.go's and
+// (ut-docs#2482). Both local callers (designer_categories_api.go's and
 // categories_page.go's reorder routes) already send every category, active
-// and inactive, so this only ever fires for a future or hand-crafted
-// partial post; it's defence in depth, not a live-observed gap.
+// and inactive. The set_category_order cloud directive (ut-docs#3075) may
+// not: a category created on the till after the owner loaded my. is left
+// out, and lands here after the listed ones.
 func (r *CatalogRepo) SetCategorySortOrder(ctx context.Context, orderedIDs []string) error {
+	return r.setCategorySortOrder(ctx, orderedIDs, false)
+}
+
+// SetCategorySortOrderKnown is SetCategorySortOrder for the set_category_order
+// cloud directive (ut-docs#3075, manage-shop contract §3.8): an id with no
+// categories row (active or inactive) refuses the whole list with
+// ErrCategoryNotFound naming the first such id, and nothing is written. The
+// check reads the same rows inside the same write transaction (the DSN's
+// _txlock=immediate makes it BEGIN IMMEDIATE), so no concurrent write can
+// slip between the check and the UPDATEs.
+func (r *CatalogRepo) SetCategorySortOrderKnown(ctx context.Context, orderedIDs []string) error {
+	return r.setCategorySortOrder(ctx, orderedIDs, true)
+}
+
+func (r *CatalogRepo) setCategorySortOrder(ctx context.Context, orderedIDs []string, knownOnly bool) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("set category sort order: %w", err)
@@ -1863,12 +1879,14 @@ func (r *CatalogRepo) SetCategorySortOrder(ctx context.Context, orderedIDs []str
 		posted[id] = true
 	}
 	var missing []string
+	present := make(map[string]bool)
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
 			rows.Close()
 			return fmt.Errorf("set category sort order: %w", err)
 		}
+		present[id] = true
 		if !posted[id] {
 			missing = append(missing, id)
 		}
@@ -1878,6 +1896,13 @@ func (r *CatalogRepo) SetCategorySortOrder(ctx context.Context, orderedIDs []str
 	}
 	if err := rows.Close(); err != nil {
 		return fmt.Errorf("set category sort order: %w", err)
+	}
+	if knownOnly {
+		for _, id := range orderedIDs {
+			if !present[id] {
+				return fmt.Errorf("%w: %s", ErrCategoryNotFound, id)
+			}
+		}
 	}
 	full := append(append(make([]string, 0, len(orderedIDs)+len(missing)), orderedIDs...), missing...)
 

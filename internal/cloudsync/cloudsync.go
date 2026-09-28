@@ -192,6 +192,14 @@ type Hooks struct {
 	DeleteCategory      func(ctx context.Context, id, moveItemsTo string) (string, error)
 	SaveModifierGroup   func(ctx context.Context, p data.ModifierGroupSave) (string, error)
 	DeleteModifierGroup func(ctx context.Context, id string) (string, error)
+	// SetCategoryOrder handles "set_category_order" (contract §3.8,
+	// ut-docs#3075): the owner's category order from my., as the full
+	// ordered id list. Main-till only like the five above. The hook
+	// refuses an id that is not a categories row (nothing written), then
+	// makes the same CatalogRepo.SetCategorySortOrder call the till's own
+	// category list and Designer reorders make — unlisted categories keep
+	// their relative order after the listed ones. Audited, idempotent.
+	SetCategoryOrder func(ctx context.Context, ids []string) (string, error)
 	// The till user directives (ut-docs reference/till-user-directives.md
 	// §4, ADR-0115 amendment 2026-09-25): main-till only, like the catalog
 	// ones above. Each opens pin_sealed (when present) with the main
@@ -733,6 +741,15 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", bad
 		}
 		msg, err = hooks.SaveCategory(ctx, p)
+	case "set_category_order":
+		if hooks.SetCategoryOrder == nil {
+			return "failed", "set_category_order is not supported on this till"
+		}
+		ids, bad := decodeCategoryOrder(payload(d.Payload))
+		if bad != "" {
+			return "failed", bad
+		}
+		msg, err = hooks.SetCategoryOrder(ctx, ids)
 	case "delete_category":
 		if hooks.DeleteCategory == nil {
 			return "failed", "delete_category is not supported on this till"
