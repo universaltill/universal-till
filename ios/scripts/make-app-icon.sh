@@ -16,7 +16,7 @@
 # 70% of the tile's height, leaving room for iOS's rounded-corner mask. It is
 # fully OPAQUE RGB: App Store Connect rejects an app icon with an alpha
 # channel. Built-in macOS tools only (qlmanage + sips), like
-# packaging/macos/build-app.sh, so it runs on a bare GitHub macos-15 runner.
+# packaging/macos/build-app.sh, so it runs on a bare GitHub macos-26 runner.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

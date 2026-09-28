@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -405,7 +406,8 @@ func TestResolveAndInstallBasePlugin_IdempotentWhenAlreadyActive(t *testing.T) {
 // already presets both of those synchronously with no plugin install
 // involved at all. PK's own default (ur-PK) is the one seeded country whose
 // language is genuinely RTL AND not bundled — nothing ships web/locales/
-// ur.json, and nothing in setupBasePlugins auto-installs it — so it is the
+// ur.json, and no ur pack is published for basePluginsForCountry to
+// install — so it is the
 // one real case #1027 deliberately leaves unapplied at country-selection
 // time. These tests drive the other half: what happens once a matching
 // language pack actually finishes installing, through the one function
@@ -855,13 +857,105 @@ func TestBackfillLocaleConfirmed_LeavesLeftoverPreviousCountryDefaultUnconfirmed
 	}
 }
 
+// --- basePluginsForCountry (ut-docs#2964: derived from data, not a table) ---
+
+// A country's base language pack comes from its own DefaultLocale, so core
+// never names a country (core-neutral guard, ADR-0121 §11): DE and ES keep the
+// packs the old country table gave them, PT gets pt without a code change,
+// and a country whose language core already bundles gets nothing.
+func TestBasePluginsForCountry_DerivesLanguagePackFromCountryDefaultLocale(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	lang := func(l string) []basePluginSpec { return []basePluginSpec{{CanonicalType: "language", Locale: l}} }
+	cases := []struct {
+		country string
+		want    []basePluginSpec
+	}{
+		{"DE", lang("de")},
+		{"ES", lang("es")},
+		{"PT", lang("pt")},
+		{" pt ", lang("pt")}, // normalised like every other country input
+		{"GB", nil},          // en ships bundled
+		{"TR", nil},          // tr ships bundled
+		{"IR", nil},          // fa ships bundled
+		{"ZZ", nil},          // no such country row
+		{"", nil},
+	}
+	for _, c := range cases {
+		got := basePluginsForCountry(t.Context(), dp, c.country)
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("basePluginsForCountry(%q) = %+v, want %+v", c.country, got, c.want)
+		}
+	}
+}
+
+// An operator-created country carries whatever DefaultLocale they typed; a
+// value that isn't a plain language subtag must never become a catalog
+// query or a pending spec.
+func TestBasePluginsForCountry_IgnoresMalformedCustomDefaultLocale(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	repo := data.NewCountrySettingsRepo(dp.Db)
+	for code, loc := range map[string]string{"XA": "../evil", "XB": "d3-XX", "XC": "   "} {
+		if err := repo.Upsert(t.Context(), data.CountrySetting{Code: code, NameKey: "setup.country.other", Currency: "EUR", CurrencySymbol: "€", ArchiveMinDays: 3650, DefaultLocale: loc}); err != nil {
+			t.Fatalf("upsert %s: %v", code, err)
+		}
+		if got := basePluginsForCountry(t.Context(), dp, code); got != nil {
+			t.Errorf("basePluginsForCountry(%s, locale %q) = %+v, want nil", code, loc, got)
+		}
+	}
+}
+
+// The wizard hook queues PT's pack exactly as it does DE's (offline: the
+// spec stays pending for the background retry).
+func TestInstallBasePluginsForSetup_PTQueuesPortugueseLanguagePack(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	dp.Cfg.Marketplace.EndpointURL = dead.URL
+	dp.Cfg.Marketplace.ClientID = "merchant-1"
+	dp.Cfg.Marketplace.StoreID = "store-1"
+	dead.Close()
+
+	installBasePluginsForSetup(t.Context(), dp, "PT")
+
+	pending, err := loadPendingBasePlugins(t.Context(), dp)
+	if err != nil {
+		t.Fatalf("loadPendingBasePlugins: %v", err)
+	}
+	if len(pending) != 1 || pending[0] != (basePluginSpec{CanonicalType: "language", Locale: "pt"}) {
+		t.Fatalf("expected the pt language spec pending, got %+v", pending)
+	}
+}
+
+// ADR-0015 (lazy store registration): a base-plugin attempt for a language
+// with no published pack must not mint the shop's cloud store identity.
+// Since ut-docs#2964 every country whose language core doesn't bundle
+// (FR, IT, NL, PK…) queues a spec, so an attempt that registered before
+// checking the catalog enrolled those tills at setup with nothing to
+// download — only a real install may register.
+func TestResolveAndInstallBasePlugin_NoListingDoesNotRegisterStore(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	mkt := newFakeMarketplace(t, nil)
+	dp.Cfg.Marketplace = mkt.config()
+
+	if err := resolveAndInstallBasePlugin(t.Context(), dp, basePluginSpec{CanonicalType: "language", Locale: "fr"}); err != nil {
+		t.Fatalf("resolveAndInstallBasePlugin: %v", err)
+	}
+	// The catalog really was asked (otherwise "no register call" proves nothing).
+	if hits := mkt.catalogHitsFor(""); hits != 1 {
+		t.Fatalf("expected one catalog query, got %d", hits)
+	}
+	if hits := mkt.storeRegisterHits(); hits != 0 {
+		t.Fatalf("a base-plugin attempt with nothing to install enrolled the store (%d POST /v1/stores/register) — "+
+			"ADR-0015 allows that only on a real plugin download/install", hits)
+	}
+}
+
 // --- installBasePluginsForSetup (the wizard's own hook) ---
 
 func TestInstallBasePluginsForSetup_NoMappingIsNoOp(t *testing.T) {
 	dp := newBasePluginTestDeps(t)
 	// No Marketplace endpoint configured at all — if this touched the
 	// network it would error; the point of this test is that it must not
-	// even try for a country with nothing in setupBasePlugins.
+	// even try for a country with no base plugin (en ships bundled).
 	installBasePluginsForSetup(t.Context(), dp, "US")
 
 	if _, ok, _ := dp.Settings.Get(t.Context(), common.KeyPendingBasePlugins); ok {

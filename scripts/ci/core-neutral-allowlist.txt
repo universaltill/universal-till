@@ -16,8 +16,6 @@ internal/data/fiscal_repo.go|<file>|"com.universaltill.tax-de" # #2879 data.Fisc
 internal/plugins/builtinlayouts/builtinlayouts.go|<file>|"com.universaltill.layout-salon" # #2879 SalonPluginID const
 internal/pages/tax_rate_switcher_banner.go|<file>|"DE" # #2879 taxRateSwitchMandatedCountries
 internal/pages/setup_tax_catalog.go|<file>|"DE" # #2879 countryTaxLocale
-internal/pages/setup_base_plugins.go|<file>|"DE" # #2879 setupBasePlugins country table
-internal/pages/setup_base_plugins.go|<file>|"ES" # #2879 setupBasePlugins country table
 internal/pages/menu_page.go|init|"DE" # #2879 menu DE tile
 internal/pages/menu_page.go|init|"TR" # #2879 menu TR tile
 internal/pages/settings_page.go|registerSettings|"DE" # #2879 receiptPolicyAdvisoryDE flag

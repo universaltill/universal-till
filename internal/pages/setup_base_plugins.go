@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"strings"
 	"sync"
 	"time"
@@ -17,11 +18,12 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/plugins/oauth"
 	"github.com/universaltill/universal-till/internal/updates"
+	"github.com/universaltill/universal-till/web/locales"
 )
 
 // basePluginSpec identifies a free base plugin to auto-install once a
 // merchant confirms their country in the setup wizard. ONLY canonical
-// type "language" belongs in setupBasePlugins — a fiscal/tax entry would
+// type "language" belongs in basePluginsForCountry — a fiscal/tax entry would
 // contradict ADR-0025 decision 4 (fiscal plugins are prompted, never
 // silently auto-installed) and needs a superseding ADR first.
 type basePluginSpec struct {
@@ -29,14 +31,59 @@ type basePluginSpec struct {
 	Locale        string // catalog locale filter, e.g. "de"
 }
 
-// setupBasePlugins is the country → free-base-plugins table (ut-docs#591):
-// declared data, reviewable in a PR diff, extendable by adding a row — no
-// core code change. Every shop gets its country's entries, subscribed or
-// not (ut-docs/architecture/monetization-cloud-services.md already excludes
-// locally-installed free plugins/language packs from anything paid).
-var setupBasePlugins = map[string][]basePluginSpec{
-	"DE": {{CanonicalType: "language", Locale: "de"}},
-	"ES": {{CanonicalType: "language", Locale: "es"}},
+// basePluginsForCountry is a country's free base plugins (ut-docs#591):
+// the language pack for the language of the country's own DefaultLocale
+// (country_settings data, ut-docs#1027), unless core already bundles that
+// language in web/locales. It replaced a hard-coded country table
+// (ut-docs#2964): core never names a country (ADR-0121 §11, guard-core-neutral),
+// so a new market needs only its country row, never a code change here.
+// DE→de and ES→es resolve exactly as the table did; PT→pt is new. Every
+// shop gets its country's entries, subscribed or not
+// (ut-docs/architecture/monetization-cloud-services.md already excludes
+// locally-installed free plugins/language packs from anything paid). A
+// language with no published pack is a silent no-op one level down
+// (resolveAndInstallBasePlugin), so a country without one costs a single
+// catalog query, never a stuck pending entry. A read error or a malformed
+// operator-typed locale returns nil: setup never fails on this.
+func basePluginsForCountry(ctx context.Context, d *common.Deps, country string) []basePluginSpec {
+	if strings.TrimSpace(country) == "" {
+		return nil
+	}
+	cs, ok, err := data.NewCountrySettingsRepo(d.Db).Get(ctx, country)
+	if err != nil {
+		logging.L().Warnf("base plugins: read country %q: %v", country, err)
+		return nil
+	}
+	if !ok {
+		return nil
+	}
+	lang := baseLang(strings.TrimSpace(cs.DefaultLocale))
+	if !isLanguageSubtag(lang) || coreBundlesLanguage(lang) {
+		return nil
+	}
+	return []basePluginSpec{{CanonicalType: "language", Locale: lang}}
+}
+
+// isLanguageSubtag reports whether s is a plain BCP-47 primary language
+// subtag (2–3 ASCII letters), the only shape a catalog locale query or a
+// pending spec may carry.
+func isLanguageSubtag(s string) bool {
+	if len(s) < 2 || len(s) > 3 {
+		return false
+	}
+	for _, r := range s {
+		if r < 'a' || r > 'z' {
+			return false
+		}
+	}
+	return true
+}
+
+// coreBundlesLanguage reports whether core ships lang's base locale file
+// (web/locales/<lang>.json), in which case no pack is needed.
+func coreBundlesLanguage(lang string) bool {
+	_, err := fs.Stat(locales.FS, lang+".json")
+	return err == nil
 }
 
 // setupBasePluginAttemptTimeout bounds the ONE synchronous resolve+install
@@ -80,7 +127,7 @@ const (
 // never delay or fail the wizard's own response, so every error is logged
 // and swallowed.
 func installBasePluginsForSetup(ctx context.Context, d *common.Deps, country string) {
-	specs := setupBasePlugins[strings.ToUpper(strings.TrimSpace(country))]
+	specs := basePluginsForCountry(ctx, d, country)
 	if len(specs) == 0 {
 		return
 	}
@@ -171,7 +218,14 @@ func addPendingBasePlugins(ctx context.Context, d *common.Deps, specs []basePlug
 // Bounded by setupBasePluginMaxPages so a malformed/hostile server can't
 // loop forever.
 func resolveAndInstallBasePlugin(ctx context.Context, d *common.Deps, spec basePluginSpec) error {
-	effCfg := enroll.EnsureRegistered(ctx, d.Cfg, d.Settings)
+	// enroll.Effective, NOT EnsureRegistered (ut-docs#2964 review): looking
+	// the pack up is a browse, and ADR-0015 lets only a real download/install
+	// mint the shop's cloud store identity. Since basePluginsForCountry
+	// queues a spec for every country whose language core doesn't bundle,
+	// registering here enrolled FR/IT/NL/PK tills at setup with no pack to
+	// install. cloudInstallPluginVersion below still calls EnsureRegistered
+	// itself, so the ADR's trigger 1 is unchanged.
+	effCfg := enroll.Effective(d.Cfg)
 	client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
 
 	var all []marketplace.PluginSummary
@@ -729,7 +783,7 @@ func StartBasePluginRetry(ctx context.Context, d *common.Deps, wg *sync.WaitGrou
 // as the wizard's offline path does. A failure is logged, never returned —
 // the country change itself has already succeeded.
 func queueBasePluginsForCountryChange(ctx context.Context, d *common.Deps, country string) {
-	specs := setupBasePlugins[strings.ToUpper(strings.TrimSpace(country))]
+	specs := basePluginsForCountry(ctx, d, country)
 	if len(specs) == 0 {
 		return
 	}

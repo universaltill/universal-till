@@ -32,7 +32,7 @@ func TestSetupWizardAutoRegisterOptInPersistsAndAttemptsRegistration(t *testing.
 	rec := postForm(mux, "/api/setup", url.Values{
 		"pin":           {"2468"},
 		"pin_confirm":   {"2468"},
-		"country":       {"GB"}, // unmapped in setupBasePlugins: no base-plugin install can also hit register
+		"country":       {"GB"}, // en ships bundled, so no base plugin: no base-plugin install can also hit register
 		"currency":      {"GBP"},
 		"store_name":    {"Corner Shop"},
 		"auto_register": {"on"},
