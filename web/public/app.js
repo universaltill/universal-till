@@ -1384,6 +1384,48 @@ document.addEventListener('click', function(e){
     var m = document.getElementById('modifier-modal');
     if (m && !m.open) m.showModal();
   });
+  // ut-docs#3073 (product owner + pilot café owner): the category_tabs
+  // popup (#category-items-modal, buttons.html's openCategoryPopup) closes
+  // by itself once the cashier has added an item from it, back to the sale
+  // screen with the line in the basket. A tap on one of its tiles ARMS it;
+  // the next item add that lands in #basket closes it. That covers both
+  // shapes with one rule: a plain tile's own /api/pos/scan, and a modifier/
+  // variant tile, whose tap only opens the picker (a #modifier-modal swap,
+  // not #basket) -- the popup then closes when the picker's
+  // /api/pos/scan-with-modifiers succeeds, and stays open (still armed) if
+  // the picker is cancelled. So does the before_item order-type prompt's
+  // replayed request (htmx.ajax, no issuing element -- why this is armed by
+  // the tap, not matched on requestConfig.elt). Not closed: a refusal --
+  // a 4xx, or /api/pos/scan's 200 that re-renders the basket with an error
+  // notice (basket.html's .pos-notice.error), or the stale-tile answer
+  // below -- so the cashier sees it and picks again. Any close disarms it. dialog.close() fires the `close`
+  // event base.html's shared shrink hangs off (ADR-0122/0123), so the
+  // zoom-out motion plays as for a Close tap.
+  var catPopupArmed = false;
+  document.addEventListener('click', function (ev) {
+    var t = ev.target;
+    if (t && t.closest && t.closest('#category-items-modal-body .btn-tile')) catPopupArmed = true;
+  }, true);
+  // `close` does not bubble -- capture sees it on the dialog.
+  document.addEventListener('close', function (ev) {
+    if (ev.target && ev.target.id === 'category-items-modal') catPopupArmed = false;
+  }, true);
+  document.body.addEventListener('htmx:afterSwap', function (ev) {
+    var d = ev.detail;
+    if (!catPopupArmed || !d || !d.target || d.target.id !== 'basket') return;
+    if (d.xhr && d.xhr.status >= 400) return;
+    var p = (d.pathInfo && (d.pathInfo.finalRequestPath || d.pathInfo.requestPath)) || '';
+    if (p.indexOf('/api/pos/scan') !== 0) return;
+    var basket = document.getElementById('basket');
+    if (basket && basket.querySelector('.pos-notice.error')) return;
+    // The #2525 stale-tile answer (the tile's item was deactivated/recoded
+    // elsewhere): a 200 basket with an info notice that adds nothing, told
+    // apart by the grid refetch it triggers (HX-Trigger: buttons-changed).
+    var trig = (d.xhr && d.xhr.getResponseHeader && d.xhr.getResponseHeader('HX-Trigger')) || '';
+    if (trig.indexOf('buttons-changed') !== -1) return;
+    var m = document.getElementById('category-items-modal');
+    if (m && m.open) m.close();
+  });
   // Self-heal: the first successful request clears a stale alert, so an
   // intermittent-connectivity till doesn't wear a permanent red banner
   // (offline-first: transient failure must not leave persistent chrome).
