@@ -36,7 +36,7 @@ The reviewer also checked these and found them correct:
 - TDD re-verified by the reviewer: with the production change reverted, 12 new or updated tests fail for the claimed reason (NULL sku, old hex shape, INSERT count). Restoring the change makes them pass.
 - Real driven run (Playwright, real till binary): a CSV row with no SKU in category "NullSku3072 Cat …" was imported as `NUL-0001`. Its sell tile carries that code and rings up one basket line with no stale toast.
 - Full gate: `gofmt`, `go build`, `go vet`, `go test ./...` and `golangci-lint` (0 issues) all pass, as do the data-access, i18n, help-drift, help-topics, core-neutral, compliance, competitor-naming and kiosk-engine guards. `guard-deadcode-baseline` fails identically on `main` in this container, because it has no GTK headers. Full default e2e project: 753 passed, 2 failed. `money-comma-2925` timed out under load and passes on rerun. `osk-…-1284` was a real regression (finding 4), now fixed and green.
-- No UI template or locale key changed, so there are no language-pack follow-ups.
+- No locale key changed, so there are no language-pack follow-ups. The manual screenshots were regenerated with `make docs-shots` (the catalog topic text changed); `guard-docs-shots` now passes.
 
 ## Verdict
 
