@@ -475,6 +475,39 @@ func IsProtectedSettingsKey(key string) bool {
 	return IsProtectedKey(ProtectedSettingsKeys, key)
 }
 
+// SettingsAdvancedCategory is the key of the one category that lists
+// EVERY settings section (ut-docs#3090 AC 3): the technical sections live
+// only here, and its view keeps the full sidebar as it was before
+// categories existed.
+const SettingsAdvancedCategory = "advanced"
+
+// Category is one tile on the /settings landing grid (ut-docs#3090): a
+// shop-owner-sized group of settings sections. A category IS a Group
+// (AC 8) — a CoreSettings entry belongs to the category whose LabelKey
+// equals its Group, so a `layout` plugin's Group amendment moves a section
+// between categories with the machinery ADR-0088 already has.
+type Category struct {
+	Key      string // stable id, used in the #cat-<key> fragment
+	LabelKey string // locale key; also the Group value its entries carry
+	DescKey  string // locale key for the tile's one-line explanation
+	Icon     string // a name in internal/httpx/icons.go
+}
+
+// SettingsCategories is the landing grid's declared order. Advanced is
+// always last. Keep the plain-words naming: these are read by a shop owner
+// who "doesn't understand computers at all" (the card's own brief).
+var SettingsCategories = []Category{
+	{Key: "shop", LabelKey: "settings.cat.shop.label", DescKey: "settings.cat.shop.desc", Icon: "store"},
+	{Key: "selling", LabelKey: "settings.cat.selling.label", DescKey: "settings.cat.selling.desc", Icon: "shopping-cart"},
+	{Key: "payments", LabelKey: "settings.cat.payments.label", DescKey: "settings.cat.payments.desc", Icon: "credit-card"},
+	{Key: "receipts", LabelKey: "settings.cat.receipts.label", DescKey: "settings.cat.receipts.desc", Icon: "receipt"},
+	{Key: "staff", LabelKey: "settings.cat.staff.label", DescKey: "settings.cat.staff.desc", Icon: "lock"},
+	{Key: "devices", LabelKey: "settings.cat.devices.label", DescKey: "settings.cat.devices.desc", Icon: "monitor"},
+	{Key: "look", LabelKey: "settings.cat.look.label", DescKey: "settings.cat.look.desc", Icon: "palette"},
+	{Key: "backup", LabelKey: "settings.cat.backup.label", DescKey: "settings.cat.backup.desc", Icon: "download"},
+	{Key: SettingsAdvancedCategory, LabelKey: "settings.cat.advanced.label", DescKey: "settings.cat.advanced.desc", Icon: "settings"},
+}
+
 // CoreSettings is the /settings page's declared section list (ADR-0088
 // Decision C, ut-docs#1913): the `.card` sections
 // web/ui/pages/settings.html always declared as static, hand-ordered
@@ -496,23 +529,27 @@ func IsProtectedSettingsKey(key string) bool {
 // follow-up rather than folded into this slice (see this card's own PR
 // description / close-out comment for the tracking issue), matching how
 // ADR-0088 itself shipped one slot at a time.
+//
+// Every entry's Group names its SettingsCategories category (ut-docs#3090);
+// settingsnav.Resolve gathers rows by category, so the declaration order
+// below stays the template's card order.
 var CoreSettings = []Entry{
-	{Key: "registration", Href: "#registration", LabelKey: "settings.enrol.title", Order: 100},
-	{Key: "settings-issuereport", Href: "#settings-issuereport", LabelKey: "issuereport.title", Order: 200},
+	{Key: "registration", Href: "#registration", LabelKey: "settings.enrol.title", Order: 100, Group: "settings.cat.devices.label"},
+	{Key: "settings-issuereport", Href: "#settings-issuereport", LabelKey: "issuereport.title", Order: 200, Group: "settings.cat.advanced.label"},
 	// ADR-0092 §7 / ut-docs#2169: diagnostic mode (activation code entry,
 	// "ON since" copy, local stop). Manager-only card right after
 	// Report-an-issue in settings.html — the two are the till's support
 	// surfaces — and filtered from the sidebar for a cashier the same way.
-	{Key: "settings-diagnostics", Href: "#settings-diagnostics", LabelKey: "settings.diagnostics.title", Order: 250},
-	{Key: "settings-menulayout", Href: "#settings-menulayout", LabelKey: "menulayout.title", Order: 300},
-	{Key: "settings-update", Href: "#settings-update", LabelKey: "settings.update.title", Order: 400},
+	{Key: "settings-diagnostics", Href: "#settings-diagnostics", LabelKey: "settings.diagnostics.title", Order: 250, Group: "settings.cat.advanced.label"},
+	{Key: "settings-menulayout", Href: "#settings-menulayout", LabelKey: "menulayout.title", Order: 300, Group: "settings.cat.look.label"},
+	{Key: "settings-update", Href: "#settings-update", LabelKey: "settings.update.title", Order: 400, Group: "settings.cat.backup.label"},
 	// ut-docs#3091: About (version, first run, What's new), right after the
 	// Software update card in the template.
-	{Key: "settings-about", Href: "#settings-about", LabelKey: "settings.about.title", Order: 450},
-	{Key: "settings-theme", Href: "#settings-theme", LabelKey: "settings.theme.title", Order: 500},
-	{Key: "settings-display", Href: "#settings-display", LabelKey: "settings.display.title", Order: 600},
-	{Key: "settings-payments", Href: "#settings-payments", LabelKey: "settings.payments.title", Order: 700},
-	{Key: "settings-order-no", Href: "#settings-order-no", LabelKey: "settings.order_no.title", Order: 800},
+	{Key: "settings-about", Href: "#settings-about", LabelKey: "settings.about.title", Order: 450, Group: "settings.cat.backup.label"},
+	{Key: "settings-theme", Href: "#settings-theme", LabelKey: "settings.theme.title", Order: 500, Group: "settings.cat.look.label"},
+	{Key: "settings-display", Href: "#settings-display", LabelKey: "settings.display.title", Order: 600, Group: "settings.cat.look.label"},
+	{Key: "settings-payments", Href: "#settings-payments", LabelKey: "settings.payments.title", Order: 700, Group: "settings.cat.payments.label"},
+	{Key: "settings-order-no", Href: "#settings-order-no", LabelKey: "settings.order_no.title", Order: 800, Group: "settings.cat.selling.label"},
 	// ut-docs#2282: added right after settings-order-no in both places (the
 	// template declares it immediately after that card too) — see this
 	// slot's own doc comment: a matching CoreSettings entry is what keeps a
@@ -520,27 +557,27 @@ var CoreSettings = []Entry{
 	// amendments (settings_page_test.go's own
 	// TestSettingsPage_CoreSettingsAndFilterMatchTheRealTemplate pins the
 	// template's .card ids against this list, in order).
-	{Key: "settings-order-type-prompt", Href: "#settings-order-type-prompt", LabelKey: "settings.order_type_prompt.title", Order: 850},
-	{Key: "settings-barcode", Href: "#settings-barcode", LabelKey: "settings.barcode.symbologies_title", Order: 900},
-	{Key: "settings-catalog-import-barcode-default", Href: "#settings-catalog-import-barcode-default", LabelKey: "settings.catalog_import_barcode_default.title", Order: 1000},
-	{Key: "settings-sell-screen", Href: "#settings-sell-screen", LabelKey: "settings.sell_screen.title", Order: 1050},
-	{Key: "settings-stock-tracking", Href: "#settings-stock-tracking", LabelKey: "settings.stock_tracking.title", Order: 1100},
-	{Key: "settings-backup", Href: "#settings-backup", LabelKey: "settings.backup.title", Order: 1200},
-	{Key: "settings-data", Href: "#settings-data", LabelKey: "settings.data.title", Order: 1300},
-	{Key: "settings-retention", Href: "#settings-retention", LabelKey: "settings.retention.title", Order: 1400},
-	{Key: "settings-printer", Href: "#settings-printer", LabelKey: "settings.printer.title", Order: 1500},
-	{Key: "settings-tills", Href: "#settings-tills", LabelKey: "tills.title", Order: 1600},
-	{Key: "settings-invoice", Href: "#settings-invoice", LabelKey: "settings.invoice.title", Order: 1700},
-	{Key: "settings-idle-lock", Href: "#settings-idle-lock", LabelKey: "settings.idle_lock.title", Order: 1800},
-	{Key: "settings-kiosk-idle-reset", Href: "#settings-kiosk-idle-reset", LabelKey: "settings.kiosk_idle_reset.title", Order: 1900},
-	{Key: "settings-kiosk-payment-mode", Href: "#settings-kiosk-payment-mode", LabelKey: "settings.kiosk.payment_mode", Order: 2000},
-	{Key: "settings-telemetry", Href: "#settings-telemetry", LabelKey: "settings.telemetry.title", Order: 2100},
-	{Key: "settings-currency", Href: "#settings-currency", LabelKey: "settings.currency.title", Order: 2200},
-	{Key: "settings-language", Href: "#settings-language", LabelKey: "settings.language.title", Order: 2300},
+	{Key: "settings-order-type-prompt", Href: "#settings-order-type-prompt", LabelKey: "settings.order_type_prompt.title", Order: 850, Group: "settings.cat.selling.label"},
+	{Key: "settings-barcode", Href: "#settings-barcode", LabelKey: "settings.barcode.symbologies_title", Order: 900, Group: "settings.cat.advanced.label"},
+	{Key: "settings-catalog-import-barcode-default", Href: "#settings-catalog-import-barcode-default", LabelKey: "settings.catalog_import_barcode_default.title", Order: 1000, Group: "settings.cat.advanced.label"},
+	{Key: "settings-sell-screen", Href: "#settings-sell-screen", LabelKey: "settings.sell_screen.title", Order: 1050, Group: "settings.cat.selling.label"},
+	{Key: "settings-stock-tracking", Href: "#settings-stock-tracking", LabelKey: "settings.stock_tracking.title", Order: 1100, Group: "settings.cat.selling.label"},
+	{Key: "settings-backup", Href: "#settings-backup", LabelKey: "settings.backup.title", Order: 1200, Group: "settings.cat.backup.label"},
+	{Key: "settings-data", Href: "#settings-data", LabelKey: "settings.data.title", Order: 1300, Group: "settings.cat.advanced.label"},
+	{Key: "settings-retention", Href: "#settings-retention", LabelKey: "settings.retention.title", Order: 1400, Group: "settings.cat.advanced.label"},
+	{Key: "settings-printer", Href: "#settings-printer", LabelKey: "settings.printer.title", Order: 1500, Group: "settings.cat.receipts.label"},
+	{Key: "settings-tills", Href: "#settings-tills", LabelKey: "tills.title", Order: 1600, Group: "settings.cat.devices.label"},
+	{Key: "settings-invoice", Href: "#settings-invoice", LabelKey: "settings.invoice.title", Order: 1700, Group: "settings.cat.receipts.label"},
+	{Key: "settings-idle-lock", Href: "#settings-idle-lock", LabelKey: "settings.idle_lock.title", Order: 1800, Group: "settings.cat.staff.label"},
+	{Key: "settings-kiosk-idle-reset", Href: "#settings-kiosk-idle-reset", LabelKey: "settings.kiosk_idle_reset.title", Order: 1900, Group: "settings.cat.devices.label"},
+	{Key: "settings-kiosk-payment-mode", Href: "#settings-kiosk-payment-mode", LabelKey: "settings.kiosk.payment_mode", Order: 2000, Group: "settings.cat.devices.label"},
+	{Key: "settings-telemetry", Href: "#settings-telemetry", LabelKey: "settings.telemetry.title", Order: 2100, Group: "settings.cat.advanced.label"},
+	{Key: "settings-currency", Href: "#settings-currency", LabelKey: "settings.currency.title", Order: 2200, Group: "settings.cat.shop.label"},
+	{Key: "settings-language", Href: "#settings-language", LabelKey: "settings.language.title", Order: 2300, Group: "settings.cat.shop.label"},
 	// ut-docs#3086: Languages shown to staff, right after the Language card.
-	{Key: "settings-staff-languages", Href: "#settings-staff-languages", LabelKey: "settings.staff_languages.title", Order: 2350},
-	{Key: "settings-shop-type", Href: "#settings-shop-type", LabelKey: "settings.shop_type.title", Order: 2400},
-	{Key: "settings-all", Href: "#settings-all", LabelKey: "settings.all", Order: 2500},
+	{Key: "settings-staff-languages", Href: "#settings-staff-languages", LabelKey: "settings.staff_languages.title", Order: 2350, Group: "settings.cat.shop.label"},
+	{Key: "settings-shop-type", Href: "#settings-shop-type", LabelKey: "settings.shop_type.title", Order: 2400, Group: "settings.cat.shop.label"},
+	{Key: "settings-all", Href: "#settings-all", LabelKey: "settings.all", Order: 2500, Group: "settings.cat.advanced.label"},
 }
 
 var coreSettingsIndex = func() map[string]int {

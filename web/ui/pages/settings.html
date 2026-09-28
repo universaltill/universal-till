@@ -11,8 +11,35 @@
      cards (a progressive-disclosure affordance over server-rendered content,
      like <details>/<summary>), so this is not a client-side router and does
      not contradict ADR-0008. See that script's header for the rationale. -->
+<!-- ut-docs#3090: the landing view — one large touch tile per category
+     (uislot.SettingsCategories, resolved by settingsnav.Categories from the
+     rows THIS render shows, so a category with nothing visible for this
+     session has no tile). Advanced is always last and lists everything.
+     Rendered hidden: the script below shows it for /settings with no
+     fragment, so a browser without script still gets the full page. -->
+<nav class="settings-home" id="settings-home" aria-label="{{ T "settings.home.label" }}" hidden>
+  <form class="settings-search settings-home-search" role="search" onsubmit="return false">
+    <label class="visually-hidden" for="settings-home-q">{{ T "settings.search.label" }}</label>
+    <input id="settings-home-q" type="search" autocomplete="off" placeholder="{{ T "settings.search.placeholder" }}">
+  </form>
+  <div class="menu-grid settings-cat-grid">
+    {{ range .settingsCategories }}
+    <a class="menu-tile settings-cat-tile" href="#cat-{{ .ID }}" data-cat="{{ .ID }}">
+      <span class="menu-ico" aria-hidden="true">{{ .IconSVG }}</span>
+      <span class="menu-label">{{ .Label }}</span>
+      {{ if .Desc }}<span class="settings-cat-desc">{{ .Desc }}</span>{{ end }}
+    </a>
+    {{ end }}
+  </div>
+</nav>
 <div class="settings-shell" id="settings-shell">
+  {{/* ut-docs#3090: swap to the grid before the ~2,000 lines of cards below
+       are parsed, so a slow kiosk never flashes the two-pane view first.
+       The script at the bottom of the page owns every later change. */}}
+  <script>(function () { var h = document.getElementById('settings-home'); if (!location.hash && h && h.querySelector('.settings-cat-tile')) { h.hidden = false; document.getElementById('settings-shell').hidden = true; } })();</script>
   <aside class="settings-nav" id="settings-nav" aria-label="{{ T "settings.nav.label" }}">
+    <a class="settings-home-link" id="settings-home-link" href="#" hidden>{{ T "settings.home.back" }}</a>
+    <h2 class="settings-cat-title" id="settings-cat-title" tabindex="-1" hidden></h2>
     <form class="settings-search" role="search" onsubmit="return false">
       <label class="visually-hidden" for="settings-q">{{ T "settings.search.label" }}</label>
       <input id="settings-q" type="search" autocomplete="off" placeholder="{{ T "settings.search.placeholder" }}">
@@ -29,7 +56,7 @@
          card actually present in THIS render (a gated card that didn't
          render this time is simply skipped). -->
     <ul id="settings-nav-index" hidden aria-hidden="true">
-      {{ range .settingsNav }}<li data-key="{{ .Key }}"{{ if .Group }} data-group="{{ .Group }}"{{ end }}>{{ .Label }}</li>{{ end }}
+      {{ range .settingsNav }}<li data-key="{{ .Key }}"{{ if .Group }} data-group="{{ .Group }}"{{ end }} data-cat="{{ .Cat }}">{{ .Label }}</li>{{ end }}
     </ul>
   </aside>
   <div class="settings-panel" id="settings-panel">
@@ -2095,6 +2122,8 @@
 <script>
 (function () {
   // ut-docs#1960: the Settings two-pane section switcher + settings search.
+  // ut-docs#3090 adds three views over it (landing grid, one category,
+  // Advanced): see "Categories" below.
   //
   // Runs AFTER #settings-grid's closing tag on purpose: it builds the section
   // list from the cards that actually rendered for THIS session/role/locale
@@ -2164,12 +2193,13 @@
       resolvedOrder.push({
         key: li.getAttribute('data-key'),
         label: (li.textContent || '').replace(/\s+/g, ' ').trim(),
-        group: li.getAttribute('data-group') || ''
+        group: li.getAttribute('data-group') || '',
+        cat: li.getAttribute('data-cat') || ''
       });
     });
   }
   if (!resolvedOrder.length) {
-    cards.forEach(function (card) { resolvedOrder.push({ key: card.id, label: headingText(card), group: '' }); });
+    cards.forEach(function (card) { resolvedOrder.push({ key: card.id, label: headingText(card), group: '', cat: '' }); });
   }
 
   var prevGroup = '';
@@ -2181,10 +2211,12 @@
       heading.className = 'settings-tree-group';
       heading.setAttribute('role', 'presentation');
       heading.textContent = row.group;
+      heading.setAttribute('data-cat', row.cat);
       tree.appendChild(heading);
     }
     prevGroup = row.group;
     var li = document.createElement('li');
+    li.setAttribute('data-cat', row.cat);
     var a = document.createElement('a');
     a.href = '#' + card.id;
     a.className = 'settings-tree-link';
@@ -2192,7 +2224,7 @@
     a.textContent = row.label;
     li.appendChild(a);
     tree.appendChild(li);
-    navItems.push({ id: card.id, card: card, li: li, a: a, title: a.textContent });
+    navItems.push({ id: card.id, card: card, li: li, a: a, title: a.textContent, cat: row.cat });
   });
   // Snapshot of the fully-built tree (nav-item <li>s AND group-heading
   // <li>s) so a search restores the exact same markup afterwards — restoreNav
@@ -2233,6 +2265,84 @@
     return target;
   }
 
+  // ---- Categories (ut-docs#3090) ----
+  // Three views over the same rendered cards: the landing grid (no
+  // fragment), one category (#cat-<id>: the sidebar lists only that
+  // category's sections) and Advanced (#settings-advanced, or any section
+  // with no simple category: the full sidebar under category headings, as
+  // before categories existed). Still show/hide only — nothing is fetched.
+  var home = document.getElementById('settings-home');
+  var homeLink = document.getElementById('settings-home-link');
+  var catTitle = document.getElementById('settings-cat-title');
+  var homeSearch = document.getElementById('settings-home-q');
+  var ADVANCED = 'advanced';
+  var catLabels = {};
+  if (home) {
+    Array.prototype.forEach.call(home.querySelectorAll('.settings-cat-tile'), function (tile) {
+      var label = tile.querySelector('.menu-label');
+      catLabels[tile.getAttribute('data-cat')] = label ? label.textContent.trim() : '';
+    });
+  }
+  var hasCategories = !!home && Object.keys(catLabels).length > 0;
+  var mode = null; // null = landing grid; else a category id (ADVANCED = everything)
+
+  // A section with no category of its own (or one this render has no tile
+  // for) is found under Advanced.
+  function catForSection(id) {
+    for (var i = 0; i < navItems.length; i++) {
+      if (navItems[i].id === id) {
+        var c = navItems[i].cat;
+        return c && catLabels[c] !== undefined ? c : ADVANCED;
+      }
+    }
+    return ADVANCED;
+  }
+
+  function inMode(cat) {
+    return mode === ADVANCED || cat === mode;
+  }
+
+  // Filter the plain section list (never a search-results list) to mode.
+  // In one category its group heading is redundant with the title above.
+  function applyFilter() {
+    initialTreeChildren.forEach(function (node) {
+      var cat = node.getAttribute('data-cat') || '';
+      var isHeading = node.classList.contains('settings-tree-group');
+      node.hidden = mode !== null && (isHeading ? mode !== ADVANCED : !inMode(cat));
+    });
+  }
+
+  function setMode(m) {
+    if (!hasCategories) return;
+    mode = m;
+    if (home) home.hidden = m !== null;
+    shell.hidden = m === null;
+    if (homeLink) homeLink.hidden = m === null;
+    if (catTitle) {
+      catTitle.hidden = m === null;
+      catTitle.textContent = m === null ? '' : (catLabels[m] || catLabels[ADVANCED] || '');
+    }
+    applyFilter();
+  }
+
+  function firstSectionIn(cat) {
+    for (var i = 0; i < navItems.length; i++) {
+      if (cat === ADVANCED || navItems[i].cat === cat) return navItems[i].id;
+    }
+    return navItems.length ? navItems[0].id : cards[0].id;
+  }
+
+  // Open a category (or Advanced) on its list: at phone width a section
+  // left open earlier (has-selection) must not carry over (review of
+  // ut-docs#3090). After a tile tap, focus moves to the category's title so
+  // keyboard and screen-reader users land where the content now is.
+  function enterView(cat, focus) {
+    shell.classList.remove('has-selection');
+    setMode(cat);
+    showSection(firstSectionIn(cat), { select: false });
+    if (focus && catTitle) catTitle.focus();
+  }
+
   // ---- Initial section from the URL fragment ----
   // Three cases: the hash names a card's own id (e.g. base.html's
   // /settings#registration); it names an element NESTED inside a card (the
@@ -2260,6 +2370,25 @@
 
   function applyHash(fromEvent) {
     var r = resolveHash();
+    if (hasCategories && !r.id) {
+      var hash = (location.hash || '').slice(1);
+      if (hash.indexOf('cat-') === 0 && catLabels[hash.slice(4)] !== undefined) {
+        enterView(hash.slice(4), fromEvent);
+        return;
+      }
+      if (hash === 'settings-advanced') {
+        enterView(ADVANCED, fromEvent);
+        return;
+      }
+      shell.classList.remove('has-selection');
+      setMode(null);
+      if (fromEvent && home) {
+        var first = home.querySelector('.settings-cat-tile');
+        if (first) first.focus();
+      }
+      return;
+    }
+    if (hasCategories) setMode(catForSection(r.id));
     var id = r.id || cards[0].id;
     // Phone width, list-first (CSS keys off .has-selection below 40rem): with
     // no real deep link, arrive on the section list and wait for a tap. With
@@ -2291,10 +2420,39 @@
     if (!a) return;
     ev.preventDefault();
     var id = a.getAttribute('data-section');
+    // A search hit may live in another category: follow it there, so
+    // clearing the search shows the list the section belongs to.
+    if (hasCategories && !inMode(catForSection(id))) setMode(catForSection(id));
     showSection(id, { updateHash: true, focusPanel: true });
     var hitIndex = a.getAttribute('data-hit');
     if (hitIndex !== null) revealHit(index[Number(hitIndex)]);
   });
+
+  if (homeLink) {
+    homeLink.addEventListener('click', function (ev) {
+      ev.preventDefault();
+      // pushState, so the browser's Back returns to the category just left.
+      try { history.pushState(null, '', location.pathname + location.search); } catch (e) { /* file:// etc. */ }
+      if (search && search.value) { search.value = ''; restoreNav(); }
+      applyHash(true);
+    });
+  }
+
+  if (homeSearch && search) {
+    // Searching from the landing grid searches every setting: open the
+    // full list and carry the query into the sidebar's own search box.
+    homeSearch.addEventListener('input', function () {
+      var q = homeSearch.value;
+      if (!q.trim()) return;
+      homeSearch.value = '';
+      // pushState (like a tile tap): Back returns to the grid, not off /settings.
+      try { history.pushState(null, '', '#settings-advanced'); } catch (e) { /* file:// etc. */ }
+      enterView(ADVANCED, false);
+      search.value = q;
+      search.focus();
+      runSearch();
+    });
+  }
 
   if (back) {
     back.addEventListener('click', function () {
@@ -2354,6 +2512,7 @@
     // ut-docs#1913) rather than rebuilding from navItems alone — appendChild
     // moves an existing node, so this is the same markup, not a rebuild.
     initialTreeChildren.forEach(function (node) { tree.appendChild(node); });
+    if (hasCategories) applyFilter();
     tree.hidden = false;
     if (noResults) noResults.hidden = true;
   }

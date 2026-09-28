@@ -41,6 +41,8 @@ var knownIconNames = map[string]bool{
 	"pause": true, "keyboard": true, // ut-docs#2702 compact tender row
 	"rotate-ccw": true, "eye": true, "ellipsis": true, "eye-off": true,
 	"folder-input": true, // ut-docs#2465: the Move to category badge
+	"store":        true, // ut-docs#3090: Settings "My shop" tile
+	"credit-card":  true, // ut-docs#3090: Settings "Payments" tile
 }
 
 // IsKnownIconName reports whether name is in the closed icon-name set.

@@ -4853,6 +4853,25 @@ body.login-screen {
    in the panel with a back control. Above this width .has-selection has no
    effect at all — both panes are always side by side. */
 .settings-back { display: none; margin-block-end: .8rem; }
+/* ut-docs#3090: the landing grid of category tiles, and the sidebar header
+   (a way back to it + the open category's name). The shell's own
+   display:grid would beat the UA [hidden] rule, hence the explicit guard. */
+.settings-shell[hidden] { display: none; }
+.settings-home-search { max-inline-size: 32rem; }
+.settings-cat-grid { margin-top: .6rem; }
+.settings-cat-tile { min-height: 150px; gap: .45rem; }
+.settings-cat-desc { font-size: .9rem; color: var(--muted); line-height: 1.35; }
+.settings-home-link { display: flex; align-items: center; min-block-size: 44px;
+                      padding-inline: .6rem; margin-block-end: .2rem; border-radius: .45rem;
+                      color: inherit; text-decoration: none; font-weight: 600; }
+.settings-home-link[hidden] { display: none; }
+/* The arrow points back toward the grid in both directions (RTL mirrors). */
+.settings-home-link::before { content: "\2190"; margin-inline-end: .4em; }
+[dir="rtl"] .settings-home-link::before { content: "\2192"; }
+.settings-cat-title:focus { outline: none; }
+.settings-cat-title:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.settings-home-link:hover, .settings-home-link:focus-visible { background: var(--surface-2); }
+.settings-cat-title { margin: .2rem 0 .6rem; padding-inline: .6rem; font-size: 1.15rem; text-align: start; }
 @media (max-width: 40rem) {
   .settings-shell { grid-template-columns: 1fr; }
   .settings-nav { position: static; max-block-size: none; padding-inline-end: 0; }

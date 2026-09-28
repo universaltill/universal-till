@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/universaltill/universal-till/internal/db"
 	"html"
+	"html/template"
 	"net/http"
 	"os"
 	"slices"
@@ -404,6 +405,21 @@ func filterSettingsNavForRender(rows []settingsnav.Row, isManager, hasPayMethods
 	return out
 }
 
+// settingsCategoryTile is one /settings landing-grid tile as the template
+// renders it (ut-docs#3090): the resolved category plus its icon's SVG.
+type settingsCategoryTile struct {
+	settingsnav.Category
+	IconSVG template.HTML
+}
+
+func settingsCategoryTiles(cats []settingsnav.Category) []settingsCategoryTile {
+	out := make([]settingsCategoryTile, len(cats))
+	for i, c := range cats {
+		out[i] = settingsCategoryTile{Category: c, IconSVG: httpx.Icon(c.Icon)}
+	}
+	return out
+}
+
 // credentialSettingKey reports a settings row that is a credential or a
 // till's cloud identity (ut-docs#2769 review): this till's own cloud token
 // (ADR-0116, not reissuable), its device id and the LAN sync bearer. The
@@ -684,6 +700,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// whole point: the heading text must not appear in the body at
 		// all, not merely be visually hidden).
 		showDataCard := isManager || sampleCount > 0 || len(pendingBasePluginRows) > 0 || restorePromptDeferred
+		settingsNav := filterSettingsNavForRender(
+			settingsnav.Resolve(locale, d.SettingsAmendmentsSnapshot()),
+			isManager, len(payMethods) > 0, showDataCard,
+		)
 		data := map[string]any{
 			"title":       httpx.T(httpx.RequestLocale(r), "page.title.settings"),
 			"theme":       st.Theme,
@@ -785,13 +805,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"barcodeSymbologies": barcodeSymbologies,
 			// ADR-0088, ut-docs#1913: the sidebar's resolved order/label/
 			// grouping (core defaults + any active `layout` plugin's
-			// Settings-slot amendments) — see settingsnav's own doc comment
-			// for why this resolves the SIDEBAR only, not the on-page card
+			// Settings-slot amendments), grouped by category (ut-docs#3090)
+			// — see settingsnav's own doc comment for why this resolves the
+			// sidebar and its categories only, not the on-page card
 			// content/order.
-			"settingsNav": filterSettingsNavForRender(
-				settingsnav.Resolve(locale, d.SettingsAmendmentsSnapshot()),
-				isManager, len(payMethods) > 0, showDataCard,
-			),
+			"settingsNav": settingsNav,
+			// ut-docs#3090: the landing grid's category tiles, built from
+			// the SAME filtered rows so a category whose every section is
+			// gated out for this session gets no tile.
+			"settingsCategories": settingsCategoryTiles(settingsnav.Categories(locale, settingsNav)),
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
 	})

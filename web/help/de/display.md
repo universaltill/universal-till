@@ -12,6 +12,8 @@ keywords: [theme, skalierung, kiosk, bildschirm, osk, tastatur]
 
 Die gesamte Kasse spricht Englisch, Türkçe, فارسی und العربية — einschließlich Rechts-nach-links-Layout — und passt sich mit einer Bildschirmtastatur und einstellbarer Textgröße an Touchscreens an.
 
+Die Einstellungen öffnen mit einem Raster großer Kacheln, eine pro Gruppe, so benannt, wie Ladeninhaber denken: **Mein Geschäft**, **Verkaufen**, **Zahlungen**, **Belege & Drucker**, **Personal & Sicherheit**, **Kassen & Geräte**, **Aussehen** und **Sicherung & Updates**, jeweils mit einer Zeile, was darin steckt. Tippen Sie auf eine Kachel, um nur die Einstellungen dieser Gruppe zu sehen; **Zurück zu den Kategorien** führt zurück zu den Kacheln. Die letzte Kachel, **Erweitert**, enthält alle Einstellungen in einer Liste, auch die technischen (Barcode-Typen, Diagnosemodus, Datenverwaltung, Berichtsaufbewahrung und die Rohliste aller Einstellungen), unter denselben Gruppenüberschriften. Eine Kachel erscheint nur, wenn sie etwas enthält, das Sie ändern dürfen. Das Suchfeld über den Kacheln durchsucht alle Einstellungen.
+
 Die Einstellungen zeigen eine Liste ihrer Abschnitte auf der einen Seite und den gerade angezeigten Abschnitt auf der anderen, mit einem Suchfeld über der Liste, das eine bestimmte Einstellung anhand ihres Namens findet (nicht nur einen Abschnittstitel) — praktisch bei einer Seite mit so vielen Abschnitten. Wählen Sie ein Ergebnis, und die Kasse öffnet diesen Abschnitt und führt Sie direkt zur Einstellung. Auf einem Bildschirm in Telefongröße erscheint zuerst die Liste; tippen Sie auf einen Abschnitt, um ihn zu öffnen, und verwenden Sie **Zurück zu den Abschnitten**, um zurückzukehren.
 
 ## Verwendung
