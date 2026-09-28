@@ -499,7 +499,9 @@ type Category struct {
 var SettingsCategories = []Category{
 	{Key: "shop", LabelKey: "settings.cat.shop.label", DescKey: "settings.cat.shop.desc", Icon: "store"},
 	{Key: "selling", LabelKey: "settings.cat.selling.label", DescKey: "settings.cat.selling.desc", Icon: "shopping-cart"},
-	{Key: "payments", LabelKey: "settings.cat.payments.label", DescKey: "settings.cat.payments.desc", Icon: "credit-card"},
+	// Reuses the Payments card's own title key: a duplicate key with the
+	// same English text reads as untranslated to the locale audit.
+	{Key: "payments", LabelKey: "settings.payments.title", DescKey: "settings.cat.payments.desc", Icon: "credit-card"},
 	{Key: "receipts", LabelKey: "settings.cat.receipts.label", DescKey: "settings.cat.receipts.desc", Icon: "receipt"},
 	{Key: "staff", LabelKey: "settings.cat.staff.label", DescKey: "settings.cat.staff.desc", Icon: "lock"},
 	{Key: "devices", LabelKey: "settings.cat.devices.label", DescKey: "settings.cat.devices.desc", Icon: "monitor"},
@@ -548,7 +550,7 @@ var CoreSettings = []Entry{
 	{Key: "settings-about", Href: "#settings-about", LabelKey: "settings.about.title", Order: 450, Group: "settings.cat.backup.label"},
 	{Key: "settings-theme", Href: "#settings-theme", LabelKey: "settings.theme.title", Order: 500, Group: "settings.cat.look.label"},
 	{Key: "settings-display", Href: "#settings-display", LabelKey: "settings.display.title", Order: 600, Group: "settings.cat.look.label"},
-	{Key: "settings-payments", Href: "#settings-payments", LabelKey: "settings.payments.title", Order: 700, Group: "settings.cat.payments.label"},
+	{Key: "settings-payments", Href: "#settings-payments", LabelKey: "settings.payments.title", Order: 700, Group: "settings.payments.title"},
 	{Key: "settings-order-no", Href: "#settings-order-no", LabelKey: "settings.order_no.title", Order: 800, Group: "settings.cat.selling.label"},
 	// ut-docs#2282: added right after settings-order-no in both places (the
 	// template declares it immediately after that card too) — see this

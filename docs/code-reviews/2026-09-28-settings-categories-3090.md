@@ -54,6 +54,10 @@ Accepted as designed: a plugin `order` amendment can no longer move a section ac
   Emulated in Chromium only, not on real touch hardware; nothing here uses a pointer/drag handler.
 - German-length check: the de pack strings ("Personal & Sicherheit", "Backups & Updates") are no longer than the longest English tile ("Receipts & printers" wraps to two lines, which the tile handles).
 
+## CI finding after push
+
+`locale-render-audit` (German render) flagged the Payments tile. Its new key `settings.cat.payments.label` had the same English text, "Payments", as the existing `settings.payments.title`. The audit's new-key carve-out therefore couldn't tell it was new, and German fell back to English. **Fixed:** the Payments category reuses `settings.payments.title`, which is already translated in every locale and pack, and the duplicate key is dropped. Re-ran the audit locally against the de pack's `main`, with the base-branch `en.json`, and it passes.
+
 ## Language packs
 
 The de/es strings got a second Fable review. It found the rename to `settings.home.back`, "Belegdrucker"/"Backups" to match each pack's own section names, the formal register in Spanish, and "fichas" as that pack's word for menu tiles. All are fixed in the pack PRs, and the German help paragraph now says "Backups & Updates".

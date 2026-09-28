@@ -2165,7 +2165,6 @@
   "settings.cat.shop.desc": "Para birimi, dil ve işletmenizin türü.",
   "settings.cat.selling.label": "Satış",
   "settings.cat.selling.desc": "Sipariş numaraları, satış ekranı ve stok.",
-  "settings.cat.payments.label": "Ödemeler",
   "settings.cat.payments.desc": "Müşterileriniz nasıl ödeyebilir.",
   "settings.cat.receipts.label": "Fişler ve yazıcılar",
   "settings.cat.receipts.desc": "Fiş yazıcınız ve faturalar.",

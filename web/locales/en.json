@@ -2150,7 +2150,6 @@
   "settings.cat.shop.desc": "Currency, language and the kind of shop you run.",
   "settings.cat.selling.label": "Selling",
   "settings.cat.selling.desc": "Order numbers, the sell screen and stock.",
-  "settings.cat.payments.label": "Payments",
   "settings.cat.payments.desc": "How your customers can pay.",
   "settings.cat.receipts.label": "Receipts & printers",
   "settings.cat.receipts.desc": "Your receipt printer and invoices.",
