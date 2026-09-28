@@ -20,6 +20,7 @@ import (
 // (trust_level, install_state) -- this used to ALTER TABLE them in by hand.
 func pluginsManagerTestDeps(t *testing.T) *common.Deps {
 	t.Helper()
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: the route is now permission-gated; this test is about rendering/behaviour past the gate (gate: cashier_sale_only_test.go).
 	d, _ := pluginPageTestDeps(t)
 	return d
 }

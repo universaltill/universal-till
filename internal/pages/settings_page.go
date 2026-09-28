@@ -424,6 +424,11 @@ func visibleSettings(all map[string]string) map[string]string {
 func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 	mux.HandleFunc("/settings", func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#3079: a cashier is sale-only — the whole page is gated,
+		// not just its individual cards/actions.
+		if !requirePage(d, w, r, "settings") {
+			return
+		}
 		locale := httpx.ResolveLocale(w, r)
 		all, _ := d.Settings.All(r.Context())
 		st := d.CurrentState()
@@ -2519,6 +2524,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("/api/settings/theme", func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#3079 review: the only settings write with no gate at all.
+		if !canPerform(d, r, "settings") {
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			return
+		}
 		_ = r.ParseForm()
 		if v := strings.TrimSpace(r.Form.Get("theme")); v != "" {
 			base := d.CurrentState()

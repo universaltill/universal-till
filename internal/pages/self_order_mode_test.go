@@ -434,11 +434,11 @@ func TestSelfOrderExit_ExistingSessionCookieStillRequiresPIN(t *testing.T) {
 		t.Fatalf("PIN re-entry via the kiosk exit = %d → %q, want 303 → /settings", postRec.Code, postRec.Header().Get("Location"))
 	}
 
-	// And, once through, the session genuinely reaches the real till surface
-	// for a plain operator too — not role-gated at the route (individual
-	// mutating actions are, via canPerform/elevation; that's out of scope
-	// for this ticket, which is about reaching the page at all, not what a
-	// cashier can do once there).
+	// And, once through, the session is a real one: /settings answers it
+	// with the settings gate's own verdict. ut-docs#3079 (cashier is
+	// sale-only) made that verdict 403 for this cashier — before it the
+	// route was not role-gated and this asserted 200. A manager's PIN at the
+	// kiosk exit is what reaches Settings now.
 	settingsRec := httptest.NewRecorder()
 	settingsReq := httptest.NewRequest(http.MethodGet, "/settings", nil)
 	var freshCookie *http.Cookie
@@ -452,8 +452,8 @@ func TestSelfOrderExit_ExistingSessionCookieStillRequiresPIN(t *testing.T) {
 	}
 	settingsReq.AddCookie(freshCookie)
 	h.ServeHTTP(settingsRec, settingsReq)
-	if settingsRec.Code != http.StatusOK {
-		t.Fatalf("GET /settings with the re-entered session = %d: %s", settingsRec.Code, settingsRec.Body.String())
+	if settingsRec.Code != http.StatusForbidden {
+		t.Fatalf("GET /settings with the re-entered cashier session = %d, want 403 (ut-docs#3079): %s", settingsRec.Code, settingsRec.Body.String())
 	}
 }
 

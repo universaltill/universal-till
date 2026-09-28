@@ -176,19 +176,20 @@ func TestButtonsPartial_EditMode(t *testing.T) {
 		t.Fatalf("cashier /ui/buttons?mode=edit = %d, want 403: %s", rec.Code, rec.Body.String())
 	}
 	// The normal sale-screen render is untouched: no edit-mode section, a
-	// live scan tile, the link to /designer still there.
+	// live scan tile. No link to /designer for a cashier: that page refuses
+	// them (ut-docs#3079 -- the jiggle badges stay, locked, #2361).
 	plain := getWithUser(mux, "/ui/buttons", &cashier)
 	if plain.Code != http.StatusOK {
 		t.Fatalf("cashier /ui/buttons = %d: %s", plain.Code, plain.Body.String())
 	}
-	for _, unwanted := range []string{`designer-categories`, `hx-vals='{"mode":"edit"}'`} {
+	for _, unwanted := range []string{`designer-categories`, `hx-vals='{"mode":"edit"}'`, `href="/designer"`} {
 		if strings.Contains(plain.Body.String(), unwanted) {
 			t.Fatalf("plain /ui/buttons must not carry edit-mode markup %q", unwanted)
 		}
 	}
 	// ut-docs#2989: the sale screen's badges come from its one template
 	// (placeholder item id), filled per cell from data-item-id by app.js.
-	for _, want := range []string{`hx-post="/api/pos/scan"`, `href="/designer"`, `href="/catalog?item=` + ui.TileBadgeItemPlaceholder + `&return=/"`, `data-item-id="itm-btn"`,
+	for _, want := range []string{`hx-post="/api/pos/scan"`, `href="/catalog?item=` + ui.TileBadgeItemPlaceholder + `&return=/"`, `data-item-id="itm-btn"`,
 		// ut-docs#2174 review: the sale screen keeps its own search results
 		// region and restores a persisted search -- only edit mode drops them.
 		`id="search-results"`, `this.q = st.q`} {

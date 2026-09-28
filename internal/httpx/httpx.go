@@ -146,7 +146,13 @@ var baseFuncs = template.FuncMap{
 	// (ADR-0088, ut-docs#1912; rail.go). Locale-less fallback for the same
 	// reason as helpHref/helpLink above (fragment renderers parse nav.html
 	// with baseFuncs only); FuncsFor overrides it locale-bound.
-	"railEntries": func() []RailEntry { return railEntriesFor(DefaultLocale()) },
+	"railEntries": func() []RailEntry { return railEntriesFor(DefaultLocale(), requestVisibility(nil)) },
+	// {{ if allowed "settings" }} — does THIS request pass a core VisibleIf
+	// predicate (ut-docs#3079: base.html's status-bar links to /settings and
+	// /plugins). Request-less fallback: fails closed once pages.Init has
+	// installed a checker (requestVisibility); withHelpHref binds it per
+	// request on every whole-page render path.
+	"allowed": func(predicate string) bool { return allowedFunc(requestVisibility(nil))(predicate) },
 	// {{ icon "lock" }} — inline SVG rail icons (icons.go, ut-docs#1423).
 	"icon": iconHTML,
 	// {{ dict "k" v ... }} — per-call parameters for a shared partial
@@ -284,10 +290,25 @@ func (r *Renderer) Render(w http.ResponseWriter, name string, data any) error {
 // it in only one of the two is how the "?" on /catalog silently degraded to
 // the manual's index while the one on / worked. Copies the map rather than
 // mutating the caller's, which may be shared across requests.
+//
+// ut-docs#3079: it is also where the request's VIEWER is bound — the rail
+// (railEntries drops entries whose VisibleIf this request fails, e.g. Stock
+// for a cashier) and the `allowed` predicate func base.html's status bar
+// uses. Every whole-page render path (Render, RenderWith, RenderError)
+// passes through here, so a cashier's 403 page still gets a correct rail.
+// The locale comes from the funcs' own locale-bound "locale" (FuncsFor);
+// DefaultLocale() when the caller built funcs without it.
 func withHelpHref(funcs template.FuncMap, r *http.Request) template.FuncMap {
-	out := make(template.FuncMap, len(funcs)+1)
+	out := make(template.FuncMap, len(funcs)+3)
 	maps.Copy(out, funcs)
 	out["helpHref"] = func() string { return manual.HelpHref(r.URL.Path) }
+	locale := DefaultLocale()
+	if f, ok := funcs["locale"].(func() string); ok {
+		locale = f()
+	}
+	visible := requestVisibility(r)
+	out["railEntries"] = func() []RailEntry { return railEntriesFor(locale, visible) }
+	out["allowed"] = allowedFunc(visible)
 	return out
 }
 
@@ -1271,7 +1292,9 @@ func FuncsFor(locale string) template.FuncMap {
 	// whole-page render path (Render, RenderContentFragment, RenderWith,
 	// RenderError) builds its funcs through FuncsFor, so every page that
 	// renders nav gets it.
-	funcs["railEntries"] = func() []RailEntry { return railEntriesFor(locale) }
+	// ut-docs#3079: request-less here (fails closed once a checker is
+	// installed); withHelpHref re-binds it with the request's visibility.
+	funcs["railEntries"] = func() []RailEntry { return railEntriesFor(locale, requestVisibility(nil)) }
 	// tenderLabel translates the sentinel values pos.deriveTenderType can
 	// itself produce ("unknown" — no payments at all, e.g. a zero-marginal-
 	// net partial refund, ut-docs#1579; "split" — more than one distinct

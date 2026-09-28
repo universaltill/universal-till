@@ -71,6 +71,8 @@ func RenderError(w http.ResponseWriter, r *http.Request, status int, msgKey stri
 	data := map[string]any{
 		"title":   "Error",
 		"Message": T(locale, msgKey),
+		// ut-docs#3079: permission refusals get their own heading.
+		"Forbidden": status == http.StatusForbidden,
 		// ut-docs#2362: without this the error page carries no theme
 		// stylesheet and, via the shellsig template func, a shell
 		// signature that never matches a themed till's other pages.

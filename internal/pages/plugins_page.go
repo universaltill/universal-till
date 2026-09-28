@@ -18,6 +18,11 @@ import (
 // downloading and installing new plugins happens on /plugins/store.
 func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/plugins", func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#3079: every lifecycle action here was already
+		// plugin_management-gated; now the page itself is too.
+		if !requirePage(d, w, r, "plugin_management") {
+			return
+		}
 		ctx := r.Context()
 
 		rows, err := data.NewPluginRepo(d.Db).ListManagedPlugins(ctx)

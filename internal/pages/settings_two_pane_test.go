@@ -66,6 +66,7 @@ func TestSettingsTwoPaneShellRenders(t *testing.T) {
 }
 
 func TestSettingsEveryCardHasAStableID(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: /settings is settings-gated; this test is about rendering, not permissions.
 	mux, _, _ := newFullAuthDeps(t)
 
 	// Both roles: the cashier render drops the manager-only cards, and the

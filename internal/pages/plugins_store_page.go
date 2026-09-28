@@ -74,6 +74,10 @@ func storeInstaller(d *common.Deps) (*plugins.MarketplaceInstaller, *config.Conf
 // approved for, each in its download/install lifecycle state.
 func PluginStoreHandler(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#3079: same gate as /plugins and the store's own POSTs.
+		if !requirePage(d, w, r, "plugin_management") {
+			return
+		}
 		ctx := r.Context()
 		if d.CatalogRepo == nil {
 			httpx.RenderError(w, r, http.StatusServiceUnavailable, "plugins.install.error.configuration", nil)

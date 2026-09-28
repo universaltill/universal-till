@@ -260,6 +260,10 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) *data.SyncAdminRepo {
 				label = strings.TrimSuffix(get("sync.receipt_prefix"), "-")
 			}
 			httpx.RenderPartial("ui/partials/sync_chip.html", map[string]any{
+				// ut-docs#3079: /tills and /sync-quarantine are
+				// sync_management-gated; a viewer without it (a cashier)
+				// gets the same chip as status, not a link into a refusal.
+				"canManage": canPerform(d, r, "sync_management"),
 				"isReplica": true,
 				"class":     class,
 				"label":     label,
@@ -325,6 +329,7 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) *data.SyncAdminRepo {
 		// every other identity surface (Settings, /tills) already shows.
 		label := tillNameOrDefault(r.Context(), d, httpx.ResolveLocale(w, r))
 		httpx.RenderPartial("ui/partials/sync_chip.html", map[string]any{
+			"canManage":   canPerform(d, r, "sync_management"), // ut-docs#3079, see the replica branch
 			"isReplica":   false,
 			"class":       class,
 			"label":       label,

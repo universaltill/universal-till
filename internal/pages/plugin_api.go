@@ -30,6 +30,11 @@ import (
 func registerPluginAPI(mux *http.ServeMux, d *common.Deps) {
 	// Marketplace: list available binaries from marketplace service
 	mux.HandleFunc("/api/plugins/marketplace", func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#3079 review: plugin_management only (#2675 removes it).
+		if !canPerform(d, r, "plugin_management") {
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			return
+		}
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -947,6 +952,12 @@ func handleListPluginVersions(d *common.Deps) http.HandlerFunc {
 // handleCheckUpdates checks for available plugin updates (T025)
 func handleCheckUpdates(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#3079 review: the installed-plugin/update list is for
+		// whoever manages plugins.
+		if !canPerform(d, r, "plugin_management") {
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			return
+		}
 		ctx := r.Context()
 
 		if d.CatalogRepo == nil {

@@ -48,6 +48,10 @@ Eine unbeaufsichtigte, angemeldete Kasse ist ein echtes Risiko — jeder, der vo
 3. Das Ändern dieser Einstellung erfordert die Rolle Manager oder Admin, dieselbe [Manager-Freigabe-Abfrage](/help/elevation) wie bei anderen Einstellungsänderungen.
 4. Möchten Sie nicht auf das Zeitlimit warten? Verwenden Sie die Schaltfläche „Sperren“ neben Ihrem Namen im linken Menü, um sie jederzeit selbst zu sperren.
 
+## Was ein Kassierer darf
+
+Ein Kassierer-Konto ist zum Verkaufen da. Als Kassierer angemeldet können Sie Verkäufe buchen, Bestellungen parken und wieder aufrufen, den Bestellstatus und offene Bestellungen sehen, frühere Verkäufe im Kassenjournal nachschlagen und Ihre eigene Schicht öffnen und schließen. Alles andere — Einstellungen, Berichte, Lager, Katalog und Schnellwahltasten, Kassen und Plugins — erfordert einen Manager oder Administrator: Diese Kacheln und Links erscheinen für einen Kassierer nicht, und wer eine dieser Seiten direkt öffnet, sieht „Manager oder Administrator erforderlich“. Brauchen Ihre Kassierer doch eine davon, kann ein Administrator sie der Kassierer-Rolle unter Benutzer → Berechtigungen gewähren — zum Beispiel erlaubt „Lager & Bestand“ Kassierern, Lieferungen einzubuchen und Bestände zu korrigieren.
+
 ## Berechtigungsmatrix
 
 Ein Super-Admin kann über die Zuweisung von Kassierer-/Manager-/Admin-Rollen hinausgehen — er kann jeder Rolle genau erlauben oder entziehen, was sie darf, Aktion für Aktion (Rückerstattungen, Stornierung, Preisüberschreibungen, Einstellungen, Berichte und mehr), unter Benutzer → Berechtigungen. Jede Änderung wird im Prüfprotokoll mit der ausführenden Person festgehalten. Das eine, was Sie nie tun können, ist, den Zugriff eines Super-Admins auf diese Seite selbst zu entziehen — diese Berechtigung ist immer fest eingeschaltet, damit niemand versehentlich jeden Super-Admin aussperren kann.

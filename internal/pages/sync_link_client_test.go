@@ -513,6 +513,7 @@ func TestRequestSyncPull_IsNonBlockingAndCoalesced(t *testing.T) {
 // changes the levels its linked tills pull; it must nudge `stock` (the
 // sale/refund paths reach the same nudge through RequestSyncPush).
 func TestSyncLink_MainTillStockMovementNudgesStock(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: receipt is stock_management-gated; this is about the sync nudge.
 	f := newSyncLinkFixture(t)
 	f.enrol(t, "Till 2", "bearer-t2")
 	registerInventoryAPI(f.mux, f.dp)

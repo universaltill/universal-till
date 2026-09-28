@@ -19,6 +19,7 @@ import (
 // test renders the real /plugins/store page against a marketplace that returns
 // plugins but exposes NO entitlements, and asserts the plugins still appear.
 func TestPluginStoreShowsCatalogForAnonymousTill(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: the route is now permission-gated; this test is about rendering/behaviour past the gate (gate: cashier_sale_only_test.go).
 	chdirRoot(t)
 	db := openPagesTestDB(t)
 	defer db.Close()

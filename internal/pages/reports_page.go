@@ -234,6 +234,10 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 	// ut-docs#401) moved behind /ui/reports/tab/{name} and only run when
 	// the operator opens that tab.
 	mux.HandleFunc("/reports", func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#3079: a cashier is sale-only — no reports at all.
+		if !requirePage(d, w, r, "reports") {
+			return
+		}
 		days := parseReportDays(r)
 		bizDayStart, _, _ := d.Settings.Get(r.Context(), keyReportsBusinessDayStart)
 		window := parseReportWindow(r, bizDayStart)
@@ -338,6 +342,11 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 	// same ?period/?anchor/?days params as /reports via parseReportWindow
 	// (ut-docs#519), so a tab shows the same window as the header KPIs.
 	mux.HandleFunc("/ui/reports/tab/{name}", func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#3079: same gate as /reports; the per-tab checks below
+		// (eod_report etc.) still apply on top.
+		if !requirePage(d, w, r, "reports") {
+			return
+		}
 		bizDayStart, _, _ := d.Settings.Get(r.Context(), keyReportsBusinessDayStart)
 		window := parseReportWindow(r, bizDayStart)
 		repo := data.NewPOSRepo(d.Db)

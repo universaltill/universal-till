@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"net/http"
 	"sync/atomic"
 
 	"github.com/universaltill/universal-till/internal/uislot"
@@ -25,6 +26,11 @@ type RailEntry struct {
 	// ut-docs#413's top-bar wrap has no budget for a third row — Inventory
 	// and Orders are both reachable from the ☰ Menu there (ut-docs#1349).
 	RailOnly bool
+	// VisibleIf is the core entry's predicate NAME (uislot.Entry.VisibleIf,
+	// carried through uislot.Resolve untouched — an Amendment cannot set
+	// it). railEntriesFor drops the entry when the request's checker says
+	// no (ut-docs#3079: a cashier's rail has no Stock).
+	VisibleIf string
 }
 
 // railPresentation is the per-key render-only attributes nav.html's four
@@ -66,6 +72,58 @@ func InitRailAmendments(src func() []uislot.Amendment) {
 	railAmendmentsSource.Store(src)
 }
 
+// railVisibilitySource is the process-global predicate checker for rail
+// entries (and the per-request `allowed` template func) — pages.Init wires
+// it to a function evaluating internal/pages' menuPredicates for that
+// request (ut-docs#3079). Same shape as railAmendmentsSource: nil (a test,
+// a boot before Init) means "no checker" = everything visible.
+var railVisibilitySource atomic.Value // func(*http.Request, string) bool
+
+// InitRailVisibility wires the rail's per-request VisibleIf checker
+// (ut-docs#3079). nil resets to "everything visible" (tests).
+func InitRailVisibility(check func(r *http.Request, predicate string) bool) {
+	railVisibilitySource.Store(check)
+}
+
+// requestVisibility binds the installed checker to one request, memoizing
+// each predicate (canPerform behind it can hit role_permissions, and a page
+// asks about the same predicate from the rail and the status bar). nil when
+// no checker is installed — callers treat that as "everything visible".
+// A nil request with a checker installed fails closed: a render with no
+// request to evaluate never shows a gated link.
+func requestVisibility(r *http.Request) func(string) bool {
+	check, _ := railVisibilitySource.Load().(func(*http.Request, string) bool)
+	if check == nil {
+		return nil
+	}
+	if r == nil {
+		return func(string) bool { return false }
+	}
+	var memo map[string]bool
+	return func(predicate string) bool {
+		if predicate == "" {
+			return true
+		}
+		if got, ok := memo[predicate]; ok {
+			return got
+		}
+		got := check(r, predicate)
+		if memo == nil {
+			memo = make(map[string]bool, 4)
+		}
+		memo[predicate] = got
+		return got
+	}
+}
+
+// allowedFunc is the `{{ if allowed "settings" }}` template func for one
+// request's visibility (nil = no checker = allowed).
+func allowedFunc(visible func(string) bool) func(string) bool {
+	return func(predicate string) bool {
+		return visible == nil || visible(predicate)
+	}
+}
+
 func railAmendments() []uislot.Amendment {
 	src, _ := railAmendmentsSource.Load().(func() []uislot.Amendment)
 	if src == nil {
@@ -74,16 +132,42 @@ func railAmendments() []uislot.Amendment {
 	return src()
 }
 
-// railEntriesFor resolves the rail for one render — the value FuncsFor's
+// railEntriesFor resolves the rail for one render — the value the
 // `railEntries` template func returns. Zero amendments: coreRailView, no
 // allocation. Otherwise uislot.Resolve's amended copy, mapped through
-// buildRailView with the locale for Decision G's label fallback.
-func railEntriesFor(locale string) []RailEntry {
-	amendments := railAmendments()
-	if len(amendments) == 0 {
-		return coreRailView
+// buildRailView with the locale for Decision G's label fallback. Then
+// entries whose VisibleIf the request fails are dropped (visible nil =
+// everything visible); when nothing is hidden the view is returned as-is,
+// so the zero-plugin, nothing-hidden path still allocates nothing.
+func railEntriesFor(locale string, visible func(string) bool) []RailEntry {
+	view := coreRailView
+	if amendments := railAmendments(); len(amendments) > 0 {
+		view = buildRailView(uislot.Resolve(uislot.CoreRail, amendments), locale)
 	}
-	return buildRailView(uislot.Resolve(uislot.CoreRail, amendments), locale)
+	return filterRailVisible(view, visible)
+}
+
+// filterRailVisible drops the entries visible refuses. Copies only when at
+// least one entry is hidden — never mutates view (coreRailView is shared
+// by every request).
+func filterRailVisible(view []RailEntry, visible func(string) bool) []RailEntry {
+	if visible == nil {
+		return view
+	}
+	for i, e := range view {
+		if e.VisibleIf == "" || visible(e.VisibleIf) {
+			continue
+		}
+		out := make([]RailEntry, i, len(view)-1)
+		copy(out, view[:i])
+		for _, rest := range view[i+1:] {
+			if rest.VisibleIf == "" || visible(rest.VisibleIf) {
+				out = append(out, rest)
+			}
+		}
+		return out
+	}
+	return view
 }
 
 func buildRailView(entries []uislot.Entry, locale string) []RailEntry {
@@ -91,12 +175,13 @@ func buildRailView(entries []uislot.Entry, locale string) []RailEntry {
 	for i, e := range entries {
 		p := railPresentation[e.Key]
 		out[i] = RailEntry{
-			Key:      e.Key,
-			Href:     e.Href,
-			LabelKey: railLabel(locale, e),
-			Icon:     e.Icon,
-			TestID:   p.testID,
-			RailOnly: p.railOnly,
+			Key:       e.Key,
+			Href:      e.Href,
+			LabelKey:  railLabel(locale, e),
+			Icon:      e.Icon,
+			TestID:    p.testID,
+			RailOnly:  p.railOnly,
+			VisibleIf: e.VisibleIf,
 		}
 	}
 	return out

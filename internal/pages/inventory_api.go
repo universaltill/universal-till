@@ -44,6 +44,11 @@ type StockReceiptResponse struct {
 // CreateStockReceipt handles POST /api/inventory/receipt
 func CreateStockReceipt(dp *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#3079: goods-in had no permission check at all.
+		if !canPerform(dp, r, "stock_management") {
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			return
+		}
 		ctx := r.Context()
 
 		var req StockReceiptRequest
@@ -222,6 +227,11 @@ type OverrideResponse struct {
 // CreateNegativeInventoryOverride handles POST /api/inventory/override
 func CreateNegativeInventoryOverride(dp *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#3079: an absolute stock override had no permission check.
+		if !canPerform(dp, r, "stock_management") {
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			return
+		}
 		ctx := r.Context()
 		repo := data.NewPOSRepo(dp.Db)
 
@@ -996,6 +1006,12 @@ func registerInventoryAPI(mux *http.ServeMux, dp *common.Deps) {
 // GetLowStock handles GET /api/inventory/low-stock
 func GetLowStock(dp *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#3079 review: the same stock levels /ui/inventory/stock-table
+		// refuses a cashier.
+		if !canPerform(dp, r, "stock_management") {
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			return
+		}
 		ctx := r.Context()
 		locationID := r.URL.Query().Get("location_id")
 

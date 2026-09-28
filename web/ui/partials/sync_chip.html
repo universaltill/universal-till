@@ -44,13 +44,18 @@
      for `title` plus the full label content — takes over as the element's
      whole accessible name, so .nav-toggle-label's own text is marked
      aria-hidden right alongside it to avoid double-announcing the same
-     content in browse-mode screen readers. */}}
+     content in browse-mode screen readers.
+     ut-docs#3079: /tills and /sync-quarantine are sync_management-gated, so
+     for a viewer without it (.canManage false — a cashier) the SAME control
+     renders as a <span role="group"> instead of an <a href>: identical
+     class, icon, badge, title and aria-label, just nothing to tap into a
+     refusal. */}}
 <span class="sync-chip {{ .class }}">
   {{ if .isReplica -}}
   {{/* ut-docs#405: /tills is a LOCAL route (relative href, this till's own
        server), never the primary's origin — can't strand an operator the
        way linking straight to primaryURL would (ut-docs#390). */}}
-  <a href="/tills" class="nav-toggle"
+  {{ if .canManage }}<a href="/tills" class="nav-toggle"{{ else }}<span role="group" class="nav-toggle"{{ end }}
      title="{{ if .offline }}{{ T "sync.chip_offline" }}{{ else }}{{ T "sync.chip_following" }}{{ end }}"
      aria-label="{{ if .offline }}{{ T "sync.chip_offline" }}{{ else }}{{ T "sync.chip_following" }}{{ end }} — {{ .label }}{{ if .queued }} · {{ .queued }} {{ if eq .queued 1 }}{{ T "sync.chip_queued_one" }}{{ else }}{{ T "sync.chip_queued_other" }}{{ end }}{{ end }}">
     {{/* Queued sales while still "online" is real backlog worth flagging —
@@ -58,7 +63,7 @@
          surfaced as neither a badge nor visible text at rail width). */}}
     <span class="nav-toggle-ico" aria-hidden="true">{{ icon "sync" }}{{ if or .offline .queued }}<span class="nav-badge" aria-hidden="true"></span>{{ end }}</span>
     <span class="nav-toggle-label" aria-hidden="true">{{ .label }}{{ if .queued }} · {{ .queued }} {{ if eq .queued 1 }}{{ T "sync.chip_queued_one" }}{{ else }}{{ T "sync.chip_queued_other" }}{{ end }}{{ end }}</span>
-  </a>
+  {{ if .canManage }}</a>{{ else }}</span>{{ end }}
   {{- else -}}
   {{/* ut-docs#1133 (ADR-0065 follow-up): a quarantined entry outlives the
        till that caused it, so it gets its own link target straight to the
@@ -69,13 +74,13 @@
        quarantined does — additional detail on the SAME control, never a
        new href branch (a pending request is resolved on /tills either
        way, quarantined or not). */}}
-  <a href="{{ if .quarantined }}/sync-quarantine{{ else }}/tills{{ end }}" class="nav-toggle"
+  {{ if .canManage }}<a href="{{ if .quarantined }}/sync-quarantine{{ else }}/tills{{ end }}" class="nav-toggle"{{ else }}<span role="group" class="nav-toggle"{{ end }}
      title="{{ if .quarantined }}{{ T "sync.chip_quarantine_title" }}{{ else if .stale }}{{ T "sync.chip_tills_stale_title" }}{{ else }}{{ T "sync.chip_tills_title" }}{{ end }}"
      aria-label="{{ if .quarantined }}{{ T "sync.chip_quarantine_title" }}{{ else if .stale }}{{ T "sync.chip_tills_stale_title" }}{{ else }}{{ T "sync.chip_tills_title" }}{{ end }} — {{ .label }}{{ if .count }} · {{ .count }} {{ if eq .count 1 }}{{ T "sync.chip_till_one" }}{{ else }}{{ T "sync.chip_till_other" }}{{ end }}{{ end }}{{ if .stale }} · {{ .stale }} {{ if eq .stale 1 }}{{ T "sync.chip_till_offline_one" }}{{ else }}{{ T "sync.chip_till_offline_other" }}{{ end }}{{ end }}{{ if .quarantined }} · {{ .quarantined }} {{ if eq .quarantined 1 }}{{ T "sync.chip_quarantined_one" }}{{ else }}{{ T "sync.chip_quarantined_other" }}{{ end }}{{ end }}{{ if .pending }} · {{ .pending }} {{ if eq .pending 1 }}{{ T "sync.chip_pairing_pending_one" }}{{ else }}{{ T "sync.chip_pairing_pending_other" }}{{ end }}{{ end }}">
     <span class="nav-toggle-ico" aria-hidden="true">{{ icon "sync" }}{{ if or .quarantined .pending }}<span class="nav-badge" aria-hidden="true"></span>{{ end }}</span>
     {{/* ut-docs#405: this till's own name leads, same source (tillNameOrDefault)
          Settings/​/tills already use; the count stays a secondary detail. */}}
     <span class="nav-toggle-label" aria-hidden="true">{{ .label }}{{ if .count }} · {{ .count }} {{ if eq .count 1 }}{{ T "sync.chip_till_one" }}{{ else }}{{ T "sync.chip_till_other" }}{{ end }}{{ end }}{{ if .stale }} · {{ .stale }} {{ if eq .stale 1 }}{{ T "sync.chip_till_offline_one" }}{{ else }}{{ T "sync.chip_till_offline_other" }}{{ end }}{{ end }}{{ if .quarantined }} · {{ .quarantined }} {{ if eq .quarantined 1 }}{{ T "sync.chip_quarantined_one" }}{{ else }}{{ T "sync.chip_quarantined_other" }}{{ end }}{{ end }}{{ if .pending }} · {{ .pending }} {{ if eq .pending 1 }}{{ T "sync.chip_pairing_pending_one" }}{{ else }}{{ T "sync.chip_pairing_pending_other" }}{{ end }}{{ end }}</span>
-  </a>
+  {{ if .canManage }}</a>{{ else }}</span>{{ end }}
   {{- end }}
 </span>
