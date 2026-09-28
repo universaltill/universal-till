@@ -338,14 +338,31 @@ func TestGetLowStockItems_Batch8(t *testing.T) {
 		}
 	}
 
-	// Location filter narrows to that location's rows only.
+	// Location filter narrows to that location's rows; an item stocked
+	// only at another location is listed at qty 0, marked not stocked here
+	// (ut-docs#27).
 	mainOnly, err := repo.GetLowStockItems(ctx, "loc_main")
-	if err != nil || len(mainOnly) != 2 || mainOnly[0].ItemID != "b8-low" || mainOnly[1].ItemID != "b8-just" {
+	if err != nil || len(mainOnly) != 3 || mainOnly[0].ItemID != "b8-low" || mainOnly[1].ItemID != "b8-just" ||
+		mainOnly[2].ItemID != "b8-oth" || !mainOnly[2].NotStockedHere || mainOnly[2].CurrentQty != 0 || mainOnly[2].LocationID != "loc_main" {
 		t.Fatalf("loc_main filter: got %+v err=%v", mainOnly, err)
 	}
+	// loc_back: its own low row, plus the three loc_main-only items (b8-at
+	// included — 10 of 10 at loc_main, but none here) not stocked here.
 	backOnly, err := repo.GetLowStockItems(ctx, "loc_back")
-	if err != nil || len(backOnly) != 1 || backOnly[0].ItemID != "b8-oth" || backOnly[0].LocationName != "Back Store" || backOnly[0].CurrentQty != 1 {
+	if err != nil || len(backOnly) != 4 {
 		t.Fatalf("loc_back filter: got %+v err=%v", backOnly, err)
+	}
+	for _, it := range backOnly {
+		if it.LocationName != "Back Store" {
+			t.Fatalf("loc_back filter: every row is Back Store's, got %+v", it)
+		}
+		if it.ItemID == "b8-oth" {
+			if it.NotStockedHere || it.CurrentQty != 1 {
+				t.Fatalf("b8-oth is stocked here at 1: %+v", it)
+			}
+		} else if !it.NotStockedHere || it.CurrentQty != 0 {
+			t.Fatalf("loc_main-only item on loc_back: %+v, want qty 0, not stocked here", it)
+		}
 	}
 	if none, err := repo.GetLowStockItems(ctx, "loc-nope"); err != nil || len(none) != 0 {
 		t.Fatalf("unknown location: got %+v err=%v", none, err)

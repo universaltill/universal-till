@@ -192,6 +192,12 @@ type LowStockItem struct {
 	// html's data-category already carries it for /catalog. No join: items
 	// is already in every query below's FROM/JOIN.
 	CategoryID string `json:"category_id,omitempty"`
+	// NotStockedHere marks a row on a location-filtered reorder list for an
+	// item (or variant) with no inventory row at that location but rows at
+	// other locations — listed at qty 0, attributed to the filtered
+	// location (ut-docs#27, product owner's decision 2026-09-28). Never set
+	// on an unfiltered list, whose rows are all real stock rows.
+	NotStockedHere bool `json:"not_stocked_here,omitempty"`
 }
 
 // defaultWarnDays is the running-out threshold for an item with no lead
@@ -712,9 +718,52 @@ VALUES (?, ?, 'inventory', ?, 'negative_inventory_override', ?, ?)
 	return overrideID, nil
 }
 
-// GetLowStockItems returns all items where current inventory is below reorder level.
+// GetLowStockItems returns all items where current inventory is below
+// reorder level — LowStockItemsFor with the shop tracking stock.
 func (r *POSRepo) GetLowStockItems(ctx context.Context, locationID string) ([]LowStockItem, error) {
-	query := `
+	return r.LowStockItemsFor(ctx, locationID, false)
+}
+
+// lowStockVariantGuard is the item-scoped queries' ut-docs#2082 guard: a
+// variant-tracked item (has ACTIVE rows in item_variants) with no
+// item-scoped inventory row of its own is NOT "never stocked" — its stock
+// lives entirely on its variants, reported separately by
+// variantLowStockItems. Without it, inv.item_id IS NULL reads exactly like
+// a genuinely untouched item and phantom-reports it as low (qty 0) at every
+// location, even one where its variants hold plenty. Scoped to ACTIVE
+// variants only (independent review finding, #2082): variantLowStockItems
+// only reports an active variant, so an item whose only variant has since
+// been deactivated must fall back to its item-scoped row, not vanish.
+// hasItemRow is the SQL for "this item keeps an item-scoped row" in the
+// query's own scope.
+func lowStockVariantGuard(hasItemRow string) string {
+	return `
+  AND (` + hasItemRow + ` OR NOT EXISTS (
+    SELECT 1 FROM item_variants v WHERE v.item_id = i.id AND v.is_active = 1
+  ))`
+}
+
+// LowStockItemsFor returns the reorder list: every stock-tracked item (and
+// active variant) with a reorder level whose inventory is below it.
+//
+// Unfiltered (locationID ""), one row per real inventory row, plus one row
+// with an empty location for an item never stocked anywhere (a new item
+// awaiting its first delivery belongs on the list).
+//
+// Filtered to a location, one row per item/variant for THAT location (the
+// inventory join is scoped to it): its own row when it has one, else qty 0 —
+// either never stocked anywhere (empty location, as unfiltered), or stocked
+// only at other locations, which is listed attributed to this location and
+// marked NotStockedHere (ut-docs#27: "branch ran out / never received, head
+// office stocks it" is the common multi-location case). shopStockUntracked
+// (the shop sells without tracking stock, pos.allow_negative_inventory)
+// hides those not-stocked-here rows, as does an unknown location; an item
+// set to sell without tracking stock never appears at all.
+func (r *POSRepo) LowStockItemsFor(ctx context.Context, locationID string, shopStockUntracked bool) ([]LowStockItem, error) {
+	var query string
+	var args []any
+	if locationID == "" {
+		query = `
 SELECT
 	i.id,
 	i.name,
@@ -722,43 +771,41 @@ SELECT
 	COALESCE(inv.location_id, ''),
 	COALESCE(sl.name, ''),
 	COALESCE(inv.quantity, 0),
-	i.reorder_level
+	i.reorder_level,
+	0
 FROM items i
 LEFT JOIN inventory inv ON inv.item_id = i.id
 LEFT JOIN stock_locations sl ON sl.id = inv.location_id
 WHERE i.reorder_level > 0
   AND COALESCE(inv.quantity, 0) < i.reorder_level
+  AND i.stock_untracked = 0` + lowStockVariantGuard("inv.item_id IS NOT NULL") + `
+ORDER BY i.name`
+	} else {
+		// elsewhere: no row here (inv.item_id IS NULL) but an item-scoped
+		// row at some other location.
+		query = `
+SELECT
+	i.id,
+	i.name,
+	COALESCE(i.sku, ''),
+	CASE WHEN inv.item_id IS NOT NULL OR elsewhere.item_id IS NOT NULL THEN COALESCE(here.id, '') ELSE '' END,
+	CASE WHEN inv.item_id IS NOT NULL OR elsewhere.item_id IS NOT NULL THEN COALESCE(here.name, '') ELSE '' END,
+	COALESCE(inv.quantity, 0),
+	i.reorder_level,
+	CASE WHEN inv.item_id IS NULL AND elsewhere.item_id IS NOT NULL THEN 1 ELSE 0 END
+FROM items i
+LEFT JOIN inventory inv ON inv.item_id = i.id AND inv.location_id = ?
+LEFT JOIN stock_locations here ON here.id = ?
+LEFT JOIN (SELECT DISTINCT item_id FROM inventory WHERE item_id IS NOT NULL) elsewhere
+  ON elsewhere.item_id = i.id AND inv.item_id IS NULL
+WHERE i.reorder_level > 0
+  AND COALESCE(inv.quantity, 0) < i.reorder_level
   AND i.stock_untracked = 0
-  -- ut-docs#2082: a variant-tracked item (has rows in item_variants) with
-  -- no item-scoped inventory row of its own is NOT "never stocked" — its
-  -- stock lives entirely on its variants, reported separately below by
-  -- variantLowStockItems. Without this guard, inv.item_id IS NULL here
-  -- reads exactly like a genuinely untouched item and phantom-reports it
-  -- as low (qty 0) at every location, even one where its variants
-  -- actually hold plenty of stock. An item that ALSO keeps its own
-  -- item-scoped row despite having variants is untouched by this guard
-  -- (inv.item_id IS NOT NULL covers it). The NOT EXISTS is scoped to
-  -- ACTIVE variants only (independent review finding, #2082) — variantLowStockItems
-  -- below only ever reports an active variant (v.is_active = 1), so an item
-  -- whose only variant has since been deactivated has nothing left to
-  -- report it there; without this v.is_active filter here too, this guard
-  -- would still see "a variant exists" and suppress the item-scoped
-  -- phantom-zero branch, silently dropping the item from the reorder list
-  -- entirely instead of falling back to it.
-  AND (inv.item_id IS NOT NULL OR NOT EXISTS (
-    SELECT 1 FROM item_variants v WHERE v.item_id = i.id AND v.is_active = 1
-  ))
-`
-	args := []any{}
-	if locationID != "" {
-		// inv.location_id IS NULL = never stocked anywhere (LEFT JOIN
-		// missed; the column itself is NOT NULL so this can't over-match)
-		// — a new item awaiting its first delivery belongs on every
-		// location's reorder list.
-		query += ` AND (inv.location_id = ? OR inv.location_id IS NULL)`
-		args = append(args, locationID)
+  AND (elsewhere.item_id IS NULL OR (here.id IS NOT NULL AND ? = 0))` +
+			lowStockVariantGuard("(inv.item_id IS NOT NULL OR elsewhere.item_id IS NOT NULL)") + `
+ORDER BY i.name`
+		args = []any{locationID, locationID, shopStockUntracked}
 	}
-	query += ` ORDER BY i.name`
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -769,7 +816,7 @@ WHERE i.reorder_level > 0
 	var items []LowStockItem
 	for rows.Next() {
 		var item LowStockItem
-		if err := rows.Scan(&item.ItemID, &item.Name, &item.SKU, &item.LocationID, &item.LocationName, &item.CurrentQty, &item.ReorderLevel); err != nil {
+		if err := rows.Scan(&item.ItemID, &item.Name, &item.SKU, &item.LocationID, &item.LocationName, &item.CurrentQty, &item.ReorderLevel, &item.NotStockedHere); err != nil {
 			return nil, fmt.Errorf("scan low stock item: %w", err)
 		}
 		// ut-docs#1610 (review): the joined stock_locations row is NOT
@@ -785,28 +832,30 @@ WHERE i.reorder_level > 0
 		return nil, fmt.Errorf("iterate low stock: %w", err)
 	}
 
-	variants, err := r.variantLowStockItems(ctx, locationID)
+	variants, err := r.variantLowStockItems(ctx, locationID, shopStockUntracked)
 	if err != nil {
 		return nil, err
 	}
 	return append(items, variants...), nil
 }
 
-// variantLowStockItems is GetLowStockItems' variant-scoped counterpart,
+// variantLowStockItems is LowStockItemsFor's variant-scoped counterpart,
 // same ADR-0043 shape as variantStockForExport below: a separate query
 // joined through item_variants instead of items, additive to (never folded
 // into) the parent item's own row — ut-docs#2082. Without this, a
 // variant-tracked item's stock (item_id NULL, variant_id set rows) never
-// matched GetLowStockItems' `inv.item_id = i.id` join, so it read as
+// matched the item query's `inv.item_id = i.id` join, so it read as
 // permanently, unclearably low at a false qty of 0 once its reorder_level
 // was set, regardless of what its variants actually held.
 //
-// Mirrors the item-scoped query's own "never stocked anywhere" inclusion
-// (LEFT JOIN from item_variants, not an INNER JOIN starting at inventory):
-// a variant awaiting its first delivery belongs on the reorder list too,
-// same reasoning as an item-scoped row with no inventory row at all.
-func (r *POSRepo) variantLowStockItems(ctx context.Context, locationID string) ([]LowStockItem, error) {
-	query := `
+// Mirrors the item-scoped query row for row: never-stocked variants are
+// listed (LEFT JOIN from item_variants), and on a location-filtered list a
+// variant stocked only elsewhere is listed NotStockedHere (ut-docs#27).
+func (r *POSRepo) variantLowStockItems(ctx context.Context, locationID string, shopStockUntracked bool) ([]LowStockItem, error) {
+	var query string
+	var args []any
+	if locationID == "" {
+		query = `
 SELECT
 	i.id,
 	i.name,
@@ -816,7 +865,8 @@ SELECT
 	COALESCE(inv.location_id, ''),
 	COALESCE(sl.name, ''),
 	COALESCE(inv.quantity, 0),
-	i.reorder_level
+	i.reorder_level,
+	0
 FROM item_variants v
 JOIN items i ON i.id = v.item_id
 LEFT JOIN inventory inv ON inv.variant_id = v.id
@@ -825,13 +875,34 @@ WHERE i.reorder_level > 0
   AND COALESCE(inv.quantity, 0) < i.reorder_level
   AND i.stock_untracked = 0
   AND v.is_active = 1
-`
-	args := []any{}
-	if locationID != "" {
-		query += ` AND (inv.location_id = ? OR inv.location_id IS NULL)`
-		args = append(args, locationID)
+ORDER BY i.name, v.name`
+	} else {
+		query = `
+SELECT
+	i.id,
+	i.name,
+	COALESCE(v.sku, ''),
+	v.id,
+	v.name,
+	CASE WHEN inv.variant_id IS NOT NULL OR elsewhere.variant_id IS NOT NULL THEN COALESCE(here.id, '') ELSE '' END,
+	CASE WHEN inv.variant_id IS NOT NULL OR elsewhere.variant_id IS NOT NULL THEN COALESCE(here.name, '') ELSE '' END,
+	COALESCE(inv.quantity, 0),
+	i.reorder_level,
+	CASE WHEN inv.variant_id IS NULL AND elsewhere.variant_id IS NOT NULL THEN 1 ELSE 0 END
+FROM item_variants v
+JOIN items i ON i.id = v.item_id
+LEFT JOIN inventory inv ON inv.variant_id = v.id AND inv.location_id = ?
+LEFT JOIN stock_locations here ON here.id = ?
+LEFT JOIN (SELECT DISTINCT variant_id FROM inventory WHERE variant_id IS NOT NULL) elsewhere
+  ON elsewhere.variant_id = v.id AND inv.variant_id IS NULL
+WHERE i.reorder_level > 0
+  AND COALESCE(inv.quantity, 0) < i.reorder_level
+  AND i.stock_untracked = 0
+  AND v.is_active = 1
+  AND (elsewhere.variant_id IS NULL OR (here.id IS NOT NULL AND ? = 0))
+ORDER BY i.name, v.name`
+		args = []any{locationID, locationID, shopStockUntracked}
 	}
-	query += ` ORDER BY i.name, v.name`
 
 	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -843,7 +914,7 @@ WHERE i.reorder_level > 0
 	for rows.Next() {
 		var item LowStockItem
 		if err := rows.Scan(&item.ItemID, &item.Name, &item.SKU, &item.VariantID, &item.VariantName,
-			&item.LocationID, &item.LocationName, &item.CurrentQty, &item.ReorderLevel); err != nil {
+			&item.LocationID, &item.LocationName, &item.CurrentQty, &item.ReorderLevel, &item.NotStockedHere); err != nil {
 			return nil, fmt.Errorf("scan variant low stock item: %w", err)
 		}
 		item.LocationName = stripRetireMangle(item.LocationID, item.LocationName)

@@ -858,6 +858,7 @@
   "inventory.low_stock": "Low Stock",
   "inventory.manager_pin": "Manager PIN",
   "inventory.manager_pin_placeholder": "if signed in as cashier",
+  "inventory.not_stocked_here": "Not stocked here",
   "inventory.order_hint": "order ~",
   "inventory.order_hint_title": "Suggested order to hold two weeks of stock at the current selling rate",
   "inventory.original_receipt": "Original receipt no.",

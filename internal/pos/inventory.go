@@ -25,3 +25,9 @@ func RecordNegativeInventoryOverride(ctx context.Context, sqlDB *sql.DB, overrid
 func GetLowStockItems(ctx context.Context, sqlDB *sql.DB, locationID string) ([]LowStockItem, error) {
 	return data.NewPOSRepo(sqlDB).GetLowStockItems(ctx, locationID)
 }
+
+// LowStockItemsFor is GetLowStockItems with the shop-wide "sell items
+// without tracking stock" setting applied (ut-docs#27).
+func LowStockItemsFor(ctx context.Context, sqlDB *sql.DB, locationID string, shopStockUntracked bool) ([]LowStockItem, error) {
+	return data.NewPOSRepo(sqlDB).LowStockItemsFor(ctx, locationID, shopStockUntracked)
+}

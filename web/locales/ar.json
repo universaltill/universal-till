@@ -858,6 +858,7 @@
   "inventory.low_stock": "مخزون منخفض",
   "inventory.manager_pin": "الرمز السري للمدير",
   "inventory.manager_pin_placeholder": "إذا سجّلت الدخول كصرّاف",
+  "inventory.not_stocked_here": "غير متوفر في هذا الموقع",
   "inventory.order_hint": "اطلب ~",
   "inventory.order_hint_title": "الطلب المقترح لتغطية أسبوعين من المخزون بمعدل البيع الحالي",
   "inventory.original_receipt": "رقم الإيصال الأصلي",

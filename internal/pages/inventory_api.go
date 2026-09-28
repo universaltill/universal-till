@@ -1015,7 +1015,9 @@ func GetLowStock(dp *common.Deps) http.HandlerFunc {
 		ctx := r.Context()
 		locationID := r.URL.Query().Get("location_id")
 
-		items, err := pos.GetLowStockItems(ctx, dp.Db, locationID)
+		// ut-docs#27: a shop that sells without tracking stock has nothing
+		// to reorder at a location that simply doesn't stock an item.
+		items, err := pos.LowStockItemsFor(ctx, dp.Db, locationID, dp.CurrentState().AllowNegativeInventory)
 		if err != nil {
 			if strings.Contains(r.Header.Get("Accept"), "application/json") {
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"data": nil, "error": err.Error()})
@@ -1043,6 +1045,7 @@ func GetLowStock(dp *common.Deps) http.HandlerFunc {
 			return
 		}
 
+		notStockedHere := html.EscapeString(httpx.T(httpx.ResolveLocale(w, r), "inventory.not_stocked_here"))
 		tableHTML := "<table class='table'><thead><tr><th>Item</th><th>SKU</th><th>Location</th><th>Current</th><th>Reorder Level</th></tr></thead><tbody>"
 		for _, item := range items {
 			// item.Name/SKU/LocationName come from persisted catalog/location
@@ -1066,9 +1069,14 @@ func GetLowStock(dp *common.Deps) http.HandlerFunc {
 			if item.VariantName != "" {
 				displayName = item.Name + " — " + item.VariantName
 			}
+			// ut-docs#27: a row for an item stocked only at other locations.
+			locationCell := html.EscapeString(item.LocationName)
+			if item.NotStockedHere {
+				locationCell += " <span class='muted'>(" + notStockedHere + ")</span>"
+			}
 			tableHTML += fmt.Sprintf("<tr class='stock-row' data-item='%s' data-name='%s' data-sku='%s' data-location='%s' data-location-name='%s' data-variant='%s'><td>%s</td><td>%s</td><td>%s</td><td class='low-stock'>%.2f</td><td>%d</td></tr>",
 				html.EscapeString(item.ItemID), html.EscapeString(displayName), html.EscapeString(item.SKU), html.EscapeString(item.LocationID), html.EscapeString(item.LocationName), html.EscapeString(item.VariantID),
-				html.EscapeString(displayName), html.EscapeString(item.SKU), html.EscapeString(item.LocationName), item.CurrentQty, item.ReorderLevel)
+				html.EscapeString(displayName), html.EscapeString(item.SKU), locationCell, item.CurrentQty, item.ReorderLevel)
 		}
 		tableHTML += "</tbody></table>"
 		tableHTML += fmt.Sprintf("<script>document.getElementById('low-stock-badge').textContent = '%d';</script>", len(items))

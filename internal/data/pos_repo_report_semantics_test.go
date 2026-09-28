@@ -171,9 +171,9 @@ func TestGetLowStockItems_LocationFilterIncludesNeverStocked(t *testing.T) {
 	b8Item(t, d, "lf-never", 500, nil, 1)
 	mustExec(t, d, `UPDATE items SET reorder_level = 5 WHERE id = 'lf-never'`)
 
-	// An item stocked (and low) at a DIFFERENT location must stay out of
-	// this location's filtered list — the IS NULL widening must not
-	// over-match rows that belong elsewhere.
+	// An item stocked (and low) at a DIFFERENT location must not leak that
+	// location's row into this filtered list — it is listed for THIS
+	// location at qty 0, marked not stocked here (ut-docs#27).
 	mustExec(t, d, `INSERT INTO stock_locations (id, name) VALUES ('loc_other', 'Elsewhere')`)
 	b8Item(t, d, "lf-elsewhere", 500, nil, 1)
 	mustExec(t, d, `UPDATE items SET reorder_level = 5 WHERE id = 'lf-elsewhere'`)
@@ -185,7 +185,13 @@ func TestGetLowStockItems_LocationFilterIncludesNeverStocked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].ItemID != "lf-never" || items[0].CurrentQty != 0 {
-		t.Fatalf("location-filtered report must include ONLY the never-stocked item (not other locations' rows), got %+v", items)
+	if len(items) != 2 || items[0].ItemID != "lf-elsewhere" || items[1].ItemID != "lf-never" || items[1].CurrentQty != 0 {
+		t.Fatalf("location-filtered report must include the never-stocked and the stocked-elsewhere item, got %+v", items)
+	}
+	if e := items[0]; !e.NotStockedHere || e.CurrentQty != 0 || e.LocationID != "loc_lf" {
+		t.Fatalf("stocked-elsewhere row must be this location's, qty 0, not stocked here (not loc_other's qty 1): %+v", e)
+	}
+	if n := items[1]; n.NotStockedHere || n.LocationID != "" {
+		t.Fatalf("never-stocked row keeps an empty location and no not-stocked-here mark: %+v", n)
 	}
 }
