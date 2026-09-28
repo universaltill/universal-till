@@ -307,15 +307,15 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// same as installableLangs' own catalog fetch just above, and never
 		// on the checkout path, so this doesn't violate offline-first — but
 		// it is a small first-boot latency regression for the common
-		// non-German till, worth knowing if setup ever feels slower.
+		// non-German till, worth knowing if setup ever feels slower. Since
+		// ut-docs#1512 an unreachable catalog also puts the (Offline) tile's
+		// markup in the DOM for every till; step 3's Germany-only routing
+		// still keeps it off a non-DE operator's screen.
 		//
 		// The second return (catalogUnavailable) is deliberately NOT put in
-		// data: unlike langCatalogUnavailable there is no "…once connected"
-		// note to drive with it yet, and an unread template key reads as if
-		// there were. Wiring that note is a follow-up (see the code-review
-		// record for ut-docs#1180) — it needs product sign-off on whether an
-		// unreachable catalog should say anything at all about a *fiscal*
-		// plugin during setup, plus copy in every locale.
+		// data: ut-docs#1512 carries the offline state on the tile itself
+		// (installableTaxPlugin.Offline), which drives step 3's "couldn't
+		// check yet — we'll install it when you're online" note and button.
 		taxPlugin, _ := setupInstallableTaxPlugin(r.Context(), d, tseProvisionCountry)
 		data["installableTaxPlugin"] = taxPlugin
 		// tax_plugin_pending: set by POST /api/setup/tax-plugin's failure
