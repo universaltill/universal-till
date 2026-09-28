@@ -52,7 +52,9 @@ check_wf() {
   if grep -qE '^  (push|release|pull_request|pull_request_target|workflow_run|issue_comment|schedule):' <<<"$on"; then
     echo "FAIL:forbidden trigger (push/release/pull_request*/workflow_run/issue_comment/schedule)"
   fi
-  if grep -E '^ *(- )?uses: ' "$wf" | grep -vqE 'uses: [^@ ]+@[0-9a-f]{40}( |$)'; then
+  local uses
+  uses="$(grep -E '^ *(- )?uses: ' "$wf" || true)"
+  if [ -n "$uses" ] && grep -vqE 'uses: [^@ ]+@[0-9a-f]{40}( |$)' <<<"$uses"; then
     echo "FAIL:an action is not pinned to a commit SHA"
   fi
   # The archive step (from its `- name:` to the next) must be unsigned.
@@ -81,7 +83,9 @@ check_wf() {
   grep -qE 'chmod 600' <<<"$runs" || echo "FAIL:key file not chmod 600"
   # The key's only writer is `printf … | base64 --decode > file`; any other
   # echo/printf/cat/tee of it could land it in the log.
-  if grep -E '(echo|printf|cat|tee)[^#]*\$\{?ASC_KEY_P8' <<<"$runs" | grep -vqE '\| *base64 (-d|--decode) *>'; then
+  local p8
+  p8="$(grep -E '(echo|printf|cat|tee)[^#]*\$\{?ASC_KEY_P8' <<<"$runs" || true)"
+  if [ -n "$p8" ] && grep -vqE '\| *base64 (-d|--decode) *>' <<<"$p8"; then
     echo "FAIL:ASC_KEY_P8 printed other than piped into base64 --decode"
   fi
   # A step (from its `- name:` to the next) that runs if: always() and
@@ -158,9 +162,10 @@ else
 fi
 
 # release.yml's publish-release job is what starts the upload for a release.
+publish_job="$(awk '/^  publish-release:/{f=1} f && /^  [a-z-]+:$/ && !/publish-release/{f=0} f' .github/workflows/release.yml)"
 # shellcheck disable=SC2016
 if grep -qE 'gh workflow run ios-testflight\.yml --ref "\$TAG" -f version=' .github/workflows/release.yml \
-  && awk '/^  publish-release:/{f=1} f && /^  [a-z-]+:$/ && !/publish-release/{f=0} f' .github/workflows/release.yml | grep -qE '^      actions: write$'; then
+  && grep -qE '^      actions: write$' <<<"$publish_job"; then
   pass "release.yml publish-release dispatches ios-testflight.yml with the release version"
 else
   fail "release.yml publish-release does not dispatch ios-testflight.yml (with actions: write)"

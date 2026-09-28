@@ -89,7 +89,8 @@ cat >"${OUT}/AppIcon.appiconset/Contents.json" <<'JSON'
 }
 JSON
 
-if sips -g hasAlpha "$png" | grep -qF 'hasAlpha: yes'; then
+alpha="$(sips -g hasAlpha "$png")"
+if grep -qF 'hasAlpha: yes' <<<"$alpha"; then
   echo "make-app-icon: ${png} still has an alpha channel" >&2
   exit 1
 fi
