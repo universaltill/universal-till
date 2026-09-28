@@ -15,13 +15,15 @@ package data
 // Open orders, paid through the normal tender -- a real signed sale) and
 // writes its row here with status "held" (Create), to allocate the
 // "C-" number and record what was ordered. Rows in "open" are orders
-// placed before that change; the staff board (ListOpen) now only ever
-// shows those.
+// placed before that change (ListOpen); since the reopened #2703 they are
+// listed under Open orders' "Pay at the counter" tab and become payable held
+// sales when opened (ConvertOpenToHeld).
 
 import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -52,14 +54,18 @@ const counterOrderHeldRetention = 90 * 24 * time.Hour
 // enough that two replicas' generated ids practically never collide.
 const counterOrderTillIDPrefixLen = 6
 
-// KioskCounterOrderStatusOpen/Collected are the only two states this table
-// tracks — a plain two-state lifecycle, unlike the sales-order status
-// ladder (pos.OrderStatus*), since a counter order has no kitchen-progress
-// steps of its own to track here (kitchen ticket printing is fire-and-
-// forget, not tracked back into this row).
+// KioskCounterOrderStatusOpen/Held are the states this table's code still
+// writes -- a plain lifecycle, unlike the sales-order status ladder
+// (pos.OrderStatus*), since a counter order has no kitchen-progress steps of
+// its own to track here (kitchen ticket printing is fire-and-forget, not
+// tracked back into this row). Rows may also carry the historical value
+// "collected" (the removed "Mark collected" action, which closed an order
+// unpaid; ut-docs#2703 reopened): nothing writes it any more, ListOpen
+// (status = open) and the held-row prune (status = held) skip such rows,
+// and Get returns them as-is -- they load fine and are simply never acted
+// on.
 const (
-	KioskCounterOrderStatusOpen      = "open"
-	KioskCounterOrderStatusCollected = "collected"
+	KioskCounterOrderStatusOpen = "open"
 	// KioskCounterOrderStatusHeld (ut-docs#2703): since the product owner's
 	// "it should be exactly the same as a hold order" decision, a
 	// pay-at-counter checkout parks the kiosk basket as a held sale -- the
@@ -67,7 +73,9 @@ const (
 	// tender -- and this row is only the record of the order number it was
 	// given (the "C-" sequence lives in this table) and of what was ordered.
 	// A "held" row is never listed on the legacy staff board (ListOpen) and
-	// never collectable (MarkCollected only moves "open" rows).
+	// never collectable. Since the reopened ut-docs#2703 nothing marks any
+	// row "collected" (that closed an order unpaid); ConvertOpenToHeld
+	// moves a legacy "open" row here when the cashier opens it.
 	KioskCounterOrderStatusHeld = "held"
 )
 
@@ -81,8 +89,8 @@ type KioskCounterOrderLine struct {
 	// printCounterOrderTicket's kitchen ticket (self_order_shop.go),
 	// which must stay Latin (an ESC/POS printer can't render Arabic-Indic
 	// glyphs, same reasoning as print.KitchenItem.Qty elsewhere), and
-	// counterOrderItemsSummary's on-screen staff board
-	// (kiosk_counter_orders_page.go), which should follow the viewing
+	// counterOrderItemsSummary's on-screen list on Open orders'
+	// pay-at-the-counter tab (open_orders_counter.go), which should follow the viewing
 	// operator's locale like every other on-screen quantity. A single
 	// pre-formatted string could only ever be right for one of the two.
 	Qty       float64
@@ -143,11 +151,13 @@ func (l *KioskCounterOrderLine) UnmarshalJSON(b []byte) error {
 
 // KioskCounterOrder is one "pay at counter" kiosk order.
 type KioskCounterOrder struct {
-	ID          string
-	DisplayNo   string
-	OrderType   string
-	Status      string
-	CreatedAt   string
+	ID        string
+	DisplayNo string
+	OrderType string
+	Status    string
+	CreatedAt string
+	// CollectedAt is set only on historical "collected" rows (see the
+	// status constants); nothing writes it any more.
 	CollectedAt string
 	// TableID/TableLabel (ut-docs#815, migration 029) are the physical
 	// table this order was placed from, via /self-order?table=<id> on the
@@ -194,8 +204,8 @@ func (r *KioskCounterOrdersRepo) Create(ctx context.Context, order KioskCounterO
 	// ut-docs#2703: the one caller-chosen status is "held" -- a
 	// pay-at-counter order whose payable basket was parked as a held sale
 	// (completeCounterOrderCheckout): same "C-" number allocation, but the
-	// legacy staff board never lists it and "Mark collected" can never
-	// close it without payment. Anything else starts "open", as before.
+	// legacy open list never shows it and nothing can close it without
+	// payment. Anything else starts "open", as before.
 	status := KioskCounterOrderStatusOpen
 	if order.Status == KioskCounterOrderStatusHeld {
 		status = KioskCounterOrderStatusHeld
@@ -353,26 +363,77 @@ WHERE k.status = ? ORDER BY k.created_at ASC`, KioskCounterOrderStatusOpen)
 	return out, nil
 }
 
-// MarkCollected moves id to the terminal 'collected' state and stamps
-// collected_at. A missing/already-collected id is a silent no-op (0 rows
-// affected) — the caller (the mark-collected API) treats "not found" and
-// "already collected" the same way a re-tapped button should: nothing
-// left to do, not an error.
-//
-// The `status = open` clause is what actually makes the "already
-// collected" half of that true (review finding, ut-docs#582): the board
-// polls every 15s, so two tills can both be showing the same open row,
-// and without it the second tap would overwrite the FIRST tap's
-// collected_at with a later time — quietly rewriting when the customer
-// actually took their order. Collection time is the only timestamp this
-// row carries beyond created_at; it should record the first collection,
-// not the last tap.
-func (r *KioskCounterOrdersRepo) MarkCollected(ctx context.Context, id string) error {
-	now := time.Now().UTC().Format(time.RFC3339)
-	if _, err := r.db.ExecContext(ctx, `
-UPDATE kiosk_counter_orders SET status = ?, collected_at = ? WHERE id = ? AND status = ?`,
-		KioskCounterOrderStatusCollected, now, id, KioskCounterOrderStatusOpen); err != nil {
-		return fmt.Errorf("mark counter order collected: %w", err)
+// Get returns one counter order by id, any status, with its table label
+// resolved fresh (same LEFT JOIN as ListOpen). found=false for an unknown id.
+func (r *KioskCounterOrdersRepo) Get(ctx context.Context, id string) (KioskCounterOrder, bool, error) {
+	var o KioskCounterOrder
+	var linesJSON string
+	err := r.db.QueryRowContext(ctx, `
+SELECT k.id, k.display_no, k.order_type, k.lines_json, k.status, k.created_at, COALESCE(k.collected_at, ''),
+       COALESCE(k.table_id, ''), COALESCE(t.label, '')
+FROM kiosk_counter_orders k LEFT JOIN tables t ON t.id = k.table_id
+WHERE k.id = ?`, id).Scan(&o.ID, &o.DisplayNo, &o.OrderType, &linesJSON, &o.Status, &o.CreatedAt, &o.CollectedAt, &o.TableID, &o.TableLabel)
+	if errors.Is(err, sql.ErrNoRows) {
+		return KioskCounterOrder{}, false, nil
 	}
-	return nil
+	if err != nil {
+		return KioskCounterOrder{}, false, fmt.Errorf("get counter order: %w", err)
+	}
+	if linesJSON != "" {
+		if err := json.Unmarshal([]byte(linesJSON), &o.Lines); err != nil {
+			return KioskCounterOrder{}, false, fmt.Errorf("unmarshal counter order lines: %w", err)
+		}
+	}
+	return o, true, nil
+}
+
+// ConvertOpenToHeld (ut-docs#2703, reopened) turns a legacy "open" counter
+// order -- placed before pay-at-counter orders were parked as held sales,
+// and until now closable only unpaid via "Mark collected" -- into a held
+// sale the cashier can resume and take payment for. h is the held sale the
+// caller priced from the current catalog; h.ID must be the counter row's
+// own id, so the order keeps one identity (the same id-sharing the
+// pay-at-counter checkout uses; nothing in the held-sale code depends on the
+// "hold-" prefix).
+//
+// One transaction (BEGIN IMMEDIATE, internal/db/db.go): the row moves
+// open -> held only if it is still open, and the held_sales row is written
+// only when that move happened. So two taps on this till's database -- a
+// double tap, or two sessions -- produce exactly one held sale: the loser
+// gets converted=false and a nil error, and simply resumes the order the
+// winner parked. A failure rolls both back, leaving the order open and
+// listed. The held_sales row is written directly (primary_synced=0, not
+// via the replica write-through): a legacy kiosk row only ever existed on
+// the till that took it, and the caller resumes the new held sale in the
+// same request.
+func (r *KioskCounterOrdersRepo) ConvertOpenToHeld(ctx context.Context, h HeldSale) (converted bool, err error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("begin counter order convert: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // no-op once Commit succeeds
+	res, err := tx.ExecContext(ctx, `
+UPDATE kiosk_counter_orders SET status = ? WHERE id = ? AND status = ?`,
+		KioskCounterOrderStatusHeld, h.ID, KioskCounterOrderStatusOpen)
+	if err != nil {
+		return false, fmt.Errorf("mark counter order held: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return false, fmt.Errorf("mark counter order held: rows affected: %w", err)
+	} else if n == 0 {
+		return false, nil
+	}
+	// Same columns as HeldSalesRepo.Upsert's insert branch: created_at kept
+	// from the caller (the order's own age), updated_at now, not yet
+	// confirmed on any primary (a local-only row, resumed straight away).
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id, created_at, updated_at, primary_synced)
+VALUES (?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), datetime('now')), datetime('now'), 0)`,
+		h.ID, h.Label, h.TotalMinor, h.LineCount, h.Payload, nullIfEmpty(h.TableID), h.CreatedAt); err != nil {
+		return false, fmt.Errorf("insert held sale for counter order: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("commit counter order convert: %w", err)
+	}
+	return true, nil
 }

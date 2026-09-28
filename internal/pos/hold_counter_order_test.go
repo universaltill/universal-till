@@ -110,3 +110,54 @@ func TestCounterOrderFields_ClearedWhenLastLineVoided(t *testing.T) {
 		})
 	}
 }
+
+// ut-docs#2703 (reopened, review): lines of a legacy counter order that
+// matched nothing in the catalog ride IN the held sale's payload
+// (BasketSnapshot.AddByHand), so every resume of that order -- any till,
+// any number of park/resume cycles -- shows the "add by hand" notice until
+// the sale is paid, cleared, or the cashier dismisses it.
+func TestSnapshot_AddByHandTravelsWithTheOrder(t *testing.T) {
+	s := newHoldService()
+	_, _ = s.Scan("A")
+	snap := s.Snapshot()
+	if len(snap.AddByHand) != 0 {
+		t.Fatalf("a till-rung basket has nothing to add by hand: %+v", snap.AddByHand)
+	}
+	snap.AddByHand = []ByHandLine{{Name: "Black Shadow", Qty: 2, Modifiers: []string{"Oat milk"}}}
+	raw, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back BasketSnapshot
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+	s.Reset()
+	s.RestoreHeld(back, HeldOrigin{ID: "h1"})
+	if got := s.Basket().AddByHand; len(got) != 1 || got[0].Name != "Black Shadow" || got[0].Qty != 2 || len(got[0].Modifiers) != 1 {
+		t.Fatalf("restored basket lost the add-by-hand lines: %+v", got)
+	}
+	// Survives edits: scanning, and voiding every line (the cashier may be
+	// about to ring the missing items up by hand).
+	_, _ = s.Scan("A")
+	s.Remove("A")
+	if len(s.Basket().AddByHand) != 1 {
+		t.Fatal("editing the basket must not drop the add-by-hand lines")
+	}
+	_, _ = s.Scan("A")
+	// Re-park keeps them.
+	if again := s.Snapshot(); len(again.AddByHand) != 1 {
+		t.Fatalf("re-park snapshot dropped the add-by-hand lines: %+v", again)
+	}
+	// Dismissed: gone, and the next park no longer carries them.
+	s.DismissAddByHand()
+	if len(s.Basket().AddByHand) != 0 || len(s.Snapshot().AddByHand) != 0 {
+		t.Fatal("dismiss must clear the add-by-hand lines")
+	}
+	// Reset (a cleared or completed sale) never leaks them into the next one.
+	s.RestoreHeld(back, HeldOrigin{ID: "h1"})
+	s.Reset()
+	if len(s.Basket().AddByHand) != 0 {
+		t.Fatal("Reset must clear the add-by-hand lines")
+	}
+}

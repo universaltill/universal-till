@@ -485,7 +485,10 @@ export async function drainParkedOrders(request: APIRequestContext) {
   let lastID = '';
   for (let round = 0; round < 50; round++) {
     await request.post('/api/pos/reset').catch(() => {});
-    const listing = await request.get('/ui/parked-orders');
+    // ut-docs#2703 (reopened): the popup has two tabs (On hold / Pay at the
+    // counter) and renders one at a time, so both are read.
+    const listing = await request.get('/ui/parked-orders?tab=hold');
+    const counterListing = await request.get('/ui/parked-orders?tab=counter');
     // An independent review caught this: a non-2xx here (500 on a repo read
     // failure -- internal/pages/open_orders_page.go -- or an auth-project
     // caller with no session getting redirected to /login) parses no
@@ -494,12 +497,24 @@ export async function drainParkedOrders(request: APIRequestContext) {
     // fixtures.ts's own auto-fixture, so a swallowed failure here would
     // reintroduce exactly the silent, order-dependent leak this function
     // exists to close -- fail loudly instead.
-    if (!listing.ok()) {
-      throw new Error(`drainParkedOrders: GET /ui/parked-orders returned ${listing.status()}, expected 2xx`);
+    if (!listing.ok() || !counterListing.ok()) {
+      throw new Error(`drainParkedOrders: GET /ui/parked-orders returned ${listing.status()}/${counterListing.status()}, expected 2xx`);
     }
-    const body = await listing.text();
+    const body = (await listing.text()) + (await counterListing.text());
     const id = body.match(/data-held-id="([^"]+)"/)?.[1];
-    if (!id) return;
+    if (!id) {
+      // A legacy pay-at-counter order (placed before such orders were held
+      // sales) is not a held sale: opening it converts it into one and
+      // resumes it into the basket, which the next round's reset clears.
+      const legacy = body.match(/data-counter-id="([^"]+)"/)?.[1];
+      if (!legacy) return;
+      if (legacy === lastID) {
+        throw new Error(`drainParkedOrders: legacy counter order ${legacy} survived being opened`);
+      }
+      lastID = legacy;
+      await request.post('/open-orders/counter/open', { form: { id: legacy }, maxRedirects: 0 });
+      continue;
+    }
     if (id === lastID) {
       // Quote the refusal's own toast rather than the whole basket partial it
       // is wrapped in -- the partial leads with ~200 chars of markup and
