@@ -248,3 +248,17 @@ func TestInitMarketplaceStoreIDFallsBackToStoreName(t *testing.T) {
 		t.Errorf("Marketplace.StoreID = %q, want it to fall back to StoreName", cfg.Marketplace.StoreID)
 	}
 }
+
+// ut-docs#3096: a shop must never keep, or register under, a default name.
+func TestIsPlaceholderStoreName(t *testing.T) {
+	for _, name := range []string{"", "   ", "My Store", " my store ", "MY STORE", "Universal Till store", "universal till STORE"} {
+		if !IsPlaceholderStoreName(name) {
+			t.Errorf("IsPlaceholderStoreName(%q) = false, want true", name)
+		}
+	}
+	for _, name := range []string{"Corner Café", "My Store Berlin", "Bäckerei", "Store"} {
+		if IsPlaceholderStoreName(name) {
+			t.Errorf("IsPlaceholderStoreName(%q) = true, want false", name)
+		}
+	}
+}
