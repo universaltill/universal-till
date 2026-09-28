@@ -4083,6 +4083,39 @@ body.login-screen {
 .users-form form { display: flex; flex-direction: column; gap: .7rem; }
 @media (max-width: 900px) { .users-layout { grid-template-columns: 1fr; } }
 
+/* Permissions matrix (/users/permissions, ut-docs#3132). The grid scrolls
+   sideways inside its own card, never the page; the action column stays
+   pinned at the card's inline-start edge while the role columns scroll
+   under it, so a checkbox is never read against the wrong action. The
+   table's generic `overflow: hidden` (table.table above) would make the
+   table itself the scroll container and defeat `position: sticky`, so it
+   is `clip` here (same rounded-corner clipping, no scroll container). */
+.perm-card { min-inline-size: 0; }
+.perm-scroll { overflow-x: auto; max-inline-size: 100%; }
+.card table.perm-table { overflow: clip; }
+.perm-table .perm-action {
+  position: sticky; inset-inline-start: 0; z-index: 1;
+  background: var(--surface);
+  min-inline-size: 12rem;
+  border-inline-end: 1px solid var(--border);
+}
+.perm-table tbody th.perm-action {
+  text-transform: none; letter-spacing: normal; font-size: inherit;
+  font-weight: 400; color: var(--text); padding: .5rem .6rem;
+  border-bottom: 1px solid var(--border); vertical-align: top;
+}
+.perm-table tbody tr:last-child th.perm-action { border-bottom: none; }
+.perm-label { display: block; font-weight: 600; }
+.perm-desc, .perm-unlocks { display: block; font-size: .8rem; line-height: 1.35; margin-block-start: .15rem; }
+.perm-unlocks { font-weight: 600; }
+.perm-table .perm-cell { text-align: center; min-inline-size: 4.5rem; }
+.perm-table .perm-group-head { background: var(--surface-2); padding-block: .4rem; }
+.perm-group-label { position: sticky; inset-inline-start: .6rem; }
+@media (max-width: 480px) {
+  .perm-table .perm-action { min-inline-size: 9rem; max-inline-size: 11rem; }
+  .perm-table .perm-cell { min-inline-size: 3.5rem; }
+}
+
 /* Fiscal register (ut-docs#665) -- one block per business location inside
    .users-list; without this, consecutive locations' tables run straight
    into each other with no visual break. */
