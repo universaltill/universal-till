@@ -93,9 +93,9 @@ func TestProbeURL(t *testing.T) {
 		{"http://127.1.2.3/api", "", false},
 		{"http://[::1]:8081/api", "", false},
 	} {
-		got, ok := ProbeURL(c.in)
+		got, ok := probeURL(c.in, false)
 		if got != c.want || ok != c.ok {
-			t.Errorf("ProbeURL(%q) = %q, %v; want %q, %v", c.in, got, ok, c.want, c.ok)
+			t.Errorf("probeURL(%q) = %q, %v; want %q, %v", c.in, got, ok, c.want, c.ok)
 		}
 	}
 }
@@ -255,4 +255,12 @@ func TestStateJSON(t *testing.T) {
 	if p := Unreachable.Reachable(); p == nil || *p {
 		t.Error("Unreachable must map to false")
 	}
+}
+
+// snapshot reads the cached state and whether a probe runs, without
+// starting one (test-only: production reads go through Status).
+func (m *Monitor) snapshot() (State, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.state, m.inFlight
 }

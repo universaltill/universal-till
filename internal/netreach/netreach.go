@@ -51,17 +51,6 @@ const (
 	Unreachable
 )
 
-func (s State) String() string {
-	switch s {
-	case Reachable:
-		return "reachable"
-	case Unreachable:
-		return "unreachable"
-	default:
-		return "unknown"
-	}
-}
-
 // Reachable maps s to the JSON tri-state: nil (unknown), true or false.
 func (s State) Reachable() *bool {
 	switch s {
@@ -135,10 +124,6 @@ func New(o Options) *Monitor {
 	return m
 }
 
-// ProbeURL is the health URL probed for endpoint — scheme://host[:port]/healthz
-// — and false when a Monitor for it would be disabled.
-func ProbeURL(endpoint string) (string, bool) { return probeURL(endpoint, false) }
-
 func probeURL(endpoint string, allowLoopback bool) (string, bool) {
 	endpoint = strings.TrimSpace(endpoint)
 	if endpoint == "" {
@@ -180,14 +165,6 @@ func (m *Monitor) Status() State {
 		go m.probe()
 	}
 	return m.state
-}
-
-// snapshot reads the cached state and whether a probe runs, without
-// starting one.
-func (m *Monitor) snapshot() (State, bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.state, m.inFlight
 }
 
 // probe runs one bounded request and records its outcome.
