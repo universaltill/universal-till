@@ -1805,12 +1805,13 @@ func TestSettingsPage_NavIndexNeverLeaksManagerOnlyRowsToCashier(t *testing.T) {
 	}
 }
 
-// ADR-0088, ut-docs#1913: with no `layout` plugin active, GET /settings'
-// server-rendered #settings-nav-index must resolve to exactly
-// uislot.CoreSettings' rows, in its declared order, with no group heading —
-// the "Zero-plugin Settings page is unchanged" acceptance criterion, pinned
-// at the actual HTTP-render level (settingsnav's own package tests already
-// pin Resolve directly; this proves the handler actually wires it through).
+// ADR-0088, ut-docs#1913, categories ut-docs#3090: with no `layout` plugin
+// active, GET /settings' server-rendered #settings-nav-index lists every
+// uislot.CoreSettings row gathered under its category (My shop first,
+// Advanced last), each tagged with its category id, and the landing grid
+// renders one tile per category — pinned at the actual HTTP-render level
+// (settingsnav's own package tests pin Resolve/Categories directly; this
+// proves the handler actually wires them through).
 func TestSettingsPage_NavIndexResolvesCoreOrderWithNoPlugin(t *testing.T) {
 	t.Setenv("UT_AUTH", "off") // ut-docs#3079: /settings is settings-gated; this test is about rendering, not permissions.
 	mux, _, _ := newFullAuthDeps(t)
@@ -1830,18 +1831,69 @@ func TestSettingsPage_NavIndexResolvesCoreOrderWithNoPlugin(t *testing.T) {
 		t.Fatalf("unterminated #settings-nav-index")
 	}
 	indexHTML := body[indexStart : indexStart+indexEnd]
-	if strings.Contains(indexHTML, "data-group=") {
-		t.Errorf("zero-plugin nav index must carry no group heading, got:\n%s", indexHTML)
+	for _, want := range []string{
+		`data-key="settings-currency" data-group="My shop" data-cat="shop"`,
+		`data-key="registration" data-group="Tills &amp; devices" data-cat="devices"`,
+		`data-key="settings-all" data-group="Advanced" data-cat="advanced"`,
+	} {
+		if !strings.Contains(indexHTML, want) {
+			t.Errorf("nav index must carry %s, got:\n%s", want, indexHTML)
+		}
 	}
-	// registration is the very first CoreSettings row (Order 100) — it must
-	// appear before settings-update (Order 400) in the rendered index.
+	// Categories in declared order: My shop's rows before Tills & devices'
+	// before Advanced's.
+	curIdx := strings.Index(indexHTML, `data-key="settings-currency"`)
 	regIdx := strings.Index(indexHTML, `data-key="registration"`)
-	updateIdx := strings.Index(indexHTML, `data-key="settings-update"`)
-	if regIdx == -1 || updateIdx == -1 || regIdx > updateIdx {
-		t.Fatalf("expected registration before settings-update in declared order, got:\n%s", indexHTML)
+	allIdx := strings.Index(indexHTML, `data-key="settings-all"`)
+	if curIdx > regIdx || regIdx > allIdx {
+		t.Fatalf("expected My shop, then Tills & devices, then Advanced, got:\n%s", indexHTML)
 	}
 	if !strings.Contains(indexHTML, "Till registration") {
 		t.Fatalf("expected the resolved English label, not a raw key, got:\n%s", indexHTML)
+	}
+	// The landing grid (hidden until the page script shows it, so a
+	// browser without script keeps the full page): one tile per category,
+	// Advanced last, each with its icon and one-line description.
+	homeStart := strings.Index(body, `id="settings-home"`)
+	if homeStart == -1 || !strings.Contains(body[homeStart-200:homeStart+200], "hidden") {
+		t.Fatalf("no hidden-by-default #settings-home rendered")
+	}
+	homeHTML := body[homeStart : homeStart+strings.Index(body[homeStart:], "</nav>")]
+	var tiles []string
+	for _, part := range strings.Split(homeHTML, `data-cat="`)[1:] {
+		tiles = append(tiles, part[:strings.Index(part, `"`)])
+	}
+	if got, want := strings.Join(tiles, ","), "shop,selling,payments,receipts,staff,devices,look,backup,advanced"; got != want {
+		t.Fatalf("landing tiles = %s, want %s", got, want)
+	}
+	for _, want := range []string{`href="#cat-shop"`, `data-icon="store"`, "Currency, language and the kind of shop you run.", "Every setting, including the technical ones."} {
+		if !strings.Contains(homeHTML, want) {
+			t.Errorf("landing grid must contain %q:\n%s", want, homeHTML)
+		}
+	}
+}
+
+// A category whose every section is gated out for this render gets no
+// tile (ut-docs#3090): with every payment method turned off the Payments
+// card does not render, so neither does the Payments tile.
+func TestSettingsPage_NoTileForAnEmptyCategory(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _, d := newFullAuthDeps(t)
+	if _, err := d.Db.Exec(`UPDATE payment_methods SET is_active = 0`); err != nil {
+		t.Fatalf("turn payment methods off: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if strings.Contains(body, `id="settings-payments"`) {
+		t.Fatalf("premise: with no active payment method there is no Payments card")
+	}
+	if strings.Contains(body, `href="#cat-payments"`) {
+		t.Fatalf("a category with no rendered section must have no tile")
+	}
+	if !strings.Contains(body, `href="#cat-shop"`) || !strings.Contains(body, `href="#cat-advanced"`) {
+		t.Fatalf("the other tiles must still render")
 	}
 }
 
@@ -1879,10 +1931,12 @@ func TestSettingsPage_NavIndexReflectsSalonLayoutAmendment(t *testing.T) {
 	indexEnd := strings.Index(body[indexStart:], "</ul>")
 	indexHTML := body[indexStart : indexStart+indexEnd]
 
+	// Categories keep their order (ut-docs#3090), so the salon's Order
+	// amendment moves Theme to the front of its own category, Look & feel.
 	themeIdx := strings.Index(indexHTML, `data-key="settings-theme"`)
-	regIdx := strings.Index(indexHTML, `data-key="registration"`)
-	if themeIdx == -1 || regIdx == -1 || themeIdx > regIdx {
-		t.Fatalf("salon layout must reorder settings-theme ahead of registration, got:\n%s", indexHTML)
+	menuLayoutIdx := strings.Index(indexHTML, `data-key="settings-menulayout"`)
+	if themeIdx == -1 || menuLayoutIdx == -1 || themeIdx > menuLayoutIdx {
+		t.Fatalf("salon layout must reorder settings-theme to the front of Look & feel, got:\n%s", indexHTML)
 	}
 	printerIdx := strings.Index(indexHTML, `data-key="settings-printer"`)
 	tillsIdx := strings.Index(indexHTML, `data-key="settings-tills"`)
@@ -1891,6 +1945,14 @@ func TestSettingsPage_NavIndexReflectsSalonLayoutAmendment(t *testing.T) {
 	}
 	if !strings.Contains(indexHTML[printerIdx:printerIdx+200], "data-group=") {
 		t.Errorf("settings-printer must carry a resolved data-group, got:\n%s", indexHTML[printerIdx:printerIdx+200])
+	}
+	// The salon's own group is a category of its own (ut-docs#3090 AC 8):
+	// a tile on the landing grid, and Printer/Tills are listed in it.
+	if !strings.Contains(indexHTML[printerIdx:printerIdx+200], `data-cat="g-layout-salon-settings_group"`) {
+		t.Errorf("settings-printer must sit in the salon group's category, got:\n%s", indexHTML[printerIdx:printerIdx+200])
+	}
+	if !strings.Contains(body, `href="#cat-g-layout-salon-settings_group"`) {
+		t.Errorf("the salon group must render as a landing tile")
 	}
 }
 

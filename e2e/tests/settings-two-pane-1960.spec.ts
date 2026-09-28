@@ -24,17 +24,22 @@ import { watchConsole } from './helpers';
 const NESTED_IN_UPDATE_CARD = 'update-check-msg';
 
 test.describe('settings two-pane layout (ut-docs#1960)', () => {
-  test('no hash: first section shown on the panel, several sections listed, real grid', async ({ page }) => {
+  // ut-docs#3090: /settings with no hash is now the category grid
+  // (settings-categories-3090.spec.ts); the full two-pane list this suite
+  // pins is the Advanced view, #settings-advanced.
+  test('Advanced: first section shown on the panel, several sections listed, real grid', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.setViewportSize({ width: 1280, height: 800 });
-    await page.goto('/settings');
+    await page.goto('/settings#settings-advanced');
 
     await expect(page.locator('#settings-shell')).toHaveCSS('display', 'grid');
     const items = page.locator('#settings-tree a[data-section]');
     expect(await items.count(), 'the section list is built from the rendered cards').toBeGreaterThan(10);
 
-    // First card in DOM order is the registration card; it is the one shown.
-    await expect(page.locator('#registration')).toBeVisible();
+    // Advanced lists sections by category, My shop first: Currency is the
+    // first row and the one shown.
+    await expect(items.first()).toHaveAttribute('data-section', 'settings-currency');
+    await expect(page.locator('#settings-currency')).toBeVisible();
     await expect(items.first()).toHaveAttribute('aria-current', 'page');
     await expect(items.first()).toHaveClass(/is-current/);
     // Everything else is hidden, but still IN the DOM (server-rendered once).
@@ -55,7 +60,7 @@ test.describe('settings two-pane layout (ut-docs#1960)', () => {
   test('clicking a section switches instantly, without a page load', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.setViewportSize({ width: 1280, height: 800 });
-    await page.goto('/settings');
+    await page.goto('/settings#settings-advanced');
     // A marker that a full navigation would wipe.
     await page.evaluate(() => ((window as any).__ut1960 = 'alive'));
 
@@ -110,8 +115,8 @@ test.describe('settings two-pane layout (ut-docs#1960)', () => {
   test('search finds an individual setting in a non-first section and opens it', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.setViewportSize({ width: 1280, height: 800 });
-    await page.goto('/settings');
-    await expect(page.locator('#registration')).toBeVisible();
+    await page.goto('/settings#settings-advanced');
+    await expect(page.locator('#settings-currency')).toBeVisible();
 
     // A control label from the Receipt printer section (settings.printer
     // .discover.find_button), matched case-insensitively.
@@ -158,10 +163,10 @@ test.describe('settings two-pane layout (ut-docs#1960)', () => {
     assertClean();
   });
 
-  test('phone width, no hash: list first, tap opens the section, back returns to the list', async ({ page }) => {
+  test('phone width, category: list first, tap opens the section, back returns to the list', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.setViewportSize({ width: 375, height: 740 });
-    await page.goto('/settings');
+    await page.goto('/settings#cat-shop');
 
     await expect(page.locator('#settings-nav')).toBeVisible();
     await expect(page.locator('#settings-panel')).toBeHidden();
@@ -193,12 +198,14 @@ test.describe('settings two-pane layout (ut-docs#1960)', () => {
   test('every rendered card is listed as a section — nothing became unreachable', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.setViewportSize({ width: 1280, height: 800 });
-    await page.goto('/settings');
+    await page.goto('/settings#settings-advanced');
     const cardIds = await page.locator('#settings-grid > .card').evaluateAll((els) => els.map((el) => el.id));
-    const navIds = await page.locator('#settings-tree a[data-section]').evaluateAll((els) => els.map((el) => el.getAttribute('data-section')));
+    const navIds = await page.locator('#settings-tree a[data-section]:visible').evaluateAll((els) => els.map((el) => el.getAttribute('data-section')));
     expect(cardIds.length).toBeGreaterThan(10);
     expect(cardIds.every((id) => id !== ''), 'every card carries an id').toBe(true);
-    expect(navIds).toEqual(cardIds);
+    // Advanced lists them by category (ut-docs#3090), not in DOM order —
+    // the same set, nothing missing.
+    expect([...navIds].sort()).toEqual([...cardIds].sort());
     assertClean();
   });
 });

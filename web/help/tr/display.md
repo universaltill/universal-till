@@ -11,6 +11,8 @@ routes: [/settings]
 
 Kasa baştan sona English, Türkçe, فارسی ve العربية konuşur — sağdan sola düzen dâhil — ve ekran klavyesiyle, ayarlanabilir yazı boyutuyla dokunmatik ekranlara uyum sağlar.
 
+Ayarlar, her ayar grubu için bir tane olmak üzere büyük kutucuklardan oluşan bir ızgarayla açılır; adlar bir dükkân sahibinin düşündüğü gibidir: **Dükkânım**, **Satış**, **Ödemeler**, **Fişler ve yazıcılar**, **Personel ve güvenlik**, **Kasalar ve cihazlar**, **Görünüm** ve **Yedekleme ve güncellemeler**; her birinin altında içinde ne olduğunu anlatan bir satır vardır. Yalnızca o grubun ayarlarını görmek için bir kutucuğa dokunun; **Kategorilere dön** sizi kutucuklara geri götürür. Son kutucuk **Gelişmiş**, teknik olanlar dahil (barkod türleri, tanılama modu, veri yönetimi, rapor saklama ve tüm ayarların ham listesi) her ayarı aynı grup başlıkları altında tek listede tutar. Bir kutucuk yalnızca değiştirebileceğiniz bir şey içeriyorsa görünür. Kutucukların üstündeki arama kutusu tüm ayarlarda arar.
+
 Ayarlar, bölümlerinin listesini bir yanda, baktığınız bölümü diğer yanda gösterir; listenin üstündeki arama kutusu, yalnızca bir bölüm başlığını değil, belirli bir ayarı adıyla bulur — bu kadar çok bölümü olan bir sayfada işe yarar. Bir sonucu seçtiğinizde kasa o bölümü açar ve sizi doğrudan ayara götürür. Telefon boyutundaki bir ekranda önce liste gelir; bir bölümü açmak için dokunun, geri dönmek için **Bölümlere dön**'ü kullanın.
 
 ## Nasıl kullanılır
