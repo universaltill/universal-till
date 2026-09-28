@@ -75,6 +75,8 @@ jobs:
         run: bash scripts/ci/check-release-checksums_test.sh
       - name: macOS notarization never holds a release — wiring test (ut-docs#2917)
         run: bash scripts/ci/release-macos-nonblocking_test.sh
+      - name: iOS TestFlight workflow never reaches its signing key from a PR — wiring test (ut-docs#3069)
+        run: bash scripts/ci/ios-testflight-workflow_test.sh
       - name: e2e launchers never open a browser (ut-docs#2704)
         run: bash scripts/ci/guard-e2e-no-browser.sh
       - name: e2e no-browser guard regression test
