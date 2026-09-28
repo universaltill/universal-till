@@ -138,7 +138,8 @@ const (
 	KeyCurrencyConfirmed = "store.currency_confirmed"
 	// KeyPendingBasePlugins holds the JSON list of still-pending country
 	// base-plugin auto-installs (ut-docs#591): populated by the setup wizard
-	// the instant a country with a setupBasePlugins entry is confirmed,
+	// the instant a country with a base plugin (basePluginsForCountry) is
+	// confirmed,
 	// before any network attempt, and drained entry-by-entry as each
 	// resolves+installs (wizard's own best-effort attempt, then the
 	// background retry). Empty/unset means nothing pending. A merchant can

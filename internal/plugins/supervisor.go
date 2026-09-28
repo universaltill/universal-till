@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os/exec"
+	goruntime "runtime"
 	"sync"
 	"time"
 
@@ -53,6 +54,18 @@ type HealthCheckConfig struct {
 	Endpoint string // HTTP endpoint to check (e.g., "http://localhost:8080/health")
 }
 
+// supervisorGOOS is the platform process plugins would run on; a var so
+// tests can stand in for a mobile build.
+var supervisorGOOS = goruntime.GOOS
+
+// processPluginsSupported reports whether goos can exec a plugin binary.
+// Android (API 29+ W^X, Play policy) and iOS (App Review 2.5.2) cannot, so
+// runtime "go"/"native" plugins are refused there (ADR-0121 §2,
+// ut-docs#3154); feature code runs as WASM instead.
+func processPluginsSupported(goos string) bool {
+	return goos != "android" && goos != "ios"
+}
+
 // NewSupervisor creates a new plugin supervisor
 func NewSupervisor(db *sql.DB) *Supervisor {
 	return &Supervisor{
@@ -63,6 +76,10 @@ func NewSupervisor(db *sql.DB) *Supervisor {
 
 // StartPlugin launches a plugin process
 func (s *Supervisor) StartPlugin(ctx context.Context, pluginID, entrypoint string, args []string, policy RestartPolicy) error {
+	if !processPluginsSupported(supervisorGOOS) {
+		return fmt.Errorf("plugin %s: process plugins cannot run on %s (ADR-0121)", pluginID, supervisorGOOS)
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

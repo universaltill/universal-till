@@ -271,7 +271,10 @@ func numberSeparators(locale string) (thousands, decimal byte) {
 	case "de", "es", "it", "nl", "tr":
 		return '.', ','
 	// French convention: a space groups thousands, comma decimals.
-	case "fr":
+	// European Portuguese (CLDR pt-PT) is the same family (ut-docs#2964).
+	// Brazilian Portuguese groups with '.' instead; no pt-BR locale ships
+	// yet, and the day one does this case needs a region split.
+	case "fr", "pt":
 		return ' ', ','
 	default:
 		return ',', '.'

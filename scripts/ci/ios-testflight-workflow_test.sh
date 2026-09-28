@@ -12,7 +12,11 @@
 #     ALLOWED=NO) so only the export cloud-signs — a signed archive mints a
 #     new development certificate on every fresh runner;
 #   - the job is guarded to universaltill/universal-till (forks skip);
-#   - GitHub-hosted macos-15, never self-hosted; a job timeout;
+#   - GitHub-hosted macos-26, never self-hosted; a job timeout; App Store
+#     Connect refuses builds made with an iOS SDK older than 26, so a step
+#     fails fast (before the 20-minute build) when the runner's iphoneos SDK
+#     is older, and ios-ci.yml builds on the same image so a PR sees the
+#     new SDK's compile errors first;
 #   - permissions: contents: read; a non-cancelling concurrency group;
 #   - the .p8 key is written under $RUNNER_TEMP with umask 077 / chmod 600
 #     and removed (with ExportOptions.plist) in an `if: always()` step;
@@ -65,7 +69,16 @@ check_wf() {
   fi
   if grep -qE '^on: *\[|^on: *[a-z]' "$wf"; then echo "FAIL:inline on: form not allowed"; fi
   grep -qF "if: github.repository == 'universaltill/universal-till'" "$wf" || echo "FAIL:no repository guard"
-  grep -qE '^    runs-on: macos-15$' "$wf" || echo "FAIL:job does not run on GitHub-hosted macos-15"
+  grep -qE '^    runs-on: macos-26$' "$wf" || echo "FAIL:job does not run on GitHub-hosted macos-26"
+  # The SDK step (from its `- name:` to the next) must actually refuse an
+  # old SDK, and come before the archive.
+  local sdkstep
+  sdkstep="$(awk '/^      - name: /{p = ($0 ~ /^      - name: Refuse an iOS SDK/)} p' "$wf")"
+  if [ -z "$sdkstep" ] || ! grep -qF 'xcrun --sdk iphoneos --show-sdk-version' <<<"$sdkstep" \
+    || ! grep -qE -- '-lt 26 \]' <<<"$sdkstep" || ! grep -qF 'exit 1' <<<"$sdkstep" \
+    || [ "$(awk '/^      - name: Refuse an iOS SDK/{print NR; exit}' "$wf")" -gt "$(awk '/^      - name: Archive/{print NR; exit} END{print 999999}' "$wf" | head -1)" ]; then
+    echo "FAIL:no iOS SDK version check (refusing < 26) before the archive"
+  fi
   if grep -qiE 'runs-on:.*(self-hosted|homelab)' "$wf"; then echo "FAIL:self-hosted runner in a public repo"; fi
   grep -qE '^    timeout-minutes: [0-9]+$' "$wf" || echo "FAIL:no job timeout-minutes"
   if ! grep -qE '^permissions:$' "$wf" || ! grep -qE '^  contents: read$' "$wf"; then
@@ -138,7 +151,7 @@ jobs:
           echo "$ASC_KEY_P8"
 YAML
 bad="$(check_wf "$fixture")"
-for want in 'not pinned to a commit SHA' 'archive step is not unsigned' 'forbidden trigger' 'no repository guard' 'macos-15' 'self-hosted' \
+for want in 'not pinned to a commit SHA' 'archive step is not unsigned' 'forbidden trigger' 'no repository guard' 'macos-26' 'iOS SDK version check' 'self-hosted' \
   'timeout-minutes' 'write permission' 'concurrency' 'secrets expanded inside a run' 'RUNNER_TEMP' \
   'umask 077' 'if: always()' 'ASC_KEY_P8 printed'; do
   if grep -qF -- "$want" <<<"$bad"; then
@@ -159,6 +172,14 @@ else
   else
     while IFS= read -r line; do fail "${WF}: ${line#FAIL:}"; done <<<"$real"
   fi
+fi
+
+# ios-ci.yml must build on the image TestFlight uploads from, or a PR stays
+# green while the release upload fails on the newer SDK.
+if grep -qE '^    runs-on: macos-26$' .github/workflows/ios-ci.yml; then
+  pass "ios-ci.yml builds on macos-26 (same image as the upload)"
+else
+  fail "ios-ci.yml does not build on macos-26 (same image as the upload)"
 fi
 
 # release.yml's publish-release job is what starts the upload for a release.

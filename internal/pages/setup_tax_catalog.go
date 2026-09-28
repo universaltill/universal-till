@@ -21,7 +21,7 @@ import (
 // ut-docs#1180: ADR-0025 decision 4 — a fiscal ("tax") plugin such as
 // ut-plugin-tax-de (§12 UStG dine-in/takeaway VAT-rate-switching plus TSE
 // signing and DSFinV-K export) must never be silently auto-installed —
-// setupBasePlugins (setup_base_plugins.go) is explicitly documented
+// basePluginsForCountry (setup_base_plugins.go) is explicitly documented
 // language-packs-only for exactly this reason. Instead the wizard's country
 // step PROMPTS: a tile appears only when the marketplace actually has a
 // tax-type listing for the selected country, and it installs only on an

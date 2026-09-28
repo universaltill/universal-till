@@ -11,7 +11,7 @@ import (
 // taxRateSwitchMandatedCountries is the country → "a tax.rate.ask plugin
 // is expected to answer for this country" table (ADR-0068). Small,
 // explicit and reviewable by design — same convention as
-// setupBasePlugins and ADR-0067's mandated-tax-plugin list — not
+// ADR-0067's mandated-tax-plugin list — not
 // inferred from any marketplace/country metadata, so adding a country
 // here is a deliberate, reviewed line.
 var taxRateSwitchMandatedCountries = map[string]bool{

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"time"
@@ -57,7 +58,8 @@ type WasmRuntime struct {
 	httpClient *http.Client    // http_request egress client; nil → defaultPluginHTTPClient
 	db         *sql.DB         // for host functions; set by Sync
 	baseDir    string
-	unsubGen   int // bumped per sync so stale handlers no-op
+	unsubGen   int           // bumped per sync so stale handlers no-op
+	calls      *wasmCallGate // concurrent-call caps, sale-path slot reserved (ut-docs#3154)
 	// wg tracks the per-plugin event-channel drainer goroutines Sync starts,
 	// so Close can wait for them to exit at shutdown (ut-docs#380).
 	wg sync.WaitGroup
@@ -195,6 +197,7 @@ func NewWasmRuntime(baseDir string) *WasmRuntime {
 		hasNet:     map[string]bool{},
 		hasTCP:     map[string]bool{},
 		baseDir:    baseDir,
+		calls:      newWasmCallGate(wasmConcurrencyLimits(goruntime.GOOS)),
 	}
 }
 
@@ -557,6 +560,13 @@ func (w *WasmRuntime) HandleEvent(ctx context.Context, pluginID string, ev Event
 
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	// Waiting for a slot counts against the call's own deadline, so a
+	// saturated plugin fails the call instead of queueing forever.
+	release, err := w.calls.acquire(cctx, pluginID, isSalePathEvent(ev.Type))
+	if err != nil {
+		return nil, fmt.Errorf("wasm handler: %s has too many calls in flight: %w", pluginID, err)
+	}
+	defer release()
 	// Host functions ("ut" module) resolve the caller through this state.
 	cctx = withHostState(cctx, &hostState{pluginID: pluginID, db: db, httpClient: w.httpClient})
 

@@ -20,7 +20,7 @@ name: ios-testflight
 #     private key survives between runners) until the team's certificate
 #     limit trips; cloud signing never puts a private key on the runner.
 #   - The job only runs in universaltill/universal-till (forks skip it).
-#   - GitHub-hosted macos-15 only (public repo: never a self-hosted runner).
+#   - GitHub-hosted macos-26 only (public repo: never a self-hosted runner).
 #   - Secrets reach scripts through env: only, never `${{ secrets.X }}`
 #     inside a run: block; the .p8 is written under $RUNNER_TEMP with
 #     umask 077 + chmod 600 and removed in an always() step.
@@ -54,13 +54,32 @@ concurrency:
 jobs:
   testflight:
     if: github.repository == 'universaltill/universal-till'
-    runs-on: macos-15
+    # macos-26 = Xcode 26 / iOS 26 SDK: App Store Connect refuses uploads
+    # built with an older SDK (ut-docs#3069; the 18.5 SDK on macos-15 was).
+    runs-on: macos-26
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # Tags, for `git describe` on a dispatch.
           fetch-depth: 0
+      - name: Refuse an iOS SDK App Store Connect would reject
+        # First step: fails in seconds instead of after the 20-minute archive.
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          sdk="$(xcrun --sdk iphoneos --show-sdk-version)"
+          # Empty or odd output would make `-lt` error inside the `if` and
+          # pass silently under set -e, so the format is checked first.
+          if ! [[ "$sdk" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+            echo "::error::unexpected iphoneos SDK version '$sdk'"
+            exit 1
+          fi
+          if [ "${sdk%%.*}" -lt 26 ]; then
+            echo "::error::iphoneos SDK $sdk is older than 26; App Store Connect refuses the upload"
+            exit 1
+          fi
+          echo "iphoneos SDK $sdk"
       - name: Resolve marketing and build versions
         env:
           INPUT_VERSION: ${{ inputs.version }}
@@ -97,7 +116,6 @@ jobs:
       - name: Bind the Go till server (gomobile bind -target=ios)
         run: |
           set -euo pipefail
-          xcodebuild -version
           gomobile bind -target=ios -o ios/build/Mobile.xcframework ./mobile
       - name: Generate the app icon asset catalog
         run: bash ios/scripts/make-app-icon.sh
