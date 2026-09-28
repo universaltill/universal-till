@@ -349,7 +349,7 @@ test.describe('Designer category list: long-press drag reorder (ut-docs#2699)', 
     assertClean();
   });
 
-  test('Alt+ArrowDown persists and focus survives the re-render', async ({ page }) => {
+  test('Alt+ArrowDown persists and focus stays on the row (in place since ut-docs#3074)', async ({ page }) => {
     const assertClean = watchConsole(page);
     const [a, b] = await seed(page, 'Kbd');
     const id = (await row(page, a).getAttribute('data-cat-id'))!;
