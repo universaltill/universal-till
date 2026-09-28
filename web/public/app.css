@@ -559,7 +559,9 @@ html.fx-balanced .designer-cat.is-dragging { transform: none; box-shadow: inset 
 /* ut-docs#2873: every till popup gets a full-screen dimmed backdrop that
    blocks taps behind it. Two families, one colour (--ut-scrim, :root):
    - a showModal() dialog: its native ::backdrop (top layer; the rest of
-     the page is already inert). The fallback is for an engine whose
+     the page is already inert). Since ut-docs#2097 that is only the
+     self-order kiosk's #selforder-modal -- every till dialog is non-modal
+     (guard-no-showmodal.sh). The fallback is for an engine whose
      ::backdrop does not inherit custom properties yet.
    - a non-modal .show() dialog (the #1385 on-screen-keyboard family, z
      500/550) or a UT.popupOpened() panel: the ONE shared #ut-scrim
@@ -2722,19 +2724,32 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    same reasoning .payment-overlay's own z-index comment above gives. */
 #hold-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 550; }
 #hold-label-input { width: 100%; margin-block: .5rem .75rem; }
-/* ut-docs#2371: unlike #hold-modal/#pfand-modal above, this dialog needs
-   NO TYPING at all -- there's no text field anywhere in it, so the
-   custom-on-screen-keyboard-must-stay-reachable reason those two use
-   .show() for does not apply here. It stays a real, native top-layer
-   modal: showModal() (app.js), centred by the UA's own `dialog:modal`
-   styles, with no position/inset overrides of any kind -- and
-   deliberately no left/right literals either (RTL). It inherits
-   .modifier-modal::backdrop (rgba(15, 23, 42, .45), declared above) for
-   free, same as #modifier-modal itself. Before this it opened non-modally
-   at a fixed 8vh offset like its .show() siblings, which (ut-docs#2371's
-   bug report) left the rest of the sale screen tappable underneath it and
-   let #modifier-modal's own showModal() paint OVER it whenever both
-   opened together. */
+/* ut-docs#2097 (product owner, 2026-09-28): the till's former showModal()
+   dialogs. showModal() made everything outside the dialog inert -- the
+   status bar and the rail's Lock included (CLAUDE.md "Offline-first",
+   ut-docs#1999) -- and "unclickable counts as blocked, no exception for
+   small dialogs". They open with .show() now, like #hold-modal above, so
+   this is the explicit frame the top layer used to give them: fixed,
+   centred in both axes as the UA's `dialog:modal` did (none of them holds
+   a text field, so the #hold-modal family's 8vh anchor clear of the
+   on-screen keyboard is not needed), and capped short of the viewport so
+   a tall one never paints over the status bar (<= 2 rows) at the bottom.
+   Logical properties only (RTL). #ut-scrim (z 450, base.html) blocks the
+   page behind them; the status bar (460) and Lock stay above it.
+   Stacking (was top-layer open order): #category-items-modal (500) can
+   open #modifier-modal, and #order-type-prompt-modal can gate a tile tap
+   or a scan while #modifier-modal is open (ut-docs#2371: never under it),
+   so the modifier is 560 (over #category-items-modal's 500 and
+   #hold-modal's 550) and the prompt 570 (over the modifier) -- all below
+   #osk (1000). The self-order kiosk's
+   #selforder-modal stays showModal() (kiosk mode must NOT reach status/
+   lock/exit) and keeps .modifier-modal::backdrop. */
+#modifier-modal, #order-type-prompt-modal, #table-modal, #barcode-backfill-modal, #table-qr-modal {
+  position: fixed; inset: 0; margin: auto; block-size: fit-content;
+  max-block-size: calc(100dvh - 8rem); overflow-y: auto; z-index: 500;
+}
+#modifier-modal { z-index: 560; }
+#order-type-prompt-modal { z-index: 570; }
 /* Keep the payout dialog out of the native top layer: the custom on-screen
    keyboard is appended to <body> and must remain clickable while it is open. */
 #pfand-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
@@ -3739,9 +3754,9 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    any more: a .show() dialog never paints one, and the basket staying
    visible/undimmed while paying was always the intent (the light tint this
    replaced only ever softened, never replicated, the near-opaque default
-   #modifier-modal's own ::backdrop uses for its still-genuinely-modal
-   showModal() state — the ONE dialog in this file that still opens that
-   way) — dropping it is a continuation of that, not a regression, and
+   #modifier-modal's own ::backdrop used while it was still showModal()'d
+   — ut-docs#2097 made it non-modal too, over the shared #ut-scrim)
+   — dropping it is a continuation of that, not a regression, and
    matches the other four non-modal dialogs (#hold-modal/#pfand-modal/
    #elevation-modal/#table-add-modal), none of which replicate dimming
    either. */

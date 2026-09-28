@@ -14,7 +14,10 @@ const SHOTS = process.env.UT_SCRIM_SHOTS || '';
 
 // Dialogs only ever opened with showModal() (native ::backdrop, top layer):
 // the sweep below forces .show() on every OTHER dialog a page ships.
-const SHOWMODAL_ONLY = ['modifier-modal', 'order-type-prompt-modal', 'barcode-backfill-modal', 'table-modal', 'table-qr-modal', 'selforder-modal'];
+// ut-docs#2097: only the self-order kiosk's is left -- the five till
+// dialogs that used to be here (modifier, order-type prompt, barcode
+// backfill, table picker, table QR) are non-modal now and join the sweep.
+const SHOWMODAL_ONLY = ['selforder-modal'];
 
 async function openSell(page: Page, path = '/') {
   await page.goto(path);

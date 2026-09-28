@@ -25,6 +25,11 @@ linked ut-docs issue; full pre-2026-09-23 wording: `git log -p CLAUDE.md`.
   (the axis is device mode, not admin-vs-sale). A full-screen dialog over the
   nav rail must keep a compact affordance for all three. Kiosk exit can't
   live only in the web UI it hides. (#1999, #1513; coding-standards §10.)
+- No `showModal()` on till surfaces, whatever the dialog's size: it makes
+  the status bar inert. Use `.show()` in a fixed frame over the shared
+  `#ut-scrim`; only self-order kiosk dialogs may stay modal
+  (`scripts/ci/guard-no-showmodal.sh`, reviewed exception
+  `showmodal:allow <reason>`; ut-docs#2097).
 
 ## Self-order kiosk isolation (`scripts/ci/guard-kiosk-engine.sh`)
 - The kiosk basket is `common.Deps.KioskEngine`, separate from the cashier's
