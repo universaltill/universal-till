@@ -164,7 +164,7 @@ func TestInventoryLookup_MissingData(t *testing.T) {
 	}
 
 	// Verify GetLowStockItems handles missing/corrupted data gracefully
-	items, err := GetLowStockItems(ctx, db, "loc-missing")
+	items, err := LowStockItemsFor(ctx, db, "loc-missing", false)
 	if err != nil {
 		t.Fatalf("GetLowStockItems should not fail with missing data: %v", err)
 	}

@@ -858,6 +858,7 @@
   "inventory.low_stock": "موجودی کم",
   "inventory.manager_pin": "پین مدیر",
   "inventory.manager_pin_placeholder": "اگر با نقش صندوقدار وارد شده‌اید",
+  "inventory.not_stocked_here": "در این محل موجود نیست",
   "inventory.order_hint": "سفارش ~",
   "inventory.order_hint_title": "سفارش پیشنهادی برای دو هفته موجودی با نرخ فروش فعلی",
   "inventory.original_receipt": "شماره رسید اصلی",

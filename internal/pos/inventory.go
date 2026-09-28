@@ -21,7 +21,9 @@ func RecordNegativeInventoryOverride(ctx context.Context, sqlDB *sql.DB, overrid
 	return data.NewPOSRepo(sqlDB).RecordNegativeInventoryOverride(ctx, override)
 }
 
-// GetLowStockItems returns all items where current inventory is below reorder level.
-func GetLowStockItems(ctx context.Context, sqlDB *sql.DB, locationID string) ([]LowStockItem, error) {
-	return data.NewPOSRepo(sqlDB).GetLowStockItems(ctx, locationID)
+// LowStockItemsFor returns the reorder list — every stock-tracked item
+// below its reorder level — with the shop-wide "sell items without tracking
+// stock" setting applied (ut-docs#27).
+func LowStockItemsFor(ctx context.Context, sqlDB *sql.DB, locationID string, shopStockUntracked bool) ([]LowStockItem, error) {
+	return data.NewPOSRepo(sqlDB).LowStockItemsFor(ctx, locationID, shopStockUntracked)
 }

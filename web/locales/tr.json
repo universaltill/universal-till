@@ -858,6 +858,7 @@
   "inventory.low_stock": "Düşük stok",
   "inventory.manager_pin": "Yönetici PIN",
   "inventory.manager_pin_placeholder": "kasiyer olarak giriş yaptıysanız",
+  "inventory.not_stocked_here": "Bu konumda stoklanmıyor",
   "inventory.order_hint": "öneri: ~",
   "inventory.order_hint_title": "Mevcut satış hızında iki haftalık stok için önerilen sipariş",
   "inventory.original_receipt": "Orijinal fiş no.",

@@ -57,10 +57,22 @@ func TestGetLowStockItems_VariantTrackedItem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetLowStockItems(loc_back): %v", err)
 	}
+	// v1 is stocked only at loc_main, so loc_back lists it not stocked
+	// here (ut-docs#27); v2 is healthy at loc_back and stays off.
+	sawV1 := false
 	for _, it := range backOnly {
-		if it.ItemID == "b8-vlow" {
-			t.Fatalf("b8-vlow must not appear for loc_back (v2's 20 >= reorder level 10): %+v", it)
+		if it.VariantID == "b8-vlow-v2" {
+			t.Fatalf("b8-vlow-v2 must not appear for loc_back (20 >= reorder level 10): %+v", it)
 		}
+		if it.VariantID == "b8-vlow-v1" {
+			sawV1 = true
+			if !it.NotStockedHere || it.CurrentQty != 0 || it.LocationID != "loc_back" {
+				t.Fatalf("b8-vlow-v1 on loc_back: %+v, want qty 0, not stocked here", it)
+			}
+		}
+	}
+	if !sawV1 {
+		t.Fatalf("b8-vlow-v1 (stocked only at loc_main) must be on loc_back's list, got %+v", backOnly)
 	}
 
 	// A variant with NO inventory row anywhere still belongs on every

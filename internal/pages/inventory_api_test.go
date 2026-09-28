@@ -1213,7 +1213,7 @@ func TestGetLowStock_HTMLError_UsesErrorHTMLHelper(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
 	}
-	_, queryErr := pos.GetLowStockItems(context.Background(), dp.Db, "")
+	_, queryErr := pos.LowStockItemsFor(context.Background(), dp.Db, "", false)
 	if queryErr == nil {
 		t.Fatal("expected the closed *sql.DB to still fail the same query")
 	}
@@ -1238,5 +1238,73 @@ func TestGetLowStock_EmptyList(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "No low stock items") {
 		t.Fatalf("expected the empty-state message, got %s", rec.Body.String())
+	}
+}
+
+// TestGetLowStock_LocationFilterNotStockedHere covers ut-docs#27: filtered
+// to a location, an item stocked only elsewhere is listed at qty 0 and
+// marked not stocked here (JSON not_stocked_here, HTML hint) — unless the
+// shop sells without tracking stock.
+func TestGetLowStock_LocationFilterNotStockedHere(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	ctx := context.Background()
+	// itm1 holds 50 at loc_main; a reorder level of 10 makes it healthy
+	// there and not stocked at all at loc_side.
+	if _, err := dp.Db.ExecContext(ctx, `UPDATE items SET reorder_level = 10 WHERE id = 'itm1'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO stock_locations (id, name) VALUES ('loc_side', 'Side Shop')`); err != nil {
+		t.Fatal(err)
+	}
+
+	get := func(accept string) string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/api/inventory/low-stock?location_id=loc_side", nil)
+		if accept != "" {
+			req.Header.Set("Accept", accept)
+		}
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+
+	var envelope struct {
+		Data struct {
+			Items []struct {
+				ItemID         string  `json:"item_id"`
+				VariantID      string  `json:"variant_id"`
+				LocationID     string  `json:"location_id"`
+				CurrentQty     float64 `json:"current_qty"`
+				NotStockedHere bool    `json:"not_stocked_here"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+	body := get("application/json")
+	if err := json.Unmarshal([]byte(body), &envelope); err != nil {
+		t.Fatalf("decode: %v (%s)", err, body)
+	}
+	found := false
+	for _, it := range envelope.Data.Items {
+		if it.ItemID == "itm1" && it.VariantID == "" {
+			found = true
+			if !it.NotStockedHere || it.CurrentQty != 0 || it.LocationID != "loc_side" {
+				t.Fatalf("itm1 at loc_side: %+v, want qty 0, not_stocked_here", it)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("itm1 (stocked only at loc_main) must be on loc_side's list, got %s", body)
+	}
+
+	if html := get(""); !strings.Contains(html, "Not stocked here") {
+		t.Fatalf("HTML list must mark the row not stocked here, got %s", html)
+	}
+
+	dp.UpdateState(func(s *common.RuntimeState) { s.AllowNegativeInventory = true })
+	if body := get("application/json"); strings.Contains(body, `"not_stocked_here":true`) {
+		t.Fatalf("shop sells without tracking stock: no not-stocked-here rows, got %s", body)
 	}
 }
