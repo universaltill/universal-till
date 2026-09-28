@@ -9,6 +9,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
 
@@ -141,23 +142,64 @@ func TestSetupInstallableTaxPlugin_IgnoresNonTaxListings(t *testing.T) {
 	}
 }
 
-// Catalog unreachable with nothing cached: catalogUnavailable=true (distinct
-// from the unmapped-country case above), and no match.
-func TestSetupInstallableTaxPlugin_CatalogUnreachableReportsUnavailable(t *testing.T) {
-	resetTaxCatalogForTest(t)
-	dp := newBasePluginTestDeps(t)
+// deadMarketplace points dp at a marketplace that refuses connections (a
+// closed local server fails immediately, no timeout wait) — a fully offline
+// first boot with nothing cached.
+func deadMarketplace(t *testing.T, dp *common.Deps) {
+	t.Helper()
 	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	dp.Cfg.Marketplace.EndpointURL = dead.URL
 	dp.Cfg.Marketplace.ClientID = "merchant-1"
 	dp.Cfg.Marketplace.StoreID = "store-1"
 	dead.Close()
+}
 
-	plugin, unavailable := setupInstallableTaxPlugin(t.Context(), dp, "DE")
-	if plugin != nil {
-		t.Fatalf("expected no match while unreachable, got %+v", plugin)
-	}
+// Catalog unreachable with nothing cached: catalogUnavailable=true (distinct
+// from the unmapped-country case above). ut-docs#1512 (owner decision
+// 2026-09-28, "always show the prompt"): a tax-mapped country still gets a
+// tile — in its Offline state, with no listing to name yet — so a fully
+// offline German first boot prompts the operator instead of silently showing
+// nothing (which also left #1506's queue-on-Skip/Next with no tile to hang
+// off).
+func TestSetupInstallableTaxPlugin_CatalogUnreachableReturnsOfflineTile(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	dp := newBasePluginTestDeps(t)
+	deadMarketplace(t, dp)
+
+	plugin, unavailable := setupInstallableTaxPlugin(t.Context(), dp, "de")
 	if !unavailable {
 		t.Fatal("expected catalogUnavailable=true when the catalog cannot be reached and nothing is cached")
+	}
+	if plugin == nil {
+		t.Fatal("ut-docs#1512: an offline DE first boot must still get a (offline) tax-plugin tile, got nil")
+	}
+	if !plugin.Offline || plugin.Country != "DE" || plugin.ListingID != "" {
+		t.Fatalf("plugin = %+v, want Offline=true Country=DE ListingID=\"\"", plugin)
+	}
+}
+
+// An unmapped country stays tile-less offline too — the offline tile is for
+// countries that need a fiscal plugin, not every country.
+func TestSetupInstallableTaxPlugin_CatalogUnreachableUnmappedCountryReturnsNil(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	dp := newBasePluginTestDeps(t)
+	deadMarketplace(t, dp)
+
+	if plugin, _ := setupInstallableTaxPlugin(t.Context(), dp, "FR"); plugin != nil {
+		t.Fatalf("FR has no fiscal plugin mapped, want nil even offline, got %+v", plugin)
+	}
+}
+
+// Once the catalog HAS been reached, the online tile is unchanged: a
+// reachable catalog with no DE tax listing still means no tile.
+func TestSetupInstallableTaxPlugin_ReachableCatalogWithoutListingIsNotOffline(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	dp := newBasePluginTestDeps(t)
+	mkt := newFakeMarketplace(t, map[string]string{})
+	dp.Cfg.Marketplace = mkt.config()
+
+	if plugin, unavailable := setupInstallableTaxPlugin(t.Context(), dp, "DE"); plugin != nil || unavailable {
+		t.Fatalf("reachable catalog with no DE listing: plugin=%+v unavailable=%v, want nil,false", plugin, unavailable)
 	}
 }
 
@@ -802,4 +844,123 @@ func postFormRaw(mux *http.ServeMux, path string, form url.Values) *httptest.Res
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	return rec
+}
+
+// --- ut-docs#1512: fully offline first boot ---
+
+// Pressing the offline tile's button is the operator's consent: it queues the
+// fiscal plugin on the existing #591 pending list straight away (no 20s
+// foreground attempt against a catalog already known unreachable) and lands
+// back on step 3 with the "still installing in the background" note. The
+// existing background retry installs it once the network returns.
+func TestSetupTaxPluginInstallOfflineQueuesPendingWithConsent(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	deadMarketplace(t, dp)
+
+	rec := postForm(mux, "/api/setup/tax-plugin", url.Values{"country": {"DE"}}, nil)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("offline POST /api/setup/tax-plugin: code=%d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/setup?tax_country=DE&tax_plugin_pending=1" {
+		t.Fatalf("offline install redirect = %q, want /setup?tax_country=DE&tax_plugin_pending=1", loc)
+	}
+	pending, err := loadPendingBasePlugins(t.Context(), dp)
+	if err != nil {
+		t.Fatalf("loadPendingBasePlugins: %v", err)
+	}
+	if len(pending) != 1 || pending[0] != (basePluginSpec{CanonicalType: "tax", Locale: "de"}) {
+		t.Fatalf("expected the tax/de spec queued after offline consent, got %+v", pending)
+	}
+
+	// Network returns: the EXISTING background retry finishes the job.
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+	basePluginRetryTick(t.Context(), dp)
+	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-tax-de"); !active {
+		t.Fatal("expected the background retry to install the plugin queued while offline")
+	}
+}
+
+// Skip (and Next, which fires the same request) off the offline tile queue it
+// too, exactly like #1506's online tile — the tile was shown, so the operator
+// was prompted.
+func TestSetupTaxPluginSkipOfflineQueuesPending(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	deadMarketplace(t, dp)
+
+	rec := postForm(mux, "/api/setup/tax-plugin-skip", url.Values{"country": {"DE"}}, nil)
+	if loc := rec.Header().Get("Location"); loc != "/setup?tax_country=DE&tax_plugin_skip_ack=1" {
+		t.Fatalf("offline skip redirect = %q, want /setup?tax_country=DE&tax_plugin_skip_ack=1", loc)
+	}
+	pending, _ := loadPendingBasePlugins(t.Context(), dp)
+	if len(pending) != 1 || pending[0] != (basePluginSpec{CanonicalType: "tax", Locale: "de"}) {
+		t.Fatalf("expected the tax/de spec queued after an offline skip, got %+v", pending)
+	}
+}
+
+// The wizard renders the tile offline, in its offline state: the "couldn't
+// check yet" note, the "Install when online" button, and the same Skip/Next
+// wiring as the online tile.
+func TestSetupWizardShowsOfflineTaxPluginTile(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	deadMarketplace(t, dp)
+
+	form := url.Values{
+		"pin": {"1234"}, "pin_confirm": {"9999"}, // mismatch -> error re-render
+		"country": {"DE"}, "currency": {"EUR"},
+	}
+	body := postFormRaw(mux, "/api/setup", form).Body.String()
+	for _, want := range []string{
+		`action="/api/setup/tax-plugin"`,
+		`action="/api/setup/tax-plugin-skip"`,
+		`form="tax-plugin-skip"`,
+		`hx-post="/api/setup/tax-plugin-skip" hx-include="#tax-plugin-skip" hx-swap="none"`,
+		`data-tax-plugin-offline`,
+		"Install when online",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("offline DE render missing %q", want)
+		}
+	}
+}
+
+// The online tile must not carry the offline note.
+func TestSetupWizardOnlineTaxPluginTileHasNoOfflineNote(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	form := url.Values{"pin": {"1234"}, "pin_confirm": {"9999"}, "country": {"DE"}, "currency": {"EUR"}}
+	body := postFormRaw(mux, "/api/setup", form).Body.String()
+	if strings.Contains(body, "data-tax-plugin-offline") || strings.Contains(body, "Install when online") {
+		t.Error("the online tile must not show the offline note or button")
+	}
+}
+
+// After consenting offline, the resumed step 3 confirms the install is queued
+// (not "still installing", which would be untrue with no network).
+func TestSetupGETResumeAfterOfflineConsentShowsQueuedNote(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	withOSLocale(t, "", "") // see TestSetupGETResumesStep3ForTaxCountry's comment
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	deadMarketplace(t, dp)
+
+	body := getSetup(mux, "?tax_country=DE&tax_plugin_pending=1", "").Body.String()
+	if !strings.Contains(body, "data-tax-plugin-queued") {
+		t.Errorf("offline resume after consent must show the queued note, got:\n%s", body)
+	}
+	if strings.Contains(body, "data-tax-plugin-offline") {
+		t.Error("the queued note replaces the offline note, not both")
+	}
 }

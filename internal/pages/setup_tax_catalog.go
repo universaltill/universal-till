@@ -155,6 +155,14 @@ func setupTaxCatalogEntries(ctx context.Context, d *common.Deps) (entries []mark
 type installableTaxPlugin struct {
 	Country   string
 	ListingID string
+	// Offline (ut-docs#1512): the catalog could not be reached and nothing
+	// is cached, so there is no listing to name yet. The tile still shows —
+	// owner decision 2026-09-28, "always show the prompt" — with a "couldn't
+	// check yet, we'll install it when you're online" note, and its button
+	// queues the install for the #591 background retry with the operator's
+	// consent. Without it a fully offline German first boot showed no
+	// prompt at all, and #1506's queue-on-Skip/Next had no tile to hang off.
+	Offline bool
 }
 
 // setupInstallableTaxPlugin resolves the wizard's current country against
@@ -164,7 +172,9 @@ type installableTaxPlugin struct {
 // prompt:
 //   - no locale mapped for this country: nil, false — nothing to prompt,
 //     not "catalog unavailable" (no note should show either).
-//   - the catalog is unreachable with nothing cached: nil, true.
+//   - the catalog is unreachable with nothing cached: an Offline tile, true
+//     (ut-docs#1512 — the operator is still prompted; the install is queued
+//     for when the till is online).
 //   - no CanonicalType=="tax" listing declares the mapped locale: nil, false.
 //   - the best match is already installed and active: nil, false — this is
 //     what makes the tile disappear the moment install actually lands.
@@ -176,7 +186,7 @@ func setupInstallableTaxPlugin(ctx context.Context, d *common.Deps, country stri
 
 	entries, fetched := setupTaxCatalogEntries(ctx, d)
 	if !fetched {
-		return nil, true
+		return &installableTaxPlugin{Country: strings.ToUpper(strings.TrimSpace(country)), Offline: true}, true
 	}
 
 	// Filter to CanonicalType=="tax" via the EXISTING localeInList helper
@@ -249,12 +259,29 @@ func setupTaxPluginInstallHandler(d *common.Deps, svc *auth.Service) http.Handle
 		// and a forged/stale POST (a country with no current catalog match,
 		// or one already installed since the tile rendered) is rejected
 		// clean, same posture as the language handler's `known` check.
-		if match, _ := setupInstallableTaxPlugin(r.Context(), d, country); match == nil {
+		match, _ := setupInstallableTaxPlugin(r.Context(), d, country)
+		if match == nil {
 			http.Redirect(w, r, resume, http.StatusSeeOther)
 			return
 		}
 
 		spec := basePluginSpec{CanonicalType: "tax", Locale: locale}
+		// ut-docs#1512: the catalog is known unreachable (the re-resolve
+		// above retried it, or served its cached miss if the last attempt
+		// was under setupTaxCatalogRetryInterval ago), so the offline tile's
+		// button is the operator's consent to install later — queue it for
+		// the #591 background retry now rather than spend
+		// setupWizardTaxInstallTimeout on a foreground attempt that is
+		// unlikely to succeed. If the network came back in that window, the
+		// retry installs it within one tick.
+		if match.Offline {
+			if err := addPendingBasePlugins(r.Context(), d, []basePluginSpec{spec}); err != nil {
+				logging.L().Errorf("setup wizard: persist offline tax plugin install: %v", err)
+			}
+			http.Redirect(w, r, resume+"&tax_plugin_pending=1", http.StatusSeeOther)
+			return
+		}
+
 		ctx, cancel := context.WithTimeout(r.Context(), setupWizardTaxInstallTimeout)
 		err = resolveAndInstallBasePlugin(ctx, d, spec)
 		cancel()

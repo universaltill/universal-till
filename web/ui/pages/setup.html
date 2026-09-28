@@ -208,10 +208,18 @@
           <div class="setup-tax-plugin-prompt">
             <h2>{{ T "setup.tax_plugin.title" }}</h2>
             <p class="muted">{{ T "setup.tax_plugin.description" }}</p>
-            {{ if .taxPluginPending }}
+            {{ if and .taxPluginPending .installableTaxPlugin.Offline }}
+              <p class="muted" data-tax-plugin-pending data-tax-plugin-queued>{{ T "setup.tax_plugin.queued_offline" }}</p>
+            {{ else if .taxPluginPending }}
               <p class="muted" data-tax-plugin-pending>{{ T "setup.tax_plugin.install_pending" }}</p>
+            {{ else if .installableTaxPlugin.Offline }}
+              <!-- ut-docs#1512: fully offline first boot — the catalog could
+                   not be checked, but the operator is still prompted (owner
+                   decision 2026-09-28). The button queues the install for the
+                   background retry; Skip/Next below queue it too (#1506). -->
+              <p class="muted" data-tax-plugin-offline>{{ T "setup.tax_plugin.offline_note" }}</p>
             {{ end }}
-            <button type="submit" class="btn secondary setup-tax-plugin-install-btn" form="tax-plugin-install">{{ T "setup.tax_plugin.install_btn" }}</button>
+            <button type="submit" class="btn secondary setup-tax-plugin-install-btn" form="tax-plugin-install">{{ if .installableTaxPlugin.Offline }}{{ T "setup.tax_plugin.install_when_online_btn" }}{{ else }}{{ T "setup.tax_plugin.install_btn" }}{{ end }}</button>
           </div>
           {{ end }}
           <label>{{ T "setup.tse.legal_name" }}
