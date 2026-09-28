@@ -99,8 +99,10 @@
   <p class="muted">{{ T "issuereport.logs_note" }}</p>
   <!-- "My reports" (ut-docs#348): where sent reports and their statuses
        live. A plain link, not htmx — it's a full page; the draft (and what a
-       running recording has captured so far) survives it (ut-docs#2342). -->
-  <p><a href="/my-reports">{{ T "issuereport.view_my_reports" }}</a></p>
+       running recording has captured so far) survives it (ut-docs#2342).
+       ut-docs#3120: only for who can open it — /my-reports lists every
+       report this till sent and is gated on "reports" (a cashier got 403). -->
+  {{ if allowed "reports" }}<p><a href="/my-reports">{{ T "issuereport.view_my_reports" }}</a></p>{{ end }}
 </section>
 
 <script>

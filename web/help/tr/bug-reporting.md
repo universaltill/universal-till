@@ -25,6 +25,6 @@ Android kasa uygulamasında, "Ekran görüntüsü al" uygulamanın gösterdiğin
 
 Paneli ✕ ile kapatmak, taslağınız korunarak, siz yeniden 🐞'e basana kadar gizler: ekranlar arasında geçerken kapalı kalır ve Sorun bildir sayfası artık onu zorla açmaz. Bir taslağı gerçekten silen düğme Vazgeç'tir (önce sorar). Taslak yalnızca geçerli kasa oturumu boyunca saklanır; bir rapora en fazla 12 ekran görüntüsü sığar.
 
-Gönderdikten sonra raporunuza ne olduğunu mu merak ediyorsunuz? [Raporlarım](/help/my-reports) sayfasına bakın — bu kasadan gönderilen tüm raporlar, her birinin güncel durumuyla.
+Gönderdikten sonra raporunuza ne olduğunu mu merak ediyorsunuz? [Raporlarım](/help/my-reports) sayfasına bakın — bu kasadan gönderilen tüm raporlar, her birinin güncel durumuyla. Bu sayfayı müdürler ve yöneticiler açabilir; kasiyerseniz onlardan birine sorun.
 
 Bir rapor gönderdiğinizde tanılama modu açıksa (bkz. [Diller ve görünüm](/help/display) altındaki Ayarlar → Tanılama modu), rapor ayrıca o tanılama oturumuna bir referans ve en son teknik olaylarını da taşır; böylece destek raporu ait olduğu akışın yanında okuyabilir. Tanılama modu kapalıyken fazladan hiçbir şey gönderilmez.

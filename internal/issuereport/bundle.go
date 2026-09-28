@@ -265,6 +265,72 @@ func Discard(id string) error {
 	return os.RemoveAll(filepath.Join(PendingDir, id))
 }
 
+// PruneOlderThan removes pending bundles captured before cutoff — the
+// device-housekeeping age cap (ut-docs#3092): a report that still hasn't
+// uploaded after a week is dropped rather than kept forever with its video.
+// A bundle's age is meta.json's CreatedAt; a directory without a readable
+// meta.json (a Save that crashed mid-write) is aged by its own mtime.
+// Anything in PendingDir that isn't a directory is left alone. If cloudsync
+// happens to be uploading a bundle as it expires, that one upload fails and
+// the bundle is gone — the same outcome as expiring a moment earlier. Returns the
+// bundles removed and the bytes freed; a missing PendingDir is not an error.
+func PruneOlderThan(cutoff time.Time) (int, int64, error) {
+	entries, err := os.ReadDir(PendingDir)
+	if os.IsNotExist(err) {
+		return 0, 0, nil
+	}
+	if err != nil {
+		return 0, 0, fmt.Errorf("issuereport: list pending: %w", err)
+	}
+	removed, freed := 0, int64(0)
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir := filepath.Join(PendingDir, e.Name())
+		created := time.Time{}
+		if mb, err := os.ReadFile(filepath.Join(dir, "meta.json")); err == nil {
+			var meta Meta
+			if json.Unmarshal(mb, &meta) == nil {
+				created = meta.CreatedAt
+			}
+		}
+		if created.IsZero() {
+			info, err := e.Info()
+			if err != nil {
+				continue
+			}
+			created = info.ModTime()
+		}
+		if !created.Before(cutoff) {
+			continue
+		}
+		size := dirSize(dir)
+		if os.RemoveAll(dir) == nil {
+			removed++
+			freed += size
+		}
+	}
+	return removed, freed, nil
+}
+
+// dirSize sums the regular files under dir; unreadable entries count as 0.
+func dirSize(dir string) int64 {
+	var total int64
+	_ = filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.Type().IsRegular() {
+			if info, err := d.Info(); err == nil {
+				total += info.Size()
+			}
+		}
+		return nil
+	})
+	return total
+}
+
 // sentFailFallback tracks SentFailCount in memory for bundles whose durable
 // write (writeMeta, below) has failed — independent review (ut-docs#446)
 // caught that the counter's own persistence shares a failure domain with

@@ -26,6 +26,17 @@ itself — no need to reach for a keyboard or a plug. On Windows the till
 can't restart itself yet — close the window and reopen Universal Till
 instead.
 
+## Automatic clean-up
+
+Once a day the till removes files it no longer needs, so its disk doesn't fill up:
+
+- Backups: the newest 14 are kept.
+- The copy of your data set aside when you restore a backup: the newest 3 are kept, and none older than 30 days.
+- Issue reports that couldn't be sent: removed after 7 days.
+- Downloaded updates: removed after 7 days.
+
+The clean-up never removes sales, receipts, the audit log, Z reports or any other record you must keep by law. Each till cleans only its own disk.
+
 ## Removing the till from a Linux box
 
 If the till was installed from the `.deb` package, run `sudo

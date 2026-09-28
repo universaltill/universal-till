@@ -25,6 +25,6 @@ In der Android-Kasse-App erfasst "Screenshot aufnehmen" direkt, was die App gera
 
 Mit ✕ wird das Panel ausgeblendet — Ihr Entwurf bleibt erhalten — bis Sie wieder 🐞 drücken: Es bleibt beim Wechsel zwischen Bildschirmen geschlossen, und die Seite „Problem melden“ öffnet es nicht mehr von selbst. „Verwerfen“ ist die Schaltfläche, die einen Entwurf tatsächlich löscht (mit Rückfrage). Ein Entwurf gilt nur für die aktuelle Kassensitzung; in einen Bericht passen bis zu 12 Screenshots.
 
-Möchten Sie wissen, was aus einem gesendeten Bericht geworden ist? Siehe [Meine Berichte](/help/my-reports) — jeder von dieser Kasse gesendete Bericht mit seinem aktuellen Status.
+Möchten Sie wissen, was aus einem gesendeten Bericht geworden ist? Siehe [Meine Berichte](/help/my-reports) — jeder von dieser Kasse gesendete Bericht mit seinem aktuellen Status. Manager und Administratoren können sie öffnen; fragen Sie als Kassierer eine dieser Personen.
 
 Ist beim Senden eines Berichts der Diagnosemodus eingeschaltet (siehe Einstellungen → Diagnosemodus unter [Sprachen & Anzeige](/help/display)), enthält der Bericht zusätzlich einen Verweis auf diese Diagnosesitzung und ihre letzten technischen Ereignisse, damit der Support den Bericht neben dem zugehörigen Datenstrom lesen kann. Bei ausgeschaltetem Diagnosemodus wird nichts Zusätzliches gesendet.
