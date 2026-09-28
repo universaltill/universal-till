@@ -148,10 +148,14 @@ func TestPluginPage_ContentBundleEscapesEveryField(t *testing.T) {
 func assertPluginPageCSP(t *testing.T, branch string, rec *httptest.ResponseRecorder) {
 	t.Helper()
 	csp := rec.Header().Get("Content-Security-Policy")
-	for _, want := range []string{"object-src 'none'", "frame-src 'self' about:"} {
+	for _, want := range []string{"object-src 'none'", "frame-src 'self' about:", "frame-ancestors 'self'"} {
 		if !strings.Contains(csp, want) {
 			t.Errorf("%s branch: Content-Security-Policy %q missing %q", branch, csp, want)
 		}
+	}
+	// ADR-0121 §7 defence in depth (ut-docs#3154).
+	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Errorf("%s branch: X-Content-Type-Options = %q, want nosniff", branch, got)
 	}
 }
 
