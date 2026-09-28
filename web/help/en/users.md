@@ -56,6 +56,8 @@ A cashier account is for selling. Signed in as a cashier you can ring up sales, 
 
 A super admin can go further than assigning cashier/manager/admin roles — they can grant or revoke exactly what each role is allowed to do, action by action (refunds, void, price overrides, settings, reports, and more), from Users → Permissions. Every change is logged in the audit trail with who made it. The one thing you can never do is revoke a super admin's own access to this page — that grant is always locked on, so nobody can accidentally lock every super admin out.
 
+The page groups permissions under headings — Sales, Catalog, Stock, Reports, Staff, Settings, Plugins and System — so related ones sit together. Under each permission's name a short line says what it lets a person do, and where it applies an "Unlocks" line lists the menu tiles and left-hand menu entries that appear for a role once it's granted — for example, Reports unlocks the Reports tile. A few permissions (refunds, voids, price overrides and cash adjustments) are listed but not checked by the till yet: their description says so, and a refund or taking cash out of the drawer still asks for a manager PIN whatever is ticked. On a narrow screen the grid scrolls sideways inside its card while the permission names stay in place.
+
 ## Becoming a super admin
 
 Only an existing super admin can create or promote another one — from Users, either pick "super admin" as the role for a brand-new account, or use "Promote to super admin" next to an existing person's name. Both are logged in the audit trail, the same as any other permission-sensitive change, and take effect on that person's next sign-in.

@@ -3,6 +3,7 @@ package pages
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -34,9 +35,15 @@ func registerPermissionSettings(mux *http.ServeMux, d *common.Deps) {
 		Locked  bool // this exact cell can't be unchecked (self-lockout guard)
 	}
 	type actionRow struct {
-		Action string
-		Cells  map[string]gridCell // by role
+		Action  string
+		Cells   map[string]gridCell // by role
+		Unlocks string              // translated, joined menu labels this action shows ("" = none)
 	}
+	type groupView struct {
+		Key  string
+		Rows []*actionRow
+	}
+	unlocksByAction := menuUnlocksByAction()
 
 	mux.HandleFunc("GET /users/permissions", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, lockoutAction) {
@@ -70,12 +77,60 @@ func registerPermissionSettings(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 
+		// "Unlocks" (ut-docs#3132, display only): the menu entries whose
+		// VisibleIf resolves to this action. A composite predicate (e.g. a
+		// country-specific fiscal tile nested under settings) is listed
+		// only where this shop has that tile at all — evaluated through the
+		// same menuPredicates the menu itself uses.
+		locale := httpx.RequestLocale(r)
+		vis := &menuVisibility{d: d, r: r}
+		sep := httpx.T(locale, "permissions.unlocks_separator")
+		for _, row := range rows {
+			var labels []string
+			for _, u := range unlocksByAction[row.Action] {
+				if u.Predicate != row.Action && !vis.visible(u.Predicate) {
+					continue
+				}
+				labels = append(labels, httpx.T(locale, u.LabelKey))
+			}
+			if len(labels) > 0 {
+				row.Unlocks = strings.Join(labels, sep)
+			}
+		}
+
+		// Group the rows (permission_groups.go); anything the table doesn't
+		// place still renders, in a trailing "other" group.
+		placed := map[string]bool{}
+		var groups []groupView
+		for _, g := range permissionGroups {
+			gv := groupView{Key: g.Key}
+			for _, a := range g.Actions {
+				if row, ok := rowByAction[a]; ok {
+					gv.Rows = append(gv.Rows, row)
+					placed[a] = true
+				}
+			}
+			if len(gv.Rows) > 0 {
+				groups = append(groups, gv)
+			}
+		}
+		other := groupView{Key: permissionOtherGroup}
+		for _, row := range rows {
+			if !placed[row.Action] {
+				other.Rows = append(other.Rows, row)
+			}
+		}
+		if len(other.Rows) > 0 {
+			groups = append(groups, other)
+		}
+
 		httpx.Render("ui/pages/permissions.html", map[string]any{
-			"title":     httpx.T(httpx.RequestLocale(r), "page.title.permissions"),
+			"title":     httpx.T(locale, "page.title.permissions"),
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
 			"Roles":     roles,
-			"Rows":      rows,
+			"Groups":    groups,
+			"Cols":      len(roles) + 1,
 		})(w, r)
 	})
 

@@ -472,3 +472,76 @@ func TestPermissionSettingsPage_POST_RefusedOnReplica(t *testing.T) {
 		t.Fatalf("a replica must not change the matrix, granted=%v err=%v", granted, err)
 	}
 }
+
+// ut-docs#3132: the matrix renders one rowgroup heading per group in
+// permissionGroups order, a plain-language description under each action,
+// and the menu entries each action unlocks (derived from uislot).
+func TestPermissionSettingsPage_GET_GroupedDescribedWithUnlocks(t *testing.T) {
+	mux, _ := newPermissionSettingsTestDeps(t)
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/users/permissions", nil), auth.User{ID: "sa-1", Role: "super_admin"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	// Group headings, in table order, each a rowgroup header spanning the grid.
+	headRe := regexp.MustCompile(`<th scope="rowgroup" colspan="(\d+)"[^>]*>\s*<span[^>]*>([^<]+)</span>`)
+	var got []string
+	for _, m := range headRe.FindAllStringSubmatch(body, -1) {
+		if m[1] != "5" { // action column + 4 seeded roles
+			t.Errorf("group heading %q spans %s columns, want 5", m[2], m[1])
+		}
+		got = append(got, strings.TrimSpace(m[2]))
+	}
+	want := []string{"Sales", "Catalog", "Stock", "Reports", "Staff", "Settings", "Plugins", "System"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("group headings = %v, want %v", got, want)
+	}
+	// An action row sits under its own group: refund after Sales, before Catalog.
+	sales, catalog := strings.Index(body, ">Sales<"), strings.Index(body, ">Catalog<")
+	refund := strings.Index(body, ">Refunds<")
+	if !(sales < refund && refund < catalog) {
+		t.Fatalf("Refunds row not inside the Sales group (sales=%d refunds=%d catalog=%d)", sales, refund, catalog)
+	}
+
+	// A description under an action label.
+	if !strings.Contains(body, httpx.T("en", "permissions.action_desc.reports")) {
+		t.Fatalf("expected the reports description, got: %s", body)
+	}
+	// The Unlocks list: reports → the Reports tile.
+	if !strings.Contains(body, "Unlocks: Reports<") {
+		t.Fatalf(`expected "Unlocks: Reports" under the reports action, got: %s`, body)
+	}
+	// Composite fiscal tiles only show where the shop has them (not DE here).
+	if strings.Contains(body, httpx.T("en", "fiscalregister.title")) {
+		t.Fatalf("the Germany-only fiscal register tile must not be listed for a non-DE shop: %s", body)
+	}
+}
+
+// ut-docs#3132: an action the DB has but permissionGroups doesn't place
+// still renders (in a trailing "Other" group) — the page never hides a
+// grantable permission; TestPermissionGroups_EveryActionInExactlyOneGroup
+// is what fails CI for the gap.
+func TestPermissionSettingsPage_GET_UngroupedActionRendersUnderOther(t *testing.T) {
+	mux, dp := newPermissionSettingsTestDeps(t)
+	if _, err := dp.Db.Exec(`INSERT INTO permission_actions(action) VALUES ('zz_unplaced_action')`); err != nil {
+		t.Fatalf("seed action: %v", err)
+	}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/users/permissions", nil), auth.User{ID: "sa-1", Role: "super_admin"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	other := strings.Index(body, ">Other<")
+	system := strings.Index(body, ">System<")
+	row := strings.Index(body, `&#34;action&#34;:&#34;zz_unplaced_action&#34;`)
+	if other < 0 || row < 0 || !(system < other && other < row) {
+		t.Fatalf("expected a trailing Other group holding zz_unplaced_action (system=%d other=%d row=%d): %s", system, other, row, body)
+	}
+}
