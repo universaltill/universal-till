@@ -1,6 +1,8 @@
 package pos
 
 import (
+	"strings"
+
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/money"
@@ -90,6 +92,42 @@ type BasketSnapshot struct {
 	// the receipt, the kitchen ticket printed at payment and the order
 	// board all show the number the customer is holding.
 	DisplayNo string `json:"display_no,omitempty"`
+	// AddByHand (ut-docs#2703, reopened) lists the lines of a legacy
+	// pay-at-counter order that could not be matched to the catalog when it
+	// was converted into this held sale. Carried IN the payload so it
+	// travels with the order everywhere the held sale goes (every resume,
+	// every re-park, replica sync) and the sale screen keeps telling the
+	// cashier to ring them up until the sale is paid or cleared, or the
+	// cashier dismisses the notice. Omitted for every other basket.
+	AddByHand []ByHandLine `json:"add_by_hand,omitempty"`
+}
+
+// ByHandLine (ut-docs#2703, reopened) is one customer-ordered line the till
+// could not price: the name, quantity and modifier names exactly as the
+// customer ordered them, shown on the sale screen for the cashier to add by
+// hand. Never sold as-is -- it has no price.
+type ByHandLine struct {
+	Name      string   `json:"name"`
+	Qty       float64  `json:"qty"`
+	Modifiers []string `json:"modifiers,omitempty"`
+}
+
+// Label is the line as the customer ordered it, "Name (mod, mod)" -- the
+// sale screen adds the locale-formatted quantity.
+func (l ByHandLine) Label() string {
+	if len(l.Modifiers) == 0 {
+		return l.Name
+	}
+	return l.Name + " (" + strings.Join(l.Modifiers, ", ") + ")"
+}
+
+// DismissAddByHand clears the live basket's "add by hand" lines -- the
+// cashier has dealt with them -- so neither the sale screen nor the next
+// park of this order carries them any more.
+func (s *Service) DismissAddByHand() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.basket.AddByHand = nil
 }
 
 // HeldOrigin (ut-docs#1918) identifies the parked held_sales row the live
@@ -181,6 +219,7 @@ func (s *Service) Snapshot() BasketSnapshot {
 		TableLabel:        s.tableLabel,
 		Total:             s.basket.Total,
 		DisplayNo:         s.orderDisplayNo,
+		AddByHand:         append([]ByHandLine(nil), s.basket.AddByHand...),
 	}
 	for _, l := range s.lines {
 		snap.Lines = append(snap.Lines, SnapshotLine{
@@ -219,6 +258,7 @@ func (s *Service) RestoreHeld(snap BasketSnapshot, origin HeldOrigin) {
 	s.resetLocked()
 	s.heldOrigin = origin
 	s.orderDisplayNo = snap.DisplayNo
+	s.basket.AddByHand = append([]ByHandLine(nil), snap.AddByHand...)
 	// ADR-0073 legacy rule: a pre-ADR-0073 payload has no per-line values
 	// and its header IS the mode of every line. A new payload always writes
 	// an explicit "takeaway" on every takeaway line, so only a "takeaway"

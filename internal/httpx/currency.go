@@ -362,8 +362,8 @@ func formatMoney(minor int64, locale string, digitShape bool) string {
 //
 // Wired into the template FuncMap as {{ qty }} (ut-docs#2221) for every
 // on-screen, non-editable quantity display: receipt.html, invoice.html,
-// order_view.html, journal_detail.html, self_order_cart.html, the
-// kiosk-counter-orders staff board, and the reports tabs (top/slow items,
+// order_view.html, journal_detail.html, self_order_cart.html, Open
+// orders' pay-at-the-counter tab, and the reports tabs (top/slow items,
 // dead stock, by-department, and the archived-EOD by-article-group/
 // by-article/by-order-type breakdowns) — the quantity-side twin of
 // FormatMoney's own {{ money }} binding. Two things stay Latin-only

@@ -72,6 +72,12 @@ func newHoldTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	if _, err := db.Exec(`CREATE TABLE tills (id TEXT PRIMARY KEY, name TEXT NOT NULL, bearer_hash TEXT UNIQUE, enrolled_at TEXT NOT NULL DEFAULT (datetime('now')), last_seen_at TEXT);`); err != nil {
 		t.Fatalf("create tills: %v", err)
 	}
+	// ut-docs#2703 (reopened): Open orders' "Pay at the counter" tab also
+	// lists legacy open counter orders -- column-identical to migrations
+	// 026 + 029.
+	if _, err := db.Exec(`CREATE TABLE kiosk_counter_orders (id TEXT PRIMARY KEY, display_no TEXT NOT NULL, order_type TEXT NOT NULL DEFAULT '', lines_json TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', created_at TEXT NOT NULL, collected_at TEXT, table_id TEXT REFERENCES tables(id));`); err != nil {
+		t.Fatalf("create kiosk_counter_orders: %v", err)
+	}
 
 	resolver := stubResolver{
 		"ABC": {SKU: "ABC", Name: "Apple", Qty: 1, PriceCents: 100, ItemID: "itm1", TaxRateBP: 2000},

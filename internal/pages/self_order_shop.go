@@ -980,7 +980,13 @@ func completeCounterOrderCheckout(w http.ResponseWriter, r *http.Request, d *com
 // customer's: the label is stored text read by staff, same choice as the
 // kitchen ticket (printCounterOrderTicket).
 func counterOrderHeldLabel(displayNo, orderType string) string {
-	locale := httpx.DefaultLocale()
+	return counterOrderLabelIn(httpx.DefaultLocale(), displayNo, orderType)
+}
+
+// counterOrderLabelIn is counterOrderHeldLabel in a chosen locale -- Open
+// orders names a legacy (never parked) counter order the same way, in the
+// viewing cashier's language (ut-docs#2703, reopened).
+func counterOrderLabelIn(locale, displayNo, orderType string) string {
 	key := "selforder.order_type.dine_in"
 	switch orderType {
 	case pos.OrderTypeTakeaway:

@@ -49,7 +49,12 @@ test('a pay-at-counter kiosk order is recalled from Open orders and paid as a no
 
   // --- The cashier, at the till.
   const assertClean = watchConsole(page);
-  await page.goto('/open-orders');
+  // ut-docs#2703 (reopened): it waits under the "Pay at the counter" tab,
+  // never under On hold.
+  await page.goto('/open-orders?tab=hold');
+  await expect(page.locator('[data-testid="open-order-row"]', { hasText: orderNo })).toHaveCount(0);
+  await page.goto('/open-orders?tab=counter');
+  await expect(page.getByTestId('open-orders-tab-counter')).toHaveAttribute('aria-current', 'page');
   const row = page.locator('[data-testid="open-order-row"]', { hasText: orderNo });
   await expect(row, 'the kiosk order waits in Open orders like a held sale').toBeVisible();
   await expect(row).toContainText('1.20');
@@ -65,7 +70,7 @@ test('a pay-at-counter kiosk order is recalled from Open orders and paid as a no
   await expect(receipt).toBeVisible();
 
   // Paid: it has left Open orders for good.
-  await page.goto('/open-orders');
+  await page.goto('/open-orders?tab=counter');
   await expect(page.locator('[data-testid="open-order-row"]', { hasText: orderNo })).toHaveCount(0);
 
   // And it is a real, paid sale under the customer's own number: the Order

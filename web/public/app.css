@@ -3689,6 +3689,40 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
 .open-order-cell-total { flex: 0 0 auto; min-inline-size: 5rem; white-space: nowrap; }
 .open-order-cell-age { flex: 0 0 auto; min-inline-size: 6rem; white-space: nowrap; }
 
+/* ut-docs#2703 (reopened): Open orders' two tabs -- On hold / Pay at the
+   counter -- on the page (links, aria-current) and in the sale screen's
+   popup (buttons). The shared .tab-bar look (catalog item dialog, tender
+   Pay/Split), plus: the 46px touch floor; <a> tabs lose link styling; the
+   count reads as a quiet pill beside the label (never the absolutely
+   positioned .count-badge, which belongs to the sale-screen icon button).
+   Labels wrap onto a second row rather than shrink when a long locale
+   ("Kasada ödenecek", "پرداخت در صندوق") meets a 360px screen, via
+   .tab-bar's own flex-wrap. */
+.open-orders-tabs { margin-block-end: .75rem; }
+.open-orders-tabs .tab { min-height: 46px; display: inline-flex; align-items: center; justify-content: center; gap: .4rem; text-decoration: none; }
+.open-orders-tabs .tab-count { min-inline-size: 1.5rem; padding-inline: .4rem; border-radius: 999px;
+  background: var(--surface-2); color: inherit; font-size: .85em; line-height: 1.5; }
+.open-orders-tabs .tab.active .tab-count { background: var(--accent); color: #fff; }
+/* A legacy counter order's "what was ordered" line under its label: it
+   wraps (never ellipsized -- it is how the cashier recognises the order). */
+/* "Priced when opened" stands in a legacy row's total cell: let it wrap
+   in a narrow block rather than widen the never-truncated money column
+   past a 360px phone (the money rule above is about amounts, not this). */
+.open-order-cell-total .open-order-price-later { display: inline-block; max-inline-size: 6rem; white-space: normal; line-height: 1.2; }
+.open-order-items { display: block; white-space: normal; overflow-wrap: break-word; font-weight: 400; font-size: .85em; opacity: .8; }
+/* ut-docs#2703 review: at phone width the five columns left the order
+   cell a few letters wide ("Avocad/o/Lachs"). Below 40rem each row wraps:
+   the order (label + items) takes the full first line, the numbers follow
+   on the second; the column headers no longer line up, so they go. */
+@media (max-width: 40rem) {
+  #open-orders-table thead { display: none; }
+  .open-order-row-btn { flex-wrap: wrap; row-gap: .25rem; }
+  .open-order-row-btn .open-order-cell-label { flex: 1 1 100%; white-space: normal; }
+  .open-order-row-btn .open-order-cell-table:empty { display: none; }
+}
+.parked-order-form { flex: 1; display: flex; margin: 0; }
+.parked-order-form > .parked-order { flex: 1; min-height: 46px; display: flex; align-items: center; gap: .5rem; text-align: start; }
+
 /* The dialog itself: a slide-in panel anchored to the inline-end edge
    (right in LTR, left in RTL — logical properties per this repo's RTL
    rule) rather than the UA's default centered box, and sized so it never
