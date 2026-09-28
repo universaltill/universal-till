@@ -2867,5 +2867,12 @@
   "vouchers_import.status.missing_code": "رمز مفقود",
   "vouchers_import.status.non_positive_balance": "يجب أن يكون الرصيد أكبر من صفر",
   "vouchers_import.status.unknown_issue": "تعذّر استيراده",
-  "vouchers_import.title": "استيراد أرصدة القسائم"
+  "vouchers_import.title": "استيراد أرصدة القسائم",
+  "settings.staff_languages.title": "اللغات المتاحة للموظفين",
+  "settings.staff_languages.help": "اللغات التي يمكن للموظفين التبديل إليها من ☰ القائمة. لغة المتجر الافتراضية مضمّنة دائمًا. إذا اختيرت لغة واحدة فقط، فلن تعرض القائمة أزرار اللغات.",
+  "settings.staff_languages.default": "اللغة الافتراضية",
+  "settings.staff_languages.error_unknown": "هذه اللغة غير مثبّتة على هذا الصندوق.",
+  "settings.staff_languages.error_empty": "اختر لغة واحدة على الأقل.",
+  "settings.staff_languages.error_default": "لا يمكن إزالة لغة المتجر الافتراضية من القائمة.",
+  "elevation.summary.staff_languages": "تعيين اللغات المتاحة للموظفين إلى: %s"
 }

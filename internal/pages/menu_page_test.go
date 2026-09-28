@@ -65,10 +65,14 @@ func newMenuPageTestDeps(t *testing.T, menu []common.MenuItem) (*http.ServeMux, 
 
 func TestMenuPage_RendersConfiguredTilesWithMappedIcons(t *testing.T) {
 	t.Setenv("UT_AUTH", "off") // ut-docs#3079: /reports is reports-gated; this test is about icons, not permissions.
-	mux, _ := newMenuPageTestDeps(t, []common.MenuItem{
+	mux, d := newMenuPageTestDeps(t, []common.MenuItem{
 		{Href: "/inventory", Label: "nav.inventory"},
 		{Href: "/reports", Label: "nav.reports"},
 	})
+	// ut-docs#3086: an English-only shop shows no language row; select two.
+	if err := d.Settings.Set(t.Context(), common.KeyStaffLocales, "en,tr"); err != nil {
+		t.Fatal(err)
+	}
 	req := httptest.NewRequest(http.MethodGet, "/menu", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -253,8 +257,12 @@ func TestMenuPage_FiscalTilesNeverRenderDirectlyOnMenu(t *testing.T) {
 // below the tile grid) never appears in menu.png and a regression here would
 // be invisible to both CI and the manual.
 func TestMenuPageLanguageRowShowsNativeNamesNotBareCodes(t *testing.T) {
-	mux, _ := newMenuPageTestDeps(t, []common.MenuItem{{Href: "/inventory", Label: "nav.inventory"}})
+	mux, d := newMenuPageTestDeps(t, []common.MenuItem{{Href: "/inventory", Label: "nav.inventory"}})
 	t.Setenv("UT_AUTH", "off")
+	// ut-docs#3086: the row lists only the staff languages — select them all.
+	if err := d.Settings.Set(t.Context(), common.KeyStaffLocales, "ar,en,fa,tr"); err != nil {
+		t.Fatal(err)
+	}
 
 	req := httptest.NewRequest(http.MethodGet, "/menu", nil)
 	rec := httptest.NewRecorder()
