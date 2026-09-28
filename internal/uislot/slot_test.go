@@ -847,8 +847,12 @@ func TestCoreSettings_IsWellFormed(t *testing.T) {
 			t.Errorf("core table must be declared in ascending Order: %q has %d after %d", e.Key, e.Order, prev)
 		}
 		prev = e.Order
-		if e.Icon != "" || e.SubtitleKey != "" || e.VisibleIf != "" || e.InNav || e.Group != "" {
-			t.Errorf("settings rows carry no icon/subtitle/predicate/InNav/group in their CORE declaration: %+v", e)
+		if e.Icon != "" || e.SubtitleKey != "" || e.VisibleIf != "" || e.InNav {
+			t.Errorf("settings rows carry no icon/subtitle/predicate/InNav in their CORE declaration: %+v", e)
+		}
+		// ut-docs#3090: every core row names its landing-grid category.
+		if e.Group == "" {
+			t.Errorf("settings rows declare their category as Group: %+v", e)
 		}
 		if e.LabelFallback != "" || e.IconFallback != "" {
 			t.Errorf("fallbacks are set by Resolve, never declared: %+v", e)
