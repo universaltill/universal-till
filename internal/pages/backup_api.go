@@ -147,7 +147,7 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.backup.failed"))
 			return
 		}
-		_ = db.PruneBackups(dbPath, 14)
+		_ = db.PruneBackups(dbPath, db.DefaultBackupKeep)
 		auditNow("backup_created", map[string]any{"file": filepath.Base(path)})
 		// Reload so the list shows the new snapshot.
 		w.Header().Set("HX-Refresh", "true")
