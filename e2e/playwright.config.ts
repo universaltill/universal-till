@@ -82,6 +82,11 @@ const LAYOUT_ONLY_SPECS = /layout-plugin-menu-1904\.spec\.ts$/;
 // its own server + project, same reasoning as the layout project above.
 const DIAGNOSTICS_ONLY_SPECS = /diagnostic-mode-indicator-2169\.spec\.ts$/;
 
+// ut-docs#3091: the release-notes spec needs a till stamped with a released
+// version and seeded as "just updated" (run-till-release-notes.sh), so the
+// one-time what's-new chip shows — never in the shared default till.
+const RELEASE_NOTES_ONLY_SPECS = /release-notes-3091\.spec\.ts$/;
+
 // ut-docs#2345: the `default` project's till is NOT in the `webServer`
 // list below. Its ~134 spec files run in parallel, and `internal/pos.Engine`
 // is a server-side singleton, so one shared server would let workers race
@@ -174,11 +179,17 @@ export default defineConfig<{}, WorkerOptions>({
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
     },
+    {
+      command: 'bash ./run-till-release-notes.sh',
+      url: 'http://127.0.0.1:8097/healthz',
+      timeout: 120_000,
+      reuseExistingServer: !process.env.CI,
+    },
   ],
   projects: [
     {
       name: 'default',
-      testIgnore: [AUTH_ONLY_SPECS, AI_IDENTIFY_ONLY_SPECS, LAYOUT_ONLY_SPECS, DIAGNOSTICS_ONLY_SPECS],
+      testIgnore: [AUTH_ONLY_SPECS, AI_IDENTIFY_ONLY_SPECS, LAYOUT_ONLY_SPECS, DIAGNOSTICS_ONLY_SPECS, RELEASE_NOTES_ONLY_SPECS],
       use: {
         // No static baseURL: the `workerServerURL` fixture supplies this
         // worker's own server (9091 + parallelIndex) — see the note above
@@ -228,6 +239,17 @@ export default defineConfig<{}, WorkerOptions>({
       workers: STATIC_SERVER_WORKERS,
       use: {
         baseURL: 'http://127.0.0.1:8095',
+        trace: 'retain-on-failure',
+        screenshot: 'only-on-failure',
+        launchOptions,
+      },
+    },
+    {
+      name: 'release-notes',
+      testMatch: RELEASE_NOTES_ONLY_SPECS,
+      workers: STATIC_SERVER_WORKERS,
+      use: {
+        baseURL: 'http://127.0.0.1:8097',
         trace: 'retain-on-failure',
         screenshot: 'only-on-failure',
         launchOptions,

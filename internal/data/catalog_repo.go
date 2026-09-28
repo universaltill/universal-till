@@ -2127,6 +2127,63 @@ func (r *CatalogRepo) RemoveFromSellScreen(ctx context.Context, itemID string) e
 	return nil
 }
 
+// SetItemCategory moves itemID into categoryID (ut-docs#2465): the sale
+// screen's / Designer's jiggle-mode "move this quick button to another
+// category" -- a drag onto a category tab, or the Move to category badge's
+// dialog, via POST /api/buttons/recategorize. A blank categoryID clears the
+// category (NULL, the Uncategorised bucket). An unknown or inactive category
+// refuses with ErrCategoryNotFound; an unknown or inactive item with
+// ErrItemNotFound -- never a silent zero-row no-op (ut-docs#2541 finding 4).
+//
+// Only category_id (and updated_at, like every other single-column setter
+// here) changes. Everything else the catalog editor's full-row update
+// (updateItemExec) sets off for a category change comes from the items
+// table's own triggers, so this path gets it too without a second copy: the
+// admin-sync version (migration 023, what a replica's pull and the fleet
+// nudge key off) and the sell-screen generation (migration 047, the #2501
+// render cache and sell-screen-watch.js's live refresh). The editor writes
+// no audit row and no outbox entry for a category change either; the
+// elevated-PIN audit lives in the route, like its siblings'.
+//
+// The check and the write share one transaction (BEGIN IMMEDIATE via the
+// DSN, ut-docs#311), so a category deactivated in between can't be the one
+// written.
+func (r *CatalogRepo) SetItemCategory(ctx context.Context, itemID, categoryID string) error {
+	itemID = strings.TrimSpace(itemID)
+	categoryID = strings.TrimSpace(categoryID)
+	if itemID == "" {
+		return ErrItemNotFound
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("set item category: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if categoryID != "" {
+		var one int
+		err := tx.QueryRowContext(ctx, `SELECT 1 FROM categories WHERE id = ? AND is_active = 1`, categoryID).Scan(&one)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrCategoryNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("set item category: %w", err)
+		}
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE items SET category_id = ?, updated_at = datetime('now') WHERE id = ? AND is_active = 1`, nullableString(categoryID), itemID)
+	if err != nil {
+		return fmt.Errorf("set item category: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("set item category: %w", err)
+	} else if n == 0 {
+		return ErrItemNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("set item category: %w", err)
+	}
+	return nil
+}
+
 // UnhideAllSellScreen clears items.sell_screen_hidden for every ACTIVE
 // hidden item in one statement (ut-docs#2614 — the Designer's "Show all N
 // on the sell screen") and returns how many items it unhid (0 when none

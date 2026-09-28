@@ -267,15 +267,6 @@ var CoreMenu = []Entry{
 	// it must be declared here to render at all.
 	{Key: "/open-orders", Href: "/open-orders", LabelKey: "open_orders.title", Icon: "monitor", Order: 1900},
 	{Key: "/help", Href: "/help", LabelKey: "nav.help", Icon: "help", Order: 2000},
-	// ut-docs#582: the staff "pay at counter" board (kiosk.payment_mode
-	// "counter") — no VisibleIf, same as /orders above: any operator needs
-	// to see which orders are waiting to be called out/collected, not just
-	// a manager. Order 2050, not InNav: visible to every operator on the
-	// /menu grid (like /help just above), but not promoted into the
-	// space-constrained top nav rail (see nav.html's own "no spare budget"
-	// comment) — same non-InNav placement as every other non-rail tile
-	// below.
-	{Key: "/kiosk-counter-orders", Href: "/kiosk-counter-orders", LabelKey: "nav.kiosk_counter_orders", Icon: "check", Order: 2050},
 	{Key: "/users", Href: "/users", LabelKey: "users.title", Icon: "users", Order: 2100, VisibleIf: "settings"},
 	{Key: "/kitchen-stations", Href: "/kitchen-stations", LabelKey: "kitchenstations.title", Icon: "chef-hat", Order: 2200, VisibleIf: "settings"},
 	// bluetoothdevices.title, not a separate nav.bluetooth_devices key — it
@@ -515,6 +506,9 @@ var CoreSettings = []Entry{
 	{Key: "settings-diagnostics", Href: "#settings-diagnostics", LabelKey: "settings.diagnostics.title", Order: 250},
 	{Key: "settings-menulayout", Href: "#settings-menulayout", LabelKey: "menulayout.title", Order: 300},
 	{Key: "settings-update", Href: "#settings-update", LabelKey: "settings.update.title", Order: 400},
+	// ut-docs#3091: About (version, first run, What's new), right after the
+	// Software update card in the template.
+	{Key: "settings-about", Href: "#settings-about", LabelKey: "settings.about.title", Order: 450},
 	{Key: "settings-theme", Href: "#settings-theme", LabelKey: "settings.theme.title", Order: 500},
 	{Key: "settings-display", Href: "#settings-display", LabelKey: "settings.display.title", Order: 600},
 	{Key: "settings-payments", Href: "#settings-payments", LabelKey: "settings.payments.title", Order: 700},

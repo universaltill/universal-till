@@ -113,7 +113,7 @@ func TestRealRequestStillExtendsTheSession(t *testing.T) {
 // Display boards are watched, not touched; they keep today's behaviour
 // until the display-device auto-lock decision lands (ut-docs#2935).
 func TestDisplayBoardPollsStillExtendTheSession(t *testing.T) {
-	for _, p := range []string{"/ui/orders", "/ui/kiosk-counter-orders", "/ui/kitchen-display/st-1"} {
+	for _, p := range []string{"/ui/orders", "/ui/kitchen-display/st-1"} {
 		if !displayBoardPoll(p) {
 			t.Fatalf("%s should be a display-board poll", p)
 		}
@@ -163,6 +163,9 @@ var (
 	pollTriggerRe = regexp.MustCompile(`hx-trigger=(?:\\?"[^"\\]*|'[^']*)\bevery\b`)
 	pollURLRe     = regexp.MustCompile(`hx-(?:get|post)=(?:\\?"([^"\\]*)|'([^']*))`)
 	jsPollURLRe   = regexp.MustCompile(`var VERSION_URL = '([^']+)'`)
+	// base.html's status-bar script polls the cloud-reachability light
+	// with fetch on a timer (ut-docs#3095) — a poller the tag scan can't see.
+	netStatusURLRe = regexp.MustCompile(`var NET_STATUS_URL = '([^']+)'`)
 )
 
 // dynamicPollURLs resolves the templated hx-get values of the pollers that
@@ -257,6 +260,16 @@ func TestEveryPollerIsClassified(t *testing.T) {
 	}
 	add("web/public/sell-screen-watch.js", m[1])
 
+	base, err := os.ReadFile(filepath.Join(root, "web", "ui", "layouts", "base.html"))
+	if err != nil {
+		t.Fatalf("read base.html: %v", err)
+	}
+	if m := netStatusURLRe.FindStringSubmatch(string(base)); m == nil {
+		t.Error("base.html: NET_STATUS_URL not found — keep this guard pointed at the status-bar light's poll URL")
+	} else {
+		add("web/ui/layouts/base.html", m[1])
+	}
+
 	// A JS timer is a poller the tag scan can't see. The known ones: the
 	// idle-lock timer itself (app.js, no request) and sell-screen-watch.js
 	// (VERSION_URL, checked above). A new setInterval anywhere else in
@@ -280,7 +293,7 @@ func TestEveryPollerIsClassified(t *testing.T) {
 	}
 
 	// The scan must actually see the pollers this card is about.
-	for _, want := range []string{"/ui/buttons/version", "/ui/open-orders-badge/watch", "/ui/main-till-status", "/ui/sync-chip"} {
+	for _, want := range []string{"/ui/buttons/version", "/ui/open-orders-badge/watch", "/ui/main-till-status", "/ui/sync-chip", "/ui/net-status"} {
 		if _, ok := found[want]; !ok {
 			t.Errorf("scanner did not find the %s poller — the scan is broken", want)
 		}

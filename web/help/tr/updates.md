@@ -26,6 +26,15 @@ Kasa, siz kapatmadıkça gece kendini günceller.
 4. Ek kasa ana kasayı izler: ana kasa daha yeni bir sürüm çalıştırdığında, ek kasa tam olarak o sürümü açık satışın olmadığı ilk anda kurar. Android ek kasalar ve taşınabilir Windows zip'inden kurulan ek kasalar, kendi başlarına kurabilene kadar bunun yerine bir 'gerekli' notu gösterir.
 5. Windows'ta kasa imzalı kurulum programını indirir ve denetler. Ardından kasa kapanır, güncellemeyi kurar ve kendiliğinden yeniden açılır. Bu yaklaşık bir dakika sürer. Android kasalar güncellemeleri henüz kendi başına kuramaz. Onları yukarıda anlatıldığı gibi elle güncelleyin. Windows yükleyicisini kendiniz çalıştırırsanız, Universal Till hâlâ açıksa önce onu kapatır; bu yüzden başlatmadan önce devam eden satışı tamamlayın.
 
+## Her sürümdeki yenilikler
+
+Bir güncellemeden sonra kasa neyin değiştiğini size anlatır — sade bir dille ve kasanın dilinde.
+
+1. Ayarlar → Hakkında, bu kasanın çalıştırdığı sürümü, bu kasada ilk ne zaman başlatıldığını ve "Yenilikler"i gösterir: bu sürümün ve ondan önceki birkaç sürümün notları, en yenisi önce, Yeni, İyileştirmeler ve Düzeltmeler olarak gruplanmış.
+2. Bir güncellemeden sonra kasayı ilk kez bir yönetici veya admin açtığında, durum çubuğunda küçük bir "… sürümüne güncellendi — yenilikleri görün" notu çıkar. Notları okumak için ona dokunun ya da gizlemek için × simgesine dokunun. Satışa asla engel olmaz ve yalnızca bir kez görünür.
+3. Kasiyerler bu notu hiç görmez, self-servis kioskundaki müşteriler de görmez. Yeni kurulmuş bir kasa da bu notu göstermez.
+4. Notlar kasanın içinde yerleşiktir, bu yüzden internet bağlantısı olmadan da çalışır. Bir not henüz dilinize çevrilmediyse İngilizce gösterilir.
+
 ## Android kasalarda
 
 Android uygulaması kendini masaüstü sürümleri gibi değiştiremez; bunun yerine yeni sürümü Android'in kendi yükleyicisine verir. Adımlar biraz farklıdır:

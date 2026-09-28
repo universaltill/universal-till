@@ -347,19 +347,19 @@
       "topic": "open-orders",
       "signature": {
         "headings": 3,
-        "numbered_steps": 3,
+        "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 5,
+        "top_bullets": 9,
         "bold_leadins": 1
       },
       "english": {
         "headings": 3,
-        "numbered_steps": 3,
+        "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 5,
+        "top_bullets": 9,
         "bold_leadins": 0
       },
-      "reason": "ut-docs#1918 — reviewed, not a translation error: Persian's step 1 opens with the noun phrase '**سفارش‌های باز**' (Open orders) immediately after the '1. ' numbering, with the imperative verb at the end (SOV word order), so it matches boldLeadInRe where English's 'Open **Open orders** from the ☰ menu' has the verb 'Open' between the numbering and the bold term. Same shape as the other fa/ar/tr word-order-driven bold_leadins entries above (ut-docs#1962). ut-docs#2703: English and this locale both gained one Notes bullet (kiosk pay-at-counter orders), so the tracked gap is unchanged, top_bullets shifted 4 -> 5."
+      "reason": "ut-docs#1918 — reviewed, not a translation error: Persian's step 1 opens with the noun phrase '**سفارش‌های باز**' (Open orders) immediately after the '1. ' numbering, with the imperative verb at the end (SOV word order), so it matches boldLeadInRe where English's 'Open **Open orders** from the ☰ menu' has the verb 'Open' between the numbering and the bold term. Same shape as the other fa/ar/tr word-order-driven bold_leadins entries above (ut-docs#1962). ut-docs#2703: English and this locale both gained one Notes bullet (kiosk pay-at-counter orders), so the tracked gap is unchanged, top_bullets shifted 4 -> 5. ut-docs#2703 (reopened): the Pay at counter topic was removed and its content folded into this one -- English and this locale both gained one step (3 -> 4) and four Notes bullets (5 -> 9) in lockstep; the tracked bold_leadins gap is unchanged."
     },
     {
       "locale": "fa",
@@ -517,20 +517,20 @@
       "locale": "fa",
       "topic": "updates",
       "signature": {
-        "headings": 4,
-        "numbered_steps": 8,
+        "headings": 5,
+        "numbered_steps": 12,
         "sub_bullets": 0,
         "top_bullets": 0,
         "bold_leadins": 0
       },
       "english": {
-        "headings": 4,
-        "numbered_steps": 13,
+        "headings": 5,
+        "numbered_steps": 17,
         "sub_bullets": 0,
         "top_bullets": 0,
         "bold_leadins": 0
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2726: a new \"Automatic updates\" section (one heading, five numbered steps) added to English and this locale in lockstep (headings 3->4 / 3->4, numbered_steps 8->13 / 3->8); the pre-existing gap is unchanged, just re-recorded at its new absolute values."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2726: a new \"Automatic updates\" section (one heading, five numbered steps) added to English and this locale in lockstep (headings 3->4 / 3->4, numbered_steps 8->13 / 3->8); the pre-existing gap is unchanged, just re-recorded at its new absolute values. Updated ut-docs#3091: a new \"What's new in each version\" section (one heading, four numbered steps) added to English and this locale in lockstep (headings 4->5 / 4->5, numbered_steps 13->17 / 8->12); the pre-existing gap is unchanged."
     },
     {
       "locale": "fa",

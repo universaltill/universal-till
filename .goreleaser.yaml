@@ -272,6 +272,14 @@ nfpms:
 checksum:
   name_template: checksums.txt
 
+# ut-docs#3091: the owner-facing "What's new" leads the Release body
+# (release.yml passes --release-header from web/release-notes/en/<tag>.md);
+# the auto-generated change list stays below it, under one heading.
+changelog:
+  groups:
+    - title: Technical changes
+      order: 0
+
 release:
   # Draft, not published: windows-installer/macos-app/android-app/
   # verify-versions all run AFTER this job (release.yml's needs: graph) and

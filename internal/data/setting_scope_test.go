@@ -389,6 +389,11 @@ func TestSettingScope_Classification(t *testing.T) {
 		{"diagnostics.active", SettingPerTill},
 		{"cloudsync.snapshot_hash", SettingPerTill},
 		{"install.desktop_kiosk_overlay_provisioned", SettingPerTill},
+		// ut-docs#3091: each till runs its own binary, so which version it
+		// runs, since when, and whether its notes were seen are its own.
+		{AppVersionSettingsKey, SettingPerTill},
+		{AppVersionFirstRunAtSettingsKey, SettingPerTill},
+		{ReleaseNotesSeenVersionSettingsKey, SettingPerTill},
 		// ut-docs#2950: reviewed and kept shop-wide (reasons at
 		// ShopWideSettingPrefixes).
 		{"setup.restore_prompt_status", SettingShopWide},

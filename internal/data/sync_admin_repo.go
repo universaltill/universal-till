@@ -583,6 +583,18 @@ const (
 // so it cannot be imported the other way.
 const ThemeSettingsKey = "theme"
 
+// AppVersionSettingsKey / AppVersionFirstRunAtSettingsKey record the version
+// this till last started with and when it first ran it — Settings → About's
+// "installed" line (ut-docs#3091). ReleaseNotesSeenVersionSettingsKey is the
+// version whose "What's new" a manager already acknowledged, so the
+// after-update chip shows once. All three are per till: each till runs (and
+// updates) its own binary.
+const (
+	AppVersionSettingsKey              = "app.version"
+	AppVersionFirstRunAtSettingsKey    = "app.version_first_run_at"
+	ReleaseNotesSeenVersionSettingsKey = "release_notes.seen_version"
+)
+
 // PerTillSettingPrefixes are settings that belong to ONE till, never synced:
 // the replica's own sync identity/cursors, its printer, its screen, its own
 // end-of-day schedule (a replica Z-report would only cover local data), and
@@ -654,6 +666,10 @@ var PerTillSettingPrefixes = []string{
 	// the main till's queue overwrote a replica's at every pull. A full key
 	// used as a prefix; the rest of setup.* stays shop-wide.
 	"setup.pending_base_plugins",
+	// ut-docs#3091: this till's running version, when it first ran it, and
+	// whether its release notes were seen (AppVersionSettingsKey above).
+	// "app.version" as a prefix also covers app.version_first_run_at.
+	AppVersionSettingsKey, "release_notes.",
 }
 
 func perTillSetting(key string) bool {

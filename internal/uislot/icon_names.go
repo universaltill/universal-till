@@ -40,6 +40,7 @@ var knownIconNames = map[string]bool{
 	"arrow-left": true, "chevron-left": true, "chevron-right": true,
 	"pause": true, "keyboard": true, // ut-docs#2702 compact tender row
 	"rotate-ccw": true, "eye": true, "ellipsis": true, "eye-off": true,
+	"folder-input": true, // ut-docs#2465: the Move to category badge
 }
 
 // IsKnownIconName reports whether name is in the closed icon-name set.

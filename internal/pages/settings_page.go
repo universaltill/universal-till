@@ -433,6 +433,7 @@ func visibleSettings(all map[string]string) map[string]string {
 
 func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
+	registerReleaseNotes(mux, d) // ut-docs#3091: the after-update chip's dismiss
 	mux.HandleFunc("/settings", func(w http.ResponseWriter, r *http.Request) {
 		// ut-docs#3079: a cashier is sale-only — the whole page is gated,
 		// not just its individual cards/actions.
@@ -739,6 +740,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"exportEntries":          exportEntries,
 			"autoUpdateEnabled":      autoUpdateEnabled,
 			"autoUpdateTime":         autoUpdateTime,
+			"about":                  aboutView(r.Context(), d.Settings, locale), // ut-docs#3091
 			"TillName":               tillNameOrDefault(r.Context(), d, locale),
 			"TillRegisterID":         tillRegisterID,
 			"registers":              registers,

@@ -60,10 +60,20 @@ test.describe('/open-orders row geometry + accessible name (ut-docs#2147)', () =
       // its <tr> is still display:table-row), so before that fix the two
       // disagreed by 100-356px at every viewport measured. Assert real
       // pixel alignment per column, not just "both exist".
-      for (const col of COLUMNS) {
-        const th = (await page.locator(`#open-orders-table thead .open-order-cell-${col}`).boundingBox())!;
-        const val = (await row.locator(`.open-order-cell-${col}`).boundingBox())!;
-        expect(Math.abs(th.x - val.x), `${col} column: header.x=${th.x} value.x=${val.x}`).toBeLessThanOrEqual(1);
+      if (vp.width > 640) {
+        for (const col of COLUMNS) {
+          const th = (await page.locator(`#open-orders-table thead .open-order-cell-${col}`).boundingBox())!;
+          const val = (await row.locator(`.open-order-cell-${col}`).boundingBox())!;
+          expect(Math.abs(th.x - val.x), `${col} column: header.x=${th.x} value.x=${val.x}`).toBeLessThanOrEqual(1);
+        }
+      } else {
+        // ut-docs#2703: below 40rem a row wraps -- the order takes the full
+        // first line (it was squeezed to a few letters), numbers follow, so
+        // the headers (which can no longer line up) are hidden.
+        await expect(page.locator('#open-orders-table thead')).toBeHidden();
+        const label = (await row.locator('.open-order-cell-label').boundingBox())!;
+        const rowBox0 = (await row.boundingBox())!;
+        expect(label.width / rowBox0.width).toBeGreaterThan(0.8);
       }
 
       // The row fills the list, not ~75% of it (the other measured bug --

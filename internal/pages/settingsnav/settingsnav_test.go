@@ -36,6 +36,7 @@ func TestResolve_ZeroAmendmentsMatchesCoreSettingsExactly(t *testing.T) {
 		{Key: "settings-diagnostics", Label: "Diagnostic mode"},
 		{Key: "settings-menulayout", Label: "Hidden menu tiles"},
 		{Key: "settings-update", Label: "Software update"},
+		{Key: "settings-about", Label: "About"},
 		{Key: "settings-theme", Label: "Theme"},
 		{Key: "settings-display", Label: "Display"},
 		{Key: "settings-payments", Label: "Payments"},

@@ -441,7 +441,13 @@ func (h *ButtonsHTTP) ListFragment(r *http.Request) ([]byte, bool) {
 		return nil, false
 	}
 	buf := newBufferedResponse()
-	clean := h.serveSellScreen(buf, r, h.sellScreenKey("list", ""), true, h.renderList)
+	// ut-docs#3089: ALWAYS "all" -- ListFragment renders GET /'s first
+	// paint, which must never flash a filtered grid, whatever query param a
+	// caller's *http.Request happens to carry (renderList never reads one
+	// back off r itself; see ButtonsHTTP.List's own doc comment).
+	clean := h.serveSellScreen(buf, r, h.sellScreenKey("list", ""), true, func(w http.ResponseWriter, r *http.Request) bool {
+		return h.renderList(w, r, "all")
+	})
 	resp := buf.response()
 	if !clean || resp.Status != http.StatusOK || len(resp.Body) == 0 {
 		return nil, false

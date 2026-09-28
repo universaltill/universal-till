@@ -2507,6 +2507,40 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
    own -8px offset + its 44px box), so the two never overlap even on the
    smallest tile this grid ever renders (checked at 1024x600 and 360px). */
 .tile-badge-hide { inset-block-start: auto; inset-block-end: -8px; inset-inline-end: -8px; }
+/* ut-docs#2465: Move to category -- the fourth corner, inline-START BOTTOM
+   (mirrors .tile-badge-hide), so no two badges ever share a corner. Shown
+   only when app.js's utTileJiggle marked the grid .recat-enabled (a strip
+   with category tabs for a catalog_management session); otherwise there is
+   nowhere to move to. The arrow in the folder points inline-end, so it
+   flips under RTL. */
+.tile-badge-move { inset-block-start: auto; inset-block-end: -8px; inset-inline-start: -8px; display: none; }
+.recat-enabled .tile-badge-move { display: flex; }
+[dir="rtl"] .tile-badge-move svg { transform: scaleX(-1); }
+/* A category tab the dragged tile would move to on release: an inset
+   outline in the accent colour, a tinted fill and a down-arrow marker --
+   shape and outline, never colour alone. Inset, so it isn't clipped by the
+   tab bar's own overflow. */
+.products-finder .tab-bar .tab.tile-drop-target {
+  outline: 3px dashed var(--accent); outline-offset: -3px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  color: var(--text);
+}
+/* The marker is a masked shape with empty content, so it never joins the
+   tab's accessible name (a text glyph there would be read out). */
+.products-finder .tab-bar .tab.tile-drop-target::after {
+  content: ""; display: inline-block; vertical-align: middle;
+  inline-size: .9em; block-size: .9em; margin-inline-start: .35rem;
+  background: var(--accent);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 4v14'/%3E%3Cpath d='m6 12 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 4v14'/%3E%3Cpath d='m6 12 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+/* The Move to category dialog reuses the overflow sheet's frame/tiles;
+   its own bits are the hint line and the Cancel row. */
+.tile-move-dialog h3 { margin: 0; }
+.tile-move-hint { margin-block: .35rem 0; color: var(--muted); font-size: .9rem; }
+.tile-move-option[hidden] { display: none; }
+.tile-move-actions { display: flex; justify-content: flex-end; }
+.tile-move-actions .btn { min-block-size: 44px; }
 .tile-badge-dot {
   position: relative;
   display: flex; align-items: center; justify-content: center;
@@ -3655,6 +3689,40 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
 .open-order-cell-total { flex: 0 0 auto; min-inline-size: 5rem; white-space: nowrap; }
 .open-order-cell-age { flex: 0 0 auto; min-inline-size: 6rem; white-space: nowrap; }
 
+/* ut-docs#2703 (reopened): Open orders' two tabs -- On hold / Pay at the
+   counter -- on the page (links, aria-current) and in the sale screen's
+   popup (buttons). The shared .tab-bar look (catalog item dialog, tender
+   Pay/Split), plus: the 46px touch floor; <a> tabs lose link styling; the
+   count reads as a quiet pill beside the label (never the absolutely
+   positioned .count-badge, which belongs to the sale-screen icon button).
+   Labels wrap onto a second row rather than shrink when a long locale
+   ("Kasada ödenecek", "پرداخت در صندوق") meets a 360px screen, via
+   .tab-bar's own flex-wrap. */
+.open-orders-tabs { margin-block-end: .75rem; }
+.open-orders-tabs .tab { min-height: 46px; display: inline-flex; align-items: center; justify-content: center; gap: .4rem; text-decoration: none; }
+.open-orders-tabs .tab-count { min-inline-size: 1.5rem; padding-inline: .4rem; border-radius: 999px;
+  background: var(--surface-2); color: inherit; font-size: .85em; line-height: 1.5; }
+.open-orders-tabs .tab.active .tab-count { background: var(--accent); color: #fff; }
+/* A legacy counter order's "what was ordered" line under its label: it
+   wraps (never ellipsized -- it is how the cashier recognises the order). */
+/* "Priced when opened" stands in a legacy row's total cell: let it wrap
+   in a narrow block rather than widen the never-truncated money column
+   past a 360px phone (the money rule above is about amounts, not this). */
+.open-order-cell-total .open-order-price-later { display: inline-block; max-inline-size: 6rem; white-space: normal; line-height: 1.2; }
+.open-order-items { display: block; white-space: normal; overflow-wrap: break-word; font-weight: 400; font-size: .85em; opacity: .8; }
+/* ut-docs#2703 review: at phone width the five columns left the order
+   cell a few letters wide ("Avocad/o/Lachs"). Below 40rem each row wraps:
+   the order (label + items) takes the full first line, the numbers follow
+   on the second; the column headers no longer line up, so they go. */
+@media (max-width: 40rem) {
+  #open-orders-table thead { display: none; }
+  .open-order-row-btn { flex-wrap: wrap; row-gap: .25rem; }
+  .open-order-row-btn .open-order-cell-label { flex: 1 1 100%; white-space: normal; }
+  .open-order-row-btn .open-order-cell-table:empty { display: none; }
+}
+.parked-order-form { flex: 1; display: flex; margin: 0; }
+.parked-order-form > .parked-order { flex: 1; min-height: 46px; display: flex; align-items: center; gap: .5rem; text-align: start; }
+
 /* The dialog itself: a slide-in panel anchored to the inline-end edge
    (right in LTR, left in RTL — logical properties per this repo's RTL
    rule) rather than the UA's default centered box, and sized so it never
@@ -4632,6 +4700,26 @@ body.login-screen {
   margin-inline-start: .5rem;
 }
 .statusbar a.sb-language-pack-update:hover { background: #22c55e; }
+/* After-update "what's new" chip (ut-docs#3091) — same green notice pill as
+   sb-update; the link and its × dismiss sit inside one pill. */
+.statusbar .sb-release-notes {
+  color: #052e16; background: #4ade80;
+  padding-block: .05rem; padding-inline: .5rem .25rem; border-radius: 999px; font-weight: 700;
+  margin-inline-start: .5rem; gap: .25rem;
+}
+.statusbar .sb-release-notes a { color: inherit; text-decoration: none; display: inline-flex; align-items: center; gap: .45rem; }
+.statusbar .sb-release-notes a:hover { text-decoration: underline; }
+.statusbar .sb-release-notes-dismiss {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-inline-size: 2.25rem; min-block-size: 2.25rem; padding: 0;
+  border: 0; border-radius: 999px; background: transparent; color: inherit; cursor: pointer;
+}
+.statusbar .sb-release-notes-dismiss:hover { background: #22c55e; }
+/* Settings → About's release notes (ut-docs#3091). */
+.release-note { border-block-start: 1px solid var(--border, #d1d5db); padding-block: .5rem; }
+.release-note h4 { margin-block: .25rem; }
+.release-note h5 { margin-block: .5rem .25rem; font-size: .95rem; }
+.release-note ul { margin-block: .25rem; padding-inline-start: 1.25rem; }
 /* ut-docs#413: confirmed live at 360px — `.statusbar`'s row (conn chip +
    the optional enrol/update pills + the version, none of it wrapping)
    needs more width than a phone viewport has. Wrapping the bar itself
@@ -4663,6 +4751,13 @@ body.login-screen {
   .statusbar .sb-language-pack-update {
     overflow: hidden; text-overflow: ellipsis; max-inline-size: 70vw;
   }
+  /* ut-docs#3091: the what's-new pill holds a link AND its × — clipping the
+     pill itself cut the × off at 360px (tester, 2026-09-28), leaving no way
+     to dismiss. Cap the pill, ellipsise only the link's text, keep the ×. */
+  .statusbar .sb-release-notes { max-inline-size: 70vw; min-inline-size: 0; }
+  .statusbar .sb-release-notes a { min-inline-size: 0; flex: 0 1 auto; }
+  .statusbar .sb-release-notes-text { overflow: hidden; text-overflow: ellipsis; min-inline-size: 0; }
+  .statusbar .sb-release-notes-dismiss { flex: none; }
 }
 
 /* Claim-by-phone QR under the claim code (kiosk/desktop shells can't open a browser) */

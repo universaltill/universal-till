@@ -13,6 +13,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/ai"
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
@@ -21,6 +22,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/issuereport"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/netreach"
 	"github.com/universaltill/universal-till/internal/pages/catalog"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
@@ -28,6 +30,7 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins/builtinlayouts"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/pos"
+	"github.com/universaltill/universal-till/internal/releasenotes"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/ui"
 	"github.com/universaltill/universal-till/internal/uislot"
@@ -370,6 +373,9 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// `allowed` status-bar links are evaluated per request against the same
 	// menuPredicates the /menu grid uses — so a cashier sees neither.
 	httpx.InitRailVisibility(menuPredicateChecker(dp))
+	// ut-docs#3091: record this till's running version (and when it first
+	// ran it) and publish whether the after-update "what's new" chip shows.
+	recordRunningVersion(ctx, dp.Settings, releasenotes.Builtin(), buildinfo.Version, time.Now())
 
 	// ut-docs#2001 (follow-up from the ut-docs#1902 independent review,
 	// finding 4): builtinlayouts.Sync was previously only called from the
@@ -535,6 +541,11 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerPrimaryProof(mux, dp)       // main till answers a moved-till challenge (ut-docs#2722)
 	registerMainTillStatus(mux, dp)     // replica's main-till connectivity chip (ut-docs#2722, #2742)
 	registerTillsRoster(mux, dp)        // Tills page roster, live link per till (ut-docs#2742)
+	// ut-docs#3095: the status-bar light's cloud reachability. Probes run
+	// lazily on /ui/net-status polls, each bounded by netreach's 5 s
+	// timeout and cancelled by bgCtx on shutdown.
+	dp.NetReach = netreach.New(netreach.Options{Endpoint: cfg.Marketplace.EndpointURL, Ctx: bgCtx})
+	registerNetStatus(mux, dp)
 	dp.PrimaryWatch = discovery.NewPrimaryWatch(dp.Settings, discovery.Browse)
 	// ADR-0114 (ut-docs#2735): this till's side of the main-till link. Built
 	// before StartSyncPull, which reads its link state for the polling floor.
@@ -600,9 +611,8 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	catalog.Register(mux, dp)
 	registerBasket(mux, dp)
 	registerJournal(mux, dp)
-	registerOrderStatus(mux, dp)            // order lifecycle status one-tap surface (ut-docs#526)
-	registerKioskCounterOrdersPage(mux, dp) // staff "pay at counter" board (ut-docs#582), normal authenticated route
-	registerOrderTracking(mux, dp)          // anonymous customer tracking page /o/{token}, auth-exempt (ut-docs#527)
+	registerOrderStatus(mux, dp)   // order lifecycle status one-tap surface (ut-docs#526)
+	registerOrderTracking(mux, dp) // anonymous customer tracking page /o/{token}, auth-exempt (ut-docs#527)
 	registerHealth(mux)
 	registerWindowState(mux, dp) // desktop shell reads this pre-login at launch (ut-docs#611)
 	registerReloadReason(mux)    // ut-docs#2788: base.html reports why a whole page just reloaded
