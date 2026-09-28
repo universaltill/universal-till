@@ -665,7 +665,7 @@ data/plugins/
     ├── {version}/           # Current active version
     │   ├── manifest.json    # Plugin metadata
     │   └── ...              # Plugin files
-    └── versions/            # Rollback history (max 3 versions)
+    └── versions/            # Rollback history (max 3; the installed version is never evicted)
         ├── 1.0.0/
         ├── 1.1.0/
         └── 1.2.0/

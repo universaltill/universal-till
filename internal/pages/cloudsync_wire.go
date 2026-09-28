@@ -1033,7 +1033,9 @@ func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, v
 			// an already-correct install.
 			rolledBack = true
 		case hasPriorGood && priorGood.PluginID == result.PluginID:
-			if rbErr := plugins.NewRollbackManager(d.Db, paths.Plugins()).Rollback(ctx, result.PluginID, priorGood.CurrentVersion, "system"); rbErr != nil {
+			// Discarding: the mismatched version is deleted just below, so it
+			// must not take a rollback snapshot slot (ut-docs#3035 gap 3).
+			if rbErr := plugins.NewRollbackManager(d.Db, paths.Plugins()).RollbackDiscardingCurrent(ctx, result.PluginID, priorGood.CurrentVersion, "system"); rbErr != nil {
 				logging.L().Errorf("plugin sync: failed to roll back %s to prior version %s after mismatch, falling back to full uninstall: %v",
 					result.Name, priorGood.CurrentVersion, rbErr)
 			} else {

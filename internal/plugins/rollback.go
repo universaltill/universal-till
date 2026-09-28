@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -114,8 +115,37 @@ func (rm *RollbackManager) GetVersionHistory(ctx context.Context, pluginID strin
 	return versions, nil
 }
 
-// Rollback rolls back a plugin to a previous version
+// pluginLocks serializes StoreVersion and Rollback per plugin tree
+// (ut-docs#3035 gap 1). Callers build a fresh RollbackManager per call
+// (internal/pages), so the lock can't live on the manager: it is keyed by
+// the cleaned plugin base dir plus the plugin id. Entries are never removed —
+// one small mutex per plugin id ever touched, a bounded set on a till.
+var pluginLocks sync.Map // string -> *sync.Mutex
+
+func (rm *RollbackManager) lockPlugin(pluginID string) func() {
+	key := filepath.Clean(rm.pluginBaseDir) + "\x00" + pluginID
+	mu, _ := pluginLocks.LoadOrStore(key, &sync.Mutex{})
+	m := mu.(*sync.Mutex)
+	m.Lock()
+	return m.Unlock
+}
+
+// Rollback rolls back a plugin to a previous version, snapshotting the
+// version it leaves so the shop can roll forward again.
 func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion, actorID string) error {
+	return rm.rollback(ctx, pluginID, targetVersion, actorID, true)
+}
+
+// RollbackDiscardingCurrent is Rollback for a caller about to delete the
+// version it is leaving — the cloudsync auto-rollback after a pinned install
+// came back with the wrong version (ut-docs#3035 gap 3). It does not snapshot
+// that version: a known-bad snapshot would take one of the maxVersions slots
+// and evict a good one.
+func (rm *RollbackManager) RollbackDiscardingCurrent(ctx context.Context, pluginID, targetVersion, actorID string) error {
+	return rm.rollback(ctx, pluginID, targetVersion, actorID, false)
+}
+
+func (rm *RollbackManager) rollback(ctx context.Context, pluginID, targetVersion, actorID string, snapshotLeft bool) error {
 	log := logging.L()
 	repo := data.NewPluginRepo(rm.db)
 
@@ -129,10 +159,18 @@ func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion
 		return err
 	}
 
+	// Held until return: no StoreVersion for this plugin (update, sync) can
+	// evict the target between the stat below and the manifest open, or
+	// interleave with the post-commit snapshot (ut-docs#3035 gap 1).
+	defer rm.lockPlugin(pluginID)()
+
 	// Verify target version exists
 	targetPath := filepath.Join(rm.pluginBaseDir, pluginID, "versions", targetVersion)
 	if _, err := os.Stat(targetPath); os.IsNotExist(err) {
 		return fmt.Errorf("target version %s not found for plugin %s", targetVersion, pluginID)
+	}
+	if rollbackAfterTargetStat != nil {
+		rollbackAfterTargetStat()
 	}
 
 	// Decide now whether the live per-version install dir needs restoring
@@ -338,7 +376,9 @@ func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion
 	// handler's own StoreVersion call — a snapshot failure must never
 	// retroactively fail a rollback that has already committed.
 	currentSourcePath := filepath.Join(rm.pluginBaseDir, pluginID, currentVersion)
-	if _, statErr := os.Stat(currentSourcePath); statErr == nil {
+	if !snapshotLeft {
+		log.Infof("[Rollback] Not snapshotting %s of plugin %s: the caller discards it", currentVersion, pluginID)
+	} else if _, statErr := os.Stat(currentSourcePath); statErr == nil {
 		if err := rm.storeVersion(pluginID, currentVersion, currentSourcePath, targetVersion); err != nil {
 			log.Warnf("[Rollback] Failed to store version %s for plugin %s after rolling back to %s: %v", currentVersion, pluginID, targetVersion, err)
 		}
@@ -347,6 +387,11 @@ func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion
 	log.Infof("[Rollback] Plugin %s rolled back from %s to %s", pluginID, currentVersion, targetVersion)
 	return nil
 }
+
+// rollbackAfterTargetStat is a test hook, nil in production: it runs inside
+// Rollback right after the target snapshot's os.Stat, the window a concurrent
+// StoreVersion used to evict the target in (ut-docs#3035 gap 1).
+var rollbackAfterTargetStat func()
 
 // StoreVersion saves a plugin version for potential rollback: snapshots the
 // live per-version install directory (pluginBaseDir/pluginID/version/, the
@@ -358,11 +403,19 @@ func (rm *RollbackManager) Rollback(ctx context.Context, pluginID, targetVersion
 //
 // Delegates to storeVersion with no must-keep names — this public signature
 // must not change, since internal/pages calls it directly (ut-docs#3032).
+//
+// Serialized with Rollback per plugin (ut-docs#3035 gap 1).
 func (rm *RollbackManager) StoreVersion(pluginID, version, sourcePath string) error {
+	// Validate before locking, so a bad id never gets a lock entry.
+	if err := validatePluginID(pluginID); err != nil {
+		return err
+	}
+	defer rm.lockPlugin(pluginID)()
 	return rm.storeVersion(pluginID, version, sourcePath)
 }
 
-// storeVersion is StoreVersion's implementation, plus a must-keep set passed
+// storeVersion is StoreVersion's implementation (caller holds the plugin
+// lock), plus a must-keep set passed
 // straight through to cleanupOldVersions (ut-docs#3032) — Rollback's
 // post-commit "snapshot the version we're leaving" call uses this to protect
 // the rollback target from the eviction that snapshot write can trigger.
@@ -572,11 +625,24 @@ func copyVersionFiles(sourceDir, destDir string) error {
 // deleted, oldest first, until the real-snapshot count is at most
 // maxVersions or there are no more non-kept candidates left to delete (a
 // keep set larger than maxVersions is honored in full, not truncated).
+//
+// The plugin's installed version (from the DB, active or disabled) is always
+// kept too (ut-docs#3035 gap 2): after a rollback to the oldest snapshot it
+// is also the oldest by mtime, and its snapshot is the only copy left if the
+// live dir goes missing. If that version can't be read, nothing is evicted —
+// an extra snapshot on disk is cheaper than losing the active one.
 func (rm *RollbackManager) cleanupOldVersions(pluginID string, keep ...string) error {
 	versionsDir := filepath.Join(rm.pluginBaseDir, pluginID, "versions")
-	kept := make(map[string]bool, len(keep))
+	kept := make(map[string]bool, len(keep)+1)
 	for _, k := range keep {
 		kept[k] = true
+	}
+	installed, ok, err := data.NewPluginRepo(rm.db).GetInstalledPluginVersion(context.Background(), pluginID)
+	if err != nil {
+		return fmt.Errorf("installed version of %s unknown, keeping every snapshot: %w", pluginID, err)
+	}
+	if ok {
+		kept[installed] = true
 	}
 
 	// Best-effort sweep of crash leftovers before counting anything
