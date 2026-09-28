@@ -951,14 +951,12 @@ func TestSetupWizardOnlineTaxPluginTileHasNoOfflineNote(t *testing.T) {
 // (not "still installing", which would be untrue with no network).
 func TestSetupGETResumeAfterOfflineConsentShowsQueuedNote(t *testing.T) {
 	resetTaxCatalogForTest(t)
+	withOSLocale(t, "", "") // see TestSetupGETResumesStep3ForTaxCountry's comment
 	mux, dp := newRealDBDeps(t)
 	initTestPaths(t)
 	deadMarketplace(t, dp)
 
-	req := httptest.NewRequest(http.MethodGet, "/setup?tax_country=DE&tax_plugin_pending=1", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	body := rec.Body.String()
+	body := getSetup(mux, "?tax_country=DE&tax_plugin_pending=1", "").Body.String()
 	if !strings.Contains(body, "data-tax-plugin-queued") {
 		t.Errorf("offline resume after consent must show the queued note, got:\n%s", body)
 	}
