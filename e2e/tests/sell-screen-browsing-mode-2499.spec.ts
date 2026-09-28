@@ -258,6 +258,16 @@ test.describe('Sell screen browsing mode (ut-docs#2499)', () => {
       body.locator('.btn-tile', { hasText: noqb.name }).click(),
     ]);
     await expect(page.locator('#basket')).toContainText(noqb.name);
+    // ut-docs#3073: adding an item closes the popup by itself (its own
+    // spec, category-popup-fullscreen-3073.spec.ts, covers that deeply);
+    // reopen it for the modifier item.
+    await expect(modal).toBeHidden();
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/ui/buttons/category?id=')),
+      tileA.click(),
+    ]);
+    await expect(modal).toBeVisible();
+    await expect(body.locator('.btn-tile', { hasText: mod.name })).toBeVisible();
 
     // A modifier item opens the REAL picker on top of the popup.
     await Promise.all([
@@ -273,7 +283,7 @@ test.describe('Sell screen browsing mode (ut-docs#2499)', () => {
     ]);
     await expect(page.locator('#basket')).toContainText(mod.name);
     await expect(page.locator('#basket')).toContainText(optionName);
-    await modal.getByRole('button', { name: 'Close' }).click();
+    // ... and the picker's Add closes the popup too (ut-docs#3073).
     await expect(modal).toBeHidden();
 
     // The strip's own search still works in this mode, across categories.

@@ -185,7 +185,9 @@
        visually-hidden prefix (this dialog can hold ANY category, so one
        static heading can't name it) plus the tapped category's own name —
        merchant data, not a translation concern, set as plain text via
-       .textContent, never innerHTML. -->
+       .textContent, never innerHTML. ut-docs#3073: full screen beside the
+       nav rail (app.css .category-items-modal), and it closes by itself
+       once an item from it lands in the basket (app.js, catPopupArmed). -->
   <dialog id="category-items-modal" class="modifier-modal category-items-modal"
           aria-labelledby="category-items-modal-title">
     <h3 id="category-items-modal-title">
