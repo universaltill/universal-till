@@ -366,7 +366,7 @@ func TestSellScreenCache_PriceBoundaryPassingMidRenderNotCached(t *testing.T) {
 	f.exec(t, `INSERT INTO price_history (id, item_id, price, starts_at) VALUES ('ph-mid', 'itm-cola', 77, ?)`, start.Format("2006-01-02 15:04:05"))
 	rec := httptest.NewRecorder()
 	h.serveSellScreen(rec, httptest.NewRequest("GET", "/ui/buttons", nil), h.sellScreenKey("list", ""), true, func(w http.ResponseWriter, r *http.Request) bool {
-		clean := h.renderList(w, r)
+		clean := h.renderList(w, r, "all")
 		// The boundary passes after the render read its prices.
 		time.Sleep(time.Until(start) + 1100*time.Millisecond)
 		return clean
