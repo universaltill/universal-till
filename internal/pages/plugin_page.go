@@ -134,6 +134,7 @@ func renderPluginPage(w http.ResponseWriter, r *http.Request, d *common.Deps, en
 	// Every branch below (bundle, sandboxed static page, info card) gets
 	// the plugin page policy (ut-docs#2892 security review).
 	w.Header().Set("Content-Security-Policy", pluginPageCSP)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	base := map[string]any{
 		// Entry labels are translator keys (plugins ship locales/ overlays);
 		// plain-text labels pass through T unchanged.
@@ -178,8 +179,11 @@ func renderPluginPage(w http.ResponseWriter, r *http.Request, d *common.Deps, en
 // itself (a srcdoc frame is not a fetch, so it is unaffected; about: is
 // listed as insurance for engines, e.g. WebKitGTK on the Pi, that check a
 // srcdoc frame's about:srcdoc URL against frame-src). The global UI policy
-// is ut-docs#2913.
-const pluginPageCSP = "object-src 'none'; frame-src 'self' about:"
+// is ut-docs#2913. frame-ancestors 'self' and nosniff (set beside it) are
+// ADR-0121 §7's defence in depth (ut-docs#3154); its default-src/script-src
+// 'self' part waits for #2913, since this page renders inside the POS
+// chrome and its page-local inline scripts.
+const pluginPageCSP = "object-src 'none'; frame-src 'self' about:; frame-ancestors 'self'"
 
 // pluginFrameTmpl is the document a plugin's content/index.html is wrapped
 // in inside its sandboxed iframe: the till's stylesheet and theme so it
