@@ -113,7 +113,7 @@ func TestRealRequestStillExtendsTheSession(t *testing.T) {
 // Display boards are watched, not touched; they keep today's behaviour
 // until the display-device auto-lock decision lands (ut-docs#2935).
 func TestDisplayBoardPollsStillExtendTheSession(t *testing.T) {
-	for _, p := range []string{"/ui/orders", "/ui/kiosk-counter-orders", "/ui/kitchen-display/st-1"} {
+	for _, p := range []string{"/ui/orders", "/ui/kitchen-display/st-1"} {
 		if !displayBoardPoll(p) {
 			t.Fatalf("%s should be a display-board poll", p)
 		}

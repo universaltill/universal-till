@@ -5,6 +5,11 @@
 # build/Mobile.xcframework is the Go till server, produced by
 #   gomobile bind -target=ios,iossimulator -o ios/build/Mobile.xcframework ./mobile
 # (see README.md and .github/workflows/ios-ci.yml).
+#
+# UniversalTill/Assets.xcassets (the app icon) is generated too, by
+#   ios/scripts/make-app-icon.sh
+# from the canonical brand mark; run it before `xcodegen generate` so the
+# catalog is picked up with the rest of the UniversalTill/ sources.
 name: UniversalTill
 options:
   bundleIdPrefix: com.universaltill
@@ -21,6 +26,7 @@ targets:
     type: application
     platform: iOS
     sources:
+      # Includes the generated Assets.xcassets (app icon) — see above.
       - path: UniversalTill
     dependencies:
       # gomobile builds a static framework: link it, never embed it.
@@ -36,10 +42,17 @@ targets:
         OTHER_LDFLAGS: ["-lresolv"]
         ENABLE_BITCODE: NO
         GENERATE_INFOPLIST_FILE: NO
+        # Assets.xcassets/AppIcon.appiconset (ios/scripts/make-app-icon.sh).
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
       path: UniversalTill/Info.plist
       properties:
         CFBundleDisplayName: Universal Till
+        # From the build settings, so ios-testflight.yml's MARKETING_VERSION /
+        # CURRENT_PROJECT_VERSION overrides reach the bundle (XcodeGen would
+        # otherwise write a literal 1.0 / 1 — ut-docs#3069).
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         CFBundleDevelopmentRegion: en
         CFBundleAllowMixedLocalizations: true
         LSRequiresIPhoneOS: true
@@ -71,3 +84,11 @@ targets:
           - _pdl-datastream._tcp
         # Barcode scanning with the camera from the web UI.
         NSCameraUsageDescription: Universal Till uses the camera to scan barcodes.
+        # Export compliance, answered once here so App Store Connect doesn't
+        # hold every TestFlight build on the questionnaire (ut-docs#3069).
+        # The till uses only standard, published algorithms from Go's
+        # standard library — TLS, AES-256-GCM sealing of plugin secrets
+        # (internal/secrets), RFC 9180 HPKE for PIN directives
+        # (internal/hpke) — no proprietary crypto. Adding proprietary or
+        # non-standard encryption means revisiting this answer.
+        ITSAppUsesNonExemptEncryption: false

@@ -645,6 +645,17 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 	})
 
+	// Dismiss the basket's "add by hand" notice (ut-docs#2703, reopened):
+	// the cashier has rung up (or deliberately skipped) the lines of a legacy
+	// counter order the till could not price. Cleared on the engine, so the
+	// notice neither comes back on the next basket render nor rides along
+	// when this order is parked and resumed again. Any operator, like the
+	// resume that showed it. No body: the notice removes itself client-side.
+	mux.HandleFunc("POST /api/pos/add-by-hand/dismiss", func(w http.ResponseWriter, r *http.Request) {
+		d.Engine.DismissAddByHand()
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	// Held-sales strip: chips the cashier taps to resume.
 	mux.HandleFunc("GET /ui/held", renderHeldStrip)
 

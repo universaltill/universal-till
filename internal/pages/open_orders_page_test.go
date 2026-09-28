@@ -104,10 +104,11 @@ func TestOpenOrdersPage_ListsHeldSalesWithTableTotalAndAge(t *testing.T) {
 	if strings.Contains(body, ">1250<") || strings.Contains(body, "tbl-1") {
 		t.Fatalf("totals must be money-formatted and tables shown by label, got: %s", body)
 	}
-	// 90 minutes ago, allowing the test's own clock to tick over one minute.
-	if !strings.Contains(body, strings.Replace(httpx.T("en", "open_orders.age_minutes"), "%d", "90", 1)) &&
-		!strings.Contains(body, strings.Replace(httpx.T("en", "open_orders.age_minutes"), "%d", "91", 1)) {
-		t.Fatalf("expected the h1 row to show ~90 min open, got: %s", body)
+	// 90 minutes ago. Since ut-docs#2703 (reopened) an age of an hour or
+	// more reads in whole hours ("1 h"), not "90 min" -- a forgotten order
+	// read "22258 min" on the pilot tablet.
+	if !strings.Contains(body, strings.Replace(httpx.T("en", "open_orders.age_hours"), "%d", "1", 1)) {
+		t.Fatalf("expected the h1 row to show 1 h open, got: %s", body)
 	}
 	if strings.Contains(body, template.HTMLEscapeString(httpx.T("en", "open_orders.empty"))) {
 		t.Fatalf("empty-state copy must not render alongside rows, got: %s", body)

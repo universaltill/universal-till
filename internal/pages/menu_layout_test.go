@@ -52,7 +52,7 @@ func getMenu(t *testing.T, mux *http.ServeMux) string {
 var goldenManagerTiles = []string{
 	"/designer", "/shifts", "/journal", "/orders", "/reports", "/settings", "/plugins", "/items",
 	"/open-orders",
-	"/help", "/kiosk-counter-orders",
+	"/help",
 	"/users", "/kitchen-stations", "/bluetooth-devices", "/tables", "/report-issue", "/admin",
 }
 
@@ -61,9 +61,9 @@ func TestMenuPage_GoldenZeroPluginTileOrder(t *testing.T) {
 	mux, _ := newMenuPageTestDeps(t, baseMenu)
 
 	// No session, UT_AUTH unset: a cashier sees the nav tiles, Open orders
-	// (ut-docs#1918 -- an ungated cashier surface), Help and Kiosk counter
-	// orders (ut-docs#582 -- also ungated, any operator needs to see which
-	// orders are waiting) — no /admin either, since visibleAdminEntries is
+	// (ut-docs#1918 -- an ungated cashier surface; since the reopened
+	// ut-docs#2703 it also holds the pay-at-the-counter orders the removed
+	// /kiosk-counter-orders tile used to list) and Help — no /admin either, since visibleAdminEntries is
 	// empty for a cashier (every one of the six it gates behind is itself
 	// settings/fiscal/stock_location_management-gated). ut-docs#2312:
 	// /designer and /items now also carry VisibleIf "catalog_management",
@@ -73,7 +73,7 @@ func TestMenuPage_GoldenZeroPluginTileOrder(t *testing.T) {
 	// ut-docs#3079: /reports, /settings and /plugins now carry VisibleIf too
 	// (a cashier is sale-only), so a cashier's grid is the sale flow only.
 	cashier := menuTileHrefs(getMenu(t, mux))
-	wantCashier := []string{"/shifts", "/journal", "/orders", "/open-orders", "/help", "/kiosk-counter-orders"}
+	wantCashier := []string{"/shifts", "/journal", "/orders", "/open-orders", "/help"}
 	if strings.Join(cashier, " ") != strings.Join(wantCashier, " ") {
 		t.Fatalf("zero-plugin cashier tiles drifted:\n got %v\nwant %v", cashier, wantCashier)
 	}
@@ -465,14 +465,13 @@ func TestMenuPage_EveryCoreVisibleIfPredicateIsRegistered(t *testing.T) {
 // sale-only). Anything else must carry a VisibleIf. Widening this list is a
 // product decision, not a test fix.
 var saleFlowUngatedKeys = map[string]bool{
-	"/":                     true,
-	"/menu":                 true,
-	"/orders":               true,
-	"/journal":              true,
-	"/shifts":               true,
-	"/open-orders":          true,
-	"/help":                 true,
-	"/kiosk-counter-orders": true,
+	"/":            true,
+	"/menu":        true,
+	"/orders":      true,
+	"/journal":     true,
+	"/shifts":      true,
+	"/open-orders": true,
+	"/help":        true,
 }
 
 // TestCoreMenuAndRail_EveryUngatedEntryIsSaleFlow (ut-docs#3079): every

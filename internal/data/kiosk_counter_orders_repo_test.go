@@ -25,8 +25,11 @@ func openKioskCounterOrdersDB(t *testing.T, name string) *db.DB {
 
 // Create must generate a "C-"-prefixed display_no distinct from any sale
 // receipt/display-no sequence, and the order must then show up via
-// ListOpen; MarkCollected must remove it from that same list.
-func TestKioskCounterOrdersRepo_CreateListMarkCollected(t *testing.T) {
+// ListOpen. (ut-docs#2703 reopened: MarkCollected -- closing an order with
+// no payment -- was removed; the half of this test that exercised it went
+// with it. An open order now leaves ListOpen only by being converted into a
+// held sale, see kiosk_counter_orders_convert_test.go.)
+func TestKioskCounterOrdersRepo_CreateAndListOpen(t *testing.T) {
 	d := openKioskCounterOrdersDB(t, "counter_orders.db")
 	ctx := context.Background()
 	repo := NewKioskCounterOrdersRepo(d.DB)
@@ -67,24 +70,6 @@ func TestKioskCounterOrdersRepo_CreateListMarkCollected(t *testing.T) {
 		t.Fatalf("ListOpen lines round-trip mismatch: %+v", got.Lines)
 	}
 
-	if err := repo.MarkCollected(ctx, created.ID); err != nil {
-		t.Fatalf("MarkCollected: %v", err)
-	}
-	open, err = repo.ListOpen(ctx)
-	if err != nil {
-		t.Fatalf("ListOpen after collect: %v", err)
-	}
-	if len(open) != 0 {
-		t.Fatalf("ListOpen after MarkCollected: want 0, got %d: %+v", len(open), open)
-	}
-
-	var status, collectedAt string
-	if err := d.DB.QueryRow(`SELECT status, collected_at FROM kiosk_counter_orders WHERE id = ?`, created.ID).Scan(&status, &collectedAt); err != nil {
-		t.Fatalf("read back collected row: %v", err)
-	}
-	if status != KioskCounterOrderStatusCollected || collectedAt == "" {
-		t.Fatalf("collected row: status=%q collected_at=%q", status, collectedAt)
-	}
 }
 
 // Two Create calls must never hand back the same display_no.
@@ -103,45 +88,6 @@ func TestKioskCounterOrdersRepo_DisplayNoIncrementsAcrossOrders(t *testing.T) {
 	}
 	if first.DisplayNo == second.DisplayNo {
 		t.Fatalf("two counter orders got the same display_no %q", first.DisplayNo)
-	}
-}
-
-// A second MarkCollected on an ALREADY-collected order must not move
-// collected_at. The staff board polls every 15s, so two tills can both be
-// showing the same still-open row; the second tap must not rewrite when
-// the customer actually collected their order (review finding, ut-docs#582).
-func TestKioskCounterOrdersRepo_MarkCollectedTwiceKeepsFirstCollectedAt(t *testing.T) {
-	d := openKioskCounterOrdersDB(t, "counter_orders_recollect.db")
-	ctx := context.Background()
-	repo := NewKioskCounterOrdersRepo(d.DB)
-
-	created, err := repo.Create(ctx, KioskCounterOrder{Lines: []KioskCounterOrderLine{{Name: "Tea", Qty: 1}}})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	if err := repo.MarkCollected(ctx, created.ID); err != nil {
-		t.Fatalf("MarkCollected: %v", err)
-	}
-	var first string
-	if err := d.DB.QueryRow(`SELECT collected_at FROM kiosk_counter_orders WHERE id = ?`, created.ID).Scan(&first); err != nil {
-		t.Fatal(err)
-	}
-
-	// Backdate it so a re-stamp would be unmistakable rather than landing
-	// on the same RFC3339 second as the first call.
-	past := "2020-01-01T00:00:00Z"
-	if _, err := d.DB.Exec(`UPDATE kiosk_counter_orders SET collected_at = ? WHERE id = ?`, past, created.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := repo.MarkCollected(ctx, created.ID); err != nil {
-		t.Fatalf("second MarkCollected: %v", err)
-	}
-	var second string
-	if err := d.DB.QueryRow(`SELECT collected_at FROM kiosk_counter_orders WHERE id = ?`, created.ID).Scan(&second); err != nil {
-		t.Fatal(err)
-	}
-	if second != past {
-		t.Fatalf("second MarkCollected rewrote collected_at: %q -> %q (first call recorded %q)", past, second, first)
 	}
 }
 
@@ -180,16 +126,6 @@ VALUES ('legacy-1', 'C-1', 'takeaway', ?, ?, '2026-09-10T00:00:00Z')`,
 	}
 	if open[0].Lines[1].Qty != 1.5 {
 		t.Fatalf("legacy comma-decimal qty: got %v, want 1.5", open[0].Lines[1].Qty)
-	}
-}
-
-// MarkCollected on an unknown id must not error — same silent-no-op
-// convention as a re-tapped "mark collected" button.
-func TestKioskCounterOrdersRepo_MarkCollectedUnknownIDIsNoop(t *testing.T) {
-	d := openKioskCounterOrdersDB(t, "counter_orders_unknown.db")
-	repo := NewKioskCounterOrdersRepo(d.DB)
-	if err := repo.MarkCollected(context.Background(), "does-not-exist"); err != nil {
-		t.Fatalf("MarkCollected on unknown id: %v", err)
 	}
 }
 
@@ -296,16 +232,6 @@ func TestKioskCounterOrdersRepo_HeldOrderSharesSequenceButIsNotOpen(t *testing.T
 	}
 	if len(open) != 1 || open[0].ID != legacy.ID {
 		t.Fatalf("ListOpen = %+v, want only the legacy open row", open)
-	}
-	if err := repo.MarkCollected(ctx, held.ID); err != nil {
-		t.Fatal(err)
-	}
-	var status string
-	if err := d.DB.QueryRow(`SELECT status FROM kiosk_counter_orders WHERE id = ?`, held.ID).Scan(&status); err != nil {
-		t.Fatal(err)
-	}
-	if status != KioskCounterOrderStatusHeld {
-		t.Fatalf("MarkCollected moved a held (unpaid) order to %q", status)
 	}
 }
 
@@ -445,7 +371,7 @@ func TestKioskCounterOrdersRepo_CreatePrunesStaleHeldRows(t *testing.T) {
 		{"stale-held", "C-50", KioskCounterOrderStatusHeld, old},
 		{"recent-held", "C-10", KioskCounterOrderStatusHeld, recent},
 		{"old-open", "C-11", KioskCounterOrderStatusOpen, old},
-		{"old-collected", "C-12", KioskCounterOrderStatusCollected, old},
+		{"old-collected", "C-12", "collected", old}, // historical: nothing writes it any more
 	} {
 		if _, err := d.DB.Exec(`INSERT INTO kiosk_counter_orders (id, display_no, order_type, lines_json, status, created_at) VALUES (?, ?, '', '[]', ?, ?)`,
 			row.id, row.no, row.status, row.at); err != nil {

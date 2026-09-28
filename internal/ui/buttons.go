@@ -1708,16 +1708,104 @@ func (h *ButtonsHTTP) List(w http.ResponseWriter, r *http.Request) {
 	// manager's working surface (hidden-items list, category management),
 	// rendered rarely, and must always show the live state it is editing.
 	if h.EditMode {
-		h.renderList(w, r)
+		h.renderList(w, r, "all")
 		return
 	}
-	h.serveSellScreen(w, r, h.sellScreenKey("list", ""), true, h.renderList)
+	// ut-docs#3089: a buttons-changed/modifiers-changed whole-document
+	// refresh (the .products root's own hx-get) now carries the pressed
+	// all_filter_chips chip along (the chip row's hidden input, hx-include),
+	// in AllMore's own ?category= semantics -- see requestedChipParam and
+	// AllMore's doc comment. Only read in that one mode: every other mode
+	// renders identically whatever a stray query param says, and reading it
+	// there too would only fragment the cache for no reason. The chip is
+	// resolved against CategoryTiles and passed into renderList explicitly
+	// (a closure, not r's query) so ListFragment's own call below -- which
+	// must always render All regardless of its caller's request -- can't
+	// accidentally pick one up.
+	chip := "all"
+	if h.BrowsingMode == browsingModeAllFilterChips {
+		chip = requestedChipParam(r)
+		// Normalise BEFORE keying: a chip the key folds into All must
+		// render as All too, or its filtered render would be cached under
+		// the All key that GET /'s first paint also reads (review finding 1).
+		if chipCacheKeyParam(chip) == "" {
+			chip = "all"
+		}
+	}
+	h.serveSellScreen(w, r, h.sellScreenKey("list", chipCacheKeyParam(chip)), true, func(w http.ResponseWriter, r *http.Request) bool {
+		return h.renderList(w, r, chip)
+	})
+}
+
+// requestedChipParam reads the all_filter_chips chip a refresh is
+// requesting, collapsed to exactly the three values renderList/resolveChip
+// branch on: "all" (no ?category, or the literal "all" the All chip's own
+// hx-get sends), "" (present and empty -- the uncategorized bucket), or the
+// raw category id otherwise. Mirrors AllMore's own "category" query
+// semantics (see its doc comment) -- GET /ui/buttons never had a category
+// param of its own before ut-docs#3089; the chip row's hidden input now
+// carries the pressed chip along in this exact shape on every refresh.
+func requestedChipParam(r *http.Request) string {
+	q := r.URL.Query()
+	if _, has := q["category"]; !has {
+		return "all"
+	}
+	return q.Get("category")
+}
+
+// resolveChip is ut-docs#3089's fallback rule: a requested chip is honoured
+// only when it matches one of the CategoryTiles this exact render already
+// built (the uncategorized tile's ID is "") -- a deleted category, or
+// garbage on the query string, falls back to All quietly (no error, no log
+// line): CategoryTiles is already the render's own source of truth for
+// which chips exist, so this can never disagree with what the chip row
+// itself renders.
+func resolveChip(raw string, tiles []CategoryTileVM) string {
+	if raw == "all" {
+		return "all"
+	}
+	for _, t := range tiles {
+		if t.ID == raw {
+			return raw
+		}
+	}
+	return "all"
+}
+
+// chipParamMaxLen and chipIDCharsetRE bound chipCacheKeyParam's cardinality
+// (ut-docs#3089): the #2501 sell-screen cache's key must include the chip
+// (a stale render mid-sale is exactly the bug this card fixes), but the key
+// is a map entry an unauthenticated-by-design till session can grow one of
+// per distinct query value -- a category id is short and drawn from a small
+// charset (uuid.NewString(), or an imported slug like the fixtures' "cat1"),
+// so anything outside that shape is folded into the same "all" key an
+// unresolvable chip already renders as (resolveChip), rather than given its
+// own cache slot.
+const chipParamMaxLen = 64
+
+var chipIDCharsetRE = regexp.MustCompile(`^[A-Za-z0-9_-]*$`)
+
+// chipCacheKeyParam is the #2501 sell-screen cache key's own encoding of the
+// raw requested chip (ut-docs#3089 AC 4): "" for All (chip=="all", or
+// anything outside the id charset/length -- List normalises such a chip to
+// "all" before rendering, so key and render always agree), else "chip:"+chip -- prefixed so the
+// uncategorized bucket's raw value ("") reads as "chip:" here, distinct
+// from All's own "" encoding.
+func chipCacheKeyParam(chip string) string {
+	if chip == "all" || len(chip) > chipParamMaxLen || !chipIDCharsetRE.MatchString(chip) {
+		return ""
+	}
+	return "chip:" + chip
 }
 
 // renderList is List's render, reporting whether it is clean enough to cache
 // (ut-docs#2501): every load below is non-fatal to the render, but a render
 // that degraded around a failed load must not be served for minutes after.
-func (h *ButtonsHTTP) renderList(w http.ResponseWriter, r *http.Request) bool {
+// chipParam (ut-docs#3089) is the all_filter_chips chip to render selected
+// -- ALWAYS "all" from EditMode/ListFragment, the live requested value from
+// List otherwise (see List's own doc comment for why this is a parameter,
+// not r's own query).
+func (h *ButtonsHTTP) renderList(w http.ResponseWriter, r *http.Request, chipParam string) bool {
 	clean := true
 	// ut-docs#2541 review finding 2: LoadAllActive is fetched exactly ONCE
 	// per render and reused for both Load's implicit-tile merge AND the
@@ -1775,9 +1863,15 @@ func (h *ButtonsHTTP) renderList(w http.ResponseWriter, r *http.Request) bool {
 	// BuildCategoryTiles — reuses that ONE load rather than querying again.
 	// The strip (the default branch) pages nothing: ut-docs#2613 retired its
 	// All tab, so it renders quick-button categories only.
-	var allPage []Button
+	var allButtons []ButtonVM
 	var allHasMore bool
 	var categoryTiles []CategoryTileVM
+	// ut-docs#3089: the all_filter_chips chip actually selected for this
+	// render -- "all" everywhere else (unused by the template outside that
+	// mode). Fed straight into the chip row/hidden-input/x-data init, so the
+	// server-rendered state and Alpine's post-hydration state always agree.
+	chip := "all"
+	chipFiltered := false
 	// ut-docs#2698: the category tiles and the All grid are at-rest browse
 	// surfaces with no edit mode of their own, so hidden items stay out of
 	// them (allBtns itself keeps them, marked, for the quick-button grid).
@@ -1787,11 +1881,30 @@ func (h *ButtonsHTTP) renderList(w http.ResponseWriter, r *http.Request) bool {
 	case browsingModeAllFilterChips:
 		visible := visibleOnly(allBtns)
 		categoryTiles = BuildCategoryTiles(visible, cats)
+		// ut-docs#3089: honour the requested chip only when it is still one
+		// of THESE tiles -- see resolveChip's own doc comment.
+		chip = resolveChip(chipParam, categoryTiles)
+		chipFiltered = chip != "all"
+		// A requested chip that no longer resolves renders as All but is
+		// keyed under its own raw id: don't cache it, so arbitrary unknown
+		// ids can't crowd the real entries out of the bounded cache.
+		if chipParam != "all" && !chipFiltered {
+			clean = false
+		}
+		category := "all"
+		if chipFiltered {
+			category = chip
+		}
 		// ut-docs#2319: only the first page ships on the initial render
 		// (and on every modifiers-changed/buttons-changed whole-document
 		// refetch) — see AllTabPageSize's own doc comment. The rest loads
 		// on demand via the "load more" button AllMore serves below.
-		allPage, allHasMore = pageButtons(visible, 0)
+		// ut-docs#2534/#3089: btns is Load()'s own order, already fetched
+		// above for .Groups -- the SAME loadWith result AllMore's own
+		// pos/quickButtonsFirst computation needs, reused here (via the
+		// allFilterPage helper AllMore itself now calls too) rather than
+		// querying it a second time.
+		allButtons, allHasMore = allFilterPage(allBtns, btns, cats, category, chipFiltered, 0)
 	}
 	// ut-docs#2498: LoadCategoriesForAdmin is the one query that carries a
 	// per-category ACTIVE ITEM count (data.CategoryAdminRow.ItemCount) —
@@ -1872,16 +1985,25 @@ func (h *ButtonsHTTP) renderList(w http.ResponseWriter, r *http.Request) bool {
 		// and the sale screen's one badge template (buttons.html
 		// "tile-badges-template"): lock state is per session, identical for
 		// every tile (stampLocked), so it is resolved once here.
-		"SellVersion":     sellVersionFrom(r.Context()),
-		"Locked":          !h.Granted,
-		"BadgeItemPH":     TileBadgeItemPlaceholder,
-		"BadgeLabelPH":    TileBadgeLabelPlaceholder,
-		"Groups":          groups,
-		"AllButtons":      ToVM(allPage),
-		"AllHasMore":      allHasMore,
-		"AllNextOffset":   len(allPage),
-		"BrowsingMode":    mode,
-		"CategoryTiles":   categoryTiles,
+		"SellVersion":   sellVersionFrom(r.Context()),
+		"Locked":        !h.Granted,
+		"BadgeItemPH":   TileBadgeItemPlaceholder,
+		"BadgeLabelPH":  TileBadgeLabelPlaceholder,
+		"Groups":        groups,
+		"AllButtons":    allButtons,
+		"AllHasMore":    allHasMore,
+		"AllNextOffset": len(allButtons),
+		"BrowsingMode":  mode,
+		"CategoryTiles": categoryTiles,
+		// ut-docs#3089: the all_filter_chips selection this render used --
+		// "all" | "" (uncategorized) | a category id. Chip drives the chip
+		// row's static aria-pressed and the hidden input's value (no flash
+		// of All before Alpine hydrates); ChipFiltered is whether
+		// #buttons-grid-all's body came from the filtered branch (the
+		// all-more-fragment's own Filtered field, which controls the
+		// data-all-filter marker jiggle-mode keys off).
+		"Chip":            chip,
+		"ChipFiltered":    chipFiltered,
 		"EditMode":        h.EditMode,
 		"AdminCategories": adminCats,
 		"ItemColors":      palette,
@@ -1951,21 +2073,55 @@ func (h *ButtonsHTTP) AllMore(w http.ResponseWriter, r *http.Request) {
 		logging.L().Errorf("buttons all-more: load all-active items: %v", err)
 		withHidden = nil
 	}
-	all := visibleOnly(withHidden)
-	var pos map[string]int
+	var cats []data.CategoryNode
+	var quick []Button
 	category, filtered := r.URL.Query().Get("category"), false
 	if _, has := r.URL.Query()["category"]; has && category != "all" {
-		cats, err := h.Store.LoadCategories(r.Context())
+		cats, err = h.Store.LoadCategories(r.Context())
 		if err != nil {
 			logging.L().Errorf("buttons all-more: load categories: %v", err)
 		}
 		// Load()'s own order: loadWith over the hidden-kept set, so an
 		// implicit hidden item holds its slot here too and every Pos is the
 		// tile's index in Load() -- the slots UpdateOrderSubset re-deals.
-		quick, _, err := h.Store.loadWith(r.Context(), withHidden)
+		quick, _, err = h.Store.loadWith(r.Context(), withHidden)
 		if err != nil {
 			logging.L().Errorf("buttons all-more: load quick buttons: %v", err)
 		}
+		filtered = true
+	}
+	vms, hasMore := allFilterPage(withHidden, quick, cats, category, filtered, offset)
+	_ = h.View.Render(w, "all-more-fragment", map[string]any{
+		"Buttons":    vms,
+		"HasMore":    hasMore,
+		"NextOffset": offset + len(vms),
+		"Category":   category,
+		"Filtered":   filtered,
+	})
+}
+
+// allFilterPage computes one page of the all_filter_chips All grid --
+// extracted (ut-docs#3089) so AllMore (a chip's own hx-get) and
+// ButtonsHTTP.renderList (a chip surviving a buttons-changed/
+// modifiers-changed refresh) can never disagree about what a given
+// chip/offset renders: renderList's grid is now byte-for-byte what tapping
+// the chip would have fetched here, Pos included.
+//
+// withHidden is loadAllActive's own hidden-kept grid set. quick is Load()'s
+// own order (a loadWith result over withHidden) -- read ONLY when filtered,
+// so a caller that already knows it won't filter (or already paid for that
+// same loadWith elsewhere in its own render, as renderList has) can pass
+// nil rather than a second load. category/filtered are AllMore's own
+// "category" query semantics restated (see its doc comment): filtered=false
+// means the whole catalog and category is then not read at all; otherwise
+// "" is the uncategorized bucket, else a category id (nested categories
+// fold into their top-level chip via filterButtonsInCategory). Pos is
+// stamped from quick's own index, exactly as AllMore always did
+// (ut-docs#2534).
+func allFilterPage(withHidden, quick []Button, cats []data.CategoryNode, category string, filtered bool, offset int) ([]ButtonVM, bool) {
+	all := visibleOnly(withHidden)
+	var pos map[string]int
+	if filtered {
 		pos = make(map[string]int, len(quick))
 		for i, b := range quick {
 			if _, dup := pos[b.Code]; !dup {
@@ -1976,7 +2132,6 @@ func (h *ButtonsHTTP) AllMore(w http.ResponseWriter, r *http.Request) {
 			filterButtonsInCategory(visibleOnly(quick), cats, category),
 			filterButtonsInCategory(all, cats, category),
 		)
-		filtered = true
 	}
 	page, hasMore := pageButtons(all, offset)
 	vms := ToVM(page)
@@ -1985,13 +2140,7 @@ func (h *ButtonsHTTP) AllMore(w http.ResponseWriter, r *http.Request) {
 			vms[i].Pos = p
 		}
 	}
-	_ = h.View.Render(w, "all-more-fragment", map[string]any{
-		"Buttons":    vms,
-		"HasMore":    hasMore,
-		"NextOffset": offset + len(page),
-		"Category":   category,
-		"Filtered":   filtered,
-	})
+	return vms, hasMore
 }
 
 // CategoryItems renders the category_tabs mode's popup body (ut-docs#2499,
