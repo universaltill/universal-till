@@ -263,6 +263,10 @@ func TestFormatMoney_LocaleGrouping(t *testing.T) {
 		{"nl-NL", "€1.234,56"},
 		{"tr", "€1.234,56"}, // bundled UI locale — must NOT keep the default
 		{"fr-FR", "€1 234,56"},
+		// ut-docs#2964: pt-PT follows CLDR's space-grouped, comma-decimal
+		// convention, the same family as fr.
+		{"pt-PT", "€1 234,56"},
+		{"pt", "€1 234,56"},
 		{"en-GB", "€1,234.56"},
 		{"en-US", "€1,234.56"},
 		{"en", "€1,234.56"}, // unlisted locale keeps the international default
@@ -294,6 +298,9 @@ func TestFormatMoneyLatin(t *testing.T) {
 func TestFormatQty(t *testing.T) {
 	if got := FormatQty(1234.5, "de-DE"); got != "1.234,5" {
 		t.Errorf("FormatQty de-DE = %q", got)
+	}
+	if got := FormatQty(1234.5, "pt-PT"); got != "1 234,5" {
+		t.Errorf("FormatQty pt-PT = %q", got)
 	}
 	if got := FormatQty(1.5, "en-GB"); got != "1.5" {
 		t.Errorf("FormatQty en-GB = %q", got)

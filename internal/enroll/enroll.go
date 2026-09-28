@@ -27,7 +27,8 @@
 // doesn't opt in registers exactly as lazily as documented above; nothing
 // about this package's own retry/error semantics changed. The other thing
 // that can look like eager registration in practice: setup's automatic
-// base-plugin install for a handful of countries (setupBasePlugins in
+// base-plugin install for a country whose language core doesn't bundle
+// (basePluginsForCountry in
 // internal/pages/setup_base_plugins.go) calls EnsureRegistered as part of
 // installing that plugin — that's this package's ordinary "first plugin
 // download/install" trigger firing earlier than a human browsing the

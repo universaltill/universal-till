@@ -456,6 +456,7 @@ keep it updated.
 | No-Sale Button | button | [ut-plugin-button-nosale](https://github.com/universaltill/ut-plugin-button-nosale) | [latest](https://github.com/universaltill/ut-plugin-button-nosale/releases/latest/download/latest.tar.gz) |
 | Spanish (Español) | language | [ut-plugin-language-es](https://github.com/universaltill/ut-plugin-language-es) | [latest](https://github.com/universaltill/ut-plugin-language-es/releases/latest/download/latest.tar.gz) |
 | German (Deutsch) | language | [ut-plugin-language-de](https://github.com/universaltill/ut-plugin-language-de) | [latest](https://github.com/universaltill/ut-plugin-language-de/releases/latest/download/latest.tar.gz) |
+| Portuguese (Português) | language | [ut-plugin-language-pt](https://github.com/universaltill/ut-plugin-language-pt) | [latest](https://github.com/universaltill/ut-plugin-language-pt/releases/latest/download/latest.tar.gz) |
 | Screen Top Theme | theme | [ut-plugin-theme-screen-top](https://github.com/universaltill/ut-plugin-theme-screen-top) | [latest](https://github.com/universaltill/ut-plugin-theme-screen-top/releases/latest/download/latest.tar.gz) |
 | Buttons Left Theme | theme | [ut-plugin-theme-buttons-left](https://github.com/universaltill/ut-plugin-theme-buttons-left) | [latest](https://github.com/universaltill/ut-plugin-theme-buttons-left/releases/latest/download/latest.tar.gz) |
 | Midnight Theme | theme | [ut-plugin-theme-midnight](https://github.com/universaltill/ut-plugin-theme-midnight) | [latest](https://github.com/universaltill/ut-plugin-theme-midnight/releases/latest/download/latest.tar.gz) |
@@ -542,6 +543,7 @@ Available as install-time language plugins (offered right on the setup
 wizard's language step, installing on selection):
 - German (de) — `ut-plugin-language-de`
 - Spanish (es) — `ut-plugin-language-es`
+- Portuguese, European (pt) — `ut-plugin-language-pt`
 
 Want to add your language? See [CONTRIBUTING.md](CONTRIBUTING.md) for translation guidelines.
 
