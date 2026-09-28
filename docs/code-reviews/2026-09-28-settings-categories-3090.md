@@ -52,7 +52,11 @@ Accepted as designed: a plugin `order` amendment can no longer move a section ac
   - The Look & feel category view at 1024×600.
 
   Emulated in Chromium only, not on real touch hardware; nothing here uses a pointer/drag handler.
-- German-length check: the de pack strings ("Personal & Sicherheit", "Sicherung & Updates") are no longer than the longest English tile ("Receipts & printers" wraps to two lines, which the tile handles).
+- German-length check: the de pack strings ("Personal & Sicherheit", "Backups & Updates") are no longer than the longest English tile ("Receipts & printers" wraps to two lines, which the tile handles).
+
+## Language packs
+
+The de/es strings got a second Fable review. It found the rename to `settings.home.back`, "Belegdrucker"/"Backups" to match each pack's own section names, the formal register in Spanish, and "fichas" as that pack's word for menu tiles. All are fixed in the pack PRs, and the German help paragraph now says "Backups & Updates".
 
 ## Deferred (follow-up cards)
 
