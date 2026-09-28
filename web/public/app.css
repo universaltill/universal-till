@@ -2457,6 +2457,12 @@ html[dir="rtl"] .products-strip-back .btn-ico svg { transform: scaleX(-1); }
 .tile-badges { display: none; }
 .jiggle-mode .tile-cell { display: block; position: relative; min-inline-size: 0; }
 .jiggle-mode .tile-cell > .btn-tile { inline-size: 100%; block-size: 100%; touch-action: none; cursor: grab; }
+/* ut-docs#2534: the all_filter_chips All grid with no category chip is
+   edit-only (no drag -- app.js's canMove), so its tiles keep the finger-pan
+   and a plain pointer; under a chip app.js's syncAllGridMovable sets
+   .all-grid-movable (the fragment's data-all-filter marker is there) and
+   the rule above applies. A class, not :has(), so it holds on every engine. */
+.jiggle-mode #buttons-grid-all:not(.all-grid-movable) > .tile-cell > .btn-tile { touch-action: manipulation; cursor: pointer; }
 .jiggle-mode .tile-badges { display: contents; }
 .tile-badge {
   position: absolute; inset-block-start: -8px; z-index: 2;

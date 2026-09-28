@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"html/template"
@@ -295,14 +296,36 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		// contract-consistency with every other checkOrElevate call site,
 		// but is never actually rendered/used by a non-htmx caller (that JS
 		// helper only ever extracts #elevation-modal from the body).
+		// ut-docs#2534: scope=subset is the all_filter_chips All grid under a
+		// category chip -- codes is that ONE category's tiles in their new
+		// order (possibly only its loaded page), re-dealt server-side into
+		// the global slots they already hold (ui.ButtonStore.
+		// UpdateOrderSubset). Any other value is the full global list.
+		subset := r.Form.Get("scope") == "subset"
 		elev := checkOrElevate(d, r, "catalog_management", r.Form.Get("override_pin"))
 		if elev.Outcome == needsElevation {
+			hidden := []elevationHiddenField{{Name: "codes", Value: strings.Join(codes, ",")}}
+			if subset {
+				// The PIN retry must be a subset reorder too, or it would
+				// rewrite the global order from one category's codes.
+				hidden = append(hidden, elevationHiddenField{Name: "scope", Value: "subset"})
+			}
 			renderElevationPrompt(w, r, "/api/buttons/reorder", "#buttons-add-error",
 				httpx.T(httpx.ResolveLocale(w, r), "elevation.summary.buttons_reorder"),
-				[]elevationHiddenField{{Name: "codes", Value: strings.Join(codes, ",")}}, elev)
+				hidden, elev)
 			return
 		}
-		if err := d.BtnStore.UpdateOrder(r.Context(), codes); err != nil {
+		var err error
+		if subset {
+			err = d.BtnStore.UpdateOrderSubset(r.Context(), codes)
+		} else {
+			err = d.BtnStore.UpdateOrder(r.Context(), codes)
+		}
+		if errors.Is(err, ui.ErrNoKnownCodes) {
+			http.Error(w, "codes required", http.StatusBadRequest)
+			return
+		}
+		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, buttonsErrorKey, "buttons", err)
 			return
 		}
@@ -316,6 +339,20 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		// its own DOM already shows the new order, so that refetch is a
 		// harmless re-render from the now-persisted truth.)
 		w.Header().Set("HX-Trigger", "buttons-changed")
+		// ut-docs#2534 review: the save moved sell_screen_version, so report
+		// where it now stands -- the same X-UT-Sell-Version a GET /ui/buttons
+		// render carries. The sale screen's jiggle save (a plain fetch, so
+		// its HX-Trigger above is never acted on) hands it to
+		// sell-screen-watch.js, which then treats this till's own save as
+		// already on screen instead of re-rendering the grid on its next
+		// poll (under an all_filter_chips category chip that re-render
+		// dropped the chip). Best effort: without it the watcher simply
+		// refreshes, as before.
+		if v, ok, verr := d.BtnStore.SellGeneration(r.Context()); verr == nil && ok {
+			w.Header().Set(ui.SellVersionHeader, strconv.FormatInt(v, 10))
+		} else if verr != nil {
+			logging.L().Warnf("buttons reorder: sell version: %v", verr)
+		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 

@@ -56,8 +56,10 @@ const launchOptions = existsSync(PREINSTALLED_CHROMIUM) ? { executablePath: PREI
 // PIN-login session as the others here: it creates and logs in as a SECOND
 // (cashier) operator on top of the wizard-created admin, which the default
 // (auth-off) project has no session model for at all.
+// sell-all-grid-jiggle-locked-cashier-2534.spec.ts (ut-docs#2534) likewise
+// logs in as its own cashier to prove the All grid never arms for one.
 const AUTH_ONLY_SPECS =
-  /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423|session-expiry-redirect-2144|session-expiry-redirect-admin-2157|sell-tile-jiggle-mode-locked-cashier-2312|session-idle-lock-loop-3005|sale-only-cashier-3079)\.spec\.ts$/;
+  /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423|session-expiry-redirect-2144|session-expiry-redirect-admin-2157|sell-tile-jiggle-mode-locked-cashier-2312|session-idle-lock-loop-3005|sale-only-cashier-3079|sell-all-grid-jiggle-locked-cashier-2534)\.spec\.ts$/;
 
 // ut-docs#1559: the ai.identify overlay's own err.name branching coverage
 // needs the dedicated ai-identify project/server below — see the comment
