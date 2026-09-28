@@ -387,6 +387,7 @@ func TestButtonsHTTPList_EverythingHiddenIsEmptyAtRest(t *testing.T) {
 	if err := h.Store.Hide(t.Context(), "i1"); err != nil {
 		t.Fatal(err)
 	}
+	h.Granted = true // the "+ add" link is for catalog_management only (ut-docs#3079)
 	rec := httptest.NewRecorder()
 	h.List(rec, httptest.NewRequest("GET", "/ui/buttons", nil))
 	body := rec.Body.String()

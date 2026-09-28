@@ -129,8 +129,9 @@ func TestAndroidInstallFormAbsentWithoutTheBridge(t *testing.T) {
 	}
 }
 
-// A cashier DOES see the form, and the manager PIN is what stops them
-// (ut-docs#1534 review, finding 4). base.html shows the "Update available —
+// Historically (ut-docs#1534 review, finding 4) a cashier DID see the form
+// and the manager PIN stopped them; since ut-docs#3079 a cashier cannot open
+// /settings at all (see the body). Original reasoning: base.html shows the "Update available —
 // Download" chip to every role, so hiding the form from a cashier did not
 // remove a capability — it just recreated this card's own bug one role down:
 // tap the chip, land on a page with nothing on it. The boundary that matters
@@ -148,13 +149,17 @@ func TestAndroidInstallFormReachableByCashierButPINGated(t *testing.T) {
 	androidInstallCheckNow = func(context.Context) updates.Status { return updates.Status{Available: true} }
 	t.Cleanup(func() { androidInstallCheckNow = orig })
 
-	body := renderSettingsAs(t, mux, cashUser, true)
-	if !strings.Contains(body, `id="android-update-form"`) {
-		t.Error("a cashier following the update chip finds no install form — the chip is a dead end for that role")
-	}
-	// The manager-only controls in the same card stay manager-only.
-	if strings.Contains(body, `hx-post="/api/update/check"`) {
-		t.Error("check-for-updates rendered for a cashier — that control has no PIN gate of its own")
+	// ut-docs#3079 (cashier is sale-only) supersedes #1534's "a cashier sees
+	// the form": /settings now refuses a cashier outright, and base.html no
+	// longer offers a cashier the Android install chip that would send them
+	// there (it falls through to the plain status line — asserted in
+	// internal/httpx's TestBaseLayoutAndroidUpdateChipFollowsViewer). The
+	// install endpoint's own PIN gate below is unchanged.
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/settings", nil), cashUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("cashier GET /settings = %d, want 403 (ut-docs#3079)", rec.Code)
 	}
 
 	// The real gate: no PIN, no install authorisation, whatever the session.
@@ -163,7 +168,7 @@ func TestAndroidInstallFormReachableByCashierButPINGated(t *testing.T) {
 	api := http.NewServeMux()
 	registerUpdateAPI(api, d)
 
-	rec := postForm(api, "/api/update/android-install", url.Values{"manager_pin": {""}}, &cashUser)
+	rec = postForm(api, "/api/update/android-install", url.Values{"manager_pin": {""}}, &cashUser)
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("blank PIN from a cashier = %d, want 403: %s", rec.Code, rec.Body.String())
 	}

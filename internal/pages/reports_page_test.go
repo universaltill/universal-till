@@ -75,6 +75,7 @@ func getReportsTab(t *testing.T, mux *http.ServeMux, name, query string) *httpte
 }
 
 func TestReportsPage_DaysParamValidAndInvalidValues(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: /reports is reports-gated; this test is about the days param.
 	mux, _ := newReportsPageTestDeps(t)
 
 	// No days param -> the 14-day default is selected.
@@ -364,6 +365,13 @@ func TestReportsPage_CashAdjustmentsByReasonGatedOnAuditPermission(t *testing.T)
 ('a1','user1','shift','shift1','cash_adjustment','{"amount":-500,"reason":"Pfandrückgabe"}',datetime('now'))`); err != nil {
 		t.Fatal(err)
 	}
+	// ut-docs#3079: /reports and its tabs 403 a role without "reports" (a
+	// cashier by default is sale-only). This test is about the FINER gate
+	// inside the page, so the cashier role is granted "reports" here the way
+	// an admin would in Users → Permissions.
+	if _, err := dp.Db.Exec(`INSERT OR REPLACE INTO role_permissions(role, action, granted) VALUES('cashier','reports',1)`); err != nil {
+		t.Fatal(err)
+	}
 
 	roleReq := func(role string) *httptest.ResponseRecorder {
 		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/reports/tab/payments", nil), auth.User{ID: "u1", Role: role})
@@ -599,18 +607,21 @@ func TestReportsPage_ManagerOnlySectionsGatedByRole(t *testing.T) {
 	// silently pass or fail depending on the developer's shell environment.
 	t.Setenv("UT_AUTH", "on")
 	mux, _ := newReportsPageTestDeps(t)
-	// The page itself must not offer the EOD tab to a non-manager…
+	// ut-docs#3079: a request without "reports" (no session here) is now
+	// refused by the page gate itself — 403 — rather than rendered with the
+	// manager-only EOD tab hidden (that finer gate is still exercised for a
+	// reports-granted cashier in TestReportsPage_CanViewShrinkageGatesTabButton).
 	rec := getReportsPage(t, mux, "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
 	}
 	if strings.Contains(rec.Body.String(), "/ui/reports/tab/eod") {
 		t.Fatalf("expected the manager-only EOD tab hidden for a non-manager, got: %s", rec.Body.String())
 	}
 	// …and the fragment itself stays gated even when requested directly.
 	rec = getReportsTab(t, mux, "eod", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
 	}
 	if strings.Contains(rec.Body.String(), `name="time"`) {
 		t.Fatalf("expected the manager-only EOD settings form hidden for a non-manager, got: %s", rec.Body.String())

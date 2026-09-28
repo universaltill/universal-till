@@ -641,6 +641,7 @@ func TestHandleListPluginVersions_ReturnsSortedHistoryWithoutLeakingPath(t *test
 // --- handleCheckUpdates ----------------------------------------------------
 
 func TestHandleCheckUpdates_NoCatalog_503(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")              // behaviour, not the ut-docs#3079 permission gate
 	h := handleCheckUpdates(&common.Deps{}) // CatalogRepo nil
 	req := httptest.NewRequest(http.MethodGet, "/api/plugins/check-updates", nil)
 	rec := httptest.NewRecorder()
@@ -651,6 +652,7 @@ func TestHandleCheckUpdates_NoCatalog_503(t *testing.T) {
 }
 
 func TestHandleCheckUpdates_NoInstalledPlugins_200Empty(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // behaviour, not the ut-docs#3079 permission gate
 	db := openRealSchemaPagesDB(t)
 	deps := newPluginAPIDeps(t, db, nil)
 	deps.CatalogRepo = newCatalogRepoWithSnapshot(t, marketplace.CatalogSnapshot{})

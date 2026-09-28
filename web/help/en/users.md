@@ -48,6 +48,10 @@ An unattended, signed-in till is a real risk — anyone walking past can sell, r
 3. Changing this setting needs a manager's or admin's role, the same [manager-approval prompt](/help/elevation) as other settings changes.
 4. Don't want to wait for the timeout? Use the Lock button next to your name in the left-hand menu to lock it yourself, any time.
 
+## What a cashier can do
+
+A cashier account is for selling. Signed in as a cashier you can ring up sales, park and recall orders, see order status and open orders, look up past sales in the journal, and open and close your own shift. Everything else — Settings, Reports, Inventory, the catalogue and quick buttons, Tills and Plugins — needs a manager or admin: those tiles and links don't appear for a cashier, and opening one of those pages directly shows "Manager or admin required". If your cashiers do need one of them, an admin can grant it to the cashier role under Users → Permissions — for example "Stock & inventory" lets cashiers receive deliveries and adjust stock counts.
+
 ## Permissions matrix
 
 A super admin can go further than assigning cashier/manager/admin roles — they can grant or revoke exactly what each role is allowed to do, action by action (refunds, void, price overrides, settings, reports, and more), from Users → Permissions. Every change is logged in the audit trail with who made it. The one thing you can never do is revoke a super admin's own access to this page — that grant is always locked on, so nobody can accidentally lock every super admin out.

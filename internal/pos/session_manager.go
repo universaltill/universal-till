@@ -39,7 +39,8 @@ import (
 // HasItems (ut-docs#2449) were already fixed for. Fixed for SetConfig too
 // (ut-docs#2435): it snapshots the live *Service list under mu, then calls
 // each one's SetConfig after releasing it, so no manager method still holds
-// mu across a plugin round-trip.
+// mu across a plugin round-trip. Whole SetConfig batches are serialized
+// against each other by setConfigMu (ut-docs#2488; see the field).
 //
 // BindTable is the one exception, and takes mu up to three times (ut-docs#2443,
 // review finding S1 on ut-docs#2434, and the round-2 review of that first
@@ -65,6 +66,15 @@ type SessionBasketManager struct {
 	mu       sync.Mutex
 	sessions map[string]*sessionBasket
 	factory  func() *Service
+	// setConfigMu serializes whole SetConfig batches (snapshot + dispatch)
+	// against each other (ut-docs#2488): without it two racing calls'
+	// per-session writes could interleave and leave live sessions on
+	// different final configs. Now the call that acquires it last wins on
+	// every session. Only SetConfig takes it; lock order is
+	// setConfigMu -> mu -> Service.mu, and mu is still released before any
+	// Service call. A SetConfig stuck in a slow plugin ask (bounded by the
+	// WASM call timeout) delays a concurrent SetConfig, never Get/Create.
+	setConfigMu sync.Mutex
 	// clock is the time source for each session's last-seen stamp (Create
 	// and Get). time.Now in production; same-package tests override it so
 	// Sweep's idle math can be exercised without sleeping — the same
@@ -533,11 +543,14 @@ func (m *SessionBasketManager) Sweep(maxIdle time.Duration, now time.Time) int {
 // every other live session's Get/BindTable/etc. (all of which need m.mu)
 // behind however long that ask takes. A session created after the snapshot
 // is taken simply doesn't receive this particular SetConfig call, same as
-// any other snapshot-then-call race in this file.
+// any other snapshot-then-call race in this file. Runs under setConfigMu
+// (ut-docs#2488).
 func (m *SessionBasketManager) SetConfig(cfg Config) {
 	if m == nil {
 		return
 	}
+	m.setConfigMu.Lock()
+	defer m.setConfigMu.Unlock()
 	m.mu.Lock()
 	svcs := make([]*Service, 0, len(m.sessions))
 	for _, sb := range m.sessions {

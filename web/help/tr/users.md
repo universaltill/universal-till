@@ -47,6 +47,10 @@ Gözetimsiz, oturumu açık bir kasa gerçek bir risktir — yanından geçen he
 3. Bu ayarı değiştirmek bir yönetici veya admin rolü gerektirir, diğer ayar değişikliklerindeki [yönetici onay penceresi](/help/elevation) ile aynı.
 4. Zaman aşımını beklemek istemiyor musunuz? Yan menüdeki adınızın yanındaki Kilitle düğmesini kullanarak istediğiniz zaman kendiniz kilitleyin.
 
+## Kasiyer neler yapabilir
+
+Kasiyer hesabı satış içindir. Kasiyer olarak oturum açtığınızda satış yapabilir, siparişleri bekletip geri çağırabilir, sipariş durumunu ve açık siparişleri görebilir, geçmiş satışları işlem geçmişinde arayabilir ve kendi vardiyanızı açıp kapatabilirsiniz. Geri kalan her şey — Ayarlar, Raporlar, Envanter, katalog ve hızlı satış düğmeleri, Kasalar ve Eklentiler — bir müdür veya yönetici gerektirir: bu kutucuklar ve bağlantılar kasiyere görünmez ve bu sayfalardan birini doğrudan açmak "Yönetici veya admin gerekli" mesajını gösterir. Kasiyerlerinizin bunlardan birine gerçekten ihtiyacı varsa, bir yönetici bunu Kullanıcılar → İzinler'den kasiyer rolüne verebilir — örneğin "Stok ve envanter", kasiyerlerin teslimatları kabul etmesine ve stok miktarlarını düzeltmesine izin verir.
+
 ## İzin matrisi
 
 Süper yönetici, kasiyer/müdür/yönetici rolü atamanın ötesine geçebilir — her rolün tam olarak neler yapabileceğini (iadeler, iptaller, fiyat geçersiz kılma, ayarlar, raporlar ve daha fazlası) Kullanıcılar → İzinler'den, işlem bazında verebilir veya geri alabilir. Her değişiklik, kimin yaptığıyla birlikte denetim kaydına işlenir. Asla yapamayacağınız tek şey, bir süper yöneticinin bu sayfaya kendi erişimini geri almaktır — bu izin her zaman kilitlidir, böylece kimse yanlışlıkla tüm süper yöneticileri dışarıda bırakamaz.

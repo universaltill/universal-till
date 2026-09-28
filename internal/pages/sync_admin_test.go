@@ -135,6 +135,7 @@ func TestSyncAdminAPI_FullBundleThenUnchangedOnMatchingFingerprint(t *testing.T)
 // --- registerSyncAdmin: GET /ui/sync-chip ---
 
 func TestSyncChip_ReplicaMode(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: the chip links only for sync_management; this test is about the manager's chip (cashier: sync_chip_cashier_test.go).
 	dp := newMigratedSyncDeps(t, "replica.db")
 	initPagesI18n(t)
 	ctx := t.Context()
@@ -219,6 +220,7 @@ func TestSyncChip_PrimaryModeNoTills(t *testing.T) {
 }
 
 func TestSyncChip_PrimaryModeWithTills(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: the chip links only for sync_management; this test is about the manager's chip (cashier: sync_chip_cashier_test.go).
 	dp := newMigratedSyncDeps(t, "primary.db")
 	initPagesI18n(t)
 	ctx := t.Context()
@@ -312,6 +314,7 @@ func TestSyncChip_PrimaryModeWithTills(t *testing.T) {
 // TestSyncChip_PrimaryModeWithTills: stale roster, zero pending, zero
 // quarantined => class=warn, but NO badge.
 func TestSyncChip_PrimaryModeStaleTillAloneShowsNoBadge(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: the chip links only for sync_management; this test is about the manager's chip (cashier: sync_chip_cashier_test.go).
 	dp := newMigratedSyncDeps(t, "primary-stale-no-badge.db")
 	initPagesI18n(t)
 	ctx := t.Context()
@@ -355,6 +358,7 @@ func TestSyncChip_PrimaryModeStaleTillAloneShowsNoBadge(t *testing.T) {
 // English ("1 tills"), so the fix (real one/other keys) needs coverage on
 // both sides of the boundary, not just the count=1 case.
 func TestSyncChip_PrimaryModeWithMultipleTills(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: the chip links only for sync_management; this test is about the manager's chip (cashier: sync_chip_cashier_test.go).
 	dp := newMigratedSyncDeps(t, "primary-multi.db")
 	initPagesI18n(t)
 	ctx := t.Context()
@@ -384,6 +388,7 @@ func TestSyncChip_PrimaryModeWithMultipleTills(t *testing.T) {
 // otherwise hide it completely, the same gap ut-docs#1133 already closed
 // for quarantined entries.
 func TestSyncChip_PrimaryModeWithPendingPairingAndNoEnrolledTills(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: the chip links only for sync_management; this test is about the manager's chip (cashier: sync_chip_cashier_test.go).
 	dp := newMigratedSyncDeps(t, "primary-pending.db")
 	initPagesI18n(t)
 	ctx := t.Context()
@@ -423,6 +428,7 @@ func TestSyncChip_PrimaryModeWithPendingPairingAndNoEnrolledTills(t *testing.T) 
 // warn class must come from the quarantine count, not merely coexist with
 // the pre-existing staleness check.
 func TestSyncChip_PrimaryModeWarnsAndLinksToQuarantineWhenEntriesExist(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: the chip links only for sync_management; this test is about the manager's chip (cashier: sync_chip_cashier_test.go).
 	dp := newMigratedSyncDeps(t, "primary-quarantine.db")
 	initPagesI18n(t)
 	ctx := t.Context()

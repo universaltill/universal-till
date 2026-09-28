@@ -921,3 +921,89 @@ func TestBaseLayoutAndroidUpdateChipIsAnInstallButton(t *testing.T) {
 		t.Errorf("a chip state resolved to an empty string — the key is missing from the locale: %q", chip)
 	}
 }
+
+// ut-docs#3079 (cashier is sale-only): the status bar's "Register this till"
+// link (/settings#registration) and the plugin / language-pack update links
+// (/plugins) lead to settings- and plugin_management-gated pages, so they
+// render only for a viewer who passes those predicates — evaluated per
+// request through the checker pages.Init installs (InitRailVisibility).
+func TestBaseLayoutStatusBarAdminLinksFollowViewer(t *testing.T) {
+	before := plugins.CurrentPendingUpdates()
+	t.Cleanup(func() { plugins.PublishPendingUpdates(before) })
+	plugins.PublishPendingUpdates(plugins.PendingUpdateStatus{Count: 2, LanguagePending: true})
+	InitRailVisibility(func(r *http.Request, predicate string) bool {
+		return r.Header.Get("X-Test-Role") == "manager"
+	})
+	t.Cleanup(func() { InitRailVisibility(nil) })
+	InitI18n(realI18n(t), "en")
+
+	render := func(role string) string {
+		req := httptest.NewRequest(http.MethodGet, "/pin", nil)
+		req.Header.Set("X-Test-Role", role)
+		funcs := withHelpHref(FuncsFor("en"), req)
+		funcs["enrolled"] = func() bool { return false }
+		files := append([]string{renderFiles[0], "ui/pages/pin.html"}, renderFiles[1:]...)
+		tpl, err := ClonedTemplate("statusbar-3079:"+role, "base.html", funcs, files...)
+		if err != nil {
+			t.Fatalf("ClonedTemplate: %v", err)
+		}
+		w := httptest.NewRecorder()
+		data := map[string]any{"title": "Change PIN", "theme": "", "menuItems": nil, "errKey": ""}
+		if err := tpl.ExecuteTemplate(w, "base", data); err != nil {
+			t.Fatalf("execute base: %v", err)
+		}
+		return w.Body.String()
+	}
+	links := []string{`href="/settings#registration"`, `class="sb-item sb-plugin-update"`, `class="sb-item sb-language-pack-update"`}
+	cashier := render("cashier")
+	for _, l := range links {
+		if strings.Contains(cashier, l) {
+			t.Errorf("cashier status bar still renders %s", l)
+		}
+	}
+	manager := render("manager")
+	for _, l := range links {
+		if !strings.Contains(manager, l) {
+			t.Errorf("manager status bar lost %s", l)
+		}
+	}
+}
+
+// ut-docs#3079: on an Android till the "Update available — Download" chip
+// answers a cashier's 403 by sending them to /settings#android-update,
+// which a cashier can no longer open. So the install button renders only
+// for a viewer allowed "settings"; a cashier gets the plain status line.
+func TestBaseLayoutAndroidUpdateChipFollowsViewer(t *testing.T) {
+	origAvail, origBridge := UpdateAvailable, UpdateInstallBridge
+	UpdateAvailable = func() bool { return true }
+	UpdateInstallBridge = func() bool { return true }
+	t.Cleanup(func() { UpdateAvailable, UpdateInstallBridge = origAvail, origBridge })
+	InitRailVisibility(func(r *http.Request, predicate string) bool {
+		return r.Header.Get("X-Test-Role") == "manager"
+	})
+	t.Cleanup(func() { InitRailVisibility(nil) })
+	InitI18n(realI18n(t), "en")
+	render := func(role string) string {
+		req := httptest.NewRequest(http.MethodGet, "/pin", nil)
+		req.Header.Set("X-Test-Role", role)
+		funcs := withHelpHref(FuncsFor("en"), req)
+		funcs["canselfupdate"] = func() bool { return false }
+		funcs["updatedownloadlink"] = func() bool { return false }
+		files := append([]string{renderFiles[0], "ui/pages/pin.html"}, renderFiles[1:]...)
+		tpl, err := ClonedTemplate("android-chip-3079:"+role, "base.html", funcs, files...)
+		if err != nil {
+			t.Fatalf("ClonedTemplate: %v", err)
+		}
+		w := httptest.NewRecorder()
+		if err := tpl.ExecuteTemplate(w, "base", map[string]any{"title": "Change PIN", "theme": "", "menuItems": nil, "errKey": ""}); err != nil {
+			t.Fatalf("execute base: %v", err)
+		}
+		return w.Body.String()
+	}
+	if body := render("cashier"); strings.Contains(body, `id="sb-android-update-btn"`) || !strings.Contains(body, `class="sb-item sb-update"`) {
+		t.Errorf("cashier: want the plain update status line, not the install button")
+	}
+	if body := render("manager"); !strings.Contains(body, `id="sb-android-update-btn"`) {
+		t.Errorf("manager lost the Android install chip")
+	}
+}

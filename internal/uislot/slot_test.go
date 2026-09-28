@@ -618,11 +618,13 @@ func TestCoreRail_IsWellFormed(t *testing.T) {
 	want := []struct {
 		key, label, icon string
 		order            int
+		visibleIf        string
 	}{
-		{"/", "nav.till", "shopping-cart", 100},
-		{"/menu", "nav.menu", "menu", 200},
-		{"/inventory", "kiosk.inventory", "package", 300},
-		{"/orders", "nav.orders", "bell", 400},
+		{"/", "nav.till", "shopping-cart", 100, ""},
+		{"/menu", "nav.menu", "menu", 200, ""},
+		// ut-docs#3079: Stock is hidden from a viewer without stock_management.
+		{"/inventory", "kiosk.inventory", "package", 300, "stock_management"},
+		{"/orders", "nav.orders", "bell", 400, ""},
 	}
 	if len(CoreRail) != len(want) {
 		t.Fatalf("CoreRail has %d entries, want %d: %+v", len(CoreRail), len(want), CoreRail)
@@ -642,8 +644,11 @@ func TestCoreRail_IsWellFormed(t *testing.T) {
 			t.Errorf("core table must be declared in ascending Order (zero-plugin path never sorts): %q has %d after %d", e.Key, e.Order, prev)
 		}
 		prev = e.Order
-		if e.Group != "" || e.SubtitleKey != "" || e.VisibleIf != "" || e.InNav {
-			t.Errorf("rail rows carry no group/subtitle/predicate/InNav (nav.html draws none): %+v", e)
+		if e.Group != "" || e.SubtitleKey != "" || e.InNav {
+			t.Errorf("rail rows carry no group/subtitle/InNav (nav.html draws none): %+v", e)
+		}
+		if e.VisibleIf != w.visibleIf {
+			t.Errorf("CoreRail[%d] %q VisibleIf = %q, want %q", i, e.Key, e.VisibleIf, w.visibleIf)
 		}
 		if e.LabelFallback != "" || e.IconFallback != "" {
 			t.Errorf("fallbacks are set by Resolve, never declared: %+v", e)

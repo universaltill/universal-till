@@ -390,6 +390,91 @@ func TestSessionBasketManager_SetConfig_DoesNotBlockOtherSessions(t *testing.T) 
 	}
 }
 
+// ut-docs#2488: SetConfig dispatches to each session AFTER releasing m.mu
+// (ut-docs#2435), so two concurrent calls' dispatch loops could interleave
+// and leave live sessions on different final configs. This proves the fix
+// (setConfigMu serializes whole batches): while call 1 is stuck inside one
+// session's charge-policy ask, call 2 must not write cfg2 to ANY session.
+// Without the fix call 2 writes cfg2 to every session ahead of the stuck
+// one in its map order, so the mid-flight check fails ~32/33 of the time;
+// the final "cfg2 everywhere" check catches most of the remaining runs.
+func TestSessionBasketManager_SetConfig_ConcurrentCallsDoNotInterleave(t *testing.T) {
+	m, _ := newTestSessionManager(t)
+
+	_, stuck, _ := m.Create()
+	asker := newSlowChargeAsker()
+	t.Cleanup(asker.releaseNow)
+	stuck.SetChargePolicyAsker(asker)
+
+	const others = 32
+	svcs := make([]*Service, 0, others)
+	for i := 0; i < others; i++ {
+		_, svc, _ := m.Create()
+		svcs = append(svcs, svc)
+	}
+
+	// cfg2 must differ from newTestSessionManager's factory default
+	// (Config{TaxRateBasisPoints: 2000}) too, or every freshly-created
+	// session would already read as cfg2 before any SetConfig call runs,
+	// making the mid-flight assertion below a false positive.
+	cfg1 := Config{TaxRateBasisPoints: 1000}
+	cfg2 := Config{TaxRateBasisPoints: 2500}
+
+	done1 := make(chan struct{})
+	go func() {
+		defer close(done1)
+		m.SetConfig(cfg1)
+	}()
+
+	select {
+	case <-asker.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("SetConfig(cfg1) never reached the stuck session's charge-policy ask")
+	}
+
+	done2 := make(chan struct{})
+	go func() {
+		defer close(done2)
+		m.SetConfig(cfg2)
+	}()
+
+	// Give call 2 a short window to run. With the fix it must be parked
+	// behind call 1's whole batch (blocked on setConfigMu), so it cannot
+	// have reached, let alone finished, any session's SetConfig yet.
+	select {
+	case <-done2:
+		t.Fatal("SetConfig(cfg2) returned while SetConfig(cfg1) was still stuck in its batch — setConfigMu is not serializing the two calls")
+	case <-time.After(200 * time.Millisecond):
+	}
+	for i, svc := range svcs {
+		if svc.Config() == cfg2 {
+			t.Fatalf("session %d already has Config() = cfg2 while call 1's batch is still in flight — the two SetConfig batches interleaved", i)
+		}
+	}
+
+	asker.releaseNow()
+
+	select {
+	case <-done1:
+	case <-time.After(2 * time.Second):
+		t.Fatal("SetConfig(cfg1) never returned after its ask was released")
+	}
+	select {
+	case <-done2:
+	case <-time.After(2 * time.Second):
+		t.Fatal("SetConfig(cfg2) never returned")
+	}
+
+	if stuck.Config() != cfg2 {
+		t.Fatalf("stuck session's Config() = %+v after both calls, want %+v (the later call must win everywhere)", stuck.Config(), cfg2)
+	}
+	for i, svc := range svcs {
+		if svc.Config() != cfg2 {
+			t.Fatalf("session %d's Config() = %+v after both calls, want %+v (the later call must win everywhere)", i, svc.Config(), cfg2)
+		}
+	}
+}
+
 func TestSessionBasketManager_HasItems(t *testing.T) {
 	m, _ := newTestSessionManager(t)
 	if m.HasItems() {

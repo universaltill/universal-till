@@ -1430,7 +1430,11 @@
         <span class="sb-dot" aria-hidden="true"></span>
         <span class="sb-conn-text">{{ T "status.online" }}</span>
       </span>
-      {{ if not enrolled }}
+      {{/* ut-docs#3079: the three admin links below (/settings#registration,
+           /plugins) render only for a viewer who can open their target —
+           `allowed` is bound per request (httpx.withHelpHref) to the same
+           predicates the /menu grid uses; a cashier is sale-only. */}}
+      {{ if and (not enrolled) (allowed "settings") }}
         <!-- ut-docs#1859: was a bare ✦ emoji (platform-color-emoji-font
              risk); .btn-ico's 1em svg sizing already tracks whatever
              font-size .sb-item renders at, so it's reused as-is here
@@ -1443,7 +1447,7 @@
              .sb-enrol above. -->
         <button type="button" class="sb-item sb-update" id="sb-update-btn"
                 data-latest="{{ latestversion }}"><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ T "status.update_now" }}&nbsp;v{{ latestversion }}</button>
-        {{ else if updateinstallbridge }}
+        {{ else if and updateinstallbridge (allowed "settings") }}
         <!-- ut-docs#1246: Android. canselfupdate is false because the Go core
              ships inside the APK and only the package installer may replace an
              app's own code — but the native shell can drive that installer, so
@@ -1451,7 +1455,12 @@
              bridge takes no url (it resolves the release APK itself), so this
              markup cannot steer what gets installed. An <a href> would not work
              here either: shouldOverrideUrlLoading confines the WebView to the
-             till's own loopback origin. -->
+             till's own loopback origin.
+             ut-docs#3079: only for a viewer who can open /settings — a 403
+             here sends the chip to /settings#android-update (the PIN form),
+             which a cashier (sale-only) can no longer open, so for them the
+             chip falls through to the plain "update available" status below
+             instead of a button that ends on a refusal. -->
         <button type="button" class="sb-item sb-update" id="sb-android-update-btn"
                 data-testid="sb-android-update" data-latest="{{ latestversion }}"
                 data-confirm="{{ T "settings.update.android.confirm" }}"
@@ -1484,7 +1493,7 @@
            has to be the way in (independent review finding). -->
       <a class="sb-item sb-power" href="/help/power-supply" title="{{ T "status.psu_underpowered_hint" }}">⚡&nbsp;{{ T "status.psu_underpowered" }}</a>
       {{ end }}
-      {{ if pluginupdatesavailable }}
+      {{ if and pluginupdatesavailable (allowed "plugin_management") }}
       <!-- ut-docs#1953: StartPluginUpdateScheduler already auto-applies
            every language-pack update silently — this chip is only what it
            deliberately left pending (anything that isn't "content, not
@@ -1509,7 +1518,7 @@
       <a class="sb-item sb-plugin-update" href="/plugins" data-testid="sb-plugin-update"><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ T "status.plugin_updates_available" }}&nbsp;({{ pluginupdatescount }})</a>
       {{ end }}
       {{ end }}
-      {{ if languagepackupdateavailable }}
+      {{ if and languagepackupdateavailable (allowed "plugin_management") }}
       <!-- ut-docs#2299: a language pack normally auto-applies silently and
            never reaches pluginupdatesavailable above at all — this is the
            one case that leaves it visibly pending: a joined till, which

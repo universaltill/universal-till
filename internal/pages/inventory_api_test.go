@@ -21,6 +21,11 @@ import (
 
 func newInventoryAPITestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Helper()
+	// ut-docs#3079: receipt/override are stock_management-gated now; these
+	// tests are about the handlers' own behaviour past that gate (the gate
+	// itself: cashier_sale_only_test.go). A test that needs real
+	// permissions sets UT_AUTH=on again itself.
+	t.Setenv("UT_AUTH", "off")
 	chdirRoot(t)
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -204,6 +209,14 @@ func TestCreateNegativeInventoryOverride_AdminNeedsNoPIN(t *testing.T) {
 func TestCreateNegativeInventoryOverride_CashierRequiresManagerPIN(t *testing.T) {
 	mux, dp := newInventoryAPITestDeps(t)
 	ctx := context.Background()
+	// ut-docs#3079: a cashier reaches this endpoint at all only when an admin
+	// granted the cashier role stock_management (Users → Permissions); the
+	// override's own manager-PIN approval still applies on top of that.
+	t.Setenv("UT_AUTH", "on")
+	if _, err := dp.Db.ExecContext(ctx,
+		`INSERT INTO role_permissions(role, action, granted) VALUES('cashier','stock_management',1)`); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := dp.Db.ExecContext(ctx,
 		`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('cashier1','cashier1','Cashier One','','cashier')`); err != nil {

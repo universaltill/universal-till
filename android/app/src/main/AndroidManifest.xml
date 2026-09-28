@@ -7,6 +7,15 @@
          even for loopback destinations. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- ut-docs#3088: the status bar's online/offline light is the page's
+         navigator.onLine, which an Android WebView changes only when the
+         app calls WebView.setNetworkAvailable(). MainActivity watches the
+         default network (ConnectivityManager) and tells the WebView, and
+         watching needs this permission. A normal (install-time)
+         permission: no prompt, no user data, no implied hardware feature.
+         guard-android-network-state.sh keeps it here. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <!-- TillService (ADR-0023 §1's foreground-service packaging shape)
          keeps the embedded server running independent of MainActivity's
          own lifecycle. FOREGROUND_SERVICE + the SPECIAL_USE subtype are

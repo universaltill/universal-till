@@ -21,6 +21,7 @@ import (
 )
 
 func TestInventoryPage_RendersCategoryFilterChipRowAndRowCategoryID(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: the route is now permission-gated; this test is about rendering/behaviour past the gate (gate: cashier_sale_only_test.go).
 	chdirRoot(t)
 	d := openPagesTestDB(t)
 	defer d.Close()
@@ -76,6 +77,7 @@ func TestInventoryPage_RendersCategoryFilterChipRowAndRowCategoryID(t *testing.T
 // no longer appears in ListActiveCategories) must still get its own chip on
 // /inventory, same as /catalog.
 func TestInventoryPage_DeactivatedParentPromotesActiveChildToItsOwnChip(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: the route is now permission-gated; this test is about rendering/behaviour past the gate (gate: cashier_sale_only_test.go).
 	chdirRoot(t)
 	d := openPagesTestDB(t)
 	defer d.Close()

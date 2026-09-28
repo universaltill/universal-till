@@ -16,6 +16,8 @@ import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Rect
+import android.net.ConnectivityManager
+import android.net.Network
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -85,6 +87,11 @@ class MainActivity : AppCompatActivity() {
     // can always cancel a still-pending check from an earlier pin attempt.
     private val pinCheckHandler = Handler(Looper.getMainLooper())
     private var pinCheckRunnable: Runnable? = null
+
+    // ut-docs#3088: keeps the page's navigator.onLine (the status bar's
+    // online/offline light) in step with the device's network; see
+    // [watchNetwork]. Null until registered, and again once unregistered.
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     // ut-docs#1639 (independent review): whether this Activity is between
     // onResume and onPause. [schedulePinCheck] refuses to arm outside that
@@ -1323,6 +1330,7 @@ class MainActivity : AppCompatActivity() {
         statusView.visibility = if (BuildConfig.DEBUG) View.VISIBLE else View.GONE
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
+        watchNetwork()
         // ut-docs#1254: see KioskBridge's own KDoc for why this is safe to
         // expose — it depends on webViewClient's shouldOverrideUrlLoading
         // below, registered before that WebViewClient is (next statement),
@@ -1796,6 +1804,66 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+    /**
+     * ut-docs#3088: with Wi-Fi off the status bar still said "Online".
+     * That light is the page's navigator.onLine (base.html, #sb-conn), and
+     * an Android WebView never changes navigator.onLine -- nor fires the
+     * online/offline events the page listens for -- unless the app calls
+     * [WebView.setNetworkAvailable]. So watch the default network and say
+     * so: no default network means offline.
+     *
+     * "Has a network", not "the network is validated": Android validates
+     * against a Google endpoint, which fails in cloud-restricted markets
+     * (and behind some shop firewalls) on a network that works, and would
+     * leave the light stuck on offline there instead. Whether the cloud
+     * itself answers is a separate signal (the sync chip).
+     *
+     * Callbacks arrive on a ConnectivityManager thread; WebView calls must
+     * be made on the UI thread, hence runOnUiThread. Best-effort: if the
+     * system refuses the callback (it caps callbacks per app) the light
+     * simply keeps its old behaviour, and selling is unaffected either way.
+     */
+    private fun watchNetwork() {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+        fun tellWebView(up: Boolean) = runOnUiThread {
+            if (networkCallback != null) webView.setNetworkAvailable(up)
+        }
+        val callback =
+            object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: Network) = tellWebView(true)
+
+                // A default network lost with another already taking over
+                // (Wi-Fi -> Ethernet) is still online: only "no default
+                // network left" is offline.
+                override fun onLost(network: Network) {
+                    val active = cm.activeNetwork
+                    tellWebView(active != null && active != network)
+                }
+            }
+        try {
+            cm.registerDefaultNetworkCallback(callback)
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "network: can't watch the default network; online light stays as the WebView reports it", e)
+            return
+        }
+        networkCallback = callback
+        // registerDefaultNetworkCallback reports an existing default
+        // network straight away, but nothing when there is none: set the
+        // starting state explicitly so a till booted offline shows it.
+        webView.setNetworkAvailable(cm.activeNetwork != null)
+    }
+
+    private fun unwatchNetwork() {
+        val callback = networkCallback ?: return
+        networkCallback = null
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+        try {
+            cm.unregisterNetworkCallback(callback)
+        } catch (e: IllegalArgumentException) {
+            Log.w(TAG, "network: callback was not registered", e)
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         // ut-docs#2788: pairs with onCreate's "activity recreated" line.
@@ -1812,6 +1880,7 @@ class MainActivity : AppCompatActivity() {
         // completed.
         till?.removeListener(listener)
         unbindService(connection)
+        unwatchNetwork()
         // WebView instances are a well-known Android leak if not
         // explicitly destroyed — detach from its parent first (destroying
         // an attached WebView is documented as unsafe) then release it.

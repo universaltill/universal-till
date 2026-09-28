@@ -495,6 +495,7 @@ func TestPluginRepoGetPluginVersionAt_SeedForPagesSchema(t *testing.T) {
 }
 
 func TestInventoryFormRender(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: the route is now permission-gated; this test is about rendering/behaviour past the gate (gate: cashier_sale_only_test.go).
 	chdirRoot(t)
 	db := openPagesTestDB(t)
 	defer db.Close()
@@ -574,6 +575,7 @@ func TestInventoryFormRender(t *testing.T) {
 // (hx-trigger="stock-updated from:body") to refetch itself from the new
 // /ui/inventory/stock-table endpoint.
 func TestInventoryReceiptTriggersStockTableRefresh(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: the route is now permission-gated; this test is about rendering/behaviour past the gate (gate: cashier_sale_only_test.go).
 	chdirRoot(t)
 	db := openPagesTestDB(t)
 	defer db.Close()
@@ -642,6 +644,7 @@ func TestInventoryReceiptTriggersStockTableRefresh(t *testing.T) {
 }
 
 func TestManagerOverrideForm(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: the route is now permission-gated; this test is about rendering/behaviour past the gate (gate: cashier_sale_only_test.go).
 	chdirRoot(t)
 	db := openPagesTestDB(t)
 	defer db.Close()
@@ -706,6 +709,7 @@ func TestManagerOverrideForm(t *testing.T) {
 }
 
 func TestReturnFormRender(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: the route is now permission-gated; this test is about rendering/behaviour past the gate (gate: cashier_sale_only_test.go).
 	chdirRoot(t)
 	db := openPagesTestDB(t)
 	defer db.Close()
@@ -753,6 +757,7 @@ func TestReturnFormRender(t *testing.T) {
 }
 
 func TestLowStockBadge(t *testing.T) {
+	t.Setenv("UT_AUTH", "off") // ut-docs#3079: the route is now permission-gated; this test is about rendering/behaviour past the gate (gate: cashier_sale_only_test.go).
 	chdirRoot(t)
 	db := openPagesTestDB(t)
 	defer db.Close()

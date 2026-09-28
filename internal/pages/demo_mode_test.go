@@ -504,6 +504,7 @@ func TestInit_DemoMiddlewareInstalledOnlyInDemoMode(t *testing.T) {
 			}
 			var wg sync.WaitGroup
 			h, _ := Init(ctx, ctx, cfg, pm, d.DB, nil, &wg)
+			t.Cleanup(func() { httpx.InitRailVisibility(nil) }) // ut-docs#3079: Init wires a process-global checker bound to this test's DB
 
 			w := httptest.NewRecorder()
 			h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/healthz", nil))

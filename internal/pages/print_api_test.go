@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -290,6 +291,7 @@ func TestInit_ReturnedDepsIsTheSameInstanceAsyncPrintGoroutinesTrack(t *testing.
 	}
 	var wg sync.WaitGroup
 	mux, dp := Init(ctx, ctx, cfg, pm, dbase.DB, nil, &wg)
+	t.Cleanup(func() { httpx.InitRailVisibility(nil) }) // ut-docs#3079: Init wires a process-global checker bound to this test's DB
 
 	// A printer that's guaranteed to fail fast (unopenable device path, no
 	// network dial) so the async goroutine's effect — a print_failed audit
