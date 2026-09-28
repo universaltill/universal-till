@@ -1539,6 +1539,18 @@
            specifically the language pack, not some other plugin type. -->
       <a class="sb-item sb-language-pack-update" href="/plugins" data-testid="sb-language-pack-update"><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ T "status.language_pack_update_available" }}</a>
       {{ end }}
+      {{ with releasenoticeversion }}{{ if allowed "settings" }}
+      <!-- ut-docs#3091: once after an update — a non-blocking notice, never a
+           modal. releasenoticeversion is "" on the self-order kiosk; `allowed
+           "settings"` keeps it from a cashier (#3079). The link opens
+           Settings → About and counts as seen (POST ?open=1, then HX-Redirect); × dismisses. -->
+      <span class="sb-item sb-release-notes" id="sb-release-notes" data-testid="sb-release-notes">
+        <a href="/settings#settings-about" hx-post="/api/release-notes/seen?open=1" hx-swap="none" data-testid="sb-release-notes-link"><span class="btn-ico" aria-hidden="true">{{ icon "eye" }}</span> <span class="sb-release-notes-text">{{ printf (T "status.release_notes_updated") . }}</span></a>
+        <button type="button" class="sb-release-notes-dismiss" data-testid="sb-release-notes-dismiss"
+                hx-post="/api/release-notes/seen" hx-target="#sb-release-notes" hx-swap="outerHTML"
+                title="{{ T "status.release_notes_dismiss" }}" aria-label="{{ T "status.release_notes_dismiss" }}"><span class="btn-ico" aria-hidden="true">{{ icon "x" }}</span></button>
+      </span>
+      {{ end }}{{ end }}
       <span class="sb-item sb-ver" title="Universal Till">Universal&nbsp;Till&nbsp;v{{ appversion }}</span>
     </footer>
     <script>

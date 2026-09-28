@@ -283,6 +283,24 @@
   </form>
   {{ end }}
 </div>
+<!-- ut-docs#3091: Settings → About — the running version, when this till
+     first ran it, and the embedded "What's new" (internal/releasenotes),
+     newest first. The whole page is manager-gated (#3079), so the card is not wrapped in an isManager check. -->
+<div class="card" id="settings-about">
+  <h2>{{ T "settings.about.title" }} {{ helpLink "updates" }}</h2>
+  <p>{{ T "settings.about.installed_version" }} <strong><bdi dir="ltr" data-testid="about-version">v{{ appversion }}</bdi></strong></p>
+  {{ with .about.FirstRunAt }}<p class="muted">{{ T "settings.about.first_run" }} <bdi>{{ datetime . }}</bdi></p>{{ end }}
+  <h3>{{ T "settings.about.whats_new" }}</h3>
+  {{ range .about.Notes }}
+  <section class="release-note" data-testid="release-note" data-version="{{ .Version }}"{{ if not .Translated }} lang="en" dir="ltr"{{ end }}>
+    <h4><bdi dir="ltr">{{ .Version }}</bdi> <span class="muted">&middot; {{ .DateText }}</span></h4>
+    {{ if not .Translated }}<p class="muted release-note-fallback" dir="auto">{{ T "settings.about.english_only" }}</p>{{ end }}
+    {{ .HTML }}
+  </section>
+  {{ else }}
+  <p class="muted">{{ T "settings.about.no_notes" }}</p>
+  {{ end }}
+</div>
 <div class="card" id="settings-theme">
   <h2>{{ T "settings.theme.title" }}</h2>
   {{/* ut-docs#2783: per station, never synced between tills. */}}

@@ -542,13 +542,16 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /api/reports/eod/run":                             true,
 	"POST /api/reports/worker-allocations":                  true,
 	"POST /api/reports/worker-allocations/pool-collections": true,
-	"POST /api/settings/eod":                                true,
-	"POST /api/settings/invoice":                            true,
-	"POST /api/settings/report-retention":                   true,
-	"POST /api/shifts/adjustment":                           true,
-	"POST /api/shifts/close":                                true,
-	"POST /api/shifts/open":                                 true,
-	"POST /api/shifts/pfandrueckgabe":                       true,
+	// ut-docs#3091: dismiss the after-update "what's new" chip (a per-till
+	// seen marker, nothing reaches the network).
+	"POST /api/release-notes/seen":        true,
+	"POST /api/settings/eod":              true,
+	"POST /api/settings/invoice":          true,
+	"POST /api/settings/report-retention": true,
+	"POST /api/shifts/adjustment":         true,
+	"POST /api/shifts/close":              true,
+	"POST /api/shifts/open":               true,
+	"POST /api/shifts/pfandrueckgabe":     true,
 	// Admin: users and permissions, locations, registers, tables, promotions,
 	// country settings, translations, receipt designer (preview/save), menu
 	// layout, data clean-up on the visitor's own instance.

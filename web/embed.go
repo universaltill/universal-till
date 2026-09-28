@@ -21,3 +21,11 @@ var FS embed.FS
 //
 //go:embed help
 var HelpFS embed.FS
+
+// ReleaseNotesFS carries the owner-facing release notes
+// (web/release-notes/<locale>/v<X.Y.Z>.md, ut-docs#3091) that Settings →
+// About shows. Embedded for the same offline reason as the manual (ADR-0003):
+// "what changed in this update" must be readable with the line down.
+//
+//go:embed release-notes
+var ReleaseNotesFS embed.FS

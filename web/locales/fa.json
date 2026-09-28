@@ -2878,5 +2878,13 @@
   "settings.staff_languages.error_unknown": "این زبان روی این صندوق نصب نیست.",
   "settings.staff_languages.error_empty": "دست‌کم یک زبان انتخاب کنید.",
   "settings.staff_languages.error_default": "زبان پیش‌فرض فروشگاه را نمی‌توان از فهرست حذف کرد.",
-  "elevation.summary.staff_languages": "تنظیم زبان‌های قابل انتخاب برای کارکنان به: %s"
+  "elevation.summary.staff_languages": "تنظیم زبان‌های قابل انتخاب برای کارکنان به: %s",
+  "settings.about.title": "درباره",
+  "settings.about.installed_version": "نسخهٔ نصب‌شده:",
+  "settings.about.first_run": "نخستین اجرا روی این صندوق:",
+  "settings.about.whats_new": "تازه‌ها",
+  "settings.about.english_only": "هنوز ترجمه نشده — به انگلیسی نمایش داده می‌شود.",
+  "settings.about.no_notes": "برای این نسخه یادداشت انتشاری در دسترس نیست.",
+  "status.release_notes_updated": "به %s به‌روزرسانی شد — تازه‌ها را ببینید",
+  "status.release_notes_dismiss": "بستن"
 }

@@ -2878,5 +2878,13 @@
   "settings.staff_languages.error_unknown": "Bu dil bu kasada yüklü değil.",
   "settings.staff_languages.error_empty": "En az bir dil seçin.",
   "settings.staff_languages.error_default": "Mağazanın varsayılan dili listeden çıkarılamaz.",
-  "elevation.summary.staff_languages": "Personele gösterilen dilleri şu şekilde ayarla: %s"
+  "elevation.summary.staff_languages": "Personele gösterilen dilleri şu şekilde ayarla: %s",
+  "settings.about.title": "Hakkında",
+  "settings.about.installed_version": "Yüklü sürüm:",
+  "settings.about.first_run": "Bu kasada ilk başlatılma:",
+  "settings.about.whats_new": "Yenilikler",
+  "settings.about.english_only": "Henüz çevrilmedi — İngilizce gösteriliyor.",
+  "settings.about.no_notes": "Bu sürüm için sürüm notu yok.",
+  "status.release_notes_updated": "%s sürümüne güncellendi — yenilikleri görün",
+  "status.release_notes_dismiss": "Kapat"
 }

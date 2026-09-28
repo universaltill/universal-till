@@ -27,6 +27,15 @@ The till updates itself overnight unless you switch it off.
 4. An additional till follows the main till: when the main till runs a newer version, the additional till installs exactly that version at the next moment with no open sale. Android additional tills, and Windows ones installed from the portable zip, show a 'needed' note instead, until they can install by themselves.
 5. On Windows the till downloads the signed installer and checks it. Then the till closes, installs the update and opens again by itself, which takes about a minute. Android tills can't install updates by themselves yet. Update them by hand as described above. If you run the Windows installer yourself, it closes Universal Till first if it is still open, so finish any sale in progress before you start it.
 
+## What's new in each version
+
+After an update, the till tells you what changed — in plain words, in the till's language.
+
+1. Settings → About shows the version this till runs, when it first started on this till, and "What's new": the notes for this version and the few before it, newest first, grouped into New, Improved and Fixed.
+2. The first time a manager or admin opens the till after an update, a small "Updated to … — see what's new" note appears in the status bar. Tap it to read the notes, or tap × to hide it. It never gets in the way of selling and it shows only once.
+3. Cashiers never see this note, and neither do customers at a self-order kiosk. A newly installed till doesn't show it either.
+4. The notes are built into the till, so they work without an internet connection. If a note isn't translated into your language yet, it's shown in English.
+
 ## On an Android till
 
 The Android app cannot replace itself the way the desktop versions do, so it hands the new version to Android's own installer instead. The steps are slightly different:

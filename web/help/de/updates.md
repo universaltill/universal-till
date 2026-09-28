@@ -27,6 +27,15 @@ Die Kasse aktualisiert sich nachts selbst, solange Sie das nicht ausschalten.
 4. Eine zusätzliche Kasse folgt der Hauptkasse: Läuft auf der Hauptkasse eine neuere Version, installiert die zusätzliche Kasse genau diese Version im nächsten Moment, in dem kein Verkauf offen ist. Zusätzliche Kassen unter Android und aus dem portablen Windows-ZIP installierte zeigen stattdessen einen Hinweis „erforderlich“, bis sie selbst installieren können.
 5. Unter Windows lädt die Kasse das signierte Installationsprogramm herunter und prüft es. Dann schließt sich die Kasse, installiert das Update und öffnet sich von selbst wieder. Das dauert etwa eine Minute. Kassen unter Android können Updates noch nicht selbst installieren. Aktualisieren Sie sie von Hand wie oben beschrieben. Wenn Sie das Windows-Installationsprogramm selbst ausführen, schließt es Universal Till zuerst, falls es noch geöffnet ist. Schließen Sie also einen laufenden Verkauf ab, bevor Sie es starten.
 
+## Was ist neu in jeder Version
+
+Nach einem Update zeigt Ihnen die Kasse, was sich geändert hat – in einfachen Worten und in der Sprache der Kasse.
+
+1. Einstellungen → Über zeigt, welche Version diese Kasse verwendet, wann sie zum ersten Mal auf dieser Kasse gestartet wurde, und „Was ist neu“: die Hinweise zu dieser Version und den wenigen davor, die neueste zuerst, gegliedert in Neu, Verbessert und Behoben.
+2. Wenn ein Manager oder Admin die Kasse nach einem Update zum ersten Mal öffnet, erscheint in der Statusleiste ein kleiner Hinweis „Aktualisiert auf … – sehen Sie, was neu ist“. Tippen Sie darauf, um die Hinweise zu lesen, oder tippen Sie auf ×, um ihn auszublenden. Er stört nie beim Verkaufen und erscheint nur einmal.
+3. Kassierer sehen diesen Hinweis nie, Kunden an einem Selbstbedienungs-Kiosk ebenfalls nicht. Auch eine neu installierte Kasse zeigt ihn nicht.
+4. Die Hinweise sind in die Kasse eingebaut und funktionieren daher ohne Internetverbindung. Ist ein Hinweis noch nicht in Ihre Sprache übersetzt, wird er auf Englisch angezeigt.
+
 ## Auf einer Android-Kasse
 
 Die Android-App kann sich nicht wie die Desktop-Versionen selbst ersetzen, sie übergibt die neue Version daher an Androids eigenen Installer. Die Schritte sind etwas anders:

@@ -506,6 +506,9 @@ var CoreSettings = []Entry{
 	{Key: "settings-diagnostics", Href: "#settings-diagnostics", LabelKey: "settings.diagnostics.title", Order: 250},
 	{Key: "settings-menulayout", Href: "#settings-menulayout", LabelKey: "menulayout.title", Order: 300},
 	{Key: "settings-update", Href: "#settings-update", LabelKey: "settings.update.title", Order: 400},
+	// ut-docs#3091: About (version, first run, What's new), right after the
+	// Software update card in the template.
+	{Key: "settings-about", Href: "#settings-about", LabelKey: "settings.about.title", Order: 450},
 	{Key: "settings-theme", Href: "#settings-theme", LabelKey: "settings.theme.title", Order: 500},
 	{Key: "settings-display", Href: "#settings-display", LabelKey: "settings.display.title", Order: 600},
 	{Key: "settings-payments", Href: "#settings-payments", LabelKey: "settings.payments.title", Order: 700},

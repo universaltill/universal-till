@@ -2878,5 +2878,13 @@
   "settings.staff_languages.error_unknown": "هذه اللغة غير مثبّتة على هذا الصندوق.",
   "settings.staff_languages.error_empty": "اختر لغة واحدة على الأقل.",
   "settings.staff_languages.error_default": "لا يمكن إزالة لغة المتجر الافتراضية من القائمة.",
-  "elevation.summary.staff_languages": "تعيين اللغات المتاحة للموظفين إلى: %s"
+  "elevation.summary.staff_languages": "تعيين اللغات المتاحة للموظفين إلى: %s",
+  "settings.about.title": "حول",
+  "settings.about.installed_version": "الإصدار المثبّت:",
+  "settings.about.first_run": "أول تشغيل على هذا الصندوق:",
+  "settings.about.whats_new": "ما الجديد",
+  "settings.about.english_only": "لم تُترجم بعد — معروضة بالإنجليزية.",
+  "settings.about.no_notes": "لا تتوفر ملاحظات إصدار لهذا الإصدار.",
+  "status.release_notes_updated": "تم التحديث إلى %s — اطّلع على الجديد",
+  "status.release_notes_dismiss": "إغلاق"
 }
