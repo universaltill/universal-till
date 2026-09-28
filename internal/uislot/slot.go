@@ -543,6 +543,8 @@ var CoreSettings = []Entry{
 	{Key: "settings-telemetry", Href: "#settings-telemetry", LabelKey: "settings.telemetry.title", Order: 2100},
 	{Key: "settings-currency", Href: "#settings-currency", LabelKey: "settings.currency.title", Order: 2200},
 	{Key: "settings-language", Href: "#settings-language", LabelKey: "settings.language.title", Order: 2300},
+	// ut-docs#3086: Languages shown to staff, right after the Language card.
+	{Key: "settings-staff-languages", Href: "#settings-staff-languages", LabelKey: "settings.staff_languages.title", Order: 2350},
 	{Key: "settings-shop-type", Href: "#settings-shop-type", LabelKey: "settings.shop_type.title", Order: 2400},
 	{Key: "settings-all", Href: "#settings-all", LabelKey: "settings.all", Order: 2500},
 }

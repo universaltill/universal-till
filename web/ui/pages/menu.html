@@ -92,14 +92,18 @@
   </form>
 </dialog>
 
-<div class="menu-lang">
+<!-- ut-docs#3086: only the languages the shop chose in Settings → Languages
+     shown to staff; the row is hidden when the shop chose just one. -->
+{{ if gt (len .staffLocales) 1 }}
+<div class="menu-lang" data-testid="menu-lang">
   <span class="menu-lang-label"><span class="menu-lang-ico" aria-hidden="true">{{ icon "globe" }}</span> {{ T "setup.language.title" }}</span>
   <!-- ut-docs#1125: native name (nativelocalename), not the bare code — same
        fix and same no-flag reasoning as setup.html's language step and
        settings.html's default-locale picker; this is the third render site
        for the same locale list, found while fixing the other two. -->
   <div class="menu-lang-btns">
-    {{ range locales }}<a class="btn btn-touch menu-lang-btn{{ if eq . locale }} primary{{ else }} secondary{{ end }}" href="/menu?lang={{ . }}">{{ nativelocalename . }}</a>{{ end }}
+    {{ range .staffLocales }}<a class="btn btn-touch menu-lang-btn{{ if eq . locale }} primary{{ else }} secondary{{ end }}" href="/menu?lang={{ . }}">{{ nativelocalename . }}</a>{{ end }}
   </div>
 </div>
+{{ end }}
 {{ end }}

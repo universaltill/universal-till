@@ -208,6 +208,16 @@ func settingsRespondSaved(w http.ResponseWriter, r *http.Request, elev elevation
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// staffLocaleSet is the effective staff-language list as a set, for the
+// Settings card's checkboxes (ut-docs#3086).
+func staffLocaleSet(stored string) map[string]bool {
+	set := map[string]bool{}
+	for _, c := range httpx.StaffLocales(stored) {
+		set[c] = true
+	}
+	return set
+}
+
 // writeKeptDemoItemsHTML renders the "kept" list ut-docs#1840 AC2/AC3 asks
 // for — WHICH sample items were kept and the ACTUAL reason per row (never
 // again a single count with one blanket "already in use" that's simply
@@ -739,6 +749,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"reportArchiveCoverage":  reportArchiveCoverage,
 			"shopType":               shopType,
 			"shopTypes":              setupShopTypes,
+			"staffLocaleSet":         staffLocaleSet(all[common.KeyStaffLocales]), // ut-docs#3086
+			"defaultStaffLocale":     httpx.DefaultStaffLocale(),
 			"restorePromptDeferred":  restorePromptDeferred,
 			"pendingBasePlugins":     pendingBasePluginRows,
 			"tseProvisioning":        tseProvisioningViewFor(tseState),
@@ -1965,6 +1977,68 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		settingsAudit(r, posRepo, elev, "settings", common.KeyShopType, "shop_type_changed",
 			map[string]any{"shop_type": v})
+		settingsRespondSaved(w, r, elev)
+	})
+
+	// Languages shown to staff (ut-docs#3086): which installed languages
+	// the ☰ Menu's language row offers. Shop-wide, so it travels to the
+	// main till like the other store.* keys. The shop's default language
+	// can't be left out and at least one language must stay selected —
+	// refused here, not only by the card's disabled checkbox.
+	mux.HandleFunc("POST /api/settings/staff-languages", func(w http.ResponseWriter, r *http.Request) {
+		// Validate BEFORE the elevation gate (ut-docs#557 convention).
+		_ = r.ParseForm()
+		// RequestLocale, not ResolveLocale: a refused POST must not set the
+		// ?lang= cookie.
+		locale := httpx.RequestLocale(r)
+		available := httpx.AvailableLocales()
+		picked := map[string]bool{}
+		for _, v := range r.Form["staff_locales"] {
+			// Same matching as the read side (StaffLocalesFor): "DE" or
+			// "de-DE" mean the installed "de".
+			v = httpx.MatchLocale(v, available)
+			if v == "" {
+				http.Error(w, httpx.T(locale, "settings.staff_languages.error_unknown"), http.StatusBadRequest)
+				return
+			}
+			picked[v] = true
+		}
+		if len(picked) == 0 {
+			http.Error(w, httpx.T(locale, "settings.staff_languages.error_empty"), http.StatusBadRequest)
+			return
+		}
+		if def := httpx.DefaultStaffLocale(); def != "" && !picked[def] {
+			http.Error(w, httpx.T(locale, "settings.staff_languages.error_default"), http.StatusBadRequest)
+			return
+		}
+		ordered := make([]string, 0, len(picked))
+		for _, a := range available {
+			if picked[a] {
+				ordered = append(ordered, a)
+			}
+		}
+		value := strings.Join(ordered, ",")
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			names := make([]string, 0, len(ordered))
+			hidden := make([]elevationHiddenField, 0, len(ordered))
+			for _, c := range ordered {
+				names = append(names, httpx.NativeLanguageName(c))
+				hidden = append(hidden, elevationHiddenField{Name: "staff_locales", Value: c})
+			}
+			renderElevationPrompt(w, r, "/api/settings/staff-languages", "#staff-languages-msg",
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.staff_languages"), strings.Join(names, ", ")),
+				hidden, elev)
+			return
+		}
+		if err := saveShopSettings(r.Context(), d, elev, map[string]string{common.KeyStaffLocales: value}); err != nil {
+			if !respondSettingsSyncError(w, r, err) {
+				http.Error(w, "could not save", http.StatusInternalServerError)
+			}
+			return
+		}
+		settingsAudit(r, posRepo, elev, "settings", common.KeyStaffLocales, "staff_languages_changed",
+			map[string]any{"staff_locales": value})
 		settingsRespondSaved(w, r, elev)
 	})
 
