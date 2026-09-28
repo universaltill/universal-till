@@ -381,13 +381,12 @@ var backgroundPollPaths = map[string]bool{
 func backgroundPoll(path string) bool { return backgroundPollPaths[path] }
 
 // displayBoardPoll marks the pollers of screens meant to be watched, not
-// touched: the kitchen display, the order-status board and the kiosk
-// counter-orders list. They deliberately still extend the session, as they
+// touched: the kitchen display and the order-status board. They deliberately still extend the session, as they
 // always have — with the default 10-minute auto-lock, a no-touch rule would
 // lock a kitchen screen mid-service. Whether display devices should
 // auto-lock at all is a separate product decision (ut-docs#2935).
 func displayBoardPoll(path string) bool {
-	if path == "/ui/orders" || path == "/ui/kiosk-counter-orders" {
+	if path == "/ui/orders" {
 		return true
 	}
 	id, ok := strings.CutPrefix(path, "/ui/kitchen-display/")

@@ -37,14 +37,49 @@
      cashier sees where the order went. A native <details>/<summary>, so it
      is keyboard- and screen-reader-operable with no script; the summary
      carries the order's label (visually hidden) so several rows' "Move
-     table" controls have distinct accessible names. */}}
+     table" controls have distinct accessible names.
+
+     ut-docs#2703 (reopened): the same two tabs as /open-orders -- On hold
+     and Pay at the counter, each with its count. Each tab re-fetches this
+     body with ?tab=, and focus returns to the tab that was tapped. The
+     tab panel carries the active tab as hx-vals, which htmx INHERITS, so
+     every request made from inside it (a Move table post, and any control
+     added later) re-renders the same tab (review finding, #2703). Roving
+     tabindex + data-arrow-tabs (app.js): Left/Right/Home/End move between
+     the tabs and select them, per WAI-ARIA tabs.
+     A held counter order resumes exactly like any hold; a legacy counter
+     order (.Legacy, never a held sale -- so data-counter-id, not
+     data-held-id, which callers resume via /api/pos/resume) is a plain form post to
+     /open-orders/counter/open -- a full navigation, since it lands on the
+     sale screen reloaded, possibly with an "add by hand" notice. */}}
+{{ $tab := .view.Tab }}
+<div class="tab-bar open-orders-tabs" role="tablist" data-arrow-tabs aria-label="{{ T "open_orders.tabs_label" }}">
+  <button type="button" role="tab" id="parked-orders-tab-hold" class="tab{{ if eq $tab "hold" }} active{{ end }}" aria-selected="{{ if eq $tab "hold" }}true{{ else }}false{{ end }}" tabindex="{{ if eq $tab "hold" }}0{{ else }}-1{{ end }}" aria-controls="parked-orders-panel" data-testid="parked-orders-tab-hold"
+          hx-get="/ui/parked-orders?tab=hold" hx-target="#parked-orders-body" hx-swap="innerHTML"
+          hx-on::before-request="document.getElementById('parked-orders-body').dataset.focusAfter = 'parked-orders-tab-hold';">{{ T "open_orders.tab.hold" }} <span class="tab-count">{{ qty (len .view.Hold) }}</span></button>
+  <button type="button" role="tab" id="parked-orders-tab-counter" class="tab{{ if eq $tab "counter" }} active{{ end }}" aria-selected="{{ if eq $tab "counter" }}true{{ else }}false{{ end }}" tabindex="{{ if eq $tab "counter" }}0{{ else }}-1{{ end }}" aria-controls="parked-orders-panel" data-testid="parked-orders-tab-counter"
+          hx-get="/ui/parked-orders?tab=counter" hx-target="#parked-orders-body" hx-swap="innerHTML"
+          hx-on::before-request="document.getElementById('parked-orders-body').dataset.focusAfter = 'parked-orders-tab-counter';">{{ T "open_orders.tab.counter" }} <span class="tab-count">{{ qty (len .view.Counter) }}</span></button>
+</div>
 {{ if .toast }}<div class="pos-notice {{ .toastLevel }}" id="parked-orders-toast" role="{{ .toastRole }}"><span class="notice-text">{{ .toast }}</span><button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}">✕</button></div>{{ end }}
+<div role="tabpanel" aria-labelledby="parked-orders-tab-{{ $tab }}" hx-vals='{{ jsonVals "tab" $tab }}' id="parked-orders-panel">
 {{ if not .orders }}
-<p class="muted" data-testid="parked-orders-empty">{{ T "open_orders.empty" }}</p>
+<p class="muted" data-testid="parked-orders-empty">{{ if eq $tab "counter" }}{{ T "open_orders.counter.empty" }}{{ else }}{{ T "open_orders.empty" }}{{ end }}</p>
 {{ else }}
 <ul class="parked-orders-list">
   {{ range .orders }}
   <li>
+    {{ if .Legacy }}
+    <form method="post" action="/open-orders/counter/open" class="parked-order-form">
+      <input type="hidden" name="id" value="{{ .ID }}">
+      <button type="submit" class="btn secondary parked-order" data-counter-id="{{ .ID }}">
+        <span class="visually-hidden">{{ T "open_orders.resume_row" }}</span>
+        <span class="parked-order-label">{{ .Label }}<small class="open-order-items">{{ .Items }}</small></span>
+        {{ if .TableLabel }}<span class="held-chip-table">{{ .TableLabel }}</span>{{ end }}
+        <span class="parked-order-meta">{{ .LineCount }} × · {{ .AgeText }}</span>
+      </button>
+    </form>
+    {{ else }}
     <button type="button" class="btn secondary parked-order" data-held-id="{{ .ID }}"
             hx-post="/api/pos/resume" hx-vals='{{ jsonVals "id" .ID }}'
             hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
@@ -52,8 +87,9 @@
       <span class="visually-hidden">{{ T "open_orders.resume_row" }}</span>
       <span class="parked-order-label">{{ .Label }}</span>
       {{ if .TableLabel }}<span class="held-chip-table">{{ .TableLabel }}</span>{{ end }}
-      <span class="parked-order-meta">{{ .LineCount }} × · {{ money .Total }} · {{ printf (T "open_orders.age_minutes") .AgeMinutes }}</span>
+      <span class="parked-order-meta">{{ .LineCount }} × · {{ money .Total }} · {{ .AgeText }}</span>
     </button>
+    {{ end }}
     {{ if .MoveTargets }}
     {{ $id := .ID }}
     <details class="parked-move" data-testid="parked-move">
@@ -72,3 +108,4 @@
   {{ end }}
 </ul>
 {{ end }}
+</div>
