@@ -22,6 +22,9 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	appdb "github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/housekeeping"
+	"github.com/universaltill/universal-till/internal/issuereport"
+	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
@@ -918,5 +921,48 @@ func TestOpenSetupPage_WaitsForListener(t *testing.T) {
 		}
 	default:
 		t.Fatal("browser never opened")
+	}
+}
+
+// ut-docs#3092: the hourly backup loop runs housekeeping at most once per
+// housekeeping.Interval — a pre-restore copy past its age limit goes on the
+// first call; one added later survives until the next interval.
+func TestRunHousekeeping_OncePerInterval(t *testing.T) {
+	root := t.TempDir()
+	origData, origPending := paths.DataDir(), issuereport.PendingDir
+	paths.Init(root)
+	issuereport.PendingDir = filepath.Join(root, "issue-reports", "pending")
+	t.Cleanup(func() { paths.Init(origData); issuereport.PendingDir = origPending })
+	dbPath := filepath.Join(root, "unitill-pos.db")
+	dir, err := appdb.BackupDir(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-60 * 24 * time.Hour)
+	aged := func(name string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	var s housekeeping.Schedule
+	first := aged("pre-restore-20200101-000000.db")
+	runHousekeeping(&s, dbPath, now)
+	if _, err := os.Stat(first); !os.IsNotExist(err) {
+		t.Fatal("first run kept an expired pre-restore copy")
+	}
+	second := aged("pre-restore-20200102-000000.db")
+	runHousekeeping(&s, dbPath, now.Add(time.Hour))
+	if _, err := os.Stat(second); err != nil {
+		t.Fatal("ran again within the interval")
+	}
+	runHousekeeping(&s, dbPath, now.Add(housekeeping.Interval))
+	if _, err := os.Stat(second); !os.IsNotExist(err) {
+		t.Fatal("did not run after a full interval")
 	}
 }

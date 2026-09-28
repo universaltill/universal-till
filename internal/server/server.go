@@ -17,6 +17,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	dbpkg "github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/housekeeping"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
@@ -195,15 +196,19 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 		jobs.Start(ctx, wg)
 	}
 
-	// Daily local DB backup (docs: architecture/local-backup.md) — runs
-	// regardless of marketplace config. Checks hourly; snapshots when the
+	// Daily local DB backup (docs: architecture/local-backup.md) and device
+	// housekeeping (ut-docs#3092) — runs regardless of marketplace config. Checks hourly; snapshots when the
 	// newest backup is older than 24h; first check shortly after boot so a
 	// till powered off nightly still gets one.
 	if db != nil {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			run := func() { runDailyBackup(db, cfg.DBPath) }
+			var hk housekeeping.Schedule
+			run := func() {
+				runDailyBackup(db, cfg.DBPath)
+				runHousekeeping(&hk, cfg.DBPath, time.Now())
+			}
 			ticker := time.NewTicker(time.Hour)
 			defer ticker.Stop()
 			select {
@@ -331,7 +336,7 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 var deviceArchOf = marketplace.DeviceArch
 
 // runDailyBackup snapshots the local DB unless a backup newer than 24h
-// already exists, then prunes old snapshots to the newest 14.
+// already exists, then prunes old snapshots to the newest DefaultBackupKeep.
 func runDailyBackup(db *sql.DB, dbPath string) {
 	list, err := dbpkg.ListBackups(dbPath)
 	if err == nil && len(list) > 0 && time.Since(list[0].ModTime) < 24*time.Hour {
@@ -343,7 +348,29 @@ func runDailyBackup(db *sql.DB, dbPath string) {
 		return
 	}
 	log.Printf("[Backup] daily snapshot: %s", path)
-	_ = dbpkg.PruneBackups(dbPath, 14)
+	_ = dbpkg.PruneBackups(dbPath, dbpkg.DefaultBackupKeep)
+}
+
+// runHousekeeping runs the daily device clean-up when due and logs what it
+// removed. Failures are logged and skipped; nothing here blocks selling.
+func runHousekeeping(s *housekeeping.Schedule, dbPath string, now time.Time) {
+	if !s.Due(now) {
+		return
+	}
+	s.Ran(now)
+	policy := map[string]string{}
+	for _, rule := range housekeeping.Retention() {
+		policy[rule.Kind] = rule.Policy
+	}
+	for _, r := range housekeeping.Run(dbPath, now) {
+		if r.Err != nil {
+			log.Printf("[Housekeeping] %s: %v", r.Kind, r.Err)
+			continue
+		}
+		if r.Removed > 0 {
+			log.Printf("[Housekeeping] %s: removed %d, freed %d bytes (policy: %s)", r.Kind, r.Removed, r.Freed, policy[r.Kind])
+		}
+	}
 }
 
 // bindListener is Start's bind: listenWithFallback normally, but a demo

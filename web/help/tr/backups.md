@@ -25,6 +25,17 @@ tıklayın; kasa kendini yeniden başlatır — klavyeye ya da fişi çekmeye
 gerek yok. Windows'ta kasa henüz kendini yeniden başlatamaz — bunun
 yerine pencereyi kapatıp Universal Till'i yeniden açın.
 
+## Otomatik temizlik
+
+Kasa, diski dolmasın diye günde bir kez artık gerekmeyen dosyaları siler:
+
+- Yedekler: en yeni 14 yedek tutulur.
+- Bir yedeği geri yüklerken kenara ayrılan veri kopyası: en yeni 3 kopya tutulur, hiçbiri 30 günden eski olmaz.
+- Gönderilemeyen sorun bildirimleri: 7 gün sonra silinir.
+- İndirilen güncellemeler: 7 gün sonra silinir.
+
+Bu temizlik satışları, fişleri, denetim kaydını, Z raporlarını veya yasal olarak saklamanız gereken başka hiçbir kaydı asla silmez. Her kasa yalnızca kendi diskini temizler.
+
 ## Kasayı bir Linux makinesinden kaldırma
 
 Kasa `.deb` paketinden kurulduysa, kaldırmak için terminalde `sudo

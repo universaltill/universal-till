@@ -18,6 +18,10 @@ const (
 	backupDirName      = "backups"
 	restorePendingName = "restore-pending.db"
 	backupPrefix       = "unitill-pos-"
+	preRestorePrefix   = "pre-restore-"
+	// backupTimeLayout is the UTC timestamp in snapshot and pre-restore
+	// file names.
+	backupTimeLayout = "20060102-150405"
 )
 
 // BackupDir returns (and creates) the backup directory next to the DB file.
@@ -35,7 +39,7 @@ func Snapshot(db *sql.DB, dbPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	name := backupPrefix + time.Now().UTC().Format("20060102-150405") + ".db"
+	name := backupPrefix + time.Now().UTC().Format(backupTimeLayout) + ".db"
 	dest := filepath.Join(dir, name)
 	if _, err := os.Stat(dest); err == nil {
 		// Same-second snapshot (tests, double-click): VACUUM INTO refuses to
@@ -91,6 +95,10 @@ func ValidBackupName(name string) bool {
 		strings.HasPrefix(name, backupPrefix) && strings.HasSuffix(name, ".db")
 }
 
+// DefaultBackupKeep is how many unitill-pos-* snapshots the daily backup,
+// the manual "Back up now" and device housekeeping keep (ut-docs#3092).
+const DefaultBackupKeep = 14
+
 // PruneBackups keeps the newest keep snapshots, removing the rest.
 func PruneBackups(dbPath string, keep int) error {
 	if keep < 1 {
@@ -105,6 +113,54 @@ func PruneBackups(dbPath string, keep int) error {
 		_ = os.Remove(filepath.Join(dir, b.Name))
 	}
 	return nil
+}
+
+// PrunePreRestore removes the pre-restore-<ts>.db copies ApplyPendingRestore
+// sets aside, keeping at most the newest keep and none older than maxAge
+// (whichever removes more), aged by the restore time in the file name. Each copy is a full database, and before
+// ut-docs#3092 nothing ever removed them. It never touches real snapshots
+// (unitill-pos-*) or any other file. Returns the files removed and the bytes
+// freed; a file that can't be removed is skipped.
+func PrunePreRestore(dbPath string, keep int, maxAge time.Duration, now time.Time) (int, int64, error) {
+	dir, err := BackupDir(dbPath)
+	if err != nil {
+		return 0, 0, err
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, 0, err
+	}
+	var list []BackupInfo
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasPrefix(e.Name(), preRestorePrefix) || !strings.HasSuffix(e.Name(), ".db") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		// os.Rename keeps the old database's mtime, so a till idle for a
+		// month would make a copy set aside a minute ago look a month old.
+		// Age it by the restore time in its name; fall back to the mtime.
+		at := info.ModTime()
+		ts := strings.TrimSuffix(strings.TrimPrefix(e.Name(), preRestorePrefix), ".db")
+		if parsed, err := time.Parse(backupTimeLayout, ts); err == nil {
+			at = parsed
+		}
+		list = append(list, BackupInfo{Name: e.Name(), Size: info.Size(), ModTime: at})
+	}
+	sort.Slice(list, func(i, j int) bool { return list[i].ModTime.After(list[j].ModTime) })
+	removed, freed := 0, int64(0)
+	for i, b := range list {
+		if i < keep && now.Sub(b.ModTime) <= maxAge {
+			continue
+		}
+		if os.Remove(filepath.Join(dir, b.Name)) == nil {
+			removed++
+			freed += b.Size
+		}
+	}
+	return removed, freed, nil
 }
 
 // StageRestore marks a snapshot to become the live DB on next start.
@@ -147,7 +203,7 @@ func ApplyPendingRestore(dbPath string) (bool, error) {
 		return false, err
 	}
 	if _, err := os.Stat(dbPath); err == nil {
-		aside := filepath.Join(dir, "pre-restore-"+time.Now().UTC().Format("20060102-150405")+".db")
+		aside := filepath.Join(dir, preRestorePrefix+time.Now().UTC().Format(backupTimeLayout)+".db")
 		if err := os.Rename(dbPath, aside); err != nil {
 			return false, fmt.Errorf("set aside current db: %w", err)
 		}

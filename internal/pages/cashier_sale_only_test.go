@@ -157,8 +157,16 @@ func TestCashierSaleOnly_MenuAndRail(t *testing.T) {
 	if !strings.Contains(cashier, `data-testid="nav-till"`) || !strings.Contains(cashier, `href="/journal"`) {
 		t.Errorf("cashier /menu lost the sale flow (Sell rail / Journal tile)")
 	}
+	// ut-docs#3120: base.html's bug-report panel linked /my-reports for
+	// everyone, but that page needs "reports" — a cashier's tap got a 403.
+	if strings.Contains(cashier, `href="/my-reports"`) {
+		t.Errorf("cashier bug-report panel still links /my-reports (403 for them)")
+	}
+	if !strings.Contains(cashier, `id="bugreport-panel"`) {
+		t.Errorf("cashier lost the bug-report panel itself")
+	}
 	manager := get(auth.User{ID: "m1", Role: "manager"})
-	for _, href := range []string{`href="/reports"`, `href="/settings"`, `href="/plugins"`, `href="/inventory"`} {
+	for _, href := range []string{`href="/reports"`, `href="/settings"`, `href="/plugins"`, `href="/inventory"`, `href="/my-reports"`} {
 		if !strings.Contains(manager, href) {
 			t.Errorf("manager /menu is missing %s", href)
 		}

@@ -25,6 +25,6 @@ On the Android till app, "Take screenshot" captures what the app is showing dire
 
 Closing the panel with ✕ hides it — with your draft kept — until you press 🐞 again: it stays shut as you move between screens, and the Report an issue page no longer forces it back open. Discard is the button that actually throws a draft away (it asks first). A draft lasts for the current till session only; up to 12 screenshots fit in one report.
 
-Wondering what happened to a report after you sent it? See [My reports](/help/my-reports) — every report this till has sent, with its current status.
+Wondering what happened to a report after you sent it? See [My reports](/help/my-reports) — every report this till has sent, with its current status. Managers and admins can open it; ask one if you're a cashier.
 
 If diagnostic mode is on when you send a report (see Settings → Diagnostic mode in [Languages & display](/help/display)), the report also carries a reference to that diagnostic session and its most recent technical events, so support can read the report next to the stream it belongs to. Nothing extra is sent when diagnostic mode is off.
