@@ -11,7 +11,8 @@ import (
 
 // Manage-shop catalog directives (ut-docs
 // reference/manage-shop-catalog-api.md §3): save_item, save_category,
-// delete_category, save_modifier_group, delete_modifier_group.
+// delete_category, save_modifier_group, delete_modifier_group, and
+// set_category_order (§3.8, ut-docs#3075).
 
 // mainTillOnlyTypes are skipped entirely on a satellite till: no apply and
 // no result post, so the directive stays pending for the main till
@@ -24,6 +25,7 @@ var mainTillOnlyTypes = map[string]bool{
 	"delete_category":       true,
 	"save_modifier_group":   true,
 	"delete_modifier_group": true,
+	"set_category_order":    true,
 	// Till user directives (reference/till-user-directives.md §4): only
 	// the main till applies them; the admin bundle carries the result to
 	// the other tills (ADR-0115 §1).
@@ -41,7 +43,7 @@ var mainTillOnlyTypes = map[string]bool{
 // snapshot again (its hash gate keeps an unchanged push free).
 var catalogTypes = map[string]bool{
 	"save_item": true, "save_category": true, "delete_category": true,
-	"save_modifier_group": true, "delete_modifier_group": true,
+	"save_modifier_group": true, "delete_modifier_group": true, "set_category_order": true,
 	"set_price": true, "rename_item": true, "deactivate_item": true, "create_item": true,
 	"add_barcode": true, "update_item_details": true, "adjust_stock": true,
 	"upsert_category": true, "update_category": true, "upsert_modifier_group": true,
@@ -173,6 +175,42 @@ func decodeSaveItem(p payload) (data.ItemPatch, string) {
 		}
 	}
 	return out, ""
+}
+
+// decodeCategoryOrder reads a set_category_order payload (§3.8): the full
+// ordered id list as a JSON array inside a string field. Stricter than
+// apply's strs(), which drops blanks: a wrong shape, a blank id or a
+// duplicate fails the directive instead of reordering something the owner
+// didn't send.
+func decodeCategoryOrder(p payload) ([]string, string) {
+	v, present := p["category_ids"]
+	if !present {
+		return nil, "missing category_ids"
+	}
+	raw, ok := v.(string)
+	if !ok {
+		return nil, "bad category_ids"
+	}
+	var arr []string
+	if err := json.Unmarshal([]byte(raw), &arr); err != nil {
+		return nil, "bad category_ids"
+	}
+	if len(arr) == 0 {
+		return nil, "missing category_ids"
+	}
+	seen := make(map[string]bool, len(arr))
+	for i := range arr {
+		id := strings.TrimSpace(arr[i])
+		if id == "" {
+			return nil, "blank category id"
+		}
+		if seen[id] {
+			return nil, "duplicate category id " + id
+		}
+		seen[id] = true
+		arr[i] = id
+	}
+	return arr, ""
 }
 
 // decodeSaveCategory reads a save_category payload (§3.2).

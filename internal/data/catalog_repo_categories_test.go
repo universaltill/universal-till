@@ -479,3 +479,34 @@ func TestUpdateCategory_WritesNameAndColor(t *testing.T) {
 		}
 	}
 }
+
+// CategoryIDsNotFound backs set_category_order's "category X is not on this
+// till" check (ut-docs#3075): it names every id with no categories row,
+// in input order, and counts an INACTIVE category as present.
+func TestCategoryIDsNotFound(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+	active, err := repo.CreateCategory(ctx, "Drinks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inactive, err := repo.CreateCategory(ctx, "Old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetCategoryActive(ctx, inactive, false); err != nil {
+		t.Fatal(err)
+	}
+	missing, err := repo.CategoryIDsNotFound(ctx, []string{"ghost-2", active, inactive, "ghost-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(missing) != 2 || missing[0] != "ghost-2" || missing[1] != "ghost-1" {
+		t.Fatalf("missing = %v, want [ghost-2 ghost-1]", missing)
+	}
+	if missing, err := repo.CategoryIDsNotFound(ctx, []string{active, inactive}); err != nil || len(missing) != 0 {
+		t.Fatalf("all present: %v %v", missing, err)
+	}
+}

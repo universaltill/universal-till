@@ -1834,6 +1834,37 @@ func (r *CatalogRepo) SetCategoryActive(ctx context.Context, id string, active b
 	return nil
 }
 
+// CategoryIDsNotFound returns, in input order, every id in ids that has no
+// categories row — active and inactive rows both count as present. It backs
+// the set_category_order directive's "category X is not on this till"
+// refusal (ut-docs#3075, manage-shop contract §3.8), checked before
+// SetCategorySortOrder writes anything.
+func (r *CatalogRepo) CategoryIDsNotFound(ctx context.Context, ids []string) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id FROM categories`)
+	if err != nil {
+		return nil, fmt.Errorf("category ids: %w", err)
+	}
+	defer rows.Close()
+	present := make(map[string]bool)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("category ids: %w", err)
+		}
+		present[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("category ids: %w", err)
+	}
+	var missing []string
+	for _, id := range ids {
+		if !present[id] {
+			missing = append(missing, id)
+		}
+	}
+	return missing, nil
+}
+
 // SetCategorySortOrder persists a full reorder — one UPDATE per position,
 // in a transaction — mirroring ShortcutsRepo.UpdateOrder's shape
 // (internal/data/shortcuts_repo.go), the repo-side counterpart of
@@ -1843,10 +1874,11 @@ func (r *CatalogRepo) SetCategoryActive(ctx context.Context, id string, active b
 // A category orderedIDs leaves out still gets a slot, appended after the
 // posted ones in its own existing relative order, instead of keeping its
 // old sort_order — which could otherwise tie with a renumbered posted id
-// (ut-docs#2482). Both current callers (designer_categories_api.go's and
+// (ut-docs#2482). Both local callers (designer_categories_api.go's and
 // categories_page.go's reorder routes) already send every category, active
-// and inactive, so this only ever fires for a future or hand-crafted
-// partial post; it's defence in depth, not a live-observed gap.
+// and inactive. The set_category_order cloud directive (ut-docs#3075) may
+// not: a category created on the till after the owner loaded my. is left
+// out, and lands here after the listed ones.
 func (r *CatalogRepo) SetCategorySortOrder(ctx context.Context, orderedIDs []string) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {

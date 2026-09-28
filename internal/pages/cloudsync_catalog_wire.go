@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -84,6 +85,89 @@ func cloudSaveCategory(ctx context.Context, d *common.Deps, p data.CategorySave)
 		return "created category " + res.Name, nil
 	}
 	return "updated category " + res.Name, nil
+}
+
+// cloudSetCategoryOrder is the set_category_order hook (contract §3.8,
+// ut-docs#3075): the owner's category order from my., as the full ordered
+// id list. Primary-gated like every catalog directive — categories sync
+// primary-wins (ADR-0011), and sort_order travels with the row, so the
+// order reaches satellite tills through that sync.
+//
+// The cloud-side decode already refuses a blank or duplicate id; this
+// re-checks, because nothing else validates a directive against the till.
+// An id with no categories row (active or inactive) refuses the whole list
+// before anything is written — SetCategorySortOrder would otherwise run
+// an UPDATE matching no row and report success for an order it didn't set.
+// Every category the list leaves out keeps its relative order after the
+// listed ones (SetCategorySortOrder, ut-docs#2482). Idempotent: when the
+// till already shows exactly the order this list produces (a lost-result
+// replay), nothing is written and no audit row added — an UPDATE would
+// still bump the LAN-sync generation for no change — and the result is
+// the same "applied" text.
+func cloudSetCategoryOrder(ctx context.Context, d *common.Deps, ids []string) (string, error) {
+	if len(ids) == 0 {
+		return "", errors.New("missing category_ids")
+	}
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if strings.TrimSpace(id) == "" {
+			return "", errors.New("blank category id")
+		}
+		if seen[id] {
+			return "", fmt.Errorf("duplicate category id %s", id)
+		}
+		seen[id] = true
+	}
+	if err := requirePrimaryDirective(ctx, d); err != nil {
+		return "", err
+	}
+	repo := data.NewCatalogRepo(d.Db)
+	missing, err := repo.CategoryIDsNotFound(ctx, ids)
+	if err != nil {
+		return "", err
+	}
+	if len(missing) > 0 {
+		return "", fmt.Errorf("category %s is not on this till", missing[0])
+	}
+	msg := fmt.Sprintf("category order applied to %d categories", len(ids))
+	current, err := repo.ListCategories(ctx)
+	if err != nil {
+		return "", err
+	}
+	if categoryOrderAlreadyApplied(current, ids) {
+		return msg, nil
+	}
+	if err := repo.SetCategorySortOrder(ctx, ids); err != nil {
+		return "", err
+	}
+	auditCloudDirective(ctx, d, "category", "-", "cloud_category_order_set", map[string]any{"category_ids": ids})
+	return msg, nil
+}
+
+// categoryOrderAlreadyApplied reports whether current (ListCategories:
+// sort_order, name) is exactly what SetCategorySortOrder(ids) would write:
+// the listed ids first, then every other category in its current relative
+// order, numbered 0..n-1 with no gaps or ties.
+func categoryOrderAlreadyApplied(current []data.CategoryNode, ids []string) bool {
+	listed := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		listed[id] = true
+	}
+	want := append([]string{}, ids...)
+	for _, c := range current {
+		if !listed[c.ID] {
+			want = append(want, c.ID)
+		}
+	}
+	if len(want) != len(current) {
+		return false
+	}
+	for i, c := range current {
+		if c.ID != want[i] || c.SortOrder != i {
+			return false
+		}
+	}
+	return true
 }
 
 func cloudDeleteCategory(ctx context.Context, d *common.Deps, id, moveItemsTo string) (string, error) {

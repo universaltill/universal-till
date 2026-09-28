@@ -200,6 +200,7 @@ func TestTickSatelliteSkipsMainTillOnlyTypes(t *testing.T) {
 		{"id": "d4", "type": "save_modifier_group", "payload": map[string]any{"id": "g1"}},
 		{"id": "d5", "type": "delete_modifier_group", "payload": map[string]any{"id": "g1"}},
 		{"id": "d6", "type": "set_setting", "payload": map[string]any{"key": "k", "value": "v"}},
+		{"id": "d7", "type": "set_category_order", "payload": map[string]any{"category_ids": `["c1"]`}},
 	}}
 	srv := httptest.NewServer(cloud.handler())
 	defer srv.Close()
@@ -214,6 +215,7 @@ func TestTickSatelliteSkipsMainTillOnlyTypes(t *testing.T) {
 		DeleteCategory:      func(context.Context, string, string) (string, error) { ran++; return "", nil },
 		SaveModifierGroup:   func(context.Context, data.ModifierGroupSave) (string, error) { ran++; return "", nil },
 		DeleteModifierGroup: func(context.Context, string) (string, error) { ran++; return "", nil },
+		SetCategoryOrder:    func(context.Context, []string) (string, error) { ran++; return "", nil },
 		SetSetting:          func(context.Context, string, string) (string, error) { return "set", nil },
 	}
 	if err := Tick(context.Background(), testCfg(srv.URL), db, hooks); err != nil {
@@ -353,5 +355,60 @@ func TestSnapshotSchema2Shape(t *testing.T) {
 	}
 	if _, has := items[1].(map[string]any)["qty"]; has {
 		t.Fatal("qty must be omitted for a stock-untracked item")
+	}
+}
+
+// §3.8 (ut-docs#3075): set_category_order carries the full ordered list as
+// a JSON-encoded string field. Unlike set_quick_button_layout's lenient
+// strs() decode, a malformed list, a blank id or a duplicate FAILS the
+// directive visibly instead of being dropped or guessed at.
+func TestApplySetCategoryOrder(t *testing.T) {
+	if status, msg := apply(context.Background(), directive{Type: "set_category_order", Payload: map[string]any{"category_ids": `["c1"]`}}, Hooks{}); status != "failed" || msg != "set_category_order is not supported on this till" {
+		t.Fatalf("nil hook: %q %q", status, msg)
+	}
+	var calls int
+	var got []string
+	hooks := Hooks{SetCategoryOrder: func(ctx context.Context, ids []string) (string, error) {
+		calls++
+		got = ids
+		return "category order applied to 3 categories", nil
+	}}
+	for _, c := range []struct {
+		payload map[string]any
+		want    string
+	}{
+		{map[string]any{}, "missing category_ids"},
+		{map[string]any{"category_ids": `[]`}, "missing category_ids"},
+		{map[string]any{"category_ids": `null`}, "missing category_ids"},
+		{map[string]any{"category_ids": ""}, "bad category_ids"},
+		{map[string]any{"category_ids": "c1,c2"}, "bad category_ids"},
+		{map[string]any{"category_ids": `[1,2]`}, "bad category_ids"},
+		{map[string]any{"category_ids": `{"a":"b"}`}, "bad category_ids"},
+		{map[string]any{"category_ids": []any{"c1", "c2"}}, "bad category_ids"},
+		{map[string]any{"category_ids": 5.0}, "bad category_ids"},
+		{map[string]any{"category_ids": `["c1"," ","c2"]`}, "blank category id"},
+		{map[string]any{"category_ids": `["c1","c2"," c1 "]`}, "duplicate category id c1"},
+	} {
+		if status, msg := apply(context.Background(), directive{Type: "set_category_order", Payload: c.payload}, hooks); status != "failed" || msg != c.want {
+			t.Errorf("%v: %q %q, want failed %q", c.payload, status, msg, c.want)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("hook ran %d times for refused payloads", calls)
+	}
+	status, msg := apply(context.Background(), directive{Type: "set_category_order", Payload: map[string]any{"category_ids": `[" c3 ","c1","c2"]`}}, hooks)
+	if status != "applied" || msg != "category order applied to 3 categories" || !reflect.DeepEqual(got, []string{"c3", "c1", "c2"}) {
+		t.Fatalf("applied: %q %q %v", status, msg, got)
+	}
+}
+
+// §3.8: set_category_order is main-till only (a satellite leaves it
+// pending) and a catalog type (an applied one re-pushes in the same tick).
+func TestSetCategoryOrderIsMainTillOnlyCatalogType(t *testing.T) {
+	if !mainTillOnlyTypes["set_category_order"] {
+		t.Error("set_category_order not in mainTillOnlyTypes")
+	}
+	if !catalogTypes["set_category_order"] {
+		t.Error("set_category_order not in catalogTypes")
 	}
 }
