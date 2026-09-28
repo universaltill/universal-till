@@ -1862,6 +1862,21 @@ function initOfflineOverride(updateFn){
 // Only the SET of slots per grid matters, so a stale data-pos after a
 // persisted reorder is harmless; they're refreshed client-side anyway.
 //
+// The all_filter_chips All grid (#buttons-grid-all, ut-docs#2534) is the
+// one grid that is NOT a quick-button grid: every active item, A-Z, or --
+// under a category chip -- that category's items in the global quick-button
+// order (ButtonsHTTP.AllMore). It arms only when the server marked it
+// data-edit-allowed (a catalog_management session; a cashier's long press
+// there never arms the mode -- it sells like a plain tap), its cells get the pencil
+// badge only (no remove/hide: the All grid lists every item, removed or
+// not), and a tile moves (drag or arrow key) only while the grid holds the
+// fragment's hidden data-all-filter marker. Plain All is edit-only,
+// never dirty. Its save posts just the grid's own tiles in DOM order with
+// scope=subset (persistAllGrid), which the server re-deals into the global
+// slots those tiles already hold -- orderedCodes()' client-side re-deal
+// needs the full list, which the All grid never has. A chip tap while
+// editing keeps the mode and saves a pending move before its swap.
+//
 // Scoped to the sale screen by the #buttons-grid ancestor in every
 // selector: the Designer's admin tiles (#buttons-grid-admin) and the
 // category-tiles mode's popup tiles (#category-items-modal, outside
@@ -1888,22 +1903,38 @@ function initOfflineOverride(updateFn){
   // so a plain '#buttons-grid .btn-tile[data-code]' match also catches
   // every All-grid tile. Since ut-docs#2613 the strip has no All tab, so
   // the All grid exists only as the whole grid of the all_filter_chips
-  // browsing mode (ut-docs#2499), where it is the very first screen an
-  // operator sees: without this exclusion a long-press/right-click there
-  // would wobble/badge the WHOLE catalogue and let a drag "reorder" items
-  // that were never quick buttons -- sort_order has no meaning for the
-  // All grid's fixed alphabetical listing. inAllGrid() gates every entry
-  // point (tileFor/badgeFor) so the mode simply never arms from there, and
-  // the code-gathering helpers below (orderedCodes/refreshPositions) skip
-  // any tile under #buttons-grid-all as defence in depth.
+  // browsing mode (ut-docs#2499). ut-docs#2534: it arms edit mode too, but
+  // on its own terms (see the header): tileFor/badgeFor match an All-grid
+  // tile only when the server marked the grid data-edit-allowed, and the
+  // code-gathering helpers of the quick-button grids (orderedCodes/
+  // refreshPositions) still skip it -- its save is persistAllGrid's.
+  function allGrid() {
+    var a = document.getElementById('buttons-grid-all');
+    return (a && a.closest('#buttons-grid')) ? a : null;
+  }
   function inAllGrid(el) { return !!(el && el.closest && el.closest('#buttons-grid-all')); }
+  function allGridEditable() { var a = allGrid(); return !!(a && a.hasAttribute('data-edit-allowed')); }
+  // A category chip's page (ButtonsHTTP.AllMore) carries the marker; plain
+  // All's does not, so it never lets a tile move.
+  function allGridFiltered() { var a = allGrid(); return !!(a && a.querySelector(':scope > [data-all-filter]')); }
+  function canMove(tile) { return !inAllGrid(tile) || allGridFiltered(); }
+  // app.css keys the All grid's drag affordance (touch-action: none, grab
+  // cursor) off this class instead of a :has() test on the marker, so an
+  // engine without :has() still lets a finger pan plain All in edit mode.
+  // Absent is the safe default (edit-only). Re-synced wherever the marker
+  // can come or go: entering the mode, and every settle while it is on (a
+  // chip's or load-more's swap into the grid, a full grid re-render).
+  function syncAllGridMovable() {
+    var a = allGrid();
+    if (a) a.classList.toggle('all-grid-movable', allGridFiltered());
+  }
   function tileFor(el) {
     var t = el && el.closest ? el.closest('#buttons-grid .btn-tile[data-code]') : null;
-    return (t && !inAllGrid(t)) ? t : null;
+    return (t && (!inAllGrid(t) || allGridEditable())) ? t : null;
   }
   function badgeFor(el) {
     var b = el && el.closest ? el.closest('#buttons-grid .tile-badge') : null;
-    return (b && !inAllGrid(b)) ? b : null;
+    return (b && (!inAllGrid(b) || allGridEditable())) ? b : null;
   }
   function isRTL(el) { return getComputedStyle(el).direction === 'rtl'; }
   // ut-docs#2698: controls outside #buttons-grid that are part of editing:
@@ -1912,7 +1943,9 @@ function initOfflineOverride(updateFn){
   // strip: its pencil link navigates to /designer, and leaving through the
   // normal exit is what persists an unsaved drag first.
   function stayInEdit(el) {
-    return !!el.closest('.products-finder .tab-bar, #category-overflow-dialog, .products-strip-search, .products-strip-back, #products-search, #search-results');
+    // ut-docs#2534: and the all_filter_chips chip row -- switching the
+    // category is how another category's order is reached.
+    return !!el.closest('.products-finder .tab-bar, #category-overflow-dialog, .products-strip-search, .products-strip-back, #products-search, #search-results, #browsing-category-chips');
   }
   function visibleCells(gridEl) {
     return Array.prototype.filter.call(gridEl.children, function (c) {
@@ -1956,11 +1989,15 @@ function initOfflineOverride(updateFn){
     var labelPH = tpl.getAttribute('data-label-ph');
     if (!idPH || !labelPH) return;
     Array.prototype.forEach.call(g.querySelectorAll('.tile-cell[data-item-id]'), function (cell) {
-      if (inAllGrid(cell) || cell.querySelector(':scope > .tile-badges')) return;
+      var all = inAllGrid(cell);
+      if ((all && !allGridEditable()) || cell.querySelector(':scope > .tile-badges')) return;
       var id = cell.getAttribute('data-item-id') || '';
       var label = cell.getAttribute('data-name') || '';
       var frag = tpl.content.cloneNode(true);
-      var drop = cell.hasAttribute('data-hidden') ? '.tile-badge-hide:not(.tile-badge-unhide)' : '.tile-badge-unhide';
+      // ut-docs#2534: an All-grid cell keeps the pencil only -- remove/hide
+      // are quick-button actions, and this grid lists every item.
+      var drop = all ? '.tile-badge:not(.tile-badge-edit)'
+        : cell.hasAttribute('data-hidden') ? '.tile-badge-hide:not(.tile-badge-unhide)' : '.tile-badge-unhide';
       Array.prototype.forEach.call(frag.querySelectorAll(drop), function (n) { n.remove(); });
       Array.prototype.forEach.call(frag.querySelectorAll('*'), function (el) {
         Array.prototype.slice.call(el.attributes).forEach(function (a) {
@@ -1991,6 +2028,7 @@ function initOfflineOverride(updateFn){
     if (!g) return;
     active = true;
     materialiseBadges();
+    syncAllGridMovable();
     g.classList.add('jiggle-mode');
     if (b) b.hidden = false;
     markFinder(true);
@@ -2014,8 +2052,9 @@ function initOfflineOverride(updateFn){
         // renders), so its own tiles come first in DOM order whenever they
         // precede the active panel -- require real visibility too, the same
         // getClientRects() check visibleCells() already uses above.
+        // ut-docs#2534: tileFor() -- an All-grid tile counts once it can edit.
         var candidates = Array.prototype.slice.call(g.querySelectorAll('.btn-tile[data-code]'))
-          .filter(function (t) { return !inAllGrid(t) && t.getClientRects().length > 0; });
+          .filter(function (t) { return tileFor(t) && t.getClientRects().length > 0; });
         var first = candidates[0];
         if (first) first.focus();
       }
@@ -2088,6 +2127,10 @@ function initOfflineOverride(updateFn){
     if (window.htmx) window.htmx.trigger(document.body, 'buttons-changed');
   }
   function persistOrder() {
+    // ut-docs#2534: the all_filter_chips mode has no quick-button grid, only
+    // the All grid, which saves its own way.
+    var ag = allGrid();
+    if (ag) return persistAllGrid(ag);
     var codes = orderedCodes();
     if (!codes.length) return Promise.resolve();
     // ut-docs#2312 (found during that card's own merge with this one):
@@ -2106,9 +2149,36 @@ function initOfflineOverride(updateFn){
     // dialog's own retry resolves it.
     var fd = new FormData();
     codes.forEach(function (c) { fd.append('codes', c); });
+    return postReorder(fd, refreshPositions);
+  }
+  // ut-docs#2534: the All grid under a category chip saves ITS tiles, in DOM
+  // order, as scope=subset -- the server re-deals them into the global slots
+  // they hold (ButtonStore.UpdateOrderSubset). Only the loaded page is
+  // posted; the rest of the category keeps its slots. Plain All never moves
+  // a tile, so there is nothing to save there.
+  function persistAllGrid(ag) {
+    if (!allGridFiltered()) return Promise.resolve();
+    var codes = Array.prototype.map.call(ag.querySelectorAll(':scope > .tile-cell > .btn-tile[data-code]'), function (t) { return t.dataset.code; });
+    if (!codes.length) return Promise.resolve();
+    var fd = new FormData();
+    fd.append('scope', 'subset');
+    codes.forEach(function (c) { fd.append('codes', c); });
+    return postReorder(fd, function () {});
+  }
+  // ut-docs#2534 review: every reorder save is bracketed for
+  // sell-screen-watch.js -- it moves sell_screen_version, and the route
+  // answers with the new value (X-UT-Sell-Version), which the watcher then
+  // takes as already on screen: this DOM shows exactly what was saved. Left
+  // unreported, the watcher's next poll re-rendered the grid as if another
+  // till had changed it, dropping an all_filter_chips category chip back to
+  // plain All. A failed or cancelled save only releases the hold (its own
+  // refetchGrid() re-renders anyway).
+  function postReorder(fd, onSaved) {
+    var watch = window.utSellScreenWatch;
+    var saved = (watch && typeof watch.ownWrite === 'function') ? watch.ownWrite() : function () {};
     return new Promise(function (resolve) {
       window.utPostWithElevation('/api/buttons/reorder', fd, function (res) {
-        if (res.ok) { refreshPositions(); resolve(); return; }
+        if (res.ok) { saved(res.headers.get('X-UT-Sell-Version')); onSaved(); resolve(); return; }
         res.text().then(function (text) {
           showAlert((text || '').trim(), 'server');
           refetchGrid(); // the DOM shows an order that never took -- reload it
@@ -2123,7 +2193,7 @@ function initOfflineOverride(updateFn){
     }).catch(function () {
       showAlert('', 'network');
       refetchGrid();
-    });
+    }).then(function () { saved(null); });
   }
 
   // ---- long-press ----
@@ -2146,7 +2216,7 @@ function initOfflineOverride(updateFn){
       if (active && !(e.target.closest && (e.target.closest('#buttons-grid') || e.target.closest('.jiggle-bar') || stayInEdit(e.target)))) exit();
       return;
     }
-    if (active) { startDrag(e, tile); return; }
+    if (active) { if (canMove(tile)) startDrag(e, tile); return; }
     clearHold();
     var h = { pointerId: e.pointerId, x: e.clientX, y: e.clientY, tile: tile };
     h.timer = setTimeout(function () {
@@ -2156,7 +2226,8 @@ function initOfflineOverride(updateFn){
       // The finger is still down on this tile: let the very same gesture
       // continue straight into a drag (iOS does exactly this), so a hold-
       // and-slide reorders in one motion instead of hold, lift, press again.
-      startDrag({ pointerId: h.pointerId, clientX: h.x, clientY: h.y, preventDefault: function () {} }, tile);
+      // ut-docs#2534: not in the plain All grid, which is edit-only.
+      if (canMove(tile)) startDrag({ pointerId: h.pointerId, clientX: h.x, clientY: h.y, preventDefault: function () {} }, tile);
     }, HOLD_MS);
     hold = h;
   });
@@ -2320,7 +2391,7 @@ function initOfflineOverride(updateFn){
     if (e.key === 'Escape') { e.preventDefault(); exit(); return; }
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     var tile = tileFor(e.target);
-    if (!tile) return;
+    if (!tile || !canMove(tile)) return;
     e.preventDefault();
     var cell = tile.parentElement, gridEl = cell.parentElement;
     var cells = visibleCells(gridEl);
@@ -2349,7 +2420,7 @@ function initOfflineOverride(updateFn){
   // and must never eat a badge's own click.
   document.addEventListener('click', function (e) {
     var edit = e.target.closest ? e.target.closest('#buttons-grid .tile-badge-edit') : null;
-    if (!edit || inAllGrid(edit) || !active || !dirty) return;
+    if (!edit || !badgeFor(edit) || !active || !dirty) return;
     var href = edit.getAttribute('href');
     if (!href) return;
     e.preventDefault();
@@ -2358,6 +2429,21 @@ function initOfflineOverride(updateFn){
     // error and never rejects, so this resolves either way.
     persistOrder().then(function () { window.location.href = href; });
   });
+
+  // ut-docs#2534: a chip tap while editing stays in the mode (stayInEdit) and
+  // swaps the All grid to another category -- a pending move in the current
+  // one is saved FIRST: the click is held here (capture phase, before htmx's
+  // hx-get and Alpine's @click see it), the order posted, and the click
+  // replayed once it settled, so the new page is rendered from the saved
+  // order. dirty is already false on the replay, so it passes straight on.
+  document.addEventListener('click', function (e) {
+    if (!active || !dirty) return;
+    var chip = e.target.closest ? e.target.closest('#browsing-category-chips .chip') : null;
+    if (!chip) return;
+    e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+    dirty = false;
+    persistOrder().then(function () { if (chip.isConnected) chip.click(); });
+  }, true);
 
   // ---- htmx interplay ----
   // The remove badge's own hx-confirm/hx-post: if a drag is still
@@ -2388,11 +2474,12 @@ function initOfflineOverride(updateFn){
   // .jiggle-mode class and a hidden bar, so put the mode back -- iOS keeps
   // jiggling after a delete too. Idempotent, so any settle is fine.
   // ut-docs#2989: a swap that kept the grid (tiles added into it) still
-  // needs badges on its new cells, so materialise either way.
+  // needs badges on its new cells, so materialise either way -- including a
+  // chip's or load-more's swap into the All grid (ut-docs#2534).
   document.body.addEventListener('htmx:afterSettle', function () {
     if (!active || !grid()) return;
     if (!grid().classList.contains('jiggle-mode')) enter();
-    else materialiseBadges();
+    else { materialiseBadges(); syncAllGridMovable(); }
   });
 })();
 

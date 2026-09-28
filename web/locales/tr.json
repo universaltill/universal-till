@@ -163,6 +163,7 @@
   "bluetoothdevices.scanning": "Taranıyor… yaklaşık on saniye sürer.",
   "bluetoothdevices.title": "Bluetooth cihazları",
   "buttons.edit_mode.title": "Hızlı satış düğmeleri düzenleniyor — sıralamak için bir kutucuğu sürükleyin",
+  "buttons.edit_mode.title_all_grid": "Ürünler düzenleniyor — ürünlerini sıraya sürüklemek için bir kategori seçin; kalem bir ürünü düzenler",
   "catalog.active": "Etkin",
   "catalog.add_item_btn": "Ürün ekle",
   "catalog.attach_barcode": "Barkod ekle",

@@ -36,48 +36,145 @@
 <script>
 (function () {
   'use strict';
-  // ut-docs#2174: the two pieces of behaviour the replica's category
+  // ut-docs#2174: the pieces of behaviour the replica's category
   // management needs that a per-row htmx form can't express on its own.
   // Page-scoped listeners on body: base.html records any window/document/
   // body listener a script inside #ut-page adds and drops it when this page
   // is swapped away, so re-running this on every arrival never stacks
   // handlers. Delegated on body, not bound to the fragment, because the
-  // whole .products root is outerHTML-swapped on every buttons-changed.
+  // whole .products root is still outerHTML-swapped on buttons-changed
+  // (rename, create, deactivate, a tile's own badges).
   //
-  // 1. Reorder. The move-earlier/move-later buttons (data-cat-move, inside
-  //    a row's inline edit form since ut-docs#2699; long-press drag and
-  //    Alt+Arrow are web/public/list-reorder.js's) post
-  //    EVERY category id in its new display order -- the body shape
-  //    /api/designer/categories/reorder shares with /api/categories/reorder
-  //    and /api/buttons/reorder -- computed from the list's current DOM
-  //    order with the two neighbours swapped. No DOM reordering here: the
-  //    204's HX-Trigger: buttons-changed re-renders the whole root from the
-  //    server's truth (strip AND list), which is the point of a live
-  //    replica. htmx.ajax rather than fetch so that HX-Trigger header is
-  //    processed exactly as it is for the forms, and a non-2xx text/html
-  //    refusal lands in #designer-categories-msg through app.js's global
-  //    beforeSwap force-swap, same as theirs.
+  // 1. Reorder -- in place, never a re-render (ut-docs#3074: the product
+  //    owner's "stay where it was, like an app"). Long-press drag and
+  //    Alt+Arrow are web/public/list-reorder.js's; the Move earlier/later
+  //    buttons (data-cat-move, inside a row's open form) call its
+  //    utListReorder.move(), so the row moves in the DOM with its form
+  //    still open and focus still on the button. list-reorder.js posts
+  //    every id and, once the server accepts, fires list-reorder:saved:
+  //    the rest of the replica that mirrors category order (strip tabs,
+  //    the "..." sheet, category sections) is permuted to match below. A
+  //    refusal puts the rows back (list-reorder:reverted) and says why.
   //
-  // 2. Focus. That full re-render replaces the control the operator just
-  //    activated, which would drop keyboard focus to <body> after every
-  //    move/save/deactivate (the retired admin grid kept focus on the
+  // 2. Focus. A form submit's re-render replaces the control the operator
+  //    just activated, which would drop keyboard focus to <body> after
+  //    every save/deactivate (the retired admin grid kept focus on the
   //    moved tile's own button for exactly this reason -- ut-docs#826's
   //    lesson). Remember the activated control's id on the way out and put
   //    focus back on its freshly rendered twin (ids are stable per
   //    category: designer-cat-<action>-<id>) once the root has settled --
-  //    or, if that twin is now disabled (moved to an edge) or hidden (the
-  //    edit form collapsed after a save), on the nearest sensible control
-  //    in the same row.
+  //    or, if that twin is now disabled or hidden (the edit form collapsed
+  //    after a save), on the nearest sensible control in the same row.
   var pendingFocus = null;
-  // ut-docs#2699: Move earlier/later now live inside a row's inline edit
-  // form, which the re-render collapses (fresh x-data). Re-open that row's
-  // form after the root settles so a run of moves doesn't mean re-opening
-  // it each time, and focus can land back on the button just used.
-  var reopenRow = null;
 
   function focusable(el) {
     return !!(el && !el.disabled && el.getClientRects().length > 0);
   }
+
+  function rows(list) {
+    return Array.prototype.filter.call(list.children, function (c) { return c.hasAttribute('data-reorder-id'); });
+  }
+
+  // Each row's Move earlier/later disabled at the list's ends, as the
+  // server renders them -- re-derived after every client-side move.
+  function syncMoveButtons(list) {
+    var r = rows(list);
+    r.forEach(function (row, i) {
+      var up = row.querySelector('[data-cat-move="-1"]');
+      var down = row.querySelector('[data-cat-move="1"]');
+      if (up) up.disabled = i === 0;
+      if (down) down.disabled = i === r.length - 1;
+    });
+  }
+
+  // Put the elements of `els` that carry an id in `ids` into that order,
+  // each landing in one of the slots the group already occupied, so an
+  // element the order doesn't name (the uncategorised bucket, the "..."
+  // button) keeps its own place.
+  function permute(els, key, ids) {
+    var rank = {};
+    ids.forEach(function (id, i) { rank['#' + id] = i; });
+    var r = function (el) { return rank['#' + key(el)]; };
+    var named = els.filter(function (el) { return r(el) !== undefined; });
+    if (named.length < 2) return;
+    var sorted = named.slice().sort(function (a, b) { return r(a) - r(b); });
+    if (sorted.every(function (el, i) { return el === named[i]; })) return;
+    var marks = named.map(function (el) {
+      var m = document.createComment('');
+      el.parentNode.insertBefore(m, el);
+      return m;
+    });
+    marks.forEach(function (m, i) { m.parentNode.replaceChild(sorted[i], m); });
+  }
+  function permuteChildren(parent, selector, key, ids) {
+    if (!parent) return;
+    permute(Array.prototype.filter.call(parent.children, function (c) { return c.matches(selector); }), key, ids);
+  }
+  function attr(name) { return function (el) { return el.getAttribute(name); }; }
+
+  function applyCategoryOrder(root, ids) {
+    var bar = root.querySelector('.tab-bar');
+    permuteChildren(bar, '[data-cat-tab]', attr('data-tab-id'), ids);
+    permuteChildren(root.querySelector('.category-overflow-grid'), '.category-overflow-tile', attr('data-tab-id'), ids);
+    var grid = root.querySelector('#buttons-grid');
+    if (grid) {
+      // Tab panels (only the active one shows, but keep source order
+      // honest), top-level sections (the tab-less branch) and each
+      // parent's nested subcategory sections.
+      permuteChildren(grid, '.products-tab-panel', function (el) { return el.id.replace(/^cat-panel-/, ''); }, ids);
+      var parents = [grid];
+      Array.prototype.forEach.call(grid.querySelectorAll('.products-tab-panel, [data-cat-group]'), function (p) { parents.push(p); });
+      parents.forEach(function (p) { permuteChildren(p, '[data-cat-group]', attr('data-cat-group'), ids); });
+    }
+    // The strip's own fit-to-width pass: which tabs fit depends on order.
+    var finder = bar && bar.closest('[x-data]');
+    if (finder && window.Alpine && window.Alpine.$data) {
+      try {
+        var d = window.Alpine.$data(finder);
+        if (d && typeof d.applyCategoryOverflow === 'function') d.applyCategoryOverflow();
+      } catch (e) { /* the order is right either way; only the fit is stale */ }
+    }
+  }
+
+  document.body.addEventListener('click', function (ev) {
+    var btn = ev.target.closest ? ev.target.closest('.designer-categories [data-cat-move]') : null;
+    if (!btn || btn.disabled || !window.utListReorder) return;
+    var row = btn.closest('[data-reorder-id]');
+    var list = row && row.parentElement;
+    if (!list || !list.hasAttribute('data-reorder-list')) return;
+    if (!window.utListReorder.move(row, parseInt(btn.dataset.catMove, 10))) return;
+    syncMoveButtons(list);
+    if (!keepMoveFocus(btn) && document.activeElement !== btn) btn.focus();
+  });
+
+  // A move to an end disables the focused Move button (the click above,
+  // or a save/revert that shifted this row under it) -- keep focus in the
+  // row's form, on its twin, rather than letting it drop to <body>.
+  function keepMoveFocus(btn) {
+    if (!btn || !btn.disabled) return false;
+    var row = btn.closest('[data-reorder-id]');
+    var other = row && row.querySelector('[data-cat-move]:not([disabled])');
+    if (focusable(other)) other.focus();
+    return true;
+  }
+  function syncKeepingFocus(list) {
+    var a = document.activeElement;
+    var wasMove = a && a.matches && a.matches('[data-cat-move]') && list.contains(a);
+    syncMoveButtons(list);
+    if (wasMove) keepMoveFocus(a);
+  }
+
+  document.body.addEventListener('list-reorder:saved', function (ev) {
+    var list = ev.target;
+    var root = list && list.closest ? list.closest('.products') : null;
+    if (!root || !list.closest('.designer-categories')) return;
+    syncKeepingFocus(list);
+    applyCategoryOrder(root, (ev.detail && ev.detail.ids) || []);
+  });
+  document.body.addEventListener('list-reorder:reverted', function (ev) {
+    var list = ev.target;
+    if (list && list.closest && list.closest('.designer-categories')) syncKeepingFocus(list);
+  });
 
   function restoreFocus() {
     var id = pendingFocus;
@@ -96,31 +193,8 @@
     }
   }
 
-  document.body.addEventListener('click', function (ev) {
-    var btn = ev.target.closest ? ev.target.closest('.designer-categories [data-cat-move]') : null;
-    if (!btn || btn.disabled || !window.htmx) return;
-    var list = btn.closest('.designer-categories');
-    var row = btn.closest('[data-cat-id]');
-    if (!list || !row) return;
-    var ids = Array.prototype.map.call(list.querySelectorAll('[data-cat-id]'), function (el) { return el.dataset.catId; });
-    var i = ids.indexOf(row.dataset.catId);
-    var j = i + parseInt(btn.dataset.catMove, 10);
-    if (i < 0 || j < 0 || j >= ids.length) return;
-    ids[i] = ids[j];
-    ids[j] = row.dataset.catId;
-    pendingFocus = btn.id;
-    reopenRow = row.dataset.catId;
-    window.htmx.ajax('POST', '/api/designer/categories/reorder', {
-      source: btn,
-      target: '#designer-categories-msg',
-      swap: 'innerHTML',
-      values: { ids: ids.join(',') }
-    });
-  });
-
   // A form submit (save / create / deactivate / activate): remember the
-  // submit button that had focus. Only when nothing is pending already --
-  // the reorder click above set its own id before its request started.
+  // submit button that had focus.
   document.body.addEventListener('htmx:beforeRequest', function (ev) {
     var elt = ev.detail && ev.detail.elt;
     if (pendingFocus || !elt || !elt.closest || !elt.closest('.designer-categories')) return;
@@ -135,28 +209,6 @@
     var info = ev.detail && ev.detail.pathInfo;
     var path = (info && (info.finalRequestPath || info.requestPath)) || '';
     if (path.indexOf('/ui/buttons') !== 0) return;
-    var id = reopenRow;
-    reopenRow = null;
-    var row = id ? document.querySelector('.designer-categories [data-cat-id="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]') : null;
-    if (row) {
-      // At afterSettle Alpine has usually NOT initialised the fresh row yet
-      // (measured: no _x_dataStack), so seed its x-data instead; if it has,
-      // flip the live state.
-      if (row._x_dataStack && window.Alpine && window.Alpine.$data) {
-        try { window.Alpine.$data(row).editing = true; } catch (e) { /* focus falls back below */ }
-      } else {
-        row.setAttribute('x-data', '{ editing: true }');
-      }
-      // Wait (briefly) for x-show to reveal the pending control before
-      // restoring, or restoreFocus would fall back to the row's toggle.
-      var until = Date.now() + 600;
-      (function wait() {
-        var el = pendingFocus && document.getElementById(pendingFocus);
-        if (el && !el.disabled && !focusable(el) && Date.now() < until) { setTimeout(wait, 16); return; }
-        restoreFocus();
-      })();
-      return;
-    }
     restoreFocus();
   });
 })();

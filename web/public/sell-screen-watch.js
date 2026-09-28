@@ -29,6 +29,10 @@
 // down. One request in flight at most; a failed/offline poll is silently
 // ignored -- this never blocks checkout (offline-first, ADR-0003).
 //
+// A save the sale screen makes itself without a grid render (the jiggle
+// reorder) reports its own version through window.utSellScreenWatch.ownWrite
+// (below), so it never reads as a change made elsewhere (ut-docs#2534).
+//
 // A persistent-shell script (ADR-0098, loaded once from base.html's <head>
 // and listed in httpx.HeadAssets): it only ever acts while the current page
 // has a sale-screen grid, so it is a no-op everywhere else, same pattern as
@@ -48,6 +52,7 @@
   var inFlight = false;   // a /ui/buttons/version poll is running
   var refreshAt = 0;      // when this watcher last fired buttons-changed (0 = none pending)
   var pointersDown = 0;
+  var ownWrites = 0;      // this document's own catalog saves still in flight
   var timer = null;
 
   // The sale screen's own grid: the at-rest root, never the Designer's
@@ -60,7 +65,7 @@
   }
 
   function busy(g) {
-    if (pointersDown > 0) return true;
+    if (pointersDown > 0 || ownWrites > 0) return true;
     if (g.querySelector('#buttons-grid.jiggle-mode, .jiggle-active, .dragging')) return true;
     if (document.querySelector('dialog[open]')) return true;
     var s = document.getElementById('products-search');
@@ -115,6 +120,37 @@
   document.addEventListener('htmx:afterSettle', seed);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', seed, { once: true });
   else seed();
+
+  // ut-docs#2534 review: this document's OWN catalog writes. A save made
+  // from the sale screen itself by a plain fetch (app.js's utTileJiggle
+  // reorder -- it never goes through GET /ui/buttons, so the header path
+  // above never sees it) moves the version too, and the next poll used to
+  // take that for a change made elsewhere and re-render the grid, losing
+  // what the grid alone knows (the all_filter_chips category chip). A
+  // caller brackets such a write:
+  //   var saved = window.utSellScreenWatch.ownWrite();  // before the request
+  //   saved(response.headers.get('X-UT-Sell-Version')); // when it settled
+  // No refresh fires while one is in flight (a poll can land between the
+  // commit and the response), and a version handed back is adopted as the
+  // one on screen -- the caller's DOM already shows what it saved. Calling
+  // saved() again, or with no version (a failed save), only releases the
+  // hold; a hold never released lapses after REFRESH_TIMEOUT_MS so a lost
+  // response can't stop the watcher for good.
+  function ownWrite() {
+    ownWrites++;
+    var open = true;
+    var lapse = window.setTimeout(function () { release(null); }, REFRESH_TIMEOUT_MS);
+    function release(v) {
+      if (!open) return;
+      open = false;
+      window.clearTimeout(lapse);
+      if (ownWrites > 0) ownWrites--;
+      if (v === undefined || v === null || v === '' || !saleGrid()) return;
+      rendered = String(v);
+    }
+    return release;
+  }
+  window.utSellScreenWatch = { ownWrite: ownWrite };
 
   function pointerDown() { pointersDown++; }
   function pointerUp() { if (pointersDown > 0) pointersDown--; }

@@ -2481,6 +2481,12 @@ body.osk-padded .modifier-modal.category-items-modal { inset-block-end: var(--os
 .tile-badges { display: none; }
 .jiggle-mode .tile-cell { display: block; position: relative; min-inline-size: 0; }
 .jiggle-mode .tile-cell > .btn-tile { inline-size: 100%; block-size: 100%; touch-action: none; cursor: grab; }
+/* ut-docs#2534: the all_filter_chips All grid with no category chip is
+   edit-only (no drag -- app.js's canMove), so its tiles keep the finger-pan
+   and a plain pointer; under a chip app.js's syncAllGridMovable sets
+   .all-grid-movable (the fragment's data-all-filter marker is there) and
+   the rule above applies. A class, not :has(), so it holds on every engine. */
+.jiggle-mode #buttons-grid-all:not(.all-grid-movable) > .tile-cell > .btn-tile { touch-action: manipulation; cursor: pointer; }
 .jiggle-mode .tile-badges { display: contents; }
 .tile-badge {
   position: absolute; inset-block-start: -8px; z-index: 2;
@@ -5244,6 +5250,12 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
 .designer-categories-head h3 { margin: 0; }
 .designer-categories-help { margin: 0; font-size: .85rem; }
 .designer-cat-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .45rem; }
+/* ut-docs#3074: a reorder moves rows in place (no re-render), and the page
+   must stay exactly where it was. Browser scroll anchoring would otherwise
+   pick the moved row (usually the one in view) as its anchor and scroll the
+   page after it -- measured: Move later scrolled the Designer by one row
+   height. Opting the list out keeps the viewport still while the row moves. */
+.designer-cat-list { overflow-anchor: none; }
 .designer-cat {
   display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .3rem .6rem; align-items: center;
   padding: .45rem .65rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface);
