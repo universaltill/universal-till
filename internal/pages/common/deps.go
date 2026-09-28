@@ -15,6 +15,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/fleetlink"
+	"github.com/universaltill/universal-till/internal/netreach"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -168,6 +169,13 @@ type Deps struct {
 	// idles on a replica or a periodic till); nil in bare-Deps tests —
 	// its methods are nil-safe.
 	CloudLink *cloudlink.Client
+
+	// NetReach probes the cloud host's /healthz for the status-bar light
+	// (ut-docs#3095): "No internet" when the network is up but the cloud
+	// is not. Display-only — checkout never reads it. Built once in
+	// pages.Init; disabled on a loopback/empty endpoint; nil in bare-Deps
+	// tests — its methods are nil-safe.
+	NetReach *netreach.Monitor
 
 	// CloudSyncNow asks the cloudsync loop for a check-in now
 	// (cloudsync.Hooks.Kick). Capacity 1: kicks coalesce, and one that
