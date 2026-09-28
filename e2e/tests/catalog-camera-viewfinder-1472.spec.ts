@@ -103,18 +103,109 @@ test.describe('catalog camera viewfinder (ut-docs#1472)', () => {
 
     await page.locator('#image-viewfinder-capture-btn').click();
     await expect(page.locator('#image-viewfinder')).toBeHidden();
-    await expect(page.locator('#image-file-name')).toHaveText('catalog-photo.jpg');
+    // (ut-docs#3133: the "catalog-photo.jpg" name is shown only until the
+    // automatic upload lands, then cleared with the file.)
     // The stream must actually be released, not left recording behind the
     // now-hidden viewfinder.
     await expect.poll(() => page.evaluate(() => (window as any).__stopCalls)).toBe(1);
 
     // The captured frame is a real Blob wired into the SAME canonical
     // #image-file field the plain file picker and the OS-camera input both
-    // use — prove it actually reaches the server via the existing form.
-    await page.locator('#image-form button[type=submit]').click();
+    // use. ut-docs#3133: Capture now submits that form by itself — no
+    // second "Upload Image" tap — and the tab shows the saved picture.
     await expect(page.locator('#image-msg')).toContainText('updated');
+    const current = page.locator('#image-current');
+    await expect(current).toBeVisible();
+    await expect(current).toHaveAttribute('src', /^\/public\/.*\?v=/);
+    await expect(current).toBeInViewport();
 
     assertClean();
+  });
+
+  // ut-docs#3133: the viewfinder used to fill the full-width dialog at 4:3
+  // (~1230x920 on the 1280x800 tablet), so its top went under the tab bar
+  // and Capture needed scrolling. It must fit, controls included.
+  for (const vp of [{ width: 1280, height: 800 }, { width: 1024, height: 600 }, { width: 360, height: 740 }]) {
+    test(`the viewfinder and its buttons fit on screen at ${vp.width}x${vp.height} (ut-docs#3133)`, async ({ page }) => {
+      await page.setViewportSize(vp);
+      await stubCamera(page);
+      await openItemImagePanel(page);
+      await page.locator('#image-camera-btn').click();
+      await expect(page.locator('#image-viewfinder')).toBeVisible();
+      const video = await page.locator('#image-viewfinder-video').boundingBox();
+      expect(video).not.toBeNull();
+      expect(video!.height).toBeLessThanOrEqual(Math.min(300, vp.height * 0.5));
+      expect(video!.width).toBeLessThanOrEqual(Math.min(400, vp.width));
+      for (const id of ['#image-viewfinder-video', '#image-viewfinder-capture-btn', '#image-viewfinder-cancel-btn']) {
+        await expect(page.locator(id)).toBeInViewport({ ratio: 1 });
+      }
+      await page.locator('#image-viewfinder-cancel-btn').click();
+    });
+  }
+
+  // ut-docs#3133 review finding 1: an upload that finishes after the
+  // operator already moved to another item must not paint the first item's
+  // picture under the second item's name.
+  test('switching item mid-upload never shows the previous item\'s photo (ut-docs#3133)', async ({ page }) => {
+    await stubCamera(page);
+    await page.route('**/api/catalog/item/image', async (route) => {
+      await new Promise((r) => setTimeout(r, 1500));
+      await route.continue();
+    });
+    await openItemImagePanel(page);
+    await page.locator('#image-camera-btn').click();
+    await page.waitForFunction(() => (document.querySelector('#image-viewfinder-video') as HTMLVideoElement).videoWidth > 0);
+    await page.locator('#image-viewfinder-capture-btn').click();
+    // Upload for Butter (itm009) is in flight; move to Cheddar (itm010).
+    await page.locator('#item-form-close-btn').click();
+    await page.locator('.catalog-row', { hasText: 'Cheddar Cheese 400g' }).click();
+    await page.locator('#item-form-tab-image').click();
+    await expect(page.locator('#image-item-id')).toHaveValue('itm010');
+    await page.waitForResponse('**/api/catalog/item/image');
+    await page.waitForTimeout(700); // let the late icon-state refresh land
+    const src = await page.locator('#image-current').getAttribute('src');
+    expect(src ?? '').not.toContain('itm009');
+  });
+
+  // ut-docs#3133 review finding 2: a chosen-but-not-uploaded file must not
+  // follow the operator to the next item (Upload Image would save it there).
+  test('a chosen file is dropped when another item is opened (ut-docs#3133)', async ({ page }) => {
+    await openItemImagePanel(page);
+    await page.locator('#image-file').setInputFiles({ name: 'pick.png', mimeType: 'image/png',
+      buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64') });
+    await expect(page.locator('#image-file-name')).toHaveText('pick.png');
+    await page.locator('#item-form-close-btn').click();
+    await page.locator('.catalog-row', { hasText: 'Cheddar Cheese 400g' }).click();
+    await page.locator('#item-form-tab-image').click();
+    await expect(page.locator('#image-item-id')).toHaveValue('itm010');
+    await expect(page.locator('#image-file-name')).toHaveText('');
+    expect(await page.locator('#image-file').evaluate((el: HTMLInputElement) => el.files ? el.files.length : 0)).toBe(0);
+  });
+
+  // ut-docs#3133 review finding 4: after Capture saved the photo, the file
+  // is not left armed for a duplicate "Upload Image".
+  test('after Capture saves, nothing is left to upload twice (ut-docs#3133)', async ({ page }) => {
+    await stubCamera(page);
+    await openItemImagePanel(page);
+    await page.locator('#image-camera-btn').click();
+    await page.waitForFunction(() => (document.querySelector('#image-viewfinder-video') as HTMLVideoElement).videoWidth > 0);
+    await page.locator('#image-viewfinder-capture-btn').click();
+    await expect(page.locator('#image-msg')).toContainText('updated');
+    expect(await page.locator('#image-file').evaluate((el: HTMLInputElement) => el.files ? el.files.length : 0)).toBe(0);
+    await expect(page.locator('#image-file-name')).toHaveText('');
+  });
+
+  test('an item that already has a photo shows it on the Item image tab (ut-docs#3133)', async ({ page }) => {
+    await stubCamera(page);
+    await openItemImagePanel(page);
+    await page.locator('#image-camera-btn').click();
+    await page.waitForFunction(() => (document.querySelector('#image-viewfinder-video') as HTMLVideoElement).videoWidth > 0);
+    await page.locator('#image-viewfinder-capture-btn').click();
+    await expect(page.locator('#image-msg')).toContainText('updated');
+    // Reopen from a fresh page load: the preview comes from the server.
+    await openItemImagePanel(page);
+    await expect(page.locator('#image-current')).toBeVisible();
+    await expect(page.locator('#image-current')).toHaveAttribute('src', /^\/public\//);
   });
 
   test('Cancel releases the camera without touching the file field', async ({ page }) => {

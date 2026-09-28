@@ -391,6 +391,9 @@
           <form id="image-form" enctype="multipart/form-data">
             <label>{{ T "basket.col.item" }} <input type="text" class="pick-item" id="image-item-label" readonly placeholder="{{ T "catalog.pick_row" }}"></label>
             <input type="hidden" name="item_id" id="image-item-id">
+            <!-- ut-docs#3133: the item's current picture (from icon-state's
+                 thumbnail_url), or the photo just taken/chosen. -->
+            <img id="image-current" class="item-image-current" alt="" hidden>
             <div class="muted">{{ T "catalog.image_types" }}</div>
             <div class="field-pair">
               <button type="button" class="btn secondary" id="image-camera-btn">{{ T "catalog.take_photo" }}</button>
@@ -1140,7 +1143,7 @@
     if (modHost) modHost.innerHTML = '<div id="item-modifiers-list"></div>';
     loadItemModifiers();
     var imgLabel = document.getElementById('image-item-label');
-    if (imgLabel) { imgLabel.value = row.dataset.name; document.getElementById('image-item-id').value = row.dataset.id; }
+    if (imgLabel) { imgLabel.value = row.dataset.name; document.getElementById('image-item-id').value = row.dataset.id; clearPendingImage(); }
     refreshBuiltinIconState(row.dataset.id);
     var lblLabel = document.getElementById('labels-item-label');
     if (lblLabel) { lblLabel.value = row.dataset.name; document.getElementById('labels-item-id').value = row.dataset.id; }
@@ -1416,6 +1419,37 @@
   var cameraBtn = document.getElementById('image-camera-btn');
   var VIEWFINDER_MSG = { notReady: "{{ T "catalog.viewfinder.not_ready" }}" };
   var viewfinderStream = null;
+  // ut-docs#3133: preview of the current / just-taken picture. A pending
+  // (not yet uploaded) file shows through an object URL, revoked when
+  // replaced so repeated captures don't leak blobs.
+  var imageCurrent = document.getElementById('image-current');
+  var pendingPreviewURL = null;
+  function showImagePreview(src) {
+    if (pendingPreviewURL && pendingPreviewURL !== src) { URL.revokeObjectURL(pendingPreviewURL); pendingPreviewURL = null; }
+    if (!imageCurrent) return;
+    if (src) {
+      imageCurrent.src = src;
+      imageCurrent.alt = document.getElementById('image-item-label').value || '';
+      imageCurrent.hidden = false;
+    } else {
+      imageCurrent.removeAttribute('src');
+      imageCurrent.hidden = true;
+    }
+  }
+  // Review of ut-docs#3133: a chosen-but-not-uploaded file belongs to the
+  // item it was chosen for — drop it on item switch/reset (or "Upload
+  // Image" would save it onto the next item) and once it has been saved.
+  function clearPendingImage() {
+    imageFileInput.value = '';
+    imageFileCamera.value = '';
+    imageFileNameEl.textContent = '';
+    if (pendingPreviewURL) showImagePreview('');
+  }
+  function showPendingFile(file) {
+    var url = URL.createObjectURL(file);
+    showImagePreview(url);
+    pendingPreviewURL = url;
+  }
   // True from the moment getUserMedia is requested until stopViewfinder()
   // runs (covering both "already open" and "still starting") so a second
   // click on the trigger button — reachable either before the first
@@ -1460,6 +1494,9 @@
         viewfinderStream = stream;
         viewfinderVideo.srcObject = stream;
         viewfinder.hidden = false;
+        // ut-docs#3133: bring the (now compact) preview and its buttons
+        // into view if the tab was scrolled.
+        if (viewfinder.scrollIntoView) viewfinder.scrollIntoView({ block: 'nearest' });
         // autoplay is normally enough, but some engines need an explicit
         // nudge for a MediaStream assigned programmatically after the
         // element already exists — muted, so this is allowed without a
@@ -1502,6 +1539,13 @@
       imageFileInput.files = dt.files;
       imageFileNameEl.textContent = file.name;
       stopViewfinder();
+      // ut-docs#3133: show the photo straight away and save it — Capture is
+      // the operator's decision, a second "Upload Image" tap was the step
+      // that got missed. dispatchEvent rather than requestSubmit() for the
+      // older WebViews; the submit listener below does the upload.
+      showPendingFile(file);
+      if (imageCurrent && imageCurrent.scrollIntoView) imageCurrent.scrollIntoView({ block: 'nearest' });
+      imageForm.dispatchEvent(new Event('submit', { cancelable: true }));
     }, 'image/jpeg', 0.85);
   });
   document.getElementById('image-choose-btn').addEventListener('click', function () { imageFileInput.click(); });
@@ -1511,10 +1555,11 @@
       dt.items.add(this.files[0]);
       imageFileInput.files = dt.files;
       imageFileNameEl.textContent = this.files[0].name;
+      showPendingFile(this.files[0]);
     }
   });
   imageFileInput.addEventListener('change', function () {
-    if (this.files && this.files[0]) { imageFileNameEl.textContent = this.files[0].name; }
+    if (this.files && this.files[0]) { imageFileNameEl.textContent = this.files[0].name; showPendingFile(this.files[0]); }
   });
   // Keep upload errors in the image form's own message slot: the form is
   // the source element, so htmx raises htmx:responseError here first —
@@ -1545,6 +1590,12 @@
         imageForm.removeEventListener('htmx:responseError', markFailed);
         if (failed) return;
         imsg.textContent = imageT.uploaded;
+        // ut-docs#3133 review: saved — nothing left armed for a duplicate
+        // "Upload Image" (the preview switches to the saved picture below).
+        if (document.getElementById('image-item-id').value === id) {
+          imageFileInput.value = '';
+          imageFileNameEl.textContent = '';
+        }
         // ut-docs#1844: an upload also changes what the built-in icon
         // grid should show (is_custom becomes true, any previously-pressed
         // built-in tile is no longer current) — without this the grid
@@ -1627,16 +1678,26 @@
     // ut-docs#2506: a new item selected → drop the previous item's search,
     // or its suggested/current tile could be the one the filter hid.
     if (!preserveMsg && window.clearIconFilter) window.clearIconFilter('builtin-icon-grid');
-    if (!itemId) { setBuiltinIconTiles('', '', false, preserveMsg); return; }
+    if (!itemId) { setBuiltinIconTiles('', '', false, preserveMsg); clearPendingImage(); showImagePreview(''); return; }
+    // ut-docs#3133 review: a response for an item the operator has since
+    // left (an upload finishing late, out-of-order reads) must not paint
+    // that item's picture or tiles under the current item's name.
+    function stillCurrent() { return document.getElementById('image-item-id').value === itemId; }
     fetch('/api/catalog/item/icon-state?item_id=' + encodeURIComponent(itemId))
       .then(function (res) { return res.json(); })
       .then(function (r) {
+        if (!stillCurrent()) return;
         var d = (r && r.data) || {};
         setBuiltinIconTiles(d.selected_key || '', d.suggested_key || '', !!d.is_custom, preserveMsg);
+        showImagePreview(d.thumbnail_url || '');
       })
       // Best-effort: a failed read just leaves the grid showing no
       // selection/suggestion rather than blocking the row selection itself.
-      .catch(function () { setBuiltinIconTiles('', '', false, preserveMsg); });
+      .catch(function () {
+        if (!stillCurrent()) return;
+        setBuiltinIconTiles('', '', false, preserveMsg);
+        showImagePreview('');
+      });
   }
 
   if (builtinIconGrid) {

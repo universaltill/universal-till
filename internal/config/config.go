@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/paths"
@@ -66,6 +67,24 @@ type MarketplaceConfig struct {
 
 	// Request timeout for marketplace HTTP calls
 	RequestTimeoutSec int
+}
+
+// DefaultStoreName is the name a till has before its owner names it: the
+// UT_STORE_NAME fallback, and the value migration 001 seeds into store.name.
+// It is a placeholder, never a real shop name (ut-docs#3096).
+const DefaultStoreName = "My Store"
+
+// cloudDefaultStoreName is what the cloud's /api/v1/stores/register names a
+// shop that registered with a blank name (ut-cloud handlers/stores.go).
+const cloudDefaultStoreName = "Universal Till store"
+
+// IsPlaceholderStoreName reports whether name is blank or one of the
+// defaults the till or the cloud fills in for an unnamed shop, compared
+// trimmed and case-insensitively. The setup wizard refuses such a name, and
+// registration never sends one (ut-docs#3096).
+func IsPlaceholderStoreName(name string) bool {
+	name = strings.TrimSpace(name)
+	return name == "" || strings.EqualFold(name, DefaultStoreName) || strings.EqualFold(name, cloudDefaultStoreName)
 }
 
 type Config struct {
@@ -130,7 +149,7 @@ func Init() (*Config, error) {
 	fallbackTimeout, _ := strconv.Atoi(getenv("UT_MARKETPLACE_FALLBACK_TIMEOUT_SEC", "30"))
 
 	cfg := &Config{
-		StoreName:  getenv("UT_STORE_NAME", "My Store"),
+		StoreName:  getenv("UT_STORE_NAME", DefaultStoreName),
 		ListenAddr: getenv("UT_LISTEN_ADDR", ":8080"),
 		// Env:        getenv("UT_ENV", "local"),
 		DataDir:      dataDir,
@@ -143,7 +162,7 @@ func Init() (*Config, error) {
 		AuthDisabled: auth.Disabled(os.Getenv("UT_AUTH")),
 		Marketplace: MarketplaceConfig{
 			EndpointURL:           getenv("UT_MARKETPLACE_ENDPOINT_URL", "http://127.0.0.1:8081/api"),
-			StoreID:               getenv("UT_MARKETPLACE_STORE_ID", getenv("UT_STORE_NAME", "My Store")),
+			StoreID:               getenv("UT_MARKETPLACE_STORE_ID", getenv("UT_STORE_NAME", DefaultStoreName)),
 			DeviceID:              getenv("UT_MARKETPLACE_DEVICE_ID", ""),
 			PublicKey:             getenv("UT_MARKETPLACE_PUBLIC_KEY", ""),
 			UploadToken:           getenv("UT_MARKETPLACE_UPLOAD_TOKEN", ""),
