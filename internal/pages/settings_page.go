@@ -19,7 +19,6 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/barcode"
-	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/data/seeddata"
 	"github.com/universaltill/universal-till/internal/enroll"
@@ -442,14 +441,6 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		locale := httpx.ResolveLocale(w, r)
-		// ut-docs#3091: the after-update chip links here with ?whatsnew=1 —
-		// opening the notes from it counts as seeing them, so the chip is
-		// already gone from the page it lands on.
-		if r.URL.Query().Get("whatsnew") != "" {
-			if err := markReleaseNotesSeen(r.Context(), d.Settings, buildinfo.Version); err != nil {
-				logging.L().Warnf("release notes: mark seen: %v", err)
-			}
-		}
 		all, _ := d.Settings.All(r.Context())
 		st := d.CurrentState()
 		scale := st.UIScale
