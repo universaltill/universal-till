@@ -1944,10 +1944,15 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		suggestedKey := catimport.PlaceholderIcon(itm.Name, categoryName)
 		selectedKey := ""
 		isCustom := false
+		// ut-docs#3133: the Item image tab previews the current picture from
+		// this (it already calls icon-state on item select and after every
+		// upload/icon pick), versioned like the catalog row's <img>.
+		thumbnailURL := ""
 		if path, hasPath, err := repo.ItemThumbnailPath(r.Context(), itemID); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
 			return
 		} else if hasPath {
+			thumbnailURL = httpx.ImgVersion(path)
 			isCustom = true
 			for _, ic := range catimport.BuiltinIcons() {
 				if ic.Path == path {
@@ -1961,6 +1966,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"selected_key":  selectedKey,
 			"is_custom":     isCustom,
 			"suggested_key": suggestedKey,
+			"thumbnail_url": thumbnailURL,
 		}, "")
 	})
 

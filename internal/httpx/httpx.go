@@ -948,6 +948,11 @@ func saleScreenReturnURLFor(mode string) string {
 // mtime, so browsers pick up redesigns without a manual hard refresh.
 // imgVersion appends a cache-busting mtime to a /public/... URL so replacing
 // a file (e.g. an item image upload) shows immediately despite browser cache.
+// ImgVersion is the `imgv` template func for Go callers that hand an
+// image URL to client-side JS instead of a template (ut-docs#3133: the
+// catalog Item image tab's current-picture preview).
+func ImgVersion(url string) string { return imgVersion(url) }
+
 func imgVersion(url string) string {
 	if rel, ok := strings.CutPrefix(url, "/"); ok && strings.HasPrefix(rel, "public/") {
 		return url + "?v=" + uploadVersion(rel)

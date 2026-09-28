@@ -4172,6 +4172,27 @@ body.login-screen {
   aspect-ratio: 4 / 3;
   object-fit: cover;
 }
+/* ut-docs#3133: the catalog photo viewfinder sits in the full-width item
+   dialog (#1956), where 100% at 4:3 was ~1230x920 on a 1280x800 tablet —
+   taller than the screen, top under the tab bar. A compact preview; the
+   AI-identify and barcode panels keep the shared sizing above. */
+#image-viewfinder .camera-overlay-video {
+  display: block;
+  inline-size: min(100%, 20rem);
+}
+/* ut-docs#3133: the item's current (or just-taken) picture on the Item
+   image tab. */
+.item-image-current {
+  display: block;
+  max-inline-size: 8rem;
+  max-block-size: 8rem;
+  object-fit: contain;
+  margin-block: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.item-image-current[hidden] { display: none; }
 .ai-identify-results { display: flex; flex-direction: column; gap: 0.5rem; }
 .ai-identify-results .ai-match {
   display: flex;
