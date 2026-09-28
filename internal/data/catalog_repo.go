@@ -2196,28 +2196,10 @@ func (r *CatalogRepo) CreateItem(ctx context.Context, in catalogtypes.ItemInput)
 	if in.ID == "" {
 		in.ID = uuid.NewString()
 	}
-	// ut-docs#1176: an item with no source SKU used to get its own internal
-	// UUID copied into the sku column here, which then leaked verbatim into
-	// every staff-facing surface that displays SKU (inventory grid, item
-	// search, receipts) — meaningless and confusing, and it defeated
-	// SKU-based search since nobody types a UUID. sku is a nullable UNIQUE
-	// column (001_init.sql); storing NULL for "no real SKU" is enough to
-	// satisfy uniqueness (SQLite treats NULLs as distinct from each other
-	// under UNIQUE, unlike duplicate empty strings) without inventing a
-	// display value. nullableString leaves in.SKU as "" for the caller.
-	active := 1
-	if !in.IsActive {
-		active = 0
-	}
-	_, err := r.db.ExecContext(ctx, `
-INSERT INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, stock_untracked, color)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, in.ID, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), boolToInt(in.StockUntracked), nullableString(in.Color))
-	if err != nil {
-		if isUniqueViolation(err) {
-			return "", ErrSKUExists
-		}
-		return "", fmt.Errorf("insert item: %w", err)
+	// ut-docs#3087: a blank SKU gets a generated, readable one (never the
+	// item's UUID — ut-docs#1176); see insertItemRow.
+	if err := insertItemRow(ctx, r.db, &in); err != nil {
+		return "", err
 	}
 	// Without this, a newly created item has NO row in inventory at all
 	// (RecordStockMovement's UPDATE can't create one, only adjust an
@@ -2291,6 +2273,47 @@ WHERE NOT EXISTS (
 		return fmt.Errorf("insert inventory row: %w", err)
 	}
 	return nil
+}
+
+// insertItemRow holds the only items-table insert (ut-docs#3087): CreateItem
+// and CreateItemTx both go through it, so no item is ever stored without
+// a SKU. A blank (or whitespace) in.SKU is replaced by nextItemSKU's
+// readable SKU and written back to in; if a concurrent insert claims that
+// SKU first, it generates again (bounded). An explicit SKU that is already
+// taken returns ErrSKUExists and is never replaced.
+func insertItemRow(ctx context.Context, q dbExecutor, in *catalogtypes.ItemInput) error {
+	active := 1
+	if !in.IsActive {
+		active = 0
+	}
+	autoSKU := isBlankSKU(in.SKU)
+	for attempt := 1; ; attempt++ {
+		if autoSKU {
+			sku, err := nextItemSKU(ctx, q, in.CategoryID)
+			if err != nil {
+				return fmt.Errorf("generate item sku: %w", err)
+			}
+			in.SKU = sku
+		}
+		_, err := q.ExecContext(ctx, `
+INSERT INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, stock_untracked, color)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, in.ID, in.SKU, in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), boolToInt(in.StockUntracked), nullableString(in.Color))
+		if err == nil {
+			return nil
+		}
+		if !isUniqueViolation(err) {
+			return fmt.Errorf("insert item: %w", err)
+		}
+		// Only a clash on items.sku is an SKU problem; a duplicate id (PK)
+		// is not, and generating again would not help.
+		if !strings.Contains(err.Error(), "items.sku") {
+			return fmt.Errorf("insert item: %w", err)
+		}
+		if !autoSKU || attempt >= maxAutoSKUAttempts {
+			return ErrSKUExists
+		}
+	}
 }
 
 // execer is satisfied by both *sql.DB and *sql.Tx — lets a single statement
@@ -2425,28 +2448,13 @@ func (r *CatalogRepo) CreateItemTx(ctx context.Context, tx *sql.Tx, in catalogty
 	if in.ID == "" {
 		in.ID = uuid.NewString()
 	}
-	// ut-docs#1176: see CreateItem's identical comment — don't fall back to
-	// the item's own UUID as a display SKU, store NULL instead.
-	active := 1
-	if !in.IsActive {
-		active = 0
-	}
-	_, err := tx.ExecContext(ctx, `
-INSERT INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, stock_untracked, color)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, in.ID, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), boolToInt(in.StockUntracked), nullableString(in.Color))
-	if err != nil {
-		// ut-docs#1510: unlike CreateItem, this branch never translated a
-		// UNIQUE(sku) violation into the distinguishable ErrSKUExists — a
-		// caller committing many rows in a loop (the catalog importer) could
-		// only tell "some DB error" from "that SKU is already in use," so a
-		// genuine race between two concurrent imports of the same SKU surfaced
-		// as a raw failed-row instead of the same clean "already in catalog"
-		// skip a sequential re-import gets. Mirrors CreateItem's own check.
-		if isUniqueViolation(err) {
-			return "", ErrSKUExists
-		}
-		return "", fmt.Errorf("insert item: %w", err)
+	// ut-docs#3087: same blank-SKU fill as CreateItem, read inside tx so an
+	// import's earlier rows in the same transaction count as taken.
+	// ut-docs#1510: an explicit SKU that is already in use comes back as
+	// ErrSKUExists, so the importer shows its clean "already in catalog"
+	// skip rather than a raw failed row.
+	if err := insertItemRow(ctx, tx, &in); err != nil {
+		return "", err
 	}
 	// Same reasoning as CreateItem: the item is already valid and sellable
 	// without a stock row (stock tracking is opt-in), so this must never

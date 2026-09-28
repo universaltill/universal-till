@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -127,8 +128,34 @@ func TestSaveItem_CreateBlankSKUGeneratesOne(t *testing.T) {
 	if _, err := f.catalog.SaveItem(context.Background(), data.ItemPatch{ID: "it-new", Create: true, Name: strp("Scone"), PriceMinor: i64p(250), SKU: strp("")}); err != nil {
 		t.Fatal(err)
 	}
-	if sku := f.str(t, `SELECT COALESCE(sku, '') FROM items WHERE id = 'it-new'`); !strings.HasPrefix(sku, "ITEM-") || len(sku) != 13 {
-		t.Fatalf("sku = %q, want a generated ITEM-XXXXXXXX (never an item without a SKU)", sku)
+	if sku := f.str(t, `SELECT COALESCE(sku, '') FROM items WHERE id = 'it-new'`); !regexp.MustCompile(`^ITEM-\d{4}$`).MatchString(sku) {
+		t.Fatalf("sku = %q, want a generated ITEM-NNNN (never an item without a SKU, ut-docs#3087)", sku)
+	}
+}
+
+// ut-docs#3087: a create that names a category gets that category's SKU
+// shape (cat1 is "Drinks", whose items have no numeric SKUs → DRI-0001).
+func TestSaveItem_CreateBlankSKUUsesCategoryShape(t *testing.T) {
+	f := newSaveFixture(t)
+	if _, err := f.catalog.SaveItem(context.Background(), data.ItemPatch{ID: "it-cat", Create: true, Name: strp("Lemonade"), PriceMinor: i64p(250), CategoryID: strp("cat1")}); err != nil {
+		t.Fatal(err)
+	}
+	if sku := f.str(t, `SELECT COALESCE(sku, '') FROM items WHERE id = 'it-cat'`); sku != "DRI-0001" {
+		t.Fatalf("sku = %q, want DRI-0001 from category Drinks", sku)
+	}
+}
+
+// ut-docs#3087 review: the create path validates the category before the
+// INSERT (the SKU generator reads it), so an unknown id gets the contract's
+// message, not a raw FOREIGN KEY error.
+func TestSaveItem_CreateUnknownCategoryIsRefusedCleanly(t *testing.T) {
+	f := newSaveFixture(t)
+	_, err := f.catalog.SaveItem(context.Background(), data.ItemPatch{ID: "it-bad", Create: true, Name: strp("Ghost"), PriceMinor: i64p(100), CategoryID: strp("no-such-cat")})
+	if err == nil || !strings.Contains(err.Error(), "does not exist on this till") {
+		t.Fatalf("err = %v, want the unknown-category message", err)
+	}
+	if n := f.str(t, `SELECT COUNT(*) FROM items WHERE id = 'it-bad'`); n != "0" {
+		t.Fatalf("item was created despite the unknown category")
 	}
 }
 
