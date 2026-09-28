@@ -362,6 +362,7 @@ func optionalAuth(path string) bool {
 var backgroundPollPaths = map[string]bool{
 	// base.html / nav.html shell, on every page.
 	"/ui/main-till-status": true,
+	"/ui/net-status":       true, // status-bar light, fetch every 10 s (ut-docs#3095)
 	"/ui/sync-chip":        true,
 	"/ui/fiscal-chip":      true,
 	"/ui/diagnostics-chip": true,
