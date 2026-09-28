@@ -1,11 +1,11 @@
 // Package ai gives the till assistive AI features (docs repo:
 // architecture/ai-integration.md) against a pluggable model backend.
 //
-// The primary backend is SELF-HOSTED (an Ollama server running an open
-// vision model on the shop's own hardware/homelab) — Farshid's direction is
-// no paid AI: local models now, a custom model trained on the shop's own
-// data later. The Claude and OpenAI APIs exist only as optional providers
-// for shops that choose one, with their own key (ADR-0085, ut-docs#1791).
+// The default backend is SELF-HOSTED (an Ollama server running an open
+// vision model on the shop's own hardware/homelab). A shop may pick any
+// other provider with its own key (ADR-0126, superseding ADR-0085); today
+// the Claude and OpenAI APIs are implemented (ut-docs#1791), and more
+// arrive as adapters. Never a Universal Till AI account.
 // Offline-first is binding (ADR-0003): nothing here sits on
 // the checkout path, every feature degrades to the non-AI experience, and
 // callers treat errors as "feature unavailable", never as a sale blocker.
