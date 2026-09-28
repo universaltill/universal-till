@@ -1213,7 +1213,7 @@ func TestGetLowStock_HTMLError_UsesErrorHTMLHelper(t *testing.T) {
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d: %s", rec.Code, rec.Body.String())
 	}
-	_, queryErr := pos.GetLowStockItems(context.Background(), dp.Db, "")
+	_, queryErr := pos.LowStockItemsFor(context.Background(), dp.Db, "", false)
 	if queryErr == nil {
 		t.Fatal("expected the closed *sql.DB to still fail the same query")
 	}
