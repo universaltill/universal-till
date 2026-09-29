@@ -20,4 +20,8 @@ here too. No PR numbers or card IDs; RTL arrows correct.
 **Known, not changed here:** the German Sell help topic already uses
 "Außer Haus" where the UI says "Zum Mitnehmen" (older text).
 
+**Added after main moved:** #1522 (Refunds / Cash adjustments permissions
+enforced) merged before the release, so the notes gained one Improved line in
+all five languages, using the permission names from each locale.
+
 **Verdict:** safe to merge.
