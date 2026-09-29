@@ -2944,5 +2944,11 @@
   "settings.about.english_only": "لم تُترجم بعد — معروضة بالإنجليزية.",
   "settings.about.no_notes": "لا تتوفر ملاحظات إصدار لهذا الإصدار.",
   "status.release_notes_updated": "تم التحديث إلى %s — اطّلع على الجديد",
-  "status.release_notes_dismiss": "إغلاق"
+  "status.release_notes_dismiss": "إغلاق",
+  "settings.store_name.title": "اسم المتجر",
+  "settings.store_name.help": "يُطبع على كل إيصال ويظهر في التقارير.",
+  "settings.store_name.error_required": "أدخل اسم متجرك. يُطبع على كل إيصال.",
+  "settings.store_name.error_too_long": "يمكن أن يتكوّن اسم المتجر من 80 حرفًا كحدٍّ أقصى.",
+  "settings.store_name.error_invalid_chars": "لا يمكن أن يحتوي اسم المتجر على فواصل أسطر أو علامات جدولة أو أحرف مخفية.",
+  "elevation.summary.store_name": "إعادة تسمية المتجر إلى \"%s\"."
 }

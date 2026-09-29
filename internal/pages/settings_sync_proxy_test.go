@@ -446,3 +446,33 @@ func TestSettingsWriteThrough_CountryOlderMainPointsAtMainTill(t *testing.T) {
 	}
 	wantPending(t, dp)
 }
+
+// ut-docs#3115 review: on an additional till the local store.name is a
+// mirror that can lag the main till (a rename from my. or another till not
+// pulled yet). A rename that happens to match the stale mirror must still
+// reach the main till instead of being answered "unchanged" locally.
+func TestSettingsWriteThrough_StoreNameForwardsEvenWhenMirrorMatches(t *testing.T) {
+	main := newSettingsSyncMain(t)
+	mux, dp := newSettingsSyncReplica(t, main.srv.URL)
+	if err := main.dp.Settings.Set(t.Context(), common.KeyStoreName, "Renamed From Cloud"); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(t.Context(), common.KeyStoreName, "Corner Cafe"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := postForm(mux, "/api/settings/store-name", url.Values{"store_name": {"Corner Cafe"}}, &mgrUser)
+	if rec.Code != http.StatusNoContent && rec.Code != http.StatusOK {
+		t.Fatalf("replica store-name = %d %q", rec.Code, rec.Body.String())
+	}
+	if main.calls.Load() != 1 {
+		t.Fatalf("main till calls = %d, want 1: a rename matching the stale mirror was dropped", main.calls.Load())
+	}
+	if got := mustSetting(t, main.dp, common.KeyStoreName); got != "Corner Cafe" {
+		t.Fatalf("main till store.name = %q, want Corner Cafe", got)
+	}
+	if got := mustSetting(t, dp, common.KeyStoreName); got != "Corner Cafe" {
+		t.Fatalf("replica store.name = %q, want the mirrored Corner Cafe", got)
+	}
+	assertSettingSyncAudit(t, main.dp, "m1", common.KeyStoreName, "Corner Cafe", "Till 2")
+}

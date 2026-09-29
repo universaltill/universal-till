@@ -1953,6 +1953,26 @@
     </div>
   </form>
 </div>
+<!-- ut-docs#3115: the shop's name (store.name), editable after setup.
+     Elevation-wired like Shop type below, so it renders for every session.
+     A plain text input: osk.js's guardSweep gives it inputmode="none" when
+     the on-screen keyboard is on, like every other Settings text field. The
+     value is blank while the name is still a placeholder ("My Store").
+     hx-target: a refused name answers 400 with an HTML fragment that
+     app.js swaps into #store-name-msg (no page-wide error banner); the
+     elevation prompt's hint lands there too. A save answers 204 and the
+     page reloads to show it; any other failure (e.g. the main till is
+     unreachable from an additional till) shows its message there. -->
+<div class="card" id="settings-store-name">
+  <h2>{{ T "settings.store_name.title" }}</h2>
+  <p class="muted">{{ T "settings.store_name.help" }}</p>
+  <form hx-post="/api/settings/store-name" hx-target="#store-name-msg" hx-swap="innerHTML" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){UT.reload('settings-save')} } else {document.getElementById('store-name-msg').textContent=event.detail.xhr.responseText; document.getElementById('settings-save-error').hidden=false}">
+    <label for="store-name-input" class="visually-hidden">{{ T "settings.store_name.title" }}</label>
+    <input type="text" id="store-name-input" name="store_name" value="{{ .storeName }}" maxlength="80" dir="auto" autocomplete="off" data-testid="store-name-input">
+    <button class="btn" type="submit" data-testid="store-name-save">{{ T "common.save" }}</button>
+    <span id="store-name-msg" aria-live="polite" data-testid="store-name-msg"></span>
+  </form>
+</div>
 <!-- ut-docs#867: currency and shop-type post to elevation-wired endpoints —
      both cards render for every session. -->
 <div class="card" id="settings-currency">

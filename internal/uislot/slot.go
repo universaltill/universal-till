@@ -574,6 +574,9 @@ var CoreSettings = []Entry{
 	{Key: "settings-kiosk-idle-reset", Href: "#settings-kiosk-idle-reset", LabelKey: "settings.kiosk_idle_reset.title", Order: 1900, Group: "settings.cat.devices.label"},
 	{Key: "settings-kiosk-payment-mode", Href: "#settings-kiosk-payment-mode", LabelKey: "settings.kiosk.payment_mode", Order: 2000, Group: "settings.cat.devices.label"},
 	{Key: "settings-telemetry", Href: "#settings-telemetry", LabelKey: "settings.telemetry.title", Order: 2100, Group: "settings.cat.advanced.label"},
+	// ut-docs#3115: Shop name, first in My shop (the template declares it
+	// right before the Currency card).
+	{Key: "settings-store-name", Href: "#settings-store-name", LabelKey: "settings.store_name.title", Order: 2150, Group: "settings.cat.shop.label"},
 	{Key: "settings-currency", Href: "#settings-currency", LabelKey: "settings.currency.title", Order: 2200, Group: "settings.cat.shop.label"},
 	{Key: "settings-language", Href: "#settings-language", LabelKey: "settings.language.title", Order: 2300, Group: "settings.cat.shop.label"},
 	// ut-docs#3086: Languages shown to staff, right after the Language card.

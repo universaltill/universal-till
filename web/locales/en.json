@@ -2944,5 +2944,11 @@
   "settings.about.english_only": "Not translated yet — shown in English.",
   "settings.about.no_notes": "No release notes are available for this version.",
   "status.release_notes_updated": "Updated to %s — see what's new",
-  "status.release_notes_dismiss": "Dismiss"
+  "status.release_notes_dismiss": "Dismiss",
+  "settings.store_name.title": "Shop name",
+  "settings.store_name.help": "Printed on every receipt and shown on reports.",
+  "settings.store_name.error_required": "Enter your shop’s name. It is printed on every receipt.",
+  "settings.store_name.error_too_long": "The shop name can be at most 80 characters.",
+  "settings.store_name.error_invalid_chars": "The shop name can’t contain line breaks, tabs or hidden characters.",
+  "elevation.summary.store_name": "Rename the shop to \"%s\"."
 }

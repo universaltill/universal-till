@@ -630,6 +630,7 @@ var demoAllowedRoutes = map[string]bool{
 	"POST /api/settings/remove-demo-catalogue":          true,
 	"POST /api/settings/save":                           true,
 	"POST /api/settings/staff-languages":                true,
+	"POST /api/settings/store-name":                     true,
 	"POST /api/settings/till-name":                      true,
 	"POST /api/settings/till-register":                  true,
 	"POST /api/settings/ui-scale":                       true,

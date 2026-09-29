@@ -1,11 +1,14 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/paths"
@@ -85,6 +88,69 @@ const cloudDefaultStoreName = "Universal Till store"
 func IsPlaceholderStoreName(name string) bool {
 	name = strings.TrimSpace(name)
 	return name == "" || strings.EqualFold(name, DefaultStoreName) || strings.EqualFold(name, cloudDefaultStoreName)
+}
+
+// MaxStoreNameRunes bounds a shop name after trimming — the same limit
+// ut-cloud's claims.MaxStoreNameRunes puts on a rename from my. (ut-docs#3115).
+const MaxStoreNameRunes = 80
+
+// Reasons NormalizeStoreName refuses a name; compare with errors.Is.
+var (
+	// ErrStoreNameRequired: blank (after trimming, or only invisible
+	// joiners) or a placeholder (IsPlaceholderStoreName).
+	ErrStoreNameRequired = errors.New("store name required")
+	// ErrStoreNameTooLong: more than MaxStoreNameRunes characters.
+	ErrStoreNameTooLong = errors.New("store name too long")
+	// ErrStoreNameInvalidChars: invalid UTF-8, control characters (line
+	// breaks and tabs included), bidi override/isolate characters or
+	// invisible format characters other than ZWNJ/ZWJ.
+	ErrStoreNameInvalidChars = errors.New("store name has invalid characters")
+)
+
+// isBidiControl reports the explicit bidi embedding/override (U+202A–U+202E)
+// and isolate (U+2066–U+2069) characters: they can make a name render as
+// something other than what it stores on a receipt.
+func isBidiControl(r rune) bool {
+	return (r >= 0x202A && r <= 0x202E) || (r >= 0x2066 && r <= 0x2069)
+}
+
+// isInvisibleFormat reports a Unicode format (Cf) character other than
+// ZWNJ (U+200C) and ZWJ (U+200D), which Persian words and emoji sequences
+// need.
+func isInvisibleFormat(r rune) bool {
+	return unicode.Is(unicode.Cf, r) && r != 0x200C && r != 0x200D
+}
+
+// NormalizeStoreName trims s and checks it as a shop name (ut-docs#3115).
+// It mirrors ut-cloud's claims.NormalizeStoreName — valid UTF-8, 1 to
+// MaxStoreNameRunes runes, no control, bidi-control or invisible format
+// characters (ZWNJ/ZWJ allowed, but not on their own) — so a name the
+// till accepts is one the cloud would accept too, and additionally refuses
+// the placeholders IsPlaceholderStoreName knows. A refusal wraps one of
+// ErrStoreNameRequired, ErrStoreNameTooLong or ErrStoreNameInvalidChars.
+func NormalizeStoreName(s string) (string, error) {
+	if !utf8.ValidString(s) {
+		return "", ErrStoreNameInvalidChars
+	}
+	s = strings.TrimSpace(s)
+	switch n := utf8.RuneCountInString(s); {
+	case n == 0:
+		return "", ErrStoreNameRequired
+	case n > MaxStoreNameRunes:
+		return "", ErrStoreNameTooLong
+	}
+	if strings.ContainsFunc(s, unicode.IsControl) ||
+		strings.ContainsFunc(s, isBidiControl) ||
+		strings.ContainsFunc(s, isInvisibleFormat) {
+		return "", ErrStoreNameInvalidChars
+	}
+	if !strings.ContainsFunc(s, func(r rune) bool { return !unicode.Is(unicode.Cf, r) }) {
+		return "", ErrStoreNameRequired
+	}
+	if IsPlaceholderStoreName(s) {
+		return "", ErrStoreNameRequired
+	}
+	return s, nil
 }
 
 type Config struct {

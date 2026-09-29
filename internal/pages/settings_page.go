@@ -20,6 +20,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/barcode"
+	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/data/seeddata"
 	"github.com/universaltill/universal-till/internal/enroll"
@@ -207,6 +208,29 @@ func settingsRespondSaved(w http.ResponseWriter, r *http.Request, elev elevation
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// storeNameForCard is the Shop name card's prefill (ut-docs#3115): the
+// stored name, or blank while it is still a placeholder so the owner types
+// the real one instead of editing "My Store".
+func storeNameForCard(stored string) string {
+	if config.IsPlaceholderStoreName(stored) {
+		return ""
+	}
+	return strings.TrimSpace(stored)
+}
+
+// storeNameErrorKey maps a config.NormalizeStoreName refusal to the
+// message the Shop name card shows.
+func storeNameErrorKey(err error) string {
+	switch {
+	case errors.Is(err, config.ErrStoreNameTooLong):
+		return "settings.store_name.error_too_long"
+	case errors.Is(err, config.ErrStoreNameInvalidChars):
+		return "settings.store_name.error_invalid_chars"
+	default:
+		return "settings.store_name.error_required"
+	}
 }
 
 // staffLocaleSet is the effective staff-language list as a set, for the
@@ -771,6 +795,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"reportArchiveCoverage":  reportArchiveCoverage,
 			"shopType":               shopType,
 			"shopTypes":              setupShopTypes,
+			"storeName":              storeNameForCard(all[common.KeyStoreName]),  // ut-docs#3115
 			"staffLocaleSet":         staffLocaleSet(all[common.KeyStaffLocales]), // ut-docs#3086
 			"defaultStaffLocale":     httpx.DefaultStaffLocale(),
 			"restorePromptDeferred":  restorePromptDeferred,
@@ -2001,6 +2026,62 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		settingsAudit(r, posRepo, elev, "settings", common.KeyShopType, "shop_type_changed",
 			map[string]any{"shop_type": v})
+		settingsRespondSaved(w, r, elev)
+	})
+
+	// Shop name (ut-docs#3115): store.name, editable after the setup
+	// wizard. Shop-wide, so an additional till forwards it to the main till
+	// (saveShopSettings). A rename from my. reaches the main till as a
+	// set_setting directive instead. Receipts, reports and registration
+	// read store.name live.
+	mux.HandleFunc("POST /api/settings/store-name", func(w http.ResponseWriter, r *http.Request) {
+		// Validate BEFORE the elevation gate (ut-docs#557 convention).
+		_ = r.ParseForm()
+		// RequestLocale, not ResolveLocale: a refused POST must not set the
+		// ?lang= cookie.
+		locale := httpx.RequestLocale(r)
+		name, err := config.NormalizeStoreName(r.Form.Get("store_name"))
+		if err != nil {
+			// A text/html fragment, not http.Error's text/plain: app.js
+			// (ut-docs#916) swaps a non-empty HTML 4xx into the card's own
+			// #store-name-msg instead of raising the page-wide "something
+			// went wrong" banner over a plain validation refusal.
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(httpx.T(locale, storeNameErrorKey(err))))
+			return
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/settings/store-name", "#store-name-msg",
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.store_name"), name),
+				[]elevationHiddenField{{Name: "store_name", Value: name}}, elev)
+			return
+		}
+		old, _, err := d.Settings.Get(r.Context(), common.KeyStoreName)
+		if err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		// Unchanged: nothing to write or audit (ut-cloud's RenameStore
+		// treats a same-name rename the same way). Only on a till that
+		// decides for itself: an additional till's store.name is a mirror
+		// that can lag the main till (a rename from my. or another till not
+		// pulled yet), so a match here proves nothing and short-circuiting
+		// would silently drop the rename. It always forwards, and "old" in
+		// its audit entry is its mirror's value.
+		if strings.TrimSpace(old) == name && !tillFollowsMain(r.Context(), d) {
+			settingsRespondSaved(w, r, elev)
+			return
+		}
+		if err := saveShopSettings(r.Context(), d, elev, map[string]string{common.KeyStoreName: name}); err != nil {
+			if !respondSettingsSyncError(w, r, err) {
+				http.Error(w, "could not save", http.StatusInternalServerError)
+			}
+			return
+		}
+		settingsAudit(r, posRepo, elev, "settings", common.KeyStoreName, "store_name_changed",
+			map[string]any{"old": old, "new": name})
 		settingsRespondSaved(w, r, elev)
 	})
 

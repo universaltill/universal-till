@@ -1,10 +1,12 @@
 package pages
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -172,7 +174,7 @@ func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 				if busy {
 					httpx.RenderPartial("ui/pages/self_order.html", map[string]any{
 						"title":    httpx.T(httpx.RequestLocale(r), "page.title.self_order"),
-						"shopName": d.Cfg.StoreName,
+						"shopName": kioskShopName(r.Context(), d),
 						"Busy":     true,
 					})(w, r)
 					return
@@ -186,9 +188,22 @@ func registerSelfOrder(mux *http.ServeMux, d *common.Deps) {
 		httpx.RenderPartial("ui/pages/self_order.html", map[string]any{
 			"title":         httpx.T(httpx.RequestLocale(r), "page.title.self_order"),
 			"idleResetSecs": st.KioskIdleResetSeconds,
-			"shopName":      d.Cfg.StoreName,
+			"shopName":      kioskShopName(r.Context(), d),
 		})(w, r)
 	})
+}
+
+// kioskShopName is the name the kiosk header shows: store.name read live
+// (a rename in Settings, from my. or in the setup wizard shows on the next
+// page load, ut-docs#3020), falling back to the boot-time cfg.StoreName
+// while the setting is unset, unreadable or still a placeholder (migration
+// 001 seeds "My Store", which must not hide a UT_STORE_NAME name). Not storeNameOrDefault: its
+// untranslated "this shop" fallback must never reach a customer screen.
+func kioskShopName(ctx context.Context, d *common.Deps) string {
+	if v, ok, err := d.Settings.Get(ctx, common.KeyStoreName); err == nil && ok && !config.IsPlaceholderStoreName(v) {
+		return v
+	}
+	return d.Cfg.StoreName
 }
 
 // bindSelfOrderTableSession is the ?table= half of GET /self-order
