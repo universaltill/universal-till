@@ -7,6 +7,7 @@
 // into a bottom bar (Dine in | Takeaway + "Pay £x · n items") that opens a
 // sheet with the editable lines and the tender panel.
 import { test, expect, type Page } from './fixtures';
+import { setBrowsingMode } from './helpers';
 
 async function geometry(page: Page) {
   return page.evaluate(() => {
@@ -186,6 +187,85 @@ test.describe('phone sale screen (ut-docs#3059)', () => {
     }));
     expect(z.bar, 'the pay bar must sit under the scrim, never tappable behind a dialog').toBeLessThan(z.scrim);
     expect(z.status, 'the status row stays reachable over the scrim').toBeGreaterThan(z.scrim);
+  });
+
+  // Product owner, 2026-09-29, comparing the iPhone build with the mock-up:
+  // search and edit in the top bar, the status row in the ☰ menu, Dine in |
+  // Takeaway next to Pay, and the categories as a bar of pills.
+  test('search and edit sit in the top bar; the search field opens under it', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+    await expect(page.locator('.btn-tile').first()).toBeVisible();
+    const nav = (await page.locator('.nav').boundingBox())!;
+    for (const sel of ['.products-strip-search', '.products-strip-edit']) {
+      const b = (await page.locator(sel).boundingBox())!;
+      expect(b.y, `${sel} is inside the top bar`).toBeGreaterThanOrEqual(nav.y);
+      expect(b.y + b.height).toBeLessThanOrEqual(nav.y + nav.height + 1);
+      expect(b.width).toBeGreaterThanOrEqual(44);
+      expect(b.x + b.width, `${sel} is at the bar's end`).toBeGreaterThan(390 - 110);
+    }
+    // Nothing else in the bar sits under them.
+    const logo = (await page.locator('.nav .logo').boundingBox())!;
+    const search = (await page.locator('.products-strip-search').boundingBox())!;
+    expect(logo.x + logo.width).toBeLessThanOrEqual(search.x);
+    await page.locator('.products-strip-search').click();
+    const input = page.locator('#products-search');
+    await expect(input).toBeFocused();
+    const ib = (await input.boundingBox())!;
+    expect(ib.y, 'the field is under the bar, not over it').toBeGreaterThanOrEqual(nav.y + nav.height);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.products-strip-search')).toBeVisible();
+  });
+
+  test('the status row lives in the ☰ menu; a problem (offline) brings it back on the sale screen', async ({ page, context }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+    await expect(page.locator('.btn-tile').first()).toBeVisible();
+    const status = page.locator('.statusbar');
+    await expect(status, 'no status row over the tiles at rest').toBeHidden();
+    await page.locator('.nav-drawer-toggle').click();
+    await expect(status).toBeVisible();
+    await expect(status.locator('.sb-ver')).toBeVisible();
+    const drawer = (await page.locator('#nav-drawer').boundingBox())!;
+    const sb = (await status.boundingBox())!;
+    expect(Math.abs(sb.x - drawer.x), 'the row is the drawer\'s foot').toBeLessThanOrEqual(1);
+    expect(Math.abs(sb.width - drawer.width)).toBeLessThanOrEqual(1);
+    expect(Math.round(sb.y + sb.height)).toBeGreaterThanOrEqual(843);
+    await page.keyboard.press('Escape');
+    await expect(status).toBeHidden();
+    await context.setOffline(true);
+    try {
+      await expect(page.locator('#sb-conn')).toHaveClass(/is-offline/);
+      await expect(status, 'offline state is never hidden').toBeVisible();
+      const bar = (await page.locator('#basket').boundingBox())!;
+      const sb2 = (await status.boundingBox())!;
+      expect(sb2.y + sb2.height).toBeLessThanOrEqual(bar.y + 1);
+    } finally {
+      await context.setOffline(false);
+    }
+  });
+
+  test('Dine in | Takeaway sits next to Pay, one row; categories are 40px pills', async ({ page }) => {
+    await setBrowsingMode(page, 'all_filter_chips');
+    try {
+    for (const vp of [{ width: 390, height: 844 }, { width: 360, height: 800 }]) {
+      await page.setViewportSize(vp);
+      await page.goto('/');
+      await expect(page.locator('.btn-tile').first()).toBeVisible();
+      const seg = (await page.locator('#basket .order-type-toggle-group').boundingBox())!;
+      const pay = (await page.locator('.basket-phonebar').boundingBox())!;
+      expect(Math.abs(seg.y - pay.y), `${vp.width}: same row`).toBeLessThanOrEqual(2);
+      expect(seg.x + seg.width).toBeLessThanOrEqual(pay.x);
+      expect(pay.x + pay.width).toBeLessThanOrEqual(vp.width);
+      expect(pay.height).toBeLessThanOrEqual(64);
+      const chip = page.locator('.pos-container .products .filter-chips .chip').first();
+      const c = (await chip.boundingBox())!;
+      expect(Math.round(c.height)).toBe(40);
+      expect(c.y, 'the pills sit right under the top bar').toBeLessThan(140);
+    }
+    } finally {
+      await setBrowsingMode(page, 'strip_overflow');
+    }
   });
 
   for (const vp of [{ width: 1024, height: 600 }, { width: 800, height: 1280 }]) {

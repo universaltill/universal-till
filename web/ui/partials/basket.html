@@ -116,14 +116,14 @@
               data-testid="order-type-dine-in"
               hx-post="/api/pos/order-type" hx-vals='{{ jsonVals "order_type" "" }}'
               hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
-        🍽️ {{ if eq .OrderType "mixed" }}{{ T "basket.order_type.all_dine_in" }}{{ else }}{{ T "basket.order_type.dine_in" }}{{ end }}
+        <span class="order-type-ico" aria-hidden="true">🍽️</span> {{ if eq .OrderType "mixed" }}{{ T "basket.order_type.all_dine_in" }}{{ else }}{{ T "basket.order_type.dine_in" }}{{ end }}
       </button>
       <button type="button" class="order-type-option{{ if eq .OrderType "takeaway" }} is-active{{ end }}"
               role="radio" aria-checked="{{ if eq .OrderType "takeaway" }}true{{ else }}false{{ end }}"
               data-testid="order-type-takeaway"
               hx-post="/api/pos/order-type" hx-vals='{{ jsonVals "order_type" "takeaway" }}'
               hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
-        🥡 {{ if eq .OrderType "mixed" }}{{ T "basket.order_type.all_takeaway" }}{{ else }}{{ T "basket.order_type.takeaway" }}{{ end }}
+        <span class="order-type-ico" aria-hidden="true">🥡</span> {{ if eq .OrderType "mixed" }}{{ T "basket.order_type.all_takeaway" }}{{ else }}{{ T "basket.order_type.takeaway" }}{{ end }}
       </button>
     </div>
     <!-- Table assignment (ut-docs#820, ADR-0054): was an always-expanded

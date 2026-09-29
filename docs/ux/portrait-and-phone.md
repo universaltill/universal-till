@@ -87,6 +87,30 @@ of scope and unchanged. Short stacked landscape windows in the same width range
   not ship (#1985 AC).
 - Everything a sale needs sits in the bottom two thirds, for one-handed use.
 
+### As shipped (ut-docs#3059, and the 2026-09-29 pass against the mock-up)
+
+The build replaced the rail with a ☰ drawer (the owner's own exception for
+phones). The approved mock-up is the "Phone sell screen" design canvas.
+
+```
+┌────────────────────────────┐
+│ ☰  Universal Till    🔍  ✎ │  56px top bar; search + edit at its end
+├────────────────────────────┤
+│ (All) (Food) (Drinks) (…)  │  40px pills, sticky, scroll sideways
+│  ▢    ▢    ▢               │
+│  ▢    ▢    ▢               │  app-icon tiles, 3 per row
+├────────────────────────────┤
+│ [Dine in|Takeaway] [Pay £x ⌃]│ one row; tap Pay: basket sheet
+└────────────────────────────┘
+```
+
+- **Status row:** at the foot of the ☰ drawer. It returns above the pay bar
+  only for a problem (offline / no internet, main till unreachable, weak
+  power supply), and above the scrim while a dialog is open, since ☰ is
+  then covered.
+- **Table button:** in the basket sheet, which shows the whole order-type
+  row. The bottom bar only holds Dine in | Takeaway and Pay.
+
 ## #1985's three decisions
 
 1. **Bottom-nav overflow:** there is no bottom nav. Binding rule 1 keeps the
