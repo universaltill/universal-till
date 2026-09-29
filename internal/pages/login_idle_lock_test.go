@@ -17,7 +17,7 @@ import (
 func TestLoginVisitDoesNotExtendAnIdleSession(t *testing.T) {
 	withOSLocale(t, "", "")
 	mux, svc, d := newAuthTestMux(t)
-	rec := postForm(mux, "/api/auth/setup", url.Values{"pin": {"2468"}, "pin_confirm": {"2468"}}, nil)
+	rec := postForm(mux, "/api/auth/setup", url.Values{"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"}}, nil)
 	var cookie string
 	for _, c := range rec.Result().Cookies() {
 		if c.Name == auth.CookieName {
