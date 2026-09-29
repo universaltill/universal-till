@@ -61,6 +61,14 @@ func registerPermissionSettings(mux *http.ServeMux, d *common.Deps) {
 		rowByAction := map[string]*actionRow{}
 		var rows []*actionRow
 		for _, g := range grants {
+			if _, hidden := permissionHiddenActions[g.Action]; hidden {
+				// Still collect the role column, just never render the row.
+				if !seenRole[g.Role] {
+					seenRole[g.Role] = true
+					roles = append(roles, g.Role)
+				}
+				continue
+			}
 			if !seenRole[g.Role] {
 				seenRole[g.Role] = true
 				roles = append(roles, g.Role)
@@ -99,7 +107,9 @@ func registerPermissionSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		// Group the rows (permission_groups.go); anything the table doesn't
-		// place still renders, in a trailing "other" group.
+		// place still renders, in a trailing "other" group. Hidden actions
+		// (permissionHiddenActions) never reached rows above, so they land
+		// in neither.
 		placed := map[string]bool{}
 		var groups []groupView
 		for _, g := range permissionGroups {

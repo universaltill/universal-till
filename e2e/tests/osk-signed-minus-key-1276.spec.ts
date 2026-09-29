@@ -108,10 +108,11 @@ test.describe('osk.js numeric minus key (ut-docs#1276)', () => {
 
     await page.locator('#adjustment-form input[name="reason"]').fill('e2e: ut-docs#1276 payout via OSK');
 
-    const pin = page.locator('#adjustment-form input[name="manager_pin"]');
-    await pin.click();
-    await expect(page.locator('#osk.osk-open')).toBeVisible();
-    await typeViaOsk(page, '1234');
+    // ut-docs#3134: the manager-PIN field renders only for a session whose
+    // role lacks cash_adjustment. This project runs with UT_AUTH=off, where
+    // every permission check passes, so there is no PIN field to fill and
+    // the payout goes straight through.
+    await expect(page.locator('#adjustment-form input[name="manager_pin"]')).toHaveCount(0);
 
     const [response] = await Promise.all([
       page.waitForResponse((r) => r.url().includes('/api/shifts/adjustment')),

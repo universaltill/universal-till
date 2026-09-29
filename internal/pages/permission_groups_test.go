@@ -323,9 +323,10 @@ func TestPermissionGuard_CoreVisibleIfNamesAreActionsOrComposite(t *testing.T) {
 }
 
 // TestPermissionGroups_EveryActionInExactlyOneGroup: the group table places
-// each DB action exactly once (an unplaced one would fall into the runtime
+// each DB action exactly once — or lists it in permissionHiddenActions,
+// never both (an unplaced, unhidden one would fall into the runtime
 // "Other" group — this test is what makes CI catch that), names no action
-// the DB lacks, and every group/action has its locale keys.
+// the DB lacks, and every group/shown action has its locale keys.
 func TestPermissionGroups_EveryActionInExactlyOneGroup(t *testing.T) {
 	actions := dbPermissionActions(t)
 	keys := enLocaleKeys(t)
@@ -350,17 +351,29 @@ func TestPermissionGroups_EveryActionInExactlyOneGroup(t *testing.T) {
 			if !actions[a] {
 				t.Errorf("group %q lists %q, which has no permission_actions row", g.Key, a)
 			}
+			if _, hidden := permissionHiddenActions[a]; hidden {
+				t.Errorf("action %q is both in group %q and in permissionHiddenActions — pick one", a, g.Key)
+			}
+		}
+	}
+	for a, why := range permissionHiddenActions {
+		if !actions[a] {
+			t.Errorf("permissionHiddenActions lists %q, which has no permission_actions row — drop it", a)
+		}
+		if strings.TrimSpace(why) == "" {
+			t.Errorf("permissionHiddenActions[%q] has no reason — say why the till doesn't show it", a)
 		}
 	}
 	var missing []string
 	for a := range actions {
-		if _, ok := placed[a]; !ok {
+		_, hidden := permissionHiddenActions[a]
+		if _, ok := placed[a]; !ok && !hidden {
 			missing = append(missing, a)
 		}
 	}
 	sort.Strings(missing)
 	for _, a := range missing {
-		t.Errorf("permission action %q is in no group in permissionGroups — it renders under \"Other\"; place it (permission_groups.go)", a)
+		t.Errorf("permission action %q is in no group in permissionGroups — it renders under \"Other\"; place it or hide it (permission_groups.go)", a)
 	}
 	for _, g := range append(append([]permissionGroup{}, permissionGroups...), permissionGroup{Key: permissionOtherGroup}) {
 		if _, ok := keys["permissions.group."+g.Key]; !ok {
@@ -368,13 +381,33 @@ func TestPermissionGroups_EveryActionInExactlyOneGroup(t *testing.T) {
 		}
 	}
 	for a := range actions {
-		if _, ok := keys["permissions.action_desc."+a]; !ok {
+		_, hidden := permissionHiddenActions[a]
+		_, has := keys["permissions.action_desc."+a]
+		if !hidden && !has {
 			t.Errorf("en.json has no permissions.action_desc.%s description", a)
+		}
+		if hidden && has {
+			t.Errorf("en.json still has permissions.action_desc.%s, but the page never shows that action — remove the key", a)
 		}
 	}
 	for _, k := range []string{"permissions.unlocks", "permissions.unlocks_separator"} {
 		if _, ok := keys[k]; !ok {
 			t.Errorf("en.json has no %s", k)
+		}
+	}
+}
+
+// ut-docs#3134: the till has no whole-sale void and no price override, so
+// those two boxes would promise something nothing checks — they are hidden.
+func TestPermissionHiddenActions_VoidAndPriceOverride(t *testing.T) {
+	for _, a := range []string{"void", "price_override"} {
+		if _, ok := permissionHiddenActions[a]; !ok {
+			t.Errorf("%q must be in permissionHiddenActions (ut-docs#3134)", a)
+		}
+	}
+	for _, a := range []string{"refund", "cash_adjustment", "void_comp_waste"} {
+		if _, ok := permissionHiddenActions[a]; ok {
+			t.Errorf("%q is enforced by the till and must stay on the page", a)
 		}
 	}
 }

@@ -573,7 +573,8 @@ func refundCharges(detail data.SaleDetail, guard refundGuardState, num, den int6
 }
 
 // registerRefund mounts the refund screen + API (docs: refunds.md, G27/G28).
-func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
+// The refund gate reads d.AuthSvc via checkOrElevate (ut-docs#3134).
+func registerRefund(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewPOSRepo(d.Db)
 	authOff := auth.Disabled(os.Getenv("UT_AUTH"))
 
@@ -624,6 +625,9 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			fiscalOverrideActive = true
 			fiscalOverrideUntil = g.OverrideUntil.Local().Format("2006-01-02 15:04")
 		}
+		// NeedsManagerPIN (ut-docs#3134): the manager-PIN field renders only
+		// for a session whose role isn't granted "refund".
+		needsManagerPIN := !authOff && !canPerform(d, r, "refund")
 		httpx.Render("ui/pages/refund.html", map[string]any{
 			"title":                httpx.T(httpx.RequestLocale(r), "page.title.refund"),
 			"theme":                d.CurrentState().Theme,
@@ -632,6 +636,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			"Lines":                refundableLines(detail, returned, returnedByLine),
 			"Methods":              methods,
 			"AuthOff":              authOff,
+			"NeedsManagerPIN":      needsManagerPIN,
 			"fiscalOverrideActive": fiscalOverrideActive,
 			"fiscalOverrideUntil":  fiscalOverrideUntil,
 			// RefundAttemptID (ut-docs#2415): a stable id for this ONE
@@ -721,19 +726,30 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			return
 		}
 
-		// Manager approval; the PIN owner is the audit actor (pos-auth).
+		// The refund permission (ut-docs#3134): a role granted "refund" on
+		// /users/permissions refunds with no PIN (actor = session user); any
+		// other session needs a manager PIN, whose owner becomes the actor
+		// (pos-auth) and the blocked session user is recorded alongside it
+		// on the refund audit row (blockedActorID, ut-docs#557). The
+		// refused response keeps its pre-#3134 shape (403 "manager PIN
+		// required", 429 on lockout) — refund.html's own PIN field and the
+		// e2e specs read it.
 		actorID := getSessionUserID(r)
+		blockedActorID := ""
 		if !authOff {
-			approver, err := svc.AuthorizeManager(r.Context(), strings.TrimSpace(r.Form.Get("manager_pin")))
-			if err != nil {
+			elev := checkOrElevate(d, r, "refund", strings.TrimSpace(r.Form.Get("manager_pin")))
+			switch elev.Outcome {
+			case needsElevation:
 				status := http.StatusForbidden
-				if errors.Is(err, auth.ErrLockedOut) {
+				if errors.Is(elev.Err, auth.ErrLockedOut) {
 					status = http.StatusTooManyRequests
 				}
 				http.Error(w, "manager PIN required", status)
 				return
+			case elevated:
+				actorID = elev.ApproverID
+				blockedActorID = elev.ActorID
 			}
-			actorID = approver.ID
 		}
 
 		// DE+TR fiscal-signing-device hard gate (ADR-0048, ut-docs#731, fiscal.RequiresHardGate): a refund moves real
@@ -1094,9 +1110,15 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// linked tills instead (ADR-0114 §2), so it is never gated.
 		d.RequestSyncPush()
 		newReceipt, _, _, _, _ := repo.SaleTotals(r.Context(), saleID)
-		_ = repo.InsertAudit(r.Context(), nil, actorID, "sale", newReceipt, "refund",
-			map[string]any{"original": detail.ReceiptNo, "amount": refundTotal.Minor(), "method": method},
-			time.Now().UTC().Format(time.RFC3339), "")
+		refundAuditPayload := map[string]any{"original": detail.ReceiptNo, "amount": refundTotal.Minor(), "method": method}
+		refundAuditAt := time.Now().UTC().Format(time.RFC3339)
+		if blockedActorID != "" {
+			_ = repo.InsertAuditElevated(r.Context(), nil, actorID, blockedActorID, "sale", newReceipt, "refund",
+				refundAuditPayload, refundAuditAt, "")
+		} else {
+			_ = repo.InsertAudit(r.Context(), nil, actorID, "sale", newReceipt, "refund",
+				refundAuditPayload, refundAuditAt, "")
+		}
 		printReceiptAsync(d, newReceipt, actorID)
 		// Invoiced sale? A credit note follows automatically (G31).
 		maybeIssueCreditNote(r.Context(), d, newReceipt, detail.ID, actorID)
