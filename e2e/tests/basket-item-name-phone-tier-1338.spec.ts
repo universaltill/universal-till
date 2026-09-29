@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole, waitForStableLayout } from './helpers';
+import { watchConsole, waitForStableLayout, openPhoneSheet } from './helpers';
 
 // ut-docs#1338 (follow-up to ut-docs#1314): #1314 fixed the item-name
 // column at the kiosk floor (1024x600) and default till (1280x800) but
@@ -60,6 +60,7 @@ test.describe('basket item name is legible at the 360px phone tier (ut-docs#1338
     const assertClean = watchConsole(page);
     await page.goto('/');
     await page.waitForSelector('.pos-container');
+    await openPhoneSheet(page); // ut-docs#3059: lines + scan row live in the sheet
     await scan(page, CHEDDAR);
     await expect(page.locator('.basket .line-name')).toHaveText('Cheddar Cheese 400g');
 
@@ -82,6 +83,7 @@ test.describe('basket item name is legible at the 360px phone tier (ut-docs#1338
     const assertClean = watchConsole(page);
     await page.goto('/');
     await page.waitForSelector('.pos-container');
+    await openPhoneSheet(page); // ut-docs#3059: lines + scan row live in the sheet
     await scan(page, CHEDDAR);
     await page.evaluate(() => {
       (document.querySelector('.basket .line-name') as HTMLElement).textContent =
@@ -104,6 +106,7 @@ test.describe('basket item name is legible at the 360px phone tier (ut-docs#1338
     const assertClean = watchConsole(page);
     await page.goto('/');
     await page.waitForSelector('.pos-container');
+    await openPhoneSheet(page); // ut-docs#3059: lines + scan row live in the sheet
     await scan(page, CHEDDAR);
 
     await waitForStableLayout(page, '.basket-scroll');
@@ -122,6 +125,7 @@ test.describe('basket item name is legible at the 360px phone tier (ut-docs#1338
     const assertClean = watchConsole(page);
     await page.goto('/');
     await page.waitForSelector('.pos-container');
+    await openPhoneSheet(page); // ut-docs#3059: lines + scan row live in the sheet
     await scan(page, CHEDDAR);
 
     await expect(page.locator('.qty-input').first()).toBeVisible();
@@ -147,6 +151,7 @@ test.describe('basket item name is legible at the 360px phone tier (ut-docs#1338
     const assertClean = watchConsole(page);
     await page.goto('/');
     await page.waitForSelector('.pos-container');
+    await openPhoneSheet(page); // ut-docs#3059: lines + scan row live in the sheet
     await scan(page, CHEDDAR);
     await waitForStableLayout(page, '.basket-scroll, .basket .line-name');
 
@@ -177,6 +182,7 @@ test.describe('basket item name is legible at the 360px phone tier (ut-docs#1338
     const assertClean = watchConsole(page);
     await page.goto('/');
     await page.waitForSelector('.pos-container');
+    await openPhoneSheet(page); // ut-docs#3059: lines + scan row live in the sheet
     await scan(page, CHEDDAR);
     await waitForStableLayout(page, '.basket-scroll');
 
@@ -190,12 +196,17 @@ test.describe('basket item name is legible at the 360px phone tier (ut-docs#1338
     // `column-gap` between the four is exactly such an addition (+.9rem,
     // measured +23px at ui_scale 1.5 / +31px at 2). Direction-agnostic
     // (min-left..max-right) so it holds in RTL too.
+    // ut-docs#3059: in the phone sheet the qty cell also takes the row's
+    // empty start column (for the − and + steppers), so it is no longer a
+    // fixed 4.3rem box. The tracks are unchanged; what must not grow is the
+    // fixed part: price + total + remove within their 10.8rem, plus the
+    // qty track's own 4.3rem = the same 15.1rem reserve.
     const budget = await page.evaluate(() => {
       const tr = document.querySelector('.basket tbody tr') as HTMLElement;
-      const boxes = [2, 3, 4, 5].map((n) => tr.querySelector(`td:nth-child(${n})`)!.getBoundingClientRect());
+      const boxes = [3, 4, 5].map((n) => tr.querySelector(`td:nth-child(${n})`)!.getBoundingClientRect());
       const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
       return {
-        span: Math.max(...boxes.map((b) => b.right)) - Math.min(...boxes.map((b) => b.left)),
+        span: Math.max(...boxes.map((b) => b.right)) - Math.min(...boxes.map((b) => b.left)) + 4.3 * rem,
         reserved: 15.1 * rem,
       };
     });
@@ -210,6 +221,7 @@ test.describe('basket item name is legible at the 360px phone tier (ut-docs#1338
     const assertClean = watchConsole(page);
     await page.goto('/');
     await page.waitForSelector('.pos-container');
+    await openPhoneSheet(page); // ut-docs#3059: lines + scan row live in the sheet
     await scan(page, CHEDDAR);
     await waitForStableLayout(page, '.basket-scroll');
 

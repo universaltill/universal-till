@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures';
+import { openPhoneDrawer } from './helpers';
 
 // ut-docs#1423 (product owner, live on the tablet, third report of the same
 // symptom): the rail's 🔒 lock and 🐞 bug-report icons still rendered
@@ -58,6 +59,7 @@ test.describe('sale-screen nav rail icons are one SVG set (ut-docs#1423)', () =>
   test('phone-width top bar still shows icon + visible label per button', async ({ page }) => {
     await page.setViewportSize({ width: 360, height: 740 });
     await page.goto('/catalog');
+    await openPhoneDrawer(page); // ut-docs#3059: the phone nav is the ☰ drawer, labels visible there
     const till = page.locator('[data-testid="nav-till"]');
     await expect(till.locator('svg[data-icon="shopping-cart"]')).toBeVisible();
     await expect(till.locator('.nav-toggle-label')).toBeVisible();

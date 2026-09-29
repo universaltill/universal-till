@@ -51,6 +51,11 @@
             hx-post="/api/pos/add-by-hand/dismiss" hx-swap="none">✕</button>
   </div>
   {{ end }}
+  {{/* ut-docs#3059: phone tier only (app.css <= 480px). Closes the basket
+       sheet that .basket-phonebar below opens; hidden everywhere else. */}}
+  <button type="button" class="basket-sheet-close" data-testid="basket-sheet-close" aria-label="{{ T "basket.sheet.close" }}">
+    <span class="btn-ico" aria-hidden="true">{{ icon "chevron-down" }}</span>
+  </button>
   <h2>{{ T "basket.title" }}
     <span class="basket-count" data-testid="basket-count" title="{{ T "basket.count_label" }}">{{ .ItemCount }}</span>
     <span class="visually-hidden">{{ T "basket.count_label" }}</span>
@@ -341,6 +346,18 @@
          scripts. -->
     <div class="total" data-minor="{{ .Total.Minor }}" data-label="{{ money .Total }}">{{ T "basket.total" }}: {{ money .Total }}</div>
   </div>
+  {{/* ut-docs#3059: the phone tier's bottom bar (app.css <= 480px, hidden
+       elsewhere). It lives inside #basket so every basket swap re-renders
+       its total and count; tapping it opens the sheet (app.js
+       utPhoneSheet, body.pos-sheet-open) with the lines and the tender
+       panel. */}}
+  <button type="button" class="basket-phonebar{{ if not .Lines }} is-empty{{ end }}" data-testid="basket-phonebar" aria-controls="basket" aria-expanded="false">
+    <span class="basket-phonebar-text">
+      <span class="basket-phonebar-pay">{{ if .Lines }}{{ printf (T "tender.pay_with_total") (money .Total) }}{{ else }}{{ T "tender.pay_empty" }}{{ end }}</span>
+      <span class="basket-phonebar-count">{{ printf (T "basket.phonebar.items") .ItemCount }}</span>
+    </span>
+    <span class="btn-ico" aria-hidden="true">{{ icon "chevron-up" }}</span>
+  </button>
   <!-- "Customers also buy" — reloads with every basket swap (local data only) -->
   <div id="suggest-strip" hx-get="/ui/suggestions" hx-trigger="load" hx-swap="outerHTML"></div>
 </div>
