@@ -2854,11 +2854,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(st),
 			ChargesForbidden:             common.ServiceChargeForbidden(st.Country),
 		}
-		d.Engine.SetConfig(newCfg)
-		if d.KioskEngine != nil {
-			d.KioskEngine.SetConfig(newCfg)
-		}
-		d.SelfOrderSessions.SetConfig(newCfg) // every live table-QR session too (ADR-0103); nil-safe
+		applyEngineConfig(d, newCfg)
 		settingsAudit(r, posRepo, elev, "settings", "-", "store_settings_saved", auditPayload)
 		settingsRespondSaved(w, r, elev)
 	})
@@ -3227,11 +3223,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(st),
 				ChargesForbidden:             common.ServiceChargeForbidden(st.Country),
 			}
-			d.Engine.SetConfig(newCfg)
-			if d.KioskEngine != nil {
-				d.KioskEngine.SetConfig(newCfg)
-			}
-			d.SelfOrderSessions.SetConfig(newCfg) // every live table-QR session too (ADR-0103); nil-safe
+			applyEngineConfig(d, newCfg)
 		case "display.mode":
 			// ut-docs#2121: this generic key/value door didn't get the same
 			// side effects as the dedicated POST /api/settings/display-mode
