@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures';
+import { openPhoneSheet } from './helpers';
 
 // ut-docs#1674 (found reviewing #1629, the reviewer's own coverage sweep):
 // #1629 gave the two ORIGINAL Hold Sale / New Sale buttons `tabindex="-1"`
@@ -72,6 +73,7 @@ test.describe('remaining covered controls drop out of tab order while the paymen
   test('the phone-width New Sale duplicate gets tabindex=-1 while covered at 375x667 (overlay goes full-screen), and the existing not-rendered guard still no-ops it at 1024x600 where it is display:none', async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 667 });
     await page.goto('/');
+    await openPhoneSheet(page); // ut-docs#3059: scan row + New Sale are in the phone basket sheet
     await page.waitForSelector('.pos-container');
     // ut-docs#1984: scan first — Payment is disabled on an empty basket.
     await page.getByRole('textbox').first().fill('5000000000012');

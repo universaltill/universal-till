@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, openPhoneDrawer } from './helpers';
 
 // The 🐞 bug-report panel (ut-docs#346): the capture UI moved out of the
 // standalone /report-issue page into a floating, NON-modal panel opened
@@ -419,6 +419,7 @@ for (const [w, h] of [[360, 640], [360, 740]] as const) {
     await expect(page.locator('#basket')).toBeVisible();
 
     const nav = (await page.locator('.nav').boundingBox())!;
+    await openPhoneDrawer(page); // ut-docs#3059: the bug-report chip is in the phone ☰ drawer
     await page.getByTestId('bugreport-toggle').click();
     const panel = page.getByTestId('bugreport-panel');
     await expect(panel).toBeVisible();

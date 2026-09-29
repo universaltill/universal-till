@@ -609,3 +609,26 @@ export async function hideUncategorizedStrays(page: Page): Promise<void> {
     await page.request.post('/api/buttons/remove-from-grid', { form: { itemId: id } });
   }
 }
+
+// ut-docs#3059: at <= 480px the basket lines, totals and the tender panel
+// (scan row, Pay, New Sale) live in a sheet the bottom bar opens. Phone
+// specs written for the old stacked layout open it first; a no-op on wider
+// viewports, where the bar is hidden.
+export async function openPhoneSheet(page: Page) {
+  const bar = page.locator('.basket-phonebar');
+  if (await bar.isVisible()) {
+    await bar.click();
+    await expect(page.locator('body')).toHaveClass(/pos-sheet-open/);
+  }
+}
+
+// ut-docs#3059: at <= 480px the nav links and chips live in the ☰ drawer.
+export async function openPhoneDrawer(page: Page) {
+  const toggle = page.locator('.nav-drawer-toggle');
+  if (await toggle.isVisible()) {
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    // Wait out the .2s slide-in, so a test measures a link where it rests.
+    await expect.poll(() => page.locator('#nav-drawer').evaluate((el) => getComputedStyle(el).transform)).toBe('none');
+  }
+}

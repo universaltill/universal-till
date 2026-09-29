@@ -3406,3 +3406,113 @@ window.utTabBarFade = function (el) {
       .catch(function () { fallbackReload(); return false; });
   };
 })();
+
+// utNavDrawer / utPhoneSheet (ut-docs#3059): the phone tier's ☰ drawer and
+// basket sheet (app.css <= 480px). Both are body classes, so a boosted
+// navigation (base.html resets body to data-shell-classes) closes them.
+(function () {
+  var body = document.body;
+
+  function toggleBtn() { return document.querySelector('.nav-drawer-toggle'); }
+  function setDrawer(open, restoreFocus) {
+    var btn = toggleBtn();
+    body.classList.toggle('nav-drawer-open', open);
+    if (btn) {
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      btn.setAttribute('aria-label', btn.getAttribute(open ? 'data-label-close' : 'data-label-open') || '');
+    }
+    if (open) {
+      var first = document.querySelector('#nav-drawer a, #nav-drawer button');
+      if (first) first.focus();
+    } else if (restoreFocus && btn) {
+      btn.focus();
+    }
+  }
+
+  // The bottom bar's height, so the grid's last row scrolls clear of it.
+  function measureBar() {
+    var sb = document.querySelector('.statusbar');
+    var sh = sb ? sb.getBoundingClientRect().height : 0;
+    if (sh > 0) document.documentElement.style.setProperty('--phone-sb-h', sh + 'px');
+    var basket = document.getElementById('basket');
+    if (!basket || body.classList.contains('pos-sheet-open')) return;
+    var h = basket.getBoundingClientRect().height;
+    if (h > 0) document.documentElement.style.setProperty('--phone-bar-h', h + 'px');
+  }
+  function setSheet(open) {
+    body.classList.toggle('pos-sheet-open', open);
+    var bar = document.querySelector('.basket-phonebar');
+    if (bar) bar.setAttribute('aria-expanded', open ? 'true' : 'false');
+    var pc = document.querySelector('.pos-container');
+    if (pc) pc.scrollTop = 0;
+    if (open) {
+      var close = document.querySelector('.basket-sheet-close');
+      if (close) close.focus();
+    } else {
+      measureBar();
+      if (bar) bar.focus();
+    }
+  }
+
+  document.addEventListener('click', function (e) {
+    var t = e.target;
+    if (!(t instanceof Element)) return;
+    if (t.closest('.nav-drawer-toggle')) { setDrawer(!body.classList.contains('nav-drawer-open'), true); return; }
+    if (t.closest('.nav-drawer-backdrop')) { setDrawer(false, true); return; }
+    // A link navigates, a button (bug report, Lock) opens its own panel:
+    // either way the drawer closes. page-zoom (ut-docs#2942) has already
+    // taken its tap origin at pointerdown, before this click.
+    if (t.closest('#nav-drawer a, #nav-drawer button') && body.classList.contains('nav-drawer-open')) { setDrawer(false, false); return; }
+    if (t.closest('.basket-phonebar')) { setSheet(true); return; }
+    if (t.closest('.basket-sheet-close')) { setSheet(false); }
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    if (body.classList.contains('nav-drawer-open')) { setDrawer(false, true); e.preventDefault(); return; }
+    // A dialog (payment, modifiers) owns Escape while it is open.
+    if (body.classList.contains('pos-sheet-open') && !document.querySelector('dialog[open]') &&
+        !document.documentElement.classList.contains('ut-scrim-on')) {
+      setSheet(false);
+      e.preventDefault();
+    }
+  });
+
+  // Every basket swap: keep the new bar's aria-expanded in step, re-measure.
+  // A paid sale swaps in the receipt view (pos_api.go, .receipt-view: paper
+  // receipt ask, Print, New customer): the sheet must show it in full, so it
+  // opens if needed. Leaving the receipt view for a fresh basket (New
+  // customer) is the end of the sale: back to the tiles. Emptying a basket
+  // any other way (void, remove) keeps the sheet where the cashier left it.
+  var lastWasReceipt = false;
+  document.addEventListener('htmx:afterSettle', function (e) {
+    var basket = document.getElementById('basket');
+    // Status-bar chips (release notes, update) load late and can wrap it
+    // to a second row: re-measure after any swap.
+    // The nav persists across boosted swaps; the body classes don't.
+    var btn = toggleBtn();
+    var open = body.classList.contains('nav-drawer-open');
+    if (btn && btn.getAttribute('aria-expanded') !== String(open)) {
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      btn.setAttribute('aria-label', btn.getAttribute(open ? 'data-label-close' : 'data-label-open') || '');
+    }
+    if (!basket || !(e.target === basket || (e.target instanceof Element && e.target.contains(basket)))) { measureBar(); return; }
+    var isReceipt = basket.classList.contains('receipt-view');
+    var bar = basket.querySelector('.basket-phonebar');
+    if (isReceipt) {
+      if (window.matchMedia('(max-width: 480px)').matches && !body.classList.contains('pos-sheet-open')) setSheet(true);
+    } else if (lastWasReceipt && body.classList.contains('pos-sheet-open')) {
+      setSheet(false);
+    } else {
+      if (bar) bar.setAttribute('aria-expanded', body.classList.contains('pos-sheet-open') ? 'true' : 'false');
+      measureBar();
+    }
+    lastWasReceipt = isReceipt;
+  });
+  window.addEventListener('resize', measureBar);
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', measureBar);
+  } else {
+    measureBar();
+  }
+})();
