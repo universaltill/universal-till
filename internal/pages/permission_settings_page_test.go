@@ -545,3 +545,35 @@ func TestPermissionSettingsPage_GET_UngroupedActionRendersUnderOther(t *testing.
 		t.Fatalf("expected a trailing Other group holding zz_unplaced_action (system=%d other=%d row=%d): %s", system, other, row, body)
 	}
 }
+
+// ut-docs#3134: an action in permissionHiddenActions is not rendered — not
+// in its old group, and not in the trailing "Other" fallback either —
+// while its stored grants stay untouched.
+func TestPermissionSettingsPage_GET_HiddenActionsNotRendered(t *testing.T) {
+	mux, dp := newPermissionSettingsTestDeps(t)
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/users/permissions", nil), auth.User{ID: "sa-1", Role: "super_admin"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, a := range []string{"void", "price_override"} {
+		if strings.Contains(body, `&#34;action&#34;:&#34;`+a+`&#34;`) {
+			t.Errorf("hidden action %q still renders a checkbox", a)
+		}
+	}
+	if strings.Contains(body, ">Other<") {
+		t.Error("hidden actions must not fall into the Other group")
+	}
+	for _, a := range []string{"refund", "cash_adjustment"} {
+		if !strings.Contains(body, `&#34;action&#34;:&#34;`+a+`&#34;`) {
+			t.Errorf("enforced action %q must still render", a)
+		}
+	}
+	var granted int
+	if err := dp.Db.QueryRow(`SELECT granted FROM role_permissions WHERE role='manager' AND action='void'`).Scan(&granted); err != nil || granted != 1 {
+		t.Fatalf("stored grant for manager/void must be untouched: granted=%d err=%v", granted, err)
+	}
+}

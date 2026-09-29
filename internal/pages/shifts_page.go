@@ -64,6 +64,10 @@ func registerShiftsPage(mux *http.ServeMux, d *common.Deps) {
 			// minor units rendered as "5.00" instead of "500".
 			"CarryForwardDisplay": httpx.FormatMajorPlain(carryMinor, httpx.ActiveCurrency().Decimals),
 			"HasCarryForward":     carryMinor > 0,
+			// NeedsManagerPIN (ut-docs#3134): the manager-PIN fields and the
+			// skim-approval hint render only for a session whose role isn't
+			// granted cash_adjustment (canPerform is true when auth is off).
+			"NeedsManagerPIN": !canPerform(d, r, "cash_adjustment"),
 		}
 		httpx.Render("ui/pages/shifts.html", data)(w, r)
 	})
