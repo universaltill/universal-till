@@ -63,7 +63,7 @@ var (
 
 // AttachFile starts writing every log line — this package's logger AND the
 // standard library "log" package many till packages still use — to a
-// rotating, redacted file at path, in addition to stdout/stderr. Calling it
+// rotating file at path, in addition to stdout/stderr, all redacted. Calling it
 // again switches files. app.go attaches the log file before taking the
 // data-dir lock (ut-docs#1097), so a second instance that is about to be
 // refused briefly appends to the same till.log — harmless (both writes are
@@ -77,16 +77,18 @@ func AttachFile(path string) error {
 	old := fileSink
 	fileSink, filePath = w, path
 	fileMu.Unlock()
-	red := redactingWriter{w: w}
-	L().log.SetOutput(teeWriter{os.Stdout, red})
-	log.SetOutput(teeWriter{os.Stderr, red})
+	// Redact once, then fan out: the console copy is as redacted as the
+	// file (ut-docs#3145). teeWriter never fails, so neither does this.
+	L().log.SetOutput(redactingWriter{w: teeWriter{os.Stdout, w}})
+	log.SetOutput(redactingWriter{w: teeWriter{os.Stderr, w}})
 	if old != nil {
 		_ = old.Close()
 	}
 	return nil
 }
 
-// DetachFile returns logging to stdout/stderr only and closes the file.
+// DetachFile returns logging to (redacted) stdout/stderr only and closes
+// the file.
 func DetachFile() {
 	fileMu.Lock()
 	old := fileSink
@@ -95,8 +97,8 @@ func DetachFile() {
 	if old == nil {
 		return
 	}
-	L().log.SetOutput(os.Stdout)
-	log.SetOutput(os.Stderr)
+	L().log.SetOutput(redactingWriter{w: os.Stdout})
+	log.SetOutput(redactingWriter{w: os.Stderr})
 	_ = old.Close()
 }
 
@@ -108,15 +110,15 @@ func FilePath() string {
 }
 
 // Stderr is where a process writes a plain diagnostic message (the desktop
-// shell's fmt.Fprintln calls): stderr plus the redacted log file when one
-// is attached.
+// shell's fmt.Fprintln calls): redacted stderr plus the log file, with a
+// timestamp, when one is attached (ut-docs#3145).
 func Stderr() io.Writer {
 	fileMu.Lock()
 	defer fileMu.Unlock()
 	if fileSink == nil {
-		return os.Stderr
+		return redactingWriter{w: os.Stderr}
 	}
-	return teeWriter{os.Stderr, timestampWriter{w: redactingWriter{w: fileSink}}}
+	return redactingWriter{w: teeWriter{os.Stderr, timestampWriter{w: fileSink}}}
 }
 
 // timestampWriter prefixes each write with the same RFC3339 timestamp this

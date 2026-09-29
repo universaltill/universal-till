@@ -8,14 +8,16 @@ import (
 // redactedMark replaces every secret Redact removes.
 const redactedMark = "[REDACTED]"
 
-// Free-text log redaction for the log FILE (ut-docs#2720). The diagnostics
+// Free-text log redaction for every log sink (ut-docs#2720): the log file,
+// stdout/stderr and the Problems ring that bug-report bundles and the cloud
+// heartbeat carry off the till (ut-docs#3145). The diagnostics
 // stream (internal/diagnostics, ADR-0092) never carries free text at all —
 // its events are closed enums plus ids validated against an id charset —
 // so there is no string redactor there to reuse; this applies the same
 // rule ("no credential, cookie or token ever leaves as data") to prose log
 // lines, which can't be schema-checked. It errs on the side of removing
 // too much: a false positive costs a log detail, a false negative leaks a
-// credential onto disk.
+// credential onto disk or off the till.
 var (
 	// "Bearer <tok>" / "Basic <b64>" wherever they appear.
 	authSchemeRe = regexp.MustCompile(`(?i)\b(bearer|basic)(\s+)[A-Za-z0-9._~+/=-]+`)
@@ -74,7 +76,10 @@ func Redact(line string) string {
 	line = urlUserinfoRe.ReplaceAllString(line, "${1}"+redactedMark+"@")
 	line = secretKVRe.ReplaceAllStringFunc(line, func(m string) string {
 		sub := secretKVRe.FindStringSubmatch(m)
-		if sub[2] == redactedMark {
+		// The unquoted value stops before ']', so an already-redacted value
+		// reads as "[REDACTED" — leave it be, so a second pass is a no-op
+		// (the ring, bundles and uploads each redact; ut-docs#3145).
+		if sub[2] == redactedMark || sub[2] == strings.TrimSuffix(redactedMark, "]") {
 			return m
 		}
 		return sub[1] + redactedMark

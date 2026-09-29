@@ -1281,3 +1281,40 @@ func TestPullIssueReportStatusesOlderCloudSendsNoTicketState(t *testing.T) {
 		t.Fatalf("Status = %q, want the delivery status intact", sent[0].Status)
 	}
 }
+
+// ut-docs#3145: a bundle written by a till version that stored raw lines in
+// the Problems ring may still be pending; its Meta.Logs are redacted on the
+// way out, whatever meta.json holds.
+func TestUploadIssueReportRedactsLogs(t *testing.T) {
+	const line = "card 4111 1111 1111 1111 Authorization: Bearer abc123def456ghi789 jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+	createdAt := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
+	b := issuereport.Bundle{
+		Meta: issuereport.Meta{
+			ID: "report-raw", Note: "old bundle", CreatedAt: createdAt,
+			Logs: []logging.Problem{{At: createdAt, Level: "ERROR", Msg: line}},
+		},
+		Dir: t.TempDir(),
+	}
+	var gotLogs []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			t.Errorf("server: parse multipart: %v", err)
+			return
+		}
+		gotLogs = append([]string(nil), r.MultipartForm.Value["logs"]...)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	if err := uploadIssueReport(context.Background(), registeredCfg(srv.URL), b); err != nil {
+		t.Fatalf("uploadIssueReport: %v", err)
+	}
+	if len(gotLogs) != 1 || !strings.Contains(gotLogs[0], "\tERROR\tcard [REDACTED]") {
+		t.Fatalf("logs = %q, want the one redacted line", gotLogs)
+	}
+	for _, s := range []string{"4111 1111 1111 1111", "abc123def456ghi789", "eyJhbGciOiJIUzI1NiJ9"} {
+		if strings.Contains(gotLogs[0], s) {
+			t.Errorf("secret %q uploaded: %q", s, gotLogs[0])
+		}
+	}
+}

@@ -1,8 +1,11 @@
 package logging
 
 import (
+	"bytes"
 	"fmt"
+	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -64,7 +67,7 @@ func TestResolveFileMakesCustomPathAbsolute(t *testing.T) {
 
 // The desktop shell's plain fmt.Fprint(logging.Stderr(), …) messages land
 // in the attached file too — timestamped and redacted — and Stderr falls
-// back to plain stderr once detached.
+// back to (redacted) stderr alone once detached.
 func TestStderrWritesToAttachedFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "desktop.log")
 	if err := AttachFile(path); err != nil {
@@ -73,8 +76,8 @@ func TestStderrWritesToAttachedFile(t *testing.T) {
 	t.Cleanup(DetachFile)
 	fmt.Fprintln(Stderr(), "failed to start the till: token=abcdef123456")
 	DetachFile()
-	if Stderr() != os.Stderr {
-		t.Fatal("Stderr after DetachFile must be plain os.Stderr")
+	if Stderr() != (redactingWriter{w: os.Stderr}) {
+		t.Fatal("Stderr after DetachFile must be redacted os.Stderr alone")
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -86,5 +89,61 @@ func TestStderrWritesToAttachedFile(t *testing.T) {
 	}
 	if _, err := time.Parse(time.RFC3339, strings.SplitN(line, " ", 2)[0]); err != nil {
 		t.Fatalf("shell message not timestamped: %q", line)
+	}
+}
+
+// ut-docs#3145: stdout and stderr (journald, a terminal, a service log) are
+// log sinks as much as the file is, so every line reaching them is
+// redacted — this package's logger on stdout, the stdlib "log" package and
+// Stderr() on stderr — with no file attached (Init, android/ios), with one
+// attached, and after DetachFile. Run in a subprocess so the real Init and
+// the real os.Stdout/os.Stderr are what gets checked.
+func TestConsoleSinksAreRedacted(t *testing.T) {
+	const marker = "sink-marker"
+	if mode := os.Getenv("UT_TEST_CONSOLE_SINK"); mode != "" {
+		L() // Init, as app.go does first thing
+		switch mode {
+		case "attached", "detached":
+			if err := AttachFile(os.Getenv("UT_TEST_CONSOLE_SINK_FILE")); err != nil {
+				fmt.Fprintln(os.Stderr, "attach:", err)
+				os.Exit(2)
+			}
+			if mode == "detached" {
+				DetachFile()
+			}
+		}
+		L().Warnf("%s %s", marker, sinkSecretLine)
+		log.Printf("%s %s", marker, sinkSecretLine)
+		fmt.Fprintln(Stderr(), marker, sinkSecretLine)
+		DetachFile()
+		os.Exit(0)
+	}
+	for _, mode := range []string{"nofile", "attached", "detached"} {
+		t.Run(mode, func(t *testing.T) {
+			cmd := exec.Command(os.Args[0], "-test.run=TestConsoleSinksAreRedacted$")
+			cmd.Env = append(os.Environ(),
+				"UT_LOG_LEVEL=info", // a developer's exported level must not hide the marker line
+				"UT_TEST_CONSOLE_SINK="+mode,
+				"UT_TEST_CONSOLE_SINK_FILE="+filepath.Join(t.TempDir(), "till.log"))
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout, cmd.Stderr = &stdout, &stderr
+			if err := cmd.Run(); err != nil {
+				t.Fatalf("child: %v\nstdout: %s\nstderr: %s", err, stdout.String(), stderr.String())
+			}
+			for name, out := range map[string]string{"stdout": stdout.String(), "stderr": stderr.String()} {
+				want := 1 // this package's logger
+				if name == "stderr" {
+					want = 2 // stdlib log + Stderr()
+				}
+				if n := strings.Count(out, marker); n != want {
+					t.Errorf("%s has %d marker lines, want %d: %q", name, n, want, out)
+				}
+				for _, s := range sinkSecrets {
+					if strings.Contains(out, s) {
+						t.Errorf("secret %q reached %s: %q", s, name, out)
+					}
+				}
+			}
+		})
 	}
 }

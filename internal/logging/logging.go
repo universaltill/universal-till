@@ -79,8 +79,16 @@ func Init() {
 	once.Do(func() {
 		lvl := parseLevel(os.Getenv("UT_LOG_LEVEL"))
 
-		// You can swap os.Stdout with a file or multi-writer later.
-		base := log.New(os.Stdout, "", 0)
+		// Every console line is redacted like the file (ut-docs#3145):
+		// stdout/stderr reach journald, a terminal or a service log, and
+		// with no file attached (android/ios, UT_LOG_FILE=off) they are
+		// the only sink. The stdlib "log" output is only taken over while
+		// it is still the default os.Stderr, so a caller (or test) that
+		// already redirected it keeps its writer.
+		base := log.New(redactingWriter{w: os.Stdout}, "", 0)
+		if log.Writer() == os.Stderr {
+			log.SetOutput(redactingWriter{w: os.Stderr})
+		}
 
 		defaultLogger = &Logger{
 			level: lvl,
@@ -212,6 +220,9 @@ func (l *Logger) logKeyf(level Level, key, format string, args ...any) {
 	if l == nil {
 		return
 	}
+	// The test capture gets the raw line on purpose: CaptureForTest exists
+	// to prove a secret is never logged at the source, and redacting it
+	// would let those tests pass on a line that still logs one.
 	if capture.Load() != nil {
 		teeCapture(level, fmt.Sprintf(format, args...))
 	}
@@ -221,7 +232,10 @@ func (l *Logger) logKeyf(level Level, key, format string, args ...any) {
 
 	ts := time.Now().Format(time.RFC3339)
 	// Format: 2025-01-01T12:00:00Z [INFO] message
-	msg := fmt.Sprintf(format, args...)
+	// Redacted once, here, so the Problems ring — which leaves the till in
+	// bug-report bundles and the cloud heartbeat — never holds a secret
+	// (ut-docs#3145); the writers redact again, a no-op on this text.
+	msg := Redact(fmt.Sprintf(format, args...))
 	remember(level, key, msg)
 	l.log.Printf("%s [%s] %s", ts, level.String(), msg)
 }

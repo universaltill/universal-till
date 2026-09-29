@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 func withTempPendingDir(t *testing.T) {
@@ -596,5 +598,31 @@ func TestWriteMetaAtomicLeavesNoTempFileBehind(t *testing.T) {
 	}
 	if got.Note != "updated" || got.SentFailCount != 2 {
 		t.Fatalf("written meta = %+v, want Note=updated SentFailCount=2", got)
+	}
+}
+
+// ut-docs#3145: a bug-report bundle's meta.json carries the Problems ring
+// (Meta.Logs) off the till, so no secret a warn/error line held may be in it.
+func TestSaveWritesRedactedLogsToMeta(t *testing.T) {
+	withTempPendingDir(t)
+	logging.ResetRecent()
+	t.Cleanup(logging.ResetRecent)
+	const line = "card 4111 1111 1111 1111 Authorization: Bearer abc123def456ghi789 jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+	logging.L().Errorf("%s", line)
+	id, err := Save("printer jammed", "", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	mb, err := os.ReadFile(filepath.Join(PendingDir, id, "meta.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(mb), "card [REDACTED]") {
+		t.Fatalf("meta.json lacks the (redacted) log line: %s", mb)
+	}
+	for _, s := range []string{"4111 1111 1111 1111", "abc123def456ghi789", "eyJhbGciOiJIUzI1NiJ9"} {
+		if strings.Contains(string(mb), s) {
+			t.Errorf("secret %q reached meta.json: %s", s, mb)
+		}
 	}
 }
