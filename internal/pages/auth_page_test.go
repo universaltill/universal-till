@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -101,13 +102,13 @@ func TestFirstBootSetupThenLogin(t *testing.T) {
 	}
 
 	// Mismatched PINs are refused.
-	rec = postForm(mux, "/api/auth/setup", url.Values{"pin": {"2468"}, "pin_confirm": {"8642"}}, nil)
+	rec = postForm(mux, "/api/auth/setup", url.Values{"pin": {"2468"}, "pin_confirm": {"8642"}, "store_name": {"Test Shop"}}, nil)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "/api/auth/setup") {
 		t.Fatalf("mismatch should re-render setup: code=%d", rec.Code)
 	}
 
 	// Setup creates the admin, signs in, sets the session cookie.
-	rec = postForm(mux, "/api/auth/setup", url.Values{"pin": {"2468"}, "pin_confirm": {"2468"}}, nil)
+	rec = postForm(mux, "/api/auth/setup", url.Values{"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"}}, nil)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("setup: code=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -132,7 +133,7 @@ func TestFirstBootSetupThenLogin(t *testing.T) {
 	}
 
 	// Setup is one-time: a second attempt bounces to /login untouched.
-	rec = postForm(mux, "/api/auth/setup", url.Values{"pin": {"1111"}, "pin_confirm": {"1111"}}, nil)
+	rec = postForm(mux, "/api/auth/setup", url.Values{"pin": {"1111"}, "pin_confirm": {"1111"}, "store_name": {"Test Shop"}}, nil)
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login" {
 		t.Fatalf("second setup: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
 	}
@@ -278,7 +279,7 @@ func TestLoginAndSetupLoadOnScreenKeyboard(t *testing.T) {
 	// login.html (first-boot admin-PIN-creation and the regular keypad)
 	// take through the one template, so this also covers the firstBoot
 	// branch implicitly.
-	if rec := postForm(mux, "/api/auth/setup", url.Values{"pin": {"2468"}, "pin_confirm": {"2468"}}, nil); rec.Code != http.StatusSeeOther {
+	if rec := postForm(mux, "/api/auth/setup", url.Values{"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"}}, nil); rec.Code != http.StatusSeeOther {
 		t.Fatalf("setup: code=%d body=%s", rec.Code, rec.Body.String())
 	}
 	assertOSK("GET /login (keypad)", get(t, mux, "/login"))
@@ -324,8 +325,49 @@ func TestLoginAndSetupUseFluidUIScaleCSSVariable(t *testing.T) {
 	assertUIScale("GET /setup (first boot)", get(t, mux, "/setup"))
 
 	// Complete first-boot setup so /login renders its normal PIN keypad.
-	if rec := postForm(mux, "/api/auth/setup", url.Values{"pin": {"2468"}, "pin_confirm": {"2468"}}, nil); rec.Code != http.StatusSeeOther {
+	if rec := postForm(mux, "/api/auth/setup", url.Values{"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"}}, nil); rec.Code != http.StatusSeeOther {
 		t.Fatalf("setup: code=%d body=%s", rec.Code, rec.Body.String())
 	}
 	assertUIScale("GET /login (keypad)", get(t, mux, "/login"))
+}
+
+// ut-docs#3116: the bare first-boot fallback must name the shop like the
+// wizard does (#3096) — never finish first boot on migration 001's seeded
+// "My Store". A refusal saves nothing: no PIN, no rename, still first boot.
+func TestBareFirstBootSetupRequiresShopName(t *testing.T) {
+	withOSLocale(t, "", "")
+	mux, svc, d := newAuthTestMux(t)
+	ctx := t.Context()
+
+	for _, name := range []string{"", "   ", "My Store", "my store", "Universal Till store", "My Shop"} {
+		rec := postForm(mux, "/api/auth/setup", url.Values{"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {name}}, nil)
+		body := rec.Body.String()
+		if rec.Code != http.StatusOK || !strings.Contains(body, `action="/api/auth/setup"`) {
+			t.Fatalf("store_name=%q: want the setup form re-rendered, got code=%d", name, rec.Code)
+		}
+		want := template.HTMLEscapeString(httpx.T("en", "setup.error.store_name_required"))
+		if !strings.Contains(body, want) {
+			t.Errorf("store_name=%q: want the translated %q error, body lacks it", name, want)
+		}
+		if first, err := svc.NeedsFirstBoot(ctx); err != nil || !first {
+			t.Fatalf("store_name=%q: a refused setup must stay first boot (first=%v err=%v)", name, first, err)
+		}
+		if _, _, err := svc.Login(ctx, "2468"); err == nil {
+			t.Fatalf("store_name=%q: a refused setup must not set a PIN", name)
+		}
+	}
+
+	// A PIN error keeps the typed shop name so it isn't retyped.
+	rec := postForm(mux, "/api/auth/setup", url.Values{"pin": {"2468"}, "pin_confirm": {"8642"}, "store_name": {"Corner Café"}}, nil)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `value="Corner Café"`) {
+		t.Fatalf("PIN mismatch should re-render with the typed shop name: code=%d", rec.Code)
+	}
+
+	rec = postForm(mux, "/api/auth/setup", url.Values{"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"  Corner Café  "}}, nil)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
+		t.Fatalf("setup with a real shop name: code=%d loc=%q body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
+	}
+	if v, ok, _ := d.Settings.Get(ctx, "store.name"); !ok || v != "Corner Café" {
+		t.Errorf("store.name = %q ok=%v, want %q", v, ok, "Corner Café")
+	}
 }

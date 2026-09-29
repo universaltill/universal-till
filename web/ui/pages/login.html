@@ -30,8 +30,11 @@
       <h1>{{ T "auth.setup.title" }}</h1>
       <p class="muted">{{ T "auth.setup.hint" }}</p>
       <form method="post" action="/api/auth/setup" class="login-setup">
+        <label>{{ T "setup.store.title" }}
+          <input type="text" name="store_name" maxlength="60" placeholder="{{ T "setup.store.placeholder" }}" value="{{ .storeName }}" required autofocus />
+        </label>
         <label>{{ T "auth.setup.pin" }}
-          <input type="password" name="pin" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8" required autofocus />
+          <input type="password" name="pin" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8" required />
         </label>
         <label>{{ T "auth.setup.pin_confirm" }}
           <input type="password" name="pin_confirm" inputmode="numeric" pattern="[0-9]{4,8}" minlength="4" maxlength="8" required />

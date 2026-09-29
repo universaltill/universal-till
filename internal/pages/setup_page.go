@@ -173,6 +173,15 @@ func wizardCountryCodes(countries []setupCountry) []string {
 // name; it re-opens the wizard on the shop-name step (ut-docs#3096).
 const keyStoreNameRequired = "setup.error.store_name_required"
 
+// isRefusedStoreName reports whether a first-boot shop name must be refused:
+// blank, a till/cloud default (config.IsPlaceholderStoreName), or the name
+// field's own placeholder text in the request's language. Shared by the
+// wizard and the bare POST /api/auth/setup fallback (ut-docs#3096, #3116).
+func isRefusedStoreName(r *http.Request, name string) bool {
+	return config.IsPlaceholderStoreName(name) ||
+		strings.EqualFold(strings.TrimSpace(name), httpx.T(httpx.RequestLocale(r), "setup.store.placeholder"))
+}
+
 func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	posRepo := data.NewPOSRepo(d.Db)
 
@@ -549,8 +558,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// placeholder text. Checked with the other pre-persist validations,
 		// so a refusal saves nothing.
 		storeName := strings.TrimSpace(r.PostFormValue("store_name"))
-		if config.IsPlaceholderStoreName(storeName) ||
-			strings.EqualFold(storeName, httpx.T(httpx.RequestLocale(r), "setup.store.placeholder")) {
+		if isRefusedStoreName(r, storeName) {
 			renderWizard(w, r, keyStoreNameRequired, "")
 			return
 		}

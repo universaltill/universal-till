@@ -243,7 +243,7 @@ func TestFirstBootReusesExistingActiveAdmin(t *testing.T) {
 	}
 	before, _ := svc.Repo().ListUsers(t.Context())
 
-	rec := postForm(mux, "/api/auth/setup", url.Values{"pin": {"2468"}, "pin_confirm": {"2468"}}, nil)
+	rec := postForm(mux, "/api/auth/setup", url.Values{"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"}}, nil)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("setup: code=%d", rec.Code)
 	}
@@ -271,7 +271,7 @@ func TestFirstBootReactivatesDormantAdmin(t *testing.T) {
 	}
 	before, _ := svc.Repo().ListUsers(t.Context())
 
-	rec := postForm(mux, "/api/auth/setup", url.Values{"pin": {"2468"}, "pin_confirm": {"2468"}}, nil)
+	rec := postForm(mux, "/api/auth/setup", url.Values{"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {"Test Shop"}}, nil)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("setup: code=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -395,7 +395,7 @@ func TestSetupPostRedirectsToAWorkingLoginWhenTheDatabaseIsUnreachable(t *testin
 		t.Fatalf("close db: %v", err)
 	}
 
-	form := url.Values{"pin": {"4321"}, "pin_confirm": {"4321"}}
+	form := url.Values{"pin": {"4321"}, "pin_confirm": {"4321"}, "store_name": {"Test Shop"}}
 	req := httptest.NewRequest(http.MethodPost, "/api/auth/setup", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
