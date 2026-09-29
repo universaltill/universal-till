@@ -333,6 +333,7 @@ func TestSettingsElevation_RemainingSites_DenyAndElevate(t *testing.T) {
 		{"payments-default", "/api/settings/payments-default", url.Values{"method": {"cash"}}},
 		{"payments-fee", "/api/settings/payments-fee", url.Values{"method": {"card"}, "percent": {"1.5"}, "fixed": {"0.10"}}},
 		{"shop-type", "/api/settings/shop-type", url.Values{"shop_type": {"cafe"}}},
+		{"store-name", "/api/settings/store-name", url.Values{"store_name": {"Corner Café"}}},
 		{"till-name", "/api/settings/till-name", url.Values{"name": {"Front"}}},
 		{"save", "/api/settings/save", url.Values{"currency": {"EUR"}}},
 	}

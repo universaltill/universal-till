@@ -2944,5 +2944,11 @@
   "settings.about.english_only": "Henüz çevrilmedi — İngilizce gösteriliyor.",
   "settings.about.no_notes": "Bu sürüm için sürüm notu yok.",
   "status.release_notes_updated": "%s sürümüne güncellendi — yenilikleri görün",
-  "status.release_notes_dismiss": "Kapat"
+  "status.release_notes_dismiss": "Kapat",
+  "settings.store_name.title": "Dükkân adı",
+  "settings.store_name.help": "Her fişe basılır ve raporlarda gösterilir.",
+  "settings.store_name.error_required": "Dükkânınızın adını girin. Her fişe basılır.",
+  "settings.store_name.error_too_long": "Dükkân adı en fazla 80 karakter olabilir.",
+  "settings.store_name.error_invalid_chars": "Dükkân adı satır sonu, sekme veya gizli karakter içeremez.",
+  "elevation.summary.store_name": "Dükkânı \"%s\" olarak yeniden adlandır."
 }

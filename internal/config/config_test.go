@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"testing"
 )
@@ -260,5 +261,50 @@ func TestIsPlaceholderStoreName(t *testing.T) {
 		if IsPlaceholderStoreName(name) {
 			t.Errorf("IsPlaceholderStoreName(%q) = true, want false", name)
 		}
+	}
+}
+
+// ut-docs#3115: the till's own shop-name check mirrors ut-cloud's
+// claims.NormalizeStoreName and additionally refuses the placeholders.
+func TestNormalizeStoreName(t *testing.T) {
+	long := ""
+	for i := 0; i < MaxStoreNameRunes; i++ {
+		long += "ä"
+	}
+	cases := []struct {
+		name, in, want string
+		err            error
+	}{
+		{"plain", "Corner Café", "Corner Café", nil},
+		{"trimmed", "  Bäckerei Schmidt \t", "Bäckerei Schmidt", nil},
+		{"80 runes", long, long, nil},
+		{"persian with zwnj", "کافه\u200Cمن", "کافه\u200Cمن", nil},
+		{"emoji zwj", "Family \U0001F468\u200D\U0001F469\u200D\U0001F467 Shop", "Family \U0001F468\u200D\U0001F469\u200D\U0001F467 Shop", nil},
+		{"blank", "", "", ErrStoreNameRequired},
+		{"spaces", "   ", "", ErrStoreNameRequired},
+		{"placeholder", "My Store", "", ErrStoreNameRequired},
+		{"placeholder case", " universal till STORE ", "", ErrStoreNameRequired},
+		{"zwj only", "\u200D\u200C", "", ErrStoreNameRequired},
+		{"81 runes", long + "x", "", ErrStoreNameTooLong},
+		{"invalid utf8", "Shop\xff", "", ErrStoreNameInvalidChars},
+		{"newline", "Corner\nCafé", "", ErrStoreNameInvalidChars},
+		{"tab inside", "Corner\tCafé", "", ErrStoreNameInvalidChars},
+		{"nul", "Corner\x00", "", ErrStoreNameInvalidChars},
+		{"rlo", "Shop\u202Egnp.exe", "", ErrStoreNameInvalidChars},
+		{"lri isolate", "Shop\u2066x\u2069", "", ErrStoreNameInvalidChars},
+		{"zero-width space", "Sh\u200Bop", "", ErrStoreNameInvalidChars},
+		{"bom", "\uFEFFShop", "", ErrStoreNameInvalidChars},
+		{"soft hyphen", "Sh\u00ADop", "", ErrStoreNameInvalidChars},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := NormalizeStoreName(tc.in)
+			if !errors.Is(err, tc.err) {
+				t.Fatalf("NormalizeStoreName(%q) err = %v, want %v", tc.in, err, tc.err)
+			}
+			if got != tc.want {
+				t.Fatalf("NormalizeStoreName(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
 	}
 }

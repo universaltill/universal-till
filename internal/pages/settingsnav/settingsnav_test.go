@@ -44,6 +44,7 @@ func TestResolve_ZeroAmendmentsGroupsCoreSettingsByCategory(t *testing.T) {
 		advanced = "Advanced"
 	)
 	want := []Row{
+		{Key: "settings-store-name", Label: "Shop name", Group: shop, Cat: "shop"},
 		{Key: "settings-currency", Label: "Currency", Group: shop, Cat: "shop"},
 		{Key: "settings-language", Label: "Language", Group: shop, Cat: "shop"},
 		{Key: "settings-staff-languages", Label: "Languages shown to staff", Group: shop, Cat: "shop"},

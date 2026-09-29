@@ -2944,5 +2944,11 @@
   "settings.about.english_only": "هنوز ترجمه نشده — به انگلیسی نمایش داده می‌شود.",
   "settings.about.no_notes": "برای این نسخه یادداشت انتشاری در دسترس نیست.",
   "status.release_notes_updated": "به %s به‌روزرسانی شد — تازه‌ها را ببینید",
-  "status.release_notes_dismiss": "بستن"
+  "status.release_notes_dismiss": "بستن",
+  "settings.store_name.title": "نام فروشگاه",
+  "settings.store_name.help": "روی هر رسید چاپ می‌شود و در گزارش‌ها نمایش داده می‌شود.",
+  "settings.store_name.error_required": "نام فروشگاه خود را وارد کنید. روی هر رسید چاپ می‌شود.",
+  "settings.store_name.error_too_long": "نام فروشگاه حداکثر می‌تواند ۸۰ نویسه باشد.",
+  "settings.store_name.error_invalid_chars": "نام فروشگاه نمی‌تواند شکست خط، تب یا نویسه‌های پنهان داشته باشد.",
+  "elevation.summary.store_name": "تغییر نام فروشگاه به «%s»."
 }

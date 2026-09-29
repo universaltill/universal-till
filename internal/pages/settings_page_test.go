@@ -2198,6 +2198,7 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 		{"telemetry", http.MethodPost, "/api/settings/telemetry", url.Values{"optIn": {"on"}}, gateElevation},
 		{"display-mode", http.MethodPost, "/api/settings/display-mode", url.Values{"mode": {"backoffice"}}, gateElevation},
 		{"shop-type", http.MethodPost, "/api/settings/shop-type", url.Values{"shop_type": {""}}, gateElevation},
+		{"store-name", http.MethodPost, "/api/settings/store-name", url.Values{"store_name": {"Corner Café"}}, gateElevation},
 		{"remove-demo-catalogue", http.MethodPost, "/api/settings/remove-demo-catalogue", nil, gateElevation},
 		{"dismiss-restore-prompt", http.MethodPost, "/api/settings/dismiss-restore-prompt", nil, gateElevation},
 		{"dismiss-pending-base-plugin", http.MethodPost, "/api/settings/dismiss-pending-base-plugin", url.Values{"canonical_type": {"x"}}, gateElevation},
@@ -2353,6 +2354,7 @@ func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 		`hx-post="/api/settings/telemetry"`,          // telemetry card
 		`hx-post="/api/settings/save"`,               // currency card
 		`hx-post="/api/settings/shop-type"`,          // shop-type card
+		`hx-post="/api/settings/store-name"`,         // ut-docs#3115: shop-name card
 		`hx-post="/api/settings/printer"`,            // ut-docs#866: printer card
 		`hx-post="/api/settings/invoice"`,            // ut-docs#866: invoice card
 	}

@@ -36,10 +36,10 @@ test.describe('settings two-pane layout (ut-docs#1960)', () => {
     const items = page.locator('#settings-tree a[data-section]');
     expect(await items.count(), 'the section list is built from the rendered cards').toBeGreaterThan(10);
 
-    // Advanced lists sections by category, My shop first: Currency is the
-    // first row and the one shown.
-    await expect(items.first()).toHaveAttribute('data-section', 'settings-currency');
-    await expect(page.locator('#settings-currency')).toBeVisible();
+    // Advanced lists sections by category, My shop first: Shop name
+    // (ut-docs#3115) is the first row and the one shown.
+    await expect(items.first()).toHaveAttribute('data-section', 'settings-store-name');
+    await expect(page.locator('#settings-store-name')).toBeVisible();
     await expect(items.first()).toHaveAttribute('aria-current', 'page');
     await expect(items.first()).toHaveClass(/is-current/);
     // Everything else is hidden, but still IN the DOM (server-rendered once).
@@ -116,7 +116,7 @@ test.describe('settings two-pane layout (ut-docs#1960)', () => {
     const assertClean = watchConsole(page);
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto('/settings#settings-advanced');
-    await expect(page.locator('#settings-currency')).toBeVisible();
+    await expect(page.locator('#settings-store-name')).toBeVisible();
 
     // A control label from the Receipt printer section (settings.printer
     // .discover.find_button), matched case-insensitively.

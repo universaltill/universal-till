@@ -80,7 +80,11 @@ const (
 	// setup wizard (cafe|retail|service|hospitality|market_stall|other) —
 	// ut-docs#539. Optional: empty/missing is fine.
 	KeyShopType = "shop.type"
-	KeyUIScale  = "display.ui_scale"
+	// KeyStoreName is the shop's name (ut-docs#3115): printed on receipts
+	// and reports, set by the setup wizard and editable under Settings →
+	// My shop. Same key as enroll.StoreNameSettingsKey.
+	KeyStoreName = "store.name"
+	KeyUIScale   = "display.ui_scale"
 	// KeyBasketPanelWidth is the sell screen's basket/products divider
 	// position (ut-docs#2308), persisted per till: the basket column's
 	// width in rem, so it applies at whatever ui_scale/root-font-size is
