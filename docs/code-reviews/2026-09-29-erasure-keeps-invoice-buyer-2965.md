@@ -48,8 +48,17 @@ touches it. This branch:
 - **Not looked at**: dark theme (it uses the same `muted` class as the
   neighbouring paragraph), and the PIN-prompt dialog visually (its text is
   asserted by the handler test).
-- Playwright e2e was not run: there is no Node/Playwright in the local WSL,
-  and CI runs it on the PR.
+- Playwright e2e: green in the PR's CI (`playwright`, `locale-render-audit`).
+- **docs-shots:** first CI run failed `guard-docs-shots`, because help item
+  16 and `/settings` changed. `make docs-shots` was run locally (WSL, Node
+  20, Playwright Chromium 149): 120/120 passed.
+  - Only `web/help/img/manifest.json` is committed (display topic hashes and
+    `surface_sha256`).
+  - The display screenshot is the top of `/settings`; the new paragraph is
+    further down, in the Data card.
+  - Old and new `en/display.png` are visually identical. The byte-level PNG
+    differences across all topics are local font/Chromium noise.
+  - `guard-docs-shots.sh` passes with the new manifest.
 
 ## Findings
 
