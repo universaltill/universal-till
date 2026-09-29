@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, openPhoneSheet, openPhoneDrawer } from './helpers';
 
 // ut-docs#413: an external tester on a real ~360dp-wide Android phone found
 // the till's server-rendered UI has no phone-width responsive layout — only
@@ -154,6 +154,7 @@ test.describe('phone-width layout (ut-docs#413)', () => {
     const assertClean = watchConsole(page);
     await page.goto('/');
     await page.waitForSelector('.pos-container');
+    await openPhoneDrawer(page); // ut-docs#3059: nav links and chips live in the ☰ drawer
     // The chips render async (htmx hx-trigger="load") — give them a turn.
     await expect(page.getByTestId('bugreport-toggle')).toBeVisible();
 
@@ -199,6 +200,7 @@ test.describe('phone-width layout (ut-docs#413)', () => {
   // run off-canvas by nav overflow" in this project.
   test('the right-most nav-right chip is fully reachable on-screen, not run off-canvas by nav overflow', async ({ page }) => {
     await page.goto('/');
+    await openPhoneDrawer(page); // ut-docs#3059
     const toggle = page.getByTestId('bugreport-toggle');
     await expect(toggle).toBeVisible();
     const box = await toggle.boundingBox();
@@ -224,6 +226,7 @@ test.describe('phone-width layout (ut-docs#413)', () => {
     const assertClean = watchConsole(page);
     await page.goto('/');
     await page.waitForSelector('.pos-container');
+    await openPhoneSheet(page); // ut-docs#3059: New Sale lives in the basket sheet
 
     const button = page.getByTestId('kiosk-checkout-start-phone');
     await expect(button).toBeVisible();
@@ -262,6 +265,7 @@ test.describe('phone-width layout (ut-docs#413)', () => {
     const assertClean = watchConsole(page);
     await page.goto('/');
     await page.waitForSelector('.pos-container');
+    await openPhoneSheet(page); // ut-docs#3059: basket + tender stack in the sheet
 
     const rects = await page.evaluate(() => {
       const rect = (sel: string) => {
@@ -293,6 +297,7 @@ test.describe('phone-width layout (ut-docs#413)', () => {
     const assertClean = watchConsole(page);
     await page.goto('/');
     await page.waitForSelector('.pos-container');
+    await openPhoneSheet(page); // ut-docs#3059
     const totals = page.locator('.basket .totals');
     await expect(totals).toBeVisible();
 
@@ -311,6 +316,7 @@ test.describe('phone-width layout (ut-docs#413)', () => {
     const assertClean = watchConsole(page);
     await page.goto('/');
     await page.waitForSelector('.pos-container');
+    await openPhoneDrawer(page); // ut-docs#3059: the bug-report chip is in the ☰ drawer
     await page.getByTestId('bugreport-toggle').click();
     await expect(page.getByTestId('bugreport-panel')).toBeVisible();
 
@@ -410,7 +416,7 @@ test.describe('phone-width layout (ut-docs#413)', () => {
   // scroll event is recorded from the first byte of the page, so this fails
   // deterministically whenever ANYTHING scrolls .pos-container, instead of
   // depending on when scrollTop happens to be sampled.
-  test('nothing scrolls .pos-container at load, and the scan field still takes focus', async ({ page }) => {
+  test('nothing scrolls .pos-container at load, and no hidden scan field takes focus (ut-docs#3059: at <= 480px the scan row is in the closed sheet; a focused input would pop the phone keyboard over the tiles)', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.addInitScript(() => {
       (window as any).__posScrolls = [];
@@ -423,7 +429,7 @@ test.describe('phone-width layout (ut-docs#413)', () => {
     });
     await page.goto('/');
     await page.waitForSelector('.pos-container');
-    await expect(page.locator('input[name=code]')).toBeFocused();
+    await expect(page.locator('input[name=code]')).not.toBeFocused();
     // Let late layout (fonts, htmx load swaps, the ADR-0122 zoom settle) land.
     await page.waitForTimeout(1000);
     const seen = await page.evaluate(() => ({
@@ -442,6 +448,7 @@ test.describe('phone-width layout (ut-docs#413)', () => {
     const assertClean = watchConsole(page);
     await page.goto('/');
     await page.waitForSelector('.pos-container');
+    await openPhoneSheet(page); // ut-docs#3059
     await page.evaluate(() => {
       const c = document.querySelector('.pos-container')!;
       c.scrollTop = 0;
@@ -462,10 +469,15 @@ test.describe('phone-width layout (ut-docs#413)', () => {
     const assertClean = watchConsole(page);
     await page.goto('/menu');
     const boot = await page.evaluate(() => (window as any).UT.shellBootAt as number);
+    await openPhoneDrawer(page); // ut-docs#3059: Sell is in the ☰ drawer
     await page.getByTestId('nav-till').click();
     await expect(page).toHaveURL(/\/$/);
     expect(await page.evaluate(() => (window as any).UT.shellBootAt as number), 'must be a boosted swap, not a full load').toBe(boot);
-    await expect(page.locator('input[name=code]')).toBeFocused();
+    // ut-docs#3059: the phone arrives on the tiles with the drawer closed; the
+    // scan field is in the closed sheet and must not take focus.
+    await expect(page.locator('.nav-drawer-toggle')).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('.basket-phonebar')).toBeVisible();
+    await expect(page.locator('input[name=code]')).not.toBeFocused();
     const scrollTop = await page.evaluate(() => document.querySelector('.pos-container')!.scrollTop);
     expect(scrollTop, '.pos-container must stay at the top after a boosted arrival').toBe(0);
     assertClean();

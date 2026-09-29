@@ -1,5 +1,5 @@
 import { test, expect, type Page } from './fixtures';
-import { setOskMode, watchConsole } from './helpers';
+import { setOskMode, watchConsole, openPhoneSheet } from './helpers';
 
 // ut-docs#2873: every till popup gets a full-screen dimmed backdrop that
 // blocks taps behind it. A showModal() dialog paints its native ::backdrop
@@ -373,6 +373,7 @@ test.describe('ut-docs#2873 popup scrim', () => {
               await new Promise((res) => { link.onload = res; link.setAttribute('href', '/themes/dark.css'); });
             });
           }
+          await openPhoneSheet(page); // ut-docs#3059: at 360px Hold is in the basket sheet
           await page.getByTestId('tender-footer-hold').click();
           await expect(page.locator('#hold-modal')).toBeVisible();
           expect(await scrimOn(page)).toBe(true);
