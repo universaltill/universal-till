@@ -90,3 +90,7 @@ Also checked beyond the automated tests:
 **Touch:** emulated only (Playwright). Not yet tried on a real phone.
 
 **Safe to merge** after these fixes: 152 e2e tests on the touched surfaces pass, as do `go test ./...`, golangci-lint (0 issues), the guards and docs-shots.
+
+## CI follow-up
+
+`release-notes-3091.spec.ts` (its own `release-notes` project) failed on the PR. It checks the "what's new" chip's × at 360px on the sale screen, and after this change that chip lives in the status row at the foot of the ☰ drawer. The spec is adapted rather than deleted: at 360px it opens the drawer (`openPhoneDrawer`) and checks the pill and its × there. Reproduced locally before the change; both tests in the project pass after it.

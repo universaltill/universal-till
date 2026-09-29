@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { openPhoneDrawer, watchConsole } from './helpers';
 
 // ut-docs#3091: in-app release notes, driven on the `release-notes` project's
 // till (run-till-release-notes.sh): built as the newest version that has
@@ -28,8 +28,12 @@ test('after an update the chip shows until opened, and Settings → About shows 
   // Phone width: the pill is capped and its text ellipsised, but the × must
   // stay inside the pill and on screen — clipping the whole pill once cut
   // the × off at 360px, leaving no way to dismiss (tester, 2026-09-28).
+  // On the phone sale screen the status row lives at the foot of the ☰
+  // drawer (ut-docs#3256), so the chip is checked there.
   const viewport = page.viewportSize()!;
   await page.setViewportSize({ width: 360, height: 740 });
+  await openPhoneDrawer(page);
+  await expect(page.getByTestId('sb-release-notes')).toBeVisible();
   const pill = await page.getByTestId('sb-release-notes').boundingBox();
   const x = await page.getByTestId('sb-release-notes-dismiss').boundingBox();
   expect(pill && x).toBeTruthy();
@@ -37,6 +41,7 @@ test('after an update the chip shows until opened, and Settings → About shows 
   expect(x!.x + x!.width).toBeLessThanOrEqual(pill!.x + pill!.width + 1);
   expect(x!.x + x!.width).toBeLessThanOrEqual(360);
   await expect(page.getByTestId('sb-release-notes-dismiss')).toHaveAccessibleName(/\S/);
+  await page.keyboard.press('Escape');
   await page.setViewportSize(viewport);
 
   await page.getByTestId('sb-release-notes-link').click();
