@@ -3,6 +3,7 @@ package common
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"sort"
 	"strconv"
@@ -354,9 +355,24 @@ func ClampBasketPanelWidthRem(v float64) float64 {
 }
 
 // LoadState pulls settings from the DB-backed settings store with cfg defaults.
+// A failed read falls back to the default like a missing row; callers that
+// must not act on a defaulted value use LoadStateChecked.
 func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) RuntimeState {
+	st, _ := LoadStateChecked(ctx, store, cfg)
+	return st
+}
+
+// LoadStateChecked is LoadState that also returns the first read error, so a
+// caller can tell a defaulted value from a stored one (ut-docs#3245: pushing
+// a transient read failure's default tax rate to every live basket).
+func LoadStateChecked(ctx context.Context, store *settings.Store, cfg *config.Config) (RuntimeState, error) {
+	var readErr error
 	get := func(key, def string) string {
-		if v, ok, _ := store.Get(ctx, key); ok && strings.TrimSpace(v) != "" {
+		v, ok, err := store.Get(ctx, key)
+		if err != nil && readErr == nil {
+			readErr = fmt.Errorf("read %s: %w", key, err)
+		}
+		if ok && strings.TrimSpace(v) != "" {
 			return v
 		}
 		return def
@@ -431,7 +447,7 @@ func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) R
 		}
 	}
 
-	return st
+	return st, readErr
 }
 
 // ParseServiceChargeRateBasisPoints parses the decimal-percent string

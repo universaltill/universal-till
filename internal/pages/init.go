@@ -690,14 +690,8 @@ func newRederiveSettings(dp *common.Deps, authDisabled bool, i18n *config.I18n) 
 		// Both engines: the kiosk's separate instance (ut-docs#449) must
 		// see the same tax config or a kiosk checkout would silently
 		// charge stale rates after a settings drift.
-		if newCfg := (pos.Config{
-			TaxInclusive:                 applied.TaxInclusive,
-			TaxRateBasisPoints:           applied.TaxRatePct * 100,
-			ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(applied),
-			ChargesForbidden:             common.ServiceChargeForbidden(applied.Country),
-		}); dp.Engine.Config() != newCfg {
-			applyEngineConfig(dp, newCfg)
-		}
+		// Read and compared inside applyEngineConfig's lock (ut-docs#3245).
+		applyEngineConfig(c, dp)
 		dp.AuthSvc.SetIdleLockMinutes(applied.IdleLockMinutes)
 		if overrides, err := data.NewTranslationRepo(dp.Db).ListOverrides(c); err == nil {
 			i18n.SetShopOverrides(overrides)
