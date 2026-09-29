@@ -5714,7 +5714,7 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   }
   body:not(.pos-sheet-open) .basket .order-type-option {
     flex: 1 1 0; min-inline-size: 0; min-block-size: 56px; padding: .25rem .55rem;
-    font-size: .9rem; white-space: normal; text-align: center;
+    font-size: .9rem; white-space: normal; overflow-wrap: anywhere; hyphens: auto; text-align: center;
   }
   body:not(.pos-sheet-open) .basket .order-type-option.is-active {
     background: color-mix(in srgb, var(--success) 72%, #000); color: #fff;
@@ -5790,9 +5790,14 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   }
   .pos-container .products .filter-chips::-webkit-scrollbar { display: none; }
   .pos-container .products .filter-chips .chip {
-    flex-shrink: 0; white-space: nowrap;
+    flex-shrink: 0; white-space: nowrap; position: relative;
     min-block-size: 40px; block-size: 40px; padding: 0 1rem; border-radius: 20px;
     font-size: .95rem; font-weight: 600;
+  }
+  /* 40px to the eye (the mock-up), 44px to the finger (the touch floor):
+     the bar's own padding has the room. */
+  .pos-container .products .filter-chips .chip::after {
+    content: ""; position: absolute; inset-block: -2px; inset-inline: 0;
   }
   .pos-container .products .filter-chips .chip[aria-pressed="true"] {
     background: color-mix(in srgb, var(--success) 72%, #000);

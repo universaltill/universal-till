@@ -245,6 +245,41 @@ test.describe('phone sale screen (ut-docs#3059)', () => {
     }
   });
 
+  test('after a boosted page change, going offline still re-measures the status row: Pay stays tappable', async ({ page, context }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+    await expect(page.locator('.btn-tile').first()).toBeVisible();
+    // Sell -> Menu -> Sell through the drawer: hx-boost swaps #ut-page, status bar included.
+    await page.locator('.nav-drawer-toggle').click();
+    await page.locator('#nav-drawer .nav-primary a[href="/menu"]').click();
+    await expect(page).toHaveURL(/\/menu/);
+    await page.locator('.nav-drawer-toggle').click();
+    await page.locator('#nav-drawer .nav-primary a[href="/"]').click();
+    await expect(page.locator('.btn-tile').first()).toBeVisible();
+    await addFirstTiles(page, 1);
+    await page.locator('.basket-phonebar').click();
+    await context.setOffline(true);
+    try {
+      const status = page.locator('.statusbar');
+      await expect(status).toBeVisible();
+      await expect.poll(async () => {
+        const h = (await status.boundingBox())!.height;
+        const v = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--phone-sb-h')) || 0);
+        return Math.abs(v - h);
+      }, { message: '--phone-sb-h follows the status row' }).toBeLessThanOrEqual(1);
+      const pay = page.getByTestId('payment-open');
+      await pay.scrollIntoViewIfNeeded();
+      const hit = await pay.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return !!top && el.contains(top);
+      });
+      expect(hit, 'the status row never covers Pay').toBe(true);
+    } finally {
+      await context.setOffline(false);
+    }
+  });
+
   test('Dine in | Takeaway sits next to Pay, one row; categories are 40px pills', async ({ page }) => {
     await setBrowsingMode(page, 'all_filter_chips');
     try {

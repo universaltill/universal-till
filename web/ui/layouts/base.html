@@ -1470,6 +1470,15 @@
          first. -->
     {{ template "pos_alert" . }}
     <main class="container">{{ template "content" . }}</main>
+    <!-- Screen readers hear a CHANGE of link state, not every poll: the
+         script below copies the chip's text here only when its
+         data-link-state differs from the last one seen — and not on the
+         chip's first appearance after a full page load, or every hard
+         navigation would announce "Main till linked" (review). Outside the
+         footer: on the phone sale screen the status row is display:none at
+         rest (it lives in the ☰ drawer, ut-docs#3256), and a live region
+         inside a hidden subtree announces nothing. -->
+    <span id="sb-link-live" class="visually-hidden" aria-live="polite" hx-preserve></span>
     <footer class="statusbar" aria-label="Status">
       <!-- ut-docs#2722/#2742: an additional till's ONE connectivity light
            for its main till — linked / polling / "not reachable since … —
@@ -1480,12 +1489,6 @@
            innerHTML swap as nav.html's #sync-chip: the response is the
            chip itself, never an OOB swap of this element. -->
       <span id="sb-main-till-mount" hx-preserve hx-get="/ui/main-till-status" hx-trigger="load, every 5s"></span>
-      <!-- Screen readers hear a CHANGE of link state, not every poll: the
-           script below copies the chip's text here only when its
-           data-link-state differs from the last one seen — and not on the
-           chip's first appearance after a full page load, or every hard
-           navigation would announce "Main till linked" (review). -->
-      <span id="sb-link-live" class="visually-hidden" aria-live="polite" hx-preserve></span>
       <!-- The network light: navigator.onLine, plus the till's own probe
            of its cloud host (ut-docs#3095). navigator.onLine only means a
            network interface is up, so on Wi-Fi whose router has no
