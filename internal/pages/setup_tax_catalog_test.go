@@ -964,3 +964,52 @@ func TestSetupGETResumeAfterOfflineConsentShowsQueuedNote(t *testing.T) {
 		t.Error("the queued note replaces the offline note, not both")
 	}
 }
+
+// ut-docs#3210: the operator consented to the fiscal plugin (offline tile,
+// Skip or Next), so tax/de is on the #591 pending list. If the background
+// retry then reaches a catalog that has no DE tax listing (staging endpoint,
+// listing unpublished), "nothing published" used to count as done and the
+// tick dropped the entry — the pending list, the Settings chip and the tile
+// all vanished, leaving a German till with no fiscal plugin and no warning.
+// A tax spec must stay pending; a language pack keeps today's silent no-op.
+func TestBasePluginRetryTick_TaxSpecStaysPendingWhenCatalogHasNoTaxListing(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	_, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{})
+	mkt.setCatalog() // reachable, but publishes no tax (or language) listing
+	dp.Cfg.Marketplace = mkt.config()
+
+	taxSpec := basePluginSpec{CanonicalType: "tax", Locale: "de"}
+	langSpec := basePluginSpec{CanonicalType: "language", Locale: "de"}
+	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{taxSpec, langSpec}); err != nil {
+		t.Fatal(err)
+	}
+
+	basePluginRetryTick(t.Context(), dp)
+
+	pending, err := loadPendingBasePlugins(t.Context(), dp)
+	if err != nil {
+		t.Fatalf("loadPendingBasePlugins: %v", err)
+	}
+	if len(pending) != 1 || pending[0] != taxSpec {
+		t.Fatalf("pending after the tick = %+v, want only %+v (tax stays, language no-op drops)", pending, taxSpec)
+	}
+	// The Settings chip is {{ range .pendingBasePlugins }} over exactly this list.
+	if views := pendingBasePluginViews(pending); len(views) != 1 || views[0].CanonicalType != "tax" || views[0].LocaleUpper != "DE" {
+		t.Fatalf("Settings chip views = %+v, want one tax/DE entry", views)
+	}
+
+	// The listing is published later: the same retry installs it and clears
+	// the entry — the stay-pending path converges, it doesn't wedge.
+	mkt2 := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt2.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt2.config()
+	basePluginRetryTick(t.Context(), dp)
+	if pending, _ := loadPendingBasePlugins(t.Context(), dp); len(pending) != 0 {
+		t.Fatalf("expected the pending list cleared once the listing is published, got %+v", pending)
+	}
+	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-tax-de"); !active {
+		t.Fatal("expected the retry to install the fiscal plugin once it is published")
+	}
+}

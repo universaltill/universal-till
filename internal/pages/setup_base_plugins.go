@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"strings"
@@ -191,6 +192,11 @@ func addPendingBasePlugins(ctx context.Context, d *common.Deps, specs []basePlug
 	return savePendingBasePlugins(ctx, d, pending)
 }
 
+// errBasePluginNotPublished is resolveAndInstallBasePlugin's "the catalog
+// answered but has no listing for this spec" for a tax spec, which stays
+// pending (ut-docs#3210). A language spec keeps the silent nil no-op.
+var errBasePluginNotPublished = errors.New("no matching listing published in the catalog")
+
 // resolveAndInstallBasePlugin resolves spec against the marketplace catalog
 // and installs the highest-semver matching listing through the existing
 // Ed25519-verified install path (cloudInstallPluginVersion) — never a second
@@ -201,10 +207,11 @@ func addPendingBasePlugins(ctx context.Context, d *common.Deps, specs []basePlug
 // AvailableLocales" (the real catalog's per-listing availableLocales array —
 // a listing can serve several locales; #1055: matching on a singular field
 // the real server never sent is what made this silently install nothing).
-// Returns nil when there's genuinely nothing to do (no listing
+// Returns nil when there's genuinely nothing to do (no language listing
 // published yet, or an equivalent plugin is already active — idempotent on
 // a retry or a second wizard run) or a non-nil error describing why the
-// spec should stay pending for the next attempt.
+// spec should stay pending for the next attempt — including
+// errBasePluginNotPublished for a tax spec with no listing (ut-docs#3210).
 //
 // Pages through the full result under the same ctx deadline as a single
 // page (ut-docs#2133): this used to read only page 1 of ListPlugins, unlike
@@ -253,6 +260,14 @@ func resolveAndInstallBasePlugin(ctx context.Context, d *common.Deps, spec baseP
 		}
 	}
 	if best == nil {
+		if spec.CanonicalType == "tax" {
+			// ut-docs#3210: a tax spec is only ever queued with the
+			// operator's consent to the fiscal plugin (#1506, #1512), so
+			// "nothing published" (a staging catalog, an unpublished
+			// listing) must keep it pending — dropping it would leave the
+			// till with no fiscal plugin and no Settings chip.
+			return errBasePluginNotPublished
+		}
 		// Nothing published for this country/locale yet — not an error, just
 		// nothing to install (mirrors the "country with nothing mapped"
 		// no-op, one level down).
