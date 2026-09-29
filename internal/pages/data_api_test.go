@@ -801,6 +801,10 @@ func TestEraseCustomer_NoPIN_NeedsElevation_NoMutation(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "cust1") {
 		t.Fatalf("expected the elevation summary to reference the customer id, got: %s", rec.Body.String())
 	}
+	// ut-docs#2965: the approving manager is told issued invoices keep the buyer's details.
+	if !strings.Contains(rec.Body.String(), "Invoices already issued keep the buyer") {
+		t.Fatalf("expected the elevation summary to say issued invoices keep the buyer's details, got: %s", rec.Body.String())
+	}
 	var count int
 	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM customers WHERE id='cust1'`).Scan(&count); err != nil {
 		t.Fatal(err)
