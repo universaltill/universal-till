@@ -167,3 +167,26 @@ func TestOpenProblems_ResolvedAndAgedOutAreNotOpen(t *testing.T) {
 		t.Fatalf("recurrence not open: %+v", open)
 	}
 }
+
+// ut-docs#3145: the Problems ring feeds bug-report bundles and the cloud
+// heartbeat, so it only ever holds the redacted message.
+func TestRecentHoldsRedactedMessage(t *testing.T) {
+	ResetRecent()
+	t.Cleanup(ResetRecent)
+	L().Warnf("%s", sinkSecretLine)
+	L().WarnProblemf("test.redact", "%s", sinkSecretLine)
+	got := Recent()
+	if len(got) != 2 {
+		t.Fatalf("Recent() = %+v, want 2 entries", got)
+	}
+	for _, p := range got {
+		for _, s := range sinkSecrets {
+			if strings.Contains(p.Msg, s) {
+				t.Errorf("secret %q reached the Problems ring: %q", s, p.Msg)
+			}
+		}
+		if !strings.HasPrefix(p.Msg, "card ") || !strings.Contains(p.Msg, redactedMark) {
+			t.Errorf("ring entry not the redacted line: %q", p.Msg)
+		}
+	}
+}

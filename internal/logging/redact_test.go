@@ -179,3 +179,30 @@ func TestAttachedFileNeverContainsToken(t *testing.T) {
 		t.Fatalf("stdlib log line not captured (redacted) in file: %q", out)
 	}
 }
+
+// sinkSecrets are the ut-docs#3145 vectors every log sink is tested with: a
+// Luhn-valid test PAN, a bearer token and a JWT.
+var sinkSecrets = []string{
+	"4111 1111 1111 1111",
+	"abc123def456ghi789",
+	"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
+}
+
+// sinkSecretLine carries every sinkSecrets vector in one log line.
+const sinkSecretLine = "card 4111 1111 1111 1111 Authorization: Bearer abc123def456ghi789 jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+
+// ut-docs#3145: text is redacted at more than one layer (the Problems ring,
+// then again before a bundle is written or uploaded), so a second pass must
+// leave an already-redacted line exactly as the first pass left it.
+func TestRedactIsIdempotent(t *testing.T) {
+	lines := []string{sinkSecretLine}
+	for _, s := range secretSamples {
+		lines = append(lines, s.line)
+	}
+	for _, line := range lines {
+		once := Redact(line)
+		if twice := Redact(once); twice != once {
+			t.Errorf("Redact is not idempotent:\n  once: %s\n twice: %s", once, twice)
+		}
+	}
+}

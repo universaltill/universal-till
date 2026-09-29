@@ -236,8 +236,12 @@ func TestHandleEvent_AuthorizeResultRedactedInRealLog(t *testing.T) {
 	if !strings.Contains(logged, "payment.demopay.authorize") {
 		t.Errorf("expected the event type in the real log line for debuggability, got:\n%s", logged)
 	}
-	if !strings.Contains(logged, "omitted") {
-		t.Errorf("expected a size placeholder in the real log line, got:\n%s", logged)
+	// The auth_token key is itself a secret key to logging.Redact, which
+	// now runs on stdout too (ut-docs#3145) and replaces the size
+	// placeholder wholesale; wasm_runtime_ask_log_test.go proves the
+	// placeholder itself.
+	if !strings.Contains(logged, `"auth_token":[REDACTED]`) {
+		t.Errorf("expected the redacted auth_token in the real log line, got:\n%s", logged)
 	}
 }
 
@@ -291,8 +295,12 @@ func TestHandleEvent_RefundResultRedactedInRealLog(t *testing.T) {
 	if !strings.Contains(logged, "payment.demopay.refund") {
 		t.Errorf("expected the event type in the real log line for debuggability, got:\n%s", logged)
 	}
-	if !strings.Contains(logged, "omitted") {
-		t.Errorf("expected a size placeholder in the real log line, got:\n%s", logged)
+	// The auth_token key is itself a secret key to logging.Redact, which
+	// now runs on stdout too (ut-docs#3145) and replaces the size
+	// placeholder wholesale; wasm_runtime_ask_log_test.go proves the
+	// placeholder itself.
+	if !strings.Contains(logged, `"auth_token":[REDACTED]`) {
+		t.Errorf("expected the redacted auth_token in the real log line, got:\n%s", logged)
 	}
 }
 
@@ -368,8 +376,12 @@ func TestHandleEvent_NestedAuthorizeTokenRedactedInRealLog(t *testing.T) {
 	if !strings.Contains(logged, "payment.demopay.authorize") {
 		t.Errorf("expected the event type in the real log line for debuggability, got:\n%s", logged)
 	}
-	if !strings.Contains(logged, "omitted") {
-		t.Errorf("expected a size placeholder in the real log line, got:\n%s", logged)
+	// The auth_token key is itself a secret key to logging.Redact, which
+	// now runs on stdout too (ut-docs#3145) and replaces the size
+	// placeholder wholesale; wasm_runtime_ask_log_test.go proves the
+	// placeholder itself.
+	if !strings.Contains(logged, `"auth_token":[REDACTED]`) {
+		t.Errorf("expected the redacted auth_token in the real log line, got:\n%s", logged)
 	}
 }
 
