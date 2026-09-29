@@ -65,7 +65,7 @@
           {{ range .Methods }}<option value="{{ . }}">{{ . }}</option>{{ end }}
         </select>
       </label>
-      {{ if not .AuthOff }}
+      {{ if .NeedsManagerPIN }}
       <label>{{ T "refund.manager_pin" }}
         <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off" required>
       </label>

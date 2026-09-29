@@ -218,7 +218,7 @@ func CloseShift(dp *common.Deps) http.HandlerFunc {
 		// gate applies — mirrors RecordCashAdjustment's actorID pattern)
 		actorID := getSessionUserID(r)
 
-		// Manager approval whenever a skim actually moves cash out of the
+		// Authorization whenever a skim actually moves cash out of the
 		// drawer (ut-docs#1006 review finding 1) — a skim is exactly the
 		// class of action RecordCashAdjustment's sign-based gate exists for
 		// (ut-docs#266), and closing a shift must not become a way to move
@@ -227,24 +227,40 @@ func CloseShift(dp *common.Deps) http.HandlerFunc {
 		// RecordCashAdjustment (which requires the shift to still be open).
 		// A plain close (no skim) stays ungated, same as a positive
 		// adjustment does today.
+		//
+		// ut-docs#3134: the gate is the cash_adjustment permission — a role
+		// granted it on /users/permissions skims with no PIN (the session
+		// user is the approver of record); any other session needs a
+		// manager PIN (checkOrElevate), whose owner is recorded as the
+		// approver and the blocked session user alongside it. A blank PIN
+		// never reaches AuthorizeManager (checkOrElevate returns
+		// needsElevation with no Err), so it burns no lockout attempt.
 		skimApproverID := ""
+		skimBlockedActorID := ""
 		if req.Skim > 0 {
 			authOff := auth.Disabled(os.Getenv("UT_AUTH"))
 			if !authOff {
-				if strings.TrimSpace(req.ManagerPIN) == "" {
-					respondCloseError(w, r, http.StatusForbidden, "manager PIN required")
-					return
-				}
-				approver, err := dp.AuthSvc.AuthorizeManager(ctx, strings.TrimSpace(req.ManagerPIN))
-				if err != nil {
+				elev := checkOrElevate(dp, r, "cash_adjustment", strings.TrimSpace(req.ManagerPIN))
+				switch elev.Outcome {
+				case needsElevation:
 					status := http.StatusForbidden
-					if errors.Is(err, auth.ErrLockedOut) {
+					if errors.Is(elev.Err, auth.ErrLockedOut) {
 						status = http.StatusTooManyRequests
 					}
 					respondCloseError(w, r, status, "manager PIN required")
 					return
+				case elevated:
+					skimApproverID = elev.ApproverID
+					skimBlockedActorID = elev.ActorID
+				default: // allowed
+					skimApproverID = actorID
+					if skimApproverID == "" {
+						// canPerform can't be true without a session user
+						// while auth is on; fail closed if it ever is.
+						respondCloseError(w, r, http.StatusForbidden, "manager PIN required")
+						return
+					}
 				}
-				skimApproverID = approver.ID
 			} else {
 				// Auth disabled (test/dev mode, UT_AUTH) — same convention
 				// RecordCashAdjustment follows: the gate itself is skipped,
@@ -273,13 +289,14 @@ func CloseShift(dp *common.Deps) http.HandlerFunc {
 
 		// Close shift
 		err = pos.CloseShift(ctx, dp.Db, pos.ShiftCloseInput{
-			ShiftID:        req.ShiftID,
-			ClosingCash:    money.FromMinor(req.ClosingCash),
-			Note:           req.Note,
-			Skim:           money.FromMinor(req.Skim),
-			SkimReason:     req.SkimReason,
-			CountProtocol:  req.CountProtocol,
-			SkimApproverID: skimApproverID,
+			ShiftID:            req.ShiftID,
+			ClosingCash:        money.FromMinor(req.ClosingCash),
+			Note:               req.Note,
+			Skim:               money.FromMinor(req.Skim),
+			SkimReason:         req.SkimReason,
+			CountProtocol:      req.CountProtocol,
+			SkimApproverID:     skimApproverID,
+			SkimBlockedActorID: skimBlockedActorID,
 		})
 		if err != nil {
 			respondCloseError(w, r, http.StatusInternalServerError, err.Error())
@@ -446,41 +463,42 @@ func RecordCashAdjustment(dp *common.Deps) http.HandlerFunc {
 			return
 		}
 
-		// Manager approval whenever cash actually LEAVES the till (a
-		// negative amount) — gated on the sign, not the declared "type",
-		// because "type" is a client-supplied label with no sign
-		// enforcement: a cashier could otherwise pick "adjustment" instead
-		// of "payout" for the same negative amount and bypass a
-		// type-only gate entirely (ut-docs#266). Positive adjustments
-		// (cash going in, e.g. a float top-up correction) are unaffected,
-		// same as the existing refund/PfandRueckgabe gates only ever
-		// covering cash leaving the till. The PIN owner becomes the audit
-		// actor, mirroring PfandRueckgabe/refund.
+		// Authorization whenever cash actually LEAVES the till (a negative
+		// amount) — gated on the sign, not the declared "type", because
+		// "type" is a client-supplied label with no sign enforcement: a
+		// cashier could otherwise pick "adjustment" instead of "payout" for
+		// the same negative amount and bypass a type-only gate entirely
+		// (ut-docs#266). Positive adjustments (cash going in, e.g. a float
+		// top-up correction) are unaffected, same as the existing
+		// refund/PfandRueckgabe gates only ever covering cash leaving the
+		// till.
+		//
+		// ut-docs#3134: the gate is the cash_adjustment permission — a role
+		// granted it records the payout itself with no PIN; any other
+		// session needs a manager PIN (checkOrElevate), whose owner becomes
+		// the audit actor, mirroring PfandRueckgabe/refund, with the
+		// blocked session user recorded alongside. An empty PIN never
+		// reaches AuthorizeManager (checkOrElevate returns needsElevation
+		// with no Err), so a blank manager_pin — the natural first mistake,
+		// since this field can't be HTML-`required` — burns no failed
+		// attempt from the lockout budget shared with keypad login.
+		blockedActorID := ""
 		if req.Amount < 0 {
 			authOff := auth.Disabled(os.Getenv("UT_AUTH"))
 			if !authOff {
-				// An empty PIN can never authorize anything — reject it
-				// before AuthorizeManager, which would otherwise burn a
-				// failed-attempt count shared with keypad login
-				// (internal/auth.Service: 5 failures device-wide locks out
-				// for 30s). A blank manager_pin is the natural first
-				// mistake here since, unlike refund.html's field, this one
-				// can't be HTML-`required` — positive adjustments must be
-				// allowed to submit it blank.
-				if strings.TrimSpace(req.ManagerPIN) == "" {
-					respondAdjustmentError(w, r, http.StatusForbidden, "manager PIN required")
-					return
-				}
-				approver, err := dp.AuthSvc.AuthorizeManager(ctx, strings.TrimSpace(req.ManagerPIN))
-				if err != nil {
+				elev := checkOrElevate(dp, r, "cash_adjustment", strings.TrimSpace(req.ManagerPIN))
+				switch elev.Outcome {
+				case needsElevation:
 					status := http.StatusForbidden
-					if errors.Is(err, auth.ErrLockedOut) {
+					if errors.Is(elev.Err, auth.ErrLockedOut) {
 						status = http.StatusTooManyRequests
 					}
 					respondAdjustmentError(w, r, status, "manager PIN required")
 					return
+				case elevated:
+					actorID = elev.ApproverID
+					blockedActorID = elev.ActorID
 				}
-				actorID = approver.ID
 			}
 		}
 
@@ -507,6 +525,8 @@ func RecordCashAdjustment(dp *common.Deps) http.HandlerFunc {
 			Amount:  money.FromMinor(req.Amount),
 			Reason:  req.Reason,
 			ActorID: actorID,
+			// ut-docs#3134: set only when a manager PIN approved it.
+			BlockedActorID: blockedActorID,
 		})
 		if err != nil {
 			respondAdjustmentError(w, r, http.StatusInternalServerError, err.Error())
