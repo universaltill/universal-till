@@ -78,7 +78,7 @@ Auf einem Smartphone sieht der Verkaufsbildschirm wie eine Smartphone-App aus, d
 
 - **☰** oben öffnet das Menü: Verkaufen, Menü, Lager und die anderen Seiten, dazu Hilfe, Problem melden, Ihr Name und **Sperren**. Tippen Sie daneben (oder drücken Sie Escape), um es zu schließen. Eine Fiskal- oder Diagnosemodus-Warnung erscheint in der oberen Leiste selbst, nie nur im Menü.
 - Artikel erscheinen als Symbole, drei pro Reihe: das Bild des Artikels, falls vorhanden, sonst seine Farbe mit seinen Anfangsbuchstaben. Tippen Sie auf ein Symbol, um den Artikel hinzuzufügen. Die Kategorie-Schaltflächen darüber lassen sich seitlich wischen.
-- Die Leiste unten zeigt **Vor Ort / Außer Haus** und **Bezahlen** mit dem Betrag und der Anzahl der Artikel. Tippen Sie auf Bezahlen, um den Warenkorb zu öffnen: Menge mit − und + ändern, eine Zeile entfernen, einen Rabatt geben, dann bezahlen. Schließen Sie den Warenkorb mit dem Pfeil oben. Nach dem Bezahlen erscheinen die Beleg-Optionen (Drucken, Papierbeleg); tippen Sie auf **Neuer Kunde**, um zu den Artikeln zurückzukehren.
+- Die Leiste unten zeigt **Vor Ort / Zum Mitnehmen** und **Zahlen** mit dem Betrag und der Anzahl der Artikel. Tippen Sie auf Zahlen, um den Warenkorb zu öffnen: Menge mit − und + ändern, eine Zeile entfernen, einen Rabatt geben, dann bezahlen. Schließen Sie den Warenkorb mit dem Pfeil oben. Nach dem Bezahlen erscheinen die Beleg-Optionen (Drucken, Papierbeleg); tippen Sie auf **Neuer Kunde**, um zu den Artikeln zurückzukehren.
 - Die Statuszeile (online, Hauptkasse, Updates) liegt direkt über der unteren Leiste.
 
 ## Die Art des Stöberns wählen

@@ -645,11 +645,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(st),
 			ChargesForbidden:             common.ServiceChargeForbidden(st.Country),
 		}
-		d.Engine.SetConfig(newCfg)
-		if d.KioskEngine != nil {
-			d.KioskEngine.SetConfig(newCfg)
-		}
-		d.SelfOrderSessions.SetConfig(newCfg) // every live table-QR session too (ADR-0103); nil-safe
+		applyEngineConfig(d, newCfg)
 
 		if err := d.Settings.Set(r.Context(), "store.name", storeName); err != nil {
 			http.Error(w, "setup failed", http.StatusInternalServerError)
