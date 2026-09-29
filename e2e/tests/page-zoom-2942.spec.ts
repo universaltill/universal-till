@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, openPhoneDrawer } from './helpers';
 import { WORKER_TILL_EFFECTS_LEVEL } from './worker-till';
 
 // ut-docs#2942 / ADR-0122 §2, §3: page motion is an iOS zoom from the tapped
@@ -230,6 +230,7 @@ test.describe('page zoom from the tapped element (ut-docs#2942, ADR-0122)', () =
     const assertClean = watchConsole(page);
     await open(page, '/', { width: 360, height: 740 });
     await instrument(page);
+    await openPhoneDrawer(page); // ut-docs#3059: at phone width the rail links are in the ☰ drawer
     const btn = page.locator('[data-testid="nav-menu"]');
     const b = box(await btn.boundingBox());
     await btn.click();

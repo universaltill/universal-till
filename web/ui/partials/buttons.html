@@ -1526,6 +1526,9 @@
 {{ define "tile-hidden-mark" }}{{ if .Hidden }}<span class="tile-hidden-mark" aria-hidden="true">{{ icon "eye-off" }}</span><span class="visually-hidden">{{ T "tile_sheet.hidden_state" }}</span>{{ end }}{{ end }}
 
 {{ define "product-tile" }}
+  {{/* ut-docs#3059: .tile-initials is the picture-less fallback of the phone
+       tier's app-icon tile (the item colour with its initials, app.css
+       <= 480px); hidden on every wider layout. */}}
   {{ $colored := and (not .ImageURL) .Color }}
   <div class="tile-cell{{ if .Hidden }} tile--hidden{{ if not .Editing }} tile--rest-hidden{{ end }}{{ end }}" data-name="{{ .Label }}" data-item-id="{{ .ItemID }}"{{ if .Hidden }} data-hidden{{ end }} x-show="matches($el)">
   {{/* ut-docs#2174: on the Designer's live replica (.Editing, see
@@ -1543,7 +1546,7 @@
     data-code="{{ .Code }}" data-item-id="{{ .ItemID }}" data-pos="{{ .Pos }}"{{ if .Hidden }} data-hidden{{ end }}
     data-testid="designer-tile"
     {{ if $colored }}style="--tile-color: {{ .Color }}"{{ end }}>
-    {{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}
+    {{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ else }}<span class="tile-initials" aria-hidden="true">{{ initials .Label }}</span>{{ end }}
     <span class="tile-name">{{ .Label }}</span>
     {{ if .Price }}<span class="tile-price">{{ money .Price }}</span>{{ end }}
     {{ template "tile-hidden-mark" . }}
@@ -1568,7 +1571,7 @@
     hx-get="/ui/pos/modifiers?item={{ .ItemID }}&code={{ .Code }}&src=tile"
     hx-target="#modifier-modal"
     hx-swap="innerHTML">
-    {{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}
+    {{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ else }}<span class="tile-initials" aria-hidden="true">{{ initials .Label }}</span>{{ end }}
     <span class="tile-name">{{ .Label }}</span>
     {{ if .Price }}<span class="tile-price">{{ money .Price }}</span>{{ end }}
     {{ template "tile-hidden-mark" . }}
@@ -1584,7 +1587,7 @@
     hx-target="#basket"
     hx-swap="outerHTML"
     hx-sync="#basket:replace">
-    {{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}
+    {{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ else }}<span class="tile-initials" aria-hidden="true">{{ initials .Label }}</span>{{ end }}
     <span class="tile-name">{{ .Label }}</span>
     {{ if .Price }}<span class="tile-price">{{ money .Price }}</span>{{ end }}
     {{ template "tile-hidden-mark" . }}
@@ -1777,7 +1780,7 @@
     hx-get="/ui/pos/modifiers?item={{ .ItemID }}&code={{ .Code }}&src=tile"
     hx-target="#modifier-modal"
     hx-swap="innerHTML">
-    {{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}
+    {{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ else }}<span class="tile-initials" aria-hidden="true">{{ initials .Label }}</span>{{ end }}
     <span class="tile-name">{{ .Label }}</span>
     {{ if .Price }}<span class="tile-price">{{ money .Price }}</span>{{ end }}
   </button>
@@ -1791,7 +1794,7 @@
     hx-target="#basket"
     hx-swap="outerHTML"
     hx-sync="#basket:replace">
-    {{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}
+    {{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ else }}<span class="tile-initials" aria-hidden="true">{{ initials .Label }}</span>{{ end }}
     <span class="tile-name">{{ .Label }}</span>
     {{ if .Price }}<span class="tile-price">{{ money .Price }}</span>{{ end }}
   </button>

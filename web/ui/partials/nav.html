@@ -11,6 +11,18 @@
     <img src="/public/assets/logo/unitill-logo-light.svg" alt="" />
     <span class="app-name">{{ T "app.name" }}</span>
   </div>
+  {{/* ut-docs#3059 (product owner, 2026-09-28, on an iPhone): at phone
+       width the wrapped top bar ate ~40% of the screen before any product
+       tile. There the nav is one 56px row -- this ☰ button and the logo --
+       and #nav-drawer below becomes an off-canvas panel holding the same
+       links and chips. Above 480px the button is hidden and #nav-drawer is
+       `display: contents`, so the rail's DOM and layout are unchanged.
+       app.js (utNavDrawer) toggles body.nav-drawer-open. */}}
+  <button type="button" class="nav-drawer-toggle" aria-expanded="false" aria-controls="nav-drawer"
+          aria-label="{{ T "nav.drawer.open" }}" data-label-open="{{ T "nav.drawer.open" }}" data-label-close="{{ T "nav.drawer.close" }}">
+    <span class="btn-ico" aria-hidden="true">{{ icon "menu" }}</span>
+  </button>
+  <div id="nav-drawer" class="nav-drawer">
   <!-- 2026-08-30 (nav rail, ut-docs#1332): the product owner asked
        repeatedly, comparing directly against a competitor POS (SumUp),
        for this bar to move off the top of the screen -- every page paid
@@ -112,19 +124,28 @@
          gating — empty body when the operator can't report issues. -->
     <span id="bugreport-chip" hx-preserve hx-get="/ui/bugreport-chip" hx-trigger="load"></span>
     <span id="sync-chip" hx-preserve hx-get="/ui/sync-chip" hx-trigger="load, every 30s"></span>
-    <!-- Fiscalisation status (ut-docs#685): empty body when this shop has
-         no fiscalisation configured — same "nothing shown" convention as
-         the other chips' zero-state. -->
-    <span id="fiscal-chip" hx-preserve hx-get="/ui/fiscal-chip" hx-trigger="load, every 30s"></span>
-    <!-- Diagnostic mode indicator (ADR-0092 §7, ut-docs#2169): empty body
-         unless a diagnostic session is locally active; then a persistent
-         pulse icon with a dot badge on EVERY page, for every role — a
-         disclosure that this till is sending technical events to support,
-         not a manager control. Same htmx-after-render trick as the other
-         chips; the activate/stop responses also push it out-of-band so it
-         flips without waiting for the 30s poll. -->
-    <span id="diagnostics-chip" hx-preserve hx-get="/ui/diagnostics-chip" hx-trigger="load, every 30s"></span>
     <span id="session-chip" hx-preserve hx-get="/ui/session-chip" hx-trigger="load"></span>
   </div>
+  </div>
+  {{/* ut-docs#3059: the two alert chips (fiscal, diagnostic mode) sit
+       outside #nav-drawer so the phone top bar can always show them:
+       ADR-0092 §7 requires the diagnostic indicator on every screen and
+       size, and a fiscal failure must not hide behind ☰. On the rail they
+       follow the session chip at the foot, empty until there is an alert. */}}
+  <div class="nav-alerts">
+      <!-- Fiscalisation status (ut-docs#685): empty body when this shop has
+           no fiscalisation configured — same "nothing shown" convention as
+           the other chips' zero-state. -->
+      <span id="fiscal-chip" hx-preserve hx-get="/ui/fiscal-chip" hx-trigger="load, every 30s"></span>
+      <!-- Diagnostic mode indicator (ADR-0092 §7, ut-docs#2169): empty body
+           unless a diagnostic session is locally active; then a persistent
+           pulse icon with a dot badge on EVERY page, for every role — a
+           disclosure that this till is sending technical events to support,
+           not a manager control. Same htmx-after-render trick as the other
+           chips; the activate/stop responses also push it out-of-band so it
+           flips without waiting for the 30s poll. -->
+      <span id="diagnostics-chip" hx-preserve hx-get="/ui/diagnostics-chip" hx-trigger="load, every 30s"></span>
+  </div>
+  <div class="nav-drawer-backdrop" aria-hidden="true"></div>
 </nav>
 {{- end }}

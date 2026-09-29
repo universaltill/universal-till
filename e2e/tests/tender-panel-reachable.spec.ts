@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole, clearAllHeldSales } from './helpers';
+import { watchConsole, clearAllHeldSales, openPhoneSheet } from './helpers';
 
 // ut-docs#161's independent review found TWO real regressions on the way to
 // making the sale screen viewport-responsive, both in the tender panel
@@ -225,6 +225,7 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
     await page.setViewportSize({ width: 360, height: 640 });
     await page.goto('/');
     await page.waitForSelector('.pos-container');
+    await openPhoneSheet(page); // ut-docs#3059: the tender panel is in the phone basket sheet
 
     const overflow = await page.evaluate(() => ({
       scrollWidth: document.documentElement.scrollWidth,
