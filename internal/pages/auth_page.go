@@ -227,10 +227,6 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			loginUnavailable(w, r, "", err)
 			return
 		}
-		if err := d.Settings.Set(r.Context(), "store.name", storeName); err != nil {
-			loginUnavailable(w, r, "", err)
-			return
-		}
 
 		// The seeded 'system' user stays a service identity; first boot
 		// creates (or reuses) a real admin operator.
@@ -240,6 +236,11 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			return
 		}
 		if err := svc.Repo().SetUserPIN(r.Context(), adminID, hash); err != nil {
+			loginUnavailable(w, r, "", err)
+			return
+		}
+		// settings-write:allow first boot runs before this till follows a main till (as setup_page.go)
+		if err := d.Settings.Set(r.Context(), "store.name", storeName); err != nil {
 			loginUnavailable(w, r, "", err)
 			return
 		}

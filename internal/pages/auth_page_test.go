@@ -339,7 +339,7 @@ func TestBareFirstBootSetupRequiresShopName(t *testing.T) {
 	mux, svc, d := newAuthTestMux(t)
 	ctx := t.Context()
 
-	for _, name := range []string{"", "   ", "My Store", "my store", "Universal Till store", "My Shop"} {
+	for _, name := range []string{"", "   ", "My Store", "my store", "Universal Till store", "My Shop", strings.Repeat("é", 61)} {
 		rec := postForm(mux, "/api/auth/setup", url.Values{"pin": {"2468"}, "pin_confirm": {"2468"}, "store_name": {name}}, nil)
 		body := rec.Body.String()
 		if rec.Code != http.StatusOK || !strings.Contains(body, `action="/api/auth/setup"`) {
@@ -348,6 +348,9 @@ func TestBareFirstBootSetupRequiresShopName(t *testing.T) {
 		want := template.HTMLEscapeString(httpx.T("en", "setup.error.store_name_required"))
 		if !strings.Contains(body, want) {
 			t.Errorf("store_name=%q: want the translated %q error, body lacks it", name, want)
+		}
+		if !strings.Contains(body, `name="store_name" maxlength="60" placeholder="My Shop" value=""`) {
+			t.Errorf("store_name=%q: a refused name must not be echoed back into the form", name)
 		}
 		if first, err := svc.NeedsFirstBoot(ctx); err != nil || !first {
 			t.Fatalf("store_name=%q: a refused setup must stay first boot (first=%v err=%v)", name, first, err)
