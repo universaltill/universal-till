@@ -5546,3 +5546,223 @@ body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-heig
   .designer-cat { transition: box-shadow .12s ease, transform .12s ease; }
   .designer-cat.is-dragging { transform: scale(1.015); }
 }
+
+/* ── Phone sale screen (ut-docs#3059) ───────────────────────────────────
+   Product owner, 2026-09-28, on an iPhone: the phone tier showed no product
+   tile without scrolling (a wrapped 3-row nav, then the basket table and
+   the tender block, then the grid). Owner-approved design (mock-up on the
+   card, modelled on the SumUp/Square/Shopify phone apps):
+   - the nav is ONE 56px row (☰ + logo); nav.html's #nav-drawer, which is
+     `display: contents` on every wider layout, becomes an off-canvas panel;
+   - item tiles are app icons: the item's picture, else .tile-initials on
+     the item colour, in a square with rounded corners, 3 per row;
+   - #basket collapses into a bottom bar (Dine in | Takeaway, and
+     .basket-phonebar "Pay £x / n items") that opens a sheet
+     (body.pos-sheet-open): the lines, totals and the tender panel, stacked.
+   Tablet, desktop and Pi layouts are untouched: the rail is binding there
+   (the phone is the owner's own exception). Toggles: app.js utNavDrawer /
+   utPhoneSheet. Spec: e2e/tests/phone-sell-3059.spec.ts. */
+.nav-drawer { display: contents; }
+.nav-drawer-toggle, .nav-drawer-backdrop, .basket-phonebar,
+.basket-sheet-close, .tile-initials { display: none; }
+/* nav.html's alert chips (fiscal, diagnostic mode): a column at the rail's
+   foot; an empty chip (no alert) takes no room. */
+.nav-alerts { display: flex; flex-direction: column; gap: .3rem; }
+.nav-alerts > span:empty { display: none; }
+
+@media (max-width: 480px) {
+  :root { --phone-top-h: 56px; }
+
+  /* Top bar: ☰ + logo, one row. */
+  .nav {
+    flex-wrap: nowrap; justify-content: flex-start; align-items: center;
+    gap: .35rem; row-gap: 0; padding: 0 .4rem;
+    block-size: var(--phone-top-h); min-block-size: var(--phone-top-h);
+    z-index: 60;
+  }
+  .nav-drawer-toggle {
+    display: inline-flex; align-items: center; justify-content: center;
+    inline-size: 48px; block-size: 48px; flex-shrink: 0;
+    border: 0; border-radius: 10px; background: transparent; color: #fff;
+    font: inherit; cursor: pointer; order: -1;
+  }
+  .nav-drawer-toggle .btn-ico svg { inline-size: 1.6rem; block-size: 1.6rem; }
+  .nav-drawer-toggle:focus-visible { outline: 3px solid #fff; outline-offset: -3px; }
+  .nav .logo img { height: 2rem; }
+  .nav-alerts { flex-direction: row; align-items: center; gap: .3rem; margin-inline-start: auto; min-inline-size: 0; }
+  /* An active alert chip is icon + badge in the bar (its label stays the
+     accessible name, visually hidden); the app name gives way to it. */
+  .nav-alerts .nav-toggle { min-height: 44px; padding: .4rem .6rem; }
+  .nav-alerts .nav-toggle-label {
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+  }
+  /* The fiscal chip's "ok" state is information, not an alert: it isn't
+     worth the bar on a phone (warn/err still show). */
+  .nav-alerts .fiscal-chip.ok { display: none; }
+  .nav:has(.nav-alerts .fiscal-chip:not(.ok)) .app-name,
+  .nav:has(#diagnostics-chip:not(:empty)) .app-name { display: none; }
+
+  /* Drawer: the same links and chips, as a column. inset-inline-start and
+     the direction-aware transform keep it on the reading-start edge in RTL. */
+  .nav-drawer {
+    display: flex; flex-direction: column; gap: .75rem;
+    position: fixed; inset-block: 0; inset-inline-start: 0;
+    inline-size: min(20rem, 86vw); box-sizing: border-box;
+    padding: .75rem .6rem calc(.75rem + env(safe-area-inset-bottom));
+    background: var(--brand); color: #fff; overflow-y: auto; z-index: 2;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, .35);
+    transform: translateX(-105%); visibility: hidden;
+    transition: transform .2s ease, visibility 0s linear .2s;
+  }
+  [dir="rtl"] .nav-drawer { transform: translateX(105%); }
+  body.nav-drawer-open .nav-drawer {
+    transform: none; visibility: visible; transition: transform .2s ease;
+  }
+  .nav-drawer .nav-primary, .nav-drawer .nav-right {
+    flex-direction: column; flex-wrap: nowrap; align-items: stretch;
+    gap: .3rem; margin: 0;
+  }
+  .nav-drawer .nav-right { padding-block-start: .75rem; border-block-start: 1px solid rgba(255, 255, 255, .15); }
+  .nav-drawer .nav-toggle,
+  .nav .nav-drawer button.nav-toggle { justify-content: flex-start; inline-size: 100%; min-height: 48px; }
+  .nav-drawer .nav-rail-only { display: flex; }
+  body.nav-drawer-open .nav-drawer-backdrop {
+    display: block; position: fixed; inset: 0; z-index: 1;
+    background: rgba(15, 23, 42, .45);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .nav-drawer, body.nav-drawer-open .nav-drawer { transition: none; }
+  }
+
+  /* Sale screen: products fill; basket is a bottom bar; the rest waits in
+     the sheet. */
+  body.sale-screen:not(.pos-sheet-open) .kiosk-header { display: none; }
+  /* The status bar (main-till link, network light, update/enrol chips)
+     stays on screen -- offline state is never hidden (offline-first) -- as
+     one slim row just above the pay bar (or, in the open sheet, at the very
+     bottom, with Pay pinned above it); it wraps when full (app.js
+     re-measures it). */
+  body.sale-screen .statusbar {
+    position: fixed; inset-inline: 0; bottom: var(--phone-bar-h, 8rem); z-index: 39;
+    padding-block: .2rem; font-size: .8rem;
+  }
+  body.sale-screen.pos-sheet-open .statusbar { bottom: 0; }
+  /* ...and, like everywhere else, it stays above #ut-scrim while a dialog
+     is open (status stays reachable; base rule html.ut-scrim-on .statusbar). */
+  html.ut-scrim-on body.sale-screen .statusbar { z-index: 460; }
+  .pos-container {
+    display: flex; flex-direction: column; overflow: hidden;
+    flex: 1 1 auto; min-height: 0;
+  }
+  .pos-container > .pos-divider { display: none; }
+  .pos-container > .products {
+    order: 1; flex: 1 1 auto; min-height: 0; max-height: none;
+    overflow-y: auto; margin: 0; border: 0; border-radius: 0; box-shadow: none;
+    padding-block-end: calc(var(--phone-bar-h, 8rem) + var(--phone-sb-h, 2.25rem) + .75rem);
+  }
+  body:not(.pos-sheet-open) .pos-container > .tender { display: none; }
+  body:not(.pos-sheet-open) .pos-container > .basket {
+    position: fixed; inset-inline: 0; bottom: 0; z-index: 40;
+    display: flex; flex-direction: column; gap: .45rem;
+    margin: 0; border-radius: 16px 16px 0 0; border: 0;
+    padding: .55rem .75rem calc(.6rem + env(safe-area-inset-bottom));
+    background: var(--surface); box-shadow: 0 -4px 16px rgba(15, 23, 42, .14);
+    max-height: none; min-height: 0; overflow: visible;
+  }
+  body:not(.pos-sheet-open) .pos-container > .basket:not(.receipt-view) > :not(.order-type-row):not(.basket-phonebar):not(.pos-notice) { display: none; }
+  body:not(.pos-sheet-open) .pos-container > .basket > .order-type-row { margin: 0; }
+  .basket-phonebar {
+    display: flex; align-items: center; justify-content: space-between; gap: .75rem;
+    inline-size: 100%; min-height: 56px; padding: .4rem 1rem;
+    border: 0; border-radius: 12px; font: inherit; cursor: pointer;
+    background: color-mix(in srgb, var(--success) 72%, #000); color: #fff; text-align: start;
+  }
+  .basket-phonebar.is-empty { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+  .basket-phonebar-text { display: flex; flex-direction: column; line-height: 1.2; }
+  .basket-phonebar-pay { font-size: 1.15rem; font-weight: 700; }
+  .basket-phonebar-count { font-size: .85rem; }
+  .basket-phonebar .btn-ico svg { inline-size: 1.3rem; block-size: 1.3rem; }
+  .basket-phonebar:focus-visible { outline: 3px solid var(--focus-border); outline-offset: 2px; }
+
+  /* The open sheet: products out, basket and tender stacked, scrolling. */
+  body.pos-sheet-open .pos-container { overflow-y: auto; }
+  body.pos-sheet-open .pos-container > .products { display: none; }
+  body.pos-sheet-open .basket-phonebar { display: none; }
+  body.pos-sheet-open .pos-container > .basket {
+    position: relative; flex: none; block-size: auto; min-block-size: 0; max-height: none; overflow: visible;
+  }
+  body.pos-sheet-open .pos-container > .basket .basket-scroll { flex: none; block-size: auto; max-height: none; overflow: visible; }
+  /* A sticky box -- and a flex item with a z-index, even a static one --
+     is its own stacking context, so a dialog opened inside the tender (the
+     payment overlay, z-index 500) would be trapped under the top bar and
+     the status row: unpin it and drop the z-index while one is open. */
+  body.pos-sheet-open .pos-container > .tender:has(dialog[open]) { position: static; z-index: auto; }
+  /* Pay stays in reach at the foot of the sheet while the lines scroll. */
+  body.pos-sheet-open .pos-container > .tender {
+    flex: none; position: sticky; bottom: var(--phone-sb-h, 2.25rem); z-index: 2;
+    box-shadow: 0 -4px 16px rgba(15, 23, 42, .14);
+  }
+  /* The sheet has the whole screen, so the ±1 steppers the packed phone
+     row had to drop (ut-docs#1338) come back: owner-approved design, every
+     line editable with thumb-sized − and +. */
+  body.pos-sheet-open .basket .qty-step-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-inline-size: 44px; min-block-size: 44px; padding: 0; font-size: 1.3rem;
+  }
+  /* ...and the qty cell also takes the row's free start column (empty in
+     the packed tier), so − and + sit inside it and never under the price.
+     Same tracks as the packed tier, so the 15.1rem fixed budget of
+     ut-docs#1338/#391 is unchanged; only the areas differ. */
+  body.pos-sheet-open .basket tr {
+    grid-template-areas: "name name name  name  name"
+                         "qty  qty  price total remove";
+  }
+  body.pos-sheet-open .basket-sheet-close {
+    display: inline-flex; align-items: center; justify-content: center;
+    position: absolute; inset-block-start: .5rem; inset-inline-end: .5rem; z-index: 1;
+    inline-size: 48px; block-size: 48px;
+    border: 1px solid var(--border); border-radius: 12px;
+    background: var(--surface); color: var(--text); cursor: pointer;
+  }
+  body.pos-sheet-open .basket-sheet-close .btn-ico svg { inline-size: 1.4rem; block-size: 1.4rem; }
+
+  /* Categories: one row that scrolls sideways, never wrapping. */
+  .pos-container .products .filter-chips {
+    flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
+    margin-inline: -.25rem; padding-inline: .25rem; padding-block-end: .25rem;
+  }
+  .pos-container .products .filter-chips::-webkit-scrollbar { display: none; }
+  .pos-container .products .filter-chips .chip { flex-shrink: 0; white-space: nowrap; }
+
+  /* App-icon tiles: 3 per row, the picture or the initials in a rounded
+     square, name and price under it. */
+  .pos-container .products .grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem .75rem;
+  }
+  .pos-container .btn-tile,
+  .pos-container .btn-tile.tile-colored {
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+    gap: .3rem; min-height: 0; block-size: auto; padding: 0;
+    background: transparent; border: 0; box-shadow: none; text-align: center;
+  }
+  .pos-container .btn-tile .thumb,
+  .pos-container .btn-tile .tile-initials {
+    display: flex; align-items: center; justify-content: center;
+    inline-size: 100%; max-inline-size: 6.5rem; aspect-ratio: 1 / 1; block-size: auto;
+    margin: 0; border-radius: 24%; object-fit: cover;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, .18), 0 4px 10px rgba(15, 23, 42, .12);
+  }
+  .pos-container .btn-tile .tile-initials {
+    background: var(--tile-color, #475569); color: #fff;
+    font-size: 2rem; font-weight: 700; letter-spacing: .02em; line-height: 1;
+  }
+  .pos-container .btn-tile .tile-name,
+  .pos-container .btn-tile.tile-colored .tile-name {
+    color: var(--text); font-size: .9rem; font-weight: 600; line-height: 1.2;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden; overflow-wrap: anywhere;
+  }
+  .pos-container .btn-tile .tile-price,
+  .pos-container .btn-tile.tile-colored .tile-price { color: var(--muted); font-size: .85rem; }
+}

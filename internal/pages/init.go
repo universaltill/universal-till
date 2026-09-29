@@ -623,7 +623,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// Operator PIN login (docs: architecture/pos-auth.md). UT_AUTH=off is
 	// the CI/dev-tooling escape hatch; a real till runs with auth on.
 	registerAuth(mux, dp, authSvc)
-	registerRefund(mux, dp, authSvc)
+	registerRefund(mux, dp)
 	registerUsers(mux, dp, authSvc)
 	registerPermissionSettings(mux, dp) // super_admin-only role→action grant matrix editor (ut-docs#556)
 	registerLocations(mux, dp)

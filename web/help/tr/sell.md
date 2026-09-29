@@ -72,6 +72,15 @@ Yan menünün alt kısmına yakın birkaç küçük çip, kasayla ilgili durumla
 - Dükkanınızda yapılandırılmış bir TSE varsa, bir mali imzalama çipi sağlığını gösterir — aşağıda **Almanya'daki mağazalar: TSE ve gerçek satışlar**'a bakın.
 - Bu özellik etkinleştirilmişse bir hata raporu çipi de orada — **Bir sorun bildirme**'ye bakın.
 
+## Telefonda satış
+
+Telefonda satış ekranı bir telefon uygulaması gibi düzenlenir, böylece ekranı ürünler kullanır:
+
+- **☰** (üstte) menüyü açar: Satış, Menü, Stok ve diğer sayfalar, ayrıca Yardım, Sorun bildir, adınız ve **Kilitle**. Kapatmak için dışına dokunun (veya Escape'e basın). Mali cihaz veya tanılama modu uyarısı üst çubuğun kendisinde görünür, asla yalnızca menüde değil.
+- Ürünler her satırda üç tane olmak üzere simge olarak görünür: varsa ürünün resmi, yoksa baş harfleriyle birlikte rengi. Ürünü eklemek için simgeye dokunun. Üstteki kategori düğmeleri yana kaydırılır.
+- Alttaki çubuk **Burada / Paket** seçimini ve toplam tutar ile ürün sayısıyla birlikte **Öde** düğmesini gösterir. Sepeti açmak için Öde'ye dokunun: miktarı − ve + ile değiştirin, bir satırı kaldırın, indirim verin, sonra ödemeyi alın. Sepeti üstündeki okla kapatın. Ödemeden sonra fiş seçenekleri (yazdır, kâğıt fiş) görünür; ürünlere dönmek için **Yeni müşteri**'ye dokunun.
+- Durum satırı (çevrimiçi, ana kasa, güncellemeler) alt çubuğun hemen üstündedir.
+
 ## Ürünlere göz atma biçimini seçme
 
 Bir yönetici satış ekranının düzenini **Ayarlar → Satış ekranı → Ürünlere göz atma biçimi** altından seçer; seçicinin altındaki tek satırlık açıklama seçili seçeneği anlatır ve değişiklik, yeniden başlatma gerekmeden satış ekranının bir sonraki yüklenişinde görünür. Üç seçenek:

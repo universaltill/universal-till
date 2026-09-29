@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { drainParkedOrders, watchConsole } from './helpers';
+import { drainParkedOrders, watchConsole, openPhoneSheet } from './helpers';
 
 // ut-docs#2147: split out of the ut-docs#2138 review (universaltill/
 // universal-till#1103's code-review record, finding N3 + "process
@@ -24,6 +24,7 @@ import { drainParkedOrders, watchConsole } from './helpers';
 const COLUMNS = ['label', 'table', 'lines', 'total', 'age'] as const;
 
 async function parkASale(page: Page, label: string) {
+  await openPhoneSheet(page); // ut-docs#3059: the scan row is in the phone basket sheet
   await page.locator('.scan-row input[name="code"]').fill('5000000000012');
   await page.locator('.scan-row button[type=submit]').click();
   await expect(page.locator('#basket')).toContainText('Coca-Cola');

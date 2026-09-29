@@ -1206,6 +1206,8 @@ func FuncsFor(locale string) template.FuncMap {
 	funcs["toJson"] = toJSON
 	funcs["assetv"] = assetVersion
 	funcs["imgv"] = imgVersion
+	// ut-docs#3059: app-icon initials on a picture-less phone tile.
+	funcs["initials"] = TileInitials
 	funcs["imgExists"] = imgExists
 	funcs["kiosk"] = func() bool {
 		if v := kioskMode.Load(); v != nil {

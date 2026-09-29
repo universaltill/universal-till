@@ -230,11 +230,13 @@ auditor.
 
 The Shifts page's "Cash adjustment / payout" form records anything that
 changes the till's expected cash outside of a sale — a float top-up, a
-till-count correction, or cash paid out of the drawer. Any adjustment
-that **removes** cash needs a manager PIN, whichever type is selected —
-the same approval a refund or a bottle-deposit (Pfandrückgabe) payout
-needs, since it's the same risk (cash leaving the drawer unapproved).
-Adding cash (a positive amount, e.g. a float top-up) doesn't need one.
+till-count correction, or cash paid out of the drawer. Any adjustment that **removes** cash, whichever type is selected, needs
+the **Cash adjustments** permission (Users → Permissions) — a role without it is
+asked for a manager PIN in the form instead, since it's the same risk as an
+unapproved refund (cash leaving the drawer). The same goes for a skim to the
+safe when closing a shift. Adding cash (a positive amount, e.g. a float
+top-up) never needs either. A bottle-deposit (Pfandrückgabe) payout always
+asks for a manager PIN.
 Enter the amount removed as a negative number (e.g. "-50" for a 50-unit
 payout) — on a touch till with no physical keyboard, tap the on-screen
 keyboard's "-" key first. The shift amounts (opening and closing cash, skim, adjustment) can be typed with a dot or a comma before the decimals ("-3.50" or "-3,50").
@@ -318,8 +320,8 @@ now records **why** whenever the line was worth anything: pick **Void**
 (a mis-ring or the customer changed their mind), **Comp** (given to the
 customer free of charge as a goodwill gesture), or **Waste** (spoiled,
 dropped, or a kitchen mistake). A manager or admin can pick a reason
-directly; a cashier is asked for a manager's PIN first, the same
-approval a price override needs. A free/$0 promotional line skips this
+directly; a cashier is asked for a manager's PIN first, unless their
+role holds the Void/comp/waste permission. A free/$0 promotional line skips this
 entirely — there's no loss to categorize. This is separate from a
 refund: a refund returns money on a sale that already completed, while
 this covers only what never got that far.

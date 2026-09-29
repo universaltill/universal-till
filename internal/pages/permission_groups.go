@@ -11,14 +11,15 @@ type permissionGroup struct {
 }
 
 // permissionGroups orders the permission matrix for a shop owner reading it
-// top to bottom. Every permission_actions row belongs to exactly one group —
+// top to bottom. Every permission_actions row belongs to exactly one group,
+// or to permissionHiddenActions —
 // TestPermissionGroups_EveryActionInExactlyOneGroup fails when a migration
 // adds an action this table doesn't place. At runtime an unplaced action
-// still renders, under a trailing permissionOtherGroup group, so a
-// grantable permission is never hidden. Display only: grouping changes no
+// (not listed as hidden) still renders, under a trailing
+// permissionOtherGroup group, so a grantable permission is never lost. Display only: grouping changes no
 // grant, no gate and no stored data.
 var permissionGroups = []permissionGroup{
-	{Key: "sales", Actions: []string{"void", "void_comp_waste", "refund", "price_override", "cash_adjustment", "worker_allocation", "fiscal_tse_override"}},
+	{Key: "sales", Actions: []string{"void_comp_waste", "refund", "cash_adjustment", "worker_allocation", "fiscal_tse_override"}},
 	{Key: "catalog", Actions: []string{"catalog_management", "tax_code_management", "import_export"}},
 	{Key: "stock", Actions: []string{"stock_management", "stock_location_management"}},
 	{Key: "reports", Actions: []string{"reports", "eod_report", "audit"}},
@@ -26,6 +27,20 @@ var permissionGroups = []permissionGroup{
 	{Key: "settings", Actions: []string{"settings", "sync_management", "data_management"}},
 	{Key: "plugins", Actions: []string{"plugin_management"}},
 	{Key: "system", Actions: []string{"issue_reporting"}},
+}
+
+// permissionHiddenActions lists permission_actions rows /users/permissions
+// deliberately does not show (ut-docs#3134), each with the reason. A box
+// the till never checks promises control the owner doesn't have, so these
+// are left off the page — not in their old group, not in the "Other"
+// fallback. Display only: the rows and any stored role_permissions grants
+// stay in the DB untouched (no migration), so showing one again is a
+// one-line change once the till has the feature.
+// TestPermissionGroups_EveryActionInExactlyOneGroup holds every action to
+// exactly one of: a group in permissionGroups, or this table.
+var permissionHiddenActions = map[string]string{
+	"void":           "no whole-sale void in the till; line voids use void_comp_waste",
+	"price_override": "the till has no price-override feature",
 }
 
 // permissionOtherGroup is the runtime fallback group for an action

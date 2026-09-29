@@ -72,6 +72,15 @@ Mehrere kleine Chips unten im linken Menü zeigen Ihnen auf einen Blick, was mit
 - Hat Ihr Geschäft eine TSE konfiguriert, zeigt ein Fiskalsignatur-Chip deren Zustand — siehe „Deutsche Geschäfte: TSE und echte Verkäufe“ unten.
 - Ein Fehlerberichts-Chip ist ebenfalls vorhanden, wenn diese Funktion aktiviert ist — siehe „Ein Problem melden“.
 
+## Verkaufen auf dem Smartphone
+
+Auf einem Smartphone sieht der Verkaufsbildschirm wie eine Smartphone-App aus, damit die Artikel den Platz bekommen:
+
+- **☰** oben öffnet das Menü: Verkaufen, Menü, Lager und die anderen Seiten, dazu Hilfe, Problem melden, Ihr Name und **Sperren**. Tippen Sie daneben (oder drücken Sie Escape), um es zu schließen. Eine Fiskal- oder Diagnosemodus-Warnung erscheint in der oberen Leiste selbst, nie nur im Menü.
+- Artikel erscheinen als Symbole, drei pro Reihe: das Bild des Artikels, falls vorhanden, sonst seine Farbe mit seinen Anfangsbuchstaben. Tippen Sie auf ein Symbol, um den Artikel hinzuzufügen. Die Kategorie-Schaltflächen darüber lassen sich seitlich wischen.
+- Die Leiste unten zeigt **Vor Ort / Außer Haus** und **Bezahlen** mit dem Betrag und der Anzahl der Artikel. Tippen Sie auf Bezahlen, um den Warenkorb zu öffnen: Menge mit − und + ändern, eine Zeile entfernen, einen Rabatt geben, dann bezahlen. Schließen Sie den Warenkorb mit dem Pfeil oben. Nach dem Bezahlen erscheinen die Beleg-Optionen (Drucken, Papierbeleg); tippen Sie auf **Neuer Kunde**, um zu den Artikeln zurückzukehren.
+- Die Statuszeile (online, Hauptkasse, Updates) liegt direkt über der unteren Leiste.
+
 ## Die Art des Stöberns wählen
 
 Ein Manager wählt das Layout des Verkaufsbildschirms unter **Einstellungen → Verkaufsbildschirm → Art des Stöberns**; eine einzeilige Beschreibung unter der Auswahl erklärt die jeweils gewählte Option, und die Änderung erscheint beim nächsten Laden des Verkaufsbildschirms, ohne Neustart. Die drei Möglichkeiten:

@@ -180,10 +180,13 @@ olarak indirin, örneğin bir denetçiye vermek için.
 Vardiyalar sayfasındaki "Nakit düzeltme / çıkış" formu, bir satış dışında
 kasadaki beklenen nakdi değiştiren her şeyi kaydeder — bozukluk takviyesi,
 kasa sayım düzeltmesi veya çekmeceden nakit çıkışı. Nakdi **azaltan** her
-düzeltme, seçilen türden bağımsız olarak yönetici PIN'i gerektirir — bir
-iade veya depozito iadesi (Pfandrückgabe) çıkışının gerektirdiği aynı onay,
-çünkü risk aynıdır (kasadan onaysız nakit çıkışı). Nakit eklemek (pozitif
-bir tutar, örn. bozukluk takviyesi) buna gerek duymaz. Çıkan tutarı negatif
+düzeltme, seçilen türden bağımsız olarak **Nakit düzeltmeleri** iznini
+(Kullanıcılar → İzinler) gerektirir — bu izni olmayan
+bir rolden form bunun yerine yönetici PIN'i ister, çünkü risk onaysız bir
+iadeyle aynıdır (kasadan nakit çıkışı). Aynısı vardiya kapanışında çelik
+kasaya çekim için de geçerlidir. Nakit eklemek (pozitif bir tutar, örn.
+bozukluk takviyesi) ikisine de gerek duymaz. Depozito iadesi (Pfandrückgabe)
+çıkışı her zaman yönetici PIN'i ister. Çıkan tutarı negatif
 girin (ör. 50 birimlik bir çıkış için "-50") — fiziksel klavyesi olmayan
 dokunmatik bir kasada önce ekran klavyesinin "-" tuşuna dokunun. Vardiya tutarları (açılış ve kapanış nakdi, kasadan alma, düzeltme) ondalık kısmından önce nokta veya virgülle yazılabilir ("-3.50" veya "-3,50").
 

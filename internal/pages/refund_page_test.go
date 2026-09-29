@@ -294,8 +294,11 @@ func newRefundTestDeps(t *testing.T) (*http.ServeMux, *common.Deps, *auth.Servic
 	// finish before Close and TempDir removal can race them.
 	t.Cleanup(dp.WaitForAsyncWork)
 	svc := auth.NewService(db)
+	// ut-docs#3134: POST /api/refund and GET /refund/{receipt} consult
+	// canPerform(refund), which reads dp.AuthSvc.
+	dp.AuthSvc = svc
 	mux := http.NewServeMux()
-	registerRefund(mux, dp, svc)
+	registerRefund(mux, dp)
 	return mux, dp, svc
 }
 
