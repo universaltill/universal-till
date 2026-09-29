@@ -194,11 +194,14 @@ oder JSON herunter, um sie z. B. einem Prüfer zu übergeben.
 Das Formular „Bargeldanpassung/Auszahlung“ auf der Seite Schichten erfasst
 alles, was den erwarteten Bargeldbestand der Kasse außerhalb eines Verkaufs
 ändert — eine Wechselgeld-Auffüllung, eine Zählkorrektur oder eine Auszahlung
-aus der Schublade. Jede Anpassung, die Bargeld **entfernt**, benötigt eine
-Manager-PIN, unabhängig vom gewählten Typ — dieselbe Freigabe wie bei einer
-Rückerstattung oder einer Pfandrückgabe-Auszahlung, da es dasselbe Risiko ist
-(Bargeld verlässt die Schublade ungenehmigt). Das Hinzufügen von Bargeld (ein
-positiver Betrag, z. B. eine Wechselgeld-Auffüllung) benötigt keine. Geben Sie
+aus der Schublade. Jede Anpassung, die Bargeld **entfernt**, benötigt unabhängig vom gewählten
+Typ die Berechtigung **Bargeldkorrekturen** (Benutzer → Berechtigungen) — eine
+Rolle ohne sie wird im Formular stattdessen nach einer Manager-PIN gefragt, da
+es dasselbe Risiko ist wie eine ungenehmigte Rückerstattung (Bargeld verlässt
+die Schublade). Dasselbe gilt für das Abschöpfen in den Tresor beim
+Schichtabschluss. Das Hinzufügen von Bargeld (ein positiver Betrag, z. B. eine
+Wechselgeld-Auffüllung) benötigt keins von beidem. Eine Pfandrückgabe-Auszahlung
+verlangt immer eine Manager-PIN. Geben Sie
 den entnommenen Betrag als negative Zahl ein (z. B. „-50“ für eine Auszahlung
 von 50 Einheiten) — tippen Sie an einer Touch-Kasse ohne physische Tastatur
 zuerst auf die „-“-Taste der Bildschirmtastatur. Die Schichtbeträge (Anfangs- und Endbestand, Abschöpfung, Anpassung) können mit Punkt oder Komma vor den Nachkommastellen eingegeben werden („-3.50“ oder „-3,50“).

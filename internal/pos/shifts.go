@@ -55,6 +55,12 @@ type ShiftCloseInput struct {
 	// function only enforces that it was actually done, and records that
 	// manager (not the shift's cashier) as the skim audit row's actor.
 	SkimApproverID string
+	// SkimBlockedActorID (ut-docs#3134) is the session user whose role
+	// lacks cash_adjustment when SkimApproverID came from a manager-PIN
+	// elevation — recorded as the skim audit row's blocked_actor_id
+	// (InsertAuditElevated, ut-docs#557). Empty when the session user was
+	// allowed to skim themselves.
+	SkimBlockedActorID string
 }
 
 // CashAdjustmentReasonPfandrueckgabe is the fixed reason recorded for
@@ -81,6 +87,10 @@ type CashAdjustmentInput struct {
 	Amount  money.Money // negative for cash leaving the drawer (payout/skim)
 	Reason  string
 	ActorID string
+	// BlockedActorID (ut-docs#3134): when ActorID is a manager who approved
+	// by PIN, the session user who was blocked — written as the audit
+	// row's blocked_actor_id (InsertAuditElevated). Empty otherwise.
+	BlockedActorID string
 }
 
 // OpenShift creates a new shift record with opening cash and audit entry
@@ -212,7 +222,11 @@ func CloseShift(ctx context.Context, sqlDB *sql.DB, in ShiftCloseInput) error {
 				// this close would otherwise be misclassified as this one.
 				"at_close": true,
 			}
-			if err := repo.InsertAudit(ctx, tx, in.SkimApproverID, "shift", in.ShiftID, "cash_adjustment", skimPayload, now, ""); err != nil {
+			if in.SkimBlockedActorID != "" {
+				if err := repo.InsertAuditElevated(ctx, tx, in.SkimApproverID, in.SkimBlockedActorID, "shift", in.ShiftID, "cash_adjustment", skimPayload, now, ""); err != nil {
+					return err
+				}
+			} else if err := repo.InsertAudit(ctx, tx, in.SkimApproverID, "shift", in.ShiftID, "cash_adjustment", skimPayload, now, ""); err != nil {
 				return err
 			}
 		}
@@ -311,7 +325,11 @@ func RecordCashAdjustment(ctx context.Context, sqlDB *sql.DB, in CashAdjustmentI
 		"amount":   in.Amount.Minor(),
 		"reason":   in.Reason,
 	}
-	if err := repo.InsertAudit(ctx, nil, in.ActorID, "shift", in.ShiftID, "cash_adjustment", payload, now, adjustmentID); err != nil {
+	if in.BlockedActorID != "" {
+		if err := repo.InsertAuditElevated(ctx, nil, in.ActorID, in.BlockedActorID, "shift", in.ShiftID, "cash_adjustment", payload, now, adjustmentID); err != nil {
+			return "", err
+		}
+	} else if err := repo.InsertAudit(ctx, nil, in.ActorID, "shift", in.ShiftID, "cash_adjustment", payload, now, adjustmentID); err != nil {
 		return "", err
 	}
 
