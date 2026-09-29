@@ -384,7 +384,9 @@ func TestOpenAcceptsV019BaselineChecksumAndRestamps(t *testing.T) {
 	if len(w) != 1 {
 		t.Fatalf("accepting boot must warn exactly once about re-stamping version 1, got %d: %v", len(w), w)
 	}
-	for _, want := range []string{"migration 1:", v0192BaselineChecksum, "ut-docs#2395", "re-stamp"} {
+	// A 12-hex prefix, not the whole checksum: a 64-hex run reads as a
+	// token to logging.Redact, which every sink applies (ut-docs#3145).
+	for _, want := range []string{"migration 1:", v0192BaselineChecksum[:12], "ut-docs#2395", "re-stamp"} {
 		if !strings.Contains(w[0].Msg, want) {
 			t.Errorf("re-stamp warning %q missing %q", w[0].Msg, want)
 		}

@@ -341,12 +341,14 @@ func uploadIssueReport(ctx context.Context, cfg *config.Config, b issuereport.Bu
 			return err
 		}
 	}
+	// Redacted on the way out (ut-docs#3145): a bundle saved by an older
+	// till, whose Problems ring held raw lines, may still be pending.
 	for _, p := range b.Meta.Logs {
 		fw, err := w.CreateFormField("logs")
 		if err != nil {
 			return err
 		}
-		if _, err := fw.Write([]byte(p.At.Format("2006-01-02T15:04:05Z07:00") + "\t" + p.Level + "\t" + p.Msg)); err != nil {
+		if _, err := fw.Write([]byte(p.At.Format("2006-01-02T15:04:05Z07:00") + "\t" + p.Level + "\t" + logging.Redact(p.Msg))); err != nil {
 			return err
 		}
 	}

@@ -3106,3 +3106,26 @@ func TestCloudUpdateCategory_PartialEditLinksAuditAndGates(t *testing.T) {
 		t.Fatalf("replica wrote the rename")
 	}
 }
+
+// ut-docs#3145: the heartbeat's problems digest leaves the till, so a
+// secret in a warn/error line never reaches it.
+func TestCollectProblems_RedactsSecrets(t *testing.T) {
+	dp := newCloudSyncTestDeps(t)
+	logging.ResetRecent()
+	t.Cleanup(logging.ResetRecent)
+	logging.L().Warnf("card 4111 1111 1111 1111 Authorization: Bearer abc123def456ghi789 jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U")
+
+	problems := collectProblems(t.Context(), dp)
+	if len(problems) == 0 {
+		t.Fatal("expected the logged warning in collectProblems output")
+	}
+	msg, _ := problems[0]["msg"].(string)
+	if !strings.HasPrefix(msg, "card [REDACTED]") {
+		t.Fatalf("problems[0].msg = %q, want the redacted line", msg)
+	}
+	for _, s := range []string{"4111 1111 1111 1111", "abc123def456ghi789", "eyJhbGciOiJIUzI1NiJ9"} {
+		if strings.Contains(msg, s) {
+			t.Errorf("secret %q reached the heartbeat problems: %q", s, msg)
+		}
+	}
+}

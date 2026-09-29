@@ -184,6 +184,11 @@ func saveBundleFiles(dir, id, note, locale string, audio, video []byte, images [
 		}
 	}
 	meta := Meta{ID: id, Note: note, Locale: locale, CreatedAt: time.Now().UTC(), Logs: logging.Recent()}
+	// The ring already holds redacted text; redacting again (a no-op on it)
+	// keeps meta.json clean whatever reached the ring (ut-docs#3145).
+	for i := range meta.Logs {
+		meta.Logs[i].Msg = logging.Redact(meta.Logs[i].Msg)
+	}
 	// ADR-0092 §6: attach the active diagnostic session's recent events,
 	// if any. A read-only snapshot — nothing is consumed from the queue.
 	meta.DiagnosticSessionID, meta.DiagnosticEvents = diagnostics.RecentForIssueReport()

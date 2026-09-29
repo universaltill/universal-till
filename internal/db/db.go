@@ -361,7 +361,7 @@ func (db *DB) verifyAppliedMigrations(migs []migration, current int) error {
 			continue
 		}
 		if reason, ok := acceptedPriorChecksums[m.Version][checksum]; ok && name == m.Name {
-			logging.L().Warnf("migration %d: ledger checksum %s is a released prior variant of %q — %s; re-stamping the ledger row to the current checksum %s without re-running it (ADR-0100)", m.Version, checksum, m.Name, reason, want)
+			logging.L().Warnf("migration %d: ledger checksum %s… is a released prior variant of %q — %s; re-stamping the ledger row to the current checksum %s… without re-running it (ADR-0100)", m.Version, checksumPrefix(checksum), m.Name, reason, checksumPrefix(want))
 			if _, err := db.Exec(`UPDATE schema_migrations SET checksum = ? WHERE version = ?`, want, m.Version); err != nil {
 				return fmt.Errorf("re-stamp ledger row for migration %d: %w", m.Version, err)
 			}
@@ -370,7 +370,7 @@ func (db *DB) verifyAppliedMigrations(migs []migration, current int) error {
 		if !idempotentRerunVersions[m.Version] {
 			return fmt.Errorf("migration %d: recorded as %q (checksum %s) but on-disk file is %q (checksum %s) — a migration file was renamed or edited after being applied; delete the data directory and start again (ADR-0074)", m.Version, name, checksum, m.Name, want)
 		}
-		logging.L().Warnf("migration %d: recorded as %q (checksum %s) but on-disk file is %q (checksum %s); version is allowlisted as idempotent, re-applying in place (ADR-0074)", m.Version, name, checksum, m.Name, want)
+		logging.L().Warnf("migration %d: recorded as %q (checksum %s…) but on-disk file is %q (checksum %s…); version is allowlisted as idempotent, re-applying in place (ADR-0074)", m.Version, name, checksumPrefix(checksum), m.Name, checksumPrefix(want))
 		if err := db.reapplyMigration(m); err != nil {
 			return err
 		}
@@ -635,4 +635,15 @@ func stripLineComments(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// checksumPrefix shortens a migration checksum for a log line: a
+// full 64-hex checksum reads as a token to logging.Redact and would arrive
+// as [REDACTED] on every sink (ut-docs#3145), while 12 hex characters still
+// tell a released variant apart.
+func checksumPrefix(sum string) string {
+	if len(sum) > 12 {
+		return sum[:12]
+	}
+	return sum
 }
