@@ -696,9 +696,7 @@ func newRederiveSettings(dp *common.Deps, authDisabled bool, i18n *config.I18n) 
 			ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(applied),
 			ChargesForbidden:             common.ServiceChargeForbidden(applied.Country),
 		}); dp.Engine.Config() != newCfg {
-			dp.Engine.SetConfig(newCfg)
-			dp.KioskEngine.SetConfig(newCfg)
-			dp.SelfOrderSessions.SetConfig(newCfg) // every live table-QR session too (ADR-0103)
+			applyEngineConfig(dp, newCfg)
 		}
 		dp.AuthSvc.SetIdleLockMinutes(applied.IdleLockMinutes)
 		if overrides, err := data.NewTranslationRepo(dp.Db).ListOverrides(c); err == nil {
