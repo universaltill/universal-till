@@ -1174,6 +1174,55 @@ func TestEraseCustomer_AnonymisesArchivedSaleToo(t *testing.T) {
 	}
 }
 
+// ut-docs#2965: an issued invoice's buyer snapshot (name, address, VAT
+// number) is a fiscal document and must survive a GDPR erasure unchanged,
+// live AND archived — expected basis GDPR Art. 17(3)(b), and PT Despacho 8632/2014
+// §1.11/§2.2.15 (a reprint shows the original buyer). This pins today's
+// behaviour so a future "erase everywhere" change can't silently reach it.
+func TestEraseCustomer_LeavesInvoiceBuyerSnapshotUntouched(t *testing.T) {
+	d, x, _ := resetTestDB(t, "erase-invoices.db")
+	x(`INSERT INTO customers (id, name, phone, email, address) VALUES ('c1','Test Buyer','555','buyer@example.com','1 Test Street')`)
+	insertSaleAndInvoice := func(saleID, invID string, no int) {
+		x(`INSERT INTO sales (id, receipt_no, subtotal, total, customer_id) VALUES ('` + saleID + `','R` + invID + `',100,100,'c1')`)
+		x(`INSERT INTO invoices (id, series, invoice_no, display_no, sale_id, customer_name, customer_address, customer_vat_no,
+		     seller_json, net_total, tax_total, gross_total, vat_breakdown_json, issued_at, issued_by)
+		   VALUES ('` + invID + `','INV',` + fmt.Sprint(no) + `,'INV-` + invID + `','` + saleID + `','Test Buyer','1 Test Street','PT999999990',
+		     '{}',83,17,100,'[]','2026-09-01T10:00:00Z','u1')`)
+	}
+
+	repo := data.NewPOSRepo(d.DB)
+	ctx := context.Background()
+	insertSaleAndInvoice("s1", "i1", 1)
+	if _, _, err := repo.ResetTransactionHistory(ctx, "", ""); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	insertSaleAndInvoice("s2", "i2", 2)
+
+	ok, err := repo.EraseCustomer(ctx, "c1", "", "")
+	if err != nil || !ok {
+		t.Fatalf("erase: ok=%v err=%v, want ok=true err=nil", ok, err)
+	}
+
+	for _, tc := range []struct{ table, id string }{{"invoices", "i2"}, {"invoices_archive", "i1"}} {
+		var name, addr, vat string
+		if err := d.DB.QueryRow(`SELECT customer_name, customer_address, customer_vat_no FROM `+tc.table+` WHERE id = ?`, tc.id).
+			Scan(&name, &addr, &vat); err != nil {
+			t.Fatalf("%s %s: %v", tc.table, tc.id, err)
+		}
+		if name != "Test Buyer" || addr != "1 Test Street" || vat != "PT999999990" {
+			t.Fatalf("%s %s buyer snapshot changed by erasure: name=%q address=%q vat=%q", tc.table, tc.id, name, addr, vat)
+		}
+	}
+	// The existing contract still holds: the sale link itself is anonymised.
+	var cid *string
+	if err := d.DB.QueryRow(`SELECT customer_id FROM sales WHERE id = 's2'`).Scan(&cid); err != nil {
+		t.Fatal(err)
+	}
+	if cid != nil {
+		t.Fatalf("live sale should be unlinked, got customer_id=%v", *cid)
+	}
+}
+
 // ut-docs#1006 review finding 4: resetArchiveTables' column list for
 // "shifts" was extended (new_float, count_protocol) alongside migration
 // 067, but nothing pinned the two travelling together — reverting the

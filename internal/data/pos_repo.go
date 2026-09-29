@@ -6313,6 +6313,17 @@ ORDER BY name LIMIT ?`, like, like, like, limit)
 // (keeping the sales, which are financial records, but anonymous) and
 // deletes the customer row. Audited. Returns false if no such customer.
 //
+// Issued invoices (invoices, invoices_archive) are deliberately NOT touched
+// (ut-docs#2965): their customer_name/customer_address/customer_vat_no are
+// a text snapshot of the buyer on an issued fiscal document, not a link to
+// the customer row. The expected basis for keeping them is GDPR
+// Art. 17(3)(b) (retention required by law; not yet verified against the
+// primary text, see ut-docs reference/portugal-compliance.md §9), and some
+// markets require a reprint to show the original buyer
+// (PT Despacho 8632/2014 §1.11, §2.2.15). A future "erase everywhere"
+// change must not reach them; TestEraseCustomer_LeavesInvoiceBuyerSnapshotUntouched
+// pins this.
+//
 // actorID/blockedActorID (ut-docs#1860, ADR-0087): dual attribution for the
 // checkStepUp path, mirroring ResetTransactionHistory's own parameters
 // (reset_archive_repo.go) — actorID is whoever actually authorised the

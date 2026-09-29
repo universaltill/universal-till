@@ -398,7 +398,8 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 		if elev.Outcome != elevated {
 			locale := httpx.ResolveLocale(w, r)
 			renderElevationPrompt(w, r, "/api/data/customers/erase", "#cust-msg",
-				fmt.Sprintf(httpx.T(locale, "elevation.summary.data_customer_erase"), id),
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.data_customer_erase"), id)+" "+
+					httpx.T(locale, "settings.data.gdpr_invoices_kept"), // ut-docs#2965
 				[]elevationHiddenField{{Name: "id", Value: id}}, elev)
 			return
 		}

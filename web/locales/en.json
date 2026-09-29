@@ -2031,6 +2031,7 @@
   "settings.data.export.title": "Export / report",
   "settings.data.export.to_label": "To",
   "settings.data.gdpr_help": "Delete a customer's personal details on request. Their sales are kept for your records but no longer show who they belonged to.",
+  "settings.data.gdpr_invoices_kept": "Invoices already issued keep the buyer's name, address and VAT number exactly as issued, because tax law requires you to keep them.",
   "settings.data.gdpr_title": "Erase a customer (GDPR)",
   "settings.data.help": "Clear the practice sales made while testing so you can start real trading from a clean slate. Your products, users and settings are kept.",
   "settings.data.reset_btn": "Clear transaction history",
