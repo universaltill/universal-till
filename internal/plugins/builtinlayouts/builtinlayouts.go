@@ -142,6 +142,15 @@ func installSalon(ctx context.Context, db *sql.DB, m *plugins.Manifest) error {
 	if err != nil {
 		return fmt.Errorf("builtinlayouts: read embedded salon locales: %w", err)
 	}
+	// Hold the per-plugin tree lock from the live-dir write through
+	// PersistManifest, like every other install path (ut-docs#3278): a
+	// Rollback of layout-salon racing this shop-type reconcile could
+	// otherwise commit over the fresh install. Lock order is Sync's syncMu
+	// then this lock; removeSalon takes and releases it (via
+	// UninstallPluginTree) before installSalon runs, so they never nest —
+	// the mutex is not reentrant. PersistManifest does not lock.
+	defer plugins.LockPluginTree(paths.Plugins(), m.ID)()
+
 	destDir := paths.Plugins(m.ID, m.Version, "locales")
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return fmt.Errorf("builtinlayouts: create %s: %w", destDir, err)

@@ -117,7 +117,8 @@ func (rm *RollbackManager) GetVersionHistory(ctx context.Context, pluginID strin
 
 // pluginLocks serializes StoreVersion, Rollback (ut-docs#3035 gap 1),
 // UninstallPluginTree and RemoveVersionDir (ut-docs#3082), and the install
-// paths — Importer.Import and installBundleFile (ut-docs#3273) — per plugin
+// paths — Importer.Import and installBundleFile (ut-docs#3273) — and the
+// core-shipped builtin salon layout install (ut-docs#3278) per plugin
 // tree. sync.Mutex is not reentrant: none of these may call another.
 // Callers build a fresh RollbackManager per call (internal/pages), so the
 // lock can't live on the manager: it is keyed by the cleaned plugin base
@@ -138,6 +139,15 @@ func lockPluginTree(pluginBaseDir, pluginID string) func() {
 	m := mu.(*sync.Mutex)
 	m.Lock()
 	return m.Unlock
+}
+
+// LockPluginTree is lockPluginTree for callers outside this package — the
+// core-shipped builtin layout install (ut-docs#3278). Not reentrant: never
+// call another locking function of this package (UninstallPluginTree,
+// RemoveVersionDir, Rollback, StoreVersion, Import, installBundleFile) while
+// holding it.
+func LockPluginTree(pluginBaseDir, pluginID string) func() {
+	return lockPluginTree(pluginBaseDir, pluginID)
 }
 
 // Rollback rolls back a plugin to a previous version, snapshotting the

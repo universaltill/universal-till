@@ -5,7 +5,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 
@@ -359,5 +361,62 @@ func TestSync_ReinstallFailure_StillReturnsError(t *testing.T) {
 		t.Fatal(err)
 	} else if found {
 		t.Fatal("removeSalon's half of the reinstall must have succeeded despite installSalon failing")
+	}
+}
+
+// TestSync_SalonInstall_WaitsForPluginTreeLock pins ut-docs#3278: installSalon
+// must hold the per-plugin tree lock across the live locale-dir write and
+// PersistManifest, like every other install path (ut-docs#3273). Otherwise a
+// Rollback of layout-salon racing a shop-type reconcile (Sync) can commit over
+// the fresh install. While another holder has the lock, Sync must neither
+// write the live locale dir nor install the plugin, and it must finish once
+// the lock is released.
+func TestSync_SalonInstall_WaitsForPluginTreeLock(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+
+	m, err := plugins.ParseManifest(bytes.NewReader(layoutsalon.ManifestJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	localesDir := paths.Plugins(SalonPluginID, m.Version, "locales")
+
+	unlock := plugins.LockPluginTree(paths.Plugins(), SalonPluginID)
+	var once sync.Once
+	release := func() { once.Do(unlock) }
+	t.Cleanup(release)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := Sync(ctx, d.DB, "service")
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("Sync returned (%v) while the plugin tree lock was held", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if _, err := os.Stat(localesDir); err == nil {
+		t.Errorf("locale dir %s written while the plugin tree lock was held", localesDir)
+	}
+	repo := data.NewPluginRepo(d.DB)
+	if _, ok, err := repo.GetInstalledPluginVersion(ctx, SalonPluginID); err != nil {
+		t.Fatal(err)
+	} else if ok {
+		t.Error("salon installed while the plugin tree lock was held")
+	}
+
+	release()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Sync after lock release: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Sync did not finish after the plugin tree lock was released")
+	}
+	if v, ok, err := repo.GetInstalledPluginVersion(ctx, SalonPluginID); err != nil || !ok || v != m.Version {
+		t.Fatalf("want salon %s installed, got %q ok=%v err=%v", m.Version, v, ok, err)
 	}
 }
