@@ -2981,6 +2981,17 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 		}
+		// ut-docs#3255: same validate-before-persisting reasoning — a whole
+		// percent 0–100 (RuntimeState.TaxRatePct is an int, as in the setup
+		// wizard), stored normalised so "025" is kept as "25".
+		if key == common.KeyTaxRate {
+			n, err := strconv.Atoi(value)
+			if err != nil || n < 0 || n > 100 {
+				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "taxcodes.err.invalid_rate"), http.StatusBadRequest)
+				return
+			}
+			value = strconv.Itoa(n)
+		}
 		// ut-docs#2499: same validate-before-persisting reasoning as the
 		// service-charge rate above. An out-of-enum browsing mode would be
 		// clamped to the default on the very next LoadState, so the DB row
@@ -3270,7 +3281,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			} else if slices.Contains(httpx.AvailableLocales(), value) {
 				retireLocaleOverrides(r.Context(), d.Settings)
 			}
-		case common.KeyTaxInclusive, common.KeyServiceChargeRate, common.KeyCountry:
+		case common.KeyTaxInclusive, common.KeyTaxRate, common.KeyServiceChargeRate, common.KeyCountry:
 			// In place: replacing the engine would empty a basket in progress.
 			// Both engines — see the currency-card handler above (ut-docs#449).
 			//
