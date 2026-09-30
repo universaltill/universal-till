@@ -697,6 +697,20 @@ func setupTestDB(t *testing.T) *sql.DB {
 		data_json TEXT,
 		created_at TEXT NOT NULL
 	);
+
+	-- migration 053 (ADR-0129, ut-docs#3281)
+	CREATE TABLE plugin_provides (
+		plugin_id TEXT NOT NULL,
+		capability TEXT NOT NULL,
+		PRIMARY KEY (plugin_id, capability),
+		FOREIGN KEY (plugin_id) REFERENCES plugins (id) ON DELETE CASCADE
+	);
+	CREATE TABLE plugin_markets (
+		plugin_id TEXT NOT NULL,
+		market TEXT NOT NULL,
+		PRIMARY KEY (plugin_id, market),
+		FOREIGN KEY (plugin_id) REFERENCES plugins (id) ON DELETE CASCADE
+	);
 	`
 
 	if _, err := db.Exec(schema); err != nil {

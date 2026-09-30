@@ -523,6 +523,39 @@ func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.Handl
 					return
 				}
 			}
+			// A `fiscal.*` capability in the plugin's persisted provides
+			// is exclusive across INSTALLED plugins (ADR-0129 §2,
+			// ut-docs#3281) — a third group, same two enforcement points:
+			// plugins.PersistManifest/Rollback refuse a second provider at
+			// install/update/rollback, this covers enabling one whose rows
+			// predate or bypassed that. Installed, not active: a disabled
+			// incumbent still owns the §146a register namespace. FAIL
+			// CLOSED on a DB error, same as above.
+			provides, providesErr := pluginRepo.ListPluginProvides(ctx, pluginID)
+			var capability, fiscalOwnerID, fiscalOwnerName string
+			var fiscalFound bool
+			if providesErr == nil {
+				capability, fiscalOwnerID, fiscalOwnerName, fiscalFound, providesErr = plugins.FiscalProvidesConflict(ctx, pluginRepo, nil, pluginID, provides)
+			}
+			if providesErr != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"data":  nil,
+					"error": fmt.Sprintf("cannot enable %s: fiscal capability exclusivity check failed: %v", pluginID, providesErr),
+				})
+				return
+			}
+			if fiscalFound {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusConflict)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"data": nil,
+					"error": fmt.Sprintf("cannot enable %s: %s (%s) already provides %s — only one installed plugin may provide each fiscal.* capability (ADR-0129); uninstall it first",
+						pluginID, fiscalOwnerName, fiscalOwnerID, capability),
+				})
+				return
+			}
 		}
 		if err := data.NewPluginRepo(d.Db).SetPluginActive(ctx, nil, pluginID, active); err != nil {
 			w.Header().Set("Content-Type", "application/json")

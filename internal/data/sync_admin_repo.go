@@ -440,6 +440,8 @@ var nonAdminTables = map[string]string{
 	"plugin_catalog":        "cached marketplace listing metadata — re-fetched from the marketplace, never synced till-to-till",
 	"plugin_entries":        "plugin-contributed menu/hook entries — recreated on re-install, not synced",
 	"plugin_hooks":          "plugin-contributed hooks — recreated on re-install, not synced",
+	"plugin_provides":       "one installed plugin's declared capabilities (ADR-0129) — recreated on re-install, not synced",
+	"plugin_markets":        "one installed plugin's declared markets (ADR-0129) — recreated on re-install, not synced",
 	"plugin_install_status": "install-progress bookkeeping — SyncPluginsRepo's own source table",
 	"plugin_permissions":    "granted permissions for one installed plugin instance — recreated on re-install",
 

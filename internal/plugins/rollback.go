@@ -285,6 +285,13 @@ func (rm *RollbackManager) rollback(ctx context.Context, pluginID, targetVersion
 		return fmt.Errorf("rollback to %s rejected: %w", targetVersion, err)
 	}
 
+	// Same protection for a `fiscal.*` capability (ADR-0129 §2) — the
+	// rollback target may declare one that another installed plugin has
+	// provided since; a fresh install would refuse it, so must this.
+	if err := validateFiscalProvidesExclusivity(ctx, repo, tx, pluginID, manifest.Provides); err != nil {
+		return fmt.Errorf("rollback to %s rejected: %w", targetVersion, err)
+	}
+
 	// Same protection for layout amendments (ADR-0088) — a rolled-back
 	// manifest may hide a protected key or restructure a key another
 	// plugin has since taken; a fresh install would refuse it, so must this.
@@ -317,6 +324,11 @@ func (rm *RollbackManager) rollback(ctx context.Context, pluginID, targetVersion
 		})
 	}
 	if err := repo.ReplacePluginEntries(ctx, tx, pluginID, entryRows); err != nil {
+		return err
+	}
+
+	// Provides and markets follow the rolled-back manifest (ADR-0129).
+	if err := persistProvidesAndMarkets(ctx, repo, tx, pluginID, manifest); err != nil {
 		return err
 	}
 

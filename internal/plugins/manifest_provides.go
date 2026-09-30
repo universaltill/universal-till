@@ -1,9 +1,13 @@
 package plugins
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/universaltill/universal-till/internal/data"
 )
 
 // ADR-0129 §2: the closed set of `provides` capabilities. New values need an
@@ -81,6 +85,68 @@ func validateProvidesAndMarkets(m *Manifest) error {
 			return fmt.Errorf("manifest markets %q more than once", c)
 		}
 		seenMarket[c] = true
+	}
+	return nil
+}
+
+// fiscalCapabilityPrefix marks the `fiscal.*` capabilities, which are
+// exclusive: at most one INSTALLED plugin (active or disabled) may provide
+// each (ADR-0129 §2). Today the hard-coded plugin IDs are what stop another
+// plugin owning the §146a register namespace or the TR fiscal-device gate;
+// `provides` must not reopen that.
+const fiscalCapabilityPrefix = "fiscal."
+
+// IsExclusiveCapability reports whether at most one installed plugin may
+// provide capability (every `fiscal.*` value).
+func IsExclusiveCapability(capability string) bool {
+	return strings.HasPrefix(capability, fiscalCapabilityPrefix)
+}
+
+// FiscalProvidesConflict reports the first exclusive capability in
+// provides that an installed plugin other than pluginID already provides.
+// tx is the install/rollback transaction, nil from the enable handler.
+// found=false means no conflict (the plugin's own rows never conflict, so
+// a self-update or re-enable is fine). A DB error is returned for the
+// caller to fail CLOSED on.
+func FiscalProvidesConflict(ctx context.Context, repo *data.PluginRepo, tx *sql.Tx, pluginID string, provides []string) (capability, ownerID, ownerName string, found bool, err error) {
+	for _, c := range provides {
+		if !IsExclusiveCapability(c) {
+			continue
+		}
+		ownerID, ownerName, found, err = repo.CapabilityProviderOwner(ctx, tx, c, pluginID)
+		if err != nil || found {
+			return c, ownerID, ownerName, found, err
+		}
+	}
+	return "", "", "", false, nil
+}
+
+// validateFiscalProvidesExclusivity refuses, inside the install or
+// rollback transaction and before anything is written, a manifest that
+// would make pluginID a second installed provider of a `fiscal.*`
+// capability (ADR-0129 §2; the ADR-0106 preset pattern). A DB error fails
+// CLOSED: "couldn't verify" must never let a second §146a register owner
+// or fiscal-device provider in.
+func validateFiscalProvidesExclusivity(ctx context.Context, repo *data.PluginRepo, tx *sql.Tx, pluginID string, provides []string) error {
+	capability, ownerID, ownerName, found, err := FiscalProvidesConflict(ctx, repo, tx, pluginID, provides)
+	if err != nil {
+		return fmt.Errorf("check fiscal capability exclusivity: %w", err)
+	}
+	if found {
+		return fmt.Errorf("%s (%s) already provides %s — only one installed plugin may provide each fiscal.* capability (ADR-0129); uninstall it before installing %s",
+			ownerName, ownerID, capability, pluginID)
+	}
+	return nil
+}
+
+// persistProvidesAndMarkets replaces pluginID's persisted provides and
+// markets with the manifest's (PersistManifest and Rollback).
+func persistProvidesAndMarkets(ctx context.Context, repo *data.PluginRepo, tx *sql.Tx, pluginID string, m *Manifest) error {
+	if err := repo.ReplacePluginProvides(ctx, tx, pluginID, m.Provides); err != nil {
+		return fmt.Errorf("persist plugin provides: %w", err)
+	}
+	if err := repo.ReplacePluginMarkets(ctx, tx, pluginID, m.Markets); err != nil {
+		return fmt.Errorf("persist plugin markets: %w", err)
 	}
 	return nil
 }
