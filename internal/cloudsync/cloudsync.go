@@ -209,6 +209,16 @@ type Hooks struct {
 	SaveUser       func(ctx context.Context, u UserDirective) (string, error)
 	SetUserPIN     func(ctx context.Context, u UserDirective) (string, error)
 	DeactivateUser func(ctx context.Context, u UserDirective) (string, error)
+	// RenameTill handles "rename_till" (ut-docs#3272): the owner renamed
+	// THIS till in the cloud (my. or the portal). Payload {device_id, name};
+	// Tick already skipped it unless device_id is this till's own, so it
+	// applies on the main till and on an additional till alike (not
+	// main-till only). The hook (pages.cloudRenameTill) validates the name
+	// like the Settings rename — refusing, never truncating, so the name the
+	// till reports back equals the cloud's — then writes the key
+	// enroll.DeviceName reads for this till's role, audited. An unchanged
+	// name is applied with no write.
+	RenameTill func(ctx context.Context, name string) (string, error)
 	// DeviceExtra contributes extra fields to the device report (e.g. the
 	// current theme + the themes this till can switch to, so the cloud can
 	// render a real design picker instead of a raw key/value form). Keys must
@@ -357,6 +367,19 @@ func tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) (con
 			// every tick while it waits for the main till.
 			if firstSatelliteSkip(d.ID) {
 				logging.L().Infof("cloudsync: directive %s (%s) skipped: main till only", d.ID, d.Type)
+			}
+			continue
+		}
+		if reason := renameTillSkipReason(d); reason != "" {
+			// ut-docs#3272: a rename_till names one device. One addressed
+			// to another till (or to none) stays pending for its target —
+			// no apply, no result post. Logged once per directive id; an
+			// own id not known yet is not remembered, so the real reason
+			// is still logged once the id is known.
+			if ownDeviceID() == "" {
+				logging.L().Infof("cloudsync: directive %s (%s) skipped: %s", d.ID, d.Type, reason)
+			} else if firstRenameSkip(d.ID) {
+				logging.L().Infof("cloudsync: directive %s (%s) skipped: %s", d.ID, d.Type, reason)
 			}
 			continue
 		}
@@ -577,6 +600,16 @@ func apply(ctx context.Context, d directive, hooks Hooks) (status, msg string) {
 			return "failed", "missing session_id"
 		}
 		msg, err = hooks.DiagnosticModeRevoke(ctx, id)
+	case "rename_till":
+		if hooks.RenameTill == nil {
+			return "failed", "rename_till is not supported on this till"
+		}
+		// device_id was checked in Tick (renameTillSkipReason).
+		name := str("name")
+		if name == "" {
+			return "failed", "missing name"
+		}
+		msg, err = hooks.RenameTill(ctx, name)
 	case "upsert_category":
 		if hooks.UpsertCategory == nil {
 			return "failed", "upsert_category is not supported on this till"
