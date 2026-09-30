@@ -917,6 +917,13 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 		return err
 	}
 
+	// 0i. A `fiscal.*` capability in `provides` is exclusive across
+	// installed plugins (ADR-0129 §2): a second §146a register owner or
+	// fiscal-device provider is refused here, before anything is written.
+	if err := validateFiscalProvidesExclusivity(ctx, repo, tx, m.ID, m.Provides); err != nil {
+		return err
+	}
+
 	// 0f. Layout amendments (ADR-0088): a protected destination can never
 	// be hidden, and two plugins restructuring the same menu key is a
 	// conflict — both refused here, naming the key (and incumbent), never
@@ -1000,6 +1007,12 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 	}
 	if err := repo.ReplacePluginEntries(ctx, tx, m.ID, entryRows); err != nil {
 		return fmt.Errorf("insert plugin entry: %w", err)
+	}
+
+	// 2b. Provides and markets (ADR-0129 §2/§3): replaced on every
+	// install/update, so a capability a new version drops is gone.
+	if err := persistProvidesAndMarkets(ctx, repo, tx, m.ID, m); err != nil {
+		return err
 	}
 
 	// 3. Insert settings with defaults
