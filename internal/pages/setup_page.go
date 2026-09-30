@@ -18,7 +18,6 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins/builtinlayouts"
-	"github.com/universaltill/universal-till/internal/pos"
 )
 
 // autoRegisterAttemptTimeout bounds the ONE synchronous store-registration
@@ -654,13 +653,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		retireLocaleOverrides(r.Context(), d.Settings)
 		// Both engines: the kiosk's separate instance (ut-docs#449) must see
 		// the same tax config or it would silently charge stale rates.
-		newCfg := pos.Config{
-			TaxInclusive:                 st.TaxInclusive,
-			TaxRateBasisPoints:           st.TaxRatePct * 100,
-			ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(st),
-			ChargesForbidden:             common.ServiceChargeForbidden(st.Country),
-		}
-		applyEngineConfig(d, newCfg)
+		applyEngineConfig(r.Context(), d)
 
 		if err := d.Settings.Set(r.Context(), "store.name", storeName); err != nil {
 			http.Error(w, "setup failed", http.StatusInternalServerError)

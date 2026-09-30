@@ -2929,13 +2929,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// In place: replacing the engine would empty a basket in progress.
 		// Both engines: the kiosk's separate instance (ut-docs#449) must see
 		// the same tax config or it would silently charge stale rates.
-		newCfg := pos.Config{
-			TaxInclusive:                 st.TaxInclusive,
-			TaxRateBasisPoints:           st.TaxRatePct * 100,
-			ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(st),
-			ChargesForbidden:             common.ServiceChargeForbidden(st.Country),
-		}
-		applyEngineConfig(d, newCfg)
+		applyEngineConfig(r.Context(), d)
 		settingsAudit(r, posRepo, elev, "settings", "-", "store_settings_saved", auditPayload)
 		settingsRespondSaved(w, r, elev)
 	})
@@ -3298,13 +3292,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				// ut-docs#1068: the new country's base plugins, as the wizard queues them.
 				queueBasePluginsForCountryChange(r.Context(), d, value)
 			}
-			newCfg := pos.Config{
-				TaxInclusive:                 st.TaxInclusive,
-				TaxRateBasisPoints:           st.TaxRatePct * 100,
-				ServiceChargeRateBasisPoints: common.EffectiveServiceChargeRateBP(st),
-				ChargesForbidden:             common.ServiceChargeForbidden(st.Country),
-			}
-			applyEngineConfig(d, newCfg)
+			applyEngineConfig(r.Context(), d)
 		case "display.mode":
 			// ut-docs#2121: this generic key/value door didn't get the same
 			// side effects as the dedicated POST /api/settings/display-mode
