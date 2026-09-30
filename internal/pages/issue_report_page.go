@@ -53,6 +53,12 @@ func readCappedOrReject(r io.Reader, limit int64) ([]byte, error) {
 	return data, nil
 }
 
+// issueReportingAction is the one permission action the /report-issue page,
+// its chip and its API gate on. The /menu tile's uislot.CoreMenu VisibleIf
+// must name the same action (ut-docs#3135;
+// TestReportIssueTile_GateMatchesPageAction pins it).
+const issueReportingAction = "issue_reporting"
+
 // registerIssueReportPage serves the manager-gated "report an issue" panel
 // (ADR-0022, spec 012): capture a typed and/or spoken description + optional
 // screen recording, save locally regardless of connectivity, queue for cloud
@@ -60,7 +66,7 @@ func readCappedOrReject(r io.Reader, limit int64) ([]byte, error) {
 // tills and back-office only.
 func registerIssueReportPage(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/report-issue", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "issue_reporting") {
+		if !canPerform(d, r, issueReportingAction) {
 			httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
 			return
 		}
@@ -82,7 +88,7 @@ func registerIssueReportPage(mux *http.ServeMux, d *common.Deps) {
 	// 200 when the operator isn't allowed to report issues, so nothing
 	// appears in the nav at all.
 	mux.HandleFunc("GET /ui/bugreport-chip", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "issue_reporting") {
+		if !canPerform(d, r, issueReportingAction) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -90,7 +96,7 @@ func registerIssueReportPage(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/issue-reports", func(w http.ResponseWriter, r *http.Request) {
-		if !canPerform(d, r, "issue_reporting") {
+		if !canPerform(d, r, issueReportingAction) {
 			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
