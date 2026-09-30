@@ -60,3 +60,4 @@ internal/procrestart/procrestart.go: unreachable func: InProcess
 internal/procrestart/procrestart.go: unreachable func: SetRestarter
 internal/secrets/keystore.go: unreachable func: KeyStore.Exists
 internal/secrets/keystore.go: unreachable func: KeyStore.Path
+internal/server/server.go: unreachable func: WithBoundAddr
