@@ -21,6 +21,7 @@ import (
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/clock"
 	"github.com/universaltill/universal-till/internal/cloudsync"
+	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/diagnostics"
 	"github.com/universaltill/universal-till/internal/directivekey"
@@ -324,6 +325,38 @@ func layoutWithHiddenSlots(grid []data.ShortcutButton, visible []string) []strin
 		next++
 	}
 	return out
+}
+
+// remoteStoreNameReport is the read side for DeviceExtra's `store_name`
+// (ut-docs#3246): the main till's store.name setting, normalised the way
+// Settings → My shop saves it, so a name edited on the till shows up in my.
+// Only the main till calls it (the caller gates on SyncPrimaryURL, like
+// directive_key and users): it is the one place the shop decides.
+//
+// The cloud adopts the reported name only while no cloud rename
+// (a set_setting store.name directive) is still pending for the shop, so a
+// rename made in my. wins until this till acks it, and after that the
+// till's name is authoritative. The ordering is by that directive ack, never
+// by comparing clocks: a till without an RTC can boot with a wrong clock.
+//
+// ok is false — and the key is left out, which the cloud reads as "nothing
+// to adopt" — on a read error, an unset name, or one NormalizeStoreName
+// refuses (blank, a placeholder such as "My Store", too long, control or
+// bidi characters), so a default never overwrites the shop's real name.
+func remoteStoreNameReport(ctx context.Context, d *common.Deps) (string, bool) {
+	raw, found, err := d.Settings.Get(ctx, common.KeyStoreName)
+	if err != nil {
+		logging.L().Warnf("cloudsync: store name report failed: %v", err)
+		return "", false
+	}
+	if !found {
+		return "", false
+	}
+	name, err := config.NormalizeStoreName(raw)
+	if err != nil {
+		return "", false
+	}
+	return name, true
 }
 
 // remoteQuickButtonsReport is the read side for DeviceExtra: the currently
@@ -856,6 +889,11 @@ func buildCloudHooks(d *common.Deps, rederive func(context.Context)) cloudsync.H
 			if d.SyncPrimaryURL(ctx) == "" {
 				if rep := directiveKeys.Report(); rep != nil {
 					extra["directive_key"] = rep
+				}
+				// ut-docs#3246: the shop name, so a rename saved under
+				// Settings → My shop reaches my. See remoteStoreNameReport.
+				if name, ok := remoteStoreNameReport(ctx, d); ok {
+					extra["store_name"] = name
 				}
 			}
 			return extra
