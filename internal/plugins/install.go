@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -77,4 +79,44 @@ func UpdatePluginTrustLevel(ctx context.Context, db *sql.DB, pluginID, trustLeve
 	}
 
 	return nil
+}
+
+// UninstallPluginTree is the whole uninstall every caller wants: the DB rows
+// (UninstallPlugin) and then the plugin's files under pluginBaseDir/pluginID
+// (the live per-version dirs and the versions/ snapshots). It holds the
+// per-plugin lock that serializes Rollback and StoreVersion (ut-docs#3082),
+// so an uninstall that races a rollback or a snapshot write waits for it
+// instead of deleting the tree under it. File removal is best-effort — the
+// DB is the source of truth — so only a DB failure is returned. The lock
+// wait ignores ctx; it is bounded by one rollback (a copy plus one tx).
+func UninstallPluginTree(ctx context.Context, db *sql.DB, pluginBaseDir, pluginID string) error {
+	// Joined under pluginBaseDir and RemoveAll'd: "." or "" would be every
+	// plugin's files (ut-docs#2891 M2).
+	if err := validatePluginID(pluginID); err != nil {
+		return err
+	}
+	defer lockPluginTree(pluginBaseDir, pluginID)()
+
+	if err := UninstallPlugin(ctx, db, pluginID); err != nil {
+		return err
+	}
+	dir := filepath.Join(pluginBaseDir, pluginID)
+	if err := os.RemoveAll(dir); err != nil {
+		logging.L().Warnf("failed to remove plugin files %s: %v", dir, err)
+	}
+	return nil
+}
+
+// RemoveVersionDir removes one live per-version install dir
+// (pluginBaseDir/pluginID/version) under the per-plugin lock, so a
+// concurrent StoreVersion can't snapshot it half-deleted (ut-docs#3082).
+func RemoveVersionDir(pluginBaseDir, pluginID, version string) error {
+	if err := validatePluginID(pluginID); err != nil {
+		return err
+	}
+	if err := validatePluginVersion(version); err != nil {
+		return err
+	}
+	defer lockPluginTree(pluginBaseDir, pluginID)()
+	return os.RemoveAll(filepath.Join(pluginBaseDir, pluginID, version))
 }

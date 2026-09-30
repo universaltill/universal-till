@@ -24,7 +24,6 @@ import (
 	"sync"
 
 	"github.com/universaltill/universal-till/internal/data"
-	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	layoutsalon "github.com/universaltill/universal-till/plugins/layout-salon"
@@ -184,11 +183,9 @@ func installSalon(ctx context.Context, db *sql.DB, m *plugins.Manifest) error {
 // already-uninstalled plugin's menu amendments stuck in memory because the
 // caller's ReloadPlugins never ran.
 func removeSalon(ctx context.Context, db *sql.DB) error {
-	if err := plugins.UninstallPlugin(ctx, db, SalonPluginID); err != nil {
+	// DB rows and files under the per-plugin lock (ut-docs#3082).
+	if err := plugins.UninstallPluginTree(ctx, db, paths.Plugins(), SalonPluginID); err != nil {
 		return fmt.Errorf("builtinlayouts: uninstall salon layout: %w", err)
-	}
-	if err := os.RemoveAll(paths.Plugins(SalonPluginID)); err != nil {
-		logging.L().Warnf("builtinlayouts: could not remove salon layout files: %v", err)
 	}
 	return nil
 }

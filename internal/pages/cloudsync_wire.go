@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -1092,7 +1091,8 @@ func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, v
 				// up a per-version install dir that no row points at anymore.
 				// Left alone, this and every future retry against the same
 				// still-mismatching pin would leak disk space forever.
-				if rmErr := os.RemoveAll(filepath.Join(paths.Plugins(), result.PluginID, result.Version)); rmErr != nil {
+				// Under the per-plugin lock (ut-docs#3082).
+				if rmErr := plugins.RemoveVersionDir(paths.Plugins(), result.PluginID, result.Version); rmErr != nil {
 					logging.L().Warnf("plugin sync: failed to remove orphaned mismatched-version files for %s@%s: %v", result.PluginID, result.Version, rmErr)
 				}
 			}
@@ -1154,11 +1154,9 @@ func cloudRemovePlugin(ctx context.Context, d *common.Deps, pluginID string) (st
 	if err := plugins.ValidatePluginID(pluginID); err != nil {
 		return "", fmt.Errorf("invalid plugin id: %w", err)
 	}
-	if err := plugins.UninstallPlugin(ctx, d.Db, pluginID); err != nil {
+	// DB rows and files under the per-plugin lock (ut-docs#3082).
+	if err := plugins.UninstallPluginTree(ctx, d.Db, paths.Plugins(), pluginID); err != nil {
 		return "", err
-	}
-	if err := os.RemoveAll(filepath.Join(paths.Plugins(), pluginID)); err != nil {
-		log.Printf("warning: failed to remove plugin files %s: %v", pluginID, err)
 	}
 	if err := plugins.NewInstallStatusStore(d.Db).ClearForPlugin(ctx, pluginID); err != nil {
 		log.Printf("warning: failed to clear install status for %s: %v", pluginID, err)
