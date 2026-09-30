@@ -186,7 +186,10 @@ func TestWasmCallGateNilIsUnlimited(t *testing.T) {
 func queuedTestRuntime(t *testing.T, pluginID string) (*WasmRuntime, func()) {
 	t.Helper()
 	w := NewWasmRuntime(t.TempDir())
-	t.Cleanup(func() { _ = w.rt.Close(context.Background()) })
+	t.Cleanup(func() {
+		w.Close(context.Background())
+		_ = w.rt.Close(context.Background())
+	})
 	compiled, err := w.rt.CompileModule(context.Background(), []byte{0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00})
 	if err != nil {
 		t.Fatal(err)
@@ -211,8 +214,8 @@ func TestWasmQueuedEventDeliveredWhenOrdinarySlotFrees(t *testing.T) {
 	const pluginID = "com.test.queued"
 	w, hold := queuedTestRuntime(t, pluginID)
 
-	if _, err := w.HandleEvent(context.Background(), pluginID, Event{Type: "sale.completed"}); err == nil {
-		t.Fatal("blocking call on a saturated plugin ran; want it refused at its deadline")
+	if _, err := w.HandleEvent(context.Background(), pluginID, Event{Type: "sale.completed"}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("blocking call on a saturated plugin: err = %v, want refused at its deadline", err)
 	}
 
 	done := make(chan error, 1)
@@ -286,5 +289,36 @@ func TestWasmQueuedEventWaitEndsOnClose(t *testing.T) {
 	w.mu.Unlock()
 	if fresh.Err() != nil {
 		t.Fatal("Close left a cancelled drain context for the next Sync")
+	}
+}
+
+// Close ends only the slot wait: an event already admitted runs on to its
+// own deadline, so shutdown's grace window still lets it finish (#380).
+func TestWasmQueuedEventAdmittedRunSurvivesDrainCancel(t *testing.T) {
+	const pluginID = "com.test.queued-admitted"
+	w, hold := queuedTestRuntime(t, pluginID)
+	hold()
+	// (module (func (local i32) (loop … i < 50e6 …)) (start 0)): runs long
+	// enough that a cancelled run context aborts it (WithCloseOnContextDone).
+	compiled, err := w.rt.CompileModule(context.Background(), []byte{
+		0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+		0x01, 0x04, 0x01, 0x60, 0x00, 0x00, // type: () -> ()
+		0x03, 0x02, 0x01, 0x00, // func 0: type 0
+		0x08, 0x01, 0x00, // start: func 0
+		0x0a, 0x1a, 0x01, 0x18, 0x01, 0x01, 0x7f,
+		0x03, 0x40, 0x20, 0x00, 0x41, 0x01, 0x6a, 0x21, 0x00,
+		0x20, 0x00, 0x41, 0x80, 0xe1, 0xeb, 0x17, 0x49, 0x0d, 0x00, 0x0b, 0x0b,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.mu.Lock()
+	w.modules[pluginID] = compiled
+	w.mu.Unlock()
+	w.timeout = 30 * time.Second
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already cancelled: a free slot is still admitted at once
+	if _, err := w.handleQueuedEvent(ctx, pluginID, Event{Type: "sale.completed"}); err != nil {
+		t.Fatalf("admitted event with a cancelled drain context: %v", err)
 	}
 }

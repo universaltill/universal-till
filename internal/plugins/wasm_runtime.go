@@ -366,7 +366,14 @@ func (w *WasmRuntime) Sync(ctx context.Context, db *sql.DB) {
 			// Channel events are non-blocking: nobody waits on the answer,
 			// so they queue for a slot instead of failing at their own
 			// deadline behind a long export/import (ut-docs#3171).
+			// An event admitted after a resync runs on the current module
+			// (re-read after admission); the stale check is pre-wait only.
+			// Slot release wakes every waiter, so back-to-back blocking
+			// calls can outrun the drainer until queueWait — bounded.
 			queued := func(ev Event) {
+				if drainCtx.Err() != nil {
+					return // shutting down: events still buffered are discarded
+				}
 				w.mu.Lock()
 				stale := gen != w.unsubGen
 				w.mu.Unlock()
@@ -621,7 +628,10 @@ func (w *WasmRuntime) handleEvent(ctx context.Context, pluginID string, ev Event
 		if err != nil {
 			return nil, fmt.Errorf("wasm handler: %s had no free call slot within %s: %w", pluginID, queueWait, err)
 		}
-		cctx, cancel = context.WithTimeout(ctx, timeout)
+		// ctx (the drainers' context) ends the wait only: an admitted
+		// event runs to its own deadline, so Close's grace window still
+		// lets it finish (ut-docs#380).
+		cctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), timeout)
 	} else {
 		cctx, cancel = context.WithTimeout(ctx, timeout)
 		// Waiting for a slot counts against the call's own deadline, so a
