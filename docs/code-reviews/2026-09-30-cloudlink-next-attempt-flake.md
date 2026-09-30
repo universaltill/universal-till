@@ -3,7 +3,7 @@
 Found by lane:cloud-24 when `main` CI went red after merge 7b1ea5e. The `ci`
 build job failed in `internal/cloudlink`, a package that merge doesn't touch.
 
-**Root cause (not a flake).** The redial wait is `RedialSpread * rng()` with a
+**Root cause (a real test bug, not runner noise).** The redial wait is `RedialSpread * rng()` with a
 real random `rng`. When the draw is near 0, the client sets and clears the
 next-attempt time within the 2 ms between two `eventually` polls. The test then
 times out on "a next-attempt time". It reproduces every time with `rng` stubbed
@@ -21,4 +21,4 @@ to 0 (FAIL, `client_test.go:629`, the same message as the CI log).
 - The test ran 100 times in a row and passed every time.
 - With `rng` stubbed to 0 it fails, which confirms the diagnosis.
 
-Reviewed by Fable; see the PR.
+Reviewed by Fable: approved. It confirmed the diagnosis: the original test failed 2/200 runs, and with rng stubbed to 0 it fails 3/3. It also passed 100 runs under CPU load and 50 under -race. Its two nits (comment wrap, this wording) are applied.

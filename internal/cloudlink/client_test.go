@@ -621,9 +621,10 @@ func TestNextAttemptClearsWhenTheTimerFires(t *testing.T) {
 			return inner(ctx)
 		}
 	}, func(c *Client) {
-		// Top of the spread (~200 ms, wide enough for a loaded runner): a draw near 0 set and cleared the
-		// next-attempt time between two 2 ms polls, so the first
-		// eventually below never saw it (main CI, 2026-09-30).
+		// Top of the spread (~200 ms, wide enough for a loaded
+		// runner): a draw near 0 set and cleared the next-attempt
+		// time between two 2 ms polls, so the first eventually below
+		// never saw it (main CI, 2026-09-30).
 		c.rng = func() float64 { return 0.999999 }
 	})
 	c := h.cloud.nextConn(t)
