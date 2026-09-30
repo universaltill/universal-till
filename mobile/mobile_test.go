@@ -1,6 +1,7 @@
 package mobile
 
 import (
+	"context"
 	"io"
 	"net"
 	"net/http"
@@ -13,8 +14,10 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/bluetooth"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/listenport"
+	"github.com/universaltill/universal-till/internal/procrestart"
 	"github.com/universaltill/universal-till/internal/recovery"
 )
 
@@ -582,5 +585,141 @@ func TestStart_PersistedPortBusy_FallsBackAndPersistsTheNewOne(t *testing.T) {
 	}
 	if got := listenport.Saved(dataDir); got != port {
 		t.Fatalf("persisted port = %d, want the fallback %d actually served on", got, port)
+	}
+}
+
+// ut-docs#3220: on iOS/Android "Restart now" (after joining a shop, or after
+// staging a backup restore) must really restart the till in-process — the
+// re-exec procrestart uses on desktop can't work inside an app. The mobile
+// package registers its restarter at init, so procrestart must report the
+// restart as supported, and a Restart() must bring the server back on the
+// SAME address with the staged snapshot applied (the joined shop's data is
+// there), exactly what the WebView's /healthz poll then reloads into.
+func TestProcrestart_RestartsInProcessAndAppliesStagedRestore(t *testing.T) {
+	dataDir := mobileTestEnv(t)
+	dbPath := filepath.Join(dataDir, "unitill-pos.db")
+	t.Setenv("UT_DB_PATH", dbPath)
+	// InProcess, not just Supported: Supported is true on linux anyway, and
+	// without the registration Restart would really re-exec the test binary.
+	if !procrestart.InProcess() || !procrestart.Supported() {
+		t.Fatal("the mobile package did not register its in-process restarter with procrestart")
+	}
+
+	addr, err := Start(dataDir)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// The "joined shop": a separate database carrying a marker setting,
+	// staged the way completeJoin stages a primary's snapshot.
+	snapPath := filepath.Join(t.TempDir(), "joined.db")
+	snap, err := db.Open(snapPath)
+	if err != nil {
+		t.Fatalf("open snapshot db: %v", err)
+	}
+	if err := data.NewSettingsRepo(snap.DB).Set(context.Background(), "test.joined_marker", "joined-shop"); err != nil {
+		t.Fatalf("seed snapshot: %v", err)
+	}
+	snap.Close()
+	f, err := os.Open(snapPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.StageRestoreFromReader(dbPath, f); err != nil {
+		t.Fatalf("stage restore: %v", err)
+	}
+	f.Close()
+	if !db.PendingRestore(dbPath) {
+		t.Fatal("restore not staged")
+	}
+
+	procrestart.Restart()
+
+	// The staged file is consumed only by a fresh startup; then the server
+	// must answer again on the same address.
+	deadline := time.Now().Add(60 * time.Second)
+	client := &http.Client{Timeout: time.Second}
+	for {
+		if !db.PendingRestore(dbPath) && IsRunning() {
+			if resp, err := client.Get("http://" + addr + "/healthz"); err == nil {
+				ok := resp.StatusCode == http.StatusOK
+				resp.Body.Close()
+				if ok {
+					break
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("till never came back on %s with the staged restore applied (pending=%v running=%v)",
+				addr, db.PendingRestore(dbPath), IsRunning())
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	Stop()
+	restored, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("reopen restored db: %v", err)
+	}
+	defer restored.Close()
+	v, ok, err := data.NewSettingsRepo(restored.DB).Get(context.Background(), "test.joined_marker")
+	if err != nil || !ok || v != "joined-shop" {
+		t.Fatalf("after restart the joined shop's marker = %q (found=%v, err=%v), want joined-shop", v, ok, err)
+	}
+}
+
+// A restart with no running server fails cleanly instead of starting one
+// from nowhere.
+func TestRestartInProcess_NotRunningErrors(t *testing.T) {
+	mobileTestEnv(t)
+	if err := restartInProcess(); err == nil {
+		t.Fatal("restartInProcess with no server running returned nil")
+	}
+	if IsRunning() {
+		t.Fatal("restartInProcess started a server although none was running")
+	}
+}
+
+// Native callers must never race an in-process restart (review finding,
+// ut-docs#3220): while it runs, IsRunning reports true (iOS's resume probe
+// won't start a second restart), and Start/Stop wait for it to finish.
+func TestRestartInProcess_NativeCallsWaitForIt(t *testing.T) {
+	dataDir := mobileTestEnv(t)
+	addr, err := Start(dataDir)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- restartInProcess() }()
+	// Catch the restart in flight.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		mu.Lock()
+		inFlight := restarting != nil
+		mu.Unlock()
+		if inFlight {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("restart never observed in flight")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if !IsRunning() {
+		t.Fatal("IsRunning() = false during an in-process restart; iOS would start a racing restart")
+	}
+	addr2, err := Start(dataDir)
+	if err != nil {
+		t.Fatalf("Start during restart: %v", err)
+	}
+	if addr2 != addr {
+		t.Fatalf("Start during restart = %q, want the restarted server's %q", addr2, addr)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("restartInProcess: %v", err)
+	}
+	if !IsRunning() {
+		t.Fatal("server not running after the restart")
 	}
 }
