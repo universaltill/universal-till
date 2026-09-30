@@ -207,6 +207,13 @@ func fastOptions() Options {
 
 func newHarness(t *testing.T, mod func(*Options)) *harness {
 	t.Helper()
+	return newHarnessClient(t, mod, nil)
+}
+
+// newHarnessClient is newHarness with a hook on the Client before Run
+// starts (e.g. to stub rng), so the stub is set without racing Run.
+func newHarnessClient(t *testing.T, mod func(*Options), cmod func(*Client)) *harness {
+	t.Helper()
 	h := &harness{cloud: newFakeCloud(t), done: make(chan struct{})}
 	h.gateOK.Store(true)
 	h.bearer.Store("cred-1")
@@ -222,6 +229,9 @@ func newHarness(t *testing.T, mod func(*Options)) *harness {
 		mod(&o)
 	}
 	h.c = New(o)
+	if cmod != nil {
+		cmod(h.c)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	h.cancel = cancel
 	go func() { defer close(h.done); h.c.Run(ctx) }()
