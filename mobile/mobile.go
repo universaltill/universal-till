@@ -72,6 +72,7 @@ import (
 	"github.com/universaltill/universal-till/internal/listenport"
 	"github.com/universaltill/universal-till/internal/procrestart"
 	"github.com/universaltill/universal-till/internal/recovery"
+	"github.com/universaltill/universal-till/internal/server"
 )
 
 // instance is one running server lifecycle. Start/Stop/IsRunning agree on
@@ -84,6 +85,17 @@ type instance struct {
 	cancel  context.CancelFunc
 	done    chan struct{} // closed once app.Run has fully returned
 	err     error         // app.Run's result; only valid after done is closed
+	// bound receives the server's one bind report (ut-docs#3290). nil in
+	// the recovery-mode unit tests: a nil channel never fires.
+	bound chan bindReport
+	// listenAddr is the address runOnce asked the server to bind.
+	listenAddr string
+}
+
+// bindReport is what server.WithBoundAddr told runOnce about the bind.
+type bindReport struct {
+	addr  string
+	moved bool
 }
 
 var (
@@ -175,19 +187,6 @@ func start(dataDir string) (string, error) {
 		mu.Unlock()
 	}()
 
-	port, err := chooseListenPort(dataDir)
-	if err != nil {
-		return "", fmt.Errorf("mobile: find a free port: %w", err)
-	}
-	// Two addresses, one port (ut-docs#1256): listenAddr is what the server
-	// binds — all interfaces, so the till is LAN-reachable and ADR-0033's
-	// discovery + approve-to-pair + bearer-token model applies to it the
-	// same way it already does to a desktop/Pi till. localAddr is the
-	// loopback view of the same port: what waitUntilReady polls and what
-	// the native shell gets back for its WebView, unchanged from before.
-	listenAddr := "0.0.0.0:" + port
-	localAddr := "127.0.0.1:" + port
-
 	if err := os.Setenv("UT_DATA_DIR", dataDir); err != nil {
 		return "", fmt.Errorf("mobile: set UT_DATA_DIR: %w", err)
 	}
@@ -218,9 +217,6 @@ func start(dataDir string) (string, error) {
 			return "", fmt.Errorf("mobile: set TMPDIR: %w", err)
 		}
 	}
-	if err := os.Setenv("UT_LISTEN_ADDR", listenAddr); err != nil {
-		return "", fmt.Errorf("mobile: set UT_LISTEN_ADDR: %w", err)
-	}
 	// The native shell supplies its own window/WebView; the server must
 	// never try to open an OS browser on its own (same reasoning as
 	// cmd/unitill-desktop/desktop.go's identical env var).
@@ -246,8 +242,87 @@ func start(dataDir string) (string, error) {
 		}
 	}
 
+	port, err := chooseListenPort(dataDir)
+	if err != nil {
+		return "", fmt.Errorf("mobile: find a free port: %w", err)
+	}
+	// ut-docs#3290: the port is probed free and then bound later by
+	// app.Run, so something can take it in between (another package's test
+	// on CI, another app on a phone). The server then falls back to a
+	// loopback-only address on another port (internal/server,
+	// ut-docs#1169), which is neither LAN-reachable nor the port being
+	// polled. runOnce notices the moved bind at once; retry on a fresh
+	// OS-chosen port instead of waiting out the 30s timeout.
+	for attempt := 1; ; attempt++ {
+		afterPortChosen(port)
+		newInst, err := runOnce(dataDir, port)
+		if err == nil {
+			// ut-docs#2722: remember the port we actually served on, so the
+			// next launch comes back on it and paired replicas keep reaching
+			// this till. Best-effort: failing to persist only costs
+			// stability, never startup.
+			if p, perr := strconv.Atoi(port); perr == nil {
+				if err := listenport.Save(dataDir, p); err != nil {
+					fmt.Fprintf(os.Stderr, "mobile: could not persist listen port %d: %v\n", p, err)
+				}
+			}
+			mu.Lock()
+			inst = newInst
+			mu.Unlock()
+			return newInst.addr, nil
+		}
+		var moved *bindMovedError
+		if !errors.As(err, &moved) {
+			return "", err
+		}
+		if attempt >= maxBindAttempts {
+			return "", fmt.Errorf("mobile: gave up after %d ports were each taken before the bind: %w", maxBindAttempts, err)
+		}
+		if port, err = freePort(); err != nil {
+			return "", fmt.Errorf("mobile: find a free port: %w", err)
+		}
+	}
+}
+
+// maxBindAttempts caps how many ports start tries when each one is taken
+// between choosing it and binding it (ut-docs#3290).
+const maxBindAttempts = 3
+
+// afterPortChosen runs between choosing a port and app.Run binding it. A
+// test seam only: tests take the port here to reproduce ut-docs#3290.
+var afterPortChosen = func(port string) {}
+
+// bindMovedError is runOnce's report that the server bound somewhere other
+// than 0.0.0.0:<port> — start retries on a fresh port.
+type bindMovedError struct{ want, got string }
+
+func (e *bindMovedError) Error() string {
+	return fmt.Sprintf("mobile: port taken before the server bound it: asked for %s, bind moved to %s", e.want, e.got)
+}
+
+// runOnce boots app.Run on port and waits until it is ready. On any error
+// the instance is already torn down.
+func runOnce(dataDir, port string) (*instance, error) {
+	// Two addresses, one port (ut-docs#1256): listenAddr is what the server
+	// binds — all interfaces, so the till is LAN-reachable and ADR-0033's
+	// discovery + approve-to-pair + bearer-token model applies to it the
+	// same way it already does to a desktop/Pi till. localAddr is the
+	// loopback view of the same port: what waitUntilReady polls and what
+	// the native shell gets back for its WebView, unchanged from before.
+	listenAddr := "0.0.0.0:" + port
+	localAddr := "127.0.0.1:" + port
+	if err := os.Setenv("UT_LISTEN_ADDR", listenAddr); err != nil {
+		return nil, fmt.Errorf("mobile: set UT_LISTEN_ADDR: %w", err)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
-	newInst := &instance{dataDir: dataDir, addr: localAddr, cancel: cancel, done: make(chan struct{})}
+	newInst := &instance{dataDir: dataDir, addr: localAddr, listenAddr: listenAddr, cancel: cancel, done: make(chan struct{}), bound: make(chan bindReport, 1)}
+	ctx = server.WithBoundAddr(ctx, func(actual string, moved bool) {
+		select {
+		case newInst.bound <- bindReport{addr: actual, moved: moved}:
+		default: // one bind per app.Run; never block the server on it
+		}
+	})
 
 	go func() {
 		newInst.err = app.Run(ctx)
@@ -266,22 +341,9 @@ func start(dataDir string) (string, error) {
 	if err := waitUntilReady(localAddr, 30*time.Second, newInst); err != nil {
 		cancel()
 		<-newInst.done // wait for the full teardown before reporting failure
-		return "", err
+		return nil, err
 	}
-
-	// ut-docs#2722: remember the port we actually served on, so the next
-	// launch comes back on it and paired replicas keep reaching this till.
-	// Best-effort: failing to persist only costs stability, never startup.
-	if p, perr := strconv.Atoi(port); perr == nil {
-		if err := listenport.Save(dataDir, p); err != nil {
-			fmt.Fprintf(os.Stderr, "mobile: could not persist listen port %d: %v\n", p, err)
-		}
-	}
-
-	mu.Lock()
-	inst = newInst
-	mu.Unlock()
-	return localAddr, nil
+	return newInst, nil
 }
 
 // waitForRestartLocked blocks, with mu held on entry and on return, until
@@ -478,9 +540,10 @@ func chooseListenPort(dataDir string) (string, error) {
 // failure is worse than a retry: internal/server.listenWithFallback
 // deliberately degrades a wildcard bind failure to 127.0.0.1 (ut-docs#1169),
 // silently undoing this whole feature, on a different port than
-// waitUntilReady is polling — a guaranteed 30s timeout and a failed Start).
-// Probing 0.0.0.0:0 instead makes the probed port free on every interface,
-// which is exactly what the real bind needs, closing the mismatch.
+// waitUntilReady is polling). Probing 0.0.0.0:0 instead makes the probed
+// port free on every interface, which is exactly what the real bind needs,
+// closing the mismatch. The probe-then-bind gap itself remains: start
+// detects a bind that moved anyway and retries (ut-docs#3290).
 func freePort() (string, error) {
 	ln, err := net.Listen("tcp", "0.0.0.0:0")
 	if err != nil {
@@ -518,9 +581,14 @@ func freePort() (string, error) {
 // Start polls the loopback address even though the server binds 0.0.0.0
 // (ut-docs#1256): a wildcard bind answers on loopback, and 0.0.0.0 is not a
 // portable DIAL target.
+//
+// A bind report on inst.bound that says the bind moved off 0.0.0.0:<port>
+// ends the wait at once with a *bindMovedError (ut-docs#3290): nothing will
+// ever answer on addr, and start retries on a fresh port.
 func waitUntilReady(addr string, timeout time.Duration, inst *instance) error {
 	client := &http.Client{Timeout: 500 * time.Millisecond}
 	deadline := time.Now().Add(timeout)
+	sawBind := false
 	for time.Now().Before(deadline) {
 		select {
 		case <-inst.done:
@@ -528,10 +596,19 @@ func waitUntilReady(addr string, timeout time.Duration, inst *instance) error {
 				return fmt.Errorf("mobile: server failed to start: %w", inst.err)
 			}
 			return fmt.Errorf("mobile: server exited before becoming ready")
+		case b := <-inst.bound:
+			if b.moved {
+				return &bindMovedError{want: inst.listenAddr, got: b.addr}
+			}
+			sawBind = true
 		default:
 		}
 		if resp, err := client.Get("http://" + addr + "/healthz"); err == nil {
-			ready := resp.StatusCode == http.StatusOK ||
+			// A 200 counts only after our own server reported its bind: it
+			// reports before it serves, so a 200 before that came from
+			// whatever holds the port (ut-docs#3290 review). Recovery mode
+			// never reports a bind; its header is its own proof.
+			ready := (resp.StatusCode == http.StatusOK && sawBind) ||
 				(resp.StatusCode == http.StatusServiceUnavailable && resp.Header.Get(recovery.HeaderMode) == recovery.ModeRecovery)
 			resp.Body.Close()
 			if ready {
