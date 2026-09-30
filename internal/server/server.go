@@ -278,6 +278,7 @@ func Start(ctx context.Context, cfg *config.Config, handler http.Handler, catalo
 	if movedOffConfiguredAddr(cfg.ListenAddr, actualAddr) {
 		log.Printf("port %s was busy — listening on %s instead", cfg.ListenAddr, actualAddr)
 	}
+	reportBoundAddr(ctx, cfg.ListenAddr, actualAddr)
 	// A fallback bind may have moved the port; plugin egress must refuse
 	// the one really serving (ut-docs#2891).
 	plugins.SetTillListenAddr(actualAddr)
@@ -387,6 +388,25 @@ func bindListener(addr string, demo bool) (net.Listener, string, error) {
 		return nil, "", fmt.Errorf("demo mode binds exactly %s: %w", addr, err)
 	}
 	return ln, ln.Addr().String(), nil
+}
+
+// boundAddrKey carries a WithBoundAddr reporter on Start's context.
+type boundAddrKey struct{}
+
+// WithBoundAddr returns a ctx whose Start reports the address it really
+// bound, and whether that moved off cfg.ListenAddr (movedOffConfiguredAddr),
+// right after the bind and before serving (ut-docs#3290). mobile.Start drives
+// app.Run in-process and polls the port it asked for; a fallback bind used
+// to leave it polling that port for 30s. Every other caller sets nothing.
+func WithBoundAddr(ctx context.Context, report func(actual string, moved bool)) context.Context {
+	return context.WithValue(ctx, boundAddrKey{}, report)
+}
+
+// reportBoundAddr calls ctx's WithBoundAddr reporter, if it has one.
+func reportBoundAddr(ctx context.Context, configured, actual string) {
+	if report, ok := ctx.Value(boundAddrKey{}).(func(string, bool)); ok && report != nil {
+		report(actual, movedOffConfiguredAddr(configured, actual))
+	}
 }
 
 // openBrowserFor is shouldOpenBrowser, except a demo till never opens a
