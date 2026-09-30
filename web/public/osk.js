@@ -272,6 +272,10 @@
   // post-insert clear) care which one is active.
   var shiftLatched = false, lastShiftTap = 0;
   var SHIFT_LATCH_MS = 400;
+  // ut-docs#3274: when a key was last pressed/released, and how long after
+  // that a blur of the field counts as the tap's own (iOS) focus change.
+  var lastKeyTapAt = 0;
+  var KEY_TAP_FOCUS_MS = 800;
 
   function baseLayout() {
     var lang = (document.documentElement.lang || 'en').slice(0, 2);
@@ -396,8 +400,17 @@
     // there, which is why e2e (mouse-driven) and desktop testing never
     // caught this. `pointerup` is the one event that fires reliably for
     // both touch and mouse on every tested engine.
-    osk.addEventListener('pointerdown', function (ev) { ev.preventDefault(); });
+    osk.addEventListener('pointerdown', function (ev) {
+      ev.preventDefault();
+      lastKeyTapAt = Date.now();
+    });
+    // ut-docs#3274: iOS WebKit ignores the cancelled pointerdown for focus.
+    // Its tap gesture moves focus AFTER pointerup, via the synthetic
+    // mousedown, so cancel that too; the focusout keep-focus path below
+    // covers a WebKit that moves focus without dispatching it.
+    osk.addEventListener('mousedown', function (ev) { ev.preventDefault(); });
     osk.addEventListener('pointerup', function (ev) {
+      lastKeyTapAt = Date.now();
       var btn = ev.target.closest('button[data-k]');
       if (btn) press(btn.dataset.k);
     });
@@ -687,7 +700,14 @@
   // after that would wait on a `pointerup` that may not arrive again for a
   // while.
   var pointerDown = false;
-  document.addEventListener('pointerdown', function () { pointerDown = true; });
+  document.addEventListener('pointerdown', function (ev) {
+    pointerDown = true;
+    // ut-docs#3274 review: only a blur whose most recent press was on the
+    // keyboard is reclaimed — a tap on Save or the background within
+    // KEY_TAP_FOCUS_MS of a key still closes it. A press's pointerdown
+    // precedes its focus change on every engine.
+    if (!(osk && osk.contains(ev.target))) lastKeyTapAt = 0;
+  });
   document.addEventListener('pointerup', function () { pointerDown = false; });
   document.addEventListener('pointercancel', function () { pointerDown = false; });
   // Whether the CURRENT press already has a pending hide-check enqueued
@@ -762,6 +782,23 @@
     deferHideCheck(0);
   });
   document.addEventListener('focusout', function (ev) {
+    // ut-docs#3274: a tap on one of our keys must never take the field's
+    // focus. iOS WebKit blurs it anyway, just after the key's pointerup
+    // (focus falls to <body>: iOS buttons aren't focusable), so a blur of
+    // the field we're typing into, landing nowhere, right after a key tap,
+    // is put back instead of closing the keyboard. hide() clears `current`
+    // before the ↵ key's own blur, so that one still closes.
+    var field = current;
+    var to = ev.relatedTarget;
+    if (field && ev.target === field && Date.now() - lastKeyTapAt < KEY_TAP_FOCUS_MS &&
+        (!to || (osk && osk.contains(to)))) {
+      setTimeout(function () {
+        var a = document.activeElement;
+        if (current === field && field.isConnected && (!a || a === document.body || (osk && osk.contains(a)))) {
+          try { field.focus({ preventScroll: true }); } catch (e) { /* not focusable */ }
+        }
+      }, 0);
+    }
     // If focus lands on another OSK-able field, its click re-shows it.
     deferHideCheck(50);
   });
