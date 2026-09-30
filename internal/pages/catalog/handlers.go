@@ -760,6 +760,13 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		}
 		barcodes, _ := repo.ItemBarcodes(r.Context())
 		variants, _ := repo.ItemVariants(r.Context())
+		// ut-docs#3097: drives the "Generate missing SKUs (N)" button;
+		// best-effort — a failed count just hides the button.
+		missingSKUCount, err := repo.CountItemsMissingSKU(r.Context())
+		if err != nil {
+			log.Printf("[catalog] count items missing sku: %v", err)
+			missingSKUCount = 0
+		}
 		thumbnails, _ := repo.ItemThumbnails(r.Context())
 		// ut-docs#2314: the catalog list/edit form must show each item's
 		// CURRENT EFFECTIVE price (price_history-resolved), not raw
@@ -808,6 +815,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"Brands":                brands,
 			"TaxCodes":              taxCodes,
 			"SyncPrimary":           d.SyncPrimaryURL(r.Context()),
+			"MissingSKUCount":       missingSKUCount,
 			"BuiltinIconGroups":     catimport.BuiltinIconGroups(),
 			"ItemColors":            catalogtypes.ItemColors(),
 			"InItemsShell":          httpx.IsFragmentSwap(w, r),
@@ -2274,6 +2282,65 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			filepath.Join("web", "ui", "partials", "catalog_barcode_backfill.html"),
 		), funcs)("catalog_barcode_backfill_result", barcodeBackfillResultView(assigned, skipped))(w, r)
 	})
+
+	// ut-docs#3097: "Generate missing SKUs" — preview (GET, no writes) +
+	// commit (POST, primary only), the same two-state dialog as the
+	// barcode backfill above. The preview is CatalogRepo.
+	// PlanMissingItemSKUs (the commit's own routine, rolled back), so on
+	// unchanged data it shows exactly the SKUs the commit assigns; the
+	// commit re-plans fresh inside its own transaction rather than
+	// trusting the preview.
+	mux.HandleFunc("GET /api/catalog/sku-backfill", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
+		plan, err := repo.PlanMissingItemSKUs(r.Context())
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
+			return
+		}
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		httpx.RenderWith(files(
+			filepath.Join("web", "ui", "partials", "catalog_sku_backfill.html"),
+		), funcs)("catalog_sku_backfill", skuBackfillPreviewView(plan))(w, r)
+	})
+
+	mux.HandleFunc("POST /api/catalog/sku-backfill", func(w http.ResponseWriter, r *http.Request) {
+		if !requireCatalogManagement(w, r) {
+			return
+		}
+		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+			return
+		}
+		assigned, err := repo.BackfillMissingItemSKUs(r.Context())
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
+			return
+		}
+		// Not HX-Refresh, same reason as the barcode backfill: the result
+		// fragment's Close refreshes #catalog-table once it has been read.
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		httpx.RenderWith(files(
+			filepath.Join("web", "ui", "partials", "catalog_sku_backfill.html"),
+		), funcs)("catalog_sku_backfill_result", map[string]any{"Assigned": len(assigned)})(w, r)
+	})
+}
+
+// skuBackfillPreviewView shapes PlanMissingItemSKUs' result for
+// catalog_sku_backfill.html, capping the list at backfillPreviewRowCap
+// like the barcode backfill preview (ut-docs#3097).
+func skuBackfillPreviewView(plan []data.AssignedItemSKU) map[string]any {
+	shown := plan
+	moreCount := 0
+	if len(plan) > backfillPreviewRowCap {
+		shown = plan[:backfillPreviewRowCap]
+		moreCount = len(plan) - backfillPreviewRowCap
+	}
+	return map[string]any{
+		"Rows":      shown,
+		"Count":     len(plan),
+		"MoreCount": moreCount,
+	}
 }
 
 // backfillRow is one item computeBarcodeBackfillPlan found eligible for a

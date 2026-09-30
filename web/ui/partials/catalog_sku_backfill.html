@@ -1,0 +1,46 @@
+{{/* ut-docs#3097: "Generate missing SKUs" — preview and post-commit result
+     fragments, swapped into catalog.html's #sku-backfill-modal <dialog>.
+     Same two-state dialog shape as catalog_barcode_backfill.html
+     (ut-docs#1356), opened with .show(), never .showModal() (ut-docs#2097). */}}
+{{ define "catalog_sku_backfill" }}
+<h3 id="sku-backfill-heading">{{ T "catalog.sku_backfill.heading" }}</h3>
+{{ if .Rows }}
+<p>{{ printf (T "catalog.sku_backfill.eligible_count") .Count }}</p>
+<div style="max-height:40vh; overflow:auto">
+  <table class="table">
+    <thead><tr><th>{{ T "catalog.col.name" }}</th><th>{{ T "catalog.col.sku" }}</th></tr></thead>
+    <tbody>
+      {{ range .Rows }}
+      <tr><td>{{ .Name }}</td><td style="white-space:nowrap">{{ .SKU }}</td></tr>
+      {{ end }}
+      {{ if .MoreCount }}
+      <tr><td colspan="2" class="muted">{{ printf (T "catalog.sku_backfill.more_rows") .MoreCount }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>
+{{ else }}
+<p class="muted">{{ T "catalog.sku_backfill.empty" }}</p>
+{{ end }}
+<div style="margin-block-start:.8rem; display:flex; gap:.5rem">
+  {{ if .Rows }}
+  <button class="btn primary" type="button"
+          hx-post="/api/catalog/sku-backfill" hx-target="#sku-backfill-modal" hx-swap="innerHTML">
+    {{ T "catalog.sku_backfill.confirm_btn" }}
+  </button>
+  {{ end }}
+  <button class="btn secondary" type="button" onclick="document.getElementById('sku-backfill-modal').close()">{{ T "common.close" }}</button>
+</div>
+{{ end }}
+
+{{ define "catalog_sku_backfill_result" }}
+<h3 id="sku-backfill-heading">{{ T "catalog.sku_backfill.heading" }}</h3>
+<p>{{ printf (T "catalog.sku_backfill.result") .Assigned }}</p>
+<div style="margin-block-start:.8rem">
+  {{/* Refreshes only #catalog-table (the dialog's data-ut-refresh,
+       ut-docs#2762) so the grid shows the new SKUs, and removes the
+       "Generate missing SKUs (N)" button, whose count is now stale — the
+       next page load re-reads it. */}}
+  <button class="btn secondary" type="button" onclick="var b = document.getElementById('catalog-sku-backfill-btn'); if (b) b.remove(); document.getElementById('sku-backfill-modal').close(); UT.refreshRegion(this)">{{ T "common.close" }}</button>
+</div>
+{{ end }}
