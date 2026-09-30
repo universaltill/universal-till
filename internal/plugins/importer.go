@@ -164,6 +164,11 @@ func (imp *Importer) Import(ctx context.Context, req *ImportRequest) (*ImportRes
 		return nil, err
 	}
 
+	// Held until return, like Rollback: the live dir replace below and its
+	// PersistManifest must not interleave with a Rollback, StoreVersion or
+	// uninstall of the same plugin (ut-docs#3273). No caller holds it here.
+	defer lockPluginTree(imp.pluginBaseDir, manifest.ID)()
+
 	// Check disk budget (prevent excessive plugin storage)
 	if err := imp.checkDiskBudget(manifest.ID, manifest.Version, tempDir); err != nil {
 		return nil, fmt.Errorf("disk budget check failed: %w", err)

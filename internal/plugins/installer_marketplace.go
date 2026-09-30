@@ -302,6 +302,11 @@ func (i *MarketplaceInstaller) installBundleFile(ctx context.Context, spec bundl
 	if err := validatePluginVersion(manifest.Version); err != nil {
 		return nil, err
 	}
+	// Held until return, like Rollback: the live dir replace below and its
+	// PersistManifest must not interleave with a Rollback, StoreVersion or
+	// uninstall of the same plugin (ut-docs#3273). No caller holds it here.
+	defer lockPluginTree(i.pluginBaseDir, manifest.ID)()
+
 	finalDir := filepath.Join(i.pluginBaseDir, manifest.ID, manifest.Version)
 	if err := os.RemoveAll(finalDir); err != nil && !os.IsNotExist(err) {
 		return nil, fmt.Errorf("clean existing plugin dir: %w", err)
